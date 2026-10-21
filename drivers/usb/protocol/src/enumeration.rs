@@ -38,6 +38,22 @@ pub enum Speed {
     High,
 }
 
+/// The polling interval in milliseconds an endpoint's `bInterval` asks for:
+/// frames for a low- or full-speed device, `2^(bInterval - 1)` microframes for
+/// a high-speed one, at least a millisecond and at most what the controller
+/// polls.
+#[must_use]
+pub fn interval_ms(speed: Speed, b_interval: u8) -> u32 {
+    let milliseconds = match speed {
+        Speed::Low | Speed::Full => u32::from(b_interval),
+        Speed::High => {
+            let microframes = 1_u32 << u32::from(b_interval.clamp(1, 16) - 1);
+            microframes.div_ceil(8)
+        }
+    };
+    milliseconds.clamp(1, 255)
+}
+
 /// Why enumeration failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {

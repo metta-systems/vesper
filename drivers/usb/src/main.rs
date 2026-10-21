@@ -12,8 +12,11 @@
 //! The Thread resets the root port and enumerates the device there. A hub there
 //! gets the hub driver: its descriptor is read, every port is powered, and each
 //! port runs through `vesper_usb_protocol::hub::Port` (debounce, reset,
-//! enumeration, teardown), polled with `GET_STATUS` until interrupt pipes
-//! exist. A low- or full-speed device behind a high-speed hub is reached with
+//! enumeration, teardown). A port at rest waits for the hub's Status Change
+//! endpoint to name it (an interrupt pipe whose reports arrive on the
+//! controller's report channel) before its status is read again; the timed
+//! waits of debounce, reset and recovery stay timers, and a hub without that
+//! pipe is polled. A low- or full-speed device behind a high-speed hub is reached with
 //! split transactions: its pipes carry the hub and port as their route.
 //!
 //! Progress is traced on the serial channel when the component has one
@@ -37,6 +40,7 @@ mod component {
         crate::trace::Trace,
         core::cell::UnsafeCell,
         libdevice_driver::{DriverInit, INIT_VA, Turn, Turnstile, driver_init},
+        libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
         libmeddle_runtime::DataArea,
         libobject::{
             CapError, EventCountKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
@@ -54,17 +58,23 @@ mod component {
         },
         vesper_usb_protocol::{
             descriptor::{self, Descriptor},
-            enumeration::Speed,
+            enumeration::{Speed, interval_ms},
             hub::{
                 CLASS_HUB, HubDescriptor, MAX_HUB_DESCRIPTOR, PORT_POWER, PORT_RESET, Port,
                 PortAction, PortEvent, PortStatus, clear_port_feature, get_hub_descriptor,
                 get_port_status, set_port_feature,
             },
+            report_channel::{ReportChannel, SLOTS, data_area as report_data_area},
             setup::SetupPacket,
         },
     };
 
     libuser::entry!(main);
+
+    /// Buffers posted on the controller's report channel for the hubs' Status
+    /// Change bitmaps, and the bytes of each.
+    const REPORT_BUFFERS: u64 = 4;
+    const REPORT_BYTES: u64 = 64;
 
     /// Address the root device is enumerated to.
     const ROOT_ADDRESS: u8 = 1;
@@ -195,6 +205,37 @@ mod component {
                 })
                 .and(Err(Exception::NotPermitted))
         }
+
+        fn trace(badge: u64, text: usb::usb_v1::__runtime::IoRec) -> Result<u32, Exception> {
+            let (_, exported) = init()
+                .area_for_badge(badge)
+                .ok_or(Exception::NotPermitted)?;
+            let area = DataArea {
+                base: exported.base,
+                len: exported.len,
+            };
+            if !area.contains(&text) {
+                return Err(Exception::NotPermitted);
+            }
+            let capacity =
+                usize::try_from(text.len).map_err(|_overflow| Exception::NotPermitted)?;
+            // The turn makes this the backlog's one reader.
+            let _turn = TURNSTILE.enter(init());
+            let mut written = 0;
+            let mut chunk = [0; 256];
+            while written < capacity {
+                let count = libserial_trace::drain(&mut chunk[..(capacity - written).min(256)]);
+                if count == 0 {
+                    break;
+                }
+                let offset = text.base - area.base + written as u64;
+                if !area.write_bytes(offset, &chunk[..count]) {
+                    return Err(Exception::NotPermitted);
+                }
+                written += count;
+            }
+            Ok(u32::try_from(written).unwrap_or(u32::MAX))
+        }
     }
 
     usb::usb_v1_export!(UsbCore);
@@ -225,6 +266,47 @@ mod component {
         trace: Trace,
         addresses: AddressPool,
         devices: DeviceTable,
+        /// The controller's report channel, where the hubs' Status Change pipes
+        /// report; without it the ports are looked at on a timer.
+        reports: Option<Reports>,
+    }
+
+    /// The client side of the controller's report channel.
+    struct Reports {
+        buffers: Producer<'static, SLOTS, NoEvent>,
+        completed: Consumer<'static, SLOTS, EventCountKey>,
+        data: libio_channel::DataArea,
+        /// Advanced by the controller for every report it returns.
+        event: EventCountKey,
+        seen: u64,
+    }
+
+    impl Reports {
+        /// The channel of `client`'s import, with its empty buffers posted.
+        fn new(client: &Client) -> Option<Self> {
+            let channel_area = client.channel().filter(|area| area.event != 0)?;
+            // SAFETY: Kickstart mapped the channel's control page read/write.
+            let channel = unsafe { ReportChannel::at(channel_area.control) };
+            let event = |wire| EventCountKey::from_key(RawKey::from_wire(wire));
+            let (mut buffers, completed) =
+                channel.reports.client(NoEvent, event(channel_area.event));
+            let data = report_data_area(channel_area.control);
+            for index in 0..REPORT_BUFFERS {
+                let rec = IoRec {
+                    base: data.base + index * REPORT_BYTES,
+                    len: REPORT_BYTES,
+                };
+                let packet = Packet::new(index, &[rec])?;
+                buffers.put(&packet).ok()?;
+            }
+            Some(Self {
+                buffers,
+                completed,
+                data,
+                event: event(channel_area.event),
+                seen: 0,
+            })
+        }
     }
 
     /// One downstream port of a hub, and when to look at it next.
@@ -242,6 +324,9 @@ mod component {
     struct HubState {
         info: HubInfo,
         control: Pipe,
+        /// The pipe of the hub's Status Change endpoint (USB 2.0 §11.12.1), whose
+        /// bitmaps name the ports to look at; without it the ports are polled.
+        status: Option<Pipe>,
         slots: [PortSlot; MAX_PORTS],
         ports: usize,
     }
@@ -255,6 +340,9 @@ mod component {
         /// full-speed hub behind a high-speed one; the devices behind it take
         /// the same route.
         route: Option<Route>,
+        /// Whether the hub's Status Change pipe names the ports to look at, so a
+        /// resting port waits for it instead of a timer.
+        reports_changes: bool,
     }
 
     /// What running a port did beyond its own state.
@@ -516,11 +604,24 @@ mod component {
         }
 
         /// The hub's status for `port`.
-        fn port_status(&self, pipe: &Pipe, port: u8) -> Option<PortStatus> {
+        fn port_status(&mut self, pipe: &Pipe, port: u8) -> Option<PortStatus> {
             let mut reply = [0; 4];
-            match self.hub_request(pipe, get_port_status(port), &mut reply) {
-                Some(4) => Some(PortStatus::from_bytes(reply)),
-                _ => None,
+            match self
+                .pipes
+                .control(pipe, get_port_status(port), &[], &mut reply)
+            {
+                Ok(4) => Some(PortStatus::from_bytes(reply)),
+                Ok(moved) => {
+                    trace!(
+                        self.trace,
+                        "usb-core: port {port}: no status ({moved} bytes)"
+                    );
+                    None
+                }
+                Err(error) => {
+                    trace!(self.trace, "usb-core: port {port}: no status: {error:?}");
+                    None
+                }
             }
         }
 
@@ -570,6 +671,7 @@ mod component {
                 address: hub.address,
                 speed: hub.speed,
                 route,
+                reports_changes: false,
             };
             let control = self.open_hub_control(info, hub.max_packet0)?;
             let mut reply = [0; MAX_HUB_DESCRIPTOR];
@@ -601,9 +703,14 @@ mod component {
                     "usb-core: only the first {MAX_PORTS} ports are driven"
                 );
             }
+            let status = self.open_status_pipe(info, hub);
             Some(HubState {
-                info,
+                info: HubInfo {
+                    reports_changes: status.is_some(),
+                    ..info
+                },
                 control,
+                status,
                 slots: core::array::from_fn(|index| PortSlot {
                     port: Port::new(descriptor.power_on_to_good_ms),
                     wake_ns: 0,
@@ -612,6 +719,131 @@ mod component {
                 }),
                 ports,
             })
+        }
+
+        /// Open the pipe of `hub`'s Status Change endpoint, its interrupt-IN
+        /// endpoint, when there is a report channel to read it on.
+        fn open_status_pipe(&mut self, info: HubInfo, hub: &Enumerated) -> Option<Pipe> {
+            self.reports.as_ref()?;
+            let configuration = hub
+                .configuration
+                .get(..hub.configuration_len)
+                .unwrap_or_default();
+            let endpoint = descriptor::walk(configuration).find_map(|found| match found {
+                Ok(Descriptor::Endpoint(endpoint))
+                    if endpoint.is_in()
+                        && endpoint.transfer_kind() == descriptor::TransferKind::Interrupt =>
+                {
+                    Some(endpoint)
+                }
+                _ => None,
+            })?;
+            let speed = match info.speed {
+                Speed::Low => HcdSpeed::Low,
+                Speed::Full => HcdSpeed::Full,
+                Speed::High => HcdSpeed::High,
+            };
+            let pipe = self
+                .pipes
+                .open_unconfigured(u32::from(info.address), u32::from(endpoint.address), speed)
+                .ok()?;
+            let interval = interval_ms(info.speed, endpoint.interval);
+            let configured = info.route.is_none_or(|route| {
+                pipe.client
+                    .set_route(u32::from(route.hub_address), u32::from(route.hub_port))
+                    .is_ok()
+            }) && pipe
+                .client
+                .configure(
+                    usb_hcd_client::pipe_v1::TransferKind::Interrupt,
+                    endpoint.max_packet,
+                    interval,
+                )
+                .is_ok();
+            if !configured {
+                trace!(
+                    self.trace,
+                    "usb-core: hub at address {}: no Status Change pipe, its ports are polled",
+                    info.address
+                );
+                self.pipes.close(&pipe);
+                return None;
+            }
+            trace!(
+                self.trace,
+                "usb-core: hub at address {}: Status Change endpoint {:#04x} every {interval} ms",
+                info.address,
+                endpoint.address
+            );
+            Some(pipe)
+        }
+
+        /// Wake the resting ports the hubs' Status Change bitmaps name, and post
+        /// their buffers again.
+        fn wake_changed_ports(&mut self, hubs: &mut [Option<HubState>]) {
+            let Some(reports) = self.reports.as_mut() else {
+                return;
+            };
+            while let Ok(Some(packet)) = reports.completed.get() {
+                let Some(rec) = packet.recs().first().copied() else {
+                    continue;
+                };
+                let buffer = IoRec {
+                    base: rec.base,
+                    len: REPORT_BYTES,
+                };
+                if !reports.data.contains(&buffer) {
+                    continue;
+                }
+                let handle = u32::try_from(packet.value()).unwrap_or(u32::MAX);
+                if let Some(hub) = hubs.iter_mut().flatten().find(|hub| {
+                    hub.status
+                        .as_ref()
+                        .is_some_and(|pipe| pipe.handle == handle)
+                }) {
+                    // Bit n of the bitmap is port n; bit 0 is the hub itself
+                    // (USB 2.0 §11.12.4).
+                    for offset in 0..rec.len.min(REPORT_BYTES) {
+                        // SAFETY: the buffer lies in the channel's data page,
+                        // mapped read/write; the controller gave it back.
+                        let byte = unsafe {
+                            core::ptr::with_exposed_provenance::<u8>(
+                                usize::try_from(rec.base + offset).unwrap_or(0),
+                            )
+                            .read_volatile()
+                        };
+                        for bit in 0..8 {
+                            let port = usize::try_from(offset * 8 + bit).unwrap_or(0);
+                            if byte & (1 << bit) != 0
+                                && (1..=hub.ports).contains(&port)
+                                && hub.slots[port - 1].wake_ns == u64::MAX
+                            {
+                                hub.slots[port - 1].wake_ns = 0;
+                            }
+                        }
+                    }
+                }
+                if let Some(again) = Packet::new(0, &[buffer]) {
+                    let _posted = reports.buffers.put(&again);
+                }
+            }
+        }
+
+        /// Sleep until the next port's timer, or until a Status Change report
+        /// arrives, whichever comes first.
+        fn wait(&mut self, milliseconds: u64) {
+            let Some(reports) = self.reports.as_mut() else {
+                self.sleep(u32::try_from(milliseconds).unwrap_or(u32::MAX));
+                return;
+            };
+            match reports
+                .event
+                .await_ge(reports.seen + 1, milliseconds.saturating_mul(1_000_000))
+            {
+                Ok(count) => reports.seen = count,
+                Err(CapError::TimedOut { .. }) => {}
+                Err(error) => panic!("usb-core: waiting for reports failed: {:?}", error.code()),
+            }
         }
 
         /// Forget the hubs whose address is in `addresses`: their devices are gone.
@@ -627,7 +859,45 @@ mod component {
                         "usb-core: hub at address {} is gone", hub.info.address
                     );
                     self.pipes.close(&hub.control);
+                    if let Some(status) = &hub.status {
+                        self.pipes.close(status);
+                    }
                 }
+            }
+        }
+
+        /// Trace the lines the controller kept since the last look, which has no
+        /// serial channel of its own.
+        fn relay_controller_trace(&mut self) {
+            let area = self.pipes.area();
+            let Some(text) = area.reference(0, area.len) else {
+                return;
+            };
+            let Ok(length) = self.client.trace(text) else {
+                return;
+            };
+            // One line at a time from the area: a buffer of the whole area would
+            // not fit the stack next to the hub loop.
+            let length = usize::try_from(length).unwrap_or(0);
+            let mut line = [0_u8; 256];
+            let mut start = 0;
+            while start < length {
+                let take = (length - start).min(line.len());
+                if !area.read_bytes(start as u64, &mut line[..take]) {
+                    return;
+                }
+                let end = line[..take]
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .unwrap_or(take);
+                if end > 0 {
+                    trace!(
+                        self.trace,
+                        "{}",
+                        core::str::from_utf8(&line[..end]).unwrap_or("?")
+                    );
+                }
+                start += end + 1;
             }
         }
 
@@ -637,6 +907,7 @@ mod component {
             hubs[0] = Some(root);
             let mut reported = false;
             loop {
+                self.relay_controller_trace();
                 let now = now_ns();
                 for which in 0..MAX_HUBS {
                     let Some(mut hub) = hubs[which].take() else {
@@ -709,10 +980,15 @@ mod component {
                     .filter(|slot| slot.active)
                     .map(|slot| slot.wake_ns)
                     .min();
+                // Resting ports wait for the hubs' reports, at most a second at
+                // a time.
                 let wait = next.map_or(u64::from(ROOT_POLL_MS), |wake| {
-                    wake.saturating_sub(now_ns()).div_ceil(1_000_000).max(1)
+                    wake.saturating_sub(now_ns())
+                        .div_ceil(1_000_000)
+                        .clamp(1, 1000)
                 });
-                self.sleep(u32::try_from(wait).unwrap_or(u32::MAX));
+                self.wait(wait);
+                self.wake_changed_ports(&mut hubs);
             }
         }
 
@@ -760,7 +1036,16 @@ mod component {
                     }
                     PortAction::Wait { milliseconds } => {
                         slot.event = PortEvent::Delayed;
-                        slot.wake_ns = now_ns() + u64::from(milliseconds) * 1_000_000;
+                        // A resting port that was just looked at waits for the hub to
+                        // name it; any other wait is a timer.
+                        slot.wake_ns = if hub.reports_changes
+                            && slot.port.waits_for_change()
+                            && matches!(event, PortEvent::Status(_))
+                        {
+                            u64::MAX
+                        } else {
+                            now_ns() + u64::from(milliseconds) * 1_000_000
+                        };
                         return;
                     }
                     PortAction::PowerOn => {
@@ -772,7 +1057,6 @@ mod component {
                         None => {
                             // Try again later; a Delayed event polls in every
                             // state that waits to poll.
-                            trace!(self.trace, "usb-core: port {number}: no status");
                             slot.event = PortEvent::Delayed;
                             slot.wake_ns = now_ns() + 100_000_000;
                             return;
@@ -989,6 +1273,7 @@ mod component {
             trace,
             addresses: AddressPool::new(),
             devices: DeviceTable::new(),
+            reports: Reports::new(&client),
         };
         core.wait_for_root_device();
         let Some(root) = core.enumerate_root() else {

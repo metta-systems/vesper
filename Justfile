@@ -695,7 +695,7 @@ _cross-clippy-usb board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      -p usb-hcd-dwc2 -p usb-core -p vesper-usb-host -p vesper-usb-protocol -p usb-hid \
+      -p usb-hcd-dwc2 -p usb-core -p vesper-usb-host -p vesper-usb-protocol -p usb-hid -p input-trace \
       -- --deny warnings --allow deprecated
 
 # Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)

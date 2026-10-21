@@ -8,5 +8,5 @@
 # (`pipe_v1`) are not listed.
 uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
 {
-    reset_port, port_status, open_pipe
+    reset_port, port_status, open_pipe, trace
 }

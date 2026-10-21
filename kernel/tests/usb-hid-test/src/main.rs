@@ -175,10 +175,14 @@ pub fn run() -> ! {
                 assert!(imports.is_empty());
             } else if name == components::USB_CORE.name {
                 // usb-core: the functions of `usb_hcd_v1` it uses, and usb_v1
-                // served to usb-hid.
+                // served to usb-hid and to input-trace (its trace).
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 3, "the three functions of usb_hcd_v1");
-                assert_eq!(init.areas().len(), 1, "usb-hid is its client");
+                assert_eq!(imports.len(), 4, "the four functions of usb_hcd_v1");
+                assert_eq!(
+                    init.areas().len(),
+                    2,
+                    "usb-hid and input-trace are its clients"
+                );
             } else if name == components::USB_HID.name {
                 // usb-hid: usb_v1 from the core, one function of usb_hcd_v1,
                 // and input-trace as its client.
@@ -188,10 +192,10 @@ pub fn run() -> ! {
                 assert_ne!(init.areas()[0].channel_base, 0);
                 assert_ne!(init.areas()[0].channel_event, 0);
             } else if name == components::INPUT_TRACE.name {
-                // input-trace: the two functions of input_v1 and the serial
-                // channel; the report key goes in its table only.
+                // input-trace: three functions of input_v1, usb_v1's trace and
+                // the serial channel; the report key goes in its table only.
                 assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
-                assert_eq!(imports.len(), 2, "descriptor and snapshot");
+                assert_eq!(imports.len(), 4, "descriptor, snapshot and two traces");
                 assert_ne!(imports[0].channel_event, 0);
                 // SAFETY: the driver's retained table; no invocation overlaps.
                 unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
@@ -236,7 +240,12 @@ pub fn run() -> ! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_success()
         } else {
-            libcpu::endless_sleep()
+            // On the board the components keep serving whoever types: this
+            // Thread waits for good instead of stopping the CPU.
+            loop {
+                let _woken = NotificationKey::from_key(report)
+                    .await_bits(NotificationKey::WAIT_INFINITE);
+            }
         }
     }
 }

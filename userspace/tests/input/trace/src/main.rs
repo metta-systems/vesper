@@ -47,6 +47,11 @@ fn main(_init_va: u64) -> ! {
     let mut trace = Trace::new(init);
     trace!(trace, "input-trace: starting");
     let client = Client::new(Bindings::from_imports(init.imports()));
+    let usb =
+        usb_client::usb_v1::Client::new(usb_client::usb_v1::Bindings::from_imports(init.imports()));
+    let usb_area = usb
+        .data_area()
+        .expect("input-trace shares a data area with usb-core");
     let area = client
         .data_area()
         .expect("input-trace shares a data area with the producer");
@@ -119,6 +124,30 @@ fn main(_init_va: u64) -> ! {
                 Err(Error::Exception(Exception::NoDevice)) => {}
                 Err(error) => panic!("descriptor failed: {error:?}"),
             }
+        }
+
+        // Print what usb-core and usb-hid traced since the last look; each
+        // backlog holds whole lines and fits its area.
+        let mut print = |area: &libmeddle_runtime::DataArea, length: u32| {
+            let mut bytes = [0_u8; 4096];
+            let length = usize::try_from(length).unwrap_or(0).min(bytes.len());
+            if area.read_bytes(0, &mut bytes[..length]) {
+                for line in bytes[..length].split(|&byte| byte == b'\n') {
+                    if !line.is_empty() {
+                        trace!(trace, "{}", core::str::from_utf8(line).unwrap_or("?"));
+                    }
+                }
+            }
+        };
+        if let Some(text) = usb_area.reference(0, usb_area.len)
+            && let Ok(length) = usb.trace(text)
+        {
+            print(&usb_area, length);
+        }
+        if let Some(text) = area.reference(0, area.len)
+            && let Ok(length) = client.trace(text)
+        {
+            print(&area, length);
         }
 
         match event.await_ge(seen + 1, RECHECK_MS * 1_000_000) {

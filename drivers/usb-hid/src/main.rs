@@ -5,8 +5,6 @@
 
 // Host tests build this binary natively too; it is only an empty `main` there.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! The USB HID component, `usb-hid`.
 //!
@@ -30,9 +28,16 @@
 //! clients. They share the device table with the Thread that publishes
 //! events, under a `Turnstile`.
 
+/// `note!("text {value}")`: one trace line, on the semihosting console and in
+/// the backlog `input_v1.trace` drains.
 #[cfg(target_os = "vesper")]
-// The traces name what failed only where the semihosting console prints.
-#[cfg_attr(not(feature = "qemu"), allow(unused_variables))]
+macro_rules! note {
+    ($($argument:tt)*) => {
+        libserial_trace::note(format_args!($($argument)*))
+    };
+}
+
+#[cfg(target_os = "vesper")]
 mod component {
     use {
         core::cell::UnsafeCell,
@@ -46,7 +51,6 @@ mod component {
             CapError, EventCountKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
-        libuser::semihosting as semi,
         usb_client::usb_v1::{
             Bindings as UsbBindings, Client as UsbClient, Error as UsbError,
             Exception as UsbException,
@@ -154,6 +158,31 @@ mod component {
             }
         }
 
+        fn trace(badge: u64, text: StageRec) -> Result<u32, Exception> {
+            let area = caller_area(badge).ok_or(Exception::NotPermitted)?;
+            if !area.contains(&text) {
+                return Err(Exception::NotPermitted);
+            }
+            let capacity =
+                usize::try_from(text.len).map_err(|_overflow| Exception::NotPermitted)?;
+            // The turn makes this the backlog's one reader.
+            let _turn = TURNSTILE.enter(init());
+            let mut written = 0;
+            let mut chunk = [0; 256];
+            while written < capacity {
+                let count = libserial_trace::drain(&mut chunk[..(capacity - written).min(256)]);
+                if count == 0 {
+                    break;
+                }
+                let offset = text.base - area.base + written as u64;
+                if !area.write_bytes(offset, &chunk[..count]) {
+                    return Err(Exception::NotPermitted);
+                }
+                written += count;
+            }
+            Ok(u32::try_from(written).unwrap_or(u32::MAX))
+        }
+
         fn snapshot(badge: u64, subject: u32, stage: StageRec) -> Result<u32, Exception> {
             let area = caller_area(badge).ok_or(Exception::NotPermitted)?;
             let mut frame = Frame::new();
@@ -253,7 +282,7 @@ mod component {
                     Ok(claim) => claim,
                     Err(UsbError::Exception(UsbException::NotReady)) => return,
                     Err(error) => {
-                        semi::println!("usb-hid: claiming a {kind:?} failed: {error:?}");
+                        note!("usb-hid: claiming a {kind:?} failed: {error:?}");
                         return;
                     }
                 };
@@ -266,7 +295,7 @@ mod component {
                 *slot = Some(active);
             }
             self.publish_one(Event::new(now_ns(), subject, Kind::DeviceAdded, 0, 0));
-            semi::println!("usb-hid: serving a {kind:?} as device {subject}");
+            note!("usb-hid: serving a {kind:?} as device {subject}");
         }
 
         /// Boot protocol and the interrupt pipe for the claim `claim` of a
@@ -281,7 +310,7 @@ mod component {
                 .pipes
                 .open_unconfigured(address, 0, speed)
                 .map_err(|error| {
-                    semi::println!("usb-hid: no control pipe: {error:?}");
+                    note!("usb-hid: no control pipe: {error:?}");
                 })
                 .ok()?;
             let configured = route(&control, params.route)
@@ -289,16 +318,26 @@ mod component {
                     .client
                     .configure(TransferKind::Control, SETUP_PACKET, 0)
                     .is_ok();
-            let requested = configured
-                && [
-                    set_protocol(params.interface, true),
-                    set_idle(params.interface, 0, 0),
-                ]
-                .into_iter()
-                .all(|setup| self.pipes.control(&control, setup, &[], &mut []).is_ok());
+            let protocol = if configured {
+                self.pipes
+                    .control(&control, set_protocol(params.interface, true), &[], &mut [])
+                    .map(|_moved| ())
+                    .map_err(|error| note!("usb-hid: the {kind:?} refused SET_PROTOCOL: {error:?}"))
+            } else {
+                Err(())
+            };
+            // Set_Idle is optional for a boot mouse (HID 1.11 Appendix G): a refusal
+            // is only traced.
+            if protocol.is_ok()
+                && let Err(error) =
+                    self.pipes
+                        .control(&control, set_idle(params.interface, 0, 0), &[], &mut [])
+            {
+                note!("usb-hid: the {kind:?} refused SET_IDLE: {error:?}");
+            }
             self.pipes.close(&control);
-            if !requested {
-                semi::println!("usb-hid: the {kind:?} did not accept boot protocol");
+            if protocol.is_err() {
+                note!("usb-hid: the {kind:?} did not accept boot protocol");
                 return None;
             }
 
@@ -306,7 +345,7 @@ mod component {
                 .pipes
                 .open_unconfigured(address, u32::from(params.endpoint), speed)
                 .map_err(|error| {
-                    semi::println!("usb-hid: no interrupt pipe: {error:?}");
+                    note!("usb-hid: no interrupt pipe: {error:?}");
                 })
                 .ok()?;
             let polled = route(&pipe, params.route)
@@ -319,7 +358,7 @@ mod component {
                     )
                     .is_ok();
             if !polled {
-                semi::println!("usb-hid: the interrupt pipe was refused");
+                note!("usb-hid: the interrupt pipe was refused");
                 self.pipes.close(&pipe);
                 return None;
             }
@@ -392,7 +431,7 @@ mod component {
                     0,
                     0,
                 ));
-                semi::println!("usb-hid: device {} went away", active.subject);
+                note!("usb-hid: device {} went away", active.subject);
             }
         }
 
@@ -526,7 +565,7 @@ mod component {
 
     fn main(_init_va: u64) -> ! {
         let init = init();
-        semi::println!("usb-hid: starting");
+        note!("usb-hid: starting");
         // The first free slot holds the EventCount that counts the turns of
         // the exports; the pipes' slots follow it.
         let table = KeyTableKey::from_key(RawKey::from_wire(init.table));

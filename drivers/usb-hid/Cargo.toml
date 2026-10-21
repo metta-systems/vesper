@@ -18,7 +18,7 @@ publish = false
 default = []
 # Opt in to standard host integration tests of the report decoding.
 host-tests = []
-qemu = ["libuser/qemu"]
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
 libio-channel = { workspace = true }
@@ -34,6 +34,7 @@ libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
+libserial-trace = { workspace = true }
 libuser = { workspace = true }
 usb-client = { workspace = true }
 usb-core = { workspace = true }

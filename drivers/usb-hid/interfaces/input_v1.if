@@ -43,4 +43,12 @@ local interface input_v1
     snapshot(card32 subject, octet& stage)
         returns (card32 length)
         raises (no_device, not_permitted);
+
+    ## The trace lines the producer kept since the last call, for the program
+    ## that holds the serial channel when the producer has none: as many as fit
+    ## `text`, each ending in a line feed. Returns the bytes written; lines that
+    ## did not fit the producer's backlog are lost.
+    trace(octet& text)
+        returns (card32 bytes)
+        raises (not_permitted);
 }

@@ -26,6 +26,7 @@ vesper-usb-protocol = { workspace = true }
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
 libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().

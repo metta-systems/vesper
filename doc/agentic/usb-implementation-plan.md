@@ -22,12 +22,8 @@ See [usb-completed.md](usb-completed.md).
 Done: the hub module, `usb-core` enumerating the root hub and the devices behind it, and
 the serial trace; see [usb-completed.md](usb-completed.md).
 
-- [ ] Split transactions through a nested high-speed hub (a Genesys GL850G behind the
-  LAN9514, `just boot-usb-core-test`): the SETUP passes and the data IN stage ends in
-  NAKs or a translator STALL; behind the LAN9514 itself the same devices enumerate.
-  Remove the status-stage `shortcut:` in `control()` once a split control read is seen
-  never to need it. Split transactions also need `Clear_TT_Buffer` after a failure
-  (USB 2.0 §11.17.5).
+- [ ] `Clear_TT_Buffer` to the hub after a failed split transaction, which can leave
+  the translator's buffer busy (USB 2.0 §11.17.5).
 - [ ] `usb_v1.control` on a claim: forward the claimant's stage to the device's control
   pipe. It needs the core's pipes shared with the exports' Threads, which today live on
   the enumeration Thread; a valid claim raises `not_permitted` until then.
@@ -41,16 +37,15 @@ the serial trace; see [usb-completed.md](usb-completed.md).
 
 Needs decision 1. The input event contract is decided ([input-design.md](input-design.md)); the record library is `libs/input-event`.
 
-- [ ] Verify interrupt-IN on a Raspberry Pi 3 and finish its hardware details: the
-  odd/even frame placement (`HCCHAR.OddFrm`), the periodic transmit FIFO (`HPTXFSIZ`)
-  that split interrupt polls need, and the split poll itself, which QEMU's controller
-  cannot run (no transaction translator). QEMU runs the unsplit poll end to end (see
-  [usb-completed.md](usb-completed.md)).
-- [ ] Verify `hid` on a Raspberry Pi 3 with `just boot-usb-hid-test` (keyboard, then
-  mouse; the mouse is untested even in QEMU) and fix what the hardware shows. Not yet
-  done in `hid`: a second keyboard or mouse (one of each is claimed), `usb_v1.control`
-  instead of its own control pipe, and the keyboard's real `max_packet0` for its
-  setup requests (it uses 8).
+- [ ] Interrupt-IN on the Raspberry Pi 3 works through split polls (see
+  [usb-completed.md](usb-completed.md)); still open: the periodic transmit FIFO
+  (`HPTXFSIZ`), polls and control transfers sharing the one host channel (a control
+  transfer NAKed for the whole retry budget still holds it for a second), and an
+  unsplit interrupt device on the board.
+- [ ] `hid`: frames missed while `input-trace` has no buffer posted show as `Dropped`;
+  a second keyboard or mouse (one of each is claimed), `usb_v1.control` instead of its
+  own control pipe, and the keyboard's real `max_packet0` for its setup requests (it
+  uses 8).
 
 ## USB5: keyboard behaviour
 

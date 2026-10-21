@@ -380,6 +380,18 @@ impl Port {
         )
     }
 
+    /// Whether the port only waits for its status to change: nothing is attached,
+    /// a device is enumerated, or a failed device waits to be unplugged. Its next
+    /// look can wait for the hub's Status Change endpoint to name the port
+    /// (USB 2.0 §11.12.1) instead of a timer.
+    #[must_use]
+    pub const fn waits_for_change(&self) -> bool {
+        matches!(
+            self.state,
+            PortState::Empty | PortState::Enumerated | PortState::Failed
+        )
+    }
+
     /// Take back a [`PortAction::Reset`] that cannot run yet because another port
     /// holds the default address: the port keeps debouncing and asks to reset
     /// again at its next look.

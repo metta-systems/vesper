@@ -4,10 +4,16 @@
 
 //! Progress lines for the people bringing a program up: on the serial channel
 //! when the component has one (`serial = true` in its manifest entry), and on
-//! the semihosting console under QEMU.
+//! the semihosting console under QEMU. A component without a serial channel
+//! keeps its lines in a backlog that it hands to the program holding the serial
+//! channel through an export of its own ([`drain`]).
 
 use {
-    core::fmt::{self, Write},
+    core::{
+        cell::UnsafeCell,
+        fmt::{self, Write},
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     libdevice_driver::DriverInit,
     libio_channel::{Consumer, IoRec, Packet, Producer},
     libobject::{EventCountKey, RawKey},
@@ -91,6 +97,81 @@ impl Write for Line {
     }
 }
 
+/// Bytes of trace the backlog holds; a line that does not fit is dropped.
+const BACKLOG_BYTES: usize = 4096;
+
+/// A ring of trace bytes: writers take turns through `writing` (a line that
+/// finds it taken is dropped), one reader at a time drains it.
+struct Backlog {
+    bytes: UnsafeCell<[u8; BACKLOG_BYTES]>,
+    writing: AtomicBool,
+    /// Bytes written and read so far; their difference is what is waiting.
+    written: AtomicUsize,
+    read: AtomicUsize,
+}
+
+// SAFETY: a writer only touches bytes past `written`, the reader only bytes
+// before it; `writing` admits one writer and the counters order the two sides.
+unsafe impl Sync for Backlog {}
+
+static BACKLOG: Backlog = Backlog {
+    bytes: UnsafeCell::new([0; BACKLOG_BYTES]),
+    writing: AtomicBool::new(false),
+    written: AtomicUsize::new(0),
+    read: AtomicUsize::new(0),
+};
+
+impl Backlog {
+    fn push(&self, line: &[u8]) {
+        if self.writing.swap(true, Ordering::Acquire) {
+            return;
+        }
+        let written = self.written.load(Ordering::Relaxed);
+        if written - self.read.load(Ordering::Acquire) + line.len() <= BACKLOG_BYTES {
+            for (offset, &byte) in line.iter().enumerate() {
+                // SAFETY: the reader does not look past `written`, stored below.
+                unsafe {
+                    (*self.bytes.get())[(written + offset) % BACKLOG_BYTES] = byte;
+                }
+            }
+            self.written.store(written + line.len(), Ordering::Release);
+        }
+        self.writing.store(false, Ordering::Release);
+    }
+}
+
+/// Copy the backlog's waiting bytes (whole lines, each ending in a line feed)
+/// into `out`; returns how many. One caller at a time.
+pub fn drain(out: &mut [u8]) -> usize {
+    let read = BACKLOG.read.load(Ordering::Relaxed);
+    let count = (BACKLOG.written.load(Ordering::Acquire) - read).min(out.len());
+    for (offset, byte) in out[..count].iter_mut().enumerate() {
+        // SAFETY: bytes before `written` are complete, and writers leave them
+        // alone until `read` passes them.
+        *byte = unsafe { (*BACKLOG.bytes.get())[(read + offset) % BACKLOG_BYTES] };
+    }
+    BACKLOG.read.store(read + count, Ordering::Release);
+    count
+}
+
+/// One line on the semihosting console and in the backlog, for a component
+/// without a serial channel.
+pub fn note(arguments: fmt::Arguments<'_>) {
+    semi::println!("{arguments}");
+    keep(arguments);
+}
+
+fn keep(arguments: fmt::Arguments<'_>) {
+    let mut line = Line {
+        bytes: [0; LINE_BYTES + 2],
+        len: 0,
+    };
+    // Writing to a `Line` cannot fail.
+    let _written = line.write_fmt(arguments);
+    line.bytes[line.len] = b'\n';
+    BACKLOG.push(&line.bytes[..=line.len]);
+}
+
 /// Where the component's progress lines go.
 pub struct Trace {
     serial: Option<SerialLog>,
@@ -106,7 +187,11 @@ impl Trace {
     /// Emit one line.
     pub fn line(&mut self, arguments: fmt::Arguments<'_>) {
         semi::println!("{arguments}");
-        if let Some(serial) = &mut self.serial {
+        let Some(serial) = &mut self.serial else {
+            keep(arguments);
+            return;
+        };
+        {
             let mut line = Line {
                 bytes: [0; LINE_BYTES + 2],
                 len: 0,

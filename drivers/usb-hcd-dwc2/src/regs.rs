@@ -169,6 +169,9 @@ pub struct Characteristics {
     /// Address of the device.
     #[bits(22..=28, rw)]
     device_address: u7,
+    /// A periodic transfer runs in an odd (micro)frame, else an even one.
+    #[bit(29, rw)]
+    odd_frame: bool,
     /// Halts the channel together with `enable`.
     #[bit(30, rw)]
     disable: bool,
@@ -359,7 +362,11 @@ pub struct RegisterBlock {
     _reserved1: [u32; 245],
     /// Host configuration.
     host_config: u32,
-    _reserved2: [u32; 4],
+    _host_frame_interval: u32,
+    /// Host frame number (`HFNUM`): bits 0 to 15 count (micro)frames.
+    #[mmio(PureRead)]
+    frame_number: u32,
+    _reserved2: [u32; 2],
     /// Host all-channels interrupt: bit `n` is set while host channel `n` has an
     /// enabled event pending. Read only; clear the event in the channel.
     #[mmio(PureRead)]
@@ -400,6 +407,7 @@ assert_register_offsets!(RegisterBlock, 0x500, {
     rx_fifo_size: 0x024,
     tx_fifo_size: 0x028,
     host_config: 0x400,
+    frame_number: 0x408,
     host_channel_interrupt: 0x414,
     host_channel_interrupt_mask: 0x418,
     port: 0x440,

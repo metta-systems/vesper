@@ -5,12 +5,9 @@ use {
         record::{EVENT_SIZE, Event, KEY_DOWN, KEY_UP, Kind},
         usage::{code, generic_desktop, keyboard, page},
     },
-    vesper_usb_protocol::{
-        enumeration::Speed,
-        hid_boot::{
-            BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT, KeyChange, KeyboardReport, MouseReport,
-            ReportError, for_each_change,
-        },
+    vesper_usb_protocol::hid_boot::{
+        BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT, KeyChange, KeyboardReport, MouseReport,
+        ReportError, for_each_change,
     },
 };
 
@@ -228,18 +225,4 @@ impl Default for MouseDecoder {
     }
 }
 
-/// The polling interval in milliseconds an endpoint's `bInterval` asks for:
-/// frames for a low- or full-speed device, `2^(bInterval - 1)` microframes for
-/// a high-speed one, at least a millisecond and at most what the controller
-/// polls.
-#[must_use]
-pub fn interval_ms(speed: Speed, b_interval: u8) -> u32 {
-    let milliseconds = match speed {
-        Speed::Low | Speed::Full => u32::from(b_interval),
-        Speed::High => {
-            let microframes = 1_u32 << u32::from(b_interval.clamp(1, 16) - 1);
-            microframes.div_ceil(8)
-        }
-    };
-    milliseconds.clamp(1, 255)
-}
+pub use vesper_usb_protocol::enumeration::interval_ms;

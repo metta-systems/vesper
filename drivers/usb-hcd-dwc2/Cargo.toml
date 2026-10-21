@@ -18,7 +18,7 @@ publish = false
 default = []
 # Opt in to standard host integration tests of the register logic.
 host-tests = []
-qemu = ["libuser/qemu"]
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
 arbitrary-int = { workspace = true }
@@ -35,6 +35,7 @@ libio-channel = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
+libserial-trace = { workspace = true }
 libuser = { workspace = true }
 mailbox-client = { workspace = true }
 usb-hcd = { workspace = true }

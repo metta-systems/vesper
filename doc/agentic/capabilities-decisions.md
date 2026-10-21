@@ -203,3 +203,8 @@ needs them.
   and invalidate it after the answer, or keep the buffers in a non-cacheable
   region. Worth doing only if chainboot needs atomics; QEMU does not model
   caches, so the board is the test.
+- **Panics visible on hardware:** move chainboot's PL011 driver into
+  `libmachine` so the nucleus panic handler can take the UART over and dump the
+  panic there; and give EL0 components a DebugConsole key their panic handler
+  writes to, so a component's panic reaches the UART too (today it prints only
+  over semihosting, which hardware does not have).

@@ -78,4 +78,11 @@ local interface usb_hcd_v1
         lends (key_table into)
         installs (pipe_v1)
         raises (busy, not_permitted, controller_failed);
+
+    ## The trace lines the controller kept since the last call (it has no serial
+    ## channel): as many as fit `text`, each ending in a line feed. Returns the
+    ## bytes written; lines that did not fit the controller's backlog are lost.
+    trace(octet& text)
+        returns (card32 bytes)
+        raises (not_permitted);
 }

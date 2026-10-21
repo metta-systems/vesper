@@ -5,8 +5,6 @@
 
 // Host tests build this binary natively too; it is only an empty `main` there.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! EL0 driver component for the `DesignWare` DWC2 USB host controller.
 //!
@@ -39,13 +37,22 @@
 //! and its client has posted an empty buffer on the report channel, it runs one
 //! IN transaction on the same host channel, under the same turnstile as the
 //! calls, and returns the report in the buffer. A NAK is not an error, and the
-//! pipe is due again an interval later. Frame parity placement (`HCCHAR.OddFrm`)
-//! is left to the controller.
+//! pipe is due again an interval later. Each interrupt transaction is placed in
+//! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`).
 //!
 //! A pipe is the set of `pipe_v1` Invocation keys `open_pipe` installs in the
 //! table the caller lends, badged with the pipe's handle: holding a key is the
 //! right to use the pipe. The component keeps one master key per client and
 //! function (see `libdevice_driver::Masters`) and derives the badged copies.
+
+/// `note!("text {value}")`: one trace line, on the semihosting console and in
+/// the backlog `usb_hcd_v1.trace` drains.
+#[cfg(target_os = "vesper")]
+macro_rules! note {
+    ($($argument:tt)*) => {
+        libserial_trace::note(format_args!($($argument)*))
+    };
+}
 
 #[cfg(target_os = "vesper")]
 mod component {
@@ -66,7 +73,6 @@ mod component {
             KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
-        libuser::semihosting as semi,
         mailbox_client::mailbox_v1::{Bindings, Client, Device},
         usb_hcd::{
             pipe_v1::{self, Exception as PipeException, PipeV1, TransferKind},
@@ -403,10 +409,17 @@ mod component {
             ARMED.store(false, Ordering::Release);
             channel.write_interrupt_mask(ChannelInterrupts::ZERO);
             channel.write_characteristics(characteristics(target, true).with_disable(true));
-            assert!(
-                wait_until(10, || channel.read_interrupt().halted()),
-                "usb-hcd-dwc2: timed out waiting for the channel to halt"
-            );
+            // shortcut: a channel that does not halt is left as it is, since a
+            // panic here would hold the turnstile for good; reset the channel
+            // instead once the case is seen.
+            if !wait_until(10, || channel.read_interrupt().halted()) {
+                note!(
+                    "usb-hcd-dwc2: channel {index} did not halt: characteristics {:#010x} split {:#010x} events {:#010x}",
+                    channel.read_characteristics().raw_value(),
+                    channel.read_split().raw_value(),
+                    channel.read_interrupt().raw_value()
+                );
+            }
             channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
         }
 
@@ -481,7 +494,13 @@ mod component {
             } else {
                 channel_event_mask()
             });
-            channel.write_characteristics(characteristics(attempt.target, true));
+            // A periodic transfer runs in the (micro)frame parity `HCCHAR.OddFrm`
+            // names (periodic transfers only); the next one is asked for.
+            let next_is_odd = self.registers.read_frame_number() & 1 == 0;
+            channel.write_characteristics(
+                characteristics(attempt.target, true)
+                    .with_odd_frame(attempt.target.kind == UsbKind::Interrupt && next_is_odd),
+            );
             seen
         }
 
@@ -959,30 +978,13 @@ mod component {
                 }
             }
             *failed_stage = 3;
-            let status = self.run_channel(
+            self.run_channel(
                 CHANNEL,
                 target(stages.status_input),
                 Pid::Data1,
                 DATA_OFFSET,
                 0,
-            );
-            match status {
-                Ok(_) => {}
-                // A translator reports STALL for a downstream transaction that
-                // failed three times as well as for a device STALL (USB 2.0
-                // §11.17.1); the read's data is in hand and the next SETUP
-                // resynchronises the endpoint (§8.5.3.4).
-                // shortcut: hides a real STALL of a split control read's status
-                // stage, drop once the split status-stage failure is understood.
-                Err(PipeException::TransferFailed { status })
-                    if pipe.route.is_some() && stages.data_input && status & (1 << 3) != 0 =>
-                {
-                    semi::println!(
-                        "usb-hcd-dwc2: status stage of a split control read stalled: {status:#010x}"
-                    );
-                }
-                Err(error) => return Err(error),
-            }
+            )?;
             Ok(moved)
         }
     }
@@ -1125,6 +1127,31 @@ mod component {
                 return Err(Exception::ControllerFailed { step: step as u32 });
             }
             Ok(hcd.controller.port_status(port))
+        }
+
+        fn trace(badge: u64, text: IoRec) -> Result<u32, Exception> {
+            let (_client, _area, data) = caller(badge).ok_or(Exception::NotPermitted)?;
+            if !data.contains(&text) {
+                return Err(Exception::NotPermitted);
+            }
+            let capacity =
+                usize::try_from(text.len).map_err(|_overflow| Exception::NotPermitted)?;
+            // The turn makes this the backlog's one reader.
+            let _turn = TURNSTILE.enter(init());
+            let mut written = 0;
+            let mut chunk = [0; 256];
+            while written < capacity {
+                let count = libserial_trace::drain(&mut chunk[..(capacity - written).min(256)]);
+                if count == 0 {
+                    break;
+                }
+                let offset = text.base - data.base + written as u64;
+                if !data.write_bytes(offset, &chunk[..count]) {
+                    return Err(Exception::NotPermitted);
+                }
+                written += count;
+            }
+            Ok(u32::try_from(written).unwrap_or(u32::MAX))
         }
 
         fn open_pipe(
@@ -1330,9 +1357,19 @@ mod component {
             else {
                 return Err(PipeException::NotPermitted);
             };
-            hcd.controller
-                .control(&pipe, max_packet, &area, stage.base - area.base, stage_len)
-                .map(|moved| u32::try_from(moved).unwrap_or(u32::MAX))
+            let started = now_ms();
+            let result =
+                hcd.controller
+                    .control(&pipe, max_packet, &area, stage.base - area.base, stage_len);
+            // The channel is shared with the polls: a long transfer delays them.
+            let took = now_ms() - started;
+            if took > SLOW_MS {
+                note!(
+                    "usb-hcd-dwc2: control to device {} held the channel {took} ms: {result:?}",
+                    pipe.device_address
+                );
+            }
+            result.map(|moved| u32::try_from(moved).unwrap_or(u32::MAX))
         }
     }
 
@@ -1412,6 +1449,13 @@ mod component {
         let _signalled = reports.signal();
     }
 
+    /// Milliseconds on the shared host channel past which a call or poll is
+    /// traced.
+    const SLOW_MS: u64 = 20;
+
+    /// Polls that failed, for the trace's back-off.
+    static POLL_FAILURES: AtomicU32 = AtomicU32::new(0);
+
     /// Poll the first pipe that is due and has a buffer to fill, if any; the
     /// milliseconds until the next pipe is due, if any pipe is polled.
     fn poll_due(hcd: &mut Hcd, now: u64) -> Option<u64> {
@@ -1429,14 +1473,38 @@ mod component {
                 hcd.poller.polled(handle, now, Polled::Nothing);
                 continue;
             }
-            match hcd.controller.poll(&pipe, config, data1) {
+            let started = now_ms();
+            let polled = hcd.controller.poll(&pipe, config, data1);
+            let took = now_ms() - started;
+            if took > SLOW_MS {
+                note!("usb-hcd-dwc2: poll of pipe {handle} held the channel {took} ms: {polled:?}");
+            }
+            match polled {
                 Ok(Some(bytes)) => {
                     deliver(pipe.owner, handle, bytes);
                     hcd.poller.polled(handle, now, Polled::Data);
                 }
                 // A stall stops the polls until `clear_halt`.
-                Err(PipeException::Stalled) => hcd.poller.remove(handle),
-                Ok(None) | Err(_) => hcd.poller.polled(handle, now, Polled::Nothing),
+                Err(PipeException::Stalled) => {
+                    note!("usb-hcd-dwc2: pipe {handle} stalled, polls stop");
+                    hcd.poller.remove(handle);
+                }
+                Ok(None) => hcd.poller.polled(handle, now, Polled::Nothing),
+                Err(error) => {
+                    // The 1st, 2nd, 4th, 8th... failure, so a dead endpoint cannot
+                    // flood the trace.
+                    let failures = POLL_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+                    if failures.is_power_of_two() {
+                        let status = match error {
+                            PipeException::TransferFailed { status } => status,
+                            _ => 0,
+                        };
+                        note!(
+                            "usb-hcd-dwc2: poll of pipe {handle} failed ({failures} so far): {error:?} status {status:#010x}"
+                        );
+                    }
+                    hcd.poller.polled(handle, now, Polled::Nothing);
+                }
             }
             break;
         }
@@ -1589,7 +1657,7 @@ mod component {
             .unwrap_or_else(|error| {
                 panic!("usb-hcd-dwc2: ready advance failed: {:?}", error.code())
             });
-        semi::println!(
+        note!(
             "usb-hcd-dwc2: serving usb_hcd_v1: {} data areas",
             init.areas().len()
         );

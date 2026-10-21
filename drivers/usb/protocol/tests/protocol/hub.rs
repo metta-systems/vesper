@@ -181,6 +181,18 @@ fn a_port_that_gave_up_takes_the_next_device_after_the_unplugging() {
 }
 
 #[test]
+fn only_resting_ports_wait_for_a_status_change() {
+    let mut port = Port::new(0);
+    assert!(!port.waits_for_change(), "unpowered");
+    port.next(PortEvent::Start);
+    port.next(PortEvent::Done);
+    port.next(PortEvent::Delayed);
+    assert!(port.waits_for_change(), "powered and empty");
+    let port = port_at_reset();
+    assert!(!port.waits_for_change(), "a reset is timed");
+}
+
+#[test]
 fn a_deferred_reset_is_asked_for_again_at_the_next_look() {
     let mut port = port_at_reset();
     assert!(

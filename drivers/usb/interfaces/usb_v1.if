@@ -71,4 +71,12 @@ local interface usb_v1
     control(card32 claim, octet& stage)
         returns (card32 transferred)
         raises (no_claim, device_gone, stalled, transfer_failed, busy, not_permitted);
+
+    ## The trace lines `usb-core` kept since the last call, for the program that
+    ## holds the serial channel when `usb-core` has none: as many as fit `text`,
+    ## each ending in a line feed. Returns the bytes written; lines that did not
+    ## fit the core's backlog are lost.
+    trace(octet& text)
+        returns (card32 bytes)
+        raises (not_permitted);
 }
