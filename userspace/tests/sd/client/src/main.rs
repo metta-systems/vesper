@@ -14,6 +14,7 @@ use {
     block_client::block_v1::{Bindings, Client},
     core::{ptr, slice},
     driver_protocol::report_key,
+    gpio_client::gpio_v1,
     libblock_channel::{BLOCK_BYTES, BlockChannel, HEADER_BYTES, Header, Op, Status, request},
     libdevice_driver::{driver_init, driver_threads},
     libio_channel::{IoRec, NoEvent, Packet},
@@ -33,6 +34,9 @@ const MARKED: [u64; 4] = [0, 5, 6, IMAGE_BLOCKS - 1];
 
 /// The block the program writes and reads back.
 const SCRATCH_BLOCK: u64 = 100;
+
+/// A GPIO pin no device of the board uses, for the pull check.
+const UNUSED_PIN: u32 = 26;
 
 /// The program's second Thread: it reports in on the component's own
 /// `EventCount`, which the first Thread waits for before it starts calling.
@@ -276,6 +280,23 @@ fn main(init_va: u64) -> ! {
         "a buffer outside the data area leaves the request untouched"
     );
     semi::println!("sd-test: the driver refused the malformed requests");
+
+    // A pull change through the gpio component, on a pin nothing else uses.
+    let gpio = gpio_v1::Client::new(gpio_v1::Bindings::from_imports(init.imports()));
+    gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Up)
+        .expect("a pull on a pin of the block");
+    gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Off)
+        .expect("a pull on a pin of the block");
+    assert!(
+        matches!(
+            gpio.set_pull(54, gpio_v1::PinPull::Up),
+            Err(gpio_v1::Error::Exception(gpio_v1::Exception::InvalidPin {
+                pin: 54
+            }))
+        ),
+        "the block has 54 pins"
+    );
+    semi::println!("sd-test: pulled GPIO {UNUSED_PIN} up and back off");
 
     NotificationKey::from_key(report_key(init.table))
         .signal(0)

@@ -3,10 +3,10 @@
 #[cfg(test)]
 mod tests {
     use vesper_devicetree::{
-        Cells, DevTreeIndex, DeviceTree, PropReader, Region, bus_cells, dma_address, dump,
-        find_compatible, interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible,
-        is_enabled, is_interrupt_controller, linked_phandle, node_by_phandle, phandle, property,
-        reg, reg_cells, regions, translate,
+        BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_pins, bus_cells,
+        dma_address, dump, find_compatible, interrupt_cells, interrupt_parent, interrupt_specifier,
+        is_compatible, is_enabled, is_interrupt_controller, linked_phandle, node_by_phandle,
+        phandle, property, reg, reg_cells, regions, translate,
     };
 
     /// A DTB blob copied into u32-aligned storage, as `DevTree` requires.
@@ -114,6 +114,87 @@ mod tests {
                 assert_eq!(dma_address(&mailbox, ram_size - 0x1000, 0x2000), None);
             });
         }
+    }
+
+    #[test]
+    fn rpi3_card_pins_route_to_the_enabled_controller() {
+        with_index(RPI3, |index| {
+            let pins_of = |path_compatible: &str| {
+                index
+                    .nodes()
+                    .filter(|node| is_compatible(node, path_compatible))
+                    .map(|node| {
+                        (
+                            is_enabled(&node),
+                            brcm_pins(index, &node).collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let card_pins = |function| {
+                (48..54)
+                    .map(|pin| BrcmPin {
+                        pin,
+                        function,
+                        pull: None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            // SDHOST is enabled with the card's pins on ALT0, pulls left as
+            // they are.
+            assert_eq!(pins_of("brcm,bcm2835-sdhost"), [(true, card_pins(4))]);
+            // The Arasan node for the card is disabled (pins on ALT3); the
+            // enabled one drives the Wi-Fi chip on GPIO 34 to 39, its clock
+            // without a pull and the other lines pulled up.
+            let arasan = pins_of("brcm,bcm2835-sdhci");
+            assert!(arasan.contains(&(false, card_pins(7))));
+            let wifi = (34..40)
+                .map(|pin| BrcmPin {
+                    pin,
+                    function: 7,
+                    pull: Some(if pin == 34 { 0 } else { 2 }),
+                })
+                .collect();
+            assert!(arasan.contains(&(true, wifi)));
+        });
+    }
+
+    #[test]
+    fn every_pin_group_of_a_node_is_read() {
+        with_index(RPI3, |index| {
+            // The PL011 links two groups: `uart0_pins` (GPIO 32 and 33 on
+            // ALT3, one pull each) and `bt_pins` (GPIO 43 on ALT0, one pull).
+            let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("PL011 node");
+            assert_eq!(
+                brcm_pins(index, &uart).collect::<Vec<_>>(),
+                [
+                    BrcmPin {
+                        pin: 32,
+                        function: 7,
+                        pull: Some(0),
+                    },
+                    BrcmPin {
+                        pin: 33,
+                        function: 7,
+                        pull: Some(2),
+                    },
+                    BrcmPin {
+                        pin: 43,
+                        function: 4,
+                        pull: Some(0),
+                    },
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn nodes_without_a_pin_group_set_up_no_pins() {
+        with_index(RPI3, |index| {
+            let (mailbox, _) =
+                find_compatible(index, &["brcm,bcm2835-mbox"]).expect("mailbox node");
+            assert_eq!(brcm_pins(index, &mailbox).count(), 0);
+        });
     }
 
     #[test]

@@ -11,6 +11,8 @@
 //! - one `IRQHandler` per interrupt of the node, issued through the boot
 //!   `IRQControl` and bound to the driver's Notification and Thread, interrupt
 //!   *i* signalling bit *i*;
+//! - the pins of the node's default pin state (`pinctrl-0`, see
+//!   `libdevicetree::brcm_pins`), which the driver sets up through `gpio_v1`;
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -67,11 +69,12 @@ use {
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
         FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS,
-        MAX_IMPORTS, MAX_INTERRUPTS, MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MapWindow,
-        NO_BUS_ADDRESS, PAGE_FRAME, PAGE_UNTYPED, Region, ResourceRecord, STACK_REGION, VideoBlock,
+        MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS,
+        MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED, PinSetting, Region,
+        ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
-        DevTreeIndex, Node, dma_address, find_compatible,
+        DevTreeIndex, Node, brcm_pins, dma_address, find_compatible,
         interrupts::{MAX_INTERRUPT_CELLS, interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
@@ -1077,6 +1080,23 @@ pub fn load_drivers(
             interrupt_count += 1;
         }
         init.interrupt_count = interrupt_count as u64;
+
+        // ── Pins: the node's default pin state, for the gpio component ──
+        let mut pin_count = 0;
+        for pin in instance
+            .node
+            .iter()
+            .flat_map(|node| brcm_pins(tree, node))
+            .take(MAX_PINS)
+        {
+            init.pins[pin_count] = PinSetting {
+                pin: pin.pin,
+                function: pin.function,
+                pull: pin.pull.unwrap_or(NO_PULL),
+            };
+            pin_count += 1;
+        }
+        init.pin_count = pin_count as u64;
         init.notification = move_to(
             builder,
             &mut self_table,

@@ -10,6 +10,12 @@ name = "mailbox"
 binary = "mailbox"
 interfaces = "../../../drivers/mailbox/interfaces"
 
+# The gpio component, through which the controller routes the card's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
 [[driver]]
 name = "sd"
 binary = "sdhost-bcm2835"

@@ -110,15 +110,6 @@ revisit after use. Unanswered questions:
   needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
   `x3..x7` with client chunking, so the nucleus never reads user memory. Until
   this is decided the console stays a debug-only prototype.
-- **GPIO pin functions:** who owns the GPIO block and switches pins to a
-  device's function, such as GPIO 48 to 53 to SDHOST (ALT0). The firmware does
-  it on a Raspberry Pi 3; QEMU leaves the card on the Arasan SDHCI, so
-  `just test-sd` reaches no card until the pins are switched. (A) a `gpio`
-  component exporting a `gpio_v1` interface (`set_function`, later pin levels
-  for `power`'s power-down), which `sdhost-bcm2835` imports and calls at start;
-  (B) Kickstart applies each driver node's `pinctrl-0` pin group before
-  starting the driver, as Linux's driver core does; (C) the SD driver maps the
-  GPIO page itself and switches its own pins.
 
 ## Future work
 
@@ -217,3 +208,8 @@ needs them.
   panic there; and give EL0 components a DebugConsole key their panic handler
   writes to, so a component's panic reaches the UART too (today it prints only
   over semihosting, which hardware does not have).
+- **Arasan SDHCI driver for the card:** the Raspberry Pi 3 has two SD
+  controllers, and the device tree says which one has the card (the enabled
+  node whose pin group holds GPIO 48 to 53). The stock tree enables SDHOST and
+  gives the Arasan to the Wi-Fi chip; a tree that enables the Arasan for the
+  card instead (the `sdio` overlay) would need an Arasan SDHCI driver.

@@ -5,3 +5,5 @@
 # The test client has no device tree node, so the chain starts from the node
 # found by its compatible string: the SD card controller.
 uses block_v1 via device compatible "brcm,bcm2835-sdhost" { blocks, submitted }
+# Pull changes, which the card's pin group does not make, are checked here.
+uses gpio_v1 via device compatible "brcm,bcm2835-gpio" { set_pull }

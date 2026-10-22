@@ -332,6 +332,55 @@ pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u3
     property(node, property_name).and_then(|prop| prop.u32(0).ok())
 }
 
+/// One pin of a Broadcom pin group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrcmPin {
+    pub pin: u32,
+    /// The code of the GPIO function select registers (0 input, 1 output, 4
+    /// to 7 ALT0 to ALT3, 3 ALT4, 2 ALT5)
+    pub function: u32,
+    /// The pull code (0 off, 1 down, 2 up), if the group sets one
+    pub pull: Option<u32>,
+}
+
+/// The pins `node`'s default pin state (`pinctrl-0`) sets up, in the
+/// Broadcom pin controller binding: each linked group's `brcm,pins`, with its
+/// `brcm,function` and optional `brcm,pull`, each one value for every pin or
+/// one per pin.
+pub fn brcm_pins<'a, 'i: 'a, 'dt: 'i>(
+    tree: &'a DevTreeIndex<'i, 'dt>,
+    node: &Node<'a, 'i, 'dt>,
+) -> impl Iterator<Item = BrcmPin> + 'a {
+    let groups = property(node, "pinctrl-0");
+    let group_count = groups
+        .as_ref()
+        .map_or(0, |prop| prop.length() / size_of::<u32>());
+    (0..group_count)
+        .filter_map(move |index| groups.as_ref()?.u32(index).ok())
+        .filter_map(move |group| node_by_phandle(tree, group))
+        .flat_map(|group| {
+            let pins = property(&group, "brcm,pins");
+            let functions = property(&group, "brcm,function");
+            let pulls = property(&group, "brcm,pull");
+            let pin_count = pins
+                .as_ref()
+                .map_or(0, |prop| prop.length() / size_of::<u32>());
+            // A per-pin property with a single value applies it to every pin.
+            let value_of = |prop: &Option<Prop<'a, 'i, 'dt>>, index: usize| {
+                let prop = prop.as_ref()?;
+                let shared = prop.length() == size_of::<u32>();
+                prop.u32(if shared { 0 } else { index }).ok()
+            };
+            (0..pin_count).filter_map(move |index| {
+                Some(BrcmPin {
+                    pin: pins.as_ref()?.u32(index).ok()?,
+                    function: value_of(&functions, index)?,
+                    pull: value_of(&pulls, index),
+                })
+            })
+        })
+}
+
 /// The node in `tree` whose `phandle` property equals `phandle`.
 pub fn node_by_phandle<'a, 'i: 'a, 'dt: 'i>(
     tree: &'a DevTreeIndex<'i, 'dt>,

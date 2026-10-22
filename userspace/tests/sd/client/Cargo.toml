@@ -20,6 +20,7 @@ qemu = ["libuser/qemu"]
 [dependencies]
 block-client = { workspace = true }
 driver-protocol = { workspace = true }
+gpio-client = { workspace = true }
 libblock-channel = { workspace = true }
 libdevice-driver = { workspace = true }
 libio-channel = { workspace = true }

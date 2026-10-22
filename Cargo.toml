@@ -50,6 +50,10 @@ members = [
   "drivers/sdhost-bcm2835",
   "drivers/sdhost-bcm2835/client",
   "drivers/sdhost-bcm2835/server",
+  # GPIO component and its gpio_v1 interface crates
+  "drivers/gpio-bcm2835",
+  "drivers/gpio-bcm2835/client",
+  "drivers/gpio-bcm2835/server",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/usb-core-test",
@@ -194,6 +198,8 @@ usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
 usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
 block = { path = "drivers/sdhost-bcm2835/server" }
 block-client = { path = "drivers/sdhost-bcm2835/client" }
+gpio = { path = "drivers/gpio-bcm2835/server" }
+gpio-client = { path = "drivers/gpio-bcm2835/client" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }

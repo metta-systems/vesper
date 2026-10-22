@@ -935,6 +935,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpio"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "gpio-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "gpio",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "gpio-client"
+version = "0.0.1"
+dependencies = [
+ "gpio",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1819,6 +1852,7 @@ dependencies = [
  "block",
  "cfg-if",
  "driver-protocol",
+ "gpio",
  "kickstart",
  "metta-component-loader",
  "nucleus",
@@ -1843,6 +1877,7 @@ version = "0.0.1"
 dependencies = [
  "block-client",
  "driver-protocol",
+ "gpio-client",
  "vesper-block-channel",
  "vesper-device-driver",
  "vesper-io-channel",
@@ -1859,6 +1894,7 @@ dependencies = [
  "bitbybit",
  "block",
  "derive-mmio",
+ "gpio-client",
  "mailbox-client",
  "metta-meddle-runtime",
  "vesper-block-channel",

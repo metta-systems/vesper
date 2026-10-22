@@ -7,19 +7,19 @@
 //! EL0 driver component for the BCM2835 SDHOST controller, the Raspberry Pi's
 //! SD card slot, serving `block_v1` (see `interfaces/block_v1.if`).
 //!
-//! Kickstart loads it for the `brcm,bcm2835-sdhost` node and wires its import
-//! of `mailbox_v1` through the firmware node (see `interfaces/imports.if`): the
-//! card clock divides the core clock, whose rate the firmware reports.
+//! Kickstart loads it for the `brcm,bcm2835-sdhost` node and wires its imports
+//! (see `interfaces/imports.if`): `mailbox_v1` through the firmware node, since
+//! the card clock divides the core clock, whose rate the firmware reports; and
+//! `gpio_v1`, through which it sets the pulls of its node's pin group and
+//! routes its pins (on the Raspberry Pi 3, GPIO 48 to 53 on ALT0) to the
+//! controller.
 //!
-//! Its one Thread maps the registers, brings the card up and then serves the
+//! Its one Thread maps the registers, routes the pins, brings the card up and then serves the
 //! request queue of every client's io-channel (`libblock-channel`): it sleeps
 //! on a doorbell `EventCount` the `submitted` export advances, and on each
 //! wakeup serves every waiting request of every client in order, moving each
 //! block through the data register, and completes it back. A card that failed
 //! to come up answers every request with `NoMedium` or `DeviceFailed`.
-//!
-//! The pins of the SD card slot (GPIO 48 to 53) must already be routed to the
-//! controller, as the firmware leaves them.
 
 use block::block_v1::{BlockV1, Exception};
 
@@ -59,10 +59,11 @@ mod component {
     use {
         super::Exception,
         core::sync::atomic::{AtomicU32, AtomicU64, Ordering},
+        gpio_client::gpio_v1,
         libblock_channel::{BLOCK_BYTES, BlockChannel, Header, Op, Refusal, Status, admit, shape},
         libdevice_driver::{
-            DriverInit, ExportedArea, INIT_VA, device_address, driver_compatible, driver_init,
-            map_device_pages,
+            DriverInit, ExportedArea, INIT_VA, NO_PULL, device_address, driver_compatible,
+            driver_init, map_device_pages,
         },
         libio_channel::{DataArea, IoRec, NoEvent, Packet},
         libmeddle_runtime::PAGE_BYTES,
@@ -145,6 +146,29 @@ mod component {
             semi::println!("sdhost: no core clock rate from the firmware, assuming 250 MHz");
             DEFAULT_CORE_HZ
         })
+    }
+
+    /// Give the pins of the node's pin group their pulls, if the group sets
+    /// them, and route them to the controller. The firmware
+    /// already does on a Raspberry Pi 3; QEMU keeps the card on the Arasan
+    /// controller until they switch.
+    fn route_pins(init: &DriverInit) {
+        let gpio = gpio_v1::Client::new(gpio_v1::Bindings::from_imports(init.imports()));
+        for setting in init.pins() {
+            // The pull settles before the pin connects to the controller.
+            let pulled = setting.pull == NO_PULL
+                || gpio_v1::PinPull::from_code(setting.pull)
+                    .is_some_and(|pull| gpio.set_pull(setting.pin, pull).is_ok());
+            let routed = pulled
+                && gpio_v1::PinFunction::from_select_code(setting.function)
+                    .is_some_and(|function| gpio.set_function(setting.pin, function).is_ok());
+            if !routed {
+                semi::println!(
+                    "sdhost: routing GPIO {} failed, the card may be unreachable",
+                    setting.pin
+                );
+            }
+        }
     }
 
     /// Move the `blocks` of `buffers` from `block` on, one command per block.
@@ -276,6 +300,7 @@ mod component {
         // as device memory at `registers` for the driver's lifetime, and only
         // this Thread touches it.
         let registers = unsafe { RegisterBlock::new_mmio(registers as *mut RegisterBlock) };
+        route_pins(init);
         let core_hz = core_hz(init);
         let mut host = Sdhost::new(registers, core_hz, now_ms);
         host.reset();

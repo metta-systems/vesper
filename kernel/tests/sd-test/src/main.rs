@@ -6,7 +6,8 @@
 //! sd-test: the SDHOST component and a client, loaded by Kickstart.
 //!
 //! The image bundles the `sdhost-bcm2835` component, the mailbox component it
-//! asks for the core clock, and `sd-test-client`. Kickstart loads the
+//! asks for the core clock, the gpio component it routes the card's pins
+//! through, and `sd-test-client`. Kickstart loads the
 //! controller for the enabled `brcm,bcm2835-sdhost` node, the Raspberry Pi 3's
 //! SD card slot, and starts the client as a program that imports `block_v1`
 //! from it. The client reads marked blocks of the card image `just test-sd`
@@ -29,6 +30,7 @@ mod components {
 use {
     block::block_v1::{CHANNEL_PAGES, TYPE_CODE as BLOCK_V1},
     driver_protocol::REPORT_SLOT,
+    gpio::gpio_v1::TYPE_CODE as GPIO_V1,
     kickstart::{
         bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
         drivers::{BootKeys, LoadedDriver, load_drivers},
@@ -40,7 +42,7 @@ use {
         keys::{SlotCursor, boot_key},
         paging::image_table_count,
     },
-    libdevice_driver::DATA_WINDOW_VA,
+    libdevice_driver::{DATA_WINDOW_VA, NO_PULL},
     libdevicetree::{is_compatible, is_enabled},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
@@ -149,6 +151,7 @@ pub fn run() -> ! {
         &[
             &components::SD_DRIVER,
             &components::MAILBOX_DRIVER,
+            &components::GPIO_DRIVER,
             &components::CLIENT_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
@@ -158,11 +161,31 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::SD.name {
-                // The controller: registers, one import (the mailbox, for the
-                // core clock), and one client with an io-channel and no data
-                // area.
+                // The controller: registers, three imports (the mailbox, for
+                // the core clock, and the gpio component, for the card's
+                // pins), and one client with an io-channel and no data area.
                 assert!(!init.pages().is_empty());
-                assert_eq!(imports.len(), 1, "get_clock_rate of mailbox_v1");
+                assert_eq!(
+                    imports.len(),
+                    3,
+                    "get_clock_rate of mailbox_v1, set_function and set_pull of gpio_v1"
+                );
+                assert!(
+                    imports
+                        .iter()
+                        .filter(|record| record.type_code == GPIO_V1)
+                        .map(|record| record.function)
+                        .eq(0..2),
+                    "both functions of gpio_v1"
+                );
+                // Its node's pin group: the card's pins on ALT0, no pulls.
+                assert!(
+                    init.pins()
+                        .iter()
+                        .map(|setting| (setting.pin, setting.function, setting.pull))
+                        .eq((48..54).map(|pin| (pin, 4, NO_PULL))),
+                    "the card's pins from the device tree"
+                );
                 let [area] = init.areas() else {
                     panic!("one client, one channel, found {}", init.areas().len());
                 };
@@ -172,24 +195,33 @@ pub fn run() -> ! {
                 assert_ne!(init.export_pool, 0, "the controller serves calls on a pool");
                 assert!(area.channel_base >= DATA_WINDOW_VA);
                 controller_channel = area.channel_base;
-            } else if name == components::MAILBOX.name {
-                // The mailbox: its registers, and the controller as a client.
+            } else if name == components::MAILBOX.name || name == components::GPIO.name {
+                // The mailbox and the gpio component: their registers, and
+                // the controller as a client.
                 assert!(!init.pages().is_empty());
                 assert!(imports.is_empty());
             } else {
                 // The client: both functions of `block_v1`, sharing one
-                // channel with the controller. It has no registers.
+                // channel with the controller, and `set_pull` of `gpio_v1`.
+                // It has no registers.
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 2, "the two functions of block_v1");
+                assert_eq!(imports.len(), 3, "block_v1 and set_pull of gpio_v1");
+                let block = || imports.iter().filter(|record| record.type_code == BLOCK_V1);
+                assert_eq!(block().count(), 2, "the two functions of block_v1");
                 assert!(
-                    imports.iter().all(|record| record.type_code == BLOCK_V1
-                        && record.area_len == 0
+                    block().all(|record| record.area_len == 0
                         && record.channel_base != 0
                         && record.channel_base == imports[0].channel_base
                         && record.channel(CHANNEL_PAGES).is_some()),
                     "the functions of one pair share one channel"
                 );
-                assert!(imports.iter().map(|record| record.function).eq(0..2));
+                assert!(block().map(|record| record.function).eq(0..2));
+                assert!(
+                    imports
+                        .iter()
+                        .any(|record| record.type_code == GPIO_V1 && record.function == 1),
+                    "set_pull of gpio_v1"
+                );
                 client_channel = imports[0].channel_base;
                 // The report key, in the client's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.
@@ -219,10 +251,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 3,
-        "the instances, the mailbox, the client and the root dispatcher"
+        INSTANCES + 4,
+        "the instances, the mailbox, the gpio component, the client and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 2);
+    assert_eq!(seen, INSTANCES + 3);
     assert_eq!(
         client_channel, controller_channel,
         "the channel the client was handed"

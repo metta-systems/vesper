@@ -155,6 +155,27 @@ pub const MAX_IMPORTS: usize = 32;
 /// Most interrupts of one node: one Notification bit each.
 pub const MAX_INTERRUPTS: usize = 16;
 
+/// Most pins of one node's default pin state.
+pub const MAX_PINS: usize = 16;
+
+/// One pin of the node's default pin state (`pinctrl-0`), which the driver
+/// sets up through the gpio component.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PinSetting {
+    /// The GPIO pin
+    pub pin: u32,
+    /// Its function select code, as the device tree's `brcm,function` gives
+    /// it (`gpio_v1::PinFunction::from_select_code`)
+    pub function: u32,
+    /// Its pull code, as the device tree's `brcm,pull` gives it
+    /// (`gpio_v1::PinPull::from_code`), or [`NO_PULL`] to leave it as it is
+    pub pull: u32,
+}
+
+/// [`PinSetting::pull`]: the pin group sets no pull.
+pub const NO_PULL: u32 = u32::MAX;
+
 /// One `reg` range of the node, as a CPU physical address range.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -303,6 +324,9 @@ pub struct DriverInit {
     pub regions: [Region; MAX_REGIONS],
     pub pages: [DevicePage; MAX_DEVICE_PAGES],
     pub interrupts: [Interrupt; MAX_INTERRUPTS],
+    pub pin_count: u64,
+    /// The node's default pin state, from its device tree pin group
+    pub pins: [PinSetting; MAX_PINS],
     /// The `VideoCore` memory a driver that asked for it holds: the memory the
     /// firmware allocates framebuffers in, outside every other Untyped
     pub video_count: u64,
@@ -389,6 +413,12 @@ impl DriverInit {
             bits: 0,
             line: 0,
         }; MAX_INTERRUPTS],
+        pin_count: 0,
+        pins: [PinSetting {
+            pin: 0,
+            function: 0,
+            pull: NO_PULL,
+        }; MAX_PINS],
         video_count: 0,
         video: [VideoBlock {
             key: 0,
@@ -481,6 +511,11 @@ impl DriverInit {
     /// The node's interrupts, in device tree order.
     pub fn interrupts(&self) -> &[Interrupt] {
         &self.interrupts[..clamp(self.interrupt_count, MAX_INTERRUPTS)]
+    }
+
+    /// The node's default pin state.
+    pub fn pins(&self) -> &[PinSetting] {
+        &self.pins[..clamp(self.pin_count, MAX_PINS)]
     }
 }
 

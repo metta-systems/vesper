@@ -1,8 +1,4 @@
-For your hardware test
-- Run `just boot-usb-hid-test`. It builds an image with the DWC2 driver, PL011, usb-core, usb-hid and input-trace.
-- input-trace owns the serial channel in that image. On the UART you get the device descriptor, the snapshot, and each key press and release as Key and Sync lines.
-- usb-core's trace is not on the UART in that image (only one program gets a serial channel). For the core's trace, boot `just boot-usb-core-test` instead.
-- The mouse has not been tried, even in QEMU. A keyboard behind a hub with a low-speed device is the first real split-transaction interrupt poll, so expect to debug there.
+Clean up image-build generators - use templates not direct output.
 
 ---
 

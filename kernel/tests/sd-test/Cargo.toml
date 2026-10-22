@@ -34,6 +34,7 @@ aarch64-cpu = { workspace = true }
 block = { workspace = true }
 cfg-if = { workspace = true }
 driver-protocol = { workspace = true }
+gpio = { workspace = true }
 kickstart = { workspace = true }
 libaddress = { workspace = true }
 libboot = { workspace = true }

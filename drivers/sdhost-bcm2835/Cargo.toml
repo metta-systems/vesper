@@ -29,6 +29,7 @@ libmmio = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
+gpio-client = { workspace = true }
 libblock-channel = { workspace = true }
 libdevice-driver = { workspace = true }
 libio-channel = { workspace = true }

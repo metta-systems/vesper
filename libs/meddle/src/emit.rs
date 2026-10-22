@@ -577,6 +577,7 @@ impl Emitter<'_, '_> {
                 impl Bindings {
                     /// The bindings `imports` grant for this interface
                     /// version, from the client's init record.
+                    #[allow(clippy::single_match, reason = "one arm per function, and an interface may have one")]
                     pub fn from_imports(imports: &[#runtime::ImportRecord]) -> Self {
                         let mut bindings = Self::default();
                         for record in imports.iter().filter(|record| record.type_code == TYPE_CODE) {
