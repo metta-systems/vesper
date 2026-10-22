@@ -31,7 +31,7 @@ const MAXEVENTS: usize = 64;
 ///
 /// | `type_` (evtype_t) | `data1` | `data2` | `data3` | `data4` |
 /// |--------------------|---------|---------|---------|---------|
-/// | `ev_keydown` / `ev_keyup` | key code (from `doomkeys`) | ASCII char pressed | - | - |
+/// | `ev_keydown` / `ev_keyup` | key code (from `interface::keys`) | ASCII char pressed | - | - |
 /// | `ev_mouse` | button bitfield (bit 0=left, 1=right, 2=middle) | X delta (turn) | Y delta (fwd/back) | - |
 /// | `ev_joystick` | button bitfield | X axis (turn) | Y axis (fwd/back) | Z axis (strafe) |
 /// | `ev_quit` | - | - | - | - |

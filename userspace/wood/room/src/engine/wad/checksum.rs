@@ -16,7 +16,7 @@
 use std::ffi::c_void;
 
 use crate::engine::{
-    sha1::{
+    misc::sha1::{
         sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
     },
     wad::{lumpinfo, numlumps},

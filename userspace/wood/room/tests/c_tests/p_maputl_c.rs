@@ -12,7 +12,7 @@ use {
     room::engine::{
         c_ffi,
         c_ffi::{divline_t, line_t, vertex_t},
-        misc::{bbox::BBox, fixed::FRACUNIT},
+        math::{bbox::BBox, fixed::FRACUNIT},
         play,
     },
 };

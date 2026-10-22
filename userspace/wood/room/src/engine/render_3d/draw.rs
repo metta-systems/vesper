@@ -10,11 +10,10 @@ use std::{ffi::c_void, ptr};
 
 use crate::engine::{
     c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT},
-    deh_str::DEH_String,
-    doom::mode::commercial,
-    doomstat::gamemode,
+    dehacked::DEH_String,
+    doom::{mode::commercial, stat::gamemode},
     interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
-    misc::fixed::FRACBITS,
+    math::fixed::FRACBITS,
     render_2d::{patch_t, V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
     render_3d::{data::colormaps, main::centery},
     wad::W_CacheLumpName,

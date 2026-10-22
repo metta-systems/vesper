@@ -14,8 +14,10 @@
 
 use room::engine::{
     c_ffi,
-    misc::fixed::{FixedDiv, FixedMul, FRACUNIT},
-    tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
+    math::{
+        fixed::{FixedDiv, FixedMul, FRACUNIT},
+        tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
+    },
 };
 
 // ---------------------------------------------------------------------------

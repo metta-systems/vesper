@@ -494,9 +494,9 @@ pub fn HUlib_keyInIText(it: *mut hu_itext_t, ch: u8) -> i32 {
         let ch = ch.to_ascii_uppercase();
         if (b' '..=b'_').contains(&ch) {
             HUlib_addCharToTextLine(&mut (*it).l, ch);
-        } else if ch == crate::engine::doomkeys::KEY_BACKSPACE {
+        } else if ch == crate::engine::interface::keys::KEY_BACKSPACE {
             HUlib_delCharFromIText(it);
-        } else if ch != crate::engine::doomkeys::KEY_ENTER {
+        } else if ch != crate::engine::interface::keys::KEY_ENTER {
             return 0;
         }
         1
@@ -703,7 +703,7 @@ mod tests {
     /// HUlib_keyInIText with KEY_BACKSPACE removes the last character.
     #[test]
     fn key_in_itext_backspace_removes_char() {
-        use crate::engine::doomkeys::KEY_BACKSPACE;
+        use crate::engine::interface::keys::KEY_BACKSPACE;
         let _g = LOCK.lock().unwrap();
         let mut on: i32 = 1;
         let mut it = hu_itext_t {

@@ -8,7 +8,7 @@
 //! Notable Rust-vs-C differences:
 //! - Cheat-sequence tables are built at compile time with `const fn` helpers
 //!   instead of being initialised by `ST_Start`.
-//! - `DEH_String` (from `deh_str`) is an identity; Dehacked string
+//! - `DEH_String` (from `dehacked`) is an identity; Dehacked string
 //!   replacement is not yet wired up.
 //! - `logical_gamemission` is duplicated here (it also lives in `st_stuff.c`
 //!   as a macro) to keep the file self-contained.
@@ -21,16 +21,17 @@ use crate::{
     c_write,
     engine::{
         automap::automapactive,
-        deh_str::DEH_String,
+        dehacked::DEH_String,
         doom::{
             self,
             event::event_t,
             items::weaponinfo,
             player::{PlayerMessage, PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
+            stat::{gamemission, gamemode, gameversion},
         },
-        doomstat::{gamemission, gamemode, gameversion},
         game::{consoleplayer, deathmatch, gameskill, netgame, players, G_DeferedInitNew},
         interface::{timer::TICRATE, video::I_SetPalette},
+        math::tables::{ANG180, ANG45},
         misc::{
             cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
             random::M_Random,
@@ -44,7 +45,6 @@ use crate::{
             STlib_initMultIcon, STlib_initNum, STlib_initPercent, STlib_updateBinIcon,
             STlib_updateMultIcon, STlib_updateNum, STlib_updatePercent,
         },
-        tables::{ANG180, ANG45},
         wad::{W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName},
         zone::{Z_Malloc, PU_CACHE, PU_STATIC},
     },

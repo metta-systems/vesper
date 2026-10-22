@@ -6,10 +6,8 @@
 //! - [`engine`] - Rust ports of the `doomgeneric` C sources, grouped into
 //!   subsystem modules by their C prefix (see `doom.md`). The engine reaches
 //!   the platform only through the
-//!   [`Platform`](engine::doomgeneric::Platform) trait; the `room` binary
+//!   [`Platform`](engine::platform::Platform) trait; the `room` binary
 //!   implements it in `src/platform/`.
-//! - [`headless`] - thread-local frame/tick counters used by the testing and
-//!   benchmarking harnesses to run the engine without a window or audio device.
 //! - [`types`] - cross-cutting FFI-safe type aliases (currently just the
 //!   tri-state [`types::Boolean`] mirroring Doom's `unsigned int boolean`).
 //!
@@ -52,7 +50,6 @@
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
 
 pub mod engine;
-pub mod headless;
 pub mod types;
 
 // Re-export `dhat` when the `dhat-heap` Cargo feature is enabled so binaries

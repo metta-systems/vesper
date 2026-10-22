@@ -11,8 +11,10 @@ use std::{ffi::c_void, ptr};
 use crate::{
     engine::{
         doom,
-        doom::player::{consoleplayer, players, MAXPLAYERS},
-        doomstat::{gamedescription, gamemission, gamemode, gameversion, modifiedgame},
+        doom::{
+            player::{consoleplayer, players, MAXPLAYERS},
+            stat::{gamedescription, gamemission, gamemode, gameversion, modifiedgame},
+        },
         interface::{
             timer::TICRATE,
             video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
@@ -277,7 +279,7 @@ const PACKS: [PackDesc; 3] = [
 // C library functions
 // ---------------------------------------------------------------------------
 
-use crate::engine::dummy::drone;
+use crate::engine::doom::net::drone;
 
 // g_game.rs
 use crate::engine::game::{
@@ -292,7 +294,7 @@ use crate::engine::game::{
 use crate::engine::automap::{automapactive, AM_Drawer};
 
 // deh_str.rs
-use crate::engine::deh_str::DEH_String;
+use crate::engine::dehacked::DEH_String;
 
 // m_menu.rs
 use crate::engine::misc::menu::{
@@ -300,9 +302,8 @@ use crate::engine::misc::menu::{
 };
 
 // s_sound.rs
-use crate::engine::{
-    sound::{musicVolume, sfxVolume, snd_channels, S_Init, S_StartMusic, S_UpdateSounds},
-    sounds::Mus,
+use crate::engine::sound::{
+    info::Mus, musicVolume, sfxVolume, snd_channels, S_Init, S_StartMusic, S_UpdateSounds,
 };
 
 // r_main.rs

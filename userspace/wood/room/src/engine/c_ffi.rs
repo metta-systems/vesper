@@ -12,11 +12,11 @@ pub use super::{
         timer::TICRATE,
         video::{SCREENHEIGHT, SCREENWIDTH},
     },
-    misc::{
+    math::{
         bbox::BBox,
         fixed::{FRACBITS, FRACUNIT},
+        tables::{ANG180, ANG270, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
     },
-    tables::{ANG180, ANG270, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
 };
 
 // ---------------------------------------------------------------------------

@@ -8,9 +8,9 @@
 
 use crate::i_error;
 
-use crate::engine::misc::fixed::{FixedDiv, FixedMul};
+use crate::engine::math::fixed::{FixedDiv, FixedMul};
 
-use crate::engine::misc::fixed::FRACBITS;
+use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::c_ffi::LinedefFlag;
 

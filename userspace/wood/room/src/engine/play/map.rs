@@ -24,13 +24,14 @@ use crate::{
             intercept_t, line_t, mobj_t, sector_t, subsector_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC,
             MAPBLOCKSHIFT,
         },
-        info::MobjInfo,
-        misc::{
+        math::{
             bbox::BBox,
             fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
-            random::P_Random,
+            tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
         },
+        misc::random::P_Random,
         play::{
+            info::MobjInfo,
             maputl::{
                 lowfloor, openbottom, openrange, opentop, P_AproxDistance, P_BlockLinesIterator,
                 P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening, P_PathTraverse,
@@ -41,7 +42,6 @@ use crate::{
             sight::{bottomslope, topslope, P_CheckSight},
         },
         render_3d::main::{validcount, R_PointInSubsector, R_PointToAngle2},
-        tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
     },
     i_error,
 };
@@ -147,8 +147,7 @@ use crate::engine::{
         tick::leveltime,
     },
     render_3d::sky::skyflatnum,
-    sound::S_StartSound,
-    sounds::Sfx,
+    sound::{info::Sfx, S_StartSound},
 };
 
 /// Type alias used when calling functions in `p_telept` that expect its own

@@ -29,12 +29,14 @@ use crate::engine::{
         self,
         player::{consoleplayer, players, MAXPLAYERS},
     },
-    info::sprnames,
-    misc::{
+    math::{
         bbox::{BBox, M_AddToBox, M_ClearBox},
         fixed::{FRACBITS, FRACUNIT},
     },
-    play::tick::{leveltime, P_InitThinkers},
+    play::{
+        info::sprnames,
+        tick::{leveltime, P_InitThinkers},
+    },
     zone::{PU_LEVEL, PU_STATIC},
 };
 
@@ -363,13 +365,14 @@ pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t {
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    doomstat::gamemode,
+    doom::stat::gamemode,
     game::{
         bodyqueslot, deathmatch, playeringame, precache, totalitems, totalkills, totalsecret,
         wminfo, G_DeathMatchSpawnPlayer,
     },
     interface::system::I_GetMemoryValue,
-    misc::{argv::M_CheckParm, fixed::FixedDiv},
+    math::fixed::FixedDiv,
+    misc::argv::M_CheckParm,
     play::{
         mobj::{iquehead, iquetail, P_SpawnMapThing},
         spec::{P_InitPicAnims, P_SpawnSpecials},

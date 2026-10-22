@@ -4,9 +4,10 @@
 //! call to a `sound_module_t` / `music_module_t` vtable (set up by
 //! `InitSfxModule` / `InitMusicModule`). This port collapses that
 //! indirection into the platform's sound and music methods
-//! ([`Platform`](crate::engine::doomgeneric::Platform)). SFX lumps are
+//! ([`Platform`](crate::engine::platform::Platform)). SFX lumps are
 //! handed over as raw DMX bytes; MUS songs are converted to MIDI here
-//! ([`mus2midi`]) before they reach the platform.
+//! ([`sound::mus2midi`](crate::engine::sound::mus2midi)) before they reach
+//! the platform.
 //!
 //! Public `static mut` `snd_*` globals are bound by address in
 //! `m_config` as user-configurable variables.
@@ -15,10 +16,9 @@
 
 use {
     crate::engine::{
-        doomgeneric::platform,
         misc::config::M_BindVariable,
-        mus2midi::mus2midi,
-        sounds::SfxInfo,
+        platform::platform,
+        sound::{info::SfxInfo, mus2midi::mus2midi},
         wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength},
         zone::PU_CACHE,
     },

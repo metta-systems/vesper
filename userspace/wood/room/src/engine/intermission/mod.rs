@@ -11,7 +11,7 @@
 //!   data and makes borrowing semantics clearer.
 //! - `AnimStateTable` wraps `UnsafeCell` to give interior mutability to the state
 //!   arrays, which must be `Sync` for use as module-level statics.
-//! - `DEH_String` (from `deh_str`) and `SHORT` are identities (Dehacked and
+//! - `DEH_String` (from `dehacked`) and `SHORT` are identities (Dehacked and
 //!   endianness conversion are not yet active in this port).
 
 #![allow(
@@ -27,17 +27,18 @@
     clippy::manual_c_str_literals
 )]
 
+pub mod statdump;
+
 use {
-    crate::engine::sounds::Sfx,
+    crate::engine::sound::info::Sfx,
     std::{cell::UnsafeCell, ptr},
 };
 
 use crate::{
     c_write,
     engine::{
-        deh_str::DEH_String,
-        doom::{self, event::event_t, player::MAXPLAYERS},
-        doomstat::gamemode,
+        dehacked::DEH_String,
+        doom::{self, event::event_t, player::MAXPLAYERS, stat::gamemode},
         game::{deathmatch, netgame, playeringame, players, G_WorldDone},
         interface::{
             timer::TICRATE,
@@ -45,8 +46,7 @@ use crate::{
         },
         misc::random::M_Random,
         render_2d::{patch_t, V_DrawPatch},
-        sound::{S_ChangeMusic, S_StartSound},
-        sounds::Mus,
+        sound::{info::Mus, S_ChangeMusic, S_StartSound},
         wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName},
         zone::{Z_Malloc, PU_STATIC},
     },

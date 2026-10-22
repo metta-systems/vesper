@@ -20,26 +20,28 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::sounds::Sfx,
+    crate::engine::sound::info::Sfx,
     std::{borrow::Cow, ptr},
 };
 
 use crate::engine::{
-    deh_str::DEH_String,
+    dehacked::DEH_String,
     doom::{
         self,
         event::event_t,
         player::{PlayerMessage, PlayerT, MAXPLAYERS},
+        stat::{gamemission, gameversion},
     },
-    doomkeys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT},
-    doomstat::{gamemission, gameversion},
     hud::lib::{
         hu_itext_t, hu_stext_t, hu_textline_t, HUlib_addCharToTextLine, HUlib_addMessageToSText,
         HUlib_drawIText, HUlib_drawSText, HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText,
         HUlib_eraseTextLine, HUlib_initIText, HUlib_initSText, HUlib_initTextLine,
         HUlib_keyInIText, HUlib_resetIText,
     },
-    interface::timer::TICRATE,
+    interface::{
+        keys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT},
+        timer::TICRATE,
+    },
     misc::{
         controls::{key_message_refresh, key_multi_msg, key_multi_msgplayer},
         until_nul,
@@ -389,7 +391,7 @@ static mut tail: usize = 0;
 
 use crate::engine::{
     automap::automapactive,
-    doomstat::gamemode,
+    doom::stat::gamemode,
     game::{consoleplayer, gameepisode, gamemap, netgame, playeringame},
     misc::menu::showMessages,
     sound::S_StartSound,

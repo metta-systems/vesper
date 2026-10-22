@@ -5,6 +5,7 @@ pub mod cdmus;
 pub mod endoom;
 pub mod input;
 pub mod joystick;
+pub mod keys;
 pub mod scale;
 pub mod sound;
 pub mod system;

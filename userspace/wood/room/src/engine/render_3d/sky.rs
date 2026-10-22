@@ -11,7 +11,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use crate::engine::misc::fixed::FRACUNIT;
+use crate::engine::math::fixed::FRACUNIT;
 
 /// WAD lump index of the sky flat (`F_SKY1`), filled in by `g_game.c`
 /// via `R_FlatNumForName(SKYFLATNAME)`.

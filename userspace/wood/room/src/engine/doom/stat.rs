@@ -13,7 +13,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use {super::doom, crate::types::Boolean};
+use crate::{engine::doom, types::Boolean};
 
 /// Identifies which IWAD variant is loaded (shareware, registered, retail, etc.).
 ///

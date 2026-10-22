@@ -37,7 +37,7 @@ use std::ptr;
 
 use crate::engine::{
     c_ffi::mobj_t,
-    misc::fixed::FRACBITS,
+    math::fixed::FRACBITS,
     zone::{PU_CACHE, PU_STATIC},
 };
 
@@ -218,7 +218,7 @@ struct spritedef_t {
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    deh_str::DEH_String,
+    dehacked::DEH_String,
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::{

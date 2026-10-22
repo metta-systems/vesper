@@ -37,7 +37,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::sounds::Sfx,
+    crate::engine::sound::info::Sfx,
     std::{
         borrow::Cow,
         ffi::c_void,
@@ -54,16 +54,16 @@ use crate::engine::{
             exe_final2, exe_ultimate, shareware,
         },
         player::{PlayerMessage, PlayerT, TiccmdT, MAXPLAYERS},
+        stat::{gamemission, gamemode, gameversion},
     },
-    doomstat::{gamemission, gamemode, gameversion},
     intermission::{wbplayerstruct_t, wbstartstruct_t},
+    math::tables::{finecosine, finesine, finetangent},
     misc::random::P_Random,
     play::{
         inter::maxammo,
         setup::{deathmatch_p, deathmatchstarts, mapthing_t as SetupMapThing, playerstarts},
         telept::{mapthing_t, mobj_t},
     },
-    tables::{finecosine, finesine, finetangent},
 };
 
 // ---------------------------------------------------------------------------
@@ -622,7 +622,7 @@ use crate::engine::misc::argv::{argument, M_CheckParm, M_CheckParmWithArgs};
 use crate::engine::misc::random::{rndindex, M_ClearRandom};
 
 /// Statistics-dump hook used after a level completes, from `statdump.c`.
-use crate::engine::statdump::StatCopy;
+use crate::engine::intermission::statdump::StatCopy;
 
 /// Screenshot grabber from `v_video.c`.
 use crate::engine::render_2d::V_ScreenShot;
@@ -650,7 +650,7 @@ use crate::engine::misc::controls::{
 use crate::engine::zone::PU_STATIC;
 
 /// Dehacked string-substitution hook (identity in this build).
-use crate::engine::deh_str::DEH_String;
+use crate::engine::dehacked::DEH_String;
 
 // ---------------------------------------------------------------------------
 // logical_gamemission helper (mirrors doomstat.h macro)
@@ -1513,7 +1513,7 @@ pub unsafe fn G_PlayerFinishLevel(player: i32) {
     let p = &mut players[player as usize];
     p.powers = [0; 6];
     p.cards = [0; 6];
-    (*(p.mo as *mut mobj_t)).flags &= !crate::engine::info::MF_SHADOW;
+    (*(p.mo as *mut mobj_t)).flags &= !crate::engine::play::info::MF_SHADOW;
     p.extralight = 0;
     p.fixedcolormap = 0;
     p.damagecount = 0;
@@ -1927,7 +1927,9 @@ pub unsafe fn G_DoCompleted() {
     viewactive = 0;
     automapactive = 0;
 
-    StatCopy(&raw mut wminfo as *mut _ as *mut crate::engine::statdump::wbstartstruct_t);
+    StatCopy(
+        &raw mut wminfo as *mut _ as *mut crate::engine::intermission::statdump::wbstartstruct_t,
+    );
     WI_Start(&raw mut wminfo);
 }
 
@@ -2329,7 +2331,7 @@ unsafe fn set_fast_monsters(fast: bool) {
 /// # Safety
 /// Mutates the shared `states` and `mobjinfo` arrays.
 pub unsafe fn G_SetFastMonsters(fast: i32) {
-    use crate::engine::info::{
+    use crate::engine::play::info::{
         mobjinfo, states, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, S_SARG_PAIN2, S_SARG_RUN1,
     };
 

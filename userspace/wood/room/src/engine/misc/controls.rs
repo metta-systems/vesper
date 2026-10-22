@@ -15,7 +15,7 @@
 
 use std::ffi::c_void;
 
-use crate::engine::doomkeys::{
+use crate::engine::interface::keys::{
     KEY_BACKSPACE, KEY_DEL, KEY_DOWNARROW, KEY_END, KEY_ENTER, KEY_EQUALS, KEY_ESCAPE, KEY_F1,
     KEY_F10, KEY_F11, KEY_F12, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9,
     KEY_HOME, KEY_INS, KEY_LEFTARROW, KEY_MINUS, KEY_PAUSE, KEY_PGDN, KEY_PGUP, KEY_RALT,
@@ -39,7 +39,7 @@ pub static mut key_strafeleft: i32 = KEY_STRAFE_L as i32;
 /// Strafe right (default: period `KEY_STRAFE_R`).
 pub static mut key_straferight: i32 = KEY_STRAFE_R as i32;
 /// Fire current weapon (default: `KEY_FIRE`, the right Ctrl).
-pub static mut key_fire: i32 = crate::engine::doomkeys::KEY_FIRE as i32;
+pub static mut key_fire: i32 = crate::engine::interface::keys::KEY_FIRE as i32;
 /// Use / open / activate trigger (default: space `KEY_USE`).
 pub static mut key_use: i32 = KEY_USE as i32;
 /// Hold to convert turn into strafe (default: right Alt).

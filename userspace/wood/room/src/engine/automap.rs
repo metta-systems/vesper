@@ -26,7 +26,7 @@ use crate::{
     c_write,
     engine::{
         c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS},
-        deh_str::DEH_String,
+        dehacked::DEH_String,
         doom::{
             event::event_t,
             player::{PlayerMessage, PlayerT, MAXPLAYERS},
@@ -36,6 +36,10 @@ use crate::{
             singledemo, viewactive,
         },
         interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
+        math::{
+            fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+            tables::{finecosine, finesine, ANGLETOFINESHIFT},
+        },
         misc::{
             cheat::{cheatseq_t, cht_CheckCheat},
             controls::{
@@ -43,14 +47,12 @@ use crate::{
                 key_map_maxzoom, key_map_north, key_map_south, key_map_toggle, key_map_west,
                 key_map_zoomin, key_map_zoomout,
             },
-            fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
         },
         play::setup::{
             bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
         },
         render_2d::{patch_t, V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
-        tables::{finecosine, finesine, ANGLETOFINESHIFT},
         wad::{W_CacheLumpName, W_ReleaseLumpName},
     },
 };

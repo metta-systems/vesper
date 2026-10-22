@@ -15,10 +15,12 @@ use {
 use crate::engine::{
     c_ffi::{spriteframe_t, vissprite_t, BASEYCENTER, MINZ},
     doom::player::{PspdefT, NUMPSPRITES},
-    info::*,
-    misc::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+    math::{
+        fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+        tables::ANG45,
+    },
+    play::info::*,
     render_3d::bsp::sector_t,
-    tables::ANG45,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,7 +121,7 @@ fn sprite_prefix(name: &[u8]) -> &[u8] {
 }
 
 use crate::engine::{
-    doomstat::modifiedgame,
+    doom::stat::modifiedgame,
     misc::until_nul,
     render_3d::{
         bsp::{drawsegs, ds_p},

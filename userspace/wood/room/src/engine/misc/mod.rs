@@ -20,13 +20,12 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 pub mod argv;
-pub mod bbox;
 pub mod cheat;
 pub mod config;
 pub mod controls;
-pub mod fixed;
 pub mod menu;
 pub mod random;
+pub mod sha1;
 
 use std::path::Path;
 

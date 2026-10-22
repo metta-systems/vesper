@@ -1,5 +1,5 @@
 //! Host audio: the sound and music half of the host
-//! [`Platform`](room::engine::doomgeneric::Platform), on top of the sfx and
+//! [`Platform`](room::engine::platform::Platform), on top of the sfx and
 //! music submodules.
 //!
 //! The backend replaces the SDL2 mixer that the original `i_sound.c` and

@@ -34,7 +34,7 @@ const am_noammo: i32 = 5;
 // ran A_Lower instead of A_Raise, eventually driving readyweapon to
 // wp_nochange (= NUMWEAPONS) and segfaulting on weaponinfo[9].
 
-use crate::engine::statenum::*;
+use crate::engine::play::info::*;
 
 // ---------------------------------------------------------------------------
 // Weapon info table

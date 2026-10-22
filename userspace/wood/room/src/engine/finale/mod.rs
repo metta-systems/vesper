@@ -23,15 +23,17 @@
 
 pub mod wipe;
 
-use {crate::engine::sounds::Sfx, std::ptr};
+use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
     engine::{
         doom,
-        doom::event::event_t,
-        doomstat::{gamemission, gameversion},
+        doom::{
+            event::event_t,
+            stat::{gamemission, gameversion},
+        },
         hud::stuff::{hu_font, HU_FONTSIZE, HU_FONTSTART},
-        info::*,
+        play::info::*,
         render_2d::patch_t,
     },
     DEH_snprintf,
@@ -266,7 +268,7 @@ struct CastInfo {
 
 // g_game.rs
 use crate::engine::{
-    deh_str::DEH_String,
+    dehacked::DEH_String,
     game::{gameaction, gameepisode, gamemap, gamestate, players, viewactive},
 };
 
@@ -274,7 +276,7 @@ use crate::engine::{
 use crate::engine::automap::automapactive;
 
 // doomstat.rs
-use crate::engine::doomstat::gamemode;
+use crate::engine::doom::stat::gamemode;
 
 // d_main.rs
 use crate::engine::doom::main::wipegamestate;
@@ -295,10 +297,7 @@ use crate::engine::wad::{W_CacheLumpName, W_CacheLumpNum};
 use crate::engine::render_2d::{V_DrawPatch, V_DrawPatchFlipped, V_MarkRect};
 
 // s_sound.rs
-use crate::engine::{
-    sound::{S_ChangeMusic, S_StartMusic, S_StartSound},
-    sounds::Mus,
-};
+use crate::engine::sound::{info::Mus, S_ChangeMusic, S_StartMusic, S_StartSound};
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -825,10 +824,10 @@ pub fn F_StartCast() {
     unsafe {
         wipegamestate = -1;
         castnum = 0;
-        let st = &(*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+        let st = &(*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
             .add(CASTORDER[0].type_ as usize))
         .seestate;
-        caststate = &mut crate::engine::info::states[*st as usize];
+        caststate = &mut crate::engine::play::info::states[*st as usize];
         casttics = (*caststate).tics;
         castdeath = 0;
         FINALE_STAGE = FinaleStage::Cast;
@@ -870,23 +869,23 @@ pub fn F_CastTicker() {
             if CASTORDER[castnum as usize].name.is_empty() {
                 castnum = 0;
             }
-            let info = &*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+            let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
                 .add(CASTORDER[castnum as usize].type_ as usize);
             if info.seesound != Sfx::None {
                 S_StartSound(ptr::null_mut(), info.seesound as i32);
             }
             let st = info.seestate;
-            caststate = &mut crate::engine::info::states[st as usize];
+            caststate = &mut crate::engine::play::info::states[st as usize];
             castframes = 0;
         } else {
             // just advance to next state in animation
-            if caststate == &mut crate::engine::info::states[S_PLAY_ATK1 as usize] {
+            if caststate == &mut crate::engine::play::info::states[S_PLAY_ATK1 as usize] {
                 // Oh, gross hack! Jump to stopattack logic below
                 goto_stopattack();
                 return;
             }
             let st = (*caststate).nextstate;
-            caststate = &mut crate::engine::info::states[st as usize];
+            caststate = &mut crate::engine::play::info::states[st as usize];
             castframes += 1;
 
             let sfx = match st {
@@ -917,7 +916,7 @@ pub fn F_CastTicker() {
 
         if castframes == 12 {
             castattacking = 1;
-            let info = &*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+            let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
                 .add(CASTORDER[castnum as usize].type_ as usize);
             let st = if castonmelee != 0 {
                 info.meleestate
@@ -925,32 +924,33 @@ pub fn F_CastTicker() {
                 info.missilestate
             };
             castonmelee ^= 1;
-            caststate = &mut crate::engine::info::states[st as usize];
-            if caststate == &mut crate::engine::info::states[S_NULL as usize] {
+            caststate = &mut crate::engine::play::info::states[st as usize];
+            if caststate == &mut crate::engine::play::info::states[S_NULL as usize] {
                 let st2 = if castonmelee != 0 {
                     info.meleestate
                 } else {
                     info.missilestate
                 };
-                caststate = &mut crate::engine::info::states[st2 as usize];
+                caststate = &mut crate::engine::play::info::states[st2 as usize];
             }
         }
 
         if castattacking != 0
             && (castframes == 24
                 || caststate
-                    == &mut crate::engine::info::states[(*std::ptr::addr_of!(
-                        crate::engine::info::mobjinfo[0]
+                    == &mut crate::engine::play::info::states[(*std::ptr::addr_of!(
+                        crate::engine::play::info::mobjinfo[0]
                     )
                     .add(CASTORDER[castnum as usize].type_ as usize))
-                    .seestate as usize])
+                    .seestate
+                        as usize])
         {
             castattacking = 0;
             castframes = 0;
-            let st = (*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+            let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
                 .add(CASTORDER[castnum as usize].type_ as usize))
             .seestate;
-            caststate = &mut crate::engine::info::states[st as usize];
+            caststate = &mut crate::engine::play::info::states[st as usize];
         }
 
         casttics = (*caststate).tics;
@@ -976,10 +976,10 @@ pub fn F_CastTicker() {
 unsafe fn goto_stopattack() {
     castattacking = 0;
     castframes = 0;
-    let st = (*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+    let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
         .add(CASTORDER[castnum as usize].type_ as usize))
     .seestate;
-    caststate = &mut crate::engine::info::states[st as usize];
+    caststate = &mut crate::engine::play::info::states[st as usize];
     casttics = (*caststate).tics;
     if casttics == -1 {
         casttics = 15;
@@ -1004,9 +1004,9 @@ pub fn F_CastResponder(ev: *mut event_t) -> i32 {
             return 1;
         }
         castdeath = 1;
-        let info = &*std::ptr::addr_of!(crate::engine::info::mobjinfo[0])
+        let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
             .add(CASTORDER[castnum as usize].type_ as usize);
-        caststate = &mut crate::engine::info::states[info.deathstate as usize];
+        caststate = &mut crate::engine::play::info::states[info.deathstate as usize];
         casttics = (*caststate).tics;
         castframes = 0;
         castattacking = 0;

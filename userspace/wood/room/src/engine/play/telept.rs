@@ -10,7 +10,9 @@
 use std::ffi::c_void;
 
 use crate::engine::{
-    doom::player::PlayerT, info::*, play::tick::thinker_t, tables::ANGLETOFINESHIFT,
+    doom::player::PlayerT,
+    math::tables::ANGLETOFINESHIFT,
+    play::{info::*, tick::thinker_t},
 };
 
 /// A sub-sector: the smallest convex region of the BSP tree.
@@ -234,16 +236,15 @@ pub struct line_t {
 const EXE_FINAL: i32 = 7;
 
 use crate::engine::{
-    doomstat::gameversion,
+    doom::stat::gameversion,
+    math::tables::{finecosine, finesine},
     play::{
         map::P_TeleportMove,
         mobj::{P_MobjThinker, P_SpawnMobj},
         setup::{numsectors, sectors},
         tick::thinkercap,
     },
-    sound::S_StartSound,
-    sounds::Sfx,
-    tables::{finecosine, finesine},
+    sound::{info::Sfx, S_StartSound},
 };
 
 // Type alias for cross-module pointer cast (#[repr(C)] identical layout).

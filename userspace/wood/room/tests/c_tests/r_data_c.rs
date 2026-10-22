@@ -12,7 +12,7 @@
 #![allow(non_snake_case)]
 
 use room::engine::{
-    misc::fixed::{FRACBITS, FRACUNIT},
+    math::fixed::{FRACBITS, FRACUNIT},
     render_3d,
 };
 

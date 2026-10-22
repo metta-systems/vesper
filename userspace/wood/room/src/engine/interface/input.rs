@@ -9,7 +9,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::{doom::event::event_t, doomkeys::KEY_RSHIFT};
+use crate::engine::{doom::event::event_t, interface::keys::KEY_RSHIFT};
 
 /// Configuration flag mirroring the C global `vanilla_keyboard_mapping`.
 ///
@@ -120,7 +120,7 @@ pub fn I_InitInput() {}
 /// first keyup event ends the call. Suppresses events whose `data1` is 0.
 /// `d_main` calls it from the main loop.
 pub fn I_GetEvent() {
-    while let Some((is_pressed, key)) = crate::engine::doomgeneric::platform().key() {
+    while let Some((is_pressed, key)) = crate::engine::platform::platform().key() {
         let pressed = i32::from(is_pressed);
         UpdateShiftStatus(pressed, key);
 

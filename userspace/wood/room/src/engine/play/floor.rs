@@ -10,7 +10,7 @@ use std::ffi::c_void;
 
 use crate::engine::{
     c_ffi as cffi,
-    misc::fixed::{fixed_t, FRACUNIT},
+    math::fixed::{fixed_t, FRACUNIT},
     play::{
         lights::sector_t,
         map::P_ChangeSector,
@@ -23,8 +23,7 @@ use crate::engine::{
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
     },
     render_3d::data::textureheight,
-    sound::S_StartSound,
-    sounds::Sfx,
+    sound::{info::Sfx, S_StartSound},
     zone::{Z_Malloc, PU_LEVSPEC},
 };
 

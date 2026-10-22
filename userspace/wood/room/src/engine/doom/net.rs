@@ -21,7 +21,7 @@
 //! Notable Rust-vs-C differences:
 //! * `PlayerQuitGame` takes a player index (`usize`) instead of a `player_t *`
 //!   pointer; pointer arithmetic is replaced by array indexing.
-//! * `DEH_String` is the identity hook from [`crate::engine::deh_str`]
+//! * `DEH_String` is the identity hook from [`crate::engine::dehacked`]
 //!   (DeHackEd support is not implemented).
 //! * The `DEH_printf` diagnostic prints present in `D_CheckNetGame` in C are
 //!   omitted in this port.
@@ -167,16 +167,29 @@ pub struct LoopInterfaceT {
 /// Corresponds to `ticcmd_t *netcmds` in `d_net.c`.
 pub static mut netcmds: *mut TiccmdT = std::ptr::null_mut();
 
+/// Whether the client is connected to a network game session.
+///
+/// Always false: the network client is not ported. Corresponds to
+/// `net_client_connected` in `dummy.c`.
+pub static mut net_client_connected: u32 = 0;
+
+/// Whether this instance is a "drone" (observer) client, which joins a
+/// network game without controlling a player.
+///
+/// Always false: the network client is not ported. Corresponds to `drone`
+/// in `dummy.c`.
+pub static mut drone: u32 = 0;
+
 use crate::engine::{
-    deh_str::DEH_String,
+    dehacked::DEH_String,
     doom::{
         main::{
             advancedemo, autostart, fastparm, nomonsters, respawnparm, startepisode, startloadgame,
             startmap, startskill, D_DoAdvanceDemo, D_ProcessEvents,
         },
         main_loop::{D_InitNetGame, D_RegisterLoopCallbacks, D_StartNetGame},
+        stat::{gamemission, gamemode, gameversion},
     },
-    doomstat::{gamemission, gamemode, gameversion},
     game::{
         deathmatch, demoplayback, demorecording, lowres_turn, netgame, playeringame, timelimit,
         G_BuildTiccmd, G_CheckDemoStatus, G_Ticker,

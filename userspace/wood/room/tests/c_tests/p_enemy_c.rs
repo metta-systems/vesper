@@ -13,7 +13,10 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, misc::fixed::FRACUNIT, tables::ANG90};
+use room::engine::{
+    c_ffi,
+    math::{fixed::FRACUNIT, tables::ANG90},
+};
 
 // ---------------------------------------------------------------------------
 // xspeed / yspeed — 8-directional movement velocity tables

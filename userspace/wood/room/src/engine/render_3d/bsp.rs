@@ -9,11 +9,9 @@
 
 use std::{ffi::c_void, ptr};
 
-use crate::engine::{
-    misc::{
-        bbox::BBox,
-        fixed::{angle_t, fixed_t},
-    },
+use crate::engine::math::{
+    bbox::BBox,
+    fixed::{angle_t, fixed_t},
     tables::{ANG90, ANGLETOFINESHIFT},
 };
 

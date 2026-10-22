@@ -6,7 +6,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::{engine::sounds::Sfx, i_error},
+    crate::{engine::sound::info::Sfx, i_error},
     std::{ffi::c_void, ptr},
 };
 
@@ -14,13 +14,14 @@ use crate::engine::{
     c_ffi::ITEMQUESIZE,
     doom::player::{PlayerMessage, PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
     hud::stuff::HU_Start,
-    info::{self, *},
     interface::timer::TICRATE,
-    misc::{
+    math::{
         fixed::{FixedMul, FRACBITS, FRACUNIT},
-        random::P_Random,
+        tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT},
     },
+    misc::random::P_Random,
     play::{
+        info::{self, *},
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
         telept::{line_t, mapthing_t, mobj_t, subsector_t},
@@ -28,7 +29,6 @@ use crate::engine::{
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{MobjStub, S_StartSound, S_StopSound},
-    tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT},
     zone::PU_LEVEL,
 };
 
@@ -65,8 +65,7 @@ const PST_REBORN: i32 = 2;
 const exe_ultimate: i32 = 6;
 
 use crate::engine::{
-    doom::main::nomonsters,
-    doomstat::gameversion,
+    doom::{main::nomonsters, stat::gameversion},
     game::{
         consoleplayer, deathmatch, gameskill, netgame, playeringame, players, respawnmonsters,
         totalitems, totalkills, G_PlayerReborn,

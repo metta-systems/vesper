@@ -60,7 +60,7 @@ room/
     │   └── vesper/          Placeholder `Platform` impl for the Vesper component
     └── engine/              Ported engine, one module per C file (see doom.md)
         ├── mod.rs           Module list
-        ├── doomgeneric.rs   The `Platform` trait and engine entry point
+        ├── platform.rs      doomgeneric: the `Platform` trait and engine entry point
         ├── doom/            d_*: main loop, events, game state, startup
         ├── game.rs          g_game: game control, save/load, level changes
         ├── play/            p_*: world simulation
@@ -70,9 +70,11 @@ room/
         ├── wad/             w_*: WAD access
         ├── zone.rs          z_zone: zone memory allocator
         ├── misc/            m_*: menus, config, utilities
+        ├── math/            m_fixed, m_bbox, tables: fixed-point math
         ├── hud/, status/    hu_*, st_*: HUD and status bar
-        ├── automap.rs, intermission.rs, finale/, sound.rs
-        └── …                Unprefixed C files (info, tables, sounds, …)
+        ├── automap.rs, intermission/, finale/, sound/
+        ├── dehacked.rs      deh_str: DeHackEd string hook
+        └── c_ffi.rs, memio.rs  Not placed yet
 ```
 
 ## Prerequisites

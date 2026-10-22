@@ -17,7 +17,7 @@ static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 use std::{cell::Cell, mem::offset_of, path::PathBuf};
 
 // ---------------------------------------------------------------------------
-// headless:: TLS re-exports
+// Virtual clock and frame counter for the headless platform
 // ---------------------------------------------------------------------------
 
 thread_local! {
@@ -49,7 +49,7 @@ fn frame_count() -> u64 {
 
 struct Headless;
 
-impl room::engine::doomgeneric::Platform for Headless {
+impl room::engine::platform::Platform for Headless {
     fn draw_frame(&self, _frame: &[u32]) {
         note_frame();
     }
@@ -757,7 +757,7 @@ fn demo_playthrough() {
 
     // Initialize the Doom engine.
     unsafe {
-        room::engine::doomgeneric::doomgeneric_Create(&Headless, args);
+        room::engine::platform::doomgeneric_Create(&Headless, args);
     }
 
     // Sanity-check invariants that future agents often re-validate when

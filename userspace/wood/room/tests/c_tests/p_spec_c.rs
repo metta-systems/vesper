@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, interface::timer::TICRATE, misc::fixed::FRACUNIT};
+use room::engine::{c_ffi, interface::timer::TICRATE, math::fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // leveltime — current game tic within the level

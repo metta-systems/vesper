@@ -8,3 +8,5 @@ pub mod main_loop;
 pub mod mode;
 pub mod net;
 pub mod player;
+pub mod stat;
+pub mod strings;

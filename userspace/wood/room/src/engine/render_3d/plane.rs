@@ -24,9 +24,11 @@ use std::ptr;
 
 use crate::{
     engine::{
-        misc::fixed::{fixed_t, FixedDiv, FixedMul},
+        math::{
+            fixed::{fixed_t, FixedDiv, FixedMul},
+            tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
+        },
         render_3d,
-        tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
     },
     i_error,
 };

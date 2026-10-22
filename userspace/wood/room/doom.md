@@ -22,7 +22,30 @@ Source files: `prefix_file` becomes `file` in the `prefix/` module.
 | `wi_`    | World Intermission | Intermission screens, level statistics, map progression                        | `intermission::`  |
 | `in_`    | Intermission       | Intermission-related definitions; less common than `wi_`                       | `intermission::`  |
 | `f_`     | Finale             | End-of-episode and endgame sequences                                           | `finale::`        |
-| `tables` | Lookup tables      | Fixed-point trigonometry and angle lookup tables (no prefix)                   |                   |
+
+## Files placed by contents
+
+Files without a prefix, and the `m_` math files, go to the module their contents belong to.
+
+| File          | Contents                                          | Module                   |
+|---------------|---------------------------------------------------|--------------------------|
+| `doomgeneric` | `Platform` trait and engine entry points          | `platform`               |
+| `doomstat`    | Game-wide state globals                           | `doom::stat`             |
+| `dstrings`    | Quit messages                                     | `doom::strings`          |
+| `dummy`       | Network stubs `drone`, `net_client_connected`     | `doom::net`              |
+| `info`        | Thing and state tables                            | `play::info`             |
+| `statenum`    | `S_*` state indices (`info.h` in C)               | `play::info`             |
+| `sounds`      | Sound effect and music tables                     | `sound::info`            |
+| `mus2midi`    | MUS to MIDI conversion                            | `sound::mus2midi`        |
+| `tables`      | Fixed-point trigonometry and gamma tables         | `math::tables`           |
+| `m_fixed`     | Fixed-point arithmetic                            | `math::fixed`            |
+| `m_bbox`      | Bounding boxes                                    | `math::bbox`             |
+| `sha1`        | SHA-1 hashing                                     | `misc::sha1`             |
+| `deh_str`     | `DEH_String` hook                                 | `dehacked`               |
+| `doomkeys`    | Key codes                                         | `interface::keys`        |
+| `statdump`    | End-of-level statistics capture                   | `intermission::statdump` |
+| `memio`       | In-memory `FILE` streams                          | not placed yet           |
+| `c_ffi`       | Room-only: C-layout copies of shared types        | not placed yet           |
 
 ## Function prefixes
 

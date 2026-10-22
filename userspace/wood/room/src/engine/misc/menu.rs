@@ -26,8 +26,11 @@ use crate::types::Boolean;
 use crate::{
     engine::{
         doom,
-        doom::{event::event_t, player::M_Menu_SetPlayerMessage},
-        doomstat::{gamemission, gamemode, gameversion},
+        doom::{
+            event::event_t,
+            player::M_Menu_SetPlayerMessage,
+            stat::{gamemission, gamemode, gameversion},
+        },
     },
     i_error,
 };
@@ -219,8 +222,11 @@ fn clamp_to_buffer(mut text: String, size: usize) -> String {
 
 use crate::engine::{
     automap::automapactive,
-    doom::{main::devparm, main_loop::gametic},
-    dstrings::{doom1_endmsg, doom2_endmsg},
+    doom::{
+        main::devparm,
+        main_loop::gametic,
+        strings::{doom1_endmsg, doom2_endmsg},
+    },
     game::{
         demoplayback, gamestate, netgame, testcontrols, usergame, G_DeferedInitNew, G_LoadGame,
         G_SaveGame, G_ScreenShot,
@@ -236,8 +242,7 @@ use crate::engine::{
     play::saveg::P_SaveGameFile,
     render_2d::{patch_t, V_DrawPatchDirect},
     render_3d::main::R_SetViewSize,
-    sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
-    sounds::Sfx,
+    sound::{info::Sfx, S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
     wad::W_CacheLumpName,
 };
 

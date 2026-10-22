@@ -8,7 +8,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::misc::fixed::fixed_t;
+use crate::engine::math::fixed::fixed_t;
 
 /// Indices into a 4-element bounding-box array, matching `m_bbox.h`.
 pub struct BBox;

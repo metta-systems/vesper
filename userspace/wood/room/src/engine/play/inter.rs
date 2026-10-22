@@ -7,23 +7,26 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::sounds::Sfx;
+use crate::engine::sound::info::Sfx;
 
 use crate::{
     engine::{
-        deh_str::DEH_String,
+        dehacked::DEH_String,
         doom::{
             items::weaponinfo,
             player::{consoleplayer, players, PlayerMessage, PlayerT, CF_GODMODE},
+            stat::{gamemode, gameversion},
         },
-        doomstat::{gamemode, gameversion},
-        info::{self, *},
-        misc::{
+        math::{
             fixed::{FixedMul, FRACUNIT},
-            random::P_Random,
+            tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
         },
-        play::{pspr::P_DropWeapon, telept::mobj_t},
-        tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
+        misc::random::P_Random,
+        play::{
+            info::{self, *},
+            pspr::P_DropWeapon,
+            telept::mobj_t,
+        },
     },
     i_error,
 };

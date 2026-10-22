@@ -22,7 +22,7 @@ use crate::engine::{
         player::TiccmdT,
     },
     interface::timer::TICRATE,
-    misc::fixed::FRACUNIT,
+    math::fixed::FRACUNIT,
 };
 
 /// Maximum number of players in a multiplayer session.
@@ -159,7 +159,7 @@ static mut FRAMESKIP: [i32; 4] = [0; 4];
 static mut OLDNETTICS: i32 = 0;
 
 use crate::engine::{
-    dummy::{drone, net_client_connected},
+    doom::net::{drone, net_client_connected},
     interface::{
         system::I_AtExit,
         timer::{I_GetTime, I_GetTimeMS, I_Sleep},

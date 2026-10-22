@@ -20,7 +20,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::sounds::Sfx,
+    crate::engine::sound::info::Sfx,
     std::{ffi::c_void, ptr},
 };
 
@@ -28,16 +28,16 @@ use crate::{
     engine::{
         c_ffi::{line_t, mobj_t, sector_t, side_t, LinedefFlag, FLOORSPEED},
         doom::player::{PlayerT, CF_GODMODE},
-        info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
         interface::timer::TICRATE,
+        math::fixed::FRACUNIT,
         misc::{
             argv::{argument, M_CheckParmWithArgs},
-            fixed::FRACUNIT,
             random::P_Random,
             M_StrToInt,
         },
         play::{
             floor::floormove_t,
+            info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
             setup::{lines, numlines, numsectors, sectors, sides},
             switch::{buttonlist, MAXBUTTONS},
             tick::{leveltime, P_AddThinker},
@@ -285,7 +285,7 @@ pub static mut levelTimeCount: i32 = 0;
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    deh_str::DEH_String,
+    dehacked::DEH_String,
     game::{deathmatch, timelimit, totalsecret, G_ExitLevel, G_SecretExitLevel},
     play::{
         ceilng::{EV_CeilingCrushStop, EV_DoCeiling},

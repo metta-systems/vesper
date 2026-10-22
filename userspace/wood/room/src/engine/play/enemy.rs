@@ -17,7 +17,7 @@
 
 use std::ffi::c_void;
 
-use crate::{engine::sounds::Sfx, types::Boolean};
+use crate::{engine::sound::info::Sfx, types::Boolean};
 /// Binary-angle measurement type (`u32`); a full circle is `2^32` units.
 type angle_t = u32;
 /// State index type mirroring C `statenum_t`; indexes the `states` table in `info.rs`.
@@ -43,21 +43,23 @@ use crate::{
         doom::{
             main_loop::gametic,
             player::{players, PlayerT, PspdefT, MAXPLAYERS},
+            stat::{gamemode, gameversion},
         },
-        doomstat::{gamemode, gameversion},
-        info::{
-            mobjinfo, MobjInfo, State, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED,
-            MF_JUSTHIT, MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MT_ARACHPLAZ, MT_BABY,
-            MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG, MT_FATSHOT, MT_FATSO, MT_FIRE,
-            MT_HEAD, MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET, MT_SERGEANT, MT_SHADOWS, MT_SKULL,
-            MT_SMOKE, MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER, MT_TRACER, MT_TROOP, MT_TROOPSHOT,
-            MT_UNDEAD, MT_VILE, S_BRAINEXPLODE1, S_NULL, S_VILE_HEAL1,
-        },
-        misc::{
+        math::{
             fixed::{fixed_t, FixedMul, FRACUNIT},
-            random::P_Random,
+            tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
         },
+        misc::random::P_Random,
         play::{
+            info::{
+                mobjinfo, MobjInfo, State, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT,
+                MF_JUSTATTACKED, MF_JUSTHIT, MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID,
+                MT_ARACHPLAZ, MT_BABY, MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG,
+                MT_FATSHOT, MT_FATSO, MT_FIRE, MT_HEAD, MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET,
+                MT_SERGEANT, MT_SHADOWS, MT_SKULL, MT_SMOKE, MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER,
+                MT_TRACER, MT_TROOP, MT_TROOPSHOT, MT_UNDEAD, MT_VILE, S_BRAINEXPLODE1, S_NULL,
+                S_VILE_HEAL1,
+            },
             inter::P_DamageMobj,
             map::{
                 floatok, numspechit, spechit, tmfloorz, P_AimLineAttack, P_CheckPosition,
@@ -76,7 +78,6 @@ use crate::{
             switch::P_UseSpecialLine,
             telept::mobj_t,
         },
-        tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
     },
     i_error,
 };
@@ -84,10 +85,10 @@ use crate::{
 /// that expect that specific type definition.
 type CffiMobj = crate::engine::c_ffi::mobj_t;
 use crate::engine::{
+    math::tables::{finecosine, finesine},
     play::tick::{thinker_t, thinkercap},
     render_3d::main::{validcount, R_PointToAngle2},
     sound::S_StartSound,
-    tables::{finecosine, finesine},
 };
 
 /// Maximum melee attack range in fixed-point units (64 map units); from `p_local.h`.

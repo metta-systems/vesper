@@ -7,11 +7,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sounds::Sfx, std::ffi::c_void};
+use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::engine::{
     c_ffi as cffi,
-    misc::fixed::{fixed_t, FRACUNIT},
+    math::fixed::{fixed_t, FRACUNIT},
     play::{
         floor::T_MovePlane,
         lights::{line_t, sector_t},

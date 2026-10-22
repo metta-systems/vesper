@@ -39,11 +39,11 @@ use crate::engine::{
         players, PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS,
         NUMPOWERS, NUMPSPRITES, NUMWEAPONS,
     },
-    info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
     play::{
         ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
         doors::{vldoor_t, T_VerticalDoor},
         floor::{floormove_t, side_t, T_MoveFloor},
+        info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
         lights::{
             glow_t, lightflash_t, line_t, sector_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash,
         },

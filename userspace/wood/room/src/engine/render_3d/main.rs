@@ -12,13 +12,14 @@ use crate::{
     engine::{
         doom::player::PlayerT,
         interface::video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
-        misc::{
+        math::{
+            self,
             bbox::BBox,
             fixed::{angle_t, fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+            tables::{SlopeDiv, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
         },
         play::telept::mobj_t,
         render_3d::bsp::{node_t, seg_t, subsector_t},
-        tables::{self, SlopeDiv, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
     },
     types::Boolean,
 };
@@ -195,7 +196,8 @@ pub static mut clipangle: angle_t = 0;
 // r_bsp.rs originally declared this as [i32; FINEANGLES/2 + 1] to guard
 // against a potential off-by-one in the original C code. Keep the same
 // size so the two modules agree.
-pub static mut viewangletox: [i32; tables::FINEANGLES / 2 + 1] = [0; tables::FINEANGLES / 2 + 1];
+pub static mut viewangletox: [i32; math::tables::FINEANGLES / 2 + 1] =
+    [0; math::tables::FINEANGLES / 2 + 1];
 
 /// Maps screen X column to the smallest view angle that projects onto that
 /// column.
@@ -458,20 +460,20 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
             // dy >= 0
             if dx > dy {
                 // octant 0
-                tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
+                math::tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 1
-                ANG90 - 1 - tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
+                ANG90 - 1 - math::tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         } else {
             // dy < 0
             dy = -dy;
             if dx > dy {
                 // octant 8
-                0u32.wrapping_sub(tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize])
+                0u32.wrapping_sub(math::tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize])
             } else {
                 // octant 7
-                ANG270 + tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
+                ANG270 + math::tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         }
     } else {
@@ -481,20 +483,20 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
             // dy >= 0
             if dx > dy {
                 // octant 3
-                ANG180 - 1 - tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
+                ANG180 - 1 - math::tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 2
-                ANG90 + tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
+                ANG90 + math::tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         } else {
             // dy < 0
             dy = -dy;
             if dx > dy {
                 // octant 4
-                ANG180 + tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
+                ANG180 + math::tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 5
-                ANG270 - 1 - tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
+                ANG270 - 1 - math::tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         }
     }
@@ -560,9 +562,10 @@ pub unsafe fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
 
     let frac = if dx != 0 { FixedDiv(dy, dx) } else { 0 };
 
-    let angle = (tables::tantoangle[(frac as u32 >> DBITS) as usize] + ANG90) >> ANGLETOFINESHIFT;
+    let angle =
+        (math::tables::tantoangle[(frac as u32 >> DBITS) as usize] + ANG90) >> ANGLETOFINESHIFT;
 
-    FixedDiv(dx, tables::finesine[angle as usize])
+    FixedDiv(dx, math::tables::finesine[angle as usize])
 }
 
 // ---------------------------------------------------------------------------
@@ -573,7 +576,7 @@ pub unsafe fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
 ///
 /// In the original Doom source, `R_InitPointToAngle` built the `tantoangle`
 /// lookup table at runtime. The table is now precomputed in `tables.c` (and
-/// `tables.rs`), so this function has no work to do.
+/// [`math::tables`]), so this function has no work to do.
 pub fn R_InitPointToAngle() {
     // UNUSED - now getting from tables.c
 }
@@ -603,8 +606,8 @@ pub unsafe fn R_ScaleFromGlobalAngle(visangle: angle_t) -> fixed_t {
     let anglea = ANG90.wrapping_add(visangle.wrapping_sub(viewangle));
     let angleb = ANG90.wrapping_add(visangle.wrapping_sub(rw_normalangle));
 
-    let sinea = tables::finesine[(anglea >> ANGLETOFINESHIFT) as usize];
-    let sineb = tables::finesine[(angleb >> ANGLETOFINESHIFT) as usize];
+    let sinea = math::tables::finesine[(anglea >> ANGLETOFINESHIFT) as usize];
+    let sineb = math::tables::finesine[(angleb >> ANGLETOFINESHIFT) as usize];
     let num = FixedMul(projection, sineb) << detailshift;
     let den = FixedMul(rw_distance, sinea);
 
@@ -625,7 +628,7 @@ pub unsafe fn R_ScaleFromGlobalAngle(visangle: angle_t) -> fixed_t {
 ///
 /// In the original source, `R_InitTables` computed `finetangent` and
 /// `finesine` at runtime. Both tables are now precomputed in `tables.c`
-/// (and `tables.rs`).
+/// (and [`math::tables`]).
 pub fn R_InitTables() {
     // UNUSED: now getting from tables.c
 }
@@ -655,17 +658,17 @@ pub unsafe fn R_InitTextureMapping() {
     // Calc focallength so FIELDOFVIEW angles covers SCREENWIDTH.
     let focallength = FixedDiv(
         centerxfrac,
-        tables::finetangent[tables::FINEANGLES / 4 + FIELDOFVIEW as usize / 2],
+        math::tables::finetangent[math::tables::FINEANGLES / 4 + FIELDOFVIEW as usize / 2],
     );
 
-    for i in 0..tables::FINEANGLES / 2 {
+    for i in 0..math::tables::FINEANGLES / 2 {
         let t: i32;
-        if tables::finetangent[i] > FRACUNIT * 2 {
+        if math::tables::finetangent[i] > FRACUNIT * 2 {
             t = -1;
-        } else if tables::finetangent[i] < -FRACUNIT * 2 {
+        } else if math::tables::finetangent[i] < -FRACUNIT * 2 {
             t = viewwidth + 1;
         } else {
-            let mut tt = FixedMul(tables::finetangent[i], focallength);
+            let mut tt = FixedMul(math::tables::finetangent[i], focallength);
             tt = (centerxfrac - tt + FRACUNIT - 1) >> FRACBITS;
             if tt < -1 {
                 t = -1;
@@ -689,8 +692,8 @@ pub unsafe fn R_InitTextureMapping() {
     }
 
     // Take out the fencepost cases from viewangletox.
-    for i in 0..tables::FINEANGLES / 2 {
-        let mut t = FixedMul(tables::finetangent[i], focallength);
+    for i in 0..math::tables::FINEANGLES / 2 {
+        let mut t = FixedMul(math::tables::finetangent[i], focallength);
         t = centerx - t;
 
         if viewangletox[i] == -1 {
@@ -840,7 +843,7 @@ pub unsafe fn R_ExecuteSetViewSize() {
     }
 
     for i in 0..viewwidth as usize {
-        let cosadj = (*tables::finecosine
+        let cosadj = (*math::tables::finecosine
             .0
             .add((xtoviewangle[i] >> ANGLETOFINESHIFT) as usize))
         .wrapping_abs();
@@ -968,8 +971,8 @@ pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
 
     viewz = (*player).viewz;
 
-    viewsin = tables::finesine[(viewangle >> ANGLETOFINESHIFT) as usize];
-    viewcos = *tables::finecosine
+    viewsin = math::tables::finesine[(viewangle >> ANGLETOFINESHIFT) as usize];
+    viewcos = *math::tables::finecosine
         .0
         .add((viewangle >> ANGLETOFINESHIFT) as usize);
 
@@ -1033,7 +1036,7 @@ pub unsafe fn R_RenderPlayerView(player: *mut PlayerT) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::engine::misc::fixed::FixedDiv, std::sync::Mutex};
+    use {super::*, crate::engine::math::fixed::FixedDiv, std::sync::Mutex};
 
     /// Process-wide guard serialising tests that read or write the renderer
     /// globals (`viewx`, `viewy`, `viewangle`, ...). `cargo test` runs tests

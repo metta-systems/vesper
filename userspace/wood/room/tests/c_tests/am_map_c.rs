@@ -15,7 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{automap, misc::fixed::FRACUNIT};
+use room::engine::{automap, math::fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // automapactive — whether the automap is currently open

@@ -16,15 +16,20 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
+pub mod info;
+pub mod mus2midi;
+
 use std::ffi::c_void;
 
 use crate::types::Boolean;
 
 use crate::engine::{
     doom,
-    misc::fixed::{FRACBITS, FRACUNIT},
-    sounds::{Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX},
-    tables::{finesine, ANGLETOFINESHIFT},
+    math::{
+        fixed::{FRACBITS, FRACUNIT},
+        tables::{finesine, ANGLETOFINESHIFT},
+    },
+    sound::info::{Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX},
     zone::PU_STATIC,
 };
 
@@ -105,7 +110,7 @@ pub struct MobjStub {
 }
 
 // doomstat.rs
-use crate::engine::doomstat::gamemode;
+use crate::engine::doom::stat::gamemode;
 
 // g_game.rs
 use crate::engine::game::{consoleplayer, gameepisode, gamemap, players};
@@ -130,7 +135,7 @@ use crate::engine::zone::Z_Malloc;
 use crate::engine::render_3d::main::R_PointToAngle2;
 
 // m_fixed.rs
-use crate::engine::misc::fixed::FixedMul;
+use crate::engine::math::fixed::FixedMul;
 
 // w_wad.rs
 use crate::engine::wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReleaseLumpNum};

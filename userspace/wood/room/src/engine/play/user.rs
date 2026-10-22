@@ -10,12 +10,13 @@ use crate::engine::{
     doom::{
         mode::{commercial, shareware},
         player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM},
+        stat::gamemode,
     },
-    doomstat::gamemode,
-    info::*,
-    misc::fixed::{fixed_t, FixedMul, FRACUNIT},
-    play::{telept::mobj_t, tick::leveltime},
-    tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
+    math::{
+        fixed::{fixed_t, FixedMul, FRACUNIT},
+        tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
+    },
+    play::{info::*, telept::mobj_t, tick::leveltime},
 };
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
@@ -491,7 +492,7 @@ mod tests {
                 mode::{commercial, registered, retail, shareware},
                 player::{PspdefT, NUMPOWERS},
             },
-            tables::ANG270,
+            math::tables::ANG270,
         },
         std::sync::Mutex,
     };

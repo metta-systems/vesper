@@ -15,8 +15,8 @@ use crate::engine::{
         divline_t, intercept_t, intercept_t_d, line_t, mobj_t, sector_t, subsector_t,
         MAPBLOCKSHIFT, MAPBLOCKSIZE, MAPBTOFRAC,
     },
-    info::*,
-    misc::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+    math::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+    play::info::*,
 };
 
 /// The original Doom intercepts array capacity (128 entries).

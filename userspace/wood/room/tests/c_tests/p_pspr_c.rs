@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, misc::fixed::FRACUNIT};
+use room::engine::{c_ffi, math::fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // Weapon speed constants

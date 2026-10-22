@@ -1,7 +1,7 @@
 //! The platform the engine runs on.
 //!
 //! The engine (`room::engine`) reaches the platform only through the
-//! `room::engine::doomgeneric::Platform` trait: doomgeneric's six `DG_*`
+//! `room::engine::platform::Platform` trait: doomgeneric's six `DG_*`
 //! callbacks (init, draw a frame, sleep, the clock, keys, the window title)
 //! plus this port's sound and music methods, which `room::engine::interface::sound`
 //! calls. Each platform module implements it and has a `run()` that hands

@@ -1,4 +1,4 @@
-Engine code (room::engine, room::headless, room::types) that needs more than
+Engine code (room::engine, room::types) that needs more than
 core + alloc, i.e. what stops the engine building for Vesper.
 
 Scope: everything outside src/platform/, skipping #[cfg(test)] code.
@@ -42,7 +42,7 @@ Console output (print!, println!, eprintln!, std::io::stdout):
   src/engine/wad/main.rs: W_ParseCommandLine: println!
   src/engine/wad/mod.rs: W_AddFile: println!
   src/engine/wad/mod.rs: W_ReadLump: eprintln!
-  src/engine/intermission.rs: WI_drawOnLnode: print!
+  src/engine/intermission/mod.rs: WI_drawOnLnode: print!
   src/engine/zone.rs: Z_FreeTags, Z_CheckHeap, Z_CheckHeapQuiet,
     Z_CheckHeapAfter: eprintln!
   src/engine/zone.rs: Z_DumpHeap: println!
@@ -72,10 +72,6 @@ Processes:
   src/engine/interface/system.rs: ZenityErrorBox: std::process::Command
   src/engine/interface/system.rs: I_Error: std::process::exit
   src/engine/doom/main.rs: D_Endoom: std::process::exit
-
-Thread-local storage:
-  src/headless.rs: VIRTUAL_MS, FRAMES, TITLE (thread_local!), used by
-    bump_virtual_ms, virtual_ms, note_frame, frame_count, note_title, title
 
 Only spelled through std (the same items exist in core or alloc; a path
 change is enough):

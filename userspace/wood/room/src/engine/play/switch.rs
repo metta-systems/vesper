@@ -8,7 +8,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::{c_ffi::LinedefFlag, sounds::Sfx},
+    crate::engine::{c_ffi::LinedefFlag, sound::info::Sfx},
     std::ffi::c_void,
 };
 
@@ -431,7 +431,7 @@ pub static mut buttonlist: [button_t; MAXBUTTONS] = [button_t {
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    doomstat::gamemode,
+    doom::stat::gamemode,
     game::{G_ExitLevel, G_SecretExitLevel},
     play::{
         doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor},

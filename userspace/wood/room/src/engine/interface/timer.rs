@@ -9,7 +9,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use crate::engine::doomgeneric::platform;
+use crate::engine::platform::platform;
 
 /// Game tick rate in Hz. Doom updates state at 35 tics per second; all
 /// gameplay code expresses durations in multiples of this constant.
@@ -22,7 +22,7 @@ pub const TICRATE: i32 = 35;
 static mut BASETIME: u32 = 0;
 
 /// Return the host's raw millisecond tick counter (not relative to game
-/// start). Thin wrapper around [`Platform::ticks_ms`](crate::engine::doomgeneric::Platform::ticks_ms).
+/// start). Thin wrapper around [`Platform::ticks_ms`](crate::engine::platform::Platform::ticks_ms).
 ///
 /// Called from a few places that need wall-clock deltas independent of the
 /// game tic clock.
@@ -65,7 +65,7 @@ pub fn I_GetTimeMS() -> i32 {
 }
 
 /// Sleep for approximately `ms` milliseconds by delegating to
-/// [`Platform::sleep_ms`](crate::engine::doomgeneric::Platform::sleep_ms). The actual
+/// [`Platform::sleep_ms`](crate::engine::platform::Platform::sleep_ms). The actual
 /// resolution depends on the backend.
 pub fn I_Sleep(ms: i32) {
     platform().sleep_ms(ms as u32)

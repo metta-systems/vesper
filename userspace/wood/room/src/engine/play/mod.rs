@@ -5,6 +5,7 @@ pub mod ceilng;
 pub mod doors;
 pub mod enemy;
 pub mod floor;
+pub mod info;
 pub mod inter;
 pub mod lights;
 pub mod map;

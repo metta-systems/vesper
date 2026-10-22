@@ -30,7 +30,7 @@ use std::{
 
 use winit::window::Window;
 
-use room::engine::doomgeneric::Platform;
+use room::engine::platform::Platform;
 
 use gpu::GpuState;
 

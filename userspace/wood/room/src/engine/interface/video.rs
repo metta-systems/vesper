@@ -21,8 +21,8 @@ use {
     crate::{
         engine::{
             interface::input::{I_GetEvent, I_InitInput},
+            math::tables::gammatable,
             misc::argv::{argument, M_CheckParmWithArgs},
-            tables::gammatable,
             zone::{Z_Free, Z_Malloc},
         },
         i_error,
@@ -253,8 +253,8 @@ unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: i32) {
 /// other I_* graphics function.
 pub unsafe fn I_InitGraphics() {
     s_Fb = mem::zeroed::<FB_ScreenInfo>();
-    s_Fb.xres = crate::engine::doomgeneric::DOOMGENERIC_RESX as u32;
-    s_Fb.yres = crate::engine::doomgeneric::DOOMGENERIC_RESY as u32;
+    s_Fb.xres = crate::engine::platform::DOOMGENERIC_RESX as u32;
+    s_Fb.yres = crate::engine::platform::DOOMGENERIC_RESY as u32;
     s_Fb.xres_virtual = s_Fb.xres;
     s_Fb.yres_virtual = s_Fb.yres;
 
@@ -397,7 +397,7 @@ pub unsafe fn I_FinishUpdate() {
         .max(0) as u32;
 
     let mut line_in = I_VideoBuffer;
-    let screen_ptr = crate::engine::doomgeneric::DG_ScreenBuffer as *mut u8;
+    let screen_ptr = crate::engine::platform::DG_ScreenBuffer as *mut u8;
     let mut line_out = screen_ptr.add(y_offset as usize + x_offset as usize);
 
     for _ in 0..SCREENHEIGHT as usize {
@@ -415,10 +415,10 @@ pub unsafe fn I_FinishUpdate() {
     }
 
     let frame = std::slice::from_raw_parts(
-        crate::engine::doomgeneric::DG_ScreenBuffer,
-        crate::engine::doomgeneric::DOOMGENERIC_PIXELS,
+        crate::engine::platform::DG_ScreenBuffer,
+        crate::engine::platform::DOOMGENERIC_PIXELS,
     );
-    crate::engine::doomgeneric::platform().draw_frame(frame);
+    crate::engine::platform::platform().draw_frame(frame);
 }
 
 /// Copy the entire palette-indexed screen buffer into `scr`. Used by
@@ -511,10 +511,10 @@ pub unsafe fn I_BeginRead() {}
 /// Trivially safe.
 pub unsafe fn I_EndRead() {}
 
-/// Set the host-window title via [`Platform::set_window_title`](crate::engine::doomgeneric::Platform::set_window_title).
+/// Set the host-window title via [`Platform::set_window_title`](crate::engine::platform::Platform::set_window_title).
 /// Mirrors `I_SetWindowTitle` from `i_video.c`.
 pub fn I_SetWindowTitle(title: &str) {
-    crate::engine::doomgeneric::platform().set_window_title(title);
+    crate::engine::platform::platform().set_window_title(title);
 }
 
 /// Parse video-related command-line switches. No-op in this port;

@@ -25,7 +25,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use room::engine::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
+use room::engine::platform::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 
 use super::{
     gpu::GpuState, init_start_time, keys::to_doom_key, Host, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW,
@@ -163,7 +163,7 @@ impl ApplicationHandler for App {
             // SAFETY: guarded by `doom_initialized`, so this runs once.
             let args = std::mem::take(&mut self.args);
             unsafe {
-                room::engine::doomgeneric::doomgeneric_Create(&Host, args);
+                room::engine::platform::doomgeneric_Create(&Host, args);
             }
             self.doom_initialized = true;
         } else {

@@ -6,7 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sounds::Sfx, std::ffi::c_void};
+use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::engine::{
     c_ffi::{LOWERSPEED, RAISESPEED, WEAPONBOTTOM, WEAPONTOP},
@@ -14,16 +14,19 @@ use crate::engine::{
         items::weaponinfo,
         mode::{commercial, shareware},
         player::{PlayerT, PspdefT, NUMAMMO, NUMPSPRITES, NUMWEAPONS},
+        stat::gamemode,
     },
-    doomstat::gamemode,
-    info::{self, *},
-    misc::{
+    math::{
         fixed::{fixed_t, FixedMul, FRACBITS, FRACUNIT},
-        random::P_Random,
+        tables::{finecosine, finesine, FINEANGLES, FINEMASK},
     },
-    play::{telept::mobj_t, tick::leveltime},
+    misc::random::P_Random,
+    play::{
+        info::{self, *},
+        telept::mobj_t,
+        tick::leveltime,
+    },
     sound::S_StartSound,
-    tables::{finecosine, finesine, FINEANGLES, FINEMASK},
 };
 
 // Weapon type constants (from doomdef.h)

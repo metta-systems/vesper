@@ -29,9 +29,11 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    misc::fixed::{angle_t, fixed_t, FixedMul, FRACBITS},
+    math::{
+        fixed::{angle_t, fixed_t, FixedMul, FRACBITS},
+        tables::{self, ANG180, ANG90, ANGLETOFINESHIFT},
+    },
     render_3d::bsp::drawseg_t,
-    tables::{self, ANG180, ANG90, ANGLETOFINESHIFT},
 };
 
 // ---------------------------------------------------------------------------
