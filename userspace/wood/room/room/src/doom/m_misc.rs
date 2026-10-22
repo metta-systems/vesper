@@ -62,8 +62,6 @@ extern "C" {
     fn free(ptr: *mut c_void);
     /// libc `strdup`: allocate a malloc'd copy of a null-terminated string.
     fn strdup(s: *const c_char) -> *mut c_char;
-    /// libc per-thread errno location, used by [`errno`].
-    fn __errno_location() -> *mut c_int;
     /// libc `mkdir`: create `path` with the given permission bits.
     fn mkdir(path: *const c_char, mode: u32) -> c_int;
     /// libc `toupper`: convert an ASCII character to upper case.
@@ -96,13 +94,18 @@ use crate::doom::z_zone::Z_Malloc;
 
 /// Returns the current value of libc `errno` for the calling thread.
 ///
+/// Read through `std` rather than glibc's `__errno_location`, which macOS
+/// libc names `__error`.
+///
 /// # Safety
 ///
 /// Must be called from a context where libc has been initialised. The
 /// caller must not retain the returned `int` across operations that may
 /// reset `errno`.
 unsafe fn errno() -> c_int {
-    *__errno_location()
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(0)
 }
 
 /// Create the directory at `path` with permissions `0o755`.
