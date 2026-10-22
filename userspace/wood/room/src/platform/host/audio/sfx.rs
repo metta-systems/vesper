@@ -3,7 +3,7 @@
 //! Implements the per-channel audio state used by Doom's eight logical SFX
 //! channels and the helpers that decode raw DMX `DSxxxxx` lumps into
 //! float-PCM samples consumable by `rodio`.  The channel and pan-state types
-//! here are owned by [`crate::audio::AudioState`] (see the parent module),
+//! here are owned by [`super::AudioState`] (see the parent module),
 //! which drives the high-level start/stop/update API.
 //!
 //! ## Format quick-reference (Doom DMX SFX lump)
@@ -173,7 +173,7 @@ impl<S: Source> Source for PannedSource<S> {
 
 /// State for one of Doom's eight logical SFX channels.
 ///
-/// Held in an array by [`crate::audio::AudioState`].  The optional `player` is
+/// Held in an array by [`super::AudioState`].  The optional `player` is
 /// the live `rodio::Player` currently playing on this channel (dropping it
 /// stops playback immediately); the shared `pan` outlives individual players
 /// so volume/separation updates between sounds remain coherent.
@@ -182,7 +182,7 @@ pub(crate) struct ChannelState {
     /// the player halts playback.
     pub(crate) player: Option<Player>,
     /// Shared pan state cloned into every [`PannedSource`] on this channel
-    /// so [`crate::audio::AudioState::update_sound_params`] can adjust
+    /// so [`super::AudioState::update_sound_params`] can adjust
     /// gains without restarting playback.
     pub(crate) pan: Arc<PanState>,
 }

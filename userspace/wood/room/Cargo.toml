@@ -21,6 +21,9 @@ path = "src/main.rs"
 [features]
 dhat-heap = ["dep:dhat"]
 rangecheck = []
+# Build the binary with the placeholder Vesper platform (src/platform/vesper)
+# instead of the winit/wgpu/rodio host platform, to compile-check it on a host.
+platform-vesper = []
 
 [dependencies]
 # Cross-platform window creation and event handling.
@@ -52,3 +55,7 @@ libc = "0.2"
 
 # Optional heap profiler (use with --features dhat-heap).
 dhat = { version = "0.3", optional = true }
+
+[lints.rust]
+# Vesper's custom target sets `target_os = "vesper"` (src/platform/mod.rs).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("vesper"))'] }

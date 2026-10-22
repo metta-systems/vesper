@@ -40,28 +40,29 @@ Sound effects and music are implemented via [rodio](https://github.com/RustAudio
 
 ```
 room/
-├── Cargo.toml               Workspace manifest
-├── vendor/
-│   └── doomgeneric/         Vendored C source from ozkl/doomgeneric
-├── doomgeneric-sys/         FFI + C compilation crate
-│   ├── build.rs             Compiles remaining C modules via the `cc` crate
-│   └── src/lib.rs           Declarations for C entry points (doomgeneric_Create, etc.)
-└── room/                    Rust binary crate
-    └── src/
-        ├── main.rs          winit ApplicationHandler and entry point
-        ├── gpu.rs           wgpu renderer (texture upload + fullscreen blit)
-        ├── platform/
-        │   ├── mod.rs       DG_* C-callable platform callbacks
-        │   └── keys.rs      winit KeyCode → Doom key byte mapping
-        └── doom/
-            ├── mod.rs       Rust reimplementations of ported engine modules
-            ├── c_ffi.rs     FFI declarations for still-C modules (used by tests)
-            ├── c_tests/     Regression tests comparing C vs Rust behaviour
-            ├── d_main.rs    Ported main entry point and game init
-            ├── r_draw.rs    Ported renderer core
-            ├── p_setup.rs   Ported map loader
-            ├── z_zone.rs    Ported zone memory allocator
-            └── …            One `.rs` module per original `.c` file
+├── Cargo.toml               Crate manifest
+└── src/
+    ├── main.rs              Entry point: runs the selected platform
+    ├── lib.rs               The engine library
+    ├── platform/
+    │   ├── mod.rs           The DG_* platform interface, platform selection
+    │   ├── std.txt          Engine functions that still need std or libc
+    │   ├── host/            winit + wgpu + rodio
+    │   │   ├── mod.rs       DG_* video, input and timer callbacks
+    │   │   ├── app.rs       winit ApplicationHandler, run()
+    │   │   ├── gpu.rs       wgpu renderer (texture upload + fullscreen blit)
+    │   │   ├── keys.rs      winit KeyCode → Doom key byte mapping
+    │   │   └── audio/       DG_Sound* / DG_Music* hooks on rodio + rustysynth
+    │   └── vesper/          Placeholder DG_* functions for the Vesper component
+    └── doom/
+        ├── mod.rs           Rust reimplementations of ported engine modules
+        ├── c_ffi.rs         FFI declarations for still-C modules (used by tests)
+        ├── c_tests/         Regression tests of the ported modules
+        ├── d_main.rs        Ported main entry point and game init
+        ├── r_draw.rs        Ported renderer core
+        ├── p_setup.rs       Ported map loader
+        ├── z_zone.rs        Ported zone memory allocator
+        └── …                One `.rs` module per original `.c` file
 ```
 
 ## Prerequisites

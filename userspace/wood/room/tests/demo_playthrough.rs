@@ -49,8 +49,62 @@ fn frame_count() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// DG_* stubs (C-callable, replaces room/src/platform/mod.rs)
+// DG_* stubs (C-callable, replace the platform in room/src/platform/);
+// the playthrough runs silent
 // ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn DG_SoundInit() -> c_int {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn DG_SoundShutdown() {}
+
+#[no_mangle]
+pub extern "C" fn DG_SoundStart(
+    _data: *const u8,
+    _len: usize,
+    _channel: c_int,
+    _vol: c_int,
+    _sep: c_int,
+) -> c_int {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn DG_SoundStop(_channel: c_int) {}
+
+#[no_mangle]
+pub extern "C" fn DG_SoundUpdate(_channel: c_int, _vol: c_int, _sep: c_int) {}
+
+#[no_mangle]
+pub extern "C" fn DG_SoundIsPlaying(_channel: c_int) -> c_int {
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicInit() {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicPlay(_midi: *const u8, _len: usize, _looping: c_int) {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicStop() {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicPause() {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicResume() {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicSetVolume(_volume: c_int) {}
+
+#[no_mangle]
+pub extern "C" fn DG_MusicIsPlaying() -> c_int {
+    0
+}
 
 #[no_mangle]
 pub extern "C" fn DG_Init() {}

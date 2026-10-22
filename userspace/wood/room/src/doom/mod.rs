@@ -56,6 +56,7 @@ pub mod m_menu;
 pub mod m_misc;
 pub mod m_random;
 pub mod memio;
+pub mod mus2midi;
 pub mod p_ceilng;
 pub mod p_doors;
 pub mod p_enemy;

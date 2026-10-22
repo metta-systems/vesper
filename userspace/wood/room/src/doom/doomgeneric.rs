@@ -79,7 +79,7 @@ extern "C" {
 
     /// Platform-provided initialisation callback.
     ///
-    /// The platform implementation (e.g., `gpu.rs` or `headless.rs`) must
+    /// The platform (`src/platform/host` or `src/platform/vesper`) must
     /// define this symbol.  Called once by [`doomgeneric_Create`] after the
     /// screen buffer is allocated; responsible for creating the window,
     /// setting up audio, etc.

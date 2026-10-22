@@ -3,17 +3,18 @@
 //! `room` is a Rust port of `chocolate-doom`/`doomgeneric`.  This file is the
 //! library crate root that re-exports the major subsystems:
 //!
-//! - `audio` (crate-private) - rodio-based sound and music backend that
-//!   replaces the SDL2 audio plumbing in `i_sound.c` / `i_oplmusic.c`.
-//! - [`doom`] - per-`.c`-file Rust ports living under `vendor/doomgeneric/`.
+//! - [`doom`] - per-`.c`-file Rust ports of `doomgeneric`. The engine
+//!   reaches the platform only through the `DG_*` functions: doomgeneric's
+//!   video, input and timer callbacks plus this port's `DG_Sound*` and
+//!   `DG_Music*` audio hooks. The `room` binary provides them in
+//!   `src/platform/`.
 //! - [`headless`] - thread-local frame/tick counters used by the testing and
 //!   benchmarking harnesses to run the engine without a window or audio device.
 //! - [`types`] - cross-cutting FFI-safe type aliases (currently just the
 //!   tri-state [`types::Boolean`] mirroring Doom's `unsigned int boolean`).
 //!
-//! The binary front-ends (the GPU/winit player in `src/main.rs`, the
-//! struct-size dumper in `src/bin/struct_sizes.rs`) and the test harness in
-//! `doom::c_tests` all consume this crate.
+//! The `room` binary (`src/main.rs`, with its platforms in `src/platform/`)
+//! and the test harness in `doom::c_tests` consume this crate.
 //!
 //! # Crate-wide lints
 //!
@@ -50,7 +51,6 @@
 // so converting to iterators would require from_raw_parts complexity.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
 
-pub(crate) mod audio;
 pub mod doom;
 pub mod headless;
 pub mod types;
