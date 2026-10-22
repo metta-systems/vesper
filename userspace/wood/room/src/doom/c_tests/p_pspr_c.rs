@@ -13,8 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::m_fixed::FRACUNIT;
+use crate::doom::{c_ffi, m_fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // Weapon speed constants
@@ -93,7 +92,7 @@ fn weapon_travel_range_is_96_fracunits() {
 #[test]
 fn swingx_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::swingx, 0, "swingx should be 0 before any tic");
+        assert_eq!({ c_ffi::swingx }, 0, "swingx should be 0 before any tic");
     }
 }
 
@@ -102,7 +101,7 @@ fn swingx_default_zero() {
 #[test]
 fn swingy_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::swingy, 0, "swingy should be 0 before any tic");
+        assert_eq!({ c_ffi::swingy }, 0, "swingy should be 0 before any tic");
     }
 }
 

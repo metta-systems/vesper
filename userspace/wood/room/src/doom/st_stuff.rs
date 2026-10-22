@@ -15,37 +15,41 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int};
-use std::ptr;
-
-use crate::c_write;
-use crate::doom::am_map::automapactive;
-use crate::doom::d_event::event_t;
-use crate::doom::d_items::weaponinfo;
-use crate::doom::d_mode;
-use crate::doom::d_player::{PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS};
-use crate::doom::doomstat::{gamemission, gamemode, gameversion};
-use crate::doom::g_game::G_DeferedInitNew;
-use crate::doom::g_game::{consoleplayer, deathmatch, gameskill, netgame, players};
-use crate::doom::i_timer::TICRATE;
-use crate::doom::i_video::I_SetPalette;
-use crate::doom::m_cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam};
-use crate::doom::m_random::M_Random;
-use crate::doom::p_inter::P_GivePower;
-use crate::doom::p_telept::mobj_t;
-use crate::doom::r_main::R_PointToAngle2;
-use crate::doom::s_sound::S_ChangeMusic;
-use crate::doom::st_lib::{
-    st_binicon_t, st_multicon_t, st_number_t, st_percent_t, STlib_init, STlib_initBinIcon,
-    STlib_initMultIcon, STlib_initNum, STlib_initPercent, STlib_updateBinIcon,
-    STlib_updateMultIcon, STlib_updateNum, STlib_updatePercent,
+use std::{
+    ffi::{c_char, c_int},
+    ptr,
 };
-use crate::doom::tables::{ANG180, ANG45};
-use crate::doom::v_video::patch_t;
-use crate::doom::v_video::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer};
-use crate::doom::w_wad::{W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName};
-use crate::doom::z_zone::{Z_Malloc, PU_CACHE, PU_STATIC};
-use crate::types::Boolean;
+
+use crate::{
+    c_write,
+    doom::{
+        am_map::automapactive,
+        d_event::event_t,
+        d_items::weaponinfo,
+        d_mode,
+        d_player::{PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
+        doomstat::{gamemission, gamemode, gameversion},
+        g_game::{consoleplayer, deathmatch, gameskill, netgame, players, G_DeferedInitNew},
+        i_timer::TICRATE,
+        i_video::I_SetPalette,
+        m_cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
+        m_random::M_Random,
+        p_inter::P_GivePower,
+        p_telept::mobj_t,
+        r_main::R_PointToAngle2,
+        s_sound::S_ChangeMusic,
+        st_lib::{
+            st_binicon_t, st_multicon_t, st_number_t, st_percent_t, STlib_init, STlib_initBinIcon,
+            STlib_initMultIcon, STlib_initNum, STlib_initPercent, STlib_updateBinIcon,
+            STlib_updateMultIcon, STlib_updateNum, STlib_updatePercent,
+        },
+        tables::{ANG180, ANG45},
+        v_video::{patch_t, V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
+        w_wad::{W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName},
+        z_zone::{Z_Malloc, PU_CACHE, PU_STATIC},
+    },
+    types::Boolean,
+};
 
 // ---------------------------------------------------------------------------
 // Constants

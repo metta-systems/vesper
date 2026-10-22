@@ -601,8 +601,7 @@ pub extern "C" fn HUlib_eraseIText(it: *mut hu_itext_t) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

@@ -8,14 +8,16 @@
 
 use std::ffi::c_int;
 
-use crate::doom::d_mode::{commercial, shareware};
-use crate::doom::d_player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM};
-use crate::doom::doomstat::gamemode;
-use crate::doom::info::*;
-use crate::doom::m_fixed::{fixed_t, FixedMul, FRACUNIT};
-use crate::doom::p_telept::mobj_t;
-use crate::doom::p_tick::leveltime;
-use crate::doom::tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES};
+use crate::doom::{
+    d_mode::{commercial, shareware},
+    d_player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM},
+    doomstat::gamemode,
+    info::*,
+    m_fixed::{fixed_t, FixedMul, FRACUNIT},
+    p_telept::mobj_t,
+    p_tick::leveltime,
+    tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
+};
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
 /// Matches `MAXBOB` in `p_user.c`.
@@ -120,11 +122,10 @@ const INVERSECOLORMAP: c_int = 32;
 #[no_mangle]
 pub static mut onground: c_int = 0;
 
-use crate::doom::p_map::P_UseLines;
-use crate::doom::p_mobj::P_SetMobjState;
-use crate::doom::p_pspr::P_MovePsprites;
-use crate::doom::p_spec::P_PlayerInSpecialSector;
-use crate::doom::r_main::R_PointToAngle2;
+use crate::doom::{
+    p_map::P_UseLines, p_mobj::P_SetMobjState, p_pspr::P_MovePsprites,
+    p_spec::P_PlayerInSpecialSector, r_main::R_PointToAngle2,
+};
 
 /// Apply a momentum impulse to the player's map object along `angle`.
 ///
@@ -504,11 +505,15 @@ pub extern "C" fn P_User_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::doom::d_mode::{commercial, registered, retail, shareware};
-    use crate::doom::d_player::{PspdefT, NUMPOWERS};
-    use crate::doom::tables::ANG270;
-    use std::sync::Mutex;
+    use {
+        super::*,
+        crate::doom::{
+            d_mode::{commercial, registered, retail, shareware},
+            d_player::{PspdefT, NUMPOWERS},
+            tables::ANG270,
+        },
+        std::sync::Mutex,
+    };
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -530,7 +535,7 @@ mod tests {
     fn onground_defaults_to_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(onground, 0);
+            assert_eq!({ onground }, 0);
         }
     }
 

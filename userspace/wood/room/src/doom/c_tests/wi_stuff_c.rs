@@ -12,8 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::i_video::SCREENHEIGHT;
+use crate::doom::{c_ffi, i_video::SCREENHEIGHT};
 
 // ---------------------------------------------------------------------------
 // Episode / map count constants

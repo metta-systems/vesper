@@ -17,16 +17,23 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::i_input::{I_GetEvent, I_InitInput};
-use crate::doom::m_argv::{myargv, M_CheckParmWithArgs};
-use crate::doom::tables::gammatable;
-use crate::doom::z_zone::{Z_Free, Z_Malloc};
-use crate::i_error;
-use std::ffi::{c_char, c_float, c_int, c_void};
+use {
+    crate::{
+        doom::{
+            i_input::{I_GetEvent, I_InitInput},
+            m_argv::{myargv, M_CheckParmWithArgs},
+            tables::gammatable,
+            z_zone::{Z_Free, Z_Malloc},
+        },
+        i_error,
+    },
+    std::ffi::{c_char, c_float, c_int, c_void},
+};
 
-use crate::types::Boolean;
-use std::mem;
-use std::ptr;
+use {
+    crate::types::Boolean,
+    std::{mem, ptr},
+};
 
 use super::z_zone::PU_STATIC;
 
@@ -644,8 +651,10 @@ pub unsafe extern "C" fn I_Video_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::{Mutex, MutexGuard};
+    use {
+        super::*,
+        std::sync::{Mutex, MutexGuard},
+    };
 
     /// `COLORS` is a `static mut` shared across the whole crate; the
     /// tests below mutate it, so they must run serially.

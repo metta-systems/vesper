@@ -517,9 +517,7 @@ pub extern "C" fn D_GameMissionString(mission: c_int) -> *mut c_char {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::types::Boolean;
-    use std::ffi::CStr;
+    use {super::*, crate::types::Boolean, std::ffi::CStr};
 
     /// Verifies that `doom` shareware is a valid game mode combination.
     #[test]

@@ -6,19 +6,23 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_short, c_uint};
-use std::ptr;
+use std::{
+    ffi::{c_int, c_short, c_uint},
+    ptr,
+};
 
-use crate::doom::d_player::PlayerT;
-use crate::doom::i_video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV};
-use crate::doom::m_bbox::BBox;
-use crate::doom::m_fixed::{angle_t, fixed_t, FixedDiv, FixedMul};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::p_telept::mobj_t;
-use crate::doom::r_bsp::{node_t, seg_t, subsector_t};
-use crate::doom::tables::{self, SlopeDiv};
-use crate::doom::tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT};
-use crate::types::Boolean;
+use crate::{
+    doom::{
+        d_player::PlayerT,
+        i_video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
+        m_bbox::BBox,
+        m_fixed::{angle_t, fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+        p_telept::mobj_t,
+        r_bsp::{node_t, seg_t, subsector_t},
+        tables::{self, SlopeDiv, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
+    },
+    types::Boolean,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -322,20 +326,20 @@ pub static mut setdetail: c_int = 0;
 // Imports from other modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::d_loop::NetUpdate;
-use crate::doom::m_menu::{detailLevel, screenblocks};
-use crate::doom::p_setup::{nodes, numnodes, subsectors};
-use crate::doom::r_bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode};
-use crate::doom::r_data::{colormaps, R_InitData};
-use crate::doom::r_draw::{
-    scaledviewwidth, viewheight, viewwidth, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn,
-    R_DrawFuzzColumnLow, R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn,
-    R_DrawTranslatedColumnLow, R_InitBuffer, R_InitTranslationTables,
-};
-use crate::doom::r_plane::{R_ClearPlanes, R_DrawPlanes, R_InitPlanes};
-use crate::doom::r_segs::{rw_distance, rw_normalangle, walllights};
-use crate::doom::r_things::{
-    pspriteiscale, pspritescale, screenheightarray, R_ClearSprites, R_DrawMasked,
+use crate::doom::{
+    d_loop::NetUpdate,
+    m_menu::{detailLevel, screenblocks},
+    p_setup::{nodes, numnodes, subsectors},
+    r_bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
+    r_data::{colormaps, R_InitData},
+    r_draw::{
+        scaledviewwidth, viewheight, viewwidth, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn,
+        R_DrawFuzzColumnLow, R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn,
+        R_DrawTranslatedColumnLow, R_InitBuffer, R_InitTranslationTables,
+    },
+    r_plane::{R_ClearPlanes, R_DrawPlanes, R_InitPlanes},
+    r_segs::{rw_distance, rw_normalangle, walllights},
+    r_things::{pspriteiscale, pspritescale, screenheightarray, R_ClearSprites, R_DrawMasked},
 };
 
 // ---------------------------------------------------------------------------
@@ -1130,9 +1134,7 @@ pub unsafe extern "C" fn R_Main_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::doom::m_fixed::FixedDiv;
-    use std::sync::Mutex;
+    use {super::*, crate::doom::m_fixed::FixedDiv, std::sync::Mutex};
 
     /// Process-wide guard serialising tests that read or write the renderer
     /// globals (`viewx`, `viewy`, `viewangle`, ...). `cargo test` runs tests
@@ -1256,8 +1258,8 @@ mod tests {
 
             let _ = R_PointToAngle2(1000, 2000, 3000, 4000);
 
-            assert_eq!(viewx, 12345, "R_PointToAngle2 must not modify viewx");
-            assert_eq!(viewy, -6789, "R_PointToAngle2 must not modify viewy");
+            assert_eq!({ viewx }, 12345, "R_PointToAngle2 must not modify viewx");
+            assert_eq!({ viewy }, -6789, "R_PointToAngle2 must not modify viewy");
         }
     }
 

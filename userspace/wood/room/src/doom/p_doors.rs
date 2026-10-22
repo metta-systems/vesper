@@ -5,23 +5,29 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_void};
-use std::os::raw::c_int;
+use {
+    crate::doom::sounds::Sfx,
+    std::{
+        ffi::{c_char, c_void},
+        os::raw::c_int,
+    },
+};
 
-use crate::doom::c_ffi as cffi;
-use crate::doom::c_ffi::mobj_t;
-use crate::doom::d_player::PlayerT;
-use crate::doom::i_timer::TICRATE;
-use crate::doom::m_fixed::{fixed_t, FRACUNIT};
-use crate::doom::p_floor::T_MovePlane;
-use crate::doom::p_lights::{line_t, sector_t};
-use crate::doom::p_plats::{plat_t, T_PlatRaise};
-use crate::doom::p_setup::{sectors, sides};
-use crate::doom::p_spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag};
-use crate::doom::p_tick::{thinker_t, P_AddThinker, P_RemoveThinker};
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::z_zone::{Z_Malloc, PU_LEVSPEC};
+use crate::doom::{
+    c_ffi as cffi,
+    c_ffi::mobj_t,
+    d_player::PlayerT,
+    i_timer::TICRATE,
+    m_fixed::{fixed_t, FRACUNIT},
+    p_floor::T_MovePlane,
+    p_lights::{line_t, sector_t},
+    p_plats::{plat_t, T_PlatRaise},
+    p_setup::{sectors, sides},
+    p_spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
+    p_tick::{thinker_t, P_AddThinker, P_RemoveThinker},
+    s_sound::S_StartSound,
+    z_zone::{Z_Malloc, PU_LEVSPEC},
+};
 
 /// Movement speed for normal vertical doors (in fixed-point units per tic).
 const VDOORSPEED: fixed_t = FRACUNIT * 2;
@@ -695,8 +701,7 @@ pub unsafe extern "C" fn P_Doors_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

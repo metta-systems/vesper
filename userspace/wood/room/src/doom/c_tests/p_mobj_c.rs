@@ -14,9 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::m_fixed::FRACUNIT;
-use crate::doom::p_mobj;
+use crate::doom::{c_ffi, m_fixed::FRACUNIT, p_mobj};
 
 // ---------------------------------------------------------------------------
 // STOPSPEED / FRICTION constants
@@ -74,7 +72,10 @@ fn itemquesize_is_128() {
 #[test]
 fn itemrespawnque_length() {
     unsafe {
-        assert_eq!(p_mobj::itemrespawnque.len(), c_ffi::ITEMQUESIZE);
+        assert_eq!(
+            (*&raw const p_mobj::itemrespawnque).len(),
+            c_ffi::ITEMQUESIZE
+        );
     }
 }
 
@@ -83,7 +84,7 @@ fn itemrespawnque_length() {
 fn iquehead_default_zero() {
     unsafe {
         assert_eq!(
-            p_mobj::iquehead,
+            { p_mobj::iquehead },
             0,
             "iquehead should be 0 before level load"
         );
@@ -95,7 +96,7 @@ fn iquehead_default_zero() {
 fn iquetail_default_zero() {
     unsafe {
         assert_eq!(
-            p_mobj::iquetail,
+            { p_mobj::iquetail },
             0,
             "iquetail should be 0 before level load"
         );
@@ -107,8 +108,8 @@ fn iquetail_default_zero() {
 fn itemque_starts_empty() {
     unsafe {
         assert_eq!(
-            p_mobj::iquehead,
-            p_mobj::iquetail,
+            { p_mobj::iquehead },
+            { p_mobj::iquetail },
             "item queue must be empty (head == tail) at startup"
         );
     }
@@ -118,7 +119,7 @@ fn itemque_starts_empty() {
 #[test]
 fn itemrespawntime_starts_zeroed() {
     unsafe {
-        for (i, &t) in p_mobj::itemrespawntime.iter().enumerate() {
+        for (i, &t) in (*&raw const p_mobj::itemrespawntime).iter().enumerate() {
             assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
         }
     }
@@ -128,7 +129,10 @@ fn itemrespawntime_starts_zeroed() {
 #[test]
 fn itemrespawntime_length_is_itemquesize() {
     unsafe {
-        assert_eq!(p_mobj::itemrespawntime.len(), c_ffi::ITEMQUESIZE);
+        assert_eq!(
+            (*&raw const p_mobj::itemrespawntime).len(),
+            c_ffi::ITEMQUESIZE
+        );
     }
 }
 

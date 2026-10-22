@@ -42,7 +42,7 @@ fn backuptics_is_power_of_two() {
 #[test]
 fn gametic_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::gametic, 0, "gametic should be 0 at startup");
+        assert_eq!({ c_ffi::gametic }, 0, "gametic should be 0 at startup");
     }
 }
 
@@ -55,7 +55,11 @@ fn gametic_default_zero() {
 #[test]
 fn ticdup_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::ticdup, 0, "ticdup should be 0 before D_InitNetGame");
+        assert_eq!(
+            { c_ffi::ticdup },
+            0,
+            "ticdup should be 0 before D_InitNetGame"
+        );
     }
 }
 
@@ -68,7 +72,7 @@ fn ticdup_default_zero() {
 fn singletics_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::singletics,
+            { c_ffi::singletics },
             0,
             "singletics should be false at startup"
         );

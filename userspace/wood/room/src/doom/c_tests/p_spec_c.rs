@@ -14,9 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::i_timer::TICRATE;
-use crate::doom::m_fixed::FRACUNIT;
+use crate::doom::{c_ffi, i_timer::TICRATE, m_fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // leveltime — current game tic within the level
@@ -28,7 +26,7 @@ use crate::doom::m_fixed::FRACUNIT;
 fn leveltime_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::leveltime,
+            { c_ffi::leveltime },
             0,
             "leveltime should be 0 before level load"
         );

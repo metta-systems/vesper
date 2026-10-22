@@ -77,8 +77,7 @@ pub extern "C" fn M_ClearRandom() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     /// Process-wide guard that serialises tests touching the global
     /// `rndindex`/`prndindex` so parallel `cargo test` invocations do not
@@ -117,8 +116,8 @@ mod tests {
         let b = P_Random();
         assert_eq!(a, b);
         unsafe {
-            assert_eq!(rndindex, 1);
-            assert_eq!(prndindex, 1);
+            assert_eq!({ rndindex }, 1);
+            assert_eq!({ prndindex }, 1);
         }
     }
 
@@ -132,7 +131,7 @@ mod tests {
         P_Random();
         M_ClearRandom();
         unsafe {
-            assert_eq!(rndindex, 0);
+            assert_eq!({ rndindex }, 0);
         }
     }
 
@@ -145,7 +144,7 @@ mod tests {
         assert_eq!(P_Random(), RNDTABLE[1] as c_int);
         assert_eq!(P_Random(), RNDTABLE[2] as c_int);
         unsafe {
-            assert_eq!(prndindex, 2);
+            assert_eq!({ prndindex }, 2);
         }
     }
 
@@ -158,7 +157,7 @@ mod tests {
         P_Random();
         M_ClearRandom();
         unsafe {
-            assert_eq!(prndindex, 0);
+            assert_eq!({ prndindex }, 0);
         }
     }
 
@@ -174,7 +173,7 @@ mod tests {
         }
         // 256 calls done; rndindex = (0 + 256) & 0xFF = 0
         unsafe {
-            assert_eq!(rndindex, 0);
+            assert_eq!({ rndindex }, 0);
         }
         // 257th call should match the first (RNDTABLE[1])
         assert_eq!(M_Random(), first);

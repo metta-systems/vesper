@@ -730,11 +730,8 @@ fn capture_snapshot(tic: usize) -> Snapshot {
 
 fn find_wad() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let wad = manifest
-        .join("../doom1.wad")
-        .canonicalize()
-        .unwrap_or_else(|_| manifest.parent().unwrap_or(&manifest).join("doom1.wad"));
-    wad
+    let wad = manifest.join("../wad/doom1.wad");
+    wad.canonicalize().unwrap_or(wad)
 }
 
 // ---------------------------------------------------------------------------
@@ -874,9 +871,7 @@ fn demo_playthrough() {
         TOTAL_TICS
     );
     for tic in 0..TOTAL_TICS {
-        unsafe {
-            room::doom::d_main::doomgeneric_Tick();
-        }
+        room::doom::d_main::doomgeneric_Tick();
 
         if is_checkpoint(tic + 1) {
             let checkpoint_idx = snapshots.len();
@@ -889,7 +884,7 @@ fn demo_playthrough() {
                     pct,
                     tic + 1,
                     gametic,
-                    room::doom::p_tick::leveltime,
+                    { room::doom::p_tick::leveltime },
                 );
             }
             let snap = capture_snapshot(tic + 1);

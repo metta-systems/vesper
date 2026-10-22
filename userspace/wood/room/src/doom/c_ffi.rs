@@ -9,11 +9,13 @@
 
 use std::ffi::{c_int, c_short, c_uint, c_ushort, c_void};
 
-pub use super::i_timer::TICRATE;
-pub use super::i_video::{SCREENHEIGHT, SCREENWIDTH};
-pub use super::m_bbox::BBox;
-pub use super::m_fixed::{FRACBITS, FRACUNIT};
-pub use super::tables::{ANG180, ANG270, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK};
+pub use super::{
+    i_timer::TICRATE,
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    m_bbox::BBox,
+    m_fixed::{FRACBITS, FRACUNIT},
+    tables::{ANG180, ANG270, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
+};
 
 // ---------------------------------------------------------------------------
 // Opaque types — we only need pointers to these for many FFI signatures.

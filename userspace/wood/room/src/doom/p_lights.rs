@@ -5,15 +5,16 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use std::{ffi::c_void, os::raw::c_int};
 
-use crate::doom::c_ffi as cffi;
-use crate::doom::m_random::P_Random;
-use crate::doom::p_setup::{numsectors, sectors};
-use crate::doom::p_spec::{getNextSector, P_FindMinSurroundingLight, P_FindSectorFromLineTag};
-use crate::doom::p_tick::{thinker_t, P_AddThinker};
-use crate::doom::z_zone::{Z_Malloc, PU_LEVSPEC};
+use crate::doom::{
+    c_ffi as cffi,
+    m_random::P_Random,
+    p_setup::{numsectors, sectors},
+    p_spec::{getNextSector, P_FindMinSurroundingLight, P_FindSectorFromLineTag},
+    p_tick::{thinker_t, P_AddThinker},
+    z_zone::{Z_Malloc, PU_LEVSPEC},
+};
 
 /// Light change applied each step of the glow oscillation (light units per tic).
 const GLOWSPEED: c_int = 8;
@@ -558,8 +559,7 @@ pub unsafe extern "C" fn P_Lights_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

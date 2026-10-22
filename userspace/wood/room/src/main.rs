@@ -49,18 +49,21 @@ mod platform;
 
 use std::ffi::{c_char, c_int, CString};
 
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::PhysicalKey;
-use winit::window::{Window, WindowId};
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::{ElementState, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::PhysicalKey,
+    window::{Window, WindowId},
+};
 
 use room::doom::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 
-use gpu::GpuState;
-use platform::keys::to_doom_key;
-use platform::{GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW};
+use {
+    gpu::GpuState,
+    platform::{keys::to_doom_key, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW},
+};
 
 // ---------------------------------------------------------------------------
 // App – the winit ApplicationHandler

@@ -14,11 +14,9 @@
 pub(crate) mod music;
 pub(crate) mod sfx;
 
-use std::cell::RefCell;
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 
-use rodio::buffer::SamplesBuffer;
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{buffer::SamplesBuffer, DeviceSinkBuilder, MixerDeviceSink, Player};
 
 pub(crate) use sfx::{decode_doom_sfx, PannedSource};
 

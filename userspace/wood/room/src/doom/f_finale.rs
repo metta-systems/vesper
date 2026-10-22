@@ -21,24 +21,34 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_int, c_short, c_uint};
-use std::ptr;
+use {
+    crate::doom::sounds::Sfx,
+    std::{
+        ffi::{c_char, c_int, c_short, c_uint},
+        ptr,
+    },
+};
 
-use crate::doom::d_event::event_t;
-use crate::doom::d_mode;
-use crate::doom::doomstat::{gamemission, gameversion};
-use crate::doom::hu_stuff::{hu_font, HU_FONTSIZE, HU_FONTSTART};
-use crate::doom::info::*;
-use crate::doom::v_video::patch_t;
-use crate::DEH_snprintf;
+use crate::{
+    doom::{
+        d_event::event_t,
+        d_mode,
+        doomstat::{gamemission, gameversion},
+        hu_stuff::{hu_font, HU_FONTSIZE, HU_FONTSTART},
+        info::*,
+        v_video::patch_t,
+    },
+    DEH_snprintf,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::z_zone::{PU_CACHE, PU_LEVEL};
+use crate::doom::{
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    z_zone::{PU_CACHE, PU_LEVEL},
+};
 
 /// Number of game ticks a single text character takes to appear on screen.
 ///
@@ -299,8 +309,10 @@ use crate::doom::w_wad::{W_CacheLumpName, W_CacheLumpNum};
 use crate::doom::v_video::{V_DrawPatch, V_DrawPatchFlipped, V_MarkRect};
 
 // s_sound.rs
-use crate::doom::s_sound::{S_ChangeMusic, S_StartMusic, S_StartSound};
-use crate::doom::sounds::Mus;
+use crate::doom::{
+    s_sound::{S_ChangeMusic, S_StartMusic, S_StartSound},
+    sounds::Mus,
+};
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -1203,8 +1215,10 @@ pub extern "C" fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
 #[no_mangle]
 pub extern "C" fn F_BunnyScroll() {
     unsafe {
-        let p1 = W_CacheLumpName(DEH_String(c"PFUB2".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
-        let p2 = W_CacheLumpName(DEH_String(c"PFUB1".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
+        let p1 =
+            W_CacheLumpName(DEH_String(c"PFUB2".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
+        let p2 =
+            W_CacheLumpName(DEH_String(c"PFUB1".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
 
         V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
@@ -1345,8 +1359,7 @@ pub unsafe extern "C" fn F_Finale_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1385,12 +1398,12 @@ mod tests {
     fn cast_globals_default_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(castnum, 0);
-            assert_eq!(casttics, 0);
-            assert_eq!(castdeath, 0);
-            assert_eq!(castframes, 0);
-            assert_eq!(castonmelee, 0);
-            assert_eq!(castattacking, 0);
+            assert_eq!({ castnum }, 0);
+            assert_eq!({ casttics }, 0);
+            assert_eq!({ castdeath }, 0);
+            assert_eq!({ castframes }, 0);
+            assert_eq!({ castonmelee }, 0);
+            assert_eq!({ castattacking }, 0);
         }
     }
 

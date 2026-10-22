@@ -58,8 +58,7 @@ pub extern "C" fn R_InitSkyMap() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     // Global state; serialise tests that touch it.
     static LOCK: Mutex<()> = Mutex::new(());
@@ -70,7 +69,7 @@ mod tests {
         unsafe {
             skytexturemid = 0;
             R_InitSkyMap();
-            assert_eq!(skytexturemid, 100 * 65536);
+            assert_eq!({ skytexturemid }, 100 * 65536);
         }
     }
 

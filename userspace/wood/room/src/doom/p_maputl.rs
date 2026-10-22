@@ -8,16 +8,19 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_uint, c_void};
-use std::ptr;
-
-use crate::doom::c_ffi::{
-    divline_t, intercept_t, intercept_t_d, line_t, mobj_t, sector_t, subsector_t, MAPBLOCKSHIFT,
-    MAPBLOCKSIZE, MAPBTOFRAC,
+use std::{
+    ffi::{c_int, c_uint, c_void},
+    ptr,
 };
-use crate::doom::info::*;
-use crate::doom::m_fixed::{fixed_t, FixedDiv, FixedMul};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
+
+use crate::doom::{
+    c_ffi::{
+        divline_t, intercept_t, intercept_t_d, line_t, mobj_t, sector_t, subsector_t,
+        MAPBLOCKSHIFT, MAPBLOCKSIZE, MAPBTOFRAC,
+    },
+    info::*,
+    m_fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+};
 
 /// The original Doom intercepts array capacity (128 entries).
 ///

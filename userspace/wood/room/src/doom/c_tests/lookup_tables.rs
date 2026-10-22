@@ -7,12 +7,7 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
-
-use crate::doom::c_ffi;
-use crate::doom::c_tests::harness::C_GLOBAL_LOCK;
-use crate::doom::p_inter;
-use crate::doom::p_maputl;
+use crate::doom::{c_tests::harness::C_GLOBAL_LOCK, p_inter, p_maputl};
 
 // ---------------------------------------------------------------------------
 // p_inter.c: maxammo and clipammo
@@ -65,7 +60,10 @@ fn ammo_arrays_positive() {
 #[test]
 fn intercepts_array_length() {
     unsafe {
-        assert_eq!(p_maputl::intercepts.len(), p_maputl::MAXINTERCEPTS);
+        assert_eq!(
+            (*&raw const p_maputl::intercepts).len(),
+            p_maputl::MAXINTERCEPTS
+        );
     }
 }
 

@@ -22,35 +22,39 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int};
-use std::os::raw::c_uint;
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int},
+    os::raw::c_uint,
+    ptr,
+};
 
-use crate::c_write;
-use crate::doom::c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS};
-use crate::doom::d_event::event_t;
-use crate::doom::d_player::{PlayerT, MAXPLAYERS};
-use crate::doom::g_game::{
-    consoleplayer, deathmatch, gameepisode, gamemap, netgame, playeringame, players, singledemo,
-    viewactive,
+use crate::{
+    c_write,
+    doom::{
+        c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS},
+        d_event::event_t,
+        d_player::{PlayerT, MAXPLAYERS},
+        g_game::{
+            consoleplayer, deathmatch, gameepisode, gamemap, netgame, playeringame, players,
+            singledemo, viewactive,
+        },
+        i_video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
+        m_cheat::{cheatseq_t, cht_CheckCheat},
+        m_controls::{
+            key_map_clearmark, key_map_east, key_map_follow, key_map_grid, key_map_mark,
+            key_map_maxzoom, key_map_north, key_map_south, key_map_toggle, key_map_west,
+            key_map_zoomin, key_map_zoomout,
+        },
+        m_fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+        p_setup::{
+            bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
+        },
+        st_stuff::ST_Responder,
+        tables::{finecosine, finesine, ANGLETOFINESHIFT},
+        v_video::{patch_t, V_DrawPatch, V_MarkRect},
+        w_wad::{W_CacheLumpName, W_ReleaseLumpName},
+    },
 };
-use crate::doom::i_video::I_VideoBuffer;
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::m_cheat::{cheatseq_t, cht_CheckCheat};
-use crate::doom::m_controls::{
-    key_map_clearmark, key_map_east, key_map_follow, key_map_grid, key_map_mark, key_map_maxzoom,
-    key_map_north, key_map_south, key_map_toggle, key_map_west, key_map_zoomin, key_map_zoomout,
-};
-use crate::doom::m_fixed::{fixed_t, FixedDiv, FixedMul};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::p_setup::{
-    bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
-};
-use crate::doom::st_stuff::ST_Responder;
-use crate::doom::tables::ANGLETOFINESHIFT;
-use crate::doom::tables::{finecosine, finesine};
-use crate::doom::v_video::{patch_t, V_DrawPatch, V_MarkRect};
-use crate::doom::w_wad::{W_CacheLumpName, W_ReleaseLumpName};
 
 use crate::doom::z_zone::PU_STATIC;
 

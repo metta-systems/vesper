@@ -6,19 +6,25 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
+};
 
-use crate::doom::d_mode;
-use crate::doom::d_player::{consoleplayer, players, MAXPLAYERS};
-use crate::doom::doomstat::{gamedescription, gamemission, gamemode, gameversion, modifiedgame};
-use crate::doom::i_timer::TICRATE;
-use crate::doom::i_video::I_StartFrame;
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::m_config::M_SaveDefaults;
-use crate::doom::m_misc::M_snprintf_clamp;
-use crate::types::Boolean;
-use crate::{c_write, i_error};
+use crate::{
+    c_write,
+    doom::{
+        d_mode,
+        d_player::{consoleplayer, players, MAXPLAYERS},
+        doomstat::{gamedescription, gamemission, gamemode, gameversion, modifiedgame},
+        i_timer::TICRATE,
+        i_video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
+        m_config::M_SaveDefaults,
+        m_misc::M_snprintf_clamp,
+    },
+    i_error,
+    types::Boolean,
+};
 
 // ---------------------------------------------------------------------------
 // String constants from d_englsh.h / dstrings.h
@@ -379,10 +385,10 @@ use crate::doom::m_menu::{
 };
 
 // s_sound.rs
-use crate::doom::s_sound::{
-    musicVolume, sfxVolume, snd_channels, S_Init, S_StartMusic, S_UpdateSounds,
+use crate::doom::{
+    s_sound::{musicVolume, sfxVolume, snd_channels, S_Init, S_StartMusic, S_UpdateSounds},
+    sounds::Mus,
 };
-use crate::doom::sounds::Mus;
 
 // r_main.rs
 use crate::doom::r_main::{setsizeneeded, R_ExecuteSetViewSize, R_Init, R_RenderPlayerView};
@@ -1871,18 +1877,18 @@ mod tests {
     #[test]
     fn startup_flags_defaults() {
         unsafe {
-            assert_eq!(devparm, 0);
-            assert_eq!(nomonsters, 0);
-            assert_eq!(respawnparm, 0);
-            assert_eq!(fastparm, 0);
-            assert_eq!(autostart, 0);
-            assert_eq!(advancedemo, 0);
-            assert_eq!(storedemo, 0);
-            assert_eq!(bfgedition, 0);
-            assert_eq!(main_loop_started, 0);
-            assert_eq!(show_endoom, 1);
-            assert_eq!(startepisode, 0);
-            assert_eq!(startmap, 0);
+            assert_eq!({ devparm }, 0);
+            assert_eq!({ nomonsters }, 0);
+            assert_eq!({ respawnparm }, 0);
+            assert_eq!({ fastparm }, 0);
+            assert_eq!({ autostart }, 0);
+            assert_eq!({ advancedemo }, 0);
+            assert_eq!({ storedemo }, 0);
+            assert_eq!({ bfgedition }, 0);
+            assert_eq!({ main_loop_started }, 0);
+            assert_eq!({ show_endoom }, 1);
+            assert_eq!({ startepisode }, 0);
+            assert_eq!({ startmap }, 0);
         }
     }
 
@@ -1890,7 +1896,7 @@ mod tests {
     #[test]
     fn wipegamestate_default() {
         unsafe {
-            assert_eq!(wipegamestate, GS_DEMOSCREEN);
+            assert_eq!({ wipegamestate }, GS_DEMOSCREEN);
         }
     }
 
@@ -1898,9 +1904,9 @@ mod tests {
     #[test]
     fn global_buffer_sizes() {
         unsafe {
-            assert_eq!(std::mem::size_of_val(&wadfile), 1024);
-            assert_eq!(std::mem::size_of_val(&mapdir), 1024);
-            assert_eq!(std::mem::size_of_val(&title), 128);
+            assert_eq!(std::mem::size_of_val(&*(&raw const wadfile)), 1024);
+            assert_eq!(std::mem::size_of_val(&*(&raw const mapdir)), 1024);
+            assert_eq!(std::mem::size_of_val(&*(&raw const title)), 128);
         }
     }
 
@@ -1938,8 +1944,6 @@ mod tests {
     /// Verify the startup banners array contains exactly seven entries.
     #[test]
     fn banners_count() {
-        unsafe {
-            assert_eq!(7, 7);
-        }
+        assert_eq!(7, 7);
     }
 }

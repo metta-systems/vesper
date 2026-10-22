@@ -16,27 +16,33 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_uint, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_int, c_uint, c_void},
+    ptr,
+};
 
-use crate::doom::c_ffi::{
-    intercept_t, line_t, mobj_t, sector_t, subsector_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC,
-    MAPBLOCKSHIFT,
+use crate::{
+    doom::{
+        c_ffi::{
+            intercept_t, line_t, mobj_t, sector_t, subsector_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC,
+            MAPBLOCKSHIFT,
+        },
+        info::MobjInfo,
+        m_bbox::BBox,
+        m_fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+        m_random::P_Random,
+        p_maputl::{
+            lowfloor, openbottom, openrange, opentop, P_AproxDistance, P_BlockLinesIterator,
+            P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening, P_PathTraverse,
+            P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES, PT_ADDTHINGS,
+        },
+        p_setup::{bmaporgx, bmaporgy, lines},
+        p_sight::{bottomslope, topslope, P_CheckSight},
+        r_main::{validcount, R_PointInSubsector, R_PointToAngle2},
+        tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
+    },
+    i_error,
 };
-use crate::doom::info::MobjInfo;
-use crate::doom::m_bbox::BBox;
-use crate::doom::m_fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_maputl::{
-    lowfloor, openbottom, openrange, opentop, P_AproxDistance, P_BlockLinesIterator,
-    P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening, P_PathTraverse, P_PointOnLineSide,
-    P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES, PT_ADDTHINGS,
-};
-use crate::doom::p_setup::{bmaporgx, bmaporgy, lines};
-use crate::doom::p_sight::{bottomslope, topslope, P_CheckSight};
-use crate::doom::r_main::{validcount, R_PointInSubsector, R_PointToAngle2};
-use crate::doom::tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT};
-use crate::i_error;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -123,19 +129,21 @@ const DEH_DEFAULT_SPECIES_INFIGHTING: c_int = 0;
 // Extern functions from other modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::g_game::gamemap;
-use crate::doom::m_argv::{myargv, M_CheckParmWithArgs};
-use crate::doom::m_misc::M_StrToInt;
-use crate::doom::p_inter::{P_DamageMobj, P_TouchSpecialThing};
-use crate::doom::p_mobj::{
-    P_RemoveMobj, P_SetMobjState, P_SpawnBlood, P_SpawnMobj, P_SpawnPuff, P_SubstNullMobj,
+use crate::doom::{
+    g_game::gamemap,
+    m_argv::{myargv, M_CheckParmWithArgs},
+    m_misc::M_StrToInt,
+    p_inter::{P_DamageMobj, P_TouchSpecialThing},
+    p_mobj::{
+        P_RemoveMobj, P_SetMobjState, P_SpawnBlood, P_SpawnMobj, P_SpawnPuff, P_SubstNullMobj,
+    },
+    p_spec::{P_CrossSpecialLine, P_ShootSpecialLine},
+    p_switch::P_UseSpecialLine,
+    p_tick::leveltime,
+    r_sky::skyflatnum,
+    s_sound::S_StartSound,
+    sounds::Sfx,
 };
-use crate::doom::p_spec::{P_CrossSpecialLine, P_ShootSpecialLine};
-use crate::doom::p_switch::P_UseSpecialLine;
-use crate::doom::p_tick::leveltime;
-use crate::doom::r_sky::skyflatnum;
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::sounds::Sfx;
 
 /// Type alias used when calling functions in `p_telept` that expect its own
 /// local `mobj_t` definition (all `#[repr(C)]` layouts are identical).

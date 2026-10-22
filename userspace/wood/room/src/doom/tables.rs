@@ -1748,138 +1748,20 @@ pub extern "C" fn SlopeDiv(num: c_uint, den: c_uint) -> c_int {
     SLOPERANGE
 }
 
-/// Vendor cross-validation tests: parse the original `tables.c` (and a few
-/// neighbouring source files) at test time and assert that every Rust table
-/// matches the C original element-for-element. Acts as a tripwire if the
-/// Rust copies are ever edited by hand.
 #[cfg(test)]
-mod vendor_table_tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-
-    /// Resolve a path inside the vendored `doomgeneric` tree relative to
-    /// the workspace, regardless of where `cargo test` is invoked from.
-    fn vendor_path(rel: &str) -> PathBuf {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.push("..");
-        p.push("vendor");
-        p.push("doomgeneric");
-        p.push(rel);
-        p
-    }
-
-    /// Locate the textual position of a C array definition named `name`
-    /// inside `content`. Scans forward, requiring the line that introduces
-    /// the identifier to contain either `const` or `static` so that
-    /// references in comments or `extern` declarations are skipped.
-    fn find_array_start(content: &str, name: &str) -> usize {
-        let mut pos = 0;
-        while let Some(idx) = content[pos..].find(name) {
-            let abs = pos + idx;
-            let before = &content[..abs];
-            if let Some(last_nl) = before.rfind('\n') {
-                let line = &before[last_nl + 1..];
-                if line.contains("const") || line.contains("static") {
-                    return abs;
-                }
-            }
-            pos = abs + name.len();
-        }
-        panic!("Could not find array definition for '{}'", name);
-    }
-
-    /// Parse a flat C `int` array literal named `name` inside the vendor
-    /// file `rel` into a `Vec<i32>`. Tokenizes by comma and silently drops
-    /// fragments that fail to parse (whitespace, trailing braces, etc.),
-    /// which is sufficient for the simple integer-literal tables here.
-    fn parse_c_array_i32(rel: &str, name: &str) -> Vec<i32> {
-        let content = fs::read_to_string(vendor_path(rel)).unwrap();
-        let start = find_array_start(&content, name);
-        let rest = &content[start..];
-        let brace_start = rest.find('{').unwrap();
-        let rest = &rest[brace_start + 1..];
-        let brace_end = rest.find('}').unwrap();
-        let body = &rest[..brace_end];
-        body.split(',')
-            .filter_map(|s| s.trim().parse::<i32>().ok())
-            .collect()
-    }
-
-    /// `u32` companion to [`parse_c_array_i32`]; used for [`tantoangle`],
-    /// which is an `unsigned` array in the C source.
-    fn parse_c_array_u32(rel: &str, name: &str) -> Vec<u32> {
-        let content = fs::read_to_string(vendor_path(rel)).unwrap();
-        let start = find_array_start(&content, name);
-        let rest = &content[start..];
-        let brace_start = rest.find('{').unwrap();
-        let rest = &rest[brace_start + 1..];
-        let brace_end = rest.find('}').unwrap();
-        let body = &rest[..brace_end];
-        body.split(',')
-            .filter_map(|s| s.trim().parse::<u32>().ok())
-            .collect()
-    }
-
-    /// Element-by-element equality check between Rust [`finetangent`] and
-    /// the vendor `finetangent` array.
-    #[test]
-    fn finetangent_matches_vendor() {
-        let c = parse_c_array_i32("tables.c", "finetangent");
-        assert_eq!(c.len(), finetangent.len(), "finetangent length mismatch");
-        for (i, (a, b)) in c.iter().zip(finetangent.iter()).enumerate() {
-            assert_eq!(*a, *b, "finetangent[{}] mismatch: C={} Rust={}", i, a, b);
-        }
-    }
-
-    /// Element-by-element equality check between Rust [`finesine`] and the
-    /// vendor `finesine` array.
-    #[test]
-    fn finesine_matches_vendor() {
-        let c = parse_c_array_i32("tables.c", "finesine");
-        assert_eq!(c.len(), finesine.len(), "finesine length mismatch");
-        for (i, (a, b)) in c.iter().zip(finesine.iter()).enumerate() {
-            assert_eq!(*a, *b, "finesine[{}] mismatch: C={} Rust={}", i, a, b);
-        }
-    }
-
-    /// Element-by-element equality check between Rust [`tantoangle`] and
-    /// the vendor `tantoangle` array.
-    #[test]
-    fn tantoangle_matches_vendor() {
-        let c = parse_c_array_u32("tables.c", "tantoangle");
-        assert_eq!(c.len(), tantoangle.len(), "tantoangle length mismatch");
-        for (i, (a, b)) in c.iter().zip(tantoangle.iter()).enumerate() {
-            assert_eq!(*a, *b, "tantoangle[{}] mismatch: C={} Rust={}", i, a, b);
-        }
-    }
-
-    /// Cross-validate the random-number table in
-    /// [`crate::doom::m_random::RNDTABLE`] against the vendor
-    /// `m_random.c::rndtable` (lives here for convenience because this
-    /// module hosts the vendor-parsing helpers).
-    #[test]
-    fn rndtable_matches_vendor() {
-        use crate::doom::m_random::RNDTABLE;
-        let c = parse_c_array_i32("m_random.c", "rndtable");
-        assert_eq!(c.len(), RNDTABLE.len(), "rndtable length mismatch");
-        for (i, (a, b)) in c.iter().zip(RNDTABLE.iter()).enumerate() {
-            assert_eq!(*a as i32, *b as i32, "rndtable[{}] mismatch", i);
-        }
-    }
-
+mod tests {
     /// Sanity check on the runtime SFX link table: after
     /// `S_InitSfxLinks` runs, the chainsaw / chaingun (`sfx_chgun`) entry
     /// must alias the pistol (`sfx_pistol`) entry so chaingun shots reuse
-    /// the pistol sound. Lives in this file because vendor-data cross
-    /// checks are colocated here.
+    /// the pistol sound.
     #[test]
     fn sfx_chgun_links_to_pistol() {
         use crate::doom::sounds::{S_InitSfxLinks, S_sfx, Sfx};
         unsafe {
             S_InitSfxLinks();
-            let chgun_link = (*S_sfx.as_ptr().add(Sfx::Chgun as usize)).link;
-            let pistol_addr = S_sfx.as_ptr().add(Sfx::Pistol as usize);
+            let sfx = (&raw const S_sfx).cast::<crate::doom::sounds::SfxInfo>();
+            let chgun_link = (*sfx.add(Sfx::Chgun as usize)).link;
+            let pistol_addr = sfx.add(Sfx::Pistol as usize);
             assert_eq!(
                 chgun_link, pistol_addr as *mut _,
                 "S_sfx[sfx_chgun].link must point to S_sfx[sfx_pistol]"

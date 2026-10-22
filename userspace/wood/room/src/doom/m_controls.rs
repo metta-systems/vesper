@@ -13,8 +13,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::os::raw::c_uint;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    os::raw::c_uint,
+};
 
 use super::doomkeys::{
     KEY_BACKSPACE, KEY_DEL, KEY_DOWNARROW, KEY_END, KEY_ENTER, KEY_EQUALS, KEY_ESCAPE, KEY_F1,

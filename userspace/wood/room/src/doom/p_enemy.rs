@@ -15,11 +15,12 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-use std::os::raw::{c_int, c_uint};
+use std::{
+    ffi::c_void,
+    os::raw::{c_int, c_uint},
+};
 
-use crate::doom::sounds::Sfx;
-use crate::types::Boolean;
+use crate::{doom::sounds::Sfx, types::Boolean};
 /// C `size_t` equivalent; used for buffer sizes matching the C ABI.
 type size_t = usize;
 /// Binary-angle measurement type (`u32`); a full circle is `2^32` units.
@@ -43,47 +44,52 @@ fn abs(x: c_int) -> c_int {
     }
 }
 
-use crate::doom::c_ffi::{line_t, sector_t, vertex_t, LinedefFlag, MAPBLOCKSHIFT};
-use crate::doom::d_loop::gametic;
-use crate::doom::d_player::{players, PlayerT, PspdefT, MAXPLAYERS};
-use crate::doom::doomstat::{gamemode, gameversion};
-use crate::doom::info::{
-    mobjinfo, MobjInfo, State, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED,
-    MF_JUSTHIT, MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MT_ARACHPLAZ, MT_BABY,
-    MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG, MT_FATSHOT, MT_FATSO, MT_FIRE, MT_HEAD,
-    MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET, MT_SERGEANT, MT_SHADOWS, MT_SKULL, MT_SMOKE,
-    MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER, MT_TRACER, MT_TROOP, MT_TROOPSHOT, MT_UNDEAD, MT_VILE,
-    S_BRAINEXPLODE1, S_NULL, S_VILE_HEAL1,
+use crate::{
+    doom::{
+        c_ffi::{line_t, sector_t, vertex_t, LinedefFlag, MAPBLOCKSHIFT},
+        d_loop::gametic,
+        d_player::{players, PlayerT, PspdefT, MAXPLAYERS},
+        doomstat::{gamemode, gameversion},
+        info::{
+            mobjinfo, MobjInfo, State, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED,
+            MF_JUSTHIT, MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MT_ARACHPLAZ, MT_BABY,
+            MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG, MT_FATSHOT, MT_FATSO, MT_FIRE,
+            MT_HEAD, MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET, MT_SERGEANT, MT_SHADOWS, MT_SKULL,
+            MT_SMOKE, MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER, MT_TRACER, MT_TROOP, MT_TROOPSHOT,
+            MT_UNDEAD, MT_VILE, S_BRAINEXPLODE1, S_NULL, S_VILE_HEAL1,
+        },
+        m_fixed::{fixed_t, FixedMul, FRACUNIT},
+        m_random::P_Random,
+        p_inter::P_DamageMobj,
+        p_map::{
+            floatok, numspechit, spechit, tmfloorz, P_AimLineAttack, P_CheckPosition, P_LineAttack,
+            P_RadiusAttack, P_TeleportMove, P_TryMove,
+        },
+        p_maputl::{
+            openrange, P_AproxDistance, P_BlockThingsIterator, P_LineOpening, P_SetThingPosition,
+            P_UnsetThingPosition,
+        },
+        p_mobj::{
+            P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
+            P_SubstNullMobj,
+        },
+        p_setup::{bmaporgx, bmaporgy, sides},
+        p_sight::P_CheckSight,
+        p_switch::P_UseSpecialLine,
+        p_telept::mobj_t,
+        tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
+    },
+    i_error,
 };
-use crate::doom::m_fixed::FRACUNIT;
-use crate::doom::m_fixed::{fixed_t, FixedMul};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_inter::P_DamageMobj;
-use crate::doom::p_map::{
-    floatok, numspechit, spechit, tmfloorz, P_AimLineAttack, P_CheckPosition, P_LineAttack,
-    P_RadiusAttack, P_TeleportMove, P_TryMove,
-};
-use crate::doom::p_maputl::{
-    openrange, P_AproxDistance, P_BlockThingsIterator, P_LineOpening, P_SetThingPosition,
-    P_UnsetThingPosition,
-};
-use crate::doom::p_mobj::{
-    P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
-    P_SubstNullMobj,
-};
-use crate::doom::p_setup::{bmaporgx, bmaporgy, sides};
-use crate::doom::p_sight::P_CheckSight;
-use crate::doom::p_switch::P_UseSpecialLine;
-use crate::doom::p_telept::mobj_t;
-use crate::doom::tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT};
-use crate::i_error;
 /// Alias for the `c_ffi`-module `mobj_t` used in pointer casts when calling C-facing functions
 /// that expect that specific type definition.
 type CffiMobj = crate::doom::c_ffi::mobj_t;
-use crate::doom::p_tick::{thinker_t, thinkercap};
-use crate::doom::r_main::{validcount, R_PointToAngle2};
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::tables::{finecosine, finesine};
+use crate::doom::{
+    p_tick::{thinker_t, thinkercap},
+    r_main::{validcount, R_PointToAngle2},
+    s_sound::S_StartSound,
+    tables::{finecosine, finesine},
+};
 
 /// Maximum melee attack range in fixed-point units (64 map units); from `p_local.h`.
 const MELEERANGE: c_int = 64 * FRACUNIT;
@@ -145,11 +151,13 @@ const FATSPREAD: c_int = ANG90 as c_int / 8;
 /// Lost Soul charge speed in fixed-point units per tic (20 map units/tic); mirrors `SKULLSPEED`.
 const SKULLSPEED: c_int = 20 * FRACUNIT;
 
-use crate::doom::d_main::fastparm;
-use crate::doom::g_game::{gameepisode, gamemap, gameskill, netgame, playeringame, G_ExitLevel};
-use crate::doom::p_doors::EV_DoDoor;
-use crate::doom::p_floor::EV_DoFloor;
-use crate::doom::p_pspr::A_ReFire;
+use crate::doom::{
+    d_main::fastparm,
+    g_game::{gameepisode, gamemap, gameskill, netgame, playeringame, G_ExitLevel},
+    p_doors::EV_DoDoor,
+    p_floor::EV_DoFloor,
+    p_pspr::A_ReFire,
+};
 
 /// Type alias used when casting a `line_t` pointer for `EV_DoDoor`/`EV_DoFloor` calls that
 /// require the `p_lights` module's `line_t` definition; all `line_t` variants share an

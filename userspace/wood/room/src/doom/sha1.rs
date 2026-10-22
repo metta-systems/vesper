@@ -485,8 +485,7 @@ pub unsafe extern "C" fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut 
 /// as well as the doomgeneric-specific helper APIs.
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::ffi::c_char;
+    use {super::*, std::ffi::c_char};
 
     /// Allocates a fresh zero-filled `SHA1Context` and initialises it.
     /// Zeroing first guarantees the staging `buf` is in a known state, which

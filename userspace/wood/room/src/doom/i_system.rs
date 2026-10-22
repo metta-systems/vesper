@@ -12,13 +12,18 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::m_argv::{myargc, myargv, M_CheckParmWithArgs, M_ParmExists};
-use crate::doom::m_misc::M_StrToInt;
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
-use std::ptr;
+use {
+    crate::doom::{
+        m_argv::{myargc, myargv, M_CheckParmWithArgs, M_ParmExists},
+        m_misc::M_StrToInt,
+    },
+    std::{
+        ffi::{c_char, c_int, c_uint, c_void, CStr},
+        ptr,
+    },
+};
 
-use crate::i_error;
-use crate::types::Boolean;
+use crate::{i_error, types::Boolean};
 
 /// Default size of the zone heap, in MiB, when `-mb` is not supplied.
 /// Mirrors the `DEFAULT_RAM` macro in `i_system.c`.

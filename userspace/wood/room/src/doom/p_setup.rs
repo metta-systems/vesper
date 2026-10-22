@@ -21,19 +21,21 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void};
-use std::ptr;
-
-use crate::doom::c_ffi::{
-    line_t, node_t, sector_t, seg_t, side_t, subsector_t, vertex_t, LinedefFlag, MapLump,
+use std::{
+    ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void},
+    ptr,
 };
-use crate::doom::d_mode;
-use crate::doom::d_player::{consoleplayer, players, MAXPLAYERS};
-use crate::doom::info::sprnames;
-use crate::doom::m_bbox::{BBox, M_AddToBox, M_ClearBox};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::p_tick::{leveltime, P_InitThinkers};
-use crate::doom::z_zone::{PU_LEVEL, PU_STATIC};
+
+use crate::doom::{
+    c_ffi::{line_t, node_t, sector_t, seg_t, side_t, subsector_t, vertex_t, LinedefFlag, MapLump},
+    d_mode,
+    d_player::{consoleplayer, players, MAXPLAYERS},
+    info::sprnames,
+    m_bbox::{BBox, M_AddToBox, M_ClearBox},
+    m_fixed::{FRACBITS, FRACUNIT},
+    p_tick::{leveltime, P_InitThinkers},
+    z_zone::{PU_LEVEL, PU_STATIC},
+};
 
 // ---------------------------------------------------------------------------
 // Byte-order helper
@@ -384,24 +386,24 @@ pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t {
 // Extern declarations for still-unported C modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::doomstat::gamemode;
-use crate::doom::g_game::{
-    bodyqueslot, deathmatch, playeringame, precache, totalitems, totalkills, totalsecret, wminfo,
-    G_DeathMatchSpawnPlayer,
+use crate::doom::{
+    doomstat::gamemode,
+    g_game::{
+        bodyqueslot, deathmatch, playeringame, precache, totalitems, totalkills, totalsecret,
+        wminfo, G_DeathMatchSpawnPlayer,
+    },
+    i_system::I_GetMemoryValue,
+    m_argv::M_CheckParm,
+    m_fixed::FixedDiv,
+    p_mobj::{iquehead, iquetail, P_SpawnMapThing},
+    p_spec::{P_InitPicAnims, P_SpawnSpecials},
+    p_switch::P_InitSwitchList,
+    r_data::{R_FlatNumForName, R_PrecacheLevel, R_TextureNumForName},
+    r_things::R_InitSprites,
+    s_sound::S_Start,
+    w_wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum},
+    z_zone::{Z_FreeTags, Z_Malloc},
 };
-use crate::doom::i_system::I_GetMemoryValue;
-use crate::doom::m_argv::M_CheckParm;
-use crate::doom::m_fixed::FixedDiv;
-use crate::doom::p_mobj::{iquehead, iquetail, P_SpawnMapThing};
-use crate::doom::p_spec::{P_InitPicAnims, P_SpawnSpecials};
-use crate::doom::p_switch::P_InitSwitchList;
-use crate::doom::r_data::{R_FlatNumForName, R_PrecacheLevel, R_TextureNumForName};
-use crate::doom::r_things::R_InitSprites;
-use crate::doom::s_sound::S_Start;
-use crate::doom::w_wad::{
-    W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum,
-};
-use crate::doom::z_zone::{Z_FreeTags, Z_Malloc};
 
 // ---------------------------------------------------------------------------
 // GetSectorAtNullAddress
@@ -1341,8 +1343,7 @@ pub extern "C" fn P_Init() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1360,17 +1361,17 @@ mod tests {
     fn setup_globals_default_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(numvertexes, 0);
-            assert_eq!(numsegs, 0);
-            assert_eq!(numsectors, 0);
-            assert_eq!(numsubsectors, 0);
-            assert_eq!(numnodes, 0);
-            assert_eq!(numlines, 0);
-            assert_eq!(numsides, 0);
-            assert_eq!(bmapwidth, 0);
-            assert_eq!(bmapheight, 0);
-            assert_eq!(bmaporgx, 0);
-            assert_eq!(bmaporgy, 0);
+            assert_eq!({ numvertexes }, 0);
+            assert_eq!({ numsegs }, 0);
+            assert_eq!({ numsectors }, 0);
+            assert_eq!({ numsubsectors }, 0);
+            assert_eq!({ numnodes }, 0);
+            assert_eq!({ numlines }, 0);
+            assert_eq!({ numsides }, 0);
+            assert_eq!({ bmapwidth }, 0);
+            assert_eq!({ bmapheight }, 0);
+            assert_eq!({ bmaporgx }, 0);
+            assert_eq!({ bmaporgy }, 0);
         }
     }
 

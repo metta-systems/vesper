@@ -7,8 +7,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_int, c_long, c_void};
+use {
+    crate::i_error,
+    std::ffi::{c_char, c_int, c_long, c_void},
+};
 
 /// Opaque stdio `FILE` handle used by the local `fopen`/`fread`/`fclose`
 /// declarations below. Mirrors the C `FILE` typedef without exposing its

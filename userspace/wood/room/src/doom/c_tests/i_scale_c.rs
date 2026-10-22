@@ -20,8 +20,10 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
+use crate::doom::{
+    c_ffi,
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+};
 
 // ---------------------------------------------------------------------------
 // Screen dimension constants
@@ -74,8 +76,8 @@ fn screen_mode_t_align_is_8() {
 #[test]
 fn mode_scale_1x_is_320x200() {
     unsafe {
-        assert_eq!(c_ffi::mode_scale_1x.width, 320, "mode_scale_1x.width");
-        assert_eq!(c_ffi::mode_scale_1x.height, 200, "mode_scale_1x.height");
+        assert_eq!({ c_ffi::mode_scale_1x.width }, 320, "mode_scale_1x.width");
+        assert_eq!({ c_ffi::mode_scale_1x.height }, 200, "mode_scale_1x.height");
     }
 }
 
@@ -83,8 +85,8 @@ fn mode_scale_1x_is_320x200() {
 #[test]
 fn mode_scale_2x_is_640x400() {
     unsafe {
-        assert_eq!(c_ffi::mode_scale_2x.width, 640, "mode_scale_2x.width");
-        assert_eq!(c_ffi::mode_scale_2x.height, 400, "mode_scale_2x.height");
+        assert_eq!({ c_ffi::mode_scale_2x.width }, 640, "mode_scale_2x.width");
+        assert_eq!({ c_ffi::mode_scale_2x.height }, 400, "mode_scale_2x.height");
     }
 }
 
@@ -92,8 +94,8 @@ fn mode_scale_2x_is_640x400() {
 #[test]
 fn mode_scale_3x_is_960x600() {
     unsafe {
-        assert_eq!(c_ffi::mode_scale_3x.width, 960, "mode_scale_3x.width");
-        assert_eq!(c_ffi::mode_scale_3x.height, 600, "mode_scale_3x.height");
+        assert_eq!({ c_ffi::mode_scale_3x.width }, 960, "mode_scale_3x.width");
+        assert_eq!({ c_ffi::mode_scale_3x.height }, 600, "mode_scale_3x.height");
     }
 }
 
@@ -101,8 +103,8 @@ fn mode_scale_3x_is_960x600() {
 #[test]
 fn mode_scale_4x_is_1280x800() {
     unsafe {
-        assert_eq!(c_ffi::mode_scale_4x.width, 1280, "mode_scale_4x.width");
-        assert_eq!(c_ffi::mode_scale_4x.height, 800, "mode_scale_4x.height");
+        assert_eq!({ c_ffi::mode_scale_4x.width }, 1280, "mode_scale_4x.width");
+        assert_eq!({ c_ffi::mode_scale_4x.height }, 800, "mode_scale_4x.height");
     }
 }
 
@@ -110,8 +112,12 @@ fn mode_scale_4x_is_1280x800() {
 #[test]
 fn mode_scale_5x_is_1600x1000() {
     unsafe {
-        assert_eq!(c_ffi::mode_scale_5x.width, 1600, "mode_scale_5x.width");
-        assert_eq!(c_ffi::mode_scale_5x.height, 1000, "mode_scale_5x.height");
+        assert_eq!({ c_ffi::mode_scale_5x.width }, 1600, "mode_scale_5x.width");
+        assert_eq!(
+            { c_ffi::mode_scale_5x.height },
+            1000,
+            "mode_scale_5x.height"
+        );
     }
 }
 
@@ -156,27 +162,27 @@ fn scale_mode_heights_are_multiples_of_screenheight() {
 fn scale_modes_not_poor_quality() {
     unsafe {
         assert_eq!(
-            c_ffi::mode_scale_1x.poor_quality,
+            { c_ffi::mode_scale_1x.poor_quality },
             0,
             "mode_scale_1x.poor_quality"
         );
         assert_eq!(
-            c_ffi::mode_scale_2x.poor_quality,
+            { c_ffi::mode_scale_2x.poor_quality },
             0,
             "mode_scale_2x.poor_quality"
         );
         assert_eq!(
-            c_ffi::mode_scale_3x.poor_quality,
+            { c_ffi::mode_scale_3x.poor_quality },
             0,
             "mode_scale_3x.poor_quality"
         );
         assert_eq!(
-            c_ffi::mode_scale_4x.poor_quality,
+            { c_ffi::mode_scale_4x.poor_quality },
             0,
             "mode_scale_4x.poor_quality"
         );
         assert_eq!(
-            c_ffi::mode_scale_5x.poor_quality,
+            { c_ffi::mode_scale_5x.poor_quality },
             0,
             "mode_scale_5x.poor_quality"
         );
@@ -188,15 +194,15 @@ fn scale_modes_not_poor_quality() {
 fn scale_modes_have_draw_fn() {
     unsafe {
         assert!(
-            c_ffi::mode_scale_1x.draw_screen.is_some(),
+            { c_ffi::mode_scale_1x.draw_screen }.is_some(),
             "mode_scale_1x.draw_screen should not be null"
         );
         assert!(
-            c_ffi::mode_scale_2x.draw_screen.is_some(),
+            { c_ffi::mode_scale_2x.draw_screen }.is_some(),
             "mode_scale_2x.draw_screen should not be null"
         );
         assert!(
-            c_ffi::mode_scale_5x.draw_screen.is_some(),
+            { c_ffi::mode_scale_5x.draw_screen }.is_some(),
             "mode_scale_5x.draw_screen should not be null"
         );
     }
@@ -212,8 +218,16 @@ fn scale_modes_have_draw_fn() {
 #[test]
 fn mode_stretch_1x_is_320x240() {
     unsafe {
-        assert_eq!(c_ffi::mode_stretch_1x.width, 320, "mode_stretch_1x.width");
-        assert_eq!(c_ffi::mode_stretch_1x.height, 240, "mode_stretch_1x.height");
+        assert_eq!(
+            { c_ffi::mode_stretch_1x.width },
+            320,
+            "mode_stretch_1x.width"
+        );
+        assert_eq!(
+            { c_ffi::mode_stretch_1x.height },
+            240,
+            "mode_stretch_1x.height"
+        );
     }
 }
 
@@ -223,7 +237,7 @@ fn mode_stretch_1x_is_320x240() {
 fn mode_stretch_1x_is_poor_quality() {
     unsafe {
         assert_ne!(
-            c_ffi::mode_stretch_1x.poor_quality,
+            { c_ffi::mode_stretch_1x.poor_quality },
             0,
             "mode_stretch_1x.poor_quality should be true"
         );
@@ -235,10 +249,18 @@ fn mode_stretch_1x_is_poor_quality() {
 #[test]
 fn mode_stretch_2x_is_640x480() {
     unsafe {
-        assert_eq!(c_ffi::mode_stretch_2x.width, 640, "mode_stretch_2x.width");
-        assert_eq!(c_ffi::mode_stretch_2x.height, 480, "mode_stretch_2x.height");
         assert_eq!(
-            c_ffi::mode_stretch_2x.poor_quality,
+            { c_ffi::mode_stretch_2x.width },
+            640,
+            "mode_stretch_2x.width"
+        );
+        assert_eq!(
+            { c_ffi::mode_stretch_2x.height },
+            480,
+            "mode_stretch_2x.height"
+        );
+        assert_eq!(
+            { c_ffi::mode_stretch_2x.poor_quality },
             0,
             "mode_stretch_2x.poor_quality"
         );
@@ -249,8 +271,8 @@ fn mode_stretch_2x_is_640x480() {
 #[test]
 fn mode_stretch_3x_is_960x720() {
     unsafe {
-        assert_eq!(c_ffi::mode_stretch_3x.width, 960);
-        assert_eq!(c_ffi::mode_stretch_3x.height, 720);
+        assert_eq!({ c_ffi::mode_stretch_3x.width }, 960);
+        assert_eq!({ c_ffi::mode_stretch_3x.height }, 720);
     }
 }
 
@@ -258,8 +280,8 @@ fn mode_stretch_3x_is_960x720() {
 #[test]
 fn mode_stretch_4x_is_1280x960() {
     unsafe {
-        assert_eq!(c_ffi::mode_stretch_4x.width, 1280);
-        assert_eq!(c_ffi::mode_stretch_4x.height, 960);
+        assert_eq!({ c_ffi::mode_stretch_4x.width }, 1280);
+        assert_eq!({ c_ffi::mode_stretch_4x.height }, 960);
     }
 }
 
@@ -267,8 +289,8 @@ fn mode_stretch_4x_is_1280x960() {
 #[test]
 fn mode_stretch_5x_is_1600x1200() {
     unsafe {
-        assert_eq!(c_ffi::mode_stretch_5x.width, 1600);
-        assert_eq!(c_ffi::mode_stretch_5x.height, 1200);
+        assert_eq!({ c_ffi::mode_stretch_5x.width }, 1600);
+        assert_eq!({ c_ffi::mode_stretch_5x.height }, 1200);
     }
 }
 
@@ -320,8 +342,12 @@ fn stretch_mode_heights_are_n_times_screenheight_4_3() {
 #[test]
 fn mode_squash_1x_is_256x200() {
     unsafe {
-        assert_eq!(c_ffi::mode_squash_1x.width, 256, "mode_squash_1x.width");
-        assert_eq!(c_ffi::mode_squash_1x.height, 200, "mode_squash_1x.height");
+        assert_eq!({ c_ffi::mode_squash_1x.width }, 256, "mode_squash_1x.width");
+        assert_eq!(
+            { c_ffi::mode_squash_1x.height },
+            200,
+            "mode_squash_1x.height"
+        );
     }
 }
 
@@ -330,7 +356,7 @@ fn mode_squash_1x_is_256x200() {
 fn mode_squash_1x_is_poor_quality() {
     unsafe {
         assert_ne!(
-            c_ffi::mode_squash_1x.poor_quality,
+            { c_ffi::mode_squash_1x.poor_quality },
             0,
             "mode_squash_1x.poor_quality should be true"
         );
@@ -341,8 +367,8 @@ fn mode_squash_1x_is_poor_quality() {
 #[test]
 fn mode_squash_2x_is_512x400() {
     unsafe {
-        assert_eq!(c_ffi::mode_squash_2x.width, 512);
-        assert_eq!(c_ffi::mode_squash_2x.height, 400);
+        assert_eq!({ c_ffi::mode_squash_2x.width }, 512);
+        assert_eq!({ c_ffi::mode_squash_2x.height }, 400);
     }
 }
 
@@ -352,8 +378,8 @@ fn mode_squash_2x_is_512x400() {
 #[test]
 fn mode_squash_3x_is_800x600() {
     unsafe {
-        assert_eq!(c_ffi::mode_squash_3x.width, 800);
-        assert_eq!(c_ffi::mode_squash_3x.height, 600);
+        assert_eq!({ c_ffi::mode_squash_3x.width }, 800);
+        assert_eq!({ c_ffi::mode_squash_3x.height }, 600);
     }
 }
 
@@ -361,8 +387,8 @@ fn mode_squash_3x_is_800x600() {
 #[test]
 fn mode_squash_4x_is_1024x800() {
     unsafe {
-        assert_eq!(c_ffi::mode_squash_4x.width, 1024);
-        assert_eq!(c_ffi::mode_squash_4x.height, 800);
+        assert_eq!({ c_ffi::mode_squash_4x.width }, 1024);
+        assert_eq!({ c_ffi::mode_squash_4x.height }, 800);
     }
 }
 
@@ -370,8 +396,8 @@ fn mode_squash_4x_is_1024x800() {
 #[test]
 fn mode_squash_5x_is_1280x1000() {
     unsafe {
-        assert_eq!(c_ffi::mode_squash_5x.width, 1280);
-        assert_eq!(c_ffi::mode_squash_5x.height, 1000);
+        assert_eq!({ c_ffi::mode_squash_5x.width }, 1280);
+        assert_eq!({ c_ffi::mode_squash_5x.height }, 1000);
     }
 }
 
@@ -397,12 +423,12 @@ fn squash_mode_widths_are_n_times_screenwidth_4_3() {
         }
         // The 3x quirk: 800 ≠ 3 × 256
         assert_eq!(
-            c_ffi::mode_squash_3x.width,
+            { c_ffi::mode_squash_3x.width },
             800,
             "mode_squash_3x.width quirk"
         );
         assert_ne!(
-            c_ffi::mode_squash_3x.width,
+            { c_ffi::mode_squash_3x.width },
             3 * c_ffi::SCREENWIDTH_4_3,
             "mode_squash_3x should NOT follow the formula"
         );

@@ -6,15 +6,19 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
+};
 
-use crate::doom::c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT};
-use crate::doom::d_mode::commercial;
-use crate::doom::doomstat::gamemode;
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::m_fixed::FRACBITS;
-use crate::doom::v_video::{patch_t, V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer};
+use crate::doom::{
+    c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT},
+    d_mode::commercial,
+    doomstat::gamemode,
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    m_fixed::FRACBITS,
+    v_video::{patch_t, V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -945,8 +949,7 @@ pub extern "C" fn R_DrawViewBorder() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     /// Serialises all tests that touch the shared mutable renderer globals.
     static LOCK: Mutex<()> = Mutex::new(());
@@ -968,8 +971,8 @@ mod tests {
 
             R_InitBuffer(SCREENWIDTH, 168);
 
-            assert_eq!(viewwindowx, 0);
-            assert_eq!(viewwindowy, 0);
+            assert_eq!({ viewwindowx }, 0);
+            assert_eq!({ viewwindowy }, 0);
             for i in 0..SCREENWIDTH {
                 assert_eq!(columnofs[i as usize], i, "columnofs[{i}] mismatch");
             }
@@ -996,8 +999,8 @@ mod tests {
 
             R_InitBuffer(256, 168);
 
-            assert_eq!(viewwindowx, (SCREENWIDTH - 256) >> 1); // 32
-            assert_eq!(viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 168) >> 1); // 0
+            assert_eq!({ viewwindowx }, (SCREENWIDTH - 256) >> 1); // 32
+            assert_eq!({ viewwindowy }, (SCREENHEIGHT - SBARHEIGHT - 168) >> 1); // 0
             for i in 0..256 {
                 assert_eq!(columnofs[i as usize], viewwindowx + i);
             }
@@ -1017,8 +1020,8 @@ mod tests {
 
             R_InitBuffer(200, 100);
 
-            assert_eq!(viewwindowx, (SCREENWIDTH - 200) >> 1); // 60
-            assert_eq!(viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 100) >> 1); // 34
+            assert_eq!({ viewwindowx }, (SCREENWIDTH - 200) >> 1); // 60
+            assert_eq!({ viewwindowy }, (SCREENHEIGHT - SBARHEIGHT - 100) >> 1); // 34
             for i in 0..200 {
                 assert_eq!(columnofs[i as usize], viewwindowx + i);
             }
@@ -1458,7 +1461,7 @@ mod tests {
             R_DrawFuzzColumn();
 
             // fuzzpos should have advanced
-            assert_eq!(fuzzpos, 1);
+            assert_eq!({ fuzzpos }, 1);
             // The pixel at (10, 25) should now be colormaps[6*256 + framebuffer[(10, 26)]]
             assert_eq!(framebuffer[(25 * SCREENWIDTH + 10) as usize], 77);
         }
@@ -1493,8 +1496,8 @@ mod tests {
             R_DrawFuzzColumn();
 
             // After clamping: dc_yl = 1, dc_yh = SCREENHEIGHT - 2
-            assert_eq!(dc_yl, 1);
-            assert_eq!(dc_yh, SCREENHEIGHT - 2);
+            assert_eq!({ dc_yl }, 1);
+            assert_eq!({ dc_yh }, SCREENHEIGHT - 2);
         }
     }
 
@@ -1514,7 +1517,11 @@ mod tests {
             -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF,
         ];
         unsafe {
-            for (i, (&got, &want)) in fuzzoffset.iter().zip(expected.iter()).enumerate() {
+            for (i, (&got, &want)) in (*&raw const fuzzoffset)
+                .iter()
+                .zip(expected.iter())
+                .enumerate()
+            {
                 assert_eq!(
                     got, want,
                     "fuzzoffset[{i}] mismatch: got {got}, want {want}"
@@ -1527,8 +1534,9 @@ mod tests {
     #[test]
     fn fuzzoffset_positive_count() {
         unsafe {
-            let pos = fuzzoffset.iter().filter(|&&v| v > 0).count();
-            let neg = fuzzoffset.iter().filter(|&&v| v < 0).count();
+            let offsets = fuzzoffset;
+            let pos = offsets.iter().filter(|&&v| v > 0).count();
+            let neg = offsets.iter().filter(|&&v| v < 0).count();
             assert_eq!(
                 pos, 29,
                 "expected 29 positive fuzzoffset entries, got {pos}"

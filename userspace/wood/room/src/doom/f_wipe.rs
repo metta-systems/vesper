@@ -18,13 +18,14 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use std::{ffi::c_void, os::raw::c_int};
 
 use crate::doom::m_random::M_Random;
 
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::z_zone::PU_STATIC;
+use crate::doom::{
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    z_zone::PU_STATIC,
+};
 
 extern "C" {
     /// Allocate `size` bytes from zone memory with the given cache tag.

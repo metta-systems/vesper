@@ -15,8 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::i_timer::TICRATE;
-use crate::doom::p_switch;
+use crate::doom::{i_timer::TICRATE, p_switch};
 
 // ---------------------------------------------------------------------------
 // Switch / button size constants
@@ -55,8 +54,11 @@ fn buttontime_equals_ticrate() {
 #[test]
 fn switchlist_length_is_maxswitches_times_2() {
     unsafe {
-        assert_eq!(p_switch::switchlist.len(), p_switch::MAXSWITCHES * 2);
-        assert_eq!(p_switch::switchlist.len(), 100);
+        assert_eq!(
+            (*&raw const p_switch::switchlist).len(),
+            p_switch::MAXSWITCHES * 2
+        );
+        assert_eq!((*&raw const p_switch::switchlist).len(), 100);
     }
 }
 
@@ -64,7 +66,7 @@ fn switchlist_length_is_maxswitches_times_2() {
 #[test]
 fn switchlist_default_zero() {
     unsafe {
-        for (i, &v) in p_switch::switchlist.iter().enumerate() {
+        for (i, &v) in (*&raw const p_switch::switchlist).iter().enumerate() {
             assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
         }
     }
@@ -79,7 +81,7 @@ fn switchlist_default_zero() {
 fn numswitches_default_zero() {
     unsafe {
         assert_eq!(
-            p_switch::numswitches,
+            { p_switch::numswitches },
             0,
             "numswitches should be 0 before P_InitSwitchList"
         );

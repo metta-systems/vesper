@@ -12,8 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::p_inter;
+use crate::doom::{c_ffi, p_inter};
 
 // ---------------------------------------------------------------------------
 // NUMAMMO / BONUSADD constants
@@ -72,7 +71,7 @@ fn maxammo_missiles_is_50() {
 fn maxammo_exact_values() {
     unsafe {
         assert_eq!(
-            p_inter::maxammo,
+            { p_inter::maxammo },
             [200, 50, 300, 50],
             "maxammo array mismatch"
         );
@@ -119,7 +118,11 @@ fn clipammo_missiles_is_1() {
 #[test]
 fn clipammo_exact_values() {
     unsafe {
-        assert_eq!(p_inter::clipammo, [10, 4, 20, 1], "clipammo array mismatch");
+        assert_eq!(
+            { p_inter::clipammo },
+            [10, 4, 20, 1],
+            "clipammo array mismatch"
+        );
     }
 }
 

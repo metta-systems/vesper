@@ -23,12 +23,18 @@
 //!   shared volume cell; exposes load/play/stop/pause/resume.
 //! - [`mus2midi`] — pure-Rust MUS-to-SMF converter.
 
-use rodio::{Player, Source};
-use rustysynth::{MidiFile, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings};
-use std::io::{BufReader, Cursor};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use {
+    rodio::{Player, Source},
+    rustysynth::{MidiFile, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings},
+    std::{
+        io::{BufReader, Cursor},
+        sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        },
+        time::Duration,
+    },
+};
 
 /// Number of stereo frames rendered per sequencer `render` call.  Each call
 /// produces `BLOCK_SIZE` left and `BLOCK_SIZE` right samples, so the

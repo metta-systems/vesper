@@ -7,17 +7,22 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_int, c_short, c_void, CStr};
-use std::ptr;
+use {
+    crate::i_error,
+    std::{
+        ffi::{c_char, c_int, c_short, c_void, CStr},
+        ptr,
+    },
+};
 
-use crate::doom::c_ffi::{spriteframe_t, vissprite_t, BASEYCENTER, MINZ};
-use crate::doom::d_player::{PspdefT, NUMPSPRITES};
-use crate::doom::info::*;
-use crate::doom::m_fixed::{fixed_t, FixedDiv, FixedMul};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::r_bsp::sector_t;
-use crate::doom::tables::ANG45;
+use crate::doom::{
+    c_ffi::{spriteframe_t, vissprite_t, BASEYCENTER, MINZ},
+    d_player::{PspdefT, NUMPSPRITES},
+    info::*,
+    m_fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+    r_bsp::sector_t,
+    tables::ANG45,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,23 +125,25 @@ extern "C" {
     fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
 }
 
-use crate::doom::doomstat::modifiedgame;
-use crate::doom::r_bsp::{drawsegs, ds_p};
-use crate::doom::r_data::{
-    colormaps, firstspritelump, lastspritelump, spriteoffset, spritetopoffset, spritewidth,
+use crate::doom::{
+    doomstat::modifiedgame,
+    r_bsp::{drawsegs, ds_p},
+    r_data::{
+        colormaps, firstspritelump, lastspritelump, spriteoffset, spritetopoffset, spritewidth,
+    },
+    r_draw::{
+        dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_translation, dc_x, dc_yh, dc_yl,
+        viewheight, viewwidth,
+    },
+    r_main::{
+        basecolfunc, centerxfrac, centeryfrac, colfunc, detailshift, extralight, fixedcolormap,
+        fuzzcolfunc, projection, scalelight, transcolfunc, validcount, viewangleoffset, viewcos,
+        viewplayer, viewsin, viewx, viewy, viewz, R_PointOnSegSide, R_PointToAngle,
+    },
+    r_segs::R_RenderMaskedSegRange,
+    w_wad::{lumpinfo, W_CacheLumpNum, W_GetNumForName},
+    z_zone::Z_Malloc,
 };
-use crate::doom::r_draw::{
-    dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_translation, dc_x, dc_yh, dc_yl,
-    viewheight, viewwidth,
-};
-use crate::doom::r_main::{
-    basecolfunc, centerxfrac, centeryfrac, colfunc, detailshift, extralight, fixedcolormap,
-    fuzzcolfunc, projection, scalelight, transcolfunc, validcount, viewangleoffset, viewcos,
-    viewplayer, viewsin, viewx, viewy, viewz, R_PointOnSegSide, R_PointToAngle,
-};
-use crate::doom::r_segs::R_RenderMaskedSegRange;
-use crate::doom::w_wad::{lumpinfo, W_CacheLumpNum, W_GetNumForName};
-use crate::doom::z_zone::Z_Malloc;
 
 // ---------------------------------------------------------------------------
 // Globals defined by this module

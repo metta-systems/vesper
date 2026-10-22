@@ -7,20 +7,25 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::c_char;
-use std::os::raw::c_int;
+use {
+    crate::doom::sounds::Sfx,
+    std::{ffi::c_char, os::raw::c_int},
+};
 
-use crate::doom::d_items::weaponinfo;
-use crate::doom::d_player::{consoleplayer, players, PlayerT, CF_GODMODE};
-use crate::doom::doomstat::{gamemode, gameversion};
-use crate::doom::info::{self, *};
-use crate::doom::m_fixed::{FixedMul, FRACUNIT};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_pspr::P_DropWeapon;
-use crate::doom::p_telept::mobj_t;
-use crate::doom::tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT};
-use crate::i_error;
+use crate::{
+    doom::{
+        d_items::weaponinfo,
+        d_player::{consoleplayer, players, PlayerT, CF_GODMODE},
+        doomstat::{gamemode, gameversion},
+        info::{self, *},
+        m_fixed::{FixedMul, FRACUNIT},
+        m_random::P_Random,
+        p_pspr::P_DropWeapon,
+        p_telept::mobj_t,
+        tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
+    },
+    i_error,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -321,12 +326,14 @@ unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
 // C globals still provided by unported C modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::am_map::{automapactive, AM_Stop};
-use crate::doom::g_game::{deathmatch, gameskill, netgame};
-use crate::doom::i_system::I_Tactile;
-use crate::doom::p_mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj};
-use crate::doom::r_main::R_PointToAngle2;
-use crate::doom::s_sound::S_StartSound;
+use crate::doom::{
+    am_map::{automapactive, AM_Stop},
+    g_game::{deathmatch, gameskill, netgame},
+    i_system::I_Tactile,
+    p_mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
+    r_main::R_PointToAngle2,
+    s_sound::S_StartSound,
+};
 
 // ---------------------------------------------------------------------------
 // Ammo tables
@@ -1319,8 +1326,7 @@ pub extern "C" fn P_Inter_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1328,7 +1334,7 @@ mod tests {
     fn maxammo_defaults() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(maxammo, [200, 50, 300, 50]);
+            assert_eq!({ maxammo }, [200, 50, 300, 50]);
         }
     }
 
@@ -1336,7 +1342,7 @@ mod tests {
     fn clipammo_defaults() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(clipammo, [10, 4, 20, 1]);
+            assert_eq!({ clipammo }, [10, 4, 20, 1]);
         }
     }
 
@@ -1381,13 +1387,13 @@ mod tests {
     fn deh_runtime_globals_default_to_deh_values() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(deh_max_health, DEH_DEFAULT_MAX_HEALTH);
-            assert_eq!(deh_max_armor, DEH_DEFAULT_MAX_ARMOR);
-            assert_eq!(deh_green_armor_class, DEH_DEFAULT_GREEN_ARMOR_CLASS);
-            assert_eq!(deh_blue_armor_class, DEH_DEFAULT_BLUE_ARMOR_CLASS);
-            assert_eq!(deh_max_soulsphere, DEH_DEFAULT_MAX_SOULSPHERE);
-            assert_eq!(deh_soulsphere_health, DEH_DEFAULT_SOULSPHERE_HEALTH);
-            assert_eq!(deh_megasphere_health, DEH_DEFAULT_MEGASPHERE_HEALTH);
+            assert_eq!({ deh_max_health }, DEH_DEFAULT_MAX_HEALTH);
+            assert_eq!({ deh_max_armor }, DEH_DEFAULT_MAX_ARMOR);
+            assert_eq!({ deh_green_armor_class }, DEH_DEFAULT_GREEN_ARMOR_CLASS);
+            assert_eq!({ deh_blue_armor_class }, DEH_DEFAULT_BLUE_ARMOR_CLASS);
+            assert_eq!({ deh_max_soulsphere }, DEH_DEFAULT_MAX_SOULSPHERE);
+            assert_eq!({ deh_soulsphere_health }, DEH_DEFAULT_SOULSPHERE_HEALTH);
+            assert_eq!({ deh_megasphere_health }, DEH_DEFAULT_MEGASPHERE_HEALTH);
         }
     }
 }

@@ -5,30 +5,33 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use crate::i_error;
-use std::ffi::c_void;
-use std::os::raw::c_int;
-use std::ptr;
+use {
+    crate::{doom::sounds::Sfx, i_error},
+    std::{ffi::c_void, os::raw::c_int, ptr},
+};
 
-use crate::doom::c_ffi::ITEMQUESIZE;
-use crate::doom::d_player::{PlayerT, CF_NOMOMENTUM, MAXPLAYERS};
-use crate::doom::hu_stuff::HU_Start;
-use crate::doom::i_timer::TICRATE;
-use crate::doom::info::{self, *};
-use crate::doom::m_fixed::{FixedMul, FRACBITS, FRACUNIT};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition};
-use crate::doom::p_pspr::P_SetupPsprites;
+use crate::doom::{
+    c_ffi::ITEMQUESIZE,
+    d_player::{PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
+    hu_stuff::HU_Start,
+    i_timer::TICRATE,
+    info::{self, *},
+    m_fixed::{FixedMul, FRACBITS, FRACUNIT},
+    m_random::P_Random,
+    p_maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
+    p_pspr::P_SetupPsprites,
+};
 // deathmatch_p, deathmatchstarts, playerstarts are accessed via extern "C"
 // below to avoid type mismatches between p_setup::mapthing_t and
 // p_telept::mapthing_t.
-use crate::doom::p_telept::{line_t, mapthing_t, mobj_t, subsector_t};
-use crate::doom::p_tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker};
-use crate::doom::r_main::{R_PointInSubsector, R_PointToAngle2};
-use crate::doom::s_sound::{MobjStub, S_StartSound, S_StopSound};
-use crate::doom::tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT};
-use crate::doom::z_zone::PU_LEVEL;
+use crate::doom::{
+    p_telept::{line_t, mapthing_t, mobj_t, subsector_t},
+    p_tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
+    r_main::{R_PointInSubsector, R_PointToAngle2},
+    s_sound::{MobjStub, S_StartSound, S_StopSound},
+    tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT},
+    z_zone::PU_LEVEL,
+};
 
 /// Momentum magnitude below which an object's XY velocity is snapped to zero.
 const STOPSPEED: c_int = 0x1000;
@@ -62,21 +65,23 @@ const PST_REBORN: c_int = 2;
 /// corrected (corresponds to Ultimate Doom / `exe_ultimate`).
 const exe_ultimate: c_int = 6;
 
-use crate::doom::d_main::nomonsters;
-use crate::doom::doomstat::gameversion;
-use crate::doom::g_game::G_PlayerReborn;
-use crate::doom::g_game::{
-    consoleplayer, deathmatch, gameskill, netgame, playeringame, players, respawnmonsters,
-    totalitems, totalkills,
+use crate::doom::{
+    d_main::nomonsters,
+    doomstat::gameversion,
+    g_game::{
+        consoleplayer, deathmatch, gameskill, netgame, playeringame, players, respawnmonsters,
+        totalitems, totalkills, G_PlayerReborn,
+    },
+    p_map::{
+        attackrange, ceilingline, linetarget, P_AimLineAttack, P_CheckPosition, P_SlideMove,
+        P_TryMove,
+    },
+    p_setup::{deathmatch_p, deathmatchstarts, playerstarts},
+    p_tick::leveltime,
+    r_sky::skyflatnum,
+    st_stuff::ST_Start,
+    z_zone::Z_Malloc,
 };
-use crate::doom::p_map::{
-    attackrange, ceilingline, linetarget, P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove,
-};
-use crate::doom::p_setup::{deathmatch_p, deathmatchstarts, playerstarts};
-use crate::doom::p_tick::leveltime;
-use crate::doom::r_sky::skyflatnum;
-use crate::doom::st_stuff::ST_Start;
-use crate::doom::z_zone::Z_Malloc;
 
 /// Type alias used for cross-module pointer casts where both sides are
 /// `#[repr(C)]`-identical `mobj_t` definitions.
@@ -1040,14 +1045,14 @@ mod tests {
     #[test]
     fn itemrespawntime_length_is_itemquesize() {
         unsafe {
-            assert_eq!(itemrespawntime.len(), ITEMQUESIZE);
+            assert_eq!((*&raw const itemrespawntime).len(), ITEMQUESIZE);
         }
     }
 
     #[test]
     fn itemrespawnque_length_is_itemquesize() {
         unsafe {
-            assert_eq!(itemrespawnque.len(), ITEMQUESIZE);
+            assert_eq!((*&raw const itemrespawnque).len(), ITEMQUESIZE);
         }
     }
 
@@ -1055,7 +1060,8 @@ mod tests {
     fn itemque_starts_empty() {
         unsafe {
             assert_eq!(
-                iquehead, iquetail,
+                { iquehead },
+                { iquetail },
                 "item queue must be empty (head == tail) at startup"
             );
         }
@@ -1064,7 +1070,7 @@ mod tests {
     #[test]
     fn itemrespawntime_starts_zeroed() {
         unsafe {
-            for (i, &t) in itemrespawntime.iter().enumerate() {
+            for (i, &t) in (*&raw const itemrespawntime).iter().enumerate() {
                 assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
             }
         }

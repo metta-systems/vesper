@@ -1481,7 +1481,7 @@ mod tests {
     fn sfx_table_has_correct_length() {
         // The static array is sized by NUMSFX; this confirms no off-by-one.
         unsafe {
-            assert_eq!(S_sfx.len(), NUMSFX);
+            assert_eq!((*&raw const S_sfx).len(), NUMSFX);
         }
     }
 
@@ -1489,7 +1489,7 @@ mod tests {
     #[test]
     fn music_table_has_correct_length() {
         unsafe {
-            assert_eq!(S_music.len(), NUMMUSIC);
+            assert_eq!((*&raw const S_music).len(), NUMMUSIC);
         }
     }
 

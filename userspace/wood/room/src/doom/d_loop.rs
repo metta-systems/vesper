@@ -16,13 +16,14 @@
 
 use std::os::raw::c_int;
 
-use crate::i_error;
-use crate::types::Boolean;
+use crate::{i_error, types::Boolean};
 
-use crate::doom::d_net::{LoopInterfaceT, NetConnectDataT, NetGameSettingsT};
-use crate::doom::d_player::TiccmdT;
-use crate::doom::i_timer::TICRATE;
-use crate::doom::m_fixed::FRACUNIT;
+use crate::doom::{
+    d_net::{LoopInterfaceT, NetConnectDataT, NetGameSettingsT},
+    d_player::TiccmdT,
+    i_timer::TICRATE,
+    m_fixed::FRACUNIT,
+};
 
 /// Maximum number of players in a multiplayer session.
 ///

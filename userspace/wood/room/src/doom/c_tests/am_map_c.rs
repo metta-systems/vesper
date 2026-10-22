@@ -15,9 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::am_map;
-use crate::doom::c_ffi;
-use crate::doom::m_fixed::FRACUNIT;
+use crate::doom::{am_map, m_fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // automapactive — whether the automap is currently open
@@ -29,7 +27,7 @@ use crate::doom::m_fixed::FRACUNIT;
 fn automapactive_default_false() {
     unsafe {
         assert_eq!(
-            am_map::automapactive,
+            { am_map::automapactive },
             0,
             "automapactive should be false at startup"
         );

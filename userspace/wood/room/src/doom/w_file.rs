@@ -12,8 +12,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_long, c_uint, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_long, c_uint, c_void},
+    ptr,
+};
 
 use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 
@@ -62,8 +64,10 @@ struct stdc_wad_file_t {
     fstream: *mut FILE,
 }
 
-use crate::doom::m_misc::{M_FileLength, FILE as MiscFILE};
-use crate::doom::z_zone::{Z_Free, Z_Malloc, PU_STATIC};
+use crate::doom::{
+    m_misc::{M_FileLength, FILE as MiscFILE},
+    z_zone::{Z_Free, Z_Malloc, PU_STATIC},
+};
 
 /// Stdio-backed `OpenFile` implementation. Opens `path` for reading in
 /// binary mode, allocates a [`stdc_wad_file_t`] in the static zone heap,

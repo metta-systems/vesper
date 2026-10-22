@@ -84,7 +84,7 @@ fn hu_msgheight_is_1() {
 #[test]
 fn chat_macros_count_is_10() {
     unsafe {
-        assert_eq!(hu_stuff::chat_macros.len(), 10);
+        assert_eq!((*&raw const hu_stuff::chat_macros).len(), 10);
     }
 }
 
@@ -93,7 +93,7 @@ fn chat_macros_count_is_10() {
 #[test]
 fn chat_macros_all_non_null() {
     unsafe {
-        for (i, &ptr) in hu_stuff::chat_macros.iter().enumerate() {
+        for (i, &ptr) in (*&raw const hu_stuff::chat_macros).iter().enumerate() {
             assert!(!ptr.is_null(), "chat_macros[{i}] should be non-null");
         }
     }
@@ -118,7 +118,7 @@ fn chat_macros_default_strings() {
         "Yes",
     ];
     unsafe {
-        for (i, (&ptr, &want)) in hu_stuff::chat_macros
+        for (i, (&ptr, &want)) in (*&raw const hu_stuff::chat_macros)
             .iter()
             .zip(expected.iter())
             .enumerate()
@@ -138,7 +138,7 @@ fn chat_macros_default_strings() {
 #[test]
 fn player_names_count_is_4() {
     unsafe {
-        assert_eq!(hu_stuff::player_names.len(), 4);
+        assert_eq!((*&raw const hu_stuff::player_names).len(), 4);
     }
 }
 
@@ -150,7 +150,7 @@ fn player_names_count_is_4() {
 fn player_names_default_strings() {
     let expected = ["Green: ", "Indigo: ", "Brown: ", "Red: "];
     unsafe {
-        for (i, (&ptr, &want)) in hu_stuff::player_names
+        for (i, (&ptr, &want)) in (*&raw const hu_stuff::player_names)
             .iter()
             .zip(expected.iter())
             .enumerate()
@@ -263,7 +263,11 @@ fn mapnames_commercial_plutonia_starts_at_index_32() {
 #[test]
 fn chat_on_default_false() {
     unsafe {
-        assert_eq!(hu_stuff::chat_on, 0, "chat_on should be false by default");
+        assert_eq!(
+            { hu_stuff::chat_on },
+            0,
+            "chat_on should be false by default"
+        );
     }
 }
 
@@ -274,7 +278,7 @@ fn chat_on_default_false() {
 fn message_dontfuckwithme_default_false() {
     unsafe {
         assert_eq!(
-            hu_stuff::message_dontfuckwithme,
+            { hu_stuff::message_dontfuckwithme },
             0,
             "message_dontfuckwithme should be false by default"
         );

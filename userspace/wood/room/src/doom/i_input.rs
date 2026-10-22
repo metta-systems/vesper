@@ -11,8 +11,7 @@
 
 use std::os::raw::c_int;
 
-use crate::doom::d_event::event_t;
-use crate::doom::doomkeys::KEY_RSHIFT;
+use crate::doom::{d_event::event_t, doomkeys::KEY_RSHIFT};
 
 /// Configuration flag mirroring the C global `vanilla_keyboard_mapping`.
 ///

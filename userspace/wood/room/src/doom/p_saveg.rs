@@ -26,27 +26,31 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use {
+    crate::i_error,
+    std::{
+        ffi::{c_char, c_int, c_void},
+        ptr,
+    },
+};
 
-use crate::doom::c_ffi::{SAVEGAME_EOF, VERSIONSIZE};
-use crate::doom::d_player::{
-    players, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES,
-    NUMWEAPONS,
+use crate::doom::{
+    c_ffi::{SAVEGAME_EOF, VERSIONSIZE},
+    d_player::{
+        players, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES,
+        NUMWEAPONS,
+    },
+    info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
+    p_ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
+    p_doors::{vldoor_t, T_VerticalDoor},
+    p_floor::{floormove_t, side_t, T_MoveFloor},
+    p_lights::{
+        glow_t, lightflash_t, line_t, sector_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash,
+    },
+    p_plats::{plat_t, P_AddActivePlat, T_PlatRaise},
+    p_tick::{actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers},
+    z_zone::{Z_Free, Z_Malloc, PU_LEVEL, PU_LEVSPEC},
 };
-use crate::doom::info::{mobjinfo, states, MobjInfo, State, NUMSTATES};
-use crate::doom::p_ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS};
-use crate::doom::p_doors::{vldoor_t, T_VerticalDoor};
-use crate::doom::p_floor::{floormove_t, side_t, T_MoveFloor};
-use crate::doom::p_lights::{
-    glow_t, lightflash_t, line_t, sector_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash,
-};
-use crate::doom::p_plats::{plat_t, P_AddActivePlat, T_PlatRaise};
-use crate::doom::p_tick::{
-    actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers,
-};
-use crate::doom::z_zone::{Z_Free, Z_Malloc, PU_LEVEL, PU_LEVSPEC};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2108,8 +2112,7 @@ pub extern "C" fn P_Saveg_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

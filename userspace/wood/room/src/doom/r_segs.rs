@@ -26,12 +26,16 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_short, c_uchar, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_int, c_short, c_uchar, c_void},
+    ptr,
+};
 
-use super::m_fixed::{angle_t, fixed_t, FixedMul, FRACBITS};
-use super::r_bsp::drawseg_t;
-use super::tables::{self, ANG180, ANG90, ANGLETOFINESHIFT};
+use super::{
+    m_fixed::{angle_t, fixed_t, FixedMul, FRACBITS},
+    r_bsp::drawseg_t,
+    tables::{self, ANG180, ANG90, ANGLETOFINESHIFT},
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -83,20 +87,18 @@ const MAXDRAWSEGS: usize = 256;
 // Externs from other modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::r_bsp::{backsector, curline, drawsegs, ds_p, frontsector, linedef, sidedef};
-use crate::doom::r_data::{textureheight, texturetranslation, R_GetColumn};
-use crate::doom::r_draw::{
-    dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_x, dc_yh, dc_yl, viewheight,
+use crate::doom::{
+    r_bsp::{backsector, curline, drawsegs, ds_p, frontsector, linedef, sidedef},
+    r_data::{textureheight, texturetranslation, R_GetColumn},
+    r_draw::{dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_x, dc_yh, dc_yl, viewheight},
+    r_main::{
+        centeryfrac, colfunc, extralight, fixedcolormap, scalelight, viewangle, viewz,
+        xtoviewangle, R_PointToDist, R_ScaleFromGlobalAngle,
+    },
+    r_plane::{ceilingclip, ceilingplane, floorclip, floorplane, lastopening, R_CheckPlane},
+    r_sky::skyflatnum,
+    r_things::{negonearray, screenheightarray, R_DrawMaskedColumn},
 };
-use crate::doom::r_main::{
-    centeryfrac, colfunc, extralight, fixedcolormap, scalelight, viewangle, viewz, xtoviewangle,
-    R_PointToDist, R_ScaleFromGlobalAngle,
-};
-use crate::doom::r_plane::{
-    ceilingclip, ceilingplane, floorclip, floorplane, lastopening, R_CheckPlane,
-};
-use crate::doom::r_sky::skyflatnum;
-use crate::doom::r_things::{negonearray, screenheightarray, R_DrawMaskedColumn};
 
 // ---------------------------------------------------------------------------
 // Globals defined by this module

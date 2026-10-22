@@ -15,13 +15,19 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use crate::audio::music::MusicHandle;
-use crate::doom::m_argv::{myargv, M_CheckParmWithArgs};
-use crate::doom::m_config::M_BindVariable;
-use crate::doom::sounds::SfxInfo;
-use crate::doom::w_wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength};
-use crate::doom::z_zone::PU_CACHE;
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use {
+    crate::{
+        audio::music::MusicHandle,
+        doom::{
+            m_argv::{myargv, M_CheckParmWithArgs},
+            m_config::M_BindVariable,
+            sounds::SfxInfo,
+            w_wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength},
+            z_zone::PU_CACHE,
+        },
+    },
+    std::ffi::{c_char, c_int, c_uint, c_void},
+};
 
 use crate::types::Boolean;
 

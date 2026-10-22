@@ -6,23 +6,25 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use {
+    crate::doom::sounds::Sfx,
+    std::{ffi::c_void, os::raw::c_int},
+};
 
-use crate::doom::c_ffi::{LOWERSPEED, RAISESPEED, WEAPONBOTTOM, WEAPONTOP};
-use crate::doom::d_items::weaponinfo;
-use crate::doom::d_mode::{commercial, shareware};
-use crate::doom::d_player::{PlayerT, PspdefT, NUMAMMO, NUMPSPRITES, NUMWEAPONS};
-use crate::doom::doomstat::gamemode;
-use crate::doom::info::{self, *};
-use crate::doom::m_fixed::{fixed_t, FixedMul};
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_telept::mobj_t;
-use crate::doom::p_tick::leveltime;
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::tables::{finecosine, finesine, FINEANGLES, FINEMASK};
+use crate::doom::{
+    c_ffi::{LOWERSPEED, RAISESPEED, WEAPONBOTTOM, WEAPONTOP},
+    d_items::weaponinfo,
+    d_mode::{commercial, shareware},
+    d_player::{PlayerT, PspdefT, NUMAMMO, NUMPSPRITES, NUMWEAPONS},
+    doomstat::gamemode,
+    info::{self, *},
+    m_fixed::{fixed_t, FixedMul, FRACBITS, FRACUNIT},
+    m_random::P_Random,
+    p_telept::mobj_t,
+    p_tick::leveltime,
+    s_sound::S_StartSound,
+    tables::{finecosine, finesine, FINEANGLES, FINEMASK},
+};
 
 // Weapon type constants (from doomdef.h)
 /// Weapon slot index for the fist (melee, no ammo).
@@ -86,11 +88,13 @@ const MISSILERANGE: c_int = 32 * 64 * FRACUNIT;
 /// Default number of cells consumed per BFG shot (Dehacked-patchable in C; hardcoded here).
 const DEH_DEFAULT_BFG_CELLS_PER_SHOT: c_int = 40;
 
-use crate::doom::p_enemy::P_NoiseAlert;
-use crate::doom::p_inter::P_DamageMobj;
-use crate::doom::p_map::{linetarget, P_AimLineAttack, P_LineAttack};
-use crate::doom::p_mobj::{P_SetMobjState, P_SpawnMobj, P_SpawnPlayerMissile};
-use crate::doom::r_main::R_PointToAngle2;
+use crate::doom::{
+    p_enemy::P_NoiseAlert,
+    p_inter::P_DamageMobj,
+    p_map::{linetarget, P_AimLineAttack, P_LineAttack},
+    p_mobj::{P_SetMobjState, P_SpawnMobj, P_SpawnPlayerMissile},
+    r_main::R_PointToAngle2,
+};
 
 /// Type alias used for cross-module pointer casts where both sides are `#[repr(C)]`-identical.
 type CffiMobj = crate::doom::c_ffi::mobj_t;
@@ -977,8 +981,7 @@ pub extern "C" fn P_Pspr_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1011,8 +1014,8 @@ mod tests {
     fn swing_defaults_to_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(swingx, 0);
-            assert_eq!(swingy, 0);
+            assert_eq!({ swingx }, 0);
+            assert_eq!({ swingy }, 0);
         }
     }
 
@@ -1020,7 +1023,7 @@ mod tests {
     fn bulletslope_defaults_to_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(bulletslope, 0);
+            assert_eq!({ bulletslope }, 0);
         }
     }
 

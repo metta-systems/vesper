@@ -15,8 +15,7 @@
 
 use std::ffi::{c_char, c_int, c_long, c_void, CStr};
 
-use crate::i_error;
-use crate::types::Boolean;
+use crate::{i_error, types::Boolean};
 
 /// Opaque stand-in for libc's `FILE *`. Pointers are passed through to the
 /// `extern "C"` shims below; the contents are never accessed from Rust.
@@ -103,9 +102,7 @@ use crate::doom::z_zone::Z_Malloc;
 /// caller must not retain the returned `int` across operations that may
 /// reset `errno`.
 unsafe fn errno() -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(0)
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
 
 /// Create the directory at `path` with permissions `0o755`.
@@ -680,8 +677,7 @@ pub(crate) fn write_c_buf(buf: &mut [c_char], s: &str) {
 /// inherited from the C source.
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::ffi::CString;
+    use {super::*, std::ffi::CString};
 
     // -----------------------------------------------------------------------
     // M_StringCopy
@@ -693,7 +689,7 @@ mod tests {
     fn test_string_copy_fits() {
         let src = CString::new("Hello").unwrap();
         let mut dest: Vec<c_char> = vec![0; 10];
-        let result = unsafe { M_StringCopy(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
+        let result = M_StringCopy(dest.as_mut_ptr(), src.as_ptr(), dest.len());
         assert_eq!(result, Boolean::TRUE);
         let cstr = unsafe { CStr::from_ptr(dest.as_ptr()) };
         assert_eq!(cstr.to_str().unwrap(), "Hello");
@@ -705,7 +701,7 @@ mod tests {
     fn test_string_copy_truncation() {
         let src = CString::new("Hello, World!").unwrap();
         let mut dest: Vec<c_char> = vec![0; 6];
-        let result = unsafe { M_StringCopy(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
+        let result = M_StringCopy(dest.as_mut_ptr(), src.as_ptr(), dest.len());
         assert_eq!(result, Boolean::FALSE);
         let cstr = unsafe { CStr::from_ptr(dest.as_ptr()) };
         assert_eq!(cstr.to_str().unwrap(), "Hello");
@@ -727,7 +723,7 @@ mod tests {
             .collect();
         buf.resize(20, 0);
         let suffix = CString::new("World!").unwrap();
-        let result = unsafe { M_StringConcat(buf.as_mut_ptr(), suffix.as_ptr(), buf.len()) };
+        let result = M_StringConcat(buf.as_mut_ptr(), suffix.as_ptr(), buf.len());
         assert_eq!(result, Boolean::TRUE);
         let cstr = unsafe { CStr::from_ptr(buf.as_ptr()) };
         assert_eq!(cstr.to_str().unwrap(), "Hello, World!");
@@ -745,7 +741,7 @@ mod tests {
             .collect();
         buf.resize(11, 0);
         let suffix = CString::new("World!").unwrap();
-        let result = unsafe { M_StringConcat(buf.as_mut_ptr(), suffix.as_ptr(), buf.len()) };
+        let result = M_StringConcat(buf.as_mut_ptr(), suffix.as_ptr(), buf.len());
         // "Hello, " (7) + "World!" (6) = 13 chars, but buffer is 11 => truncated to "Hello, Wor"
         assert_eq!(result, Boolean::FALSE);
         let cstr = unsafe { CStr::from_ptr(buf.as_ptr()) };
@@ -761,7 +757,7 @@ mod tests {
     fn test_string_starts_with_basic() {
         let s = CString::new("hello world").unwrap();
         let prefix = CString::new("hello").unwrap();
-        let result = unsafe { M_StringStartsWith(s.as_ptr(), prefix.as_ptr()) };
+        let result = M_StringStartsWith(s.as_ptr(), prefix.as_ptr());
         assert_eq!(result, Boolean::TRUE);
     }
 
@@ -775,7 +771,7 @@ mod tests {
     fn test_string_starts_with_exact_match_broken() {
         let s = CString::new("hello").unwrap();
         let prefix = CString::new("hello").unwrap();
-        let result = unsafe { M_StringStartsWith(s.as_ptr(), prefix.as_ptr()) };
+        let result = M_StringStartsWith(s.as_ptr(), prefix.as_ptr());
         // BUG: should be 1 — a string starts with itself.
         assert_eq!(result, Boolean::FALSE);
     }
@@ -785,7 +781,7 @@ mod tests {
     fn test_string_starts_with_no_match() {
         let s = CString::new("world").unwrap();
         let prefix = CString::new("hello").unwrap();
-        let result = unsafe { M_StringStartsWith(s.as_ptr(), prefix.as_ptr()) };
+        let result = M_StringStartsWith(s.as_ptr(), prefix.as_ptr());
         assert_eq!(result, Boolean::FALSE);
     }
 
@@ -794,7 +790,7 @@ mod tests {
     fn test_string_starts_with_prefix_longer_than_string() {
         let s = CString::new("hi").unwrap();
         let prefix = CString::new("hello").unwrap();
-        let result = unsafe { M_StringStartsWith(s.as_ptr(), prefix.as_ptr()) };
+        let result = M_StringStartsWith(s.as_ptr(), prefix.as_ptr());
         assert_eq!(result, Boolean::FALSE);
     }
 
@@ -807,7 +803,7 @@ mod tests {
     fn test_string_ends_with_basic() {
         let s = CString::new("hello world").unwrap();
         let suffix = CString::new("world").unwrap();
-        let result = unsafe { M_StringEndsWith(s.as_ptr(), suffix.as_ptr()) };
+        let result = M_StringEndsWith(s.as_ptr(), suffix.as_ptr());
         assert_eq!(result, Boolean::TRUE);
     }
 
@@ -817,7 +813,7 @@ mod tests {
     fn test_string_ends_with_exact_match() {
         let s = CString::new("hello").unwrap();
         let suffix = CString::new("hello").unwrap();
-        let result = unsafe { M_StringEndsWith(s.as_ptr(), suffix.as_ptr()) };
+        let result = M_StringEndsWith(s.as_ptr(), suffix.as_ptr());
         assert_eq!(result, Boolean::TRUE);
     }
 
@@ -826,7 +822,7 @@ mod tests {
     fn test_string_ends_with_no_match() {
         let s = CString::new("hello").unwrap();
         let suffix = CString::new("world").unwrap();
-        let result = unsafe { M_StringEndsWith(s.as_ptr(), suffix.as_ptr()) };
+        let result = M_StringEndsWith(s.as_ptr(), suffix.as_ptr());
         assert_eq!(result, Boolean::FALSE);
     }
 
@@ -835,7 +831,7 @@ mod tests {
     fn test_string_ends_with_suffix_longer_than_string() {
         let s = CString::new("hi").unwrap();
         let suffix = CString::new("hello world").unwrap();
-        let result = unsafe { M_StringEndsWith(s.as_ptr(), suffix.as_ptr()) };
+        let result = M_StringEndsWith(s.as_ptr(), suffix.as_ptr());
         assert_eq!(result, Boolean::FALSE);
     }
 
@@ -859,8 +855,7 @@ mod tests {
         let haystack = CString::new("hello world").unwrap();
         let needle = CString::new("world").unwrap();
         let replacement = CString::new("earth").unwrap();
-        let result =
-            unsafe { M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr()) };
+        let result = M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr());
         assert!(!result.is_null());
         let s = unsafe { CStr::from_ptr(result).to_str().unwrap().to_owned() };
         unsafe { free_cstring(result) };
@@ -874,8 +869,7 @@ mod tests {
         let haystack = CString::new("hello").unwrap();
         let needle = CString::new("world").unwrap();
         let replacement = CString::new("earth").unwrap();
-        let result =
-            unsafe { M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr()) };
+        let result = M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr());
         assert!(!result.is_null());
         let s = unsafe { CStr::from_ptr(result).to_str().unwrap().to_owned() };
         unsafe { free_cstring(result) };
@@ -888,8 +882,7 @@ mod tests {
         let haystack = CString::new("aababab").unwrap();
         let needle = CString::new("ab").unwrap();
         let replacement = CString::new("cd").unwrap();
-        let result =
-            M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr());
+        let result = M_StringReplace(haystack.as_ptr(), needle.as_ptr(), replacement.as_ptr());
         assert!(!result.is_null());
         let s = unsafe { CStr::from_ptr(result).to_str().unwrap().to_owned() };
         unsafe { free_cstring(result) };
@@ -922,7 +915,7 @@ mod tests {
         let c = CString::new("world").unwrap();
         let strs: [*const c_char; 4] = [a.as_ptr(), b.as_ptr(), c.as_ptr(), std::ptr::null()];
         // SAFETY: null-terminated pointer array; result freed below with free_cstring.
-        let result = unsafe { M_StringJoinA(strs.as_ptr()) };
+        let result = M_StringJoinA(strs.as_ptr());
         assert!(!result.is_null());
         let out = unsafe { CStr::from_ptr(result).to_str().unwrap().to_owned() };
         unsafe { free_cstring(result) };
@@ -935,7 +928,7 @@ mod tests {
     fn test_string_join_a_empty_list() {
         let strs: [*const c_char; 1] = [std::ptr::null()];
         // SAFETY: null-terminated pointer array; result freed below with free_cstring.
-        let result = unsafe { M_StringJoinA(strs.as_ptr()) };
+        let result = M_StringJoinA(strs.as_ptr());
         assert!(!result.is_null());
         let out = unsafe { CStr::from_ptr(result).to_str().unwrap().to_owned() };
         unsafe { free_cstring(result) };
@@ -950,7 +943,7 @@ mod tests {
     #[test]
     fn test_force_uppercase() {
         let mut buf: Vec<c_char> = b"Hello, World!\0".iter().map(|&b| b as c_char).collect();
-        unsafe { M_ForceUppercase(buf.as_mut_ptr()) };
+        M_ForceUppercase(buf.as_mut_ptr());
         let s = unsafe { CStr::from_ptr(buf.as_ptr()).to_str().unwrap() };
         assert_eq!(s, "HELLO, WORLD!");
     }
@@ -959,7 +952,7 @@ mod tests {
     #[test]
     fn test_force_lowercase() {
         let mut buf: Vec<c_char> = b"Hello, World!\0".iter().map(|&b| b as c_char).collect();
-        unsafe { M_ForceLowercase(buf.as_mut_ptr()) };
+        M_ForceLowercase(buf.as_mut_ptr());
         let s = unsafe { CStr::from_ptr(buf.as_ptr()).to_str().unwrap() };
         assert_eq!(s, "hello, world!");
     }

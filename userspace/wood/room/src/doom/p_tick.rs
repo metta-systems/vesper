@@ -8,16 +8,17 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use std::{ffi::c_void, os::raw::c_int};
 
-use crate::doom::d_player::{consoleplayer, players, MAXPLAYERS};
-use crate::doom::g_game::{demoplayback, netgame, paused, playeringame};
-use crate::doom::m_menu::menuactive;
-use crate::doom::p_mobj::P_RespawnSpecials;
-use crate::doom::p_spec::P_UpdateSpecials;
-use crate::doom::p_user::P_PlayerThink;
-use crate::doom::z_zone::Z_Free;
+use crate::doom::{
+    d_player::{consoleplayer, players, MAXPLAYERS},
+    g_game::{demoplayback, netgame, paused, playeringame},
+    m_menu::menuactive,
+    p_mobj::P_RespawnSpecials,
+    p_spec::P_UpdateSpecials,
+    p_user::P_PlayerThink,
+    z_zone::Z_Free,
+};
 
 /// Union of the three C function-pointer variants stored in every thinker.
 ///
@@ -229,8 +230,7 @@ pub extern "C" fn P_Ticker() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -252,7 +252,7 @@ mod tests {
     fn globals_default() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(leveltime, 0);
+            assert_eq!({ leveltime }, 0);
         }
     }
 
@@ -269,8 +269,8 @@ mod tests {
             thinkercap.prev = 0 as *mut thinker_t;
             thinkercap.next = 0 as *mut thinker_t;
             P_InitThinkers();
-            assert_eq!(thinkercap.prev, &raw mut thinkercap as *mut thinker_t);
-            assert_eq!(thinkercap.next, &raw mut thinkercap as *mut thinker_t);
+            assert_eq!({ thinkercap.prev }, &raw mut thinkercap as *mut thinker_t);
+            assert_eq!({ thinkercap.next }, &raw mut thinkercap as *mut thinker_t);
         }
     }
 }

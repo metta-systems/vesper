@@ -21,8 +21,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_char;
-use std::os::raw::c_int;
+use std::{ffi::c_char, os::raw::c_int};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;

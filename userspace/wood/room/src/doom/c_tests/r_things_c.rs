@@ -14,9 +14,7 @@
 
 use std::ffi::{c_int, c_short};
 
-use crate::doom::c_ffi;
-use crate::doom::i_video::SCREENWIDTH;
-use crate::doom::m_fixed::FRACUNIT;
+use crate::doom::{c_ffi, i_video::SCREENWIDTH, m_fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // Constants derived from r_things.c / r_defs.h
@@ -92,7 +90,7 @@ fn spriteframe_t_flip_offset_is_20() {
 #[test]
 fn pspritescale_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::pspritescale, 0);
+        assert_eq!({ c_ffi::pspritescale }, 0);
     }
 }
 
@@ -100,7 +98,7 @@ fn pspritescale_default_zero() {
 #[test]
 fn pspriteiscale_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::pspriteiscale, 0);
+        assert_eq!({ c_ffi::pspriteiscale }, 0);
     }
 }
 
@@ -132,7 +130,7 @@ fn sprites_pointer_initially_null() {
 #[test]
 fn numsprites_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::numsprites, 0);
+        assert_eq!({ c_ffi::numsprites }, 0);
     }
 }
 
@@ -141,7 +139,7 @@ fn numsprites_default_zero() {
 #[test]
 fn maxframe_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::maxframe, 0);
+        assert_eq!({ c_ffi::maxframe }, 0);
     }
 }
 
@@ -166,7 +164,7 @@ fn spritename_initially_null() {
 #[test]
 fn negonearray_length_is_screenwidth() {
     unsafe {
-        assert_eq!(c_ffi::negonearray.len(), SCREENWIDTH as usize);
+        assert_eq!((*&raw const c_ffi::negonearray).len(), SCREENWIDTH as usize);
     }
 }
 
@@ -175,7 +173,10 @@ fn negonearray_length_is_screenwidth() {
 #[test]
 fn screenheightarray_length_is_screenwidth() {
     unsafe {
-        assert_eq!(c_ffi::screenheightarray.len(), SCREENWIDTH as usize);
+        assert_eq!(
+            (*&raw const c_ffi::screenheightarray).len(),
+            SCREENWIDTH as usize
+        );
     }
 }
 
@@ -184,8 +185,8 @@ fn screenheightarray_length_is_screenwidth() {
 fn clipping_arrays_element_type_is_c_short() {
     const _: () = assert!(std::mem::size_of::<c_short>() == 2);
     unsafe {
-        let _: &[c_short] = &c_ffi::negonearray;
-        let _: &[c_short] = &c_ffi::screenheightarray;
+        let _: &[c_short] = &*&raw const c_ffi::negonearray;
+        let _: &[c_short] = &*&raw const c_ffi::screenheightarray;
     }
 }
 
@@ -194,10 +195,10 @@ fn clipping_arrays_element_type_is_c_short() {
 #[test]
 fn clipping_arrays_start_zeroed() {
     unsafe {
-        for (i, &v) in c_ffi::negonearray.iter().enumerate() {
+        for (i, &v) in (*&raw const c_ffi::negonearray).iter().enumerate() {
             assert_eq!(v, 0, "negonearray[{i}] should be 0 before rendering");
         }
-        for (i, &v) in c_ffi::screenheightarray.iter().enumerate() {
+        for (i, &v) in (*&raw const c_ffi::screenheightarray).iter().enumerate() {
             assert_eq!(v, 0, "screenheightarray[{i}] should be 0 before rendering");
         }
     }
@@ -213,7 +214,7 @@ fn clipping_arrays_start_zeroed() {
 #[test]
 fn sprtemp_has_29_elements() {
     unsafe {
-        assert_eq!(c_ffi::sprtemp.len(), 29);
+        assert_eq!((*&raw const c_ffi::sprtemp).len(), 29);
     }
 }
 
@@ -221,7 +222,7 @@ fn sprtemp_has_29_elements() {
 #[test]
 fn sprtemp_starts_zeroed() {
     unsafe {
-        for (i, frame) in c_ffi::sprtemp.iter().enumerate() {
+        for (i, frame) in (*&raw const c_ffi::sprtemp).iter().enumerate() {
             assert_eq!(frame.rotate, 0, "sprtemp[{i}].rotate");
             for (r, &l) in frame.lump.iter().enumerate() {
                 assert_eq!(l, 0, "sprtemp[{i}].lump[{r}]");

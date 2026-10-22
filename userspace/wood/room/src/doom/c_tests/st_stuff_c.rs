@@ -15,8 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::c_ffi;
-use crate::doom::i_timer::TICRATE;
+use crate::doom::{c_ffi, i_timer::TICRATE};
 
 // ---------------------------------------------------------------------------
 // Palette animation constants

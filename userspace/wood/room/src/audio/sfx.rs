@@ -19,9 +19,13 @@
 //! [`PannedSource`] adapter turns a mono `rodio::Source` into a stereo stream
 //! with per-channel gains that may be updated mid-playback via [`PanState`].
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use rodio::{Player, Source};
 
@@ -197,9 +201,7 @@ impl ChannelState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rodio::buffer::SamplesBuffer;
-    use std::num::NonZero;
+    use {super::*, rodio::buffer::SamplesBuffer, std::num::NonZero};
 
     #[test]
     fn decode_sfx_silence_sample() {

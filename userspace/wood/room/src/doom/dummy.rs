@@ -50,8 +50,7 @@ pub extern "C" fn I_InitTimidityConfig() {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -59,8 +58,8 @@ mod tests {
     fn globals_default_to_zero() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(net_client_connected, 0);
-            assert_eq!(drone, 0);
+            assert_eq!({ net_client_connected }, 0);
+            assert_eq!({ drone }, 0);
         }
     }
 
@@ -70,8 +69,8 @@ mod tests {
         unsafe {
             net_client_connected = c_uint::MAX;
             drone = c_uint::MAX;
-            assert_eq!(net_client_connected, c_uint::MAX);
-            assert_eq!(drone, c_uint::MAX);
+            assert_eq!({ net_client_connected }, c_uint::MAX);
+            assert_eq!({ drone }, c_uint::MAX);
             net_client_connected = 0;
             drone = 0;
         }

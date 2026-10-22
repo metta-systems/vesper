@@ -30,8 +30,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_char;
-use std::os::raw::c_int;
+use std::{ffi::c_char, os::raw::c_int};
 
 use crate::types::Boolean;
 
@@ -567,8 +566,7 @@ pub extern "C" fn D_CheckNetGame() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

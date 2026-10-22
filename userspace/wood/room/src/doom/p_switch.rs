@@ -7,17 +7,24 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::c_ffi::LinedefFlag;
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_int, c_void};
-use std::os::raw::c_short;
+use {
+    crate::doom::{c_ffi::LinedefFlag, sounds::Sfx},
+    std::{
+        ffi::{c_char, c_int, c_void},
+        os::raw::c_short,
+    },
+};
 
-use crate::doom::d_mode;
-use crate::doom::p_ceilng::EV_DoCeiling;
-use crate::doom::p_floor::{EV_BuildStairs, EV_DoFloor};
-use crate::doom::p_lights::{line_t, EV_LightTurnOn};
-use crate::doom::p_plats::EV_DoPlat;
-use crate::i_error;
+use crate::{
+    doom::{
+        d_mode,
+        p_ceilng::EV_DoCeiling,
+        p_floor::{EV_BuildStairs, EV_DoFloor},
+        p_lights::{line_t, EV_LightTurnOn},
+        p_plats::EV_DoPlat,
+    },
+    i_error,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -427,13 +434,15 @@ pub static mut buttonlist: [button_t; MAXBUTTONS] = [button_t {
 // External declarations (unported C functions)
 // ---------------------------------------------------------------------------
 
-use crate::doom::doomstat::gamemode;
-use crate::doom::g_game::{G_ExitLevel, G_SecretExitLevel};
-use crate::doom::p_doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor};
-use crate::doom::p_setup::sides;
-use crate::doom::p_spec::EV_DoDonut;
-use crate::doom::r_data::R_TextureNumForName;
-use crate::doom::s_sound::S_StartSound;
+use crate::doom::{
+    doomstat::gamemode,
+    g_game::{G_ExitLevel, G_SecretExitLevel},
+    p_doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor},
+    p_setup::sides,
+    p_spec::EV_DoDonut,
+    r_data::R_TextureNumForName,
+    s_sound::S_StartSound,
+};
 
 // Type aliases for cross-module pointer casts (all #[repr(C)] identical layouts).
 type CffiLine = crate::doom::c_ffi::line_t;
@@ -850,8 +859,7 @@ pub unsafe extern "C" fn P_Switch_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -887,11 +895,11 @@ mod tests {
     fn globals_are_zero_initialized() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(numswitches, 0);
-            for (i, &v) in switchlist.iter().enumerate() {
+            assert_eq!({ numswitches }, 0);
+            for (i, &v) in (*&raw const switchlist).iter().enumerate() {
                 assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
             }
-            for (i, b) in buttonlist.iter().enumerate() {
+            for (i, b) in (*&raw const buttonlist).iter().enumerate() {
                 assert!(b.line.is_null(), "buttonlist[{i}].line should be null");
                 assert_eq!(b.btimer, 0, "buttonlist[{i}].btimer should be 0");
             }
@@ -901,8 +909,8 @@ mod tests {
     #[test]
     fn switchlist_length_is_maxswitches_times_2() {
         unsafe {
-            assert_eq!(switchlist.len(), MAXSWITCHES * 2);
-            assert_eq!(switchlist.len(), 100);
+            assert_eq!((*&raw const switchlist).len(), MAXSWITCHES * 2);
+            assert_eq!((*&raw const switchlist).len(), 100);
         }
     }
 }

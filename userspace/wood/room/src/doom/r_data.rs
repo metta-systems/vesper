@@ -31,14 +31,18 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void, CStr};
+use {
+    crate::i_error,
+    std::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void, CStr},
+};
 
 use std::ptr;
 
-use crate::doom::c_ffi::mobj_t;
-use crate::doom::m_fixed::FRACBITS;
-use crate::doom::z_zone::{PU_CACHE, PU_STATIC};
+use crate::doom::{
+    c_ffi::mobj_t,
+    m_fixed::FRACBITS,
+    z_zone::{PU_CACHE, PU_STATIC},
+};
 
 // ---------------------------------------------------------------------------
 // Constants & helpers
@@ -234,19 +238,21 @@ extern "C" {
     fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
 }
 
-use crate::doom::g_game::demoplayback;
-use crate::doom::i_system::I_ConsoleStdout;
-use crate::doom::m_misc::M_StringCopy;
-use crate::doom::p_mobj::P_MobjThinker;
-use crate::doom::p_setup::{numsectors, numsides, sectors, sides};
-use crate::doom::p_tick::thinkercap;
-use crate::doom::r_sky::skytexture;
-use crate::doom::r_things::{numsprites, sprites};
-use crate::doom::w_wad::{
-    lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
-    W_LumpNameHash, W_ReleaseLumpName,
+use crate::doom::{
+    g_game::demoplayback,
+    i_system::I_ConsoleStdout,
+    m_misc::M_StringCopy,
+    p_mobj::P_MobjThinker,
+    p_setup::{numsectors, numsides, sectors, sides},
+    p_tick::thinkercap,
+    r_sky::skytexture,
+    r_things::{numsprites, sprites},
+    w_wad::{
+        lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName,
+        W_LumpLength, W_LumpNameHash, W_ReleaseLumpName,
+    },
+    z_zone::{Z_ChangeTag2, Z_Free, Z_Malloc},
 };
-use crate::doom::z_zone::{Z_ChangeTag2, Z_Free, Z_Malloc};
 
 // ---------------------------------------------------------------------------
 // Globals defined by this module

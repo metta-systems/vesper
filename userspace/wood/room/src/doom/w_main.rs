@@ -16,9 +16,11 @@ use libc::printf;
 
 use crate::types::Boolean;
 
-use crate::doom::d_iwad::D_TryFindWADByName;
-use crate::doom::m_argv::{myargc, myargv, M_CheckParmWithArgs};
-use crate::doom::w_wad::W_AddFile;
+use crate::doom::{
+    d_iwad::D_TryFindWADByName,
+    m_argv::{myargc, myargv, M_CheckParmWithArgs},
+    w_wad::W_AddFile,
+};
 
 /// Parse `-file <wad>...` from the command line and append each WAD to the
 /// lump directory.

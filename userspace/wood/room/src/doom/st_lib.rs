@@ -24,9 +24,10 @@
 
 use std::os::raw::c_int;
 
-use crate::doom::v_video::patch_t;
-use crate::doom::z_zone::PU_STATIC;
-use crate::i_error;
+use crate::{
+    doom::{v_video::patch_t, z_zone::PU_STATIC},
+    i_error,
+};
 /// Height of the status bar in pixels.
 /// Mirrors `ST_HEIGHT` from `st_stuff.h`.
 const ST_HEIGHT: c_int = 32;
@@ -159,9 +160,11 @@ pub struct st_binicon_t {
 #[no_mangle]
 pub static mut sttminus: *mut patch_t = std::ptr::null_mut();
 
-use crate::doom::st_stuff::st_backing_screen;
-use crate::doom::v_video::{V_CopyRect, V_DrawPatch};
-use crate::doom::w_wad::W_CacheLumpName;
+use crate::doom::{
+    st_stuff::st_backing_screen,
+    v_video::{V_CopyRect, V_DrawPatch},
+    w_wad::W_CacheLumpName,
+};
 
 /// Initialize the status bar widget library.
 ///
@@ -471,8 +474,7 @@ pub extern "C" fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: c_int) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

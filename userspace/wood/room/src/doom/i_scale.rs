@@ -52,11 +52,17 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::c_ffi::screen_mode_t;
-use crate::doom::m_argv::M_CheckParm;
-use crate::doom::z_zone::{Z_Free, Z_Malloc};
-use std::ffi::{c_int, c_void};
-use std::ptr;
+use {
+    crate::doom::{
+        c_ffi::screen_mode_t,
+        m_argv::M_CheckParm,
+        z_zone::{Z_Free, Z_Malloc},
+    },
+    std::{
+        ffi::{c_int, c_void},
+        ptr,
+    },
+};
 
 /// Flush the "Generating lookup tables.." progress prints. `fflush(NULL)`
 /// flushes every output stream, `stdout` among them, without naming the
@@ -65,8 +71,10 @@ unsafe fn flush_stdout() {
     libc::fflush(ptr::null_mut());
 }
 
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
-use crate::doom::z_zone::PU_STATIC;
+use crate::doom::{
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    z_zone::PU_STATIC,
+};
 
 /// Source framebuffer for the current scale call, set by
 /// [`I_InitScale`]. Points to Doom's `SCREENWIDTH * SCREENHEIGHT`

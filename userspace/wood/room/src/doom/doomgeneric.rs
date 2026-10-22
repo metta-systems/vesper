@@ -26,24 +26,20 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int},
+    ptr,
+};
 
 // Pull in the anchors so all #[no_mangle] functions survive link-time dead-code elimination
 // (they are only called from C).
-use super::hu_lib::HUlib_init;
-use super::i_input::I_Input_Link_Anchor;
-use super::p_ceilng::P_Ceilng_Link_Anchor;
-use super::p_doors::P_Doors_Link_Anchor;
-use super::p_floor::P_Floor_Link_Anchor;
-use super::p_lights::P_Lights_Link_Anchor;
-use super::p_plats::P_Plats_Link_Anchor;
-use super::p_pspr::P_Pspr_Link_Anchor;
-use super::p_sight::P_Sight_Link_Anchor;
-use super::p_switch::P_Switch_Link_Anchor;
-use super::p_telept::P_Telept_Link_Anchor;
-use super::p_user::P_User_Link_Anchor;
-use super::r_main::R_Main_Link_Anchor;
+use super::{
+    hu_lib::HUlib_init, i_input::I_Input_Link_Anchor, p_ceilng::P_Ceilng_Link_Anchor,
+    p_doors::P_Doors_Link_Anchor, p_floor::P_Floor_Link_Anchor, p_lights::P_Lights_Link_Anchor,
+    p_plats::P_Plats_Link_Anchor, p_pspr::P_Pspr_Link_Anchor, p_sight::P_Sight_Link_Anchor,
+    p_switch::P_Switch_Link_Anchor, p_telept::P_Telept_Link_Anchor, p_user::P_User_Link_Anchor,
+    r_main::R_Main_Link_Anchor,
+};
 
 /// Width of the doomgeneric frame buffer in pixels.
 ///

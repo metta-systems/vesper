@@ -24,7 +24,7 @@ use crate::doom::c_ffi;
 fn devparm_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::devparm,
+            { c_ffi::devparm },
             0,
             "devparm should be false without -devparm"
         );
@@ -36,7 +36,7 @@ fn devparm_default_false() {
 fn nomonsters_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::nomonsters,
+            { c_ffi::nomonsters },
             0,
             "nomonsters should be false without -nomonsters"
         );
@@ -49,7 +49,7 @@ fn nomonsters_default_false() {
 fn respawnparm_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::respawnparm,
+            { c_ffi::respawnparm },
             0,
             "respawnparm should be false without -respawn"
         );
@@ -61,7 +61,11 @@ fn respawnparm_default_false() {
 #[test]
 fn fastparm_default_false() {
     unsafe {
-        assert_eq!(c_ffi::fastparm, 0, "fastparm should be false without -fast");
+        assert_eq!(
+            { c_ffi::fastparm },
+            0,
+            "fastparm should be false without -fast"
+        );
     }
 }
 
@@ -70,7 +74,11 @@ fn fastparm_default_false() {
 #[test]
 fn autostart_default_false() {
     unsafe {
-        assert_eq!(c_ffi::autostart, 0, "autostart should be false at startup");
+        assert_eq!(
+            { c_ffi::autostart },
+            0,
+            "autostart should be false at startup"
+        );
     }
 }
 
@@ -80,7 +88,7 @@ fn autostart_default_false() {
 fn advancedemo_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::advancedemo,
+            { c_ffi::advancedemo },
             0,
             "advancedemo should be false at startup"
         );
@@ -91,7 +99,11 @@ fn advancedemo_default_false() {
 #[test]
 fn storedemo_default_false() {
     unsafe {
-        assert_eq!(c_ffi::storedemo, 0, "storedemo should be false at startup");
+        assert_eq!(
+            { c_ffi::storedemo },
+            0,
+            "storedemo should be false at startup"
+        );
     }
 }
 
@@ -100,7 +112,7 @@ fn storedemo_default_false() {
 fn bfgedition_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::bfgedition,
+            { c_ffi::bfgedition },
             0,
             "bfgedition should be false when no IWAD is loaded"
         );
@@ -113,7 +125,7 @@ fn bfgedition_default_false() {
 fn main_loop_started_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::main_loop_started,
+            { c_ffi::main_loop_started },
             0,
             "main_loop_started should be false before D_DoomLoop"
         );
@@ -130,7 +142,7 @@ fn main_loop_started_default_false() {
 fn show_endoom_default_one() {
     unsafe {
         assert_eq!(
-            c_ffi::show_endoom,
+            { c_ffi::show_endoom },
             1,
             "show_endoom should be 1 (enabled) by default"
         );
@@ -147,12 +159,12 @@ fn show_endoom_default_one() {
 fn start_episode_and_map_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::startepisode,
+            { c_ffi::startepisode },
             0,
             "startepisode should be 0 before command-line parse"
         );
         assert_eq!(
-            c_ffi::startmap,
+            { c_ffi::startmap },
             0,
             "startmap should be 0 before command-line parse"
         );

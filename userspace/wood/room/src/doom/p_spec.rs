@@ -19,29 +19,37 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_int, c_short, c_void};
-use std::ptr;
-
-use crate::doom::c_ffi::{line_t, mobj_t, sector_t, side_t, LinedefFlag, FLOORSPEED};
-use crate::doom::d_player::{PlayerT, CF_GODMODE};
-use crate::doom::i_timer::TICRATE;
-use crate::doom::info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT};
-use crate::doom::m_argv::{myargv, M_CheckParmWithArgs};
-use crate::doom::m_fixed::FRACUNIT;
-use crate::doom::m_misc::M_StrToInt;
-use crate::doom::m_random::P_Random;
-use crate::doom::p_floor::floormove_t;
-use crate::doom::p_setup::{lines, numlines, numsectors, sectors, sides};
-use crate::doom::p_switch::{buttonlist, MAXBUTTONS};
-use crate::doom::p_tick::{leveltime, P_AddThinker};
-use crate::doom::r_data::{
-    flattranslation, numflats, texturetranslation, R_CheckTextureNumForName, R_FlatNumForName,
-    R_TextureNumForName,
+use {
+    crate::doom::sounds::Sfx,
+    std::{
+        ffi::{c_char, c_int, c_short, c_void},
+        ptr,
+    },
 };
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::z_zone::PU_LEVSPEC;
-use crate::i_error;
+
+use crate::{
+    doom::{
+        c_ffi::{line_t, mobj_t, sector_t, side_t, LinedefFlag, FLOORSPEED},
+        d_player::{PlayerT, CF_GODMODE},
+        i_timer::TICRATE,
+        info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
+        m_argv::{myargv, M_CheckParmWithArgs},
+        m_fixed::FRACUNIT,
+        m_misc::M_StrToInt,
+        m_random::P_Random,
+        p_floor::floormove_t,
+        p_setup::{lines, numlines, numsectors, sectors, sides},
+        p_switch::{buttonlist, MAXBUTTONS},
+        p_tick::{leveltime, P_AddThinker},
+        r_data::{
+            flattranslation, numflats, texturetranslation, R_CheckTextureNumForName,
+            R_FlatNumForName, R_TextureNumForName,
+        },
+        s_sound::S_StartSound,
+        z_zone::PU_LEVSPEC,
+    },
+    i_error,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -197,28 +205,138 @@ mod layout_checks {
 /// C string literals and are valid for the program lifetime. Sourced from
 /// p_spec.c `animdefs[]`.
 const ANIMDEFS: &[(c_int, *mut c_char, *mut c_char, c_int)] = &[
-    (0, c"NUKAGE3".as_ptr().cast_mut(), c"NUKAGE1".as_ptr().cast_mut(), 8),
-    (0, c"FWATER4".as_ptr().cast_mut(), c"FWATER1".as_ptr().cast_mut(), 8),
-    (0, c"SWATER4".as_ptr().cast_mut(), c"SWATER1".as_ptr().cast_mut(), 8),
-    (0, c"LAVA4".as_ptr().cast_mut(), c"LAVA1".as_ptr().cast_mut(), 8),
-    (0, c"BLOOD3".as_ptr().cast_mut(), c"BLOOD1".as_ptr().cast_mut(), 8),
-    (0, c"RROCK08".as_ptr().cast_mut(), c"RROCK05".as_ptr().cast_mut(), 8),
-    (0, c"SLIME04".as_ptr().cast_mut(), c"SLIME01".as_ptr().cast_mut(), 8),
-    (0, c"SLIME08".as_ptr().cast_mut(), c"SLIME05".as_ptr().cast_mut(), 8),
-    (0, c"SLIME12".as_ptr().cast_mut(), c"SLIME09".as_ptr().cast_mut(), 8),
-    (1, c"BLODGR4".as_ptr().cast_mut(), c"BLODGR1".as_ptr().cast_mut(), 8),
-    (1, c"SLADRIP3".as_ptr().cast_mut(), c"SLADRIP1".as_ptr().cast_mut(), 8),
-    (1, c"BLODRIP4".as_ptr().cast_mut(), c"BLODRIP1".as_ptr().cast_mut(), 8),
-    (1, c"FIREWALL".as_ptr().cast_mut(), c"FIREWALA".as_ptr().cast_mut(), 8),
-    (1, c"GSTFONT3".as_ptr().cast_mut(), c"GSTFONT1".as_ptr().cast_mut(), 8),
-    (1, c"FIRELAVA".as_ptr().cast_mut(), c"FIRELAV3".as_ptr().cast_mut(), 8),
-    (1, c"FIREMAG3".as_ptr().cast_mut(), c"FIREMAG1".as_ptr().cast_mut(), 8),
-    (1, c"FIREBLU2".as_ptr().cast_mut(), c"FIREBLU1".as_ptr().cast_mut(), 8),
-    (1, c"ROCKRED3".as_ptr().cast_mut(), c"ROCKRED1".as_ptr().cast_mut(), 8),
-    (1, c"BFALL4".as_ptr().cast_mut(), c"BFALL1".as_ptr().cast_mut(), 8),
-    (1, c"SFALL4".as_ptr().cast_mut(), c"SFALL1".as_ptr().cast_mut(), 8),
-    (1, c"WFALL4".as_ptr().cast_mut(), c"WFALL1".as_ptr().cast_mut(), 8),
-    (1, c"DBRAIN4".as_ptr().cast_mut(), c"DBRAIN1".as_ptr().cast_mut(), 8),
+    (
+        0,
+        c"NUKAGE3".as_ptr().cast_mut(),
+        c"NUKAGE1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"FWATER4".as_ptr().cast_mut(),
+        c"FWATER1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"SWATER4".as_ptr().cast_mut(),
+        c"SWATER1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"LAVA4".as_ptr().cast_mut(),
+        c"LAVA1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"BLOOD3".as_ptr().cast_mut(),
+        c"BLOOD1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"RROCK08".as_ptr().cast_mut(),
+        c"RROCK05".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"SLIME04".as_ptr().cast_mut(),
+        c"SLIME01".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"SLIME08".as_ptr().cast_mut(),
+        c"SLIME05".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        0,
+        c"SLIME12".as_ptr().cast_mut(),
+        c"SLIME09".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"BLODGR4".as_ptr().cast_mut(),
+        c"BLODGR1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"SLADRIP3".as_ptr().cast_mut(),
+        c"SLADRIP1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"BLODRIP4".as_ptr().cast_mut(),
+        c"BLODRIP1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"FIREWALL".as_ptr().cast_mut(),
+        c"FIREWALA".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"GSTFONT3".as_ptr().cast_mut(),
+        c"GSTFONT1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"FIRELAVA".as_ptr().cast_mut(),
+        c"FIRELAV3".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"FIREMAG3".as_ptr().cast_mut(),
+        c"FIREMAG1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"FIREBLU2".as_ptr().cast_mut(),
+        c"FIREBLU1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"ROCKRED3".as_ptr().cast_mut(),
+        c"ROCKRED1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"BFALL4".as_ptr().cast_mut(),
+        c"BFALL1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"SFALL4".as_ptr().cast_mut(),
+        c"SFALL1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"WFALL4".as_ptr().cast_mut(),
+        c"WFALL1".as_ptr().cast_mut(),
+        8,
+    ),
+    (
+        1,
+        c"DBRAIN4".as_ptr().cast_mut(),
+        c"DBRAIN1".as_ptr().cast_mut(),
+        8,
+    ),
     (-1, c"".as_ptr().cast_mut(), c"".as_ptr().cast_mut(), 0),
 ];
 
@@ -285,20 +403,22 @@ pub static mut levelTimeCount: c_int = 0;
 // Externs from other modules / remaining C code
 // ---------------------------------------------------------------------------
 
-use crate::doom::g_game::{deathmatch, timelimit, totalsecret, G_ExitLevel, G_SecretExitLevel};
-use crate::doom::p_ceilng::{EV_CeilingCrushStop, EV_DoCeiling};
-use crate::doom::p_doors::{EV_DoDoor, P_SpawnDoorCloseIn30, P_SpawnDoorRaiseIn5Mins};
-use crate::doom::p_floor::{EV_BuildStairs, EV_DoFloor, T_MoveFloor};
-use crate::doom::p_inter::P_DamageMobj;
-use crate::doom::p_lights::{
-    EV_LightTurnOn, EV_StartLightStrobing, EV_TurnTagLightsOff, P_SpawnFireFlicker,
-    P_SpawnGlowingLight, P_SpawnLightFlash, P_SpawnStrobeFlash,
+use crate::doom::{
+    g_game::{deathmatch, timelimit, totalsecret, G_ExitLevel, G_SecretExitLevel},
+    p_ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
+    p_doors::{EV_DoDoor, P_SpawnDoorCloseIn30, P_SpawnDoorRaiseIn5Mins},
+    p_floor::{EV_BuildStairs, EV_DoFloor, T_MoveFloor},
+    p_inter::P_DamageMobj,
+    p_lights::{
+        EV_LightTurnOn, EV_StartLightStrobing, EV_TurnTagLightsOff, P_SpawnFireFlicker,
+        P_SpawnGlowingLight, P_SpawnLightFlash, P_SpawnStrobeFlash,
+    },
+    p_plats::{EV_DoPlat, EV_StopPlat},
+    p_switch::P_ChangeSwitchTexture,
+    p_telept::EV_Teleport,
+    w_wad::W_CheckNumForName,
+    z_zone::Z_Malloc,
 };
-use crate::doom::p_plats::{EV_DoPlat, EV_StopPlat};
-use crate::doom::p_switch::P_ChangeSwitchTexture;
-use crate::doom::p_telept::EV_Teleport;
-use crate::doom::w_wad::W_CheckNumForName;
-use crate::doom::z_zone::Z_Malloc;
 
 /// `line_t` as seen by `p_lights` - `#[repr(C)]` layout identical to `c_ffi::line_t`.
 type LightsLine = crate::doom::p_lights::line_t;
@@ -1499,8 +1619,7 @@ pub unsafe extern "C" fn P_Spec_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1523,14 +1642,14 @@ mod tests {
     fn globals_are_zero_initialized() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(levelTimer, 0);
-            assert_eq!(levelTimeCount, 0);
-            assert_eq!(numlinespecials, 0);
+            assert_eq!({ levelTimer }, 0);
+            assert_eq!({ levelTimeCount }, 0);
+            assert_eq!({ numlinespecials }, 0);
             assert!(lastanim.is_null());
-            for (i, &v) in linespeciallist.iter().enumerate() {
+            for (i, &v) in (*&raw const linespeciallist).iter().enumerate() {
                 assert!(v.is_null(), "linespeciallist[{i}] should be null");
             }
-            for (i, a) in anims.iter().enumerate() {
+            for (i, a) in (*&raw const anims).iter().enumerate() {
                 assert_eq!(a.istexture, 0, "anims[{i}].istexture should be 0");
                 assert_eq!(a.picnum, 0, "anims[{i}].picnum should be 0");
             }

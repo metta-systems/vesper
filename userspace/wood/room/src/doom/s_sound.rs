@@ -22,13 +22,13 @@ use std::ffi::{c_char, c_int, c_uint, c_void};
 
 use crate::types::Boolean;
 
-use crate::doom::d_mode;
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::sounds::{
-    Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX,
+use crate::doom::{
+    d_mode,
+    m_fixed::{FRACBITS, FRACUNIT},
+    sounds::{Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX},
+    tables::{finesine, ANGLETOFINESHIFT},
+    z_zone::PU_STATIC,
 };
-use crate::doom::tables::{finesine, ANGLETOFINESHIFT};
-use crate::doom::z_zone::PU_STATIC;
 
 /// Distance, in fixed-point units, beyond which a positional sound is clipped
 /// out entirely (`S_CLIPPING_DIST` in `s_sound.c`).

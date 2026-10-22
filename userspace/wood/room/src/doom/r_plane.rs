@@ -20,14 +20,19 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_short, c_uchar};
-use std::ptr;
+use std::{
+    ffi::{c_int, c_short, c_uchar},
+    ptr,
+};
 
-use crate::i_error;
-use super::m_fixed::{fixed_t, FixedDiv, FixedMul};
-use super::r_sky;
-use super::tables;
-use super::tables::{ANG90, ANGLETOFINESHIFT, FINEMASK};
+use {
+    super::{
+        m_fixed::{fixed_t, FixedDiv, FixedMul},
+        r_sky,
+        tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
+    },
+    crate::i_error,
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -384,18 +389,21 @@ pub static mut cachedystep: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
 // Imports from other modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::r_data::{colormaps, firstflat, flattranslation, R_GetColumn};
-use crate::doom::r_draw::{
-    dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_x, dc_yh, dc_yl, ds_colormap, ds_source,
-    ds_x1, ds_x2, ds_xfrac, ds_xstep, ds_y, ds_yfrac, ds_ystep, viewheight, viewwidth,
+use crate::doom::{
+    r_data::{colormaps, firstflat, flattranslation, R_GetColumn},
+    r_draw::{
+        dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_x, dc_yh, dc_yl, ds_colormap,
+        ds_source, ds_x1, ds_x2, ds_xfrac, ds_xstep, ds_y, ds_yfrac, ds_ystep, viewheight,
+        viewwidth,
+    },
+    r_main::{
+        centerxfrac, colfunc, detailshift, extralight, fixedcolormap, spanfunc, viewangle, viewx,
+        viewy, viewz, xtoviewangle, zlight,
+    },
+    r_sky::{skytexture, skytexturemid},
+    r_things::pspriteiscale,
+    w_wad::{W_CacheLumpNum, W_ReleaseLumpNum},
 };
-use crate::doom::r_main::{
-    centerxfrac, colfunc, detailshift, extralight, fixedcolormap, spanfunc, viewangle, viewx,
-    viewy, viewz, xtoviewangle, zlight,
-};
-use crate::doom::r_sky::{skytexture, skytexturemid};
-use crate::doom::r_things::pspriteiscale;
-use crate::doom::w_wad::{W_CacheLumpNum, W_ReleaseLumpNum};
 
 // ---------------------------------------------------------------------------
 // R_InitPlanes — called once at game startup

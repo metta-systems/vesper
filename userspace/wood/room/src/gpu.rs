@@ -37,8 +37,7 @@
 
 use std::sync::Arc;
 
-use winit::dpi::PhysicalSize;
-use winit::window::Window;
+use winit::{dpi::PhysicalSize, window::Window};
 
 use room::doom::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 

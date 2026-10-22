@@ -11,8 +11,10 @@
 
 #![allow(non_snake_case)]
 
-use crate::doom::m_fixed::{FRACBITS, FRACUNIT};
-use crate::doom::r_data;
+use crate::doom::{
+    m_fixed::{FRACBITS, FRACUNIT},
+    r_data,
+};
 
 // ---------------------------------------------------------------------------
 // Symbol linkage — these tests simply read the Rust globals.

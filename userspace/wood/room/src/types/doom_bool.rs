@@ -5,9 +5,7 @@
 //! sentinel by the enum variant `undef`.  This module models all three states
 //! explicitly and provides safe conversion helpers.
 
-use core::ffi::c_uint;
-use core::fmt;
-use core::ops::Not;
+use core::{ffi::c_uint, fmt, ops::Not};
 
 /// FFI-safe boolean matching Doom's `typedef unsigned int boolean`.
 ///

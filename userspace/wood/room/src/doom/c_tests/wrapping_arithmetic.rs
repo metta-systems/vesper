@@ -12,12 +12,13 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
-use std::ffi::c_uint;
+use std::ffi::{c_int, c_uint};
 
-use crate::doom::c_ffi;
-use crate::doom::m_fixed::{FixedDiv, FixedMul, FRACUNIT};
-use crate::doom::tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK};
+use crate::doom::{
+    c_ffi,
+    m_fixed::{FixedDiv, FixedMul, FRACUNIT},
+    tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
+};
 
 // ---------------------------------------------------------------------------
 // Fixed-point multiplication wrapping

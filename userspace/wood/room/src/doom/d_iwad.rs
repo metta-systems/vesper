@@ -17,12 +17,15 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
+};
 
-use crate::doom::d_mode;
-use crate::doom::m_misc::M_StringJoinA;
-use crate::i_error;
+use crate::{
+    doom::{d_mode, m_misc::M_StringJoinA},
+    i_error,
+};
 
 /// Hard limit on the number of IWAD search directories.
 ///

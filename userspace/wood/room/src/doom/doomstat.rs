@@ -14,11 +14,12 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int},
+    ptr,
+};
 
-use super::d_mode;
-use crate::types::Boolean;
+use {super::d_mode, crate::types::Boolean};
 
 /// Identifies which IWAD variant is loaded (shareware, registered, retail, etc.).
 ///
@@ -67,8 +68,7 @@ pub static mut modifiedgame: Boolean = Boolean::FALSE;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -76,11 +76,11 @@ mod tests {
     fn defaults_match_c() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert_eq!(gamemode, d_mode::indetermined);
-            assert_eq!(gamemission, d_mode::doom);
-            assert_eq!(gameversion, d_mode::exe_final2);
+            assert_eq!({ gamemode }, d_mode::indetermined);
+            assert_eq!({ gamemission }, d_mode::doom);
+            assert_eq!({ gameversion }, d_mode::exe_final2);
             assert!(gamedescription.is_null());
-            assert_eq!(modifiedgame, Boolean::FALSE);
+            assert_eq!({ modifiedgame }, Boolean::FALSE);
         }
     }
 }

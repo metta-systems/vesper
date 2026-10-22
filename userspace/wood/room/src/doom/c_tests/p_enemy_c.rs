@@ -15,9 +15,7 @@
 
 use std::ffi::c_int;
 
-use crate::doom::c_ffi;
-use crate::doom::m_fixed::FRACUNIT;
-use crate::doom::tables::ANG90;
+use crate::doom::{c_ffi, m_fixed::FRACUNIT, tables::ANG90};
 
 // ---------------------------------------------------------------------------
 // xspeed / yspeed — 8-directional movement velocity tables
@@ -31,7 +29,11 @@ use crate::doom::tables::ANG90;
 fn xspeed_exact_values() {
     let expected: [c_int; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
     unsafe {
-        for (i, (&got, &want)) in c_ffi::xspeed.iter().zip(expected.iter()).enumerate() {
+        for (i, (&got, &want)) in (*&raw const c_ffi::xspeed)
+            .iter()
+            .zip(expected.iter())
+            .enumerate()
+        {
             assert_eq!(got, want, "xspeed[{i}]: got {got}, want {want}");
         }
     }
@@ -43,7 +45,11 @@ fn xspeed_exact_values() {
 fn yspeed_exact_values() {
     let expected: [c_int; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
     unsafe {
-        for (i, (&got, &want)) in c_ffi::yspeed.iter().zip(expected.iter()).enumerate() {
+        for (i, (&got, &want)) in (*&raw const c_ffi::yspeed)
+            .iter()
+            .zip(expected.iter())
+            .enumerate()
+        {
             assert_eq!(got, want, "yspeed[{i}]: got {got}, want {want}");
         }
     }
@@ -53,8 +59,8 @@ fn yspeed_exact_values() {
 #[test]
 fn speed_tables_have_8_entries() {
     unsafe {
-        assert_eq!(c_ffi::xspeed.len(), 8, "xspeed");
-        assert_eq!(c_ffi::yspeed.len(), 8, "yspeed");
+        assert_eq!((*&raw const c_ffi::xspeed).len(), 8, "xspeed");
+        assert_eq!((*&raw const c_ffi::yspeed).len(), 8, "yspeed");
     }
 }
 
@@ -132,7 +138,7 @@ fn skullspeed_is_20_fracunits() {
 #[test]
 fn braintargets_initially_null() {
     unsafe {
-        for (i, &ptr) in c_ffi::braintargets.iter().enumerate() {
+        for (i, &ptr) in (*&raw const c_ffi::braintargets).iter().enumerate() {
             assert!(
                 ptr.is_null(),
                 "braintargets[{i}] should be NULL before spawn"
@@ -145,7 +151,7 @@ fn braintargets_initially_null() {
 #[test]
 fn braintargets_has_32_slots() {
     unsafe {
-        assert_eq!(c_ffi::braintargets.len(), 32);
+        assert_eq!((*&raw const c_ffi::braintargets).len(), 32);
     }
 }
 
@@ -153,7 +159,7 @@ fn braintargets_has_32_slots() {
 #[test]
 fn numbraintargets_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::numbraintargets, 0);
+        assert_eq!({ c_ffi::numbraintargets }, 0);
     }
 }
 
@@ -161,7 +167,7 @@ fn numbraintargets_default_zero() {
 #[test]
 fn braintargeton_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::braintargeton, 0);
+        assert_eq!({ c_ffi::braintargeton }, 0);
     }
 }
 

@@ -6,23 +6,28 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_void};
-use std::os::raw::c_short;
-
-use crate::doom::c_ffi as cffi;
-use crate::doom::m_fixed::{fixed_t, FRACUNIT};
-use crate::doom::p_lights::sector_t;
-use crate::doom::p_map::P_ChangeSector;
-use crate::doom::p_setup::sectors;
-use crate::doom::p_spec::{
-    getSector, getSide, twoSided, P_FindHighestFloorSurrounding, P_FindLowestCeilingSurrounding,
-    P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
+use std::{
+    ffi::{c_int, c_void},
+    os::raw::c_short,
 };
-use crate::doom::p_tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker};
-use crate::doom::r_data::textureheight;
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::sounds::Sfx;
-use crate::doom::z_zone::{Z_Malloc, PU_LEVSPEC};
+
+use crate::doom::{
+    c_ffi as cffi,
+    m_fixed::{fixed_t, FRACUNIT},
+    p_lights::sector_t,
+    p_map::P_ChangeSector,
+    p_setup::sectors,
+    p_spec::{
+        getSector, getSide, twoSided, P_FindHighestFloorSurrounding,
+        P_FindLowestCeilingSurrounding, P_FindLowestFloorSurrounding, P_FindNextHighestFloor,
+        P_FindSectorFromLineTag,
+    },
+    p_tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
+    r_data::textureheight,
+    s_sound::S_StartSound,
+    sounds::Sfx,
+    z_zone::{Z_Malloc, PU_LEVSPEC},
+};
 
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).
 const FLOORSPEED: fixed_t = FRACUNIT;
@@ -655,8 +660,7 @@ pub extern "C" fn P_Floor_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

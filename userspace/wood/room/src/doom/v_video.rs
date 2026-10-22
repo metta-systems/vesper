@@ -4,18 +4,24 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
-
-use crate::doom::i_video::{
-    mouse_acceleration, mouse_threshold, usemouse, I_GetPaletteIndex, I_VideoBuffer, SCREENHEIGHT,
-    SCREENWIDTH,
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
 };
-use crate::doom::m_bbox::M_AddToBox;
-use crate::doom::m_misc::{M_FileExists, M_WriteFile};
-use crate::doom::w_wad::W_CacheLumpName;
-use crate::doom::z_zone::{Z_Free, Z_Malloc, PU_CACHE, PU_STATIC};
-use crate::i_error;
+
+use crate::{
+    doom::{
+        i_video::{
+            mouse_acceleration, mouse_threshold, usemouse, I_GetPaletteIndex, I_VideoBuffer,
+            SCREENHEIGHT, SCREENWIDTH,
+        },
+        m_bbox::M_AddToBox,
+        m_misc::{M_FileExists, M_WriteFile},
+        w_wad::W_CacheLumpName,
+        z_zone::{Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+    },
+    i_error,
+};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]

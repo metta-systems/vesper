@@ -7,19 +7,22 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use {
+    crate::doom::sounds::Sfx,
+    std::{ffi::c_void, os::raw::c_int},
+};
 
-use crate::doom::c_ffi as cffi;
-use crate::doom::m_fixed::{fixed_t, FRACUNIT};
-use crate::doom::p_floor::T_MovePlane;
-use crate::doom::p_lights::{line_t, sector_t};
-use crate::doom::p_setup::sectors;
-use crate::doom::p_spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag};
-use crate::doom::p_tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker};
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::z_zone::{Z_Malloc, PU_LEVSPEC};
+use crate::doom::{
+    c_ffi as cffi,
+    m_fixed::{fixed_t, FRACUNIT},
+    p_floor::T_MovePlane,
+    p_lights::{line_t, sector_t},
+    p_setup::sectors,
+    p_spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
+    p_tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
+    s_sound::S_StartSound,
+    z_zone::{Z_Malloc, PU_LEVSPEC},
+};
 
 /// Default ceiling movement speed: 1 fixed-point unit per tic (`FRACUNIT`).
 ///
@@ -424,8 +427,7 @@ pub extern "C" fn P_Ceilng_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

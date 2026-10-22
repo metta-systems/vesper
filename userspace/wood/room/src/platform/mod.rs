@@ -27,12 +27,13 @@
 
 pub mod keys;
 
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-use std::ffi::c_char;
-use std::ffi::CStr;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    ffi::{c_char, CStr},
+    sync::Arc,
+    time::Instant,
+};
 
 use winit::window::Window;
 

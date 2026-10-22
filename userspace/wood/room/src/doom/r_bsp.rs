@@ -7,12 +7,16 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_short, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_int, c_short, c_void},
+    ptr,
+};
 
-use super::m_bbox::BBox;
-use super::m_fixed::{angle_t, fixed_t};
-use super::tables::{ANG90, ANGLETOFINESHIFT};
+use super::{
+    m_bbox::BBox,
+    m_fixed::{angle_t, fixed_t},
+    tables::{ANG90, ANGLETOFINESHIFT},
+};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -575,15 +579,18 @@ static CHECKCOORD: [[c_int; 4]; 12] = [
 // Imports from other modules
 // ---------------------------------------------------------------------------
 
-use crate::doom::p_setup::{nodes, segs, subsectors};
-use crate::doom::r_draw::viewwidth;
-use crate::doom::r_main::{
-    clipangle, sscount, viewangle, viewangletox, viewx, viewy, viewz, R_PointOnSide, R_PointToAngle,
+use crate::doom::{
+    p_setup::{nodes, segs, subsectors},
+    r_draw::viewwidth,
+    r_main::{
+        clipangle, sscount, viewangle, viewangletox, viewx, viewy, viewz, R_PointOnSide,
+        R_PointToAngle,
+    },
+    r_plane::{ceilingplane, floorplane, R_FindPlane},
+    r_segs::{rw_angle1, R_StoreWallRange},
+    r_sky::skyflatnum,
+    r_things::R_AddSprites,
 };
-use crate::doom::r_plane::{ceilingplane, floorplane, R_FindPlane};
-use crate::doom::r_segs::{rw_angle1, R_StoreWallRange};
-use crate::doom::r_sky::skyflatnum;
-use crate::doom::r_things::R_AddSprites;
 
 // ---------------------------------------------------------------------------
 // R_ClearDrawSegs

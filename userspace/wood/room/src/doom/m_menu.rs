@@ -16,16 +16,22 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
+};
 
 use crate::types::Boolean;
 
-use super::d_event::event_t;
-use super::d_mode;
-use super::d_player::M_Menu_SetPlayerMessage;
-use super::doomstat::{gamemission, gamemode, gameversion};
-use crate::{c_write, i_error};
+use {
+    super::{
+        d_event::event_t,
+        d_mode,
+        d_player::M_Menu_SetPlayerMessage,
+        doomstat::{gamemission, gamemode, gameversion},
+    },
+    crate::{c_write, i_error},
+};
 
 /// Return the canonical game mission, collapsing Chex Quest and HacX aliases.
 ///
@@ -198,26 +204,28 @@ extern "C" {
     fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
 }
 
-use crate::doom::am_map::automapactive;
-use crate::doom::d_loop::gametic;
-use crate::doom::d_main::devparm;
-use crate::doom::dstrings::{doom1_endmsg, doom2_endmsg};
-use crate::doom::g_game::{
-    demoplayback, gamestate, netgame, testcontrols, usergame, G_DeferedInitNew, G_LoadGame,
-    G_SaveGame, G_ScreenShot,
+use crate::doom::{
+    am_map::automapactive,
+    d_loop::gametic,
+    d_main::devparm,
+    dstrings::{doom1_endmsg, doom2_endmsg},
+    g_game::{
+        demoplayback, gamestate, netgame, testcontrols, usergame, G_DeferedInitNew, G_LoadGame,
+        G_SaveGame, G_ScreenShot,
+    },
+    hu_stuff::{chat_on, hu_font, message_dontfuckwithme},
+    i_input::vanilla_keyboard_mapping,
+    i_system::I_Quit,
+    i_timer::{I_GetTime, I_WaitVBL},
+    i_video::{usegamma, I_SetPalette},
+    m_misc::M_StringCopy,
+    p_saveg::P_SaveGameFile,
+    r_main::R_SetViewSize,
+    s_sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
+    sounds::Sfx,
+    v_video::{patch_t, V_DrawPatchDirect},
+    w_wad::W_CacheLumpName,
 };
-use crate::doom::hu_stuff::{chat_on, hu_font, message_dontfuckwithme};
-use crate::doom::i_input::vanilla_keyboard_mapping;
-use crate::doom::i_system::I_Quit;
-use crate::doom::i_timer::{I_GetTime, I_WaitVBL};
-use crate::doom::i_video::{usegamma, I_SetPalette};
-use crate::doom::m_misc::M_StringCopy;
-use crate::doom::p_saveg::P_SaveGameFile;
-use crate::doom::r_main::R_SetViewSize;
-use crate::doom::s_sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound};
-use crate::doom::sounds::Sfx;
-use crate::doom::v_video::{patch_t, V_DrawPatchDirect};
-use crate::doom::w_wad::W_CacheLumpName;
 
 /// Current mouse sensitivity setting (0-9); exported to C for `m_config.c` serialization.
 #[no_mangle]

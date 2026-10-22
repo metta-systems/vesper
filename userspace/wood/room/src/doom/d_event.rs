@@ -187,7 +187,7 @@ mod tests {
                 };
                 D_PostEvent(&ev);
             }
-            assert_eq!(EVENT_HEAD, max);
+            assert_eq!({ EVENT_HEAD }, max);
             for i in 0..max {
                 let result = D_PopEvent();
                 assert!(!result.is_null());

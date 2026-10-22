@@ -15,8 +15,7 @@
 
 use std::ffi::c_int;
 
-use crate::doom::c_ffi;
-use crate::doom::p_map;
+use crate::doom::{c_ffi, p_map};
 
 // ---------------------------------------------------------------------------
 // DEFAULT_SPECHIT_MAGIC — spechit overflow sentinel
@@ -41,7 +40,7 @@ fn default_spechit_magic_value() {
 #[test]
 fn tmbbox_default_zero() {
     unsafe {
-        for (i, &v) in p_map::tmbbox.iter().enumerate() {
+        for (i, &v) in (*&raw const p_map::tmbbox).iter().enumerate() {
             assert_eq!(v, 0, "tmbbox[{i}] should be 0 before P_CheckPosition");
         }
     }
@@ -51,7 +50,7 @@ fn tmbbox_default_zero() {
 #[test]
 fn tmbbox_length_is_4() {
     unsafe {
-        assert_eq!(p_map::tmbbox.len(), 4);
+        assert_eq!((*&raw const p_map::tmbbox).len(), 4);
     }
 }
 
@@ -64,7 +63,7 @@ fn tmbbox_length_is_4() {
 fn tmflags_default_zero() {
     unsafe {
         assert_eq!(
-            p_map::tmflags,
+            { p_map::tmflags },
             0,
             "tmflags should be 0 before P_CheckPosition"
         );
@@ -75,8 +74,8 @@ fn tmflags_default_zero() {
 #[test]
 fn tmx_tmy_default_zero() {
     unsafe {
-        assert_eq!(p_map::tmx, 0, "tmx");
-        assert_eq!(p_map::tmy, 0, "tmy");
+        assert_eq!({ p_map::tmx }, 0, "tmx");
+        assert_eq!({ p_map::tmy }, 0, "tmy");
     }
 }
 
@@ -85,7 +84,7 @@ fn tmx_tmy_default_zero() {
 fn floatok_default_zero() {
     unsafe {
         assert_eq!(
-            p_map::floatok,
+            { p_map::floatok },
             0,
             "floatok should be false before P_CheckPosition"
         );
@@ -97,9 +96,9 @@ fn floatok_default_zero() {
 #[test]
 fn tm_z_globals_default_zero() {
     unsafe {
-        assert_eq!(p_map::tmfloorz, 0, "tmfloorz");
-        assert_eq!(p_map::tmceilingz, 0, "tmceilingz");
-        assert_eq!(p_map::tmdropoffz, 0, "tmdropoffz");
+        assert_eq!({ p_map::tmfloorz }, 0, "tmfloorz");
+        assert_eq!({ p_map::tmceilingz }, 0, "tmceilingz");
+        assert_eq!({ p_map::tmdropoffz }, 0, "tmdropoffz");
     }
 }
 
@@ -109,7 +108,7 @@ fn tm_z_globals_default_zero() {
 fn numspechit_default_zero() {
     unsafe {
         assert_eq!(
-            p_map::numspechit,
+            { p_map::numspechit },
             0,
             "numspechit should be 0 before P_CheckPosition"
         );
@@ -125,7 +124,7 @@ fn numspechit_default_zero() {
 #[test]
 fn shootz_default_zero() {
     unsafe {
-        assert_eq!(p_map::shootz, 0, "shootz");
+        assert_eq!({ p_map::shootz }, 0, "shootz");
     }
 }
 
@@ -134,7 +133,7 @@ fn shootz_default_zero() {
 #[test]
 fn la_damage_default_zero() {
     unsafe {
-        assert_eq!(p_map::la_damage, 0, "la_damage");
+        assert_eq!({ p_map::la_damage }, 0, "la_damage");
     }
 }
 
@@ -142,7 +141,7 @@ fn la_damage_default_zero() {
 #[test]
 fn attackrange_default_zero() {
     unsafe {
-        assert_eq!(p_map::attackrange, 0, "attackrange");
+        assert_eq!({ p_map::attackrange }, 0, "attackrange");
     }
 }
 
@@ -151,7 +150,7 @@ fn attackrange_default_zero() {
 #[test]
 fn aimslope_default_zero() {
     unsafe {
-        assert_eq!(p_map::aimslope, 0, "aimslope");
+        assert_eq!({ p_map::aimslope }, 0, "aimslope");
     }
 }
 
@@ -164,8 +163,8 @@ fn aimslope_default_zero() {
 #[test]
 fn slide_fracs_default_zero() {
     unsafe {
-        assert_eq!(p_map::bestslidefrac, 0, "bestslidefrac");
-        assert_eq!(p_map::secondslidefrac, 0, "secondslidefrac");
+        assert_eq!({ p_map::bestslidefrac }, 0, "bestslidefrac");
+        assert_eq!({ p_map::secondslidefrac }, 0, "secondslidefrac");
     }
 }
 
@@ -178,7 +177,7 @@ fn slide_fracs_default_zero() {
 #[test]
 fn bombdamage_default_zero() {
     unsafe {
-        assert_eq!(p_map::bombdamage, 0, "bombdamage");
+        assert_eq!({ p_map::bombdamage }, 0, "bombdamage");
     }
 }
 

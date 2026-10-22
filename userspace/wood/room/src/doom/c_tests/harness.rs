@@ -2,8 +2,10 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
-use std::sync::Mutex;
+use std::{
+    ffi::{c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void},
+    sync::Mutex,
+};
 
 // ---------------------------------------------------------------------------
 // Compile-time type-size assertions.
@@ -23,7 +25,5 @@ pub static C_GLOBAL_LOCK: Mutex<()> = Mutex::new(());
 
 /// Reset the RNG cursors to a known state.
 pub fn reset_rng() {
-    unsafe {
-        crate::doom::m_random::M_ClearRandom();
-    }
+    crate::doom::m_random::M_ClearRandom();
 }

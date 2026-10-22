@@ -15,11 +15,13 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
-use crate::doom::m_misc::M_StringCopy;
-use crate::doom::sha1::{
-    sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
+use crate::doom::{
+    m_misc::M_StringCopy,
+    sha1::{
+        sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
+    },
+    w_wad::{lumpinfo, numlumps},
 };
-use crate::doom::w_wad::{lumpinfo, numlumps};
 
 /// Mirror of the C `lumpinfo_t` layout used by [`W_Checksum`] to read
 /// individual lump metadata out of the `lumpinfo` array.

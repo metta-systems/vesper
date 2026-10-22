@@ -6,8 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::i_error;
-use std::os::raw::c_int;
+use {crate::i_error, std::os::raw::c_int};
 
 use crate::doom::m_fixed::{FixedDiv, FixedMul};
 
@@ -254,11 +253,13 @@ pub static mut t2y: c_int = 0;
 #[no_mangle]
 pub static mut sightcounts: [c_int; 2] = [0, 0];
 
-use crate::doom::p_setup::{
-    nodes as p_setup_nodes, numnodes, numsectors, numsubsectors, rejectmatrix,
-    sectors as p_setup_sectors, segs as p_setup_segs, subsectors as p_setup_subsectors,
+use crate::doom::{
+    p_setup::{
+        nodes as p_setup_nodes, numnodes, numsectors, numsubsectors, rejectmatrix,
+        sectors as p_setup_sectors, segs as p_setup_segs, subsectors as p_setup_subsectors,
+    },
+    r_main::validcount,
 };
-use crate::doom::r_main::validcount;
 // Reuse the authoritative mobj_t mirror from p_telept.rs to guarantee
 // field offsets match the C layout (x=24, subsector=88, height=108).
 pub use crate::doom::p_telept::mobj_t;
@@ -596,8 +597,7 @@ pub extern "C" fn P_Sight_Link_Anchor() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
 

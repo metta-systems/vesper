@@ -13,17 +13,23 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
-use std::ptr;
+use {
+    crate::i_error,
+    std::{
+        ffi::{c_char, c_int, c_uint, c_void, CStr},
+        ptr,
+    },
+};
 
 use crate::doom::w_file::{wad_file_t, W_OpenFile, W_Read};
 
-use crate::doom::d_iwad::D_SuggestGameName;
-use crate::doom::d_mode::D_GameMissionString;
-use crate::doom::i_video::{I_BeginRead, I_EndRead};
-use crate::doom::m_misc::M_ExtractFileBase;
-use crate::doom::z_zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC};
+use crate::doom::{
+    d_iwad::D_SuggestGameName,
+    d_mode::D_GameMissionString,
+    i_video::{I_BeginRead, I_EndRead},
+    m_misc::M_ExtractFileBase,
+    z_zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+};
 
 /// One entry in the global lump directory. Mirrors `lumpinfo_t` in
 /// `w_wad.h`. The size (40 bytes on x86_64) is asserted by a
@@ -587,8 +593,7 @@ pub unsafe extern "C" fn W_Wad_Link_Anchor() {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
+    use {super::*, std::sync::Mutex};
 
     /// `lumpinfo_t` is shared with C code: its 40-byte size on
     /// x86_64 must not silently change.
@@ -716,7 +721,7 @@ mod tests {
         let mut lumps = [make_lump(b"TESTLUMP", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 1) };
 
-        unsafe { W_ReleaseLumpName(c"TESTLUMP".as_ptr()) };
+        W_ReleaseLumpName(c"TESTLUMP".as_ptr());
     }
 
     /// The underlying `strncasecmp` lookup is case-insensitive, so
@@ -728,7 +733,7 @@ mod tests {
         let mut lumps = [make_lump(b"TESTLUMP", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 1) };
 
-        unsafe { W_ReleaseLumpName(c"testlump".as_ptr()) };
+        W_ReleaseLumpName(c"testlump".as_ptr());
     }
 
     /// With multiple lumps loaded, each name must resolve to its
@@ -742,7 +747,7 @@ mod tests {
         let mut lumps = [make_lump(b"ALPHA", &mut wad), make_lump(b"BETA", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 2) };
 
-        unsafe { W_ReleaseLumpName(c"ALPHA".as_ptr()) };
-        unsafe { W_ReleaseLumpName(c"BETA".as_ptr()) };
+        W_ReleaseLumpName(c"ALPHA".as_ptr());
+        W_ReleaseLumpName(c"BETA".as_ptr());
     }
 }

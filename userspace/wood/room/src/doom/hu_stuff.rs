@@ -22,25 +22,31 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
-
-use crate::doom::d_event::event_t;
-use crate::doom::d_mode;
-use crate::doom::d_player::{PlayerT, MAXPLAYERS};
-use crate::doom::doomkeys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT};
-use crate::doom::doomstat::{gamemission, gameversion};
-use crate::doom::hu_lib::{
-    hu_itext_t, hu_stext_t, hu_textline_t, HUlib_addCharToTextLine, HUlib_addMessageToSText,
-    HUlib_drawIText, HUlib_drawSText, HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText,
-    HUlib_eraseTextLine, HUlib_initIText, HUlib_initSText, HUlib_initTextLine, HUlib_keyInIText,
-    HUlib_resetIText,
+use {
+    crate::doom::sounds::Sfx,
+    std::{
+        ffi::{c_char, c_int, c_void},
+        ptr,
+    },
 };
-use crate::doom::i_timer::TICRATE;
-use crate::doom::m_controls::{key_message_refresh, key_multi_msg, key_multi_msgplayer};
-use crate::doom::m_misc::M_StringCopy;
-use crate::doom::v_video::patch_t;
+
+use crate::doom::{
+    d_event::event_t,
+    d_mode,
+    d_player::{PlayerT, MAXPLAYERS},
+    doomkeys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT},
+    doomstat::{gamemission, gameversion},
+    hu_lib::{
+        hu_itext_t, hu_stext_t, hu_textline_t, HUlib_addCharToTextLine, HUlib_addMessageToSText,
+        HUlib_drawIText, HUlib_drawSText, HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText,
+        HUlib_eraseTextLine, HUlib_initIText, HUlib_initSText, HUlib_initTextLine,
+        HUlib_keyInIText, HUlib_resetIText,
+    },
+    i_timer::TICRATE,
+    m_controls::{key_message_refresh, key_multi_msg, key_multi_msgplayer},
+    m_misc::M_StringCopy,
+    v_video::patch_t,
+};
 
 // ---------------------------------------------------------------------------
 // Constants

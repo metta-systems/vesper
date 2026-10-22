@@ -9,9 +9,11 @@
 
 use std::ffi::c_int;
 
-use crate::doom::c_ffi;
-use crate::doom::c_tests::harness::C_GLOBAL_LOCK;
-use crate::doom::i_video::{SCREENHEIGHT, SCREENWIDTH};
+use crate::doom::{
+    c_ffi,
+    c_tests::harness::C_GLOBAL_LOCK,
+    i_video::{SCREENHEIGHT, SCREENWIDTH},
+};
 
 // ---------------------------------------------------------------------------
 // Screen / renderer constants
@@ -70,7 +72,7 @@ const EXPECTED_FUZZ: [c_int; 50] = [
 #[test]
 fn fuzzoffset_length() {
     unsafe {
-        assert_eq!(c_ffi::fuzzoffset.len(), c_ffi::FUZZTABLE);
+        assert_eq!((*&raw const c_ffi::fuzzoffset).len(), c_ffi::FUZZTABLE);
     }
 }
 
@@ -79,7 +81,7 @@ fn fuzzoffset_length() {
 #[test]
 fn fuzzoffset_all_values_are_plus_or_minus_fuzzoff() {
     unsafe {
-        for (i, &v) in c_ffi::fuzzoffset.iter().enumerate() {
+        for (i, &v) in (*&raw const c_ffi::fuzzoffset).iter().enumerate() {
             assert!(
                 v == c_ffi::FUZZOFF || v == -c_ffi::FUZZOFF,
                 "fuzzoffset[{i}] = {v}; expected ±{foff}",
@@ -93,7 +95,7 @@ fn fuzzoffset_all_values_are_plus_or_minus_fuzzoff() {
 #[test]
 fn fuzzoffset_exact_values() {
     unsafe {
-        for (i, (&got, &want)) in c_ffi::fuzzoffset
+        for (i, (&got, &want)) in (*&raw const c_ffi::fuzzoffset)
             .iter()
             .zip(EXPECTED_FUZZ.iter())
             .enumerate()
@@ -112,8 +114,9 @@ fn fuzzoffset_exact_values() {
 fn fuzzoffset_positive_count() {
     // There are exactly 29 positive (+320) entries and 21 negative (−320).
     unsafe {
-        let pos = c_ffi::fuzzoffset.iter().filter(|&&v| v > 0).count();
-        let neg = c_ffi::fuzzoffset.iter().filter(|&&v| v < 0).count();
+        let offsets = c_ffi::fuzzoffset;
+        let pos = offsets.iter().filter(|&&v| v > 0).count();
+        let neg = offsets.iter().filter(|&&v| v < 0).count();
         assert_eq!(
             pos, 29,
             "expected 29 positive fuzzoffset entries, got {pos}"
@@ -143,12 +146,12 @@ fn r_init_buffer_fullscreen_sets_zero_offsets() {
     unsafe {
         c_ffi::R_InitBuffer(SCREENWIDTH, 168);
         assert_eq!(
-            c_ffi::viewwindowx,
+            { c_ffi::viewwindowx },
             0,
             "viewwindowx should be 0 for full-width view"
         );
         assert_eq!(
-            c_ffi::viewwindowy,
+            { c_ffi::viewwindowy },
             0,
             "viewwindowy should be 0 for full-width view"
         );
@@ -163,7 +166,7 @@ fn r_init_buffer_windowed_sets_correct_x_offset() {
     unsafe {
         c_ffi::R_InitBuffer(256, 168);
         assert_eq!(
-            c_ffi::viewwindowx,
+            { c_ffi::viewwindowx },
             (SCREENWIDTH - 256) >> 1,
             "viewwindowx mismatch for width=256"
         );
@@ -179,7 +182,7 @@ fn r_init_buffer_windowed_height_sets_correct_y_offset() {
         c_ffi::R_InitBuffer(200, 100);
         let want_y = (SCREENHEIGHT - c_ffi::SBARHEIGHT - 100) >> 1;
         assert_eq!(
-            c_ffi::viewwindowy,
+            { c_ffi::viewwindowy },
             want_y,
             "viewwindowy mismatch for height=100"
         );
@@ -195,10 +198,10 @@ fn r_init_buffer_various_widths_x_formula() {
             c_ffi::R_InitBuffer(w, 100);
             let want = (SCREENWIDTH - w) >> 1;
             assert_eq!(
-                c_ffi::viewwindowx,
+                { c_ffi::viewwindowx },
                 want,
                 "viewwindowx wrong for width={w}: got {}, want {want}",
-                c_ffi::viewwindowx
+                { c_ffi::viewwindowx }
             );
         }
     }
@@ -217,10 +220,10 @@ fn r_init_buffer_various_heights_y_formula() {
             c_ffi::R_InitBuffer(w, h);
             let want = (playfield - h) >> 1;
             assert_eq!(
-                c_ffi::viewwindowy,
+                { c_ffi::viewwindowy },
                 want,
                 "viewwindowy wrong for height={h}: got {}, want {want}",
-                c_ffi::viewwindowy
+                { c_ffi::viewwindowy }
             );
         }
     }

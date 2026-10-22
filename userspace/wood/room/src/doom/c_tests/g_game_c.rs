@@ -192,7 +192,7 @@ fn bodyquesize_is_32() {
 #[test]
 fn vanilla_savegame_limit_is_one() {
     unsafe {
-        assert_eq!(c_ffi::vanilla_savegame_limit, 1);
+        assert_eq!({ c_ffi::vanilla_savegame_limit }, 1);
     }
 }
 
@@ -200,7 +200,7 @@ fn vanilla_savegame_limit_is_one() {
 #[test]
 fn vanilla_demo_limit_is_one() {
     unsafe {
-        assert_eq!(c_ffi::vanilla_demo_limit, 1);
+        assert_eq!({ c_ffi::vanilla_demo_limit }, 1);
     }
 }
 
@@ -210,7 +210,7 @@ fn vanilla_demo_limit_is_one() {
 fn precache_is_true_by_default() {
     unsafe {
         assert_ne!(
-            c_ffi::precache,
+            { c_ffi::precache },
             0,
             "precache should be true (non-zero) by default"
         );
@@ -221,7 +221,7 @@ fn precache_is_true_by_default() {
 #[test]
 fn testcontrols_is_false_by_default() {
     unsafe {
-        assert_eq!(c_ffi::testcontrols, 0);
+        assert_eq!({ c_ffi::testcontrols }, 0);
     }
 }
 
@@ -229,7 +229,7 @@ fn testcontrols_is_false_by_default() {
 #[test]
 fn bodyqueslot_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::bodyqueslot, 0);
+        assert_eq!({ c_ffi::bodyqueslot }, 0);
     }
 }
 
@@ -238,10 +238,10 @@ fn bodyqueslot_default_zero() {
 #[test]
 fn level_counters_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::levelstarttic, 0, "levelstarttic");
-        assert_eq!(c_ffi::totalkills, 0, "totalkills");
-        assert_eq!(c_ffi::totalitems, 0, "totalitems");
-        assert_eq!(c_ffi::totalsecret, 0, "totalsecret");
+        assert_eq!({ c_ffi::levelstarttic }, 0, "levelstarttic");
+        assert_eq!({ c_ffi::totalkills }, 0, "totalkills");
+        assert_eq!({ c_ffi::totalitems }, 0, "totalitems");
+        assert_eq!({ c_ffi::totalsecret }, 0, "totalsecret");
     }
 }
 

@@ -18,9 +18,13 @@
 #![allow(non_upper_case_globals, non_snake_case, static_mut_refs)]
 #![allow(clippy::manual_c_str_literals)]
 
-use crate::i_error;
-use std::ffi::{c_char, c_float, c_int, c_void, CStr};
-use std::ptr;
+use {
+    crate::i_error,
+    std::{
+        ffi::{c_char, c_float, c_int, c_void, CStr},
+        ptr,
+    },
+};
 
 /// Type tag for a configuration variable.
 ///
@@ -108,8 +112,10 @@ extern "C" {
     fn malloc(n: usize) -> *mut c_void;
 }
 
-use crate::doom::m_argv::{myargv, M_CheckParmWithArgs};
-use crate::doom::m_misc::{M_MakeDirectory, M_StringJoinA};
+use crate::doom::{
+    m_argv::{myargv, M_CheckParmWithArgs},
+    m_misc::{M_MakeDirectory, M_StringJoinA},
+};
 
 /// Global configuration directory (mirrors C `char *configdir`).
 ///

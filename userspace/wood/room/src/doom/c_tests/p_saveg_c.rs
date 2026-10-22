@@ -59,7 +59,7 @@ fn versionsize_is_power_of_two() {
 fn savegamelength_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::savegamelength,
+            { c_ffi::savegamelength },
             0,
             "savegamelength should be 0 before any P_SaveGame call"
         );
@@ -76,7 +76,7 @@ fn savegamelength_default_zero() {
 fn savegame_error_default_false() {
     unsafe {
         assert_eq!(
-            c_ffi::savegame_error,
+            { c_ffi::savegame_error },
             0,
             "savegame_error should be false before any save operation"
         );

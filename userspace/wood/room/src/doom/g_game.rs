@@ -36,25 +36,27 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::sounds::Sfx;
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use {
+    crate::doom::sounds::Sfx,
+    std::ffi::{c_char, c_int, c_uint, c_void},
+};
 
 use std::ptr;
 
-use crate::doom::d_mode::{
-    commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_666, exe_doom_1_7, exe_doom_1_8,
-    exe_final2, exe_ultimate, shareware,
+use crate::doom::{
+    d_mode::{
+        commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_666, exe_doom_1_7, exe_doom_1_8,
+        exe_final2, exe_ultimate, shareware,
+    },
+    d_player::{PlayerT, TiccmdT, MAXPLAYERS},
+    doomstat::{gamemission, gamemode, gameversion},
+    m_random::P_Random,
+    p_inter::maxammo,
+    p_setup::{deathmatch_p, deathmatchstarts, mapthing_t as SetupMapThing, playerstarts},
+    p_telept::{mapthing_t, mobj_t},
+    tables::{finecosine, finesine, finetangent},
+    wi_stuff::{wbplayerstruct_t, wbstartstruct_t},
 };
-use crate::doom::d_player::{PlayerT, TiccmdT, MAXPLAYERS};
-use crate::doom::doomstat::{gamemission, gamemode, gameversion};
-use crate::doom::m_random::P_Random;
-use crate::doom::p_inter::maxammo;
-use crate::doom::p_setup::{
-    deathmatch_p, deathmatchstarts, mapthing_t as SetupMapThing, playerstarts,
-};
-use crate::doom::p_telept::{mapthing_t, mobj_t};
-use crate::doom::tables::{finecosine, finesine, finetangent};
-use crate::doom::wi_stuff::{wbplayerstruct_t, wbstartstruct_t};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -3058,9 +3060,10 @@ pub unsafe extern "C" fn G_CheckDemoStatus() -> boolean {
 /// `DEMOMARKER` end-of-stream shortcut.
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::doom::d_mode::exe_doom_1_9;
-    use crate::doom::d_player::TiccmdT;
+    use {
+        super::*,
+        crate::doom::{d_mode::exe_doom_1_9, d_player::TiccmdT},
+    };
 
     /// Helper returning a freshly zeroed [`TiccmdT`] for test assembly.
     fn zeroed_cmd() -> TiccmdT {
@@ -3128,7 +3131,7 @@ mod tests {
             let mut cmd = zeroed_cmd();
             // Don't call G_ReadDemoTiccmd (it calls G_CheckDemoStatus on DEMOMARKER),
             // instead test the inner read logic directly.
-            read_demo_ticcmd_inner(&mut demo_p, &mut cmd, false);
+            read_demo_ticcmd_inner(&mut *(&raw mut demo_p), &mut cmd, false);
             assert_eq!(cmd.forwardmove, 0x10i8);
             assert_eq!(cmd.sidemove, 0x20i8);
             // angleturn: (0x30 as u8 as u32) << 8 = 0x3000 = 12288 as i16

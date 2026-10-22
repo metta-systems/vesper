@@ -10,8 +10,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_void};
-use std::ptr;
+use std::{
+    ffi::{c_char, c_int, c_void},
+    ptr,
+};
 
 use crate::i_error;
 

@@ -7,13 +7,9 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-use std::os::raw::c_int;
+use std::{ffi::c_void, os::raw::c_int};
 
-use crate::doom::d_player::PlayerT;
-use crate::doom::info::*;
-use crate::doom::p_tick::thinker_t;
-use crate::doom::tables::ANGLETOFINESHIFT;
+use crate::doom::{d_player::PlayerT, info::*, p_tick::thinker_t, tables::ANGLETOFINESHIFT};
 
 /// A sub-sector: the smallest convex region of the BSP tree.
 ///
@@ -235,14 +231,16 @@ pub struct line_t {
 /// binary does not set `thing->z` to `floorz` after teleporting.
 const EXE_FINAL: c_int = 7;
 
-use crate::doom::doomstat::gameversion;
-use crate::doom::p_map::P_TeleportMove;
-use crate::doom::p_mobj::{P_MobjThinker, P_SpawnMobj};
-use crate::doom::p_setup::{numsectors, sectors};
-use crate::doom::p_tick::thinkercap;
-use crate::doom::s_sound::S_StartSound;
-use crate::doom::sounds::Sfx;
-use crate::doom::tables::{finecosine, finesine};
+use crate::doom::{
+    doomstat::gameversion,
+    p_map::P_TeleportMove,
+    p_mobj::{P_MobjThinker, P_SpawnMobj},
+    p_setup::{numsectors, sectors},
+    p_tick::thinkercap,
+    s_sound::S_StartSound,
+    sounds::Sfx,
+    tables::{finecosine, finesine},
+};
 
 // Type alias for cross-module pointer cast (#[repr(C)] identical layout).
 type CffiMobj = crate::doom::c_ffi::mobj_t;
