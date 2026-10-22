@@ -28,7 +28,7 @@ use crate::doom::{
     d_iwad::D_SuggestGameName,
     d_mode::D_GameMissionString,
     i_video::{I_BeginRead, I_EndRead},
-    m_misc::M_ExtractFileBase,
+    m_misc::{until_nul, M_ExtractFileBase},
     z_zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
 };
 
@@ -152,10 +152,7 @@ unsafe fn ExtendLumpInfo(newnumlumps: u32) {
 /// when full, so every comparison and hash works on this prefix,
 /// matching the C code's `strncasecmp(a, b, 8)`.
 pub fn lump_name(name: &[u8]) -> &[u8] {
-    let name = &name[..name.len().min(8)];
-    name.iter()
-        .position(|&byte| byte == 0)
-        .map_or(name, |nul| &name[..nul])
+    until_nul(&name[..name.len().min(8)])
 }
 
 /// Case-insensitive lump-name equality over the [`lump_name`] prefixes.
@@ -212,7 +209,7 @@ pub fn W_AddFile(filename: *mut u8) -> *mut wad_file_t {
             ) as *mut filelump_t;
             (*fileinfo).filepos = 0;
             (*fileinfo).size = (*wad_file).length as i32;
-            M_ExtractFileBase(filename, (*fileinfo).name.as_mut_ptr());
+            (*fileinfo).name = M_ExtractFileBase(path);
             newnumlumps += 1;
         } else {
             // WAD file

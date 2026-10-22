@@ -359,26 +359,13 @@ pub fn HUlib_addLineToSText(s: *mut hu_stext_t) {
 /// Append a message (with optional prefix) to a scrolling text widget.
 ///
 /// Calls [`HUlib_addLineToSText`] to advance the ring buffer, then appends
-/// each character of `prefix` (if non-null) followed by each character of
-/// `msg` to the current line using [`HUlib_addCharToTextLine`].
-///
-/// # Preconditions
-/// * `msg` must be a valid NUL-terminated C string.
-/// * `prefix` may be null; if non-null it must also be NUL-terminated.
-pub fn HUlib_addMessageToSText(s: *mut hu_stext_t, prefix: *mut u8, msg: *mut u8) {
+/// each byte of `prefix` (if any) followed by each byte of `msg` to the
+/// current line using [`HUlib_addCharToTextLine`].
+pub fn HUlib_addMessageToSText(s: *mut hu_stext_t, prefix: Option<&[u8]>, msg: &[u8]) {
     unsafe {
         HUlib_addLineToSText(s);
-        if !prefix.is_null() {
-            let mut p = prefix;
-            while *p != 0 {
-                HUlib_addCharToTextLine(&mut (*s).l[(*s).cl as usize], *p);
-                p = p.add(1);
-            }
-        }
-        let mut m = msg;
-        while *m != 0 {
-            HUlib_addCharToTextLine(&mut (*s).l[(*s).cl as usize], *m);
-            m = m.add(1);
+        for &byte in prefix.unwrap_or_default().iter().chain(msg) {
+            HUlib_addCharToTextLine(&mut (*s).l[(*s).cl as usize], byte);
         }
     }
 }
@@ -481,18 +468,13 @@ pub fn HUlib_resetIText(it: *mut hu_itext_t) {
 
 /// Append a prefix string to an input widget and lock it as the left margin.
 ///
-/// Appends each byte of the NUL-terminated `str` to the underlying text line,
-/// then sets `lm = l.len` so that subsequent delete operations cannot remove
-/// those characters.
-///
-/// # Preconditions
-/// * `str` must be a valid NUL-terminated C string.
-pub fn HUlib_addPrefixToIText(it: *mut hu_itext_t, str: *mut u8) {
+/// Appends each byte of `prefix` to the underlying text line, then sets
+/// `lm = l.len` so that subsequent delete operations cannot remove those
+/// characters.
+pub fn HUlib_addPrefixToIText(it: *mut hu_itext_t, prefix: &[u8]) {
     unsafe {
-        let mut p = str;
-        while *p != 0 {
-            HUlib_addCharToTextLine(&mut (*it).l, *p);
-            p = p.add(1);
+        for &byte in prefix {
+            HUlib_addCharToTextLine(&mut (*it).l, byte);
         }
         (*it).lm = (*it).l.len;
     }

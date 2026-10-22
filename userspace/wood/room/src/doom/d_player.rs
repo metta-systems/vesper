@@ -194,8 +194,8 @@ pub struct PlayerT {
     pub itemcount: i32,
     /// Total secrets found this level (used by intermission screen).
     pub secretcount: i32,
-    /// Pointer to the current HUD hint message string, or null if none.
-    pub message: *mut u8,
+    /// The current HUD hint message, or `None` if there is none.
+    pub message: Option<&'static str>,
     /// Tic counter for red damage flash; decrements toward 0 each tic.
     pub damagecount: i32,
     /// Tic counter for yellow bonus flash; decrements toward 0 each tic.
@@ -224,47 +224,12 @@ pub use crate::doom::g_game::{consoleplayer, players};
 /// the C `M_Menu` code to the player struct.  It writes `msg` into
 /// `players[consoleplayer].message` so the HUD renderer can display it.
 ///
-/// Called from C (`m_menu.c`) when a menu action produces a status message
+/// Called from `m_menu` when a menu action produces a status message
 /// (e.g., "Gamma correction OFF").
 ///
 /// # Safety
-/// - `msg` must be a valid pointer to a NUL-terminated C string that remains
-///   valid at least until the next game tic clears the message field.
-/// - `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
-///   function is called (guaranteed by the engine's startup sequence).
-pub unsafe fn M_Menu_SetPlayerMessage(msg: *const u8) {
-    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message = msg as *mut u8;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Expected layout of `player_t` as emitted by layout_probe.c
-    /// on x86_64 Linux.  Kept in-source so tests don't depend on the
-    /// linker pulling symbols out of a static archive.
-    const PLAYER_T_SIZEOF: usize = 328;
-    const PLAYER_T_MESSAGE_OFFSET: usize = 232;
-
-    #[test]
-    fn player_t_size_matches_c() {
-        assert_eq!(
-            std::mem::size_of::<PlayerT>(),
-            PLAYER_T_SIZEOF,
-            "PlayerT size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<PlayerT>(),
-            PLAYER_T_SIZEOF
-        );
-    }
-
-    #[test]
-    fn player_t_message_offset_matches_c() {
-        assert_eq!(
-            std::mem::offset_of!(PlayerT, message),
-            PLAYER_T_MESSAGE_OFFSET,
-            "PlayerT.message offset mismatch: Rust={}, expected={}",
-            std::mem::offset_of!(PlayerT, message),
-            PLAYER_T_MESSAGE_OFFSET
-        );
-    }
+/// `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
+/// function is called (guaranteed by the engine's startup sequence).
+pub unsafe fn M_Menu_SetPlayerMessage(msg: &'static str) {
+    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message = Some(msg);
 }

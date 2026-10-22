@@ -304,8 +304,6 @@ pub static mut dclick_use: i32 = 1;
 /// memory location. Wired through the `M_Bind*` functions below.
 use crate::doom::m_config::M_BindVariable;
 
-use crate::c_write;
-
 //
 // Bind all of the common controls used by Doom and all other games.
 //
@@ -318,70 +316,46 @@ use crate::c_write;
 /// corresponding `static mut` in this module, so loading a config file
 /// updates the live binding.
 pub fn M_BindBaseControls() {
-    M_BindVariable(cstr(b"key_right\0"), &raw mut key_right as *mut c_void);
-    M_BindVariable(cstr(b"key_left\0"), &raw mut key_left as *mut c_void);
-    M_BindVariable(cstr(b"key_up\0"), &raw mut key_up as *mut c_void);
-    M_BindVariable(cstr(b"key_down\0"), &raw mut key_down as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_strafeleft\0"),
-        &raw mut key_strafeleft as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_straferight\0"),
-        &raw mut key_straferight as *mut c_void,
-    );
-    M_BindVariable(cstr(b"key_fire\0"), &raw mut key_fire as *mut c_void);
-    M_BindVariable(cstr(b"key_use\0"), &raw mut key_use as *mut c_void);
-    M_BindVariable(cstr(b"key_strafe\0"), &raw mut key_strafe as *mut c_void);
-    M_BindVariable(cstr(b"key_speed\0"), &raw mut key_speed as *mut c_void);
+    M_BindVariable("key_right", &raw mut key_right as *mut c_void);
+    M_BindVariable("key_left", &raw mut key_left as *mut c_void);
+    M_BindVariable("key_up", &raw mut key_up as *mut c_void);
+    M_BindVariable("key_down", &raw mut key_down as *mut c_void);
+    M_BindVariable("key_strafeleft", &raw mut key_strafeleft as *mut c_void);
+    M_BindVariable("key_straferight", &raw mut key_straferight as *mut c_void);
+    M_BindVariable("key_fire", &raw mut key_fire as *mut c_void);
+    M_BindVariable("key_use", &raw mut key_use as *mut c_void);
+    M_BindVariable("key_strafe", &raw mut key_strafe as *mut c_void);
+    M_BindVariable("key_speed", &raw mut key_speed as *mut c_void);
 
-    M_BindVariable(cstr(b"mouseb_fire\0"), &raw mut mousebfire as *mut c_void);
-    M_BindVariable(
-        cstr(b"mouseb_strafe\0"),
-        &raw mut mousebstrafe as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"mouseb_forward\0"),
-        &raw mut mousebforward as *mut c_void,
-    );
+    M_BindVariable("mouseb_fire", &raw mut mousebfire as *mut c_void);
+    M_BindVariable("mouseb_strafe", &raw mut mousebstrafe as *mut c_void);
+    M_BindVariable("mouseb_forward", &raw mut mousebforward as *mut c_void);
 
-    M_BindVariable(cstr(b"joyb_fire\0"), &raw mut joybfire as *mut c_void);
-    M_BindVariable(cstr(b"joyb_strafe\0"), &raw mut joybstrafe as *mut c_void);
-    M_BindVariable(cstr(b"joyb_use\0"), &raw mut joybuse as *mut c_void);
-    M_BindVariable(cstr(b"joyb_speed\0"), &raw mut joybspeed as *mut c_void);
+    M_BindVariable("joyb_fire", &raw mut joybfire as *mut c_void);
+    M_BindVariable("joyb_strafe", &raw mut joybstrafe as *mut c_void);
+    M_BindVariable("joyb_use", &raw mut joybuse as *mut c_void);
+    M_BindVariable("joyb_speed", &raw mut joybspeed as *mut c_void);
 
-    M_BindVariable(
-        cstr(b"joyb_menu_activate\0"),
-        &raw mut joybmenu as *mut c_void,
-    );
+    M_BindVariable("joyb_menu_activate", &raw mut joybmenu as *mut c_void);
 
     // Extra controls that are not in the Vanilla versions:
 
+    M_BindVariable("joyb_strafeleft", &raw mut joybstrafeleft as *mut c_void);
+    M_BindVariable("joyb_straferight", &raw mut joybstraferight as *mut c_void);
     M_BindVariable(
-        cstr(b"joyb_strafeleft\0"),
-        &raw mut joybstrafeleft as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"joyb_straferight\0"),
-        &raw mut joybstraferight as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"mouseb_strafeleft\0"),
+        "mouseb_strafeleft",
         &raw mut mousebstrafeleft as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"mouseb_straferight\0"),
+        "mouseb_straferight",
         &raw mut mousebstraferight as *mut c_void,
     );
-    M_BindVariable(cstr(b"mouseb_use\0"), &raw mut mousebuse as *mut c_void);
+    M_BindVariable("mouseb_use", &raw mut mousebuse as *mut c_void);
+    M_BindVariable("mouseb_backward", &raw mut mousebbackward as *mut c_void);
+    M_BindVariable("dclick_use", &raw mut dclick_use as *mut c_void);
+    M_BindVariable("key_pause", &raw mut key_pause as *mut c_void);
     M_BindVariable(
-        cstr(b"mouseb_backward\0"),
-        &raw mut mousebbackward as *mut c_void,
-    );
-    M_BindVariable(cstr(b"dclick_use\0"), &raw mut dclick_use as *mut c_void);
-    M_BindVariable(cstr(b"key_pause\0"), &raw mut key_pause as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_message_refresh\0"),
+        "key_message_refresh",
         &raw mut key_message_refresh as *mut c_void,
     );
 }
@@ -389,71 +363,47 @@ pub fn M_BindBaseControls() {
 /// Register the Heretic-specific keyboard bindings (fly / look / inventory
 /// keys).
 pub fn M_BindHereticControls() {
-    M_BindVariable(cstr(b"key_flyup\0"), &raw mut key_flyup as *mut c_void);
-    M_BindVariable(cstr(b"key_flydown\0"), &raw mut key_flydown as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_flycenter\0"),
-        &raw mut key_flycenter as *mut c_void,
-    );
+    M_BindVariable("key_flyup", &raw mut key_flyup as *mut c_void);
+    M_BindVariable("key_flydown", &raw mut key_flydown as *mut c_void);
+    M_BindVariable("key_flycenter", &raw mut key_flycenter as *mut c_void);
 
-    M_BindVariable(cstr(b"key_lookup\0"), &raw mut key_lookup as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_lookdown\0"),
-        &raw mut key_lookdown as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_lookcenter\0"),
-        &raw mut key_lookcenter as *mut c_void,
-    );
+    M_BindVariable("key_lookup", &raw mut key_lookup as *mut c_void);
+    M_BindVariable("key_lookdown", &raw mut key_lookdown as *mut c_void);
+    M_BindVariable("key_lookcenter", &raw mut key_lookcenter as *mut c_void);
 
-    M_BindVariable(cstr(b"key_invleft\0"), &raw mut key_invleft as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_invright\0"),
-        &raw mut key_invright as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_useartifact\0"),
-        &raw mut key_useartifact as *mut c_void,
-    );
+    M_BindVariable("key_invleft", &raw mut key_invleft as *mut c_void);
+    M_BindVariable("key_invright", &raw mut key_invright as *mut c_void);
+    M_BindVariable("key_useartifact", &raw mut key_useartifact as *mut c_void);
 }
 
 /// Register the Hexen-specific bindings: jump on key / mouse / joystick
 /// plus the eight artifact hotkeys.
 pub fn M_BindHexenControls() {
-    M_BindVariable(cstr(b"key_jump\0"), &raw mut key_jump as *mut c_void);
-    M_BindVariable(cstr(b"mouseb_jump\0"), &raw mut mousebjump as *mut c_void);
-    M_BindVariable(cstr(b"joyb_jump\0"), &raw mut joybjump as *mut c_void);
+    M_BindVariable("key_jump", &raw mut key_jump as *mut c_void);
+    M_BindVariable("mouseb_jump", &raw mut mousebjump as *mut c_void);
+    M_BindVariable("joyb_jump", &raw mut joybjump as *mut c_void);
 
+    M_BindVariable("key_arti_all", &raw mut key_arti_all as *mut c_void);
+    M_BindVariable("key_arti_health", &raw mut key_arti_health as *mut c_void);
     M_BindVariable(
-        cstr(b"key_arti_all\0"),
-        &raw mut key_arti_all as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_arti_health\0"),
-        &raw mut key_arti_health as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_arti_poisonbag\0"),
+        "key_arti_poisonbag",
         &raw mut key_arti_poisonbag as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"key_arti_blastradius\0"),
+        "key_arti_blastradius",
         &raw mut key_arti_blastradius as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"key_arti_teleport\0"),
+        "key_arti_teleport",
         &raw mut key_arti_teleport as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"key_arti_teleportother\0"),
+        "key_arti_teleportother",
         &raw mut key_arti_teleportother as *mut c_void,
     );
+    M_BindVariable("key_arti_egg", &raw mut key_arti_egg as *mut c_void);
     M_BindVariable(
-        cstr(b"key_arti_egg\0"),
-        &raw mut key_arti_egg as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_arti_invulnerability\0"),
+        "key_arti_invulnerability",
         &raw mut key_arti_invulnerability as *mut c_void,
     );
 }
@@ -476,39 +426,27 @@ pub fn M_BindStrifeControls() {
         key_invleft = KEY_INS as i32;
         key_invright = KEY_DEL as i32;
 
-        M_BindVariable(cstr(b"key_jump\0"), &raw mut key_jump as *mut c_void);
-        M_BindVariable(cstr(b"key_lookUp\0"), &raw mut key_lookup as *mut c_void);
-        M_BindVariable(
-            cstr(b"key_lookDown\0"),
-            &raw mut key_lookdown as *mut c_void,
-        );
-        M_BindVariable(cstr(b"key_invLeft\0"), &raw mut key_invleft as *mut c_void);
-        M_BindVariable(
-            cstr(b"key_invRight\0"),
-            &raw mut key_invright as *mut c_void,
-        );
+        M_BindVariable("key_jump", &raw mut key_jump as *mut c_void);
+        M_BindVariable("key_lookUp", &raw mut key_lookup as *mut c_void);
+        M_BindVariable("key_lookDown", &raw mut key_lookdown as *mut c_void);
+        M_BindVariable("key_invLeft", &raw mut key_invleft as *mut c_void);
+        M_BindVariable("key_invRight", &raw mut key_invright as *mut c_void);
 
         // Custom Strife-only Keys:
-        M_BindVariable(
-            cstr(b"key_useHealth\0"),
-            &raw mut key_usehealth as *mut c_void,
-        );
-        M_BindVariable(
-            cstr(b"key_invquery\0"),
-            &raw mut key_invquery as *mut c_void,
-        );
-        M_BindVariable(cstr(b"key_mission\0"), &raw mut key_mission as *mut c_void);
-        M_BindVariable(cstr(b"key_invPop\0"), &raw mut key_invpop as *mut c_void);
-        M_BindVariable(cstr(b"key_invKey\0"), &raw mut key_invkey as *mut c_void);
-        M_BindVariable(cstr(b"key_invHome\0"), &raw mut key_invhome as *mut c_void);
-        M_BindVariable(cstr(b"key_invEnd\0"), &raw mut key_invend as *mut c_void);
-        M_BindVariable(cstr(b"key_invUse\0"), &raw mut key_invuse as *mut c_void);
-        M_BindVariable(cstr(b"key_invDrop\0"), &raw mut key_invdrop as *mut c_void);
+        M_BindVariable("key_useHealth", &raw mut key_usehealth as *mut c_void);
+        M_BindVariable("key_invquery", &raw mut key_invquery as *mut c_void);
+        M_BindVariable("key_mission", &raw mut key_mission as *mut c_void);
+        M_BindVariable("key_invPop", &raw mut key_invpop as *mut c_void);
+        M_BindVariable("key_invKey", &raw mut key_invkey as *mut c_void);
+        M_BindVariable("key_invHome", &raw mut key_invhome as *mut c_void);
+        M_BindVariable("key_invEnd", &raw mut key_invend as *mut c_void);
+        M_BindVariable("key_invUse", &raw mut key_invuse as *mut c_void);
+        M_BindVariable("key_invDrop", &raw mut key_invdrop as *mut c_void);
 
         // Strife also supports jump on mouse and joystick, and in the exact same
         // manner as Hexen!
-        M_BindVariable(cstr(b"mouseb_jump\0"), &raw mut mousebjump as *mut c_void);
-        M_BindVariable(cstr(b"joyb_jump\0"), &raw mut joybjump as *mut c_void);
+        M_BindVariable("mouseb_jump", &raw mut mousebjump as *mut c_void);
+        M_BindVariable("joyb_jump", &raw mut joybjump as *mut c_void);
     }
 }
 
@@ -516,91 +454,46 @@ pub fn M_BindStrifeControls() {
 /// `key_prevweapon`, `key_nextweapon`) plus the corresponding mouse and
 /// joystick prev/next bindings.
 pub fn M_BindWeaponControls() {
-    M_BindVariable(cstr(b"key_weapon1\0"), &raw mut key_weapon1 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon2\0"), &raw mut key_weapon2 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon3\0"), &raw mut key_weapon3 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon4\0"), &raw mut key_weapon4 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon5\0"), &raw mut key_weapon5 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon6\0"), &raw mut key_weapon6 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon7\0"), &raw mut key_weapon7 as *mut c_void);
-    M_BindVariable(cstr(b"key_weapon8\0"), &raw mut key_weapon8 as *mut c_void);
+    M_BindVariable("key_weapon1", &raw mut key_weapon1 as *mut c_void);
+    M_BindVariable("key_weapon2", &raw mut key_weapon2 as *mut c_void);
+    M_BindVariable("key_weapon3", &raw mut key_weapon3 as *mut c_void);
+    M_BindVariable("key_weapon4", &raw mut key_weapon4 as *mut c_void);
+    M_BindVariable("key_weapon5", &raw mut key_weapon5 as *mut c_void);
+    M_BindVariable("key_weapon6", &raw mut key_weapon6 as *mut c_void);
+    M_BindVariable("key_weapon7", &raw mut key_weapon7 as *mut c_void);
+    M_BindVariable("key_weapon8", &raw mut key_weapon8 as *mut c_void);
+
+    M_BindVariable("key_prevweapon", &raw mut key_prevweapon as *mut c_void);
+    M_BindVariable("key_nextweapon", &raw mut key_nextweapon as *mut c_void);
+
+    M_BindVariable("joyb_prevweapon", &raw mut joybprevweapon as *mut c_void);
+    M_BindVariable("joyb_nextweapon", &raw mut joybnextweapon as *mut c_void);
 
     M_BindVariable(
-        cstr(b"key_prevweapon\0"),
-        &raw mut key_prevweapon as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_nextweapon\0"),
-        &raw mut key_nextweapon as *mut c_void,
-    );
-
-    M_BindVariable(
-        cstr(b"joyb_prevweapon\0"),
-        &raw mut joybprevweapon as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"joyb_nextweapon\0"),
-        &raw mut joybnextweapon as *mut c_void,
-    );
-
-    M_BindVariable(
-        cstr(b"mouseb_prevweapon\0"),
+        "mouseb_prevweapon",
         &raw mut mousebprevweapon as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"mouseb_nextweapon\0"),
+        "mouseb_nextweapon",
         &raw mut mousebnextweapon as *mut c_void,
     );
 }
 
 /// Register the automap movement / zoom / overlay bindings.
 pub fn M_BindMapControls() {
+    M_BindVariable("key_map_north", &raw mut key_map_north as *mut c_void);
+    M_BindVariable("key_map_south", &raw mut key_map_south as *mut c_void);
+    M_BindVariable("key_map_east", &raw mut key_map_east as *mut c_void);
+    M_BindVariable("key_map_west", &raw mut key_map_west as *mut c_void);
+    M_BindVariable("key_map_zoomin", &raw mut key_map_zoomin as *mut c_void);
+    M_BindVariable("key_map_zoomout", &raw mut key_map_zoomout as *mut c_void);
+    M_BindVariable("key_map_toggle", &raw mut key_map_toggle as *mut c_void);
+    M_BindVariable("key_map_maxzoom", &raw mut key_map_maxzoom as *mut c_void);
+    M_BindVariable("key_map_follow", &raw mut key_map_follow as *mut c_void);
+    M_BindVariable("key_map_grid", &raw mut key_map_grid as *mut c_void);
+    M_BindVariable("key_map_mark", &raw mut key_map_mark as *mut c_void);
     M_BindVariable(
-        cstr(b"key_map_north\0"),
-        &raw mut key_map_north as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_south\0"),
-        &raw mut key_map_south as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_east\0"),
-        &raw mut key_map_east as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_west\0"),
-        &raw mut key_map_west as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_zoomin\0"),
-        &raw mut key_map_zoomin as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_zoomout\0"),
-        &raw mut key_map_zoomout as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_toggle\0"),
-        &raw mut key_map_toggle as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_maxzoom\0"),
-        &raw mut key_map_maxzoom as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_follow\0"),
-        &raw mut key_map_follow as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_grid\0"),
-        &raw mut key_map_grid as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_mark\0"),
-        &raw mut key_map_mark as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_map_clearmark\0"),
+        "key_map_clearmark",
         &raw mut key_map_clearmark as *mut c_void,
     );
 }
@@ -611,101 +504,47 @@ pub fn M_BindMapControls() {
 /// size and screenshot bindings.
 pub fn M_BindMenuControls() {
     M_BindVariable(
-        cstr(b"key_menu_activate\0"),
+        "key_menu_activate",
         &raw mut key_menu_activate as *mut c_void,
     );
-    M_BindVariable(cstr(b"key_menu_up\0"), &raw mut key_menu_up as *mut c_void);
-    M_BindVariable(
-        cstr(b"key_menu_down\0"),
-        &raw mut key_menu_down as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_left\0"),
-        &raw mut key_menu_left as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_right\0"),
-        &raw mut key_menu_right as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_back\0"),
-        &raw mut key_menu_back as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_forward\0"),
-        &raw mut key_menu_forward as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_confirm\0"),
-        &raw mut key_menu_confirm as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_abort\0"),
-        &raw mut key_menu_abort as *mut c_void,
-    );
+    M_BindVariable("key_menu_up", &raw mut key_menu_up as *mut c_void);
+    M_BindVariable("key_menu_down", &raw mut key_menu_down as *mut c_void);
+    M_BindVariable("key_menu_left", &raw mut key_menu_left as *mut c_void);
+    M_BindVariable("key_menu_right", &raw mut key_menu_right as *mut c_void);
+    M_BindVariable("key_menu_back", &raw mut key_menu_back as *mut c_void);
+    M_BindVariable("key_menu_forward", &raw mut key_menu_forward as *mut c_void);
+    M_BindVariable("key_menu_confirm", &raw mut key_menu_confirm as *mut c_void);
+    M_BindVariable("key_menu_abort", &raw mut key_menu_abort as *mut c_void);
 
+    M_BindVariable("key_menu_help", &raw mut key_menu_help as *mut c_void);
+    M_BindVariable("key_menu_save", &raw mut key_menu_save as *mut c_void);
+    M_BindVariable("key_menu_load", &raw mut key_menu_load as *mut c_void);
+    M_BindVariable("key_menu_volume", &raw mut key_menu_volume as *mut c_void);
+    M_BindVariable("key_menu_detail", &raw mut key_menu_detail as *mut c_void);
+    M_BindVariable("key_menu_qsave", &raw mut key_menu_qsave as *mut c_void);
+    M_BindVariable("key_menu_endgame", &raw mut key_menu_endgame as *mut c_void);
     M_BindVariable(
-        cstr(b"key_menu_help\0"),
-        &raw mut key_menu_help as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_save\0"),
-        &raw mut key_menu_save as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_load\0"),
-        &raw mut key_menu_load as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_volume\0"),
-        &raw mut key_menu_volume as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_detail\0"),
-        &raw mut key_menu_detail as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_qsave\0"),
-        &raw mut key_menu_qsave as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_endgame\0"),
-        &raw mut key_menu_endgame as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_messages\0"),
+        "key_menu_messages",
         &raw mut key_menu_messages as *mut c_void,
     );
-    M_BindVariable(
-        cstr(b"key_menu_qload\0"),
-        &raw mut key_menu_qload as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_quit\0"),
-        &raw mut key_menu_quit as *mut c_void,
-    );
-    M_BindVariable(
-        cstr(b"key_menu_gamma\0"),
-        &raw mut key_menu_gamma as *mut c_void,
-    );
+    M_BindVariable("key_menu_qload", &raw mut key_menu_qload as *mut c_void);
+    M_BindVariable("key_menu_quit", &raw mut key_menu_quit as *mut c_void);
+    M_BindVariable("key_menu_gamma", &raw mut key_menu_gamma as *mut c_void);
 
     M_BindVariable(
-        cstr(b"key_menu_incscreen\0"),
+        "key_menu_incscreen",
         &raw mut key_menu_incscreen as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"key_menu_decscreen\0"),
+        "key_menu_decscreen",
         &raw mut key_menu_decscreen as *mut c_void,
     );
     M_BindVariable(
-        cstr(b"key_menu_screenshot\0"),
+        "key_menu_screenshot",
         &raw mut key_menu_screenshot as *mut c_void,
     );
-    M_BindVariable(
-        cstr(b"key_demo_quit\0"),
-        &raw mut key_demo_quit as *mut c_void,
-    );
-    M_BindVariable(cstr(b"key_spy\0"), &raw mut key_spy as *mut c_void);
+    M_BindVariable("key_demo_quit", &raw mut key_demo_quit as *mut c_void);
+    M_BindVariable("key_spy", &raw mut key_spy as *mut c_void);
 }
 
 /// Register multiplayer chat bindings: the broadcast `key_multi_msg`
@@ -717,21 +556,13 @@ pub fn M_BindMenuControls() {
 /// `M_BindVariable`; this replaces the C `M_snprintf` call.
 pub fn M_BindChatControls(num_players: u32) {
     unsafe {
-        let mut name: [u8; 32] = [0; 32];
-        let mut i: u32 = 0;
+        M_BindVariable("key_multi_msg", &raw mut key_multi_msg as *mut c_void);
 
-        M_BindVariable(
-            cstr(b"key_multi_msg\0"),
-            &raw mut key_multi_msg as *mut c_void,
-        );
-
-        while i < num_players {
-            c_write!(name, "key_multi_msgplayer{}", i + 1);
+        for i in 0..num_players as usize {
             M_BindVariable(
-                name.as_ptr().cast_mut(),
-                &raw mut key_multi_msgplayer[i as usize] as *mut c_void,
+                &format!("key_multi_msgplayer{}", i + 1),
+                &raw mut key_multi_msgplayer[i] as *mut c_void,
             );
-            i += 1;
         }
     }
 }
@@ -747,15 +578,4 @@ pub fn M_BindChatControls(num_players: u32) {
 /// an extension point for porters who want to retune defaults.
 pub fn M_ApplyPlatformDefaults() {
     // no-op. Add your platform-specific patches here.
-}
-
-/// Cast a `'static` NUL-terminated byte slice to a `*mut u8` for use
-/// as a configuration variable name.
-///
-/// The slice is conceptually `const`, but `M_BindVariable` takes
-/// `*mut u8` (matching the C signature), so the cast strips the
-/// const-ness. The pointee is never mutated by the binding code; callers
-/// must continue to honour that invariant.
-const fn cstr(bytes: &[u8]) -> *mut u8 {
-    bytes.as_ptr() as *mut u8
 }

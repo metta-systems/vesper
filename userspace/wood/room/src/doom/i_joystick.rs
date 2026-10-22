@@ -44,8 +44,6 @@ static mut joystick_physical_buttons: [i32; NUM_VIRTUAL_BUTTONS] = [0, 1, 2, 3, 
 
 use crate::doom::m_config::M_BindVariable;
 
-use crate::c_write;
-
 /// Initialise the joystick subsystem.
 ///
 /// No-op stub. The original opened the SDL joystick, validated the
@@ -74,44 +72,30 @@ pub fn I_UpdateJoystick() {}
 /// `default.cfg` is round-trip compatible.
 pub fn I_BindJoystickVariables() {
     unsafe {
+        M_BindVariable("use_joystick", &raw mut usejoystick as *mut c_void);
+        M_BindVariable("joystick_index", &raw mut joystick_index as *mut c_void);
+        M_BindVariable("joystick_x_axis", &raw mut joystick_x_axis as *mut c_void);
+        M_BindVariable("joystick_y_axis", &raw mut joystick_y_axis as *mut c_void);
         M_BindVariable(
-            c"use_joystick".as_ptr().cast_mut().cast(),
-            &raw mut usejoystick as *mut c_void,
-        );
-        M_BindVariable(
-            c"joystick_index".as_ptr().cast_mut().cast(),
-            &raw mut joystick_index as *mut c_void,
-        );
-        M_BindVariable(
-            c"joystick_x_axis".as_ptr().cast_mut().cast(),
-            &raw mut joystick_x_axis as *mut c_void,
-        );
-        M_BindVariable(
-            c"joystick_y_axis".as_ptr().cast_mut().cast(),
-            &raw mut joystick_y_axis as *mut c_void,
-        );
-        M_BindVariable(
-            c"joystick_strafe_axis".as_ptr().cast_mut().cast(),
+            "joystick_strafe_axis",
             &raw mut joystick_strafe_axis as *mut c_void,
         );
         M_BindVariable(
-            c"joystick_x_invert".as_ptr().cast_mut().cast(),
+            "joystick_x_invert",
             &raw mut joystick_x_invert as *mut c_void,
         );
         M_BindVariable(
-            c"joystick_y_invert".as_ptr().cast_mut().cast(),
+            "joystick_y_invert",
             &raw mut joystick_y_invert as *mut c_void,
         );
         M_BindVariable(
-            c"joystick_strafe_invert".as_ptr().cast_mut().cast(),
+            "joystick_strafe_invert",
             &raw mut joystick_strafe_invert as *mut c_void,
         );
 
         for i in 0..NUM_VIRTUAL_BUTTONS {
-            let mut name: [u8; 32] = [0; 32];
-            c_write!(name, "joystick_physical_button{}", i);
             M_BindVariable(
-                name.as_mut_ptr(),
+                &format!("joystick_physical_button{i}"),
                 &raw mut joystick_physical_buttons[i] as *mut c_void,
             );
         }

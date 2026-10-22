@@ -169,11 +169,11 @@ pub static mut netcmds: *mut TiccmdT = std::ptr::null_mut();
 
 use crate::doom::{
     d_loop::{D_InitNetGame, D_RegisterLoopCallbacks, D_StartNetGame},
-    deh_str::DEH_String,
     d_main::{
         advancedemo, autostart, fastparm, nomonsters, respawnparm, startepisode, startloadgame,
         startmap, startskill, D_DoAdvanceDemo, D_ProcessEvents,
     },
+    deh_str::DEH_String,
     doomstat::{gamemission, gamemode, gameversion},
     g_game::{
         deathmatch, demoplayback, demorecording, lowres_turn, netgame, playeringame, timelimit,
@@ -181,7 +181,6 @@ use crate::doom::{
     },
     m_argv::M_CheckParm,
     m_menu::M_Ticker,
-    m_misc::M_StringCopy,
     r_main::viewangleoffset,
     w_checksum::W_Checksum,
     w_wad::W_CheckNumForName,
@@ -207,25 +206,14 @@ use crate::doom::{
 /// Caller must ensure `player_idx < MAXPLAYERS` and that the global state
 /// (`players`, `playeringame`, `consoleplayer`, `demorecording`) is valid.
 unsafe fn PlayerQuitGame(player_idx: usize) {
-    /// Capacity of [`EXITMSG`], named so `M_StringCopy` does not have to take
-    /// a shared reference to the `static mut` to read its length.
-    const EXITMSG_LEN: usize = 80;
-
-    /// 80-byte scratch buffer holding the formatted "Player N left the game"
-    /// message; its address is passed to the console-player's message pointer.
-    static mut EXITMSG: [u8; EXITMSG_LEN] = [0; EXITMSG_LEN];
-
-    M_StringCopy(
-        std::ptr::addr_of_mut!(EXITMSG[0]),
-        DEH_String(EXIT_MSG.as_ptr()),
-        EXITMSG_LEN,
-    );
-
-    EXITMSG[7] += player_idx as u8;
+    // "Player 1 left the game" with the digit bumped to this player.
+    let mut exit_message = DEH_String(EXIT_MSG).as_bytes().to_vec();
+    exit_message[7] += player_idx as u8;
 
     playeringame[player_idx] = 0;
+    // shortcut: leaks one small string per player quitting.
     (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
-        std::ptr::addr_of_mut!(EXITMSG[0]);
+        Some(String::from_utf8_lossy(&exit_message).into_owned().leak());
 
     if demorecording != 0 {
         G_CheckDemoStatus();
@@ -393,9 +381,9 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
 /// Default "Player N left the game" message template.
 ///
 /// The `'1'` at index 7 is incremented in `PlayerQuitGame` to encode the
-/// player number. The string is NUL-terminated and matches the C literal
-/// `"Player 1 left the game"` passed to `DEH_String` in `d_net.c`.
-static EXIT_MSG: [u8; 23] = *b"Player 1 left the game\0";
+/// player number. Matches the C literal `"Player 1 left the game"`
+/// passed to `DEH_String` in `d_net.c`.
+const EXIT_MSG: &str = "Player 1 left the game";
 
 /// The loop callback table registered with `d_loop.c`.
 ///

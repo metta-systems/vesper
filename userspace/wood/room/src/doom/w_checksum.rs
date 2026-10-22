@@ -97,7 +97,7 @@ unsafe fn checksum_add_lump(
     let lump = &*lump;
 
     let mut buf: [u8; 9] = [0; 9];
-    M_StringCopy(buf.as_mut_ptr(), lump.name.as_ptr(), buf.len());
+    M_StringCopy(&mut buf, &lump.name);
 
     SHA1_UpdateString(sha1_context, buf.as_mut_ptr());
     SHA1_UpdateInt32(

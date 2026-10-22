@@ -6,10 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_void, CStr},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::{
     c_write,
@@ -20,7 +17,7 @@ use crate::{
         i_timer::TICRATE,
         i_video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
         m_config::M_SaveDefaults,
-        m_misc::{strlen, M_snprintf_clamp},
+        m_misc::c_str,
     },
     i_error,
     types::Boolean,
@@ -105,7 +102,7 @@ use crate::doom::z_zone::{PU_CACHE, PU_STATIC};
 // ---------------------------------------------------------------------------
 
 /// Savegame directory.
-pub static mut savegamedir: *mut u8 = ptr::null_mut();
+pub static mut savegamedir: String = String::new();
 
 /// Path to the currently loaded IWAD file.
 pub static mut iwadfile: *mut u8 = ptr::null_mut();
@@ -165,7 +162,7 @@ pub static mut demosequence: i32 = 0;
 pub static mut pagetic: i32 = 0;
 
 /// Name of the current demo page lump.
-pub static mut pagename: *mut u8 = ptr::null_mut();
+pub static mut pagename: &[u8] = b"";
 
 /// Wipe gamestate for transition effects. -1 forces a wipe on next draw.
 pub static mut wipegamestate: i32 = GS_DEMOSCREEN;
@@ -187,121 +184,97 @@ static mut D_DISP_BORDERDRAWCOUNT: i32 = 0;
 /// Title string printed at startup.
 static mut title: [u8; 128] = [0; 128];
 
-/// Startup banner strings (may be replaced by dehacked).
-/// These contain embedded \0 bytes (part of the format) so cannot use c"" literals.
-#[allow(clippy::manual_c_str_literals)]
-static mut banners: [*const u8; 7] = [
-    b"                         \0DOOM 2: Hell on Earth v%i.%i\0                           \0"
-        .as_ptr(),
-    b"                            \0DOOM Shareware Startup v%i.%i\0                           \0"
-        .as_ptr(),
-    b"                            \0DOOM Registered Startup v%i.%i\0                           \0"
-        .as_ptr(),
-    b"                          \0DOOM System Startup v%i.%i\0                          \0"
-        .as_ptr(),
-    b"                         \0The Ultimate DOOM Startup v%i.%i\0                        \0"
-        .as_ptr(),
-    b"                     \0DOOM 2: TNT - Evilution v%i.%i\0                           \0"
-        .as_ptr(),
-    b"                   \0DOOM 2: Plutonia Experiment v%i.%i\0                           \0"
-        .as_ptr(),
+/// Startup banner strings (may be replaced by dehacked). Each is a
+/// format containing one `%i.%i` version placeholder.
+const banners: [&str; 7] = [
+    "                         DOOM 2: Hell on Earth v%i.%i                           ",
+    "                            DOOM Shareware Startup v%i.%i                           ",
+    "                            DOOM Registered Startup v%i.%i                           ",
+    "                          DOOM System Startup v%i.%i                          ",
+    "                         The Ultimate DOOM Startup v%i.%i                        ",
+    "                     DOOM 2: TNT - Evilution v%i.%i                           ",
+    "                   DOOM 2: Plutonia Experiment v%i.%i                           ",
 ];
 
-/// Newtype wrapper that makes a raw C-string pointer `Sync` for use in statics.
-struct SyncPtr(*const u8);
-unsafe impl Sync for SyncPtr {}
-
 /// One entry in the `-gameversion` lookup table.
-#[repr(C)]
 struct GameVersionDesc {
     /// Human-readable version label shown in the help list.
-    description: SyncPtr,
+    description: &'static str,
     /// Command-line argument string (e.g. `"1.9"`, `"ultimate"`).
-    cmdline: SyncPtr,
+    cmdline: &'static str,
     /// Numeric version constant from `d_mode` (e.g. `exe_doom_1_9`).
     version: i32,
 }
 
-/// Construct a [`SyncPtr`] from a static byte-string literal.
-const fn sp(s: &'static [u8]) -> SyncPtr {
-    SyncPtr(s.as_ptr())
-}
-
-/// Table of known game versions, termined by a null-description sentinel entry.
-static GAME_VERSIONS: [GameVersionDesc; 10] = [
+/// Table of known game versions.
+const GAME_VERSIONS: [GameVersionDesc; 9] = [
     GameVersionDesc {
-        description: sp(b"Doom 1.666\0"),
-        cmdline: sp(b"1.666\0"),
+        description: "Doom 1.666",
+        cmdline: "1.666",
         version: d_mode::exe_doom_1_666,
     },
     GameVersionDesc {
-        description: sp(b"Doom 1.7/1.7a\0"),
-        cmdline: sp(b"1.7\0"),
+        description: "Doom 1.7/1.7a",
+        cmdline: "1.7",
         version: d_mode::exe_doom_1_7,
     },
     GameVersionDesc {
-        description: sp(b"Doom 1.8\0"),
-        cmdline: sp(b"1.8\0"),
+        description: "Doom 1.8",
+        cmdline: "1.8",
         version: d_mode::exe_doom_1_8,
     },
     GameVersionDesc {
-        description: sp(b"Doom 1.9\0"),
-        cmdline: sp(b"1.9\0"),
+        description: "Doom 1.9",
+        cmdline: "1.9",
         version: d_mode::exe_doom_1_9,
     },
     GameVersionDesc {
-        description: sp(b"Hacx\0"),
-        cmdline: sp(b"hacx\0"),
+        description: "Hacx",
+        cmdline: "hacx",
         version: d_mode::exe_hacx,
     },
     GameVersionDesc {
-        description: sp(b"Ultimate Doom\0"),
-        cmdline: sp(b"ultimate\0"),
+        description: "Ultimate Doom",
+        cmdline: "ultimate",
         version: d_mode::exe_ultimate,
     },
     GameVersionDesc {
-        description: sp(b"Final Doom\0"),
-        cmdline: sp(b"final\0"),
+        description: "Final Doom",
+        cmdline: "final",
         version: d_mode::exe_final,
     },
     GameVersionDesc {
-        description: sp(b"Final Doom (alt)\0"),
-        cmdline: sp(b"final2\0"),
+        description: "Final Doom (alt)",
+        cmdline: "final2",
         version: d_mode::exe_final2,
     },
     GameVersionDesc {
-        description: sp(b"Chex Quest\0"),
-        cmdline: sp(b"chex\0"),
+        description: "Chex Quest",
+        cmdline: "chex",
         version: d_mode::exe_chex,
-    },
-    GameVersionDesc {
-        description: SyncPtr(ptr::null()),
-        cmdline: SyncPtr(ptr::null()),
-        version: 0,
     },
 ];
 
 /// One entry in the `-pack` lookup table.
-#[repr(C)]
 struct PackDesc {
     /// Command-line pack name (e.g. `"tnt"`, `"plutonia"`).
-    name: SyncPtr,
+    name: &'static str,
     /// `gamemission` value to assign when this pack is selected.
     mission: i32,
 }
 
 /// Recognized `-pack` arguments, mapping names to `gamemission` values.
-static PACKS: [PackDesc; 3] = [
+const PACKS: [PackDesc; 3] = [
     PackDesc {
-        name: sp(b"doom2\0"),
+        name: "doom2",
         mission: d_mode::doom2,
     },
     PackDesc {
-        name: sp(b"tnt\0"),
+        name: "tnt",
         mission: d_mode::pack_tnt,
     },
     PackDesc {
-        name: sp(b"plutonia\0"),
+        name: "plutonia",
         mission: d_mode::pack_plut,
     },
 ];
@@ -313,20 +286,10 @@ static PACKS: [PackDesc; 3] = [
 use crate::doom::dummy::drone;
 
 extern "C" {
-    /// Compares two null-terminated C strings lexicographically; returns 0 if equal.
-    fn strcmp(s1: *const u8, s2: *const u8) -> i32;
-    /// Case-insensitive comparison of two null-terminated C strings; returns 0 if equal.
-    fn strcasecmp(s1: *const u8, s2: *const u8) -> i32;
-    /// Case-insensitive comparison of at most `n` bytes of two null-terminated C strings; returns 0 if equal.
-    fn strncasecmp(s1: *const u8, s2: *const u8, n: usize) -> i32;
     /// Converts the initial portion of the null-terminated C string `nptr` to `i32`.
     fn atoi(nptr: *const u8) -> i32;
     /// Terminates the process with the given exit `status` code.
     fn exit(status: i32) -> !;
-    /// Returns non-zero if `c` is a whitespace character per the current locale.
-    fn isspace(c: i32) -> i32;
-    /// Copies `n` bytes from `src` to `dest`, handling overlapping regions correctly.
-    fn memmove(dest: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
 }
 
 // g_game.rs
@@ -368,8 +331,8 @@ use crate::doom::i_video::{screensaver_mode, screenvisible};
 
 // w_wad.rs
 use crate::doom::w_wad::{
-    lumpinfo, numlumps, W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD, W_CheckNumForName,
-    W_GenerateHashTable,
+    lump_names_equal, lumpinfo, numlumps, W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD,
+    W_CheckNumForName, W_GenerateHashTable,
 };
 
 // hu_stuff.rs
@@ -405,7 +368,7 @@ use crate::doom::d_loop::{gametic, D_StartGameLoop, NetUpdate, TryRunTics};
 use crate::doom::d_iwad::{D_FindIWAD, D_SaveGameIWADName};
 
 // z_zone.rs
-use crate::doom::z_zone::{Z_Init, Z_Malloc};
+use crate::doom::z_zone::Z_Init;
 
 // w_main.rs
 use crate::doom::w_main::W_ParseCommandLine;
@@ -497,51 +460,9 @@ static IWAD_CHECK_NAMES: [&[u8]; 23] = [
     b"spida1d1",
 ];
 
-/// Return `true` if the C string `s` ends with `suffix` (case-insensitive).
-/// Returns `false` for null pointers.
-///
-/// # Safety
-///
-/// Both `s` and `suffix`, if non-null, must point to valid, null-terminated C strings that remain
-/// live for the duration of the call.
-unsafe fn c_str_ends_with(s: *const u8, suffix: *const u8) -> bool {
-    if s.is_null() || suffix.is_null() {
-        return false;
-    }
-    let s_len = strlen(s);
-    let suf_len = strlen(suffix);
-    if suf_len > s_len {
-        return false;
-    }
-    strncasecmp(s.add(s_len.wrapping_sub(suf_len)), suffix, suf_len) == 0
-}
-
-/// Return `true` if the two C strings are equal under a case-insensitive comparison.
-/// Returns `false` if either pointer is null.
-///
-/// # Safety
-///
-/// Both `s1` and `s2`, if non-null, must point to valid, null-terminated C strings that remain
-/// live for the duration of the call.
-unsafe fn c_str_eq(s1: *const u8, s2: *const u8) -> bool {
-    if s1.is_null() || s2.is_null() {
-        return false;
-    }
-    strcasecmp(s1, s2) == 0
-}
-
-/// Return `true` if the first `n` bytes of the two C strings differ under a case-insensitive
-/// comparison. Returns `true` (not-equal) if either pointer is null.
-///
-/// # Safety
-///
-/// Both `s1` and `s2`, if non-null, must point to valid C strings with at least `n` accessible
-/// bytes that remain live for the duration of the call.
-unsafe fn c_str_ne_n(s1: *const u8, s2: *const u8, n: usize) -> bool {
-    if s1.is_null() || s2.is_null() {
-        return true;
-    }
-    strncasecmp(s1, s2, n) != 0
+/// Return `true` if `text` ends with `suffix`, ignoring ASCII case.
+fn ends_with_ignore_case(text: &[u8], suffix: &[u8]) -> bool {
+    text.len() >= suffix.len() && text[text.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// Convert a raw C string to an owned `String`, returning empty string for null pointers.
@@ -769,54 +690,28 @@ pub fn D_BindVariables() {
         key_multi_msgplayer[3] = HUSTR_KEYRED as i32;
 
         M_BindVariable(
-            c"mouse_sensitivity".as_ptr().cast_mut().cast(),
+            "mouse_sensitivity",
             &raw mut mouseSensitivity as *mut c_void,
         );
+        M_BindVariable("sfx_volume", &raw mut sfxVolume as *mut c_void);
+        M_BindVariable("music_volume", &raw mut musicVolume as *mut c_void);
+        M_BindVariable("show_messages", &raw mut showMessages as *mut c_void);
+        M_BindVariable("screenblocks", &raw mut screenblocks as *mut c_void);
+        M_BindVariable("detaillevel", &raw mut detailLevel as *mut c_void);
+        M_BindVariable("snd_channels", &raw mut snd_channels as *mut c_void);
         M_BindVariable(
-            c"sfx_volume".as_ptr().cast_mut().cast(),
-            &raw mut sfxVolume as *mut c_void,
-        );
-        M_BindVariable(
-            c"music_volume".as_ptr().cast_mut().cast(),
-            &raw mut musicVolume as *mut c_void,
-        );
-        M_BindVariable(
-            c"show_messages".as_ptr().cast_mut().cast(),
-            &raw mut showMessages as *mut c_void,
-        );
-        M_BindVariable(
-            c"screenblocks".as_ptr().cast_mut().cast(),
-            &raw mut screenblocks as *mut c_void,
-        );
-        M_BindVariable(
-            c"detaillevel".as_ptr().cast_mut().cast(),
-            &raw mut detailLevel as *mut c_void,
-        );
-        M_BindVariable(
-            c"snd_channels".as_ptr().cast_mut().cast(),
-            &raw mut snd_channels as *mut c_void,
-        );
-        M_BindVariable(
-            c"vanilla_savegame_limit".as_ptr().cast_mut().cast(),
+            "vanilla_savegame_limit",
             &raw mut vanilla_savegame_limit as *mut c_void,
         );
         M_BindVariable(
-            c"vanilla_demo_limit".as_ptr().cast_mut().cast(),
+            "vanilla_demo_limit",
             &raw mut vanilla_demo_limit as *mut c_void,
         );
-        M_BindVariable(
-            c"show_endoom".as_ptr().cast_mut().cast(),
-            &raw mut show_endoom as *mut c_void,
-        );
+        M_BindVariable("show_endoom", &raw mut show_endoom as *mut c_void);
 
         // Multiplayer chat macros
         for i in 0..10 {
-            let mut buf: [u8; 12] = [0; 12];
-            c_write!(buf, "chatmacro{}", i);
-            M_BindVariable(
-                buf.as_mut_ptr(),
-                &mut chat_macros[i] as *mut *mut u8 as *mut c_void,
-            );
+            M_BindVariable(&format!("chatmacro{i}"), (&raw mut chat_macros[i]).cast());
         }
     }
 }
@@ -947,11 +842,7 @@ pub fn D_PageTicker() {
 /// Draw the current demo page.
 pub fn D_PageDrawer() {
     unsafe {
-        V_DrawPatch(
-            0,
-            0,
-            W_CacheLumpName(CStr::from_ptr(pagename.cast()).to_bytes(), PU_CACHE) as *mut patch_t,
-        );
+        V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t);
     }
 }
 
@@ -994,7 +885,7 @@ pub fn D_DoAdvanceDemo() {
                     pagetic = 170;
                 }
                 gamestate = GS_DEMOSCREEN;
-                pagename = c"TITLEPIC".as_ptr().cast_mut().cast();
+                pagename = b"TITLEPIC";
                 if gamemode == d_mode::commercial {
                     S_StartMusic(Mus::Dm2ttl as i32);
                 } else {
@@ -1007,7 +898,7 @@ pub fn D_DoAdvanceDemo() {
             2 => {
                 pagetic = 200;
                 gamestate = GS_DEMOSCREEN;
-                pagename = c"CREDIT".as_ptr().cast_mut().cast();
+                pagename = b"CREDIT";
             }
             3 => {
                 G_DeferedPlayDemo(c"demo2".as_ptr().cast());
@@ -1016,14 +907,14 @@ pub fn D_DoAdvanceDemo() {
                 gamestate = GS_DEMOSCREEN;
                 if gamemode == d_mode::commercial {
                     pagetic = TICRATE * 11;
-                    pagename = c"TITLEPIC".as_ptr().cast_mut().cast();
+                    pagename = b"TITLEPIC";
                     S_StartMusic(Mus::Dm2ttl as i32);
                 } else {
                     pagetic = 200;
                     if gamemode == d_mode::retail {
-                        pagename = c"CREDIT".as_ptr().cast_mut().cast();
+                        pagename = b"CREDIT";
                     } else {
-                        pagename = c"HELP2".as_ptr().cast_mut().cast();
+                        pagename = b"HELP2";
                     }
                 }
             }
@@ -1039,10 +930,10 @@ pub fn D_DoAdvanceDemo() {
 
         // BFG Edition workaround: TITLEPIC missing, use INTERPIC
         if bfgedition != 0
-            && c_str_eq(pagename, c"TITLEPIC".as_ptr().cast())
+            && { pagename }.eq_ignore_ascii_case(b"TITLEPIC")
             && W_CheckNumForName(b"titlepic") < 0
         {
-            pagename = c"INTERPIC".as_ptr().cast_mut().cast();
+            pagename = b"INTERPIC";
         }
     }
 }
@@ -1062,65 +953,23 @@ pub fn D_StartTitle() {
 
 /// Return the game name string.
 ///
-/// If any startup banner has been replaced by a DEH patch, the patched string is formatted and
-/// returned (allocated from the zone heap). Otherwise `gamename` is returned unchanged.
-///
-/// # Safety
-///
-/// `gamename` must be a valid, null-terminated C string pointer that remains live for the
-/// duration of the call. Each element of the `banners` static array must be a valid,
-/// null-terminated C string (guaranteed for the compile-time string literals stored there).
-unsafe fn GetGameName(gamename: *mut u8) -> *mut u8 {
-    for i in 0..7 {
-        let banner = banners[i];
+/// If any startup banner has been replaced by a DEH patch, the patched banner is formatted with
+/// the version number and trimmed of surrounding whitespace. Otherwise `gamename` is returned
+/// unchanged.
+fn GetGameName(gamename: &'static str) -> String {
+    for banner in banners {
         let deh_sub = DEH_String(banner);
 
         // Has been replaced?
         if !std::ptr::eq(deh_sub, banner) {
-            let gamename_size = strlen(deh_sub) + 10;
-            let expanded = Z_Malloc(gamename_size as i32, PU_STATIC, ptr::null_mut()) as *mut u8;
-
-            let version = G_VanillaVersionCode();
-            // SAFETY: `deh_sub` is a valid, null-terminated C string allocated by Z_Malloc via
-            // DEH_String and live for the duration of this call. The format string always contains
-            // exactly two `%i` specifiers (matching the banner patterns), and `version/100` /
-            // `version%100` are both `i32` values that satisfy them. `expanded` has room for
-            // `gamename_size` bytes. Dynamic format from DEH — cannot use c_write! (not a literal).
-            let result = libc::snprintf(
-                expanded.cast(),
-                gamename_size,
-                deh_sub.cast(),
-                version / 100,
-                version % 100,
-            );
-            M_snprintf_clamp(expanded, gamename_size, result);
-
-            // Trim leading spaces
-            let mut start = 0;
-            while *expanded.add(start) != 0 && isspace(*expanded.add(start) as i32) != 0 {
-                start += 1;
-            }
-            if start > 0 {
-                let remaining = strlen(expanded).wrapping_sub(start) + 1;
-                memmove(
-                    expanded as *mut c_void,
-                    expanded.add(start) as *const c_void,
-                    remaining,
-                );
-            }
-
-            // Trim trailing spaces
-            let mut len = strlen(expanded);
-            while len > 0 && isspace(*expanded.add(len.wrapping_sub(1)) as i32) != 0 {
-                *expanded.add(len.wrapping_sub(1)) = 0;
-                len -= 1;
-            }
-
-            return expanded;
+            let version = unsafe { G_VanillaVersionCode() };
+            let expanded =
+                deh_sub.replacen("%i.%i", &format!("{}.{}", version / 100, version % 100), 1);
+            return expanded.trim_ascii().to_owned();
         }
     }
 
-    gamename
+    gamename.to_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,11 +980,10 @@ unsafe fn GetGameName(gamename: *mut u8) -> *mut u8 {
 ///
 /// # Safety
 ///
-/// `pack_name` must be a valid, null-terminated C string pointer that remains live for the
-/// duration of the call.
-unsafe fn SetMissionForPackName(pack_name: *mut u8) {
+/// Writes the `gamemission` global.
+unsafe fn SetMissionForPackName(pack_name: &[u8]) {
     for pack in &PACKS {
-        if c_str_eq(pack_name, pack.name.0) {
+        if pack_name.eq_ignore_ascii_case(pack.name.as_bytes()) {
             gamemission = pack.mission;
             return;
         }
@@ -1143,10 +991,7 @@ unsafe fn SetMissionForPackName(pack_name: *mut u8) {
 
     println!("Valid mission packs are:");
     for pack in &PACKS {
-        if pack.name.0.is_null() {
-            break;
-        }
-        println!("\t{}", c_str_to_str(pack.name.0));
+        println!("\t{}", pack.name);
     }
 
     i_error!("Unknown mission pack name");
@@ -1161,12 +1006,12 @@ pub fn D_IdentifyVersion() {
     unsafe {
         if gamemission == d_mode::none {
             for i in 0..numlumps {
-                let name_ptr = (*lumpinfo.add(i as usize)).name.as_ptr();
+                let name = &(*lumpinfo.add(i as usize)).name;
 
-                if !c_str_ne_n(name_ptr, c"MAP01".as_ptr().cast(), 8) {
+                if lump_names_equal(name, b"MAP01") {
                     gamemission = d_mode::doom2;
                     break;
-                } else if !c_str_ne_n(name_ptr, c"E1M1".as_ptr().cast(), 8) {
+                } else if lump_names_equal(name, b"E1M1") {
                     gamemission = d_mode::doom;
                     break;
                 }
@@ -1195,7 +1040,7 @@ pub fn D_IdentifyVersion() {
             // Manually override gamemission with -pack
             let p = M_CheckParmWithArgs(c"-pack".as_ptr().cast_mut().cast(), 1);
             if p > 0 {
-                SetMissionForPackName(*myargv.add((p + 1) as usize));
+                SetMissionForPackName(c_str(*myargv.add((p + 1) as usize)));
             }
         }
     }
@@ -1229,38 +1074,46 @@ pub fn D_SetGameDescription() {
         let is_freedoom = W_CheckNumForName(b"FREEDOOM") >= 0;
         let is_freedm = W_CheckNumForName(b"FREEDM") >= 0;
 
-        gamedescription = c"Unknown".as_ptr().cast_mut().cast();
-
         let logical_mission = logical_gamemission();
-        if logical_mission == d_mode::doom {
+        let description = if logical_mission == d_mode::doom {
             // Doom 1. But which version?
             if is_freedoom {
-                gamedescription = GetGameName(c"Freedoom: Phase 1".as_ptr().cast_mut().cast());
+                GetGameName("Freedoom: Phase 1")
             } else if gamemode == d_mode::retail {
-                gamedescription = GetGameName(c"The Ultimate DOOM".as_ptr().cast_mut().cast());
+                GetGameName("The Ultimate DOOM")
             } else if gamemode == d_mode::registered {
-                gamedescription = GetGameName(c"DOOM Registered".as_ptr().cast_mut().cast());
+                GetGameName("DOOM Registered")
             } else if gamemode == d_mode::shareware {
-                gamedescription = GetGameName(c"DOOM Shareware".as_ptr().cast_mut().cast());
+                GetGameName("DOOM Shareware")
+            } else {
+                "Unknown".to_owned()
             }
         } else {
             // Doom 2 of some kind.
             if is_freedoom {
                 if is_freedm {
-                    gamedescription = GetGameName(c"FreeDM".as_ptr().cast_mut().cast());
+                    GetGameName("FreeDM")
                 } else {
-                    gamedescription = GetGameName(c"Freedoom: Phase 2".as_ptr().cast_mut().cast());
+                    GetGameName("Freedoom: Phase 2")
                 }
             } else if logical_mission == d_mode::doom2 {
-                gamedescription = GetGameName(c"DOOM 2: Hell on Earth".as_ptr().cast_mut().cast());
+                GetGameName("DOOM 2: Hell on Earth")
             } else if logical_mission == d_mode::pack_plut {
-                gamedescription =
-                    GetGameName(c"DOOM 2: Plutonia Experiment".as_ptr().cast_mut().cast());
+                GetGameName("DOOM 2: Plutonia Experiment")
             } else if logical_mission == d_mode::pack_tnt {
-                gamedescription =
-                    GetGameName(c"DOOM 2: TNT - Evilution".as_ptr().cast_mut().cast());
+                GetGameName("DOOM 2: TNT - Evilution")
+            } else {
+                "Unknown".to_owned()
             }
-        }
+        };
+
+        // shortcut: leaks one string per call (once at startup, like the C
+        // original's allocated name); goes away when `gamedescription` and
+        // its readers take a Rust string.
+        gamedescription = std::ffi::CString::new(description)
+            .unwrap()
+            .into_raw()
+            .cast();
     }
 }
 
@@ -1287,44 +1140,32 @@ unsafe fn D_AddFile(filename: *mut u8) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Copyright notice strings that are printed when replaced by DEH patches.
-static COPYRIGHT_BANNERS: [SyncPtr; 3] = [
-    sp(
-        b"===========================================================================\n\
+const COPYRIGHT_BANNERS: [&str; 3] = [
+    "===========================================================================\n\
 ATTENTION:  This version of DOOM has been modified.  If you would like to\n\
 get a copy of the original game, call 1-800-IDGAMES or see the readme file.\n\
         You will not receive technical support for modified games.\n\
                       press enter to continue\n\
-===========================================================================\n\0",
-    ),
-    sp(
-        b"===========================================================================\n\
+===========================================================================\n",
+    "===========================================================================\n\
                  Commercial product - do not distribute!\n\
          Please report software piracy to the SPA: 1-800-388-PIR8\n\
-===========================================================================\n\0",
-    ),
-    sp(
-        b"===========================================================================\n\
+===========================================================================\n",
+    "===========================================================================\n\
                                 Shareware!\n\
-===========================================================================\n\0",
-    ),
+===========================================================================\n",
 ];
 
 /// Print any copyright banners that have been replaced by DEH patches.
-///
-/// # Safety
-///
-/// Reads the `COPYRIGHT_BANNERS` static; must be called after the DEH subsystem is initialized.
-unsafe fn PrintDehackedBanners() {
-    for i in 0..COPYRIGHT_BANNERS.len() {
-        let banner = COPYRIGHT_BANNERS[i].0;
+fn PrintDehackedBanners() {
+    for banner in COPYRIGHT_BANNERS {
         let deh_s = DEH_String(banner);
 
         if !std::ptr::eq(deh_s, banner) {
-            print!("{}", c_str_to_str(deh_s));
+            print!("{deh_s}");
 
             // Ensure modified banner ends in newline
-            let len = strlen(deh_s);
-            if len > 0 && *deh_s.add(len.wrapping_sub(1)) != b'\n' {
+            if !deh_s.is_empty() && !deh_s.ends_with('\n') {
                 println!();
             }
         }
@@ -1345,14 +1186,11 @@ unsafe fn InitGameVersion() {
     let p = M_CheckParmWithArgs(c"-gameversion".as_ptr().cast_mut().cast(), 1);
 
     if p > 0 {
-        let arg = *myargv.add((p + 1) as usize);
+        let arg = c_str(*myargv.add((p + 1) as usize));
 
         let mut found = false;
         for gv in &GAME_VERSIONS {
-            if gv.description.0.is_null() {
-                break;
-            }
-            if strcmp(arg, gv.cmdline.0) == 0 {
+            if arg == gv.cmdline.as_bytes() {
                 gameversion = gv.version;
                 found = true;
                 break;
@@ -1362,14 +1200,7 @@ unsafe fn InitGameVersion() {
         if !found {
             println!("Supported game versions:");
             for gv in &GAME_VERSIONS {
-                if gv.description.0.is_null() {
-                    break;
-                }
-                println!(
-                    "\t{} ({})",
-                    c_str_to_str(gv.cmdline.0),
-                    c_str_to_str(gv.description.0)
-                );
+                println!("\t{} ({})", gv.cmdline, gv.description);
             }
 
             i_error!("Unknown game version");
@@ -1417,13 +1248,10 @@ unsafe fn InitGameVersion() {
 pub fn PrintGameVersion() {
     unsafe {
         for gv in &GAME_VERSIONS {
-            if gv.description.0.is_null() {
-                break;
-            }
             if gv.version == gameversion {
                 println!(
                     "Emulating the behavior of the '{}' executable.",
-                    c_str_to_str(gv.description.0)
+                    gv.description
                 );
                 break;
             }
@@ -1501,7 +1329,7 @@ pub fn D_DoomMain() {
         }
 
         // Config directory
-        M_SetConfigDir(ptr::null_mut());
+        M_SetConfigDir(None);
 
         // Turbo mode
         let p = M_CheckParm(c"-turbo".as_ptr().cast_mut().cast());
@@ -1527,10 +1355,7 @@ pub fn D_DoomMain() {
 
         // Load configuration
         println!("M_LoadDefaults: Load system defaults.");
-        M_SetConfigFilenames(
-            c"default.cfg".as_ptr().cast_mut().cast(),
-            c"doom.cfg".as_ptr().cast_mut().cast(),
-        );
+        M_SetConfigFilenames("default.cfg", "doom.cfg");
         D_BindVariables();
         M_LoadDefaults();
 
@@ -1583,8 +1408,8 @@ pub fn D_DoomMain() {
             let arg = *myargv.add((p + 1) as usize);
 
             // Copy demo name, handle .lmp extension
-            if c_str_ends_with(arg, c".lmp".as_ptr().cast()) {
-                M_StringCopy(file.as_mut_ptr(), arg, file.len());
+            if ends_with_ignore_case(c_str(arg), b".lmp") {
+                M_StringCopy(&mut file, c_str(arg));
             } else {
                 let arg_str = std::ffi::CStr::from_ptr(arg.cast()).to_string_lossy();
                 c_write!(file, "{}.lmp", arg_str);
@@ -1597,7 +1422,7 @@ pub fn D_DoomMain() {
                 demolumpname[8] = 0;
             } else {
                 // Still continue like Vanilla Doom
-                M_StringCopy(demolumpname.as_mut_ptr(), arg, demolumpname.len());
+                M_StringCopy(&mut demolumpname, c_str(arg));
             }
 
             println!("Playing demo {}.", c_str_to_str(file.as_ptr()));
@@ -1791,7 +1616,7 @@ pub fn D_DoomMain() {
 
         // Load game
         if startloadgame >= 0 {
-            M_StringCopy(file.as_mut_ptr(), P_SaveGameFile(startloadgame), file.len());
+            M_StringCopy(&mut file, P_SaveGameFile(startloadgame).as_bytes());
             G_LoadGame(file.as_mut_ptr());
         }
 
@@ -1847,29 +1672,32 @@ mod tests {
     #[test]
     fn global_buffer_sizes() {
         unsafe {
-            assert_eq!(std::mem::size_of_val(&*(&raw const wadfile)), 1024);
-            assert_eq!(std::mem::size_of_val(&*(&raw const mapdir)), 1024);
-            assert_eq!(std::mem::size_of_val(&*(&raw const title)), 128);
+            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(wadfile)), 1024);
+            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(mapdir)), 1024);
+            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(title)), 128);
         }
     }
 
-    /// Verify the `GAME_VERSIONS` table is terminated by a null-description sentinel entry.
+    /// Every `GAME_VERSIONS` entry has a description and a command-line name.
     #[test]
     fn game_version_table_complete() {
-        // Last entry should be null-terminated
-        let last = &GAME_VERSIONS[GAME_VERSIONS.len() - 1];
-        assert!(last.description.0.is_null());
-        assert!(last.cmdline.0.is_null());
-        assert_eq!(last.version, 0);
+        for gv in &GAME_VERSIONS {
+            assert!(!gv.description.is_empty());
+            assert!(!gv.cmdline.is_empty());
+        }
     }
 
-    /// Verify the `PACKS` table contains exactly three entries with non-null names.
+    /// The `PACKS` table lists the three mission packs by name.
     #[test]
     fn packs_table_complete() {
-        assert_eq!(PACKS.len(), 3);
-        assert!(!PACKS[0].name.0.is_null());
-        assert!(!PACKS[1].name.0.is_null());
-        assert!(!PACKS[2].name.0.is_null());
+        let names: Vec<&str> = PACKS.iter().map(|pack| pack.name).collect();
+        assert_eq!(names, ["doom2", "tnt", "plutonia"]);
+    }
+
+    /// An unpatched banner leaves the game name as given.
+    #[test]
+    fn game_name_without_deh_patch_is_unchanged() {
+        assert_eq!(GetGameName("DOOM Shareware"), "DOOM Shareware");
     }
 
     /// Verify the IWAD check name array contains exactly 23 lump names.
@@ -1884,9 +1712,11 @@ mod tests {
         assert_eq!(COPYRIGHT_BANNERS.len(), 3);
     }
 
-    /// Verify the startup banners array contains exactly seven entries.
+    /// Every startup banner carries the version placeholder `GetGameName` fills in.
     #[test]
-    fn banners_count() {
-        assert_eq!(7, 7);
+    fn banners_have_version_placeholder() {
+        for banner in banners {
+            assert!(banner.contains("%i.%i"), "{banner:?}");
+        }
     }
 }

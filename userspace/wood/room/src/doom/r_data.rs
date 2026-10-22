@@ -224,7 +224,6 @@ use crate::doom::{
     deh_str::DEH_String,
     g_game::demoplayback,
     i_system::I_ConsoleStdout,
-    m_misc::M_StringCopy,
     p_mobj::P_MobjThinker,
     p_setup::{numsectors, numsides, sectors, sides},
     p_tick::thinkercap,
@@ -721,8 +720,6 @@ unsafe fn GenerateTextureHashTable() {
 /// - WAD must be fully loaded (`W_Init` must have been called).
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitTextures() {
-    let mut name: [u8; 9] = [0; 9];
-
     let names = W_CacheLumpName(DEH_String(b"PNAMES"), PU_STATIC) as *mut i32;
     let nummappatches = LONG(*names);
     let name_p = names.add(1) as *mut u8;
@@ -734,8 +731,9 @@ pub unsafe fn R_InitTextures() {
     ) as *mut i32;
 
     for i in 0..nummappatches as usize {
-        M_StringCopy(name.as_mut_ptr(), name_p.add(i * 8), name.len());
-        *patchlookup.add(i) = W_CheckNumForName(&name);
+        // PNAMES entries are 8-byte names, not NUL-terminated when full.
+        let name = std::slice::from_raw_parts(name_p.add(i * 8), 8);
+        *patchlookup.add(i) = W_CheckNumForName(name);
     }
     W_ReleaseLumpName(DEH_String(b"PNAMES"));
 

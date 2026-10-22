@@ -71,52 +71,34 @@ const it_yellowskull: usize = 4;
 const it_redskull: usize = 5;
 
 /// Locked-object message: blue key required.
-const PD_BLUEO: *mut u8 = c"You need a blue key to activate this object"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_BLUEO: &str = "You need a blue key to activate this object";
 /// Locked-object message: red key required.
-const PD_REDO: *mut u8 = c"You need a red key to activate this object"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_REDO: &str = "You need a red key to activate this object";
 /// Locked-object message: yellow key required.
-const PD_YELLOWO: *mut u8 = c"You need a yellow key to activate this object"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_YELLOWO: &str = "You need a yellow key to activate this object";
 /// Locked-door message: blue key required.
-const PD_BLUEK: *mut u8 = c"You need a blue key to open this door"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_BLUEK: &str = "You need a blue key to open this door";
 /// Locked-door message: red key required.
-const PD_REDK: *mut u8 = c"You need a red key to open this door"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_REDK: &str = "You need a red key to open this door";
 /// Locked-door message: yellow key required.
-const PD_YELLOWK: *mut u8 = c"You need a yellow key to open this door"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const PD_YELLOWK: &str = "You need a yellow key to open this door";
 
 #[inline(always)]
-unsafe fn locked_object_message(special: i32) -> *mut u8 {
+fn locked_object_message(special: i32) -> Option<&'static str> {
     match special {
-        99 | 133 => DEH_String(PD_BLUEO),
-        134 | 135 => DEH_String(PD_REDO),
-        136 | 137 => DEH_String(PD_YELLOWO),
+        99 | 133 => Some(DEH_String(PD_BLUEO)),
+        134 | 135 => Some(DEH_String(PD_REDO)),
+        136 | 137 => Some(DEH_String(PD_YELLOWO)),
         _ => unreachable!("unexpected locked object special: {special}"),
     }
 }
 
 #[inline(always)]
-unsafe fn locked_door_message(special: i32) -> *mut u8 {
+fn locked_door_message(special: i32) -> Option<&'static str> {
     match special {
-        26 | 32 => DEH_String(PD_BLUEK),
-        27 | 34 => DEH_String(PD_YELLOWK),
-        28 | 33 => DEH_String(PD_REDK),
+        26 | 32 => Some(DEH_String(PD_BLUEK)),
+        27 | 34 => Some(DEH_String(PD_YELLOWK)),
+        28 | 33 => Some(DEH_String(PD_REDK)),
         _ => unreachable!("unexpected locked door special: {special}"),
     }
 }
@@ -715,26 +697,22 @@ mod tests {
     #[test]
     fn locked_object_specials_map_to_dehacked_messages() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!(locked_object_message(99), DEH_String(PD_BLUEO));
-            assert_eq!(locked_object_message(133), DEH_String(PD_BLUEO));
-            assert_eq!(locked_object_message(134), DEH_String(PD_REDO));
-            assert_eq!(locked_object_message(135), DEH_String(PD_REDO));
-            assert_eq!(locked_object_message(136), DEH_String(PD_YELLOWO));
-            assert_eq!(locked_object_message(137), DEH_String(PD_YELLOWO));
-        }
+        assert_eq!(locked_object_message(99), Some(DEH_String(PD_BLUEO)));
+        assert_eq!(locked_object_message(133), Some(DEH_String(PD_BLUEO)));
+        assert_eq!(locked_object_message(134), Some(DEH_String(PD_REDO)));
+        assert_eq!(locked_object_message(135), Some(DEH_String(PD_REDO)));
+        assert_eq!(locked_object_message(136), Some(DEH_String(PD_YELLOWO)));
+        assert_eq!(locked_object_message(137), Some(DEH_String(PD_YELLOWO)));
     }
 
     #[test]
     fn vertical_door_specials_map_to_dehacked_messages() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!(locked_door_message(26), DEH_String(PD_BLUEK));
-            assert_eq!(locked_door_message(32), DEH_String(PD_BLUEK));
-            assert_eq!(locked_door_message(27), DEH_String(PD_YELLOWK));
-            assert_eq!(locked_door_message(34), DEH_String(PD_YELLOWK));
-            assert_eq!(locked_door_message(28), DEH_String(PD_REDK));
-            assert_eq!(locked_door_message(33), DEH_String(PD_REDK));
-        }
+        assert_eq!(locked_door_message(26), Some(DEH_String(PD_BLUEK)));
+        assert_eq!(locked_door_message(32), Some(DEH_String(PD_BLUEK)));
+        assert_eq!(locked_door_message(27), Some(DEH_String(PD_YELLOWK)));
+        assert_eq!(locked_door_message(34), Some(DEH_String(PD_YELLOWK)));
+        assert_eq!(locked_door_message(28), Some(DEH_String(PD_REDK)));
+        assert_eq!(locked_door_message(33), Some(DEH_String(PD_REDK)));
     }
 }

@@ -17,14 +17,11 @@
 //! - `FinaleStage` replaces the bare `finalestage` integer, improving
 //!   exhaustiveness checking in `match` expressions.
 //! - Finale text strings and cast names that the C source takes from
-//!   `d_englsh.h` are inlined as `const` C-string literals.
+//!   `d_englsh.h` are inlined as `const` string literals.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{ffi::CStr, ptr},
-};
+use {crate::doom::sounds::Sfx, std::ptr};
 
 use crate::{
     doom::{
@@ -94,107 +91,107 @@ const MAXPLAYERS: usize = 4;
 // ---------------------------------------------------------------------------
 
 /// Episode 1 finale text shown after defeating the boss on E1M8.
-const E1TEXT: *mut u8 = c"Once you beat the big badasses and\nclean out the moon base you're supposed\nto win, aren't you? Aren't you? Where's\nyour fat reward and ticket home? What\nthe hell is this? It's not supposed to\nend this way!\n\nIt stinks like rotten meat, but looks\nlike the lost Deimos base.  Looks like\nyou're stuck on The Shores of Hell.\nThe only way out is through.\n\nTo continue the DOOM experience, play\nThe Shores of Hell and its amazing\nsequel, Inferno!".as_ptr().cast_mut().cast();
+const E1TEXT: &str = "Once you beat the big badasses and\nclean out the moon base you're supposed\nto win, aren't you? Aren't you? Where's\nyour fat reward and ticket home? What\nthe hell is this? It's not supposed to\nend this way!\n\nIt stinks like rotten meat, but looks\nlike the lost Deimos base.  Looks like\nyou're stuck on The Shores of Hell.\nThe only way out is through.\n\nTo continue the DOOM experience, play\nThe Shores of Hell and its amazing\nsequel, Inferno!";
 
 /// Episode 2 finale text shown after defeating the boss on E2M8.
-const E2TEXT: *mut u8 = c"You've done it! The hideous cyber-\ndemon lord that ruled the lost Deimos\nmoon base has been slain and you\ntriumph over the hordes of hell.\nThe mission is not complete, however.\nThe loathsome vomit of hell still\noozes from the nether regions of\nDeimos.\n\nThe demon spawner, the source of the\nhellish invasion, remains active.\nYou must find it and shut it down.\n\nTo continue the DOOM experience,\nplay Inferno!".as_ptr().cast_mut().cast();
+const E2TEXT: &str = "You've done it! The hideous cyber-\ndemon lord that ruled the lost Deimos\nmoon base has been slain and you\ntriumph over the hordes of hell.\nThe mission is not complete, however.\nThe loathsome vomit of hell still\noozes from the nether regions of\nDeimos.\n\nThe demon spawner, the source of the\nhellish invasion, remains active.\nYou must find it and shut it down.\n\nTo continue the DOOM experience,\nplay Inferno!";
 
 /// Episode 3 finale text shown after defeating the boss on E3M8.
-const E3TEXT: *mut u8 = c"The loathsome spiderdemon that\nmaster-minded the invasion of the moon\nbase and caused so much death has had\nits ass kicked for all time.\n\nA hidden doorway opens and you begin\nthe long trek back to the surface.\nThe sensual scent of flowers tickles\nyour nose and you smile.\n\nBut wait! The gateway is open, and\nthe demons of hell are pouring\nthrough! You wonder how you'll ever\nget home.\n\nA demon consumes your flesh.\n\nThe End.\n\n(Well, not really.  To continue the\nDOOM experience, play Thy Flesh\nConsumed!)".as_ptr().cast_mut().cast();
+const E3TEXT: &str = "The loathsome spiderdemon that\nmaster-minded the invasion of the moon\nbase and caused so much death has had\nits ass kicked for all time.\n\nA hidden doorway opens and you begin\nthe long trek back to the surface.\nThe sensual scent of flowers tickles\nyour nose and you smile.\n\nBut wait! The gateway is open, and\nthe demons of hell are pouring\nthrough! You wonder how you'll ever\nget home.\n\nA demon consumes your flesh.\n\nThe End.\n\n(Well, not really.  To continue the\nDOOM experience, play Thy Flesh\nConsumed!)";
 
 /// Episode 4 finale text shown after defeating the boss on E4M8.
-const E4TEXT: *mut u8 = c"The spider mastermind must have sent forth\nits legions of hellspawn before your\nfinal confrontation with that terrible\nbeast from netherworld.  But you stepped\nforward and brought forth eternal damnation\nand suffering upon the horde as a true\nhero would in the face of something so\nevil.\n\nBesides, someone was gonna pay for what\nhappened to daisy, your pet rabbit.\n\nBut now, you see spread before you more\npotential pain and gibbitude as a nation\nof demons run amok among our cities.\n\nNext stop, hell on earth!".as_ptr().cast_mut().cast();
+const E4TEXT: &str = "The spider mastermind must have sent forth\nits legions of hellspawn before your\nfinal confrontation with that terrible\nbeast from netherworld.  But you stepped\nforward and brought forth eternal damnation\nand suffering upon the horde as a true\nhero would in the face of something so\nevil.\n\nBesides, someone was gonna pay for what\nhappened to daisy, your pet rabbit.\n\nBut now, you see spread before you more\npotential pain and gibbitude as a nation\nof demons run amok among our cities.\n\nNext stop, hell on earth!";
 
 /// Doom II level 6 inter-level text (first story block).
-const C1TEXT: *mut u8 = c"YOU HAVE ENTERED DEEPLY INTO THE INFESTED\nSTARPORT. BUT SOMETHING IS WRONG. THE\nMONSTERS HAVE BROUGHT THEIR OWN REALITY\nWITH THEM, AND THE STARPORT'S TECHNOLOGY\nIS BEING SUBVERTED BY THEIR PRESENCE.\n\nAHEAD, YOU SEE AN OUTPOST OF HELL, A\nFORTIFIED ZONE. IF YOU CAN GET PAST IT,\nYOU CAN PENETRATE INTO THE HAUNTED HEART\nOF THE STARBASE AND FIND THE CONTROLLING\nSWITCH WHICH HOLDS EARTH'S POPULATION\nHOSTAGE.".as_ptr().cast_mut().cast();
+const C1TEXT: &str = "YOU HAVE ENTERED DEEPLY INTO THE INFESTED\nSTARPORT. BUT SOMETHING IS WRONG. THE\nMONSTERS HAVE BROUGHT THEIR OWN REALITY\nWITH THEM, AND THE STARPORT'S TECHNOLOGY\nIS BEING SUBVERTED BY THEIR PRESENCE.\n\nAHEAD, YOU SEE AN OUTPOST OF HELL, A\nFORTIFIED ZONE. IF YOU CAN GET PAST IT,\nYOU CAN PENETRATE INTO THE HAUNTED HEART\nOF THE STARBASE AND FIND THE CONTROLLING\nSWITCH WHICH HOLDS EARTH'S POPULATION\nHOSTAGE.";
 
 /// Doom II level 11 inter-level text.
-const C2TEXT: *mut u8 = c"YOU HAVE WON! YOUR VICTORY HAS ENABLED\nHUMANKIND TO EVACUATE EARTH AND ESCAPE\nTHE NIGHTMARE.  NOW YOU ARE THE ONLY\nHUMAN LEFT ON THE FACE OF THE PLANET.\nCAN YOU FIND YOUR WAY BACK TO HAPPY\nREALITY?\n\nOR ARE YOU DOOMED TO ROAM ETERNAL\nAMONG THE DEMONS?".as_ptr().cast_mut().cast();
+const C2TEXT: &str = "YOU HAVE WON! YOUR VICTORY HAS ENABLED\nHUMANKIND TO EVACUATE EARTH AND ESCAPE\nTHE NIGHTMARE.  NOW YOU ARE THE ONLY\nHUMAN LEFT ON THE FACE OF THE PLANET.\nCAN YOU FIND YOUR WAY BACK TO HAPPY\nREALITY?\n\nOR ARE YOU DOOMED TO ROAM ETERNAL\nAMONG THE DEMONS?";
 
 /// Doom II level 20 inter-level text.
-const C3TEXT: *mut u8 = c"YOU ARE AT THE CORRUPT HEART OF THE CITY,\nSURROUNDED BY THE CORPSES OF YOUR ENEMIES.\nYOU SEE NO WAY TO ESCAPE FROM THIS FUTURE\nHELL, BUT YOU MAY DELAY THE DAMNATION OF\nHUMANITY BY THROWING YOURSELF INTO THE\nPORTAL, AND HEADING OFF THE DEMONIC\nINVASION AT ITS SOURCE.".as_ptr().cast_mut().cast();
+const C3TEXT: &str = "YOU ARE AT THE CORRUPT HEART OF THE CITY,\nSURROUNDED BY THE CORPSES OF YOUR ENEMIES.\nYOU SEE NO WAY TO ESCAPE FROM THIS FUTURE\nHELL, BUT YOU MAY DELAY THE DAMNATION OF\nHUMANITY BY THROWING YOURSELF INTO THE\nPORTAL, AND HEADING OFF THE DEMONIC\nINVASION AT ITS SOURCE.";
 
 /// Doom II level 30 inter-level text.
-const C4TEXT: *mut u8 = c"SENSIBLE, NO?\n\nTHERE WAS NO WAY YOU COULD SURVIVE THIS\nHELL, BUT YOU HAVE SUCCEEDED IN SPOILING\nTHE DEMONS' PLANS.  THE HAZARDOUS-WASTE\nFACILITY HAS BEEN DESTROYED AND HELL'S\nPORTAL HAS BEEN SEALED.\n\nYOU ARE THE ONLY SURVIVOR, BUT THE BATTLE\nCONTINUES ELSEWHERE.  EARTH REMAINS UNDER\nSIEGE, AND THE HELLSPAWN PROWL THE\nSTREETS IN SEARCH OF MORE PREY.\n\nTHE INVASION IS FAR FROM OVER.".as_ptr().cast_mut().cast();
+const C4TEXT: &str = "SENSIBLE, NO?\n\nTHERE WAS NO WAY YOU COULD SURVIVE THIS\nHELL, BUT YOU HAVE SUCCEEDED IN SPOILING\nTHE DEMONS' PLANS.  THE HAZARDOUS-WASTE\nFACILITY HAS BEEN DESTROYED AND HELL'S\nPORTAL HAS BEEN SEALED.\n\nYOU ARE THE ONLY SURVIVOR, BUT THE BATTLE\nCONTINUES ELSEWHERE.  EARTH REMAINS UNDER\nSIEGE, AND THE HELLSPAWN PROWL THE\nSTREETS IN SEARCH OF MORE PREY.\n\nTHE INVASION IS FAR FROM OVER.";
 
 /// Doom II level 15 (secret exit) inter-level text.
-const C5TEXT: *mut u8 = c"BUT WAIT!  THERE'S MORE!\n\nIT'S BACK TO THE PITS OF HELL FOR YOU,\nTO FACE MORE DEMONS, MORE HELLSPAWN, AND\nMORE HIDEOUS ACTS OF EVIL.\n\nIT'S A DIRTY JOB, BUT SOMEONE'S GOT TO\nDO IT.  AND THAT SOMEONE IS YOU.".as_ptr().cast_mut().cast();
+const C5TEXT: &str = "BUT WAIT!  THERE'S MORE!\n\nIT'S BACK TO THE PITS OF HELL FOR YOU,\nTO FACE MORE DEMONS, MORE HELLSPAWN, AND\nMORE HIDEOUS ACTS OF EVIL.\n\nIT'S A DIRTY JOB, BUT SOMEONE'S GOT TO\nDO IT.  AND THAT SOMEONE IS YOU.";
 
 /// Doom II level 31 inter-level text.
-const C6TEXT: *mut u8 = c"CONGRATULATIONS!\n\nYOU HAVE FOUND THE SECRET LEVEL!\n\nHOPEFULLY YOU FOUND THE PLASMA GUN.\n\nTHE DEMON HORDE IS ABOUT TO GET A WAKE-UP\nCALL.".as_ptr().cast_mut().cast();
+const C6TEXT: &str = "CONGRATULATIONS!\n\nYOU HAVE FOUND THE SECRET LEVEL!\n\nHOPEFULLY YOU FOUND THE PLASMA GUN.\n\nTHE DEMON HORDE IS ABOUT TO GET A WAKE-UP\nCALL.";
 
 /// TNT: Evilution level 6 inter-level text.
-const T1TEXT: *mut u8 = c"You've fought your way out of the infested\nexperimental labs.   It seems that UAC has\nonce again gulped it down.  Ahead lies\ntheir central complex, now firmly in the\ngrasp of the demon hordes.  Perhaps by\nsabotaging their primary teleporter you\ncan halt the invasion.".as_ptr().cast_mut().cast();
+const T1TEXT: &str = "You've fought your way out of the infested\nexperimental labs.   It seems that UAC has\nonce again gulped it down.  Ahead lies\ntheir central complex, now firmly in the\ngrasp of the demon hordes.  Perhaps by\nsabotaging their primary teleporter you\ncan halt the invasion.";
 
 /// TNT: Evilution level 11 inter-level text.
-const T2TEXT: *mut u8 = c"The demon spawner you've found appears to\nhave been activated.  The Demons are\npouring through in endless waves.  You\nneed to find a way to deactivate it,\nfast!".as_ptr().cast_mut().cast();
+const T2TEXT: &str = "The demon spawner you've found appears to\nhave been activated.  The Demons are\npouring through in endless waves.  You\nneed to find a way to deactivate it,\nfast!";
 
 /// TNT: Evilution level 20 inter-level text.
-const T3TEXT: *mut u8 = c"The river of blood spills over into the\nnext area.  It seems your arrival hasn't\ngone unnoticed.  Ahead lies the most\ninfested region of the complex.  You must\nfind a way to stem the tide of demons, or\ndie trying.".as_ptr().cast_mut().cast();
+const T3TEXT: &str = "The river of blood spills over into the\nnext area.  It seems your arrival hasn't\ngone unnoticed.  Ahead lies the most\ninfested region of the complex.  You must\nfind a way to stem the tide of demons, or\ndie trying.";
 
 /// TNT: Evilution level 30 inter-level text.
-const T4TEXT: *mut u8 = c"The stench of rotten flesh and sulfur\nfills the air.  You have reached the\nheart of the infested complex.  Somewhere\nbeyond the next portal lies the Demon\nSpawner itself.  If you can survive long\nenough to find it, you may be able to turn\nthe tide of this war.".as_ptr().cast_mut().cast();
+const T4TEXT: &str = "The stench of rotten flesh and sulfur\nfills the air.  You have reached the\nheart of the infested complex.  Somewhere\nbeyond the next portal lies the Demon\nSpawner itself.  If you can survive long\nenough to find it, you may be able to turn\nthe tide of this war.";
 
 /// TNT: Evilution level 15 inter-level text.
-const T5TEXT: *mut u8 = c"You've done it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut().cast();
+const T5TEXT: &str = "You've done it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.";
 
 /// TNT: Evilution level 31 inter-level text.
-const T6TEXT: *mut u8 = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut().cast();
+const T6TEXT: &str = "The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.";
 
 /// Plutonia Experiment level 6 inter-level text.
-const P1TEXT: *mut u8 = c"You gloat over the steaming carcass of the\nGuardian.  With its death, you've wrested\nthe Accelerator from the stinking claws\nof Hell.  You relax and glance around\nthe room.  Damn!  There was supposed to\nbe a bridge around here somewhere!  Did\nthe Invaders sense your victory and\nwithdraw the bridge to prevent your\nescape?\n\nYou hear the sound of claws on stone.\nYou frantically grab your pistol and\ndive for the door, but it's too late.\nThe Demons have arrived.".as_ptr().cast_mut().cast();
+const P1TEXT: &str = "You gloat over the steaming carcass of the\nGuardian.  With its death, you've wrested\nthe Accelerator from the stinking claws\nof Hell.  You relax and glance around\nthe room.  Damn!  There was supposed to\nbe a bridge around here somewhere!  Did\nthe Invaders sense your victory and\nwithdraw the bridge to prevent your\nescape?\n\nYou hear the sound of claws on stone.\nYou frantically grab your pistol and\ndive for the door, but it's too late.\nThe Demons have arrived.";
 
 /// Plutonia Experiment level 11 inter-level text.
-const P2TEXT: *mut u8 = c"You did it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut().cast();
+const P2TEXT: &str = "You did it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.";
 
 /// Plutonia Experiment level 20 inter-level text.
-const P3TEXT: *mut u8 = c"The Vile presence fades.  You feel a\nsense of relief, but it is short lived.\nYou still must find the demon spawner\nand shut it down.  Time is running out.".as_ptr().cast_mut().cast();
+const P3TEXT: &str = "The Vile presence fades.  You feel a\nsense of relief, but it is short lived.\nYou still must find the demon spawner\nand shut it down.  Time is running out.";
 
 /// Plutonia Experiment level 30 inter-level text.
-const P4TEXT: *mut u8 = c"The demon spawner lies in ruins before\nyou.  The forces of hell are in full\nretreat, and the invasion is stopped.\nYou step onto the teleporter, eager to\nreturn home and bask in the glory of\nyour victory.".as_ptr().cast_mut().cast();
+const P4TEXT: &str = "The demon spawner lies in ruins before\nyou.  The forces of hell are in full\nretreat, and the invasion is stopped.\nYou step onto the teleporter, eager to\nreturn home and bask in the glory of\nyour victory.";
 
 /// Plutonia Experiment level 15 inter-level text.
-const P5TEXT: *mut u8 = c"You have survived the horrors of the\ninfested complex and emerged victorious.\nThe demon spawner lies in ruins, and the\nforces of hell have been driven back.\nYou step onto the teleporter, ready to\nreturn Earth and face whatever\nchallenges lie ahead.".as_ptr().cast_mut().cast();
+const P5TEXT: &str = "You have survived the horrors of the\ninfested complex and emerged victorious.\nThe demon spawner lies in ruins, and the\nforces of hell have been driven back.\nYou step onto the teleporter, ready to\nreturn Earth and face whatever\nchallenges lie ahead.";
 
 /// Plutonia Experiment level 31 inter-level text.
-const P6TEXT: *mut u8 = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut().cast();
+const P6TEXT: &str = "The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.";
 
 // Cast names (from d_englsh.h)
 
 /// Cast-roll name for the Zombieman.
-const CC_ZOMBIE: *mut u8 = c"ZOMBIEMAN".as_ptr().cast_mut().cast();
+const CC_ZOMBIE: &str = "ZOMBIEMAN";
 /// Cast-roll name for the Shotgun Guy.
-const CC_SHOTGUN: *mut u8 = c"SHOTGUN GUY".as_ptr().cast_mut().cast();
+const CC_SHOTGUN: &str = "SHOTGUN GUY";
 /// Cast-roll name for the Heavy Weapon Dude (chaingunner).
-const CC_HEAVY: *mut u8 = c"HEAVY WEAPON DUDE".as_ptr().cast_mut().cast();
+const CC_HEAVY: &str = "HEAVY WEAPON DUDE";
 /// Cast-roll name for the Imp.
-const CC_IMP: *mut u8 = c"IMP".as_ptr().cast_mut().cast();
+const CC_IMP: &str = "IMP";
 /// Cast-roll name for the Demon.
-const CC_DEMON: *mut u8 = c"DEMON".as_ptr().cast_mut().cast();
+const CC_DEMON: &str = "DEMON";
 /// Cast-roll name for the Lost Soul.
-const CC_LOST: *mut u8 = c"LOST SOUL".as_ptr().cast_mut().cast();
+const CC_LOST: &str = "LOST SOUL";
 /// Cast-roll name for the Cacodemon.
-const CC_CACO: *mut u8 = c"CACODEMON".as_ptr().cast_mut().cast();
+const CC_CACO: &str = "CACODEMON";
 /// Cast-roll name for the Hell Knight.
-const CC_HELL: *mut u8 = c"HELL KNIGHT".as_ptr().cast_mut().cast();
+const CC_HELL: &str = "HELL KNIGHT";
 /// Cast-roll name for the Baron of Hell.
-const CC_BARON: *mut u8 = c"BARON OF HELL".as_ptr().cast_mut().cast();
+const CC_BARON: &str = "BARON OF HELL";
 /// Cast-roll name for the Arachnotron.
-const CC_ARACH: *mut u8 = c"ARACHNOTRON".as_ptr().cast_mut().cast();
+const CC_ARACH: &str = "ARACHNOTRON";
 /// Cast-roll name for the Pain Elemental.
-const CC_PAIN: *mut u8 = c"PAIN ELEMENTAL".as_ptr().cast_mut().cast();
+const CC_PAIN: &str = "PAIN ELEMENTAL";
 /// Cast-roll name for the Revenant.
-const CC_REVEN: *mut u8 = c"REVENANT".as_ptr().cast_mut().cast();
+const CC_REVEN: &str = "REVENANT";
 /// Cast-roll name for the Mancubus.
-const CC_MANCU: *mut u8 = c"MANCUBUS".as_ptr().cast_mut().cast();
+const CC_MANCU: &str = "MANCUBUS";
 /// Cast-roll name for the Arch-Vile.
-const CC_ARCH: *mut u8 = c"ARCH-VILE".as_ptr().cast_mut().cast();
+const CC_ARCH: &str = "ARCH-VILE";
 /// Cast-roll name for the Spider Mastermind.
-const CC_SPIDER: *mut u8 = c"THE SPIDER MASTERMIND".as_ptr().cast_mut().cast();
+const CC_SPIDER: &str = "THE SPIDER MASTERMIND";
 /// Cast-roll name for the Cyberdemon.
-const CC_CYBER: *mut u8 = c"THE CYBERDEMON".as_ptr().cast_mut().cast();
+const CC_CYBER: &str = "THE CYBERDEMON";
 /// Cast-roll name for the player character.
-const CC_HERO: *mut u8 = c"OUR HERO".as_ptr().cast_mut().cast();
+const CC_HERO: &str = "OUR HERO";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -241,7 +238,6 @@ enum FinaleStage {
 /// text string displayed after completing that level.
 ///
 /// C origin: `textscreens[]` in f_finale.c.
-#[repr(C)]
 struct TextScreen {
     /// Which game mission this entry applies to (e.g. `d_mode::doom`).
     pub mission: i32,
@@ -250,37 +246,26 @@ struct TextScreen {
     /// The map number after which this text appears.
     pub level: i32,
     /// Name of the WAD flat lump used as the tiling background.
-    pub background: *mut u8,
-    /// The NUL-terminated text string to display.
-    pub text: *mut u8,
+    pub background: &'static [u8],
+    /// The text to display.
+    pub text: &'static str,
 }
 
 /// Pairs a cast-roll display name with the `mobjtype_t` index of the enemy.
 ///
-/// The last entry in [`CASTORDER`] has a null `name` pointer as a sentinel.
+/// The last entry in [`CASTORDER`] has an empty `name` as a sentinel.
 /// C origin: `castinfo_t` / `castorder[]` in f_finale.c.
-#[repr(C)]
 struct CastInfo {
-    /// NUL-terminated display name shown at the bottom of the cast screen.
-    pub name: *mut u8,
+    /// Display name shown at the bottom of the cast screen.
+    pub name: &'static str,
     /// `mobjtype_t` index into `mobjinfo[]`; selects sprite and state machine.
     pub type_: i32,
-}
-
-// ---------------------------------------------------------------------------
-// External C globals and functions
-// ---------------------------------------------------------------------------
-
-extern "C" {
-    /// C standard library: convert a character to upper-case.
-    fn toupper(c: i32) -> i32;
 }
 
 // g_game.rs
 use crate::doom::{
     deh_str::DEH_String,
     g_game::{gameaction, gameepisode, gamemap, gamestate, players, viewactive},
-    m_misc::strlen,
 };
 
 // am_map.rs
@@ -347,161 +332,161 @@ const TEXTSCREENS: [TextScreen; 22] = [
         mission: d_mode::doom,
         episode: 1,
         level: 8,
-        background: c"FLOOR4_8".as_ptr().cast_mut().cast(),
+        background: b"FLOOR4_8",
         text: E1TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 2,
         level: 8,
-        background: c"SFLR6_1".as_ptr().cast_mut().cast(),
+        background: b"SFLR6_1",
         text: E2TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 3,
         level: 8,
-        background: c"MFLR8_4".as_ptr().cast_mut().cast(),
+        background: b"MFLR8_4",
         text: E3TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 4,
         level: 8,
-        background: c"MFLR8_3".as_ptr().cast_mut().cast(),
+        background: b"MFLR8_3",
         text: E4TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut().cast(),
+        background: b"SLIME16",
         text: C1TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut().cast(),
+        background: b"RROCK14",
         text: C2TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut().cast(),
+        background: b"RROCK07",
         text: C3TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut().cast(),
+        background: b"RROCK17",
         text: C4TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut().cast(),
+        background: b"RROCK13",
         text: C5TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut().cast(),
+        background: b"RROCK19",
         text: C6TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut().cast(),
+        background: b"SLIME16",
         text: T1TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut().cast(),
+        background: b"RROCK14",
         text: T2TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut().cast(),
+        background: b"RROCK07",
         text: T3TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut().cast(),
+        background: b"RROCK17",
         text: T4TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut().cast(),
+        background: b"RROCK13",
         text: T5TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut().cast(),
+        background: b"RROCK19",
         text: T6TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut().cast(),
+        background: b"SLIME16",
         text: P1TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut().cast(),
+        background: b"RROCK14",
         text: P2TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut().cast(),
+        background: b"RROCK07",
         text: P3TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut().cast(),
+        background: b"RROCK17",
         text: P4TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut().cast(),
+        background: b"RROCK13",
         text: P5TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut().cast(),
+        background: b"RROCK19",
         text: P6TEXT,
     },
 ];
 
 /// Ordered list of enemies shown in the Doom II cast-of-characters roll.
 ///
-/// The last entry is a sentinel with a null `name` pointer.  C origin:
+/// The last entry is a sentinel with an empty `name`.  C origin:
 /// `castorder[]` in f_finale.c.
 const CASTORDER: [CastInfo; 18] = [
     CastInfo {
@@ -572,28 +557,24 @@ const CASTORDER: [CastInfo; 18] = [
         name: CC_HERO,
         type_: MT_PLAYER,
     },
-    CastInfo {
-        name: ptr::null_mut(),
-        type_: 0,
-    },
+    CastInfo { name: "", type_: 0 },
 ];
 
 // ---------------------------------------------------------------------------
 // Exported globals
 // ---------------------------------------------------------------------------
 
-/// Pointer to the NUL-terminated text string being displayed in the Text stage.
+/// The text being displayed in the Text stage.
 ///
-/// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; null when
-/// no text-screen applies.  Read by C code in `f_finale.c` and `g_game.c`.
-/// C origin: `finaletext` in f_finale.c.
-pub static mut finaletext: *mut u8 = ptr::null_mut();
+/// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; empty when
+/// no text-screen applies.  C origin: `finaletext` in f_finale.c.
+pub static mut finaletext: &str = "";
 
 /// Name of the WAD flat lump used as the tiling background in the Text stage.
 ///
-/// Set by [`F_StartFinale`].  Null when no text-screen applies.
+/// Set by [`F_StartFinale`].  Empty when no text-screen applies.
 /// C origin: `finaleflat` in f_finale.c.
-pub static mut finaleflat: *mut u8 = ptr::null_mut();
+pub static mut finaleflat: &[u8] = b"";
 
 /// Index into `CASTORDER` for the enemy currently shown in the cast roll.
 ///
@@ -654,7 +635,7 @@ static mut FINALE_COUNT: u32 = 0;
 /// initialises the internal stage to `Text`.
 ///
 /// Postcondition: `FINALE_STAGE` is `Text`, `FINALE_COUNT` is 0, and
-/// `finaletext`/`finaleflat` point to the selected screen data (or null if
+/// `finaletext`/`finaleflat` hold the selected screen data (or are empty if
 /// none matched).
 ///
 /// Called from C code in `g_game.c` when `gameaction == ga_completed` and the
@@ -673,15 +654,10 @@ pub fn F_StartFinale() {
             S_ChangeMusic(Mus::ReadM as i32, 1);
         }
 
-        finaletext = ptr::null_mut();
-        finaleflat = ptr::null_mut();
+        finaletext = "";
+        finaleflat = b"";
 
-        for i in 0..22usize {
-            let screen = &TEXTSCREENS[i];
-            if screen.mission == 0 && screen.background.is_null() {
-                break; // padding sentinel
-            }
-
+        for screen in &TEXTSCREENS {
             // Hack for Chex Quest
             if gameversion == d_mode::exe_chex && screen.mission == d_mode::doom {
                 // In C this mutates the static array; we emulate by checking level 5.
@@ -767,7 +743,7 @@ pub fn F_Ticker() {
         }
 
         if let FinaleStage::Text = FINALE_STAGE {
-            let len = strlen(finaletext);
+            let len = { finaletext }.len();
             if FINALE_COUNT > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32) {
                 FINALE_COUNT = 0;
                 FINALE_STAGE = FinaleStage::ArtScreen;
@@ -791,8 +767,7 @@ pub fn F_Ticker() {
 /// Called from [`F_Drawer`].  C origin: `F_TextWrite` in f_finale.c.
 pub fn F_TextWrite() {
     unsafe {
-        let src =
-            W_CacheLumpName(CStr::from_ptr(finaleflat.cast()).to_bytes(), PU_CACHE) as *mut u8;
+        let src = W_CacheLumpName(finaleflat, PU_CACHE) as *mut u8;
         let mut dest = I_VideoBuffer;
 
         for y in 0..SCREENHEIGHT {
@@ -812,36 +787,19 @@ pub fn F_TextWrite() {
 
         let mut cx = 10;
         let mut cy = 10;
-        let mut ch = finaletext;
-        let mut count = (FINALE_COUNT as i32 - 10) / TEXTSPEED;
-        if count < 0 {
-            count = 0;
-        }
+        let count = ((FINALE_COUNT as i32 - 10) / TEXTSPEED).max(0) as usize;
 
-        while count > 0 {
-            count -= 1;
-            let c = *ch;
-            if c == 0 {
-                break;
-            }
-            ch = ch.add(1);
+        for &c in { finaletext }.as_bytes().iter().take(count) {
             if c == b'\n' {
                 cx = 10;
                 cy += 11;
                 continue;
             }
 
-            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
-            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
+            let Some(font) = font_patch(c) else {
                 cx += 4;
                 continue;
-            }
-
-            let font = hu_font[cidx as usize];
-            if font.is_null() {
-                cx += 4;
-                continue;
-            }
+            };
             let w = (*font).width as i32;
             if cx + w > SCREENWIDTH {
                 break;
@@ -906,7 +864,7 @@ pub fn F_CastTicker() {
             // switch from deathstate to next monster
             castnum += 1;
             castdeath = 0;
-            if CASTORDER[castnum as usize].name.is_null() {
+            if CASTORDER[castnum as usize].name.is_empty() {
                 castnum = 0;
             }
             let info = &*std::ptr::addr_of!(crate::doom::info::mobjinfo[0])
@@ -1063,55 +1021,40 @@ pub fn F_CastResponder(ev: *mut event_t) -> i32 {
 /// The text is drawn with `V_DrawPatch` at the calculated x-offset.
 ///
 /// Called by [`F_CastDrawer`].  C origin: `F_CastPrint` in f_finale.c.
-pub fn F_CastPrint(text: *mut u8) {
+pub fn F_CastPrint(text: &str) {
     unsafe {
-        let mut ch = text;
-        let mut width = 0;
-
         // find width
-        loop {
-            let c = *ch;
-            if c == 0 {
-                break;
-            }
-            ch = ch.add(1);
-            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
-            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
-                width += 4;
-                continue;
-            }
-            let font = hu_font[cidx as usize];
-            if font.is_null() {
-                width += 4;
-                continue;
-            }
-            width += (*font).width as i32;
-        }
+        let width: i32 = text
+            .bytes()
+            .map(|c| font_patch(c).map_or(4, |font| (*font).width as i32))
+            .sum();
 
         // draw it
         let mut cx = 160 - width / 2;
-        ch = text;
-        loop {
-            let c = *ch;
-            if c == 0 {
-                break;
-            }
-            ch = ch.add(1);
-            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
-            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
+        for c in text.bytes() {
+            let Some(font) = font_patch(c) else {
                 cx += 4;
                 continue;
-            }
-            let font = hu_font[cidx as usize];
-            if font.is_null() {
-                cx += 4;
-                continue;
-            }
+            };
             let w = (*font).width as i32;
             V_DrawPatch(cx, 180, font);
             cx += w;
         }
     }
+}
+
+/// The HUD font patch for character `c` (upper-cased), or `None` if the
+/// font has no glyph for it.
+///
+/// # Safety
+/// Reads the `hu_font` table; `HU_Init` must have loaded it.
+unsafe fn font_patch(c: u8) -> Option<*mut patch_t> {
+    let index = c.to_ascii_uppercase().checked_sub(HU_FONTSTART)? as usize;
+    if index >= HU_FONTSIZE {
+        return None;
+    }
+    let font = hu_font[index];
+    (!font.is_null()).then_some(font)
 }
 
 /// Draw the current cast-roll frame: BOSSBACK background, centred enemy sprite,
@@ -1317,19 +1260,31 @@ mod tests {
     }
 
     #[test]
-    fn finaletext_initially_null() {
+    fn finaletext_initially_empty() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert!(finaletext.is_null());
+            assert!({ finaletext }.is_empty());
         }
     }
 
     #[test]
-    fn finaleflat_initially_null() {
+    fn finaleflat_initially_empty() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            assert!(finaleflat.is_null());
+            assert!({ finaleflat }.is_empty());
         }
+    }
+
+    /// Every text screen names a background flat and has text; the cast
+    /// roll ends with exactly one empty-name sentinel.
+    #[test]
+    fn finale_tables_are_complete() {
+        assert!(TEXTSCREENS
+            .iter()
+            .all(|screen| !screen.background.is_empty() && !screen.text.is_empty()));
+        let (sentinel, names) = CASTORDER.split_last().unwrap();
+        assert!(sentinel.name.is_empty());
+        assert!(names.iter().all(|cast| !cast.name.is_empty()));
     }
 
     #[test]

@@ -223,88 +223,79 @@ pub static mut deh_megasphere_health: i32 = DEH_DEFAULT_MEGASPHERE_HEALTH;
 // ---------------------------------------------------------------------------
 
 /// "Picked up the armor." — displayed when the green armor is collected.
-const GOTARMOR: *mut u8 = c"Picked up the armor.".as_ptr().cast_mut().cast();
+const GOTARMOR: &str = "Picked up the armor.";
 /// "Picked up the MegaArmor!" — displayed when the blue mega-armor is collected.
-const GOTMEGA: *mut u8 = c"Picked up the MegaArmor!".as_ptr().cast_mut().cast();
+const GOTMEGA: &str = "Picked up the MegaArmor!";
 /// "Picked up a health bonus." — displayed for the health-bonus helmet.
-const GOTHTHBONUS: *mut u8 = c"Picked up a health bonus.".as_ptr().cast_mut().cast();
+const GOTHTHBONUS: &str = "Picked up a health bonus.";
 /// "Picked up an armor bonus." — displayed for the armor-bonus helmet.
-const GOTARMBONUS: *mut u8 = c"Picked up an armor bonus.".as_ptr().cast_mut().cast();
+const GOTARMBONUS: &str = "Picked up an armor bonus.";
 /// "Picked up a stimpack." — displayed for the stimpack.
-const GOTSTIM: *mut u8 = c"Picked up a stimpack.".as_ptr().cast_mut().cast();
+const GOTSTIM: &str = "Picked up a stimpack.";
 /// Urgent medikit message when health is critically low (below 25).
-const GOTMEDINEED: *mut u8 = c"Picked up a medikit that you REALLY need!"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const GOTMEDINEED: &str = "Picked up a medikit that you REALLY need!";
 /// "Picked up a medikit." — normal medikit pickup message.
-const GOTMEDIKIT: *mut u8 = c"Picked up a medikit.".as_ptr().cast_mut().cast();
+const GOTMEDIKIT: &str = "Picked up a medikit.";
 /// "Supercharge!" — displayed when the soulsphere is collected.
-const GOTSUPER: *mut u8 = c"Supercharge!".as_ptr().cast_mut().cast();
+const GOTSUPER: &str = "Supercharge!";
 /// "MegaSphere!" — displayed when the megasphere is collected (Doom II only).
-const GOTMSPHERE: *mut u8 = c"MegaSphere!".as_ptr().cast_mut().cast();
+const GOTMSPHERE: &str = "MegaSphere!";
 /// "Picked up a blue keycard." — displayed when the blue keycard is collected.
-const GOTBLUECARD: *mut u8 = c"Picked up a blue keycard.".as_ptr().cast_mut().cast();
+const GOTBLUECARD: &str = "Picked up a blue keycard.";
 /// "Picked up a yellow keycard." — displayed when the yellow keycard is collected.
-const GOTYELWCARD: *mut u8 = c"Picked up a yellow keycard.".as_ptr().cast_mut().cast();
+const GOTYELWCARD: &str = "Picked up a yellow keycard.";
 /// "Picked up a red keycard." — displayed when the red keycard is collected.
-const GOTREDCARD: *mut u8 = c"Picked up a red keycard.".as_ptr().cast_mut().cast();
+const GOTREDCARD: &str = "Picked up a red keycard.";
 /// "Picked up a blue skull key." — displayed when the blue skull key is collected.
-const GOTBLUESKUL: *mut u8 = c"Picked up a blue skull key.".as_ptr().cast_mut().cast();
+const GOTBLUESKUL: &str = "Picked up a blue skull key.";
 /// "Picked up a yellow skull key." — displayed when the yellow skull key is collected.
-const GOTYELWSKUL: *mut u8 = c"Picked up a yellow skull key.".as_ptr().cast_mut().cast();
+const GOTYELWSKUL: &str = "Picked up a yellow skull key.";
 /// "Picked up a red skull key." — displayed when the red skull key is collected.
-const GOTREDSKULL: *mut u8 = c"Picked up a red skull key.".as_ptr().cast_mut().cast();
+const GOTREDSKULL: &str = "Picked up a red skull key.";
 /// "Invulnerability!" — displayed when the invulnerability sphere is collected.
-const GOTINVUL: *mut u8 = c"Invulnerability!".as_ptr().cast_mut().cast();
+const GOTINVUL: &str = "Invulnerability!";
 /// "Berserk!" — displayed when the berserk pack is collected.
-const GOTBERSERK: *mut u8 = c"Berserk!".as_ptr().cast_mut().cast();
+const GOTBERSERK: &str = "Berserk!";
 /// "Partial Invisibility" — displayed when the blur-sphere is collected.
-const GOTINVIS: *mut u8 = c"Partial Invisibility".as_ptr().cast_mut().cast();
+const GOTINVIS: &str = "Partial Invisibility";
 /// "Radiation Shielding Suit" — displayed when the rad suit is collected.
-const GOTSUIT: *mut u8 = c"Radiation Shielding Suit".as_ptr().cast_mut().cast();
+const GOTSUIT: &str = "Radiation Shielding Suit";
 /// "Computer Area Map" — displayed when the automap power-up is collected.
-const GOTMAP: *mut u8 = c"Computer Area Map".as_ptr().cast_mut().cast();
+const GOTMAP: &str = "Computer Area Map";
 /// "Light Amplification Visor" — displayed when the visor is collected.
-const GOTVISOR: *mut u8 = c"Light Amplification Visor".as_ptr().cast_mut().cast();
+const GOTVISOR: &str = "Light Amplification Visor";
 /// "Picked up a clip." — bullet clip pickup message.
-const GOTCLIP: *mut u8 = c"Picked up a clip.".as_ptr().cast_mut().cast();
+const GOTCLIP: &str = "Picked up a clip.";
 /// "Picked up a box of bullets." — ammo box pickup message.
-const GOTCLIPBOX: *mut u8 = c"Picked up a box of bullets.".as_ptr().cast_mut().cast();
+const GOTCLIPBOX: &str = "Picked up a box of bullets.";
 /// "Picked up a rocket." — single rocket pickup message.
-const GOTROCKET: *mut u8 = c"Picked up a rocket.".as_ptr().cast_mut().cast();
+const GOTROCKET: &str = "Picked up a rocket.";
 /// "Picked up a box of rockets." — rocket box pickup message.
-const GOTROCKBOX: *mut u8 = c"Picked up a box of rockets.".as_ptr().cast_mut().cast();
+const GOTROCKBOX: &str = "Picked up a box of rockets.";
 /// "Picked up an energy cell." — single energy cell pickup message.
-const GOTCELL: *mut u8 = c"Picked up an energy cell.".as_ptr().cast_mut().cast();
+const GOTCELL: &str = "Picked up an energy cell.";
 /// "Picked up an energy cell pack." — energy cell pack pickup message.
-const GOTCELLBOX: *mut u8 = c"Picked up an energy cell pack.".as_ptr().cast_mut().cast();
+const GOTCELLBOX: &str = "Picked up an energy cell pack.";
 /// "Picked up 4 shotgun shells." — shotgun shell pickup message.
-const GOTSHELLS: *mut u8 = c"Picked up 4 shotgun shells.".as_ptr().cast_mut().cast();
+const GOTSHELLS: &str = "Picked up 4 shotgun shells.";
 /// "Picked up a box of shotgun shells." — shell box pickup message.
-const GOTSHELLBOX: *mut u8 = c"Picked up a box of shotgun shells."
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const GOTSHELLBOX: &str = "Picked up a box of shotgun shells.";
 /// "Picked up a backpack full of ammo!" — backpack pickup message.
-const GOTBACKPACK: *mut u8 = c"Picked up a backpack full of ammo!"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const GOTBACKPACK: &str = "Picked up a backpack full of ammo!";
 /// "You got the BFG9000!  Oh, yes." — BFG pickup message.
-const GOTBFG9000: *mut u8 = c"You got the BFG9000!  Oh, yes.".as_ptr().cast_mut().cast();
+const GOTBFG9000: &str = "You got the BFG9000!  Oh, yes.";
 /// "You got the chaingun!" — chaingun pickup message.
-const GOTCHAINGUN: *mut u8 = c"You got the chaingun!".as_ptr().cast_mut().cast();
+const GOTCHAINGUN: &str = "You got the chaingun!";
 /// "A chainsaw!  Find some meat!" — chainsaw pickup message.
-const GOTCHAINSAW: *mut u8 = c"A chainsaw!  Find some meat!".as_ptr().cast_mut().cast();
+const GOTCHAINSAW: &str = "A chainsaw!  Find some meat!";
 /// "You got the rocket launcher!" — rocket launcher pickup message.
-const GOTLAUNCHER: *mut u8 = c"You got the rocket launcher!".as_ptr().cast_mut().cast();
+const GOTLAUNCHER: &str = "You got the rocket launcher!";
 /// "You got the plasma gun!" — plasma gun pickup message.
-const GOTPLASMA: *mut u8 = c"You got the plasma gun!".as_ptr().cast_mut().cast();
+const GOTPLASMA: &str = "You got the plasma gun!";
 /// "You got the shotgun!" — shotgun pickup message.
-const GOTSHOTGUN: *mut u8 = c"You got the shotgun!".as_ptr().cast_mut().cast();
+const GOTSHOTGUN: &str = "You got the shotgun!";
 /// "You got the super shotgun!" — super shotgun pickup message (Doom II only).
-const GOTSHOTGUN2: *mut u8 = c"You got the super shotgun!".as_ptr().cast_mut().cast();
+const GOTSHOTGUN2: &str = "You got the super shotgun!";
 
 // ---------------------------------------------------------------------------
 // C globals still provided by unported C modules
@@ -694,13 +685,13 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_armor(player, green_armor_class) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTARMOR);
+            player.message = Some(DEH_String(GOTARMOR));
         }
         SPR_ARM2 => {
             if p_give_armor(player, blue_armor_class) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTMEGA);
+            player.message = Some(DEH_String(GOTMEGA));
         }
         // bonus items
         SPR_BON1 => {
@@ -710,7 +701,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             let mo = &mut *(player.mo as *mut mobj_t);
             mo.health = player.health;
-            player.message = DEH_String(GOTHTHBONUS);
+            player.message = Some(DEH_String(GOTHTHBONUS));
         }
         SPR_BON2 => {
             player.armorpoints += 1;
@@ -722,7 +713,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.armortype == 0 {
                 player.armortype = 1;
             }
-            player.message = DEH_String(GOTARMBONUS);
+            player.message = Some(DEH_String(GOTARMBONUS));
         }
         SPR_SOUL => {
             player.health += soulsphere_health;
@@ -731,7 +722,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             let mo = &mut *(player.mo as *mut mobj_t);
             mo.health = player.health;
-            player.message = DEH_String(GOTSUPER);
+            player.message = Some(DEH_String(GOTSUPER));
             sound = Sfx::Getpow as i32;
         }
         SPR_MEGA => {
@@ -747,13 +738,13 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             // only affects the standalone MegaArmor pickup
             // (`SPR_ARM2`), not this one.
             p_give_armor(player, 2);
-            player.message = DEH_String(GOTMSPHERE);
+            player.message = Some(DEH_String(GOTMSPHERE));
             sound = Sfx::Getpow as i32;
         }
         // cards
         SPR_BKEY => {
             if player.cards[it_bluecard as usize] == 0 {
-                player.message = DEH_String(GOTBLUECARD);
+                player.message = Some(DEH_String(GOTBLUECARD));
             }
             p_give_card(player, it_bluecard);
             if netgame != 0 {
@@ -762,7 +753,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_YKEY => {
             if player.cards[it_yellowcard as usize] == 0 {
-                player.message = DEH_String(GOTYELWCARD);
+                player.message = Some(DEH_String(GOTYELWCARD));
             }
             p_give_card(player, it_yellowcard);
             if netgame != 0 {
@@ -771,7 +762,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_RKEY => {
             if player.cards[it_redcard as usize] == 0 {
-                player.message = DEH_String(GOTREDCARD);
+                player.message = Some(DEH_String(GOTREDCARD));
             }
             p_give_card(player, it_redcard);
             if netgame != 0 {
@@ -780,7 +771,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_BSKU => {
             if player.cards[it_blueskull as usize] == 0 {
-                player.message = DEH_String(GOTBLUESKUL);
+                player.message = Some(DEH_String(GOTBLUESKUL));
             }
             p_give_card(player, it_blueskull);
             if netgame != 0 {
@@ -789,7 +780,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_YSKU => {
             if player.cards[it_yellowskull as usize] == 0 {
-                player.message = DEH_String(GOTYELWSKUL);
+                player.message = Some(DEH_String(GOTYELWSKUL));
             }
             p_give_card(player, it_yellowskull);
             if netgame != 0 {
@@ -798,7 +789,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_RSKU => {
             if player.cards[it_redskull as usize] == 0 {
-                player.message = DEH_String(GOTREDSKULL);
+                player.message = Some(DEH_String(GOTREDSKULL));
             }
             p_give_card(player, it_redskull);
             if netgame != 0 {
@@ -810,16 +801,16 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_body(player, 10) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTSTIM);
+            player.message = Some(DEH_String(GOTSTIM));
         }
         SPR_MEDI => {
             if p_give_body(player, 25) == 0 {
                 return;
             }
             if player.health < 25 {
-                player.message = DEH_String(GOTMEDINEED);
+                player.message = Some(DEH_String(GOTMEDINEED));
             } else {
-                player.message = DEH_String(GOTMEDIKIT);
+                player.message = Some(DEH_String(GOTMEDIKIT));
             }
         }
         // power ups
@@ -827,14 +818,14 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_power(player, pw_invulnerability as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTINVUL);
+            player.message = Some(DEH_String(GOTINVUL));
             sound = Sfx::Getpow as i32;
         }
         SPR_PSTR => {
             if p_give_power(player, pw_strength as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTBERSERK);
+            player.message = Some(DEH_String(GOTBERSERK));
             if player.readyweapon != wp_fist {
                 player.pendingweapon = wp_fist;
             }
@@ -844,28 +835,28 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_power(player, pw_invisibility as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTINVIS);
+            player.message = Some(DEH_String(GOTINVIS));
             sound = Sfx::Getpow as i32;
         }
         SPR_SUIT => {
             if p_give_power(player, pw_ironfeet as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTSUIT);
+            player.message = Some(DEH_String(GOTSUIT));
             sound = Sfx::Getpow as i32;
         }
         SPR_PMAP => {
             if p_give_power(player, pw_allmap as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTMAP);
+            player.message = Some(DEH_String(GOTMAP));
             sound = Sfx::Getpow as i32;
         }
         SPR_PVIS => {
             if p_give_power(player, pw_infrared as i32) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTVISOR);
+            player.message = Some(DEH_String(GOTVISOR));
             sound = Sfx::Getpow as i32;
         }
         // ammo
@@ -878,49 +869,49 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_ammo(player, am_clip, amount) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTCLIP);
+            player.message = Some(DEH_String(GOTCLIP));
         }
         SPR_AMMO => {
             if p_give_ammo(player, am_clip, 5) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTCLIPBOX);
+            player.message = Some(DEH_String(GOTCLIPBOX));
         }
         SPR_ROCK => {
             if p_give_ammo(player, am_misl, 1) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTROCKET);
+            player.message = Some(DEH_String(GOTROCKET));
         }
         SPR_BROK => {
             if p_give_ammo(player, am_misl, 5) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTROCKBOX);
+            player.message = Some(DEH_String(GOTROCKBOX));
         }
         SPR_CELL => {
             if p_give_ammo(player, am_cell, 1) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTCELL);
+            player.message = Some(DEH_String(GOTCELL));
         }
         SPR_CELP => {
             if p_give_ammo(player, am_cell, 5) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTCELLBOX);
+            player.message = Some(DEH_String(GOTCELLBOX));
         }
         SPR_SHEL => {
             if p_give_ammo(player, am_shell, 1) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTSHELLS);
+            player.message = Some(DEH_String(GOTSHELLS));
         }
         SPR_SBOX => {
             if p_give_ammo(player, am_shell, 5) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTSHELLBOX);
+            player.message = Some(DEH_String(GOTSHELLBOX));
         }
         SPR_BPAK => {
             if player.backpack == 0 {
@@ -932,14 +923,14 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             for i in 0..NUMAMMO {
                 p_give_ammo(player, i as i32, 1);
             }
-            player.message = DEH_String(GOTBACKPACK);
+            player.message = Some(DEH_String(GOTBACKPACK));
         }
         // weapons
         SPR_BFUG => {
             if p_give_weapon(player, wp_bfg, 0) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTBFG9000);
+            player.message = Some(DEH_String(GOTBFG9000));
             sound = Sfx::Wpnup as i32;
         }
         SPR_MGUN => {
@@ -951,28 +942,28 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = DEH_String(GOTCHAINGUN);
+            player.message = Some(DEH_String(GOTCHAINGUN));
             sound = Sfx::Wpnup as i32;
         }
         SPR_CSAW => {
             if p_give_weapon(player, wp_chainsaw, 0) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTCHAINSAW);
+            player.message = Some(DEH_String(GOTCHAINSAW));
             sound = Sfx::Wpnup as i32;
         }
         SPR_LAUN => {
             if p_give_weapon(player, wp_missile, 0) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTLAUNCHER);
+            player.message = Some(DEH_String(GOTLAUNCHER));
             sound = Sfx::Wpnup as i32;
         }
         SPR_PLAS => {
             if p_give_weapon(player, wp_plasma, 0) == 0 {
                 return;
             }
-            player.message = DEH_String(GOTPLASMA);
+            player.message = Some(DEH_String(GOTPLASMA));
             sound = Sfx::Wpnup as i32;
         }
         SPR_SHOT => {
@@ -984,7 +975,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = DEH_String(GOTSHOTGUN);
+            player.message = Some(DEH_String(GOTSHOTGUN));
             sound = Sfx::Wpnup as i32;
         }
         SPR_SGN2 => {
@@ -996,7 +987,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = DEH_String(GOTSHOTGUN2);
+            player.message = Some(DEH_String(GOTSHOTGUN2));
             sound = Sfx::Wpnup as i32;
         }
         _ => {

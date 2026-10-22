@@ -9,12 +9,10 @@
 //!   * HUD font constants (`HU_FONTSTART`, `HU_FONTEND`, `HU_FONTSIZE`)
 //!   * Chat-macro default strings (verbatim from d_englsh.h)
 //!   * Player-name prefixes match the expected color labels
-//!   * Map-name pointers are non-null and spot-checked for correct content
+//!   * Map names are spot-checked for correct content
 //!   * Toggle-flag defaults (`chat_on`, `message_dontfuckwithme`)
 
 #![allow(non_snake_case)]
-
-use std::ffi::CStr;
 
 use crate::doom::hu_stuff;
 
@@ -77,7 +75,7 @@ fn hu_msgheight_is_1() {
 }
 
 // ---------------------------------------------------------------------------
-// chat_macros – 10 entries, all non-null
+// chat_macros – 10 entries
 // ---------------------------------------------------------------------------
 
 /// The `chat_macros` array has exactly 10 elements (Ctrl+0 … Ctrl+9).
@@ -85,17 +83,6 @@ fn hu_msgheight_is_1() {
 fn chat_macros_count_is_10() {
     unsafe {
         assert_eq!((*&raw const hu_stuff::chat_macros).len(), 10);
-    }
-}
-
-/// All 10 chat-macro pointers must be non-null at program start.
-/// They point to string literals in d_englsh.h and are never deallocated.
-#[test]
-fn chat_macros_all_non_null() {
-    unsafe {
-        for (i, &ptr) in (*&raw const hu_stuff::chat_macros).iter().enumerate() {
-            assert!(!ptr.is_null(), "chat_macros[{i}] should be non-null");
-        }
     }
 }
 
@@ -118,12 +105,11 @@ fn chat_macros_default_strings() {
         "Yes",
     ];
     unsafe {
-        for (i, (&ptr, &want)) in (*&raw const hu_stuff::chat_macros)
+        for (i, (got, &want)) in (*&raw const hu_stuff::chat_macros)
             .iter()
             .zip(expected.iter())
             .enumerate()
         {
-            let got = CStr::from_ptr(ptr.cast()).to_str().unwrap();
             assert_eq!(got, want, "chat_macros[{i}] mismatch");
         }
     }
@@ -137,9 +123,7 @@ fn chat_macros_default_strings() {
 /// (MAXPLAYERS = 4).
 #[test]
 fn player_names_count_is_4() {
-    unsafe {
-        assert_eq!((*&raw const hu_stuff::player_names).len(), 4);
-    }
+    assert_eq!(hu_stuff::player_names.len(), 4);
 }
 
 /// Player-name prefixes must match the color labels from `d_englsh.h`.
@@ -148,18 +132,10 @@ fn player_names_count_is_4() {
 /// break multi-player chat display.
 #[test]
 fn player_names_default_strings() {
-    let expected = ["Green: ", "Indigo: ", "Brown: ", "Red: "];
-    unsafe {
-        for (i, (&ptr, &want)) in (*&raw const hu_stuff::player_names)
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-        {
-            assert!(!ptr.is_null(), "player_names[{i}] should be non-null");
-            let got = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-            assert_eq!(got, want, "player_names[{i}] mismatch");
-        }
-    }
+    assert_eq!(
+        hu_stuff::player_names,
+        ["Green: ", "Indigo: ", "Brown: ", "Red: "]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -170,34 +146,19 @@ fn player_names_default_strings() {
 /// This is index 0 in the shareware/registered/retail DOOM map table.
 #[test]
 fn mapnames_first_entry_is_e1m1_hangar() {
-    unsafe {
-        let ptr = hu_stuff::mapnames[0];
-        assert!(!ptr.is_null(), "mapnames[0] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "E1M1: Hangar");
-    }
+    assert_eq!(hu_stuff::mapnames[0], "E1M1: Hangar");
 }
 
 /// E2M1 is at index 9 (after the nine E1 maps).
 #[test]
 fn mapnames_e2m1_is_at_index_9() {
-    unsafe {
-        let ptr = hu_stuff::mapnames[9];
-        assert!(!ptr.is_null(), "mapnames[9] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "E2M1: Deimos Anomaly");
-    }
+    assert_eq!(hu_stuff::mapnames[9], "E2M1: Deimos Anomaly");
 }
 
 /// E4M9 "Fear" is at index 35 (the last real DOOM retail map entry).
 #[test]
 fn mapnames_e4m9_is_at_index_35() {
-    unsafe {
-        let ptr = hu_stuff::mapnames[35];
-        assert!(!ptr.is_null(), "mapnames[35] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "E4M9: Fear");
-    }
+    assert_eq!(hu_stuff::mapnames[35], "E4M9: Fear");
 }
 
 /// Indices 36–44 are placeholder "NEWLEVEL" strings; vanilla Doom overflows
@@ -205,13 +166,8 @@ fn mapnames_e4m9_is_at_index_35() {
 /// so that the memory layout is preserved for pl2.wad-style overflow access.
 #[test]
 fn mapnames_placeholders_are_newlevel() {
-    unsafe {
-        for i in 36..45usize {
-            let ptr = hu_stuff::mapnames[i];
-            assert!(!ptr.is_null(), "mapnames[{i}] should not be null");
-            let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-            assert_eq!(name, "NEWLEVEL", "mapnames[{i}] should be NEWLEVEL");
-        }
+    for (i, name) in hu_stuff::mapnames.iter().enumerate().skip(36) {
+        assert_eq!(*name, "NEWLEVEL", "mapnames[{i}] should be NEWLEVEL");
     }
 }
 
@@ -222,23 +178,13 @@ fn mapnames_placeholders_are_newlevel() {
 /// The first commercial map name is "level 1: entryway" (DOOM 2 MAP01).
 #[test]
 fn mapnames_commercial_first_is_entryway() {
-    unsafe {
-        let ptr = hu_stuff::mapnames_commercial[0];
-        assert!(!ptr.is_null(), "mapnames_commercial[0] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "level 1: entryway");
-    }
+    assert_eq!(hu_stuff::mapnames_commercial[0], "level 1: entryway");
 }
 
 /// MAP32 "Grosse" is at index 31 in the commercial table.
 #[test]
 fn mapnames_commercial_map32_is_grosse() {
-    unsafe {
-        let ptr = hu_stuff::mapnames_commercial[31];
-        assert!(!ptr.is_null(), "mapnames_commercial[31] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "level 32: grosse");
-    }
+    assert_eq!(hu_stuff::mapnames_commercial[31], "level 32: grosse");
 }
 
 /// Plutonia MAP01 is at index 32 (after the 32 DOOM 2 entries).
@@ -246,12 +192,7 @@ fn mapnames_commercial_map32_is_grosse() {
 /// the commercial PWAD is Plutonia.
 #[test]
 fn mapnames_commercial_plutonia_starts_at_index_32() {
-    unsafe {
-        let ptr = hu_stuff::mapnames_commercial[32];
-        assert!(!ptr.is_null(), "mapnames_commercial[32] should not be null");
-        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
-        assert_eq!(name, "level 1: congo");
-    }
+    assert_eq!(hu_stuff::mapnames_commercial[32], "level 1: congo");
 }
 
 // ---------------------------------------------------------------------------

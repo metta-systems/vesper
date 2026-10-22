@@ -671,7 +671,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     (*p).mo = mobj as *mut crate::doom::d_player::mobj_t;
     (*p).playerstate = PST_LIVE;
     (*p).refire = 0;
-    (*p).message = ptr::null_mut();
+    (*p).message = None;
     (*p).damagecount = 0;
     (*p).bonuscount = 0;
     (*p).extralight = 0;

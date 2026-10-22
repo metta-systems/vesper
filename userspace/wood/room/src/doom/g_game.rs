@@ -38,7 +38,10 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::ffi::{c_void, CStr},
+    std::{
+        borrow::Cow,
+        ffi::{c_void, CStr},
+    },
 };
 
 use std::ptr;
@@ -348,8 +351,8 @@ pub static mut totalitems: i32 = 0;
 /// Sum of secret-sector finds across all players for the current level.
 pub static mut totalsecret: i32 = 0;
 
-/// File name of the demo currently being recorded (Z_Malloc'd).
-pub static mut demoname: *mut u8 = ptr::null_mut();
+/// File name of the demo currently being recorded.
+pub static mut demoname: String = String::new();
 
 /// Non-zero while a `.lmp` demo is being written from input.
 pub static mut demorecording: boolean = 0;
@@ -524,21 +527,9 @@ static mut NEXT_WEAPON: i32 = 0;
 /// Carry for low-resolution turn rounding (static local in `G_BuildTiccmd`).
 static mut LOWRES_TURN_CARRY: i16 = 0;
 
-/// Buffer for turbo-cheat message (static local in `G_Ticker`).
-static mut TURBOMESSAGE: [u8; 80] = [0; 80];
-
-/// Buffer for `DemoVersionDescription` (static local in `G_DoPlayDemo`).
-static mut DEMOVERSIONBUF: [u8; 16] = [0; 16];
-
 // ---------------------------------------------------------------------------
 // External function and variable declarations
 // ---------------------------------------------------------------------------
-
-extern "C" {
-    /// libc `snprintf` - variadic; only the buffer-pointer / length form is
-    /// actually invoked from this module (turbo banner and demo-version text).
-    fn snprintf(buf: *mut u8, len: usize, fmt: *const u8, ...) -> i32;
-}
 
 /// Engine-wide fatal error and clean shutdown from `i_system.c` (the
 /// latter used by single demos). Messages with arguments go through
@@ -617,7 +608,7 @@ use crate::doom::s_sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 use crate::doom::m_menu::{mouseSensitivity, M_StartControlPanel};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
-use crate::doom::m_misc::{strlen, M_StringCopy, M_TempFile, M_WriteFile, M_snprintf_clamp};
+use crate::doom::m_misc::{c_str, M_StringCopy, M_TempFile, M_WriteFile};
 
 /// Command-line argument table and lookup helpers from `m_argv.c`.
 use crate::doom::m_argv::{myargv, M_CheckParm, M_CheckParmWithArgs};
@@ -1149,8 +1140,7 @@ pub unsafe fn G_DoLoadLevel() {
     JOYARRAY = [0; MAX_JOY_BUTTONS + 1];
 
     if testcontrols != 0 {
-        players[consoleplayer as usize].message =
-            c"Press escape to quit.".as_ptr().cast_mut().cast();
+        players[consoleplayer as usize].message = Some("Press escape to quit.");
     }
 }
 
@@ -1373,8 +1363,7 @@ pub unsafe fn G_Ticker() {
             ga_worlddone => G_DoWorldDone(),
             ga_screenshot => {
                 V_ScreenShot(c"DOOM%02i.%s".as_ptr().cast_mut().cast());
-                players[consoleplayer as usize].message =
-                    DEH_String(c"screen shot".as_ptr().cast_mut().cast());
+                players[consoleplayer as usize].message = Some(DEH_String("screen shot"));
                 gameaction = ga_nothing;
             }
             _ => {}
@@ -1407,17 +1396,10 @@ pub unsafe fn G_Ticker() {
                 && ((gametic >> 5) % MAXPLAYERS as i32) == i as i32
                 && turbodetected[i] != 0
             {
-                M_snprintf_clamp(
-                    std::ptr::addr_of_mut!(TURBOMESSAGE[0]),
-                    80,
-                    snprintf(
-                        std::ptr::addr_of_mut!(TURBOMESSAGE[0]),
-                        80,
-                        c"%s is turbo!".as_ptr().cast(),
-                        player_names[i],
-                    ),
-                );
-                players[consoleplayer as usize].message = std::ptr::addr_of_mut!(TURBOMESSAGE[0]);
+                // shortcut: leaks one small string per turbo warning (once
+                // every 32 tics while a player keeps turbo running).
+                players[consoleplayer as usize].message =
+                    Some(format!("{} is turbo!", player_names[i]).leak());
                 turbodetected[i] = 0;
             }
 
@@ -1455,11 +1437,7 @@ pub unsafe fn G_Ticker() {
                     }
                     BTS_SAVEGAME => {
                         if SAVEDESCRIPTION[0] == 0 {
-                            M_StringCopy(
-                                std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]),
-                                c"NET GAME".as_ptr().cast(),
-                                32,
-                            );
+                            M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), b"NET GAME");
                         }
                         SAVEGAMESLOT = ((buttons & BTS_SAVEMASK) >> BTS_SAVESHIFT) as i32;
                         gameaction = ga_savegame;
@@ -2006,7 +1984,7 @@ pub unsafe fn G_DoWorldDone() {
 /// # Safety
 /// `name` must be a valid NUL-terminated C string.
 pub unsafe fn G_LoadGame(name: *mut u8) {
-    M_StringCopy(std::ptr::addr_of_mut!(savename[0]), name, 256);
+    M_StringCopy(&mut *ptr::addr_of_mut!(savename), c_str(name));
     gameaction = ga_loadgame;
 }
 
@@ -2048,7 +2026,7 @@ pub unsafe fn G_DoLoadGame() {
     P_UnArchiveSpecials();
 
     if P_ReadSaveGameEOF() == 0 {
-        I_Error(c"Bad savegame".as_ptr().cast());
+        I_Error("Bad savegame");
     }
 
     libc::fclose(save_stream);
@@ -2073,7 +2051,7 @@ pub unsafe fn G_DoLoadGame() {
 /// `description` must be a valid NUL-terminated C string.
 pub unsafe fn G_SaveGame(slot: i32, description: *const u8) {
     SAVEGAMESLOT = slot;
-    M_StringCopy(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]), description, 32);
+    M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), c_str(description));
     sendsave = 1;
 }
 
@@ -2092,25 +2070,25 @@ pub unsafe fn G_SaveGame(slot: i32, description: *const u8) {
 /// Performs raw `libc` file I/O (`fopen`/`ftell`/`fclose`/`remove`/`rename`)
 /// and writes through the global `save_stream`.
 pub unsafe fn G_DoSaveGame() {
-    let recovery_savegame_file: *mut u8;
+    let mut recovery_savegame_file: Option<String> = None;
     let temp_savegame_file = P_TempSaveGameFile();
     let savegame_file = P_SaveGameFile(SAVEGAMESLOT);
 
-    save_stream = libc::fopen(temp_savegame_file.cast(), c"wb".as_ptr());
+    let temp_path = std::ffi::CString::new(temp_savegame_file.as_str()).unwrap();
+    save_stream = libc::fopen(temp_path.as_ptr(), c"wb".as_ptr());
 
     if save_stream.is_null() {
-        let recovery = M_TempFile(c"recovery.dsg".as_ptr().cast_mut().cast());
-        recovery_savegame_file = recovery;
-        save_stream = libc::fopen(recovery.cast(), c"wb".as_ptr());
+        let recovery = M_TempFile("recovery.dsg");
+        let recovery_path = std::ffi::CString::new(recovery.as_str()).unwrap();
+        save_stream = libc::fopen(recovery_path.as_ptr(), c"wb".as_ptr());
         if save_stream.is_null() {
             crate::i_error!(
                 "Failed to open either '{}' or '{}' to write savegame.",
-                std::ffi::CStr::from_ptr(temp_savegame_file.cast()).to_string_lossy(),
-                std::ffi::CStr::from_ptr(recovery_savegame_file.cast()).to_string_lossy(),
+                temp_savegame_file,
+                recovery,
             );
         }
-    } else {
-        recovery_savegame_file = ptr::null_mut();
+        recovery_savegame_file = Some(recovery);
     }
 
     savegame_error = 0;
@@ -2123,30 +2101,27 @@ pub unsafe fn G_DoSaveGame() {
     P_WriteSaveGameEOF();
 
     if vanilla_savegame_limit != 0 && libc::ftell(save_stream) > SAVEGAMESIZE {
-        I_Error(c"Savegame buffer overrun".as_ptr().cast());
+        I_Error("Savegame buffer overrun");
     }
 
     libc::fclose(save_stream);
 
-    if !recovery_savegame_file.is_null() {
+    if let Some(recovery) = recovery_savegame_file {
         crate::i_error!(
             "Failed to open savegame file '{}' for writing.\nBut your game has been saved to '{}' for recovery.",
-            std::ffi::CStr::from_ptr(temp_savegame_file.cast()).to_string_lossy(),
-            std::ffi::CStr::from_ptr(recovery_savegame_file.cast()).to_string_lossy(),
+            temp_savegame_file,
+            recovery,
         );
     }
 
-    libc::remove(savegame_file.cast());
-    libc::rename(temp_savegame_file.cast(), savegame_file.cast());
+    // Errors are ignored, as the C `remove`/`rename` results were.
+    let _ = std::fs::remove_file(&savegame_file);
+    let _ = std::fs::rename(&temp_savegame_file, &savegame_file);
 
     gameaction = ga_nothing;
-    M_StringCopy(
-        std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]),
-        c"".as_ptr().cast(),
-        32,
-    );
+    M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), b"");
 
-    players[consoleplayer as usize].message = DEH_String(c"game saved.".as_ptr().cast_mut().cast());
+    players[consoleplayer as usize].message = Some(DEH_String("game saved."));
 
     R_FillBackScreen();
 }
@@ -2525,14 +2500,7 @@ pub unsafe fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
 /// `name` must be a valid NUL-terminated C string.
 pub unsafe fn G_RecordDemo(name: *mut u8) {
     usergame = 0;
-    let name_len = strlen(name);
-    let demoname_size = name_len + 5;
-    demoname = Z_Malloc(demoname_size as i32, PU_STATIC, ptr::null_mut()) as *mut u8;
-    M_snprintf_clamp(
-        demoname,
-        demoname_size,
-        snprintf(demoname, demoname_size, c"%s.lmp".as_ptr().cast(), name),
-    );
+    demoname = format!("{}.lmp", String::from_utf8_lossy(c_str(name)));
     let mut maxsize: i32 = 0x20000;
     let i = M_CheckParmWithArgs(c"-maxdemo".as_ptr().cast_mut().cast(), 1);
     if i != 0 {
@@ -2560,9 +2528,7 @@ pub unsafe fn G_VanillaVersionCode() -> i32 {
 /// exercise the table directly.
 fn g_vanilla_version_code_for(gv: i32) -> i32 {
     match gv {
-        v if v == exe_doom_1_2 => {
-            I_Error(c"Doom 1.2 does not have a version code!".as_ptr().cast())
-        }
+        v if v == exe_doom_1_2 => I_Error("Doom 1.2 does not have a version code!"),
         v if v == exe_doom_1_666 => 106,
         v if v == exe_doom_1_7 => 107,
         v if v == exe_doom_1_8 => 108,
@@ -2637,40 +2603,18 @@ pub unsafe fn G_DeferedPlayDemo(name: *const u8) {
 /// (`"v1.9"`, `"v1.6/v1.666"`, etc.).
 ///
 /// Unknown values in the range 0..=4 are treated as pre-v1.4 IWAD demos and
-/// labelled `"v1.0/v1.1/v1.2"`. Anything else is formatted into the
-/// `DEMOVERSIONBUF` static as `"major.minor (unknown)"` and a pointer into
-/// that buffer is returned (mirroring the C function's use of a static
-/// `resultbuf`).
-///
-/// # Safety
-/// Writes the `DEMOVERSIONBUF` static; the returned pointer is invalidated
-/// by the next call.
-unsafe fn demo_version_description(version: i32) -> *const u8 {
+/// labelled `"v1.0/v1.1/v1.2"`. Anything else is formatted as
+/// `"major.minor (unknown)"`.
+fn demo_version_description(version: i32) -> Cow<'static, str> {
     match version {
-        104 => c"v1.4".as_ptr().cast(),
-        105 => c"v1.5".as_ptr().cast(),
-        106 => c"v1.6/v1.666".as_ptr().cast(),
-        107 => c"v1.7/v1.7a".as_ptr().cast(),
-        108 => c"v1.8".as_ptr().cast(),
-        109 => c"v1.9".as_ptr().cast(),
-        _ => {
-            if (0..=4).contains(&version) {
-                c"v1.0/v1.1/v1.2".as_ptr().cast()
-            } else {
-                M_snprintf_clamp(
-                    std::ptr::addr_of_mut!(DEMOVERSIONBUF[0]),
-                    16,
-                    snprintf(
-                        std::ptr::addr_of_mut!(DEMOVERSIONBUF[0]),
-                        16,
-                        c"%i.%i (unknown)".as_ptr().cast(),
-                        version / 100,
-                        version % 100,
-                    ),
-                );
-                std::ptr::addr_of!(DEMOVERSIONBUF[0])
-            }
-        }
+        104 => "v1.4".into(),
+        105 => "v1.5".into(),
+        106 => "v1.6/v1.666".into(),
+        107 => "v1.7/v1.7a".into(),
+        108 => "v1.8".into(),
+        109 => "v1.9".into(),
+        0..=4 => "v1.0/v1.1/v1.2".into(),
+        _ => format!("{}.{} (unknown)", version / 100, version % 100).into(),
     }
 }
 
@@ -2708,14 +2652,13 @@ pub unsafe fn G_DoPlayDemo() {
     } else if demoversion == DOOM_191_VERSION {
         longtics = 1;
     } else {
-        let message = b"Demo is from a different game version!\n\
-            (read %i, should be %i)\n\n\
+        // C code uses printf (not I_Error) here so demo playback continues
+        print!(
+            "Demo is from a different game version!\n\
+            (read {}, should be {})\n\n\
             *** You may need to upgrade your version of Doom to v1.9. ***\n\
             See: https://www.doomworld.com/classicdoom/info/patches.php\n\
-            This appears to be %s.\0";
-        // C code uses printf (not I_Error) here so demo playback continues
-        libc::printf(
-            message.as_ptr().cast(),
+            This appears to be {}.",
             demoversion,
             G_VanillaVersionCode(),
             demo_version_description(demoversion),
@@ -2848,17 +2791,14 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
     if demorecording != 0 {
         *demo_p = DEMOMARKER;
         demo_p = demo_p.add(1);
+        let demoname_ref = &*ptr::addr_of!(demoname);
         M_WriteFile(
-            demoname,
-            demobuffer as *mut c_void,
-            demo_p.offset_from(demobuffer) as i32,
+            demoname_ref,
+            std::slice::from_raw_parts(demobuffer, demo_p.offset_from(demobuffer) as usize),
         );
         Z_Free(demobuffer as *mut c_void);
         demorecording = 0;
-        crate::i_error!(
-            "Demo {} recorded",
-            std::ffi::CStr::from_ptr(demoname.cast()).to_string_lossy()
-        );
+        crate::i_error!("Demo {} recorded", demoname_ref);
     }
 
     0

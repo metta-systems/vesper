@@ -19,10 +19,8 @@
 //!   `short`/`short`, avoiding sign-extension ambiguity.
 //! - State indices are bounds-checked on read; out-of-range values set
 //!   `savegame_error` and clamp to `states[0]`.
-//! - `P_SaveGameFile` always rebuilds the filename from the current `slot`
-//!   argument (matching C behavior); the allocation is reused across calls.
-//! - `TEMP_SAVE_FILENAME` and `SAVE_FILENAME` are module-level statics rather
-//!   than function-local statics.
+//! - `P_SaveGameFile` and `P_TempSaveGameFile` return owned `String` paths
+//!   instead of pointers into function-local static buffers.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -795,8 +793,9 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     s.itemcount = saveg_read32() as i32;
     s.secretcount = saveg_read32() as i32;
 
-    // message (raw pointer)
-    s.message = saveg_read32() as *mut u8;
+    // message: a pointer slot in the save format, never restored
+    saveg_read32();
+    s.message = None;
 
     // damagecount, bonuscount
     s.damagecount = saveg_read32() as i32;
@@ -866,7 +865,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
     saveg_write32(s.killcount as u32);
     saveg_write32(s.itemcount as u32);
     saveg_write32(s.secretcount as u32);
-    saveg_write32(s.message as u32);
+    saveg_write32(0); // message pointer slot
     saveg_write32(s.damagecount as u32);
     saveg_write32(s.bonuscount as u32);
     saveg_write32(s.attacker as u32);
@@ -1145,35 +1144,10 @@ unsafe fn saveg_write_glow_t(glow: *const glow_t) {
 // Save filename helpers
 // ---------------------------------------------------------------------------
 
-/// Formats a save-game filename into `buf` as `"{dir}{SAVEGAMENAME}{slot}.dsg\0"`.
-///
-/// Writes at most `buf.len() - 1` bytes plus a NUL terminator. Returns the
-/// number of non-NUL bytes written. The caller must ensure `buf` is at least
-/// `dir.len() + 32` bytes to avoid truncation.
-fn fill_save_filename(buf: &mut [u8], dir: &str, slot: i32) -> usize {
-    assert!(
-        !buf.is_empty(),
-        "fill_save_filename: buffer must have at least 1 byte"
-    );
-    let full = format!("{}{}{}.dsg", dir, SAVEGAMENAME, slot);
-    let bytes = full.as_bytes();
-    let len = std::cmp::min(bytes.len(), buf.len() - 1);
-    buf[..len].copy_from_slice(&bytes[..len]);
-    buf[len] = 0;
-    len
+/// The save-game filename `"{dir}{SAVEGAMENAME}{slot}.dsg"`.
+fn save_filename(dir: &str, slot: i32) -> String {
+    format!("{dir}{SAVEGAMENAME}{slot}.dsg")
 }
-
-// ---------------------------------------------------------------------------
-// Static filename buffers
-// ---------------------------------------------------------------------------
-
-/// Lazily allocated buffer holding the path to the temporary save file.
-/// Initialized once by `P_TempSaveGameFile`; never freed (process lifetime).
-static mut TEMP_SAVE_FILENAME: *mut u8 = std::ptr::null_mut();
-
-/// Lazily allocated buffer holding the path to the current slot's save file.
-/// Allocated once by `P_SaveGameFile`, then reused for every slot.
-static mut SAVE_FILENAME: *mut u8 = std::ptr::null_mut();
 
 /// Base name prefix for save-game files; slot number and `.dsg` extension are
 /// appended. Matches the `SAVEGAMENAME` define in the C source.
@@ -1187,63 +1161,26 @@ const SAVEGAMENAME: &str = "doomsav";
 /// operation.
 ///
 /// The file is written first, then atomically renamed to the final slot
-/// filename on success. The returned pointer is valid for the lifetime of the
-/// process; it is allocated once and cached in `TEMP_SAVE_FILENAME`.
+/// filename on success.
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
 /// # Safety
 ///
-/// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
-/// this call. The returned pointer is valid until process exit; the caller must
-/// not free or mutate it.
-pub unsafe fn P_TempSaveGameFile() -> *mut u8 {
-    if TEMP_SAVE_FILENAME.is_null() {
-        let dir = std::ffi::CStr::from_ptr(savegamedir.cast()).to_string_lossy();
-        let full = format!("{}temp.dsg\0", dir);
-        let bytes = full.into_bytes();
-        let ptr = std::alloc::alloc(std::alloc::Layout::from_size_align(bytes.len(), 1).unwrap());
-        ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-        TEMP_SAVE_FILENAME = ptr;
-    }
-    TEMP_SAVE_FILENAME
+/// Reads the `savegamedir` static; the caller must not be mutating it.
+pub unsafe fn P_TempSaveGameFile() -> String {
+    format!("{}temp.dsg", *ptr::addr_of!(savegamedir))
 }
 
 /// Returns the path to the save-game file for the given `slot` (0-7).
-///
-/// The buffer is allocated once and reused; the filename is rebuilt on every
-/// call so the same buffer can serve different slot numbers. The returned
-/// pointer is valid until the next call or process exit.
 ///
 /// Called by `g_game.c` to open the final save file for reading or renaming.
 ///
 /// # Safety
 ///
-/// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
-/// this call. `slot` must be in the range `0..=7`. The returned pointer is
-/// valid until the next call to this function; the caller must not free it.
-pub unsafe fn P_SaveGameFile(slot: i32) -> *mut u8 {
-    let dir_len = std::ffi::CStr::from_ptr(savegamedir.cast())
-        .to_bytes()
-        .len();
-    let alloc_size = dir_len + 32;
-
-    if SAVE_FILENAME.is_null() {
-        let layout = std::alloc::Layout::from_size_align(alloc_size, 1).unwrap();
-        let ptr = std::alloc::alloc(layout);
-        if ptr.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-        SAVE_FILENAME = ptr;
-    }
-
-    let dir_str = std::ffi::CStr::from_ptr(savegamedir.cast())
-        .to_str()
-        .unwrap();
-    let buf = std::slice::from_raw_parts_mut(SAVE_FILENAME, alloc_size);
-    fill_save_filename(buf, dir_str, slot);
-
-    SAVE_FILENAME
+/// Reads the `savegamedir` static; the caller must not be mutating it.
+pub unsafe fn P_SaveGameFile(slot: i32) -> String {
+    save_filename(&*ptr::addr_of!(savegamedir), slot)
 }
 
 /// Writes the save-game file header to the open `save_stream`.
@@ -1456,7 +1393,7 @@ pub unsafe fn P_UnArchivePlayers() {
 
         // will be set when unarc thinker
         players[i].mo = std::ptr::null_mut();
-        players[i].message = std::ptr::null_mut();
+        players[i].message = None;
         players[i].attacker = std::ptr::null_mut();
     }
 }
@@ -2172,13 +2109,7 @@ mod tests {
     fn save_game_path_not_truncated_for_long_directory() {
         let long_dir = "/very/long/savegame/directory/path/"; // 35 chars — forces path > 31 chars
         let slot = 3i32;
-        let alloc_size = long_dir.len() + 32;
-        let mut buf = vec![0u8; alloc_size];
-        fill_save_filename(&mut buf, long_dir, slot);
-        let result = std::ffi::CStr::from_bytes_until_nul(&buf)
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let result = save_filename(long_dir, slot);
         let expected = format!("{}{}{}.dsg", long_dir, SAVEGAMENAME, slot);
         assert_eq!(
             result, expected,

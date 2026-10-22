@@ -231,32 +231,29 @@ const RADIATIONPAL: i32 = 13;
 // ---------------------------------------------------------------------------
 
 /// Message shown when god mode is activated (C `STSTR_DQDON` from `d_englsh.h`).
-const STSTR_DQDON: *mut u8 = c"Degreelessness Mode On".as_ptr().cast_mut().cast();
+const STSTR_DQDON: &str = "Degreelessness Mode On";
 /// Message shown when god mode is deactivated (C `STSTR_DQDOFF` from `d_englsh.h`).
-const STSTR_DQDOFF: *mut u8 = c"Degreelessness Mode Off".as_ptr().cast_mut().cast();
+const STSTR_DQDOFF: &str = "Degreelessness Mode Off";
 /// Message shown when `idfa` (ammo, no keys) cheat fires (C `STSTR_FAADDED`).
-const STSTR_FAADDED: *mut u8 = c"Ammo (no keys) Added".as_ptr().cast_mut().cast();
+const STSTR_FAADDED: &str = "Ammo (no keys) Added";
 /// Message shown when `idkfa` (ammo + keys) cheat fires (C `STSTR_KFAADDED`).
-const STSTR_KFAADDED: *mut u8 = c"Very Happy Ammo Added".as_ptr().cast_mut().cast();
+const STSTR_KFAADDED: &str = "Very Happy Ammo Added";
 /// Message shown when a music-change cheat fires (C `STSTR_MUS`).
-const STSTR_MUS: *mut u8 = c"Music Change".as_ptr().cast_mut().cast();
+const STSTR_MUS: &str = "Music Change";
 /// Message shown when an invalid music number is entered (C `STSTR_NOMUS`).
-const STSTR_NOMUS: *mut u8 = c"IMPOSSIBLE SELECTION".as_ptr().cast_mut().cast();
+const STSTR_NOMUS: &str = "IMPOSSIBLE SELECTION";
 /// Message shown when no-clip mode is activated (C `STSTR_NCON`).
-const STSTR_NCON: *mut u8 = c"No Clipping Mode ON".as_ptr().cast_mut().cast();
+const STSTR_NCON: &str = "No Clipping Mode ON";
 /// Message shown when no-clip mode is deactivated (C `STSTR_NCOFF`).
-const STSTR_NCOFF: *mut u8 = c"No Clipping Mode OFF".as_ptr().cast_mut().cast();
+const STSTR_NCOFF: &str = "No Clipping Mode OFF";
 /// Prompt shown when the `idbehold` cheat prefix fires (C `STSTR_BEHOLD`).
-const STSTR_BEHOLD: *mut u8 = c"inVuln, Str, Inviso, Rad, Allmap, or Lite-amp"
-    .as_ptr()
-    .cast_mut()
-    .cast();
+const STSTR_BEHOLD: &str = "inVuln, Str, Inviso, Rad, Allmap, or Lite-amp";
 /// Message shown when a `idbeholdX` power-up cheat fires (C `STSTR_BEHOLDX`).
-const STSTR_BEHOLDX: *mut u8 = c"Power-up Toggled".as_ptr().cast_mut().cast();
+const STSTR_BEHOLDX: &str = "Power-up Toggled";
 /// Message shown when the `idchoppers` cheat fires (C `STSTR_CHOPPERS`).
-const STSTR_CHOPPERS: *mut u8 = c"... doesn't suck - GM".as_ptr().cast_mut().cast();
+const STSTR_CHOPPERS: &str = "... doesn't suck - GM";
 /// Message shown when the level-change cheat (`idclev`) fires (C `STSTR_CLEV`).
-const STSTR_CLEV: *mut u8 = c"Changing Level...".as_ptr().cast_mut().cast();
+const STSTR_CLEV: &str = "Changing Level...";
 
 // ---------------------------------------------------------------------------
 // Replicate the C `logical_gamemission` macro from `doomstat.h`.
@@ -569,9 +566,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                         (*((*plyr).mo as *mut mobj_t)).health = 100;
                     }
                     (*plyr).health = 100; // deh_god_mode_health
-                    (*plyr).message = DEH_String(STSTR_DQDON);
+                    (*plyr).message = Some(DEH_String(STSTR_DQDON));
                 } else {
-                    (*plyr).message = DEH_String(STSTR_DQDOFF);
+                    (*plyr).message = Some(DEH_String(STSTR_DQDOFF));
                 }
             } else if cht_CheckCheat(&raw mut cheat_ammonokey, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idfa_armor
@@ -582,7 +579,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 for i in 0..NUMAMMO {
                     (*plyr).ammo[i] = (*plyr).maxammo[i];
                 }
-                (*plyr).message = DEH_String(STSTR_FAADDED);
+                (*plyr).message = Some(DEH_String(STSTR_FAADDED));
             } else if cht_CheckCheat(&raw mut cheat_ammo, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idkfa_armor
                 (*plyr).armortype = 2; // deh_idkfa_armor_class
@@ -595,25 +592,25 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 for i in 0..NUMCARDS {
                     (*plyr).cards[i] = 1;
                 }
-                (*plyr).message = DEH_String(STSTR_KFAADDED);
+                (*plyr).message = Some(DEH_String(STSTR_KFAADDED));
             } else if cht_CheckCheat(&raw mut cheat_mus, ev.data2 as u8) != 0 {
                 let mut buf = [0u8; 3];
                 let musnum: i32;
-                (*plyr).message = DEH_String(STSTR_MUS);
+                (*plyr).message = Some(DEH_String(STSTR_MUS));
                 cht_GetParam(&raw mut cheat_mus, buf.as_mut_ptr());
 
                 if gamemode == d_mode::commercial || gameversion < d_mode::exe_ultimate {
                     musnum =
                         33 + (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32) - 1;
                     if ((buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32)) > 35 {
-                        (*plyr).message = DEH_String(STSTR_NOMUS);
+                        (*plyr).message = Some(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
                 } else {
                     musnum = 1 + (buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32);
                     if ((buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32)) > 31 {
-                        (*plyr).message = DEH_String(STSTR_NOMUS);
+                        (*plyr).message = Some(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
@@ -625,9 +622,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             {
                 (*plyr).cheats ^= 1; // CF_NOCLIP
                 if (*plyr).cheats & 1 != 0 {
-                    (*plyr).message = DEH_String(STSTR_NCON);
+                    (*plyr).message = Some(DEH_String(STSTR_NCON));
                 } else {
-                    (*plyr).message = DEH_String(STSTR_NCOFF);
+                    (*plyr).message = Some(DEH_String(STSTR_NCOFF));
                 }
             }
 
@@ -641,27 +638,29 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                     } else {
                         (*plyr).powers[i] = 0;
                     }
-                    (*plyr).message = DEH_String(STSTR_BEHOLDX);
+                    (*plyr).message = Some(DEH_String(STSTR_BEHOLDX));
                 }
             }
 
             if cht_CheckCheat(&mut cheat_powerup[6], ev.data2 as u8) != 0 {
-                (*plyr).message = DEH_String(STSTR_BEHOLD);
+                (*plyr).message = Some(DEH_String(STSTR_BEHOLD));
             } else if cht_CheckCheat(&raw mut cheat_choppers, ev.data2 as u8) != 0 {
                 (*plyr).weaponowned[7] = 1; // wp_chainsaw
                 (*plyr).powers[0] = 1; // pw_invulnerability
-                (*plyr).message = DEH_String(STSTR_CHOPPERS);
+                (*plyr).message = Some(DEH_String(STSTR_CHOPPERS));
             } else if cht_CheckCheat(&raw mut cheat_mypos, ev.data2 as u8) != 0 {
-                static mut BUF: [u8; 52] = [0; 52];
                 let mo = players[consoleplayer as usize].mo as *mut mobj_t;
-                c_write!(
-                    BUF,
-                    "ang=0x{:x};x,y=(0x{:x},0x{:x})",
-                    (*mo).angle,
-                    (*mo).x,
-                    (*mo).y
+                // shortcut: leaks one small string per idmypos use; keep a
+                // reusable buffer if messages ever get frequent.
+                (*plyr).message = Some(
+                    format!(
+                        "ang=0x{:x};x,y=(0x{:x},0x{:x})",
+                        (*mo).angle,
+                        (*mo).x,
+                        (*mo).y
+                    )
+                    .leak(),
                 );
-                (*plyr).message = std::ptr::addr_of_mut!(BUF[0]);
             }
         }
 
@@ -702,7 +701,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 return 0;
             }
 
-            (*plyr).message = DEH_String(STSTR_CLEV);
+            (*plyr).message = Some(DEH_String(STSTR_CLEV));
             G_DeferedInitNew(gameskill, epsd, map);
         }
     }

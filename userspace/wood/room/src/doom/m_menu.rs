@@ -9,14 +9,17 @@
 //!   rather than global arrays; the `menuitems` pointers inside each `menu_t` are
 //!   wired up at runtime in `M_Init` because raw-pointer field initializers cannot
 //!   reference other statics in Rust's const evaluator.
-//! - `make_gamma_msg` and `mi` are `const fn` helpers replacing C compound
-//!   literals, keeping the lookup tables in static storage.
+//! - `mi` is a `const fn` helper replacing C compound literals, keeping the
+//!   lookup tables in static storage.
+//! - Menu and prompt text are `const &str`; the active modal message is an
+//!   owned `String`, and save-game descriptions stay fixed `[u8; N]`
+//!   buffers because they are edited in place.
 //! - `logical_gamemission` has a safe signature (`fn`, not `unsafe fn`); the
 //!   C-linked global read is wrapped in an internal `unsafe { ... }` block.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{ffi::c_void, ptr};
+use std::{io::Read, ptr};
 
 use crate::types::Boolean;
 
@@ -27,7 +30,7 @@ use {
         d_player::M_Menu_SetPlayerMessage,
         doomstat::{gamemission, gamemode, gameversion},
     },
-    crate::{c_write, i_error},
+    crate::i_error,
 };
 
 /// Return the canonical game mission, collapsing Chex Quest and HacX aliases.
@@ -113,20 +116,6 @@ const fn mi(status: i16, name: &[u8], routine: Option<fn(i32)>, alpha: u8) -> me
     }
 }
 
-/// Convert a string literal into a fixed-length `[u8; 26]` buffer at compile time.
-///
-/// Used to initialise the `gammamsg` table without heap allocation.
-const fn make_gamma_msg(s: &str) -> [u8; 26] {
-    let bytes = s.as_bytes();
-    let mut arr = [0u8; 26];
-    let mut i = 0;
-    while i < bytes.len() {
-        arr[i] = bytes[i];
-        i += 1;
-    }
-    arr
-}
-
 /// A single entry in a Doom menu (C typedef `menuitem_t` from `m_menu.h`).
 ///
 /// Layout is ABI-identical to the C struct; `#[repr(C)]` ensures this.
@@ -187,12 +176,58 @@ struct patch_stub {
     height: i16,
 }
 
-extern "C" {
-    fn fopen(path: *const u8, mode: *const u8) -> *mut c_void;
-    fn fread(ptr: *mut c_void, size: usize, nmemb: usize, stream: *mut c_void) -> usize;
-    fn fclose(stream: *mut c_void) -> i32;
-    fn toupper(c: i32) -> i32;
-    fn strcmp(s1: *const u8, s2: *const u8) -> i32;
+// ---------------------------------------------------------------------------
+// Menu text (from d_englsh.h)
+// ---------------------------------------------------------------------------
+
+/// Load refused during a network game (C `LOADNET`).
+const LOADNET: &str = "you can't do load while in a net game!\n\npress a key.";
+/// Quickload refused during a network game (C `QLOADNET`).
+const QLOADNET: &str = "you can't quickload during a netgame!\n\npress a key.";
+/// Quickload without a chosen slot (C `QSAVESPOT`).
+const QSAVESPOT: &str = "you haven't picked a quicksave slot yet!\n\npress a key.";
+/// Save refused outside a game (C `SAVEDEAD`).
+const SAVEDEAD: &str = "you can't save if you aren't playing!\n\npress a key.";
+/// New game refused during a network game (C `NEWGAME`).
+const NEWGAME: &str = "you can't start a new game\nwhile in a network game.\n\npress a key.";
+/// Nightmare skill confirmation (C `NIGHTMARE`).
+const NIGHTMARE: &str =
+    "are you sure? this skill level\nisn't even remotely fair.\n\npress y or n.";
+/// Shareware episode restriction (C `SWSTRING`).
+const SWSTRING: &str =
+    "this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.";
+/// Messages toggled off (C `MSGOFF`).
+const MSGOFF: &str = "Messages OFF";
+/// Messages toggled on (C `MSGON`).
+const MSGON: &str = "Messages ON";
+/// End game refused during a network game (C `NETEND`).
+const NETEND: &str = "you can't end a netgame!\n\npress a key.";
+/// End game confirmation (C `ENDGAME`).
+const ENDGAME: &str = "are you sure you want to end the game?\n\npress y or n.";
+/// Detail level toggled to high (C `DETAILHI`).
+const DETAILHI: &str = "High detail";
+/// Detail level toggled to low (C `DETAILLO`).
+const DETAILLO: &str = "Low detail";
+/// Text placed in a save slot with no save file.
+const EMPTYSTRING: &[u8] = b"empty slot";
+
+/// Size of the C `tempstring[80]` buffer the quicksave/quickload prompts
+/// are formatted into.
+const PROMPT_BUFFER_SIZE: usize = 80;
+/// Size of the C `endstring[160]` buffer the quit prompt is formatted into.
+const ENDSTRING_SIZE: usize = 160;
+/// Size of the C `string[80]` buffer each modal message line is copied into.
+const MESSAGE_LINE_SIZE: usize = 80;
+
+/// `text` cut to the `size - 1` bytes a C `M_snprintf(buf, size, ...)`
+/// keeps.
+fn clamp_to_buffer(mut text: String, size: usize) -> String {
+    let mut end = text.len().min(size - 1);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text
 }
 
 use crate::doom::{
@@ -209,7 +244,7 @@ use crate::doom::{
     i_system::I_Quit,
     i_timer::{I_GetTime, I_WaitVBL},
     i_video::{usegamma, I_SetPalette},
-    m_misc::{strlen, M_StringCopy},
+    m_misc::{until_nul, M_StringCopy},
     p_saveg::P_SaveGameFile,
     r_main::R_SetViewSize,
     s_sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
@@ -233,8 +268,8 @@ static mut screenSize: i32 = 0;
 static mut quickSaveSlot: i32 = -1;
 /// Non-zero when a modal message/confirmation overlay is active.
 static mut messageToPrint: i32 = 0;
-/// Pointer to the C-string displayed in the active modal overlay.
-static mut messageString: *mut u8 = ptr::null_mut();
+/// Text displayed in the active modal overlay.
+static mut messageString: String = String::new();
 /// Screen x pixel of the modal message's left edge.
 static mut messx: i32 = 0;
 /// Screen y pixel of the modal message's top edge.
@@ -248,13 +283,13 @@ static mut messageRoutine: Option<fn(i32)> = None;
 
 /// Gamma-correction status messages displayed when the player cycles the gamma level.
 ///
-/// Index matches the `usegamma` value (0-4). Exported for C callers in `m_config.c`.
-pub static mut gammamsg: [[u8; 26]; 5] = [
-    make_gamma_msg("Gamma correction OFF"),
-    make_gamma_msg("Gamma correction level 1"),
-    make_gamma_msg("Gamma correction level 2"),
-    make_gamma_msg("Gamma correction level 3"),
-    make_gamma_msg("Gamma correction level 4"),
+/// Index matches the `usegamma` value (0-4).
+pub const gammamsg: [&str; 5] = [
+    "Gamma correction OFF",
+    "Gamma correction level 1",
+    "Gamma correction level 2",
+    "Gamma correction level 3",
+    "Gamma correction level 4",
 ];
 
 /// Non-zero while the player is typing a save-game description string.
@@ -274,8 +309,6 @@ pub static mut menuactive: i32 = 0;
 
 /// Save-game description strings for all 6 save slots, read from each save file header.
 static mut savegamestrings: [[u8; SAVESTRINGSIZE]; 10] = [[0; SAVESTRINGSIZE]; 10];
-/// Formatted quit confirmation string (game-specific quip + y/n prompt).
-static mut endstring: [u8; 160] = [0; 160];
 
 /// Index of the currently highlighted menu item within the active page.
 static mut itemOn: i16 = 0;
@@ -285,7 +318,7 @@ static mut skullAnimCounter: i16 = 0;
 static mut whichSkull: i16 = 0;
 
 /// WAD lump names for the two skull cursor animation frames.
-static skullName: [&[u8]; 2] = [b"M_SKULL1", b"M_SKULL2"];
+const skullName: [&[u8]; 2] = [b"M_SKULL1", b"M_SKULL2"];
 
 /// Pointer to the currently active menu page descriptor.
 /// Exported for C callers (e.g. `d_main.c`).
@@ -563,27 +596,14 @@ static mut SaveDef: menu_t = menu_t {
 fn M_ReadSaveStrings() {
     unsafe {
         for i in 0..load_end {
-            let name_ptr = P_SaveGameFile(i as i32);
-            let mut name: [u8; 256] = [0; 256];
-            M_StringCopy(name.as_mut_ptr(), name_ptr, name.len());
-
-            let handle = fopen(name.as_ptr(), c"rb".as_ptr().cast());
-            if handle.is_null() {
-                M_StringCopy(
-                    savegamestrings[i].as_mut_ptr(),
-                    c"empty slot".as_ptr().cast(),
-                    SAVESTRINGSIZE,
-                );
+            let slot = &mut *ptr::addr_of_mut!(savegamestrings[i]);
+            let Ok(mut file) = std::fs::File::open(P_SaveGameFile(i as i32)) else {
+                M_StringCopy(slot, EMPTYSTRING);
                 LoadMenu[i].status = 0;
                 continue;
-            }
-            fread(
-                savegamestrings[i].as_mut_ptr() as *mut c_void,
-                1,
-                SAVESTRINGSIZE,
-                handle,
-            );
-            fclose(handle);
+            };
+            // Like the C `fread`, a short read is ignored.
+            let _ = file.read(slot);
             LoadMenu[i].status = 1;
         }
     }
@@ -599,7 +619,7 @@ fn M_DrawLoad() {
             M_WriteText(
                 LoadDef.x as i32,
                 LoadDef.y as i32 + LINEHEIGHT * i as i32,
-                savegamestrings[i].as_mut_ptr(),
+                until_nul(&*ptr::addr_of!(savegamestrings[i])),
             );
         }
     }
@@ -626,7 +646,7 @@ fn M_DrawSaveLoadBorder(x: i32, y: i32) {
 fn M_LoadSelect(choice: i32) {
     unsafe {
         let mut name: [u8; 256] = [0; 256];
-        M_StringCopy(name.as_mut_ptr(), P_SaveGameFile(choice), name.len());
+        M_StringCopy(&mut name, P_SaveGameFile(choice).as_bytes());
         G_LoadGame(name.as_mut_ptr());
         M_ClearMenus();
     }
@@ -636,14 +656,7 @@ fn M_LoadSelect(choice: i32) {
 fn M_LoadGame(_choice: i32) {
     unsafe {
         if netgame != 0 {
-            M_StartMessage(
-                c"you can't do load while in a net game!\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(LOADNET, None, 0);
             return;
         }
         M_SetupNextMenu(&raw mut LoadDef);
@@ -660,16 +673,18 @@ fn M_DrawSave() {
             M_WriteText(
                 LoadDef.x as i32,
                 LoadDef.y as i32 + LINEHEIGHT * i as i32,
-                savegamestrings[i].as_mut_ptr(),
+                until_nul(&*ptr::addr_of!(savegamestrings[i])),
             );
         }
 
         if saveStringEnter != 0 {
-            let w = M_StringWidth(savegamestrings[saveSlot as usize].as_mut_ptr());
+            let w = M_StringWidth(until_nul(&*ptr::addr_of!(
+                savegamestrings[saveSlot as usize]
+            )));
             M_WriteText(
                 LoadDef.x as i32 + w,
                 LoadDef.y as i32 + LINEHEIGHT * saveSlot,
-                c"_".as_ptr().cast_mut().cast(),
+                b"_",
             );
         }
     }
@@ -691,19 +706,12 @@ fn M_SaveSelect(choice: i32) {
     unsafe {
         saveStringEnter = 1;
         saveSlot = choice;
-        M_StringCopy(
-            std::ptr::addr_of_mut!(saveOldString[0]),
-            savegamestrings[choice as usize].as_ptr(),
-            SAVESTRINGSIZE,
-        );
-        if strcmp(
-            savegamestrings[choice as usize].as_ptr(),
-            c"empty slot".as_ptr().cast(),
-        ) == 0
-        {
-            savegamestrings[choice as usize][0] = 0;
+        let slot = &mut *ptr::addr_of_mut!(savegamestrings[choice as usize]);
+        M_StringCopy(&mut *ptr::addr_of_mut!(saveOldString), slot);
+        if until_nul(slot) == EMPTYSTRING {
+            slot[0] = 0;
         }
-        saveCharIndex = strlen(savegamestrings[choice as usize].as_ptr()) as i32;
+        saveCharIndex = until_nul(slot).len() as i32;
     }
 }
 
@@ -712,14 +720,7 @@ fn M_SaveGame(_choice: i32) {
     const GS_LEVEL: i32 = 0;
     unsafe {
         if usergame == 0 {
-            M_StartMessage(
-                c"you can't save if you aren't playing!\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(SAVEDEAD, None, 0);
             return;
         }
         if gamestate != GS_LEVEL {
@@ -752,21 +753,27 @@ fn M_QuickSave() {
             quickSaveSlot = -2;
             return;
         }
-        static mut QUICK_SAVE_MSG: [u8; 80] = [0; 80];
-        let slot_str =
-            std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr().cast())
-                .to_string_lossy();
-        c_write!(
-            QUICK_SAVE_MSG,
+        let prompt = format!(
             "quicksave over your game named\n\n'{}'?\n\npress y or n.",
-            slot_str
+            quick_save_name()
         );
         M_StartMessage(
-            std::ptr::addr_of_mut!(QUICK_SAVE_MSG[0]),
+            &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
             Some(M_QuickSaveResponse),
             1,
         );
     }
+}
+
+/// Description of the quicksave slot, for the quicksave/quickload prompts.
+///
+/// # Safety
+/// `quickSaveSlot` must be a valid slot index.
+unsafe fn quick_save_name() -> String {
+    String::from_utf8_lossy(until_nul(&*ptr::addr_of!(
+        savegamestrings[quickSaveSlot as usize]
+    )))
+    .into_owned()
 }
 
 /// Confirmation callback for the quicksave y/n prompt; saves if `key` is the confirm key.
@@ -786,38 +793,19 @@ fn M_QuickSaveResponse(key: i32) {
 fn M_QuickLoad() {
     unsafe {
         if netgame != 0 {
-            M_StartMessage(
-                c"you can't quickload during a netgame!\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(QLOADNET, None, 0);
             return;
         }
         if quickSaveSlot < 0 {
-            M_StartMessage(
-                c"you haven't picked a quicksave slot yet!\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(QSAVESPOT, None, 0);
             return;
         }
-        static mut QUICK_LOAD_MSG: [u8; 80] = [0; 80];
-        let slot_str =
-            std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr().cast())
-                .to_string_lossy();
-        c_write!(
-            QUICK_LOAD_MSG,
+        let prompt = format!(
             "do you want to quickload the game named\n\n'{}'?\n\npress y or n.",
-            slot_str
+            quick_save_name()
         );
         M_StartMessage(
-            std::ptr::addr_of_mut!(QUICK_LOAD_MSG[0]),
+            &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
             Some(M_QuickLoadResponse),
             1,
         );
@@ -969,14 +957,7 @@ fn M_DrawNewGame() {
 fn M_NewGame(_choice: i32) {
     unsafe {
         if netgame != 0 && demoplayback == 0 {
-            M_StartMessage(
-                c"you can't start a new game\nwhile in a network game.\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(NEWGAME, None, 0);
             return;
         }
         if gamemode == d_mode::commercial || gameversion == d_mode::exe_chex {
@@ -1010,14 +991,7 @@ fn M_VerifyNightmare(key: i32) {
 /// Start a new game at the given skill level, or prompt for confirmation on Nightmare.
 fn M_ChooseSkill(choice: i32) {
     if choice as usize == nightmare {
-        M_StartMessage(
-            c"are you sure? this skill level\nisn't even remotely fair.\n\npress y or n."
-                .as_ptr()
-                .cast_mut()
-                .cast(),
-            Some(M_VerifyNightmare),
-            1,
-        );
+        M_StartMessage(NIGHTMARE, Some(M_VerifyNightmare), 1);
         return;
     }
     unsafe {
@@ -1033,11 +1007,7 @@ fn M_ChooseSkill(choice: i32) {
 fn M_Episode(choice: i32) {
     unsafe {
         if gamemode == d_mode::shareware && choice != 0 {
-            M_StartMessage(
-                c"this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.".as_ptr().cast_mut().cast(),
-                None,
-                0,
-            );
+            M_StartMessage(SWSTRING, None, 0);
             M_SetupNextMenu(&raw mut ReadDef1);
             return;
         }
@@ -1094,9 +1064,9 @@ fn M_ChangeMessages(_choice: i32) {
     unsafe {
         showMessages = 1 - showMessages;
         if showMessages == 0 {
-            M_Menu_SetPlayerMessage(c"Messages OFF".as_ptr().cast());
+            M_Menu_SetPlayerMessage(MSGOFF);
         } else {
-            M_Menu_SetPlayerMessage(c"Messages ON".as_ptr().cast());
+            M_Menu_SetPlayerMessage(MSGON);
         }
         message_dontfuckwithme = 1;
     }
@@ -1122,24 +1092,10 @@ fn M_EndGame(_choice: i32) {
             return;
         }
         if netgame != 0 {
-            M_StartMessage(
-                c"you can't end a netgame!\n\npress a key."
-                    .as_ptr()
-                    .cast_mut()
-                    .cast(),
-                None,
-                0,
-            );
+            M_StartMessage(NETEND, None, 0);
             return;
         }
-        M_StartMessage(
-            c"are you sure you want to end the game?\n\npress y or n."
-                .as_ptr()
-                .cast_mut()
-                .cast(),
-            Some(M_EndGameResponse),
-            1,
-        );
+        M_StartMessage(ENDGAME, Some(M_EndGameResponse), 1);
     }
 }
 
@@ -1203,28 +1159,24 @@ fn M_QuitResponse(key: i32) {
 }
 
 /// Select a game-specific quit quip from `doom1_endmsg` or `doom2_endmsg`, keyed by `gametic`.
-fn M_SelectEndMessage() -> *const u8 {
+fn M_SelectEndMessage() -> &'static str {
     unsafe {
         if logical_gamemission() == d_mode::doom {
-            doom1_endmsg[(gametic as usize) & 7].0
+            doom1_endmsg[(gametic as usize) & 7]
         } else {
-            doom2_endmsg[(gametic as usize) & 7].0
+            doom2_endmsg[(gametic as usize) & 7]
         }
     }
 }
 
 /// Show the quit confirmation dialog with a game-specific quip and a y/n prompt.
 fn M_QuitDOOM(_choice: i32) {
-    unsafe {
-        let msg = M_SelectEndMessage();
-        let msg_str = std::ffi::CStr::from_ptr(msg.cast()).to_string_lossy();
-        c_write!(endstring, "{}\n\n(press y to quit to dos.)", msg_str);
-        M_StartMessage(
-            std::ptr::addr_of_mut!(endstring[0]),
-            Some(M_QuitResponse),
-            1,
-        );
-    }
+    let prompt = format!("{}\n\n(press y to quit to dos.)", M_SelectEndMessage());
+    M_StartMessage(
+        &clamp_to_buffer(prompt, ENDSTRING_SIZE),
+        Some(M_QuitResponse),
+        1,
+    );
 }
 
 /// Adjust mouse sensitivity; `choice` 0 decrements, 1 increments (range 0-9).
@@ -1248,9 +1200,9 @@ fn M_ChangeDetail(_choice: i32) {
         detailLevel = 1 - detailLevel;
         R_SetViewSize(screenblocks, detailLevel);
         if detailLevel == 0 {
-            M_Menu_SetPlayerMessage(c"High detail".as_ptr().cast());
+            M_Menu_SetPlayerMessage(DETAILHI);
         } else {
-            M_Menu_SetPlayerMessage(c"Low detail".as_ptr().cast());
+            M_Menu_SetPlayerMessage(DETAILLO);
         }
     }
 }
@@ -1305,11 +1257,11 @@ fn M_DrawSelCell(_menu: *mut menu_t, _item: i32) {}
 /// `string` is the message to display.
 /// `routine` is an optional callback invoked with the key pressed to dismiss.
 /// `input` is non-zero when a specific key (y/n or confirm/abort) is required.
-fn M_StartMessage(string: *mut u8, routine: Option<fn(i32)>, input: i32) {
+fn M_StartMessage(string: &str, routine: Option<fn(i32)>, input: i32) {
     unsafe {
         messageLastMenuActive = menuactive;
         messageToPrint = 1;
-        messageString = string;
+        messageString = string.to_owned();
         messageRoutine = routine;
         messageNeedsInput = input;
         menuactive = 1;
@@ -1327,12 +1279,11 @@ fn M_StopMessage() {
 /// Return the pixel width of `string` rendered in the HUD font.
 ///
 /// Non-printable characters (outside `HU_FONTSTART`..`HU_FONTEND`) contribute 4 pixels each.
-fn M_StringWidth(string: *mut u8) -> i32 {
+fn M_StringWidth(text: &[u8]) -> i32 {
     unsafe {
-        let len = strlen(string);
         let mut w: i32 = 0;
-        for i in 0..len {
-            let c = toupper(*string.add(i) as i32) - HU_FONTSTART;
+        for &byte in text {
+            let c = byte.to_ascii_uppercase() as i32 - HU_FONTSTART;
             if c < 0 || c as usize >= HU_FONTSIZE {
                 w += 4;
             } else {
@@ -1344,46 +1295,34 @@ fn M_StringWidth(string: *mut u8) -> i32 {
     }
 }
 
-/// Return the pixel height of `string` rendered in the HUD font, accounting for newlines.
-fn M_StringHeight(string: *mut u8) -> i32 {
+/// Return the pixel height of `text` rendered in the HUD font, accounting for newlines.
+fn M_StringHeight(text: &[u8]) -> i32 {
     unsafe {
         let patch = hu_font[0] as *const patch_stub;
         let height = (*patch).height as i32;
-        let mut h = height;
-        let len = strlen(string);
-        for i in 0..len {
-            if *string.add(i) == b'\n' {
-                h += height;
-            }
-        }
-        h
+        let newlines = text.iter().filter(|&&byte| byte == b'\n').count() as i32;
+        height + newlines * height
     }
 }
 
-/// Render `string` using the HUD font at screen position `(x, y)`.
+/// Render `text` using the HUD font at screen position `(x, y)`.
 ///
 /// Newline characters reset the x cursor and advance y by 12 pixels.
 /// Characters outside the font range are rendered as 4-pixel spaces.
 /// Rendering stops at the screen right edge.
-fn M_WriteText(x: i32, y: i32, string: *mut u8) {
+fn M_WriteText(x: i32, y: i32, text: &[u8]) {
     unsafe {
-        let mut ch_ptr = string;
         let mut cx = x;
         let mut cy = y;
 
-        loop {
-            let c = *ch_ptr;
-            if c == 0 {
-                break;
-            }
-            ch_ptr = ch_ptr.add(1);
+        for &c in text {
             if c == b'\n' {
                 cx = x;
                 cy += 12;
                 continue;
             }
 
-            let c = toupper(c as i32) - HU_FONTSTART;
+            let c = c.to_ascii_uppercase() as i32 - HU_FONTSTART;
             if c < 0 || c as usize >= HU_FONTSIZE {
                 cx += 4;
                 continue;
@@ -1552,9 +1491,8 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             } else if key == KEY_ESCAPE {
                 saveStringEnter = 0;
                 M_StringCopy(
-                    savegamestrings[saveSlot as usize].as_mut_ptr(),
-                    std::ptr::addr_of!(saveOldString[0]),
-                    SAVESTRINGSIZE,
+                    &mut *ptr::addr_of_mut!(savegamestrings[saveSlot as usize]),
+                    &*ptr::addr_of!(saveOldString),
                 );
             } else if key == KEY_ENTER {
                 saveStringEnter = 0;
@@ -1565,7 +1503,9 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 if vanilla_keyboard_mapping != 0 {
                     ch = key;
                 }
-                ch = toupper(ch);
+                if let Ok(byte) = u8::try_from(ch) {
+                    ch = byte.to_ascii_uppercase() as i32;
+                }
 
                 if ch != b' ' as i32
                     && (ch - HU_FONTSTART < 0 || ch - HU_FONTSTART >= HU_FONTSIZE as i32)
@@ -1575,8 +1515,9 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
 
                 if (32..=127).contains(&ch)
                     && saveCharIndex < (SAVESTRINGSIZE as i32 - 1)
-                    && M_StringWidth(savegamestrings[saveSlot as usize].as_mut_ptr())
-                        < (SAVESTRINGSIZE as i32 - 2) * 8
+                    && M_StringWidth(until_nul(&*ptr::addr_of!(
+                        savegamestrings[saveSlot as usize]
+                    ))) < (SAVESTRINGSIZE as i32 - 2) * 8
                 {
                     savegamestrings[saveSlot as usize][saveCharIndex as usize] = ch as u8;
                     saveCharIndex += 1;
@@ -1684,7 +1625,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 if usegamma > 4 {
                     usegamma = 0;
                 }
-                M_Menu_SetPlayerMessage(gammamsg[usegamma as usize].as_ptr());
+                M_Menu_SetPlayerMessage(gammamsg[usegamma as usize]);
                 I_SetPalette(W_CacheLumpName(b"PLAYPAL", 0) as *mut u8);
                 return Boolean::TRUE;
             }
@@ -1825,30 +1766,28 @@ pub fn M_Drawer() {
         inhelpscreens = 0;
 
         if messageToPrint != 0 {
-            let mut start: usize = 0;
-            messy = SCREENHEIGHT / 2 - M_StringHeight(messageString) / 2;
-            while *messageString.add(start) != 0 {
-                let mut foundnewline = 0;
-                let mut string: [u8; 80] = [0; 80];
-                let remaining = strlen(messageString.add(start));
-                for i in 0..remaining {
-                    if *messageString.add(start + i) == b'\n' {
-                        M_StringCopy(string.as_mut_ptr(), messageString.add(start), string.len());
-                        if i < string.len() {
-                            string[i] = 0;
-                        }
-                        foundnewline = 1;
-                        start += i + 1;
-                        break;
+            let message = (*ptr::addr_of!(messageString)).as_bytes();
+            messy = SCREENHEIGHT / 2 - M_StringHeight(message) / 2;
+            // Each line is cut to the C `string[80]` buffer; text without a
+            // newline that does not fit continues on the next line.
+            let line_limit = MESSAGE_LINE_SIZE - 1;
+            let mut rest = message;
+            while !rest.is_empty() {
+                let line = match rest.iter().position(|&byte| byte == b'\n') {
+                    Some(newline) => {
+                        let line = &rest[..newline.min(line_limit)];
+                        rest = &rest[newline + 1..];
+                        line
                     }
-                }
-                if foundnewline == 0 {
-                    M_StringCopy(string.as_mut_ptr(), messageString.add(start), string.len());
-                    start += strlen(string.as_ptr());
-                }
+                    None => {
+                        let line = &rest[..rest.len().min(line_limit)];
+                        rest = &rest[line.len()..];
+                        line
+                    }
+                };
 
-                messx = SCREENWIDTH / 2 - M_StringWidth(string.as_mut_ptr()) / 2;
-                M_WriteText(messx, messy, string.as_mut_ptr());
+                messx = SCREENWIDTH / 2 - M_StringWidth(line) / 2;
+                M_WriteText(messx, messy, line);
                 let patch = hu_font[0] as *const patch_stub;
                 messy += (*patch).height as i32;
             }
@@ -1931,7 +1870,7 @@ pub fn M_Init() {
         skullAnimCounter = 10;
         screenSize = screenblocks - 3;
         messageToPrint = 0;
-        messageString = ptr::null_mut();
+        messageString = String::new();
         messageLastMenuActive = menuactive;
         quickSaveSlot = -1;
 

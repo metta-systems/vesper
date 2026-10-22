@@ -464,7 +464,7 @@ pub fn V_RestoreBuffer() {
     }
 }
 
-pub fn WritePCXfile(filename: *mut u8, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
+pub fn WritePCXfile(filename: &str, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
     unsafe {
         let pcx = Z_Malloc(width * height * 2 + 1000, PU_STATIC, ptr::null_mut()) as *mut pcx_t;
 
@@ -517,28 +517,27 @@ pub fn WritePCXfile(filename: *mut u8, data: *mut u8, width: i32, height: i32, p
             i += 1;
         }
 
-        let length = pack.offset_from(pcx as *mut u8) as i32;
-        M_WriteFile(filename, pcx as *mut c_void, length);
+        let length = pack.offset_from(pcx as *mut u8) as usize;
+        M_WriteFile(
+            filename,
+            std::slice::from_raw_parts(pcx as *const u8, length),
+        );
 
         Z_Free(pcx as *mut c_void);
     }
 }
 
-/// Build a screenshot filename for index `i`: `"DOOM{i:02}.pcx"` in a 16-byte null-padded buffer.
+/// Build a screenshot filename for index `i`: `"DOOM{i:02}.pcx"`.
 /// The only real caller always passes `"DOOM%02i.%s"` as format, so the pattern is fixed.
-fn screenshot_filename(i: i32) -> [u8; 16] {
-    let s = format!("DOOM{:02}.pcx", i);
-    let mut buf = [0u8; 16];
-    buf[..s.len()].copy_from_slice(s.as_bytes());
-    buf
+fn screenshot_filename(i: i32) -> String {
+    format!("DOOM{i:02}.pcx")
 }
 
 pub fn V_ScreenShot(_format: *mut u8) {
     unsafe {
         let mut i = 0;
         while i <= 99 {
-            let mut lbmname = screenshot_filename(i);
-            if M_FileExists(lbmname.as_mut_ptr()) == 0 {
+            if !M_FileExists(screenshot_filename(i)) {
                 break;
             }
             i += 1;
@@ -548,9 +547,8 @@ pub fn V_ScreenShot(_format: *mut u8) {
             i_error!("V_ScreenShot: Couldn't create a PCX");
         }
 
-        let mut lbmname = screenshot_filename(i);
         WritePCXfile(
-            lbmname.as_mut_ptr(),
+            &screenshot_filename(i),
             I_VideoBuffer,
             SCREENWIDTH,
             SCREENHEIGHT,
@@ -647,20 +645,16 @@ mod tests {
 
     #[test]
     fn screenshot_filename_zero_padded() {
-        let name = screenshot_filename(0);
-        assert_eq!(&name[..10], b"DOOM00.pcx");
-        assert_eq!(name[10], 0);
+        assert_eq!(screenshot_filename(0), "DOOM00.pcx");
     }
 
     #[test]
     fn screenshot_filename_two_digit() {
-        let name = screenshot_filename(42);
-        assert_eq!(&name[..10], b"DOOM42.pcx");
+        assert_eq!(screenshot_filename(42), "DOOM42.pcx");
     }
 
     #[test]
     fn screenshot_filename_max() {
-        let name = screenshot_filename(99);
-        assert_eq!(&name[..10], b"DOOM99.pcx");
+        assert_eq!(screenshot_filename(99), "DOOM99.pcx");
     }
 }

@@ -13,12 +13,9 @@
 use {
     crate::doom::{
         m_argv::{myargc, myargv, M_CheckParmWithArgs, M_ParmExists},
-        m_misc::{strlen, M_StrToInt},
+        m_misc::{c_str, M_StrToInt},
     },
-    std::{
-        ffi::{c_void, CStr},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 use crate::{i_error, types::Boolean};
@@ -131,11 +128,7 @@ pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
 
         let zonemem = AutoAllocMemory(size, default_ram, min_ram);
 
-        libc::printf(
-            c"zone memory: %p, %x allocated for zone\n".as_ptr().cast(),
-            zonemem,
-            *size,
-        );
+        println!("zone memory: {zonemem:p}, {:x} allocated for zone", *size);
 
         zonemem
     }
@@ -145,42 +138,36 @@ pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
 /// column (35 leading spaces minus half the message length), followed
 /// by a newline. Mirrors `I_PrintBanner` from `i_system.c`.
 pub fn I_PrintBanner(msg: *mut u8) {
-    unsafe {
-        let len = strlen(msg) as i32;
-        let spaces = 35 - len / 2;
-        for _ in 0..spaces {
-            libc::putchar(b' ' as i32);
-        }
-        libc::puts(msg.cast());
-    }
+    let msg = String::from_utf8_lossy(unsafe { c_str(msg) });
+    let spaces = (35 - msg.len() as i32 / 2).max(0) as usize;
+    println!("{:spaces$}{msg}", "");
 }
 
 /// Print a 75-character horizontal divider made of `=` followed by a
 /// newline. Mirrors `I_PrintDivider` from `i_system.c`. Used by the
 /// startup banner and a few menu screens.
 pub fn I_PrintDivider() {
-    unsafe {
-        for _ in 0..75 {
-            libc::putchar(b'=' as i32);
-        }
-        libc::putchar(b'\n' as i32);
-    }
+    println!("{}", "=".repeat(75));
 }
+
+/// The licence notice printed by [`I_PrintStartupBanner`].
+const STARTUP_NOTICE: &str =
+    " Room, like Doom Generic, is free software, covered by the GNU General Public
+ License.  There is NO warranty; not even for MERCHANTABILITY or FITNESS
+ FOR A PARTICULAR PURPOSE. You are welcome to change and distribute
+ copies under certain conditions. See the source for more information.
+";
 
 /// Print the startup banner: a divider, the game description centred
 /// between dividers, and the GPL copyright notice. Mirrors
 /// `I_PrintStartupBanner` from `i_system.c`, but substitutes the
 /// project name (the C source pulls it from `PACKAGE_NAME`).
 pub fn I_PrintStartupBanner(gamedescription: *mut u8) {
-    unsafe {
-        I_PrintDivider();
-        I_PrintBanner(gamedescription);
-        I_PrintDivider();
-        libc::printf(
-            c" Room, like Doom Generic, is free software, covered by the GNU General Public\n License.  There is NO warranty; not even for MERCHANTABILITY or FITNESS\n FOR A PARTICULAR PURPOSE. You are welcome to change and distribute\n copies under certain conditions. See the source for more information.\n".as_ptr().cast(),
-        );
-        I_PrintDivider();
-    }
+    I_PrintDivider();
+    I_PrintBanner(gamedescription);
+    I_PrintDivider();
+    print!("{STARTUP_NOTICE}");
+    I_PrintDivider();
 }
 
 /// Return non-zero if stdout is a real interactive console.
@@ -236,16 +223,15 @@ unsafe fn ZenityAvailable() -> bool {
 /// # Safety
 ///
 /// `message` must point to a valid NUL-terminated C string.
-unsafe fn ZenityErrorBox(message: *const u8) -> i32 {
+unsafe fn ZenityErrorBox(message: &str) -> i32 {
     if !ZenityAvailable() {
         return 0;
     }
 
-    let msg = CStr::from_ptr(message.cast()).to_string_lossy();
     let status = std::process::Command::new("/usr/bin/zenity")
         .arg("--error")
         .arg("--text")
-        .arg(&*msg)
+        .arg(message)
         .status();
 
     match status {
@@ -269,9 +255,9 @@ unsafe fn ZenityErrorBox(message: *const u8) -> i32 {
 /// continuing; this matches the safety net in `I_Error` from
 /// `i_system.c`. Unlike the C source, which takes a printf-style
 /// format string and varargs, this entry point accepts a single
-/// pre-formatted C string - the `i_error!` macro takes care of
+/// pre-formatted message - the `i_error!` macro takes care of
 /// formatting on the caller side.
-pub fn I_Error(msg: *const u8) -> ! {
+pub fn I_Error(msg: &str) -> ! {
     unsafe {
         static mut already_quitting: bool = false;
 
@@ -281,8 +267,7 @@ pub fn I_Error(msg: *const u8) -> ! {
             already_quitting = true;
         }
 
-        let msg_cstr = CStr::from_ptr(msg.cast());
-        eprintln!("{}", msg_cstr.to_string_lossy());
+        eprintln!("{msg}");
         eprintln!();
 
         let mut entry = exit_funcs;
@@ -300,15 +285,6 @@ pub fn I_Error(msg: *const u8) -> ! {
 
         std::process::exit(-1);
     }
-}
-
-/// Wrapper called by the C preprocessor macro for I_Error.
-///
-/// The original C source expands `I_Error(...)` into a varargs call;
-/// in this port the `i_error!` macro produces a formatted C string
-/// and forwards to this function. Identical behaviour to `I_Error`.
-pub fn I_ErrorV(msg: *const u8) -> ! {
-    I_Error(msg)
 }
 
 /// Length, in bytes, of the simulated low-memory dump exposed via
@@ -377,12 +353,12 @@ pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
 
             let p = M_CheckParmWithArgs(c"-setmem".as_ptr().cast_mut().cast(), 1);
             if p > 0 {
-                let arg = *myargv.offset((p + 1) as isize);
-                if libc::strcasecmp(arg.cast(), c"dos622".as_ptr().cast()) == 0 {
+                let arg = c_str(*myargv.offset((p + 1) as isize));
+                if arg.eq_ignore_ascii_case(b"dos622") {
                     dos_mem_dump = DosMemDump::Dos622;
-                } else if libc::strcasecmp(arg.cast(), c"dos71".as_ptr().cast()) == 0 {
+                } else if arg.eq_ignore_ascii_case(b"dos71") {
                     dos_mem_dump = DosMemDump::Win98;
-                } else if libc::strcasecmp(arg.cast(), c"dosbox".as_ptr().cast()) == 0 {
+                } else if arg.eq_ignore_ascii_case(b"dosbox") {
                     dos_mem_dump = DosMemDump::Dosbox;
                 } else {
                     let mut idx: usize = 0;
@@ -392,8 +368,7 @@ pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
                         if pp >= myargc as isize || **myargv.offset(pp) == b'-' {
                             break;
                         }
-                        let mut val: i32 = 0;
-                        M_StrToInt(*myargv.offset(pp), &mut val);
+                        let val = M_StrToInt(c_str(*myargv.offset(pp))).unwrap_or(0);
                         MEM_DUMP_CUSTOM[idx] = val as u8;
                         idx += 1;
                     }

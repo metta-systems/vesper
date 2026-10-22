@@ -85,6 +85,20 @@ pub const M_ZOOMIN: i32 = (1.02 * FRACUNIT as f64) as i32;
 /// C origin: `M_ZOOMOUT` in am_map.c.
 pub const M_ZOOMOUT: i32 = (FRACUNIT as f64 / 1.02) as i32;
 
+// Automap messages (C `AMSTR_*` from `d_englsh.h`).
+/// Shown when follow mode is switched on.
+const AMSTR_FOLLOWON: &str = "Follow Mode ON";
+/// Shown when follow mode is switched off.
+const AMSTR_FOLLOWOFF: &str = "Follow Mode OFF";
+/// Shown when the grid is switched on.
+const AMSTR_GRIDON: &str = "Grid ON";
+/// Shown when the grid is switched off.
+const AMSTR_GRIDOFF: &str = "Grid OFF";
+/// Prefix of the message shown when a mark is placed.
+const AMSTR_MARKEDSPOT: &str = "Marked Spot";
+/// Shown when all marks are cleared.
+const AMSTR_MARKSCLEARED: &str = "All Marks Cleared";
+
 /// Half-diameter of the player object in map units, used for arrow scaling.
 ///
 /// C origin: `PLAYERRADIUS` in am_map.c.
@@ -1338,25 +1352,25 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             followplayer = !followplayer;
             f_oldloc.x = i32::MAX;
             if followplayer != 0 {
-                (*plr).message = DEH_String(c"Follow Mode ON".as_ptr().cast_mut().cast());
+                (*plr).message = Some(DEH_String(AMSTR_FOLLOWON));
             } else {
-                (*plr).message = DEH_String(c"Follow Mode OFF".as_ptr().cast_mut().cast());
+                (*plr).message = Some(DEH_String(AMSTR_FOLLOWOFF));
             }
         } else if key == key_map_grid {
             grid = !grid;
             if grid != 0 {
-                (*plr).message = DEH_String(c"Grid ON".as_ptr().cast_mut().cast());
+                (*plr).message = Some(DEH_String(AMSTR_GRIDON));
             } else {
-                (*plr).message = DEH_String(c"Grid OFF".as_ptr().cast_mut().cast());
+                (*plr).message = Some(DEH_String(AMSTR_GRIDOFF));
             }
         } else if key == key_map_mark {
-            static mut AM_MARK_MSG: [u8; 20] = [0; 20];
-            c_write!(AM_MARK_MSG, "Marked Spot {}", { markpointnum });
-            (*plr).message = std::ptr::addr_of_mut!(AM_MARK_MSG[0]);
+            // shortcut: leaks one small string per mark placed.
+            (*plr).message =
+                Some(format!("{} {}", DEH_String(AMSTR_MARKEDSPOT), { markpointnum }).leak());
             AM_addMark();
         } else if key == key_map_clearmark {
             AM_clearMarks();
-            (*plr).message = DEH_String(c"All Marks Cleared".as_ptr().cast_mut().cast());
+            (*plr).message = Some(DEH_String(AMSTR_MARKSCLEARED));
         } else {
             rc = 0;
         }

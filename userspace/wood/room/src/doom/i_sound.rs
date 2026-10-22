@@ -22,7 +22,7 @@ use {
         w_wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength},
         z_zone::PU_CACHE,
     },
-    std::ffi::c_void,
+    std::{borrow::Cow, ffi::c_void},
 };
 
 use crate::types::Boolean;
@@ -70,16 +70,12 @@ pub static mut snd_mport: i32 = 0;
 /// preserved for config-file compatibility.
 pub static mut snd_pitchshift: i32 = 0;
 
-/// Backing storage for the empty default `snd_musiccmd` C string.
-/// `m_config` may rewrite `snd_musiccmd` to point at a different
-/// buffer; this static merely supplies the initial NUL byte.
-static mut EMPTY_CSTR: [u8; 1] = [0];
-
 /// External shell command used by the original chocolate-doom to play
 /// back music via an external process. Unused by this port (the
 /// platform's music methods handle playback directly) but kept
-/// for config-file compatibility. Starts pointing at `EMPTY_CSTR`.
-pub static mut snd_musiccmd: *mut u8 = unsafe { std::ptr::addr_of_mut!(EMPTY_CSTR[0]) };
+/// for config-file compatibility. Empty by default; `m_config` may
+/// replace it.
+pub static mut snd_musiccmd: Cow<'static, str> = Cow::Borrowed("");
 
 /// Initialise the audio subsystem through the platform's `sound_init`.
 ///
@@ -308,44 +304,17 @@ pub fn I_MusicIsPlaying() -> i32 {
 /// `libsamplerate_scale` under `FEATURE_SOUND`; those are omitted
 /// here because this port doesn't use libsamplerate.
 pub fn I_BindSoundVariables() {
+    M_BindVariable("snd_musicdevice", &raw mut snd_musicdevice as *mut c_void);
+    M_BindVariable("snd_sfxdevice", &raw mut snd_sfxdevice as *mut c_void);
+    M_BindVariable("snd_sbport", &raw mut snd_sbport as *mut c_void);
+    M_BindVariable("snd_sbirq", &raw mut snd_sbirq as *mut c_void);
+    M_BindVariable("snd_sbdma", &raw mut snd_sbdma as *mut c_void);
+    M_BindVariable("snd_mport", &raw mut snd_mport as *mut c_void);
     M_BindVariable(
-        c"snd_musicdevice".as_ptr().cast_mut().cast(),
-        &raw mut snd_musicdevice as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_sfxdevice".as_ptr().cast_mut().cast(),
-        &raw mut snd_sfxdevice as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_sbport".as_ptr().cast_mut().cast(),
-        &raw mut snd_sbport as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_sbirq".as_ptr().cast_mut().cast(),
-        &raw mut snd_sbirq as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_sbdma".as_ptr().cast_mut().cast(),
-        &raw mut snd_sbdma as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_mport".as_ptr().cast_mut().cast(),
-        &raw mut snd_mport as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_maxslicetime_ms".as_ptr().cast_mut().cast(),
+        "snd_maxslicetime_ms",
         &raw mut snd_maxslicetime_ms as *mut c_void,
     );
-    M_BindVariable(
-        c"snd_musiccmd".as_ptr().cast_mut().cast(),
-        &raw mut snd_musiccmd as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_samplerate".as_ptr().cast_mut().cast(),
-        &raw mut snd_samplerate as *mut c_void,
-    );
-    M_BindVariable(
-        c"snd_cachesize".as_ptr().cast_mut().cast(),
-        &raw mut snd_cachesize as *mut c_void,
-    );
+    M_BindVariable("snd_musiccmd", &raw mut snd_musiccmd as *mut c_void);
+    M_BindVariable("snd_samplerate", &raw mut snd_samplerate as *mut c_void);
+    M_BindVariable("snd_cachesize", &raw mut snd_cachesize as *mut c_void);
 }

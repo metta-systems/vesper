@@ -43,24 +43,24 @@ fn textwait_longer_than_textspeed() {
 // finaletext / finaleflat — set by F_StartFinale
 // ---------------------------------------------------------------------------
 
-/// Before `F_StartFinale` is called, `finaletext` is NULL.
+/// Before `F_StartFinale` is called, `finaletext` is empty.
 #[test]
-fn finaletext_initially_null() {
+fn finaletext_initially_empty() {
     unsafe {
         assert!(
-            c_ffi::finaletext.is_null(),
-            "finaletext should be NULL before F_StartFinale"
+            c_ffi::finaletext.is_empty(),
+            "finaletext should be empty before F_StartFinale"
         );
     }
 }
 
-/// Before `F_StartFinale` is called, `finaleflat` is NULL.
+/// Before `F_StartFinale` is called, `finaleflat` is empty.
 #[test]
-fn finaleflat_initially_null() {
+fn finaleflat_initially_empty() {
     unsafe {
         assert!(
-            c_ffi::finaleflat.is_null(),
-            "finaleflat should be NULL before F_StartFinale"
+            c_ffi::finaleflat.is_empty(),
+            "finaleflat should be empty before F_StartFinale"
         );
     }
 }
