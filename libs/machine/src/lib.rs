@@ -1,7 +1,5 @@
 #![no_std]
 #![no_main]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)] // incomplete_features
 #![feature(format_args_nl)]
 #![feature(int_roundings)]
 #![feature(linkage)]
@@ -86,7 +84,6 @@ mod lib_tests {
         }
 
         memory::mmu::post_enable_init();
-        platform::drivers::qemu_bring_up_console();
 
         test_main();
 

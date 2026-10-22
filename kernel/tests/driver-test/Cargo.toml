@@ -1,0 +1,62 @@
+[package]
+name = "driver-test"
+
+description = "Vesper end-to-end test kernel: Kickstart driver matching loads one probe driver instance per matching device tree node and hands each its registers, interrupts, memory and Time."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+debug_kernel = ["kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject/debug_kernel", "nucleus/debug_kernel"]
+# Enable JTAG debugging of the test kernel - enable jtag helpers and
+# block waiting for JTAG probe attach at the start of kernel main.
+jtag = ["kickstart/jtag"]
+noserial = []
+# Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
+qemu = [
+  "kickstart/qemu",
+  "libexception/qemu",
+  "libkicktest/qemu",
+  "libmachine/qemu",
+  "nucleus/qemu",
+]
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+cfg-if = { workspace = true }
+driver-echo = { workspace = true }
+driver-protocol = { workspace = true }
+kickstart = { workspace = true }
+libaddress = { workspace = true }
+libboot = { workspace = true }
+libcomponent-loader = { workspace = true }
+libcpu = { workspace = true }
+libdevice-driver = { workspace = true }
+libdevicetree = { workspace = true }
+libexception = { workspace = true }
+libimage = { workspace = true }
+libkicktest = { workspace = true }
+libmachine = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libqemu = { workspace = true }
+nucleus = { workspace = true }
+
+[build-dependencies]
+libimage-build = { workspace = true }
+
+[[bin]]
+name = "driver-test"
+test = false  # the e2e assertions run in-guest through `just test-driver`
+
+[lints]
+workspace = true

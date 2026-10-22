@@ -1,0 +1,18 @@
+# What driver-test bundles (see vesper-image-build): the probe driver, loaded
+# by Kickstart once per enabled device tree node it serves. Its interface
+# directory declares the echo_v1 interface it exports and the imports.if
+# wiring the instances to each other.
+
+[[driver]]
+name = "probe"
+binary = "driver-probe"
+interfaces = "../../../userspace/tests/driver/probe/interfaces"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

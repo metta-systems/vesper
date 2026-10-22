@@ -1,0 +1,32 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The GPIO pins of the BCM2835 (Raspberry Pi), served by the gpio component,
+## the one owner of the GPIO block.
+local interface gpio_v1
+{
+    ## What a pin is connected to: a general input or output, or one of the
+    ## six alternate functions of the pin (see the BCM2835 ARM Peripherals
+    ## manual, section 6.2, for what each pin's alternates are).
+    enum pin_function {
+        input, output, alt0, alt1, alt2, alt3, alt4, alt5
+    }
+
+    ## The resistor that holds a pin's level while nothing drives it.
+    enum pin_pull {
+        off, down, up
+    }
+
+    ## The block has no pin `pin`.
+    exception invalid_pin { card32 pin; }
+
+    ## Connect `pin` to `function`.
+    set_function(card32 pin, pin_function function)
+        raises (invalid_pin);
+
+    ## Pull `pin` up or down, or neither. A pin keeps its pull when its
+    ## function changes.
+    set_pull(card32 pin, pin_pull pull)
+        raises (invalid_pin);
+}

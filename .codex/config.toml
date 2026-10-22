@@ -1,0 +1,6 @@
+[mcp_servers.filesystem]
+command = "rust-mcp-filesystem"
+args = [
+    "--allow-write",
+    "/Users/berkus/Projects/Metta/vesper",
+]

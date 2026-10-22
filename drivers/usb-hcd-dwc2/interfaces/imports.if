@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The host controller's power domain is switched on through the firmware's
+# mailbox, found by the firmware node's compatible string.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_power_state }

@@ -1,0 +1,24 @@
+# What endpoint-test bundles (see vesper-image-build): its userspace
+# components. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+# Components are passive (exports only) unless marked `active = true`: only
+# an active component gets an entry where the loader may start Threads.
+
+[[component]]
+name = "hello"
+binary = "hello"
+active = true
+
+[[component]]
+name = "client"
+binary = "endpoint-client"
+active = true
+
+[[component]]
+name = "endpoint"
+binary = "endpoint-component"
+
+[[component]]
+name = "server"
+binary = "endpoint-server"
+active = true

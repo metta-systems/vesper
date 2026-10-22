@@ -1,0 +1,57 @@
+[package]
+name = "shell"
+
+description = "The shell: an EL0 program with a command prompt on the serial console that drives the LED through the mailbox component and draws in a window of the compositor."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+# Opt in to standard host integration tests of the command interpreter.
+host-tests = []
+qemu = ["libuser/qemu"]
+
+[target.'cfg(target_os = "vesper")'.dependencies]
+compositor-client = { workspace = true }
+libcompositor-core = { workspace = true }
+libdevice-driver = { workspace = true }
+libgraphics = { workspace = true }
+libio-channel = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-channel = { workspace = true }
+libuser = { workspace = true }
+mailbox-client = { workspace = true }
+power-client = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "commands"
+required-features = ["host-tests"]
+
+[[bin]]
+name = "shell"
+path = "src/main.rs"
+test = false
+
+# The shell's `draw` started by itself, for the compositor test image.
+[[bin]]
+name = "draw-demo"
+path = "src/draw_demo.rs"
+test = false
+
+[lints]
+workspace = true

@@ -1,0 +1,118 @@
+# What kickstart embeds (see vesper-image-build). `binary` is the cargo
+# binary name, built with the nucleus linker script.
+
+[nucleus]
+binary = "nucleus"
+
+# Privileged (EL1) components, built position-independent with
+# linker/privileged.ld (`just build-privileged`). Kickstart loads the
+# interrupt controller whose `compatible` list matches the device tree's root
+# interrupt controller; one image carries them all.
+
+[[privileged]]
+name = "bcm2836"
+binary = "irqchip-bcm2836"
+
+[[privileged]]
+name = "gicv2"
+binary = "irqchip-gicv2"
+
+# EL0 device drivers, built with userspace/runtime/user.ld (`just
+# build-drivers`). Kickstart loads one instance per enabled device tree node
+# whose `compatible` list names one of a driver's strings.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The VideoCore mailbox component: on the Raspberry Pi 3 its registers share
+# the BCM interrupt controller's page, which Kickstart hands it as a device
+# Frame (`privileged::SHARES_KERNEL_PAGES`).
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../drivers/mailbox/interfaces"
+
+# The power control: the power management node's registers halt and reset the
+# board; powering devices off goes through the mailbox component.
+[[driver]]
+name = "power"
+binary = "power"
+interfaces = "../../drivers/power/interfaces"
+
+# The display: configures the framebuffer through the mailbox component.
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../drivers/fb/interfaces"
+video_memory = true
+
+# The root dispatcher: the EL0 program that decides which Thread of the root
+# Scheduler runs, round-robin. Kickstart does not start it: once every other
+# program and driver is loaded it shares the record table with it and binds
+# its Thread with `Scheduler.BindDispatcher` (`dispatcher = true`).
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true
+
+# The DWC2 USB host controller, loaded once per enabled `brcm,bcm2708-usb`
+# node, and the USB core and the USB HID component above it, programs without a
+# device tree node: the core enumerates devices, and the HID component claims a
+# boot keyboard and mouse from it and publishes their events to the compositor.
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../drivers/usb-hcd-dwc2/interfaces"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+# The compositor: an EL0 program that owns the display and the input. It maps
+# the framebuffer through the fb component, reads the HID component's events
+# and draws the windows that clients make through `compositor_v1`, whose
+# surfaces it carves from its own memory: the back buffer, the table of the
+# framebuffer's Frames and a few surfaces of 2 MiB Frames fit in 32 MiB.
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+memory = 33554432
+
+# The shell: an EL0 program, loaded once without a device tree node (a
+# component with `program = true`). It has a command prompt on the PL011's serial
+# channel (`serial = true`), switches the LED through the mailbox component
+# and resets the board through the power component. Its `draw` command asks the
+# compositor for a window, which `memory` leaves room for (the table the
+# window's Frames are lent into).
+[[component]]
+name = "shell"
+binary = "shell"
+interfaces = "../../userspace/shell/interfaces"
+active = true
+program = true
+serial = true
+memory = 131072
+resources = ["font"]
+
+# Data files Kickstart maps read-only into the components that name them in
+# `resources`. The first is the 8x8 console font: 95 glyphs for the characters
+# from space to `~`, 8 bytes each, top row first, bit 0 the leftmost pixel.
+[[resource]]
+name = "font"
+file = "resources/font8x8.bin"

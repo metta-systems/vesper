@@ -1,34 +1,143 @@
 [workspace]
 members = [
-  "nucleus",
+  "kernel/nucleus",
+  "kernel/kickstart",
+  "kernel/tests/memory-test",
+  "kernel/tests/ppc-test",
+  "kernel/tests/sync-test",
+  "kernel/tests/capability-test",
+  "kernel/tests/driver-test",
+  "kernel/tests/mailbox-test",
+  "kernel/tests/endpoint-test",
+  "kernel/tests/fault-test",
+  "kernel/tests/fp-trap-test",
+  "kernel/tests/irq-test",
+  "kernel/tests/preempt-test",
+  "kernel/tests/dispatch-test",
+  "kernel/tests/uart-test",
   "bin/chainboot",
   "bin/chainofcommand",
+  "bin/meddler",
+  # Privileged components
+  "drivers/irqchip-bcm2836",
+  "drivers/irqchip-gicv2",
+  # EL0 driver components
+  "drivers/uart-pl011",
+  # Mailbox component and its Meddle-generated interface crates
+  "drivers/mailbox",
+  "drivers/mailbox/client",
+  "drivers/mailbox/server",
+  # Power and framebuffer components and their generated interface crates
+  "drivers/power",
+  "drivers/power/client",
+  "drivers/power/server",
+  "drivers/fb",
+  "drivers/fb/client",
+  "drivers/fb/server",
+  # USB pure protocol logic (host-testable)
+  "drivers/usb/host",
+  "drivers/usb",
+  "drivers/usb/protocol",
+  "drivers/usb/server",
+  "drivers/usb/client",
+  "drivers/usb-hid",
+  "drivers/usb-hid/client",
+  "drivers/usb-hid/server",
+  "drivers/usb-hcd-dwc2",
+  "drivers/usb-hcd-dwc2/client",
+  "drivers/usb-hcd-dwc2/server",
+  # SD card component and its block_v1 interface crates
+  "drivers/sdhost-bcm2835",
+  "drivers/sdhost-bcm2835/client",
+  "drivers/sdhost-bcm2835/server",
+  # GPIO component and its gpio_v1 interface crates
+  "drivers/gpio-bcm2835",
+  "drivers/gpio-bcm2835/client",
+  "drivers/gpio-bcm2835/server",
+  "kernel/tests/usb-test",
+  "kernel/tests/sd-test",
+  "kernel/tests/usb-core-test",
+  "kernel/tests/usb-hid-test",
+  "kernel/tests/compositor-test",
   # Libraries
+  "libs/address",
+  "libs/alloc",
+  "libs/block-channel",
   "libs/boot",
+  "libs/component-loader",
+  "userspace/libs/compositor-core",
+  "userspace/libs/framebuffer",
   "libs/console",
   "libs/cpu",
-  "libs/driver",
+  "libs/device-driver",
+  "libs/devicetree",
   "libs/exception",
+  "libs/graphics",
+  "libs/image",
+  "libs/image-build",
+  "libs/input-event",
+  "libs/io-channel",
+  "libs/irqchip",
+  "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
   "libs/locking",
   "libs/log",
   "libs/machine",
+  "libs/mapping",
+  "libs/meddle",
+  "libs/meddle-runtime",
   "libs/memory",
-  "libs/platform",
+  "libs/mmio",
+  "libs/object",
   "libs/primitives",
+  "libs/print",
   "libs/qemu",
+  "libs/serial-channel",
+  "libs/serial-trace",
+  "libs/syscall",
   "libs/test",
   "libs/time",
+  # Userspace
+  "userspace/runtime",
+  "userspace/shell",
+  "userspace/tests/endpoint/client",
+  "userspace/tests/endpoint/endpoint",
+  "userspace/tests/endpoint/protocol",
+  "userspace/tests/endpoint/server",
+  "userspace/tests/driver/echo",
+  "userspace/tests/driver/echo-client",
+  "userspace/tests/driver/probe",
+  "userspace/tests/driver/protocol",
+  "userspace/tests/fault/bare",
+  "userspace/tests/fault/faulter",
+  "userspace/tests/fault/protocol",
+  "userspace/tests/fp-trap/probe",
+  "userspace/tests/fp-trap/protocol",
+  "userspace/tests/hello",
+  "userspace/tests/irq/protocol",
+  "userspace/tests/mailbox/client",
+  "userspace/tests/usb/client",
+  "userspace/tests/sd/client",
+  "userspace/tests/input/trace",
+  "userspace/gui/compositor",
+  "userspace/gui/compositor/client",
+  "userspace/gui/compositor/server",
+  "userspace/tests/irq/receiver",
+  "userspace/dispatcher",
+  "userspace/tests/preempt/spinner",
+  "userspace/tests/preempt/reader",
+  "userspace/tests/dispatch/dispatcher",
+  "userspace/tests/dispatch/actor",
+  "userspace/tests/dispatch/child",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
 categories = ["embedded", "no-std", "os"]
 documentation = "https://docs.metta.systems/vesper"
 edition = "2024"
-homepage = "https://github.com/metta-systems/vesper"
 license = "BlueOak-1.0.0"
 publish = false
 readme = "README.md"
@@ -39,53 +148,124 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "11.2" }
-bit_field = { version = "0.10" }
-bitflags = { version = "2.10" }
-buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
+arm-gic = { version = "0.10", default-features = false }
+aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
+arbitrary-int = { version = "2.2", default-features = false }
+bitbybit  = { version = "2.0" }
+# bitflags = { version = "2.10" }
+# buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
-libboot = { path = "libs/boot" }
-libconsole = { path = "libs/console" }
-libcpu = { path = "libs/cpu" }
-libdriver = { path = "libs/driver" }
-libexception = { path = "libs/exception" }
-libkernel-state = { path = "libs/kernel-state" }
-liblocal-irq = { path = "libs/local-irq" }
-liblocking = { path = "libs/locking" }
-liblog = { path = "libs/log" }
-libmachine = { path = "libs/machine" }
-libmemory = { path = "libs/memory" }
-libplatform = { path = "libs/platform" }
-libprimitives = { path = "libs/primitives" }
-libqemu = { path = "libs/qemu" }
-libtest = { path = "libs/test" }
-libtime = { path = "libs/time" }
+derive-mmio = { version = "0.8" }
+libaddress = { path = "libs/address", package = "vesper-address" }
+# liballoc = { path = "libs/alloc", package = "vesper-alloc" }
+libblock-channel = { path = "libs/block-channel", package = "vesper-block-channel" }
+libboot = { path = "libs/boot", package = "vesper-boot" }
+libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+vesper-input-event = { path = "libs/input-event" }
+vesper-usb-protocol = { path = "drivers/usb/protocol" }
+driver-protocol = { path = "userspace/tests/driver/protocol" }
+driver-echo = { path = "userspace/tests/driver/echo" }
+driver-echo-client = { path = "userspace/tests/driver/echo-client" }
+endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
+fault-protocol = { path = "userspace/tests/fault/protocol" }
+fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
+irq-protocol = { path = "userspace/tests/irq/protocol" }
+mailbox-impl = { path = "drivers/mailbox" }
+kickstart = { path = "kernel/kickstart" }
+nucleus = { path = "kernel/nucleus" }
+libcompositor-core = { path = "userspace/libs/compositor-core", package = "metta-compositor-core" }
+libconsole = { path = "libs/console", package = "vesper-console" }
+libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
+libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
+libexception = { path = "libs/exception", package = "vesper-exceptions" }
+libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libimage = { path = "libs/image", package = "vesper-image" }
+libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
+libio-channel = { path = "libs/io-channel", package = "vesper-io-channel" }
+libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
+libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
+liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
+liblocking = { path = "libs/locking", package = "vesper-locking" }
+liblog = { path = "libs/log", package = "vesper-log" }
+libmachine = { path = "libs/machine", package = "vesper-machine" }
+libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+libmeddle = { path = "libs/meddle", package = "metta-meddle" }
+libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
+mailbox = { path = "drivers/mailbox/server" }
+mailbox-client = { path = "drivers/mailbox/client" }
+usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
+usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
+block = { path = "drivers/sdhost-bcm2835/server" }
+block-client = { path = "drivers/sdhost-bcm2835/client" }
+gpio = { path = "drivers/gpio-bcm2835/server" }
+gpio-client = { path = "drivers/gpio-bcm2835/client" }
+usb = { path = "drivers/usb/server" }
+usb-client = { path = "drivers/usb/client" }
+usb-core = { path = "drivers/usb" }
+usb-hid = { path = "drivers/usb-hid" }
+input = { path = "drivers/usb-hid/server" }
+input-client = { path = "drivers/usb-hid/client" }
+compositor-server = { path = "userspace/gui/compositor/server" }
+compositor-client = { path = "userspace/gui/compositor/client" }
+usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
+power = { path = "drivers/power/server" }
+power-client = { path = "drivers/power/client" }
+fb = { path = "drivers/fb/server" }
+fb-client = { path = "drivers/fb/client" }
+# libmemory = { path = "libs/memory", package = "vesper-memory" }
+libmmio = { path = "libs/mmio", package = "vesper-mmio" }
+libobject = { path = "libs/object", package = "vesper-objects" }
+libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
+libprint = { path = "libs/print", package = "vesper-print" }
+libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libframebuffer = { path = "userspace/libs/framebuffer", package = "vesper-framebuffer" }
+libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
+libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
+libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
+libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
+libtest = { path = "libs/test", package = "vesper-tests" }
+libtime = { path = "libs/time", package = "vesper-time" }
+libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
+num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
-qemu-exit = { version = "3.0" }
-snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+snafu = { version = "0.9", default-features = false }
+# static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
-ux = { version = "0.1", default-features = false }
 #======
 # host
 #======
 anyhow = { version = "1.0" }
 argh = { version = "0.1" }
-bytes = { version = "1.11" }
+bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
-futures-util = { version = "0.3", features = ["io"] }
-tokio = { version = "1.49", features = ["full"] }
-tokio-serial = { version = "5.4" }
+# futures-util = { version = "0.3", features = ["io"] }
+# serialport = { version = "4.0" }
+tokio = { version = "1.53", features = ["full"] }
+tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
-tokio-util = { version = "0.7", features = ["codec", "io"] }
+# tokio-util = { version = "0.7", features = ["codec", "io"] }
+#==========
+# build.rs
+#==========
+goblin = { version = "0.10" }
+minijinja = { version = "3" }
+# Meddle IDL front end and Rust emitter (libs/meddle)
+ariadne = { version = "0.6" }
+chumsky = { version = "0.13" }
+logos = { version = "0.16" }
+prettyplease = { version = "0.3" }
+proc-macro2 = { version = "1.0" }
+quote = { version = "1.0" }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
+toml = { version = "1.1" }
 #=======
 # mixed
 #=======
 seahash = { version = "4.1" }
-
-[patch.crates-io]
-serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
+owo-colors = { version = "4.4" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
@@ -98,7 +278,7 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = 's'
-panic = "abort"
+# panic = "abort" # - debug in qemu - wanna see panics
 
 [profile.release-fast]
 codegen-units = 16
@@ -156,7 +336,6 @@ float_cmp_const = "deny"
 fn_params_excessive_bools = "deny"
 fn_to_numeric_cast_any = "deny"
 format_push_string = "deny"
-from_iter_instead_of_collect = "deny"
 get_unwrap = "deny"
 if_not_else = "deny"
 if_then_some_else_none = "deny"

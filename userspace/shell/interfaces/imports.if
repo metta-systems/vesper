@@ -1,0 +1,12 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The shell has no device tree node, so every chain starts from a node found by
+# its compatible string: the firmware node, which links to the mailbox, and the
+# power management node. The shell switches the LED through the mailbox and
+# resets the board through the power component. It draws in a window of the
+# compositor, a program in the same image.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
+uses power_v1 via device compatible "brcm,bcm2835-pm" { reset }
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy }

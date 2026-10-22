@@ -1,0 +1,80 @@
+# What compositor-test bundles (see vesper-image-build): the DWC2 host controller
+# component, loaded by Kickstart once per enabled `brcm,bcm2708-usb` node, the
+# USB core, the USB HID component that claims the keyboard and mouse from it, the
+# mailbox and fb components the compositor draws through, and the compositor,
+# which owns the display and is the single consumer of the HID component's input
+# stream. The PL011 driver's serial channel belongs to the compositor, so what it
+# routes shows on the UART. The core, the HID component and the compositor are
+# programs (components with `program = true`): Kickstart starts them at boot,
+# without a device tree node.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+serial = true
+memory = 33554432
+
+# The shell's `draw` started by itself: a window of the compositor with the
+# shell's scene and the lava lamp, so the board shows a window to move the
+# cursor over. `memory` leaves room for the table the window's Frames are lent
+# into.
+[[component]]
+name = "draw_demo"
+binary = "draw-demo"
+interfaces = "../../../userspace/shell/demo-interfaces"
+active = true
+program = true
+memory = 131072
+resources = ["font"]
+
+# The 8x8 console font the scene's text is drawn with (see
+# kernel/kickstart/image.toml).
+[[resource]]
+name = "font"
+file = "../../kickstart/resources/font8x8.bin"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

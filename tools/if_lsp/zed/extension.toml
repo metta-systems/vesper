@@ -1,0 +1,10 @@
+id = "meddle"
+name = "Meddle"
+version = "0.0.1"
+schema_version = 1
+authors = ["Berkus Decker"]
+description = "Meddle interface definition language"
+
+[language_servers.if-lsp]
+name = "if_lsp"
+languages = ["Meddle"]

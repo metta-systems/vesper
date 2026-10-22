@@ -1,0 +1,87 @@
+use crate::CapError;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Rights(pub u8);
+
+impl Rights {
+    pub const READ: u8 = 0x1;
+    pub const WRITE: u8 = 0x2;
+    pub const MAP: u8 = 0x2;
+    pub const SEND: u8 = 0x2;
+    pub const RECV: u8 = 0x1;
+    pub const CALL: u8 = 0x4;
+    pub const GRANT: u8 = 0x8;
+    /// Execute permission for frame mappings: a `Frame.Map` requested with
+    /// `EXECUTE` — within the frame capability's rights — makes the installed
+    /// descriptor executable at exactly one exception level. With `WRITE` the
+    /// mapping is kernel-privilege RW+X, executable at EL1 only (EL0 denied,
+    /// UXN — EL1 cannot execute EL0-writable pages); without `WRITE` it is
+    /// read-only and executable at EL0 only (PXN).
+    pub const EXECUTE: u8 = 0x10;
+
+    /// Thread lifecycle control: a `Thread.Retire`
+    /// invocation requires `RETIRE` on the invoked Thread capability.
+    /// Delegable like other capability permissions — retirement authority
+    /// follows capability permissions, not a privileged owner identity.
+    /// `Untyped.Retype` grants it like any requested right to the Threads it
+    /// creates; bootstrap grants carry it for the boot Threads.
+    pub const RETIRE: u8 = 0x20;
+
+    /// Permission to pass this key through `Invocation.CallWithKey`. It has the
+    /// same bit position for every lendable kind (`KeyTable`, `Frame`, `DebugConsole`).
+    /// A borrowed entry keeps it, so a lent key can be lent onward; `CopyDerive`
+    /// drops it through the requested-rights subset rule.
+    pub const LEND: u8 = 0x40;
+
+    /// Permission to set a badge: a `CopyDerive` that requests a badge needs
+    /// `BADGE` on its source key, which must be unbadged. The same bit
+    /// position serves every kind that can be badged (`Invocation`,
+    /// `Notification`). Derivation can drop it like any other right.
+    pub const BADGE: u8 = 0x80;
+
+    // ── KeyTable-management permissions (per-kind interpretation) ──
+    // KeyTable capabilities interpret the rights
+    // field as table-management permissions, reusing the same bit positions
+    // as other kinds (per-kind bit reuse is permitted by the contract).
+    /// Source derivation: CopyDerive/Move from entries in this table.
+    pub const DERIVE: u8 = 0x1;
+    /// Source removal: Move-out and Delete of entries in this table.
+    pub const REMOVE: u8 = 0x2;
+    /// Destination installation: CopyDerive/Move into this table.
+    pub const INSTALL: u8 = 0x4;
+    // Bit 3 (0x8) is reserved for future table administration and is not
+    // granted initially.
+
+    pub const fn empty() -> Rights {
+        Rights(0)
+    }
+    pub const fn all() -> Rights {
+        Rights(0xFF)
+    }
+    pub fn bits(&self) -> u8 {
+        self.0
+    }
+
+    /// Decode a full-width requested-rights argument word.
+    ///
+    /// Rejects, with `InvalidOperation`, any bit outside [`Rights::all`]:
+    /// high bits that narrowing would drop and undefined bits a creation
+    /// path would otherwise install verbatim.
+    pub fn from_wire(word: u64) -> Result<Rights, CapError> {
+        u8::try_from(word)
+            .ok()
+            .filter(|bits| bits & !Self::all().0 == 0)
+            .map(Rights)
+            .ok_or(CapError::InvalidOperation)
+    }
+
+    /// Whether `self` has every permission bit in `required`.
+    pub fn has(&self, required: u8) -> bool {
+        self.0 & required == required
+    }
+
+    /// Whether `requested` is a subset of `self` (no amplification).
+    pub fn permits(&self, requested: Rights) -> bool {
+        requested.0 & !self.0 == 0
+    }
+}

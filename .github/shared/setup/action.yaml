@@ -1,0 +1,30 @@
+name: "Prepare"
+description: "Prepare Rust build environment and dependencies"
+runs:
+  using: "composite"
+  steps:
+    - name: "Install nightly Rust"
+      uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
+      with:
+        rustflags: ""
+    - name: "Install Just"
+      uses: "taiki-e/install-action@just"
+    - name: "Print Rust Version"
+      shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+      run: |
+        rustc -Vv
+        cargo -Vv
+    - name: "Install build tools"
+      shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+      run: cargo install cargo-binutils
+    - name: "Validate rust-lld"
+      if: runner.os == 'macOS'
+      shell: "bash"
+      run: |
+        which rust-lld || echo "Not found"
+        otool -L ~/.cargo/bin/rust-lld
+    - name: "Print Tools Versions"
+      shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+      run: |
+        just --version
+        cargo objcopy --version

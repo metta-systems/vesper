@@ -5,13 +5,12 @@
 
 //! Memory management functions for aarch64.
 
-mod addr;
+mod common;
+mod granule_16k;
+mod granule_4k;
+mod granule_64k;
+
+pub mod features;
 pub mod mmu;
 
-// pub use addr::{PhysAddr, VirtAddr};
-
-// aarch64 granules and page sizes howto:
-// https://stackoverflow.com/questions/34269185/simultaneous-existence-of-different-sized-pages-on-aarch64
-
-/// Default page size used by the kernel.
-pub const PAGE_SIZE: usize = 65536;
+pub use {granule_4k::Aarch64_4K, granule_16k::Aarch64_16K, granule_64k::Aarch64_64K};

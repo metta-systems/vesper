@@ -1,0 +1,1158 @@
+//! The PPC suite: `AddressSpace.CreateInvocation` construction and its full
+//! rejection matrix, then same-Thread `Invocation.Call` / `Thread.Return`
+//! round trips from the boot Thread into the Bounce fixture's
+//! `AddressSpace` — raw and library wrappers, a compiled `ppc_export!` entry
+//! with its Return-fault handler, rejected Returns inside a migrated call, and
+//! live values across deliberate target clobbers.
+
+use {
+    crate::ppc,
+    aarch64_cpu::registers::{Readable, TCR_EL1},
+    core::arch::asm,
+    kickstart::bootstrap::{BootState, bootstrap_nucleus, retained_init_memory},
+    libcomponent_loader::{
+        builder::Builder,
+        keys::{BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, boot_key, boot_slot},
+    },
+    libkicktest::{
+        bounce::{
+            self, TEST_TABLE_GUARD, assert_source_selected, record_fixture_stacks, test_slot,
+        },
+        translation,
+    },
+    libobject::{
+        CapError, InconsistencyReason, InvalidKeyReason, InvalidStackReason, KeySlot, KeyTableKey,
+        ObjectType, PlacementWindow, RawKey, Rights, StackPoolHandle, UntypedKey,
+        address_space::AddressSpaceKey, thread::ThreadReturnKey,
+    },
+    libqemu::semihosting as semi,
+    nucleus::{
+        api::key_entry::KeyEntry,
+        objects::{
+            ArchObjectsImpl, KeyTable, Nucleus,
+            arch_objects::{AddressSpaceId, AddressSpaceObject},
+        },
+    },
+};
+
+/// `AddressSpace.CreateInvocation` with full-width operands, including slots
+/// the typed wrapper cannot represent.
+fn create_invocation_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u64) {
+    address_space_raw(address_space, 3, args)
+}
+
+/// `AddressSpace.CreateStackPool` with full-width operands.
+fn create_pool_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u64) {
+    address_space_raw(address_space, 4, args)
+}
+
+/// Ordinary construction SVC with full-width operands. This never invokes PPC
+/// Call or Return.
+fn address_space_raw(address_space: RawKey, op: u64, args: [u64; 6]) -> (u64, u64, u64) {
+    let (status, word1, word2): (u64, u64, u64);
+    // SAFETY: construction uses the ordinary six-argument capability ABI and
+    // returns locally; no execution-context migration or pointer access occurs.
+    unsafe {
+        asm!(
+            "svc #0",
+            inlateout("x0") address_space.to_wire() => status,
+            inlateout("x1") op => word1,
+            inlateout("x2") args[0] => word2,
+            in("x3") args[1],
+            in("x4") args[2],
+            in("x5") args[3],
+            in("x6") args[4],
+            in("x7") args[5],
+            options(nostack),
+        );
+    }
+    (status, word1, word2)
+}
+
+fn assert_invalid_stack(
+    result: Result<RawKey, CapError>,
+    value: u64,
+    reason: InvalidStackReason,
+    reason_id: u64,
+) {
+    let error = match result {
+        Err(error) => error,
+        Ok(key) => panic!("malformed stack installed key {:#x}", key.to_wire()),
+    };
+    assert!(
+        matches!(
+            &error,
+            CapError::InvalidStack { value: actual, reason: actual_reason }
+                if *actual == value && *actual_reason == reason
+        ),
+        "wrong stack diagnostic: {:?}",
+        error.code()
+    );
+    assert_eq!(error.code(), (33, value, reason_id));
+}
+
+/// Snapshot only initialized semantic fields, never union padding. Checked
+/// lookup checks the occupied slot's incarnation; `NeverIssued` plus `check_insert`
+/// checks the vacant slot's zero counter and absence of an installed payload.
+#[derive(Debug, PartialEq, Eq)]
+struct InvocationDestinationState {
+    count: usize,
+    target: AddressSpaceId,
+    function: u64,
+    rights: Rights,
+    badge: u64,
+    pool: StackPoolHandle,
+}
+
+fn invocation_destination_state(
+    table_addr: u64,
+    occupied: RawKey,
+    vacant: KeySlot,
+) -> InvocationDestinationState {
+    // SAFETY: callers supply the retained, initialized private boot table.
+    // This borrow ends before any subsequent SVC or mutable fixture access.
+    let table = unsafe { &*KeyTable::at_carve(table_addr) };
+    let entry = table
+        .lookup(occupied, BOOT_TABLE_GUARD)
+        .unwrap_or_else(|error| panic!("occupied destination changed: {:?}", error.code()));
+    let (target, function) = entry
+        .invocation_target()
+        .unwrap_or_else(|error| panic!("Invocation target changed: {:?}", error.code()));
+    let pool = entry
+        .invocation_stack_pool()
+        .unwrap_or_else(|error| panic!("Invocation pool changed: {:?}", error.code()));
+    let never_issued = boot_key(vacant.0, 1);
+    assert!(matches!(
+        table.lookup(never_issued, BOOT_TABLE_GUARD),
+        Err(CapError::InvalidKey {
+            key,
+            reason: InvalidKeyReason::NeverIssued,
+            operand: 0,
+        }) if key == never_issued
+    ));
+    table
+        .check_insert(vacant)
+        .unwrap_or_else(|error| panic!("vacant destination changed: {:?}", error.code()));
+    InvocationDestinationState {
+        count: table.len(),
+        target,
+        function: function.get(),
+        rights: entry.rights(),
+        badge: entry.badge(),
+        pool,
+    }
+}
+
+/// First slot of the placement window the keyed Invocation declares in
+/// Bounce's table (two slots).
+const WINDOW_FIRST: u32 = 120;
+
+pub fn run() {
+    let (_boot_execution_sp, shared_trap_sp) = record_fixture_stacks();
+    let retained_init = retained_init_memory();
+    translation::observe_bootstrap(crate::run as *const u8 as u64);
+    // The boot and Bounce AddressSpaces; the source and Bounce root prefixes,
+    // both image closures and both probe tables.
+    let boot = bootstrap_nucleus();
+    let BootState {
+        nucleus,
+        keytable_addr,
+        boot_as_id,
+        self_table_key,
+        boot_untyped_key,
+        debug_console_key,
+        ..
+    } = boot;
+    let boot_table_binding = nucleus
+        .address_space(boot_as_id)
+        .expect("boot AddressSpace missing")
+        .keytable()
+        .expect("AddressSpace bound");
+    let untyped = UntypedKey::from_key(boot_untyped_key);
+    let self_table = KeyTableKey::from_key(self_table_key);
+    let builder = Builder {
+        untyped: &untyped,
+        self_table: &self_table,
+        boot_table_addr: keytable_addr,
+        retained: &retained_init,
+    };
+    // A second table for exports into a KeyTable other than the caller's.
+    let new_table_key = untyped
+        .retype(
+            ObjectType::KEY_TABLE,
+            BOOT_TABLE_SIZE_BITS,
+            TEST_TABLE_GUARD,
+            1,
+            &self_table,
+            KeySlot(6).0,
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("export KeyTable Retype failed: {:?}", error.code()));
+    let source = bounce::provision_source(&builder);
+    let boot_as_key = source.boot_as_key;
+    let boot_as = AddressSpaceKey::from_key(boot_as_key);
+    let bound_asid = source.asid;
+
+    // ─────────────────────────────────────────────────────────────────
+    // AddressSpace.CreateInvocation installs a CALL | BADGE capability into
+    // the selected KeyTable without validating the supplied entry address.
+    // These are numeric low/user-range contracts, not mapped stacks. The
+    // existing high direct-map Bounce SP is not a valid PPC stack fixture.
+    assert_eq!(TCR_EL1.get() & 0x3F, 16, "the fixture uses 48-bit TTBR0");
+    let user_end_exclusive = 1_u64 << 48;
+    let pool = boot_as
+        .create_stack_pool(0x1000, 0x1000, 1)
+        .unwrap_or_else(|error| panic!("AddressSpace.CreateStackPool failed: {:?}", error.code()));
+    let invocation_key = boot_as
+        .create_invocation(0x1234, &self_table, KeySlot(62), pool)
+        .unwrap_or_else(|error| panic!("AddressSpace.CreateInvocation failed: {:?}", error.code()));
+    assert_eq!(invocation_key.slot(), boot_slot(62));
+    assert_ne!(invocation_key.incarnation(), 0);
+    {
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        let Ok(invocation) = boot_table.lookup(invocation_key, BOOT_TABLE_GUARD) else {
+            panic!("CreateInvocation did not install its destination cap");
+        };
+        assert_eq!(invocation.object_type(), ObjectType::INVOCATION);
+        assert_eq!(invocation.rights(), Rights(Rights::CALL | Rights::BADGE));
+        let Ok((target, function_address)) = invocation.invocation_target() else {
+            panic!("installed entry is not an Invocation");
+        };
+        assert_eq!(target, boot_as_id);
+        assert_eq!(function_address.get(), 0x1234);
+        assert_eq!(invocation.invocation_stack_pool().ok(), Some(pool));
+    }
+    let before_rejections =
+        invocation_destination_state(keytable_addr, invocation_key, KeySlot(63));
+
+    // Invocation always has a nonzero entry. A zero function address
+    // cannot construct an Invocation (or current-relative Thread authority)
+    // from userspace. Once authority/live identity are established, zero
+    // wins over a stale pool and destination readiness.
+    let table_len_before_zero = before_rejections.count;
+    for slot in [KeySlot(62), KeySlot(63), KeySlot(1100)] {
+        for pool in [pool, StackPoolHandle::new(15, 0xFFFF)] {
+            assert!(matches!(
+                boot_as.create_invocation(0, &self_table, slot, pool),
+                Err(CapError::InvalidPointer)
+            ));
+            assert_eq!(
+                invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),
+                before_rejections
+            );
+        }
+    }
+    assert_eq!(
+        create_invocation_raw(
+            boot_as_key,
+            [0, self_table_key.to_wire(), u64::MAX, pool.to_wire(), 0, 0]
+        ),
+        CapError::InvalidPointer.code()
+    );
+    {
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        assert_eq!(boot_table.len(), table_len_before_zero);
+        let existing = boot_table
+            .lookup(invocation_key, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("zero-address rejection lost cap: {:?}", error.code()));
+        let target = existing
+            .invocation_target()
+            .unwrap_or_else(|error| panic!("Invocation payload changed: {:?}", error.code()));
+        assert_eq!(target.0, boot_as_id);
+        assert_eq!(target.1.get(), 0x1234);
+        assert_eq!(existing.rights(), Rights(Rights::CALL | Rights::BADGE));
+        assert!(matches!(
+            boot_table.lookup(boot_key(63, 1), BOOT_TABLE_GUARD),
+            Err(CapError::InvalidKey {
+                reason: InvalidKeyReason::NeverIssued,
+                ..
+            })
+        ));
+    }
+
+    // Every pool-creation failure, with its literal wire ID and the offending
+    // submitted value, through the real SVC path. Checks run in the order
+    // count, stack size, base, end.
+    let malformed_pools = [
+        // (base, bytes per stack, count, reason, reason id, reported value)
+        (
+            0x1000,
+            0x1000,
+            0,
+            InvalidStackReason::StackCountOutOfRange,
+            6,
+            0,
+        ),
+        (
+            0x1000,
+            0x1000,
+            65,
+            InvalidStackReason::StackCountOutOfRange,
+            6,
+            65,
+        ),
+        (0x1000, 8, 1, InvalidStackReason::StackBytesTooSmall, 5, 8),
+        (
+            0x1000,
+            0x1008,
+            1,
+            InvalidStackReason::StackBytesMisaligned,
+            4,
+            0x1008,
+        ),
+        (
+            0x1001,
+            0x1000,
+            1,
+            InvalidStackReason::BaseMisaligned,
+            3,
+            0x1001,
+        ),
+        (
+            user_end_exclusive,
+            0x1000,
+            1,
+            InvalidStackReason::BaseOutsideUserRange,
+            1,
+            user_end_exclusive,
+        ),
+        (
+            libaddress::PHYSICAL_KERNEL_WINDOW,
+            0x1000,
+            1,
+            InvalidStackReason::BaseOutsideUserRange,
+            1,
+            libaddress::PHYSICAL_KERNEL_WINDOW,
+        ),
+        (
+            user_end_exclusive - 0x1000,
+            0x1000,
+            2,
+            InvalidStackReason::EndOutsideUserRange,
+            2,
+            user_end_exclusive + 0x1000,
+        ),
+        // The size overflows: the stack size is reported.
+        (
+            0x1000,
+            !15,
+            2,
+            InvalidStackReason::EndOutsideUserRange,
+            2,
+            !15,
+        ),
+    ];
+    for (base, bytes, count, reason, reason_id, value) in malformed_pools {
+        assert_invalid_stack(
+            boot_as
+                .create_stack_pool(base, bytes, count)
+                .map(|handle| RawKey::from_wire(handle.to_wire())),
+            value,
+            reason,
+            reason_id,
+        );
+        assert_eq!(
+            create_pool_raw(boot_as_key, [base, bytes, count, 0, 0, 0]),
+            (33, value, reason_id)
+        );
+    }
+    // Reserved operands are refused, and CreateInvocation takes only a pool
+    // handle without reserved bits and zero x6 and x7.
+    assert_eq!(
+        create_pool_raw(boot_as_key, [0x1000, 0x1000, 1, 1, 0, 0]),
+        CapError::InvalidOperation.code()
+    );
+    for args in [
+        [0x5678, self_table_key.to_wire(), u64::MAX, 1 << 40, 0, 0],
+        [
+            0x5678,
+            self_table_key.to_wire(),
+            u64::MAX,
+            pool.to_wire(),
+            1,
+            0,
+        ],
+        [
+            0x5678,
+            self_table_key.to_wire(),
+            u64::MAX,
+            pool.to_wire(),
+            0,
+            1,
+        ],
+    ] {
+        assert_eq!(
+            create_invocation_raw(boot_as_key, args),
+            CapError::InvalidOperation.code()
+        );
+        assert_eq!(
+            invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),
+            before_rejections
+        );
+    }
+    // The pool table holds sixteen pools, and a pool with a stack in use
+    // cannot be destroyed; both are covered by the nucleus host tests. Here a
+    // full table is reached and emptied again.
+    let mut filler = [None; 16];
+    let mut made = 0;
+    loop {
+        match boot_as.create_stack_pool(0x1000, 0x1000, 1) {
+            Ok(handle) => {
+                filler[made] = Some(handle);
+                made += 1;
+            }
+            Err(CapError::PoolExhausted) => break,
+            Err(error) => panic!("filling the pool table failed: {:?}", error.code()),
+        }
+    }
+    assert_eq!(made, 15, "one of sixteen slots is taken");
+    for handle in filler.into_iter().flatten() {
+        boot_as
+            .destroy_stack_pool(handle)
+            .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    }
+    assert!(matches!(
+        boot_as.destroy_stack_pool(StackPoolHandle::new(3, 99)),
+        Err(CapError::StaleGeneration { .. })
+    ));
+
+    // Export into a separate KeyTable as well; the result key must carry
+    // that destination table's guard rather than the caller table's guard.
+    // Implementation status: the destination is only capability storage;
+    // it does not replace the target AddressSpace's provisioned keytable.
+    let export_table_addr = {
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        let Ok(export_table_cap) = boot_table.lookup(new_table_key, BOOT_TABLE_GUARD) else {
+            panic!("export KeyTable capability is missing");
+        };
+        let Ok(address) = export_table_cap.keytable_id().map(|table| table.address) else {
+            panic!("export destination is not a KeyTable");
+        };
+        address
+    };
+    let cross_table_invocation = boot_as
+        .create_invocation(
+            0x5678,
+            &KeyTableKey::from_key(new_table_key),
+            KeySlot(3),
+            pool,
+        )
+        .unwrap_or_else(|error| panic!("cross-table CreateInvocation failed: {:?}", error.code()));
+    assert_eq!(cross_table_invocation.slot(), test_slot(3));
+    {
+        // SAFETY: export_table_addr came from its live kernel-issued cap.
+        let export_table = unsafe { &*KeyTable::at_carve(export_table_addr) };
+        let Ok(invocation) = export_table.lookup(cross_table_invocation, TEST_TABLE_GUARD) else {
+            panic!("cross-table Invocation key did not resolve in its target table");
+        };
+        let Ok((target, function_address)) = invocation.invocation_target() else {
+            panic!("cross-table export is not an Invocation");
+        };
+        assert_eq!(target, boot_as_id);
+        assert_eq!(function_address.get(), 0x5678);
+        assert_eq!(invocation.invocation_stack_pool().ok(), Some(pool));
+        assert_eq!(invocation.rights(), Rights(Rights::CALL | Rights::BADGE));
+        assert_ne!(export_table_addr, boot_table_binding.address());
+        let target_table = nucleus
+            .address_space(target)
+            .expect("Invocation target AddressSpace missing")
+            .keytable()
+            .expect("AddressSpace bound");
+        assert_eq!(target_table.address(), boot_table_binding.address());
+        assert_eq!(target_table.size_bits(), boot_table_binding.size_bits());
+    }
+    // Non-page-aligned boundaries, the largest count, a zero base and the
+    // exclusive user ceiling are valid pools. No mapping walk or
+    // executable-entry validation is implied by success.
+    for (slot, (base, bytes, count)) in [
+        (KeySlot(4), (0x4010, 0x90, 64)),
+        (KeySlot(5), (user_end_exclusive - 0x30, 0x30, 1)),
+        (KeySlot(6), (0, 0x30, 1)),
+    ] {
+        let stack_pool = boot_as
+            .create_stack_pool(base, bytes, count)
+            .unwrap_or_else(|error| panic!("valid pool rejected: {:?}", error.code()));
+        let response = create_invocation_raw(
+            boot_as_key,
+            [
+                0x6789,
+                new_table_key.to_wire(),
+                u64::from(slot.0),
+                stack_pool.to_wire(),
+                0,
+                0,
+            ],
+        );
+        assert_eq!(response.0, 0, "valid stack rejected: {response:?}");
+        assert_eq!(response.2, 0, "construction success has one key result");
+        let key = RawKey::from_wire(response.1);
+        assert_eq!(key.slot(), test_slot(slot.0));
+        assert_eq!(key.incarnation(), 1);
+        // SAFETY: retained initialized export table, borrowed only after
+        // SVC completion; no SVC/mutation occurs while this borrow is live.
+        let table = unsafe { &*KeyTable::at_carve(export_table_addr) };
+        let entry = table
+            .lookup(key, TEST_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("valid stack cap missing: {:?}", error.code()));
+        assert_eq!(entry.invocation_stack_pool().ok(), Some(stack_pool));
+        assert!(matches!(
+            entry.invocation_target(),
+            Ok((target, function)) if target == boot_as_id && function.get() == 0x6789
+        ));
+        assert_eq!(entry.rights(), Rights(Rights::CALL | Rights::BADGE));
+        boot_as
+            .destroy_stack_pool(stack_pool)
+            .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    }
+    assert!(matches!(
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(62), pool),
+        Err(CapError::SlotOccupied(KeySlot(62)))
+    ));
+    assert!(matches!(
+        boot_as.create_invocation(0x5678, &self_table, KeySlot(1100), pool),
+        Err(CapError::InvalidSlot(KeySlot(1100)))
+    ));
+    assert_eq!(
+        create_invocation_raw(
+            boot_as_key,
+            [
+                0x5678,
+                self_table_key.to_wire(),
+                u64::MAX,
+                pool.to_wire(),
+                0,
+                0
+            ]
+        ),
+        CapError::InvalidKey {
+            key: self_table_key,
+            reason: InvalidKeyReason::SlotOutOfRange,
+            operand: 4,
+        }
+        .code()
+    );
+    assert!(matches!(
+        boot_as.create_invocation(
+            0x5678,
+            &KeyTableKey::from_key(boot_untyped_key),
+            KeySlot(63),
+            pool,
+        ),
+        Err(CapError::TypeMismatch { .. })
+    ));
+
+    assert!(matches!(
+        boot_as.create_invocation(
+            0, &KeyTableKey::from_key(boot_untyped_key), KeySlot(63), pool,
+        ),
+        Err(CapError::TypeMismatch { expected, found })
+            if expected == ObjectType::KEY_TABLE && found == ObjectType::UNTYPED
+    ));
+    assert_eq!(
+        invocation_destination_state(keytable_addr, invocation_key, KeySlot(63)),
+        before_rejections
+    );
+
+    // GRANT on the source AddressSpace and INSTALL on the destination
+    // KeyTable are independently enforced by the kernel.
+    // SAFETY: keytable_addr names the live carved boot KeyTable.
+    let no_grant_address_space = unsafe { &mut *KeyTable::at_carve(keytable_addr) }
+        .insert(
+            KeySlot(63),
+            KeyEntry::new_carved(boot_as_id, Rights(Rights::MAP), 0),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!(
+                "restricted AddressSpace fixture failed: {:?}",
+                failure.error.code()
+            )
+        });
+    assert_eq!(no_grant_address_space.incarnation(), 1);
+    assert!(matches!(
+        AddressSpaceKey::from_key(no_grant_address_space).create_invocation(
+            0x5678,
+            &self_table,
+            KeySlot(64),
+            pool,
+        ),
+        Err(CapError::InsufficientRights)
+    ));
+    // SAFETY: keytable_addr names the live carved boot KeyTable.
+    let boot_table_id = unsafe { KeyTable::carve_id(keytable_addr) };
+    // SAFETY: as above.
+    let no_install_table = unsafe { &mut *KeyTable::at_carve(keytable_addr) }
+        .insert(
+            KeySlot(64),
+            KeyEntry::new_keytable(
+                boot_table_id,
+                BOOT_TABLE_GUARD,
+                BOOT_TABLE_SIZE_BITS,
+                Rights(Rights::DERIVE),
+                0,
+            ),
+            BOOT_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| {
+            panic!(
+                "restricted KeyTable fixture failed: {:?}",
+                failure.error.code()
+            )
+        });
+    assert_eq!(no_install_table.incarnation(), 1);
+    let before_authority_rejections =
+        invocation_destination_state(keytable_addr, invocation_key, KeySlot(65));
+    assert!(matches!(
+        boot_as.create_invocation(
+            0x5678,
+            &KeyTableKey::from_key(no_install_table),
+            KeySlot(65),
+            pool,
+        ),
+        Err(CapError::InsufficientRights)
+    ));
+    {
+        // SAFETY: keytable_addr names the live carved boot KeyTable.
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        assert!(
+            boot_table.check_insert(KeySlot(65)).is_ok(),
+            "failed INSTALL check modified the destination table"
+        );
+    }
+
+    // Both independent authority failures precede zero function, invalid
+    // extent, occupied destination and full-width slot diagnostics.
+    for function in [0, 0x5678] {
+        for slot in [KeySlot(62), KeySlot(65)] {
+            assert!(matches!(
+                AddressSpaceKey::from_key(no_grant_address_space).create_invocation(
+                    function,
+                    &self_table,
+                    slot,
+                    pool,
+                ),
+                Err(CapError::InsufficientRights)
+            ));
+            assert!(matches!(
+                boot_as.create_invocation(
+                    function,
+                    &KeyTableKey::from_key(no_install_table),
+                    slot,
+                    pool,
+                ),
+                Err(CapError::InsufficientRights)
+            ));
+            assert_eq!(
+                invocation_destination_state(keytable_addr, invocation_key, KeySlot(65)),
+                before_authority_rejections
+            );
+        }
+        for (source, destination) in [
+            (no_grant_address_space, self_table_key),
+            (boot_as_key, no_install_table),
+        ] {
+            assert_eq!(
+                create_invocation_raw(
+                    source,
+                    [
+                        function,
+                        destination.to_wire(),
+                        u64::MAX,
+                        pool.to_wire(),
+                        0,
+                        0
+                    ]
+                ),
+                CapError::InsufficientRights.code()
+            );
+            assert_eq!(
+                invocation_destination_state(keytable_addr, invocation_key, KeySlot(65)),
+                before_authority_rejections
+            );
+        }
+    }
+    {
+        // SAFETY: retained boot table; all rejected SVCs have returned and
+        // these shared fixture borrows end before the next construction.
+        let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        let address_space_entry = table
+            .lookup(no_grant_address_space, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| {
+                panic!("restricted AddressSpace cap changed: {:?}", error.code())
+            });
+        assert!(matches!(address_space_entry.address_space_id(), Ok(id) if id == boot_as_id));
+        assert_eq!(address_space_entry.rights(), Rights(Rights::MAP));
+        assert_eq!(address_space_entry.badge(), 0);
+        let table_entry = table
+            .lookup(no_install_table, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("restricted KeyTable cap changed: {:?}", error.code()));
+        assert_eq!(
+            table_entry.keytable_id().ok().map(|table| table.address),
+            Some(keytable_addr)
+        );
+        assert_eq!(
+            table_entry.keytable_guard_and_size().ok(),
+            Some((BOOT_TABLE_GUARD, BOOT_TABLE_SIZE_BITS))
+        );
+        assert_eq!(table_entry.rights(), Rights(Rights::DERIVE));
+        assert_eq!(table_entry.badge(), 0);
+    }
+    let after_rejections = boot_as
+        .create_invocation(0x789A, &self_table, KeySlot(65), pool)
+        .unwrap_or_else(|error| panic!("post-rejection install failed: {:?}", error.code()));
+    assert_eq!(
+        after_rejections.incarnation(),
+        1,
+        "failed construction burned an incarnation"
+    );
+    {
+        // SAFETY: retained boot table, borrowed after construction commits.
+        let table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        let entry = table
+            .lookup(after_rejections, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("post-rejection cap missing: {:?}", error.code()));
+        assert_eq!(entry.invocation_stack_pool().ok(), Some(pool));
+        assert!(matches!(entry.invocation_target(), Ok((target, function))
+                if target == boot_as_id && function.get() == 0x789A));
+    }
+
+    // ── The Bounce AddressSpace: the PPC target ───────────────────────────
+    let bounce = bounce::provision(
+        &builder,
+        nucleus,
+        &source,
+        boot_table_binding,
+        boot_as_id,
+        debug_console_key,
+        shared_trap_sp,
+    );
+    let bounce_as_key = bounce.as_key;
+    let bounce_table_addr = bounce.table_addr;
+    let bounce_debug_console_key = bounce.debug_console_key;
+    let source_root = bounce.source_root;
+
+    // Provisioning (`bind_address_space`) installed Bounce's Slot(1)
+    // sentinel before its AddressSpace existed. As Bounce's builder, this
+    // fixture knows the table's guard and size, so the Return key is
+    // deterministic; it hands the key to the component's init, which
+    // records it for the export adapter.
+    let ppc_return_key = ThreadReturnKey::provisioned(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS).raw();
+    assert_eq!(ppc_return_key.slot(), test_slot(KeySlot::THREAD_RETURN.0));
+    {
+        // SAFETY: Bounce's retained initialized table; this read-only
+        // check overlaps no capability invocation.
+        // SAFETY: Bounce's retained table; no capability invocation is in
+        // flight while this shared borrow lives.
+        let bounce_table = unsafe { &*KeyTable::at_carve(bounce_table_addr) };
+        let entry = bounce_table
+            .lookup(ppc_return_key, TEST_TABLE_GUARD)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "provisioned Return key does not resolve: {:?}",
+                    error.code()
+                )
+            });
+        assert!(entry.is_thread_return_key());
+    }
+    ppc::component_init(ppc_return_key, bounce_debug_console_key);
+    let ppc_pool = AddressSpaceKey::from_key(bounce_as_key)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .unwrap_or_else(|error| panic!("PPC CreateStackPool failed: {:?}", error.code()));
+    let ppc_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::target_entry as *const () as u64,
+            &self_table,
+            KeySlot(200),
+            ppc_pool,
+        )
+        .unwrap_or_else(|error| panic!("PPC CreateInvocation failed: {:?}", error.code()));
+    let boot_thread_id = nucleus
+        .current_thread
+        .unwrap_or_else(|| panic!("no current boot Thread"));
+    let assert_boot_thread_home = |nucleus: &Nucleus<ArchObjectsImpl>| {
+        let boot_thread = nucleus
+            .thread(boot_thread_id)
+            .unwrap_or_else(|| panic!("boot Thread missing"));
+        assert!(boot_thread.invocation_stack.is_empty());
+        assert_eq!(boot_thread.address_space, boot_as_id);
+    };
+
+    // Recoverable rejections through real dispatch: no push, no switch,
+    // no scrubbing, source registers intact.
+    // A destroyed pool leaves its Invocations stale: the generation of the
+    // slot is the diagnostic.
+    let doomed_pool = AddressSpaceKey::from_key(bounce_as_key)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .unwrap_or_else(|error| panic!("second CreateStackPool failed: {:?}", error.code()));
+    let doomed_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::target_entry as *const () as u64,
+            &self_table,
+            KeySlot(207),
+            doomed_pool,
+        )
+        .unwrap_or_else(|error| panic!("doomed CreateInvocation failed: {:?}", error.code()));
+    AddressSpaceKey::from_key(bounce_as_key)
+        .destroy_stack_pool(doomed_pool)
+        .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    for (key, op, expected) in [
+        (
+            doomed_key,
+            0,
+            CapError::StaleGeneration {
+                current: u64::from(doomed_pool.generation()) + 1,
+            },
+        ),
+        (ppc_key, 1, CapError::KeyNotAccepted),
+        (ppc_key, 2, CapError::InvalidOperation),
+    ] {
+        ppc::assert_call_rejected(key, op, expected);
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+
+    // The real round trip, twice: the same Thread migrates into Bounce's
+    // root/ASID and table, Returns through Bounce's sentinel, and resumes
+    // here with SUCCESS/r0/r1 and its own x19-x30/SP/NZCV/root.
+    // The first pass uses the instrumented raw pair, the second the
+    // libobject `InvocationKey::call` / `ThreadReturnKey` wrappers.
+    for via_library in [false, true] {
+        let (probe_word, target_ttbr) = ppc::round_trip(ppc_key, via_library);
+        assert_eq!(target_ttbr, translation::bounce_ttbr());
+        assert_ne!(probe_word, 0);
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+
+    // A compiled `ppc_export!` entry: wrapper → linked body → result
+    // spill → Return through the init-recorded key. The second pass makes
+    // init record a stale key, so the adapter's Return is rejected and the
+    // image's `vesper_thread_return_fault` gets the exact diagnostics and
+    // original words, then repairs by retrying Return with the right key.
+    let export_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::export_entry as *const () as u64,
+            &self_table,
+            KeySlot(201),
+            ppc_pool,
+        )
+        .unwrap_or_else(|error| panic!("export CreateInvocation failed: {:?}", error.code()));
+    for stale_init_key in [false, true] {
+        ppc::export_round_trip(
+            export_key,
+            ppc_return_key,
+            bounce_debug_console_key,
+            stale_init_key,
+        );
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+
+    // Badges on derive, through the real SVC path: `CreateInvocation` grants
+    // `CALL | BADGE`, so the export key itself mints. A badged `CALL`-only
+    // copy delivers its badge in x1 of the entry; an unbadged copy delivers
+    // zero; the badge is set once.
+    {
+        let minting = export_key;
+        let call_only = Rights(Rights::CALL);
+        for (slot, badge) in [(221, 0x1234_5678_9ABC_DEF0_u64), (222, 7), (223, u64::MAX)] {
+            let badged = self_table
+                .copy_derive_badged(minting, &self_table, slot, call_only, badge)
+                .unwrap_or_else(|error| panic!("badged derive failed: {:?}", error.code()));
+            ppc::badged_export_round_trip(badged, badge);
+            assert_boot_thread_home(nucleus);
+            assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+            // The badged key cannot mint: it has no BADGE right.
+            assert!(matches!(
+                self_table.copy_derive_badged(badged, &self_table, 224, call_only, 1),
+                Err(CapError::InsufficientRights)
+            ));
+        }
+        // An unbadged copy without BADGE delivers zero and cannot mint.
+        let plain = self_table
+            .copy_derive(minting, &self_table, 224, call_only)
+            .unwrap_or_else(|error| panic!("plain derive failed: {:?}", error.code()));
+        ppc::badged_export_round_trip(plain, 0);
+        assert!(matches!(
+            self_table.copy_derive_badged(plain, &self_table, 226, call_only, 6),
+            Err(CapError::InsufficientRights)
+        ));
+
+        // A badged key that kept BADGE still cannot be badged again.
+        let keeps = self_table
+            .copy_derive_badged(
+                minting,
+                &self_table,
+                225,
+                Rights(Rights::CALL | Rights::BADGE),
+                5,
+            )
+            .unwrap_or_else(|error| panic!("badge-keeping derive failed: {:?}", error.code()));
+        assert!(matches!(
+            self_table.copy_derive_badged(keeps, &self_table, 226, call_only, 6),
+            Err(CapError::AlreadyBadged)
+        ));
+        ppc::badged_export_round_trip(keeps, 5);
+        ppc::badged_export_round_trip(export_key, 0);
+    }
+
+    // Rejected Returns from inside a migrated call: every bad key, through
+    // the library helper and through raw SVC with junk x4..x7, yields the
+    // ordinary lookup/operation error and leaves the target running in
+    // Bounce on its own stack with the continuation intact; a valid Return
+    // then completes the Call. Return on a named Thread needs a named
+    // entry in Bounce's table: Thread is not on the CopyDerive allowlist,
+    // so the bootstrap grants it kernel-privately, like the N1/N2 grants.
+    let bounce_named_thread_key = {
+        // SAFETY: both initialized private tables have retained accounted
+        // carves; neither borrow survives a capability invocation.
+        let boot_thread_id = unsafe { &*KeyTable::at_carve(keytable_addr) }
+            .lookup(boot_key(50, 1), BOOT_TABLE_GUARD)
+            .and_then(KeyEntry::thread_id)
+            .unwrap_or_else(|_| panic!("boot Thread entry missing"));
+        // SAFETY: as above; exclusively borrowed for this bootstrap grant.
+        unsafe { &mut *KeyTable::at_carve(bounce_table_addr) }
+            .insert(
+                KeySlot(9),
+                KeyEntry::new_thread(boot_thread_id, Rights::all(), 0),
+                TEST_TABLE_GUARD,
+            )
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "Bounce named Thread grant failed: {:?}",
+                    failure.error.code()
+                )
+            })
+    };
+    let rejection_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::rejection_entry as *const () as u64,
+            &self_table,
+            KeySlot(202),
+            ppc_pool,
+        )
+        .unwrap_or_else(|error| panic!("rejection CreateInvocation failed: {:?}", error.code()));
+    let zero_incarnation = RawKey::new(ppc_return_key.slot(), 0);
+    let never_issued = RawKey::new(test_slot(10), 1);
+    let wrong_guard = RawKey::new(boot_slot(KeySlot::THREAD_RETURN.0), 1);
+    let stale = RawKey::new(ppc_return_key.slot(), ppc_return_key.incarnation() + 1);
+    ppc::return_rejection_trip(
+        rejection_key,
+        [
+            ppc::RejectedReturn {
+                key: zero_incarnation,
+                expected: CapError::InvalidKey {
+                    key: zero_incarnation,
+                    reason: InvalidKeyReason::ZeroIncarnation,
+                    operand: 0,
+                },
+            },
+            ppc::RejectedReturn {
+                key: never_issued,
+                expected: CapError::InvalidKey {
+                    key: never_issued,
+                    reason: InvalidKeyReason::NeverIssued,
+                    operand: 0,
+                },
+            },
+            ppc::RejectedReturn {
+                key: wrong_guard,
+                expected: CapError::InvalidKey {
+                    key: wrong_guard,
+                    reason: InvalidKeyReason::GuardMismatch,
+                    operand: 0,
+                },
+            },
+            ppc::RejectedReturn {
+                key: stale,
+                expected: CapError::InconsistentKey {
+                    key: stale,
+                    reason: InconsistencyReason::SlotIncarnationMismatch,
+                    operand: 0,
+                },
+            },
+            ppc::RejectedReturn {
+                key: bounce_named_thread_key,
+                expected: CapError::InvalidOperation,
+            },
+        ],
+    );
+    assert_boot_thread_home(nucleus);
+    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+    // Wrapper declarations under deliberate target clobbers: the target
+    // fills x4..x30 and NZCV with garbage and writes plain memory; the
+    // source's compiler-allocated live values must all survive the
+    // `InvocationKey::call` wrapper, and the memory write must be seen.
+    let clobber_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation(
+            ppc::clobber_entry as *const () as u64,
+            &self_table,
+            KeySlot(203),
+            ppc_pool,
+        )
+        .unwrap_or_else(|error| panic!("clobber CreateInvocation failed: {:?}", error.code()));
+    ppc::live_values_trip(clobber_key);
+    assert_boot_thread_home(nucleus);
+    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+    // ── CallWithKey: lend one key for the duration of a call ─────────────
+    // Bounce, the exporter, declares a two-slot placement window in its
+    // table. The boot component lends a key to its own table that carries
+    // only `INSTALL | LEND`; inside Bounce the borrowed entry is the
+    // destination of a real CopyDerive that installs a write-only
+    // DebugConsole key into the lender's table (the fb pattern). The target
+    // also tries to keep the borrowed entry, which must be refused. Return
+    // removes the borrowed entry again.
+    let bounce_self_table_key = RawKey::from_parts(
+        TEST_TABLE_GUARD,
+        BOOT_TABLE_SIZE_BITS,
+        KeySlot::SELF_KEYTABLE.0,
+        1,
+    );
+    ppc::keyed_init(bounce_self_table_key);
+    let keyed_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation_with_window(
+            ppc::keyed_entry as *const () as u64,
+            &self_table,
+            KeySlot(204),
+            ppc_pool,
+            PlacementWindow::new(WINDOW_FIRST, 2),
+        )
+        .unwrap_or_else(|error| panic!("keyed CreateInvocation failed: {:?}", error.code()));
+    let lendable_table = self_table
+        .copy_derive(
+            self_table_key,
+            &self_table,
+            110,
+            Rights(Rights::INSTALL | Rights::LEND),
+        )
+        .unwrap_or_else(|error| panic!("lendable table key failed: {:?}", error.code()));
+    let keyed = ppc::keyed_round_trip(keyed_key, lendable_table, 111);
+    let placed = RawKey::from_parts(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, WINDOW_FIRST, 1);
+    assert_eq!(keyed.lent_key, placed, "borrowed key delivered in x0");
+    assert_eq!(keyed.dummy, 0, "x1 stays the dummy");
+    assert_eq!(keyed.input0, 111, "arguments stay in x2..x7");
+    assert_eq!(keyed.delivered.0, 0, "install through the borrowed key");
+    assert_eq!(keyed.install.0, 0, "install status");
+    assert_eq!(
+        RawKey::from_wire(keyed.delivered.1),
+        boot_key(111, 1),
+        "the installed key is local to the lender's table"
+    );
+    assert_eq!(
+        keyed.keep,
+        CapError::InvalidOperation.code(),
+        "a borrowed entry cannot be copied out of the call"
+    );
+    {
+        // SAFETY: both retained tables; every SVC has returned and these
+        // shared borrows end before the next capability invocation.
+        let boot_table = unsafe { &*KeyTable::at_carve(keytable_addr) };
+        let installed = boot_table
+            .lookup(boot_key(111, 1), BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("installed key missing: {:?}", error.code()));
+        assert_eq!(installed.object_type(), ObjectType::DEBUG_CONSOLE);
+        assert_eq!(installed.rights(), Rights(Rights::WRITE));
+        assert!(!installed.is_lent());
+        let kept = boot_table
+            .lookup(lendable_table, BOOT_TABLE_GUARD)
+            .unwrap_or_else(|error| panic!("lender's key lost: {:?}", error.code()));
+        assert_eq!(kept.rights(), Rights(Rights::INSTALL | Rights::LEND));
+        assert!(!kept.is_lent());
+        // SAFETY: Bounce's retained table; no capability invocation is in
+        // flight while this shared borrow lives.
+        let bounce_table = unsafe { &*KeyTable::at_carve(bounce_table_addr) };
+        assert!(
+            matches!(
+                bounce_table.lookup(placed, TEST_TABLE_GUARD),
+                Err(CapError::InconsistentKey {
+                    reason: InconsistencyReason::CapabilityInvalidated,
+                    ..
+                })
+            ),
+            "Return removed the borrowed entry"
+        );
+        let never_kept = RawKey::from_parts(TEST_TABLE_GUARD, BOOT_TABLE_SIZE_BITS, 130, 1);
+        assert!(
+            matches!(
+                bounce_table.lookup(never_kept, TEST_TABLE_GUARD),
+                Err(CapError::InvalidKey {
+                    reason: InvalidKeyReason::NeverIssued,
+                    ..
+                })
+            ),
+            "nothing was kept in Bounce"
+        );
+    }
+    assert_boot_thread_home(nucleus);
+    assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+
+    // Rejections through the real SVC path: before migration, nothing changes.
+    let unlendable_table = self_table
+        .copy_derive(self_table_key, &self_table, 112, Rights(Rights::INSTALL))
+        .unwrap_or_else(|error| panic!("unlendable table key failed: {:?}", error.code()));
+    let never_issued_lent = boot_key(250, 1);
+    let full_window_key = AddressSpaceKey::from_key(bounce_as_key)
+        .create_invocation_with_window(
+            ppc::keyed_entry as *const () as u64,
+            &self_table,
+            KeySlot(205),
+            ppc_pool,
+            PlacementWindow::new(124, 1),
+        )
+        .unwrap_or_else(|error| panic!("full-window CreateInvocation failed: {:?}", error.code()));
+    // SAFETY: Bounce's retained table; no capability invocation is in
+    // flight, and the borrow ends with this statement.
+    unsafe { &mut *KeyTable::at_carve(bounce_table_addr) }
+        .insert(
+            KeySlot(124),
+            KeyEntry::new_frame(0x1000, 12, false, Rights::all()),
+            TEST_TABLE_GUARD,
+        )
+        .unwrap_or_else(|failure| panic!("window fill failed: {:?}", failure.error.code()));
+    for (invocation, lent, expected) in [
+        (ppc_key, lendable_table, CapError::KeyNotAccepted),
+        (keyed_key, unlendable_table, CapError::InsufficientRights),
+        (
+            keyed_key,
+            ppc_key,
+            CapError::InvalidObjectType(ObjectType::INVOCATION),
+        ),
+        (
+            keyed_key,
+            never_issued_lent,
+            CapError::InvalidKey {
+                key: never_issued_lent,
+                reason: InvalidKeyReason::NeverIssued,
+                operand: 8,
+            },
+        ),
+        (full_window_key, lendable_table, CapError::NoPlacementSlot),
+    ] {
+        ppc::assert_call_with_key_rejected(invocation, lent, expected);
+        assert_boot_thread_home(nucleus);
+        assert_source_selected(nucleus, boot_as_id, source_root, bound_asid);
+    }
+    // A window beyond the exporter's table is refused at construction, like
+    // an out-of-range slot.
+    for (first, count) in [(1023, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
+        assert!(
+            matches!(
+                AddressSpaceKey::from_key(bounce_as_key).create_invocation_with_window(
+                    0x1234,
+                    &self_table,
+                    KeySlot(206),
+                    ppc_pool,
+                    PlacementWindow::new(first, count),
+                ),
+                Err(CapError::InvalidSlot(slot)) if slot == KeySlot(first)
+            ),
+            "window ({first}, {count}) must fail like an out-of-range slot"
+        );
+    }
+    semi::println!("PPC Call/Return round trips through Bounce passed");
+}

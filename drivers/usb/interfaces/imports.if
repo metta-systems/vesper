@@ -1,0 +1,12 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Functions of other components the USB core calls: the DWC2 host controller
+# (`usb_hcd_v1`). The link is the DWC2 device tree node. A pipe is the keys
+# `open_pipe` installs in the core's table, so the functions of a pipe
+# (`pipe_v1`) are not listed.
+uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
+{
+    reset_port, port_status, open_pipe, trace
+}

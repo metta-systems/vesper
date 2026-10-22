@@ -4,9 +4,9 @@
 
 #![no_std]
 #![no_main]
-#![feature(custom_test_frameworks)]
-#![test_runner(libtest::test_runner)]
-#![reexport_test_harness_main = "test_main"]
+// #![feature(custom_test_frameworks)]
+// #![test_runner(libtest::test_runner)]
+// #![reexport_test_harness_main = "test_main"]
 
 //! State information about the kernel itself.
 

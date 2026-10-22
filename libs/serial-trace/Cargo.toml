@@ -1,0 +1,35 @@
+[package]
+name = "vesper-serial-trace"
+
+description = "Progress lines for programs without a console of their own: sent on the serial channel when the component has one, and on the semihosting console under QEMU."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[dependencies]
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libobject = { workspace = true }
+libserial-channel = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+
+[features]
+qemu = ["libuser/qemu"]
+
+[lib]
+name = "libserial_trace"
+test = false
+harness = false
+
+[lints]
+workspace = true

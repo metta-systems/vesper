@@ -1,0 +1,12 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The compositor owns the display: it configures the framebuffer and maps its
+# Frames through the fb component. It is also the only consumer of the USB HID
+# component's input interface: it reads the descriptor and the state of each
+# device the component serves, and the events arrive on the interface's
+# io-channel. An image without the HID component leaves the input import not
+# granted and the compositor runs without input.
+uses fb_v1 via device compatible "brcm,bcm2708-fb" { configure, address, size, pixel_order, frames }
+uses input_v1 via component usb_hid { descriptor, snapshot }

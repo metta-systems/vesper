@@ -1,0 +1,39 @@
+# What mailbox-test bundles (see vesper-image-build): the mailbox, power and
+# fb components, loaded for the VideoCore mailbox, power management and
+# framebuffer nodes, and a test client. The client is a program (a component
+# with `program = true`): Kickstart starts it at boot, without a device tree node,
+# with an extra Thread. It imports mailbox_v1 through the firmware node's
+# mailbox link, and power_v1 and fb_v1 through the nodes found by their
+# compatible strings, all starting from a `compatible` step.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[component]]
+name = "client"
+binary = "mailbox-test-client"
+interfaces = "../../../userspace/tests/mailbox/client/interfaces"
+active = true
+program = true
+
+[[driver]]
+name = "power"
+binary = "power"
+interfaces = "../../../drivers/power/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

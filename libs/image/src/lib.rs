@@ -1,0 +1,354 @@
+#![no_std]
+
+//! Image descriptions shared by the boot loader and component builders.
+//!
+//! `vesper-image-build` (a host-side `build.rs` helper) extracts these from
+//! ELF files and generates `static` instances; the boot loader and test
+//! builders read them. Three image kinds exist:
+//!
+//! - [`KernelImage`]: the nucleus, copied into fresh memory at boot and mapped
+//!   in the kernel half;
+//! - [`ComponentImage`]: a userspace component whose file-backed segments are
+//!   page-aligned inside the bundling image, so they can be mapped in place as
+//!   Frames, and whose `.bss` is allocated and mapped separately;
+//! - [`PrivilegedImage`]: a position-independent EL1 component (e.g. an
+//!   interrupt controller), copied, relocated and mapped in the kernel half.
+
+use core::fmt;
+
+pub const PAGE_SIZE: u64 = 4096;
+/// [`PAGE_SIZE`] as a byte count.
+pub const PAGE_BYTES: usize = 4096;
+
+/// Access permissions of a section or mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Permissions {
+    pub readable: bool,
+    pub writable: bool,
+    pub executable: bool,
+}
+
+impl fmt::Display for Permissions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}{}",
+            if self.readable { "R" } else { "-" },
+            if self.writable { "W" } else { "-" },
+            if self.executable { "X" } else { "-" }
+        )
+    }
+}
+
+/// Where a section lives and how it may be accessed.
+#[derive(Debug, Clone, Copy)]
+pub struct SectionMeta {
+    /// Section name (for diagnostics)
+    pub name: &'static str,
+    /// Link-time virtual address
+    pub virt_addr: u64,
+    /// Size in memory, in bytes
+    pub size: usize,
+    /// Required alignment, in bytes
+    pub alignment: u64,
+    pub permissions: Permissions,
+}
+
+impl SectionMeta {
+    /// Offset of the section from an image's virtual base.
+    pub const fn offset_from_base(&self, virt_base: u64) -> u64 {
+        self.virt_addr - virt_base
+    }
+
+    /// Physical address of the section in an image loaded at `phys_base`.
+    pub const fn phys_addr(&self, phys_base: u64, virt_base: u64) -> u64 {
+        phys_base + self.offset_from_base(virt_base)
+    }
+
+    /// Number of 4 KiB pages the section spans.
+    pub const fn page_count(&self) -> usize {
+        self.size.div_ceil(PAGE_BYTES)
+    }
+}
+
+/// A file-backed section with its content.
+#[derive(Debug)]
+pub struct LoadableSection {
+    pub meta: SectionMeta,
+    pub data: &'static [u8],
+}
+
+/// The nucleus image: copied into fresh memory at boot, `.bss` zeroed.
+#[derive(Debug)]
+pub struct KernelImage {
+    /// Lowest link-time virtual address of any loadable segment
+    pub virt_base: u64,
+    pub sections: &'static [LoadableSection],
+    /// `.bss`: no content, zeroed at load
+    pub bss: SectionMeta,
+    /// Bottom of the kernel stack region (`__STACK_VIRT_BOTTOM`)
+    pub stack_virt_bottom: u64,
+    /// Exception vector table (for `VBAR_EL1`)
+    pub vectors: SectionMeta,
+}
+
+impl KernelImage {
+    /// Total memory the image needs (all sections and `.bss`), rounded up to
+    /// whole pages.
+    pub fn total_size(&self) -> usize {
+        let section_ends = self
+            .sections
+            .iter()
+            .map(|section| section.meta.virt_addr + section.meta.size as u64);
+        let end = section_ends
+            .chain(core::iter::once(self.bss.virt_addr + self.bss.size as u64))
+            .max()
+            .unwrap_or(self.virt_base);
+        usize::try_from((end - self.virt_base).next_multiple_of(PAGE_SIZE)).unwrap_or(usize::MAX)
+    }
+}
+
+/// A procedure a component exports for `AddressSpace.CreateInvocation`.
+#[derive(Debug, Clone, Copy)]
+pub struct Export {
+    pub name: &'static str,
+    /// Entry address in the component's own address space
+    pub address: u64,
+}
+
+/// An interface a component exports (one of its `interfaces/<name>_vN.if`
+/// files): each of its functions is the export `<name>_<function>`.
+#[derive(Debug, Clone, Copy)]
+pub struct InterfaceExport {
+    pub name: &'static str,
+    /// The interface version's fingerprint
+    pub type_code: u64,
+}
+
+/// One step of the chain leading from a client's node to the instance it
+/// calls (see `Provider::Device`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    /// The node the current node's property of this name holds the phandle of
+    Property(&'static str),
+    /// The one enabled node with this `compatible` string; only a chain's
+    /// first step
+    Compatible(&'static str),
+}
+
+/// How an import finds the instance it calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// The device tree chain from the client's node to the exporting node
+    Device(&'static [Link]),
+    /// The manifest component of this name; the one loaded instance of it
+    /// that exports the interface is the exporter
+    Component(&'static str),
+}
+
+/// One function of another component's interface that a component calls,
+/// declared in its `interfaces/imports.if`.
+#[derive(Debug, Clone, Copy)]
+pub struct Import {
+    /// The interface, as named in its exporter's [`InterfaceExport`]
+    pub interface: &'static str,
+    pub type_code: u64,
+    /// The function's declaration index in the interface
+    pub function: u64,
+    /// How the exporting instance is found
+    pub provider: Provider,
+    /// Bytes of the data area the interface shares between a client and its
+    /// exporter (zero: none)
+    pub data_bytes: u64,
+    /// Slots of the exporter's table reserved for each client's lent keys
+    /// (zero: none)
+    pub placement_slots: u64,
+    /// Data pages of the io-channel the interface shares between a client and
+    /// its exporter, besides its control page (zero: none)
+    pub channel_pages: u64,
+    /// The function lends a key through `Invocation.CallWithKey`: its
+    /// Invocation is created with the client's placement window
+    pub lends: bool,
+    /// The exporter's export name for the function
+    pub export: &'static str,
+}
+/// A userspace component bundled into a boot image.
+///
+/// Every segment's `data` is page-aligned and padded to whole pages inside
+/// the bundling image, so its pages can be granted as Frames and mapped at
+/// `meta.virt_addr` without copying.
+#[derive(Debug)]
+pub struct ComponentImage {
+    pub name: &'static str,
+    /// File-backed segments (`.text`, `.rodata`, `.data`), by address
+    pub segments: &'static [LoadableSection],
+    /// `.bss`, allocated and zeroed separately, if the component has one
+    pub bss: Option<SectionMeta>,
+    /// Address of the component's entry symbol, if it has one; a passive
+    /// component only exports procedures
+    pub entry: Option<u64>,
+    pub exports: &'static [Export],
+    /// The interfaces the exports implement
+    pub interfaces: &'static [InterfaceExport],
+    /// The functions of other components this one calls
+    pub imports: &'static [Import],
+    /// The resources mapped read-only among `segments`, in the order the
+    /// component's manifest entry names them
+    pub resources: &'static [ResourceMapping],
+}
+
+/// Where a bundled resource (a `[[resource]]` data file) is mapped in the
+/// component that names it.
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceMapping {
+    pub name: &'static str,
+    pub virt_addr: u64,
+    /// Bytes of the file (the mapping is padded to whole pages)
+    pub size: u64,
+}
+
+/// Where the first resource of a component is mapped; further resources
+/// follow page-aligned.
+pub const RESOURCE_BASE: u64 = 0x3c00_0000;
+
+/// A device driver bundled into a boot image: an active EL0 component that
+/// Kickstart loads once per enabled device tree node whose `compatible` it
+/// names (see `libdevice_driver`).
+#[derive(Debug)]
+pub struct DriverImage {
+    pub component: &'static ComponentImage,
+    /// Device tree `compatible` strings the driver serves
+    pub compatible: &'static [&'static str],
+    /// Budget each instance's Time receives
+    pub budget_ns: u64,
+    /// Size exponent of each instance's RAM Untyped
+    pub memory_bits: u8,
+    /// Whether each instance receives the `VideoCore` memory Untypeds
+    pub video_memory: bool,
+    /// Whether the instance is attached to the PL011 driver's serial channel
+    /// (`serial = true`; see `libserial-channel`)
+    pub serial: bool,
+    /// Whether the program is the root dispatcher (`dispatcher = true`): the
+    /// Scheduler binds its Thread rather than the loader starting it
+    pub dispatcher: bool,
+    /// Entries of the further Threads each instance runs besides the one
+    /// at the component's entry
+    pub threads: &'static [u64],
+}
+
+impl DriverImage {
+    /// Whether the driver serves the `compatible` string.
+    pub fn serves(&self, compatible: &str) -> bool {
+        self.compatible.contains(&compatible)
+    }
+}
+
+/// The `length` bytes of `memory` at image offset `offset`, if inside it.
+fn span(memory: &mut [u8], offset: u64, length: usize) -> Option<&mut [u8]> {
+    let start = usize::try_from(offset).ok()?;
+    memory.get_mut(start..start.checked_add(length)?)
+}
+
+/// Why [`PrivilegedImage::load_into`] failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadError {
+    /// The destination is smaller than the image
+    TooSmall,
+    /// A relocation targets a word outside the image
+    BadRelocation,
+}
+
+/// One `R_AARCH64_RELATIVE` relocation of a [`PrivilegedImage`]: at load,
+/// the 64-bit word at `offset` becomes `load_base + addend`.
+#[derive(Debug, Clone, Copy)]
+pub struct Relocation {
+    /// Offset of the word from the image base
+    pub offset: u64,
+    pub addend: u64,
+}
+
+/// A privileged (EL1) component bundled into the boot image, e.g. an
+/// interrupt controller (see `libirqchip`).
+///
+/// The image is position-independent and linked at 0: segment `virt_addr`s
+/// are offsets from the load base. The loader copies the segments into fresh
+/// memory, zeroes the rest of each segment, applies `relocations`, and maps
+/// the result in the kernel half.
+#[derive(Debug)]
+pub struct PrivilegedImage {
+    pub name: &'static str,
+    /// Device tree `compatible` strings the component drives; the position of
+    /// a string is the controller kind it is told about
+    pub compatible: &'static [&'static str],
+    /// Loadable segments, by offset: `data` holds the file-backed part,
+    /// `meta.size` the in-memory size (the rest is zeroed)
+    pub segments: &'static [LoadableSection],
+    pub relocations: &'static [Relocation],
+    /// Offset of the component's operation table
+    pub ops_offset: u64,
+}
+
+impl PrivilegedImage {
+    /// Memory the image spans from its base, rounded up to whole pages.
+    pub fn total_size(&self) -> usize {
+        let end = self
+            .segments
+            .iter()
+            .map(|segment| segment.meta.virt_addr + segment.meta.size as u64)
+            .max()
+            .unwrap_or(0);
+        usize::try_from(end.next_multiple_of(PAGE_SIZE)).unwrap_or(usize::MAX)
+    }
+
+    /// Lay the image out in `memory` (at least [`Self::total_size`] bytes,
+    /// mapped at `load_base`): copy every segment, zero the rest, and apply
+    /// the relocations.
+    ///
+    /// # Errors
+    ///
+    /// If `memory` is too small or a relocation falls outside it.
+    pub fn load_into(&self, memory: &mut [u8], load_base: u64) -> Result<(), LoadError> {
+        if memory.len() < self.total_size() {
+            return Err(LoadError::TooSmall);
+        }
+        memory.fill(0);
+        for segment in self.segments {
+            span(memory, segment.meta.virt_addr, segment.data.len())
+                .ok_or(LoadError::TooSmall)?
+                .copy_from_slice(segment.data);
+        }
+        for relocation in self.relocations {
+            span(memory, relocation.offset, size_of::<u64>())
+                .ok_or(LoadError::BadRelocation)?
+                .copy_from_slice(&(load_base + relocation.addend).to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// Whether the component drives the `compatible` string, and as which kind.
+    pub fn kind_of(&self, compatible: &str) -> Option<u32> {
+        self.compatible
+            .iter()
+            .position(|entry| *entry == compatible)
+            .and_then(|kind| u32::try_from(kind).ok())
+    }
+}
+
+impl ComponentImage {
+    /// The address of the export called `name`.
+    pub fn export(&self, name: &str) -> Option<u64> {
+        self.exports
+            .iter()
+            .find(|export| export.name == name)
+            .map(|export| export.address)
+    }
+}
+
+impl ComponentImage {
+    /// Whether the component exports `interface` at version `type_code`.
+    pub fn exports_interface(&self, interface: &str, type_code: u64) -> bool {
+        self.interfaces
+            .iter()
+            .any(|exported| exported.name == interface && exported.type_code == type_code)
+    }
+}

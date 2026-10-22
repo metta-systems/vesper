@@ -1,0 +1,53 @@
+# What usb-hid-test bundles (see vesper-image-build): the DWC2 host controller
+# component, loaded by Kickstart once per enabled `brcm,bcm2708-usb` node, the
+# USB core, the USB HID component that claims the keyboard and mouse from it, and
+# input-trace, the consumer of the HID component's events. The PL011 driver's
+# serial channel belongs to input-trace, so the events show on the UART. The
+# core, the HID component and input-trace are programs (components with
+# `program = true`): Kickstart starts them at boot, without a device tree node.
+
+# The mailbox component, through which the controller's power domain is switched on.
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "input_trace"
+binary = "input-trace"
+interfaces = "../../../userspace/tests/input/trace/interfaces"
+active = true
+program = true
+serial = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

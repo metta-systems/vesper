@@ -5,11 +5,14 @@
 #![reexport_test_harness_main = "test_main"]
 
 pub mod console;
-pub mod write_to;
 
 pub trait SerialOps {
     /// Read one byte from serial without translation.
     fn read_byte(&self) -> u8;
+    /// Try reading one byte from serial without blocking.
+    ///
+    /// Returns `Some(byte)` if data is available now, otherwise `None`.
+    fn read_byte_nonblocking(&self) -> Option<u8>;
     /// Write one byte to serial without translation.
     fn write_byte(&self, byte: u8);
     /// Wait until the TX FIFO is empty, aka all characters have been put on the
@@ -31,17 +34,18 @@ impl liblog::Log for ConsoleLogger {
     }
 
     fn log(&self, record: &Record) {
+        // In QEMU/test builds, mirror output to the semihosting console so it
+        // shows up in qemu.log even before/without a working UART console.
         #[cfg(any(test, feature = "qemu"))]
         {
-            use crate::write_to;
-
             let mut buf = [0_u8; 4096]; // Increase this buffer size to allow dumping larger panic texts.
             libqemu::semihosting::sys_write0_call(
-                write_to::c_show(&mut buf, *record.args()).unwrap(),
+                libprint::format_cstr(&mut buf, *record.args()).unwrap(),
             );
         }
 
-        #[cfg(not(any(test, feature = "qemu")))]
+        // Always write to the registered console (e.g. PL011 UART) as well.
+        // Chainboot's protocol replies ("OK") depend on this path in QEMU builds.
         if self.enabled(record.level()) {
             //           let timestamp = libtime::_time();
             //           concat!("[  {:>3}.{:06}] ", $string),
@@ -61,5 +65,28 @@ static LOGGER: ConsoleLogger = ConsoleLogger;
 pub fn init_logger() -> Result<(), SetLoggerError> {
     liblog::set_logger(&LOGGER)?;
     liblog::set_max_level(Level::Info); // Allow up to Info by default
+    Ok(())
+}
+
+/// [`init_logger`] for code that runs with the MMU off, such as the bootloader.
+///
+/// [`init_logger`] swaps an atomic, which takes a load-exclusive and a
+/// store-exclusive; with the MMU off the memory is Device memory, where the
+/// store-exclusive of the Raspberry Pi's cores never succeeds, and the swap
+/// loops for ever without a sound. This one loads and stores.
+///
+/// # Errors
+///
+/// If a logger is set already.
+///
+/// # Safety
+///
+/// Nothing else sets a logger at the same time: one core, interrupts masked.
+pub unsafe fn init_logger_racy() -> Result<(), SetLoggerError> {
+    // SAFETY: the caller's contract.
+    unsafe {
+        liblog::set_logger_racy(&LOGGER)?;
+    }
+    liblog::set_max_level(Level::Info);
     Ok(())
 }

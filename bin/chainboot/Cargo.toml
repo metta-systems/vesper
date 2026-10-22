@@ -14,26 +14,30 @@ maintenance = { status = "experimental" }
 [features]
 default = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
-qemu = ["libconsole/qemu", "libmachine/qemu", "libplatform/qemu"]
+qemu = ["libconsole/qemu", "libmachine/qemu"]
 # Build for debugging it over JTAG/SWD connection - halts on first non-startup function start.
 jtag = ["libmachine/jtag"]
 # Dummy feature, ignored in this crate.
 noserial = []
+# Run with the MMU on, on a flat identity map (see `platform::mmu`), and turn it off before the kernel runs.
+mmu = []
 
 [dependencies]
 aarch64-cpu = { workspace = true }
-bit_field = { workspace = true }
-bitflags = { workspace = true }
-cfg-if = { workspace = true }
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
 libconsole = { workspace = true }
+liblocking = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }
-libplatform = { workspace = true }
+libmmio = { workspace = true }
+libprimitives = { workspace = true }
+libprint = { workspace = true }
+libtime = { workspace = true }
+libqemu = { workspace = true }
 seahash = { workspace = true }
-snafu = { workspace = true }
 tock-registers = { workspace = true }
-usize_conversions = { workspace = true }
-ux = { workspace = true }
 
 [dev-dependencies]
 libqemu = { workspace = true }
@@ -41,9 +45,6 @@ libtest = { workspace = true }
 
 [[bin]]
 name = "chainboot"
-test = false
-
-[lib]
 test = false
 
 [lints]
