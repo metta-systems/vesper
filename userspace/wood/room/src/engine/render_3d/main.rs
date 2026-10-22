@@ -12,14 +12,13 @@ use crate::{
     engine::{
         doom::player::PlayerT,
         interface::video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
+        map::{node_t, seg_t, subsector_t},
         math::{
             self,
             bbox::BBox,
             fixed::{angle_t, fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
             tables::{SlopeDiv, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
         },
-        play::telept::mobj_t,
-        render_3d::bsp::{node_t, seg_t, subsector_t},
     },
     types::Boolean,
 };
@@ -928,7 +927,7 @@ const NF_SUBSECTOR: u32 = 0x8000;
 pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
     // single subsector is a special case
     if numnodes == 0 {
-        return subsectors as *mut subsector_t;
+        return subsectors;
     }
 
     let mut nodenum = numnodes - 1;
@@ -939,7 +938,7 @@ pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
         nodenum = (*node).children[side as usize] as i32;
     }
 
-    subsectors.add((nodenum as u32 & !NF_SUBSECTOR) as usize) as *mut subsector_t
+    subsectors.add((nodenum as u32 & !NF_SUBSECTOR) as usize)
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +962,7 @@ pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
 /// mobj pointer is also valid. Reads and writes numerous renderer globals.
 pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
     viewplayer = player;
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     viewx = (*mo).x;
     viewy = (*mo).y;
     viewangle = (*mo).angle.wrapping_add(viewangleoffset as u32);

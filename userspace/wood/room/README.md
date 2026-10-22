@@ -61,6 +61,7 @@ room/
     └── engine/              Ported engine, one module per C file (see doom.md)
         ├── mod.rs           Module list
         ├── platform.rs      doomgeneric: the `Platform` trait and engine entry point
+        ├── map.rs           r_defs: map geometry types shared by play and renderer
         ├── doom/            d_*: main loop, events, game state, startup
         ├── game.rs          g_game: game control, save/load, level changes
         ├── play/            p_*: world simulation

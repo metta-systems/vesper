@@ -5,15 +5,15 @@
 
 #![allow(non_snake_case)]
 
-use std::{ffi::c_void, sync::Mutex};
+use std::sync::Mutex;
 
 use {
     crate::harness::C_GLOBAL_LOCK,
     room::engine::{
         c_ffi,
-        c_ffi::{divline_t, line_t, vertex_t},
+        map::{line_t, sector_t, slopetype_t, vertex_t},
         math::{bbox::BBox, fixed::FRACUNIT},
-        play,
+        play::{self, maputl::divline_t},
     },
 };
 
@@ -455,7 +455,7 @@ fn make_divline_copies_fields() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: 0,
+        slopetype: slopetype_t::ST_HORIZONTAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -492,7 +492,7 @@ fn box_on_line_horizontal_above() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: c_ffi::ST_HORIZONTAL,
+        slopetype: slopetype_t::ST_HORIZONTAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -522,7 +522,7 @@ fn box_on_line_horizontal_below() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: c_ffi::ST_HORIZONTAL,
+        slopetype: slopetype_t::ST_HORIZONTAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -552,7 +552,7 @@ fn box_on_line_vertical_right() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: c_ffi::ST_VERTICAL,
+        slopetype: slopetype_t::ST_VERTICAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -582,7 +582,7 @@ fn box_on_line_vertical_left() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: c_ffi::ST_VERTICAL,
+        slopetype: slopetype_t::ST_VERTICAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -613,7 +613,7 @@ fn box_crosses_line_returns_negative_one() {
         tag: 0,
         sidenum: [-1, -1],
         bbox: [0; 4],
-        slopetype: c_ffi::ST_HORIZONTAL,
+        slopetype: slopetype_t::ST_HORIZONTAL,
         frontsector: std::ptr::null_mut(),
         backsector: std::ptr::null_mut(),
         validcount: 0,
@@ -635,8 +635,8 @@ fn box_crosses_line_returns_negative_one() {
 
 /// Zero-initialise a `sector_t` and set only the two height fields the
 /// line-opening tests care about.
-fn make_sector(floorheight: i32, ceilingheight: i32) -> c_ffi::sector_t {
-    let mut s: c_ffi::sector_t = unsafe { std::mem::zeroed() };
+fn make_sector(floorheight: i32, ceilingheight: i32) -> sector_t {
+    let mut s: sector_t = unsafe { std::mem::zeroed() };
     s.floorheight = floorheight;
     s.ceilingheight = ceilingheight;
     s
@@ -648,8 +648,8 @@ fn make_sector(floorheight: i32, ceilingheight: i32) -> c_ffi::sector_t {
 fn make_line(
     v1: *mut vertex_t,
     sidenum: [i16; 2],
-    frontsector: *mut c_ffi::sector_t,
-    backsector: *mut c_ffi::sector_t,
+    frontsector: *mut sector_t,
+    backsector: *mut sector_t,
 ) -> line_t {
     line_t {
         v1,
@@ -661,9 +661,9 @@ fn make_line(
         tag: 0,
         sidenum,
         bbox: [0; 4],
-        slopetype: c_ffi::ST_HORIZONTAL,
-        frontsector: frontsector as *mut c_void,
-        backsector: backsector as *mut c_void,
+        slopetype: slopetype_t::ST_HORIZONTAL,
+        frontsector,
+        backsector,
         validcount: 0,
         specialdata: std::ptr::null_mut(),
     }

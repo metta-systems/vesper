@@ -20,9 +20,10 @@ use std::{ffi::c_void, ptr};
 
 use crate::{
     engine::{
-        c_ffi::{
-            intercept_t, line_t, mobj_t, sector_t, subsector_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC,
-            MAPBLOCKSHIFT,
+        c_ffi::{intercept_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC, MAPBLOCKSHIFT},
+        map::{
+            line_t, sector_t,
+            slopetype_t::{ST_HORIZONTAL, ST_VERTICAL},
         },
         math::{
             bbox::BBox,
@@ -38,6 +39,7 @@ use crate::{
                 P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES,
                 PT_ADDTHINGS,
             },
+            mobj::mobj_t,
             setup::{bmaporgx, bmaporgy, lines},
             sight::{bottomslope, topslope, P_CheckSight},
         },
@@ -116,11 +118,6 @@ const MT_BLOOD: i32 = 38;
 /// State index for the "gibs" sprite, used when corpses are crushed.
 const S_GIBS: i32 = 895;
 
-/// Line slope type: perfectly horizontal (dy == 0).
-const ST_HORIZONTAL: i32 = 0;
-/// Line slope type: perfectly vertical (dx == 0).
-const ST_VERTICAL: i32 = 1;
-
 /// Default value for the DEH species-infighting flag (disabled).
 ///
 /// When 0, monsters of the same species cannot hurt each other with projectiles.
@@ -149,10 +146,6 @@ use crate::engine::{
     render_3d::sky::skyflatnum,
     sound::{info::Sfx, S_StartSound},
 };
-
-/// Type alias used when calling functions in `p_telept` that expect its own
-/// local `mobj_t` definition (all `#[repr(C)]` layouts are identical).
-type TeleptMobj = crate::engine::play::telept::mobj_t;
 
 // ---------------------------------------------------------------------------
 // Movement scratchpad globals
@@ -257,12 +250,7 @@ pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
     if (*tmthing).player.is_null() && gamemap != 30 {
         return 0;
     }
-    P_DamageMobj(
-        thing as *const _ as *mut TeleptMobj,
-        tmthing as *mut TeleptMobj,
-        tmthing as *mut TeleptMobj,
-        10000,
-    );
+    P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, tmthing, 10000);
     1
 }
 
@@ -289,9 +277,9 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 
     tmbbox[BBox::RIGHT] = x + (*tmthing).radius;
     tmbbox[BBox::LEFT] = x - (*tmthing).radius;
 
-    let newsubsec = R_PointInSubsector(x, y) as *mut subsector_t;
+    let newsubsec = R_PointInSubsector(x, y);
     ceilingline = ptr::null_mut();
-    let sec = (*newsubsec).sector as *mut sector_t;
+    let sec = (*newsubsec).sector;
     tmfloorz = (*sec).floorheight;
     tmdropoffz = tmfloorz;
     tmceilingz = (*sec).ceilingheight;
@@ -416,20 +404,12 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
     // check for skulls slamming into things
     if (*tmthing).flags & MF_SKULLFLY != 0 {
         let damage = ((P_Random() % 8) + 1) * (*((*tmthing).info as *mut MobjInfo)).damage;
-        P_DamageMobj(
-            thing as *const _ as *mut TeleptMobj,
-            tmthing as *mut TeleptMobj,
-            tmthing as *mut TeleptMobj,
-            damage,
-        );
+        P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, tmthing, damage);
         (*tmthing).flags &= !MF_SKULLFLY;
         (*tmthing).momx = 0;
         (*tmthing).momy = 0;
         (*tmthing).momz = 0;
-        P_SetMobjState(
-            tmthing as *mut TeleptMobj,
-            (*((*tmthing).info as *mut MobjInfo)).spawnstate,
-        );
+        P_SetMobjState(tmthing, (*((*tmthing).info as *mut MobjInfo)).spawnstate);
         return 0;
     }
 
@@ -442,7 +422,7 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
             return 1;
         }
         if !(*tmthing).target.is_null() {
-            let target = (*tmthing).target as *mut mobj_t;
+            let target = (*tmthing).target;
             let target_type = (*target).type_;
             let thing_type = thing.type_;
             if target_type == thing_type
@@ -461,13 +441,8 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
             return (thing.flags & MF_SOLID == 0) as u32;
         }
         let damage = ((P_Random() % 8) + 1) * (*((*tmthing).info as *mut MobjInfo)).damage;
-        let target = (*tmthing).target as *mut TeleptMobj;
-        P_DamageMobj(
-            thing as *const _ as *mut TeleptMobj,
-            tmthing as *mut TeleptMobj,
-            target,
-            damage,
-        );
+        let target = (*tmthing).target;
+        P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, target, damage);
         return 0;
     }
 
@@ -475,10 +450,7 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
     if thing.flags & MF_SPECIAL != 0 {
         let solid = thing.flags & MF_SOLID;
         if tmflags & MF_PICKUP != 0 {
-            P_TouchSpecialThing(
-                thing as *const _ as *mut TeleptMobj,
-                tmthing as *mut TeleptMobj,
-            );
+            P_TouchSpecialThing(thing as *const _ as *mut mobj_t, tmthing);
         }
         return (solid == 0) as u32;
     }
@@ -514,9 +486,9 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
     tmbbox[BBox::RIGHT] = x + (*tmthing).radius;
     tmbbox[BBox::LEFT] = x - (*tmthing).radius;
 
-    let newsubsec = R_PointInSubsector(x, y) as *mut subsector_t;
+    let newsubsec = R_PointInSubsector(x, y);
     ceilingline = ptr::null_mut();
-    let sec = (*newsubsec).sector as *mut sector_t;
+    let sec = (*newsubsec).sector;
     tmfloorz = (*sec).floorheight;
     tmdropoffz = tmfloorz;
     tmceilingz = (*sec).ceilingheight;
@@ -936,8 +908,8 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
             return 0;
         }
         let dist = FixedMul(attackrange, in_.frac);
-        let front = (*li).frontsector as *mut sector_t;
-        let back = (*li).backsector as *mut sector_t;
+        let front = (*li).frontsector;
+        let back = (*li).backsector;
         if back.is_null() || (*front).floorheight != (*back).floorheight {
             let slope = FixedDiv(openbottom - shootz, dist);
             if slope > bottomslope {
@@ -1010,7 +982,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
         if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
             P_LineOpening(li);
             let dist = FixedMul(attackrange, in_.frac);
-            let back = (*li).backsector as *mut sector_t;
+            let back = (*li).backsector;
             if back.is_null() {
                 let slope = FixedDiv(openbottom - shootz, dist);
                 if slope > aimslope {
@@ -1023,7 +995,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
                     return 0;
                 }
             } else {
-                let front = (*li).frontsector as *mut sector_t;
+                let front = (*li).frontsector;
                 if (*front).floorheight != (*back).floorheight {
                     let slope = FixedDiv(openbottom - shootz, dist);
                     if slope > aimslope {
@@ -1074,12 +1046,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
         P_SpawnBlood(x, y, z, la_damage);
     }
     if la_damage != 0 {
-        P_DamageMobj(
-            th as *mut TeleptMobj,
-            shootthing as *mut TeleptMobj,
-            shootthing as *mut TeleptMobj,
-            la_damage,
-        );
+        P_DamageMobj(th, shootthing, shootthing, la_damage);
     }
     0
 }
@@ -1102,12 +1069,12 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
     let y = crate::engine::play::maputl::trace.y
         + FixedMul(crate::engine::play::maputl::trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
-    let front = (*li).frontsector as *mut sector_t;
+    let front = (*li).frontsector;
     if (*front).ceilingpic as i32 == skyflatnum {
         if z > (*front).ceilingheight {
             return;
         }
-        let back = (*li).backsector as *mut sector_t;
+        let back = (*li).backsector;
         if !back.is_null() && (*back).ceilingpic as i32 == skyflatnum {
             return;
         }
@@ -1127,7 +1094,7 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
 /// `t1` must be a valid pointer to a live [`mobj_t`] (null is substituted
 /// via [`P_SubstNullMobj`] before use). Map data must be initialised.
 pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: u32, distance: fixed_t) -> fixed_t {
-    let t1 = P_SubstNullMobj(t1 as *mut TeleptMobj) as *mut mobj_t;
+    let t1 = P_SubstNullMobj(t1);
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
     shootthing = t1;
     let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
@@ -1224,11 +1191,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
     if P_PointOnLineSide((*usething).x, (*usething).y, in_.d.line) == 1 {
         side = 1;
     }
-    P_UseSpecialLine(
-        usething as *mut c_void,
-        in_.d.line as *mut crate::engine::play::lights::line_t,
-        side,
-    );
+    P_UseSpecialLine(usething as *mut c_void, in_.d.line, side);
     0
 }
 
@@ -1245,7 +1208,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
 /// initialised.
 pub unsafe fn P_UseLines(player: *mut c_void) {
     let player = player as *mut crate::engine::doom::player::PlayerT;
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     usething = mo;
     let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;
     let x1 = (*mo).x;
@@ -1309,13 +1272,11 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
     if dist >= bombdamage {
         return 1;
     }
-    let pt_mobj_t = thing as *const _ as *mut crate::engine::play::telept::mobj_t;
-    let pt_bombspot = bombspot as *mut crate::engine::play::telept::mobj_t;
-    if P_CheckSight(pt_mobj_t, pt_bombspot) != 0 {
+    if P_CheckSight(thing as *const _ as *mut mobj_t, bombspot) != 0 {
         P_DamageMobj(
-            thing as *const _ as *mut TeleptMobj,
-            bombspot as *mut TeleptMobj,
-            bombsource as *mut TeleptMobj,
+            thing as *const _ as *mut mobj_t,
+            bombspot,
+            bombsource,
             bombdamage - dist,
         );
     }
@@ -1388,14 +1349,14 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
     }
     let thing = &mut *thing;
     if thing.health <= 0 {
-        P_SetMobjState(thing as *const _ as *mut TeleptMobj, S_GIBS);
+        P_SetMobjState(thing as *const _ as *mut mobj_t, S_GIBS);
         thing.flags &= !MF_SOLID;
         thing.height = 0;
         thing.radius = 0;
         return 1;
     }
     if thing.flags & MF_DROPPED != 0 {
-        P_RemoveMobj(thing as *const _ as *mut TeleptMobj);
+        P_RemoveMobj(thing as *const _ as *mut mobj_t);
         return 1;
     }
     if thing.flags & MF_SHOOTABLE == 0 {
@@ -1404,7 +1365,7 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
     nofit = 1;
     if crushchange != 0 && leveltime & 3 == 0 {
         P_DamageMobj(
-            thing as *const _ as *mut TeleptMobj,
+            thing as *const _ as *mut mobj_t,
             ptr::null_mut(),
             ptr::null_mut(),
             10,

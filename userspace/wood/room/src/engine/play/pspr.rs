@@ -23,7 +23,7 @@ use crate::engine::{
     misc::random::P_Random,
     play::{
         info::{self, *},
-        telept::mobj_t,
+        mobj::mobj_t,
         tick::leveltime,
     },
     sound::S_StartSound,
@@ -100,9 +100,6 @@ use crate::engine::{
     },
     render_3d::main::R_PointToAngle2,
 };
-
-/// Type alias used for cross-module pointer casts where both sides are `#[repr(C)]`-identical.
-type CffiMobj = crate::engine::c_ffi::mobj_t;
 
 /// Horizontal weapon-bob offset; updated each tic by `P_CalcSwing`.
 pub static mut swingx: fixed_t = 0;
@@ -286,10 +283,10 @@ pub unsafe fn P_FireWeapon(player: *mut PlayerT) {
         return;
     }
 
-    P_SetMobjState((*player).mo as *mut mobj_t, S_PLAY_ATK1);
+    P_SetMobjState((*player).mo, S_PLAY_ATK1);
     let newstate = weaponinfo[(*player).readyweapon as usize].atkstate;
     P_SetPsprite(player, 0, newstate);
-    P_NoiseAlert((*player).mo as *mut mobj_t, (*player).mo as *mut mobj_t);
+    P_NoiseAlert((*player).mo, (*player).mo);
 }
 
 /// Begin lowering the current weapon (called on player death or weapon switch).
@@ -315,7 +312,7 @@ pub unsafe fn P_DropWeapon(player: *mut PlayerT) {
 /// whose `mo` field points to a valid `mobj_t`.  `psp` must point to the
 /// weapon psprite slot.
 pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
 
     // Get out of attack state.
     let state_ptr = (*mo).state as *mut State;
@@ -455,7 +452,7 @@ pub unsafe fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     P_SetMobjState(mo, S_PLAY_ATK2);
     P_SetPsprite(
         player,
@@ -474,7 +471,7 @@ pub unsafe fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
 
     let mut damage = ((P_Random() % 10) + 1) << 1;
     if (*player).powers[pw_strength] != 0 {
@@ -483,14 +480,8 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 
     let mut angle = (*mo).angle;
     angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
-    let slope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, angle, MELEERANGE);
-    P_LineAttack(
-        mo as *mut _ as *mut CffiMobj,
-        angle,
-        MELEERANGE,
-        slope,
-        damage,
-    );
+    let slope = P_AimLineAttack(mo, angle, MELEERANGE);
+    P_LineAttack(mo, angle, MELEERANGE, slope, damage);
 
     // Turn to face target.
     if !linetarget.is_null() {
@@ -509,20 +500,14 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
 
     let damage = 2 * ((P_Random() % 10) + 1);
     let mut angle = (*mo).angle;
     angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
 
-    let slope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, angle, MELEERANGE + 1);
-    P_LineAttack(
-        mo as *mut _ as *mut CffiMobj,
-        angle,
-        MELEERANGE + 1,
-        slope,
-        damage,
-    );
+    let slope = P_AimLineAttack(mo, angle, MELEERANGE + 1);
+    P_LineAttack(mo, angle, MELEERANGE + 1, slope, damage);
 
     if linetarget.is_null() {
         S_StartSound(mo as *mut c_void, Sfx::Sawful as i32);
@@ -573,7 +558,7 @@ unsafe fn DecreaseAmmo(player: *mut PlayerT, ammonum: i32, amount: i32) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
     P_SpawnPlayerMissile(mo, MT_ROCKET);
 }
@@ -586,7 +571,7 @@ pub unsafe fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     DecreaseAmmo(
         player,
         weaponinfo[(*player).readyweapon as usize].ammo,
@@ -603,7 +588,7 @@ pub unsafe fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
 
     P_SetPsprite(
@@ -624,14 +609,14 @@ pub unsafe fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `mo` must be a valid, non-null pointer to an initialised `mobj_t`.
 pub unsafe fn P_BulletSlope(mo: *mut mobj_t) {
     let mut an = (*mo).angle;
-    bulletslope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+    bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
 
     if linetarget.is_null() {
         an = an.wrapping_add(1 << 26);
-        bulletslope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+        bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
         if linetarget.is_null() {
             an = an.wrapping_sub(2 << 26);
-            bulletslope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+            bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
         }
     }
 }
@@ -653,13 +638,7 @@ pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: i32) {
         angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
     }
 
-    P_LineAttack(
-        mo as *mut _ as *mut CffiMobj,
-        angle,
-        MISSILERANGE,
-        bulletslope,
-        damage,
-    );
+    P_LineAttack(mo, angle, MISSILERANGE, bulletslope, damage);
 }
 
 /// Weapon action: fire the pistol (one accurate bullet, then spread on refire).
@@ -669,7 +648,7 @@ pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: i32) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
 
     P_SetMobjState(mo, S_PLAY_ATK2);
@@ -692,7 +671,7 @@ pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     S_StartSound(mo as *mut c_void, Sfx::Shotgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
@@ -719,7 +698,7 @@ pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     S_StartSound(mo as *mut c_void, Sfx::Dshtgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
@@ -738,7 +717,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
         let mut angle = (*mo).angle;
         angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 19);
         P_LineAttack(
-            mo as *mut _ as *mut CffiMobj,
+            mo,
             angle,
             MISSILERANGE,
             bulletslope + ((P_Random() - P_Random()) << 5),
@@ -757,7 +736,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// weapon psprite slot which must currently be in state `S_CHAIN1` or
 /// `S_CHAIN2`.
 pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
-    let mo = (*player).mo as *mut mobj_t;
+    let mo = (*player).mo;
     S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
 
     if (*player).ammo[weaponinfo[(*player).readyweapon as usize].ammo as usize] == 0 {
@@ -821,11 +800,7 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
     for i in 0..40 {
         let an = (*mo).angle - ANG90 / 2 + (ANG90 / 40) * i as u32;
 
-        P_AimLineAttack(
-            (*mo).target as *mut _ as *mut CffiMobj,
-            an,
-            16 * 64 * FRACUNIT,
-        );
+        P_AimLineAttack((*mo).target, an, 16 * 64 * FRACUNIT);
 
         if linetarget.is_null() {
             continue;
@@ -843,12 +818,7 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
             damage += (P_Random() & 7) + 1;
         }
 
-        P_DamageMobj(
-            linetarget as *mut mobj_t,
-            (*mo).target,
-            (*mo).target,
-            damage,
-        );
+        P_DamageMobj(linetarget, (*mo).target, (*mo).target, damage);
     }
 }
 

@@ -11,13 +11,12 @@ use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::{
     engine::{
-        c_ffi as cffi,
         interface::timer::TICRATE,
+        map::{line_t, sector_t},
         math::fixed::{fixed_t, FRACUNIT},
         misc::random::P_Random,
         play::{
             floor::T_MovePlane,
-            lights::{line_t, sector_t},
             setup::{sectors, sides},
             spec::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
@@ -186,7 +185,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 && (leveltime & 7) == 0
             {
                 S_StartSound(
-                    &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Stnmov as i32,
                 );
             }
@@ -195,14 +194,14 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 (*plat).count = (*plat).wait;
                 (*plat).status = down;
                 S_StartSound(
-                    &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Pstart as i32,
                 );
             } else if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
                 S_StartSound(
-                    &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Pstop as i32,
                 );
 
@@ -225,7 +224,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
                 S_StartSound(
-                    &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Pstop as i32,
                 );
             }
@@ -239,7 +238,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                     (*plat).status = down;
                 }
                 S_StartSound(
-                    &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Pstart as i32,
                 );
             }
@@ -283,7 +282,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
+        secnum = P_FindSectorFromLineTag(line, secnum);
         secnum
     } >= 0
     {
@@ -302,7 +301,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
         P_AddThinker(&mut (*plat).thinker);
 
         (*plat).r#type = plattype;
-        (*plat).sector = sec as *mut sector_t;
+        (*plat).sector = sec;
         (*plat).sector.as_mut().unwrap().specialdata = plat as *mut c_void;
         (*plat).thinker.function.acp1 = Some(core::mem::transmute::<
             unsafe fn(*mut plat_t),
@@ -321,7 +320,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).status = up;
                 (*sec).special = 0;
                 S_StartSound(
-                    &(*sec).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*sec).soundorg as *const _ as *mut c_void,
                     Sfx::Stnmov as i32,
                 );
             }
@@ -333,7 +332,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).wait = 0;
                 (*plat).status = up;
                 S_StartSound(
-                    &(*sec).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*sec).soundorg as *const _ as *mut c_void,
                     Sfx::Stnmov as i32,
                 );
             }
@@ -347,7 +346,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = down;
                 S_StartSound(
-                    &(*sec).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*sec).soundorg as *const _ as *mut c_void,
                     Sfx::Pstart as i32,
                 );
             }
@@ -361,7 +360,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = down;
                 S_StartSound(
-                    &(*sec).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*sec).soundorg as *const _ as *mut c_void,
                     Sfx::Pstart as i32,
                 );
             }
@@ -378,7 +377,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = P_Random() & 1;
                 S_StartSound(
-                    &(*sec).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*sec).soundorg as *const _ as *mut c_void,
                     Sfx::Pstart as i32,
                 );
             }

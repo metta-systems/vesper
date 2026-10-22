@@ -201,29 +201,6 @@ const CC_HERO: &str = "OUR HERO";
 // Types
 // ---------------------------------------------------------------------------
 
-/// Mirrors the C `spriteframe_t` structure from `r_things.h`.
-///
-/// `rotate` is non-zero if the sprite has rotations.  `lump` gives the WAD
-/// lump number for each of the 8 rotation angles; `flip` indicates whether
-/// each angle should be drawn mirrored.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct spriteframe_t {
-    pub rotate: i32,
-    pub lump: [i16; 8],
-    pub flip: [u8; 8],
-}
-
-/// Mirrors the C `spritedef_t` structure from `r_things.h`.
-///
-/// Describes all frames for a single sprite.  `spriteframes` points to an
-/// array of `numframes` [`spriteframe_t`] entries.
-#[repr(C)]
-struct spritedef_t {
-    pub numframes: i32,
-    pub spriteframes: *mut spriteframe_t,
-}
-
 /// The three stages a finale sequence passes through in order.
 ///
 /// Replaces the bare `int finalestage` from the C source with an enum for
@@ -284,7 +261,7 @@ use crate::engine::doom::main::wipegamestate;
 // i_video.rs
 use crate::engine::interface::video::I_VideoBuffer;
 
-// r_things.rs — exported as *mut c_void; cast to *mut spritedef_t at usage
+// r_things.rs
 use crate::engine::render_3d::things::sprites;
 
 // r_data.rs
@@ -1078,7 +1055,7 @@ pub fn F_CastDrawer() {
         );
         F_CastPrint(DEH_String(CASTORDER[castnum as usize].name));
 
-        let sprdef = &*(sprites as *mut spritedef_t).add((*caststate).sprite as usize);
+        let sprdef = &*sprites.add((*caststate).sprite as usize);
         let sprframe = &*sprdef
             .spriteframes
             .add(((*caststate).frame & FF_FRAMEMASK) as usize);

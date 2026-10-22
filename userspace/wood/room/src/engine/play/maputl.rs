@@ -11,13 +11,29 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    c_ffi::{
-        divline_t, intercept_t, intercept_t_d, line_t, mobj_t, sector_t, subsector_t,
-        MAPBLOCKSHIFT, MAPBLOCKSIZE, MAPBTOFRAC,
-    },
+    c_ffi::{intercept_t, intercept_t_d, MAPBLOCKSHIFT, MAPBLOCKSIZE, MAPBTOFRAC},
+    map::{line_t, slopetype_t},
     math::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
-    play::info::*,
+    play::{info::*, mobj::mobj_t},
 };
+
+/// Parametric dividing line (`divline_t` in `p_local.h`).
+///
+/// Used by `P_PointOnDivlineSide`, the sight check and the
+/// intercept-traversal helpers. `(x, y)` is the start point; `(dx, dy)` is
+/// the direction vector in fixed-point map units.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct divline_t {
+    /// X coordinate of the line origin (fixed-point map units).
+    pub x: fixed_t,
+    /// Y coordinate of the line origin (fixed-point map units).
+    pub y: fixed_t,
+    /// X component of the line direction (fixed-point).
+    pub dx: fixed_t,
+    /// Y component of the line direction (fixed-point).
+    pub dy: fixed_t,
+}
 
 /// The original Doom intercepts array capacity (128 entries).
 ///
@@ -292,8 +308,7 @@ pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
         let mut p1: i32;
         let mut p2: i32;
         match ld.slopetype {
-            0 => {
-                // ST_HORIZONTAL
+            slopetype_t::ST_HORIZONTAL => {
                 p1 = (tmbox[0] > (*ld.v1).y) as i32;
                 p2 = (tmbox[1] > (*ld.v1).y) as i32;
                 if ld.dx < 0 {
@@ -301,8 +316,7 @@ pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
                     p2 ^= 1;
                 }
             }
-            1 => {
-                // ST_VERTICAL
+            slopetype_t::ST_VERTICAL => {
                 p1 = (tmbox[3] < (*ld.v1).x) as i32;
                 p2 = (tmbox[2] < (*ld.v1).x) as i32;
                 if ld.dy < 0 {
@@ -310,13 +324,11 @@ pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
                     p2 ^= 1;
                 }
             }
-            2 => {
-                // ST_POSITIVE
+            slopetype_t::ST_POSITIVE => {
                 p1 = P_PointOnLineSide(tmbox[2], tmbox[0], ld as *const _ as *mut _);
                 p2 = P_PointOnLineSide(tmbox[3], tmbox[1], ld as *const _ as *mut _);
             }
-            _ => {
-                // ST_NEGATIVE
+            slopetype_t::ST_NEGATIVE => {
                 p1 = P_PointOnLineSide(tmbox[3], tmbox[0], ld as *const _ as *mut _);
                 p2 = P_PointOnLineSide(tmbox[2], tmbox[1], ld as *const _ as *mut _);
             }
@@ -356,8 +368,8 @@ pub fn P_LineOpening(linedef: *mut line_t) {
             openrange = 0;
             return;
         }
-        let front = linedef.frontsector as *mut sector_t;
-        let back = linedef.backsector as *mut sector_t;
+        let front = linedef.frontsector;
+        let back = linedef.backsector;
         if (*front).ceilingheight < (*back).ceilingheight {
             opentop = (*front).ceilingheight;
         } else {
@@ -400,25 +412,25 @@ pub fn P_UnsetThingPosition(thing: *mut mobj_t) {
         let thing = &mut *thing;
         if (thing.flags & MF_NOSECTOR) == 0 {
             if !thing.snext.is_null() {
-                let snext = thing.snext as *mut mobj_t;
+                let snext = thing.snext;
                 (*snext).sprev = thing.sprev;
             }
             if !thing.sprev.is_null() {
-                let sprev = thing.sprev as *mut mobj_t;
+                let sprev = thing.sprev;
                 (*sprev).snext = thing.snext;
             } else {
-                let subsector = thing.subsector as *mut subsector_t;
-                let sector = (*subsector).sector as *mut sector_t;
+                let subsector = thing.subsector;
+                let sector = (*subsector).sector;
                 (*sector).thinglist = thing.snext;
             }
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
             if !thing.bnext.is_null() {
-                let bnext = thing.bnext as *mut mobj_t;
+                let bnext = thing.bnext;
                 (*bnext).bprev = thing.bprev;
             }
             if !thing.bprev.is_null() {
-                let bprev = thing.bprev as *mut mobj_t;
+                let bprev = thing.bprev;
                 (*bprev).bnext = thing.bnext;
             } else {
                 let blockx = (thing.x - crate::engine::play::setup::bmaporgx) >> MAPBLOCKSHIFT;
@@ -458,18 +470,17 @@ pub fn P_UnsetThingPosition(thing: *mut mobj_t) {
 pub fn P_SetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
-        let ss = crate::engine::render_3d::main::R_PointInSubsector(thing.x, thing.y)
-            as *mut subsector_t;
-        thing.subsector = ss as *mut c_void;
+        let ss = crate::engine::render_3d::main::R_PointInSubsector(thing.x, thing.y);
+        thing.subsector = ss;
         if (thing.flags & MF_NOSECTOR) == 0 {
-            let sec = (*ss).sector as *mut sector_t;
+            let sec = (*ss).sector;
             thing.sprev = ptr::null_mut();
             thing.snext = (*sec).thinglist;
             if !(*sec).thinglist.is_null() {
-                let thinglist = (*sec).thinglist as *mut mobj_t;
-                (*thinglist).sprev = thing as *mut mobj_t as *mut c_void;
+                let thinglist = (*sec).thinglist;
+                (*thinglist).sprev = thing as *mut mobj_t;
             }
-            (*sec).thinglist = thing as *mut mobj_t as *mut c_void;
+            (*sec).thinglist = thing as *mut mobj_t;
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
             let blockx = (thing.x - crate::engine::play::setup::bmaporgx) >> MAPBLOCKSHIFT;
@@ -484,10 +495,10 @@ pub fn P_SetThingPosition(thing: *mut mobj_t) {
                 thing.bprev = ptr::null_mut();
                 thing.bnext = *link;
                 if !(*link).is_null() {
-                    let l = *link as *mut mobj_t;
-                    (*l).bprev = thing as *mut mobj_t as *mut c_void;
+                    let l = *link;
+                    (*l).bprev = thing as *mut mobj_t;
                 }
-                *link = thing as *mut mobj_t as *mut c_void;
+                *link = thing as *mut mobj_t;
             } else {
                 thing.bnext = ptr::null_mut();
                 thing.bprev = ptr::null_mut();
@@ -569,12 +580,12 @@ pub fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(*mut mobj_t)
             return 1;
         }
         let idx = (y * crate::engine::play::setup::bmapwidth + x) as isize;
-        let mut mobj = *crate::engine::play::setup::blocklinks.offset(idx) as *mut mobj_t;
+        let mut mobj = *crate::engine::play::setup::blocklinks.offset(idx);
         while !mobj.is_null() {
             if func.unwrap()(mobj) == 0 {
                 return 0;
             }
-            mobj = (*mobj).bnext as *mut mobj_t;
+            mobj = (*mobj).bnext;
         }
         1
     }

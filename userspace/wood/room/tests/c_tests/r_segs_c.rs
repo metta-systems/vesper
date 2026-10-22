@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::render_3d::segs;
 
 // ---------------------------------------------------------------------------
 // Boolean flags – default zero (false)
@@ -23,7 +23,7 @@ use room::engine::c_ffi;
 #[test]
 fn segtextured_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::segtextured }, 0);
+        assert_eq!({ segs::segtextured }, 0);
     }
 }
 
@@ -32,7 +32,7 @@ fn segtextured_default_zero() {
 #[test]
 fn markfloor_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::markfloor }, 0);
+        assert_eq!({ segs::markfloor }, 0);
     }
 }
 
@@ -41,7 +41,7 @@ fn markfloor_default_zero() {
 #[test]
 fn markceiling_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::markceiling }, 0);
+        assert_eq!({ segs::markceiling }, 0);
     }
 }
 
@@ -50,7 +50,7 @@ fn markceiling_default_zero() {
 #[test]
 fn maskedtexture_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::maskedtexture }, 0);
+        assert_eq!({ segs::maskedtexture }, 0);
     }
 }
 
@@ -63,9 +63,9 @@ fn maskedtexture_default_zero() {
 #[test]
 fn texture_indices_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::toptexture }, 0, "toptexture");
-        assert_eq!({ c_ffi::bottomtexture }, 0, "bottomtexture");
-        assert_eq!({ c_ffi::midtexture }, 0, "midtexture");
+        assert_eq!({ segs::toptexture }, 0, "toptexture");
+        assert_eq!({ segs::bottomtexture }, 0, "bottomtexture");
+        assert_eq!({ segs::midtexture }, 0, "midtexture");
     }
 }
 
@@ -77,7 +77,7 @@ fn texture_indices_default_zero() {
 #[test]
 fn rw_normalangle_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_normalangle }, 0);
+        assert_eq!({ segs::rw_normalangle }, 0);
     }
 }
 
@@ -86,7 +86,7 @@ fn rw_normalangle_default_zero() {
 #[test]
 fn rw_angle1_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_angle1 }, 0);
+        assert_eq!({ segs::rw_angle1 }, 0);
     }
 }
 
@@ -95,7 +95,7 @@ fn rw_angle1_default_zero() {
 #[test]
 fn rw_centerangle_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_centerangle }, 0);
+        assert_eq!({ segs::rw_centerangle }, 0);
     }
 }
 
@@ -108,8 +108,8 @@ fn rw_centerangle_default_zero() {
 #[test]
 fn rw_column_range_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_x }, 0, "rw_x");
-        assert_eq!({ c_ffi::rw_stopx }, 0, "rw_stopx");
+        assert_eq!({ segs::rw_x }, 0, "rw_x");
+        assert_eq!({ segs::rw_stopx }, 0, "rw_stopx");
     }
 }
 
@@ -123,10 +123,10 @@ fn rw_column_range_default_zero() {
 #[test]
 fn rw_scale_globals_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_offset }, 0, "rw_offset");
-        assert_eq!({ c_ffi::rw_distance }, 0, "rw_distance");
-        assert_eq!({ c_ffi::rw_scale }, 0, "rw_scale");
-        assert_eq!({ c_ffi::rw_scalestep }, 0, "rw_scalestep");
+        assert_eq!({ segs::rw_offset }, 0, "rw_offset");
+        assert_eq!({ segs::rw_distance }, 0, "rw_distance");
+        assert_eq!({ segs::rw_scale }, 0, "rw_scale");
+        assert_eq!({ segs::rw_scalestep }, 0, "rw_scalestep");
     }
 }
 
@@ -139,9 +139,9 @@ fn rw_scale_globals_default_zero() {
 #[test]
 fn rw_texturemid_globals_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::rw_midtexturemid }, 0, "rw_midtexturemid");
-        assert_eq!({ c_ffi::rw_toptexturemid }, 0, "rw_toptexturemid");
-        assert_eq!({ c_ffi::rw_bottomtexturemid }, 0, "rw_bottomtexturemid");
+        assert_eq!({ segs::rw_midtexturemid }, 0, "rw_midtexturemid");
+        assert_eq!({ segs::rw_toptexturemid }, 0, "rw_toptexturemid");
+        assert_eq!({ segs::rw_bottomtexturemid }, 0, "rw_bottomtexturemid");
     }
 }
 
@@ -154,10 +154,10 @@ fn rw_texturemid_globals_default_zero() {
 #[test]
 fn world_bounds_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::worldtop }, 0, "worldtop");
-        assert_eq!({ c_ffi::worldbottom }, 0, "worldbottom");
-        assert_eq!({ c_ffi::worldhigh }, 0, "worldhigh");
-        assert_eq!({ c_ffi::worldlow }, 0, "worldlow");
+        assert_eq!({ segs::worldtop }, 0, "worldtop");
+        assert_eq!({ segs::worldbottom }, 0, "worldbottom");
+        assert_eq!({ segs::worldhigh }, 0, "worldhigh");
+        assert_eq!({ segs::worldlow }, 0, "worldlow");
     }
 }
 
@@ -171,10 +171,10 @@ fn world_bounds_default_zero() {
 #[test]
 fn pix_step_globals_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::pixhigh }, 0, "pixhigh");
-        assert_eq!({ c_ffi::pixlow }, 0, "pixlow");
-        assert_eq!({ c_ffi::pixhighstep }, 0, "pixhighstep");
-        assert_eq!({ c_ffi::pixlowstep }, 0, "pixlowstep");
+        assert_eq!({ segs::pixhigh }, 0, "pixhigh");
+        assert_eq!({ segs::pixlow }, 0, "pixlow");
+        assert_eq!({ segs::pixhighstep }, 0, "pixhighstep");
+        assert_eq!({ segs::pixlowstep }, 0, "pixlowstep");
     }
 }
 
@@ -188,10 +188,10 @@ fn pix_step_globals_default_zero() {
 #[test]
 fn frac_step_globals_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::topfrac }, 0, "topfrac");
-        assert_eq!({ c_ffi::topstep }, 0, "topstep");
-        assert_eq!({ c_ffi::bottomfrac }, 0, "bottomfrac");
-        assert_eq!({ c_ffi::bottomstep }, 0, "bottomstep");
+        assert_eq!({ segs::topfrac }, 0, "topfrac");
+        assert_eq!({ segs::topstep }, 0, "topstep");
+        assert_eq!({ segs::bottomfrac }, 0, "bottomfrac");
+        assert_eq!({ segs::bottomstep }, 0, "bottomstep");
     }
 }
 
@@ -204,7 +204,7 @@ fn frac_step_globals_default_zero() {
 fn walllights_initially_null() {
     unsafe {
         assert!(
-            c_ffi::walllights.is_null(),
+            segs::walllights.is_null(),
             "walllights should be NULL before rendering"
         );
     }
@@ -216,7 +216,7 @@ fn walllights_initially_null() {
 fn maskedtexturecol_ptr_initially_null() {
     unsafe {
         assert!(
-            c_ffi::maskedtexturecol.is_null(),
+            segs::maskedtexturecol.is_null(),
             "maskedtexturecol should be NULL before rendering"
         );
     }

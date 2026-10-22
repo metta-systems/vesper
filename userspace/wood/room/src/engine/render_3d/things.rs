@@ -13,14 +13,14 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::{spriteframe_t, vissprite_t, BASEYCENTER, MINZ},
+    c_ffi::{BASEYCENTER, MINZ},
     doom::player::{PspdefT, NUMPSPRITES},
+    map::sector_t,
     math::{
         fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
         tables::ANG45,
     },
-    play::info::*,
-    render_3d::bsp::sector_t,
+    play::{info::*, mobj::mobj_t},
 };
 
 // ---------------------------------------------------------------------------
@@ -73,16 +73,61 @@ const SIL_TOP: i32 = 2;
 // Types
 // ---------------------------------------------------------------------------
 
-/// Sprite definition table entry for one sprite name (e.g., "TROO").
-/// Points to an array of `spriteframe_t` records, one per animation frame.
-/// Mirrors `spritedef_t` from `r_local.h`.
+/// One animation frame of a sprite (`spriteframe_t` in `r_defs.h`).
+///
+/// Layout (28 bytes):
+///   +0  rotate (boolean/int – 4 bytes)
+///   +4  lump[8] (short[8] – 16 bytes)
+///   +20 flip[8] (byte[8] – 8 bytes)
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct spritedef_t {
+pub struct spriteframe_t {
+    /// 0 = use frame 0 for all rotations; 1 = use rotation-specific lumps.
+    pub rotate: i32,
+    /// WAD lump index (relative to firstspritelump) for each of 8 rotations.
+    pub lump: [i16; 8],
+    /// 1 = horizontally flip the lump for this rotation; 0 = no flip.
+    pub flip: [u8; 8],
+}
+
+/// Sprite definition table entry for one sprite name (e.g., "TROO")
+/// (`spritedef_t` in `r_defs.h`).
+/// Points to an array of `spriteframe_t` records, one per animation frame.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct spritedef_t {
     /// Number of animation frames defined for this sprite.
-    numframes: i32,
+    pub numframes: i32,
     /// Pointer to the heap-allocated array of frame descriptors.
-    spriteframes: *mut spriteframe_t,
+    pub spriteframes: *mut spriteframe_t,
+}
+
+/// Visible sprite: a thing that is (partly) visible in the current frame
+/// (`vissprite_t` in `r_defs.h`).
+///
+/// Built by `R_ProjectSprite`; sorted by `scale` (depth) before
+/// rasterisation. `colormap` selects light level / palette translation
+/// per-column.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct vissprite_t {
+    pub prev: *mut vissprite_t,
+    pub next: *mut vissprite_t,
+    pub x1: i32,
+    pub x2: i32,
+    pub gx: i32,
+    pub gy: i32,
+    pub gz: i32,
+    pub gzt: i32,
+    pub startfrac: i32,
+    pub scale: i32,
+    pub xiscale: i32,
+    pub texturemid: i32,
+    pub patch: i32,
+    _pad: [u8; 4],
+    pub colormap: *mut u8,
+    pub mobjflags: i32,
+    _pad2: [u8; 4],
 }
 
 /// The 4-character sprite prefix of a lump or sprite name, up to the first
@@ -136,8 +181,8 @@ pub static mut negonearray: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
 /// Clipping array initialised to viewheight for psprite top clipping.
 pub static mut screenheightarray: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
 
-/// Pointer to the sprite definition table.
-pub static mut sprites: *mut c_void = ptr::null_mut();
+/// Pointer to the sprite definition table, `numsprites` entries.
+pub static mut sprites: *mut spritedef_t = ptr::null_mut();
 
 /// Total number of sprite names found in the WAD.
 pub static mut numsprites: i32 = 0;
@@ -293,7 +338,7 @@ unsafe fn R_InitSpriteDefs(namelist: &[&'static str]) {
         (numsprites as usize * std::mem::size_of::<spritedef_t>()) as i32,
         1, // PU_STATIC
         ptr::null_mut(),
-    );
+    ) as *mut spritedef_t;
 
     let start = firstspritelump - 1;
     let end = lastspritelump + 1;
@@ -331,7 +376,7 @@ unsafe fn R_InitSpriteDefs(namelist: &[&'static str]) {
 
         // Check the frames that were found for completeness.
         if maxframe == -1 {
-            let spr = &mut *(sprites as *mut spritedef_t).add(i as usize);
+            let spr = &mut *sprites.add(i as usize);
             spr.numframes = 0;
             continue;
         }
@@ -368,7 +413,7 @@ unsafe fn R_InitSpriteDefs(namelist: &[&'static str]) {
         }
 
         // Allocate space for the frames present and copy sprtemp to it.
-        let spr = &mut *(sprites as *mut spritedef_t).add(i as usize);
+        let spr = &mut *sprites.add(i as usize);
         spr.numframes = maxframe;
         spr.spriteframes = Z_Malloc(
             (maxframe as usize * std::mem::size_of::<spriteframe_t>()) as i32,
@@ -579,7 +624,7 @@ pub unsafe fn R_DrawVisSprite(vis: *mut vissprite_t, _x1: i32, _x2: i32) {
 ///   `centerxfrac`, `viewwidth`, and `spritelights` must be valid for the
 ///   current frame.
 pub unsafe fn R_ProjectSprite(thing: *mut c_void) {
-    let thing = thing as *mut crate::engine::c_ffi::mobj_t;
+    let thing = thing as *mut mobj_t;
 
     // Transform the origin point.
     let tr_x = (*thing).x - viewx;
@@ -614,7 +659,7 @@ pub unsafe fn R_ProjectSprite(thing: *mut c_void) {
         }
     }
 
-    let sprdef = &*(sprites as *mut spritedef_t).add((*thing).sprite as usize);
+    let sprdef = &*sprites.add((*thing).sprite as usize);
     #[cfg(feature = "rangecheck")]
     {
         if ((*thing).frame & FF_FRAMEMASK) >= sprdef.numframes {
@@ -750,10 +795,10 @@ pub unsafe fn R_AddSprites(sec: *mut sector_t) {
     }
 
     // Handle all things in sector.
-    let mut thing = sec.thinglist as *mut crate::engine::c_ffi::mobj_t;
+    let mut thing = sec.thinglist;
     while !thing.is_null() {
         R_ProjectSprite(thing as *mut c_void);
-        thing = (*thing).snext as *mut crate::engine::c_ffi::mobj_t;
+        thing = (*thing).snext;
     }
 }
 
@@ -795,7 +840,7 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT) {
         }
     }
 
-    let sprdef = &*(sprites as *mut spritedef_t).add((*state).sprite as usize);
+    let sprdef = &*sprites.add((*state).sprite as usize);
     #[cfg(feature = "rangecheck")]
     {
         if ((*state).frame & FF_FRAMEMASK) >= sprdef.numframes {
@@ -893,8 +938,8 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT) {
 /// - `scalelight`, `extralight`, `screenheightarray`, and `negonearray` must
 ///   all be valid before this function is called.
 pub unsafe fn R_DrawPlayerSprites() {
-    let mo = (*viewplayer).mo as *mut crate::engine::c_ffi::mobj_t;
-    let sub = (*mo).subsector as *mut crate::engine::render_3d::bsp::subsector_t;
+    let mo = (*viewplayer).mo;
+    let sub = (*mo).subsector;
     let sec = (*sub).sector;
     let lightnum = ((*sec).lightlevel >> LIGHTSEGSHIFT as i16) as i32 + extralight;
 

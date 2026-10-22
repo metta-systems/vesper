@@ -13,11 +13,13 @@
 //!   (`unsigned int`).
 //! - `TiccmdT` adds an explicit `_pad: [u8; 2]` after `arti` to match the
 //!   C compiler's padding and reach the expected struct size.
-//! - Opaque C types `mobj_t` and `state_t` are represented as empty enums,
-//!   which is the idiomatic Rust way to express "pointer-only, never
-//!   constructed" foreign types.
+//! - The opaque C type `state_t` is represented as an empty enum, which is
+//!   the idiomatic Rust way to express "pointer-only, never constructed"
+//!   foreign types.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+
+use crate::engine::play::mobj::mobj_t;
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -47,18 +49,10 @@ pub const CF_GODMODE: i32 = 2;
 /// No-momentum debug flag: player cannot move.  Matches `CF_NOMOMENTUM` in `d_player.h`.
 pub const CF_NOMOMENTUM: i32 = 4;
 
-/// Opaque handle for the moving-object (`mobj_t`) C type.
-///
-/// `mobj_t` is defined in `p_mobj.h` and is too large and complex to port
-/// fully yet.  Using an empty enum prevents accidental construction while
-/// still allowing `*mut mobj_t` pointers to cross the FFI boundary.
-pub enum mobj_t {}
-
 /// Opaque handle for the animation-state (`state_t`) C type.
 ///
-/// `state_t` is defined in `info.h` (the mobjinfo table).  As with `mobj_t`,
-/// represented as an empty enum so only pointers to it are valid at the
-/// Rust call sites.
+/// `state_t` is defined in `info.h` (the mobjinfo table).  Represented as an
+/// empty enum so only pointers to it are valid at the Rust call sites.
 pub enum state_t {}
 
 /// Per-tic command packet: the inputs sampled from one player for one game tic.

@@ -19,6 +19,7 @@ pub mod game;
 pub mod hud;
 pub mod interface;
 pub mod intermission;
+pub mod map;
 pub mod math;
 pub mod misc;
 pub mod platform;

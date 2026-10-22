@@ -61,8 +61,8 @@ use crate::engine::{
     misc::random::P_Random,
     play::{
         inter::maxammo,
+        mobj::mobj_t,
         setup::{deathmatch_p, deathmatchstarts, playerstarts},
-        telept::mobj_t,
     },
     wad::format::mapthing_t,
 };
@@ -852,7 +852,7 @@ unsafe fn g_next_weapon(direction: i32) -> i32 {
 /// `cmd` must point to a writable `TiccmdT`; the entire struct is zeroed
 /// before assembly.
 pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
-    use crate::engine::c_ffi::BACKUPTICS;
+    use crate::engine::doom::main_loop::BACKUPTICS;
 
     let cmd = &mut *cmd;
     *cmd = std::mem::zeroed();
@@ -1347,7 +1347,7 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
 /// Mutates virtually every game-loop global; intended to be called at most
 /// once per tic from the engine main loop.
 pub unsafe fn G_Ticker() {
-    use crate::engine::c_ffi::BACKUPTICS;
+    use crate::engine::doom::main_loop::BACKUPTICS;
 
     // Player reborns
     for i in 0..MAXPLAYERS {
@@ -1416,7 +1416,7 @@ pub unsafe fn G_Ticker() {
                         consistancy[i][buf] as i32,
                     );
                 }
-                let mo = players[i].mo as *mut mobj_t;
+                let mo = players[i].mo;
                 if !mo.is_null() {
                     consistancy[i][buf] = (*mo).x as u8;
                 } else {
@@ -1514,7 +1514,7 @@ pub unsafe fn G_PlayerFinishLevel(player: i32) {
     let p = &mut players[player as usize];
     p.powers = [0; 6];
     p.cards = [0; 6];
-    (*(p.mo as *mut mobj_t)).flags &= !crate::engine::play::info::MF_SHADOW;
+    (*p.mo).flags &= !crate::engine::play::info::MF_SHADOW;
     p.extralight = 0;
     p.fixedcolormap = 0;
     p.damagecount = 0;
@@ -1589,7 +1589,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     if players[playernum as usize].mo.is_null() {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
-            let mo = players[i].mo as *mut mobj_t;
+            let mo = players[i].mo;
             if (*mo).x == ((*mthing).x.get() as fixed_t) << 16
                 && (*mo).y == ((*mthing).y.get() as fixed_t) << 16
             {
@@ -1602,12 +1602,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let x = ((*mthing).x.get() as fixed_t) << 16;
     let y = ((*mthing).y.get() as fixed_t) << 16;
 
-    if P_CheckPosition(
-        players[playernum as usize].mo as *mut crate::engine::c_ffi::mobj_t,
-        x,
-        y,
-    ) == 0
-    {
+    if P_CheckPosition(players[playernum as usize].mo, x, y) == 0 {
         return 0;
     }
 
@@ -1615,7 +1610,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     if bodyqueslot >= 32 {
         P_RemoveMobj(bodyque[(bodyqueslot % 32) as usize]);
     }
-    bodyque[(bodyqueslot % 32) as usize] = players[playernum as usize].mo as *mut mobj_t;
+    bodyque[(bodyqueslot % 32) as usize] = players[playernum as usize].mo;
     bodyqueslot += 1;
 
     // Spawn teleport fog
@@ -1711,7 +1706,7 @@ pub unsafe fn G_DoReborn(playernum: i32) {
     if netgame == 0 {
         gameaction = ga_loadlevel;
     } else {
-        let mo = players[playernum as usize].mo as *mut mobj_t;
+        let mo = players[playernum as usize].mo;
         if !mo.is_null() {
             (*mo).player = ptr::null_mut();
         }

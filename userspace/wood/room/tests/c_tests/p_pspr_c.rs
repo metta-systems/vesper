@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, math::fixed::FRACUNIT};
+use room::engine::{c_ffi, math::fixed::FRACUNIT, play::pspr};
 
 // ---------------------------------------------------------------------------
 // Weapon speed constants
@@ -92,7 +92,7 @@ fn weapon_travel_range_is_96_fracunits() {
 #[test]
 fn swingx_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::swingx }, 0, "swingx should be 0 before any tic");
+        assert_eq!({ pspr::swingx }, 0, "swingx should be 0 before any tic");
     }
 }
 
@@ -101,7 +101,7 @@ fn swingx_default_zero() {
 #[test]
 fn swingy_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::swingy }, 0, "swingy should be 0 before any tic");
+        assert_eq!({ pspr::swingy }, 0, "swingy should be 0 before any tic");
     }
 }
 

@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::doom::main;
 
 // ---------------------------------------------------------------------------
 // Boolean startup flags — all false by default
@@ -24,7 +24,7 @@ use room::engine::c_ffi;
 fn devparm_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::devparm },
+            { main::devparm },
             0,
             "devparm should be false without -devparm"
         );
@@ -36,7 +36,7 @@ fn devparm_default_false() {
 fn nomonsters_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::nomonsters },
+            { main::nomonsters },
             0,
             "nomonsters should be false without -nomonsters"
         );
@@ -49,7 +49,7 @@ fn nomonsters_default_false() {
 fn respawnparm_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::respawnparm },
+            { main::respawnparm },
             0,
             "respawnparm should be false without -respawn"
         );
@@ -62,7 +62,7 @@ fn respawnparm_default_false() {
 fn fastparm_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::fastparm },
+            { main::fastparm },
             0,
             "fastparm should be false without -fast"
         );
@@ -75,7 +75,7 @@ fn fastparm_default_false() {
 fn autostart_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::autostart },
+            { main::autostart },
             0,
             "autostart should be false at startup"
         );
@@ -88,7 +88,7 @@ fn autostart_default_false() {
 fn advancedemo_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::advancedemo },
+            { main::advancedemo },
             0,
             "advancedemo should be false at startup"
         );
@@ -100,7 +100,7 @@ fn advancedemo_default_false() {
 fn storedemo_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::storedemo },
+            { main::storedemo },
             0,
             "storedemo should be false at startup"
         );
@@ -112,7 +112,7 @@ fn storedemo_default_false() {
 fn bfgedition_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::bfgedition },
+            { main::bfgedition },
             0,
             "bfgedition should be false when no IWAD is loaded"
         );
@@ -125,7 +125,7 @@ fn bfgedition_default_false() {
 fn main_loop_started_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::main_loop_started },
+            { main::main_loop_started },
             0,
             "main_loop_started should be false before D_DoomLoop"
         );
@@ -142,7 +142,7 @@ fn main_loop_started_default_false() {
 fn show_endoom_default_one() {
     unsafe {
         assert_eq!(
-            { c_ffi::show_endoom },
+            { main::show_endoom },
             1,
             "show_endoom should be 1 (enabled) by default"
         );
@@ -159,12 +159,12 @@ fn show_endoom_default_one() {
 fn start_episode_and_map_default_zero() {
     unsafe {
         assert_eq!(
-            { c_ffi::startepisode },
+            { main::startepisode },
             0,
             "startepisode should be 0 before command-line parse"
         );
         assert_eq!(
-            { c_ffi::startmap },
+            { main::startmap },
             0,
             "startmap should be 0 before command-line parse"
         );

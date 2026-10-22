@@ -39,15 +39,16 @@ fn abs(x: i32) -> i32 {
 
 use crate::{
     engine::{
-        c_ffi::{line_t, sector_t, vertex_t, LinedefFlag, MAPBLOCKSHIFT},
+        c_ffi::{LinedefFlag, MAPBLOCKSHIFT},
         doom::{
             main_loop::gametic,
             player::{players, PlayerT, PspdefT, MAXPLAYERS},
             stat::{gamemode, gameversion},
         },
+        map::{line_t, sector_t, slopetype_t, vertex_t},
         math::{
             fixed::{fixed_t, FixedMul, FRACUNIT},
-            tables::{ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
+            tables::{finecosine, finesine, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
         },
         misc::random::P_Random,
         play::{
@@ -70,25 +71,18 @@ use crate::{
                 P_SetThingPosition, P_UnsetThingPosition,
             },
             mobj::{
-                P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj,
+                mobj_t, P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj,
                 P_SpawnPuff, P_SubstNullMobj,
             },
             setup::{bmaporgx, bmaporgy, sides},
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
-            telept::mobj_t,
+            tick::{thinker_t, thinkercap},
         },
+        render_3d::main::{validcount, R_PointToAngle2},
+        sound::S_StartSound,
     },
     i_error,
-};
-/// Alias for the `c_ffi`-module `mobj_t` used in pointer casts when calling C-facing functions
-/// that expect that specific type definition.
-type CffiMobj = crate::engine::c_ffi::mobj_t;
-use crate::engine::{
-    math::tables::{finecosine, finesine},
-    play::tick::{thinker_t, thinkercap},
-    render_3d::main::{validcount, R_PointToAngle2},
-    sound::S_StartSound,
 };
 
 /// Maximum melee attack range in fixed-point units (64 map units); from `p_local.h`.
@@ -157,11 +151,6 @@ use crate::engine::{
     play::{doors::EV_DoDoor, floor::EV_DoFloor, pspr::A_ReFire},
 };
 
-/// Type alias used when casting a `line_t` pointer for `EV_DoDoor`/`EV_DoFloor` calls that
-/// require the `p_lights` module's `line_t` definition; all `line_t` variants share an
-/// identical `#[repr(C)]` layout so the cast is safe.
-type PLineThing = crate::engine::play::lights::line_t;
-
 /// Lookup table mapping each of the eight directions to its 180-degree opposite, with
 /// `DI_NODIR` mapping to `DI_NODIR`; indexed by `dirtype_t` in `P_NewChaseDir`.
 pub static opposite: [dirtype_t; 9] = [
@@ -207,10 +196,10 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
     }
     (*sec).validcount = validcount;
     (*sec).soundtraversed = soundblocks + 1;
-    (*sec).soundtarget = soundtarget as *mut c_void;
+    (*sec).soundtarget = soundtarget;
     i = 0;
     while i < (*sec).linecount {
-        check = *(*sec).lines.offset(i as isize) as *mut line_t;
+        check = *(*sec).lines.offset(i as isize);
         if (*check).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
             P_LineOpening(check);
             if openrange > 0 {
@@ -244,7 +233,7 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
 pub unsafe fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
     soundtarget = target;
     validcount += 1;
-    P_RecursiveSound((*(*emmiter).subsector).sector as *mut sector_t, 0);
+    P_RecursiveSound((*(*emmiter).subsector).sector, 0);
 }
 /// Returns `TRUE` when `actor`'s target is within melee striking range and line of sight.
 ///
@@ -306,25 +295,25 @@ pub unsafe fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
         dist -= 128 * FRACUNIT;
     }
     dist >>= 16;
-    if (*actor).mobjtype as u32 == MT_VILE as u32 && dist > 14 * 64 {
+    if (*actor).type_ as u32 == MT_VILE as u32 && dist > 14 * 64 {
         return Boolean::FALSE;
     }
-    if (*actor).mobjtype as u32 == MT_UNDEAD as u32 {
+    if (*actor).type_ as u32 == MT_UNDEAD as u32 {
         if dist < 196 {
             return Boolean::FALSE;
         }
         dist >>= 1;
     }
-    if (*actor).mobjtype as u32 == MT_CYBORG as u32
-        || (*actor).mobjtype as u32 == MT_SPIDER as u32
-        || (*actor).mobjtype as u32 == MT_SKULL as u32
+    if (*actor).type_ as u32 == MT_CYBORG as u32
+        || (*actor).type_ as u32 == MT_SPIDER as u32
+        || (*actor).type_ as u32 == MT_SKULL as u32
     {
         dist >>= 1;
     }
     if dist > 200 {
         dist = 200 as fixed_t;
     }
-    if (*actor).mobjtype as u32 == MT_CYBORG as u32 && dist > 160 {
+    if (*actor).type_ as u32 == MT_CYBORG as u32 && dist > 160 {
         dist = 160 as fixed_t;
     }
     if P_Random() < dist {
@@ -369,7 +358,7 @@ pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
         + (*((*actor).info as *mut MobjInfo)).speed as fixed_t * xspeed[(*actor).movedir as usize];
     let tryy: fixed_t = (*actor).y
         + (*((*actor).info as *mut MobjInfo)).speed as fixed_t * yspeed[(*actor).movedir as usize];
-    let try_ok: Boolean = Boolean::from_raw(P_TryMove(actor as *mut CffiMobj, tryx, tryy));
+    let try_ok: Boolean = Boolean::from_raw(P_TryMove(actor, tryx, tryy));
     if try_ok.is_false() {
         if (*actor).flags & MF_FLOAT != 0 && floatok != 0 {
             if (*actor).z < tmfloorz {
@@ -392,12 +381,7 @@ pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
                 break;
             }
             ld = spechit[numspechit as usize];
-            if P_UseSpecialLine(
-                actor as *mut c_void,
-                ld as *mut crate::engine::play::lights::line_t,
-                0,
-            ) != 0
-            {
+            if P_UseSpecialLine(actor as *mut c_void, ld, 0) != 0 {
                 good = Boolean::TRUE;
             }
         }
@@ -568,27 +552,27 @@ pub unsafe fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean) -> Boolea
                 }
                 player = (&raw mut players as *mut PlayerT).offset((*actor).lastlook as isize);
                 if (*player).health > 0 {
-                    let sight = P_CheckSight(actor, (*player).mo as *mut mobj_t);
+                    let sight = P_CheckSight(actor, (*player).mo);
                     if sight != 0 {
                         if allaround.is_false() {
                             an = R_PointToAngle2(
                                 (*actor).x,
                                 (*actor).y,
-                                (*((*player).mo as *mut mobj_t)).x,
-                                (*((*player).mo as *mut mobj_t)).y,
+                                (*(*player).mo).x,
+                                (*(*player).mo).y,
                             )
                             .wrapping_sub((*actor).angle);
                             if an > ANG90 as angle_t && an < ANG270 {
                                 dist = P_AproxDistance(
-                                    (*((*player).mo as *mut mobj_t)).x - (*actor).x,
-                                    (*((*player).mo as *mut mobj_t)).y - (*actor).y,
+                                    (*(*player).mo).x - (*actor).x,
+                                    (*(*player).mo).y - (*actor).y,
                                 );
                                 if dist > MELEERANGE {
                                     break 's_20;
                                 }
                             }
                         }
-                        (*actor).target = (*player).mo as *mut mobj_t;
+                        (*actor).target = (*player).mo;
                         return Boolean::TRUE;
                     }
                 }
@@ -623,9 +607,9 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
         tag: 0,
         sidenum: [0; 2],
         bbox: [0; 4],
-        slopetype: 0,
-        frontsector: std::ptr::null_mut::<c_void>(),
-        backsector: std::ptr::null_mut::<c_void>(),
+        slopetype: slopetype_t::ST_HORIZONTAL,
+        frontsector: std::ptr::null_mut::<sector_t>(),
+        backsector: std::ptr::null_mut::<sector_t>(),
         validcount: 0,
         specialdata: std::ptr::null_mut::<c_void>(),
     };
@@ -639,14 +623,14 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
-            if mo2 != mo && (*mo2).mobjtype as u32 == (*mo).mobjtype as u32 && (*mo2).health > 0 {
+            if mo2 != mo && (*mo2).type_ as u32 == (*mo).type_ as u32 && (*mo2).health > 0 {
                 return;
             }
         }
         th = (*th).next;
     }
     junk.tag = 666;
-    EV_DoDoor(&mut junk as *mut line_t as *mut PLineThing, vld_open);
+    EV_DoDoor(&mut junk, vld_open);
 }
 /// State-machine action: monster idle look, waiting to spot a player.
 ///
@@ -662,7 +646,7 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
 /// `flags`. Called through the state-machine action pointer.
 pub unsafe fn A_Look(actor: *mut mobj_t) {
     (*actor).threshold = 0;
-    let targ: *mut mobj_t = (*(*(*actor).subsector).sector).soundtarget as *mut mobj_t;
+    let targ: *mut mobj_t = (*(*(*actor).subsector).sector).soundtarget;
     '_seeyou: {
         if !targ.is_null() && (*targ).flags & MF_SHOOTABLE != 0 {
             (*actor).target = targ;
@@ -684,9 +668,7 @@ pub unsafe fn A_Look(actor: *mut mobj_t) {
             Sfx::Bgsit1 | Sfx::Bgsit2 => Sfx::Bgsit1 as i32 + P_Random() % 2,
             s => s as i32,
         };
-        if (*actor).mobjtype as u32 == MT_SPIDER as u32
-            || (*actor).mobjtype as u32 == MT_CYBORG as u32
-        {
+        if (*actor).type_ as u32 == MT_SPIDER as u32 || (*actor).type_ as u32 == MT_CYBORG as u32 {
             S_StartSound(std::ptr::null_mut::<c_void>(), sound);
         } else {
             S_StartSound(actor as *mut c_void, sound);
@@ -840,12 +822,12 @@ pub unsafe fn A_PosAttack(actor: *mut mobj_t) {
     }
     A_FaceTarget(actor);
     angle = (*actor).angle as i32;
-    let slope: i32 = P_AimLineAttack(actor as *mut CffiMobj, angle as angle_t, MISSILERANGE) as i32;
+    let slope: i32 = P_AimLineAttack(actor, angle as angle_t, MISSILERANGE) as i32;
     S_StartSound(actor as *mut c_void, Sfx::Pistol as i32);
     angle = angle.wrapping_add((P_Random() - P_Random()) << 20);
     let damage: i32 = (P_Random() % 5 + 1) * 3;
     P_LineAttack(
-        actor as *mut CffiMobj,
+        actor,
         angle as angle_t,
         MISSILERANGE,
         slope as fixed_t,
@@ -873,14 +855,13 @@ pub unsafe fn A_SPosAttack(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Shotgn as i32);
     A_FaceTarget(actor);
     let bangle: i32 = (*actor).angle as i32;
-    let slope: i32 =
-        P_AimLineAttack(actor as *mut CffiMobj, bangle as angle_t, MISSILERANGE) as i32;
+    let slope: i32 = P_AimLineAttack(actor, bangle as angle_t, MISSILERANGE) as i32;
     i = 0;
     while i < 3 {
         angle = bangle.wrapping_add((P_Random() - P_Random()) << 20);
         damage = (P_Random() % 5 + 1) * 3;
         P_LineAttack(
-            actor as *mut CffiMobj,
+            actor,
             angle as angle_t,
             MISSILERANGE,
             slope as fixed_t,
@@ -905,12 +886,11 @@ pub unsafe fn A_CPosAttack(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Shotgn as i32);
     A_FaceTarget(actor);
     let bangle: i32 = (*actor).angle as i32;
-    let slope: i32 =
-        P_AimLineAttack(actor as *mut CffiMobj, bangle as angle_t, MISSILERANGE) as i32;
+    let slope: i32 = P_AimLineAttack(actor, bangle as angle_t, MISSILERANGE) as i32;
     let angle: i32 = bangle.wrapping_add((P_Random() - P_Random()) << 20);
     let damage: i32 = (P_Random() % 5 + 1) * 3;
     P_LineAttack(
-        actor as *mut CffiMobj,
+        actor,
         angle as angle_t,
         MISSILERANGE,
         slope as fixed_t,
@@ -1242,11 +1222,8 @@ pub unsafe fn PIT_VileCheck(thing: *mut mobj_t) -> Boolean {
     (*corpsehit).momy = 0 as fixed_t;
     (*corpsehit).momx = (*corpsehit).momy;
     (*corpsehit).height <<= 2;
-    let check: Boolean = Boolean::from_raw(P_CheckPosition(
-        corpsehit as *mut CffiMobj,
-        (*corpsehit).x,
-        (*corpsehit).y,
-    ));
+    let check: Boolean =
+        Boolean::from_raw(P_CheckPosition(corpsehit, (*corpsehit).x, (*corpsehit).y));
     (*corpsehit).height >>= 2;
     if check.is_false() {
         return Boolean::TRUE;
@@ -1301,7 +1278,7 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
                     by,
                     Some(core::mem::transmute::<
                         unsafe fn(*mut mobj_t) -> Boolean,
-                        unsafe fn(*mut CffiMobj) -> u32,
+                        unsafe fn(*mut mobj_t) -> u32,
                     >(PIT_VileCheck)),
                 ) == 0
                 {
@@ -1372,11 +1349,11 @@ pub unsafe fn A_Fire(actor: *mut mobj_t) {
         return;
     }
     let an: u32 = (*dest).angle >> ANGLETOFINESHIFT;
-    P_UnsetThingPosition(actor as *mut CffiMobj);
+    P_UnsetThingPosition(actor);
     (*actor).x = (*dest).x + FixedMul(24 as fixed_t * FRACUNIT, *finecosine.0.add(an as usize));
     (*actor).y = (*dest).y + FixedMul(24 as fixed_t * FRACUNIT, finesine[an as usize]);
     (*actor).z = (*dest).z;
-    P_SetThingPosition(actor as *mut CffiMobj);
+    P_SetThingPosition(actor);
 }
 /// Archvile attack setup: spawns the `MT_FIRE` hellfire object at the target's location.
 ///
@@ -1439,7 +1416,7 @@ pub unsafe fn A_VileAttack(actor: *mut mobj_t) {
     (*fire).x =
         (*(*actor).target).x - FixedMul(24 as fixed_t * FRACUNIT, *finecosine.0.add(an as usize));
     (*fire).y = (*(*actor).target).y - FixedMul(24 as fixed_t * FRACUNIT, finesine[an as usize]);
-    P_RadiusAttack(fire as *mut CffiMobj, actor as *mut CffiMobj, 70);
+    P_RadiusAttack(fire, actor, 70);
 }
 /// Mancubus raise/taunt: faces the target and plays the attack preparation sound.
 ///
@@ -1595,7 +1572,7 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
                 Option<unsafe fn(*mut mobj_t) -> ()>,
                 Option<unsafe fn(*mut c_void) -> ()>,
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-            && (*(currentthinker as *mut mobj_t)).mobjtype as u32 == MT_SKULL as u32
+            && (*(currentthinker as *mut mobj_t)).type_ as u32 == MT_SKULL as u32
         {
             count += 1;
         }
@@ -1611,7 +1588,7 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
     let y: fixed_t = (*actor).y + FixedMul(prestep as fixed_t, finesine[an as usize]);
     let z: fixed_t = ((*actor).z + 8 * FRACUNIT) as fixed_t;
     let newmobj: *mut mobj_t = P_SpawnMobj(x, y, z, MT_SKULL);
-    if P_TryMove(newmobj as *mut CffiMobj, (*newmobj).x, (*newmobj).y) == 0 {
+    if P_TryMove(newmobj, (*newmobj).x, (*newmobj).y) == 0 {
         P_DamageMobj(newmobj, actor, actor, 10000);
         return;
     }
@@ -1660,8 +1637,7 @@ pub unsafe fn A_Scream(actor: *mut mobj_t) {
         Sfx::Bgdth1 | Sfx::Bgdth2 => Sfx::Bgdth1 as i32 + P_Random() % 2,
         s => s as i32,
     };
-    if (*actor).mobjtype as u32 == MT_SPIDER as u32 || (*actor).mobjtype as u32 == MT_CYBORG as u32
-    {
+    if (*actor).type_ as u32 == MT_SPIDER as u32 || (*actor).type_ as u32 == MT_CYBORG as u32 {
         S_StartSound(std::ptr::null_mut::<c_void>(), sound);
     } else {
         S_StartSound(actor as *mut c_void, sound);
@@ -1706,11 +1682,7 @@ pub unsafe fn A_Fall(actor: *mut mobj_t) {
 /// `actor` (`thingy`) must be non-null; `thingy->target` may be null (passed directly
 /// to `P_RadiusAttack`).
 pub unsafe fn A_Explode(thingy: *mut mobj_t) {
-    P_RadiusAttack(
-        thingy as *mut CffiMobj,
-        (*thingy).target as *mut CffiMobj,
-        128,
-    );
+    P_RadiusAttack(thingy, (*thingy).target, 128);
 }
 /// Determines whether the death of a monster of type `motype` should trigger episode-end effects.
 ///
@@ -1757,7 +1729,7 @@ unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null with a valid `mobjtype`. The thinker list and game-state globals
+/// `mo` must be non-null with a valid `type_`. The thinker list and game-state globals
 /// must be consistent. Called through the state-machine action pointer.
 pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     let mut th: *mut thinker_t;
@@ -1774,9 +1746,9 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         tag: 0,
         sidenum: [0; 2],
         bbox: [0; 4],
-        slopetype: 0,
-        frontsector: std::ptr::null_mut::<c_void>(),
-        backsector: std::ptr::null_mut::<c_void>(),
+        slopetype: slopetype_t::ST_HORIZONTAL,
+        frontsector: std::ptr::null_mut::<sector_t>(),
+        backsector: std::ptr::null_mut::<sector_t>(),
         validcount: 0,
         specialdata: std::ptr::null_mut::<c_void>(),
     };
@@ -1785,10 +1757,10 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         if gamemap != 7 {
             return;
         }
-        if (*mo).mobjtype as u32 != MT_FATSO as u32 && (*mo).mobjtype as u32 != MT_BABY as u32 {
+        if (*mo).type_ as u32 != MT_FATSO as u32 && (*mo).type_ as u32 != MT_BABY as u32 {
             return;
         }
-    } else if CheckBossEnd((*mo).mobjtype).is_false() {
+    } else if CheckBossEnd((*mo).type_).is_false() {
         return;
     }
     let mut i: usize = 0;
@@ -1810,7 +1782,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
-            if mo2 != mo && (*mo2).mobjtype as u32 == (*mo).mobjtype as u32 && (*mo2).health > 0 {
+            if mo2 != mo && (*mo2).type_ as u32 == (*mo).type_ as u32 && (*mo2).health > 0 {
                 return;
             }
         }
@@ -1818,17 +1790,14 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     }
     if gamemode as u32 == commercial as u32 {
         if gamemap == 7 {
-            if (*mo).mobjtype as u32 == MT_FATSO as u32 {
+            if (*mo).type_ as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
-                EV_DoFloor(
-                    &mut junk as *mut line_t as *mut PLineThing,
-                    lowerFloorToLowest,
-                );
+                EV_DoFloor(&mut junk, lowerFloorToLowest);
                 return;
             }
-            if (*mo).mobjtype as u32 == MT_BABY as u32 {
+            if (*mo).type_ as u32 == MT_BABY as u32 {
                 junk.tag = 667;
-                EV_DoFloor(&mut junk as *mut line_t as *mut PLineThing, raiseToTexture);
+                EV_DoFloor(&mut junk, raiseToTexture);
                 return;
             }
         }
@@ -1836,24 +1805,18 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         match gameepisode {
             1 => {
                 junk.tag = 666;
-                EV_DoFloor(
-                    &mut junk as *mut line_t as *mut PLineThing,
-                    lowerFloorToLowest,
-                );
+                EV_DoFloor(&mut junk, lowerFloorToLowest);
                 return;
             }
             4 => match gamemap {
                 6 => {
                     junk.tag = 666;
-                    EV_DoDoor(&mut junk as *mut line_t as *mut PLineThing, vld_blazeOpen);
+                    EV_DoDoor(&mut junk, vld_blazeOpen);
                     return;
                 }
                 8 => {
                     junk.tag = 666;
-                    EV_DoFloor(
-                        &mut junk as *mut line_t as *mut PLineThing,
-                        lowerFloorToLowest,
-                    );
+                    EV_DoFloor(&mut junk, lowerFloorToLowest);
                     return;
                 }
                 _ => {}
@@ -1947,7 +1910,7 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             m = thinker as *mut mobj_t;
-            if (*m).mobjtype as u32 == MT_BOSSTARGET as u32 {
+            if (*m).type_ as u32 == MT_BOSSTARGET as u32 {
                 braintargets[numbraintargets as usize] = m;
                 numbraintargets += 1;
             }
@@ -2117,7 +2080,7 @@ pub unsafe fn A_SpawnFly(mo: *mut mobj_t) {
             (*((*newmobj).info as *mut MobjInfo)).seestate as statenum_t,
         );
     }
-    P_TeleportMove(newmobj as *mut CffiMobj, (*newmobj).x, (*newmobj).y);
+    P_TeleportMove(newmobj, (*newmobj).x, (*newmobj).y);
     P_RemoveMobj(mo);
 }
 /// Plays the player death scream; uses the gibbing scream in Doom II when health is below -50.

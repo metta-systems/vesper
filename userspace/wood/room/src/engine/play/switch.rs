@@ -15,10 +15,12 @@ use {
 use crate::{
     engine::{
         doom,
+        map::line_t,
         play::{
             ceilng::EV_DoCeiling,
             floor::{EV_BuildStairs, EV_DoFloor},
-            lights::{line_t, EV_LightTurnOn},
+            lights::EV_LightTurnOn,
+            mobj::mobj_t,
             plats::EV_DoPlat,
         },
     },
@@ -442,10 +444,6 @@ use crate::engine::{
     sound::S_StartSound,
 };
 
-// Type aliases for cross-module pointer casts (all #[repr(C)] identical layouts).
-type CffiLine = crate::engine::c_ffi::line_t;
-type CffiMobj = crate::engine::c_ffi::mobj_t;
-
 // ---------------------------------------------------------------------------
 // P_InitSwitchList
 // ---------------------------------------------------------------------------
@@ -526,8 +524,7 @@ pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) 
             buttonlist[i].where_ = w;
             buttonlist[i].btexture = texture;
             buttonlist[i].btimer = time;
-            buttonlist[i].soundorg =
-                &(*(*line).frontsector).soundorg as *const [u8; 40] as *mut c_void;
+            buttonlist[i].soundorg = &(*(*line).frontsector).soundorg as *const _ as *mut c_void;
             return;
         }
     }
@@ -643,7 +640,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
     }
 
     // Switches that other things can activate.
-    let mobj = thing as *mut crate::engine::c_ffi::mobj_t;
+    let mobj = thing as *mut mobj_t;
     if (*mobj).player.is_null() {
         // never open secret doors
         if (*line).flags & LinedefFlag::SECRET as i16 != 0 {
@@ -659,14 +656,14 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
     match (*line).special {
         // MANUALS
         1 | 26 | 27 | 28 | 31 | 32 | 33 | 34 | 117 | 118 => {
-            EV_VerticalDoor(line, thing as *mut CffiMobj);
+            EV_VerticalDoor(line, thing as *mut mobj_t);
         }
 
         // SWITCHES
         7 if EV_BuildStairs(line, stair_build8) != 0 => {
             P_ChangeSwitchTexture(line, 0);
         }
-        9 if EV_DoDonut(line as *mut CffiLine) != 0 => {
+        9 if EV_DoDonut(line) != 0 => {
             P_ChangeSwitchTexture(line, 0);
         }
         11 => {
@@ -740,7 +737,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
         131 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
             P_ChangeSwitchTexture(line, 0);
         }
-        133 | 135 | 137 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut CffiMobj) != 0 => {
+        133 | 135 | 137 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
             P_ChangeSwitchTexture(line, 0);
         }
         140 if EV_DoFloor(line, floor_raiseFloor512) != 0 => {
@@ -805,7 +802,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
         132 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
             P_ChangeSwitchTexture(line, 1);
         }
-        99 | 134 | 136 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut CffiMobj) != 0 => {
+        99 | 134 | 136 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
             P_ChangeSwitchTexture(line, 1);
         }
         138 => {

@@ -8,7 +8,7 @@
 use std::ffi::c_void;
 
 use crate::engine::{
-    c_ffi as cffi,
+    map::{line_t, sector_t},
     misc::random::P_Random,
     play::{
         setup::{numsectors, sectors},
@@ -29,54 +29,6 @@ const FASTDARK: i32 = 15;
 
 /// Dark-phase duration for slow strobe lights, in tics (`SLOWDARK` in C).
 const SLOWDARK: i32 = 35;
-
-//
-// We only need fields up to `specialdata`.  Verified against C layout
-// on x86_64 Linux via layout_probe:
-//   sector_t size=128, lightlevel@12, special@14, specialdata@104
-
-/// Partial mirror of `sector_t` from `p_local.h`, containing only the fields
-/// required by the lighting subsystem.
-///
-/// The layout is verified by the `sector_t_layout_matches_c` test; padding
-/// bytes ensure the Rust struct matches the C ABI on x86_64 Linux.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct sector_t {
-    /// Height of the sector floor in fixed-point units.
-    pub floorheight: i32,
-    /// Height of the sector ceiling in fixed-point units.
-    pub ceilingheight: i32,
-    /// Flat texture index used for the floor.
-    pub floorpic: i16,
-    /// Flat texture index used for the ceiling.
-    pub ceilingpic: i16,
-    /// Current ambient light level (0 = dark, 255 = fully bright).
-    pub lightlevel: i16,
-    /// Sector special type (e.g. damaging floor, secret).
-    pub special: i16,
-    /// Linedef tag shared with triggers that activate this sector.
-    pub tag: i16,
-    _pad0: [u8; 2],
-    /// Number of sound propagation traversals (BSP sound travel counter).
-    pub soundtraversed: i32,
-    /// The map object currently producing sound in this sector, if any.
-    pub soundtarget: *mut c_void,
-    /// Axis-aligned bounding box of the sector in map coordinates.
-    pub blockbox: [i32; 4],
-    /// Degenerate mobj used as the origin point for sector sounds (opaque).
-    pub soundorg: [u8; 40], // degenmobj_t (opaque)
-    /// Validation counter used during BSP traversal to avoid re-processing.
-    pub validcount: i32,
-    /// Linked list of map objects currently standing in this sector.
-    pub thinglist: *mut c_void,
-    /// Pointer to the active thinker (special effect) operating on this sector.
-    pub specialdata: *mut c_void,
-    /// Number of linedefs that border this sector.
-    pub linecount: i32,
-    /// Pointer to the array of linedefs that border this sector.
-    pub lines: *mut *mut line_t,
-}
 
 /// Thinker state for the fire-flicker lighting effect.
 ///
@@ -165,43 +117,6 @@ pub struct glow_t {
     _pad: [u8; 4],
 }
 
-/// Partial mirror of `line_t` from `p_local.h`.
-///
-/// Only the fields required by the lighting subsystem are included; remaining
-/// fields are accessed through the C side.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct line_t {
-    /// First vertex of the linedef (opaque pointer).
-    pub v1: *mut c_void,
-    /// Second vertex of the linedef (opaque pointer).
-    pub v2: *mut c_void,
-    /// Horizontal component of the line direction vector (dx = v2.x - v1.x).
-    pub dx: i32,
-    /// Vertical component of the line direction vector (dy = v2.y - v1.y).
-    pub dy: i32,
-    /// Linedef flags (e.g. two-sided, impassable).
-    pub flags: i16,
-    /// Linedef special type number (triggers an action when activated).
-    pub special: i16,
-    /// Tag linking this linedef to sectors with the matching tag.
-    pub tag: i16,
-    /// Side number indices: `[0]` = front, `[1]` = back (-1 if one-sided).
-    pub sidenum: [i16; 2],
-    /// Axis-aligned bounding box of the linedef in map coordinates.
-    pub bbox: [i32; 4],
-    /// Slope type classification for quick rejection tests.
-    pub slopetype: i32,
-    /// Sector on the front side of this linedef.
-    pub frontsector: *mut sector_t,
-    /// Sector on the back side, or null for one-sided linedefs.
-    pub backsector: *mut sector_t,
-    /// Validation counter used during traversal to avoid re-processing.
-    pub validcount: i32,
-    /// Pointer to an active special effect thinker on this linedef, if any.
-    pub specialdata: *mut c_void,
-}
-
 /// Per-tic update for the fire-flicker effect.
 ///
 /// Decrements the countdown; when it reaches zero, randomises the sector's
@@ -252,9 +167,7 @@ pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
         >(T_FireFlicker));
         (*flick).sector = sector;
         (*flick).maxlight = (*sector).lightlevel as i32;
-        (*flick).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32)
-                + 16;
+        (*flick).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32) + 16;
         (*flick).count = 4;
     }
 }
@@ -308,8 +221,7 @@ pub fn P_SpawnLightFlash(sector: *mut sector_t) {
         >(T_LightFlash));
         (*flash).sector = sector;
         (*flash).maxlight = (*sector).lightlevel as i32;
-        (*flash).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
+        (*flash).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
         (*flash).maxtime = 64;
         (*flash).mintime = 7;
         (*flash).count = (P_Random() & (*flash).maxtime) + 1;
@@ -367,8 +279,7 @@ pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
             unsafe fn(*mut c_void),
         >(T_StrobeFlash));
         (*flash).maxlight = (*sector).lightlevel as i32;
-        (*flash).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
+        (*flash).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
 
         if (*flash).minlight == (*flash).maxlight {
             (*flash).minlight = 0;
@@ -392,7 +303,7 @@ pub fn EV_StartLightStrobing(line: *mut line_t) {
     unsafe {
         let mut secnum: i32 = -1;
         loop {
-            secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
+            secnum = P_FindSectorFromLineTag(line, secnum);
             if secnum < 0 {
                 break;
             }
@@ -400,7 +311,7 @@ pub fn EV_StartLightStrobing(line: *mut line_t) {
             if !(*sec).specialdata.is_null() {
                 continue;
             }
-            P_SpawnStrobeFlash(sec as *mut sector_t, SLOWDARK, 0);
+            P_SpawnStrobeFlash(sec, SLOWDARK, 0);
         }
     }
 }
@@ -420,7 +331,7 @@ pub fn EV_TurnTagLightsOff(line: *mut line_t) {
             let mut min = (*sec).lightlevel as i32;
             for i in 0..(*sec).linecount as usize {
                 let templine = *(*sec).lines.add(i);
-                let tsec = getNextSector(templine as *mut cffi::line_t, sec);
+                let tsec = getNextSector(templine, sec);
                 if tsec.is_null() {
                     continue;
                 }
@@ -450,7 +361,7 @@ pub fn EV_LightTurnOn(line: *mut line_t, bright: i32) {
             if bright == 0 {
                 for j in 0..(*sec).linecount as usize {
                     let templine = *(*sec).lines.add(j);
-                    let temp = getNextSector(templine as *mut cffi::line_t, sec);
+                    let temp = getNextSector(templine, sec);
                     if temp.is_null() {
                         continue;
                     }
@@ -512,8 +423,7 @@ pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
         P_AddThinker(&mut (*g).thinker);
 
         (*g).sector = sector;
-        (*g).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
+        (*g).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
         (*g).maxlight = (*sector).lightlevel as i32;
         (*g).thinker.function.acp1 = Some(core::mem::transmute::<
             unsafe fn(*mut glow_t),
@@ -531,38 +441,10 @@ mod tests {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
-    const SECTOR_T_SIZEOF: usize = 128;
-    const SECTOR_T_LIGHTLEVEL_OFFSET: usize = 12;
-    const SECTOR_T_SPECIAL_OFFSET: usize = 14;
-    const SECTOR_T_SPECIALDATA_OFFSET: usize = 104;
     const FIREFLICKER_T_SIZEOF: usize = 48;
     const LIGHTFLASH_T_SIZEOF: usize = 56;
     const STROBE_T_SIZEOF: usize = 56;
     const GLOW_T_SIZEOF: usize = 48;
-
-    #[test]
-    fn sector_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<sector_t>(),
-            SECTOR_T_SIZEOF,
-            "sector_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<sector_t>(),
-            SECTOR_T_SIZEOF,
-        );
-        assert_eq!(
-            std::mem::offset_of!(sector_t, lightlevel),
-            SECTOR_T_LIGHTLEVEL_OFFSET,
-        );
-        assert_eq!(
-            std::mem::offset_of!(sector_t, special),
-            SECTOR_T_SPECIAL_OFFSET,
-        );
-        assert_eq!(
-            std::mem::offset_of!(sector_t, specialdata),
-            SECTOR_T_SPECIALDATA_OFFSET,
-        );
-    }
 
     #[test]
     fn fireflicker_t_size_matches_c() {

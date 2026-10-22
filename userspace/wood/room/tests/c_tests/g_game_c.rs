@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::{c_ffi, game};
 
 // ---------------------------------------------------------------------------
 // Forward-movement speed table
@@ -25,7 +25,7 @@ use room::engine::c_ffi;
 fn forwardmove_slow_is_0x19() {
     unsafe {
         assert_eq!(
-            c_ffi::forwardmove[0],
+            game::forwardmove[0],
             0x19,
             "slow forwardmove should be 0x19 (25)"
         );
@@ -37,7 +37,7 @@ fn forwardmove_slow_is_0x19() {
 fn forwardmove_fast_is_0x32() {
     unsafe {
         assert_eq!(
-            c_ffi::forwardmove[1],
+            game::forwardmove[1],
             0x32,
             "fast forwardmove should be 0x32 (50)"
         );
@@ -50,8 +50,8 @@ fn forwardmove_fast_is_0x32() {
 fn forwardmove_fast_is_double_slow() {
     unsafe {
         assert_eq!(
-            c_ffi::forwardmove[1],
-            c_ffi::forwardmove[0] * 2,
+            game::forwardmove[1],
+            game::forwardmove[0] * 2,
             "fast forwardmove should be 2× slow"
         );
     }
@@ -65,11 +65,7 @@ fn forwardmove_fast_is_double_slow() {
 #[test]
 fn sidemove_slow_is_0x18() {
     unsafe {
-        assert_eq!(
-            c_ffi::sidemove[0],
-            0x18,
-            "slow sidemove should be 0x18 (24)"
-        );
+        assert_eq!(game::sidemove[0], 0x18, "slow sidemove should be 0x18 (24)");
     }
 }
 
@@ -77,11 +73,7 @@ fn sidemove_slow_is_0x18() {
 #[test]
 fn sidemove_fast_is_0x28() {
     unsafe {
-        assert_eq!(
-            c_ffi::sidemove[1],
-            0x28,
-            "fast sidemove should be 0x28 (40)"
-        );
+        assert_eq!(game::sidemove[1], 0x28, "fast sidemove should be 0x28 (40)");
     }
 }
 
@@ -93,7 +85,7 @@ fn sidemove_fast_is_0x28() {
 #[test]
 fn angleturn_normal_is_640() {
     unsafe {
-        assert_eq!(c_ffi::angleturn[0], 640, "normal angleturn should be 640");
+        assert_eq!(game::angleturn[0], 640, "normal angleturn should be 640");
     }
 }
 
@@ -101,7 +93,7 @@ fn angleturn_normal_is_640() {
 #[test]
 fn angleturn_fast_is_1280() {
     unsafe {
-        assert_eq!(c_ffi::angleturn[1], 1280, "fast angleturn should be 1280");
+        assert_eq!(game::angleturn[1], 1280, "fast angleturn should be 1280");
     }
 }
 
@@ -111,7 +103,7 @@ fn angleturn_fast_is_1280() {
 #[test]
 fn angleturn_slow_is_320() {
     unsafe {
-        assert_eq!(c_ffi::angleturn[2], 320, "slow angleturn should be 320");
+        assert_eq!(game::angleturn[2], 320, "slow angleturn should be 320");
     }
 }
 
@@ -120,8 +112,8 @@ fn angleturn_slow_is_320() {
 fn angleturn_fast_is_double_normal() {
     unsafe {
         assert_eq!(
-            c_ffi::angleturn[1],
-            c_ffi::angleturn[0] * 2,
+            game::angleturn[1],
+            game::angleturn[0] * 2,
             "fast angleturn should be 2× normal"
         );
     }
@@ -134,8 +126,8 @@ fn angleturn_fast_is_double_normal() {
 fn angleturn_slow_is_half_normal() {
     unsafe {
         assert_eq!(
-            c_ffi::angleturn[2],
-            c_ffi::angleturn[0] / 2,
+            game::angleturn[2],
+            game::angleturn[0] / 2,
             "slow angleturn should be angleturn[0]/2"
         );
     }
@@ -153,7 +145,7 @@ fn forwardmove_fast_equals_turbothreshold() {
     unsafe {
         // TURBOTHRESHOLD = 0x32 = 50 = forwardmove[1]
         assert_eq!(
-            c_ffi::forwardmove[1],
+            game::forwardmove[1],
             c_ffi::TURBOTHRESHOLD,
             "forwardmove[1] (MAXPLMOVE) should equal TURBOTHRESHOLD (0x32)"
         );
@@ -192,7 +184,7 @@ fn bodyquesize_is_32() {
 #[test]
 fn vanilla_savegame_limit_is_one() {
     unsafe {
-        assert_eq!({ c_ffi::vanilla_savegame_limit }, 1);
+        assert_eq!({ game::vanilla_savegame_limit }, 1);
     }
 }
 
@@ -200,7 +192,7 @@ fn vanilla_savegame_limit_is_one() {
 #[test]
 fn vanilla_demo_limit_is_one() {
     unsafe {
-        assert_eq!({ c_ffi::vanilla_demo_limit }, 1);
+        assert_eq!({ game::vanilla_demo_limit }, 1);
     }
 }
 
@@ -210,7 +202,7 @@ fn vanilla_demo_limit_is_one() {
 fn precache_is_true_by_default() {
     unsafe {
         assert_ne!(
-            { c_ffi::precache },
+            { game::precache },
             0,
             "precache should be true (non-zero) by default"
         );
@@ -221,7 +213,7 @@ fn precache_is_true_by_default() {
 #[test]
 fn testcontrols_is_false_by_default() {
     unsafe {
-        assert_eq!({ c_ffi::testcontrols }, 0);
+        assert_eq!({ game::testcontrols }, 0);
     }
 }
 
@@ -229,7 +221,7 @@ fn testcontrols_is_false_by_default() {
 #[test]
 fn bodyqueslot_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::bodyqueslot }, 0);
+        assert_eq!({ game::bodyqueslot }, 0);
     }
 }
 
@@ -238,9 +230,9 @@ fn bodyqueslot_default_zero() {
 #[test]
 fn level_counters_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::levelstarttic }, 0, "levelstarttic");
-        assert_eq!({ c_ffi::totalkills }, 0, "totalkills");
-        assert_eq!({ c_ffi::totalitems }, 0, "totalitems");
-        assert_eq!({ c_ffi::totalsecret }, 0, "totalsecret");
+        assert_eq!({ game::levelstarttic }, 0, "levelstarttic");
+        assert_eq!({ game::totalkills }, 0, "totalkills");
+        assert_eq!({ game::totalitems }, 0, "totalitems");
+        assert_eq!({ game::totalsecret }, 0, "totalsecret");
     }
 }

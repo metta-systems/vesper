@@ -24,8 +24,8 @@ use crate::{
         misc::random::P_Random,
         play::{
             info::{self, *},
+            mobj::mobj_t,
             pspr::P_DropWeapon,
-            telept::mobj_t,
         },
     },
     i_error,
@@ -512,7 +512,7 @@ unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
     if player.health > MAXHEALTH {
         player.health = MAXHEALTH;
     }
-    let mo = &mut *(player.mo as *mut mobj_t);
+    let mo = &mut *player.mo;
     mo.health = player.health;
     1
 }
@@ -603,7 +603,7 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
     }
     if power == pw_invisibility {
         player.powers[power] = INVISTICS;
-        let mo = &mut *(player.mo as *mut mobj_t);
+        let mo = &mut *player.mo;
         mo.flags |= MF_SHADOW;
         return 1;
     }
@@ -705,7 +705,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.health > max_health {
                 player.health = max_health;
             }
-            let mo = &mut *(player.mo as *mut mobj_t);
+            let mo = &mut *player.mo;
             mo.health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTHTHBONUS));
         }
@@ -726,7 +726,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.health > max_soulsphere {
                 player.health = max_soulsphere;
             }
-            let mo = &mut *(player.mo as *mut mobj_t);
+            let mo = &mut *player.mo;
             mo.health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTSUPER));
             sound = Sfx::Getpow as i32;
@@ -737,7 +737,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             player.health = megasphere_health;
             {
-                let mo = &mut *(player.mo as *mut mobj_t);
+                let mo = &mut *player.mo;
                 mo.health = player.health;
             }
             // We always give armor type 2 for the megasphere; DEHacked
@@ -1044,7 +1044,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
 pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     let info = (*target).info as *mut MobjInfo;
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
-    if (*target).mobjtype != MT_SKULL {
+    if (*target).type_ != MT_SKULL {
         (*target).flags &= !MF_NOGRAVITY;
     }
     (*target).flags |= MF_CORPSE | MF_DROPOFF;
@@ -1096,7 +1096,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         return;
     }
 
-    let item: i32 = match (*target).mobjtype {
+    let item: i32 = match (*target).type_ {
         MT_WOLFSS | MT_POSSESSED => MT_CLIP,
         MT_SHOTGUY => MT_SHOTGUN,
         MT_CHAINGUY => MT_CHAINGUN,
@@ -1217,7 +1217,7 @@ pub unsafe fn P_DamageMobj(
         if (*player).health < 0 {
             (*player).health = 0;
         }
-        (*player).attacker = source as *mut crate::engine::doom::player::mobj_t;
+        (*player).attacker = source;
         (*player).damagecount += damage;
         if (*player).damagecount > 100 {
             (*player).damagecount = 100;
@@ -1245,10 +1245,10 @@ pub unsafe fn P_DamageMobj(
 
     (*target).reactiontime = 0;
 
-    if ((*target).threshold == 0 || (*target).mobjtype == MT_VILE)
+    if ((*target).threshold == 0 || (*target).type_ == MT_VILE)
         && !source.is_null()
         && source != target
-        && (*source).mobjtype != MT_VILE
+        && (*source).type_ != MT_VILE
     {
         (*target).target = source;
         (*target).threshold = BASETHRESHOLD;

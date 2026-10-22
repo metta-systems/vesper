@@ -12,6 +12,7 @@ use {
     room::engine::{
         c_ffi,
         interface::video::{SCREENHEIGHT, SCREENWIDTH},
+        render_3d::draw,
     },
 };
 
@@ -72,7 +73,7 @@ const EXPECTED_FUZZ: [i32; 50] = [
 #[test]
 fn fuzzoffset_length() {
     unsafe {
-        assert_eq!((*&raw const c_ffi::fuzzoffset).len(), c_ffi::FUZZTABLE);
+        assert_eq!((*&raw const draw::fuzzoffset).len(), c_ffi::FUZZTABLE);
     }
 }
 
@@ -81,7 +82,7 @@ fn fuzzoffset_length() {
 #[test]
 fn fuzzoffset_all_values_are_plus_or_minus_fuzzoff() {
     unsafe {
-        for (i, &v) in (*&raw const c_ffi::fuzzoffset).iter().enumerate() {
+        for (i, &v) in (*&raw const draw::fuzzoffset).iter().enumerate() {
             assert!(
                 v == c_ffi::FUZZOFF || v == -c_ffi::FUZZOFF,
                 "fuzzoffset[{i}] = {v}; expected ±{foff}",
@@ -95,7 +96,7 @@ fn fuzzoffset_all_values_are_plus_or_minus_fuzzoff() {
 #[test]
 fn fuzzoffset_exact_values() {
     unsafe {
-        for (i, (&got, &want)) in (*&raw const c_ffi::fuzzoffset)
+        for (i, (&got, &want)) in (*&raw const draw::fuzzoffset)
             .iter()
             .zip(EXPECTED_FUZZ.iter())
             .enumerate()
@@ -114,7 +115,7 @@ fn fuzzoffset_exact_values() {
 fn fuzzoffset_positive_count() {
     // There are exactly 29 positive (+320) entries and 21 negative (−320).
     unsafe {
-        let offsets = c_ffi::fuzzoffset;
+        let offsets = draw::fuzzoffset;
         let pos = offsets.iter().filter(|&&v| v > 0).count();
         let neg = offsets.iter().filter(|&&v| v < 0).count();
         assert_eq!(
@@ -144,14 +145,14 @@ fn r_init_buffer_fullscreen_sets_zero_offsets() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Full-screen view: width == SCREENWIDTH → both offsets must be 0.
     unsafe {
-        c_ffi::R_InitBuffer(SCREENWIDTH, 168);
+        draw::R_InitBuffer(SCREENWIDTH, 168);
         assert_eq!(
-            { c_ffi::viewwindowx },
+            { draw::viewwindowx },
             0,
             "viewwindowx should be 0 for full-width view"
         );
         assert_eq!(
-            { c_ffi::viewwindowy },
+            { draw::viewwindowy },
             0,
             "viewwindowy should be 0 for full-width view"
         );
@@ -164,9 +165,9 @@ fn r_init_buffer_windowed_sets_correct_x_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Windowed view 256 wide: viewwindowx = (320 − 256) >> 1 = 32.
     unsafe {
-        c_ffi::R_InitBuffer(256, 168);
+        draw::R_InitBuffer(256, 168);
         assert_eq!(
-            { c_ffi::viewwindowx },
+            { draw::viewwindowx },
             (SCREENWIDTH - 256) >> 1,
             "viewwindowx mismatch for width=256"
         );
@@ -179,10 +180,10 @@ fn r_init_buffer_windowed_height_sets_correct_y_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Small window (200×100): viewwindowy = (200 − 32 − 100) >> 1 = 34.
     unsafe {
-        c_ffi::R_InitBuffer(200, 100);
+        draw::R_InitBuffer(200, 100);
         let want_y = (SCREENHEIGHT - c_ffi::SBARHEIGHT - 100) >> 1;
         assert_eq!(
-            { c_ffi::viewwindowy },
+            { draw::viewwindowy },
             want_y,
             "viewwindowy mismatch for height=100"
         );
@@ -195,13 +196,13 @@ fn r_init_buffer_various_widths_x_formula() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     for &w in &[160_i32, 200, 256, 280, 304, 312] {
         unsafe {
-            c_ffi::R_InitBuffer(w, 100);
+            draw::R_InitBuffer(w, 100);
             let want = (SCREENWIDTH - w) >> 1;
             assert_eq!(
-                { c_ffi::viewwindowx },
+                { draw::viewwindowx },
                 want,
                 "viewwindowx wrong for width={w}: got {}, want {want}",
-                { c_ffi::viewwindowx }
+                { draw::viewwindowx }
             );
         }
     }
@@ -217,13 +218,13 @@ fn r_init_buffer_various_heights_y_formula() {
     let playfield = SCREENHEIGHT - c_ffi::SBARHEIGHT; // 168
     for &h in &[50_i32, 80, 100, 120, 140, 160, 168] {
         unsafe {
-            c_ffi::R_InitBuffer(w, h);
+            draw::R_InitBuffer(w, h);
             let want = (playfield - h) >> 1;
             assert_eq!(
-                { c_ffi::viewwindowy },
+                { draw::viewwindowy },
                 want,
                 "viewwindowy wrong for height={h}: got {}, want {want}",
-                { c_ffi::viewwindowy }
+                { draw::viewwindowy }
             );
         }
     }

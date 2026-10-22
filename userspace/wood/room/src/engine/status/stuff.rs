@@ -36,7 +36,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
             random::M_Random,
         },
-        play::{inter::P_GivePower, telept::mobj_t},
+        play::inter::P_GivePower,
         render_2d::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
@@ -567,7 +567,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).cheats ^= 2; // CF_GODMODE
                 if (*plyr).cheats & 2 != 0 {
                     if !(*plyr).mo.is_null() {
-                        (*((*plyr).mo as *mut mobj_t)).health = 100;
+                        (*(*plyr).mo).health = 100;
                     }
                     (*plyr).health = 100; // deh_god_mode_health
                     (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDON));
@@ -653,7 +653,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).powers[0] = 1; // pw_invulnerability
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if cht_CheckCheat(&raw mut cheat_mypos, ev.data2 as u8) != 0 {
-                let mo = players[consoleplayer as usize].mo as *mut mobj_t;
+                let mo = players[consoleplayer as usize].mo;
                 (*plyr).message = PlayerMessage::new(format!(
                     "ang=0x{:x};x,y=(0x{:x},0x{:x})",
                     (*mo).angle,
@@ -805,16 +805,16 @@ pub unsafe fn ST_updateFaceWidget() {
             st_faceindex = ST_calcPainOffset() + ST_OUCHOFFSET;
         } else {
             let badguyangle = R_PointToAngle2(
-                (*((*plyr).mo as *mut mobj_t)).x,
-                (*((*plyr).mo as *mut mobj_t)).y,
-                (*((*plyr).attacker as *mut mobj_t)).x,
-                (*((*plyr).attacker as *mut mobj_t)).y,
+                (*(*plyr).mo).x,
+                (*(*plyr).mo).y,
+                (*(*plyr).attacker).x,
+                (*(*plyr).attacker).y,
             );
-            if badguyangle > (*((*plyr).mo as *mut mobj_t)).angle {
-                diffang = badguyangle - (*((*plyr).mo as *mut mobj_t)).angle;
+            if badguyangle > (*(*plyr).mo).angle {
+                diffang = badguyangle - (*(*plyr).mo).angle;
                 i = if diffang > ANG180 { 1 } else { 0 };
             } else {
-                diffang = (*((*plyr).mo as *mut mobj_t)).angle - badguyangle;
+                diffang = (*(*plyr).mo).angle - badguyangle;
                 i = if diffang <= ANG180 { 1 } else { 0 };
             }
 

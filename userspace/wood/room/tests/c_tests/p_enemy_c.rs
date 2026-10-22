@@ -16,6 +16,7 @@
 use room::engine::{
     c_ffi,
     math::{fixed::FRACUNIT, tables::ANG90},
+    play::enemy,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ use room::engine::{
 #[test]
 fn xspeed_exact_values() {
     let expected: [i32; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
-    for (i, (&got, &want)) in c_ffi::xspeed.iter().zip(expected.iter()).enumerate() {
+    for (i, (&got, &want)) in enemy::xspeed.iter().zip(expected.iter()).enumerate() {
         assert_eq!(got, want, "xspeed[{i}]: got {got}, want {want}");
     }
 }
@@ -39,7 +40,7 @@ fn xspeed_exact_values() {
 #[test]
 fn yspeed_exact_values() {
     let expected: [i32; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
-    for (i, (&got, &want)) in c_ffi::yspeed.iter().zip(expected.iter()).enumerate() {
+    for (i, (&got, &want)) in enemy::yspeed.iter().zip(expected.iter()).enumerate() {
         assert_eq!(got, want, "yspeed[{i}]: got {got}, want {want}");
     }
 }
@@ -47,8 +48,8 @@ fn yspeed_exact_values() {
 /// Both speed tables have exactly 8 entries (one per movement direction).
 #[test]
 fn speed_tables_have_8_entries() {
-    assert_eq!(c_ffi::xspeed.len(), 8, "xspeed");
-    assert_eq!(c_ffi::yspeed.len(), 8, "yspeed");
+    assert_eq!(enemy::xspeed.len(), 8, "xspeed");
+    assert_eq!(enemy::yspeed.len(), 8, "yspeed");
 }
 
 /// The cardinal-direction entries (E, N, W, S) are ±FRACUNIT or 0.
@@ -58,28 +59,28 @@ fn speed_tables_have_8_entries() {
 #[test]
 fn diagonal_speed_is_47000() {
     // NE: xspeed[1]=47000, yspeed[1]=47000
-    assert_eq!(c_ffi::xspeed[1], 47000);
-    assert_eq!(c_ffi::yspeed[1], 47000);
+    assert_eq!(enemy::xspeed[1], 47000);
+    assert_eq!(enemy::yspeed[1], 47000);
     // NW: xspeed[3]=-47000, yspeed[3]=47000
-    assert_eq!(c_ffi::xspeed[3], -47000);
-    assert_eq!(c_ffi::yspeed[3], 47000);
+    assert_eq!(enemy::xspeed[3], -47000);
+    assert_eq!(enemy::yspeed[3], 47000);
 }
 
 /// Cardinal-direction Y-speed at due-East (dir 0) is 0.
 #[test]
 fn east_direction_has_zero_yspeed() {
-    assert_eq!(c_ffi::yspeed[0], 0, "east yspeed should be 0");
+    assert_eq!(enemy::yspeed[0], 0, "east yspeed should be 0");
 }
 
 /// Opposite directions have negated X and Y components.
 #[test]
 fn opposite_directions_are_negated() {
     // East (0) vs West (4)
-    assert_eq!(c_ffi::xspeed[0], -c_ffi::xspeed[4]);
-    assert_eq!(c_ffi::yspeed[0], -c_ffi::yspeed[4]);
+    assert_eq!(enemy::xspeed[0], -enemy::xspeed[4]);
+    assert_eq!(enemy::yspeed[0], -enemy::yspeed[4]);
     // North (2) vs South (6)
-    assert_eq!(c_ffi::xspeed[2], -c_ffi::xspeed[6]);
-    assert_eq!(c_ffi::yspeed[2], -c_ffi::yspeed[6]);
+    assert_eq!(enemy::xspeed[2], -enemy::xspeed[6]);
+    assert_eq!(enemy::yspeed[2], -enemy::yspeed[6]);
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ fn skullspeed_is_20_fracunits() {
 #[test]
 fn braintargets_initially_null() {
     unsafe {
-        for (i, &ptr) in (*&raw const c_ffi::braintargets).iter().enumerate() {
+        for (i, &ptr) in (*&raw const enemy::braintargets).iter().enumerate() {
             assert!(
                 ptr.is_null(),
                 "braintargets[{i}] should be NULL before spawn"
@@ -132,7 +133,7 @@ fn braintargets_initially_null() {
 #[test]
 fn braintargets_has_32_slots() {
     unsafe {
-        assert_eq!((*&raw const c_ffi::braintargets).len(), 32);
+        assert_eq!((*&raw const enemy::braintargets).len(), 32);
     }
 }
 
@@ -140,7 +141,7 @@ fn braintargets_has_32_slots() {
 #[test]
 fn numbraintargets_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::numbraintargets }, 0);
+        assert_eq!({ enemy::numbraintargets }, 0);
     }
 }
 
@@ -148,6 +149,6 @@ fn numbraintargets_default_zero() {
 #[test]
 fn braintargeton_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::braintargeton }, 0);
+        assert_eq!({ enemy::braintargeton }, 0);
     }
 }

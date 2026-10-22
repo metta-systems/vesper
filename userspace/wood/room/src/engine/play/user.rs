@@ -16,7 +16,7 @@ use crate::engine::{
         fixed::{fixed_t, FixedMul, FRACUNIT},
         tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
     },
-    play::{info::*, telept::mobj_t, tick::leveltime},
+    play::{info::*, tick::leveltime},
 };
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
@@ -138,7 +138,7 @@ use crate::engine::{
 /// whose `mo` field points to a valid `mobj_t`.
 pub fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
     unsafe {
-        let mo = (*player).mo as *mut mobj_t;
+        let mo = (*player).mo;
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
         (*mo).momx += FixedMul(move_, *finecosine.0.add(angle));
         (*mo).momy += FixedMul(move_, finesine[angle]);
@@ -159,7 +159,7 @@ pub fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub fn P_CalcHeight(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo as *mut mobj_t;
+        let mo = (*player).mo;
 
         // Regular movement bobbing
         (*player).bob = FixedMul((*mo).momx, (*mo).momx) + FixedMul((*mo).momy, (*mo).momy);
@@ -228,7 +228,7 @@ pub fn P_CalcHeight(player: *mut PlayerT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub fn P_MovePlayer(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo as *mut mobj_t;
+        let mo = (*player).mo;
         let cmd = &(*player).cmd;
 
         (*mo).angle = (*mo)
@@ -271,7 +271,7 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub fn P_DeathThink(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo as *mut mobj_t;
+        let mo = (*player).mo;
         let angle: u32;
         let delta: u32;
 
@@ -291,7 +291,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
         P_CalcHeight(player);
 
         if !(*player).attacker.is_null() && (*player).attacker != (*player).mo {
-            let atk = (*player).attacker as *mut mobj_t;
+            let atk = (*player).attacker;
             angle = R_PointToAngle2((*mo).x, (*mo).y, (*atk).x, (*atk).y);
 
             delta = angle.wrapping_sub((*mo).angle);
@@ -343,7 +343,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
 /// chain.
 pub fn P_PlayerThink(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo as *mut mobj_t;
+        let mo = (*player).mo;
         let mut newweapon: i32;
 
         // Fixme: do this in the cheat code

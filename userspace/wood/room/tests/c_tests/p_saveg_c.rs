@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::{c_ffi, play::saveg};
 
 // ---------------------------------------------------------------------------
 // SAVEGAME_EOF constant
@@ -59,7 +59,7 @@ fn versionsize_is_power_of_two() {
 fn savegamelength_default_zero() {
     unsafe {
         assert_eq!(
-            { c_ffi::savegamelength },
+            { saveg::savegamelength },
             0,
             "savegamelength should be 0 before any P_SaveGame call"
         );
@@ -76,7 +76,7 @@ fn savegamelength_default_zero() {
 fn savegame_error_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::savegame_error },
+            { saveg::savegame_error },
             0,
             "savegame_error should be false before any save operation"
         );

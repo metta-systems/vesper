@@ -34,19 +34,19 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::{SAVEGAME_EOF, VERSIONSIZE},
+    c_ffi::{mobjinfo_t, state_t, SAVEGAME_EOF, VERSIONSIZE},
     doom::player::{
         players, PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS,
         NUMPOWERS, NUMPSPRITES, NUMWEAPONS,
     },
+    map::{line_t, sector_t, side_t, subsector_t},
     play::{
         ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
         doors::{vldoor_t, T_VerticalDoor},
-        floor::{floormove_t, side_t, T_MoveFloor},
+        floor::{floormove_t, T_MoveFloor},
         info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
-        lights::{
-            glow_t, lightflash_t, line_t, sector_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash,
-        },
+        lights::{glow_t, lightflash_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash},
+        mobj::{mobj_t, player_s},
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
         tick::{actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers},
     },
@@ -94,8 +94,6 @@ pub static mut savegamelength: i32 = 0;
 /// C origin: `savegame_error` in `p_saveg.c`.
 pub static mut savegame_error: i32 = 0;
 
-// The map arrays (`sectors`, `lines`, `sides`) hold `c_ffi`'s layout-identical
-// copies of this module's `sector_t`, `line_t` and `side_t`; uses cast them.
 use crate::engine::{
     doom::main::savegamedir,
     game::G_VanillaVersionCode,
@@ -324,11 +322,7 @@ macro_rules! make_actionf_p1 {
 }
 
 // Returns an `actionf_t` for `P_MobjThinker` (map object thinker).
-make_actionf_p1!(
-    actionf_p1_mobj_thinker,
-    crate::engine::play::telept::mobj_t,
-    P_MobjThinker
-);
+make_actionf_p1!(actionf_p1_mobj_thinker, mobj_t, P_MobjThinker);
 // Returns an `actionf_t` for `T_MoveCeiling` (ceiling special thinker).
 make_actionf_p1!(actionf_p1_move_ceiling, ceiling_t, T_MoveCeiling);
 // Returns an `actionf_t` for `T_VerticalDoor` (door special thinker).
@@ -434,11 +428,11 @@ unsafe fn saveg_write_thinker_t(th: *const thinker_t) {
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
 unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
-    let mo: *mut crate::engine::c_ffi::mobj_t = mobj as *mut crate::engine::c_ffi::mobj_t;
+    let mo = mobj as *mut mobj_t;
 
     // thinker_t
     {
-        let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker_prev) as *mut thinker_t;
+        let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker);
         (*thinker_ptr).prev = saveg_read32() as usize as *mut thinker_t;
         (*thinker_ptr).next = saveg_read32() as usize as *mut thinker_t;
         let raw = saveg_read32() as usize;
@@ -455,8 +449,8 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).z = saveg_read32() as i32;
 
     // snext, sprev
-    (*mo).snext = saveg_read32() as *mut c_void;
-    (*mo).sprev = saveg_read32() as *mut c_void;
+    (*mo).snext = saveg_read32() as *mut mobj_t;
+    (*mo).sprev = saveg_read32() as *mut mobj_t;
 
     // angle, sprite, frame
     (*mo).angle = saveg_read32();
@@ -464,11 +458,11 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).frame = saveg_read32() as i32;
 
     // bnext, bprev
-    (*mo).bnext = saveg_read32() as *mut c_void;
-    (*mo).bprev = saveg_read32() as *mut c_void;
+    (*mo).bnext = saveg_read32() as *mut mobj_t;
+    (*mo).bprev = saveg_read32() as *mut mobj_t;
 
     // subsector
-    (*mo).subsector = saveg_read32() as *mut c_void;
+    (*mo).subsector = saveg_read32() as *mut subsector_t;
 
     // floorz, ceilingz, radius, height
     (*mo).floorz = saveg_read32() as i32;
@@ -488,14 +482,14 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).type_ = saveg_read_enum() as i32;
 
     // info (raw pointer)
-    (*mo).info = saveg_read32() as *mut crate::engine::c_ffi::mobjinfo_t;
+    (*mo).info = saveg_read32() as *mut mobjinfo_t;
 
     // tics
     (*mo).tics = saveg_read32() as i32;
 
     // state (index into states array)
     let state_idx = saveg_read32();
-    (*mo).state = saveg_read_state_ptr(state_idx) as *mut crate::engine::c_ffi::state_t;
+    (*mo).state = saveg_read_state_ptr(state_idx) as *mut state_t;
 
     // flags
     (*mo).flags = saveg_read32() as i32;
@@ -508,7 +502,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).movecount = saveg_read32() as i32;
 
     // target (raw pointer)
-    (*mo).target = saveg_read32() as *mut c_void;
+    (*mo).target = saveg_read32() as *mut mobj_t;
 
     // reactiontime, threshold
     (*mo).reactiontime = saveg_read32() as i32;
@@ -517,10 +511,10 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     // player (index + 1)
     let pl = saveg_read32();
     if pl > 0 {
-        (*mo).player = saveg_read_player_ptr(pl) as *mut c_void;
+        (*mo).player = saveg_read_player_ptr(pl) as *mut player_s;
         let player = (*mo).player as *mut PlayerT;
         if !player.is_null() {
-            (*player).mo = mobj as *mut crate::engine::doom::player::mobj_t;
+            (*player).mo = mo;
         }
     } else {
         (*mo).player = std::ptr::null_mut();
@@ -533,7 +527,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     saveg_read_mapthing_t(std::ptr::addr_of_mut!((*mo).spawnpoint));
 
     // tracer (raw pointer)
-    (*mo).tracer = saveg_read32() as *mut c_void;
+    (*mo).tracer = saveg_read32() as *mut mobj_t;
 }
 
 /// Writes a full `mobj_t` record to the save stream from `mobj`.
@@ -544,11 +538,11 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
 /// `player` is written as a 1-based player index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
 unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
-    let mo: *const crate::engine::c_ffi::mobj_t = mobj as *const crate::engine::c_ffi::mobj_t;
+    let mo = mobj as *const mobj_t;
 
     // thinker_t
     {
-        let thinker_ptr = std::ptr::addr_of!((*mo).thinker_prev) as *const thinker_t;
+        let thinker_ptr = std::ptr::addr_of!((*mo).thinker);
         saveg_write32((*thinker_ptr).prev as u32);
         saveg_write32((*thinker_ptr).next as u32);
         saveg_write32(
@@ -745,7 +739,7 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     let s = &mut *pl;
 
     // mo (raw pointer, will be NULL after)
-    s.mo = saveg_read32() as *mut crate::engine::doom::player::mobj_t;
+    s.mo = saveg_read32() as *mut mobj_t;
 
     // playerstate
     s.playerstate = saveg_read_enum() as i32;
@@ -823,7 +817,7 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     s.bonuscount = saveg_read32() as i32;
 
     // attacker (raw pointer)
-    s.attacker = saveg_read32() as *mut crate::engine::doom::player::mobj_t;
+    s.attacker = saveg_read32() as *mut mobj_t;
 
     // extralight, fixedcolormap, colormap
     s.extralight = saveg_read32() as i32;
@@ -1654,13 +1648,13 @@ pub unsafe fn P_UnArchiveThinkers() {
             x if x == tc_mobj => {
                 saveg_read_pad();
                 let mobj = Z_Malloc(
-                    std::mem::size_of::<crate::engine::c_ffi::mobj_t>() as i32,
+                    std::mem::size_of::<mobj_t>() as i32,
                     PU_LEVEL,
                     std::ptr::null_mut(),
                 );
                 saveg_read_mobj_t(mobj);
 
-                let mo = mobj as *mut crate::engine::c_ffi::mobj_t;
+                let mo = mobj as *mut mobj_t;
 
                 // target/tracer set to NULL (will be rebuilt)
                 (*mo).target = std::ptr::null_mut();
@@ -1669,13 +1663,13 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_SetThingPosition(mobj.cast());
 
                 // rebuild info from mobjinfo
-                (*mo).info = &mut mobjinfo[(*mo).type_ as usize] as *mut MobjInfo
-                    as *mut crate::engine::c_ffi::mobjinfo_t;
+                (*mo).info =
+                    &mut mobjinfo[(*mo).type_ as usize] as *mut MobjInfo as *mut mobjinfo_t;
 
                 // rebuild floorz/ceilingz from subsector
-                let subsec = (*mo).subsector as *mut crate::engine::c_ffi::subsector_t;
+                let subsec = (*mo).subsector;
                 if !subsec.is_null() {
-                    let sector = (*subsec).sector as *mut sector_t;
+                    let sector = (*subsec).sector;
                     if !sector.is_null() {
                         (*mo).floorz = (*sector).floorheight;
                         (*mo).ceilingz = (*sector).ceilingheight;
@@ -1683,7 +1677,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 }
 
                 // set thinker function
-                let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker_prev) as *mut thinker_t;
+                let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker);
                 (*thinker_ptr).function = actionf_p1_mobj_thinker();
 
                 P_AddThinker(&mut (*thinker_ptr));
@@ -2128,7 +2122,6 @@ mod tests {
 
     #[test]
     fn saveg_read_mobj_t_zero_fn_ptr_becomes_none() {
-        use crate::engine::c_ffi::mobj_t;
         let _g = LOCK.lock().unwrap();
         // mobj_t is large; we need enough bytes for the full struct read.
         // The thinker (prev+next+fn) is the first 12 bytes.
@@ -2139,7 +2132,7 @@ mod tests {
             with_mem_stream(&mut data, || {
                 saveg_read_mobj_t(&raw mut mo as *mut mobj_t as *mut c_void);
             });
-            let thinker_ptr = std::ptr::addr_of!(mo.thinker_prev) as *const thinker_t;
+            let thinker_ptr = std::ptr::addr_of!(mo.thinker);
             assert!(
                 (*thinker_ptr).function.acp1.is_none(),
                 "zero function pointer in mobj thinker must deserialize as None, not Some(NULL)"

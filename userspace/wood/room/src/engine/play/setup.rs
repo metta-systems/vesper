@@ -25,10 +25,15 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    c_ffi::{line_t, node_t, sector_t, seg_t, side_t, subsector_t, vertex_t, LinedefFlag, MapLump},
+    c_ffi::{LinedefFlag, MapLump},
     doom::{
         self,
         player::{consoleplayer, players, MAXPLAYERS},
+    },
+    map::{
+        line_t, node_t, sector_t, seg_t, side_t,
+        slopetype_t::{ST_HORIZONTAL, ST_NEGATIVE, ST_POSITIVE, ST_VERTICAL},
+        subsector_t, vertex_t,
     },
     math::{
         bbox::{BBox, M_AddToBox, M_ClearBox},
@@ -36,6 +41,7 @@ use crate::engine::{
     },
     play::{
         info::sprnames,
+        mobj::mobj_t,
         tick::{leveltime, P_InitThinkers},
     },
     zone::PU_LEVEL,
@@ -60,24 +66,6 @@ fn SHORT(x: i16) -> i16 {
 /// Matches `PU_PURGELEVEL` in `z_zone.h`; all tags in `[PU_LEVEL,
 /// PU_PURGELEVEL)` are freed by `Z_FreeTags` at the start of `P_SetupLevel`.
 const PU_PURGELEVEL: i32 = 7;
-
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Slope types
-// ---------------------------------------------------------------------------
-
-/// Linedef slope type: line is perfectly horizontal (dy == 0).
-/// Referenced by `c_ffi::line_t.slopetype`.
-const ST_HORIZONTAL: i32 = 0;
-/// Linedef slope type: line is perfectly vertical (dx == 0).
-/// Referenced by `c_ffi::line_t.slopetype`.
-const ST_VERTICAL: i32 = 1;
-/// Linedef slope type: dy/dx > 0 (rises left-to-right).
-/// Referenced by `c_ffi::line_t.slopetype`.
-const ST_POSITIVE: i32 = 2;
-/// Linedef slope type: dy/dx < 0 (falls left-to-right).
-/// Referenced by `c_ffi::line_t.slopetype`.
-const ST_NEGATIVE: i32 = 3;
 
 // ---------------------------------------------------------------------------
 // Misc constants
@@ -194,7 +182,7 @@ pub static mut bmaporgy: i32 = 0;
 /// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
 /// that cell's chain, or null. Zeroed at level load.
 /// Referenced by `p_maputl.c` and `p_map.c`.
-pub static mut blocklinks: *mut *mut c_void = ptr::null_mut();
+pub static mut blocklinks: *mut *mut mobj_t = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
 // REJECT
@@ -651,7 +639,7 @@ pub fn P_LoadLineDefs(lump: i32) {
                     .offset((*ld).sidenum[0] as isize)
                     .as_ref()
                     .unwrap()
-                    .sector as *mut c_void;
+                    .sector;
             } else {
                 (*ld).frontsector = ptr::null_mut();
             }
@@ -661,7 +649,7 @@ pub fn P_LoadLineDefs(lump: i32) {
                     .offset((*ld).sidenum[1] as isize)
                     .as_ref()
                     .unwrap()
-                    .sector as *mut c_void;
+                    .sector;
             } else {
                 (*ld).backsector = ptr::null_mut();
             }
@@ -756,8 +744,8 @@ pub fn P_LoadBlockMap(lump: i32) {
         bmapwidth = *blockmaplump.add(2) as i32;
         bmapheight = *blockmaplump.add(3) as i32;
 
-        let bcount = std::mem::size_of::<*mut c_void>() * bmapwidth as usize * bmapheight as usize;
-        blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut c_void;
+        let bcount = std::mem::size_of::<*mut mobj_t>() * bmapwidth as usize * bmapheight as usize;
+        blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut mobj_t;
         ptr::write_bytes(blocklinks.cast::<u8>(), 0, bcount);
     }
 }
@@ -804,7 +792,7 @@ pub fn P_GroupLines() {
             // Must use seg->sidedef->sector, not sidenum[0], because the seg
             // may be on side 1 (back side) of the linedef, in which case
             // sidenum[0] points to the wrong side's sector.
-            (*ss).sector = (*(*seg).sidedef).sector as *mut c_void;
+            (*ss).sector = (*(*seg).sidedef).sector;
             ss = ss.add(1);
         }
 
@@ -813,11 +801,11 @@ pub fn P_GroupLines() {
         totallines = 0;
         for _ in 0..numlines {
             totallines += 1;
-            let frontsec = (*li).frontsector as *mut sector_t;
+            let frontsec = (*li).frontsector;
             if !frontsec.is_null() {
                 (*frontsec).linecount += 1;
             }
-            let backsec = (*li).backsector as *mut sector_t;
+            let backsec = (*li).backsector;
             if !backsec.is_null() && backsec != frontsec {
                 (*backsec).linecount += 1;
                 totallines += 1;
@@ -835,7 +823,7 @@ pub fn P_GroupLines() {
         let mut current = linebuffer;
         for i in 0..numsectors as usize {
             let sec = sectors.add(i);
-            (*sec).lines = current as *mut *mut c_void;
+            (*sec).lines = current;
             current = current.offset((*sec).linecount as isize);
             (*sec).linecount = 0;
         }
@@ -844,19 +832,19 @@ pub fn P_GroupLines() {
         for i in 0..numlines as usize {
             li = lines.add(i);
             if !(*li).frontsector.is_null() {
-                let sector = (*li).frontsector as *mut sector_t;
+                let sector = (*li).frontsector;
                 (*sector)
                     .lines
                     .offset((*sector).linecount as isize)
-                    .write(li as *mut c_void);
+                    .write(li);
                 (*sector).linecount += 1;
             }
             if !(*li).backsector.is_null() && (*li).frontsector != (*li).backsector {
-                let sector = (*li).backsector as *mut sector_t;
+                let sector = (*li).backsector;
                 (*sector)
                     .lines
                     .offset((*sector).linecount as isize)
-                    .write(li as *mut c_void);
+                    .write(li);
                 (*sector).linecount += 1;
             }
         }
@@ -868,18 +856,14 @@ pub fn P_GroupLines() {
             M_ClearBox(bbox.as_mut_ptr());
 
             for j in 0..(*sector).linecount {
-                let line = *(*sector).lines.offset(j as isize) as *mut line_t;
+                let line = *(*sector).lines.offset(j as isize);
                 M_AddToBox(bbox.as_mut_ptr(), (*(*line).v1).x, (*(*line).v1).y);
                 M_AddToBox(bbox.as_mut_ptr(), (*(*line).v2).x, (*(*line).v2).y);
             }
 
             // Set the degenmobj_t to the middle of the bounding box.
-            let soundorg_x = (bbox[BBox::RIGHT] + bbox[BBox::LEFT]) / 2;
-            let soundorg_y = (bbox[BBox::TOP] + bbox[BBox::BOTTOM]) / 2;
-            // sector->soundorg is a 40-byte degenmobj_t; first two fields are x,y.
-            let soundorg_ptr = (*sector).soundorg.as_mut_ptr() as *mut i32;
-            *soundorg_ptr = soundorg_x;
-            *soundorg_ptr.add(1) = soundorg_y;
+            (*sector).soundorg.x = (bbox[BBox::RIGHT] + bbox[BBox::LEFT]) / 2;
+            (*sector).soundorg.y = (bbox[BBox::TOP] + bbox[BBox::BOTTOM]) / 2;
 
             // Adjust bounding box to map blocks.
             let mut block = (bbox[BBox::TOP] - bmaporgy + MAXRADIUS) >> MAPBLOCKSHIFT;

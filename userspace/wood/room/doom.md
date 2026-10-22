@@ -45,8 +45,15 @@ Files without a prefix, and the `m_` math files, go to the module their contents
 | `deh_str`     | `DEH_String` hook                                 | `dehacked`               |
 | `doomkeys`    | Key codes                                         | `interface::keys`        |
 | `statdump`    | End-of-level statistics capture                   | `intermission::statdump` |
+| `r_defs`      | Map geometry types shared by play and renderer    | `map`                    |
 | `memio`       | In-memory `FILE` streams                          | not placed yet           |
-| `c_ffi`       | Room-only: C-layout copies of shared types        | not placed yet           |
+| `c_ffi`       | Room-only: not-yet-placed C types and constants   | not placed yet           |
+
+`r_defs.h` also declares renderer-only types; each lives in the renderer
+module that creates it: `drawseg_t` in `render_3d::bsp`, `visplane_t` in
+`render_3d::plane`, and `vissprite_t`, `spritedef_t`, `spriteframe_t` in
+`render_3d::things`. `mobj_t` (`p_mobj.h`) is in `play::mobj` and
+`divline_t` (`p_local.h`) in `play::maputl`.
 
 ## Function prefixes
 

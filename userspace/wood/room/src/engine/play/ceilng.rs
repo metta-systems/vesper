@@ -10,11 +10,10 @@
 use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::engine::{
-    c_ffi as cffi,
+    map::{line_t, sector_t},
     math::fixed::{fixed_t, FRACUNIT},
     play::{
         floor::T_MovePlane,
-        lights::{line_t, sector_t},
         setup::sectors,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
@@ -175,7 +174,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
             x if x == silentCrushAndRaise => {}
             _ => {
                 S_StartSound(
-                    &(*(*ceiling).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*ceiling).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Stnmov as i32,
                 );
             }
@@ -189,7 +188,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
             }
             x if x == silentCrushAndRaise => {
                 S_StartSound(
-                    &(*(*ceiling).sector).soundorg as *const [u8; 40] as *mut c_void,
+                    &(*(*ceiling).sector).soundorg as *const _ as *mut c_void,
                     Sfx::Pstop as i32,
                 );
             }
@@ -243,7 +242,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
+        secnum = P_FindSectorFromLineTag(line, secnum);
         secnum
     } >= 0
     {
@@ -264,7 +263,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
             unsafe fn(*mut ceiling_t),
             unsafe fn(*mut c_void),
         >(T_MoveCeiling));
-        (*ceiling).sector = sec as *mut sector_t;
+        (*ceiling).sector = sec;
         (*ceiling).crush = 0;
 
         match ceilingtype {

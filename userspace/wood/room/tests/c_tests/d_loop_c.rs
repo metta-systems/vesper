@@ -11,7 +11,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::doom::main_loop;
 
 // ---------------------------------------------------------------------------
 // BACKUPTICS constant
@@ -21,13 +21,13 @@ use room::engine::c_ffi;
 /// Increasing this would change memory layout for the tic-command arrays.
 #[test]
 fn backuptics_is_128() {
-    assert_eq!(c_ffi::BACKUPTICS, 128);
+    assert_eq!(main_loop::BACKUPTICS, 128);
 }
 
 /// BACKUPTICS is a power of two, enabling efficient modular indexing.
 #[test]
 fn backuptics_is_power_of_two() {
-    let n = c_ffi::BACKUPTICS;
+    let n = main_loop::BACKUPTICS;
     assert!(
         n > 0 && (n & (n - 1)) == 0,
         "BACKUPTICS={n} should be a power of two"
@@ -42,7 +42,7 @@ fn backuptics_is_power_of_two() {
 #[test]
 fn gametic_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::gametic }, 0, "gametic should be 0 at startup");
+        assert_eq!({ main_loop::gametic }, 0, "gametic should be 0 at startup");
     }
 }
 
@@ -56,7 +56,7 @@ fn gametic_default_zero() {
 fn ticdup_default_zero() {
     unsafe {
         assert_eq!(
-            { c_ffi::ticdup },
+            { main_loop::ticdup },
             0,
             "ticdup should be 0 before D_InitNetGame"
         );
@@ -72,7 +72,7 @@ fn ticdup_default_zero() {
 fn singletics_default_false() {
     unsafe {
         assert_eq!(
-            { c_ffi::singletics },
+            { main_loop::singletics },
             0,
             "singletics should be false at startup"
         );

@@ -12,7 +12,12 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, interface::video::SCREENWIDTH, math::fixed::FRACUNIT};
+use room::engine::{
+    c_ffi,
+    interface::video::SCREENWIDTH,
+    math::fixed::FRACUNIT,
+    render_3d::{things, things::spriteframe_t},
+};
 
 // ---------------------------------------------------------------------------
 // Constants derived from r_things.c / r_defs.h
@@ -44,19 +49,19 @@ fn baseycenter_is_100() {
 /// Total: 28 bytes, alignment 4.
 #[test]
 fn spriteframe_t_size_is_28() {
-    assert_eq!(std::mem::size_of::<c_ffi::spriteframe_t>(), 28);
+    assert_eq!(std::mem::size_of::<spriteframe_t>(), 28);
 }
 
 /// `spriteframe_t` alignment is 4 (dictated by the leading `int rotate` field).
 #[test]
 fn spriteframe_t_align_is_4() {
-    assert_eq!(std::mem::align_of::<c_ffi::spriteframe_t>(), 4);
+    assert_eq!(std::mem::align_of::<spriteframe_t>(), 4);
 }
 
 /// The `lump` field starts at offset 4 (after the 4-byte `rotate` int).
 #[test]
 fn spriteframe_t_lump_offset_is_4() {
-    let frame = c_ffi::spriteframe_t {
+    let frame = spriteframe_t {
         rotate: 0,
         lump: [0; 8],
         flip: [0; 8],
@@ -69,7 +74,7 @@ fn spriteframe_t_lump_offset_is_4() {
 /// The `flip` field starts at offset 20 (= 4 + 16).
 #[test]
 fn spriteframe_t_flip_offset_is_20() {
-    let frame = c_ffi::spriteframe_t {
+    let frame = spriteframe_t {
         rotate: 0,
         lump: [0; 8],
         flip: [0; 8],
@@ -88,7 +93,7 @@ fn spriteframe_t_flip_offset_is_20() {
 #[test]
 fn pspritescale_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::pspritescale }, 0);
+        assert_eq!({ things::pspritescale }, 0);
     }
 }
 
@@ -96,7 +101,7 @@ fn pspritescale_default_zero() {
 #[test]
 fn pspriteiscale_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::pspriteiscale }, 0);
+        assert_eq!({ things::pspriteiscale }, 0);
     }
 }
 
@@ -106,7 +111,7 @@ fn pspriteiscale_default_zero() {
 fn spritelights_initially_null() {
     unsafe {
         assert!(
-            c_ffi::spritelights.is_null(),
+            things::spritelights.is_null(),
             "spritelights should be NULL before rendering"
         );
     }
@@ -118,7 +123,7 @@ fn spritelights_initially_null() {
 fn sprites_pointer_initially_null() {
     unsafe {
         assert!(
-            c_ffi::sprites.is_null(),
+            things::sprites.is_null(),
             "sprites should be NULL before R_InitSprites"
         );
     }
@@ -128,7 +133,7 @@ fn sprites_pointer_initially_null() {
 #[test]
 fn numsprites_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::numsprites }, 0);
+        assert_eq!({ things::numsprites }, 0);
     }
 }
 
@@ -137,7 +142,7 @@ fn numsprites_default_zero() {
 #[test]
 fn maxframe_default_zero() {
     unsafe {
-        assert_eq!({ c_ffi::maxframe }, 0);
+        assert_eq!({ things::maxframe }, 0);
     }
 }
 
@@ -147,7 +152,7 @@ fn maxframe_default_zero() {
 fn spritename_initially_empty() {
     unsafe {
         assert!(
-            { c_ffi::spritename }.is_empty(),
+            { things::spritename }.is_empty(),
             "spritename should be empty before R_InitSprites"
         );
     }
@@ -162,7 +167,10 @@ fn spritename_initially_empty() {
 #[test]
 fn negonearray_length_is_screenwidth() {
     unsafe {
-        assert_eq!((*&raw const c_ffi::negonearray).len(), SCREENWIDTH as usize);
+        assert_eq!(
+            (*&raw const things::negonearray).len(),
+            SCREENWIDTH as usize
+        );
     }
 }
 
@@ -172,7 +180,7 @@ fn negonearray_length_is_screenwidth() {
 fn screenheightarray_length_is_screenwidth() {
     unsafe {
         assert_eq!(
-            (*&raw const c_ffi::screenheightarray).len(),
+            (*&raw const things::screenheightarray).len(),
             SCREENWIDTH as usize
         );
     }
@@ -183,10 +191,10 @@ fn screenheightarray_length_is_screenwidth() {
 #[test]
 fn clipping_arrays_start_zeroed() {
     unsafe {
-        for (i, &v) in (*&raw const c_ffi::negonearray).iter().enumerate() {
+        for (i, &v) in (*&raw const things::negonearray).iter().enumerate() {
             assert_eq!(v, 0, "negonearray[{i}] should be 0 before rendering");
         }
-        for (i, &v) in (*&raw const c_ffi::screenheightarray).iter().enumerate() {
+        for (i, &v) in (*&raw const things::screenheightarray).iter().enumerate() {
             assert_eq!(v, 0, "screenheightarray[{i}] should be 0 before rendering");
         }
     }
@@ -202,7 +210,7 @@ fn clipping_arrays_start_zeroed() {
 #[test]
 fn sprtemp_has_29_elements() {
     unsafe {
-        assert_eq!((*&raw const c_ffi::sprtemp).len(), 29);
+        assert_eq!((*&raw const things::sprtemp).len(), 29);
     }
 }
 
@@ -210,7 +218,7 @@ fn sprtemp_has_29_elements() {
 #[test]
 fn sprtemp_starts_zeroed() {
     unsafe {
-        for (i, frame) in (*&raw const c_ffi::sprtemp).iter().enumerate() {
+        for (i, frame) in (*&raw const things::sprtemp).iter().enumerate() {
             assert_eq!(frame.rotate, 0, "sprtemp[{i}].rotate");
             for (r, &l) in frame.lump.iter().enumerate() {
                 assert_eq!(l, 0, "sprtemp[{i}].lump[{r}]");

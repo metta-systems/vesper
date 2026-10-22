@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, interface::timer::TICRATE, math::fixed::FRACUNIT};
+use room::engine::{c_ffi, interface::timer::TICRATE, math::fixed::FRACUNIT, play::tick};
 
 // ---------------------------------------------------------------------------
 // leveltime — current game tic within the level
@@ -26,7 +26,7 @@ use room::engine::{c_ffi, interface::timer::TICRATE, math::fixed::FRACUNIT};
 fn leveltime_default_zero() {
     unsafe {
         assert_eq!(
-            { c_ffi::leveltime },
+            { tick::leveltime },
             0,
             "leveltime should be 0 before level load"
         );

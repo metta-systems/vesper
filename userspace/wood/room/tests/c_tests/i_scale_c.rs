@@ -21,7 +21,10 @@
 
 use room::engine::{
     c_ffi,
-    interface::video::{SCREENHEIGHT, SCREENWIDTH},
+    interface::{
+        scale,
+        video::{SCREENHEIGHT, SCREENWIDTH},
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -50,47 +53,47 @@ fn screenheight_4_3_is_240() {
 /// 1× scale: output is 320×200 — exactly the same as the source buffer.
 #[test]
 fn mode_scale_1x_is_320x200() {
-    assert_eq!(c_ffi::mode_scale_1x.width, 320, "mode_scale_1x.width");
-    assert_eq!(c_ffi::mode_scale_1x.height, 200, "mode_scale_1x.height");
+    assert_eq!(scale::mode_scale_1x.width, 320, "mode_scale_1x.width");
+    assert_eq!(scale::mode_scale_1x.height, 200, "mode_scale_1x.height");
 }
 
 /// 2× scale: each source pixel becomes a 2×2 block → 640×400.
 #[test]
 fn mode_scale_2x_is_640x400() {
-    assert_eq!(c_ffi::mode_scale_2x.width, 640, "mode_scale_2x.width");
-    assert_eq!(c_ffi::mode_scale_2x.height, 400, "mode_scale_2x.height");
+    assert_eq!(scale::mode_scale_2x.width, 640, "mode_scale_2x.width");
+    assert_eq!(scale::mode_scale_2x.height, 400, "mode_scale_2x.height");
 }
 
 /// 3× scale: 960×600.
 #[test]
 fn mode_scale_3x_is_960x600() {
-    assert_eq!(c_ffi::mode_scale_3x.width, 960, "mode_scale_3x.width");
-    assert_eq!(c_ffi::mode_scale_3x.height, 600, "mode_scale_3x.height");
+    assert_eq!(scale::mode_scale_3x.width, 960, "mode_scale_3x.width");
+    assert_eq!(scale::mode_scale_3x.height, 600, "mode_scale_3x.height");
 }
 
 /// 4× scale: 1280×800.
 #[test]
 fn mode_scale_4x_is_1280x800() {
-    assert_eq!(c_ffi::mode_scale_4x.width, 1280, "mode_scale_4x.width");
-    assert_eq!(c_ffi::mode_scale_4x.height, 800, "mode_scale_4x.height");
+    assert_eq!(scale::mode_scale_4x.width, 1280, "mode_scale_4x.width");
+    assert_eq!(scale::mode_scale_4x.height, 800, "mode_scale_4x.height");
 }
 
 /// 5× scale: 1600×1000.
 #[test]
 fn mode_scale_5x_is_1600x1000() {
-    assert_eq!(c_ffi::mode_scale_5x.width, 1600, "mode_scale_5x.width");
-    assert_eq!(c_ffi::mode_scale_5x.height, 1000, "mode_scale_5x.height");
+    assert_eq!(scale::mode_scale_5x.width, 1600, "mode_scale_5x.width");
+    assert_eq!(scale::mode_scale_5x.height, 1000, "mode_scale_5x.height");
 }
 
 /// All scale-mode widths are `N × SCREENWIDTH` for N in 1..=5.
 #[test]
 fn scale_mode_widths_are_multiples_of_screenwidth() {
     let modes = [
-        (1, c_ffi::mode_scale_1x.width),
-        (2, c_ffi::mode_scale_2x.width),
-        (3, c_ffi::mode_scale_3x.width),
-        (4, c_ffi::mode_scale_4x.width),
-        (5, c_ffi::mode_scale_5x.width),
+        (1, scale::mode_scale_1x.width),
+        (2, scale::mode_scale_2x.width),
+        (3, scale::mode_scale_3x.width),
+        (4, scale::mode_scale_4x.width),
+        (5, scale::mode_scale_5x.width),
     ];
     for (n, w) in modes {
         assert_eq!(w, n * SCREENWIDTH, "mode_scale_{n}x width mismatch");
@@ -101,11 +104,11 @@ fn scale_mode_widths_are_multiples_of_screenwidth() {
 #[test]
 fn scale_mode_heights_are_multiples_of_screenheight() {
     let modes = [
-        (1, c_ffi::mode_scale_1x.height),
-        (2, c_ffi::mode_scale_2x.height),
-        (3, c_ffi::mode_scale_3x.height),
-        (4, c_ffi::mode_scale_4x.height),
-        (5, c_ffi::mode_scale_5x.height),
+        (1, scale::mode_scale_1x.height),
+        (2, scale::mode_scale_2x.height),
+        (3, scale::mode_scale_3x.height),
+        (4, scale::mode_scale_4x.height),
+        (5, scale::mode_scale_5x.height),
     ];
     for (n, h) in modes {
         assert_eq!(h, n * SCREENHEIGHT, "mode_scale_{n}x height mismatch");
@@ -118,27 +121,27 @@ fn scale_mode_heights_are_multiples_of_screenheight() {
 #[test]
 fn scale_modes_not_poor_quality() {
     assert_eq!(
-        c_ffi::mode_scale_1x.poor_quality,
+        scale::mode_scale_1x.poor_quality,
         0,
         "mode_scale_1x.poor_quality"
     );
     assert_eq!(
-        c_ffi::mode_scale_2x.poor_quality,
+        scale::mode_scale_2x.poor_quality,
         0,
         "mode_scale_2x.poor_quality"
     );
     assert_eq!(
-        c_ffi::mode_scale_3x.poor_quality,
+        scale::mode_scale_3x.poor_quality,
         0,
         "mode_scale_3x.poor_quality"
     );
     assert_eq!(
-        c_ffi::mode_scale_4x.poor_quality,
+        scale::mode_scale_4x.poor_quality,
         0,
         "mode_scale_4x.poor_quality"
     );
     assert_eq!(
-        c_ffi::mode_scale_5x.poor_quality,
+        scale::mode_scale_5x.poor_quality,
         0,
         "mode_scale_5x.poor_quality"
     );
@@ -148,15 +151,15 @@ fn scale_modes_not_poor_quality() {
 #[test]
 fn scale_modes_have_draw_fn() {
     assert!(
-        c_ffi::mode_scale_1x.draw_screen.is_some(),
+        scale::mode_scale_1x.draw_screen.is_some(),
         "mode_scale_1x.draw_screen should not be null"
     );
     assert!(
-        c_ffi::mode_scale_2x.draw_screen.is_some(),
+        scale::mode_scale_2x.draw_screen.is_some(),
         "mode_scale_2x.draw_screen should not be null"
     );
     assert!(
-        c_ffi::mode_scale_5x.draw_screen.is_some(),
+        scale::mode_scale_5x.draw_screen.is_some(),
         "mode_scale_5x.draw_screen should not be null"
     );
 }
@@ -170,8 +173,8 @@ fn scale_modes_have_draw_fn() {
 /// be interpolated with its neighbour.
 #[test]
 fn mode_stretch_1x_is_320x240() {
-    assert_eq!(c_ffi::mode_stretch_1x.width, 320, "mode_stretch_1x.width");
-    assert_eq!(c_ffi::mode_stretch_1x.height, 240, "mode_stretch_1x.height");
+    assert_eq!(scale::mode_stretch_1x.width, 320, "mode_stretch_1x.width");
+    assert_eq!(scale::mode_stretch_1x.height, 240, "mode_stretch_1x.height");
 }
 
 /// The 1× stretch mode is flagged as poor quality (blended interpolation
@@ -179,7 +182,7 @@ fn mode_stretch_1x_is_320x240() {
 #[test]
 fn mode_stretch_1x_is_poor_quality() {
     assert_ne!(
-        c_ffi::mode_stretch_1x.poor_quality,
+        scale::mode_stretch_1x.poor_quality,
         0,
         "mode_stretch_1x.poor_quality should be true"
     );
@@ -189,10 +192,10 @@ fn mode_stretch_1x_is_poor_quality() {
 /// this mode is *not* poor quality.
 #[test]
 fn mode_stretch_2x_is_640x480() {
-    assert_eq!(c_ffi::mode_stretch_2x.width, 640, "mode_stretch_2x.width");
-    assert_eq!(c_ffi::mode_stretch_2x.height, 480, "mode_stretch_2x.height");
+    assert_eq!(scale::mode_stretch_2x.width, 640, "mode_stretch_2x.width");
+    assert_eq!(scale::mode_stretch_2x.height, 480, "mode_stretch_2x.height");
     assert_eq!(
-        c_ffi::mode_stretch_2x.poor_quality,
+        scale::mode_stretch_2x.poor_quality,
         0,
         "mode_stretch_2x.poor_quality"
     );
@@ -201,33 +204,33 @@ fn mode_stretch_2x_is_640x480() {
 /// 3× stretch: 960×720.
 #[test]
 fn mode_stretch_3x_is_960x720() {
-    assert_eq!(c_ffi::mode_stretch_3x.width, 960);
-    assert_eq!(c_ffi::mode_stretch_3x.height, 720);
+    assert_eq!(scale::mode_stretch_3x.width, 960);
+    assert_eq!(scale::mode_stretch_3x.height, 720);
 }
 
 /// 4× stretch: 1280×960.
 #[test]
 fn mode_stretch_4x_is_1280x960() {
-    assert_eq!(c_ffi::mode_stretch_4x.width, 1280);
-    assert_eq!(c_ffi::mode_stretch_4x.height, 960);
+    assert_eq!(scale::mode_stretch_4x.width, 1280);
+    assert_eq!(scale::mode_stretch_4x.height, 960);
 }
 
 /// 5× stretch: 1600×1200.
 #[test]
 fn mode_stretch_5x_is_1600x1200() {
-    assert_eq!(c_ffi::mode_stretch_5x.width, 1600);
-    assert_eq!(c_ffi::mode_stretch_5x.height, 1200);
+    assert_eq!(scale::mode_stretch_5x.width, 1600);
+    assert_eq!(scale::mode_stretch_5x.height, 1200);
 }
 
 /// Stretch-mode widths are `N × SCREENWIDTH` for N in 1..=5.
 #[test]
 fn stretch_mode_widths_are_n_times_screenwidth() {
     let modes = [
-        (1, c_ffi::mode_stretch_1x.width),
-        (2, c_ffi::mode_stretch_2x.width),
-        (3, c_ffi::mode_stretch_3x.width),
-        (4, c_ffi::mode_stretch_4x.width),
-        (5, c_ffi::mode_stretch_5x.width),
+        (1, scale::mode_stretch_1x.width),
+        (2, scale::mode_stretch_2x.width),
+        (3, scale::mode_stretch_3x.width),
+        (4, scale::mode_stretch_4x.width),
+        (5, scale::mode_stretch_5x.width),
     ];
     for (n, w) in modes {
         assert_eq!(w, n * SCREENWIDTH, "mode_stretch_{n}x width mismatch");
@@ -238,11 +241,11 @@ fn stretch_mode_widths_are_n_times_screenwidth() {
 #[test]
 fn stretch_mode_heights_are_n_times_screenheight_4_3() {
     let modes = [
-        (1, c_ffi::mode_stretch_1x.height),
-        (2, c_ffi::mode_stretch_2x.height),
-        (3, c_ffi::mode_stretch_3x.height),
-        (4, c_ffi::mode_stretch_4x.height),
-        (5, c_ffi::mode_stretch_5x.height),
+        (1, scale::mode_stretch_1x.height),
+        (2, scale::mode_stretch_2x.height),
+        (3, scale::mode_stretch_3x.height),
+        (4, scale::mode_stretch_4x.height),
+        (5, scale::mode_stretch_5x.height),
     ];
     for (n, h) in modes {
         assert_eq!(
@@ -262,15 +265,15 @@ fn stretch_mode_heights_are_n_times_screenheight_4_3() {
 /// quality because some source pixels are entirely discarded.
 #[test]
 fn mode_squash_1x_is_256x200() {
-    assert_eq!(c_ffi::mode_squash_1x.width, 256, "mode_squash_1x.width");
-    assert_eq!(c_ffi::mode_squash_1x.height, 200, "mode_squash_1x.height");
+    assert_eq!(scale::mode_squash_1x.width, 256, "mode_squash_1x.width");
+    assert_eq!(scale::mode_squash_1x.height, 200, "mode_squash_1x.height");
 }
 
 /// The 1× squash mode is poor quality.
 #[test]
 fn mode_squash_1x_is_poor_quality() {
     assert_ne!(
-        c_ffi::mode_squash_1x.poor_quality,
+        scale::mode_squash_1x.poor_quality,
         0,
         "mode_squash_1x.poor_quality should be true"
     );
@@ -279,8 +282,8 @@ fn mode_squash_1x_is_poor_quality() {
 /// 2× squash: 512×400.
 #[test]
 fn mode_squash_2x_is_512x400() {
-    assert_eq!(c_ffi::mode_squash_2x.width, 512);
-    assert_eq!(c_ffi::mode_squash_2x.height, 400);
+    assert_eq!(scale::mode_squash_2x.width, 512);
+    assert_eq!(scale::mode_squash_2x.height, 400);
 }
 
 /// 3× squash: 800×600.  This is a quirk of the original C code: rather than
@@ -288,22 +291,22 @@ fn mode_squash_2x_is_512x400() {
 /// standard monitor resolution (800×600).
 #[test]
 fn mode_squash_3x_is_800x600() {
-    assert_eq!(c_ffi::mode_squash_3x.width, 800);
-    assert_eq!(c_ffi::mode_squash_3x.height, 600);
+    assert_eq!(scale::mode_squash_3x.width, 800);
+    assert_eq!(scale::mode_squash_3x.height, 600);
 }
 
 /// 4× squash: 1024×800.
 #[test]
 fn mode_squash_4x_is_1024x800() {
-    assert_eq!(c_ffi::mode_squash_4x.width, 1024);
-    assert_eq!(c_ffi::mode_squash_4x.height, 800);
+    assert_eq!(scale::mode_squash_4x.width, 1024);
+    assert_eq!(scale::mode_squash_4x.height, 800);
 }
 
 /// 5× squash: 1280×1000.
 #[test]
 fn mode_squash_5x_is_1280x1000() {
-    assert_eq!(c_ffi::mode_squash_5x.width, 1280);
-    assert_eq!(c_ffi::mode_squash_5x.height, 1000);
+    assert_eq!(scale::mode_squash_5x.width, 1280);
+    assert_eq!(scale::mode_squash_5x.height, 1000);
 }
 
 /// Squash-mode widths are `N × c_ffi::SCREENWIDTH_4_3` for N in 1, 2, 4, 5.
@@ -312,11 +315,11 @@ fn mode_squash_5x_is_1280x1000() {
 #[test]
 fn squash_mode_widths_are_n_times_screenwidth_4_3() {
     let modes = [
-        (1, c_ffi::mode_squash_1x.width),
-        (2, c_ffi::mode_squash_2x.width),
+        (1, scale::mode_squash_1x.width),
+        (2, scale::mode_squash_2x.width),
         // 3x is deliberately skipped — it uses 800 instead of 768
-        (4, c_ffi::mode_squash_4x.width),
-        (5, c_ffi::mode_squash_5x.width),
+        (4, scale::mode_squash_4x.width),
+        (5, scale::mode_squash_5x.width),
     ];
     for (n, w) in modes {
         assert_eq!(
@@ -327,12 +330,12 @@ fn squash_mode_widths_are_n_times_screenwidth_4_3() {
     }
     // The 3x quirk: 800 ≠ 3 × 256
     assert_eq!(
-        c_ffi::mode_squash_3x.width,
+        scale::mode_squash_3x.width,
         800,
         "mode_squash_3x.width quirk"
     );
     assert_ne!(
-        c_ffi::mode_squash_3x.width,
+        scale::mode_squash_3x.width,
         3 * c_ffi::SCREENWIDTH_4_3,
         "mode_squash_3x should NOT follow the formula"
     );
@@ -342,11 +345,11 @@ fn squash_mode_widths_are_n_times_screenwidth_4_3() {
 #[test]
 fn squash_mode_heights_are_n_times_screenheight() {
     let modes = [
-        (1, c_ffi::mode_squash_1x.height),
-        (2, c_ffi::mode_squash_2x.height),
-        (3, c_ffi::mode_squash_3x.height),
-        (4, c_ffi::mode_squash_4x.height),
-        (5, c_ffi::mode_squash_5x.height),
+        (1, scale::mode_squash_1x.height),
+        (2, scale::mode_squash_2x.height),
+        (3, scale::mode_squash_3x.height),
+        (4, scale::mode_squash_4x.height),
+        (5, scale::mode_squash_5x.height),
     ];
     for (n, h) in modes {
         assert_eq!(h, n * SCREENHEIGHT, "mode_squash_{n}x height mismatch");

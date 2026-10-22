@@ -25,7 +25,7 @@ use std::ptr;
 use crate::{
     c_write,
     engine::{
-        c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS},
+        c_ffi::{LinedefFlag, MAPBLOCKUNITS},
         dehacked::DEH_String,
         doom::{
             event::event_t,
@@ -950,8 +950,8 @@ unsafe fn AM_restoreScaleAndLoc() {
         m_x = old_m_x;
         m_y = old_m_y;
     } else {
-        m_x = (*((*plr).mo as *mut mobj_t)).x - m_w / 2;
-        m_y = (*((*plr).mo as *mut mobj_t)).y - m_h / 2;
+        m_x = (*(*plr).mo).x - m_w / 2;
+        m_y = (*(*plr).mo).y - m_h / 2;
     }
     m_x2 = m_x + m_w;
     m_y2 = m_y + m_h;
@@ -1096,8 +1096,8 @@ unsafe fn AM_initVariables() {
         }
     }
 
-    m_x = (*((*plr).mo as *mut mobj_t)).x - m_w / 2;
-    m_y = (*((*plr).mo as *mut mobj_t)).y - m_h / 2;
+    m_x = (*(*plr).mo).x - m_w / 2;
+    m_y = (*(*plr).mo).y - m_h / 2;
     AM_changeWindowLoc();
 
     old_m_x = m_x;
@@ -1439,15 +1439,13 @@ unsafe fn AM_changeWindowScale() {
 ///
 /// `plr` must be a valid pointer; reads mutable statics.
 unsafe fn AM_doFollowPlayer() {
-    if f_oldloc.x != (*((*plr).mo as *mut mobj_t)).x
-        || f_oldloc.y != (*((*plr).mo as *mut mobj_t)).y
-    {
-        m_x = FTOM(MTOF((*((*plr).mo as *mut mobj_t)).x)) - m_w / 2;
-        m_y = FTOM(MTOF((*((*plr).mo as *mut mobj_t)).y)) - m_h / 2;
+    if f_oldloc.x != (*(*plr).mo).x || f_oldloc.y != (*(*plr).mo).y {
+        m_x = FTOM(MTOF((*(*plr).mo).x)) - m_w / 2;
+        m_y = FTOM(MTOF((*(*plr).mo).y)) - m_h / 2;
         m_x2 = m_x + m_w;
         m_y2 = m_y + m_h;
-        f_oldloc.x = (*((*plr).mo as *mut mobj_t)).x;
-        f_oldloc.y = (*((*plr).mo as *mut mobj_t)).y;
+        f_oldloc.x = (*(*plr).mo).x;
+        f_oldloc.y = (*(*plr).mo).y;
     }
 }
 
@@ -1859,8 +1857,8 @@ unsafe fn AM_drawWalls() {
             if li.backsector.is_null() {
                 AM_drawMline(&raw mut l, WALLCOLORS + lightlev);
             } else {
-                let back = li.backsector as *mut sector_t;
-                let front = li.frontsector as *mut sector_t;
+                let back = li.backsector;
+                let front = li.frontsector;
                 if li.special == 39 {
                     // teleporters
                     AM_drawMline(&raw mut l, WALLCOLORS + WALLRANGE / 2);
@@ -1995,20 +1993,20 @@ unsafe fn AM_drawPlayers() {
                 CHEAT_ARROW.as_ptr() as *mut mline_t,
                 CHEAT_ARROW.len() as i32,
                 0,
-                (*((*plr).mo as *mut mobj_t)).angle,
+                (*(*plr).mo).angle,
                 WHITE,
-                (*((*plr).mo as *mut mobj_t)).x,
-                (*((*plr).mo as *mut mobj_t)).y,
+                (*(*plr).mo).x,
+                (*(*plr).mo).y,
             );
         } else {
             AM_drawLineCharacter(
                 PLAYER_ARROW.as_ptr() as *mut mline_t,
                 PLAYER_ARROW.len() as i32,
                 0,
-                (*((*plr).mo as *mut mobj_t)).angle,
+                (*(*plr).mo).angle,
                 WHITE,
-                (*((*plr).mo as *mut mobj_t)).x,
-                (*((*plr).mo as *mut mobj_t)).y,
+                (*(*plr).mo).x,
+                (*(*plr).mo).y,
             );
         }
         return;
@@ -2037,10 +2035,10 @@ unsafe fn AM_drawPlayers() {
             PLAYER_ARROW.as_ptr() as *mut mline_t,
             PLAYER_ARROW.len() as i32,
             0,
-            (*((*p).mo as *mut mobj_t)).angle,
+            (*(*p).mo).angle,
             color,
-            (*((*p).mo as *mut mobj_t)).x,
-            (*((*p).mo as *mut mobj_t)).y,
+            (*(*p).mo).x,
+            (*(*p).mo).y,
         );
     }
 }
@@ -2059,7 +2057,7 @@ unsafe fn AM_drawPlayers() {
 /// properly terminated.
 unsafe fn AM_drawThings(colors: i32, _colorrange: i32) {
     for i in 0..numsectors {
-        let mut t = (*sectors.add(i as usize)).thinglist as *mut mobj_t;
+        let mut t = (*sectors.add(i as usize)).thinglist;
         while !t.is_null() {
             AM_drawLineCharacter(
                 THINTRIANGLE_GUY.as_ptr() as *mut mline_t,
@@ -2070,7 +2068,7 @@ unsafe fn AM_drawThings(colors: i32, _colorrange: i32) {
                 (*t).x,
                 (*t).y,
             );
-            t = (*t).snext as *mut mobj_t;
+            t = (*t).snext;
         }
     }
 }

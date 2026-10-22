@@ -11,10 +11,11 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::ITEMQUESIZE,
+    c_ffi::{mobjinfo_t, state_t, ITEMQUESIZE},
     doom::player::{PlayerMessage, PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
+    map::subsector_t,
     math::{
         fixed::{FixedMul, FRACBITS, FRACUNIT},
         tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT},
@@ -24,7 +25,6 @@ use crate::engine::{
         info::{self, *},
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
-        telept::{line_t, mobj_t, subsector_t},
         tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
@@ -84,9 +84,97 @@ use crate::engine::{
     zone::Z_Malloc,
 };
 
-/// Type alias used for cross-module pointer casts where both sides are
-/// `#[repr(C)]`-identical `mobj_t` definitions.
-type CffiMobj = crate::engine::c_ffi::mobj_t;
+/// Opaque stand-in for the C `player_s` struct; only used via raw pointer
+/// and cast to [`PlayerT`] where the fields are needed.
+pub enum player_s {}
+
+/// A map object (thing) that lives in the world and can think each tic
+/// (`mobj_t` in `p_mobj.h`).
+///
+/// `repr(C)` because the `thinker` field must be at offset 0 so that a
+/// `*mut mobj_t` can be cast to `*mut thinker_t` and back.
+///
+/// Padding bytes (`_pad0`–`_pad4`) fill gaps that C compilers insert for
+/// alignment; they have no semantic meaning in this port.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mobj_t {
+    /// Thinker header — must be the very first field (offset 0).
+    pub thinker: thinker_t,
+    /// Map X position in fixed-point units.
+    pub x: i32,
+    /// Map Y position in fixed-point units.
+    pub y: i32,
+    /// Map Z position (height above the floor) in fixed-point units.
+    pub z: i32,
+    _pad0: [u8; 4],
+    /// Next thing in this sector's sprite-order linked list.
+    pub snext: *mut mobj_t,
+    /// Previous thing in this sector's sprite-order linked list.
+    pub sprev: *mut mobj_t,
+    /// Facing angle in binary radians (BAMs); 0 = East.
+    pub angle: u32,
+    /// Current sprite number.
+    pub sprite: i32,
+    /// Current animation frame index.
+    pub frame: i32,
+    _pad1: [u8; 4],
+    /// Next thing in the blockmap block's linked list.
+    pub bnext: *mut mobj_t,
+    /// Previous thing in the blockmap block's linked list.
+    pub bprev: *mut mobj_t,
+    /// The sub-sector this thing currently occupies.
+    pub subsector: *mut subsector_t,
+    /// Floor height at the thing's current position.
+    pub floorz: i32,
+    /// Ceiling height at the thing's current position.
+    pub ceilingz: i32,
+    /// Collision radius in fixed-point units.
+    pub radius: i32,
+    /// Collision height in fixed-point units.
+    pub height: i32,
+    /// X momentum applied each tic.
+    pub momx: i32,
+    /// Y momentum applied each tic.
+    pub momy: i32,
+    /// Z momentum applied each tic.
+    pub momz: i32,
+    /// Used to avoid processing the same thing twice in a single traversal.
+    pub validcount: i32,
+    /// Thing type index into the `mobjinfo` table (`type` in C).
+    pub type_: i32,
+    _pad2: [u8; 4],
+    /// Pointer to the thing's type info record.
+    pub info: *mut mobjinfo_t,
+    /// Remaining tics in the current animation frame.
+    pub tics: i32,
+    _pad3: [u8; 4],
+    /// Pointer to the current animation frame state.
+    pub state: *mut state_t,
+    /// Bit-field of `MF_*` flags controlling collision, rendering, AI, etc.
+    pub flags: i32,
+    /// Current hit points.
+    pub health: i32,
+    /// Current movement direction (0–7 compass directions, or `DI_NODIR`).
+    pub movedir: i32,
+    /// Tics remaining before the thing attempts a new movement decision.
+    pub movecount: i32,
+    /// Primary AI target (usually the last thing to attack this one).
+    pub target: *mut mobj_t,
+    /// Tics the thing must wait before it can attack again.
+    pub reactiontime: i32,
+    /// Decremented each tic while pursuing a target; reset on target change.
+    pub threshold: i32,
+    /// Non-null if this thing is a player; points to the `PlayerT` record.
+    pub player: *mut player_s,
+    /// Index used to cycle through potential targets during `P_LookForPlayers`.
+    pub lastlook: i32,
+    /// The WAD spawn point from which this thing was created.
+    pub spawnpoint: mapthing_t,
+    _pad4: [u8; 2],
+    /// Tracer target used by homing missiles (cyberdemon rockets, etc.).
+    pub tracer: *mut mobj_t,
+}
 
 /// Circular queue of map-thing spawn records for items that need to respawn.
 ///
@@ -133,12 +221,12 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
     let mut state = state;
     loop {
         if state == S_NULL {
-            mobj.state = S_NULL as *mut State as *mut crate::engine::play::telept::state_t;
+            mobj.state = S_NULL as *mut State as *mut state_t;
             P_RemoveMobj(mobj as *mut mobj_t);
             return 0;
         }
         let st = &mut info::states[state as usize] as *mut State;
-        mobj.state = st as *mut crate::engine::play::telept::state_t;
+        mobj.state = st as *mut state_t;
         mobj.tics = (*st).tics;
         mobj.sprite = (*st).sprite;
         mobj.frame = (*st).frame;
@@ -225,13 +313,13 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             ymove = 0;
         }
 
-        if P_TryMove(mo as *mut _ as *mut CffiMobj, ptryx, ptryy) == 0 {
+        if P_TryMove(mo as *mut mobj_t, ptryx, ptryy) == 0 {
             if !mo.player.is_null() {
-                P_SlideMove(mo as *mut _ as *mut CffiMobj);
+                P_SlideMove(mo as *mut mobj_t);
             } else if mo.flags & MF_MISSILE != 0 {
                 let cl = ceilingline;
                 if !cl.is_null() {
-                    let line = cl as *mut line_t;
+                    let line = cl;
                     if !(*line).backsector.is_null()
                         && (*(*line).backsector).ceilingpic == skyflatnum as i16
                     {
@@ -393,7 +481,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     let x = (mobj.spawnpoint.x.get() as i32) << FRACBITS;
     let y = (mobj.spawnpoint.y.get() as i32) << FRACBITS;
-    if P_CheckPosition(mobj as *mut _ as *mut CffiMobj, x, y) == 0 {
+    if P_CheckPosition(mobj as *mut mobj_t, x, y) == 0 {
         return;
     }
 
@@ -405,7 +493,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     );
     S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
 
-    let ss = R_PointInSubsector(x, y) as *mut subsector_t;
+    let ss = R_PointInSubsector(x, y);
     mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_TFOG);
     S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
 
@@ -417,7 +505,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         ONFLOORZ
     };
 
-    mo = P_SpawnMobj(x, y, z, mobj.mobjtype);
+    mo = P_SpawnMobj(x, y, z, mobj.type_);
     (*mo).spawnpoint = mobj.spawnpoint;
     (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
@@ -502,8 +590,8 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, type_: i32) -> *mut mobj_t {
     let mobj_ref = &mut *mobj;
     let info = &mut info::mobjinfo[type_ as usize] as *mut MobjInfo;
 
-    mobj_ref.mobjtype = type_;
-    mobj_ref.info = info as *mut crate::engine::play::telept::mobjinfo_t;
+    mobj_ref.type_ = type_;
+    mobj_ref.info = info as *mut mobjinfo_t;
     mobj_ref.x = x;
     mobj_ref.y = y;
     mobj_ref.radius = (*info).radius;
@@ -519,12 +607,12 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, type_: i32) -> *mut mobj_t {
     mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
 
     let st = &mut info::states[(*info).spawnstate as usize] as *mut State;
-    mobj_ref.state = st as *mut crate::engine::play::telept::state_t;
+    mobj_ref.state = st as *mut state_t;
     mobj_ref.tics = (*st).tics;
     mobj_ref.sprite = (*st).sprite;
     mobj_ref.frame = (*st).frame;
 
-    P_SetThingPosition(mobj as *mut crate::engine::c_ffi::mobj_t);
+    P_SetThingPosition(mobj);
 
     mobj_ref.floorz = (*(*mobj_ref.subsector).sector).floorheight;
     mobj_ref.ceilingz = (*(*mobj_ref.subsector).sector).ceilingheight;
@@ -562,8 +650,8 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     if mobj.flags & MF_SPECIAL != 0
         && mobj.flags & MF_DROPPED == 0
-        && mobj.mobjtype != MT_INV
-        && mobj.mobjtype != MT_INS
+        && mobj.type_ != MT_INV
+        && mobj.type_ != MT_INS
     {
         itemrespawnque[iquehead as usize] = mobj.spawnpoint;
         itemrespawntime[iquehead as usize] = leveltime;
@@ -573,7 +661,7 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
         }
     }
 
-    P_UnsetThingPosition(mobj as *mut mobj_t as *mut crate::engine::c_ffi::mobj_t);
+    P_UnsetThingPosition(mobj as *mut mobj_t);
     S_StopSound(mobj as *mut mobj_t as *mut MobjStub);
     P_RemoveThinker(&mut mobj.thinker as *mut thinker_t);
 }
@@ -602,7 +690,7 @@ pub unsafe fn P_RespawnSpecials() {
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
 
-    let ss = R_PointInSubsector(x, y) as *mut subsector_t;
+    let ss = R_PointInSubsector(x, y);
     let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
     S_StartSound(mo as *mut c_void, Sfx::Itmbk as i32);
 
@@ -663,10 +751,10 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     }
 
     (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    (*mobj).player = p as *mut crate::engine::play::telept::player_s;
+    (*mobj).player = p as *mut player_s;
     (*mobj).health = (*p).health;
 
-    (*p).mo = mobj as *mut crate::engine::doom::player::mobj_t;
+    (*p).mo = mobj;
     (*p).playerstate = PST_LIVE;
     (*p).refire = 0;
     (*p).message = PlayerMessage::NONE;
@@ -860,7 +948,7 @@ pub unsafe fn P_CheckMissileSpawn(th: *mut mobj_t) {
     th.x += th.momx >> 1;
     th.y += th.momy >> 1;
     th.z += th.momz >> 1;
-    if P_TryMove(th as *mut _ as *mut CffiMobj, th.x, th.y) == 0 {
+    if P_TryMove(th as *mut mobj_t, th.x, th.y) == 0 {
         P_ExplodeMissile(th as *mut mobj_t);
     }
 }
@@ -940,14 +1028,14 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: i32)
 pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: i32) {
     let source = &mut *source;
     let mut an = source.angle;
-    let mut slope = P_AimLineAttack(source as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+    let mut slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
 
     if linetarget.is_null() {
         an = an.wrapping_add(1 << 26);
-        slope = P_AimLineAttack(source as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+        slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
         if linetarget.is_null() {
             an = an.wrapping_sub(2 << 26);
-            slope = P_AimLineAttack(source as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
+            slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
             if linetarget.is_null() {
                 an = source.angle;
                 slope = 0;

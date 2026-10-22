@@ -36,8 +36,8 @@ use {crate::i_error, std::ffi::c_void};
 use {std::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
-    c_ffi::mobj_t,
     math::fixed::FRACBITS,
+    play::mobj::mobj_t,
     zone::{PU_CACHE, PU_STATIC},
 };
 
@@ -98,34 +98,6 @@ struct texture_t {
     patchcount: i16,
     /// First patch descriptor; additional patches follow contiguously.
     patches: texpatch_t,
-}
-
-/// Per-rotation frame data for one sprite animation frame (C layout).
-///
-/// Corresponds to `spriteframe_t` in `r_local.h`.  `lump[r]` is the WAD
-/// lump offset from `firstspritelump` for rotation `r`; `flip[r]` is non-zero
-/// if that rotation should be drawn mirrored.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct spriteframe_t {
-    /// Non-zero if the sprite has per-rotation variants; 0 for a single view.
-    pub rotate: i32,
-    /// Lump offsets (from `firstspritelump`) for each of the 8 rotations.
-    pub lump: [i16; 8],
-    /// Mirror flags for each rotation (non-zero = draw flipped).
-    pub flip: [u8; 8],
-}
-
-/// Sprite definition holding all animation frames for one sprite class (C layout).
-///
-/// Corresponds to `spritedef_t` in `r_local.h`.  `spriteframes` points to a
-/// heap-allocated array of `numframes` `spriteframe_t` entries.
-#[repr(C)]
-struct spritedef_t {
-    /// Number of animation frames.
-    pub numframes: i32,
-    /// Heap-allocated array of frame descriptors, length `numframes`.
-    pub spriteframes: *mut spriteframe_t,
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,7 +1107,7 @@ pub unsafe fn R_PrecacheLevel() {
         if *spritepresent.add(i) == 0 {
             continue;
         }
-        let sprdef = (sprites as *mut spritedef_t).add(i);
+        let sprdef = sprites.add(i);
         for j in 0..(*sprdef).numframes as usize {
             let sf = (*sprdef).spriteframes.add(j);
             for k in 0..8usize {
