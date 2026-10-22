@@ -1210,7 +1210,7 @@ unsafe fn set_mouse_buttons(buttons_mask: u32) {
 ///   button press pops the main menu.
 /// * In `GS_LEVEL`, defers to HU / ST / AM responders in order.
 /// * In `GS_FINALE`, defers to `F_Responder`.
-/// * Otherwise routes by `event_t::type_`: keydown updates `GAMEKEYDOWN`
+/// * Otherwise routes by `event_t::kind`: keydown updates `GAMEKEYDOWN`
 ///   (with `key_pause` setting `sendpause`), keyup clears it, mouse and
 ///   joystick events latch axes and buttons.
 ///
@@ -1222,7 +1222,7 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
 
     // Spy mode changes even during demo
     if gamestate == GS_LEVEL
-        && ev.type_ == 0 // ev_keydown
+        && ev.kind == 0 // ev_keydown
         && ev.data1 == key_spy
         && (singledemo != 0 || deathmatch == 0)
     {
@@ -1243,9 +1243,9 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
         && singledemo == 0
         && (demoplayback != 0 || gamestate == GS_DEMOSCREEN)
     {
-        if ev.type_ == 0 // ev_keydown
-            || (ev.type_ == 2 && ev.data1 != 0) // ev_mouse with buttons
-            || (ev.type_ == 3 && ev.data1 != 0)
+        if ev.kind == 0 // ev_keydown
+            || (ev.kind == 2 && ev.data1 != 0) // ev_mouse with buttons
+            || (ev.kind == 3 && ev.data1 != 0)
         // ev_joystick with buttons
         {
             M_StartControlPanel();
@@ -1270,19 +1270,19 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
         return 1;
     }
 
-    if testcontrols != 0 && ev.type_ == 2 {
+    if testcontrols != 0 && ev.kind == 2 {
         // ev_mouse
         testcontrols_mousespeed = ev.data2.abs();
     }
 
     // Prev/next weapon keys
-    if ev.type_ == 0 && ev.data1 == key_prevweapon {
+    if ev.kind == 0 && ev.data1 == key_prevweapon {
         NEXT_WEAPON = -1;
-    } else if ev.type_ == 0 && ev.data1 == key_nextweapon {
+    } else if ev.kind == 0 && ev.data1 == key_nextweapon {
         NEXT_WEAPON = 1;
     }
 
-    match ev.type_ {
+    match ev.kind {
         0 => {
             // ev_keydown
             if ev.data1 == key_pause {
@@ -1679,7 +1679,7 @@ pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
     for _ in 0..20 {
         let i = (P_Random() % selections) as usize;
         if G_CheckSpot(playernum, &raw mut deathmatchstarts[i]) != 0 {
-            deathmatchstarts[i].r#type.set((playernum + 1) as i16);
+            deathmatchstarts[i].kind.set((playernum + 1) as i16);
             P_SpawnPlayer(&raw mut deathmatchstarts[i]);
             return;
         }
@@ -1723,9 +1723,9 @@ pub unsafe fn G_DoReborn(playernum: i32) {
 
         for i in 0..MAXPLAYERS as i32 {
             if G_CheckSpot(playernum, &raw mut playerstarts[i as usize]) != 0 {
-                playerstarts[i as usize].r#type.set((playernum + 1) as i16);
+                playerstarts[i as usize].kind.set((playernum + 1) as i16);
                 P_SpawnPlayer(&raw mut playerstarts[i as usize]);
-                playerstarts[i as usize].r#type.set((i + 1) as i16);
+                playerstarts[i as usize].kind.set((i + 1) as i16);
                 return;
             }
         }

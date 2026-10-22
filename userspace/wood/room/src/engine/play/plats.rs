@@ -114,7 +114,7 @@ pub struct plat_t {
     /// Linedef tag that activated this platform.
     pub tag: i32,
     /// Platform behaviour type (one of the `plattype_e` integer constants).
-    pub r#type: i32,
+    pub kind: i32,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -132,7 +132,7 @@ mod layout_checks {
     const _: () = assert!(std::mem::offset_of!(plat_t, oldstatus) == 56);
     const _: () = assert!(std::mem::offset_of!(plat_t, crush) == 60);
     const _: () = assert!(std::mem::offset_of!(plat_t, tag) == 64);
-    const _: () = assert!(std::mem::offset_of!(plat_t, r#type) == 68);
+    const _: () = assert!(std::mem::offset_of!(plat_t, kind) == 68);
 }
 
 /// Table of all currently active platform thinkers.
@@ -181,7 +181,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 1,
             );
 
-            if ((*plat).r#type == raiseAndChange || (*plat).r#type == raiseToNearestAndChange)
+            if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
                 && (leveltime & 7) == 0
             {
                 S_StartSound(
@@ -205,7 +205,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                     Sfx::Pstop as i32,
                 );
 
-                match (*plat).r#type {
+                match (*plat).kind {
                     x if x == blazeDWUS
                         || x == downWaitUpStay
                         || x == raiseAndChange
@@ -300,7 +300,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
         ) as *mut plat_t;
         P_AddThinker(&mut (*plat).thinker);
 
-        (*plat).r#type = plattype;
+        (*plat).kind = plattype;
         (*plat).sector = sec;
         (*plat).sector.as_mut().unwrap().specialdata = plat as *mut c_void;
         (*plat).thinker.function.acp1 = Some(core::mem::transmute::<
@@ -511,6 +511,6 @@ mod tests {
         assert_eq!(std::mem::offset_of!(plat_t, oldstatus), PLAT_T_OLDSTATUS);
         assert_eq!(std::mem::offset_of!(plat_t, crush), PLAT_T_CRUSH);
         assert_eq!(std::mem::offset_of!(plat_t, tag), PLAT_T_TAG);
-        assert_eq!(std::mem::offset_of!(plat_t, r#type), PLAT_T_TYPE);
+        assert_eq!(std::mem::offset_of!(plat_t, kind), PLAT_T_TYPE);
     }
 }

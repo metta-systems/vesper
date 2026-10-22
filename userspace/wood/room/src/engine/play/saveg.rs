@@ -355,7 +355,7 @@ unsafe fn saveg_read_mapthing_t(mt: *mut mapthing_t) {
     s.x.set(saveg_read16() as i16);
     s.y.set(saveg_read16() as i16);
     s.angle.set(saveg_read16() as i16);
-    s.r#type.set(saveg_read16() as i16);
+    s.kind.set(saveg_read16() as i16);
     s.options.set(saveg_read16() as i16);
 }
 
@@ -368,7 +368,7 @@ unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
     saveg_write16(s.x.get() as u16);
     saveg_write16(s.y.get() as u16);
     saveg_write16(s.angle.get() as u16);
-    saveg_write16(s.r#type.get() as u16);
+    saveg_write16(s.kind.get() as u16);
     saveg_write16(s.options.get() as u16);
 }
 
@@ -479,7 +479,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).validcount = saveg_read32() as i32;
 
     // type
-    (*mo).type_ = saveg_read_enum() as i32;
+    (*mo).kind = saveg_read_enum() as i32;
 
     // info (raw pointer)
     (*mo).info = saveg_read32() as *mut mobjinfo_t;
@@ -590,7 +590,7 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).validcount as u32);
 
     // type
-    saveg_write_enum((*mo).type_ as u32);
+    saveg_write_enum((*mo).kind as u32);
 
     // info
     saveg_write32((*mo).info as u32);
@@ -906,7 +906,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
 unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
     let s = &mut *ceil;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as i32;
+    s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.bottomheight = saveg_read32() as i32;
@@ -925,7 +925,7 @@ unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
 unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
     let s = &*ceil;
     saveg_write_thinker_t(&s.thinker);
-    saveg_write_enum(s.r#type as u32);
+    saveg_write_enum(s.kind as u32);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.bottomheight as u32);
     saveg_write32(s.topheight as u32);
@@ -948,7 +948,7 @@ unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
 unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
     let s = &mut *door;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as i32;
+    s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.topheight = saveg_read32() as i32;
@@ -964,7 +964,7 @@ unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
 unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
     let s = &*door;
     saveg_write_thinker_t(&s.thinker);
-    saveg_write_enum(s.r#type as u32);
+    saveg_write_enum(s.kind as u32);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.topheight as u32);
     saveg_write32(s.speed as u32);
@@ -985,7 +985,7 @@ unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
 unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
     let s = &mut *floor;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as i32;
+    s.kind = saveg_read_enum() as i32;
     s.crush = saveg_read32() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -1002,7 +1002,7 @@ unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
 unsafe fn saveg_write_floormove_t(floor: *const floormove_t) {
     let s = &*floor;
     saveg_write_thinker_t(&s.thinker);
-    saveg_write_enum(s.r#type as u32);
+    saveg_write_enum(s.kind as u32);
     saveg_write32(s.crush as u32);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.direction as u32);
@@ -1035,7 +1035,7 @@ unsafe fn saveg_read_plat_t(plat: *mut plat_t) {
     s.oldstatus = saveg_read_enum() as i32;
     s.crush = saveg_read32() as i32;
     s.tag = saveg_read32() as i32;
-    s.r#type = saveg_read_enum() as i32;
+    s.kind = saveg_read_enum() as i32;
 }
 
 /// Writes a `plat_t` thinker to the save stream.
@@ -1054,7 +1054,7 @@ unsafe fn saveg_write_plat_t(plat: *const plat_t) {
     saveg_write_enum(s.oldstatus as u32);
     saveg_write32(s.crush as u32);
     saveg_write32(s.tag as u32);
-    saveg_write_enum(s.r#type as u32);
+    saveg_write_enum(s.kind as u32);
 }
 
 //
@@ -1663,8 +1663,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_SetThingPosition(mobj.cast());
 
                 // rebuild info from mobjinfo
-                (*mo).info =
-                    &mut mobjinfo[(*mo).type_ as usize] as *mut MobjInfo as *mut mobjinfo_t;
+                (*mo).info = &mut mobjinfo[(*mo).kind as usize] as *mut MobjInfo as *mut mobjinfo_t;
 
                 // rebuild floorz/ceilingz from subsector
                 let subsec = (*mo).subsector;

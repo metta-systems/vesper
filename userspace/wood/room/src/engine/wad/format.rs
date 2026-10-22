@@ -195,7 +195,7 @@ pub struct mapthing_t {
     pub x: I16,
     pub y: I16,
     pub angle: I16,
-    pub r#type: I16,
+    pub kind: I16,
     pub options: I16,
 }
 
@@ -207,7 +207,7 @@ impl mapthing_t {
         x: I16::ZERO,
         y: I16::ZERO,
         angle: I16::ZERO,
-        r#type: I16::ZERO,
+        kind: I16::ZERO,
         options: I16::ZERO,
     };
 }

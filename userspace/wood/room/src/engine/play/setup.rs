@@ -537,7 +537,7 @@ pub fn P_LoadThings(lump: i32) {
             let mut spawn = true;
 
             if gamemode != doom::mode::commercial {
-                let thing_type = mt.r#type.get();
+                let thing_type = mt.kind.get();
                 match thing_type {
                     68 | 64 | 88 | 89 | 69 | 67 | 71 | 65 | 66 | 84 => {
                         spawn = false;

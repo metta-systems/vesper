@@ -14,7 +14,7 @@
 //! - The queue state (`EVENTS`, `EVENT_HEAD`, `EVENT_TAIL`) and the capacity
 //!   constant (`MAXEVENTS`) are private to this module; C exposed all of them
 //!   as file-static locals, which is equivalent visibility.
-//! - `event_t.type_` is spelled with a trailing underscore to avoid collision
+//! - `event_t.kind` is spelled with a trailing underscore to avoid collision
 //!   with the Rust keyword `type`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
@@ -27,26 +27,26 @@ const MAXEVENTS: usize = 64;
 /// A single input event delivered to the game logic.
 ///
 /// Corresponds to `event_t` in `d_event.h`.  The meaning of `data1`-`data4`
-/// depends on `type_`:
+/// depends on `kind`:
 ///
-/// | `type_` (evtype_t) | `data1` | `data2` | `data3` | `data4` |
+/// | `kind` (evtype_t) | `data1` | `data2` | `data3` | `data4` |
 /// |--------------------|---------|---------|---------|---------|
 /// | `ev_keydown` / `ev_keyup` | key code (from `interface::keys`) | ASCII char pressed | - | - |
 /// | `ev_mouse` | button bitfield (bit 0=left, 1=right, 2=middle) | X delta (turn) | Y delta (fwd/back) | - |
 /// | `ev_joystick` | button bitfield | X axis (turn) | Y axis (fwd/back) | Z axis (strafe) |
 /// | `ev_quit` | - | - | - | - |
 ///
-/// The `type_` field is typed as `i32` rather than an enum, mirroring the C
+/// The `kind` field is typed as `i32` rather than an enum, mirroring the C
 /// `evtype_t` enum (which is an `int` in C).
 #[derive(Copy, Clone)]
 pub struct event_t {
     /// Event type discriminant; one of the `ev_*` constants from `evtype_t`.
-    pub type_: i32,
-    /// Primary event datum; interpretation depends on `type_`.
+    pub kind: i32,
+    /// Primary event datum; interpretation depends on `kind`.
     pub data1: i32,
-    /// Secondary event datum; interpretation depends on `type_`.
+    /// Secondary event datum; interpretation depends on `kind`.
     pub data2: i32,
-    /// Tertiary event datum; interpretation depends on `type_`.
+    /// Tertiary event datum; interpretation depends on `kind`.
     pub data3: i32,
     /// Quaternary event datum; used only by `ev_joystick` for the strafe axis.
     pub data4: i32,
@@ -57,7 +57,7 @@ pub struct event_t {
 /// Rust requires const-evaluable array initialisers; this sentinel satisfies
 /// that constraint without adding runtime cost.
 const DEFAULT_EVENT: event_t = event_t {
-    type_: 0,
+    kind: 0,
     data1: 0,
     data2: 0,
     data3: 0,
@@ -150,7 +150,7 @@ mod tests {
         unsafe {
             let _queue = reset_queue();
             let ev = event_t {
-                type_: 1,
+                kind: 1,
                 data1: 42,
                 data2: 99,
                 data3: 0,
@@ -160,7 +160,7 @@ mod tests {
             let result = D_PopEvent();
             assert!(!result.is_null());
             let result = &*result;
-            assert_eq!(result.type_, 1);
+            assert_eq!(result.kind, 1);
             assert_eq!(result.data1, 42);
             assert_eq!(result.data2, 99);
             assert_eq!(D_PopEvent(), std::ptr::null_mut());
@@ -182,7 +182,7 @@ mod tests {
             let max = MAXEVENTS - 1;
             for i in 0..max {
                 let ev = event_t {
-                    type_: i as i32,
+                    kind: i as i32,
                     data1: i as i32,
                     data2: 0,
                     data3: 0,
@@ -194,7 +194,7 @@ mod tests {
             for i in 0..max {
                 let result = D_PopEvent();
                 assert!(!result.is_null());
-                assert_eq!((*result).type_, i as i32);
+                assert_eq!((*result).kind, i as i32);
                 assert_eq!((*result).data1, i as i32);
             }
             assert!(D_PopEvent().is_null());

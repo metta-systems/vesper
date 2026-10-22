@@ -423,8 +423,8 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
         }
         if !(*tmthing).target.is_null() {
             let target = (*tmthing).target;
-            let target_type = (*target).type_;
-            let thing_type = thing.type_;
+            let target_type = (*target).kind;
+            let thing_type = thing.kind;
             if target_type == thing_type
                 || (target_type == MT_KNIGHT && thing_type == MT_BRUISER)
                 || (target_type == MT_BRUISER && thing_type == MT_KNIGHT)
@@ -1259,7 +1259,7 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
     }
-    if thing.type_ == MT_CYBORG || thing.type_ == MT_SPIDER {
+    if thing.kind == MT_CYBORG || thing.kind == MT_SPIDER {
         return 1;
     }
     let dx = (thing.x - (*bombspot).x).wrapping_abs();

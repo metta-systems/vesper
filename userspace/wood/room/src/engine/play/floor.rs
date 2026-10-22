@@ -89,7 +89,7 @@ pub struct floormove_t {
     /// Embedded thinker header; must be the first field.
     pub thinker: thinker_t,
     /// Floor movement type (`floor_*` constant).
-    pub r#type: i32,
+    pub kind: i32,
     /// Non-zero if this floor should crush things it encounters.
     pub crush: i32,
     /// The sector whose floor is being moved.
@@ -113,7 +113,7 @@ mod layout_checks {
     use super::*;
     const _: () = assert!(std::mem::size_of::<floormove_t>() == 64);
     const _: () = assert!(std::mem::offset_of!(floormove_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, r#type) == 24);
+    const _: () = assert!(std::mem::offset_of!(floormove_t, kind) == 24);
     const _: () = assert!(std::mem::offset_of!(floormove_t, crush) == 28);
     const _: () = assert!(std::mem::offset_of!(floormove_t, sector) == 32);
     const _: () = assert!(std::mem::offset_of!(floormove_t, direction) == 40);
@@ -286,11 +286,11 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
         (*(*floor).sector).specialdata = std::ptr::null_mut();
 
         if (*floor).direction == 1 {
-            if (*floor).r#type == floor_donutRaise {
+            if (*floor).kind == floor_donutRaise {
                 (*(*floor).sector).special = (*floor).newspecial as i16;
                 (*(*floor).sector).floorpic = (*floor).texture;
             }
-        } else if (*floor).direction == -1 && (*floor).r#type == floor_lowerAndChange {
+        } else if (*floor).direction == -1 && (*floor).kind == floor_lowerAndChange {
             (*(*floor).sector).special = (*floor).newspecial as i16;
             (*(*floor).sector).floorpic = (*floor).texture;
         }
@@ -354,7 +354,7 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
             unsafe fn(*mut floormove_t),
             unsafe fn(*mut c_void),
         >(T_MoveFloor));
-        (*floor).r#type = floortype;
+        (*floor).kind = floortype;
         (*floor).crush = 0;
 
         match floortype {

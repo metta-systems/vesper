@@ -75,7 +75,7 @@ const ga_nothing: i32 = 0;
 /// C origin: `ga_worlddone` in `g_game.h`.
 const ga_worlddone: i32 = 8;
 
-/// `event_t.type_` value for key-down events.
+/// `event_t.kind` value for key-down events.
 ///
 /// C origin: `ev_keydown` in `d_event.h`.
 const ev_keydown: i32 = 0;
@@ -240,7 +240,7 @@ struct CastInfo {
     /// Display name shown at the bottom of the cast screen.
     pub name: &'static str,
     /// `mobjtype_t` index into `mobjinfo[]`; selects sprite and state machine.
-    pub type_: i32,
+    pub kind: i32,
 }
 
 // g_game.rs
@@ -469,73 +469,73 @@ const TEXTSCREENS: [TextScreen; 22] = [
 const CASTORDER: [CastInfo; 18] = [
     CastInfo {
         name: CC_ZOMBIE,
-        type_: MT_POSSESSED,
+        kind: MT_POSSESSED,
     },
     CastInfo {
         name: CC_SHOTGUN,
-        type_: MT_SHOTGUY,
+        kind: MT_SHOTGUY,
     },
     CastInfo {
         name: CC_HEAVY,
-        type_: MT_CHAINGUY,
+        kind: MT_CHAINGUY,
     },
     CastInfo {
         name: CC_IMP,
-        type_: MT_TROOP,
+        kind: MT_TROOP,
     },
     CastInfo {
         name: CC_DEMON,
-        type_: MT_SERGEANT,
+        kind: MT_SERGEANT,
     },
     CastInfo {
         name: CC_LOST,
-        type_: MT_SKULL,
+        kind: MT_SKULL,
     },
     CastInfo {
         name: CC_CACO,
-        type_: MT_HEAD,
+        kind: MT_HEAD,
     },
     CastInfo {
         name: CC_HELL,
-        type_: MT_KNIGHT,
+        kind: MT_KNIGHT,
     },
     CastInfo {
         name: CC_BARON,
-        type_: MT_BRUISER,
+        kind: MT_BRUISER,
     },
     CastInfo {
         name: CC_ARACH,
-        type_: MT_BABY,
+        kind: MT_BABY,
     },
     CastInfo {
         name: CC_PAIN,
-        type_: MT_PAIN,
+        kind: MT_PAIN,
     },
     CastInfo {
         name: CC_REVEN,
-        type_: MT_UNDEAD,
+        kind: MT_UNDEAD,
     },
     CastInfo {
         name: CC_MANCU,
-        type_: MT_FATSO,
+        kind: MT_FATSO,
     },
     CastInfo {
         name: CC_ARCH,
-        type_: MT_VILE,
+        kind: MT_VILE,
     },
     CastInfo {
         name: CC_SPIDER,
-        type_: MT_SPIDER,
+        kind: MT_SPIDER,
     },
     CastInfo {
         name: CC_CYBER,
-        type_: MT_CYBORG,
+        kind: MT_CYBORG,
     },
     CastInfo {
         name: CC_HERO,
-        type_: MT_PLAYER,
+        kind: MT_PLAYER,
     },
-    CastInfo { name: "", type_: 0 },
+    CastInfo { name: "", kind: 0 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -802,7 +802,7 @@ pub fn F_StartCast() {
         wipegamestate = -1;
         castnum = 0;
         let st = &(*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-            .add(CASTORDER[0].type_ as usize))
+            .add(CASTORDER[0].kind as usize))
         .seestate;
         caststate = &mut crate::engine::play::info::states[*st as usize];
         casttics = (*caststate).tics;
@@ -847,7 +847,7 @@ pub fn F_CastTicker() {
                 castnum = 0;
             }
             let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].type_ as usize);
+                .add(CASTORDER[castnum as usize].kind as usize);
             if info.seesound != Sfx::None {
                 S_StartSound(ptr::null_mut(), info.seesound as i32);
             }
@@ -894,7 +894,7 @@ pub fn F_CastTicker() {
         if castframes == 12 {
             castattacking = 1;
             let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].type_ as usize);
+                .add(CASTORDER[castnum as usize].kind as usize);
             let st = if castonmelee != 0 {
                 info.meleestate
             } else {
@@ -918,14 +918,14 @@ pub fn F_CastTicker() {
                     == &mut crate::engine::play::info::states[(*std::ptr::addr_of!(
                         crate::engine::play::info::mobjinfo[0]
                     )
-                    .add(CASTORDER[castnum as usize].type_ as usize))
+                    .add(CASTORDER[castnum as usize].kind as usize))
                     .seestate
                         as usize])
         {
             castattacking = 0;
             castframes = 0;
             let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].type_ as usize))
+                .add(CASTORDER[castnum as usize].kind as usize))
             .seestate;
             caststate = &mut crate::engine::play::info::states[st as usize];
         }
@@ -954,7 +954,7 @@ unsafe fn goto_stopattack() {
     castattacking = 0;
     castframes = 0;
     let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-        .add(CASTORDER[castnum as usize].type_ as usize))
+        .add(CASTORDER[castnum as usize].kind as usize))
     .seestate;
     caststate = &mut crate::engine::play::info::states[st as usize];
     casttics = (*caststate).tics;
@@ -974,7 +974,7 @@ unsafe fn goto_stopattack() {
 pub fn F_CastResponder(ev: *mut event_t) -> i32 {
     unsafe {
         let event = &*ev;
-        if event.type_ != ev_keydown {
+        if event.kind != ev_keydown {
             return 0;
         }
         if castdeath != 0 {
@@ -982,7 +982,7 @@ pub fn F_CastResponder(ev: *mut event_t) -> i32 {
         }
         castdeath = 1;
         let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-            .add(CASTORDER[castnum as usize].type_ as usize);
+            .add(CASTORDER[castnum as usize].kind as usize);
         caststate = &mut crate::engine::play::info::states[info.deathstate as usize];
         casttics = (*caststate).tics;
         castframes = 0;

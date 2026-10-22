@@ -195,7 +195,7 @@ enum animenum_t {
 #[derive(Clone, Copy)]
 struct anim_config_t {
     /// Playback mode: always, random, or level-triggered.
-    type_: animenum_t,
+    kind: animenum_t,
     /// Tics between frame advances (or between random retriggers for `ANIM_RANDOM`).
     period: i32,
     /// Number of patch frames in this animation (1-3).
@@ -301,7 +301,7 @@ pub(crate) const EPSD2_NANIM: usize = 6;
 /// Animation configurations for Episode 1's background overlay (C `epsd0animinfo`).
 static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 224, y: 104 },
@@ -309,7 +309,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 184, y: 160 },
@@ -317,7 +317,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 112, y: 136 },
@@ -325,7 +325,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 72, y: 112 },
@@ -333,7 +333,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 88, y: 96 },
@@ -341,7 +341,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 64, y: 48 },
@@ -349,7 +349,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 192, y: 40 },
@@ -357,7 +357,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 136, y: 16 },
@@ -365,7 +365,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 80, y: 16 },
@@ -373,7 +373,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 64, y: 24 },
@@ -385,7 +385,7 @@ static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [
 /// Animation configurations for Episode 2's background overlay (C `epsd1animinfo`).
 static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -393,7 +393,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -401,7 +401,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -409,7 +409,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -417,7 +417,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -425,7 +425,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -433,7 +433,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -441,7 +441,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 192, y: 144 },
@@ -449,7 +449,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_LEVEL,
+        kind: animenum_t::ANIM_LEVEL,
         period: TICRATE / 3,
         nanims: 1,
         loc: point_t { x: 128, y: 136 },
@@ -461,7 +461,7 @@ static EPSD1_CONFIG: [anim_config_t; EPSD1_NANIM] = [
 /// Animation configurations for Episode 3's background overlay (C `epsd2animinfo`).
 static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 104, y: 168 },
@@ -469,7 +469,7 @@ static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 40, y: 136 },
@@ -477,7 +477,7 @@ static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 160, y: 96 },
@@ -485,7 +485,7 @@ static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 104, y: 80 },
@@ -493,7 +493,7 @@ static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 3,
         nanims: 3,
         loc: point_t { x: 120, y: 32 },
@@ -501,7 +501,7 @@ static EPSD2_CONFIG: [anim_config_t; EPSD2_NANIM] = [
         data2: 0,
     },
     anim_config_t {
-        type_: animenum_t::ANIM_ALWAYS,
+        kind: animenum_t::ANIM_ALWAYS,
         period: TICRATE / 4,
         nanims: 3,
         loc: point_t { x: 40, y: 0 },
@@ -882,11 +882,11 @@ unsafe fn WI_initAnimatedBack() {
         let cfg = anim_config(epsd, i);
         let st = anim_state_ptr(epsd, i);
         (*st).ctr = -1;
-        if cfg.type_ == animenum_t::ANIM_ALWAYS {
+        if cfg.kind == animenum_t::ANIM_ALWAYS {
             (*st).nexttic = bcnt + 1 + (M_Random() % cfg.period);
-        } else if cfg.type_ == animenum_t::ANIM_RANDOM {
+        } else if cfg.kind == animenum_t::ANIM_RANDOM {
             (*st).nexttic = bcnt + 1 + cfg.data2 + (M_Random() % cfg.data1);
-        } else if cfg.type_ == animenum_t::ANIM_LEVEL {
+        } else if cfg.kind == animenum_t::ANIM_LEVEL {
             (*st).nexttic = bcnt + 1;
         }
     }
@@ -918,7 +918,7 @@ unsafe fn WI_updateAnimatedBack() {
         let cfg = anim_config(epsd, i);
         let st = anim_state_ptr(epsd, i);
         if bcnt == (*st).nexttic {
-            match cfg.type_ {
+            match cfg.kind {
                 animenum_t::ANIM_ALWAYS => {
                     (*st).ctr += 1;
                     if (*st).ctr >= cfg.nanims {
@@ -2179,7 +2179,7 @@ mod tests {
     #[test]
     fn epsd0_config_entry0_fields() {
         let c = &EPSD0_CONFIG[0];
-        assert_eq!(c.type_, animenum_t::ANIM_ALWAYS);
+        assert_eq!(c.kind, animenum_t::ANIM_ALWAYS);
         assert_eq!(c.nanims, 3);
         assert_eq!(c.loc.x, 224);
         assert_eq!(c.loc.y, 104);
@@ -2188,7 +2188,7 @@ mod tests {
     #[test]
     fn epsd1_config_entry0_is_level_anim() {
         let c = &EPSD1_CONFIG[0];
-        assert_eq!(c.type_, animenum_t::ANIM_LEVEL);
+        assert_eq!(c.kind, animenum_t::ANIM_LEVEL);
         assert_eq!(c.data1, 1);
     }
 

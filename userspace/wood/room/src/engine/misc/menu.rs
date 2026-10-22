@@ -1356,8 +1356,8 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
 
         // testcontrols mode
         if testcontrols != 0 {
-            if ev.type_ == EV_QUIT
-                || (ev.type_ == EV_KEYDOWN
+            if ev.kind == EV_QUIT
+                || (ev.kind == EV_KEYDOWN
                     && (ev.data1 == key_menu_activate || ev.data1 == key_menu_quit))
             {
                 I_Quit();
@@ -1367,7 +1367,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         }
 
         // window close button
-        if ev.type_ == EV_QUIT {
+        if ev.kind == EV_QUIT {
             if menuactive != 0
                 && messageToPrint != 0
                 && messageRoutine.map(|f| f as usize).unwrap_or(0)
@@ -1384,7 +1384,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         let mut ch: i32 = 0;
         let mut key: i32 = -1;
 
-        if ev.type_ == EV_JOYSTICK && RESP_joywait < I_GetTime() {
+        if ev.kind == EV_JOYSTICK && RESP_joywait < I_GetTime() {
             if ev.data3 < 0 {
                 key = key_menu_up;
                 RESP_joywait = I_GetTime() + 5;
@@ -1411,7 +1411,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 key = key_menu_activate;
                 RESP_joywait = I_GetTime() + 5;
             }
-        } else if ev.type_ == EV_MOUSE && RESP_mousewait < I_GetTime() {
+        } else if ev.kind == EV_MOUSE && RESP_mousewait < I_GetTime() {
             RESP_mousey += ev.data3;
             if RESP_mousey < RESP_lasty - 30 {
                 key = key_menu_down;
@@ -1446,7 +1446,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 key = key_menu_back;
                 RESP_mousewait = I_GetTime() + 15;
             }
-        } else if ev.type_ == EV_KEYDOWN {
+        } else if ev.kind == EV_KEYDOWN {
             key = ev.data1;
             ch = ev.data2;
         }

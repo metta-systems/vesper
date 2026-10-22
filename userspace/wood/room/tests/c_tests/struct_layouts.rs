@@ -55,7 +55,7 @@ fn mobj_t_offsets() {
     assert_eq!(offset_of!(mobj_t, angle), 56);
     assert_eq!(offset_of!(mobj_t, radius), 104);
     assert_eq!(offset_of!(mobj_t, height), 108);
-    assert_eq!(offset_of!(mobj_t, type_), 128);
+    assert_eq!(offset_of!(mobj_t, kind), 128);
     assert_eq!(offset_of!(mobj_t, state), 152);
     assert_eq!(offset_of!(mobj_t, flags), 160);
     assert_eq!(offset_of!(mobj_t, health), 164);

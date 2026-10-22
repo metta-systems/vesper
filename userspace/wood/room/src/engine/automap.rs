@@ -1106,7 +1106,7 @@ unsafe fn AM_initVariables() {
     old_m_h = m_h;
 
     let st_notify = event_t {
-        type_: 1, // ev_keyup
+        kind: 1, // ev_keyup
         data1: AM_MSGENTERED,
         data2: 0,
         data3: 0,
@@ -1209,7 +1209,7 @@ unsafe fn AM_LevelInit() {
 /// loaded.
 pub unsafe fn AM_Stop() {
     let st_notify = event_t {
-        type_: 0, // ev_keydown
+        kind: 0,  // ev_keydown
         data1: 1, // ev_keyup
         data2: AM_MSGEXITED,
         data3: 0,
@@ -1296,13 +1296,13 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
     static mut bigstate: i32 = 0;
 
     if automapactive == 0 {
-        if (*ev).type_ == 0 && (*ev).data1 == key_map_toggle {
+        if (*ev).kind == 0 && (*ev).data1 == key_map_toggle {
             // ev_keydown
             AM_Start();
             viewactive = 0;
             rc = 1;
         }
-    } else if (*ev).type_ == 0 {
+    } else if (*ev).kind == 0 {
         // ev_keydown
         rc = 1;
         let key = (*ev).data1;
@@ -1380,7 +1380,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             rc = 0;
             cheating = (cheating + 1) % 3;
         }
-    } else if (*ev).type_ == 1 {
+    } else if (*ev).kind == 1 {
         // ev_keyup
         rc = 0;
         let key = (*ev).data1;

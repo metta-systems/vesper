@@ -687,11 +687,11 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
         if ev.data1 == KEY_RSHIFT as i32 {
             return 0;
         } else if ev.data1 == KEY_RALT as i32 || ev.data1 == KEY_LALT as i32 {
-            altdown = ev.type_ == 0; // ev_keydown
+            altdown = ev.kind == 0; // ev_keydown
             return 0;
         }
 
-        if ev.type_ != 0 {
+        if ev.kind != 0 {
             // not ev_keydown
             return 0;
         }

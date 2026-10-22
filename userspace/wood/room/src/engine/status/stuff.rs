@@ -547,7 +547,7 @@ pub unsafe fn ST_refreshBackground() {
 pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
     let ev = &*ev;
 
-    if ev.type_ == 1 && (ev.data1 as u32 & 0xffff0000) == AM_MSGHEADER as u32 {
+    if ev.kind == 1 && (ev.data1 as u32 & 0xffff0000) == AM_MSGHEADER as u32 {
         // ev_keyup + automap message
         match ev.data1 {
             AM_MSGENTERED => {
@@ -559,7 +559,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             }
             _ => {}
         }
-    } else if ev.type_ == 0 {
+    } else if ev.kind == 0 {
         // ev_keydown
         if netgame == 0 && gameskill != 4 {
             // sk_nightmare = 4

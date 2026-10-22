@@ -295,25 +295,25 @@ pub unsafe fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
         dist -= 128 * FRACUNIT;
     }
     dist >>= 16;
-    if (*actor).type_ as u32 == MT_VILE as u32 && dist > 14 * 64 {
+    if (*actor).kind as u32 == MT_VILE as u32 && dist > 14 * 64 {
         return Boolean::FALSE;
     }
-    if (*actor).type_ as u32 == MT_UNDEAD as u32 {
+    if (*actor).kind as u32 == MT_UNDEAD as u32 {
         if dist < 196 {
             return Boolean::FALSE;
         }
         dist >>= 1;
     }
-    if (*actor).type_ as u32 == MT_CYBORG as u32
-        || (*actor).type_ as u32 == MT_SPIDER as u32
-        || (*actor).type_ as u32 == MT_SKULL as u32
+    if (*actor).kind as u32 == MT_CYBORG as u32
+        || (*actor).kind as u32 == MT_SPIDER as u32
+        || (*actor).kind as u32 == MT_SKULL as u32
     {
         dist >>= 1;
     }
     if dist > 200 {
         dist = 200 as fixed_t;
     }
-    if (*actor).type_ as u32 == MT_CYBORG as u32 && dist > 160 {
+    if (*actor).kind as u32 == MT_CYBORG as u32 && dist > 160 {
         dist = 160 as fixed_t;
     }
     if P_Random() < dist {
@@ -623,7 +623,7 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
-            if mo2 != mo && (*mo2).type_ as u32 == (*mo).type_ as u32 && (*mo2).health > 0 {
+            if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
                 return;
             }
         }
@@ -668,7 +668,7 @@ pub unsafe fn A_Look(actor: *mut mobj_t) {
             Sfx::Bgsit1 | Sfx::Bgsit2 => Sfx::Bgsit1 as i32 + P_Random() % 2,
             s => s as i32,
         };
-        if (*actor).type_ as u32 == MT_SPIDER as u32 || (*actor).type_ as u32 == MT_CYBORG as u32 {
+        if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
             S_StartSound(std::ptr::null_mut::<c_void>(), sound);
         } else {
             S_StartSound(actor as *mut c_void, sound);
@@ -1572,7 +1572,7 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
                 Option<unsafe fn(*mut mobj_t) -> ()>,
                 Option<unsafe fn(*mut c_void) -> ()>,
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-            && (*(currentthinker as *mut mobj_t)).type_ as u32 == MT_SKULL as u32
+            && (*(currentthinker as *mut mobj_t)).kind as u32 == MT_SKULL as u32
         {
             count += 1;
         }
@@ -1637,7 +1637,7 @@ pub unsafe fn A_Scream(actor: *mut mobj_t) {
         Sfx::Bgdth1 | Sfx::Bgdth2 => Sfx::Bgdth1 as i32 + P_Random() % 2,
         s => s as i32,
     };
-    if (*actor).type_ as u32 == MT_SPIDER as u32 || (*actor).type_ as u32 == MT_CYBORG as u32 {
+    if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
         S_StartSound(std::ptr::null_mut::<c_void>(), sound);
     } else {
         S_StartSound(actor as *mut c_void, sound);
@@ -1729,7 +1729,7 @@ unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null with a valid `type_`. The thinker list and game-state globals
+/// `mo` must be non-null with a valid `kind`. The thinker list and game-state globals
 /// must be consistent. Called through the state-machine action pointer.
 pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     let mut th: *mut thinker_t;
@@ -1757,10 +1757,10 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         if gamemap != 7 {
             return;
         }
-        if (*mo).type_ as u32 != MT_FATSO as u32 && (*mo).type_ as u32 != MT_BABY as u32 {
+        if (*mo).kind as u32 != MT_FATSO as u32 && (*mo).kind as u32 != MT_BABY as u32 {
             return;
         }
-    } else if CheckBossEnd((*mo).type_).is_false() {
+    } else if CheckBossEnd((*mo).kind).is_false() {
         return;
     }
     let mut i: usize = 0;
@@ -1782,7 +1782,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
-            if mo2 != mo && (*mo2).type_ as u32 == (*mo).type_ as u32 && (*mo2).health > 0 {
+            if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
                 return;
             }
         }
@@ -1790,12 +1790,12 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     }
     if gamemode as u32 == commercial as u32 {
         if gamemap == 7 {
-            if (*mo).type_ as u32 == MT_FATSO as u32 {
+            if (*mo).kind as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
                 EV_DoFloor(&mut junk, lowerFloorToLowest);
                 return;
             }
-            if (*mo).type_ as u32 == MT_BABY as u32 {
+            if (*mo).kind as u32 == MT_BABY as u32 {
                 junk.tag = 667;
                 EV_DoFloor(&mut junk, raiseToTexture);
                 return;
@@ -1910,7 +1910,7 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
             >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             m = thinker as *mut mobj_t;
-            if (*m).type_ as u32 == MT_BOSSTARGET as u32 {
+            if (*m).kind as u32 == MT_BOSSTARGET as u32 {
                 braintargets[numbraintargets as usize] = m;
                 numbraintargets += 1;
             }

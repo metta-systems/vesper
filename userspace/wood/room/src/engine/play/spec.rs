@@ -613,7 +613,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
     let line = lines.offset(linenum as isize);
 
     if (*thing).player.is_null() {
-        match (*thing).type_ {
+        match (*thing).kind {
             MT_ROCKET | MT_PLASMA | MT_BFG | MT_TROOPSHOT | MT_HEADSHOT | MT_BRUISERSHOT => {
                 return;
             }
@@ -1240,7 +1240,7 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 unsafe fn(*mut floormove_t),
                 unsafe fn(*mut c_void),
             >(T_MoveFloor));
-            (*floor).r#type = donutRaise;
+            (*floor).kind = donutRaise;
             (*floor).crush = 0;
             (*floor).direction = 1;
             (*floor).sector = s2 as *mut _;
@@ -1261,7 +1261,7 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 unsafe fn(*mut floormove_t),
                 unsafe fn(*mut c_void),
             >(T_MoveFloor));
-            (*floor).r#type = lowerFloor;
+            (*floor).kind = lowerFloor;
             (*floor).crush = 0;
             (*floor).direction = -1;
             (*floor).sector = s1 as *mut _;

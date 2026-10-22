@@ -95,7 +95,7 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
                 let m = thinker as *mut mobj_t;
 
                 // Not a teleportman
-                if (*m).type_ != MT_TELEPORTMAN {
+                if (*m).kind != MT_TELEPORTMAN {
                     thinker = (*thinker).next;
                     continue;
                 }

@@ -125,7 +125,7 @@ pub fn I_GetEvent() {
         UpdateShiftStatus(pressed, key);
 
         let mut event = event_t {
-            type_: 0,
+            kind: 0,
             data1: 0,
             data2: 0,
             data3: 0,
@@ -133,14 +133,14 @@ pub fn I_GetEvent() {
         };
 
         if pressed != 0 {
-            event.type_ = 0; // ev_keydown
+            event.kind = 0; // ev_keydown
             event.data1 = TranslateKey(key) as i32;
             event.data2 = GetTypedChar(key) as i32;
             if event.data1 != 0 {
                 D_PostEvent(&event);
             }
         } else {
-            event.type_ = 1; // ev_keyup
+            event.kind = 1; // ev_keyup
             event.data1 = TranslateKey(key) as i32;
             event.data2 = 0;
             if event.data1 != 0 {

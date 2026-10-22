@@ -1044,7 +1044,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
 pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     let info = (*target).info as *mut MobjInfo;
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
-    if (*target).type_ != MT_SKULL {
+    if (*target).kind != MT_SKULL {
         (*target).flags &= !MF_NOGRAVITY;
     }
     (*target).flags |= MF_CORPSE | MF_DROPOFF;
@@ -1096,7 +1096,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         return;
     }
 
-    let item: i32 = match (*target).type_ {
+    let item: i32 = match (*target).kind {
         MT_WOLFSS | MT_POSSESSED => MT_CLIP,
         MT_SHOTGUY => MT_SHOTGUN,
         MT_CHAINGUY => MT_CHAINGUN,
@@ -1245,10 +1245,10 @@ pub unsafe fn P_DamageMobj(
 
     (*target).reactiontime = 0;
 
-    if ((*target).threshold == 0 || (*target).type_ == MT_VILE)
+    if ((*target).threshold == 0 || (*target).kind == MT_VILE)
         && !source.is_null()
         && source != target
-        && (*source).type_ != MT_VILE
+        && (*source).kind != MT_VILE
     {
         (*target).target = source;
         (*target).threshold = BASETHRESHOLD;

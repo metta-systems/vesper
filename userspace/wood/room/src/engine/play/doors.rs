@@ -118,7 +118,7 @@ pub struct vldoor_t {
     /// Embedded thinker header; must be the first field.
     pub thinker: thinker_t,
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
-    pub r#type: i32,
+    pub kind: i32,
     _pad0: [u8; 4],
     /// The sector this door controls (its ceiling is the moving plane).
     pub sector: *mut sector_t,
@@ -140,7 +140,7 @@ mod layout_checks {
     use super::*;
     const _: () = assert!(std::mem::size_of::<vldoor_t>() == 64);
     const _: () = assert!(std::mem::offset_of!(vldoor_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, r#type) == 24);
+    const _: () = assert!(std::mem::offset_of!(vldoor_t, kind) == 24);
     const _: () = assert!(std::mem::offset_of!(vldoor_t, sector) == 32);
     const _: () = assert!(std::mem::offset_of!(vldoor_t, topheight) == 40);
     const _: () = assert!(std::mem::offset_of!(vldoor_t, speed) == 44);
@@ -171,7 +171,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
             // WAITING
             (*door).topcountdown -= 1;
             if (*door).topcountdown == 0 {
-                match (*door).r#type {
+                match (*door).kind {
                     x if x == vld_blazeRaise => {
                         (*door).direction = -1;
                         S_StartSound(
@@ -201,10 +201,10 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
             // INITIAL WAIT
             (*door).topcountdown -= 1;
             if (*door).topcountdown == 0 {
-                match (*door).r#type {
+                match (*door).kind {
                     x if x == vld_raiseIn5Mins => {
                         (*door).direction = 1;
-                        (*door).r#type = vld_normal;
+                        (*door).kind = vld_normal;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const _ as *mut c_void,
                             Sfx::Doropn as i32,
@@ -225,7 +225,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                 -1,
             );
             if res == result_pastdest {
-                match (*door).r#type {
+                match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
                         (*(*door).sector).specialdata = std::ptr::null_mut();
                         P_RemoveThinker(&mut (*door).thinker);
@@ -245,7 +245,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     _ => {}
                 }
             } else if res == result_crushed {
-                match (*door).r#type {
+                match (*door).kind {
                     x if x == vld_blazeClose || x == vld_close => {
                         // DO NOT GO BACK UP!
                     }
@@ -263,7 +263,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
             // UP
             res = T_MovePlane((*door).sector, (*door).speed, (*door).topheight, 0, 1, 1);
             if res == result_pastdest {
-                match (*door).r#type {
+                match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_normal => {
                         (*door).direction = 0;
                         (*door).topcountdown = (*door).topwait;
@@ -295,7 +295,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: i32, thing: *mut mobj_t) -> i32 {
+pub unsafe fn EV_DoLockedDoor(line: *mut line_t, kind: i32, thing: *mut mobj_t) -> i32 {
     let Some(p) = ((*thing).player as *mut PlayerT).as_mut() else {
         return 0;
     };
@@ -325,7 +325,7 @@ pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: i32, thing: *mut mobj_t
         _ => {}
     }
 
-    EV_DoDoor(line, r#type)
+    EV_DoDoor(line, kind)
 }
 
 /// Linedef-triggered event: activate doors on all sectors tagged to `line`.
@@ -340,7 +340,7 @@ pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: i32, thing: *mut mobj_t
 ///
 /// `line` must be a valid non-null pointer for the current map; the global
 /// `sectors` array must be initialised.
-pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: i32) -> i32 {
+pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -368,11 +368,11 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: i32) -> i32 {
             unsafe fn(*mut c_void),
         >(T_VerticalDoor));
         (*door).sector = sec;
-        (*door).r#type = r#type;
+        (*door).kind = kind;
         (*door).topwait = VDOORWAIT;
         (*door).speed = VDOORSPEED;
 
-        match r#type {
+        match kind {
             x if x == vld_blazeClose => {
                 (*door).topheight = P_FindLowestCeilingSurrounding(sec);
                 (*door).topheight -= 4 * FRACUNIT;
@@ -560,18 +560,18 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
 
     match (*line).special as i32 {
         1 | 26 | 27 | 28 => {
-            (*door).r#type = vld_normal;
+            (*door).kind = vld_normal;
         }
         31..=34 => {
-            (*door).r#type = vld_open;
+            (*door).kind = vld_open;
             (*line).special = 0;
         }
         117 => {
-            (*door).r#type = vld_blazeRaise;
+            (*door).kind = vld_blazeRaise;
             (*door).speed = VDOORSPEED * 4;
         }
         118 => {
-            (*door).r#type = vld_blazeOpen;
+            (*door).kind = vld_blazeOpen;
             (*line).special = 0;
             (*door).speed = VDOORSPEED * 4;
         }
@@ -609,7 +609,7 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
     >(T_VerticalDoor));
     (*door).sector = sec;
     (*door).direction = 0;
-    (*door).r#type = vld_normal;
+    (*door).kind = vld_normal;
     (*door).speed = VDOORSPEED;
     (*door).topcountdown = 30 * TICRATE;
 }
@@ -642,7 +642,7 @@ pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: i32) {
     >(T_VerticalDoor));
     (*door).sector = sec;
     (*door).direction = 2;
-    (*door).r#type = vld_raiseIn5Mins;
+    (*door).kind = vld_raiseIn5Mins;
     (*door).speed = VDOORSPEED;
     (*door).topheight = P_FindLowestCeilingSurrounding(sec);
     (*door).topheight -= 4 * FRACUNIT;
@@ -677,7 +677,7 @@ mod tests {
             VLDOOR_T_SIZEOF,
         );
         assert_eq!(std::mem::offset_of!(vldoor_t, thinker), VLDOOR_T_THINKER);
-        assert_eq!(std::mem::offset_of!(vldoor_t, r#type), VLDOOR_T_TYPE);
+        assert_eq!(std::mem::offset_of!(vldoor_t, kind), VLDOOR_T_TYPE);
         assert_eq!(std::mem::offset_of!(vldoor_t, sector), VLDOOR_T_SECTOR);
         assert_eq!(
             std::mem::offset_of!(vldoor_t, topheight),

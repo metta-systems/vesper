@@ -142,7 +142,7 @@ pub struct mobj_t {
     /// Used to avoid processing the same thing twice in a single traversal.
     pub validcount: i32,
     /// Thing type index into the `mobjinfo` table (`type` in C).
-    pub type_: i32,
+    pub kind: i32,
     _pad2: [u8; 4],
     /// Pointer to the thing's type info record.
     pub info: *mut mobjinfo_t,
@@ -505,7 +505,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         ONFLOORZ
     };
 
-    mo = P_SpawnMobj(x, y, z, mobj.type_);
+    mo = P_SpawnMobj(x, y, z, mobj.kind);
     (*mo).spawnpoint = mobj.spawnpoint;
     (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
@@ -567,7 +567,7 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
     }
 }
 
-/// Allocate, initialise, and link a new map object of type `type_` at world
+/// Allocate, initialise, and link a new map object of type `kind` at world
 /// position (`x`, `y`, `z`).
 ///
 /// The initial state, sprite, and tic count are taken from `mobjinfo`.
@@ -579,8 +579,8 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
 /// # Safety
 ///
 /// Must be called only while a level is active (zone memory must be
-/// initialised).  `type_` must be a valid `mobjtype_t` index.
-pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, type_: i32) -> *mut mobj_t {
+/// initialised).  `kind` must be a valid `mobjtype_t` index.
+pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
     let mobj = Z_Malloc(
         std::mem::size_of::<mobj_t>() as i32,
         PU_LEVEL,
@@ -588,9 +588,9 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, type_: i32) -> *mut mobj_t {
     ) as *mut mobj_t;
     // Z_Malloc already zeroes the allocation internally.
     let mobj_ref = &mut *mobj;
-    let info = &mut info::mobjinfo[type_ as usize] as *mut MobjInfo;
+    let info = &mut info::mobjinfo[kind as usize] as *mut MobjInfo;
 
-    mobj_ref.type_ = type_;
+    mobj_ref.kind = kind;
     mobj_ref.info = info as *mut mobjinfo_t;
     mobj_ref.x = x;
     mobj_ref.y = y;
@@ -650,8 +650,8 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     if mobj.flags & MF_SPECIAL != 0
         && mobj.flags & MF_DROPPED == 0
-        && mobj.type_ != MT_INV
-        && mobj.type_ != MT_INS
+        && mobj.kind != MT_INV
+        && mobj.kind != MT_INS
     {
         itemrespawnque[iquehead as usize] = mobj.spawnpoint;
         itemrespawntime[iquehead as usize] = leveltime;
@@ -696,7 +696,7 @@ pub unsafe fn P_RespawnSpecials() {
 
     let mut i = 0;
     while i < NUMMOBJTYPES {
-        if mthing.r#type.get() as i32 == info::mobjinfo[i].doomednum {
+        if mthing.kind.get() as i32 == info::mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -727,7 +727,7 @@ pub unsafe fn P_RespawnSpecials() {
 /// memory active.
 pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
-    let thing_type = mthing.r#type.get();
+    let thing_type = mthing.kind.get();
     if thing_type as i32 == 0 {
         return;
     }
@@ -791,7 +791,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
 /// called during level load.
 pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
-    let thing_type = mthing.r#type.get();
+    let thing_type = mthing.kind.get();
     let options = mthing.options.get();
     let mut i: usize;
 
@@ -977,7 +977,7 @@ pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
     mobj
 }
 
-/// Launch a projectile of type `type_` from `source` toward `dest`.
+/// Launch a projectile of type `kind` from `source` toward `dest`.
 ///
 /// The missile is spawned 32 units above `source`'s origin, aimed directly at
 /// `dest`'s centre (with random spread if `dest` has `MF_SHADOW`).  Vertical
@@ -988,11 +988,11 @@ pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
 /// # Safety
 ///
 /// `source` and `dest` must be valid, non-null pointers to `mobj_t` instances.
-/// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: i32) -> *mut mobj_t {
+/// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
+pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) -> *mut mobj_t {
     let source = &*source;
     let dest = &*dest;
-    let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, type_);
+    let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
     let info = (*th).info as *mut MobjInfo;
     if (*info).seesound != Sfx::None {
         S_StartSound(th as *mut c_void, (*info).seesound as i32);
@@ -1017,15 +1017,15 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: i32)
     th
 }
 
-/// Launch a projectile of type `type_` from the player's `source` mobj,
+/// Launch a projectile of type `kind` from the player's `source` mobj,
 /// auto-aiming within a 90-degree cone and then two additional angle offsets
 /// before giving up and firing straight ahead.
 ///
 /// # Safety
 ///
 /// `source` must be a valid, non-null pointer to a player `mobj_t`.
-/// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: i32) {
+/// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
+pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
     let source = &mut *source;
     let mut an = source.angle;
     let mut slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
@@ -1047,7 +1047,7 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: i32) {
     let y = source.y;
     let z = source.z + 4 * 8 * FRACUNIT;
 
-    let th = P_SpawnMobj(x, y, z, type_);
+    let th = P_SpawnMobj(x, y, z, kind);
     let info = (*th).info as *mut MobjInfo;
     if (*info).seesound != Sfx::None {
         S_StartSound(th as *mut c_void, (*info).seesound as i32);

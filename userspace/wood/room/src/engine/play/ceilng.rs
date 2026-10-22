@@ -71,7 +71,7 @@ pub struct ceiling_t {
     /// Thinker header — must be at offset 0.
     pub thinker: thinker_t,
     /// Ceiling type (one of the `ceiling_e` integer constants).
-    pub r#type: i32,
+    pub kind: i32,
     _pad0: [u8; 4],
     /// The sector whose ceiling this thinker is moving.
     pub sector: *mut sector_t,
@@ -97,7 +97,7 @@ mod layout_checks {
     use super::*;
     const _: () = assert!(std::mem::size_of::<ceiling_t>() == 72);
     const _: () = assert!(std::mem::offset_of!(ceiling_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, r#type) == 24);
+    const _: () = assert!(std::mem::offset_of!(ceiling_t, kind) == 24);
     const _: () = assert!(std::mem::offset_of!(ceiling_t, sector) == 32);
     const _: () = assert!(std::mem::offset_of!(ceiling_t, bottomheight) == 40);
     const _: () = assert!(std::mem::offset_of!(ceiling_t, topheight) == 44);
@@ -170,7 +170,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
     );
 
     if (leveltime & 7) == 0 {
-        match (*ceiling).r#type {
+        match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
                 S_StartSound(
@@ -182,7 +182,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
     }
 
     if res == result_pastdest {
-        match (*ceiling).r#type {
+        match (*ceiling).kind {
             x if x == raiseToHighest => {
                 P_RemoveActiveCeiling(ceiling);
             }
@@ -198,7 +198,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
             _ => {}
         }
     } else if res == result_crushed {
-        match (*ceiling).r#type {
+        match (*ceiling).kind {
             x if x == silentCrushAndRaise || x == crushAndRaise || x == lowerAndCrush => {
                 (*ceiling).speed = CEILSPEED / 8;
             }
@@ -295,7 +295,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
         }
 
         (*ceiling).tag = (*sec).tag as i32;
-        (*ceiling).r#type = ceilingtype;
+        (*ceiling).kind = ceilingtype;
         P_AddActiveCeiling(ceiling);
     }
     rtn
@@ -423,7 +423,7 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         assert_eq!(std::mem::size_of::<ceiling_t>(), CEILING_T_SIZEOF);
         assert_eq!(std::mem::offset_of!(ceiling_t, thinker), CEILING_T_THINKER);
-        assert_eq!(std::mem::offset_of!(ceiling_t, r#type), CEILING_T_TYPE);
+        assert_eq!(std::mem::offset_of!(ceiling_t, kind), CEILING_T_TYPE);
         assert_eq!(std::mem::offset_of!(ceiling_t, sector), CEILING_T_SECTOR);
         assert_eq!(
             std::mem::offset_of!(ceiling_t, bottomheight),
