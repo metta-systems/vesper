@@ -64,7 +64,7 @@
 //!
 //! # Index identifiers
 //!
-//! The `SPR_*`, `MT_*`, `MF_*` constants in this file are `c_int` aliases
+//! The `SPR_*`, `MT_*`, `MF_*` constants in this file are `i32` aliases
 //! for the corresponding C enum values. The `S_*` constants come from
 //! [`crate::doom::statenum`] (re-exported via `pub use`) so that this file
 //! can write `nextstate: S_PUNCH2` exactly like the C source does. The
@@ -88,7 +88,7 @@
 //!
 //! Concurrent access is therefore the same as in the C codebase: the
 //! game thread owns these arrays. The `unsafe impl Sync` blocks below
-//! exist solely to satisfy Rust's type system because `*mut c_char`
+//! exist solely to satisfy Rust's type system because `*mut u8`
 //! (in `sprnames`) and `Option<unsafe fn()>` (in `states`)
 //! are not auto-`Sync`. The single-threaded discipline of the engine
 //! makes this safe in practice.
@@ -98,8 +98,6 @@
 //! [`State`] and [`MobjInfo`] are `#[repr(C)]` with a `const _: () =
 //! assert!(...)` size and offset check just below their definitions, so
 //! ABI drift against the C structs is caught at compile time.
-
-use std::ffi::{c_char, c_int};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -128,281 +126,281 @@ use crate::doom::m_fixed::FRACUNIT;
 // and the renderer's sprite-lump scan.
 
 /// Sprite tag `TROO` (trooper / imp).
-pub const SPR_TROO: c_int = 0;
+pub const SPR_TROO: i32 = 0;
 /// Sprite tag `SHTG` (shotgun pickup pose).
-pub const SPR_SHTG: c_int = 1;
+pub const SPR_SHTG: i32 = 1;
 /// Sprite tag `PUNG` (fist (player weapon)).
-pub const SPR_PUNG: c_int = 2;
+pub const SPR_PUNG: i32 = 2;
 /// Sprite tag `PISG` (pistol (player weapon)).
-pub const SPR_PISG: c_int = 3;
+pub const SPR_PISG: i32 = 3;
 /// Sprite tag `PISF` (pistol muzzle flash).
-pub const SPR_PISF: c_int = 4;
+pub const SPR_PISF: i32 = 4;
 /// Sprite tag `SHTF` (shotgun muzzle flash).
-pub const SPR_SHTF: c_int = 5;
+pub const SPR_SHTF: i32 = 5;
 /// Sprite tag `SHT2` (super-shotgun (player weapon)).
-pub const SPR_SHT2: c_int = 6;
+pub const SPR_SHT2: i32 = 6;
 /// Sprite tag `CHGG` (chaingun (player weapon)).
-pub const SPR_CHGG: c_int = 7;
+pub const SPR_CHGG: i32 = 7;
 /// Sprite tag `CHGF` (chaingun muzzle flash).
-pub const SPR_CHGF: c_int = 8;
+pub const SPR_CHGF: i32 = 8;
 /// Sprite tag `MISG` (rocket launcher (player weapon)).
-pub const SPR_MISG: c_int = 9;
+pub const SPR_MISG: i32 = 9;
 /// Sprite tag `MISF` (rocket launcher muzzle flash).
-pub const SPR_MISF: c_int = 10;
+pub const SPR_MISF: i32 = 10;
 /// Sprite tag `SAWG` (chainsaw (player weapon)).
-pub const SPR_SAWG: c_int = 11;
+pub const SPR_SAWG: i32 = 11;
 /// Sprite tag `PLSG` (plasma rifle (player weapon)).
-pub const SPR_PLSG: c_int = 12;
+pub const SPR_PLSG: i32 = 12;
 /// Sprite tag `PLSF` (plasma muzzle flash).
-pub const SPR_PLSF: c_int = 13;
+pub const SPR_PLSF: i32 = 13;
 /// Sprite tag `BFGG` (BFG9000 (player weapon)).
-pub const SPR_BFGG: c_int = 14;
+pub const SPR_BFGG: i32 = 14;
 /// Sprite tag `BFGF` (BFG muzzle flash).
-pub const SPR_BFGF: c_int = 15;
+pub const SPR_BFGF: i32 = 15;
 /// Sprite tag `BLUD` (blood splash).
-pub const SPR_BLUD: c_int = 16;
+pub const SPR_BLUD: i32 = 16;
 /// Sprite tag `PUFF` (bullet puff).
-pub const SPR_PUFF: c_int = 17;
+pub const SPR_PUFF: i32 = 17;
 /// Sprite tag `BAL1` (demon fireball).
-pub const SPR_BAL1: c_int = 18;
+pub const SPR_BAL1: i32 = 18;
 /// Sprite tag `BAL2` (Cacodemon fireball).
-pub const SPR_BAL2: c_int = 19;
+pub const SPR_BAL2: i32 = 19;
 /// Sprite tag `PLSS` (plasma bolt).
-pub const SPR_PLSS: c_int = 20;
+pub const SPR_PLSS: i32 = 20;
 /// Sprite tag `PLSE` (plasma bolt explosion).
-pub const SPR_PLSE: c_int = 21;
+pub const SPR_PLSE: i32 = 21;
 /// Sprite tag `MISL` (rocket projectile).
-pub const SPR_MISL: c_int = 22;
+pub const SPR_MISL: i32 = 22;
 /// Sprite tag `BFS1` (BFG shot).
-pub const SPR_BFS1: c_int = 23;
+pub const SPR_BFS1: i32 = 23;
 /// Sprite tag `BFE1` (BFG explosion stage 1).
-pub const SPR_BFE1: c_int = 24;
+pub const SPR_BFE1: i32 = 24;
 /// Sprite tag `BFE2` (BFG explosion stage 2).
-pub const SPR_BFE2: c_int = 25;
+pub const SPR_BFE2: i32 = 25;
 /// Sprite tag `TFOG` (teleport fog).
-pub const SPR_TFOG: c_int = 26;
+pub const SPR_TFOG: i32 = 26;
 /// Sprite tag `IFOG` (item respawn fog).
-pub const SPR_IFOG: c_int = 27;
+pub const SPR_IFOG: i32 = 27;
 /// Sprite tag `PLAY` (player).
-pub const SPR_PLAY: c_int = 28;
+pub const SPR_PLAY: i32 = 28;
 /// Sprite tag `POSS` (former human (zombieman)).
-pub const SPR_POSS: c_int = 29;
+pub const SPR_POSS: i32 = 29;
 /// Sprite tag `SPOS` (shotgun guy).
-pub const SPR_SPOS: c_int = 30;
+pub const SPR_SPOS: i32 = 30;
 /// Sprite tag `VILE` (Archvile).
-pub const SPR_VILE: c_int = 31;
+pub const SPR_VILE: i32 = 31;
 /// Sprite tag `FIRE` (Archvile fire).
-pub const SPR_FIRE: c_int = 32;
+pub const SPR_FIRE: i32 = 32;
 /// Sprite tag `FATB` (Mancubus fireball).
-pub const SPR_FATB: c_int = 33;
+pub const SPR_FATB: i32 = 33;
 /// Sprite tag `FBXP` (Mancubus fireball explosion).
-pub const SPR_FBXP: c_int = 34;
+pub const SPR_FBXP: i32 = 34;
 /// Sprite tag `SKEL` (Revenant).
-pub const SPR_SKEL: c_int = 35;
+pub const SPR_SKEL: i32 = 35;
 /// Sprite tag `MANF` (Mancubus fireball (alt)).
-pub const SPR_MANF: c_int = 36;
+pub const SPR_MANF: i32 = 36;
 /// Sprite tag `FATT` (Mancubus).
-pub const SPR_FATT: c_int = 37;
+pub const SPR_FATT: i32 = 37;
 /// Sprite tag `CPOS` (chaingunner).
-pub const SPR_CPOS: c_int = 38;
+pub const SPR_CPOS: i32 = 38;
 /// Sprite tag `SARG` (Demon / Spectre).
-pub const SPR_SARG: c_int = 39;
+pub const SPR_SARG: i32 = 39;
 /// Sprite tag `HEAD` (Cacodemon).
-pub const SPR_HEAD: c_int = 40;
+pub const SPR_HEAD: i32 = 40;
 /// Sprite tag `BAL7` (Lost Soul / Baron fireball).
-pub const SPR_BAL7: c_int = 41;
+pub const SPR_BAL7: i32 = 41;
 /// Sprite tag `BOSS` (Baron of Hell).
-pub const SPR_BOSS: c_int = 42;
+pub const SPR_BOSS: i32 = 42;
 /// Sprite tag `BOS2` (Hell Knight).
-pub const SPR_BOS2: c_int = 43;
+pub const SPR_BOS2: i32 = 43;
 /// Sprite tag `SKUL` (Lost Soul).
-pub const SPR_SKUL: c_int = 44;
+pub const SPR_SKUL: i32 = 44;
 /// Sprite tag `SPID` (Spider Mastermind).
-pub const SPR_SPID: c_int = 45;
+pub const SPR_SPID: i32 = 45;
 /// Sprite tag `BSPI` (Arachnotron).
-pub const SPR_BSPI: c_int = 46;
+pub const SPR_BSPI: i32 = 46;
 /// Sprite tag `APLS` (Arachnotron plasma).
-pub const SPR_APLS: c_int = 47;
+pub const SPR_APLS: i32 = 47;
 /// Sprite tag `APBX` (Arachnotron plasma explosion).
-pub const SPR_APBX: c_int = 48;
+pub const SPR_APBX: i32 = 48;
 /// Sprite tag `CYBR` (Cyberdemon).
-pub const SPR_CYBR: c_int = 49;
+pub const SPR_CYBR: i32 = 49;
 /// Sprite tag `PAIN` (Pain Elemental).
-pub const SPR_PAIN: c_int = 50;
+pub const SPR_PAIN: i32 = 50;
 /// Sprite tag `SSWV` (Wolfenstein SS).
-pub const SPR_SSWV: c_int = 51;
+pub const SPR_SSWV: i32 = 51;
 /// Sprite tag `KEEN` (Commander Keen (E4M6 secret)).
-pub const SPR_KEEN: c_int = 52;
+pub const SPR_KEEN: i32 = 52;
 /// Sprite tag `BBRN` (Romero head (final boss)).
-pub const SPR_BBRN: c_int = 53;
+pub const SPR_BBRN: i32 = 53;
 /// Sprite tag `BOSF` (boss brain cube spawner).
-pub const SPR_BOSF: c_int = 54;
+pub const SPR_BOSF: i32 = 54;
 /// Sprite tag `ARM1` (green armor).
-pub const SPR_ARM1: c_int = 55;
+pub const SPR_ARM1: i32 = 55;
 /// Sprite tag `ARM2` (blue armor).
-pub const SPR_ARM2: c_int = 56;
+pub const SPR_ARM2: i32 = 56;
 /// Sprite tag `BAR1` (exploding barrel).
-pub const SPR_BAR1: c_int = 57;
+pub const SPR_BAR1: i32 = 57;
 /// Sprite tag `BEXP` (barrel explosion).
-pub const SPR_BEXP: c_int = 58;
+pub const SPR_BEXP: i32 = 58;
 /// Sprite tag `FCAN` (burning barrel decoration).
-pub const SPR_FCAN: c_int = 59;
+pub const SPR_FCAN: i32 = 59;
 /// Sprite tag `BON1` (health bonus).
-pub const SPR_BON1: c_int = 60;
+pub const SPR_BON1: i32 = 60;
 /// Sprite tag `BON2` (armor bonus).
-pub const SPR_BON2: c_int = 61;
+pub const SPR_BON2: i32 = 61;
 /// Sprite tag `BKEY` (blue keycard).
-pub const SPR_BKEY: c_int = 62;
+pub const SPR_BKEY: i32 = 62;
 /// Sprite tag `RKEY` (red keycard).
-pub const SPR_RKEY: c_int = 63;
+pub const SPR_RKEY: i32 = 63;
 /// Sprite tag `YKEY` (yellow keycard).
-pub const SPR_YKEY: c_int = 64;
+pub const SPR_YKEY: i32 = 64;
 /// Sprite tag `BSKU` (blue skull key).
-pub const SPR_BSKU: c_int = 65;
+pub const SPR_BSKU: i32 = 65;
 /// Sprite tag `RSKU` (red skull key).
-pub const SPR_RSKU: c_int = 66;
+pub const SPR_RSKU: i32 = 66;
 /// Sprite tag `YSKU` (yellow skull key).
-pub const SPR_YSKU: c_int = 67;
+pub const SPR_YSKU: i32 = 67;
 /// Sprite tag `STIM` (stimpack).
-pub const SPR_STIM: c_int = 68;
+pub const SPR_STIM: i32 = 68;
 /// Sprite tag `MEDI` (medikit).
-pub const SPR_MEDI: c_int = 69;
+pub const SPR_MEDI: i32 = 69;
 /// Sprite tag `SOUL` (soulsphere).
-pub const SPR_SOUL: c_int = 70;
+pub const SPR_SOUL: i32 = 70;
 /// Sprite tag `PINV` (invulnerability sphere).
-pub const SPR_PINV: c_int = 71;
+pub const SPR_PINV: i32 = 71;
 /// Sprite tag `PSTR` (berserk pack).
-pub const SPR_PSTR: c_int = 72;
+pub const SPR_PSTR: i32 = 72;
 /// Sprite tag `PINS` (partial invisibility).
-pub const SPR_PINS: c_int = 73;
+pub const SPR_PINS: i32 = 73;
 /// Sprite tag `MEGA` (megasphere).
-pub const SPR_MEGA: c_int = 74;
+pub const SPR_MEGA: i32 = 74;
 /// Sprite tag `SUIT` (radiation suit).
-pub const SPR_SUIT: c_int = 75;
+pub const SPR_SUIT: i32 = 75;
 /// Sprite tag `PMAP` (computer area map).
-pub const SPR_PMAP: c_int = 76;
+pub const SPR_PMAP: i32 = 76;
 /// Sprite tag `PVIS` (light amplification visor).
-pub const SPR_PVIS: c_int = 77;
+pub const SPR_PVIS: i32 = 77;
 /// Sprite tag `CLIP` (ammo clip).
-pub const SPR_CLIP: c_int = 78;
+pub const SPR_CLIP: i32 = 78;
 /// Sprite tag `AMMO` (box of bullets).
-pub const SPR_AMMO: c_int = 79;
+pub const SPR_AMMO: i32 = 79;
 /// Sprite tag `ROCK` (rocket).
-pub const SPR_ROCK: c_int = 80;
+pub const SPR_ROCK: i32 = 80;
 /// Sprite tag `BROK` (box of rockets).
-pub const SPR_BROK: c_int = 81;
+pub const SPR_BROK: i32 = 81;
 /// Sprite tag `CELL` (energy cell).
-pub const SPR_CELL: c_int = 82;
+pub const SPR_CELL: i32 = 82;
 /// Sprite tag `CELP` (energy cell pack).
-pub const SPR_CELP: c_int = 83;
+pub const SPR_CELP: i32 = 83;
 /// Sprite tag `SHEL` (shotgun shells).
-pub const SPR_SHEL: c_int = 84;
+pub const SPR_SHEL: i32 = 84;
 /// Sprite tag `SBOX` (box of shotgun shells).
-pub const SPR_SBOX: c_int = 85;
+pub const SPR_SBOX: i32 = 85;
 /// Sprite tag `BPAK` (backpack).
-pub const SPR_BPAK: c_int = 86;
+pub const SPR_BPAK: i32 = 86;
 /// Sprite tag `BFUG` (BFG9000 pickup).
-pub const SPR_BFUG: c_int = 87;
+pub const SPR_BFUG: i32 = 87;
 /// Sprite tag `MGUN` (chaingun pickup).
-pub const SPR_MGUN: c_int = 88;
+pub const SPR_MGUN: i32 = 88;
 /// Sprite tag `CSAW` (chainsaw pickup).
-pub const SPR_CSAW: c_int = 89;
+pub const SPR_CSAW: i32 = 89;
 /// Sprite tag `LAUN` (rocket launcher pickup).
-pub const SPR_LAUN: c_int = 90;
+pub const SPR_LAUN: i32 = 90;
 /// Sprite tag `PLAS` (plasma rifle pickup).
-pub const SPR_PLAS: c_int = 91;
+pub const SPR_PLAS: i32 = 91;
 /// Sprite tag `SHOT` (shotgun pickup).
-pub const SPR_SHOT: c_int = 92;
+pub const SPR_SHOT: i32 = 92;
 /// Sprite tag `SGN2` (super-shotgun pickup).
-pub const SPR_SGN2: c_int = 93;
+pub const SPR_SGN2: i32 = 93;
 /// Sprite tag `COLU` (floor lamp).
-pub const SPR_COLU: c_int = 94;
+pub const SPR_COLU: i32 = 94;
 /// Sprite tag `SMT2` (short green pillar with skull).
-pub const SPR_SMT2: c_int = 95;
+pub const SPR_SMT2: i32 = 95;
 /// Sprite tag `GOR1` (hanging body decoration).
-pub const SPR_GOR1: c_int = 96;
+pub const SPR_GOR1: i32 = 96;
 /// Sprite tag `POL2` (dead trooper decoration).
-pub const SPR_POL2: c_int = 97;
+pub const SPR_POL2: i32 = 97;
 /// Sprite tag `POL5` (dead lost soul).
-pub const SPR_POL5: c_int = 98;
+pub const SPR_POL5: i32 = 98;
 /// Sprite tag `POL4` (dead body decoration).
-pub const SPR_POL4: c_int = 99;
+pub const SPR_POL4: i32 = 99;
 /// Sprite tag `POL3` (dead body decoration).
-pub const SPR_POL3: c_int = 100;
+pub const SPR_POL3: i32 = 100;
 /// Sprite tag `POL1` (dead body decoration).
-pub const SPR_POL1: c_int = 101;
+pub const SPR_POL1: i32 = 101;
 /// Sprite tag `POL6` (dead body decoration).
-pub const SPR_POL6: c_int = 102;
+pub const SPR_POL6: i32 = 102;
 /// Sprite tag `GOR2` (hanging body decoration).
-pub const SPR_GOR2: c_int = 103;
+pub const SPR_GOR2: i32 = 103;
 /// Sprite tag `GOR3` (hanging body decoration).
-pub const SPR_GOR3: c_int = 104;
+pub const SPR_GOR3: i32 = 104;
 /// Sprite tag `GOR4` (hanging body decoration).
-pub const SPR_GOR4: c_int = 105;
+pub const SPR_GOR4: i32 = 105;
 /// Sprite tag `GOR5` (hanging body decoration).
-pub const SPR_GOR5: c_int = 106;
+pub const SPR_GOR5: i32 = 106;
 /// Sprite tag `SMIT` (stalagmite).
-pub const SPR_SMIT: c_int = 107;
+pub const SPR_SMIT: i32 = 107;
 /// Sprite tag `COL1` (tall green pillar).
-pub const SPR_COL1: c_int = 108;
+pub const SPR_COL1: i32 = 108;
 /// Sprite tag `COL2` (short green pillar).
-pub const SPR_COL2: c_int = 109;
+pub const SPR_COL2: i32 = 109;
 /// Sprite tag `COL3` (tall red pillar).
-pub const SPR_COL3: c_int = 110;
+pub const SPR_COL3: i32 = 110;
 /// Sprite tag `COL4` (short red pillar).
-pub const SPR_COL4: c_int = 111;
+pub const SPR_COL4: i32 = 111;
 /// Sprite tag `CAND` (candle).
-pub const SPR_CAND: c_int = 112;
+pub const SPR_CAND: i32 = 112;
 /// Sprite tag `CBRA` (candelabra).
-pub const SPR_CBRA: c_int = 113;
+pub const SPR_CBRA: i32 = 113;
 /// Sprite tag `COL6` (short red pillar with skull).
-pub const SPR_COL6: c_int = 114;
+pub const SPR_COL6: i32 = 114;
 /// Sprite tag `TRE1` (burnt tree decoration).
-pub const SPR_TRE1: c_int = 115;
+pub const SPR_TRE1: i32 = 115;
 /// Sprite tag `TRE2` (tall tree decoration).
-pub const SPR_TRE2: c_int = 116;
+pub const SPR_TRE2: i32 = 116;
 /// Sprite tag `ELEC` (tall techno pillar).
-pub const SPR_ELEC: c_int = 117;
+pub const SPR_ELEC: i32 = 117;
 /// Sprite tag `CEYE` (evil eye decoration).
-pub const SPR_CEYE: c_int = 118;
+pub const SPR_CEYE: i32 = 118;
 /// Sprite tag `FSKU` (floating skull decoration).
-pub const SPR_FSKU: c_int = 119;
+pub const SPR_FSKU: i32 = 119;
 /// Sprite tag `COL5` (short red pillar with heart).
-pub const SPR_COL5: c_int = 120;
+pub const SPR_COL5: i32 = 120;
 /// Sprite tag `TBLU` (blue torch).
-pub const SPR_TBLU: c_int = 121;
+pub const SPR_TBLU: i32 = 121;
 /// Sprite tag `TGRN` (green torch).
-pub const SPR_TGRN: c_int = 122;
+pub const SPR_TGRN: i32 = 122;
 /// Sprite tag `TRED` (red torch).
-pub const SPR_TRED: c_int = 123;
+pub const SPR_TRED: i32 = 123;
 /// Sprite tag `SMBT` (short blue torch).
-pub const SPR_SMBT: c_int = 124;
+pub const SPR_SMBT: i32 = 124;
 /// Sprite tag `SMGT` (short green torch).
-pub const SPR_SMGT: c_int = 125;
+pub const SPR_SMGT: i32 = 125;
 /// Sprite tag `SMRT` (short red torch).
-pub const SPR_SMRT: c_int = 126;
+pub const SPR_SMRT: i32 = 126;
 /// Sprite tag `HDB1` (hanging body decoration).
-pub const SPR_HDB1: c_int = 127;
+pub const SPR_HDB1: i32 = 127;
 /// Sprite tag `HDB2` (hanging body decoration).
-pub const SPR_HDB2: c_int = 128;
+pub const SPR_HDB2: i32 = 128;
 /// Sprite tag `HDB3` (hanging body decoration).
-pub const SPR_HDB3: c_int = 129;
+pub const SPR_HDB3: i32 = 129;
 /// Sprite tag `HDB4` (hanging body decoration).
-pub const SPR_HDB4: c_int = 130;
+pub const SPR_HDB4: i32 = 130;
 /// Sprite tag `HDB5` (hanging body decoration).
-pub const SPR_HDB5: c_int = 131;
+pub const SPR_HDB5: i32 = 131;
 /// Sprite tag `HDB6` (hanging body decoration).
-pub const SPR_HDB6: c_int = 132;
+pub const SPR_HDB6: i32 = 132;
 /// Sprite tag `POB1` (pool of blood).
-pub const SPR_POB1: c_int = 133;
+pub const SPR_POB1: i32 = 133;
 /// Sprite tag `POB2` (pool of blood).
-pub const SPR_POB2: c_int = 134;
+pub const SPR_POB2: i32 = 134;
 /// Sprite tag `BRS1` (brain stem decoration).
-pub const SPR_BRS1: c_int = 135;
+pub const SPR_BRS1: i32 = 135;
 /// Sprite tag `TLMP` (tall techno-lamp).
-pub const SPR_TLMP: c_int = 136;
+pub const SPR_TLMP: i32 = 136;
 /// Sprite tag `TLP2` (short techno-lamp).
-pub const SPR_TLP2: c_int = 137;
+pub const SPR_TLP2: i32 = 137;
 
 // Pull in the `Sfx` enum so the per-mobj `seesound`, `attacksound`,
 // `painsound`, `deathsound`, and `activesound` fields can name sound
@@ -428,355 +426,355 @@ pub use crate::doom::statenum::*;
 
 /// `MF_SPECIAL`: pick-up item that gives the toucher something (ammo,
 /// keys, weapons, ...). `P_TouchSpecialThing` reacts to this flag.
-pub const MF_SPECIAL: c_int = 0x00000001;
+pub const MF_SPECIAL: i32 = 0x00000001;
 /// `MF_SOLID`: blocks other things from passing through. Most actors set
 /// this; bullets, fog and gibs do not.
-pub const MF_SOLID: c_int = 0x00000002;
+pub const MF_SOLID: i32 = 0x00000002;
 /// `MF_SHOOTABLE`: can be damaged. Monsters, players, and barrels set
 /// this; props and projectiles do not.
-pub const MF_SHOOTABLE: c_int = 0x00000004;
+pub const MF_SHOOTABLE: i32 = 0x00000004;
 /// `MF_NOSECTOR`: don't link into the sector's thing list. Used by
 /// non-interactive sprites (fog, splashes) to skip subsector traversal
 /// during collision detection.
-pub const MF_NOSECTOR: c_int = 0x00000008;
+pub const MF_NOSECTOR: i32 = 0x00000008;
 /// `MF_NOBLOCKMAP`: don't link into the blockmap. Combined with
 /// `MF_NOSECTOR` this hides the actor from every spatial query.
-pub const MF_NOBLOCKMAP: c_int = 0x00000010;
+pub const MF_NOBLOCKMAP: i32 = 0x00000010;
 /// `MF_AMBUSH`: monster will not wake from far-away gunfire (deaf flag
 /// from the WAD thing flags).
-pub const MF_AMBUSH: c_int = 0x00000020;
+pub const MF_AMBUSH: i32 = 0x00000020;
 /// `MF_JUSTHIT`: monster was just hit and will retaliate on its next
 /// think. Cleared after one tick.
-pub const MF_JUSTHIT: c_int = 0x00000040;
+pub const MF_JUSTHIT: i32 = 0x00000040;
 /// `MF_JUSTATTACKED`: monster just attacked and should pause one tic
 /// before chasing again (anti-zigzag).
-pub const MF_JUSTATTACKED: c_int = 0x00000080;
+pub const MF_JUSTATTACKED: i32 = 0x00000080;
 /// `MF_SPAWNCEILING`: hangs from the ceiling instead of resting on the
 /// floor. Used by hanging-corpse decorations.
-pub const MF_SPAWNCEILING: c_int = 0x00000100;
+pub const MF_SPAWNCEILING: i32 = 0x00000100;
 /// `MF_NOGRAVITY`: does not fall. Set on projectiles, lost souls, fog.
-pub const MF_NOGRAVITY: c_int = 0x00000200;
+pub const MF_NOGRAVITY: i32 = 0x00000200;
 /// `MF_DROPOFF`: allowed to walk off ledges that are normally
 /// off-limits to monsters.
-pub const MF_DROPOFF: c_int = 0x00000400;
+pub const MF_DROPOFF: i32 = 0x00000400;
 /// `MF_PICKUP`: this is the *player*; touching an `MF_SPECIAL` will
 /// pick it up.
-pub const MF_PICKUP: c_int = 0x00000800;
+pub const MF_PICKUP: i32 = 0x00000800;
 /// `MF_NOCLIP`: ignores all collision (debug / IDCLIP cheat).
-pub const MF_NOCLIP: c_int = 0x00001000;
+pub const MF_NOCLIP: i32 = 0x00001000;
 /// `MF_SLIDE`: slide along walls instead of stopping (player only).
-pub const MF_SLIDE: c_int = 0x00002000;
+pub const MF_SLIDE: i32 = 0x00002000;
 /// `MF_FLOAT`: actor can move vertically (Cacodemons, Lost Souls).
-pub const MF_FLOAT: c_int = 0x00004000;
+pub const MF_FLOAT: i32 = 0x00004000;
 /// `MF_TELEPORT`: don't cross teleport lines while moving (avoid
 /// reentry loops).
-pub const MF_TELEPORT: c_int = 0x00008000;
+pub const MF_TELEPORT: i32 = 0x00008000;
 /// `MF_MISSILE`: this is a projectile. Affects damage rules and
 /// collision response.
-pub const MF_MISSILE: c_int = 0x00010000;
+pub const MF_MISSILE: i32 = 0x00010000;
 /// `MF_DROPPED`: was dropped by a dying monster (so it does not
 /// respawn and gives half-ammo).
-pub const MF_DROPPED: c_int = 0x00020000;
+pub const MF_DROPPED: i32 = 0x00020000;
 /// `MF_SHADOW`: drawn fuzzy (Spectre / partial-invisibility).
-pub const MF_SHADOW: c_int = 0x00040000;
+pub const MF_SHADOW: i32 = 0x00040000;
 /// `MF_NOBLOOD`: does not bleed when hit (decorations, barrels).
-pub const MF_NOBLOOD: c_int = 0x00080000;
+pub const MF_NOBLOOD: i32 = 0x00080000;
 /// `MF_CORPSE`: lies flat on the ground; ignored by most collision
 /// checks.
-pub const MF_CORPSE: c_int = 0x00100000;
+pub const MF_CORPSE: i32 = 0x00100000;
 /// `MF_INFLOAT`: currently floating up or down to a target's altitude.
 /// Suppresses gravity for one tic.
-pub const MF_INFLOAT: c_int = 0x00200000;
+pub const MF_INFLOAT: i32 = 0x00200000;
 /// `MF_COUNTKILL`: counts toward the level's kill total on death.
-pub const MF_COUNTKILL: c_int = 0x00400000;
+pub const MF_COUNTKILL: i32 = 0x00400000;
 /// `MF_COUNTITEM`: counts toward the level's item total on pickup.
-pub const MF_COUNTITEM: c_int = 0x00800000;
+pub const MF_COUNTITEM: i32 = 0x00800000;
 /// `MF_SKULLFLY`: Lost Soul mid-charge. Disables gravity and damages
 /// on contact.
-pub const MF_SKULLFLY: c_int = 0x01000000;
+pub const MF_SKULLFLY: i32 = 0x01000000;
 /// `MF_NOTDMATCH`: don't spawn in deathmatch (key cards).
-pub const MF_NOTDMATCH: c_int = 0x02000000;
+pub const MF_NOTDMATCH: i32 = 0x02000000;
 /// `MF_TRANSLATION`: two-bit player colour translation mask
 /// (`MF_TRANSSHIFT`).
-pub const MF_TRANSLATION: c_int = 0x0c000000;
+pub const MF_TRANSLATION: i32 = 0x0c000000;
 /// Bit position of the [`MF_TRANSLATION`] field within `flags`.
-pub const MF_TRANSSHIFT: c_int = 26;
+pub const MF_TRANSSHIFT: i32 = 26;
 
 // Mobj type indices (from info.h mobjtype_t enum).
 /// `MT_PLAYER` (the player actor).
-pub const MT_PLAYER: c_int = 0;
+pub const MT_PLAYER: i32 = 0;
 /// `MT_POSSESSED` (former human (zombieman)).
-pub const MT_POSSESSED: c_int = 1;
+pub const MT_POSSESSED: i32 = 1;
 /// `MT_SHOTGUY` (former shotgun guy).
-pub const MT_SHOTGUY: c_int = 2;
+pub const MT_SHOTGUY: i32 = 2;
 /// `MT_VILE` (Archvile).
-pub const MT_VILE: c_int = 3;
+pub const MT_VILE: i32 = 3;
 /// `MT_FIRE` (Archvile fire pillar).
-pub const MT_FIRE: c_int = 4;
+pub const MT_FIRE: i32 = 4;
 /// `MT_UNDEAD` (Revenant).
-pub const MT_UNDEAD: c_int = 5;
+pub const MT_UNDEAD: i32 = 5;
 /// `MT_TRACER` (Revenant tracking missile).
-pub const MT_TRACER: c_int = 6;
+pub const MT_TRACER: i32 = 6;
 /// `MT_SMOKE` (Revenant smoke trail).
-pub const MT_SMOKE: c_int = 7;
+pub const MT_SMOKE: i32 = 7;
 /// `MT_FATSO` (Mancubus).
-pub const MT_FATSO: c_int = 8;
+pub const MT_FATSO: i32 = 8;
 /// `MT_FATSHOT` (Mancubus fireball).
-pub const MT_FATSHOT: c_int = 9;
+pub const MT_FATSHOT: i32 = 9;
 /// `MT_CHAINGUY` (chaingunner).
-pub const MT_CHAINGUY: c_int = 10;
+pub const MT_CHAINGUY: i32 = 10;
 /// `MT_TROOP` (Imp).
-pub const MT_TROOP: c_int = 11;
+pub const MT_TROOP: i32 = 11;
 /// `MT_SERGEANT` (Demon).
-pub const MT_SERGEANT: c_int = 12;
+pub const MT_SERGEANT: i32 = 12;
 /// `MT_SHADOWS` (Spectre).
-pub const MT_SHADOWS: c_int = 13;
+pub const MT_SHADOWS: i32 = 13;
 /// `MT_HEAD` (Cacodemon).
-pub const MT_HEAD: c_int = 14;
+pub const MT_HEAD: i32 = 14;
 /// `MT_BRUISER` (Baron of Hell).
-pub const MT_BRUISER: c_int = 15;
+pub const MT_BRUISER: i32 = 15;
 /// `MT_BRUISERSHOT` (Baron / Knight fireball).
-pub const MT_BRUISERSHOT: c_int = 16;
+pub const MT_BRUISERSHOT: i32 = 16;
 /// `MT_KNIGHT` (Hell Knight).
-pub const MT_KNIGHT: c_int = 17;
+pub const MT_KNIGHT: i32 = 17;
 /// `MT_SKULL` (Lost Soul).
-pub const MT_SKULL: c_int = 18;
+pub const MT_SKULL: i32 = 18;
 /// `MT_SPIDER` (Spider Mastermind).
-pub const MT_SPIDER: c_int = 19;
+pub const MT_SPIDER: i32 = 19;
 /// `MT_BABY` (Arachnotron).
-pub const MT_BABY: c_int = 20;
+pub const MT_BABY: i32 = 20;
 /// `MT_CYBORG` (Cyberdemon).
-pub const MT_CYBORG: c_int = 21;
+pub const MT_CYBORG: i32 = 21;
 /// `MT_PAIN` (Pain Elemental).
-pub const MT_PAIN: c_int = 22;
+pub const MT_PAIN: i32 = 22;
 /// `MT_WOLFSS` (Wolfenstein SS).
-pub const MT_WOLFSS: c_int = 23;
+pub const MT_WOLFSS: i32 = 23;
 /// `MT_KEEN` (Commander Keen (hung body)).
-pub const MT_KEEN: c_int = 24;
+pub const MT_KEEN: i32 = 24;
 /// `MT_BOSSBRAIN` (Romero head boss target).
-pub const MT_BOSSBRAIN: c_int = 25;
+pub const MT_BOSSBRAIN: i32 = 25;
 /// `MT_BOSSSPIT` (boss cube spawner).
-pub const MT_BOSSSPIT: c_int = 26;
+pub const MT_BOSSSPIT: i32 = 26;
 /// `MT_BOSSTARGET` (deaf marker for boss-cube targets).
-pub const MT_BOSSTARGET: c_int = 27;
+pub const MT_BOSSTARGET: i32 = 27;
 /// `MT_SPAWNSHOT` (boss cube projectile).
-pub const MT_SPAWNSHOT: c_int = 28;
+pub const MT_SPAWNSHOT: i32 = 28;
 /// `MT_SPAWNFIRE` (boss-cube teleport flame).
-pub const MT_SPAWNFIRE: c_int = 29;
+pub const MT_SPAWNFIRE: i32 = 29;
 /// `MT_BARREL` (exploding barrel).
-pub const MT_BARREL: c_int = 30;
+pub const MT_BARREL: i32 = 30;
 /// `MT_TROOPSHOT` (Imp fireball).
-pub const MT_TROOPSHOT: c_int = 31;
+pub const MT_TROOPSHOT: i32 = 31;
 /// `MT_HEADSHOT` (Cacodemon fireball).
-pub const MT_HEADSHOT: c_int = 32;
+pub const MT_HEADSHOT: i32 = 32;
 /// `MT_ROCKET` (rocket projectile).
-pub const MT_ROCKET: c_int = 33;
+pub const MT_ROCKET: i32 = 33;
 /// `MT_PLASMA` (plasma bolt).
-pub const MT_PLASMA: c_int = 34;
+pub const MT_PLASMA: i32 = 34;
 /// `MT_BFG` (BFG shot).
-pub const MT_BFG: c_int = 35;
+pub const MT_BFG: i32 = 35;
 /// `MT_ARACHPLAZ` (Arachnotron plasma bolt).
-pub const MT_ARACHPLAZ: c_int = 36;
+pub const MT_ARACHPLAZ: i32 = 36;
 /// `MT_PUFF` (bullet impact puff).
-pub const MT_PUFF: c_int = 37;
+pub const MT_PUFF: i32 = 37;
 /// `MT_BLOOD` (blood splash).
-pub const MT_BLOOD: c_int = 38;
+pub const MT_BLOOD: i32 = 38;
 /// `MT_TFOG` (teleport fog).
-pub const MT_TFOG: c_int = 39;
+pub const MT_TFOG: i32 = 39;
 /// `MT_IFOG` (item respawn fog).
-pub const MT_IFOG: c_int = 40;
+pub const MT_IFOG: i32 = 40;
 /// `MT_TELEPORTMAN` (teleport destination marker).
-pub const MT_TELEPORTMAN: c_int = 41;
+pub const MT_TELEPORTMAN: i32 = 41;
 /// `MT_EXTRABFG` (BFG spray hit effect).
-pub const MT_EXTRABFG: c_int = 42;
+pub const MT_EXTRABFG: i32 = 42;
 /// `MT_MISC0` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC0: c_int = 43;
+pub const MT_MISC0: i32 = 43;
 /// `MT_MISC1` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC1: c_int = 44;
+pub const MT_MISC1: i32 = 44;
 /// `MT_MISC2` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC2: c_int = 45;
+pub const MT_MISC2: i32 = 45;
 /// `MT_MISC3` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC3: c_int = 46;
+pub const MT_MISC3: i32 = 46;
 /// `MT_MISC4` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC4: c_int = 47;
+pub const MT_MISC4: i32 = 47;
 /// `MT_MISC5` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC5: c_int = 48;
+pub const MT_MISC5: i32 = 48;
 /// `MT_MISC6` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC6: c_int = 49;
+pub const MT_MISC6: i32 = 49;
 /// `MT_MISC7` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC7: c_int = 50;
+pub const MT_MISC7: i32 = 50;
 /// `MT_MISC8` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC8: c_int = 51;
+pub const MT_MISC8: i32 = 51;
 /// `MT_MISC9` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC9: c_int = 52;
+pub const MT_MISC9: i32 = 52;
 /// `MT_MISC10` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC10: c_int = 53;
+pub const MT_MISC10: i32 = 53;
 /// `MT_MISC11` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC11: c_int = 54;
+pub const MT_MISC11: i32 = 54;
 /// `MT_MISC12` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC12: c_int = 55;
+pub const MT_MISC12: i32 = 55;
 /// `MT_INV` (invulnerability sphere).
-pub const MT_INV: c_int = 56;
+pub const MT_INV: i32 = 56;
 /// `MT_MISC13` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC13: c_int = 57;
+pub const MT_MISC13: i32 = 57;
 /// `MT_INS` (partial invisibility sphere).
-pub const MT_INS: c_int = 58;
+pub const MT_INS: i32 = 58;
 /// `MT_MISC14` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC14: c_int = 59;
+pub const MT_MISC14: i32 = 59;
 /// `MT_MISC15` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC15: c_int = 60;
+pub const MT_MISC15: i32 = 60;
 /// `MT_MISC16` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC16: c_int = 61;
+pub const MT_MISC16: i32 = 61;
 /// `MT_MEGA` (megasphere).
-pub const MT_MEGA: c_int = 62;
+pub const MT_MEGA: i32 = 62;
 /// `MT_CLIP` (ammo clip pickup).
-pub const MT_CLIP: c_int = 63;
+pub const MT_CLIP: i32 = 63;
 /// `MT_MISC17` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC17: c_int = 64;
+pub const MT_MISC17: i32 = 64;
 /// `MT_MISC18` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC18: c_int = 65;
+pub const MT_MISC18: i32 = 65;
 /// `MT_MISC19` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC19: c_int = 66;
+pub const MT_MISC19: i32 = 66;
 /// `MT_MISC20` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC20: c_int = 67;
+pub const MT_MISC20: i32 = 67;
 /// `MT_MISC21` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC21: c_int = 68;
+pub const MT_MISC21: i32 = 68;
 /// `MT_MISC22` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC22: c_int = 69;
+pub const MT_MISC22: i32 = 69;
 /// `MT_MISC23` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC23: c_int = 70;
+pub const MT_MISC23: i32 = 70;
 /// `MT_MISC24` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC24: c_int = 71;
+pub const MT_MISC24: i32 = 71;
 /// `MT_MISC25` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC25: c_int = 72;
+pub const MT_MISC25: i32 = 72;
 /// `MT_CHAINGUN` (chaingun pickup).
-pub const MT_CHAINGUN: c_int = 73;
+pub const MT_CHAINGUN: i32 = 73;
 /// `MT_MISC26` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC26: c_int = 74;
+pub const MT_MISC26: i32 = 74;
 /// `MT_MISC27` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC27: c_int = 75;
+pub const MT_MISC27: i32 = 75;
 /// `MT_MISC28` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC28: c_int = 76;
+pub const MT_MISC28: i32 = 76;
 /// `MT_SHOTGUN` (shotgun pickup).
-pub const MT_SHOTGUN: c_int = 77;
+pub const MT_SHOTGUN: i32 = 77;
 /// `MT_SUPERSHOTGUN` (super-shotgun pickup).
-pub const MT_SUPERSHOTGUN: c_int = 78;
+pub const MT_SUPERSHOTGUN: i32 = 78;
 /// `MT_MISC29` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC29: c_int = 79;
+pub const MT_MISC29: i32 = 79;
 /// `MT_MISC30` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC30: c_int = 80;
+pub const MT_MISC30: i32 = 80;
 /// `MT_MISC31` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC31: c_int = 81;
+pub const MT_MISC31: i32 = 81;
 /// `MT_MISC32` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC32: c_int = 82;
+pub const MT_MISC32: i32 = 82;
 /// `MT_MISC33` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC33: c_int = 83;
+pub const MT_MISC33: i32 = 83;
 /// `MT_MISC34` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC34: c_int = 84;
+pub const MT_MISC34: i32 = 84;
 /// `MT_MISC35` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC35: c_int = 85;
+pub const MT_MISC35: i32 = 85;
 /// `MT_MISC36` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC36: c_int = 86;
+pub const MT_MISC36: i32 = 86;
 /// `MT_MISC37` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC37: c_int = 87;
+pub const MT_MISC37: i32 = 87;
 /// `MT_MISC38` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC38: c_int = 88;
+pub const MT_MISC38: i32 = 88;
 /// `MT_MISC39` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC39: c_int = 89;
+pub const MT_MISC39: i32 = 89;
 /// `MT_MISC40` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC40: c_int = 90;
+pub const MT_MISC40: i32 = 90;
 /// `MT_MISC41` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC41: c_int = 91;
+pub const MT_MISC41: i32 = 91;
 /// `MT_MISC42` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC42: c_int = 92;
+pub const MT_MISC42: i32 = 92;
 /// `MT_MISC43` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC43: c_int = 93;
+pub const MT_MISC43: i32 = 93;
 /// `MT_MISC44` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC44: c_int = 94;
+pub const MT_MISC44: i32 = 94;
 /// `MT_MISC45` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC45: c_int = 95;
+pub const MT_MISC45: i32 = 95;
 /// `MT_MISC46` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC46: c_int = 96;
+pub const MT_MISC46: i32 = 96;
 /// `MT_MISC47` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC47: c_int = 97;
+pub const MT_MISC47: i32 = 97;
 /// `MT_MISC48` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC48: c_int = 98;
+pub const MT_MISC48: i32 = 98;
 /// `MT_MISC49` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC49: c_int = 99;
+pub const MT_MISC49: i32 = 99;
 /// `MT_MISC50` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC50: c_int = 100;
+pub const MT_MISC50: i32 = 100;
 /// `MT_MISC51` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC51: c_int = 101;
+pub const MT_MISC51: i32 = 101;
 /// `MT_MISC52` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC52: c_int = 102;
+pub const MT_MISC52: i32 = 102;
 /// `MT_MISC53` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC53: c_int = 103;
+pub const MT_MISC53: i32 = 103;
 /// `MT_MISC54` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC54: c_int = 104;
+pub const MT_MISC54: i32 = 104;
 /// `MT_MISC55` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC55: c_int = 105;
+pub const MT_MISC55: i32 = 105;
 /// `MT_MISC56` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC56: c_int = 106;
+pub const MT_MISC56: i32 = 106;
 /// `MT_MISC57` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC57: c_int = 107;
+pub const MT_MISC57: i32 = 107;
 /// `MT_MISC58` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC58: c_int = 108;
+pub const MT_MISC58: i32 = 108;
 /// `MT_MISC59` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC59: c_int = 109;
+pub const MT_MISC59: i32 = 109;
 /// `MT_MISC60` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC60: c_int = 110;
+pub const MT_MISC60: i32 = 110;
 /// `MT_MISC61` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC61: c_int = 111;
+pub const MT_MISC61: i32 = 111;
 /// `MT_MISC62` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC62: c_int = 112;
+pub const MT_MISC62: i32 = 112;
 /// `MT_MISC63` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC63: c_int = 113;
+pub const MT_MISC63: i32 = 113;
 /// `MT_MISC64` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC64: c_int = 114;
+pub const MT_MISC64: i32 = 114;
 /// `MT_MISC65` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC65: c_int = 115;
+pub const MT_MISC65: i32 = 115;
 /// `MT_MISC66` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC66: c_int = 116;
+pub const MT_MISC66: i32 = 116;
 /// `MT_MISC67` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC67: c_int = 117;
+pub const MT_MISC67: i32 = 117;
 /// `MT_MISC68` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC68: c_int = 118;
+pub const MT_MISC68: i32 = 118;
 /// `MT_MISC69` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC69: c_int = 119;
+pub const MT_MISC69: i32 = 119;
 /// `MT_MISC70` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC70: c_int = 120;
+pub const MT_MISC70: i32 = 120;
 /// `MT_MISC71` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC71: c_int = 121;
+pub const MT_MISC71: i32 = 121;
 /// `MT_MISC72` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC72: c_int = 122;
+pub const MT_MISC72: i32 = 122;
 /// `MT_MISC73` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC73: c_int = 123;
+pub const MT_MISC73: i32 = 123;
 /// `MT_MISC74` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC74: c_int = 124;
+pub const MT_MISC74: i32 = 124;
 /// `MT_MISC75` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC75: c_int = 125;
+pub const MT_MISC75: i32 = 125;
 /// `MT_MISC76` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC76: c_int = 126;
+pub const MT_MISC76: i32 = 126;
 /// `MT_MISC77` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC77: c_int = 127;
+pub const MT_MISC77: i32 = 127;
 /// `MT_MISC78` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC78: c_int = 128;
+pub const MT_MISC78: i32 = 128;
 /// `MT_MISC79` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC79: c_int = 129;
+pub const MT_MISC79: i32 = 129;
 /// `MT_MISC80` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC80: c_int = 130;
+pub const MT_MISC80: i32 = 130;
 /// `MT_MISC81` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC81: c_int = 131;
+pub const MT_MISC81: i32 = 131;
 /// `MT_MISC82` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC82: c_int = 132;
+pub const MT_MISC82: i32 = 132;
 /// `MT_MISC83` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC83: c_int = 133;
+pub const MT_MISC83: i32 = 133;
 /// `MT_MISC84` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC84: c_int = 134;
+pub const MT_MISC84: i32 = 134;
 /// `MT_MISC85` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC85: c_int = 135;
+pub const MT_MISC85: i32 = 135;
 /// `MT_MISC86` (decoration / pickup; see C `info.c` for exact mapping).
-pub const MT_MISC86: c_int = 136;
+pub const MT_MISC86: i32 = 136;
 
 /// One animation frame in a thing's state graph: Rust mirror of the C
 /// `state_t` from `info.h`.
@@ -796,14 +794,14 @@ pub const MT_MISC86: c_int = 136;
 #[repr(C)]
 pub struct State {
     /// Sprite tag index into [`sprnames`] (a `SPR_*` constant).
-    pub sprite: c_int,
+    pub sprite: i32,
     /// Sprite frame letter, low 15 bits. The high bit
     /// (`FF_FULLBRIGHT == 0x8000`, written as the integer literal
     /// `32768` in the table) marks the frame as full-bright.
-    pub frame: c_int,
+    pub frame: i32,
     /// Duration of this state in 1/35-second tics. `-1` means stay on
     /// this frame forever (until the actor is forced into a new state).
-    pub tics: c_int,
+    pub tics: i32,
     /// Optional C action function invoked when the actor enters this
     /// state. `None` corresponds to a null `actionf_t` in C. The
     /// nullary signature is a deliberate ABI quirk: many of the
@@ -813,12 +811,12 @@ pub struct State {
     /// (`actionf_v`, `actionf_p1`, `actionf_p2`) into one field.
     pub action: Option<unsafe fn()>,
     /// `S_*` index of the state to transition to once `tics` elapses.
-    pub nextstate: c_int,
+    pub nextstate: i32,
     /// Per-state scratch slot 1 (unused in vanilla Doom; reserved for
     /// Dehacked / mod use).
-    pub misc1: c_int,
+    pub misc1: i32,
     /// Per-state scratch slot 2 (see `misc1`).
-    pub misc2: c_int,
+    pub misc2: i32,
 }
 
 /// Per-mobj-type prototype: Rust mirror of the C `mobjinfo_t` from
@@ -843,63 +841,63 @@ pub struct State {
 pub struct MobjInfo {
     /// Editor number recognised by WAD level files. `-1` means this
     /// type is spawned only by code (never placed in maps).
-    pub doomednum: c_int,
+    pub doomednum: i32,
     /// `S_*` index of the idle/spawn state.
-    pub spawnstate: c_int,
+    pub spawnstate: i32,
     /// Starting `health` when this actor is spawned.
-    pub spawnhealth: c_int,
+    pub spawnhealth: i32,
     /// `S_*` index of the state to enter when the actor first sees an
     /// enemy (monster wake-up).
-    pub seestate: c_int,
+    pub seestate: i32,
     /// Sound played on `seestate` transition (monster's sighting cry).
     pub seesound: Sfx,
     /// Tic delay between sighting an enemy and attacking. Higher
     /// values make easier targets.
-    pub reactiontime: c_int,
+    pub reactiontime: i32,
     /// Sound played by the actor's attack action.
     pub attacksound: Sfx,
     /// `S_*` index of the pain (flinch) state.
-    pub painstate: c_int,
+    pub painstate: i32,
     /// 0..255 probability (of 256) of entering `painstate` when hit.
     /// 256 effectively means "always" (Pain Elementals); some
     /// monsters with high pain chance flinch repeatedly under
     /// chaingun fire.
-    pub painchance: c_int,
+    pub painchance: i32,
     /// Sound played when the actor flinches.
     pub painsound: Sfx,
     /// `S_*` index of the melee attack state, or `S_NULL` for no
     /// melee attack.
-    pub meleestate: c_int,
+    pub meleestate: i32,
     /// `S_*` index of the ranged/missile attack state, or `S_NULL`.
-    pub missilestate: c_int,
+    pub missilestate: i32,
     /// `S_*` index of the normal death animation.
-    pub deathstate: c_int,
+    pub deathstate: i32,
     /// `S_*` index of the extreme (gib) death animation, or `S_NULL`
     /// if the actor has none.
-    pub xdeathstate: c_int,
+    pub xdeathstate: i32,
     /// Sound played on death.
     pub deathsound: Sfx,
     /// Movement speed. For monsters, this is the per-`P_Move` step in
     /// integer map units. For projectiles, the table entries are already
     /// scaled by `FRACUNIT` (e.g. `15 * FRACUNIT`) and represent the
     /// per-tic distance in fixed-point.
-    pub speed: c_int,
+    pub speed: i32,
     /// Collision radius in Doom fixed-point units.
-    pub radius: c_int,
+    pub radius: i32,
     /// Collision height in Doom fixed-point units.
-    pub height: c_int,
+    pub height: i32,
     /// Inertia for thrust calculations (push-back from damage).
-    pub mass: c_int,
+    pub mass: i32,
     /// Base damage dealt by this actor's melee attack (projectiles
     /// have their own damage logic).
-    pub damage: c_int,
+    pub damage: i32,
     /// Sound played periodically while the monster is wandering.
     pub activesound: Sfx,
     /// Bitmask of [`MF_*`](MF_SPECIAL) flags applied at spawn.
-    pub flags: c_int,
+    pub flags: i32,
     /// `S_*` index of the resurrection state (used by the Archvile),
     /// or `S_NULL` if the actor cannot be raised.
-    pub raisestate: c_int,
+    pub raisestate: i32,
 }
 
 const _: () = assert!(std::mem::size_of::<MobjInfo>() == 92);
@@ -961,9 +959,9 @@ macro_rules! action {
 /// Mutability is required only to match the C type `char *sprnames[]`
 /// (nothing writes to it). Per-entry pointers are produced by the local
 /// `cstr` helper,
-/// which casts `'static` byte literals to `*mut c_char` - this is
+/// which casts `'static` byte literals to `*mut u8` - this is
 /// sound because nothing ever writes through them.
-pub static mut sprnames: [*mut c_char; 139] = [
+pub static mut sprnames: [*mut u8; 139] = [
     cstr(b"TROO\0"),
     cstr(b"SHTG\0"),
     cstr(b"PUNG\0"),
@@ -1105,7 +1103,7 @@ pub static mut sprnames: [*mut c_char; 139] = [
     std::ptr::null_mut(),
 ];
 
-/// Cast a `'static` NUL-terminated byte literal to `*mut c_char` at
+/// Cast a `'static` NUL-terminated byte literal to `*mut u8` at
 /// `const` time, for use in the [`sprnames`] static initializer.
 ///
 /// # Preconditions
@@ -1120,8 +1118,8 @@ pub static mut sprnames: [*mut c_char; 139] = [
 /// `sprnames`, but the underlying storage is read-only `.rodata`.
 /// Writing through the pointer is undefined behaviour; the C engine
 /// only reads from `sprnames`.
-const fn cstr(b: &[u8]) -> *mut c_char {
-    b.as_ptr() as *mut c_char
+const fn cstr(b: &[u8]) -> *mut u8 {
+    b.as_ptr() as *mut u8
 }
 
 /// The full per-state animation table: one [`State`] per `S_*` index
@@ -13346,7 +13344,7 @@ mod tests {
     #[test]
     fn mobjinfo_spawnstate_sprite_cross_reference() {
         unsafe {
-            let cases: [(c_int, c_int, c_int, &str); 7] = [
+            let cases: [(i32, i32, i32, &str); 7] = [
                 (MT_PUFF, S_PUFF1, SPR_PUFF, "MT_PUFF → S_PUFF1 → SPR_PUFF"),
                 (
                     MT_BLOOD,

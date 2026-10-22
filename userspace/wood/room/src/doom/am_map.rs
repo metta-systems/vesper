@@ -16,15 +16,11 @@
 //! - Coordinate-conversion macros (`FTOM`, `MTOF`, `CXMTOF`, `CYMTOF`) are
 //!   `unsafe` inline functions rather than C preprocessor macros.
 //! - The Cohen-Sutherland clip loop in `AM_clipMline` uses Rust integer
-//!   arithmetic; the OC_* outcode constants are typed `c_int`.
+//!   arithmetic; the OC_* outcode constants are typed `i32`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int},
-    os::raw::c_uint,
-    ptr,
-};
+use std::ptr;
 
 use crate::{
     c_write,
@@ -32,6 +28,7 @@ use crate::{
         c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS},
         d_event::event_t,
         d_player::{PlayerT, MAXPLAYERS},
+        deh_str::DEH_String,
         g_game::{
             consoleplayer, deathmatch, gameepisode, gamemap, netgame, playeringame, players,
             singledemo, viewactive,
@@ -69,121 +66,111 @@ pub const AM_NUMMARKPOINTS: usize = 10;
 ///
 /// The automap starts zoomed out to show roughly 20 % of the map height per
 /// screen height.  C origin: `INITSCALEMTOF` in am_map.c.
-pub const INITSCALEMTOF: c_int = (0.2 * FRACUNIT as f64) as c_int;
+pub const INITSCALEMTOF: i32 = (0.2 * FRACUNIT as f64) as i32;
 
 /// Pan increment in screen pixels per tick when the player holds a pan key.
 ///
 /// C origin: `F_PANINC` in am_map.c.
-pub const F_PANINC: c_int = 4;
+pub const F_PANINC: i32 = 4;
 
 /// Scale multiplier applied to `scale_mtof` each tick while zooming in.
 ///
 /// 1.02 in fixed-point; chosen to give a smooth zoom feel.
 /// C origin: `M_ZOOMIN` in am_map.c.
-pub const M_ZOOMIN: c_int = (1.02 * FRACUNIT as f64) as c_int;
+pub const M_ZOOMIN: i32 = (1.02 * FRACUNIT as f64) as i32;
 
 /// Scale multiplier applied to `scale_mtof` each tick while zooming out.
 ///
 /// Reciprocal of [`M_ZOOMIN`] in fixed-point.
 /// C origin: `M_ZOOMOUT` in am_map.c.
-pub const M_ZOOMOUT: c_int = (FRACUNIT as f64 / 1.02) as c_int;
+pub const M_ZOOMOUT: i32 = (FRACUNIT as f64 / 1.02) as i32;
 
 /// Half-diameter of the player object in map units, used for arrow scaling.
 ///
 /// C origin: `PLAYERRADIUS` in am_map.c.
-const PLAYERRADIUS: c_int = 16 * FRACUNIT;
+const PLAYERRADIUS: i32 = 16 * FRACUNIT;
 
 // Colour palette indices.
 
 /// Starting palette index of the red colour range.
-const REDS: c_int = 256 - 5 * 16;
+const REDS: i32 = 256 - 5 * 16;
 /// Number of palette entries in the red range.
-const REDRANGE: c_int = 16;
+const REDRANGE: i32 = 16;
 /// Starting palette index of the blue colour range.
-const BLUES: c_int = 256 - 4 * 16 + 8;
+const BLUES: i32 = 256 - 4 * 16 + 8;
 /// Number of palette entries in the blue range.
-const BLUERANGE: c_int = 8;
+const BLUERANGE: i32 = 8;
 /// Starting palette index of the green colour range.
-const GREENS: c_int = 7 * 16;
+const GREENS: i32 = 7 * 16;
 /// Number of palette entries in the green range.
-const GREENRANGE: c_int = 16;
+const GREENRANGE: i32 = 16;
 /// Starting palette index of the grey colour range.
-const GRAYS: c_int = 6 * 16;
+const GRAYS: i32 = 6 * 16;
 /// Number of palette entries in the grey range.
-const GRAYSRANGE: c_int = 16;
+const GRAYSRANGE: i32 = 16;
 /// Starting palette index of the brown colour range.
-const BROWNS: c_int = 4 * 16;
+const BROWNS: i32 = 4 * 16;
 /// Number of palette entries in the brown range.
-const BROWNRANGE: c_int = 16;
+const BROWNRANGE: i32 = 16;
 /// Starting palette index of the yellow colour range.
-const YELLOWS: c_int = 256 - 32 + 7;
+const YELLOWS: i32 = 256 - 32 + 7;
 /// Number of palette entries in the yellow range.
-const YELLOWRANGE: c_int = 1;
+const YELLOWRANGE: i32 = 1;
 /// Palette index for black (the automap background).
-const BLACK: c_int = 0;
+const BLACK: i32 = 0;
 /// Palette index for white (the player arrow in single-player).
-const WHITE: c_int = 256 - 47;
+const WHITE: i32 = 256 - 47;
 
 // Automap colour assignments.
 
 /// Background fill colour index.
-const BACKGROUND: c_int = BLACK;
+const BACKGROUND: i32 = BLACK;
 /// Colour used for solid (one-sided) walls.
-const WALLCOLORS: c_int = REDS;
+const WALLCOLORS: i32 = REDS;
 /// Colour range width for solid walls.
-const WALLRANGE: c_int = REDRANGE;
+const WALLRANGE: i32 = REDRANGE;
 /// Colour used for two-sided walls where both sides have the same floor and
 /// ceiling height (transparent / passable walls).
-const TSWALLCOLORS: c_int = GRAYS;
+const TSWALLCOLORS: i32 = GRAYS;
 /// Colour range width for transparent walls.
-const TSWALLRANGE: c_int = GRAYSRANGE;
+const TSWALLRANGE: i32 = GRAYSRANGE;
 /// Colour used for floor-height-change linedefs.
-const FDWALLCOLORS: c_int = BROWNS;
+const FDWALLCOLORS: i32 = BROWNS;
 /// Colour range width for floor-height-change walls.
-const FDWALLRANGE: c_int = BROWNRANGE;
+const FDWALLRANGE: i32 = BROWNRANGE;
 /// Colour used for ceiling-height-change linedefs.
-const CDWALLCOLORS: c_int = YELLOWS;
+const CDWALLCOLORS: i32 = YELLOWS;
 /// Colour range width for ceiling-height-change walls.
-const CDWALLRANGE: c_int = YELLOWRANGE;
+const CDWALLRANGE: i32 = YELLOWRANGE;
 /// Colour used for thing triangles.
-const THINGCOLORS: c_int = GREENS;
+const THINGCOLORS: i32 = GREENS;
 /// Colour range width for thing triangles.
-const THINGRANGE: c_int = GREENRANGE;
+const THINGRANGE: i32 = GREENRANGE;
 /// Colour used for secret walls (same as solid walls; they look identical
 /// unless cheating).
-const SECRETWALLCOLORS: c_int = WALLCOLORS;
+const SECRETWALLCOLORS: i32 = WALLCOLORS;
 /// Colour range width for secret walls.
-const SECRETWALLRANGE: c_int = WALLRANGE;
+const SECRETWALLRANGE: i32 = WALLRANGE;
 /// Colour used for the background grid.
-const GRIDCOLORS: c_int = GRAYS + GRAYSRANGE / 2;
+const GRIDCOLORS: i32 = GRAYS + GRAYSRANGE / 2;
 /// Colour used for the central crosshair dot.
-const XHAIRCOLORS: c_int = GRAYS;
+const XHAIRCOLORS: i32 = GRAYS;
 
 /// Magic header for automap event messages sent to `ST_Responder`.
 ///
 /// The upper bytes encode `'a'` and `'m'`; the lower bytes identify the
 /// specific sub-message.  C origin: `AM_MSGHEADER` in am_map.c.
-const AM_MSGHEADER: c_int = (('a' as c_int) << 24) + (('m' as c_int) << 16);
+const AM_MSGHEADER: i32 = (('a' as i32) << 24) + (('m' as i32) << 16);
 
 /// Event data value sent to `ST_Responder` when the automap is opened.
 ///
 /// C origin: `AM_MSGENTERED` in am_map.c.
-const AM_MSGENTERED: c_int = AM_MSGHEADER | (('e' as c_int) << 8);
+const AM_MSGENTERED: i32 = AM_MSGHEADER | (('e' as i32) << 8);
 
 /// Event data value sent to `ST_Responder` when the automap is closed.
 ///
 /// C origin: `AM_MSGEXITED` in am_map.c.
-const AM_MSGEXITED: c_int = AM_MSGHEADER | (('x' as c_int) << 8);
-
-/// Pass-through stub for DEH_String when dehacked patching is disabled.
-///
-/// In a dehacked build this would look up the string in a replacement table;
-/// here it simply returns its argument unchanged.
-/// C origin: `DEH_String` macro/function pattern used throughout Chocolate Doom.
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
+const AM_MSGEXITED: i32 = AM_MSGHEADER | (('x' as i32) << 8);
 
 // ---------------------------------------------------------------------------
 // C globals still provided by unported C modules
@@ -199,8 +186,8 @@ unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct fpoint_t {
-    x: c_int,
-    y: c_int,
+    x: i32,
+    y: i32,
 }
 
 /// A line segment in frame (screen-pixel) coordinates.
@@ -252,7 +239,7 @@ struct islope_t {
 ///
 /// Chosen as `(8/7) * PLAYERRADIUS` to give the arrow a slightly larger extent
 /// than the collision radius.  C origin: `R` in am_map.c.
-const R_ARROW: c_int = (8 * PLAYERRADIUS) / 7;
+const R_ARROW: i32 = (8 * PLAYERRADIUS) / 7;
 
 /// Line segments that form the normal (non-cheat) player arrow.
 ///
@@ -552,61 +539,61 @@ const THINTRIANGLE_GUY: [mline_t; 3] = [
 ///
 /// Cycles through 0-2 when the `iddt` cheat sequence is entered.
 /// C origin: `cheating` in am_map.c.
-static mut cheating: c_int = 0;
+static mut cheating: i32 = 0;
 
 /// Non-zero when the background grid is enabled.
 ///
 /// Toggled by the `key_map_grid` key.  C origin: `grid` in am_map.c.
-static mut grid: c_int = 0;
+static mut grid: i32 = 0;
 
 /// Non-zero when the automap has just been initialised for a new level and
 /// `AM_LevelInit` has not yet run.
 ///
 /// C origin: `leveljuststarted` in am_map.c.
-static mut leveljuststarted: c_int = 1;
+static mut leveljuststarted: i32 = 1;
 
 /// Non-zero while the automap is active and being drawn.
 ///
 /// Exported so that other modules (e.g. `f_finale.rs`) can read/clear it.
 /// C origin: `automapactive` in am_map.c.
-pub static mut automapactive: c_int = 0;
+pub static mut automapactive: i32 = 0;
 
 /// Width of the automap framebuffer window in pixels.
 ///
 /// Initialised to `SCREENWIDTH`; the automap always fills the full screen
 /// width.  C origin: `finit_width` in am_map.c.
-static mut finit_width: c_int = SCREENWIDTH;
+static mut finit_width: i32 = SCREENWIDTH;
 
 /// Height of the automap framebuffer window in pixels.
 ///
 /// `SCREENHEIGHT - 32` to leave room for the status bar.
 /// C origin: `finit_height` in am_map.c.
-static mut finit_height: c_int = SCREENHEIGHT - 32;
+static mut finit_height: i32 = SCREENHEIGHT - 32;
 
 /// Left edge of the automap window in screen pixels.
 ///
 /// C origin: `f_x` in am_map.c.
-static mut f_x: c_int = 0;
+static mut f_x: i32 = 0;
 
 /// Top edge of the automap window in screen pixels.
 ///
 /// C origin: `f_y` in am_map.c.
-static mut f_y: c_int = 0;
+static mut f_y: i32 = 0;
 
 /// Width of the automap window in screen pixels.
 ///
 /// C origin: `f_w` in am_map.c.
-static mut f_w: c_int = 0;
+static mut f_w: i32 = 0;
 
 /// Height of the automap window in screen pixels.
 ///
 /// C origin: `f_h` in am_map.c.
-static mut f_h: c_int = 0;
+static mut f_h: i32 = 0;
 
 /// Current light level used to offset wall colours (currently unused at runtime).
 ///
 /// C origin: `lightlev` in am_map.c.
-static mut lightlev: c_int = 0;
+static mut lightlev: i32 = 0;
 
 /// Pointer to the automap's framebuffer region (same as `I_VideoBuffer`).
 ///
@@ -617,7 +604,7 @@ static mut fb: *mut u8 = ptr::null_mut();
 ///
 /// Used to pace the (currently disabled) light-level animation.
 /// C origin: `amclock` in am_map.c.
-static mut amclock: c_int = 0;
+static mut amclock: i32 = 0;
 
 /// Per-tick map-coordinate pan increment.
 ///
@@ -731,7 +718,7 @@ static mut old_m_y: fixed_t = 0;
 /// Last recorded player position, used by [`AM_doFollowPlayer`] to detect
 /// movement.
 ///
-/// Initialised to `c_int::MAX` to force an update on the first tick.
+/// Initialised to `i32::MAX` to force an update on the first tick.
 /// C origin: `f_oldloc` in am_map.c.
 static mut f_oldloc: mpoint_t = mpoint_t { x: 0, y: 0 };
 
@@ -767,13 +754,13 @@ static mut markpoints: [mpoint_t; AM_NUMMARKPOINTS] = [mpoint_t { x: -1, y: -1 }
 /// Index of the next mark slot to fill, wrapping modulo `AM_NUMMARKPOINTS`.
 ///
 /// C origin: `markpointnum` in am_map.c.
-static mut markpointnum: c_int = 0;
+static mut markpointnum: i32 = 0;
 
 /// Non-zero when the automap camera should track the player position.
 ///
 /// Set to 0 when the player pans the map manually; restored on `key_map_follow`.
 /// C origin: `followplayer` in am_map.c.
-static mut followplayer: c_int = 1;
+static mut followplayer: i32 = 1;
 
 /// Cheat sequence for the automap reveal (`iddt`).
 ///
@@ -788,15 +775,15 @@ pub static mut cheat_amap: cheatseq_t = cheatseq_t {
     parameter_buf: [0; 5],
 };
 
-/// Compile-time helper that copies a byte slice into a fixed-length `c_char`
+/// Compile-time helper that copies a byte slice into a fixed-length `u8`
 /// array, padding with zeros.
 ///
 /// Used to initialise [`cheat_amap`]'s `sequence` field in a `const` context.
-const fn make_cheat_seq(seq: &[u8]) -> [c_char; 25] {
-    let mut arr = [0i8; 25];
+const fn make_cheat_seq(seq: &[u8]) -> [u8; 25] {
+    let mut arr = [0u8; 25];
     let mut i = 0;
     while i < seq.len() {
-        arr[i] = seq[i] as c_char;
+        arr[i] = seq[i];
         i += 1;
     }
     arr
@@ -806,7 +793,7 @@ const fn make_cheat_seq(seq: &[u8]) -> [c_char; 25] {
 ///
 /// Prevents `AM_Stop` from running its shutdown logic more than once per
 /// open/close cycle.  C origin: `stopped` in am_map.c.
-static mut stopped: c_int = 1;
+static mut stopped: i32 = 1;
 
 // ---------------------------------------------------------------------------
 // Helper: FTOM / MTOF macros
@@ -822,7 +809,7 @@ static mut stopped: c_int = 1;
 /// Reads `scale_ftom` which is a mutable static; must only be called while
 /// the automap invariants hold.
 #[inline(always)]
-unsafe fn FTOM(x: c_int) -> fixed_t {
+unsafe fn FTOM(x: i32) -> fixed_t {
     FixedMul((x as fixed_t) << FRACBITS, scale_ftom)
 }
 
@@ -836,8 +823,8 @@ unsafe fn FTOM(x: c_int) -> fixed_t {
 /// Reads `scale_mtof` which is a mutable static; must only be called while
 /// the automap invariants hold.
 #[inline(always)]
-unsafe fn MTOF(x: fixed_t) -> c_int {
-    (FixedMul(x, scale_mtof) >> FRACBITS) as c_int
+unsafe fn MTOF(x: fixed_t) -> i32 {
+    (FixedMul(x, scale_mtof) >> FRACBITS) as i32
 }
 
 /// Convert a map x-coordinate to a frame x-coordinate (absolute screen column).
@@ -850,7 +837,7 @@ unsafe fn MTOF(x: fixed_t) -> c_int {
 /// Reads multiple mutable statics; must only be called while the automap
 /// invariants hold.
 #[inline(always)]
-unsafe fn CXMTOF(x: fixed_t) -> c_int {
+unsafe fn CXMTOF(x: fixed_t) -> i32 {
     f_x + MTOF(x - m_x)
 }
 
@@ -864,7 +851,7 @@ unsafe fn CXMTOF(x: fixed_t) -> c_int {
 /// Reads multiple mutable statics; must only be called while the automap
 /// invariants hold.
 #[inline(always)]
-unsafe fn CYMTOF(y: fixed_t) -> c_int {
+unsafe fn CYMTOF(y: fixed_t) -> i32 {
     f_y + (f_h - MTOF(y - m_y))
 }
 
@@ -886,12 +873,12 @@ unsafe fn AM_getIslope(ml: *mut mline_t, is: *mut islope_t) {
     let dy = (*ml).a.y - (*ml).b.y;
     let dx = (*ml).b.x - (*ml).a.x;
     if dy == 0 {
-        (*is).islp = if dx < 0 { -c_int::MAX } else { c_int::MAX };
+        (*is).islp = if dx < 0 { -i32::MAX } else { i32::MAX };
     } else {
         (*is).islp = FixedDiv(dx, dy);
     }
     if dx == 0 {
-        (*is).slp = if dy < 0 { -c_int::MAX } else { c_int::MAX };
+        (*is).slp = if dy < 0 { -i32::MAX } else { i32::MAX };
     } else {
         (*is).slp = FixedDiv(dy, dx);
     }
@@ -969,7 +956,7 @@ unsafe fn AM_restoreScaleAndLoc() {
 unsafe fn AM_addMark() {
     markpoints[markpointnum as usize].x = m_x + m_w / 2;
     markpoints[markpointnum as usize].y = m_y + m_h / 2;
-    markpointnum = (markpointnum + 1) % AM_NUMMARKPOINTS as c_int;
+    markpointnum = (markpointnum + 1) % AM_NUMMARKPOINTS as i32;
 }
 
 /// Compute the axis-aligned bounding box of all level vertices and derive the
@@ -986,10 +973,10 @@ unsafe fn AM_addMark() {
 ///
 /// `vertexes` and `numvertexes` must be valid (populated by `P_LoadVertexes`).
 unsafe fn AM_findMinMaxBoundaries() {
-    min_x = c_int::MAX;
-    min_y = c_int::MAX;
-    max_x = -c_int::MAX;
-    max_y = -c_int::MAX;
+    min_x = i32::MAX;
+    min_y = i32::MAX;
+    max_x = -i32::MAX;
+    max_y = -i32::MAX;
 
     for i in 0..numvertexes {
         let v = &*vertexes.add(i as usize);
@@ -1032,7 +1019,7 @@ unsafe fn AM_findMinMaxBoundaries() {
 unsafe fn AM_changeWindowLoc() {
     if m_paninc.x != 0 || m_paninc.y != 0 {
         followplayer = 0;
-        f_oldloc.x = c_int::MAX;
+        f_oldloc.x = i32::MAX;
     }
 
     m_x += m_paninc.x;
@@ -1070,7 +1057,7 @@ unsafe fn AM_initVariables() {
     automapactive = 1;
     fb = I_VideoBuffer;
 
-    f_oldloc.x = c_int::MAX;
+    f_oldloc.x = i32::MAX;
     amclock = 0;
     lightlev = 0;
 
@@ -1122,10 +1109,10 @@ unsafe fn AM_initVariables() {
 ///
 /// `W_CacheLumpName` must succeed; WAD must be loaded.
 unsafe fn AM_loadPics() {
-    let mut namebuf: [c_char; 9] = [0; 9];
+    let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);
-        marknums[i as usize] = W_CacheLumpName(namebuf.as_mut_ptr(), PU_STATIC) as *mut patch_t;
+        marknums[i as usize] = W_CacheLumpName(&namebuf, PU_STATIC) as *mut patch_t;
     }
 }
 
@@ -1138,10 +1125,10 @@ unsafe fn AM_loadPics() {
 ///
 /// WAD must be loaded; patch lumps must have been loaded by [`AM_loadPics`].
 unsafe fn AM_unloadPics() {
-    let mut namebuf: [c_char; 9] = [0; 9];
+    let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);
-        W_ReleaseLumpName(namebuf.as_mut_ptr());
+        W_ReleaseLumpName(&namebuf);
     }
 }
 
@@ -1232,8 +1219,8 @@ pub unsafe fn AM_Stop() {
 ///
 /// The game must be in an active level with valid map data loaded.
 pub unsafe fn AM_Start() {
-    static mut lastlevel: c_int = -1;
-    static mut lastepisode: c_int = -1;
+    static mut lastlevel: i32 = -1;
+    static mut lastepisode: i32 = -1;
 
     if stopped == 0 {
         AM_Stop();
@@ -1289,9 +1276,9 @@ unsafe fn AM_maxOutWindowScale() {
 /// # Safety
 ///
 /// `ev` must be a valid pointer to an `event_t`; mutable statics are accessed.
-pub unsafe fn AM_Responder(ev: *mut event_t) -> c_int {
-    let mut rc: c_int = 0;
-    static mut bigstate: c_int = 0;
+pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
+    let mut rc: i32 = 0;
+    static mut bigstate: i32 = 0;
 
     if automapactive == 0 {
         if (*ev).type_ == 0 && (*ev).data1 == key_map_toggle {
@@ -1349,32 +1336,32 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> c_int {
             }
         } else if key == key_map_follow {
             followplayer = !followplayer;
-            f_oldloc.x = c_int::MAX;
+            f_oldloc.x = i32::MAX;
             if followplayer != 0 {
-                (*plr).message = DEH_String(c"Follow Mode ON".as_ptr().cast_mut());
+                (*plr).message = DEH_String(c"Follow Mode ON".as_ptr().cast_mut().cast());
             } else {
-                (*plr).message = DEH_String(c"Follow Mode OFF".as_ptr().cast_mut());
+                (*plr).message = DEH_String(c"Follow Mode OFF".as_ptr().cast_mut().cast());
             }
         } else if key == key_map_grid {
             grid = !grid;
             if grid != 0 {
-                (*plr).message = DEH_String(c"Grid ON".as_ptr().cast_mut());
+                (*plr).message = DEH_String(c"Grid ON".as_ptr().cast_mut().cast());
             } else {
-                (*plr).message = DEH_String(c"Grid OFF".as_ptr().cast_mut());
+                (*plr).message = DEH_String(c"Grid OFF".as_ptr().cast_mut().cast());
             }
         } else if key == key_map_mark {
-            static mut AM_MARK_MSG: [c_char; 20] = [0; 20];
-            c_write!(AM_MARK_MSG, "Marked Spot {}", markpointnum as c_int);
+            static mut AM_MARK_MSG: [u8; 20] = [0; 20];
+            c_write!(AM_MARK_MSG, "Marked Spot {}", { markpointnum });
             (*plr).message = std::ptr::addr_of_mut!(AM_MARK_MSG[0]);
             AM_addMark();
         } else if key == key_map_clearmark {
             AM_clearMarks();
-            (*plr).message = DEH_String(c"All Marks Cleared".as_ptr().cast_mut());
+            (*plr).message = DEH_String(c"All Marks Cleared".as_ptr().cast_mut().cast());
         } else {
             rc = 0;
         }
 
-        if deathmatch == 0 && cht_CheckCheat(&raw mut cheat_amap, (*ev).data2 as c_char) != 0 {
+        if deathmatch == 0 && cht_CheckCheat(&raw mut cheat_amap, (*ev).data2 as u8) != 0 {
             rc = 0;
             cheating = (cheating + 1) % 3;
         }
@@ -1461,14 +1448,14 @@ unsafe fn AM_doFollowPlayer() {
 /// active.
 #[allow(dead_code)]
 unsafe fn AM_updateLightLev() {
-    static mut nexttic: c_int = 0;
-    static LITELEVELS: [c_int; 8] = [0, 4, 7, 10, 12, 14, 15, 15];
-    static mut litelevelscnt: c_int = 0;
+    static mut nexttic: i32 = 0;
+    static LITELEVELS: [i32; 8] = [0, 4, 7, 10, 12, 14, 15, 15];
+    static mut litelevelscnt: i32 = 0;
 
     if amclock > nexttic {
         lightlev = LITELEVELS[litelevelscnt as usize];
         litelevelscnt += 1;
-        if litelevelscnt == LITELEVELS.len() as c_int {
+        if litelevelscnt == LITELEVELS.len() as i32 {
             litelevelscnt = 0;
         }
         nexttic = amclock + 6 - (amclock % 6);
@@ -1518,20 +1505,20 @@ pub unsafe fn AM_Ticker() {
 /// # Safety
 ///
 /// `fb` must point to a buffer of at least `f_w * f_h` bytes.
-unsafe fn AM_clearFB(color: c_int) {
+unsafe fn AM_clearFB(color: i32) {
     std::ptr::write_bytes(fb, color as u8, (f_w * f_h) as usize);
 }
 
 // Cohen-Sutherland outcode constants.
 
 /// Cohen-Sutherland outcode bit: point is to the left of the clip rectangle.
-const OC_LEFT: c_int = 1;
+const OC_LEFT: i32 = 1;
 /// Cohen-Sutherland outcode bit: point is to the right of the clip rectangle.
-const OC_RIGHT: c_int = 2;
+const OC_RIGHT: i32 = 2;
 /// Cohen-Sutherland outcode bit: point is below the clip rectangle (y > f_h).
-const OC_BOTTOM: c_int = 4;
+const OC_BOTTOM: i32 = 4;
 /// Cohen-Sutherland outcode bit: point is above the clip rectangle (y < 0).
-const OC_TOP: c_int = 8;
+const OC_TOP: i32 = 8;
 
 /// Compute the Cohen-Sutherland outcode for frame-coordinate point `(mx, my)`.
 ///
@@ -1542,7 +1529,7 @@ const OC_TOP: c_int = 8;
 ///
 /// Reads `f_h` and `f_w` mutable statics.
 #[inline(always)]
-unsafe fn dooutcode(mx: c_int, my: c_int) -> c_int {
+unsafe fn dooutcode(mx: i32, my: i32) -> i32 {
     let mut oc = 0;
     if my < 0 {
         oc |= OC_TOP;
@@ -1570,13 +1557,13 @@ unsafe fn dooutcode(mx: c_int, my: c_int) -> c_int {
 /// # Safety
 ///
 /// `ml` and `fl` must be valid non-null pointers; mutable statics are read.
-unsafe fn AM_clipMline(ml: *mut mline_t, fl: *mut fline_t) -> c_int {
-    let mut outcode1: c_int = 0;
-    let mut outcode2: c_int = 0;
-    let mut outside: c_int;
+unsafe fn AM_clipMline(ml: *mut mline_t, fl: *mut fline_t) -> i32 {
+    let mut outcode1: i32 = 0;
+    let mut outcode2: i32 = 0;
+    let mut outside: i32;
     let mut tmp: fpoint_t = fpoint_t { x: 0, y: 0 };
-    let mut dx: c_int;
-    let mut dy: c_int;
+    let mut dx: i32;
+    let mut dy: i32;
 
     // Trivial rejects and outcodes in map coords.
     if (*ml).a.y > m_y2 {
@@ -1681,8 +1668,8 @@ unsafe fn AM_clipMline(ml: *mut mline_t, fl: *mut fline_t) -> c_int {
 ///
 /// `fl` must be a valid non-null pointer; `fb` must point to a buffer of at
 /// least `f_w * f_h` bytes.
-unsafe fn AM_drawFline(fl: *mut fline_t, color: c_int) {
-    static mut fuck: c_int = 0;
+unsafe fn AM_drawFline(fl: *mut fline_t, color: i32) {
+    static mut fuck: i32 = 0;
 
     if (*fl).a.x < 0
         || (*fl).a.x >= f_w
@@ -1750,7 +1737,7 @@ unsafe fn AM_drawFline(fl: *mut fline_t, color: c_int) {
 /// # Safety
 ///
 /// `ml` must be a valid non-null pointer; mutable statics must be valid.
-unsafe fn AM_drawMline(ml: *mut mline_t, color: c_int) {
+unsafe fn AM_drawMline(ml: *mut mline_t, color: i32) {
     static mut fl: fline_t = fline_t {
         a: fpoint_t { x: 0, y: 0 },
         b: fpoint_t { x: 0, y: 0 },
@@ -1772,7 +1759,7 @@ unsafe fn AM_drawMline(ml: *mut mline_t, color: c_int) {
 ///
 /// Reads `bmaporgx` / `bmaporgy` mutable statics; `lines` / `numlines` must
 /// be valid.
-unsafe fn AM_drawGrid(color: c_int) {
+unsafe fn AM_drawGrid(color: i32) {
     let mut start: fixed_t;
     let mut end: fixed_t;
     let mut ml: mline_t = mline_t {
@@ -1848,10 +1835,10 @@ unsafe fn AM_drawWalls() {
         l.b.x = (*li.v2).x;
         l.b.y = (*li.v2).y;
 
-        let flags = li.flags as c_int;
+        let flags = li.flags as i32;
 
-        if cheating != 0 || (flags & LinedefFlag::MAPPED as c_int) != 0 {
-            if (flags & LinedefFlag::DONTDRAW as c_int) != 0 && cheating == 0 {
+        if cheating != 0 || (flags & LinedefFlag::MAPPED as i32) != 0 {
+            if (flags & LinedefFlag::DONTDRAW as i32) != 0 && cheating == 0 {
                 continue;
             }
             if li.backsector.is_null() {
@@ -1862,7 +1849,7 @@ unsafe fn AM_drawWalls() {
                 if li.special == 39 {
                     // teleporters
                     AM_drawMline(&raw mut l, WALLCOLORS + WALLRANGE / 2);
-                } else if (flags & LinedefFlag::SECRET as c_int) != 0 {
+                } else if (flags & LinedefFlag::SECRET as i32) != 0 {
                     if cheating != 0 {
                         AM_drawMline(&raw mut l, SECRETWALLCOLORS + lightlev);
                     } else {
@@ -1878,7 +1865,7 @@ unsafe fn AM_drawWalls() {
             }
         } else if (*plr).powers[4] != 0 {
             // pw_allmap
-            if (flags & LinedefFlag::DONTDRAW as c_int) == 0 {
+            if (flags & LinedefFlag::DONTDRAW as i32) == 0 {
                 AM_drawMline(&raw mut l, GRAYS + 3);
             }
         }
@@ -1898,7 +1885,7 @@ unsafe fn AM_drawWalls() {
 ///
 /// `x` and `y` must be valid non-null pointers; fine-angle tables must be
 /// initialised.
-unsafe fn AM_rotate(x: *mut fixed_t, y: *mut fixed_t, a: c_uint) {
+unsafe fn AM_rotate(x: *mut fixed_t, y: *mut fixed_t, a: u32) {
     let tmpx = FixedMul(*x, *finecosine.0.add((a >> ANGLETOFINESHIFT) as usize))
         - FixedMul(*y, finesine[(a >> ANGLETOFINESHIFT) as usize]);
     *y = FixedMul(*x, finesine[(a >> ANGLETOFINESHIFT) as usize])
@@ -1921,10 +1908,10 @@ unsafe fn AM_rotate(x: *mut fixed_t, y: *mut fixed_t, a: c_uint) {
 /// mutable statics must be valid.
 unsafe fn AM_drawLineCharacter(
     lineguy: *mut mline_t,
-    lineguylines: c_int,
+    lineguylines: i32,
     scale: fixed_t,
-    angle: c_uint,
-    color: c_int,
+    angle: u32,
+    color: i32,
     x: fixed_t,
     y: fixed_t,
 ) {
@@ -1983,15 +1970,15 @@ unsafe fn AM_drawLineCharacter(
 /// `plr` and `players` must be valid; `mobj_t` pointers within player structs
 /// must be valid.
 unsafe fn AM_drawPlayers() {
-    let their_colors: [c_int; 4] = [GREENS, GRAYS, BROWNS, REDS];
-    let mut their_color: c_int = -1;
-    let mut color: c_int;
+    let their_colors: [i32; 4] = [GREENS, GRAYS, BROWNS, REDS];
+    let mut their_color: i32 = -1;
+    let mut color: i32;
 
     if netgame == 0 {
         if cheating != 0 {
             AM_drawLineCharacter(
                 CHEAT_ARROW.as_ptr() as *mut mline_t,
-                CHEAT_ARROW.len() as c_int,
+                CHEAT_ARROW.len() as i32,
                 0,
                 (*((*plr).mo as *mut mobj_t)).angle,
                 WHITE,
@@ -2001,7 +1988,7 @@ unsafe fn AM_drawPlayers() {
         } else {
             AM_drawLineCharacter(
                 PLAYER_ARROW.as_ptr() as *mut mline_t,
-                PLAYER_ARROW.len() as c_int,
+                PLAYER_ARROW.len() as i32,
                 0,
                 (*((*plr).mo as *mut mobj_t)).angle,
                 WHITE,
@@ -2033,7 +2020,7 @@ unsafe fn AM_drawPlayers() {
 
         AM_drawLineCharacter(
             PLAYER_ARROW.as_ptr() as *mut mline_t,
-            PLAYER_ARROW.len() as c_int,
+            PLAYER_ARROW.len() as i32,
             0,
             (*((*p).mo as *mut mobj_t)).angle,
             color,
@@ -2055,13 +2042,13 @@ unsafe fn AM_drawPlayers() {
 ///
 /// `sectors` / `numsectors` must be valid; thing linked lists must be
 /// properly terminated.
-unsafe fn AM_drawThings(colors: c_int, _colorrange: c_int) {
+unsafe fn AM_drawThings(colors: i32, _colorrange: i32) {
     for i in 0..numsectors {
         let mut t = (*sectors.add(i as usize)).thinglist as *mut mobj_t;
         while !t.is_null() {
             AM_drawLineCharacter(
                 THINTRIANGLE_GUY.as_ptr() as *mut mline_t,
-                THINTRIANGLE_GUY.len() as c_int,
+                THINTRIANGLE_GUY.len() as i32,
                 16 << FRACBITS,
                 (*t).angle,
                 colors + lightlev,
@@ -2107,7 +2094,7 @@ unsafe fn AM_drawMarks() {
 ///
 /// `fb` must point to a buffer of at least `f_w * f_h` bytes; the computed
 /// index must not overflow.
-unsafe fn AM_drawCrosshair(color: c_int) {
+unsafe fn AM_drawCrosshair(color: i32) {
     *fb.add(((f_w * (f_h + 1)) / 2) as usize) = color as u8;
 }
 

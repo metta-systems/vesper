@@ -6,10 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{ffi::c_void, os::raw::c_int},
-};
+use {crate::doom::sounds::Sfx, std::ffi::c_void};
 
 use crate::doom::{
     c_ffi::{LOWERSPEED, RAISESPEED, WEAPONBOTTOM, WEAPONTOP},
@@ -28,37 +25,37 @@ use crate::doom::{
 
 // Weapon type constants (from doomdef.h)
 /// Weapon slot index for the fist (melee, no ammo).
-const wp_fist: c_int = 0;
+const wp_fist: i32 = 0;
 /// Weapon slot index for the pistol.
-const wp_pistol: c_int = 1;
+const wp_pistol: i32 = 1;
 /// Weapon slot index for the shotgun.
-const wp_shotgun: c_int = 2;
+const wp_shotgun: i32 = 2;
 /// Weapon slot index for the chaingun.
-const wp_chaingun: c_int = 3;
+const wp_chaingun: i32 = 3;
 /// Weapon slot index for the rocket launcher.
-const wp_missile: c_int = 4;
+const wp_missile: i32 = 4;
 /// Weapon slot index for the plasma rifle.
-const wp_plasma: c_int = 5;
+const wp_plasma: i32 = 5;
 /// Weapon slot index for the BFG 9000.
-const wp_bfg: c_int = 6;
+const wp_bfg: i32 = 6;
 /// Weapon slot index for the chainsaw (no ammo).
-const wp_chainsaw: c_int = 7;
+const wp_chainsaw: i32 = 7;
 /// Weapon slot index for the super shotgun (Doom II only).
-const wp_supershotgun: c_int = 8;
+const wp_supershotgun: i32 = 8;
 /// Sentinel value meaning no pending weapon change is queued.
-const wp_nochange: c_int = NUMWEAPONS as c_int;
+const wp_nochange: i32 = NUMWEAPONS as i32;
 
 // Ammo type constants
 /// Ammo type index meaning the weapon uses no ammo.
-const am_noammo: c_int = 5;
+const am_noammo: i32 = 5;
 /// Ammo type index for bullets (clip).
-const am_clip: c_int = 0;
+const am_clip: i32 = 0;
 /// Ammo type index for shells.
-const am_shell: c_int = 1;
+const am_shell: i32 = 1;
 /// Ammo type index for cells (plasma / BFG).
-const am_cell: c_int = 2;
+const am_cell: i32 = 2;
 /// Ammo type index for missiles (rockets).
-const am_misl: c_int = 3;
+const am_misl: i32 = 3;
 
 // Power type constants
 /// Power-up slot index for Berserk (strength); multiplies fist damage by 10.
@@ -70,7 +67,7 @@ const BT_ATTACK: u8 = 1;
 
 // Player state constants
 /// Player state value for a dead player (`PST_DEAD`).
-const PST_DEAD: c_int = 1;
+const PST_DEAD: i32 = 1;
 
 // Angle constants
 /// Binary-angle for 90 degrees (0x40000000).
@@ -80,13 +77,13 @@ const ANG180: u32 = 0x80000000;
 
 // Range constants (from p_local.h)
 /// Maximum reach for melee attacks, in fixed-point world units (64 map units).
-const MELEERANGE: c_int = 64 * FRACUNIT;
+const MELEERANGE: i32 = 64 * FRACUNIT;
 /// Maximum range for hitscan (bullet) attacks (32 * 64 map units).
-const MISSILERANGE: c_int = 32 * 64 * FRACUNIT;
+const MISSILERANGE: i32 = 32 * 64 * FRACUNIT;
 
 // Dehacked default
 /// Default number of cells consumed per BFG shot (Dehacked-patchable in C; hardcoded here).
-const DEH_DEFAULT_BFG_CELLS_PER_SHOT: c_int = 40;
+const DEH_DEFAULT_BFG_CELLS_PER_SHOT: i32 = 40;
 
 use crate::doom::{
     p_enemy::P_NoiseAlert,
@@ -118,7 +115,7 @@ pub static mut bulletslope: fixed_t = 0;
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
 /// `position` must be in `0..NUMPSPRITES`.  `stnum` must be a valid state
 /// index or `S_NULL` (0).
-pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: c_int, stnum: c_int) {
+pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
     let psp = (*player).psprites.as_mut_ptr().add(position as usize);
 
     let mut stnum = stnum;
@@ -164,10 +161,10 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: c_int, stnum: c_int) 
 pub unsafe fn P_CalcSwing(player: *mut PlayerT) {
     let swing = (*player).bob;
 
-    let mut angle = (FINEANGLES as c_int / 70 * leveltime) & FINEMASK;
+    let mut angle = (FINEANGLES as i32 / 70 * leveltime) & FINEMASK;
     swingx = FixedMul(swing, finesine[angle as usize]);
 
-    angle = (FINEANGLES as c_int / 70 * leveltime + FINEANGLES as c_int / 2) & FINEMASK;
+    angle = (FINEANGLES as i32 / 70 * leveltime + FINEANGLES as i32 / 2) & FINEMASK;
     swingy = -FixedMul(swingx, finesine[angle as usize]);
 }
 
@@ -183,7 +180,7 @@ pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
     }
 
     if (*player).pendingweapon == wp_chainsaw {
-        S_StartSound((*player).mo as *mut c_void, Sfx::Sawup as c_int);
+        S_StartSound((*player).mo as *mut c_void, Sfx::Sawup as i32);
     }
 
     let newstate = weaponinfo[(*player).pendingweapon as usize].upstate;
@@ -201,10 +198,10 @@ pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> c_int {
+pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
     let ammo = weaponinfo[(*player).readyweapon as usize].ammo;
 
-    let count: c_int;
+    let count: i32;
     if (*player).readyweapon == wp_bfg {
         count = DEH_DEFAULT_BFG_CELLS_PER_SHOT;
     } else if (*player).readyweapon == wp_supershotgun {
@@ -323,7 +320,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     if (*player).readyweapon == wp_chainsaw
         && std::ptr::eq((*psp).state as *mut State, &info::states[S_SAW as usize])
     {
-        S_StartSound(mo as *mut c_void, Sfx::Sawidl as c_int);
+        S_StartSound(mo as *mut c_void, Sfx::Sawidl as i32);
     }
 
     // Check for change: if player is dead, put the weapon away.
@@ -489,7 +486,7 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 
     // Turn to face target.
     if !linetarget.is_null() {
-        S_StartSound(mo as *mut c_void, Sfx::Punch as c_int);
+        S_StartSound(mo as *mut c_void, Sfx::Punch as i32);
         (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
     }
 }
@@ -520,10 +517,10 @@ pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
     );
 
     if linetarget.is_null() {
-        S_StartSound(mo as *mut c_void, Sfx::Sawful as c_int);
+        S_StartSound(mo as *mut c_void, Sfx::Sawful as i32);
         return;
     }
-    S_StartSound(mo as *mut c_void, Sfx::Sawhit as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Sawhit as i32);
 
     // Turn to face target.
     let angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
@@ -553,11 +550,11 @@ pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
 /// `ammonum` may legally exceed `NUMAMMO - 1`; the function handles that case.
-unsafe fn DecreaseAmmo(player: *mut PlayerT, ammonum: c_int, amount: c_int) {
-    if ammonum < NUMAMMO as c_int {
+unsafe fn DecreaseAmmo(player: *mut PlayerT, ammonum: i32, amount: i32) {
+    if ammonum < NUMAMMO as i32 {
         (*player).ammo[ammonum as usize] -= amount;
     } else {
-        (*player).maxammo[(ammonum - NUMAMMO as c_int) as usize] -= amount;
+        (*player).maxammo[(ammonum - NUMAMMO as i32) as usize] -= amount;
     }
 }
 
@@ -640,7 +637,7 @@ pub unsafe fn P_BulletSlope(mo: *mut mobj_t) {
 /// `mo` must be a valid, non-null pointer to an initialised `mobj_t`.
 /// `P_BulletSlope` must have been called before this function so that
 /// `bulletslope` is valid.
-pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: c_int) {
+pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: i32) {
     let damage = 5 * ((P_Random() % 3) + 1);
     let mut angle = (*mo).angle;
 
@@ -665,7 +662,7 @@ pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: c_int) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
-    S_StartSound(mo as *mut c_void, Sfx::Pistol as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
 
     P_SetMobjState(mo, S_PLAY_ATK2);
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
@@ -677,7 +674,7 @@ pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
     );
 
     P_BulletSlope(mo);
-    P_GunShot(mo, ((*player).refire == 0) as c_int);
+    P_GunShot(mo, ((*player).refire == 0) as i32);
 }
 
 /// Weapon action: fire the shotgun (7 inaccurate pellets, 1 shell consumed).
@@ -688,7 +685,7 @@ pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
-    S_StartSound(mo as *mut c_void, Sfx::Shotgn as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Shotgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
@@ -715,7 +712,7 @@ pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
-    S_StartSound(mo as *mut c_void, Sfx::Dshtgn as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Dshtgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 2);
@@ -736,7 +733,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
             mo as *mut _ as *mut CffiMobj,
             angle,
             MISSILERANGE,
-            bulletslope + (((P_Random() - P_Random()) as c_int) << 5),
+            bulletslope + ((P_Random() - P_Random()) << 5),
             damage,
         );
     }
@@ -753,7 +750,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `S_CHAIN2`.
 pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
-    S_StartSound(mo as *mut c_void, Sfx::Pistol as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
 
     if (*player).ammo[weaponinfo[(*player).readyweapon as usize].ammo as usize] == 0 {
         return;
@@ -767,10 +764,10 @@ pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
         .state
         .cast::<State>()
         .offset_from(&info::states[S_CHAIN1 as usize]);
-    P_SetPsprite(player, 1, flashstate + state_offset as c_int);
+    P_SetPsprite(player, 1, flashstate + state_offset as i32);
 
     P_BulletSlope(mo);
-    P_GunShot(mo, ((*player).refire == 0) as c_int);
+    P_GunShot(mo, ((*player).refire == 0) as i32);
 }
 
 /// Weapon action: clear the extra-light boost (normal sector lighting).
@@ -854,7 +851,7 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo as *mut c_void, Sfx::Bfg as c_int);
+    S_StartSound((*player).mo as *mut c_void, Sfx::Bfg as i32);
 }
 
 /// Initialise the player's psprite slots and begin raising the current weapon.
@@ -890,7 +887,7 @@ pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
             if (*psp).tics != -1 {
                 (*psp).tics -= 1;
                 if (*psp).tics == 0 {
-                    P_SetPsprite(player, i as c_int, (*state).nextstate);
+                    P_SetPsprite(player, i as i32, (*state).nextstate);
                 }
             }
         }
@@ -929,7 +926,7 @@ mod tests {
         assert_eq!(wp_bfg, 6);
         assert_eq!(wp_chainsaw, 7);
         assert_eq!(wp_supershotgun, 8);
-        assert_eq!(wp_nochange, NUMWEAPONS as c_int);
+        assert_eq!(wp_nochange, NUMWEAPONS as i32);
     }
 
     #[test]

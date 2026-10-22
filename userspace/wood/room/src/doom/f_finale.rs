@@ -23,10 +23,7 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::{
-        ffi::{c_char, c_int, c_short, c_uint},
-        ptr,
-    },
+    std::{ffi::CStr, ptr},
 };
 
 use crate::{
@@ -53,39 +50,39 @@ use crate::doom::{
 /// Number of game ticks a single text character takes to appear on screen.
 ///
 /// C origin: `TEXTSPEED` in f_finale.c.
-const TEXTSPEED: c_int = 3;
+const TEXTSPEED: i32 = 3;
 
 /// Number of extra ticks to wait after all text has been displayed before
 /// advancing to the art-screen stage.
 ///
 /// C origin: `TEXTWAIT` in f_finale.c.
-const TEXTWAIT: c_int = 250;
+const TEXTWAIT: i32 = 250;
 
 /// `gamestate` value that indicates the finale is active.
 ///
 /// Mirrors `GS_FINALE` from `g_game.h`; kept local to avoid a circular
 /// dependency.
-const GS_FINALE: c_int = 2;
+const GS_FINALE: i32 = 2;
 
 /// `gameaction` value meaning "do nothing".
 ///
 /// C origin: `ga_nothing` in `g_game.h`.
-const ga_nothing: c_int = 0;
+const ga_nothing: i32 = 0;
 
 /// `gameaction` value that triggers loading the next level/world.
 ///
 /// C origin: `ga_worlddone` in `g_game.h`.
-const ga_worlddone: c_int = 8;
+const ga_worlddone: i32 = 8;
 
 /// `event_t.type_` value for key-down events.
 ///
 /// C origin: `ev_keydown` in `d_event.h`.
-const ev_keydown: c_int = 0;
+const ev_keydown: i32 = 0;
 
 /// Mask applied to a sprite-frame index to strip the full-bright flag.
 ///
 /// C origin: `FF_FRAMEMASK` in f_finale.c.
-const FF_FRAMEMASK: c_int = 0x7fff;
+const FF_FRAMEMASK: i32 = 0x7fff;
 
 /// Maximum number of simultaneously active players.
 ///
@@ -97,107 +94,107 @@ const MAXPLAYERS: usize = 4;
 // ---------------------------------------------------------------------------
 
 /// Episode 1 finale text shown after defeating the boss on E1M8.
-const E1TEXT: *mut c_char = c"Once you beat the big badasses and\nclean out the moon base you're supposed\nto win, aren't you? Aren't you? Where's\nyour fat reward and ticket home? What\nthe hell is this? It's not supposed to\nend this way!\n\nIt stinks like rotten meat, but looks\nlike the lost Deimos base.  Looks like\nyou're stuck on The Shores of Hell.\nThe only way out is through.\n\nTo continue the DOOM experience, play\nThe Shores of Hell and its amazing\nsequel, Inferno!".as_ptr().cast_mut();
+const E1TEXT: *mut u8 = c"Once you beat the big badasses and\nclean out the moon base you're supposed\nto win, aren't you? Aren't you? Where's\nyour fat reward and ticket home? What\nthe hell is this? It's not supposed to\nend this way!\n\nIt stinks like rotten meat, but looks\nlike the lost Deimos base.  Looks like\nyou're stuck on The Shores of Hell.\nThe only way out is through.\n\nTo continue the DOOM experience, play\nThe Shores of Hell and its amazing\nsequel, Inferno!".as_ptr().cast_mut().cast();
 
 /// Episode 2 finale text shown after defeating the boss on E2M8.
-const E2TEXT: *mut c_char = c"You've done it! The hideous cyber-\ndemon lord that ruled the lost Deimos\nmoon base has been slain and you\ntriumph over the hordes of hell.\nThe mission is not complete, however.\nThe loathsome vomit of hell still\noozes from the nether regions of\nDeimos.\n\nThe demon spawner, the source of the\nhellish invasion, remains active.\nYou must find it and shut it down.\n\nTo continue the DOOM experience,\nplay Inferno!".as_ptr().cast_mut();
+const E2TEXT: *mut u8 = c"You've done it! The hideous cyber-\ndemon lord that ruled the lost Deimos\nmoon base has been slain and you\ntriumph over the hordes of hell.\nThe mission is not complete, however.\nThe loathsome vomit of hell still\noozes from the nether regions of\nDeimos.\n\nThe demon spawner, the source of the\nhellish invasion, remains active.\nYou must find it and shut it down.\n\nTo continue the DOOM experience,\nplay Inferno!".as_ptr().cast_mut().cast();
 
 /// Episode 3 finale text shown after defeating the boss on E3M8.
-const E3TEXT: *mut c_char = c"The loathsome spiderdemon that\nmaster-minded the invasion of the moon\nbase and caused so much death has had\nits ass kicked for all time.\n\nA hidden doorway opens and you begin\nthe long trek back to the surface.\nThe sensual scent of flowers tickles\nyour nose and you smile.\n\nBut wait! The gateway is open, and\nthe demons of hell are pouring\nthrough! You wonder how you'll ever\nget home.\n\nA demon consumes your flesh.\n\nThe End.\n\n(Well, not really.  To continue the\nDOOM experience, play Thy Flesh\nConsumed!)".as_ptr().cast_mut();
+const E3TEXT: *mut u8 = c"The loathsome spiderdemon that\nmaster-minded the invasion of the moon\nbase and caused so much death has had\nits ass kicked for all time.\n\nA hidden doorway opens and you begin\nthe long trek back to the surface.\nThe sensual scent of flowers tickles\nyour nose and you smile.\n\nBut wait! The gateway is open, and\nthe demons of hell are pouring\nthrough! You wonder how you'll ever\nget home.\n\nA demon consumes your flesh.\n\nThe End.\n\n(Well, not really.  To continue the\nDOOM experience, play Thy Flesh\nConsumed!)".as_ptr().cast_mut().cast();
 
 /// Episode 4 finale text shown after defeating the boss on E4M8.
-const E4TEXT: *mut c_char = c"The spider mastermind must have sent forth\nits legions of hellspawn before your\nfinal confrontation with that terrible\nbeast from netherworld.  But you stepped\nforward and brought forth eternal damnation\nand suffering upon the horde as a true\nhero would in the face of something so\nevil.\n\nBesides, someone was gonna pay for what\nhappened to daisy, your pet rabbit.\n\nBut now, you see spread before you more\npotential pain and gibbitude as a nation\nof demons run amok among our cities.\n\nNext stop, hell on earth!".as_ptr().cast_mut();
+const E4TEXT: *mut u8 = c"The spider mastermind must have sent forth\nits legions of hellspawn before your\nfinal confrontation with that terrible\nbeast from netherworld.  But you stepped\nforward and brought forth eternal damnation\nand suffering upon the horde as a true\nhero would in the face of something so\nevil.\n\nBesides, someone was gonna pay for what\nhappened to daisy, your pet rabbit.\n\nBut now, you see spread before you more\npotential pain and gibbitude as a nation\nof demons run amok among our cities.\n\nNext stop, hell on earth!".as_ptr().cast_mut().cast();
 
 /// Doom II level 6 inter-level text (first story block).
-const C1TEXT: *mut c_char = c"YOU HAVE ENTERED DEEPLY INTO THE INFESTED\nSTARPORT. BUT SOMETHING IS WRONG. THE\nMONSTERS HAVE BROUGHT THEIR OWN REALITY\nWITH THEM, AND THE STARPORT'S TECHNOLOGY\nIS BEING SUBVERTED BY THEIR PRESENCE.\n\nAHEAD, YOU SEE AN OUTPOST OF HELL, A\nFORTIFIED ZONE. IF YOU CAN GET PAST IT,\nYOU CAN PENETRATE INTO THE HAUNTED HEART\nOF THE STARBASE AND FIND THE CONTROLLING\nSWITCH WHICH HOLDS EARTH'S POPULATION\nHOSTAGE.".as_ptr().cast_mut();
+const C1TEXT: *mut u8 = c"YOU HAVE ENTERED DEEPLY INTO THE INFESTED\nSTARPORT. BUT SOMETHING IS WRONG. THE\nMONSTERS HAVE BROUGHT THEIR OWN REALITY\nWITH THEM, AND THE STARPORT'S TECHNOLOGY\nIS BEING SUBVERTED BY THEIR PRESENCE.\n\nAHEAD, YOU SEE AN OUTPOST OF HELL, A\nFORTIFIED ZONE. IF YOU CAN GET PAST IT,\nYOU CAN PENETRATE INTO THE HAUNTED HEART\nOF THE STARBASE AND FIND THE CONTROLLING\nSWITCH WHICH HOLDS EARTH'S POPULATION\nHOSTAGE.".as_ptr().cast_mut().cast();
 
 /// Doom II level 11 inter-level text.
-const C2TEXT: *mut c_char = c"YOU HAVE WON! YOUR VICTORY HAS ENABLED\nHUMANKIND TO EVACUATE EARTH AND ESCAPE\nTHE NIGHTMARE.  NOW YOU ARE THE ONLY\nHUMAN LEFT ON THE FACE OF THE PLANET.\nCAN YOU FIND YOUR WAY BACK TO HAPPY\nREALITY?\n\nOR ARE YOU DOOMED TO ROAM ETERNAL\nAMONG THE DEMONS?".as_ptr().cast_mut();
+const C2TEXT: *mut u8 = c"YOU HAVE WON! YOUR VICTORY HAS ENABLED\nHUMANKIND TO EVACUATE EARTH AND ESCAPE\nTHE NIGHTMARE.  NOW YOU ARE THE ONLY\nHUMAN LEFT ON THE FACE OF THE PLANET.\nCAN YOU FIND YOUR WAY BACK TO HAPPY\nREALITY?\n\nOR ARE YOU DOOMED TO ROAM ETERNAL\nAMONG THE DEMONS?".as_ptr().cast_mut().cast();
 
 /// Doom II level 20 inter-level text.
-const C3TEXT: *mut c_char = c"YOU ARE AT THE CORRUPT HEART OF THE CITY,\nSURROUNDED BY THE CORPSES OF YOUR ENEMIES.\nYOU SEE NO WAY TO ESCAPE FROM THIS FUTURE\nHELL, BUT YOU MAY DELAY THE DAMNATION OF\nHUMANITY BY THROWING YOURSELF INTO THE\nPORTAL, AND HEADING OFF THE DEMONIC\nINVASION AT ITS SOURCE.".as_ptr().cast_mut();
+const C3TEXT: *mut u8 = c"YOU ARE AT THE CORRUPT HEART OF THE CITY,\nSURROUNDED BY THE CORPSES OF YOUR ENEMIES.\nYOU SEE NO WAY TO ESCAPE FROM THIS FUTURE\nHELL, BUT YOU MAY DELAY THE DAMNATION OF\nHUMANITY BY THROWING YOURSELF INTO THE\nPORTAL, AND HEADING OFF THE DEMONIC\nINVASION AT ITS SOURCE.".as_ptr().cast_mut().cast();
 
 /// Doom II level 30 inter-level text.
-const C4TEXT: *mut c_char = c"SENSIBLE, NO?\n\nTHERE WAS NO WAY YOU COULD SURVIVE THIS\nHELL, BUT YOU HAVE SUCCEEDED IN SPOILING\nTHE DEMONS' PLANS.  THE HAZARDOUS-WASTE\nFACILITY HAS BEEN DESTROYED AND HELL'S\nPORTAL HAS BEEN SEALED.\n\nYOU ARE THE ONLY SURVIVOR, BUT THE BATTLE\nCONTINUES ELSEWHERE.  EARTH REMAINS UNDER\nSIEGE, AND THE HELLSPAWN PROWL THE\nSTREETS IN SEARCH OF MORE PREY.\n\nTHE INVASION IS FAR FROM OVER.".as_ptr().cast_mut();
+const C4TEXT: *mut u8 = c"SENSIBLE, NO?\n\nTHERE WAS NO WAY YOU COULD SURVIVE THIS\nHELL, BUT YOU HAVE SUCCEEDED IN SPOILING\nTHE DEMONS' PLANS.  THE HAZARDOUS-WASTE\nFACILITY HAS BEEN DESTROYED AND HELL'S\nPORTAL HAS BEEN SEALED.\n\nYOU ARE THE ONLY SURVIVOR, BUT THE BATTLE\nCONTINUES ELSEWHERE.  EARTH REMAINS UNDER\nSIEGE, AND THE HELLSPAWN PROWL THE\nSTREETS IN SEARCH OF MORE PREY.\n\nTHE INVASION IS FAR FROM OVER.".as_ptr().cast_mut().cast();
 
 /// Doom II level 15 (secret exit) inter-level text.
-const C5TEXT: *mut c_char = c"BUT WAIT!  THERE'S MORE!\n\nIT'S BACK TO THE PITS OF HELL FOR YOU,\nTO FACE MORE DEMONS, MORE HELLSPAWN, AND\nMORE HIDEOUS ACTS OF EVIL.\n\nIT'S A DIRTY JOB, BUT SOMEONE'S GOT TO\nDO IT.  AND THAT SOMEONE IS YOU.".as_ptr().cast_mut();
+const C5TEXT: *mut u8 = c"BUT WAIT!  THERE'S MORE!\n\nIT'S BACK TO THE PITS OF HELL FOR YOU,\nTO FACE MORE DEMONS, MORE HELLSPAWN, AND\nMORE HIDEOUS ACTS OF EVIL.\n\nIT'S A DIRTY JOB, BUT SOMEONE'S GOT TO\nDO IT.  AND THAT SOMEONE IS YOU.".as_ptr().cast_mut().cast();
 
 /// Doom II level 31 inter-level text.
-const C6TEXT: *mut c_char = c"CONGRATULATIONS!\n\nYOU HAVE FOUND THE SECRET LEVEL!\n\nHOPEFULLY YOU FOUND THE PLASMA GUN.\n\nTHE DEMON HORDE IS ABOUT TO GET A WAKE-UP\nCALL.".as_ptr().cast_mut();
+const C6TEXT: *mut u8 = c"CONGRATULATIONS!\n\nYOU HAVE FOUND THE SECRET LEVEL!\n\nHOPEFULLY YOU FOUND THE PLASMA GUN.\n\nTHE DEMON HORDE IS ABOUT TO GET A WAKE-UP\nCALL.".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 6 inter-level text.
-const T1TEXT: *mut c_char = c"You've fought your way out of the infested\nexperimental labs.   It seems that UAC has\nonce again gulped it down.  Ahead lies\ntheir central complex, now firmly in the\ngrasp of the demon hordes.  Perhaps by\nsabotaging their primary teleporter you\ncan halt the invasion.".as_ptr().cast_mut();
+const T1TEXT: *mut u8 = c"You've fought your way out of the infested\nexperimental labs.   It seems that UAC has\nonce again gulped it down.  Ahead lies\ntheir central complex, now firmly in the\ngrasp of the demon hordes.  Perhaps by\nsabotaging their primary teleporter you\ncan halt the invasion.".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 11 inter-level text.
-const T2TEXT: *mut c_char = c"The demon spawner you've found appears to\nhave been activated.  The Demons are\npouring through in endless waves.  You\nneed to find a way to deactivate it,\nfast!".as_ptr().cast_mut();
+const T2TEXT: *mut u8 = c"The demon spawner you've found appears to\nhave been activated.  The Demons are\npouring through in endless waves.  You\nneed to find a way to deactivate it,\nfast!".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 20 inter-level text.
-const T3TEXT: *mut c_char = c"The river of blood spills over into the\nnext area.  It seems your arrival hasn't\ngone unnoticed.  Ahead lies the most\ninfested region of the complex.  You must\nfind a way to stem the tide of demons, or\ndie trying.".as_ptr().cast_mut();
+const T3TEXT: *mut u8 = c"The river of blood spills over into the\nnext area.  It seems your arrival hasn't\ngone unnoticed.  Ahead lies the most\ninfested region of the complex.  You must\nfind a way to stem the tide of demons, or\ndie trying.".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 30 inter-level text.
-const T4TEXT: *mut c_char = c"The stench of rotten flesh and sulfur\nfills the air.  You have reached the\nheart of the infested complex.  Somewhere\nbeyond the next portal lies the Demon\nSpawner itself.  If you can survive long\nenough to find it, you may be able to turn\nthe tide of this war.".as_ptr().cast_mut();
+const T4TEXT: *mut u8 = c"The stench of rotten flesh and sulfur\nfills the air.  You have reached the\nheart of the infested complex.  Somewhere\nbeyond the next portal lies the Demon\nSpawner itself.  If you can survive long\nenough to find it, you may be able to turn\nthe tide of this war.".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 15 inter-level text.
-const T5TEXT: *mut c_char = c"You've done it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut();
+const T5TEXT: *mut u8 = c"You've done it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut().cast();
 
 /// TNT: Evilution level 31 inter-level text.
-const T6TEXT: *mut c_char = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut();
+const T6TEXT: *mut u8 = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 6 inter-level text.
-const P1TEXT: *mut c_char = c"You gloat over the steaming carcass of the\nGuardian.  With its death, you've wrested\nthe Accelerator from the stinking claws\nof Hell.  You relax and glance around\nthe room.  Damn!  There was supposed to\nbe a bridge around here somewhere!  Did\nthe Invaders sense your victory and\nwithdraw the bridge to prevent your\nescape?\n\nYou hear the sound of claws on stone.\nYou frantically grab your pistol and\ndive for the door, but it's too late.\nThe Demons have arrived.".as_ptr().cast_mut();
+const P1TEXT: *mut u8 = c"You gloat over the steaming carcass of the\nGuardian.  With its death, you've wrested\nthe Accelerator from the stinking claws\nof Hell.  You relax and glance around\nthe room.  Damn!  There was supposed to\nbe a bridge around here somewhere!  Did\nthe Invaders sense your victory and\nwithdraw the bridge to prevent your\nescape?\n\nYou hear the sound of claws on stone.\nYou frantically grab your pistol and\ndive for the door, but it's too late.\nThe Demons have arrived.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 11 inter-level text.
-const P2TEXT: *mut c_char = c"You did it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut();
+const P2TEXT: *mut u8 = c"You did it!  The hideous Spiderdemon\nthat masterminded the invasion is dead.\nBut the demon spawner still remains,\nand the forces of hell are still pouring\nthrough.  You need to find the primary\nteleporter and destroy it.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 20 inter-level text.
-const P3TEXT: *mut c_char = c"The Vile presence fades.  You feel a\nsense of relief, but it is short lived.\nYou still must find the demon spawner\nand shut it down.  Time is running out.".as_ptr().cast_mut();
+const P3TEXT: *mut u8 = c"The Vile presence fades.  You feel a\nsense of relief, but it is short lived.\nYou still must find the demon spawner\nand shut it down.  Time is running out.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 30 inter-level text.
-const P4TEXT: *mut c_char = c"The demon spawner lies in ruins before\nyou.  The forces of hell are in full\nretreat, and the invasion is stopped.\nYou step onto the teleporter, eager to\nreturn home and bask in the glory of\nyour victory.".as_ptr().cast_mut();
+const P4TEXT: *mut u8 = c"The demon spawner lies in ruins before\nyou.  The forces of hell are in full\nretreat, and the invasion is stopped.\nYou step onto the teleporter, eager to\nreturn home and bask in the glory of\nyour victory.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 15 inter-level text.
-const P5TEXT: *mut c_char = c"You have survived the horrors of the\ninfested complex and emerged victorious.\nThe demon spawner lies in ruins, and the\nforces of hell have been driven back.\nYou step onto the teleporter, ready to\nreturn Earth and face whatever\nchallenges lie ahead.".as_ptr().cast_mut();
+const P5TEXT: *mut u8 = c"You have survived the horrors of the\ninfested complex and emerged victorious.\nThe demon spawner lies in ruins, and the\nforces of hell have been driven back.\nYou step onto the teleporter, ready to\nreturn Earth and face whatever\nchallenges lie ahead.".as_ptr().cast_mut().cast();
 
 /// Plutonia Experiment level 31 inter-level text.
-const P6TEXT: *mut c_char = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut();
+const P6TEXT: *mut u8 = c"The primary teleporter is destroyed, but\nthe forces of hell are still pouring in.\nYou need to find the secondary teleporter\nand shut it down.  The fate of Earth\ndepends on it.".as_ptr().cast_mut().cast();
 
 // Cast names (from d_englsh.h)
 
 /// Cast-roll name for the Zombieman.
-const CC_ZOMBIE: *mut c_char = c"ZOMBIEMAN".as_ptr().cast_mut();
+const CC_ZOMBIE: *mut u8 = c"ZOMBIEMAN".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Shotgun Guy.
-const CC_SHOTGUN: *mut c_char = c"SHOTGUN GUY".as_ptr().cast_mut();
+const CC_SHOTGUN: *mut u8 = c"SHOTGUN GUY".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Heavy Weapon Dude (chaingunner).
-const CC_HEAVY: *mut c_char = c"HEAVY WEAPON DUDE".as_ptr().cast_mut();
+const CC_HEAVY: *mut u8 = c"HEAVY WEAPON DUDE".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Imp.
-const CC_IMP: *mut c_char = c"IMP".as_ptr().cast_mut();
+const CC_IMP: *mut u8 = c"IMP".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Demon.
-const CC_DEMON: *mut c_char = c"DEMON".as_ptr().cast_mut();
+const CC_DEMON: *mut u8 = c"DEMON".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Lost Soul.
-const CC_LOST: *mut c_char = c"LOST SOUL".as_ptr().cast_mut();
+const CC_LOST: *mut u8 = c"LOST SOUL".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Cacodemon.
-const CC_CACO: *mut c_char = c"CACODEMON".as_ptr().cast_mut();
+const CC_CACO: *mut u8 = c"CACODEMON".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Hell Knight.
-const CC_HELL: *mut c_char = c"HELL KNIGHT".as_ptr().cast_mut();
+const CC_HELL: *mut u8 = c"HELL KNIGHT".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Baron of Hell.
-const CC_BARON: *mut c_char = c"BARON OF HELL".as_ptr().cast_mut();
+const CC_BARON: *mut u8 = c"BARON OF HELL".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Arachnotron.
-const CC_ARACH: *mut c_char = c"ARACHNOTRON".as_ptr().cast_mut();
+const CC_ARACH: *mut u8 = c"ARACHNOTRON".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Pain Elemental.
-const CC_PAIN: *mut c_char = c"PAIN ELEMENTAL".as_ptr().cast_mut();
+const CC_PAIN: *mut u8 = c"PAIN ELEMENTAL".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Revenant.
-const CC_REVEN: *mut c_char = c"REVENANT".as_ptr().cast_mut();
+const CC_REVEN: *mut u8 = c"REVENANT".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Mancubus.
-const CC_MANCU: *mut c_char = c"MANCUBUS".as_ptr().cast_mut();
+const CC_MANCU: *mut u8 = c"MANCUBUS".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Arch-Vile.
-const CC_ARCH: *mut c_char = c"ARCH-VILE".as_ptr().cast_mut();
+const CC_ARCH: *mut u8 = c"ARCH-VILE".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Spider Mastermind.
-const CC_SPIDER: *mut c_char = c"THE SPIDER MASTERMIND".as_ptr().cast_mut();
+const CC_SPIDER: *mut u8 = c"THE SPIDER MASTERMIND".as_ptr().cast_mut().cast();
 /// Cast-roll name for the Cyberdemon.
-const CC_CYBER: *mut c_char = c"THE CYBERDEMON".as_ptr().cast_mut();
+const CC_CYBER: *mut u8 = c"THE CYBERDEMON".as_ptr().cast_mut().cast();
 /// Cast-roll name for the player character.
-const CC_HERO: *mut c_char = c"OUR HERO".as_ptr().cast_mut();
+const CC_HERO: *mut u8 = c"OUR HERO".as_ptr().cast_mut().cast();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -211,8 +208,8 @@ const CC_HERO: *mut c_char = c"OUR HERO".as_ptr().cast_mut();
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct spriteframe_t {
-    pub rotate: c_int,
-    pub lump: [c_short; 8],
+    pub rotate: i32,
+    pub lump: [i16; 8],
     pub flip: [u8; 8],
 }
 
@@ -222,7 +219,7 @@ struct spriteframe_t {
 /// array of `numframes` [`spriteframe_t`] entries.
 #[repr(C)]
 struct spritedef_t {
-    pub numframes: c_int,
+    pub numframes: i32,
     pub spriteframes: *mut spriteframe_t,
 }
 
@@ -247,15 +244,15 @@ enum FinaleStage {
 #[repr(C)]
 struct TextScreen {
     /// Which game mission this entry applies to (e.g. `d_mode::doom`).
-    pub mission: c_int,
+    pub mission: i32,
     /// Which episode this entry applies to (Doom only; Doom II uses episode 1 for all).
-    pub episode: c_int,
+    pub episode: i32,
     /// The map number after which this text appears.
-    pub level: c_int,
+    pub level: i32,
     /// Name of the WAD flat lump used as the tiling background.
-    pub background: *mut c_char,
+    pub background: *mut u8,
     /// The NUL-terminated text string to display.
-    pub text: *mut c_char,
+    pub text: *mut u8,
 }
 
 /// Pairs a cast-roll display name with the `mobjtype_t` index of the enemy.
@@ -265,9 +262,9 @@ struct TextScreen {
 #[repr(C)]
 struct CastInfo {
     /// NUL-terminated display name shown at the bottom of the cast screen.
-    pub name: *mut c_char,
+    pub name: *mut u8,
     /// `mobjtype_t` index into `mobjinfo[]`; selects sprite and state machine.
-    pub type_: c_int,
+    pub type_: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -276,13 +273,15 @@ struct CastInfo {
 
 extern "C" {
     /// C standard library: convert a character to upper-case.
-    fn toupper(c: c_int) -> c_int;
-    /// C standard library: return the length of a NUL-terminated string.
-    fn strlen(s: *const c_char) -> usize;
+    fn toupper(c: i32) -> i32;
 }
 
 // g_game.rs
-use crate::doom::g_game::{gameaction, gameepisode, gamemap, gamestate, players, viewactive};
+use crate::doom::{
+    deh_str::DEH_String,
+    g_game::{gameaction, gameepisode, gamemap, gamestate, players, viewactive},
+    m_misc::strlen,
+};
 
 // am_map.rs
 use crate::doom::am_map::automapactive;
@@ -323,7 +322,7 @@ use crate::doom::{
 ///
 /// Chex Quest maps to `doom`; HacX maps to `doom2`; all others are returned
 /// unchanged.  C origin: `logical_gamemission()` in f_finale.c.
-unsafe fn logical_gamemission() -> c_int {
+unsafe fn logical_gamemission() -> i32 {
     if gamemission == d_mode::pack_chex {
         d_mode::doom
     } else if gamemission == d_mode::pack_hacx {
@@ -331,12 +330,6 @@ unsafe fn logical_gamemission() -> c_int {
     } else {
         gamemission
     }
-}
-
-/// DEH_String is identity in this build.
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
 }
 
 // ---------------------------------------------------------------------------
@@ -354,154 +347,154 @@ const TEXTSCREENS: [TextScreen; 22] = [
         mission: d_mode::doom,
         episode: 1,
         level: 8,
-        background: c"FLOOR4_8".as_ptr().cast_mut(),
+        background: c"FLOOR4_8".as_ptr().cast_mut().cast(),
         text: E1TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 2,
         level: 8,
-        background: c"SFLR6_1".as_ptr().cast_mut(),
+        background: c"SFLR6_1".as_ptr().cast_mut().cast(),
         text: E2TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 3,
         level: 8,
-        background: c"MFLR8_4".as_ptr().cast_mut(),
+        background: c"MFLR8_4".as_ptr().cast_mut().cast(),
         text: E3TEXT,
     },
     TextScreen {
         mission: d_mode::doom,
         episode: 4,
         level: 8,
-        background: c"MFLR8_3".as_ptr().cast_mut(),
+        background: c"MFLR8_3".as_ptr().cast_mut().cast(),
         text: E4TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut(),
+        background: c"SLIME16".as_ptr().cast_mut().cast(),
         text: C1TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut(),
+        background: c"RROCK14".as_ptr().cast_mut().cast(),
         text: C2TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut(),
+        background: c"RROCK07".as_ptr().cast_mut().cast(),
         text: C3TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut(),
+        background: c"RROCK17".as_ptr().cast_mut().cast(),
         text: C4TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut(),
+        background: c"RROCK13".as_ptr().cast_mut().cast(),
         text: C5TEXT,
     },
     TextScreen {
         mission: d_mode::doom2,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut(),
+        background: c"RROCK19".as_ptr().cast_mut().cast(),
         text: C6TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut(),
+        background: c"SLIME16".as_ptr().cast_mut().cast(),
         text: T1TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut(),
+        background: c"RROCK14".as_ptr().cast_mut().cast(),
         text: T2TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut(),
+        background: c"RROCK07".as_ptr().cast_mut().cast(),
         text: T3TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut(),
+        background: c"RROCK17".as_ptr().cast_mut().cast(),
         text: T4TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut(),
+        background: c"RROCK13".as_ptr().cast_mut().cast(),
         text: T5TEXT,
     },
     TextScreen {
         mission: d_mode::pack_tnt,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut(),
+        background: c"RROCK19".as_ptr().cast_mut().cast(),
         text: T6TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 6,
-        background: c"SLIME16".as_ptr().cast_mut(),
+        background: c"SLIME16".as_ptr().cast_mut().cast(),
         text: P1TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 11,
-        background: c"RROCK14".as_ptr().cast_mut(),
+        background: c"RROCK14".as_ptr().cast_mut().cast(),
         text: P2TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 20,
-        background: c"RROCK07".as_ptr().cast_mut(),
+        background: c"RROCK07".as_ptr().cast_mut().cast(),
         text: P3TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 30,
-        background: c"RROCK17".as_ptr().cast_mut(),
+        background: c"RROCK17".as_ptr().cast_mut().cast(),
         text: P4TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 15,
-        background: c"RROCK13".as_ptr().cast_mut(),
+        background: c"RROCK13".as_ptr().cast_mut().cast(),
         text: P5TEXT,
     },
     TextScreen {
         mission: d_mode::pack_plut,
         episode: 1,
         level: 31,
-        background: c"RROCK19".as_ptr().cast_mut(),
+        background: c"RROCK19".as_ptr().cast_mut().cast(),
         text: P6TEXT,
     },
 ];
@@ -594,48 +587,48 @@ const CASTORDER: [CastInfo; 18] = [
 /// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; null when
 /// no text-screen applies.  Read by C code in `f_finale.c` and `g_game.c`.
 /// C origin: `finaletext` in f_finale.c.
-pub static mut finaletext: *mut c_char = ptr::null_mut();
+pub static mut finaletext: *mut u8 = ptr::null_mut();
 
 /// Name of the WAD flat lump used as the tiling background in the Text stage.
 ///
 /// Set by [`F_StartFinale`].  Null when no text-screen applies.
 /// C origin: `finaleflat` in f_finale.c.
-pub static mut finaleflat: *mut c_char = ptr::null_mut();
+pub static mut finaleflat: *mut u8 = ptr::null_mut();
 
 /// Index into `CASTORDER` for the enemy currently shown in the cast roll.
 ///
 /// Incremented by [`F_CastTicker`] when the current enemy finishes its death
 /// animation.  C origin: `castnum` in f_finale.c.
-pub static mut castnum: c_int = 0;
+pub static mut castnum: i32 = 0;
 
 /// Remaining ticks before the cast animation advances to the next state.
 ///
 /// Decremented each game tick by [`F_CastTicker`].
 /// C origin: `casttics` in f_finale.c.
-pub static mut casttics: c_int = 0;
+pub static mut casttics: i32 = 0;
 
 /// Non-zero while the current cast enemy is playing its death animation.
 ///
 /// Set by [`F_CastResponder`] when the player presses a key; cleared when the
 /// next enemy begins.  C origin: `castdeath` in f_finale.c.
-pub static mut castdeath: c_int = 0;
+pub static mut castdeath: i32 = 0;
 
 /// Number of animation frames the current cast enemy has displayed so far.
 ///
 /// Used to decide when to trigger an attack sequence (at frame 12) and when to
 /// stop one (at frame 24).  C origin: `castframes` in f_finale.c.
-pub static mut castframes: c_int = 0;
+pub static mut castframes: i32 = 0;
 
 /// Alternates between 0 and 1 to select melee vs. ranged attack during the
 /// cast roll.
 ///
 /// C origin: `castonmelee` in f_finale.c.
-pub static mut castonmelee: c_int = 0;
+pub static mut castonmelee: i32 = 0;
 
 /// Non-zero while a cast enemy is in an attack animation.
 ///
 /// C origin: `castattacking` in f_finale.c.
-pub static mut castattacking: c_int = 0;
+pub static mut castattacking: i32 = 0;
 
 /// Current stage of the finale sequence.
 ///
@@ -647,7 +640,7 @@ static mut FINALE_STAGE: FinaleStage = FinaleStage::Text;
 ///
 /// Controls text reveal speed, art-screen timing, and bunny-scroll position.
 /// C origin: `int finalecount` in f_finale.c.
-static mut FINALE_COUNT: c_uint = 0;
+static mut FINALE_COUNT: u32 = 0;
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -675,9 +668,9 @@ pub fn F_StartFinale() {
         automapactive = 0;
 
         if logical_gamemission() == d_mode::doom {
-            S_ChangeMusic(Mus::Victor as c_int, 1);
+            S_ChangeMusic(Mus::Victor as i32, 1);
         } else {
-            S_ChangeMusic(Mus::ReadM as c_int, 1);
+            S_ChangeMusic(Mus::ReadM as i32, 1);
         }
 
         finaletext = ptr::null_mut();
@@ -725,7 +718,7 @@ pub fn F_StartFinale() {
 /// events are ignored at this level.
 ///
 /// Called from C code in `g_game.c`.  C origin: `F_Responder` in f_finale.c.
-pub fn F_Responder(event: *mut event_t) -> c_int {
+pub fn F_Responder(event: *mut event_t) -> i32 {
     unsafe {
         let _ev = &*event;
         if let FinaleStage::Cast = FINALE_STAGE {
@@ -775,12 +768,12 @@ pub fn F_Ticker() {
 
         if let FinaleStage::Text = FINALE_STAGE {
             let len = strlen(finaletext);
-            if FINALE_COUNT > (len as c_uint) * (TEXTSPEED as c_uint) + (TEXTWAIT as c_uint) {
+            if FINALE_COUNT > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32) {
                 FINALE_COUNT = 0;
                 FINALE_STAGE = FinaleStage::ArtScreen;
                 wipegamestate = -1;
                 if gameepisode == 3 {
-                    S_StartMusic(Mus::Bunny as c_int);
+                    S_StartMusic(Mus::Bunny as i32);
                 }
             }
         }
@@ -798,7 +791,8 @@ pub fn F_Ticker() {
 /// Called from [`F_Drawer`].  C origin: `F_TextWrite` in f_finale.c.
 pub fn F_TextWrite() {
     unsafe {
-        let src = W_CacheLumpName(finaleflat, PU_CACHE) as *mut u8;
+        let src =
+            W_CacheLumpName(CStr::from_ptr(finaleflat.cast()).to_bytes(), PU_CACHE) as *mut u8;
         let mut dest = I_VideoBuffer;
 
         for y in 0..SCREENHEIGHT {
@@ -819,7 +813,7 @@ pub fn F_TextWrite() {
         let mut cx = 10;
         let mut cy = 10;
         let mut ch = finaletext;
-        let mut count = (FINALE_COUNT as c_int - 10) / TEXTSPEED;
+        let mut count = (FINALE_COUNT as i32 - 10) / TEXTSPEED;
         if count < 0 {
             count = 0;
         }
@@ -831,14 +825,14 @@ pub fn F_TextWrite() {
                 break;
             }
             ch = ch.add(1);
-            if c == b'\n' as c_char {
+            if c == b'\n' {
                 cx = 10;
                 cy += 11;
                 continue;
             }
 
-            let cidx = toupper(c as c_int) - HU_FONTSTART as c_int;
-            if cidx < 0 || cidx >= HU_FONTSIZE as c_int {
+            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
+            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
                 cx += 4;
                 continue;
             }
@@ -848,7 +842,7 @@ pub fn F_TextWrite() {
                 cx += 4;
                 continue;
             }
-            let w = (*font).width as c_int;
+            let w = (*font).width as i32;
             if cx + w > SCREENWIDTH {
                 break;
             }
@@ -880,7 +874,7 @@ pub fn F_StartCast() {
         castframes = 0;
         castonmelee = 0;
         castattacking = 0;
-        S_ChangeMusic(Mus::Evil as c_int, 1);
+        S_ChangeMusic(Mus::Evil as i32, 1);
     }
 }
 
@@ -918,7 +912,7 @@ pub fn F_CastTicker() {
             let info = &*std::ptr::addr_of!(crate::doom::info::mobjinfo[0])
                 .add(CASTORDER[castnum as usize].type_ as usize);
             if info.seesound != Sfx::None {
-                S_StartSound(ptr::null_mut(), info.seesound as c_int);
+                S_StartSound(ptr::null_mut(), info.seesound as i32);
             }
             let st = info.seestate;
             caststate = &mut crate::doom::info::states[st as usize];
@@ -935,23 +929,23 @@ pub fn F_CastTicker() {
             castframes += 1;
 
             let sfx = match st {
-                S_PLAY_ATK1 => Sfx::Dshtgn as c_int,
-                S_POSS_ATK2 => Sfx::Pistol as c_int,
-                S_SPOS_ATK2 => Sfx::Shotgn as c_int,
-                S_VILE_ATK2 => Sfx::Vilatk as c_int,
-                S_SKEL_FIST2 => Sfx::Skeswg as c_int,
-                S_SKEL_FIST4 => Sfx::Skepch as c_int,
-                S_SKEL_MISS2 => Sfx::Skeatk as c_int,
-                S_FATT_ATK8 | S_FATT_ATK5 | S_FATT_ATK2 => Sfx::Firsht as c_int,
-                S_CPOS_ATK2 | S_CPOS_ATK3 | S_CPOS_ATK4 => Sfx::Shotgn as c_int,
-                S_TROO_ATK3 => Sfx::Claw as c_int,
-                S_SARG_ATK2 => Sfx::Sgtatk as c_int,
-                S_BOSS_ATK2 | S_BOS2_ATK2 | S_HEAD_ATK2 => Sfx::Firsht as c_int,
-                S_SKULL_ATK2 => Sfx::Sklatk as c_int,
-                S_SPID_ATK2 | S_SPID_ATK3 => Sfx::Shotgn as c_int,
-                S_BSPI_ATK2 => Sfx::Plasma as c_int,
-                S_CYBER_ATK2 | S_CYBER_ATK4 | S_CYBER_ATK6 => Sfx::Rlaunc as c_int,
-                S_PAIN_ATK3 => Sfx::Sklatk as c_int,
+                S_PLAY_ATK1 => Sfx::Dshtgn as i32,
+                S_POSS_ATK2 => Sfx::Pistol as i32,
+                S_SPOS_ATK2 => Sfx::Shotgn as i32,
+                S_VILE_ATK2 => Sfx::Vilatk as i32,
+                S_SKEL_FIST2 => Sfx::Skeswg as i32,
+                S_SKEL_FIST4 => Sfx::Skepch as i32,
+                S_SKEL_MISS2 => Sfx::Skeatk as i32,
+                S_FATT_ATK8 | S_FATT_ATK5 | S_FATT_ATK2 => Sfx::Firsht as i32,
+                S_CPOS_ATK2 | S_CPOS_ATK3 | S_CPOS_ATK4 => Sfx::Shotgn as i32,
+                S_TROO_ATK3 => Sfx::Claw as i32,
+                S_SARG_ATK2 => Sfx::Sgtatk as i32,
+                S_BOSS_ATK2 | S_BOS2_ATK2 | S_HEAD_ATK2 => Sfx::Firsht as i32,
+                S_SKULL_ATK2 => Sfx::Sklatk as i32,
+                S_SPID_ATK2 | S_SPID_ATK3 => Sfx::Shotgn as i32,
+                S_BSPI_ATK2 => Sfx::Plasma as i32,
+                S_CYBER_ATK2 | S_CYBER_ATK4 | S_CYBER_ATK6 => Sfx::Rlaunc as i32,
+                S_PAIN_ATK3 => Sfx::Sklatk as i32,
                 _ => 0,
             };
 
@@ -1039,7 +1033,7 @@ unsafe fn goto_stopattack() {
 ///
 /// Called by [`F_Responder`] while in the Cast stage.
 /// C origin: `F_CastResponder` in f_finale.c.
-pub fn F_CastResponder(ev: *mut event_t) -> c_int {
+pub fn F_CastResponder(ev: *mut event_t) -> i32 {
     unsafe {
         let event = &*ev;
         if event.type_ != ev_keydown {
@@ -1056,7 +1050,7 @@ pub fn F_CastResponder(ev: *mut event_t) -> c_int {
         castframes = 0;
         castattacking = 0;
         if info.deathsound != Sfx::None {
-            S_StartSound(ptr::null_mut(), info.deathsound as c_int);
+            S_StartSound(ptr::null_mut(), info.deathsound as i32);
         }
         1
     }
@@ -1069,7 +1063,7 @@ pub fn F_CastResponder(ev: *mut event_t) -> c_int {
 /// The text is drawn with `V_DrawPatch` at the calculated x-offset.
 ///
 /// Called by [`F_CastDrawer`].  C origin: `F_CastPrint` in f_finale.c.
-pub fn F_CastPrint(text: *mut c_char) {
+pub fn F_CastPrint(text: *mut u8) {
     unsafe {
         let mut ch = text;
         let mut width = 0;
@@ -1081,8 +1075,8 @@ pub fn F_CastPrint(text: *mut c_char) {
                 break;
             }
             ch = ch.add(1);
-            let cidx = toupper(c as c_int) - HU_FONTSTART as c_int;
-            if cidx < 0 || cidx >= HU_FONTSIZE as c_int {
+            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
+            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
                 width += 4;
                 continue;
             }
@@ -1091,7 +1085,7 @@ pub fn F_CastPrint(text: *mut c_char) {
                 width += 4;
                 continue;
             }
-            width += (*font).width as c_int;
+            width += (*font).width as i32;
         }
 
         // draw it
@@ -1103,8 +1097,8 @@ pub fn F_CastPrint(text: *mut c_char) {
                 break;
             }
             ch = ch.add(1);
-            let cidx = toupper(c as c_int) - HU_FONTSTART as c_int;
-            if cidx < 0 || cidx >= HU_FONTSIZE as c_int {
+            let cidx = toupper(c as i32) - HU_FONTSTART as i32;
+            if cidx < 0 || cidx >= HU_FONTSIZE as i32 {
                 cx += 4;
                 continue;
             }
@@ -1113,7 +1107,7 @@ pub fn F_CastPrint(text: *mut c_char) {
                 cx += 4;
                 continue;
             }
-            let w = (*font).width as c_int;
+            let w = (*font).width as i32;
             V_DrawPatch(cx, 180, font);
             cx += w;
         }
@@ -1134,7 +1128,7 @@ pub fn F_CastDrawer() {
         V_DrawPatch(
             0,
             0,
-            W_CacheLumpName(DEH_String(c"BOSSBACK".as_ptr().cast_mut()), PU_CACHE) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"BOSSBACK"), PU_CACHE) as *mut patch_t,
         );
         F_CastPrint(DEH_String(CASTORDER[castnum as usize].name));
 
@@ -1142,8 +1136,8 @@ pub fn F_CastDrawer() {
         let sprframe = &*sprdef
             .spriteframes
             .add(((*caststate).frame & FF_FRAMEMASK) as usize);
-        let lump = sprframe.lump[0] as c_int;
-        let flip = sprframe.flip[0] as c_int;
+        let lump = sprframe.lump[0] as i32;
+        let flip = sprframe.flip[0] as i32;
 
         let patch = W_CacheLumpNum(lump + firstspritelump, PU_CACHE) as *mut patch_t;
         if flip != 0 {
@@ -1160,7 +1154,7 @@ pub fn F_CastDrawer() {
 /// Used by [`F_BunnyScroll`] to implement the horizontal scroll effect.
 /// The patch column is read as a standard Doom post-format column (topdelta /
 /// length / pixel data).  C origin: `F_DrawPatchCol` in f_finale.c.
-pub fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
+pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
     unsafe {
         let patch_ptr = patch as *mut u8;
         let ofs = ptr::read_unaligned(patch_ptr.add(8 + col as usize * 4) as *mut i32);
@@ -1170,7 +1164,7 @@ pub fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
         while (*column).topdelta != 0xff {
             let mut source = (column as *mut u8).add(3);
             let mut dest = desttop.add((*column).topdelta as usize * SCREENWIDTH as usize);
-            let mut count = (*column).length as c_int;
+            let mut count = (*column).length as i32;
             while count > 0 {
                 *dest = *source;
                 dest = dest.add(SCREENWIDTH as usize);
@@ -1193,14 +1187,12 @@ pub fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
 /// Called by [`F_ArtScreenDrawer`].  C origin: `F_BunnyScroll` in f_finale.c.
 pub fn F_BunnyScroll() {
     unsafe {
-        let p1 =
-            W_CacheLumpName(DEH_String(c"PFUB2".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
-        let p2 =
-            W_CacheLumpName(DEH_String(c"PFUB1".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
+        let p1 = W_CacheLumpName(DEH_String(b"PFUB2"), PU_LEVEL) as *mut patch_t;
+        let p2 = W_CacheLumpName(DEH_String(b"PFUB1"), PU_LEVEL) as *mut patch_t;
 
         V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
-        let mut scrolled = 320 - ((FINALE_COUNT as c_int - 230) / 2);
+        let mut scrolled = 320 - ((FINALE_COUNT as i32 - 230) / 2);
         scrolled = scrolled.clamp(0, 320);
 
         for x in 0..SCREENWIDTH {
@@ -1218,27 +1210,27 @@ pub fn F_BunnyScroll() {
             V_DrawPatch(
                 (SCREENWIDTH - 13 * 8) / 2,
                 (SCREENHEIGHT - 8 * 8) / 2,
-                W_CacheLumpName(DEH_String(c"END0".as_ptr().cast_mut()), PU_CACHE) as *mut patch_t,
+                W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
             );
             LAST_STAGE = 0;
             return;
         }
 
-        let mut stage = ((FINALE_COUNT as c_int) - 1180) / 5;
+        let mut stage = ((FINALE_COUNT as i32) - 1180) / 5;
         if stage > 6 {
             stage = 6;
         }
         if stage > LAST_STAGE {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
             LAST_STAGE = stage;
         }
 
-        let mut namebuf: [c_char; 10] = [0; 10];
+        let mut namebuf: [u8; 10] = [0; 10];
         DEH_snprintf!(namebuf, "END{}", stage);
         V_DrawPatch(
             (SCREENWIDTH - 13 * 8) / 2,
             (SCREENHEIGHT - 8 * 8) / 2,
-            W_CacheLumpName(namebuf.as_mut_ptr(), PU_CACHE) as *mut patch_t,
+            W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
         );
     }
 }
@@ -1247,7 +1239,7 @@ pub fn F_BunnyScroll() {
 ///
 /// Prevents a pistol sound from firing on every redraw of the same frame.
 /// C origin: `laststage` (static local) in `F_BunnyScroll` in f_finale.c.
-static mut LAST_STAGE: c_int = 0;
+static mut LAST_STAGE: i32 = 0;
 
 /// Draw the art-screen for the current episode (non-Cast, non-Text stage).
 ///
@@ -1263,16 +1255,16 @@ pub fn F_ArtScreenDrawer() {
             return;
         }
 
-        let lumpname = match gameepisode {
+        let lumpname: &[u8] = match gameepisode {
             1 => {
                 if gamemode == d_mode::retail {
-                    c"CREDIT".as_ptr().cast_mut()
+                    b"CREDIT"
                 } else {
-                    c"HELP2".as_ptr().cast_mut()
+                    b"HELP2"
                 }
             }
-            2 => c"VICTORY2".as_ptr().cast_mut(),
-            4 => c"ENDPIC".as_ptr().cast_mut(),
+            2 => b"VICTORY2",
+            4 => b"ENDPIC",
             _ => return,
         };
 
@@ -1303,6 +1295,7 @@ pub fn F_Drawer() {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)] // pins constant values
 mod tests {
     use {super::*, std::sync::Mutex};
 
@@ -1353,16 +1346,14 @@ mod tests {
     }
 
     #[test]
-    fn cast_globals_are_c_int_width() {
-        use std::ffi::c_int;
-        const _: () = assert!(std::mem::size_of::<c_int>() == 4);
+    fn cast_globals_are_i32() {
         unsafe {
-            let _: c_int = castnum;
-            let _: c_int = casttics;
-            let _: c_int = castdeath;
-            let _: c_int = castframes;
-            let _: c_int = castonmelee;
-            let _: c_int = castattacking;
+            let _: i32 = castnum;
+            let _: i32 = casttics;
+            let _: i32 = castdeath;
+            let _: i32 = castframes;
+            let _: i32 = castonmelee;
+            let _: i32 = castattacking;
         }
     }
 

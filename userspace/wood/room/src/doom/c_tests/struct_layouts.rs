@@ -243,7 +243,7 @@ fn node_t_offsets() {
 #[test]
 fn drawseg_t_size() {
     // curline*(8) + 8×int(32) + 3×pointer(24) = 64
-    // x1..tsilheight are 8 consecutive c_int fields (4 bytes each = 32 bytes),
+    // x1..tsilheight are 8 consecutive i32 fields (4 bytes each = 32 bytes),
     // followed by 3 pointers at 40, 48, 56 (8 bytes each on 64-bit).
     assert_eq!(size_of::<drawseg_t>(), 64);
 }

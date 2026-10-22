@@ -13,16 +13,16 @@
 //! * **`GameVersion_t`** - which engine executable version is being emulated,
 //!   used primarily for demo compatibility.
 //!
-//! All three concepts are modelled here as `pub const c_int` groups rather
+//! All three concepts are modelled here as `pub const i32` groups rather
 //! than Rust enums, preserving bit-for-bit compatibility with the C enums they
 //! were ported from and allowing the values to be passed through the FFI
 //! boundary without conversion. The corresponding C enums are defined in
 //! `d_mode.h`.
 //!
 //! Notable Rust-vs-C differences:
-//! * Enum discriminants are `pub const c_int` rather than Rust `enum` variants
-//!   so that they can be stored in `c_int` globals and passed directly over FFI.
-//! * `D_GameMissionString` returns `*mut c_char` pointing into static string
+//! * Enum discriminants are `pub const i32` rather than Rust `enum` variants
+//!   so that they can be stored in `i32` globals and passed directly over FFI.
+//! * `D_GameMissionString` returns `*mut u8` pointing into static string
 //!   literals rather than stack-allocated `char *` (the C version returns
 //!   read-only string literals cast to `char *` which would be UB to mutate;
 //!   the Rust port matches the C signature but the same caveat applies).
@@ -31,177 +31,175 @@
 
 #![allow(non_snake_case, non_upper_case_globals)]
 
-use std::ffi::{c_char, c_int};
-
 use crate::types::Boolean;
 
 // ---------------------------------------------------------------------------
 // GameMission_t constants
 //
 // Identify which game (IWAD) is loaded. Corresponds to `GameMission_t` in
-// `d_mode.h`. Stored as plain `c_int` for direct FFI compatibility.
+// `d_mode.h`. Stored as plain `i32` for direct FFI compatibility.
 // ---------------------------------------------------------------------------
 
 /// No game mission; used as a sentinel / unset value.
 ///
 /// Maps to `none` in `GameMission_t`. Stored as `9` in the C enum.
-pub const none: c_int = 9;
+pub const none: i32 = 9;
 
 /// Doom / Ultimate Doom (IWAD: `doom.wad`, `doom1.wad`, or `doomu.wad`).
 ///
 /// Maps to `doom` (discriminant 0) in `GameMission_t`.
-pub const doom: c_int = 0;
+pub const doom: i32 = 0;
 
 /// Doom II: Hell on Earth (IWAD: `doom2.wad`).
 ///
 /// Maps to `doom2` (discriminant 1) in `GameMission_t`.
-pub const doom2: c_int = 1;
+pub const doom2: i32 = 1;
 
 /// Final Doom: TNT Evilution (IWAD: `tnt.wad`).
 ///
 /// Maps to `pack_tnt` (discriminant 2) in `GameMission_t`.
-pub const pack_tnt: c_int = 2;
+pub const pack_tnt: i32 = 2;
 
 /// Final Doom: The Plutonia Experiment (IWAD: `plutonia.wad`).
 ///
 /// Maps to `pack_plut` (discriminant 3) in `GameMission_t`.
-pub const pack_plut: c_int = 3;
+pub const pack_plut: i32 = 3;
 
 /// Chex Quest (shareware Doom mod; IWAD: `chex.wad`).
 ///
 /// Maps to `pack_chex` (discriminant 4) in `GameMission_t`. Uses episode-based
 /// map layout like Doom 1 rather than the `MAPxx` layout of Doom 2.
-pub const pack_chex: c_int = 4;
+pub const pack_chex: i32 = 4;
 
 /// Hacx: Twitch 'n Kill (Doom 2 mod; IWAD: `hacx.wad`).
 ///
 /// Maps to `pack_hacx` (discriminant 5) in `GameMission_t`.
-pub const pack_hacx: c_int = 5;
+pub const pack_hacx: i32 = 5;
 
 /// Heretic: Shadow of the Serpent Riders (IWAD: `heretic.wad`).
 ///
 /// Maps to `heretic` (discriminant 6) in `GameMission_t`.
-pub const heretic: c_int = 6;
+pub const heretic: i32 = 6;
 
 /// Hexen: Beyond Heretic (IWAD: `hexen.wad`).
 ///
 /// Maps to `hexen` (discriminant 7) in `GameMission_t`.
-pub const hexen: c_int = 7;
+pub const hexen: i32 = 7;
 
 /// Strife: Quest for the Sigil (IWAD: `strife1.wad`).
 ///
 /// Maps to `strife` (discriminant 8) in `GameMission_t`.
-pub const strife: c_int = 8;
+pub const strife: i32 = 8;
 
 // ---------------------------------------------------------------------------
 // GameMode_t constants
 //
 // Identify the release tier of the loaded IWAD. Corresponds to `GameMode_t`
-// in `d_mode.h`. Stored as plain `c_int` for direct FFI compatibility.
+// in `d_mode.h`. Stored as plain `i32` for direct FFI compatibility.
 // ---------------------------------------------------------------------------
 
 /// Shareware release of Doom or Heretic (one episode, freely distributable).
 ///
 /// Maps to `shareware` (discriminant 0) in `GameMode_t`.
-pub const shareware: c_int = 0;
+pub const shareware: i32 = 0;
 
 /// Registered (three-episode) release of Doom or Heretic.
 ///
 /// Maps to `registered` (discriminant 1) in `GameMode_t`.
-pub const registered: c_int = 1;
+pub const registered: i32 = 1;
 
 /// Commercial (MAPxx-based) release: Doom II, Final Doom, Hexen, Strife, etc.
 ///
 /// Maps to `commercial` (discriminant 2) in `GameMode_t`.
-pub const commercial: c_int = 2;
+pub const commercial: i32 = 2;
 
 /// Retail / Ultimate Doom (four-episode release, `doom.wad`).
 ///
 /// Maps to `retail` (discriminant 3) in `GameMode_t`.
-pub const retail: c_int = 3;
+pub const retail: i32 = 3;
 
 /// Unknown or undetected game mode (IWAD not yet loaded or not recognised).
 ///
 /// Maps to `indetermined` (discriminant 4) in `GameMode_t`.
-pub const indetermined: c_int = 4;
+pub const indetermined: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // GameVersion_t constants
 //
 // Identify which executable version is being emulated, primarily for demo
 // compatibility. Corresponds to `GameVersion_t` in `d_mode.h`. Stored as
-// plain `c_int` for direct FFI compatibility.
+// plain `i32` for direct FFI compatibility.
 // ---------------------------------------------------------------------------
 
 /// Doom v1.2: earliest shareware and registered release.
 ///
 /// Maps to `exe_doom_1_2` (discriminant 0) in `GameVersion_t`.
-pub const exe_doom_1_2: c_int = 0;
+pub const exe_doom_1_2: i32 = 0;
 
 /// Doom v1.666: first release compatible with all three edition types.
 ///
 /// Maps to `exe_doom_1_666` (discriminant 1) in `GameVersion_t`.
-pub const exe_doom_1_666: c_int = 1;
+pub const exe_doom_1_666: i32 = 1;
 
 /// Doom v1.7 / v1.7a.
 ///
 /// Maps to `exe_doom_1_7` (discriminant 2) in `GameVersion_t`.
-pub const exe_doom_1_7: c_int = 2;
+pub const exe_doom_1_7: i32 = 2;
 
 /// Doom v1.8.
 ///
 /// Maps to `exe_doom_1_8` (discriminant 3) in `GameVersion_t`.
-pub const exe_doom_1_8: c_int = 3;
+pub const exe_doom_1_8: i32 = 3;
 
 /// Doom v1.9: the most widely distributed version; default emulation target.
 ///
 /// Maps to `exe_doom_1_9` (discriminant 4) in `GameVersion_t`.
-pub const exe_doom_1_9: c_int = 4;
+pub const exe_doom_1_9: i32 = 4;
 
 /// Hacx standalone executable (based on Doom 1.9).
 ///
 /// Maps to `exe_hacx` (discriminant 5) in `GameVersion_t`.
-pub const exe_hacx: c_int = 5;
+pub const exe_hacx: i32 = 5;
 
 /// Ultimate Doom (retail four-episode) executable.
 ///
 /// Maps to `exe_ultimate` (discriminant 6) in `GameVersion_t`.
-pub const exe_ultimate: c_int = 6;
+pub const exe_ultimate: i32 = 6;
 
 /// Final Doom executable (v1.9 variant used by `tnt.wad` and `plutonia.wad`).
 ///
 /// Maps to `exe_final` (discriminant 7) in `GameVersion_t`.
-pub const exe_final: c_int = 7;
+pub const exe_final: i32 = 7;
 
 /// Alternate Final Doom executable (second `final.exe` binary).
 ///
 /// Maps to `exe_final2` (discriminant 8) in `GameVersion_t`.
-pub const exe_final2: c_int = 8;
+pub const exe_final2: i32 = 8;
 
 /// Chex Quest executable (derived from the Final Doom binary).
 ///
 /// Maps to `exe_chex` (discriminant 9) in `GameVersion_t`.
-pub const exe_chex: c_int = 9;
+pub const exe_chex: i32 = 9;
 
 /// Heretic v1.3 executable.
 ///
 /// Maps to `exe_heretic_1_3` (discriminant 10) in `GameVersion_t`.
-pub const exe_heretic_1_3: c_int = 10;
+pub const exe_heretic_1_3: i32 = 10;
 
 /// Hexen v1.1 executable.
 ///
 /// Maps to `exe_hexen_1_1` (discriminant 11) in `GameVersion_t`.
-pub const exe_hexen_1_1: c_int = 11;
+pub const exe_hexen_1_1: i32 = 11;
 
 /// Strife v1.2 executable.
 ///
 /// Maps to `exe_strife_1_2` (discriminant 12) in `GameVersion_t`.
-pub const exe_strife_1_2: c_int = 12;
+pub const exe_strife_1_2: i32 = 12;
 
 /// Strife v1.31 executable.
 ///
 /// Maps to `exe_strife_1_31` (discriminant 13) in `GameVersion_t`.
-pub const exe_strife_1_31: c_int = 13;
+pub const exe_strife_1_31: i32 = 13;
 
 /// A single valid (mission, mode) combination with its episode and map bounds.
 ///
@@ -211,13 +209,13 @@ pub const exe_strife_1_31: c_int = 13;
 /// `valid_modes[]` array in `d_mode.c`.
 struct ValidMode {
     /// `GameMission_t` constant for this entry.
-    mission: c_int,
+    mission: i32,
     /// `GameMode_t` constant for this entry.
-    mode: c_int,
+    mode: i32,
     /// Maximum valid episode number (inclusive).
-    episode: c_int,
+    episode: i32,
     /// Maximum valid map number within any episode (inclusive).
-    map: c_int,
+    map: i32,
 }
 
 /// Table of all valid (mission, mode) combinations and their map bounds.
@@ -314,9 +312,9 @@ static VALID_MODES: [ValidMode; 13] = [
 /// inside `valid_versions[]` in `d_mode.c`.
 struct ValidVersion {
     /// `GameMission_t` constant for this entry.
-    mission: c_int,
+    mission: i32,
     /// `GameVersion_t` constant for this entry.
-    version: c_int,
+    version: i32,
 }
 
 /// Table of valid (mission, version) pairs.
@@ -375,7 +373,7 @@ static VALID_VERSIONS: [ValidVersion; 10] = [
 /// Returns `FALSE` for unrecognised combinations (e.g., `doom2` + `shareware`).
 ///
 /// Corresponds to `D_ValidGameMode` in `d_mode.c`.
-pub fn D_ValidGameMode(mission: c_int, mode: c_int) -> Boolean {
+pub fn D_ValidGameMode(mission: i32, mode: i32) -> Boolean {
     for vm in &VALID_MODES {
         if vm.mission == mission && vm.mode == mode {
             return Boolean::TRUE;
@@ -396,7 +394,7 @@ pub fn D_ValidGameMode(mission: c_int, mode: c_int) -> Boolean {
 /// Returns `FALSE` for unknown mission/mode combinations.
 ///
 /// Corresponds to `D_ValidEpisodeMap` in `d_mode.c`.
-pub fn D_ValidEpisodeMap(mission: c_int, mode: c_int, episode: c_int, map: c_int) -> Boolean {
+pub fn D_ValidEpisodeMap(mission: i32, mode: i32, episode: i32, map: i32) -> Boolean {
     // Hacks for Heretic secret episodes
     if mission == heretic {
         if mode == retail && episode == 6 {
@@ -425,7 +423,7 @@ pub fn D_ValidEpisodeMap(mission: c_int, mode: c_int, episode: c_int, map: c_int
 /// Returns 0 for unknown combinations.
 ///
 /// Corresponds to `D_GetNumEpisodes` in `d_mode.c`.
-pub fn D_GetNumEpisodes(mission: c_int, mode: c_int) -> c_int {
+pub fn D_GetNumEpisodes(mission: i32, mode: i32) -> i32 {
     let mut episode = 1;
     while D_ValidEpisodeMap(mission, mode, episode, 1).is_truthy() {
         episode += 1;
@@ -441,7 +439,7 @@ pub fn D_GetNumEpisodes(mission: c_int, mode: c_int) -> c_int {
 /// combinations.
 ///
 /// Corresponds to `D_ValidGameVersion` in `d_mode.c`.
-pub fn D_ValidGameVersion(mission: c_int, version: c_int) -> Boolean {
+pub fn D_ValidGameVersion(mission: i32, version: i32) -> Boolean {
     let mission = if mission == doom2
         || mission == pack_plut
         || mission == pack_tnt
@@ -469,7 +467,7 @@ pub fn D_ValidGameVersion(mission: c_int, version: c_int) -> Boolean {
 /// level-name formatting and warp/cheat parsing throughout the engine.
 ///
 /// Corresponds to `D_IsEpisodeMap` in `d_mode.c`.
-pub fn D_IsEpisodeMap(mission: c_int) -> Boolean {
+pub fn D_IsEpisodeMap(mission: i32) -> Boolean {
     match mission {
         doom | heretic | pack_chex => Boolean::TRUE,
         _ => Boolean::FALSE,
@@ -483,24 +481,24 @@ pub fn D_IsEpisodeMap(mission: c_int) -> Boolean {
 /// values. The returned pointer refers to a static string literal embedded in
 /// the binary and must not be freed or written through.
 ///
-/// The return type is `*mut c_char` to match the C signature, but the memory
+/// The return type is `*mut u8` to match the C signature, but the memory
 /// is read-only; writing to it is undefined behaviour, as it would be in the C
 /// original.
 ///
 /// Called from `w_wad` during WAD loading.
 /// Corresponds to `D_GameMissionString` in `d_mode.c`.
-pub fn D_GameMissionString(mission: c_int) -> *mut c_char {
+pub fn D_GameMissionString(mission: i32) -> *mut u8 {
     match mission {
-        doom => c"doom".as_ptr().cast_mut(),
-        doom2 => c"doom2".as_ptr().cast_mut(),
-        pack_tnt => c"tnt".as_ptr().cast_mut(),
-        pack_plut => c"plutonia".as_ptr().cast_mut(),
-        pack_hacx => c"hacx".as_ptr().cast_mut(),
-        pack_chex => c"chex".as_ptr().cast_mut(),
-        heretic => c"heretic".as_ptr().cast_mut(),
-        hexen => c"hexen".as_ptr().cast_mut(),
-        strife => c"strife".as_ptr().cast_mut(),
-        _ => c"none".as_ptr().cast_mut(),
+        doom => c"doom".as_ptr().cast_mut().cast(),
+        doom2 => c"doom2".as_ptr().cast_mut().cast(),
+        pack_tnt => c"tnt".as_ptr().cast_mut().cast(),
+        pack_plut => c"plutonia".as_ptr().cast_mut().cast(),
+        pack_hacx => c"hacx".as_ptr().cast_mut().cast(),
+        pack_chex => c"chex".as_ptr().cast_mut().cast(),
+        heretic => c"heretic".as_ptr().cast_mut().cast(),
+        hexen => c"hexen".as_ptr().cast_mut().cast(),
+        strife => c"strife".as_ptr().cast_mut().cast(),
+        _ => c"none".as_ptr().cast_mut().cast(),
     }
 }
 
@@ -542,7 +540,7 @@ mod tests {
     #[test]
     fn game_mission_string_heretic() {
         let ptr = D_GameMissionString(heretic);
-        let s = unsafe { CStr::from_ptr(ptr) };
+        let s = unsafe { CStr::from_ptr(ptr.cast()) };
         assert_eq!(s.to_str().unwrap(), "heretic");
     }
 
@@ -550,7 +548,7 @@ mod tests {
     #[test]
     fn game_mission_string_unknown() {
         let ptr = D_GameMissionString(42);
-        let s = unsafe { CStr::from_ptr(ptr) };
+        let s = unsafe { CStr::from_ptr(ptr.cast()) };
         assert_eq!(s.to_str().unwrap(), "none");
     }
 
@@ -670,7 +668,7 @@ mod tests {
     #[test]
     fn game_mission_string_all_missions() {
         use std::ffi::CStr;
-        let cases: &[(c_int, &str)] = &[
+        let cases: &[(i32, &str)] = &[
             (doom, "doom"),
             (doom2, "doom2"),
             (pack_tnt, "tnt"),
@@ -684,7 +682,7 @@ mod tests {
         ];
         for (mission, expected) in cases {
             let ptr = D_GameMissionString(*mission);
-            let s = unsafe { CStr::from_ptr(ptr) };
+            let s = unsafe { CStr::from_ptr(ptr.cast()) };
             assert_eq!(s.to_str().unwrap(), *expected, "mission={mission}");
         }
     }

@@ -7,10 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{ffi::c_void, os::raw::c_int},
-};
+use {crate::doom::sounds::Sfx, std::ffi::c_void};
 
 use crate::{
     doom::{
@@ -41,7 +38,7 @@ const PLATSPEED: fixed_t = FRACUNIT;
 
 /// Unitless platform wait count; multiplied by `TICRATE` at call sites to give
 /// the actual wait duration in tics (3 × 35 = 105 tics ≈ 3 s at 35 Hz).
-const PLATWAIT: c_int = 3;
+const PLATWAIT: i32 = 3;
 
 /// Maximum number of simultaneously active platform thinkers.
 ///
@@ -51,35 +48,35 @@ const MAXPLATS: usize = 30;
 
 // result_e enum values returned by T_MovePlane.
 /// `T_MovePlane` result: the floor moved without incident.
-const result_ok: c_int = 0;
+const result_ok: i32 = 0;
 /// `T_MovePlane` result: the floor crushed something while moving.
-const result_crushed: c_int = 1;
+const result_crushed: i32 = 1;
 /// `T_MovePlane` result: the floor reached its destination height.
-const result_pastdest: c_int = 2;
+const result_pastdest: i32 = 2;
 
 // plat_e enum values — current platform motion state.
 /// Platform is moving upward toward `high`.
-const up: c_int = 0;
+const up: i32 = 0;
 /// Platform is moving downward toward `low`.
-const down: c_int = 1;
+const down: i32 = 1;
 /// Platform has reached a target and is counting down before reversing.
-const waiting: c_int = 2;
+const waiting: i32 = 2;
 /// Platform has been suspended; its thinker callback is suppressed.
-const in_stasis: c_int = 3;
+const in_stasis: i32 = 3;
 
 // plattype_e enum values — platform behaviour types.
 /// Perpetually bounces between the lowest and highest surrounding floor heights.
-const perpetualRaise: c_int = 0;
+const perpetualRaise: i32 = 0;
 /// Lowers to the lowest surrounding floor, waits, then rises back and stops.
-const downWaitUpStay: c_int = 1;
+const downWaitUpStay: i32 = 1;
 /// Rises by `amount` units while matching the front sidedef's floor texture,
 /// then stops.
-const raiseAndChange: c_int = 2;
+const raiseAndChange: i32 = 2;
 /// Rises to the next higher surrounding floor while matching texture, then
 /// stops.
-const raiseToNearestAndChange: c_int = 3;
+const raiseToNearestAndChange: i32 = 3;
 /// Like [`downWaitUpStay`] but at twice the speed (`PLATSPEED * 8`).
-const blazeDWUS: c_int = 4;
+const blazeDWUS: i32 = 4;
 
 /// Per-sector thinker for an active platform mover.
 ///
@@ -104,19 +101,19 @@ pub struct plat_t {
     /// Upper target height (destination when moving up).
     pub high: fixed_t,
     /// Total tics to wait at a target before reversing (set from `PLATWAIT`).
-    pub wait: c_int,
+    pub wait: i32,
     /// Remaining tics in the current wait period; decremented each tic.
-    pub count: c_int,
+    pub count: i32,
     /// Current motion state: one of `up`, `down`, `waiting`, `in_stasis`.
-    pub status: c_int,
+    pub status: i32,
     /// Saved status used to resume after stasis.
-    pub oldstatus: c_int,
+    pub oldstatus: i32,
     /// Non-zero if the platform damages things it crushes (unused for plats).
-    pub crush: c_int,
+    pub crush: i32,
     /// Linedef tag that activated this platform.
-    pub tag: c_int,
+    pub tag: i32,
     /// Platform behaviour type (one of the `plattype_e` integer constants).
-    pub r#type: c_int,
+    pub r#type: i32,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -188,7 +185,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             {
                 S_StartSound(
                     &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Stnmov as c_int,
+                    Sfx::Stnmov as i32,
                 );
             }
 
@@ -197,14 +194,14 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 (*plat).status = down;
                 S_StartSound(
                     &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstart as c_int,
+                    Sfx::Pstart as i32,
                 );
             } else if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
                 S_StartSound(
                     &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstop as c_int,
+                    Sfx::Pstop as i32,
                 );
 
                 match (*plat).r#type {
@@ -227,7 +224,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 (*plat).status = waiting;
                 S_StartSound(
                     &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstop as c_int,
+                    Sfx::Pstop as i32,
                 );
             }
         }
@@ -241,7 +238,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 }
                 S_StartSound(
                     &(*(*plat).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstart as c_int,
+                    Sfx::Pstart as i32,
                 );
             }
         }
@@ -272,13 +269,13 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
 ///
 /// `line` must be a valid, non-null pointer.  The global `sectors` and `sides`
 /// arrays must be initialised for the current level.
-pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_int {
-    let mut secnum: c_int = -1;
-    let mut rtn: c_int = 0;
+pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
+    let mut secnum: i32 = -1;
+    let mut rtn: i32 = 0;
 
     match plattype {
         x if x == perpetualRaise => {
-            P_ActivateInStasis((*line).tag as c_int);
+            P_ActivateInStasis((*line).tag as i32);
         }
         _ => {}
     }
@@ -296,7 +293,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
 
         rtn = 1;
         let plat = Z_Malloc(
-            std::mem::size_of::<plat_t>() as c_int,
+            std::mem::size_of::<plat_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut plat_t;
@@ -310,7 +307,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
             unsafe fn(*mut c_void),
         >(T_PlatRaise));
         (*plat).crush = 0;
-        (*plat).tag = (*line).tag as c_int;
+        (*plat).tag = (*line).tag as i32;
 
         match plattype {
             x if x == raiseToNearestAndChange => {
@@ -323,7 +320,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
                 (*sec).special = 0;
                 S_StartSound(
                     &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Stnmov as c_int,
+                    Sfx::Stnmov as i32,
                 );
             }
             x if x == raiseAndChange => {
@@ -335,7 +332,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
                 (*plat).status = up;
                 S_StartSound(
                     &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Stnmov as c_int,
+                    Sfx::Stnmov as i32,
                 );
             }
             x if x == downWaitUpStay => {
@@ -349,7 +346,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
                 (*plat).status = down;
                 S_StartSound(
                     &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstart as c_int,
+                    Sfx::Pstart as i32,
                 );
             }
             x if x == blazeDWUS => {
@@ -363,7 +360,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
                 (*plat).status = down;
                 S_StartSound(
                     &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstart as c_int,
+                    Sfx::Pstart as i32,
                 );
             }
             x if x == perpetualRaise => {
@@ -380,7 +377,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
                 (*plat).status = P_Random() & 1;
                 S_StartSound(
                     &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstart as c_int,
+                    Sfx::Pstart as i32,
                 );
             }
             _ => {}
@@ -396,7 +393,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_
 /// thinker callback.  Called by [`EV_DoPlat`] for the `perpetualRaise` type.
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
-pub fn P_ActivateInStasis(tag: c_int) {
+pub fn P_ActivateInStasis(tag: i32) {
     unsafe {
         for i in 0..MAXPLATS {
             if !activeplats[i].is_null()
@@ -429,7 +426,7 @@ pub fn EV_StopPlat(line: *mut line_t) {
         for j in 0..MAXPLATS {
             if !activeplats[j].is_null()
                 && (*activeplats[j]).status != in_stasis
-                && (*activeplats[j]).tag == (*line).tag as c_int
+                && (*activeplats[j]).tag == (*line).tag as i32
             {
                 (*activeplats[j]).oldstatus = (*activeplats[j]).status;
                 (*activeplats[j]).status = in_stasis;

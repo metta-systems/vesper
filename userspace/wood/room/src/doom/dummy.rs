@@ -8,12 +8,10 @@
 //! unconditionally provides `net_client_connected = false`, `drone = false`,
 //! and (when `FEATURE_SOUND` is not defined) an empty
 //! `I_InitTimidityConfig`.  This Rust port mirrors those three definitions
-//! directly, using `c_uint` for the two booleans because `doomtype.h` defines
+//! directly, using `u32` for the two booleans because `doomtype.h` defines
 //! `boolean` as `unsigned int`.
 
 #![allow(non_upper_case_globals, non_snake_case)]
-
-use std::ffi::c_uint;
 
 /// Whether the client is connected to a network game session.
 ///
@@ -22,8 +20,8 @@ use std::ffi::c_uint;
 /// non-zero value when a connection is established; because the real network
 /// module is not yet ported, this stub keeps it permanently `false`.
 /// Referenced from C as `net_client_connected`.
-// `boolean` in doomtype.h is `typedef unsigned int boolean;` — use c_uint.
-pub static mut net_client_connected: c_uint = 0; // false
+// `boolean` in doomtype.h is `typedef unsigned int boolean;` — use u32.
+pub static mut net_client_connected: u32 = 0; // false
 
 /// Whether this instance is running as a "drone" (observer) client.
 ///
@@ -31,7 +29,7 @@ pub static mut net_client_connected: c_uint = 0; // false
 /// network game but does not control a player; it is used for recording or
 /// observation purposes.  Initialised to `false` (0) and never set while the
 /// networking subsystem is stubbed out.  Referenced from C as `drone`.
-pub static mut drone: c_uint = 0; // false
+pub static mut drone: u32 = 0; // false
 
 /// No-op stub for Timidity MIDI configuration initialisation.
 ///
@@ -64,10 +62,10 @@ mod tests {
     fn globals_store_unsigned_values() {
         let _g = LOCK.lock().unwrap();
         unsafe {
-            net_client_connected = c_uint::MAX;
-            drone = c_uint::MAX;
-            assert_eq!({ net_client_connected }, c_uint::MAX);
-            assert_eq!({ drone }, c_uint::MAX);
+            net_client_connected = u32::MAX;
+            drone = u32::MAX;
+            assert_eq!({ net_client_connected }, u32::MAX);
+            assert_eq!({ drone }, u32::MAX);
             net_client_connected = 0;
             drone = 0;
         }

@@ -10,13 +10,11 @@
 //! * [`hu_itext_t`] - a text-input widget with a protected left-margin prefix
 //!   (used for chat entry and cheat codes).
 //!
-//! Rust differences from C: `boolean` is `c_int` (0/1); padding fields have
+//! Rust differences from C: `boolean` is `i32` (0/1); padding fields have
 //! been added to maintain identical ABI layout on 64-bit targets (verified by
 //! compile-time `assert!` in `layout_checks`).
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
-use std::ffi::{c_char, c_int, c_uint};
 
 use crate::doom::v_video::patch_t;
 
@@ -44,9 +42,9 @@ const HU_MAXLINELENGTH: usize = 80;
 #[derive(Clone, Copy)]
 pub struct hu_textline_t {
     /// Left-justified screen X position of the text line.
-    pub x: c_int,
+    pub x: i32,
     /// Screen Y position of the text line.
-    pub y: c_int,
+    pub y: i32,
     /// Pointer to the start of the font patch array; `f.add(c - sc)` yields a
     /// pointer to the patch for character `c`. Mirrors `patch_t **f` in
     /// `hu_textline_t`. Access requires pointer arithmetic - direct indexing is
@@ -54,15 +52,15 @@ pub struct hu_textline_t {
     pub f: *mut *mut patch_t,
     /// ASCII code of the first character in the font array (`l->sc` in C).
     /// Characters below this value are rendered as spaces.
-    pub sc: c_int,
+    pub sc: i32,
     /// NUL-terminated text buffer; `l[0..len]` holds the visible characters.
-    pub l: [c_char; HU_MAXLINELENGTH + 1],
+    pub l: [u8; HU_MAXLINELENGTH + 1],
     /// Number of valid characters currently in `l` (excludes the NUL terminator).
-    pub len: c_int,
+    pub len: i32,
     /// Dirty-flag countdown: non-zero means the line must be redrawn / erased.
     /// Set to 4 on modification, decremented by `HUlib_eraseTextLine` each
     /// frame until it reaches 0.
-    pub needsupdate: c_int,
+    pub needsupdate: i32,
 }
 
 /// A scrolling message widget backed by a ring of text lines.
@@ -74,7 +72,7 @@ pub struct hu_textline_t {
 /// # Layout invariants
 /// * `h <= HU_MAXLINES`.
 /// * `cl` is always in `0..h`.
-/// * `on` is a non-null pointer to a `c_int` flag; 0 = hidden, non-zero = visible.
+/// * `on` is a non-null pointer to a `i32` flag; 0 = hidden, non-zero = visible.
 /// * The four-byte `_pad` field exists solely to match the C ABI on 64-bit
 ///   platforms where `boolean` following a pointer leaves a gap.
 #[repr(C)]
@@ -83,14 +81,14 @@ pub struct hu_stext_t {
     /// Ring of text lines; only `l[0..h]` are used.
     pub l: [hu_textline_t; HU_MAXLINES],
     /// Height of the widget in lines (`s->h` in C).
-    pub h: c_int,
+    pub h: i32,
     /// Index of the current (most recently written) line in `l` (`s->cl` in C).
-    pub cl: c_int,
+    pub cl: i32,
     /// Pointer to the visibility flag; widget is drawn only when `*on != 0`.
-    pub on: *mut c_int,
+    pub on: *mut i32,
     /// Cached value of `*on` from the previous frame, used to detect
     /// transitions from visible to hidden so dirty flags can be set.
-    pub laston: c_int,
+    pub laston: i32,
     _pad: [u8; 4],
 }
 
@@ -113,12 +111,12 @@ pub struct hu_itext_t {
     pub l: hu_textline_t,
     /// Left-margin character count: characters at indices `0..lm` are
     /// protected from deletion (`it->lm` in C).
-    pub lm: c_int,
+    pub lm: i32,
     _pad0: [u8; 4],
     /// Pointer to the visibility flag; widget is drawn only when `*on != 0`.
-    pub on: *mut c_int,
+    pub on: *mut i32,
     /// Cached value of `*on` from the previous frame (see [`hu_stext_t::laston`]).
-    pub laston: c_int,
+    pub laston: i32,
     _pad1: [u8; 4],
 }
 
@@ -186,13 +184,7 @@ pub fn HUlib_clearTextLine(t: *mut hu_textline_t) {
 /// * `t` must be a valid non-null pointer.
 /// * `f` must point to a valid array of at least `('_' - sc + 1)` patch
 ///   pointers when drawing is later requested.
-pub fn HUlib_initTextLine(
-    t: *mut hu_textline_t,
-    x: c_int,
-    y: c_int,
-    f: *mut *mut patch_t,
-    sc: c_int,
-) {
+pub fn HUlib_initTextLine(t: *mut hu_textline_t, x: i32, y: i32, f: *mut *mut patch_t, sc: i32) {
     unsafe {
         (*t).x = x;
         (*t).y = y;
@@ -207,9 +199,9 @@ pub fn HUlib_initTextLine(
 /// Returns 1 (true) on success, 0 (false) if the line is already at
 /// `HU_MAXLINELENGTH` (80) characters. On success, sets `needsupdate` to 4.
 /// The buffer remains NUL-terminated after the call.
-pub fn HUlib_addCharToTextLine(t: *mut hu_textline_t, ch: c_char) -> c_int {
+pub fn HUlib_addCharToTextLine(t: *mut hu_textline_t, ch: u8) -> i32 {
     unsafe {
-        if (*t).len == HU_MAXLINELENGTH as c_int {
+        if (*t).len == HU_MAXLINELENGTH as i32 {
             0
         } else {
             (*t).l[(*t).len as usize] = ch;
@@ -225,7 +217,7 @@ pub fn HUlib_addCharToTextLine(t: *mut hu_textline_t, ch: c_char) -> c_int {
 ///
 /// Returns 1 (true) on success, 0 (false) if the line is already empty.
 /// On success, NUL-terminates the new end and sets `needsupdate` to 4.
-pub fn HUlib_delCharFromTextLine(t: *mut hu_textline_t) -> c_int {
+pub fn HUlib_delCharFromTextLine(t: *mut hu_textline_t) -> i32 {
     unsafe {
         if (*t).len == 0 {
             0
@@ -249,17 +241,17 @@ pub fn HUlib_delCharFromTextLine(t: *mut hu_textline_t) -> c_int {
 /// position (provided it fits), giving a text-entry cursor appearance.
 ///
 /// Called from `HU_Drawer` and `HUlib_drawSText`/`HUlib_drawIText`.
-pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: c_int) {
+pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
     unsafe {
         let mut x = (*l).x;
         let f = (*l).f;
         let sc = (*l).sc;
 
         for i in 0..(*l).len as usize {
-            let c = ((*l).l[i] as u8).to_ascii_uppercase();
+            let c = (*l).l[i].to_ascii_uppercase();
             if c != b' ' && c >= sc as u8 && c <= b'_' {
-                let patch = *f.add((c as c_int - sc) as usize);
-                let w = short_swap((*patch).width) as c_int;
+                let patch = *f.add((c as i32 - sc) as usize);
+                let w = short_swap((*patch).width) as i32;
                 if x + w > SCREENWIDTH {
                     break;
                 }
@@ -274,8 +266,8 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: c_int) {
         }
 
         if drawcursor != 0 {
-            let cursor_patch = *f.add((b'_' as c_int - sc) as usize);
-            let cursor_w = short_swap((*cursor_patch).width) as c_int;
+            let cursor_patch = *f.add((b'_' as i32 - sc) as usize);
+            let cursor_w = short_swap((*cursor_patch).width) as i32;
             if x + cursor_w <= SCREENWIDTH {
                 V_DrawPatchDirect(x, (*l).y, cursor_patch);
             }
@@ -297,14 +289,14 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: c_int) {
 pub fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
     unsafe {
         if automapactive == 0 && viewwindowx != 0 && (*l).needsupdate != 0 {
-            let lh = short_swap((**(*l).f).height) as c_int + 1;
+            let lh = short_swap((**(*l).f).height) as i32 + 1;
             for y in (*l).y..(*l).y + lh {
                 let yoffset = y * SCREENWIDTH;
                 if y < viewwindowy || y >= viewwindowy + viewheight {
-                    R_VideoErase(yoffset as c_uint, SCREENWIDTH);
+                    R_VideoErase(yoffset as u32, SCREENWIDTH);
                 } else {
-                    R_VideoErase(yoffset as c_uint, viewwindowx);
-                    R_VideoErase((yoffset + viewwindowx + viewwidth) as c_uint, viewwindowx);
+                    R_VideoErase(yoffset as u32, viewwindowx);
+                    R_VideoErase((yoffset + viewwindowx + viewwidth) as u32, viewwindowx);
                 }
             }
         }
@@ -327,27 +319,21 @@ pub fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
 /// * `on` must be a valid non-null pointer for the widget's lifetime.
 pub fn HUlib_initSText(
     s: *mut hu_stext_t,
-    x: c_int,
-    y: c_int,
-    h: c_int,
+    x: i32,
+    y: i32,
+    h: i32,
     font: *mut *mut patch_t,
-    startchar: c_int,
-    on: *mut c_int,
+    startchar: i32,
+    on: *mut i32,
 ) {
     unsafe {
         (*s).h = h;
         (*s).on = on;
         (*s).laston = 1;
         (*s).cl = 0;
-        let font_h = short_swap((**font).height) as c_int + 1;
+        let font_h = short_swap((**font).height) as i32 + 1;
         for i in 0..h as usize {
-            HUlib_initTextLine(
-                &mut (*s).l[i],
-                x,
-                y - (i as c_int) * font_h,
-                font,
-                startchar,
-            );
+            HUlib_initTextLine(&mut (*s).l[i], x, y - (i as i32) * font_h, font, startchar);
         }
     }
 }
@@ -379,7 +365,7 @@ pub fn HUlib_addLineToSText(s: *mut hu_stext_t) {
 /// # Preconditions
 /// * `msg` must be a valid NUL-terminated C string.
 /// * `prefix` may be null; if non-null it must also be NUL-terminated.
-pub fn HUlib_addMessageToSText(s: *mut hu_stext_t, prefix: *mut c_char, msg: *mut c_char) {
+pub fn HUlib_addMessageToSText(s: *mut hu_stext_t, prefix: *mut u8, msg: *mut u8) {
     unsafe {
         HUlib_addLineToSText(s);
         if !prefix.is_null() {
@@ -443,11 +429,11 @@ pub fn HUlib_eraseSText(s: *mut hu_stext_t) {
 /// * `on` must be a valid non-null pointer for the widget's lifetime.
 pub fn HUlib_initIText(
     it: *mut hu_itext_t,
-    x: c_int,
-    y: c_int,
+    x: i32,
+    y: i32,
     font: *mut *mut patch_t,
-    startchar: c_int,
-    on: *mut c_int,
+    startchar: i32,
+    on: *mut i32,
 ) {
     unsafe {
         (*it).lm = 0;
@@ -501,7 +487,7 @@ pub fn HUlib_resetIText(it: *mut hu_itext_t) {
 ///
 /// # Preconditions
 /// * `str` must be a valid NUL-terminated C string.
-pub fn HUlib_addPrefixToIText(it: *mut hu_itext_t, str: *mut c_char) {
+pub fn HUlib_addPrefixToIText(it: *mut hu_itext_t, str: *mut u8) {
     unsafe {
         let mut p = str;
         while *p != 0 {
@@ -521,11 +507,11 @@ pub fn HUlib_addPrefixToIText(it: *mut hu_itext_t, str: *mut c_char) {
 /// * Any other value: returns 0 to signal the key was not consumed.
 ///
 /// Returns 1 if the key was consumed, 0 otherwise.
-pub fn HUlib_keyInIText(it: *mut hu_itext_t, ch: u8) -> c_int {
+pub fn HUlib_keyInIText(it: *mut hu_itext_t, ch: u8) -> i32 {
     unsafe {
         let ch = ch.to_ascii_uppercase();
         if (b' '..=b'_').contains(&ch) {
-            HUlib_addCharToTextLine(&mut (*it).l, ch as c_char);
+            HUlib_addCharToTextLine(&mut (*it).l, ch);
         } else if ch == crate::doom::doomkeys::KEY_BACKSPACE {
             HUlib_delCharFromIText(it);
         } else if ch != crate::doom::doomkeys::KEY_ENTER {
@@ -627,7 +613,7 @@ mod tests {
         let mut tl = make_textline();
         tl.len = 5;
         tl.needsupdate = 0;
-        tl.l[0] = b'X' as c_char;
+        tl.l[0] = b'X';
 
         HUlib_clearTextLine(&mut tl);
 
@@ -642,11 +628,11 @@ mod tests {
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
 
-        let ret = HUlib_addCharToTextLine(&mut tl, b'A' as c_char);
+        let ret = HUlib_addCharToTextLine(&mut tl, b'A');
 
         assert_eq!(ret, 1, "successful add must return 1");
         assert_eq!(tl.len, 1);
-        assert_eq!(tl.l[0], b'A' as c_char);
+        assert_eq!(tl.l[0], b'A');
         assert_eq!(tl.l[1], 0, "character after the last must be nul");
         assert_eq!(tl.needsupdate, 4);
     }
@@ -658,11 +644,11 @@ mod tests {
         HUlib_clearTextLine(&mut tl);
 
         for ch in b"HI" {
-            HUlib_addCharToTextLine(&mut tl, *ch as c_char);
+            HUlib_addCharToTextLine(&mut tl, *ch);
         }
         assert_eq!(tl.len, 2);
-        assert_eq!(tl.l[0], b'H' as c_char);
-        assert_eq!(tl.l[1], b'I' as c_char);
+        assert_eq!(tl.l[0], b'H');
+        assert_eq!(tl.l[1], b'I');
         assert_eq!(tl.l[2], 0);
     }
 
@@ -674,14 +660,14 @@ mod tests {
 
         // Fill to HU_MAXLINELENGTH
         for _ in 0..HU_MAXLINELENGTH {
-            HUlib_addCharToTextLine(&mut tl, b'X' as c_char);
+            HUlib_addCharToTextLine(&mut tl, b'X');
         }
-        assert_eq!(tl.len, HU_MAXLINELENGTH as c_int);
+        assert_eq!(tl.len, HU_MAXLINELENGTH as i32);
 
         // One more must be rejected
-        let ret = HUlib_addCharToTextLine(&mut tl, b'Y' as c_char);
+        let ret = HUlib_addCharToTextLine(&mut tl, b'Y');
         assert_eq!(ret, 0, "add beyond max length must return 0");
-        assert_eq!(tl.len, HU_MAXLINELENGTH as c_int, "len must not change");
+        assert_eq!(tl.len, HU_MAXLINELENGTH as i32, "len must not change");
     }
 
     #[test]
@@ -689,8 +675,8 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
-        HUlib_addCharToTextLine(&mut tl, b'A' as c_char);
-        HUlib_addCharToTextLine(&mut tl, b'B' as c_char);
+        HUlib_addCharToTextLine(&mut tl, b'A');
+        HUlib_addCharToTextLine(&mut tl, b'B');
 
         let ret = HUlib_delCharFromTextLine(&mut tl);
 
@@ -715,7 +701,7 @@ mod tests {
     #[test]
     fn key_in_itext_printable_adds_char() {
         let _g = LOCK.lock().unwrap();
-        let mut on: c_int = 1;
+        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
@@ -729,7 +715,7 @@ mod tests {
         let ret = HUlib_keyInIText(&mut it, b'a'); // lowercase → uppercased to 'A'
         assert_eq!(ret, 1);
         assert_eq!(it.l.len, 1);
-        assert_eq!(it.l.l[0], b'A' as c_char);
+        assert_eq!(it.l.l[0], b'A');
     }
 
     /// HUlib_keyInIText with KEY_BACKSPACE removes the last character.
@@ -737,7 +723,7 @@ mod tests {
     fn key_in_itext_backspace_removes_char() {
         use crate::doom::doomkeys::KEY_BACKSPACE;
         let _g = LOCK.lock().unwrap();
-        let mut on: c_int = 1;
+        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
@@ -747,7 +733,7 @@ mod tests {
             _pad1: [0; 4],
         };
         HUlib_clearTextLine(&mut it.l);
-        HUlib_addCharToTextLine(&mut it.l, b'Z' as c_char);
+        HUlib_addCharToTextLine(&mut it.l, b'Z');
         assert_eq!(it.l.len, 1);
 
         let ret = HUlib_keyInIText(&mut it, KEY_BACKSPACE);
@@ -759,7 +745,7 @@ mod tests {
     #[test]
     fn key_in_itext_unknown_key_returns_zero() {
         let _g = LOCK.lock().unwrap();
-        let mut on: c_int = 1;
+        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,

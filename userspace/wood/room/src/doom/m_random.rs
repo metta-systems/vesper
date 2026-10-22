@@ -5,8 +5,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_int;
-
 /// 256-entry lookup table backing both `M_Random` and `P_Random`.
 /// Byte-for-byte identical to `rndtable` in `m_random.c`; the values are
 /// the original Doom random sequence and must not be changed.
@@ -28,22 +26,22 @@ pub(crate) static RNDTABLE: [u8; 256] = [
 
 /// `extern int rndindex` — the game-thinker random cursor.
 /// Read by `g_game` to build net-play consistency hashes.
-pub static mut rndindex: c_int = 0;
+pub static mut rndindex: i32 = 0;
 
 /// `int prndindex` — the play-simulation random cursor.
 /// The demo-playthrough integration test reads it for consistency-check
 /// snapshots.
-pub static mut prndindex: c_int = 0;
+pub static mut prndindex: i32 = 0;
 
 /// `int P_Random(void)` — advance and read the play-simulation random
 /// cursor. Returns the next byte from `RNDTABLE` masked to `0..=255`.
 /// This is the deterministic generator used by game logic; demos and
 /// net-play depend on its exact sequence.
 // Which one is deterministic?
-pub fn P_Random() -> c_int {
+pub fn P_Random() -> i32 {
     unsafe {
         prndindex = (prndindex + 1) & 0xff;
-        RNDTABLE[prndindex as usize] as c_int
+        RNDTABLE[prndindex as usize] as i32
     }
 }
 
@@ -51,10 +49,10 @@ pub fn P_Random() -> c_int {
 /// cursor. Returns the next byte from `RNDTABLE` masked to `0..=255`.
 /// Used for non-simulation effects (e.g. menu animation) so its use
 /// does not perturb demo determinism.
-pub fn M_Random() -> c_int {
+pub fn M_Random() -> i32 {
     unsafe {
         rndindex = (rndindex + 1) & 0xff;
-        RNDTABLE[rndindex as usize] as c_int
+        RNDTABLE[rndindex as usize] as i32
     }
 }
 
@@ -94,9 +92,9 @@ mod tests {
     fn m_random_walks_the_table() {
         let _g = LOCK.lock().unwrap();
         M_ClearRandom();
-        assert_eq!(M_Random(), RNDTABLE[1] as c_int);
-        assert_eq!(M_Random(), RNDTABLE[2] as c_int);
-        assert_eq!(M_Random(), RNDTABLE[3] as c_int);
+        assert_eq!(M_Random(), RNDTABLE[1] as i32);
+        assert_eq!(M_Random(), RNDTABLE[2] as i32);
+        assert_eq!(M_Random(), RNDTABLE[3] as i32);
     }
 
     /// `M_Random` and `P_Random` each advance their own cursor; the
@@ -134,8 +132,8 @@ mod tests {
     fn p_random_increments_prndindex() {
         let _g = LOCK.lock().unwrap();
         M_ClearRandom();
-        assert_eq!(P_Random(), RNDTABLE[1] as c_int);
-        assert_eq!(P_Random(), RNDTABLE[2] as c_int);
+        assert_eq!(P_Random(), RNDTABLE[1] as i32);
+        assert_eq!(P_Random(), RNDTABLE[2] as i32);
         unsafe {
             assert_eq!({ prndindex }, 2);
         }
@@ -182,6 +180,6 @@ mod tests {
             M_Random();
         }
         // P cursor is still at 0; first P_Random returns RNDTABLE[1]
-        assert_eq!(P_Random(), RNDTABLE[1] as c_int);
+        assert_eq!(P_Random(), RNDTABLE[1] as i32);
     }
 }

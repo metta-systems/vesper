@@ -5,15 +5,15 @@
 //! sentinel by the enum variant `undef`.  This module models all three states
 //! explicitly and provides safe conversion helpers.
 
-use core::{ffi::c_uint, fmt, ops::Not};
+use core::{fmt, ops::Not};
 
 /// FFI-safe boolean matching Doom's `typedef unsigned int boolean`.
 ///
 /// The `#[repr(transparent)]` attribute guarantees the same ABI as a bare
-/// `c_uint`, so values can cross the Rust/C boundary without any casting.
+/// `u32`, so values can cross the Rust/C boundary without any casting.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct Boolean(c_uint);
+pub struct Boolean(u32);
 
 /// Constants, predicates, and canonicalisation helpers for [`Boolean`].
 impl Boolean {
@@ -22,17 +22,17 @@ impl Boolean {
     /// The canonical true value (`1`).
     pub const TRUE: Self = Self(1);
     /// The "undefined" sentinel (`0xFFFFFFFF`), matching the C enum `undef`.
-    pub const UNDEF: Self = Self(c_uint::MAX);
+    pub const UNDEF: Self = Self(u32::MAX);
 
-    /// Construct a `Boolean` from a raw `c_uint` without any conversion.
+    /// Construct a `Boolean` from a raw `u32` without any conversion.
     #[inline]
-    pub const fn from_raw(value: c_uint) -> Self {
+    pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
 
-    /// Return the underlying raw `c_uint` value.
+    /// Return the underlying raw `u32` value.
     #[inline]
-    pub const fn raw(self) -> c_uint {
+    pub const fn raw(self) -> u32 {
         self.0
     }
 
@@ -45,7 +45,7 @@ impl Boolean {
     /// Domain-level true: non-zero and not the `UNDEF` sentinel.
     #[inline]
     pub const fn is_true(self) -> bool {
-        self.0 != 0 && self.0 != c_uint::MAX
+        self.0 != 0 && self.0 != u32::MAX
     }
 
     /// Returns `true` when the value is exactly `0`.
@@ -57,13 +57,13 @@ impl Boolean {
     /// Returns `true` when the value is the `UNDEF` sentinel (`0xFFFFFFFF`).
     #[inline]
     pub const fn is_undef(self) -> bool {
-        self.0 == c_uint::MAX
+        self.0 == u32::MAX
     }
 
     /// Returns `true` when the value is one of `FALSE`, `TRUE`, or `UNDEF`.
     #[inline]
     pub const fn is_canonical(self) -> bool {
-        self.0 == 0 || self.0 == 1 || self.0 == c_uint::MAX
+        self.0 == 0 || self.0 == 1 || self.0 == u32::MAX
     }
 
     /// Collapse any truthy value to `TRUE`; falsy to `FALSE`.
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn undef_is_max() {
-        assert_eq!(Boolean::UNDEF.raw(), c_uint::MAX);
+        assert_eq!(Boolean::UNDEF.raw(), u32::MAX);
         assert!(Boolean::UNDEF.is_undef());
         assert!(Boolean::UNDEF.is_truthy());
         assert!(!Boolean::UNDEF.is_true());
@@ -207,11 +207,8 @@ mod tests {
     }
 
     #[test]
-    fn size_matches_c_uint() {
-        assert_eq!(
-            std::mem::size_of::<Boolean>(),
-            std::mem::size_of::<c_uint>()
-        );
+    fn size_matches_u32() {
+        assert_eq!(std::mem::size_of::<Boolean>(), std::mem::size_of::<u32>());
     }
 
     #[test]

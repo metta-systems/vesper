@@ -13,10 +13,10 @@
 use {
     crate::doom::{
         m_argv::{myargc, myargv, M_CheckParmWithArgs, M_ParmExists},
-        m_misc::M_StrToInt,
+        m_misc::{strlen, M_StrToInt},
     },
     std::{
-        ffi::{c_char, c_int, c_uint, c_void, CStr},
+        ffi::{c_void, CStr},
         ptr,
     },
 };
@@ -25,12 +25,12 @@ use crate::{i_error, types::Boolean};
 
 /// Default size of the zone heap, in MiB, when `-mb` is not supplied.
 /// Mirrors the `DEFAULT_RAM` macro in `i_system.c`.
-const DEFAULT_RAM: c_int = 6; // MiB
+const DEFAULT_RAM: i32 = 6; // MiB
 
 /// Minimum size of the zone heap, in MiB. `AutoAllocMemory` keeps
 /// halving the request until it succeeds or drops below this floor.
 /// Mirrors the `MIN_RAM` macro in `i_system.c`.
-const MIN_RAM: c_int = 6; // MiB
+const MIN_RAM: i32 = 6; // MiB
 
 /// C signature for an exit callback registered via `I_AtExit`.
 /// Matches `typedef void (*atexit_func_t)(void)` from `i_system.h`.
@@ -66,11 +66,11 @@ static mut exit_funcs: *mut atexit_listentry_t = ptr::null_mut();
 ///
 /// # Safety
 ///
-/// `size` must be a valid mutable pointer to a `c_int`. The returned
+/// `size` must be a valid mutable pointer to a `i32`. The returned
 /// pointer owns a `libc::malloc` allocation: it must be freed with
 /// `libc::free`, never with the Rust allocator. Mirrors the static
 /// helper of the same name in `i_system.c`.
-unsafe fn AutoAllocMemory(size: *mut c_int, mut default_ram: c_int, min_ram: c_int) -> *mut u8 {
+unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) -> *mut u8 {
     let mut zonemem: *mut u8 = ptr::null_mut();
 
     while zonemem.is_null() {
@@ -108,7 +108,7 @@ pub fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
 
 /// Tactile feedback hook. Originally targeted the Logitech Cyberman in
 /// the DOS Doom source; a no-op stub here, as in the C reference.
-pub fn I_Tactile(_on: c_int, _off: c_int, _total: c_int) {}
+pub fn I_Tactile(_on: i32, _off: i32, _total: i32) {}
 
 /// Allocate the engine's zone heap and return a pointer to its base.
 ///
@@ -118,21 +118,21 @@ pub fn I_Tactile(_on: c_int, _off: c_int, _total: c_int) {}
 ///
 /// Mirrors `I_ZoneBase` from `i_system.c`. Called once at startup from
 /// `Z_Init` in `z_zone.c`.
-pub fn I_ZoneBase(size: *mut c_int) -> *mut u8 {
+pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
     unsafe {
         let mut default_ram = DEFAULT_RAM;
         let mut min_ram = MIN_RAM;
 
-        let p = M_CheckParmWithArgs(c"-mb".as_ptr().cast_mut(), 1);
+        let p = M_CheckParmWithArgs(c"-mb".as_ptr().cast_mut().cast(), 1);
         if p > 0 {
-            default_ram = libc::atoi(*myargv.offset((p + 1) as isize));
+            default_ram = libc::atoi((*myargv.offset((p + 1) as isize)).cast());
             min_ram = default_ram;
         }
 
         let zonemem = AutoAllocMemory(size, default_ram, min_ram);
 
         libc::printf(
-            c"zone memory: %p, %x allocated for zone\n".as_ptr(),
+            c"zone memory: %p, %x allocated for zone\n".as_ptr().cast(),
             zonemem,
             *size,
         );
@@ -144,14 +144,14 @@ pub fn I_ZoneBase(size: *mut c_int) -> *mut u8 {
 /// Print a NUL-terminated banner string centred in a 70-character
 /// column (35 leading spaces minus half the message length), followed
 /// by a newline. Mirrors `I_PrintBanner` from `i_system.c`.
-pub fn I_PrintBanner(msg: *mut c_char) {
+pub fn I_PrintBanner(msg: *mut u8) {
     unsafe {
-        let len = libc::strlen(msg) as c_int;
+        let len = strlen(msg) as i32;
         let spaces = 35 - len / 2;
         for _ in 0..spaces {
-            libc::putchar(b' ' as c_int);
+            libc::putchar(b' ' as i32);
         }
-        libc::puts(msg);
+        libc::puts(msg.cast());
     }
 }
 
@@ -161,9 +161,9 @@ pub fn I_PrintBanner(msg: *mut c_char) {
 pub fn I_PrintDivider() {
     unsafe {
         for _ in 0..75 {
-            libc::putchar(b'=' as c_int);
+            libc::putchar(b'=' as i32);
         }
-        libc::putchar(b'\n' as c_int);
+        libc::putchar(b'\n' as i32);
     }
 }
 
@@ -171,13 +171,13 @@ pub fn I_PrintDivider() {
 /// between dividers, and the GPL copyright notice. Mirrors
 /// `I_PrintStartupBanner` from `i_system.c`, but substitutes the
 /// project name (the C source pulls it from `PACKAGE_NAME`).
-pub fn I_PrintStartupBanner(gamedescription: *mut c_char) {
+pub fn I_PrintStartupBanner(gamedescription: *mut u8) {
     unsafe {
         I_PrintDivider();
         I_PrintBanner(gamedescription);
         I_PrintDivider();
         libc::printf(
-            c" Room, like Doom Generic, is free software, covered by the GNU General Public\n License.  There is NO warranty; not even for MERCHANTABILITY or FITNESS\n FOR A PARTICULAR PURPOSE. You are welcome to change and distribute\n copies under certain conditions. See the source for more information.\n".as_ptr(),
+            c" Room, like Doom Generic, is free software, covered by the GNU General Public\n License.  There is NO warranty; not even for MERCHANTABILITY or FITNESS\n FOR A PARTICULAR PURPOSE. You are welcome to change and distribute\n copies under certain conditions. See the source for more information.\n".as_ptr().cast(),
         );
         I_PrintDivider();
     }
@@ -189,7 +189,7 @@ pub fn I_PrintStartupBanner(gamedescription: *mut c_char) {
 /// `i_system.c`: without that flag the C source also returns 0. The
 /// result is used by `I_Error` to decide whether to pop up a GUI
 /// dialog when no console is available to display the message.
-pub fn I_ConsoleStdout() -> c_int {
+pub fn I_ConsoleStdout() -> i32 {
     0
 }
 
@@ -236,12 +236,12 @@ unsafe fn ZenityAvailable() -> bool {
 /// # Safety
 ///
 /// `message` must point to a valid NUL-terminated C string.
-unsafe fn ZenityErrorBox(message: *const c_char) -> c_int {
+unsafe fn ZenityErrorBox(message: *const u8) -> i32 {
     if !ZenityAvailable() {
         return 0;
     }
 
-    let msg = CStr::from_ptr(message).to_string_lossy();
+    let msg = CStr::from_ptr(message.cast()).to_string_lossy();
     let status = std::process::Command::new("/usr/bin/zenity")
         .arg("--error")
         .arg("--text")
@@ -271,7 +271,7 @@ unsafe fn ZenityErrorBox(message: *const c_char) -> c_int {
 /// format string and varargs, this entry point accepts a single
 /// pre-formatted C string - the `i_error!` macro takes care of
 /// formatting on the caller side.
-pub fn I_Error(msg: *const c_char) -> ! {
+pub fn I_Error(msg: *const u8) -> ! {
     unsafe {
         static mut already_quitting: bool = false;
 
@@ -281,7 +281,7 @@ pub fn I_Error(msg: *const c_char) -> ! {
             already_quitting = true;
         }
 
-        let msg_cstr = CStr::from_ptr(msg);
+        let msg_cstr = CStr::from_ptr(msg.cast());
         eprintln!("{}", msg_cstr.to_string_lossy());
         eprintln!();
 
@@ -293,7 +293,7 @@ pub fn I_Error(msg: *const c_char) -> ! {
             entry = (*entry).next;
         }
 
-        let exit_gui_popup = M_ParmExists(c"-nogui".as_ptr().cast_mut()) == 0;
+        let exit_gui_popup = M_ParmExists(c"-nogui".as_ptr().cast_mut().cast()) == 0;
         if exit_gui_popup && I_ConsoleStdout() == 0 {
             ZenityErrorBox(msg);
         }
@@ -307,7 +307,7 @@ pub fn I_Error(msg: *const c_char) -> ! {
 /// The original C source expands `I_Error(...)` into a varargs call;
 /// in this port the `i_error!` macro produces a formatted C string
 /// and forwards to this function. Identical behaviour to `I_Error`.
-pub fn I_ErrorV(msg: *const c_char) -> ! {
+pub fn I_ErrorV(msg: *const u8) -> ! {
     I_Error(msg)
 }
 
@@ -368,31 +368,31 @@ static mut dos_mem_dump: DosMemDump = DosMemDump::Dos622;
 /// a latent bug in the C source (missing `else` after the `dos622`
 /// branch lets it fall through to `dos71`). The custom-byte loop also
 /// uses a single index, fixing a double-increment bug in C.
-pub fn I_GetMemoryValue(offset: c_uint, value: *mut c_void, size: c_int) -> c_int {
+pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
     unsafe {
         static mut firsttime: bool = true;
 
         if firsttime {
             firsttime = false;
 
-            let p = M_CheckParmWithArgs(c"-setmem".as_ptr().cast_mut(), 1);
+            let p = M_CheckParmWithArgs(c"-setmem".as_ptr().cast_mut().cast(), 1);
             if p > 0 {
                 let arg = *myargv.offset((p + 1) as isize);
-                if libc::strcasecmp(arg, c"dos622".as_ptr()) == 0 {
+                if libc::strcasecmp(arg.cast(), c"dos622".as_ptr().cast()) == 0 {
                     dos_mem_dump = DosMemDump::Dos622;
-                } else if libc::strcasecmp(arg, c"dos71".as_ptr()) == 0 {
+                } else if libc::strcasecmp(arg.cast(), c"dos71".as_ptr().cast()) == 0 {
                     dos_mem_dump = DosMemDump::Win98;
-                } else if libc::strcasecmp(arg, c"dosbox".as_ptr()) == 0 {
+                } else if libc::strcasecmp(arg.cast(), c"dosbox".as_ptr().cast()) == 0 {
                     dos_mem_dump = DosMemDump::Dosbox;
                 } else {
                     let mut idx: usize = 0;
                     let mut pp = (p + 1) as isize;
                     while idx < DOS_MEM_DUMP_SIZE {
                         pp += 1;
-                        if pp >= myargc as isize || **myargv.offset(pp) == b'-' as c_char {
+                        if pp >= myargc as isize || **myargv.offset(pp) == b'-' {
                             break;
                         }
-                        let mut val: c_int = 0;
+                        let mut val: i32 = 0;
                         M_StrToInt(*myargv.offset(pp), &mut val);
                         MEM_DUMP_CUSTOM[idx] = val as u8;
                         idx += 1;

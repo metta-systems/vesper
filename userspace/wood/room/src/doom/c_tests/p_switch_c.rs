@@ -87,18 +87,3 @@ fn numswitches_default_zero() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// `switchlist` and `numswitches` are C `int` arrays/values (4 bytes each).
-#[test]
-fn switch_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = p_switch::switchlist[0];
-        let _: c_int = p_switch::numswitches;
-    }
-}

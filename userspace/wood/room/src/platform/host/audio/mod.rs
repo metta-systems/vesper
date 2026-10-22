@@ -99,11 +99,11 @@ pub(super) fn sound_is_playing(channel: usize) -> bool {
 fn find_soundfont_path() -> Option<PathBuf> {
     // SAFETY: the engine set up `myargv` before calling `music_init`.
     unsafe {
-        let p = M_CheckParmWithArgs(c"-sf2".as_ptr(), 1);
+        let p = M_CheckParmWithArgs(c"-sf2".as_ptr().cast(), 1);
         if p != 0 {
             let arg = *myargv.add((p + 1) as usize);
             if !arg.is_null() {
-                let s = CStr::from_ptr(arg).to_string_lossy();
+                let s = CStr::from_ptr(arg.cast()).to_string_lossy();
                 let path = PathBuf::from(s.as_ref());
                 if path.exists() {
                     return Some(path);

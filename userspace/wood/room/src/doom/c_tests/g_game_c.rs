@@ -244,23 +244,3 @@ fn level_counters_default_zero() {
         assert_eq!({ c_ffi::totalsecret }, 0, "totalsecret");
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// All movement-table entries are `fixed_t` (= C `int` = 4 bytes).
-#[test]
-fn movement_tables_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::forwardmove[0];
-        let _: c_int = c_ffi::forwardmove[1];
-        let _: c_int = c_ffi::sidemove[0];
-        let _: c_int = c_ffi::sidemove[1];
-        let _: c_int = c_ffi::angleturn[0];
-        let _: c_int = c_ffi::angleturn[1];
-        let _: c_int = c_ffi::angleturn[2];
-    }
-}

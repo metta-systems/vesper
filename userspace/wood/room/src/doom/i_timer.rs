@@ -9,11 +9,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use {super::doomgeneric::platform, std::ffi::c_int};
+use super::doomgeneric::platform;
 
 /// Game tick rate in Hz. Doom updates state at 35 tics per second; all
 /// gameplay code expresses durations in multiples of this constant.
-pub const TICRATE: c_int = 35;
+pub const TICRATE: i32 = 35;
 
 /// Wall-clock millisecond timestamp captured on the first call to either
 /// `I_GetTime` or `I_GetTimeMS`. All subsequent results are deltas relative
@@ -26,8 +26,8 @@ static mut BASETIME: u32 = 0;
 ///
 /// Called from a few places that need wall-clock deltas independent of the
 /// game tic clock.
-pub fn I_GetTicks() -> c_int {
-    platform().ticks_ms() as c_int
+pub fn I_GetTicks() -> i32 {
+    platform().ticks_ms() as i32
 }
 
 /// Return the time since game start measured in 1/35-second game tics.
@@ -40,13 +40,13 @@ pub fn I_GetTicks() -> c_int {
 /// sentinel, which is preserved here. If the host's first tick value
 /// happens to be exactly 0 the baseline is captured on the next call;
 /// chocolate-doom relies on the same behaviour.
-pub fn I_GetTime() -> c_int {
+pub fn I_GetTime() -> i32 {
     unsafe {
         let ticks = platform().ticks_ms();
         if BASETIME == 0 {
             BASETIME = ticks;
         }
-        ((ticks - BASETIME) * TICRATE as u32 / 1000) as c_int
+        ((ticks - BASETIME) * TICRATE as u32 / 1000) as i32
     }
 }
 
@@ -54,20 +54,20 @@ pub fn I_GetTime() -> c_int {
 ///
 /// Same baseline logic as `I_GetTime` but without converting to tics. Used
 /// by code paths that need sub-tic precision (e.g. mouse polling).
-pub fn I_GetTimeMS() -> c_int {
+pub fn I_GetTimeMS() -> i32 {
     unsafe {
         let ticks = platform().ticks_ms();
         if BASETIME == 0 {
             BASETIME = ticks;
         }
-        (ticks - BASETIME) as c_int
+        (ticks - BASETIME) as i32
     }
 }
 
 /// Sleep for approximately `ms` milliseconds by delegating to
 /// [`Platform::sleep_ms`](super::doomgeneric::Platform::sleep_ms). The actual
 /// resolution depends on the backend.
-pub fn I_Sleep(ms: c_int) {
+pub fn I_Sleep(ms: i32) {
     platform().sleep_ms(ms as u32)
 }
 
@@ -75,7 +75,7 @@ pub fn I_Sleep(ms: c_int) {
 /// doomgeneric C versions are both empty (the original would have called
 /// `I_Sleep((count * 1000) / 70)`); the Rust port preserves the no-op so
 /// timing matches.
-pub fn I_WaitVBL(_count: c_int) {}
+pub fn I_WaitVBL(_count: i32) {}
 
 /// Initialise the timer subsystem. The C version originally called
 /// `SDL_Init(SDL_INIT_TIMER)`; doomgeneric drops that and the Rust port

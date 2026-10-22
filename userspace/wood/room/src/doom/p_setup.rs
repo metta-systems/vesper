@@ -21,10 +21,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::doom::{
     c_ffi::{line_t, node_t, sector_t, seg_t, side_t, subsector_t, vertex_t, LinedefFlag, MapLump},
@@ -55,7 +52,7 @@ fn SHORT(x: i16) -> i16 {
 /// Zone-memory purge level used when freeing all level data between maps.
 /// Matches `PU_PURGELEVEL` in `z_zone.h`; all tags in `[PU_LEVEL,
 /// PU_PURGELEVEL)` are freed by `Z_FreeTags` at the start of `P_SetupLevel`.
-const PU_PURGELEVEL: c_int = 7;
+const PU_PURGELEVEL: i32 = 7;
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -64,16 +61,16 @@ const PU_PURGELEVEL: c_int = 7;
 
 /// Linedef slope type: line is perfectly horizontal (dy == 0).
 /// Referenced by `c_ffi::line_t.slopetype`.
-const ST_HORIZONTAL: c_int = 0;
+const ST_HORIZONTAL: i32 = 0;
 /// Linedef slope type: line is perfectly vertical (dx == 0).
 /// Referenced by `c_ffi::line_t.slopetype`.
-const ST_VERTICAL: c_int = 1;
+const ST_VERTICAL: i32 = 1;
 /// Linedef slope type: dy/dx > 0 (rises left-to-right).
 /// Referenced by `c_ffi::line_t.slopetype`.
-const ST_POSITIVE: c_int = 2;
+const ST_POSITIVE: i32 = 2;
 /// Linedef slope type: dy/dx < 0 (falls left-to-right).
 /// Referenced by `c_ffi::line_t.slopetype`.
-const ST_NEGATIVE: c_int = 3;
+const ST_NEGATIVE: i32 = 3;
 
 // ---------------------------------------------------------------------------
 // Misc constants
@@ -81,11 +78,11 @@ const ST_NEGATIVE: c_int = 3;
 
 /// Shift to convert a fixed-point map coordinate to a blockmap cell index.
 /// Equals `FRACBITS + 7`, i.e. each blockmap cell covers 128 map units.
-const MAPBLOCKSHIFT: c_int = FRACBITS as c_int + 7;
+const MAPBLOCKSHIFT: i32 = FRACBITS as i32 + 7;
 
 /// Maximum radius added/subtracted when clamping sector bounding boxes to
 /// blockmap cells. 32 map units in fixed-point (32 << FRACBITS).
-const MAXRADIUS: c_int = 32 * FRACUNIT;
+const MAXRADIUS: i32 = 32 * FRACUNIT;
 
 /// Maximum number of deathmatch start positions in a level.
 /// Matches `MAX_DEATHMATCH_STARTS` in `p_setup.c`.
@@ -218,7 +215,7 @@ pub struct mapthing_t {
 
 /// Total number of vertexes loaded from the current map's VERTEXES lump.
 /// Referenced by `r_bsp.c` and other renderer modules.
-pub static mut numvertexes: c_int = 0;
+pub static mut numvertexes: i32 = 0;
 /// Pointer to the runtime vertex array, allocated from zone memory at
 /// `PU_LEVEL`. Each entry holds fixed-point (16.16) x/y coordinates.
 /// Referenced by `p_map.c`, `r_bsp.c`, and many others.
@@ -226,14 +223,14 @@ pub static mut vertexes: *mut vertex_t = ptr::null_mut();
 
 /// Total number of segs loaded from the current map's SEGS lump.
 /// Referenced by `r_bsp.c`.
-pub static mut numsegs: c_int = 0;
+pub static mut numsegs: i32 = 0;
 /// Pointer to the runtime seg array, allocated from zone memory at `PU_LEVEL`.
 /// Referenced by `r_bsp.c` and `p_sight.c`.
 pub static mut segs: *mut seg_t = ptr::null_mut();
 
 /// Total number of sectors loaded from the current map's SECTORS lump.
 /// Referenced throughout the game and renderer.
-pub static mut numsectors: c_int = 0;
+pub static mut numsectors: i32 = 0;
 /// Pointer to the runtime sector array, allocated from zone memory at
 /// `PU_LEVEL`. Sectors own the lighting, floor/ceiling heights, and thing
 /// lists used by most game logic.
@@ -242,7 +239,7 @@ pub static mut sectors: *mut sector_t = ptr::null_mut();
 
 /// Total number of subsectors loaded from the current map's SSECTORS lump.
 /// Referenced by `r_bsp.c` and `p_sight.c`.
-pub static mut numsubsectors: c_int = 0;
+pub static mut numsubsectors: i32 = 0;
 /// Pointer to the runtime subsector array, allocated from zone memory at
 /// `PU_LEVEL`. Each subsector is a convex polygon leaf of the BSP tree.
 /// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
@@ -250,7 +247,7 @@ pub static mut subsectors: *mut subsector_t = ptr::null_mut();
 
 /// Total number of BSP nodes loaded from the current map's NODES lump.
 /// Referenced by `r_bsp.c` and `p_sight.c`.
-pub static mut numnodes: c_int = 0;
+pub static mut numnodes: i32 = 0;
 /// Pointer to the runtime BSP node array, allocated from zone memory at
 /// `PU_LEVEL`. The root node is `nodes[numnodes - 1]`.
 /// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
@@ -258,7 +255,7 @@ pub static mut nodes: *mut node_t = ptr::null_mut();
 
 /// Total number of linedefs loaded from the current map's LINEDEFS lump.
 /// Referenced by `p_map.c`, `p_maputl.c`, and others.
-pub static mut numlines: c_int = 0;
+pub static mut numlines: i32 = 0;
 /// Pointer to the runtime linedef array, allocated from zone memory at
 /// `PU_LEVEL`. Each linedef connects two vertexes and references up to two
 /// sidedefs.
@@ -267,7 +264,7 @@ pub static mut lines: *mut line_t = ptr::null_mut();
 
 /// Total number of sidedefs loaded from the current map's SIDEDEFS lump.
 /// Referenced by `r_segs.c` and others.
-pub static mut numsides: c_int = 0;
+pub static mut numsides: i32 = 0;
 /// Pointer to the runtime sidedef array, allocated from zone memory at
 /// `PU_LEVEL`. Sidedefs hold texture indices and offsets; each linedef
 /// references one or two.
@@ -277,7 +274,7 @@ pub static mut sides: *mut side_t = ptr::null_mut();
 /// Running total of front+back linedef-sector references, used to size the
 /// per-sector line-pointer buffer in `P_GroupLines`. Module-private; not
 /// exported to C.
-static mut totallines: c_int = 0;
+static mut totallines: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // BLOCKMAP
@@ -285,28 +282,28 @@ static mut totallines: c_int = 0;
 
 /// Width of the blockmap grid in 128-unit cells.
 /// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
-pub static mut bmapwidth: c_int = 0;
+pub static mut bmapwidth: i32 = 0;
 /// Height of the blockmap grid in 128-unit cells.
 /// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
-pub static mut bmapheight: c_int = 0;
+pub static mut bmapheight: i32 = 0;
 /// Pointer into `blockmaplump` offset by 4 shorts (past the header).
 /// Each entry is an offset from `blockmaplump` to the list of linedefs in that
 /// cell, terminated by -1.
 /// Referenced by `p_maputl.c`.
-pub static mut blockmap: *mut c_short = ptr::null_mut();
+pub static mut blockmap: *mut i16 = ptr::null_mut();
 /// Base pointer to the raw blockmap lump data (including the 4-short header).
 /// Header layout: `[orgx, orgy, width, height]` in map units (not fixed-point
 /// before shifting). Allocated from zone memory at `PU_LEVEL`.
 /// Referenced by `p_maputl.c`.
-pub static mut blockmaplump: *mut c_short = ptr::null_mut();
+pub static mut blockmaplump: *mut i16 = ptr::null_mut();
 /// X origin of the blockmap in fixed-point (16.16) map coordinates.
 /// Subtract from a thing's x to get the blockmap column.
 /// Referenced by `p_maputl.c`.
-pub static mut bmaporgx: c_int = 0;
+pub static mut bmaporgx: i32 = 0;
 /// Y origin of the blockmap in fixed-point (16.16) map coordinates.
 /// Subtract from a thing's y to get the blockmap row.
 /// Referenced by `p_maputl.c`.
-pub static mut bmaporgy: c_int = 0;
+pub static mut bmaporgy: i32 = 0;
 /// Pointer to the blockmap thing-chain heads, one per cell (`bmapwidth *
 /// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
 /// that cell's chain, or null. Zeroed at level load.
@@ -401,16 +398,8 @@ pub fn GetSectorAtNullAddress() -> *mut sector_t {
     unsafe {
         if !NULL_SECTOR_IS_INITIALIZED {
             NULL_SECTOR = std::mem::zeroed();
-            I_GetMemoryValue(
-                0,
-                &raw mut NULL_SECTOR.floorheight as *mut c_int as *mut c_void,
-                4,
-            );
-            I_GetMemoryValue(
-                4,
-                &raw mut NULL_SECTOR.ceilingheight as *mut c_int as *mut c_void,
-                4,
-            );
+            I_GetMemoryValue(0, &raw mut NULL_SECTOR.floorheight as *mut c_void, 4);
+            I_GetMemoryValue(4, &raw mut NULL_SECTOR.ceilingheight as *mut c_void, 4);
             NULL_SECTOR_IS_INITIALIZED = true;
         }
         &raw mut NULL_SECTOR
@@ -431,11 +420,11 @@ pub fn GetSectorAtNullAddress() -> *mut sector_t {
 /// `lump` must be the lump number of the VERTEXES entry for the current map
 /// (typically `lumpnum + MapLump::VERTEXES`).
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadVertexes(lump: c_int) {
+pub fn P_LoadVertexes(lump: i32) {
     unsafe {
-        numvertexes = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapvertex_t>() as c_int;
+        numvertexes = W_LumpLength(lump as u32) / std::mem::size_of::<mapvertex_t>() as i32;
         vertexes = Z_Malloc(
-            numvertexes * std::mem::size_of::<vertex_t>() as c_int,
+            numvertexes * std::mem::size_of::<vertex_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut vertex_t;
@@ -445,8 +434,8 @@ pub fn P_LoadVertexes(lump: c_int) {
         let mut li = vertexes;
 
         for _ in 0..numvertexes {
-            (*li).x = (SHORT((*ml).x) as c_int) << FRACBITS;
-            (*li).y = (SHORT((*ml).y) as c_int) << FRACBITS;
+            (*li).x = (SHORT((*ml).x) as i32) << FRACBITS;
+            (*li).y = (SHORT((*ml).y) as i32) << FRACBITS;
             li = li.add(1);
             ml = ml.add(1);
         }
@@ -477,11 +466,11 @@ pub fn P_LoadVertexes(lump: c_int) {
 /// `lump` must be the lump number of the SEGS entry for the current map.
 /// Precondition: `vertexes`, `lines`, and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSegs(lump: c_int) {
+pub fn P_LoadSegs(lump: i32) {
     unsafe {
-        numsegs = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapseg_t>() as c_int;
+        numsegs = W_LumpLength(lump as u32) / std::mem::size_of::<mapseg_t>() as i32;
         segs = Z_Malloc(
-            numsegs * std::mem::size_of::<seg_t>() as c_int,
+            numsegs * std::mem::size_of::<seg_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut seg_t;
@@ -494,18 +483,18 @@ pub fn P_LoadSegs(lump: c_int) {
         for _ in 0..numsegs {
             (*li).v1 = vertexes.offset(SHORT((*ml).v1) as isize);
             (*li).v2 = vertexes.offset(SHORT((*ml).v2) as isize);
-            (*li).angle = ((SHORT((*ml).angle) as c_int) << 16) as c_uint;
-            (*li).offset = (SHORT((*ml).offset) as c_int) << 16;
-            let linedef = SHORT((*ml).linedef) as c_int;
+            (*li).angle = ((SHORT((*ml).angle) as i32) << 16) as u32;
+            (*li).offset = (SHORT((*ml).offset) as i32) << 16;
+            let linedef = SHORT((*ml).linedef) as i32;
             let ldef = lines.offset(linedef as isize);
             (*li).linedef = ldef;
-            let side = SHORT((*ml).side) as c_int;
+            let side = SHORT((*ml).side) as i32;
             (*li).sidedef = sides.offset((*ldef).sidenum[side as usize] as isize);
             (*li).frontsector = (*sides.offset((*ldef).sidenum[side as usize] as isize)).sector;
 
             if (*ldef).flags & LinedefFlag::TWOSIDED as i16 != 0 {
                 let sidenum = (*ldef).sidenum[side as usize ^ 1];
-                if sidenum < 0 || sidenum as c_int >= numsides {
+                if sidenum < 0 || sidenum as i32 >= numsides {
                     (*li).backsector = GetSectorAtNullAddress();
                 } else {
                     (*li).backsector = sides.offset(sidenum as isize).as_ref().unwrap().sector;
@@ -536,12 +525,11 @@ pub fn P_LoadSegs(lump: c_int) {
 ///
 /// `lump` must be the lump number of the SSECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSubsectors(lump: c_int) {
+pub fn P_LoadSubsectors(lump: i32) {
     unsafe {
-        numsubsectors =
-            W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsubsector_t>() as c_int;
+        numsubsectors = W_LumpLength(lump as u32) / std::mem::size_of::<mapsubsector_t>() as i32;
         subsectors = Z_Malloc(
-            numsubsectors * std::mem::size_of::<subsector_t>() as c_int,
+            numsubsectors * std::mem::size_of::<subsector_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut subsector_t;
@@ -576,11 +564,11 @@ pub fn P_LoadSubsectors(lump: c_int) {
 ///
 /// `lump` must be the lump number of the SECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSectors(lump: c_int) {
+pub fn P_LoadSectors(lump: i32) {
     unsafe {
-        numsectors = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsector_t>() as c_int;
+        numsectors = W_LumpLength(lump as u32) / std::mem::size_of::<mapsector_t>() as i32;
         sectors = Z_Malloc(
-            numsectors * std::mem::size_of::<sector_t>() as c_int,
+            numsectors * std::mem::size_of::<sector_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut sector_t;
@@ -591,11 +579,10 @@ pub fn P_LoadSectors(lump: c_int) {
         let mut ss = sectors;
 
         for _ in 0..numsectors {
-            (*ss).floorheight = (SHORT((*ms).floorheight) as c_int) << FRACBITS;
-            (*ss).ceilingheight = (SHORT((*ms).ceilingheight) as c_int) << FRACBITS;
-            (*ss).floorpic = R_FlatNumForName((*ms).floorpic.as_ptr() as *mut c_char) as c_short;
-            (*ss).ceilingpic =
-                R_FlatNumForName((*ms).ceilingpic.as_ptr() as *mut c_char) as c_short;
+            (*ss).floorheight = (SHORT((*ms).floorheight) as i32) << FRACBITS;
+            (*ss).ceilingheight = (SHORT((*ms).ceilingheight) as i32) << FRACBITS;
+            (*ss).floorpic = R_FlatNumForName(&(*ms).floorpic) as i16;
+            (*ss).ceilingpic = R_FlatNumForName(&(*ms).ceilingpic) as i16;
             (*ss).lightlevel = SHORT((*ms).lightlevel);
             (*ss).special = SHORT((*ms).special);
             (*ss).tag = SHORT((*ms).tag);
@@ -623,11 +610,11 @@ pub fn P_LoadSectors(lump: c_int) {
 ///
 /// `lump` must be the lump number of the NODES entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadNodes(lump: c_int) {
+pub fn P_LoadNodes(lump: i32) {
     unsafe {
-        numnodes = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapnode_t>() as c_int;
+        numnodes = W_LumpLength(lump as u32) / std::mem::size_of::<mapnode_t>() as i32;
         nodes = Z_Malloc(
-            numnodes * std::mem::size_of::<node_t>() as c_int,
+            numnodes * std::mem::size_of::<node_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut node_t;
@@ -637,14 +624,14 @@ pub fn P_LoadNodes(lump: c_int) {
         let mut no = nodes;
 
         for _ in 0..numnodes {
-            (*no).x = (SHORT((*mn).x) as c_int) << FRACBITS;
-            (*no).y = (SHORT((*mn).y) as c_int) << FRACBITS;
-            (*no).dx = (SHORT((*mn).dx) as c_int) << FRACBITS;
-            (*no).dy = (SHORT((*mn).dy) as c_int) << FRACBITS;
+            (*no).x = (SHORT((*mn).x) as i32) << FRACBITS;
+            (*no).y = (SHORT((*mn).y) as i32) << FRACBITS;
+            (*no).dx = (SHORT((*mn).dx) as i32) << FRACBITS;
+            (*no).dy = (SHORT((*mn).dy) as i32) << FRACBITS;
             for j in 0..2usize {
-                (*no).children[j] = SHORT((*mn).children[j] as i16) as c_ushort;
+                (*no).children[j] = SHORT((*mn).children[j] as i16) as u16;
                 for k in 0..4usize {
-                    (*no).bbox[j][k] = (SHORT((*mn).bbox[j][k]) as c_int) << FRACBITS;
+                    (*no).bbox[j][k] = (SHORT((*mn).bbox[j][k]) as i32) << FRACBITS;
                 }
             }
             no = no.add(1);
@@ -677,10 +664,10 @@ pub fn P_LoadNodes(lump: c_int) {
 /// must already be loaded; `deathmatch_p` must be reset to the base of
 /// `deathmatchstarts`.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadThings(lump: c_int) {
+pub fn P_LoadThings(lump: i32) {
     unsafe {
         let data = W_CacheLumpNum(lump, PU_STATIC);
-        let numthings = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapthing_t>() as c_int;
+        let numthings = W_LumpLength(lump as u32) / std::mem::size_of::<mapthing_t>() as i32;
         let mut mt = data as *mut mapthing_t;
 
         for _ in 0..numthings {
@@ -736,11 +723,11 @@ pub fn P_LoadThings(lump: c_int) {
 /// `lump` must be the lump number of the LINEDEFS entry for the current map.
 /// Preconditions: `vertexes` and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadLineDefs(lump: c_int) {
+pub fn P_LoadLineDefs(lump: i32) {
     unsafe {
-        numlines = W_LumpLength(lump as c_uint) / std::mem::size_of::<maplinedef_t>() as c_int;
+        numlines = W_LumpLength(lump as u32) / std::mem::size_of::<maplinedef_t>() as i32;
         lines = Z_Malloc(
-            numlines * std::mem::size_of::<line_t>() as c_int,
+            numlines * std::mem::size_of::<line_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut line_t;
@@ -836,11 +823,11 @@ pub fn P_LoadLineDefs(lump: c_int) {
 /// `lump` must be the lump number of the SIDEDEFS entry for the current map.
 /// Precondition: `sectors` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSideDefs(lump: c_int) {
+pub fn P_LoadSideDefs(lump: i32) {
     unsafe {
-        numsides = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsidedef_t>() as c_int;
+        numsides = W_LumpLength(lump as u32) / std::mem::size_of::<mapsidedef_t>() as i32;
         sides = Z_Malloc(
-            numsides * std::mem::size_of::<side_t>() as c_int,
+            numsides * std::mem::size_of::<side_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut side_t;
@@ -851,14 +838,11 @@ pub fn P_LoadSideDefs(lump: c_int) {
         let mut sd = sides;
 
         for _ in 0..numsides {
-            (*sd).textureoffset = (SHORT((*msd).textureoffset) as c_int) << FRACBITS;
-            (*sd).rowoffset = (SHORT((*msd).rowoffset) as c_int) << FRACBITS;
-            (*sd).toptexture =
-                R_TextureNumForName((*msd).toptexture.as_ptr() as *mut c_char) as c_short;
-            (*sd).bottomtexture =
-                R_TextureNumForName((*msd).bottomtexture.as_ptr() as *mut c_char) as c_short;
-            (*sd).midtexture =
-                R_TextureNumForName((*msd).midtexture.as_ptr() as *mut c_char) as c_short;
+            (*sd).textureoffset = (SHORT((*msd).textureoffset) as i32) << FRACBITS;
+            (*sd).rowoffset = (SHORT((*msd).rowoffset) as i32) << FRACBITS;
+            (*sd).toptexture = R_TextureNumForName(&(*msd).toptexture) as i16;
+            (*sd).bottomtexture = R_TextureNumForName(&(*msd).bottomtexture) as i16;
+            (*sd).midtexture = R_TextureNumForName(&(*msd).midtexture) as i16;
             (*sd).sector = sectors.offset(SHORT((*msd).sector) as isize);
             sd = sd.add(1);
             msd = msd.add(1);
@@ -889,13 +873,13 @@ pub fn P_LoadSideDefs(lump: c_int) {
 ///
 /// `lump` must be the lump number of the BLOCKMAP entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadBlockMap(lump: c_int) {
+pub fn P_LoadBlockMap(lump: i32) {
     unsafe {
-        let lumplen = W_LumpLength(lump as c_uint);
+        let lumplen = W_LumpLength(lump as u32);
         let count = lumplen / 2;
 
-        blockmaplump = Z_Malloc(lumplen, PU_LEVEL, ptr::null_mut()) as *mut c_short;
-        W_ReadLump(lump as c_uint, blockmaplump as *mut c_void);
+        blockmaplump = Z_Malloc(lumplen, PU_LEVEL, ptr::null_mut()) as *mut i16;
+        W_ReadLump(lump as u32, blockmaplump as *mut c_void);
         blockmap = blockmaplump.add(4);
 
         // Swap all short integers to native byte ordering.
@@ -903,13 +887,13 @@ pub fn P_LoadBlockMap(lump: c_int) {
             *blockmaplump.add(i as usize) = SHORT(*blockmaplump.add(i as usize));
         }
 
-        bmaporgx = (*blockmaplump.add(0) as c_int) << FRACBITS;
-        bmaporgy = (*blockmaplump.add(1) as c_int) << FRACBITS;
-        bmapwidth = *blockmaplump.add(2) as c_int;
-        bmapheight = *blockmaplump.add(3) as c_int;
+        bmaporgx = (*blockmaplump.add(0) as i32) << FRACBITS;
+        bmaporgy = (*blockmaplump.add(1) as i32) << FRACBITS;
+        bmapwidth = *blockmaplump.add(2) as i32;
+        bmapheight = *blockmaplump.add(3) as i32;
 
         let bcount = std::mem::size_of::<*mut c_void>() * bmapwidth as usize * bmapheight as usize;
-        blocklinks = Z_Malloc(bcount as c_int, PU_LEVEL, ptr::null_mut()) as *mut *mut c_void;
+        blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut c_void;
         libc::memset(blocklinks as *mut c_void, 0, bcount);
     }
 }
@@ -979,7 +963,7 @@ pub fn P_GroupLines() {
 
         // Build line tables for each sector.
         let linebuffer = Z_Malloc(
-            totallines * std::mem::size_of::<*mut line_t>() as c_int,
+            totallines * std::mem::size_of::<*mut line_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut *mut line_t;
@@ -1016,7 +1000,7 @@ pub fn P_GroupLines() {
         // Generate bounding boxes for sectors.
         let mut sector = sectors;
         for _ in 0..numsectors {
-            let mut bbox: [c_int; 4] = [0; 4];
+            let mut bbox: [i32; 4] = [0; 4];
             M_ClearBox(bbox.as_mut_ptr());
 
             for j in 0..(*sector).linecount {
@@ -1029,7 +1013,7 @@ pub fn P_GroupLines() {
             let soundorg_x = (bbox[BBox::RIGHT] + bbox[BBox::LEFT]) / 2;
             let soundorg_y = (bbox[BBox::TOP] + bbox[BBox::BOTTOM]) / 2;
             // sector->soundorg is a 40-byte degenmobj_t; first two fields are x,y.
-            let soundorg_ptr = (*sector).soundorg.as_mut_ptr() as *mut c_int;
+            let soundorg_ptr = (*sector).soundorg.as_mut_ptr() as *mut i32;
             *soundorg_ptr = soundorg_x;
             *soundorg_ptr.add(1) = soundorg_y;
 
@@ -1110,7 +1094,7 @@ unsafe fn PadRejectArray(array: *mut u8, len: usize) {
             std::mem::size_of_val(&rejectpad)
         );
 
-        let padvalue = if M_CheckParm(c"-reject_pad_with_ff".as_ptr() as *mut c_char) != 0 {
+        let padvalue = if M_CheckParm(c"-reject_pad_with_ff".as_ptr().cast_mut().cast()) != 0 {
             0xff
         } else {
             0xf00
@@ -1145,16 +1129,16 @@ unsafe fn PadRejectArray(array: *mut u8, len: usize) {
 ///
 /// Writes to the global `rejectmatrix`. Must be called after `P_GroupLines`
 /// so that `totallines` is valid (needed by `PadRejectArray`).
-unsafe fn P_LoadReject(lumpnum: c_int) {
+unsafe fn P_LoadReject(lumpnum: i32) {
     let minlength = (numsectors * numsectors + 7) / 8;
-    let lumplen = W_LumpLength(lumpnum as c_uint);
+    let lumplen = W_LumpLength(lumpnum as u32);
 
     if lumplen >= minlength {
         rejectmatrix = W_CacheLumpNum(lumpnum, PU_LEVEL) as *mut u8;
     } else {
         rejectmatrix =
             Z_Malloc(minlength, PU_LEVEL, &raw mut rejectmatrix as *mut c_void) as *mut u8;
-        W_ReadLump(lumpnum as c_uint, rejectmatrix as *mut c_void);
+        W_ReadLump(lumpnum as u32, rejectmatrix as *mut c_void);
         PadRejectArray(
             rejectmatrix.add(lumplen as usize),
             (minlength - lumplen) as usize,
@@ -1195,7 +1179,7 @@ unsafe fn P_LoadReject(lumpnum: c_int) {
 // FIXME: C uses DEH_snprintf for lump name construction, allowing DeHackEd
 // patches to rename map lumps. The Rust port uses format! and does not apply
 // DEH patches to the lump name, which may break modded WADs that rely on this.
-pub fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _skill: c_int) {
+pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
     unsafe {
         totalkills = 0;
         totalitems = 0;
@@ -1217,24 +1201,24 @@ pub fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _skill: c_in
         P_InitThinkers();
 
         // Find map name.
-        let mut lumpname = [0i8; 9];
+        let mut lumpname = [0u8; 9];
         if gamemode == d_mode::commercial {
             if map < 10 {
                 let s = format!("map0{}", map);
-                ptr::copy_nonoverlapping(s.as_ptr(), lumpname.as_mut_ptr() as *mut u8, s.len());
+                ptr::copy_nonoverlapping(s.as_ptr(), lumpname.as_mut_ptr(), s.len());
             } else {
                 let s = format!("map{}", map);
-                ptr::copy_nonoverlapping(s.as_ptr(), lumpname.as_mut_ptr() as *mut u8, s.len());
+                ptr::copy_nonoverlapping(s.as_ptr(), lumpname.as_mut_ptr(), s.len());
             }
         } else {
-            lumpname[0] = b'E' as i8;
-            lumpname[1] = (b'0' + episode as u8) as i8;
-            lumpname[2] = b'M' as i8;
-            lumpname[3] = (b'0' + map as u8) as i8;
+            lumpname[0] = b'E';
+            lumpname[1] = b'0' + episode as u8;
+            lumpname[2] = b'M';
+            lumpname[3] = b'0' + map as u8;
             lumpname[4] = 0;
         }
 
-        let lumpnum = W_GetNumForName(lumpname.as_mut_ptr());
+        let lumpnum = W_GetNumForName(&lumpname);
 
         leveltime = 0;
 
@@ -1260,7 +1244,7 @@ pub fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _skill: c_in
             for i in 0..MAXPLAYERS {
                 if playeringame[i] != 0 {
                     players[i].mo = ptr::null_mut();
-                    G_DeathMatchSpawnPlayer(i as c_int);
+                    G_DeathMatchSpawnPlayer(i as i32);
                 }
             }
         }
@@ -1338,21 +1322,19 @@ mod tests {
     }
 
     #[test]
-    fn setup_globals_are_c_int_width() {
-        use std::ffi::c_int;
-        const _: () = assert!(std::mem::size_of::<c_int>() == 4);
+    fn setup_globals_are_i32() {
         unsafe {
-            let _: c_int = numvertexes;
-            let _: c_int = numsegs;
-            let _: c_int = numsectors;
-            let _: c_int = numsubsectors;
-            let _: c_int = numnodes;
-            let _: c_int = numlines;
-            let _: c_int = numsides;
-            let _: c_int = bmapwidth;
-            let _: c_int = bmapheight;
-            let _: c_int = bmaporgx;
-            let _: c_int = bmaporgy;
+            let _: i32 = numvertexes;
+            let _: i32 = numsegs;
+            let _: i32 = numsectors;
+            let _: i32 = numsubsectors;
+            let _: i32 = numnodes;
+            let _: i32 = numlines;
+            let _: i32 = numsides;
+            let _: i32 = bmapwidth;
+            let _: i32 = bmapheight;
+            let _: i32 = bmaporgx;
+            let _: i32 = bmaporgy;
         }
     }
 

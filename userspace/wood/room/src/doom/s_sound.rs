@@ -16,7 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::c_void;
 
 use crate::types::Boolean;
 
@@ -30,30 +30,30 @@ use crate::doom::{
 
 /// Distance, in fixed-point units, beyond which a positional sound is clipped
 /// out entirely (`S_CLIPPING_DIST` in `s_sound.c`).
-const S_CLIPPING_DIST: c_int = 1200 * FRACUNIT;
+const S_CLIPPING_DIST: i32 = 1200 * FRACUNIT;
 /// Distance, in fixed-point units, within which a sound plays at full SFX
 /// volume (`S_CLOSE_DIST` in `s_sound.c`).
-const S_CLOSE_DIST: c_int = 200 * FRACUNIT;
+const S_CLOSE_DIST: i32 = 200 * FRACUNIT;
 /// Integer attenuation range between `S_CLOSE_DIST` and `S_CLIPPING_DIST`,
 /// shifted out of fixed-point. Used as the divisor in the linear volume falloff.
-const S_ATTENUATOR: c_int = (S_CLIPPING_DIST - S_CLOSE_DIST) >> FRACBITS;
+const S_ATTENUATOR: i32 = (S_CLIPPING_DIST - S_CLOSE_DIST) >> FRACBITS;
 /// Maximum stereo swing applied to `sep` based on listener-to-source angle, in
 /// fixed-point units.
-const S_STEREO_SWING: c_int = 96 * FRACUNIT;
+const S_STEREO_SWING: i32 = 96 * FRACUNIT;
 /// Pitch value treated as "no pitch shift" by the driver.
-const NORM_PITCH: c_int = 128;
+const NORM_PITCH: i32 = 128;
 /// Default channel priority when none is supplied.
-const NORM_PRIORITY: c_int = 64;
+const NORM_PRIORITY: i32 = 64;
 /// Stereo separation value meaning "centred" (0 = full left, 255 = full right).
-const NORM_SEP: c_int = 128;
+const NORM_SEP: i32 = 128;
 
 /// Mirror of `MAXPLAYERS` from `doomdef.h`; used to index `players[]`.
 const MAXPLAYERS: usize = 4;
 
 /// Music device id for AdLib, as recognised by `snd_musicdevice` config.
-const SNDDEVICE_ADLIB: c_int = 2;
+const SNDDEVICE_ADLIB: i32 = 2;
 /// Music device id for SoundBlaster, as recognised by `snd_musicdevice`.
-const SNDDEVICE_SB: c_int = 3;
+const SNDDEVICE_SB: i32 = 3;
 
 /// Mixing channel slot. C counterpart: `channel_t` defined inside `s_sound.c`.
 ///
@@ -68,7 +68,7 @@ pub struct channel_t {
     /// Map object the sound emanates from, or null for non-positional sounds.
     pub origin: *mut MobjStub,
     /// Driver-side handle returned by `I_StartSound` for this channel.
-    pub handle: c_int,
+    pub handle: i32,
 }
 
 /// Layout-compatible prefix of `mobj_t` (`p_mobj.h`).
@@ -89,11 +89,11 @@ pub struct MobjStub {
     _thinker_fn: *mut c_void,
     // mobj_t positional fields
     /// World X coordinate, fixed-point.
-    pub x: c_int,
+    pub x: i32,
     /// World Y coordinate, fixed-point.
-    pub y: c_int,
+    pub y: i32,
     /// Padding: `mobj_t.z`.
-    _z: c_int,
+    _z: i32,
     /// Padding: alignment slot before the sector list pointers.
     _pad0: u32,
     /// Padding: `mobj_t.snext`.
@@ -143,25 +143,25 @@ static mut channels: *mut channel_t = std::ptr::null_mut();
 
 /// User-facing SFX volume slider value (0-15). Mirrors `sfxVolume` in
 /// `s_sound.c`; shared with the menu and config code.
-pub static mut sfxVolume: c_int = 8;
+pub static mut sfxVolume: i32 = 8;
 
 /// User-facing music volume slider value (0-15). Mirrors `musicVolume` in
 /// `s_sound.c`; shared with the menu and config code.
-pub static mut musicVolume: c_int = 8;
+pub static mut musicVolume: i32 = 8;
 
 /// Number of mixing channels to allocate (default 8). Read by `S_Init`.
-pub static mut snd_channels: c_int = 8;
+pub static mut snd_channels: i32 = 8;
 
 /// Internal SFX volume on the 0-127 scale used by the driver. Set by
 /// `S_SetSfxVolume`. C name: `snd_SfxVolume`.
-pub static mut snd_SfxVolume: c_int = 8;
+pub static mut snd_SfxVolume: i32 = 8;
 
 /// Internal music volume on the 0-127 scale used by the driver. Set by
 /// `S_SetMusicVolume`. C name: `snd_MusicVolume`.
-pub static mut snd_MusicVolume: c_int = 8;
+pub static mut snd_MusicVolume: i32 = 8;
 
 /// Non-zero while music is paused, used by `S_PauseSound`/`S_ResumeSound`.
-pub static mut mus_paused: c_int = 0;
+pub static mut mus_paused: i32 = 0;
 
 /// Currently playing music entry, or null if no song is active.
 static mut mus_playing: *mut MusicInfo = std::ptr::null_mut();
@@ -176,20 +176,20 @@ static mut mus_playing: *mut MusicInfo = std::ptr::null_mut();
 ///
 /// C origin: `S_Init` in `s_sound.c`. The Rust port additionally calls
 /// `S_InitSfxLinks` here because that work is data-table-side in Rust.
-pub fn S_Init(sfx_volume: c_int, music_volume: c_int) {
+pub fn S_Init(sfx_volume: i32, music_volume: i32) {
     unsafe {
         S_InitSfxLinks();
 
         I_PrecacheSounds(
             std::ptr::addr_of_mut!(S_sfx[0]) as *mut c_void,
-            NUMSFX as c_int,
+            NUMSFX as i32,
         );
 
         S_SetSfxVolume(sfx_volume);
         S_SetMusicVolume(music_volume);
 
         channels = Z_Malloc(
-            (snd_channels as usize * std::mem::size_of::<channel_t>()) as c_int,
+            (snd_channels as usize * std::mem::size_of::<channel_t>()) as i32,
             PU_STATIC,
             std::ptr::null_mut(),
         ) as *mut channel_t;
@@ -225,7 +225,7 @@ pub fn S_Shutdown() {
 ///
 /// # Safety
 /// `cnum` must be a valid index into the `channels` array (`0..snd_channels`).
-unsafe fn S_StopChannel(cnum: c_int) {
+unsafe fn S_StopChannel(cnum: i32) {
     let c = &mut *channels.offset(cnum as isize);
 
     if !c.sfxinfo.is_null() {
@@ -263,25 +263,25 @@ pub fn S_Start() {
 
         mus_paused = 0;
 
-        let mnum: c_int;
+        let mnum: i32;
 
         if gamemode == d_mode::commercial {
-            mnum = Mus::Runnin as c_int + gamemap - 1;
+            mnum = Mus::Runnin as i32 + gamemap - 1;
         } else {
-            let spmus: [c_int; 9] = [
-                Mus::E3m4 as c_int,
-                Mus::E3m2 as c_int,
-                Mus::E3m3 as c_int,
-                Mus::E1m5 as c_int,
-                Mus::E2m7 as c_int,
-                Mus::E2m4 as c_int,
-                Mus::E2m6 as c_int,
-                Mus::E2m5 as c_int,
-                Mus::E1m9 as c_int,
+            let spmus: [i32; 9] = [
+                Mus::E3m4 as i32,
+                Mus::E3m2 as i32,
+                Mus::E3m3 as i32,
+                Mus::E1m5 as i32,
+                Mus::E2m7 as i32,
+                Mus::E2m4 as i32,
+                Mus::E2m6 as i32,
+                Mus::E2m5 as i32,
+                Mus::E1m9 as i32,
             ];
 
             if gameepisode < 4 {
-                mnum = Mus::E1m1 as c_int + (gameepisode - 1) * 9 + gamemap - 1;
+                mnum = Mus::E1m1 as i32 + (gameepisode - 1) * 9 + gamemap - 1;
             } else {
                 mnum = spmus[(gamemap - 1) as usize];
             }
@@ -319,8 +319,8 @@ pub fn S_StopSound(origin: *mut MobjStub) {
 /// # Safety
 /// `sfxinfo` must point to a valid `SfxInfo`; `origin` may be null. `channels`
 /// must already be allocated (call `S_Init` first).
-unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> c_int {
-    let mut cnum: c_int = 0;
+unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> i32 {
+    let mut cnum: i32 = 0;
 
     for cnum_search in 0..snd_channels {
         let ch = *channels.offset(cnum_search as isize);
@@ -372,9 +372,9 @@ unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> c_int {
 unsafe fn S_AdjustSoundParams(
     listener: *mut MobjStub,
     source: *mut MobjStub,
-    vol: *mut c_int,
-    sep: *mut c_int,
-) -> c_int {
+    vol: *mut i32,
+    sep: *mut i32,
+) -> i32 {
     let adx = (*listener).x.wrapping_sub((*source).x).wrapping_abs();
     let ady = (*listener).y.wrapping_sub((*source).y).wrapping_abs();
 
@@ -413,7 +413,7 @@ unsafe fn S_AdjustSoundParams(
         *vol = (snd_SfxVolume * ((S_CLIPPING_DIST - approx_dist) >> FRACBITS)) / S_ATTENUATOR;
     }
 
-    (*vol > 0) as c_int
+    (*vol > 0) as i32
 }
 
 /// Start an SFX from `origin_p` (an `mobj_t *`, may be null) with id `sfx_id`.
@@ -423,12 +423,12 @@ unsafe fn S_AdjustSoundParams(
 /// listener (the console player) unless `origin` is the listener itself, in
 /// which case stereo is forced to centre. The chosen sfx replaces any sound
 /// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
-pub fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int) {
+pub fn S_StartSound(origin_p: *mut c_void, sfx_id: i32) {
     unsafe {
         let origin = origin_p as *mut MobjStub;
         let mut volume = snd_SfxVolume;
 
-        if sfx_id < 1 || sfx_id > NUMSFX as c_int {
+        if sfx_id < 1 || sfx_id > NUMSFX as i32 {
             // Bogus sound id - skip
             return;
         }
@@ -447,7 +447,7 @@ pub fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int) {
             }
         }
 
-        let mut sep: c_int = NORM_SEP;
+        let mut sep: i32 = NORM_SEP;
 
         let player_mo =
             (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).mo as *mut MobjStub;
@@ -556,7 +556,7 @@ pub fn S_UpdateSounds(listener: *mut MobjStub) {
 
 /// Set the music volume (0-127). Values out of range are silently ignored to
 /// match the C behaviour. C origin: `S_SetMusicVolume` in `s_sound.c`.
-pub fn S_SetMusicVolume(volume: c_int) {
+pub fn S_SetMusicVolume(volume: i32) {
     if !(0..=127).contains(&volume) {
         return;
     }
@@ -567,7 +567,7 @@ pub fn S_SetMusicVolume(volume: c_int) {
 /// Set the SFX volume (0-127), stored in `snd_SfxVolume` and applied to
 /// subsequent `S_StartSound` calls. Values out of range are ignored.
 /// C origin: `S_SetSfxVolume` in `s_sound.c`.
-pub fn S_SetSfxVolume(volume: c_int) {
+pub fn S_SetSfxVolume(volume: i32) {
     unsafe {
         if !(0..=127).contains(&volume) {
             return;
@@ -579,7 +579,7 @@ pub fn S_SetSfxVolume(volume: c_int) {
 
 /// Start playing music `m_id` once (non-looping). Convenience wrapper around
 /// `S_ChangeMusic`. C origin: `S_StartMusic` in `s_sound.c`.
-pub fn S_StartMusic(m_id: c_int) {
+pub fn S_StartMusic(m_id: i32) {
     S_ChangeMusic(m_id, 0);
 }
 
@@ -592,17 +592,17 @@ pub fn S_StartMusic(m_id: c_int) {
 /// non-zero requests an infinite loop.
 ///
 /// C origin: `S_ChangeMusic` in `s_sound.c`.
-pub fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
+pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
     unsafe {
         let mut musicnum = musicnum;
 
-        if musicnum == Mus::Intro as c_int
+        if musicnum == Mus::Intro as i32
             && (snd_musicdevice == SNDDEVICE_ADLIB || snd_musicdevice == SNDDEVICE_SB)
         {
-            musicnum = Mus::Introa as c_int;
+            musicnum = Mus::Introa as i32;
         }
 
-        if musicnum <= Mus::None as c_int || musicnum >= NUMMUSIC as c_int {
+        if musicnum <= Mus::None as i32 || musicnum >= NUMMUSIC as i32 {
             return;
         }
 
@@ -615,15 +615,15 @@ pub fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
         S_StopMusic();
 
         if music.lumpnum == 0 {
-            let mut namebuf: [c_char; 9] = [0; 9];
-            let name_str = std::ffi::CStr::from_ptr(music.name).to_string_lossy();
+            let mut namebuf: [u8; 9] = [0; 9];
+            let name_str = std::ffi::CStr::from_ptr(music.name.cast()).to_string_lossy();
             c_write!(namebuf, "d_{}", name_str);
-            music.lumpnum = W_GetNumForName(namebuf.as_ptr() as *const c_char);
+            music.lumpnum = W_GetNumForName(&namebuf);
         }
 
         music.data = W_CacheLumpNum(music.lumpnum, PU_STATIC);
 
-        let len = W_LumpLength(music.lumpnum as c_uint);
+        let len = W_LumpLength(music.lumpnum as u32);
         let handle = I_RegisterSong(music.data, len);
         music.handle = handle;
         I_PlaySong(handle, looping);
@@ -634,7 +634,7 @@ pub fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
 
 /// Return non-zero if the music driver reports an active song. Thin wrapper
 /// around `I_MusicIsPlaying`. C origin: `S_MusicPlaying` in `s_sound.c`.
-pub fn S_MusicPlaying() -> c_int {
+pub fn S_MusicPlaying() -> i32 {
     I_MusicIsPlaying()
 }
 

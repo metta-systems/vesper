@@ -135,18 +135,3 @@ fn itemrespawntime_length_is_itemquesize() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// Queue index globals are C `int` (4 bytes).
-#[test]
-fn queue_indices_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = p_mobj::iquehead;
-        let _: c_int = p_mobj::iquetail;
-    }
-}

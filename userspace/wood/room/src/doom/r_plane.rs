@@ -20,10 +20,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_short, c_uchar},
-    ptr,
-};
+use std::ptr;
 
 use {
     super::{
@@ -50,7 +47,7 @@ const SCREENHEIGHT: usize = crate::doom::i_video::SCREENHEIGHT as usize;
 /// aborts via [`i_error!`] when exceeded (see [`R_FindPlane`]).
 const MAXVISPLANES: usize = 128;
 
-/// Maximum number of `c_short` slots in the [`openings`] array.
+/// Maximum number of `i16` slots in the [`openings`] array.
 ///
 /// Used as scratch space for sprite clipping arrays stored by
 /// [`R_StoreWallRange`] (in `r_segs`).  The C source comments this as `"?"`.
@@ -82,7 +79,7 @@ const ANGLETOSKYSHIFT: u32 = 22;
 /// always within the bounds of the static sine table exported by
 /// [`tables`].
 #[inline]
-fn finecosine(idx: usize) -> c_int {
+fn finecosine(idx: usize) -> i32 {
     unsafe { *tables::finecosine.0.add(idx & FINEMASK as usize) }
 }
 
@@ -91,14 +88,14 @@ fn finecosine(idx: usize) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// Colormap entry type: a single palette index byte.
-type lighttable_t = c_uchar;
+type lighttable_t = u8;
 
 /// Function pointer type for horizontal-span and sky-column draw callbacks.
 ///
 /// The two parameters are the left (`x1`) and right (`x2`) screen columns of
 /// the span, matching the C `planefunction_t` signature
 /// `void (*)(int top, int bottom)`.
-pub type planefunction_t = unsafe fn(c_int, c_int);
+pub type planefunction_t = unsafe fn(i32, i32);
 
 // ---------------------------------------------------------------------------
 // visplane_t — mirrors the C struct including pad bytes
@@ -121,27 +118,27 @@ pub struct visplane_t {
     /// World height of the flat, in fixed-point units.
     pub height: fixed_t,
     /// Flat texture number (lump index relative to `firstflat`).
-    pub picnum: c_int,
+    pub picnum: i32,
     /// Sector light level (0-255) for this plane.
-    pub lightlevel: c_int,
+    pub lightlevel: i32,
     /// Leftmost screen column used by this plane (inclusive).
-    pub minx: c_int,
+    pub minx: i32,
     /// Rightmost screen column used by this plane (inclusive).
-    pub maxx: c_int,
+    pub maxx: i32,
     /// Padding byte before `top[]`; acts as a sentinel slot for
     /// `top[minx-1]` when `minx == 0`.
-    pub pad1: c_uchar,
+    pub pad1: u8,
     /// Per-column top clip (inclusive screen-y).  `0xFF` means unused.
-    pub top: [c_uchar; SCREENWIDTH],
+    pub top: [u8; SCREENWIDTH],
     /// Padding byte after `top[]`; sentinel for `top[maxx+1]` when
     /// `maxx == SCREENWIDTH - 1`.
-    pub pad2: c_uchar,
+    pub pad2: u8,
     /// Padding byte before `bottom[]`; mirrors the pad3 slot in C.
-    pub pad3: c_uchar,
+    pub pad3: u8,
     /// Per-column bottom clip (inclusive screen-y).
-    pub bottom: [c_uchar; SCREENWIDTH],
+    pub bottom: [u8; SCREENWIDTH],
     /// Padding byte after `bottom[]`.
-    pub pad4: c_uchar,
+    pub pad4: u8,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -265,14 +262,14 @@ pub static mut ceilingplane: *mut visplane_t = ptr::null_mut();
 ///Slices within this buffer are
 /// handed out by `R_StoreWallRange` (in `r_segs`) and later read by the
 /// sprite renderer.  [`lastopening`] tracks the allocation watermark.
-pub static mut openings: [c_short; MAXOPENINGS] = [0; MAXOPENINGS];
+pub static mut openings: [i16; MAXOPENINGS] = [0; MAXOPENINGS];
 
 /// Allocation watermark within [`openings`].
 ///
 ///Advanced by
 /// `R_StoreWallRange` each time it allocates a clipping sub-array.
 /// Reset to `&openings[0]` by [`R_ClearPlanes`].
-pub static mut lastopening: *mut c_short = ptr::null_mut();
+pub static mut lastopening: *mut i16 = ptr::null_mut();
 
 /// Per-column floor clip (highest opaque pixel so far, inclusive).
 ///
@@ -280,27 +277,27 @@ pub static mut lastopening: *mut c_short = ptr::null_mut();
 /// screen-y of the lowest pixel that is still open for floor rendering in
 /// column `x`.  Initialized to `viewheight` (fully open) by
 /// [`R_ClearPlanes`].
-pub static mut floorclip: [c_short; SCREENWIDTH] = [0; SCREENWIDTH];
+pub static mut floorclip: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
 
 /// Per-column ceiling clip (lowest opaque pixel so far, inclusive).
 ///
 ///`ceilingclip[x]` is the
 /// screen-y of the highest pixel that is still open for ceiling rendering in
 /// column `x`.  Initialized to `-1` (fully open) by [`R_ClearPlanes`].
-pub static mut ceilingclip: [c_short; SCREENWIDTH] = [0; SCREENWIDTH];
+pub static mut ceilingclip: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
 
 /// Per-row span start columns, indexed by screen-y.
 ///
 ///[`R_MakeSpans`] writes the
 /// left edge of a span in progress here; [`R_MapPlane`] reads it to obtain
 /// `x1` when the span ends.
-pub static mut spanstart: [c_int; SCREENHEIGHT] = [0; SCREENHEIGHT];
+pub static mut spanstart: [i32; SCREENHEIGHT] = [0; SCREENHEIGHT];
 
 /// Per-row span stop columns (unused in the current implementation).
 ///
 ///Present in the C source but
 /// never written; kept for ABI compatibility.
-pub static mut spanstop: [c_int; SCREENHEIGHT] = [0; SCREENHEIGHT];
+pub static mut spanstop: [i32; SCREENHEIGHT] = [0; SCREENHEIGHT];
 
 /// Pointer into the distance-based light table for the current plane.
 ///
@@ -414,7 +411,7 @@ pub fn R_InitPlanes() {
 /// (`planezlight`, `spanfunc`, `fixedcolormap`) must be valid when called.
 /// The range-check feature gate guards against out-of-bounds `x1`/`x2`/`y`
 /// values; without it the caller is responsible for passing valid coordinates.
-pub fn R_MapPlane(y: c_int, x1: c_int, x2: c_int) {
+pub fn R_MapPlane(y: i32, x1: i32, x2: i32) {
     unsafe {
         #[cfg(feature = "rangecheck")]
         {
@@ -486,7 +483,7 @@ pub fn R_MapPlane(y: c_int, x1: c_int, x2: c_int) {
 pub fn R_ClearPlanes() {
     unsafe {
         let vw = viewwidth as usize;
-        let vh = viewheight as c_short;
+        let vh = viewheight as i16;
 
         for i in 0..vw {
             floorclip[i] = vh;
@@ -530,7 +527,7 @@ pub fn R_ClearPlanes() {
 /// Reads and writes the `static mut` globals [`visplanes`], [`lastvisplane`],
 /// and [`r_sky::skyflatnum`].  The returned pointer is valid for the lifetime
 /// of the current frame (until the next [`R_ClearPlanes`] call).
-pub fn R_FindPlane(height: fixed_t, picnum: c_int, lightlevel: c_int) -> *mut visplane_t {
+pub fn R_FindPlane(height: fixed_t, picnum: i32, lightlevel: i32) -> *mut visplane_t {
     unsafe {
         let mut h = height;
         let mut ll = lightlevel;
@@ -568,7 +565,7 @@ pub fn R_FindPlane(height: fixed_t, picnum: c_int, lightlevel: c_int) -> *mut vi
         (*new_vp).height = h;
         (*new_vp).picnum = picnum;
         (*new_vp).lightlevel = ll;
-        (*new_vp).minx = SCREENWIDTH as c_int;
+        (*new_vp).minx = SCREENWIDTH as i32;
         (*new_vp).maxx = -1;
 
         // memset top to 0xFF
@@ -596,7 +593,7 @@ pub fn R_FindPlane(height: fixed_t, picnum: c_int, lightlevel: c_int) -> *mut vi
 /// Reads and writes the `static mut` globals [`lastvisplane`] and the
 /// [`visplane_t`] pointed to by `pl`.  `pl` must be a non-null pointer to a
 /// valid, frame-lived visplane obtained from [`R_FindPlane`].
-pub fn R_CheckPlane(pl: *mut visplane_t, start: c_int, stop: c_int) -> *mut visplane_t {
+pub fn R_CheckPlane(pl: *mut visplane_t, start: i32, stop: i32) -> *mut visplane_t {
     unsafe {
         let intrl = if start < (*pl).minx {
             (*pl).minx
@@ -666,7 +663,7 @@ pub fn R_CheckPlane(pl: *mut visplane_t, start: c_int, stop: c_int) -> *mut visp
 /// derived from `t1`/`b1`/`t2`/`b2` must be valid screen rows
 /// (`0 <= row < SCREENHEIGHT`); the caller (the `R_DrawPlanes` loop) is
 /// responsible for keeping them in range.
-pub fn R_MakeSpans(x: c_int, t1: c_int, b1: c_int, t2: c_int, b2: c_int) {
+pub fn R_MakeSpans(x: i32, t1: i32, b1: i32, t2: i32, b2: i32) {
     unsafe {
         let mut t1 = t1;
         let mut b1 = b1;
@@ -735,14 +732,14 @@ pub fn R_DrawPlanes() {
                 dc_texturemid = skytexturemid;
 
                 for x in (*pl).minx..=(*pl).maxx {
-                    dc_yl = (*pl).top[x as usize] as c_int;
-                    dc_yh = (*pl).bottom[x as usize] as c_int;
+                    dc_yl = (*pl).top[x as usize] as i32;
+                    dc_yh = (*pl).bottom[x as usize] as i32;
 
                     if dc_yl <= dc_yh {
                         let angle =
                             viewangle.wrapping_add(xtoviewangle[x as usize]) >> ANGLETOSKYSHIFT;
                         dc_x = x;
-                        dc_source = R_GetColumn(skytexture, angle as c_int);
+                        dc_source = R_GetColumn(skytexture, angle as i32);
                         if let Some(func) = colfunc {
                             func();
                         }
@@ -758,10 +755,10 @@ pub fn R_DrawPlanes() {
             ds_source = W_CacheLumpNum(lumpnum, PU_STATIC) as *mut u8;
 
             planeheight = ((*pl).height.wrapping_sub(viewz)).abs();
-            let mut light = ((*pl).lightlevel >> LIGHTSEGSHIFT) as c_int + extralight;
+            let mut light = ((*pl).lightlevel >> LIGHTSEGSHIFT) + extralight;
 
-            if light >= LIGHTLEVELS as c_int {
-                light = LIGHTLEVELS as c_int - 1;
+            if light >= LIGHTLEVELS as i32 {
+                light = LIGHTLEVELS as i32 - 1;
             }
             if light < 0 {
                 light = 0;
@@ -782,7 +779,7 @@ pub fn R_DrawPlanes() {
             } else {
                 (*pl).pad1 = 0xFF;
             }
-            if (*pl).maxx < SCREENWIDTH as c_int - 1 {
+            if (*pl).maxx < SCREENWIDTH as i32 - 1 {
                 (*pl).top[((*pl).maxx + 1) as usize] = 0xFF;
             } else {
                 (*pl).pad2 = 0xFF;
@@ -801,22 +798,22 @@ pub fn R_DrawPlanes() {
                 } else {
                     (*pl).bottom[prev_x as usize]
                 };
-                let b_top = if x == SCREENWIDTH as c_int {
+                let b_top = if x == SCREENWIDTH as i32 {
                     (*pl).pad2
                 } else {
                     (*pl).top[x as usize]
                 };
-                let b_bottom = if x == SCREENWIDTH as c_int {
+                let b_bottom = if x == SCREENWIDTH as i32 {
                     (*pl).pad4
                 } else {
                     (*pl).bottom[x as usize]
                 };
                 R_MakeSpans(
                     x,
-                    t_top as c_int,
-                    t_bottom as c_int,
-                    b_top as c_int,
-                    b_bottom as c_int,
+                    t_top as i32,
+                    t_bottom as i32,
+                    b_top as i32,
+                    b_bottom as i32,
                 );
             }
 

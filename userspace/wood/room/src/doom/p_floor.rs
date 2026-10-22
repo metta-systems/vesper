@@ -6,10 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_void},
-    os::raw::c_short,
-};
+use std::ffi::c_void;
 
 use crate::doom::{
     c_ffi as cffi,
@@ -32,50 +29,50 @@ use crate::doom::{
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).
 const FLOORSPEED: fixed_t = FRACUNIT;
 
-/// Convenience alias for `c_int::MAX`, used as an initial "infinity" in texture height searches.
-const INT_MAX: c_int = c_int::MAX;
+/// Convenience alias for `i32::MAX`, used as an initial "infinity" in texture height searches.
+const INT_MAX: i32 = i32::MAX;
 
 // result_e enum values
 /// `T_MovePlane` return: plane moved without reaching destination or crushing.
-const result_ok: c_int = 0;
+const result_ok: i32 = 0;
 /// `T_MovePlane` return: plane was blocked by a thing (crushing).
-const result_crushed: c_int = 1;
+const result_crushed: i32 = 1;
 /// `T_MovePlane` return: plane reached its destination this tic.
-const result_pastdest: c_int = 2;
+const result_pastdest: i32 = 2;
 
 // floor_e enum values
 /// Lower floor to the highest surrounding floor height.
-const floor_lowerFloor: c_int = 0;
+const floor_lowerFloor: i32 = 0;
 /// Lower floor to the lowest surrounding floor height.
-const floor_lowerFloorToLowest: c_int = 1;
+const floor_lowerFloorToLowest: i32 = 1;
 /// Lower floor at 4x speed, rising 8 units above the highest surrounding floor.
-const floor_turboLower: c_int = 2;
+const floor_turboLower: i32 = 2;
 /// Raise floor to the lowest surrounding ceiling minus 8 units (crush variant sets crush flag).
-const floor_raiseFloor: c_int = 3;
+const floor_raiseFloor: i32 = 3;
 /// Raise floor to the next-highest surrounding floor.
-const floor_raiseFloorToNearest: c_int = 4;
+const floor_raiseFloorToNearest: i32 = 4;
 /// Raise floor by the height of the shortest lower texture on its linedefs.
-const floor_raiseToTexture: c_int = 5;
+const floor_raiseToTexture: i32 = 5;
 /// Lower floor to the lowest surrounding floor and transfer texture/special from neighbor.
-const floor_lowerAndChange: c_int = 6;
+const floor_lowerAndChange: i32 = 6;
 /// Raise floor 24 units.
-const floor_raiseFloor24: c_int = 7;
+const floor_raiseFloor24: i32 = 7;
 /// Raise floor 24 units and copy texture/special from the triggering linedef's front sector.
-const floor_raiseFloor24AndChange: c_int = 8;
+const floor_raiseFloor24AndChange: i32 = 8;
 /// Raise floor to lowest surrounding ceiling (with crush enabled).
-const floor_raiseFloorCrush: c_int = 9;
+const floor_raiseFloorCrush: i32 = 9;
 /// Raise floor at 4x speed to the next-highest surrounding floor.
-const floor_raiseFloorTurbo: c_int = 10;
+const floor_raiseFloorTurbo: i32 = 10;
 /// Raise floor for a donut special (transfers texture/special when done).
-const floor_donutRaise: c_int = 11;
+const floor_donutRaise: i32 = 11;
 /// Raise floor 512 units.
-const floor_raiseFloor512: c_int = 12;
+const floor_raiseFloor512: i32 = 12;
 
 // stair_e enum values
 /// Build an 8-unit staircase at quarter speed (`FLOORSPEED / 4`).
-const stair_build8: c_int = 0;
+const stair_build8: i32 = 0;
 /// Build a 16-unit staircase at 4x speed (`FLOORSPEED * 4`).
-const stair_turbo16: c_int = 1;
+const stair_turbo16: i32 = 1;
 
 use crate::doom::c_ffi::LinedefFlag;
 
@@ -92,17 +89,17 @@ pub struct floormove_t {
     /// Embedded thinker header; must be the first field.
     pub thinker: thinker_t,
     /// Floor movement type (`floor_*` constant).
-    pub r#type: c_int,
+    pub r#type: i32,
     /// Non-zero if this floor should crush things it encounters.
-    pub crush: c_int,
+    pub crush: i32,
     /// The sector whose floor is being moved.
     pub sector: *mut sector_t,
     /// Direction of movement: `1` = up, `-1` = down.
-    pub direction: c_int,
+    pub direction: i32,
     /// Sector special to apply when the floor finishes (`floor_lowerAndChange` / `floor_donutRaise`).
-    pub newspecial: c_int,
+    pub newspecial: i32,
     /// Floor flat (texture) to apply when the floor finishes.
-    pub texture: c_short,
+    pub texture: i16,
     _pad: [u8; 2],
     /// Target floor height in fixed-point units.
     pub floordestheight: fixed_t,
@@ -118,15 +115,15 @@ pub struct floormove_t {
 #[derive(Clone, Copy)]
 pub struct side_t {
     /// Horizontal texture offset for the sidedef.
-    pub textureoffset: c_int,
+    pub textureoffset: i32,
     /// Vertical texture offset for the sidedef.
-    pub rowoffset: c_int,
+    pub rowoffset: i32,
     /// Top (upper) texture index.
-    pub toptexture: c_short,
+    pub toptexture: i16,
     /// Bottom (lower) texture index.
-    pub bottomtexture: c_short,
+    pub bottomtexture: i16,
     /// Middle texture index.
-    pub midtexture: c_short,
+    pub midtexture: i16,
     _pad: [u8; 2],
     /// Sector on this side of the linedef.
     pub sector: *mut sector_t,
@@ -174,10 +171,10 @@ pub fn T_MovePlane(
     sector: *mut sector_t,
     speed: fixed_t,
     dest: fixed_t,
-    crush: c_int,
-    floorOrCeiling: c_int,
-    direction: c_int,
-) -> c_int {
+    crush: i32,
+    floorOrCeiling: i32,
+    direction: i32,
+) -> i32 {
     unsafe {
         let sec = &mut *sector;
         match floorOrCeiling {
@@ -313,7 +310,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
     if (leveltime & 7) == 0 {
         S_StartSound(
             &(*(*floor).sector).soundorg as *const [u8; 40] as *mut c_void,
-            Sfx::Stnmov as c_int,
+            Sfx::Stnmov as i32,
         );
     }
 
@@ -333,7 +330,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
 
         S_StartSound(
             &(*(*floor).sector).soundorg as *const [u8; 40] as *mut c_void,
-            Sfx::Pstop as c_int,
+            Sfx::Pstop as i32,
         );
     }
 }
@@ -362,9 +359,9 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
 /// `(*floor).floordestheight = (*floor).sector.offset_from(sec as *mut sector_t) as fixed_t`
 /// is a leftover dead assignment that is immediately overwritten. It is harmless
 /// (the correct value is set on the next line) but should be removed.
-pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
-    let mut secnum: c_int = -1;
-    let mut rtn: c_int = 0;
+pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
+    let mut secnum: i32 = -1;
+    let mut rtn: i32 = 0;
 
     while {
         secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
@@ -379,7 +376,7 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
 
         rtn = 1;
         let floor = Z_Malloc(
-            std::mem::size_of::<floormove_t>() as c_int,
+            std::mem::size_of::<floormove_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut floormove_t;
@@ -430,7 +427,7 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
                     (*floor).floordestheight = (*sec).ceilingheight;
                 }
                 (*floor).floordestheight -=
-                    (8 * FRACUNIT) * ((floortype == floor_raiseFloorCrush) as c_int);
+                    (8 * FRACUNIT) * ((floortype == floor_raiseFloorCrush) as i32);
             }
             floor_raiseFloorTurbo => {
                 (*floor).direction = 1;
@@ -472,17 +469,17 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
                 (*floor).direction = 1;
                 (*floor).sector = sec as *mut sector_t;
                 (*floor).speed = FLOORSPEED;
-                let mut minsize: c_int = INT_MAX;
+                let mut minsize: i32 = INT_MAX;
                 for i in 0..(*sec).linecount as usize {
-                    if twoSided(secnum, i as c_int) != 0 {
-                        let side = getSide(secnum, i as c_int, 0);
+                    if twoSided(secnum, i as i32) != 0 {
+                        let side = getSide(secnum, i as i32, 0);
                         if (*side).bottomtexture >= 0 {
                             let th = *textureheight.offset((*side).bottomtexture as isize);
                             if th < minsize {
                                 minsize = th;
                             }
                         }
-                        let side = getSide(secnum, i as c_int, 1);
+                        let side = getSide(secnum, i as i32, 1);
                         if (*side).bottomtexture >= 0 {
                             let th = *textureheight.offset((*side).bottomtexture as isize);
                             if th < minsize {
@@ -500,21 +497,21 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
                 (*floor).floordestheight = P_FindLowestFloorSurrounding(sec);
                 (*floor).texture = (*sec).floorpic;
 
-                for i in 0..(*sec).linecount as c_int {
+                for i in 0..(*sec).linecount {
                     if twoSided(secnum, i) != 0 {
                         let side0 = getSide(secnum, i, 0);
-                        if (*side0).sector.offset_from(sectors) as c_int == secnum {
+                        if (*side0).sector.offset_from(sectors) as i32 == secnum {
                             let check_sec = getSector(secnum, i, 1);
                             if (*check_sec).floorheight == (*floor).floordestheight {
                                 (*floor).texture = (*check_sec).floorpic;
-                                (*floor).newspecial = (*check_sec).special as c_int;
+                                (*floor).newspecial = (*check_sec).special as i32;
                                 break;
                             }
                         } else {
                             let check_sec = getSector(secnum, i, 0);
                             if (*check_sec).floorheight == (*floor).floordestheight {
                                 (*floor).texture = (*check_sec).floorpic;
-                                (*floor).newspecial = (*check_sec).special as c_int;
+                                (*floor).newspecial = (*check_sec).special as i32;
                                 break;
                             }
                         }
@@ -541,9 +538,9 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
 ///
 /// `line` must be a valid non-null pointer for the current map; the global
 /// `sectors` array must be initialised.
-pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
-    let mut secnum: c_int = -1;
-    let mut rtn: c_int = 0;
+pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
+    let mut secnum: i32 = -1;
+    let mut rtn: i32 = 0;
 
     while {
         secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
@@ -558,7 +555,7 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
 
         rtn = 1;
         let mut floor = Z_Malloc(
-            std::mem::size_of::<floormove_t>() as c_int,
+            std::mem::size_of::<floormove_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut floormove_t;
@@ -585,22 +582,22 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
 
         // Find next sector to raise
         loop {
-            let mut ok: c_int = 0;
-            for i in 0..(*sec).linecount as c_int {
+            let mut ok: i32 = 0;
+            for i in 0..(*sec).linecount {
                 let l = *(*sec).lines.offset(i as isize) as *mut line_t;
                 if (*l).flags & LinedefFlag::TWOSIDED as i16 == 0 {
                     continue;
                 }
 
                 let mut tsec = (*l).frontsector;
-                let newsecnum = tsec.offset_from(sectors as *mut sector_t) as c_int;
+                let newsecnum = tsec.offset_from(sectors as *mut sector_t) as i32;
 
                 if secnum != newsecnum {
                     continue;
                 }
 
                 tsec = (*l).backsector;
-                let newsecnum = tsec.offset_from(sectors as *mut sector_t) as c_int;
+                let newsecnum = tsec.offset_from(sectors as *mut sector_t) as i32;
 
                 if (*tsec).floorpic != texture {
                     continue;
@@ -615,7 +612,7 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
                 sec = tsec as *mut cffi::sector_t;
                 let _secnum_new = newsecnum;
                 floor = Z_Malloc(
-                    std::mem::size_of::<floormove_t>() as c_int,
+                    std::mem::size_of::<floormove_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut floormove_t;

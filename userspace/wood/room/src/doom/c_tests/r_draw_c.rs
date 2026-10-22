@@ -7,8 +7,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
-
 use crate::doom::{
     c_ffi,
     c_tests::harness::C_GLOBAL_LOCK,
@@ -62,7 +60,7 @@ fn fuzzoff_equals_screenwidth() {
 // ---------------------------------------------------------------------------
 
 /// Expected `fuzzoffset` values, verbatim from `r_draw.c`.
-const EXPECTED_FUZZ: [c_int; 50] = [
+const EXPECTED_FUZZ: [i32; 50] = [
     320, -320, 320, -320, 320, 320, -320, 320, 320, -320, 320, 320, 320, -320, 320, 320, 320, -320,
     -320, -320, -320, 320, -320, -320, 320, 320, 320, 320, -320, 320, -320, 320, 320, -320, -320,
     320, 320, -320, -320, -320, -320, 320, 320, 320, 320, -320, 320, 320, -320, 320,
@@ -226,36 +224,5 @@ fn r_init_buffer_various_heights_y_formula() {
                 { c_ffi::viewwindowy }
             );
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Draw-parameter globals — verify the C types are the right width.
-// These globals are set by the BSP/clipper before each draw call.
-// ---------------------------------------------------------------------------
-
-/// All column/span draw-parameter globals (`dc_*`, `ds_*`, `fuzzpos`) are
-/// `c_int` (4 bytes); verifies FFI linkage and read-without-UB.
-#[test]
-fn draw_globals_are_c_int_width() {
-    // Compile-time: dc_x, dc_yl, dc_yh, dc_iscale, dc_texturemid, fuzzpos must
-    // all be representable as i32 (= c_int on every supported target).
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        // Just read them — the goal is to ensure the FFI linkage compiles and
-        // the values are valid (no UB on read).
-        let _: c_int = c_ffi::dc_x;
-        let _: c_int = c_ffi::dc_yl;
-        let _: c_int = c_ffi::dc_yh;
-        let _: c_int = c_ffi::dc_iscale;
-        let _: c_int = c_ffi::dc_texturemid;
-        let _: c_int = c_ffi::fuzzpos;
-        let _: c_int = c_ffi::ds_y;
-        let _: c_int = c_ffi::ds_x1;
-        let _: c_int = c_ffi::ds_x2;
-        let _: c_int = c_ffi::ds_xfrac;
-        let _: c_int = c_ffi::ds_yfrac;
-        let _: c_int = c_ffi::ds_xstep;
-        let _: c_int = c_ffi::ds_ystep;
     }
 }

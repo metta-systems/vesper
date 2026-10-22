@@ -13,8 +13,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
-
 use crate::doom::{c_ffi, m_fixed::FRACUNIT, tables::ANG90};
 
 // ---------------------------------------------------------------------------
@@ -27,7 +25,7 @@ use crate::doom::{c_ffi, m_fixed::FRACUNIT, tables::ANG90};
 ///   -FRACUNIT, -47000, 0, 47000}.
 #[test]
 fn xspeed_exact_values() {
-    let expected: [c_int; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
+    let expected: [i32; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
     unsafe {
         for (i, (&got, &want)) in (*&raw const c_ffi::xspeed)
             .iter()
@@ -43,7 +41,7 @@ fn xspeed_exact_values() {
 /// Values: {0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000}.
 #[test]
 fn yspeed_exact_values() {
-    let expected: [c_int; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
+    let expected: [i32; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
     unsafe {
         for (i, (&got, &want)) in (*&raw const c_ffi::yspeed)
             .iter()
@@ -168,19 +166,5 @@ fn numbraintargets_default_zero() {
 fn braintargeton_default_zero() {
     unsafe {
         assert_eq!({ c_ffi::braintargeton }, 0);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// Both speed tables store `fixed_t` (= C `int`, 4 bytes) elements.
-#[test]
-fn speed_tables_are_c_int_width() {
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::xspeed[0];
-        let _: c_int = c_ffi::yspeed[0];
     }
 }

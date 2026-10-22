@@ -164,18 +164,3 @@ fn missiles_max_is_50_clips() {
         assert_eq!(p_inter::maxammo[3], 50 * p_inter::clipammo[3]);
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// Both arrays store `int` (c_int, 4 bytes).
-#[test]
-fn ammo_arrays_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = p_inter::maxammo[0];
-        let _: c_int = p_inter::clipammo[0];
-    }
-}

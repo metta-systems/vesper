@@ -137,22 +137,3 @@ fn castattacking_default_zero() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// All cast integer globals are C `int` (4 bytes).
-#[test]
-fn cast_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::castnum;
-        let _: c_int = c_ffi::casttics;
-        let _: c_int = c_ffi::castdeath;
-        let _: c_int = c_ffi::castframes;
-        let _: c_int = c_ffi::castonmelee;
-        let _: c_int = c_ffi::castattacking;
-    }
-}

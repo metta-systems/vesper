@@ -5,7 +5,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, os::raw::c_int};
+use std::ffi::c_void;
 
 use crate::doom::{
     c_ffi as cffi,
@@ -17,16 +17,16 @@ use crate::doom::{
 };
 
 /// Light change applied each step of the glow oscillation (light units per tic).
-const GLOWSPEED: c_int = 8;
+const GLOWSPEED: i32 = 8;
 
 /// Duration of the bright phase for strobe lights, in tics.
-const STROBEBRIGHT: c_int = 5;
+const STROBEBRIGHT: i32 = 5;
 
 /// Dark-phase duration for fast strobe lights, in tics (`FASTDARK` in C).
-const FASTDARK: c_int = 15;
+const FASTDARK: i32 = 15;
 
 /// Dark-phase duration for slow strobe lights, in tics (`SLOWDARK` in C).
-const SLOWDARK: c_int = 35;
+const SLOWDARK: i32 = 35;
 
 //
 // We only need fields up to `specialdata`.  Verified against C layout
@@ -42,9 +42,9 @@ const SLOWDARK: c_int = 35;
 #[derive(Clone, Copy)]
 pub struct sector_t {
     /// Height of the sector floor in fixed-point units.
-    pub floorheight: c_int,
+    pub floorheight: i32,
     /// Height of the sector ceiling in fixed-point units.
-    pub ceilingheight: c_int,
+    pub ceilingheight: i32,
     /// Flat texture index used for the floor.
     pub floorpic: i16,
     /// Flat texture index used for the ceiling.
@@ -57,21 +57,21 @@ pub struct sector_t {
     pub tag: i16,
     _pad0: [u8; 2],
     /// Number of sound propagation traversals (BSP sound travel counter).
-    pub soundtraversed: c_int,
+    pub soundtraversed: i32,
     /// The map object currently producing sound in this sector, if any.
     pub soundtarget: *mut c_void,
     /// Axis-aligned bounding box of the sector in map coordinates.
-    pub blockbox: [c_int; 4],
+    pub blockbox: [i32; 4],
     /// Degenerate mobj used as the origin point for sector sounds (opaque).
     pub soundorg: [u8; 40], // degenmobj_t (opaque)
     /// Validation counter used during BSP traversal to avoid re-processing.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Linked list of map objects currently standing in this sector.
     pub thinglist: *mut c_void,
     /// Pointer to the active thinker (special effect) operating on this sector.
     pub specialdata: *mut c_void,
     /// Number of linedefs that border this sector.
-    pub linecount: c_int,
+    pub linecount: i32,
     /// Pointer to the array of linedefs that border this sector.
     pub lines: *mut *mut line_t,
 }
@@ -88,11 +88,11 @@ pub struct fireflicker_t {
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
     /// Tics remaining until the next light change.
-    pub count: c_int,
+    pub count: i32,
     /// Sector's original (maximum) light level.
-    pub maxlight: c_int,
+    pub maxlight: i32,
     /// Minimum light level the flicker will not go below.
-    pub minlight: c_int,
+    pub minlight: i32,
     _pad: [u8; 4],
 }
 
@@ -108,15 +108,15 @@ pub struct lightflash_t {
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
     /// Tics remaining until the next light change.
-    pub count: c_int,
+    pub count: i32,
     /// Bright phase light level.
-    pub maxlight: c_int,
+    pub maxlight: i32,
     /// Dark phase light level.
-    pub minlight: c_int,
+    pub minlight: i32,
     /// Bitmask used to generate the random bright-phase duration (`count & maxtime`).
-    pub maxtime: c_int,
+    pub maxtime: i32,
     /// Bitmask used to generate the random dark-phase duration (`count & mintime`).
-    pub mintime: c_int,
+    pub mintime: i32,
 }
 
 /// Thinker state for the strobe-flash lighting effect.
@@ -132,15 +132,15 @@ pub struct strobe_t {
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
     /// Tics remaining until the next phase change.
-    pub count: c_int,
+    pub count: i32,
     /// Dark-phase light level.
-    pub minlight: c_int,
+    pub minlight: i32,
     /// Bright-phase light level.
-    pub maxlight: c_int,
+    pub maxlight: i32,
     /// Duration of the dark phase in tics.
-    pub darktime: c_int,
+    pub darktime: i32,
     /// Duration of the bright phase in tics (always `STROBEBRIGHT` = 5).
-    pub brighttime: c_int,
+    pub brighttime: i32,
 }
 
 /// Thinker state for the smoothly oscillating glow effect.
@@ -155,11 +155,11 @@ pub struct glow_t {
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
     /// Lower bound of the oscillation (minimum light level).
-    pub minlight: c_int,
+    pub minlight: i32,
     /// Upper bound of the oscillation (maximum / original light level).
-    pub maxlight: c_int,
+    pub maxlight: i32,
     /// Direction of travel: `1` = increasing, `-1` = decreasing.
-    pub direction: c_int,
+    pub direction: i32,
     _pad: [u8; 4],
 }
 
@@ -175,9 +175,9 @@ pub struct line_t {
     /// Second vertex of the linedef (opaque pointer).
     pub v2: *mut c_void,
     /// Horizontal component of the line direction vector (dx = v2.x - v1.x).
-    pub dx: c_int,
+    pub dx: i32,
     /// Vertical component of the line direction vector (dy = v2.y - v1.y).
-    pub dy: c_int,
+    pub dy: i32,
     /// Linedef flags (e.g. two-sided, impassable).
     pub flags: i16,
     /// Linedef special type number (triggers an action when activated).
@@ -187,15 +187,15 @@ pub struct line_t {
     /// Side number indices: `[0]` = front, `[1]` = back (-1 if one-sided).
     pub sidenum: [i16; 2],
     /// Axis-aligned bounding box of the linedef in map coordinates.
-    pub bbox: [c_int; 4],
+    pub bbox: [i32; 4],
     /// Slope type classification for quick rejection tests.
-    pub slopetype: c_int,
+    pub slopetype: i32,
     /// Sector on the front side of this linedef.
     pub frontsector: *mut sector_t,
     /// Sector on the back side, or null for one-sided linedefs.
     pub backsector: *mut sector_t,
     /// Validation counter used during traversal to avoid re-processing.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Pointer to an active special effect thinker on this linedef, if any.
     pub specialdata: *mut c_void,
 }
@@ -219,7 +219,7 @@ pub unsafe fn T_FireFlicker(flick: *mut fireflicker_t) {
     let amount = (P_Random() & 3) * 16;
     let sec = &mut *(*flick).sector;
 
-    if (sec.lightlevel as c_int) - amount < (*flick).minlight {
+    if (sec.lightlevel as i32) - amount < (*flick).minlight {
         sec.lightlevel = (*flick).minlight as i16;
     } else {
         sec.lightlevel = ((*flick).maxlight - amount) as i16;
@@ -237,7 +237,7 @@ pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
         (*sector).special = 0;
 
         let flick = Z_Malloc(
-            std::mem::size_of::<fireflicker_t>() as c_int,
+            std::mem::size_of::<fireflicker_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut fireflicker_t;
@@ -249,9 +249,9 @@ pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
             unsafe fn(*mut c_void),
         >(T_FireFlicker));
         (*flick).sector = sector;
-        (*flick).maxlight = (*sector).lightlevel as c_int;
+        (*flick).maxlight = (*sector).lightlevel as i32;
         (*flick).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as c_int)
+            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32)
                 + 16;
         (*flick).count = 4;
     }
@@ -275,7 +275,7 @@ pub unsafe fn T_LightFlash(flash: *mut lightflash_t) {
 
     let sec = &mut *(*flash).sector;
 
-    if sec.lightlevel as c_int == (*flash).maxlight {
+    if sec.lightlevel as i32 == (*flash).maxlight {
         sec.lightlevel = (*flash).minlight as i16;
         (*flash).count = (P_Random() & (*flash).mintime) + 1;
     } else {
@@ -293,7 +293,7 @@ pub fn P_SpawnLightFlash(sector: *mut sector_t) {
         (*sector).special = 0;
 
         let flash = Z_Malloc(
-            std::mem::size_of::<lightflash_t>() as c_int,
+            std::mem::size_of::<lightflash_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut lightflash_t;
@@ -305,9 +305,9 @@ pub fn P_SpawnLightFlash(sector: *mut sector_t) {
             unsafe fn(*mut c_void),
         >(T_LightFlash));
         (*flash).sector = sector;
-        (*flash).maxlight = (*sector).lightlevel as c_int;
+        (*flash).maxlight = (*sector).lightlevel as i32;
         (*flash).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as c_int);
+            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
         (*flash).maxtime = 64;
         (*flash).mintime = 7;
         (*flash).count = (P_Random() & (*flash).maxtime) + 1;
@@ -333,7 +333,7 @@ pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
 
     let sec = &mut *(*flash).sector;
 
-    if sec.lightlevel as c_int == (*flash).minlight {
+    if sec.lightlevel as i32 == (*flash).minlight {
         sec.lightlevel = (*flash).maxlight as i16;
         (*flash).count = (*flash).brighttime;
     } else {
@@ -347,10 +347,10 @@ pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
 /// `fastOrSlow` sets `darktime` (use `FASTDARK` or `SLOWDARK`).
 /// `inSync = 1` starts the flash immediately; `inSync = 0` gives a random offset.
 /// If `minlight == maxlight`, `minlight` is forced to 0.
-pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, inSync: c_int) {
+pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
     unsafe {
         let flash = Z_Malloc(
-            std::mem::size_of::<strobe_t>() as c_int,
+            std::mem::size_of::<strobe_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut strobe_t;
@@ -364,9 +364,9 @@ pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, inSync: c_in
             unsafe fn(*mut strobe_t),
             unsafe fn(*mut c_void),
         >(T_StrobeFlash));
-        (*flash).maxlight = (*sector).lightlevel as c_int;
+        (*flash).maxlight = (*sector).lightlevel as i32;
         (*flash).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as c_int);
+            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
 
         if (*flash).minlight == (*flash).maxlight {
             (*flash).minlight = 0;
@@ -388,7 +388,7 @@ pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, inSync: c_in
 /// have an active special effect are skipped.
 pub fn EV_StartLightStrobing(line: *mut line_t) {
     unsafe {
-        let mut secnum: c_int = -1;
+        let mut secnum: i32 = -1;
         loop {
             secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
             if secnum < 0 {
@@ -415,14 +415,14 @@ pub fn EV_TurnTagLightsOff(line: *mut line_t) {
                 continue;
             }
 
-            let mut min = (*sec).lightlevel as c_int;
+            let mut min = (*sec).lightlevel as i32;
             for i in 0..(*sec).linecount as usize {
                 let templine = *(*sec).lines.add(i);
                 let tsec = getNextSector(templine as *mut cffi::line_t, sec);
                 if tsec.is_null() {
                     continue;
                 }
-                let tl = (*tsec).lightlevel as c_int;
+                let tl = (*tsec).lightlevel as i32;
                 if tl < min {
                     min = tl;
                 }
@@ -436,7 +436,7 @@ pub fn EV_TurnTagLightsOff(line: *mut line_t) {
 ///
 /// If `bright == 0`, the function searches adjacent sectors and uses the
 /// highest light level found among them instead.
-pub fn EV_LightTurnOn(line: *mut line_t, bright: c_int) {
+pub fn EV_LightTurnOn(line: *mut line_t, bright: i32) {
     unsafe {
         let mut bright = bright;
         for i in 0..numsectors as usize {
@@ -452,7 +452,7 @@ pub fn EV_LightTurnOn(line: *mut line_t, bright: c_int) {
                     if temp.is_null() {
                         continue;
                     }
-                    let tl = (*temp).lightlevel as c_int;
+                    let tl = (*temp).lightlevel as i32;
                     if tl > bright {
                         bright = tl;
                     }
@@ -478,14 +478,14 @@ pub unsafe fn T_Glow(g: *mut glow_t) {
     match (*g).direction {
         -1 => {
             sec.lightlevel -= GLOWSPEED as i16;
-            if (sec.lightlevel as c_int) <= (*g).minlight {
+            if (sec.lightlevel as i32) <= (*g).minlight {
                 sec.lightlevel += GLOWSPEED as i16;
                 (*g).direction = 1;
             }
         }
         1 => {
             sec.lightlevel += GLOWSPEED as i16;
-            if (sec.lightlevel as c_int) >= (*g).maxlight {
+            if (sec.lightlevel as i32) >= (*g).maxlight {
                 sec.lightlevel -= GLOWSPEED as i16;
                 (*g).direction = -1;
             }
@@ -502,7 +502,7 @@ pub unsafe fn T_Glow(g: *mut glow_t) {
 pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
     unsafe {
         let g = Z_Malloc(
-            std::mem::size_of::<glow_t>() as c_int,
+            std::mem::size_of::<glow_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut glow_t;
@@ -511,8 +511,8 @@ pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
 
         (*g).sector = sector;
         (*g).minlight =
-            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as c_int);
-        (*g).maxlight = (*sector).lightlevel as c_int;
+            P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as i32);
+        (*g).maxlight = (*sector).lightlevel as i32;
         (*g).thinker.function.acp1 = Some(core::mem::transmute::<
             unsafe fn(*mut glow_t),
             unsafe fn(*mut c_void),

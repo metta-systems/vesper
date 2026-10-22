@@ -21,16 +21,14 @@
 //! Notable Rust-vs-C differences:
 //! * `PlayerQuitGame` takes a player index (`usize`) instead of a `player_t *`
 //!   pointer; pointer arithmetic is replaced by array indexing.
-//! * `DEH_String` is a no-op inline stub (DeHackEd support is not implemented);
-//!   the C original calls into `deh_main.c`.
+//! * `DEH_String` is the identity hook from [`crate::doom::deh_str`]
+//!   (DeHackEd support is not implemented).
 //! * The `DEH_printf` diagnostic prints present in `D_CheckNetGame` in C are
 //!   omitted in this port.
 //! * `deh_sha1sum` in `InitConnectData` is left zeroed (the C original called
 //!   `DEH_Checksum`), guarded by `#if ORIGCODE` in the vendor source.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
-use std::{ffi::c_char, os::raw::c_int};
 
 use crate::doom::d_player::{consoleplayer, players, TiccmdT, MAXPLAYERS};
 
@@ -60,27 +58,27 @@ const SHA1_DIGEST_SIZE: usize = 20;
 #[derive(Clone, Copy)]
 pub struct NetConnectDataT {
     /// Integer encoding of `GameMode_t` (shareware, registered, commercial, …).
-    pub gamemode: c_int,
+    pub gamemode: i32,
     /// Integer encoding of `GameMission_t` (doom, doom2, heretic, …).
-    pub gamemission: c_int,
+    pub gamemission: i32,
     /// Non-zero when recording a demo without `-longtics`; limits turn
     /// resolution to 8-bit (Vanilla compatibility).
-    pub lowres_turn: c_int,
+    pub lowres_turn: i32,
     /// Non-zero when this client is a drone (left/right screen in 3-screen
     /// setup). Set by `-left` or `-right` command-line parameters.
-    pub drone: c_int,
+    pub drone: i32,
     /// Maximum number of players for this game; normally `MAXPLAYERS`.
-    pub max_players: c_int,
+    pub max_players: i32,
     /// Non-zero when the loaded IWAD is Freedoom (detected by the `FREEDOOM`
     /// lump name).
-    pub is_freedoom: c_int,
+    pub is_freedoom: i32,
     /// SHA-1 digest of the WAD directory, used for net-consistency checks.
     pub wad_sha1sum: [u8; SHA1_DIGEST_SIZE],
     /// SHA-1 digest of any loaded DeHackEd patches. Always zeroed in this
     /// port; the C original called `DEH_Checksum` (guarded by `#if ORIGCODE`).
     pub deh_sha1sum: [u8; SHA1_DIGEST_SIZE],
     /// Player class (used by Hexen). Always 0 for Doom/Heretic.
-    pub player_class: c_int,
+    pub player_class: i32,
 }
 
 /// Session-wide game settings exchanged between the server and all clients.
@@ -97,41 +95,41 @@ pub struct NetConnectDataT {
 pub struct NetGameSettingsT {
     /// Number of game tics to duplicate per network packet (for lag
     /// compensation). Always 1 in single-player.
-    pub ticdup: c_int,
+    pub ticdup: i32,
     /// Number of extra tics to send ahead of time for smoother play.
-    pub extratics: c_int,
+    pub extratics: i32,
     /// Deathmatch mode: 0 = cooperative, 1 = deathmatch, 2 = altdeath.
-    pub deathmatch: c_int,
+    pub deathmatch: i32,
     /// Starting episode number (Doom/Heretic episode-based games).
-    pub episode: c_int,
+    pub episode: i32,
     /// Non-zero when monsters are disabled (`-nomonsters`).
-    pub nomonsters: c_int,
+    pub nomonsters: i32,
     /// Non-zero when fast monsters are enabled (`-fast`).
-    pub fast_monsters: c_int,
+    pub fast_monsters: i32,
     /// Non-zero when monsters respawn (`-respawn`).
-    pub respawn_monsters: c_int,
+    pub respawn_monsters: i32,
     /// Starting map number within the episode.
-    pub map: c_int,
+    pub map: i32,
     /// Starting skill level (0 = baby … 4 = nightmare).
-    pub skill: c_int,
+    pub skill: i32,
     /// `GameVersion_t` integer identifying which executable to emulate.
-    pub gameversion: c_int,
+    pub gameversion: i32,
     /// Non-zero when turn resolution is limited to 8-bit (Vanilla demo compat).
-    pub lowres_turn: c_int,
+    pub lowres_turn: i32,
     /// Non-zero when the new network sync protocol is in use.
-    pub new_sync: c_int,
+    pub new_sync: i32,
     /// Per-level time limit in minutes for deathmatch (0 = no limit).
-    pub timelimit: c_int,
+    pub timelimit: i32,
     /// Save-game slot to load at startup (-1 = no load).
-    pub loadgame: c_int,
+    pub loadgame: i32,
     /// Random seed (Strife only).
-    pub random: c_int,
+    pub random: i32,
     /// Number of human players in this session.
-    pub num_players: c_int,
+    pub num_players: i32,
     /// Index of the local player (0-based) within the player array.
-    pub consoleplayer: c_int,
+    pub consoleplayer: i32,
     /// Per-player class array, indexed by player number (Hexen only).
-    pub player_classes: [c_int; NET_MAXPLAYERS],
+    pub player_classes: [i32; NET_MAXPLAYERS],
 }
 
 /// Callback table registered with the game loop layer.
@@ -152,11 +150,11 @@ pub struct LoopInterfaceT {
     /// Called to build a new [`TiccmdT`] from current input state. Bound to
     /// `G_BuildTiccmd`. The second argument is `maketic`, the tic number being
     /// constructed.
-    pub BuildTiccmd: Option<unsafe fn(*mut TiccmdT, c_int)>,
+    pub BuildTiccmd: Option<unsafe fn(*mut TiccmdT, i32)>,
     /// Called to advance the game by one tic with the given player commands.
     /// The `ingame` array has one boolean per player indicating whether that
     /// player is still connected. Bound to the Rust [`RunTic`] function.
-    pub RunTic: Option<unsafe fn(*mut TiccmdT, *mut c_int)>,
+    pub RunTic: Option<unsafe fn(*mut TiccmdT, *mut i32)>,
     /// Called once per tic to run the menu system. Bound to `M_Ticker`.
     pub RunMenu: Option<unsafe fn()>,
 }
@@ -171,6 +169,7 @@ pub static mut netcmds: *mut TiccmdT = std::ptr::null_mut();
 
 use crate::doom::{
     d_loop::{D_InitNetGame, D_RegisterLoopCallbacks, D_StartNetGame},
+    deh_str::DEH_String,
     d_main::{
         advancedemo, autostart, fastparm, nomonsters, respawnparm, startepisode, startloadgame,
         startmap, startskill, D_DoAdvanceDemo, D_ProcessEvents,
@@ -214,15 +213,15 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
 
     /// 80-byte scratch buffer holding the formatted "Player N left the game"
     /// message; its address is passed to the console-player's message pointer.
-    static mut EXITMSG: [c_char; EXITMSG_LEN] = [0; EXITMSG_LEN];
+    static mut EXITMSG: [u8; EXITMSG_LEN] = [0; EXITMSG_LEN];
 
     M_StringCopy(
         std::ptr::addr_of_mut!(EXITMSG[0]),
-        DEH_String(EXIT_MSG.as_ptr() as *const c_char),
+        DEH_String(EXIT_MSG.as_ptr()),
         EXITMSG_LEN,
     );
 
-    EXITMSG[7] += player_idx as c_char;
+    EXITMSG[7] += player_idx as u8;
 
     playeringame[player_idx] = 0;
     (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
@@ -249,8 +248,8 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
 ///
 /// `cmds` must point to a valid array of at least `MAXPLAYERS` [`TiccmdT`]
 /// values. `ingame` must point to a valid array of at least `MAXPLAYERS`
-/// `c_int` values. All global game state must be consistently initialised.
-unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut c_int) {
+/// `i32` values. All global game state must be consistently initialised.
+unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut i32) {
     for i in 0..MAXPLAYERS {
         if demoplayback == 0 && playeringame[i] != 0 && *ingame.add(i) == 0 {
             PlayerQuitGame(i);
@@ -330,12 +329,13 @@ unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
     (*settings).fast_monsters = fastparm;
     (*settings).respawn_monsters = respawnparm;
     (*settings).timelimit = timelimit;
-    (*settings).lowres_turn =
-        if M_CheckParm(c"-record".as_ptr()) > 0 && M_CheckParm(c"-longtics".as_ptr()) == 0 {
-            1
-        } else {
-            0
-        };
+    (*settings).lowres_turn = if M_CheckParm(c"-record".as_ptr().cast()) > 0
+        && M_CheckParm(c"-longtics".as_ptr().cast()) == 0
+    {
+        1
+    } else {
+        0
+    };
 }
 
 /// Populate a `NetConnectDataT` from the current engine state and command line.
@@ -357,33 +357,33 @@ unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
 /// `connect_data` must point to a writable `NetConnectDataT`. Global state
 /// (`gamemode`, `gamemission`, `viewangleoffset`) must be valid.
 unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
-    (*connect_data).max_players = MAXPLAYERS as c_int;
+    (*connect_data).max_players = MAXPLAYERS as i32;
     (*connect_data).drone = 0;
 
-    if M_CheckParm(c"-left".as_ptr()) > 0 {
-        viewangleoffset = 0x40000000u32 as c_int;
+    if M_CheckParm(c"-left".as_ptr().cast()) > 0 {
+        viewangleoffset = 0x40000000u32 as i32;
         (*connect_data).drone = 1;
     }
 
-    if M_CheckParm(c"-right".as_ptr()) > 0 {
-        viewangleoffset = 0xC0000000u32 as c_int;
+    if M_CheckParm(c"-right".as_ptr().cast()) > 0 {
+        viewangleoffset = 0xC0000000u32 as i32;
         (*connect_data).drone = 1;
     }
 
     (*connect_data).gamemode = gamemode;
     (*connect_data).gamemission = gamemission;
 
-    (*connect_data).lowres_turn =
-        if M_CheckParm(c"-record".as_ptr()) > 0 && M_CheckParm(c"-longtics".as_ptr()) == 0 {
-            1
-        } else {
-            0
-        };
+    (*connect_data).lowres_turn = if M_CheckParm(c"-record".as_ptr().cast()) > 0
+        && M_CheckParm(c"-longtics".as_ptr().cast()) == 0
+    {
+        1
+    } else {
+        0
+    };
 
     W_Checksum(&raw mut (*connect_data).wad_sha1sum);
 
-    let name = b"FREEDOOM\0";
-    (*connect_data).is_freedoom = if W_CheckNumForName(name.as_ptr() as *const c_char) >= 0 {
+    (*connect_data).is_freedoom = if W_CheckNumForName(b"FREEDOOM") >= 0 {
         1
     } else {
         0
@@ -396,17 +396,6 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
 /// player number. The string is NUL-terminated and matches the C literal
 /// `"Player 1 left the game"` passed to `DEH_String` in `d_net.c`.
 static EXIT_MSG: [u8; 23] = *b"Player 1 left the game\0";
-
-/// No-op DeHackEd string lookup stub.
-///
-/// In the original engine `DEH_String` looked up a string in the DeHackEd
-/// patch database and returned the replacement if one was loaded. This port
-/// does not implement DeHackEd, so the input pointer is returned unchanged.
-/// Corresponds to `DEH_String` from `deh_main.h`.
-#[inline(always)]
-unsafe fn DEH_String(s: *const c_char) -> *const c_char {
-    s
-}
 
 /// The loop callback table registered with `d_loop.c`.
 ///
@@ -437,7 +426,7 @@ pub fn D_ConnectNetGame() {
         InitConnectData(&mut connect_data);
         netgame = D_InitNetGame(&mut connect_data);
 
-        if M_CheckParm(c"-solo-net".as_ptr()) > 0 {
+        if M_CheckParm(c"-solo-net".as_ptr().cast()) > 0 {
             netgame = 1;
         }
     }

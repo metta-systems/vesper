@@ -6,7 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::i_error, std::os::raw::c_int};
+use crate::i_error;
 
 use crate::doom::m_fixed::{FixedDiv, FixedMul};
 
@@ -30,13 +30,13 @@ const NF_SUBSECTOR: u32 = 0x8000;
 #[derive(Clone, Copy)]
 pub struct divline_t {
     /// X coordinate of the ray origin (fixed-point map units).
-    pub x: c_int,
+    pub x: i32,
     /// Y coordinate of the ray origin (fixed-point map units).
-    pub y: c_int,
+    pub y: i32,
     /// X component of the ray direction (fixed-point).
-    pub dx: c_int,
+    pub dx: i32,
     /// Y component of the ray direction (fixed-point).
-    pub dy: c_int,
+    pub dy: i32,
 }
 
 /// A two-dimensional vertex in fixed-point map coordinates.
@@ -46,9 +46,9 @@ pub struct divline_t {
 #[derive(Clone, Copy)]
 pub struct vertex_t {
     /// X coordinate (fixed-point map units).
-    pub x: c_int,
+    pub x: i32,
     /// Y coordinate (fixed-point map units).
-    pub y: c_int,
+    pub y: i32,
 }
 
 /// A BSP leaf node grouping a contiguous run of segs.
@@ -78,7 +78,7 @@ pub struct seg_t {
     /// End vertex of this segment.
     pub v2: *mut vertex_t,
     /// Texture offset along the linedef (fixed-point).
-    pub offset: c_int,
+    pub offset: i32,
     /// Angle of this segment (binary angle measurement).
     pub angle: u32,
     /// Sidedef that provides textures for this seg.
@@ -105,16 +105,16 @@ pub struct seg_t {
 #[derive(Clone, Copy)]
 pub struct node_t {
     /// X coordinate of the partition line origin.
-    pub x: c_int,
+    pub x: i32,
     /// Y coordinate of the partition line origin.
-    pub y: c_int,
+    pub y: i32,
     /// X component of the partition line direction.
-    pub dx: c_int,
+    pub dx: i32,
     /// Y component of the partition line direction.
-    pub dy: c_int,
+    pub dy: i32,
     /// Bounding boxes for each child: `bbox[0]` is front, `bbox[1]` is back.
     /// Each box is `[top, bottom, left, right]` in fixed-point map units.
-    pub bbox: [[c_int; 4]; 2],
+    pub bbox: [[i32; 4]; 2],
     /// Child indices: front (`children[0]`) and back (`children[1]`).
     /// If bit 15 (`NF_SUBSECTOR`) is set the index refers to a subsector leaf.
     pub children: [u16; 2],
@@ -130,9 +130,9 @@ use std::ffi::c_void;
 #[derive(Clone, Copy)]
 pub struct sector_t {
     /// Floor height (fixed-point map units).
-    pub floorheight: c_int,
+    pub floorheight: i32,
     /// Ceiling height (fixed-point map units).
-    pub ceilingheight: c_int,
+    pub ceilingheight: i32,
     /// Floor flat texture number.
     pub floorpic: i16,
     /// Ceiling flat texture number.
@@ -145,21 +145,21 @@ pub struct sector_t {
     pub tag: i16,
     _pad0: [u8; 2],
     /// Sound traversal counter (used by sound propagation).
-    pub soundtraversed: c_int,
+    pub soundtraversed: i32,
     /// Last sound-emitting mobj in this sector.
     pub soundtarget: *mut c_void,
     /// Bounding box of the sector in blockmap units.
-    pub blockbox: [c_int; 4],
+    pub blockbox: [i32; 4],
     /// Origin point for sector sounds (opaque 40-byte `mobj_t`-like struct).
     pub soundorg: [u8; 40],
     /// Validity stamp; updated each traversal to avoid duplicate processing.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Head of the linked list of things in this sector.
     pub thinglist: *mut c_void,
     /// In-progress thinker data (used by door/floor/ceiling specials).
     pub specialdata: *mut c_void,
     /// Number of linedefs bounding this sector.
-    pub linecount: c_int,
+    pub linecount: i32,
     /// Array of pointers to the linedefs bounding this sector.
     pub lines: *mut *mut c_void,
 }
@@ -176,9 +176,9 @@ pub struct line_t {
     /// End vertex.
     pub v2: *mut vertex_t,
     /// Precomputed `v2.x - v1.x` (fixed-point).
-    pub dx: c_int,
+    pub dx: i32,
     /// Precomputed `v2.y - v1.y` (fixed-point).
-    pub dy: c_int,
+    pub dy: i32,
     /// Linedef flags bitmask (`ML_*` constants from `doomdata.h`).
     pub flags: i16,
     /// Special action type triggered by this line.
@@ -189,15 +189,15 @@ pub struct line_t {
     /// (`-1` means no back side).
     pub sidenum: [i16; 2],
     /// Axis-aligned bounding box of the line in map units.
-    pub bbox: [c_int; 4],
+    pub bbox: [i32; 4],
     /// Slope type used for fast side-of-line tests (`ST_HORIZONTAL` etc.).
-    pub slopetype: c_int,
+    pub slopetype: i32,
     /// Sector on the front side.
     pub frontsector: *mut sector_t,
     /// Sector on the back side (`NULL` for one-sided lines).
     pub backsector: *mut sector_t,
     /// Validity stamp for blockmap/BSP traversal deduplication.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// In-progress special data (e.g. active door thinker pointer).
     pub specialdata: *mut c_void,
 }
@@ -206,19 +206,19 @@ pub struct line_t {
 ///
 /// Set by `P_CheckSight` to `t1->z + t1->height - (t1->height >> 2)` before
 /// BSP traversal. Read by `P_CrossSubsector` for slope comparisons.
-pub static mut sightzstart: c_int = 0;
+pub static mut sightzstart: i32 = 0;
 
 /// Upper slope bound for the sight corridor (fixed-point).
 ///
 /// Initialised to the slope from `sightzstart` to the top of the target.
 /// Narrowed downward as occluding portals are encountered.
-pub static mut topslope: c_int = 0;
+pub static mut topslope: i32 = 0;
 
 /// Lower slope bound for the sight corridor (fixed-point).
 ///
 /// Initialised to the slope from `sightzstart` to the bottom of the target.
 /// Narrowed upward as occluding portals are encountered.
-pub static mut bottomslope: c_int = 0;
+pub static mut bottomslope: i32 = 0;
 
 /// The sight-trace ray from `t1` to `t2`, stored as a `divline_t`.
 ///
@@ -235,16 +235,16 @@ pub static mut strace: divline_t = divline_t {
 ///
 /// Stored separately from `strace` so that `P_CrossBSPNode` can test which
 /// side of each partition the target falls on without a full ray struct.
-pub static mut t2x: c_int = 0;
+pub static mut t2x: i32 = 0;
 
 /// Y coordinate of the sight target (`t2->y`).
 ///
 /// See `t2x`.
-pub static mut t2y: c_int = 0;
+pub static mut t2y: i32 = 0;
 
 /// Diagnostic counters: `sightcounts[0]` is REJECT table hits (early-out),
 /// `sightcounts[1]` is full BSP traversals attempted.
-pub static mut sightcounts: [c_int; 2] = [0, 0];
+pub static mut sightcounts: [i32; 2] = [0, 0];
 
 use crate::doom::{
     p_setup::{
@@ -265,15 +265,15 @@ pub use crate::doom::p_telept::mobj_t;
 /// a deliberate quirk inherited from the original Doom source: it tests
 /// `x == node.y` rather than `y == node.y`. This is intentional for
 /// demo-compatible determinism; do not correct it.
-fn P_DivlineSide(x: c_int, y: c_int, node: &divline_t) -> c_int {
+fn P_DivlineSide(x: i32, y: i32, node: &divline_t) -> i32 {
     if node.dx == 0 {
         if x == node.x {
             return 2;
         }
         return if x <= node.x {
-            (node.dy > 0) as c_int
+            (node.dy > 0) as i32
         } else {
-            (node.dy < 0) as c_int
+            (node.dy < 0) as i32
         };
     }
 
@@ -285,9 +285,9 @@ fn P_DivlineSide(x: c_int, y: c_int, node: &divline_t) -> c_int {
             return 2;
         }
         return if y <= node.y {
-            (node.dx < 0) as c_int
+            (node.dx < 0) as i32
         } else {
-            (node.dx > 0) as c_int
+            (node.dx > 0) as i32
         };
     }
 
@@ -314,7 +314,7 @@ fn P_DivlineSide(x: c_int, y: c_int, node: &divline_t) -> c_int {
 ///
 /// Matches `P_InterceptVector2` in `p_sight.c` (the sight-local variant; the
 /// publicly exported version lives in `p_maputl.rs` as `P_InterceptVector`).
-fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> c_int {
+fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> i32 {
     let den = FixedMul(v1.dy >> 8, v2.dx) - FixedMul(v1.dx >> 8, v2.dy);
 
     if den == 0 {
@@ -337,7 +337,7 @@ fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> c_int {
 /// Returns `true` if the ray is unobstructed through this subsector.
 ///
 /// Matches `P_CrossSubsector` in `p_sight.c`.
-fn P_CrossSubsector(num: c_int) -> bool {
+fn P_CrossSubsector(num: i32) -> bool {
     unsafe {
         let strace_copy = strace;
         let numsubsectors_val = *std::ptr::addr_of!(numsubsectors);
@@ -351,7 +351,7 @@ fn P_CrossSubsector(num: c_int) -> bool {
 
         let sub = &*(p_setup_subsectors as *mut subsector_t).add(num as usize);
 
-        let mut count = sub.numlines as c_int;
+        let mut count = sub.numlines as i32;
         let mut seg_ptr = (p_setup_segs as *mut seg_t).add(sub.firstline as usize);
 
         while count > 0 {
@@ -486,14 +486,14 @@ fn node_as_divline(node: &node_t) -> divline_t {
 /// Returns `true` if the sight ray is unobstructed through `bspnum`.
 ///
 /// Matches `P_CrossBSPNode` in `p_sight.c`.
-fn P_CrossBSPNode(bspnum: c_int) -> bool {
+fn P_CrossBSPNode(bspnum: i32) -> bool {
     unsafe {
         let strace_copy = strace;
-        if bspnum & NF_SUBSECTOR as c_int != 0 {
+        if bspnum & NF_SUBSECTOR as i32 != 0 {
             if bspnum == -1 {
                 return P_CrossSubsector(0);
             } else {
-                return P_CrossSubsector(bspnum & !(NF_SUBSECTOR as c_int));
+                return P_CrossSubsector(bspnum & !(NF_SUBSECTOR as i32));
             }
         }
 
@@ -504,7 +504,7 @@ fn P_CrossBSPNode(bspnum: c_int) -> bool {
         let side = if side == 2 { 0 } else { side };
 
         // Cross the starting side.
-        if !P_CrossBSPNode(bsp.children[side as usize] as c_int) {
+        if !P_CrossBSPNode(bsp.children[side as usize] as i32) {
             return false;
         }
 
@@ -516,7 +516,7 @@ fn P_CrossBSPNode(bspnum: c_int) -> bool {
         }
 
         // Cross the ending side.
-        P_CrossBSPNode(bsp.children[(side ^ 1) as usize] as c_int)
+        P_CrossBSPNode(bsp.children[(side ^ 1) as usize] as i32)
     }
 }
 
@@ -529,7 +529,7 @@ fn P_CrossBSPNode(bspnum: c_int) -> bool {
 ///    `bottomslope` at each two-sided portal until the ray is either confirmed
 ///    clear or blocked.
 ///
-/// Returns a C `boolean` (`c_int`, non-zero = visible) rather than Rust `bool`
+/// Returns a C `boolean` (`i32`, non-zero = visible) rather than Rust `bool`
 /// because Doom's `typedef unsigned int boolean` makes the C caller read a
 /// 32-bit value. Returning `bool` (1 byte) would leave the upper 24 bits
 /// undefined and cause sight checks to randomly succeed or fail, desynchronising
@@ -541,7 +541,7 @@ fn P_CrossBSPNode(bspnum: c_int) -> bool {
 /// Both `t1` and `t2` must be valid, non-null pointers to initialised
 /// `mobj_t` instances. Their `subsector` fields must point into the live
 /// subsector/sector arrays loaded by `p_setup`.
-pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
+pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
     unsafe {
         // Cast both pointers through *const u8 to sidestep the fact that
         // mobj_t (from p_telept) references a different sector_t type than
@@ -549,10 +549,10 @@ pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
         let sec_size = std::mem::size_of::<sector_t>() as isize;
         let s1 = (((*(*t1).subsector).sector as *const u8)
             .offset_from(p_setup_sectors as *const u8)
-            / sec_size) as c_int;
+            / sec_size) as i32;
         let s2 = (((*(*t2).subsector).sector as *const u8)
             .offset_from(p_setup_sectors as *const u8)
-            / sec_size) as c_int;
+            / sec_size) as i32;
         let pnum = s1 * numsectors + s2;
         let bytenum = pnum >> 3;
         let bitnum = 1 << (pnum & 7);
@@ -577,7 +577,7 @@ pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
         strace.dx = (*t2).x - (*t1).x;
         strace.dy = (*t2).y - (*t1).y;
 
-        P_CrossBSPNode(numnodes - 1) as c_int
+        P_CrossBSPNode(numnodes - 1) as i32
     }
 }
 

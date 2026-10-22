@@ -26,10 +26,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_short, c_uchar, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use super::{
     m_fixed::{angle_t, fixed_t, FixedMul, FRACBITS},
@@ -51,16 +48,16 @@ const HEIGHTBITS: u32 = 12;
 ///
 /// Added to `topfrac` before the right-shift to achieve ceiling (upward)
 /// rounding when computing `yl`.
-const HEIGHTUNIT: c_int = 1 << HEIGHTBITS;
+const HEIGHTUNIT: i32 = 1 << HEIGHTBITS;
 
 /// Silhouette flag: this drawseg occludes sprites below its bottom edge.
-const SIL_BOTTOM: c_int = 1;
+const SIL_BOTTOM: i32 = 1;
 
 /// Silhouette flag: this drawseg occludes sprites above its top edge.
-const SIL_TOP: c_int = 2;
+const SIL_TOP: i32 = 2;
 
 /// Silhouette flag: this drawseg occludes sprites on both sides.
-const SIL_BOTH: c_int = 3;
+const SIL_BOTH: i32 = 3;
 
 /// Number of distinct light levels used by the colormap tables.
 const LIGHTLEVELS: usize = 16;
@@ -109,45 +106,45 @@ use crate::doom::{
 ///Set by [`R_StoreWallRange`]
 /// as the OR of `midtexture | toptexture | bottomtexture | maskedtexture`.
 /// Controls whether `R_RenderSegLoop` computes texture-U and lighting.
-pub static mut segtextured: c_int = 0;
+pub static mut segtextured: i32 = 0;
 
 /// Non-zero when the floor plane must be extended for this seg.
 ///
 ///Set by [`R_StoreWallRange`].
 /// A floor mark is needed when the back sector has a different floor flat,
 /// height, or light level, or when the seg is single-sided.
-pub static mut markfloor: c_int = 0;
+pub static mut markfloor: i32 = 0;
 
 /// Non-zero when the ceiling plane must be extended for this seg.
 ///
 ///Set by [`R_StoreWallRange`].
 /// Analogous to [`markfloor`] for the ceiling.
-pub static mut markceiling: c_int = 0;
+pub static mut markceiling: i32 = 0;
 
 /// Non-zero when the seg has a transparent mid-texture on a two-sided line.
 ///
 ///When set, [`R_StoreWallRange`]
 /// reserves a column slice in the `openings` scratch buffer and
 /// [`R_RenderMaskedSegRange`] later draws it after all opaque geometry.
-pub static mut maskedtexture: c_int = 0;
+pub static mut maskedtexture: i32 = 0;
 
 /// Translated texture number for the upper wall texture (0 = none).
 ///
 ///Set by [`R_StoreWallRange`]
 /// from `sidedef->toptexture` via `texturetranslation`.
-pub static mut toptexture: c_int = 0;
+pub static mut toptexture: i32 = 0;
 
 /// Translated texture number for the lower wall texture (0 = none).
 ///
 ///Set by [`R_StoreWallRange`]
 /// from `sidedef->bottomtexture` via `texturetranslation`.
-pub static mut bottomtexture: c_int = 0;
+pub static mut bottomtexture: i32 = 0;
 
 /// Translated texture number for the middle wall texture (0 = none).
 ///
 ///Non-zero only for single-sided
 /// lines (or masked mid-textures, tracked separately via [`maskedtexture`]).
-pub static mut midtexture: c_int = 0;
+pub static mut midtexture: i32 = 0;
 
 /// Normal angle of the current seg's linedef (perpendicular to the wall).
 ///
@@ -166,13 +163,13 @@ pub static mut rw_angle1: angle_t = 0;
 ///
 ///Also used as the loop variable
 /// inside `R_RenderSegLoop`.
-pub static mut rw_x: c_int = 0;
+pub static mut rw_x: i32 = 0;
 
 /// Screen column where rendering of the current seg stops (exclusive).
 ///
 ///Set to `stop + 1` in
 /// [`R_StoreWallRange`].
-pub static mut rw_stopx: c_int = 0;
+pub static mut rw_stopx: i32 = 0;
 
 /// Angle used to compute the texture-U coordinate for each column.
 ///
@@ -224,25 +221,25 @@ pub static mut rw_bottomtexturemid: fixed_t = 0;
 ///
 ///Used as the top boundary for
 /// wall-texture rendering.  Shifted right by 4 before the seg loop.
-pub static mut worldtop: c_int = 0;
+pub static mut worldtop: i32 = 0;
 
 /// Front sector floor height minus `viewz`, in world units (not fixed-point).
 ///
 ///Used as the bottom boundary for
 /// wall-texture rendering.  Shifted right by 4 before the seg loop.
-pub static mut worldbottom: c_int = 0;
+pub static mut worldbottom: i32 = 0;
 
 /// Back sector ceiling height minus `viewz`, in world units (not fixed-point).
 ///
 ///Meaningful only for two-sided
 /// lines; used to determine if an upper texture is needed.
-pub static mut worldhigh: c_int = 0;
+pub static mut worldhigh: i32 = 0;
 
 /// Back sector floor height minus `viewz`, in world units (not fixed-point).
 ///
 ///Meaningful only for two-sided
 /// lines; used to determine if a lower texture is needed.
-pub static mut worldlow: c_int = 0;
+pub static mut worldlow: i32 = 0;
 
 /// Screen-y of the top of the upper texture at the current column (scaled).
 ///
@@ -285,15 +282,15 @@ pub static mut bottomstep: fixed_t = 0;
 ///Points into
 /// `scalelight[lightnum]`; indexed by `rw_scale >> LIGHTSCALESHIFT` to pick
 /// the per-column colormap.
-pub static mut walllights: *mut *mut c_uchar = ptr::null_mut();
+pub static mut walllights: *mut *mut u8 = ptr::null_mut();
 
 /// Per-column texture-U coordinate buffer for masked mid-textures.
 ///
 ///Points into the `openings`
 /// scratch buffer (in `r_plane`); written by `R_RenderSegLoop` and consumed by
-/// [`R_RenderMaskedSegRange`].  A value of `c_short::MAX` (SHRT_MAX) means the
+/// [`R_RenderMaskedSegRange`].  A value of `i16::MAX` (SHRT_MAX) means the
 /// column has already been drawn or is not present.
-pub static mut maskedtexturecol: *mut c_short = ptr::null_mut();
+pub static mut maskedtexturecol: *mut i16 = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
 // R_RenderMaskedSegRange
@@ -314,15 +311,15 @@ pub static mut maskedtexturecol: *mut c_short = ptr::null_mut();
 /// within `ds` (`curline`, `maskedtexturecol`, `sprbottomclip`,
 /// `sprtopclip`) must still be valid.  Reads and writes numerous
 /// `static mut` renderer globals.
-pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
-    let texnum: c_int = *texturetranslation.add((*(*(*ds).curline).sidedef).midtexture as usize);
+pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: i32, x2: i32) {
+    let texnum: i32 = *texturetranslation.add((*(*(*ds).curline).sidedef).midtexture as usize);
 
     curline = (*ds).curline;
     frontsector = (*curline).frontsector;
     backsector = (*curline).backsector;
 
-    let mut lightnum: c_int =
-        (((*frontsector).lightlevel as u32) >> LIGHTSEGSHIFT) as c_int + extralight;
+    let mut lightnum: i32 =
+        (((*frontsector).lightlevel as u32) >> LIGHTSEGSHIFT) as i32 + extralight;
 
     if (*(*curline).v1).y == (*(*curline).v2).y {
         lightnum -= 1;
@@ -332,7 +329,7 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
 
     if lightnum < 0 {
         walllights = scalelight[0].as_mut_ptr();
-    } else if lightnum >= LIGHTLEVELS as c_int {
+    } else if lightnum >= LIGHTLEVELS as i32 {
         walllights = scalelight[LIGHTLEVELS - 1].as_mut_ptr();
     } else {
         walllights = scalelight[lightnum as usize].as_mut_ptr();
@@ -344,7 +341,7 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
     crate::doom::r_things::mfloorclip = (*ds).sprbottomclip;
     crate::doom::r_things::mceilingclip = (*ds).sprtopclip;
 
-    if (*(*curline).linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as c_short) != 0 {
+    if (*(*curline).linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
         dc_texturemid = if (*frontsector).floorheight > (*backsector).floorheight {
             (*frontsector).floorheight
         } else {
@@ -367,7 +364,7 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
 
     dc_x = x1;
     while dc_x <= x2 {
-        if *maskedtexturecol.add(dc_x as usize) != c_short::MAX {
+        if *maskedtexturecol.add(dc_x as usize) != i16::MAX {
             if fixedcolormap.is_null() {
                 let mut index = (crate::doom::r_things::spryscale as u32) >> LIGHTSCALESHIFT;
                 if index >= MAXLIGHTSCALE as u32 {
@@ -378,13 +375,13 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
 
             crate::doom::r_things::sprtopscreen =
                 centeryfrac - FixedMul(dc_texturemid, crate::doom::r_things::spryscale);
-            dc_iscale = (0xffffffff_u32 / (crate::doom::r_things::spryscale as u32)) as c_int;
+            dc_iscale = (0xffffffff_u32 / (crate::doom::r_things::spryscale as u32)) as i32;
 
-            let raw = R_GetColumn(texnum, *maskedtexturecol.add(dc_x as usize) as c_int);
+            let raw = R_GetColumn(texnum, *maskedtexturecol.add(dc_x as usize) as i32);
             let col = raw.sub(3);
             R_DrawMaskedColumn(col as *mut c_void);
 
-            *maskedtexturecol.add(dc_x as usize) = c_short::MAX;
+            *maskedtexturecol.add(dc_x as usize) = i16::MAX;
         }
         crate::doom::r_things::spryscale += rw_scalestep;
         dc_x += 1;
@@ -419,10 +416,10 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: c_int, x2: c_int) {
 /// `colfunc`) must be valid for the current frame.
 unsafe fn R_RenderSegLoop() {
     while rw_x < rw_stopx {
-        let clip_ceil = ceilingclip[rw_x as usize] as c_int;
-        let clip_floor = floorclip[rw_x as usize] as c_int;
+        let clip_ceil = ceilingclip[rw_x as usize] as i32;
+        let clip_floor = floorclip[rw_x as usize] as i32;
 
-        let mut yl = ((topfrac + HEIGHTUNIT - 1) >> HEIGHTBITS) as c_int;
+        let mut yl = (topfrac + HEIGHTUNIT - 1) >> HEIGHTBITS;
         if yl < clip_ceil + 1 {
             yl = clip_ceil + 1;
         }
@@ -439,7 +436,7 @@ unsafe fn R_RenderSegLoop() {
             }
         }
 
-        let mut yh = (bottomfrac >> HEIGHTBITS) as c_int;
+        let mut yh = bottomfrac >> HEIGHTBITS;
         if yh >= clip_floor {
             yh = clip_floor - 1;
         }
@@ -469,7 +466,7 @@ unsafe fn R_RenderSegLoop() {
             }
             dc_colormap = *walllights.add(index as usize);
             dc_x = rw_x;
-            dc_iscale = (0xffffffff_u32 / (rw_scale as u32)) as c_int;
+            dc_iscale = (0xffffffff_u32 / (rw_scale as u32)) as i32;
         } else {
             texturecolumn = 0;
         }
@@ -482,14 +479,14 @@ unsafe fn R_RenderSegLoop() {
             if let Some(func) = colfunc {
                 func();
             }
-            ceilingclip[rw_x as usize] = viewheight as c_short;
+            ceilingclip[rw_x as usize] = viewheight as i16;
             floorclip[rw_x as usize] = -1;
         } else {
             if toptexture != 0 {
-                let mut mid = (pixhigh >> HEIGHTBITS) as c_int;
+                let mut mid = pixhigh >> HEIGHTBITS;
                 pixhigh += pixhighstep;
 
-                let clip_floor = floorclip[rw_x as usize] as c_int;
+                let clip_floor = floorclip[rw_x as usize] as i32;
                 if mid >= clip_floor {
                     mid = clip_floor - 1;
                 }
@@ -502,21 +499,21 @@ unsafe fn R_RenderSegLoop() {
                     if let Some(func) = colfunc {
                         func();
                     }
-                    ceilingclip[rw_x as usize] = mid as c_short;
+                    ceilingclip[rw_x as usize] = mid as i16;
                 } else {
-                    ceilingclip[rw_x as usize] = (yl - 1) as c_short;
+                    ceilingclip[rw_x as usize] = (yl - 1) as i16;
                 }
             } else {
                 if markceiling != 0 {
-                    ceilingclip[rw_x as usize] = (yl - 1) as c_short;
+                    ceilingclip[rw_x as usize] = (yl - 1) as i16;
                 }
             }
 
             if bottomtexture != 0 {
-                let mut mid = ((pixlow + HEIGHTUNIT - 1) >> HEIGHTBITS) as c_int;
+                let mut mid = (pixlow + HEIGHTUNIT - 1) >> HEIGHTBITS;
                 pixlow += pixlowstep;
 
-                let clip_ceil = ceilingclip[rw_x as usize] as c_int;
+                let clip_ceil = ceilingclip[rw_x as usize] as i32;
                 if mid <= clip_ceil {
                     mid = clip_ceil + 1;
                 }
@@ -529,18 +526,18 @@ unsafe fn R_RenderSegLoop() {
                     if let Some(func) = colfunc {
                         func();
                     }
-                    floorclip[rw_x as usize] = mid as c_short;
+                    floorclip[rw_x as usize] = mid as i16;
                 } else {
-                    floorclip[rw_x as usize] = (yh + 1) as c_short;
+                    floorclip[rw_x as usize] = (yh + 1) as i16;
                 }
             } else {
                 if markfloor != 0 {
-                    floorclip[rw_x as usize] = (yh + 1) as c_short;
+                    floorclip[rw_x as usize] = (yh + 1) as i16;
                 }
             }
 
             if maskedtexture != 0 {
-                *maskedtexturecol.add(rw_x as usize) = (texturecolumn >> FRACBITS) as c_short;
+                *maskedtexturecol.add(rw_x as usize) = (texturecolumn >> FRACBITS) as i16;
             }
         }
 
@@ -581,7 +578,7 @@ unsafe fn R_RenderSegLoop() {
 //        *previous* seg when `stop == start`.  The C source has the same
 //        behaviour, so this is intentional, but it means `ds_p->scalestep`
 //        may hold a stale value for single-column segs.
-pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
+pub unsafe fn R_StoreWallRange(start: i32, stop: i32) {
     if ds_p == std::ptr::addr_of_mut!(drawsegs[0]).add(MAXDRAWSEGS) {
         return;
     }
@@ -597,7 +594,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
     sidedef = (*curline).sidedef;
     linedef = (*curline).linedef;
 
-    (*linedef).flags |= super::c_ffi::LinedefFlag::MAPPED as c_short;
+    (*linedef).flags |= super::c_ffi::LinedefFlag::MAPPED as i16;
 
     rw_normalangle = (*curline).angle.wrapping_add(ANG90);
     let mut offsetangle = (rw_normalangle.wrapping_sub(rw_angle1) as i32).unsigned_abs();
@@ -646,7 +643,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
         markfloor = 1;
         markceiling = 1;
 
-        if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as c_short) != 0 {
+        if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
             let vtop =
                 (*frontsector).floorheight + *textureheight.add((*sidedef).midtexture as usize);
             rw_midtexturemid = vtop - viewz;
@@ -658,8 +655,8 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
         (*ds_p).silhouette = SIL_BOTH;
         (*ds_p).sprtopclip = std::ptr::addr_of_mut!(screenheightarray[0]);
         (*ds_p).sprbottomclip = std::ptr::addr_of_mut!(negonearray[0]);
-        (*ds_p).bsilheight = c_int::MAX;
-        (*ds_p).tsilheight = c_int::MIN;
+        (*ds_p).bsilheight = i32::MAX;
+        (*ds_p).tsilheight = i32::MIN;
     } else {
         // two sided line
         (*ds_p).sprtopclip = ptr::null_mut();
@@ -671,7 +668,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
             (*ds_p).bsilheight = (*frontsector).floorheight;
         } else if (*backsector).floorheight > viewz {
             (*ds_p).silhouette = SIL_BOTTOM;
-            (*ds_p).bsilheight = c_int::MAX;
+            (*ds_p).bsilheight = i32::MAX;
         }
 
         if (*frontsector).ceilingheight < (*backsector).ceilingheight {
@@ -679,26 +676,26 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
             (*ds_p).tsilheight = (*frontsector).ceilingheight;
         } else if (*backsector).ceilingheight < viewz {
             (*ds_p).silhouette |= SIL_TOP;
-            (*ds_p).tsilheight = c_int::MIN;
+            (*ds_p).tsilheight = i32::MIN;
         }
 
         if (*backsector).ceilingheight <= (*frontsector).floorheight {
             (*ds_p).sprbottomclip = std::ptr::addr_of_mut!(negonearray[0]);
-            (*ds_p).bsilheight = c_int::MAX;
+            (*ds_p).bsilheight = i32::MAX;
             (*ds_p).silhouette |= SIL_BOTTOM;
         }
 
         if (*backsector).floorheight >= (*frontsector).ceilingheight {
             (*ds_p).sprtopclip = std::ptr::addr_of_mut!(screenheightarray[0]);
-            (*ds_p).tsilheight = c_int::MIN;
+            (*ds_p).tsilheight = i32::MIN;
             (*ds_p).silhouette |= SIL_TOP;
         }
 
         worldhigh = (*backsector).ceilingheight - viewz;
         worldlow = (*backsector).floorheight - viewz;
 
-        if (*frontsector).ceilingpic as c_int == skyflatnum
-            && (*backsector).ceilingpic as c_int == skyflatnum
+        if (*frontsector).ceilingpic as i32 == skyflatnum
+            && (*backsector).ceilingpic as i32 == skyflatnum
         {
             worldtop = worldhigh;
         }
@@ -730,7 +727,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
 
         if worldhigh < worldtop {
             toptexture = *texturetranslation.add((*sidedef).toptexture as usize);
-            if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGTOP as c_short) != 0 {
+            if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGTOP as i16) != 0 {
                 rw_toptexturemid = worldtop;
             } else {
                 let vtop = (*backsector).ceilingheight
@@ -741,7 +738,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
 
         if worldlow > worldbottom {
             bottomtexture = *texturetranslation.add((*sidedef).bottomtexture as usize);
-            if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as c_short) != 0 {
+            if (*linedef).flags & (super::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
                 rw_bottomtexturemid = worldtop;
             } else {
                 rw_bottomtexturemid = worldlow;
@@ -782,7 +779,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
 
         if fixedcolormap.is_null() {
             let mut lightnum =
-                (((*frontsector).lightlevel as u32) >> LIGHTSEGSHIFT) as c_int + extralight;
+                (((*frontsector).lightlevel as u32) >> LIGHTSEGSHIFT) as i32 + extralight;
 
             if (*(*curline).v1).y == (*(*curline).v2).y {
                 lightnum -= 1;
@@ -792,7 +789,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
 
             if lightnum < 0 {
                 walllights = scalelight[0].as_mut_ptr();
-            } else if lightnum >= LIGHTLEVELS as c_int {
+            } else if lightnum >= LIGHTLEVELS as i32 {
                 walllights = scalelight[LIGHTLEVELS - 1].as_mut_ptr();
             } else {
                 walllights = scalelight[lightnum as usize].as_mut_ptr();
@@ -804,7 +801,7 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
         markfloor = 0;
     }
 
-    if (*frontsector).ceilingheight <= viewz && (*frontsector).ceilingpic as c_int != skyflatnum {
+    if (*frontsector).ceilingheight <= viewz && (*frontsector).ceilingpic as i32 != skyflatnum {
         markceiling = 0;
     }
 
@@ -861,11 +858,11 @@ pub unsafe fn R_StoreWallRange(start: c_int, stop: c_int) {
 
     if maskedtexture != 0 && ((*ds_p).silhouette & SIL_TOP) == 0 {
         (*ds_p).silhouette |= SIL_TOP;
-        (*ds_p).tsilheight = c_int::MIN;
+        (*ds_p).tsilheight = i32::MIN;
     }
     if maskedtexture != 0 && ((*ds_p).silhouette & SIL_BOTTOM) == 0 {
         (*ds_p).silhouette |= SIL_BOTTOM;
-        (*ds_p).bsilheight = c_int::MAX;
+        (*ds_p).bsilheight = i32::MAX;
     }
 
     ds_p = ds_p.add(1);

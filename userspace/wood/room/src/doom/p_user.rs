@@ -6,8 +6,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_int;
-
 use crate::doom::{
     d_mode::{commercial, shareware},
     d_player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM},
@@ -21,7 +19,7 @@ use crate::doom::{
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
 /// Matches `MAXBOB` in `p_user.c`.
-const MAXBOB: c_int = 0x100000;
+const MAXBOB: i32 = 0x100000;
 
 /// Default player eye height above the floor in fixed-point units (41 map
 /// units). Matches `VIEWHEIGHT` in `p_local.h`.
@@ -61,23 +59,23 @@ const BT_ATTACK: u8 = 1;
 // ---------------------------------------------------------------------------
 
 /// Fist weapon index.
-const wp_fist: c_int = 0;
+const wp_fist: i32 = 0;
 /// Pistol weapon index.
-const wp_pistol: c_int = 1;
+const wp_pistol: i32 = 1;
 /// Single-barrel shotgun weapon index.
-const wp_shotgun: c_int = 2;
+const wp_shotgun: i32 = 2;
 /// Chaingun weapon index.
-const wp_chaingun: c_int = 3;
+const wp_chaingun: i32 = 3;
 /// Rocket launcher weapon index.
-const wp_missile: c_int = 4;
+const wp_missile: i32 = 4;
 /// Plasma rifle weapon index.
-const wp_plasma: c_int = 5;
+const wp_plasma: i32 = 5;
 /// BFG 9000 weapon index.
-const wp_bfg: c_int = 6;
+const wp_bfg: i32 = 6;
 /// Chainsaw weapon index.
-const wp_chainsaw: c_int = 7;
+const wp_chainsaw: i32 = 7;
 /// Super shotgun (double-barrel) weapon index. Commercial/Doom 2 only.
-const wp_supershotgun: c_int = 8;
+const wp_supershotgun: i32 = 8;
 
 // ---------------------------------------------------------------------------
 // Power-up indices (from doomdef.h)
@@ -101,11 +99,11 @@ const pw_infrared: usize = 5;
 // ---------------------------------------------------------------------------
 
 /// Player state: alive and playing.
-const PST_LIVE: c_int = 0;
+const PST_LIVE: i32 = 0;
 /// Player state: dead (playing the death sequence / death-camera).
-const PST_DEAD: c_int = 1;
+const PST_DEAD: i32 = 1;
 /// Player state: ready to be reborn (respawn requested).
-const PST_REBORN: c_int = 2;
+const PST_REBORN: i32 = 2;
 
 // ---------------------------------------------------------------------------
 // Colormap index
@@ -113,12 +111,12 @@ const PST_REBORN: c_int = 2;
 
 /// Colormap index for the full-bright inverse palette used during
 /// invulnerability. Matches `INVERSECOLORMAP` in `p_user.c`.
-const INVERSECOLORMAP: c_int = 32;
+const INVERSECOLORMAP: i32 = 32;
 
 /// Whether the player is standing on the floor (`mo->z == mo->floorz`).
 ///
-/// Stored as a `c_int` (0 or 1), as in the C source.
-pub static mut onground: c_int = 0;
+/// Stored as a `i32` (0 or 1), as in the C source.
+pub static mut onground: i32 = 0;
 
 use crate::doom::{
     p_map::P_UseLines, p_mobj::P_SetMobjState, p_pspr::P_MovePsprites,
@@ -179,8 +177,7 @@ pub fn P_CalcHeight(player: *mut PlayerT) {
             return;
         }
 
-        let angle: c_int =
-            ((FINEANGLES as c_int / 20 * leveltime) & (FINEANGLES as c_int - 1)) as c_int;
+        let angle: i32 = (FINEANGLES as i32 / 20 * leveltime) & (FINEANGLES as i32 - 1);
         let bob: fixed_t = FixedMul((*player).bob / 2, finesine[angle as usize]);
 
         // Move viewheight
@@ -235,7 +232,7 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
             .wrapping_add(((cmd.angleturn) as u32).wrapping_shl(16));
 
         // Do not let the player control movement if not onground.
-        onground = ((*mo).z <= (*mo).floorz) as c_int;
+        onground = ((*mo).z <= (*mo).floorz) as i32;
 
         if cmd.forwardmove != 0 && onground != 0 {
             P_Thrust(player, (*mo).angle, cmd.forwardmove as fixed_t * 2048);
@@ -286,7 +283,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
         }
 
         (*player).deltaviewheight = 0;
-        onground = ((*mo).z <= (*mo).floorz) as c_int;
+        onground = ((*mo).z <= (*mo).floorz) as i32;
         P_CalcHeight(player);
 
         if !(*player).attacker.is_null() && (*player).attacker != (*player).mo {
@@ -343,7 +340,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
 pub fn P_PlayerThink(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
-        let mut newweapon: c_int;
+        let mut newweapon: i32;
 
         // Fixme: do this in the cheat code
         if (*player).cheats & CF_NOCLIP != 0 {
@@ -388,7 +385,7 @@ pub fn P_PlayerThink(player: *mut PlayerT) {
             // The actual changing of the weapon is done
             // when the weapon psprite can do it
             // (read: not in the middle of an attack).
-            newweapon = (cmd.buttons as c_int & BT_WEAPONMASK as c_int) >> BT_WEAPONSHIFT;
+            newweapon = (cmd.buttons as i32 & BT_WEAPONMASK as i32) >> BT_WEAPONSHIFT;
 
             if newweapon == wp_fist
                 && (*player).weaponowned[wp_chainsaw as usize] != 0

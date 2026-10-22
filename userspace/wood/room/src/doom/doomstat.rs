@@ -13,10 +13,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{
-    ffi::{c_char, c_int},
-    ptr,
-};
+use std::ptr;
 
 use {super::d_mode, crate::types::Boolean};
 
@@ -27,7 +24,7 @@ use {super::d_mode, crate::types::Boolean};
 /// `d_mode::shareware`, `d_mode::registered`, `d_mode::retail`).
 /// Initialised to `indetermined`; set by `D_IdentifyVersion` during startup.
 /// Referenced by virtually every module that needs to branch on game edition.
-pub static mut gamemode: c_int = d_mode::indetermined;
+pub static mut gamemode: i32 = d_mode::indetermined;
 
 /// Identifies the game mission/product line (Doom, Doom II, TNT, Plutonia, etc.).
 ///
@@ -35,7 +32,7 @@ pub static mut gamemode: c_int = d_mode::indetermined;
 /// one of the `d_mode` integer constants (e.g., `d_mode::doom`,
 /// `d_mode::doom2`).  Initialised to `doom`; updated alongside `gamemode`
 /// during IWAD detection.
-pub static mut gamemission: c_int = d_mode::doom;
+pub static mut gamemission: i32 = d_mode::doom;
 
 /// Identifies the target engine version for compatibility purposes.
 ///
@@ -43,14 +40,14 @@ pub static mut gamemission: c_int = d_mode::doom;
 /// which demo format is used, whether certain Vanilla quirks are active, etc.
 /// Initialised to `exe_final2` and may be overridden by `-gameversion` on the
 /// command line.
-pub static mut gameversion: c_int = d_mode::exe_final2;
+pub static mut gameversion: i32 = d_mode::exe_final2;
 
 /// Human-readable description of the loaded IWAD (e.g. `"DOOM Registered"`).
 ///
 /// Corresponds to `char *gamedescription` in `doomstat.c`.  Set by
 /// `D_SetGameDescription` during startup and used by the window title and
 /// help text.  Null until initialised.
-pub static mut gamedescription: *mut c_char = ptr::null_mut();
+pub static mut gamedescription: *mut u8 = ptr::null_mut();
 
 /// `true` if any PWAD files have been loaded on top of the base IWAD.
 ///

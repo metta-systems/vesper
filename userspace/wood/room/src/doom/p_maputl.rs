@@ -8,10 +8,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_uint, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::doom::{
     c_ffi::{
@@ -36,13 +33,13 @@ pub const MAXINTERCEPTS_ORIGINAL: usize = 128;
 pub const MAXINTERCEPTS: usize = MAXINTERCEPTS_ORIGINAL + 61;
 
 /// `P_PathTraverse` flag: collect line intercepts while traversing.
-pub const PT_ADDLINES: c_int = 1;
+pub const PT_ADDLINES: i32 = 1;
 
 /// `P_PathTraverse` flag: collect thing intercepts while traversing.
-pub const PT_ADDTHINGS: c_int = 2;
+pub const PT_ADDTHINGS: i32 = 2;
 
 /// `P_PathTraverse` flag: stop early at the first solid (one-sided) line hit.
-pub const PT_EARLYOUT: c_int = 4;
+pub const PT_EARLYOUT: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -99,7 +96,7 @@ pub static mut trace: divline_t = divline_t {
 
 /// Whether `P_PathTraverse` should exit immediately upon hitting a solid
 /// one-sided line. Set from the `PT_EARLYOUT` flag passed to `P_PathTraverse`.
-static mut earlyout: c_int = 0;
+static mut earlyout: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // P_AproxDistance
@@ -137,7 +134,7 @@ pub fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
 /// # Safety
 /// `line` must be a valid, non-null pointer to an initialised `line_t` whose
 /// `v1` field points to a valid `vertex_t`.
-pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> c_int {
+pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
     unsafe {
         let line = &*line;
         if line.dx == 0 {
@@ -178,7 +175,7 @@ pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> c_int {
 ///
 /// # Safety
 /// `line` must be a valid, non-null pointer to an initialised `divline_t`.
-pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> c_int {
+pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> i32 {
     unsafe {
         let line = &*line;
         if line.dx == 0 {
@@ -286,19 +283,19 @@ pub fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> fixed_t {
 /// Matches `P_BoxOnLineSide` in `p_maputl.c`.
 ///
 /// # Safety
-/// `tmbox` must point to at least 4 consecutive `c_int` values. `ld` must be
+/// `tmbox` must point to at least 4 consecutive `i32` values. `ld` must be
 /// a valid, non-null pointer to an initialised `line_t` with valid `v1`.
-pub fn P_BoxOnLineSide(tmbox: *mut c_int, ld: *mut line_t) -> c_int {
+pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
     unsafe {
         let tmbox = std::slice::from_raw_parts_mut(tmbox, 4);
         let ld = &*ld;
-        let mut p1: c_int;
-        let mut p2: c_int;
+        let mut p1: i32;
+        let mut p2: i32;
         match ld.slopetype {
             0 => {
                 // ST_HORIZONTAL
-                p1 = (tmbox[0] > (*ld.v1).y) as c_int;
-                p2 = (tmbox[1] > (*ld.v1).y) as c_int;
+                p1 = (tmbox[0] > (*ld.v1).y) as i32;
+                p2 = (tmbox[1] > (*ld.v1).y) as i32;
                 if ld.dx < 0 {
                     p1 ^= 1;
                     p2 ^= 1;
@@ -306,8 +303,8 @@ pub fn P_BoxOnLineSide(tmbox: *mut c_int, ld: *mut line_t) -> c_int {
             }
             1 => {
                 // ST_VERTICAL
-                p1 = (tmbox[3] < (*ld.v1).x) as c_int;
-                p2 = (tmbox[2] < (*ld.v1).x) as c_int;
+                p1 = (tmbox[3] < (*ld.v1).x) as i32;
+                p2 = (tmbox[2] < (*ld.v1).x) as i32;
                 if ld.dy < 0 {
                     p1 ^= 1;
                     p2 ^= 1;
@@ -517,11 +514,7 @@ pub fn P_SetThingPosition(thing: *mut mobj_t) {
 /// The global blockmap arrays from `p_setup` must be initialised. `func` must
 /// be a valid function pointer; it will be called with non-null `line_t`
 /// pointers from the loaded map data.
-pub fn P_BlockLinesIterator(
-    x: c_int,
-    y: c_int,
-    func: Option<unsafe fn(*mut line_t) -> c_uint>,
-) -> c_uint {
+pub fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(*mut line_t) -> u32>) -> u32 {
     unsafe {
         if x < 0
             || y < 0
@@ -565,11 +558,7 @@ pub fn P_BlockLinesIterator(
 /// The global `blocklinks` array from `p_setup` must be initialised. `func`
 /// must be a valid function pointer; it will be called with non-null `mobj_t`
 /// pointers from the live thing-list.
-pub fn P_BlockThingsIterator(
-    x: c_int,
-    y: c_int,
-    func: Option<unsafe fn(*mut mobj_t) -> c_uint>,
-) -> c_uint {
+pub fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(*mut mobj_t) -> u32>) -> u32 {
     unsafe {
         if x < 0
             || y < 0
@@ -594,7 +583,7 @@ pub fn P_BlockThingsIterator(
 // Intercept routines
 // ---------------------------------------------------------------------------
 
-/// Write a single `c_int` value into a specific adjacent memory location to
+/// Write a single `i32` value into a specific adjacent memory location to
 /// emulate a vanilla Doom buffer overrun past the `intercepts` array.
 ///
 /// Doom's original engine laid out its BSS segment in a fixed order; when
@@ -609,7 +598,7 @@ pub fn P_BlockThingsIterator(
 /// Writes directly through raw pointers to module-level globals. Caller must
 /// ensure `location` is within the range covered by the table (0..=~300 bytes).
 #[allow(unused_assignments)]
-unsafe fn InterceptsMemoryOverrun(location: c_int, value: c_int) {
+unsafe fn InterceptsMemoryOverrun(location: i32, value: i32) {
     let mut offset: usize = 0;
     let loc = location as usize;
 
@@ -625,7 +614,7 @@ unsafe fn InterceptsMemoryOverrun(location: c_int, value: c_int) {
         ($len:expr, $ptr:expr) => {
             if offset + $len > loc {
                 let index = (loc - offset) / 4;
-                ($ptr as *mut c_int).add(index).write(value);
+                ($ptr as *mut i32).add(index).write(value);
                 return;
             }
             offset += $len;
@@ -681,14 +670,14 @@ unsafe fn InterceptsMemoryOverrun(location: c_int, value: c_int) {
 /// # Safety
 /// `intercept` must be a valid, non-null pointer to an initialised
 /// `intercept_t`.
-unsafe fn InterceptsOverrun(num_intercepts: c_int, intercept: *mut intercept_t) {
-    if num_intercepts <= MAXINTERCEPTS_ORIGINAL as c_int {
+unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
+    if num_intercepts <= MAXINTERCEPTS_ORIGINAL as i32 {
         return;
     }
-    let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL as c_int - 1) * 12;
+    let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL as i32 - 1) * 12;
     InterceptsMemoryOverrun(location, (*intercept).frac);
     InterceptsMemoryOverrun(location + 4, (*intercept).isaline);
-    InterceptsMemoryOverrun(location + 8, (*intercept).d.thing as usize as c_int);
+    InterceptsMemoryOverrun(location + 8, (*intercept).d.thing as usize as i32);
 }
 
 // ---------------------------------------------------------------------------
@@ -714,7 +703,7 @@ unsafe fn InterceptsOverrun(num_intercepts: c_int, intercept: *mut intercept_t) 
 /// `ld` must be a valid, non-null pointer to an initialised `line_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
+pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
     unsafe {
         let ld = &*ld;
         let (s1, s2) = if trace.dx > FRACUNIT * 16
@@ -765,7 +754,7 @@ pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
         (*intercept_p).isaline = 1;
         (*intercept_p).d.line = ld as *const line_t as *mut line_t;
         InterceptsOverrun(
-            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as c_int,
+            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as i32,
             intercept_p,
         );
         intercept_p = intercept_p.offset(1);
@@ -793,7 +782,7 @@ pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
 /// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
+pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
     unsafe {
         let thing = &*thing;
         // C: tracepositive = (trace.dx ^ trace.dy)>0;
@@ -832,7 +821,7 @@ pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
         (*intercept_p).isaline = 0;
         (*intercept_p).d.thing = thing as *const _ as *mut c_void;
         InterceptsOverrun(
-            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as c_int,
+            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as i32,
             intercept_p,
         );
         intercept_p = intercept_p.offset(1);
@@ -848,7 +837,7 @@ pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
 ///
 /// After `P_PathTraverse` has filled `intercepts[0..intercept_p]`, this
 /// function iterates them in ascending `frac` order (selection sort: picks the
-/// minimum each pass, marks it with `c_int::MAX` after processing). Stops
+/// minimum each pass, marks it with `i32::MAX` after processing). Stops
 /// when the nearest remaining intercept has `frac > maxfrac`.
 ///
 /// Returns 1 (true) if `func` accepted every intercept, 0 (false) if `func`
@@ -861,17 +850,17 @@ pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
 /// must be in a consistent state as set by `P_PathTraverse` / the `PIT_Add*`
 /// callbacks.
 pub fn P_TraverseIntercepts(
-    func: Option<unsafe fn(*mut intercept_t) -> c_uint>,
+    func: Option<unsafe fn(*mut intercept_t) -> u32>,
     maxfrac: fixed_t,
-) -> c_uint {
+) -> u32 {
     unsafe {
         let count = if intercept_p.is_null() {
             0
         } else {
-            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as c_int
+            intercept_p.offset_from(std::ptr::addr_of_mut!(intercepts[0])) as i32
         };
         for _ in 0..count {
-            let mut dist = c_int::MAX;
+            let mut dist = i32::MAX;
             let mut in_ptr: *mut intercept_t = ptr::null_mut();
             let mut scan = std::ptr::addr_of_mut!(intercepts[0]);
             while scan < intercept_p {
@@ -887,7 +876,7 @@ pub fn P_TraverseIntercepts(
             if func.unwrap()(in_ptr) == 0 {
                 return 0;
             }
-            (*in_ptr).frac = c_int::MAX;
+            (*in_ptr).frac = i32::MAX;
         }
         1
     }
@@ -921,9 +910,9 @@ pub fn P_PathTraverse(
     y1: fixed_t,
     x2: fixed_t,
     y2: fixed_t,
-    flags: c_int,
-    trav: Option<unsafe fn(*mut intercept_t) -> c_uint>,
-) -> c_uint {
+    flags: i32,
+    trav: Option<unsafe fn(*mut intercept_t) -> u32>,
+) -> u32 {
     unsafe {
         earlyout = flags & PT_EARLYOUT;
         crate::doom::r_main::validcount = crate::doom::r_main::validcount.wrapping_add(1);
@@ -987,7 +976,7 @@ pub fn P_PathTraverse(
                 && P_BlockLinesIterator(
                     mapx,
                     mapy,
-                    Some(PIT_AddLineIntercepts as unsafe fn(*mut line_t) -> c_uint),
+                    Some(PIT_AddLineIntercepts as unsafe fn(*mut line_t) -> u32),
                 ) == 0
             {
                 return 0;
@@ -996,7 +985,7 @@ pub fn P_PathTraverse(
                 && P_BlockThingsIterator(
                     mapx,
                     mapy,
-                    Some(PIT_AddThingIntercepts as unsafe fn(*mut mobj_t) -> c_uint),
+                    Some(PIT_AddThingIntercepts as unsafe fn(*mut mobj_t) -> u32),
                 ) == 0
             {
                 return 0;

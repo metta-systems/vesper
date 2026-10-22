@@ -16,10 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_uint, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::{
     doom::{
@@ -58,72 +55,72 @@ const MAXSPECIALCROSS: usize = 20;
 ///
 /// Crossings beyond this count trigger [`SpechitOverrun`] to emulate the
 /// vanilla memory-corruption behaviour that some demos depend on.
-const MAXSPECIALCROSS_ORIGINAL: c_int = 8;
+const MAXSPECIALCROSS_ORIGINAL: i32 = 8;
 
 /// Maximum radius of any map object, in map units (fixed-point).
 ///
 /// Used to expand blockmap queries so that objects whose origin lies in an
 /// adjacent block but overlaps the query region are still found.
-const MAXRADIUS: c_int = 32 * FRACUNIT;
+const MAXRADIUS: i32 = 32 * FRACUNIT;
 
 /// Forward reach of the player's Use action, in map units (fixed-point).
-const USERANGE: c_int = 64 * FRACUNIT;
+const USERANGE: i32 = 64 * FRACUNIT;
 
 /// Map-object flag: the thing is a special pickup item.
-const MF_SPECIAL: c_int = 1;
+const MF_SPECIAL: i32 = 1;
 /// Map-object flag: the thing blocks movement (solid).
-const MF_SOLID: c_int = 2;
+const MF_SOLID: i32 = 2;
 /// Map-object flag: the thing can be damaged by hitscan or projectile attacks.
-const MF_SHOOTABLE: c_int = 4;
+const MF_SHOOTABLE: i32 = 4;
 /// Map-object flag: the thing is not added to the sector thing list.
-const MF_NOSECTOR: c_int = 8;
+const MF_NOSECTOR: i32 = 8;
 /// Map-object flag: the thing is not added to the blockmap.
-const MF_NOBLOCKMAP: c_int = 16;
+const MF_NOBLOCKMAP: i32 = 16;
 /// Map-object flag: the thing is a projectile (missile).
-const MF_MISSILE: c_int = 65536;
+const MF_MISSILE: i32 = 65536;
 /// Map-object flag: the thing can walk off ledges.
-const MF_DROPOFF: c_int = 1024;
+const MF_DROPOFF: i32 = 1024;
 /// Map-object flag: the thing ignores clipping (no-clip cheat).
-const MF_NOCLIP: c_int = 4096;
+const MF_NOCLIP: i32 = 4096;
 /// Map-object flag: the thing can fly vertically (floats in air).
-const MF_FLOAT: c_int = 16384;
+const MF_FLOAT: i32 = 16384;
 /// Map-object flag: the thing is mid-teleport and bypasses step/dropoff checks.
-const MF_TELEPORT: c_int = 32768;
+const MF_TELEPORT: i32 = 32768;
 /// Map-object flag: a Lost Soul currently in charge-flight mode.
-const MF_SKULLFLY: c_int = 16777216;
+const MF_SKULLFLY: i32 = 16777216;
 /// Map-object flag: the thing picks up items on contact.
-const MF_PICKUP: c_int = 2048;
+const MF_PICKUP: i32 = 2048;
 /// Map-object flag: the thing does not bleed when damaged (spawns puff instead).
-const MF_NOBLOOD: c_int = 524288;
+const MF_NOBLOOD: i32 = 524288;
 /// Map-object flag: the thing was dropped by a monster and should be removed when crushed.
-const MF_DROPPED: c_int = 131072;
+const MF_DROPPED: i32 = 131072;
 
 /// Thing-type index for the player.
-const MT_PLAYER: c_int = 0;
+const MT_PLAYER: i32 = 0;
 /// Thing-type index for the Hell Knight.
-const MT_KNIGHT: c_int = 17;
+const MT_KNIGHT: i32 = 17;
 /// Thing-type index for the Baron of Hell.
-const MT_BRUISER: c_int = 15;
+const MT_BRUISER: i32 = 15;
 /// Thing-type index for the Cyberdemon (immune to splash damage).
-const MT_CYBORG: c_int = 21;
+const MT_CYBORG: i32 = 21;
 /// Thing-type index for the Spider Mastermind (immune to splash damage).
-const MT_SPIDER: c_int = 19;
+const MT_SPIDER: i32 = 19;
 /// Thing-type index for the blood splat particle spawned during crushing.
-const MT_BLOOD: c_int = 38;
+const MT_BLOOD: i32 = 38;
 
 /// State index for the "gibs" sprite, used when corpses are crushed.
-const S_GIBS: c_int = 895;
+const S_GIBS: i32 = 895;
 
 /// Line slope type: perfectly horizontal (dy == 0).
-const ST_HORIZONTAL: c_int = 0;
+const ST_HORIZONTAL: i32 = 0;
 /// Line slope type: perfectly vertical (dx == 0).
-const ST_VERTICAL: c_int = 1;
+const ST_VERTICAL: i32 = 1;
 
 /// Default value for the DEH species-infighting flag (disabled).
 ///
 /// When 0, monsters of the same species cannot hurt each other with projectiles.
 /// A DeHackEd patch can override this.
-const DEH_DEFAULT_SPECIES_INFIGHTING: c_int = 0;
+const DEH_DEFAULT_SPECIES_INFIGHTING: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Extern functions from other modules
@@ -169,7 +166,7 @@ pub static mut tmthing: *mut mobj_t = ptr::null_mut();
 /// Cached copy of `tmthing->flags` for the current position check.
 ///
 /// Avoids repeated pointer dereferences inside tight blockmap loops.
-pub static mut tmflags: c_int = 0;
+pub static mut tmflags: i32 = 0;
 
 /// Destination x-coordinate being tested in the current position check.
 pub static mut tmx: fixed_t = 0;
@@ -183,7 +180,7 @@ pub static mut tmy: fixed_t = 0;
 ///
 /// Callers (e.g. floating monsters) read this to decide whether to keep
 /// trying to ascend or descend rather than giving up entirely.
-pub static mut floatok: c_int = 0; // boolean
+pub static mut floatok: i32 = 0; // boolean
 
 /// Highest floor height touched during the current position check.
 ///
@@ -219,7 +216,7 @@ pub static mut ceilingline: *mut line_t = ptr::null_mut();
 pub static mut spechit: [*mut line_t; MAXSPECIALCROSS] = [ptr::null_mut(); MAXSPECIALCROSS];
 
 /// Number of valid entries currently in [`spechit`].
-pub static mut numspechit: c_int = 0;
+pub static mut numspechit: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // TELEPORT MOVE
@@ -237,7 +234,7 @@ pub static mut numspechit: c_int = 0;
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// [`tmthing`] and [`tmx`] / [`tmy`] must have been set by the caller
 /// ([`P_TeleportMove`]) before this callback is invoked.
-pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> c_uint {
+pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
@@ -273,7 +270,7 @@ pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> c_uint {
 /// `thing` must be a valid, non-null pointer to a live [`mobj_t`] that is
 /// already linked into the map (sector list and blockmap). The blockmap and
 /// sector structures must be fully initialised.
-pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_uint {
+pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
     tmthing = thing;
     tmflags = (*thing).flags;
     tmx = x;
@@ -336,7 +333,7 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_ui
 /// [`tmthing`], [`tmbbox`], [`tmfloorz`], [`tmceilingz`], and
 /// [`tmdropoffz`] must have been initialised by [`P_CheckPosition`] before
 /// this callback is invoked.
-pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> c_uint {
+pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
     let ld = &*ld;
     if tmbbox[BBox::RIGHT] <= ld.bbox[BBox::LEFT]
         || tmbbox[BBox::LEFT] >= ld.bbox[BBox::RIGHT]
@@ -352,11 +349,11 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> c_uint {
         return 0;
     }
     if (*tmthing).flags & MF_MISSILE == 0 {
-        if (ld.flags as c_int) & (LinedefFlag::BLOCKING as c_int) != 0 {
+        if (ld.flags as i32) & (LinedefFlag::BLOCKING as i32) != 0 {
             return 0;
         }
         if (*tmthing).player.is_null()
-            && (ld.flags as c_int) & (LinedefFlag::BLOCKMONSTERS as c_int) != 0
+            && (ld.flags as i32) & (LinedefFlag::BLOCKMONSTERS as i32) != 0
         {
             return 0;
         }
@@ -395,7 +392,7 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> c_uint {
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// [`tmthing`], [`tmx`], [`tmy`], and [`tmflags`] must have been set by
 /// [`P_CheckPosition`] before this callback is invoked.
-pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> c_uint {
+pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
     if thing.flags & (MF_SOLID | MF_SPECIAL | MF_SHOOTABLE) == 0 {
         return 1;
@@ -453,7 +450,7 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> c_uint {
             }
         }
         if thing.flags & MF_SHOOTABLE == 0 {
-            return (thing.flags & MF_SOLID == 0) as c_uint;
+            return (thing.flags & MF_SOLID == 0) as u32;
         }
         let damage = ((P_Random() % 8) + 1) * (*((*tmthing).info as *mut MobjInfo)).damage;
         let target = (*tmthing).target as *mut TeleptMobj;
@@ -475,10 +472,10 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> c_uint {
                 tmthing as *mut TeleptMobj,
             );
         }
-        return (solid == 0) as c_uint;
+        return (solid == 0) as u32;
     }
 
-    (thing.flags & MF_SOLID == 0) as c_uint
+    (thing.flags & MF_SOLID == 0) as u32
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +495,7 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> c_uint {
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// The blockmap and all sector/linedef structures must be fully initialised.
-pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_uint {
+pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
     tmthing = thing;
     tmflags = (*thing).flags;
     tmx = x;
@@ -566,7 +563,7 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_u
 ///
 /// `thing` must be a valid, non-null pointer to a live [`mobj_t`] that is
 /// already linked into the map. The map data must be fully initialised.
-pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_uint {
+pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
     floatok = 0;
     if P_CheckPosition(thing, x, y) == 0 {
         return 0;
@@ -604,7 +601,7 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_uint {
             let oldside = P_PointOnLineSide(oldx, oldy, ld);
             if side != oldside && (*ld).special != 0 {
                 let linenum = ld.offset_from(lines);
-                P_CrossSpecialLine(linenum as c_int, oldside, thing);
+                P_CrossSpecialLine(linenum as i32, oldside, thing);
             }
         }
     }
@@ -624,7 +621,7 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> c_uint {
 ///
 /// `thing` must be a valid, non-null pointer to a live [`mobj_t`]. Called
 /// only from [`PIT_ChangeSector`] during sector-height propagation.
-pub unsafe fn P_ThingHeightClip(thing: *mut mobj_t) -> c_uint {
+pub unsafe fn P_ThingHeightClip(thing: *mut mobj_t) -> u32 {
     let onfloor = (*thing).z == (*thing).floorz;
     P_CheckPosition(thing, (*thing).x, (*thing).y);
     (*thing).floorz = tmfloorz;
@@ -735,13 +732,13 @@ pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. [`slidemo`] must point to the object being moved.
-pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> c_uint {
+pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline == 0 {
         i_error!("PTR_SlideTraverse: not a line?");
     }
     let li = in_.d.line;
-    if (*li).flags as c_int & LinedefFlag::TWOSIDED as c_int == 0 {
+    if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
         if P_PointOnLineSide((*slidemo).x, (*slidemo).y, li) != 0 {
             return 1;
         }
@@ -889,7 +886,7 @@ pub static mut shootthing: *mut mobj_t = ptr::null_mut();
 pub static mut shootz: fixed_t = 0;
 
 /// Damage dealt by the current hitscan attack (0 for a pure aim/test trace).
-pub static mut la_damage: c_int = 0;
+pub static mut la_damage: i32 = 0;
 
 /// Maximum reach of the current hitscan ray, in fixed-point map units.
 ///
@@ -919,11 +916,11 @@ pub static mut aimslope: fixed_t = 0;
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. [`shootthing`], [`shootz`], [`attackrange`],
 /// `topslope`, and `bottomslope` must be set before the traversal begins.
-pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> c_uint {
+pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline != 0 {
         let li = in_.d.line;
-        if (*li).flags as c_int & LinedefFlag::TWOSIDED as c_int == 0 {
+        if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
             return 0;
         }
         P_LineOpening(li);
@@ -995,14 +992,14 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> c_uint {
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. [`shootthing`], [`shootz`], [`attackrange`],
 /// [`aimslope`], and [`la_damage`] must be set before the traversal.
-pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> c_uint {
+pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline != 0 {
         let li = in_.d.line;
         if (*li).special != 0 {
             P_ShootSpecialLine(shootthing, li);
         }
-        if (*li).flags as c_int & LinedefFlag::TWOSIDED as c_int != 0 {
+        if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
             P_LineOpening(li);
             let dist = FixedMul(attackrange, in_.frac);
             let back = (*li).backsector as *mut sector_t;
@@ -1094,12 +1091,12 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
     let y = crate::doom::p_maputl::trace.y + FixedMul(crate::doom::p_maputl::trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
     let front = (*li).frontsector as *mut sector_t;
-    if (*front).ceilingpic as c_int == skyflatnum {
+    if (*front).ceilingpic as i32 == skyflatnum {
         if z > (*front).ceilingheight {
             return;
         }
         let back = (*li).backsector as *mut sector_t;
-        if !back.is_null() && (*back).ceilingpic as c_int == skyflatnum {
+        if !back.is_null() && (*back).ceilingpic as i32 == skyflatnum {
             return;
         }
     }
@@ -1117,12 +1114,12 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
 ///
 /// `t1` must be a valid pointer to a live [`mobj_t`] (null is substituted
 /// via [`P_SubstNullMobj`] before use). Map data must be initialised.
-pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: c_uint, distance: fixed_t) -> fixed_t {
+pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: u32, distance: fixed_t) -> fixed_t {
     let t1 = P_SubstNullMobj(t1 as *mut TeleptMobj) as *mut mobj_t;
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
     shootthing = t1;
-    let x2 = (*t1).x + ((distance >> FRACBITS) as c_int) * *finecosine.0.add(angle);
-    let y2 = (*t1).y + ((distance >> FRACBITS) as c_int) * finesine[angle];
+    let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
+    let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
     shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
     topslope = 100 * FRACUNIT / 160;
     bottomslope = -(100 * FRACUNIT / 160);
@@ -1155,16 +1152,16 @@ pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: c_uint, distance: fixed_t)
 /// must be fully initialised.
 pub unsafe fn P_LineAttack(
     t1: *mut mobj_t,
-    angle: c_uint,
+    angle: u32,
     distance: fixed_t,
     slope: fixed_t,
-    damage: c_int,
+    damage: i32,
 ) {
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
     shootthing = t1;
     la_damage = damage;
-    let x2 = (*t1).x + ((distance >> FRACBITS) as c_int) * *finecosine.0.add(angle);
-    let y2 = (*t1).y + ((distance >> FRACBITS) as c_int) * finesine[angle];
+    let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
+    let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
     shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
     attackrange = distance;
     aimslope = slope;
@@ -1201,12 +1198,12 @@ pub static mut usething: *mut mobj_t = ptr::null_mut();
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`] whose `d.line` is valid. [`usething`] must be set.
-pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> c_uint {
+pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if (*in_.d.line).special == 0 {
         P_LineOpening(in_.d.line);
         if openrange <= 0 {
-            S_StartSound(usething as *mut c_void, Sfx::Noway as c_int);
+            S_StartSound(usething as *mut c_void, Sfx::Noway as i32);
             return 0;
         }
         return 1;
@@ -1241,8 +1238,8 @@ pub unsafe fn P_UseLines(player: *mut c_void) {
     let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;
     let x1 = (*mo).x;
     let y1 = (*mo).y;
-    let x2 = x1 + ((USERANGE >> FRACBITS) as c_int) * *finecosine.0.add(angle);
-    let y2 = y1 + ((USERANGE >> FRACBITS) as c_int) * finesine[angle];
+    let x2 = x1 + (USERANGE >> FRACBITS) * *finecosine.0.add(angle);
+    let y2 = y1 + (USERANGE >> FRACBITS) * finesine[angle];
     P_PathTraverse(x1, y1, x2, y2, PT_ADDLINES, Some(PTR_UseTraverse));
 }
 
@@ -1266,7 +1263,7 @@ pub static mut bombspot: *mut mobj_t = ptr::null_mut();
 ///
 /// Damage falls off linearly with Chebyshev distance from [`bombspot`]:
 /// `damage = bombdamage - dist`.
-pub static mut bombdamage: c_int = 0;
+pub static mut bombdamage: i32 = 0;
 
 /// Blockmap thing iterator callback for [`P_RadiusAttack`].
 ///
@@ -1282,7 +1279,7 @@ pub static mut bombdamage: c_int = 0;
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// [`bombspot`], [`bombsource`], and [`bombdamage`] must be set by
 /// [`P_RadiusAttack`] before this callback is invoked.
-pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> c_uint {
+pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
@@ -1326,7 +1323,7 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> c_uint {
 ///
 /// `spot` and `source` must be valid, non-null pointers to live [`mobj_t`]s.
 /// Map and blockmap data must be fully initialised.
-pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: c_int) {
+pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: i32) {
     let dist = (damage + MAXRADIUS) << FRACBITS;
     let yh = ((*spot).y + dist - bmaporgy) >> MAPBLOCKSHIFT;
     let yl = ((*spot).y - dist - bmaporgy) >> MAPBLOCKSHIFT;
@@ -1350,14 +1347,14 @@ pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: c_i
 /// take crush damage (10 HP every 4 tics).
 ///
 /// Set by [`P_ChangeSector`] from the `crunch` parameter.
-pub static mut crushchange: c_int = 0; // boolean
+pub static mut crushchange: i32 = 0; // boolean
 
 /// Set to non-zero by [`PIT_ChangeSector`] if any thing no longer fits
 /// after a sector-height change.
 ///
 /// Returned by [`P_ChangeSector`]; a truthy value tells the caller to
 /// either continue crushing or revert the sector height.
-pub static mut nofit: c_int = 0; // boolean
+pub static mut nofit: i32 = 0; // boolean
 
 /// Blockmap thing iterator callback for [`P_ChangeSector`].
 ///
@@ -1373,7 +1370,7 @@ pub static mut nofit: c_int = 0; // boolean
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// [`crushchange`] must be set by [`P_ChangeSector`] before iteration.
-pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> c_uint {
+pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
     if P_ThingHeightClip(thing) != 0 {
         return 1;
     }
@@ -1418,7 +1415,7 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> c_uint {
 ///
 /// `sector` must be a valid, non-null pointer to an initialised [`sector_t`]
 /// whose `blockbox` indices are within the blockmap bounds.
-pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: c_int) -> c_int {
+pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
     nofit = 0;
     crushchange = crunch;
     let sec = &*sector;
@@ -1454,19 +1451,16 @@ pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: c_int) -> c_int {
 /// Must only be called from [`PIT_CheckLine`] after `numspechit` has been
 /// incremented beyond [`MAXSPECIALCROSS_ORIGINAL`].
 unsafe fn SpechitOverrun(ld: *mut line_t) {
-    static mut baseaddr: c_uint = 0;
+    static mut baseaddr: u32 = 0;
     if baseaddr == 0 {
-        let p = M_CheckParmWithArgs(c"-spechit".as_ptr().cast_mut(), 1);
+        let p = M_CheckParmWithArgs(c"-spechit".as_ptr().cast_mut().cast(), 1);
         if p > 0 {
-            M_StrToInt(
-                *myargv.add((p + 1) as usize),
-                &raw mut baseaddr as *mut c_int,
-            );
+            M_StrToInt(*myargv.add((p + 1) as usize), &raw mut baseaddr as *mut i32);
         } else {
             baseaddr = DEFAULT_SPECHIT_MAGIC;
         }
     }
-    let addr = baseaddr as c_int + (ld.offset_from(lines) * 0x3e) as c_int;
+    let addr = baseaddr as i32 + (ld.offset_from(lines) * 0x3e) as i32;
     match numspechit {
         9..=12 => {
             tmbbox[(numspechit - 9) as usize] = addr;
@@ -1480,7 +1474,7 @@ unsafe fn SpechitOverrun(ld: *mut line_t) {
         _ => {
             eprintln!(
                 "SpechitOverrun: Warning: unable to emulate an overrun where numspechit={}",
-                numspechit as c_int
+                { numspechit }
             );
         }
     }

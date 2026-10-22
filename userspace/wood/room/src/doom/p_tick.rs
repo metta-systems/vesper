@@ -8,7 +8,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, os::raw::c_int};
+use std::ffi::c_void;
 
 use crate::doom::{
     d_player::{consoleplayer, players, MAXPLAYERS},
@@ -76,7 +76,7 @@ fn is_sentinel(f: actionf_t) -> bool {
 ///
 /// Used throughout the engine to
 /// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
-pub static mut leveltime: c_int = 0;
+pub static mut leveltime: i32 = 0;
 
 /// Sentinel head/tail node of the doubly-linked thinker list.
 ///

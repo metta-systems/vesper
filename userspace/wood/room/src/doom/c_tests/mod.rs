@@ -3,6 +3,9 @@
 //! Each submodule tests a specific unported C module, establishing
 //! behavioral baselines before the module is ported to Rust.
 
+// These tests pin constant values, so asserting on constants is the point.
+#![allow(clippy::assertions_on_constants)]
+
 mod am_map_c;
 mod d_loop_c;
 mod d_main_c;

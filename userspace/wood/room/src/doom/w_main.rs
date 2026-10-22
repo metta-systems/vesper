@@ -10,8 +10,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_char;
-
 use libc::printf;
 
 use crate::types::Boolean;
@@ -41,13 +39,13 @@ pub fn W_ParseCommandLine() -> Boolean {
     let mut modifiedgame: Boolean = Boolean::FALSE;
 
     unsafe {
-        let p = M_CheckParmWithArgs(c"-file".as_ptr(), 1);
+        let p = M_CheckParmWithArgs(c"-file".as_ptr().cast(), 1);
         if p != 0 {
             let mut idx = p + 1;
             modifiedgame = Boolean::TRUE;
-            while idx < myargc && **myargv.offset(idx as isize) != b'-' as c_char {
+            while idx < myargc && **myargv.offset(idx as isize) != b'-' {
                 let filename = D_TryFindWADByName(*myargv.offset(idx as isize));
-                printf(c" adding %s\n".as_ptr(), filename);
+                printf(c" adding %s\n".as_ptr().cast(), filename);
                 W_AddFile(filename);
                 idx += 1;
             }

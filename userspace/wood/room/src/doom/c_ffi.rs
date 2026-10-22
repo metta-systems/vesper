@@ -5,7 +5,7 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
-use std::ffi::{c_int, c_short, c_uint, c_ushort, c_void};
+use std::ffi::c_void;
 
 pub use super::{
     i_timer::TICRATE,
@@ -43,8 +43,8 @@ pub enum mobjinfo_t {}
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct vertex_t {
-    pub x: c_int,
-    pub y: c_int,
+    pub x: i32,
+    pub y: i32,
 }
 
 /// Parametric dividing line (`divline_t` in `p_local.h`).
@@ -55,10 +55,10 @@ pub struct vertex_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct divline_t {
-    pub x: c_int,
-    pub y: c_int,
-    pub dx: c_int,
-    pub dy: c_int,
+    pub x: i32,
+    pub y: i32,
+    pub dx: i32,
+    pub dy: i32,
 }
 
 /// Runtime BSP subsector (`subsector_t` in `r_defs.h`).
@@ -96,26 +96,26 @@ pub struct mapthing_t {
 /// Layout mirrors the C definition exactly so pointer casts between the
 /// Rust and C halves of the engine remain sound. `soundorg` is opaque
 /// `degenmobj_t` storage (40 bytes); explicit `_pad0` reflects the C
-/// compiler's natural padding after the four packed `c_short` fields.
+/// compiler's natural padding after the four packed `i16` fields.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct sector_t {
-    pub floorheight: c_int,
-    pub ceilingheight: c_int,
-    pub floorpic: c_short,
-    pub ceilingpic: c_short,
-    pub lightlevel: c_short,
-    pub special: c_short,
-    pub tag: c_short,
+    pub floorheight: i32,
+    pub ceilingheight: i32,
+    pub floorpic: i16,
+    pub ceilingpic: i16,
+    pub lightlevel: i16,
+    pub special: i16,
+    pub tag: i16,
     _pad0: [u8; 2],
-    pub soundtraversed: c_int,
+    pub soundtraversed: i32,
     pub soundtarget: *mut c_void,
-    pub blockbox: [c_int; 4],
+    pub blockbox: [i32; 4],
     pub soundorg: [u8; 40],
-    pub validcount: c_int,
+    pub validcount: i32,
     pub thinglist: *mut c_void,
     pub specialdata: *mut c_void,
-    pub linecount: c_int,
+    pub linecount: i32,
     pub lines: *mut *mut c_void,
 }
 
@@ -131,17 +131,17 @@ pub struct sector_t {
 pub struct line_t {
     pub v1: *mut vertex_t,
     pub v2: *mut vertex_t,
-    pub dx: c_int,
-    pub dy: c_int,
-    pub flags: c_short,
-    pub special: c_short,
-    pub tag: c_short,
-    pub sidenum: [c_short; 2],
-    pub bbox: [c_int; 4],
-    pub slopetype: c_int,
+    pub dx: i32,
+    pub dy: i32,
+    pub flags: i16,
+    pub special: i16,
+    pub tag: i16,
+    pub sidenum: [i16; 2],
+    pub bbox: [i32; 4],
+    pub slopetype: i32,
     pub frontsector: *mut c_void,
     pub backsector: *mut c_void,
-    pub validcount: c_int,
+    pub validcount: i32,
     pub specialdata: *mut c_void,
 }
 
@@ -154,8 +154,8 @@ pub struct line_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct intercept_t {
-    pub frac: c_int,
-    pub isaline: c_int, // boolean
+    pub frac: i32,
+    pub isaline: i32, // boolean
     pub d: intercept_t_d,
 }
 
@@ -184,42 +184,42 @@ pub struct mobj_t {
     pub thinker_prev: *mut c_void,
     pub thinker_next: *mut c_void,
     pub thinker_fn: *mut c_void,
-    pub x: c_int,
-    pub y: c_int,
-    pub z: c_int,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
     _pad0: [u8; 4],
     pub snext: *mut c_void,
     pub sprev: *mut c_void,
-    pub angle: c_uint,
-    pub sprite: c_int,
-    pub frame: c_int,
+    pub angle: u32,
+    pub sprite: i32,
+    pub frame: i32,
     _pad1: [u8; 4],
     pub bnext: *mut c_void,
     pub bprev: *mut c_void,
     pub subsector: *mut c_void,
-    pub floorz: c_int,
-    pub ceilingz: c_int,
-    pub radius: c_int,
-    pub height: c_int,
-    pub momx: c_int,
-    pub momy: c_int,
-    pub momz: c_int,
-    pub validcount: c_int,
-    pub type_: c_int,
+    pub floorz: i32,
+    pub ceilingz: i32,
+    pub radius: i32,
+    pub height: i32,
+    pub momx: i32,
+    pub momy: i32,
+    pub momz: i32,
+    pub validcount: i32,
+    pub type_: i32,
     _pad2: [u8; 4],
     pub info: *mut mobjinfo_t,
-    pub tics: c_int,
+    pub tics: i32,
     _pad3: [u8; 4],
     pub state: *mut state_t,
-    pub flags: c_int,
-    pub health: c_int,
-    pub movedir: c_int,
-    pub movecount: c_int,
+    pub flags: i32,
+    pub health: i32,
+    pub movedir: i32,
+    pub movecount: i32,
     pub target: *mut c_void,
-    pub reactiontime: c_int,
-    pub threshold: c_int,
+    pub reactiontime: i32,
+    pub threshold: i32,
     pub player: *mut c_void,
-    pub lastlook: c_int,
+    pub lastlook: i32,
     pub spawnpoint: mapthing_t,
     _pad4: [u8; 2],
     pub tracer: *mut c_void,
@@ -245,32 +245,32 @@ pub use crate::doom::r_draw::{
 
 /// Width/height of one blockmap cell in map units (`MAPBLOCKUNITS` in
 /// `p_local.h`).
-pub const MAPBLOCKUNITS: c_int = 128;
+pub const MAPBLOCKUNITS: i32 = 128;
 /// Width/height of one blockmap cell in fixed-point units (`MAPBLOCKSIZE`
 /// in `p_local.h`).
-pub const MAPBLOCKSIZE: c_int = MAPBLOCKUNITS * FRACUNIT;
+pub const MAPBLOCKSIZE: i32 = MAPBLOCKUNITS * FRACUNIT;
 /// Right-shift count converting a fixed-point coordinate to a blockmap
 /// cell index (`MAPBLOCKSHIFT` in `p_local.h`).
-pub const MAPBLOCKSHIFT: c_int = FRACBITS as c_int + 7;
+pub const MAPBLOCKSHIFT: i32 = FRACBITS as i32 + 7;
 /// Mask isolating the in-cell offset of a fixed-point coordinate
 /// (`MAPBMASK` in `p_local.h`).
-pub const MAPBMASK: c_int = MAPBLOCKSIZE - 1;
+pub const MAPBMASK: i32 = MAPBLOCKSIZE - 1;
 /// Shift count converting in-cell offsets back to fixed-point fractions
 /// (`MAPBTOFRAC` in `p_local.h`).
-pub const MAPBTOFRAC: c_int = MAPBLOCKSHIFT - FRACBITS as c_int;
+pub const MAPBTOFRAC: i32 = MAPBLOCKSHIFT - FRACBITS as i32;
 
 /// Capacity of the per-tic event queue (`ITEMQUESIZE` analogue used by the
 /// engine's input handling).
 pub const ITEMQUESIZE: usize = 128;
 
 /// Slope type for a horizontal line segment (`ST_HORIZONTAL` in `r_defs.h`).
-pub const ST_HORIZONTAL: c_int = 0;
+pub const ST_HORIZONTAL: i32 = 0;
 /// Slope type for a vertical line segment (`ST_VERTICAL` in `r_defs.h`).
-pub const ST_VERTICAL: c_int = 1;
+pub const ST_VERTICAL: i32 = 1;
 /// Slope type for a line with positive gradient (`ST_POSITIVE` in `r_defs.h`).
-pub const ST_POSITIVE: c_int = 2;
+pub const ST_POSITIVE: i32 = 2;
 /// Slope type for a line with negative gradient (`ST_NEGATIVE` in `r_defs.h`).
-pub const ST_NEGATIVE: c_int = 3;
+pub const ST_NEGATIVE: i32 = 3;
 
 // ---------------------------------------------------------------------------
 // WAD lump-order indices (doomdata.h anonymous enum).
@@ -285,32 +285,32 @@ pub struct MapLump;
 /// `ML_*` lump-offset constants used to index a map's group of WAD lumps.
 impl MapLump {
     #[doc(alias = "ML_LABEL")]
-    pub const LABEL: c_int = 0; // ExMx / MAPxx separator
+    pub const LABEL: i32 = 0; // ExMx / MAPxx separator
     #[doc(alias = "ML_THINGS")]
-    pub const THINGS: c_int = 1; // Monster/item placement
+    pub const THINGS: i32 = 1; // Monster/item placement
     #[doc(alias = "ML_LINEDEFS")]
-    pub const LINEDEFS: c_int = 2; // Line definitions
+    pub const LINEDEFS: i32 = 2; // Line definitions
     #[doc(alias = "ML_SIDEDEFS")]
-    pub const SIDEDEFS: c_int = 3; // Side (texture) definitions
+    pub const SIDEDEFS: i32 = 3; // Side (texture) definitions
     #[doc(alias = "ML_VERTEXES")]
-    pub const VERTEXES: c_int = 4; // Vertex coordinates
+    pub const VERTEXES: i32 = 4; // Vertex coordinates
     #[doc(alias = "ML_SEGS")]
-    pub const SEGS: c_int = 5; // BSP line segments
+    pub const SEGS: i32 = 5; // BSP line segments
     #[doc(alias = "ML_SSECTORS")]
-    pub const SSECTORS: c_int = 6; // BSP sub-sectors
+    pub const SSECTORS: i32 = 6; // BSP sub-sectors
     #[doc(alias = "ML_NODES")]
-    pub const NODES: c_int = 7; // BSP nodes
+    pub const NODES: i32 = 7; // BSP nodes
     #[doc(alias = "ML_SECTORS")]
-    pub const SECTORS: c_int = 8; // Sector definitions
+    pub const SECTORS: i32 = 8; // Sector definitions
     #[doc(alias = "ML_REJECT")]
-    pub const REJECT: c_int = 9; // Sector-to-sector visibility table
+    pub const REJECT: i32 = 9; // Sector-to-sector visibility table
     #[doc(alias = "ML_BLOCKMAP")]
-    pub const BLOCKMAP: c_int = 10; // Motion-clipping blockmap
+    pub const BLOCKMAP: i32 = 10; // Motion-clipping blockmap
 }
 
 const _: () = assert!(
-    std::mem::size_of::<c_int>() == std::mem::size_of::<i32>(),
-    "MapLump constants are c_int; c_int must be 32-bit on this platform"
+    std::mem::size_of::<i32>() == std::mem::size_of::<i32>(),
+    "MapLump constants are i32; i32 must be 32-bit on this platform"
 );
 
 /// Linedef flag bits (`ML_*` in `doomdata.h`). Stored in `line_t.flags` as
@@ -339,17 +339,12 @@ impl LinedefFlag {
     pub const MAPPED: u16 = 256; // Already revealed on automap
 }
 
-const _: () = assert!(
-    std::mem::size_of::<u16>() == std::mem::size_of::<std::os::raw::c_short>(),
-    "LinedefFlag masks are u16; u16 must match c_short (line_t.flags)"
-);
-
 // ---------------------------------------------------------------------------
 // Screen constants (from i_video.h / st_stuff.h)
 // ---------------------------------------------------------------------------
 
 /// Status-bar height (ST_HEIGHT from st_stuff.h).
-pub const SBARHEIGHT: c_int = 32;
+pub const SBARHEIGHT: i32 = 32;
 
 // ---------------------------------------------------------------------------
 // r_draw.c constants
@@ -358,7 +353,7 @@ pub const SBARHEIGHT: c_int = 32;
 /// Number of entries in the fuzz offset lookup table (FUZZTABLE in r_draw.c).
 pub const FUZZTABLE: usize = 50;
 /// Column offset used when rendering the fuzz/spectre effect (FUZZOFF = SCREENWIDTH).
-pub const FUZZOFF: c_int = SCREENWIDTH;
+pub const FUZZOFF: i32 = SCREENWIDTH;
 
 // ---------------------------------------------------------------------------
 // Runtime renderer types (r_defs.h) — used by unported r_segs.c / r_things.c
@@ -367,15 +362,15 @@ pub const FUZZOFF: c_int = SCREENWIDTH;
 /// SideDef: visual appearance of a wall segment (`side_t` in `r_defs.h`).
 ///
 /// Two-byte `_pad` matches the C compiler's natural alignment after the
-/// three packed `c_short` texture indices and before the pointer field.
+/// three packed `i16` texture indices and before the pointer field.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct side_t {
-    pub textureoffset: c_int,
-    pub rowoffset: c_int,
-    pub toptexture: c_short,
-    pub bottomtexture: c_short,
-    pub midtexture: c_short,
+    pub textureoffset: i32,
+    pub rowoffset: i32,
+    pub toptexture: i16,
+    pub bottomtexture: i16,
+    pub midtexture: i16,
     _pad: [u8; 2],
     pub sector: *mut sector_t,
 }
@@ -392,8 +387,8 @@ pub struct side_t {
 pub struct seg_t {
     pub v1: *mut vertex_t,
     pub v2: *mut vertex_t,
-    pub offset: c_int,
-    pub angle: c_uint,
+    pub offset: i32,
+    pub angle: u32,
     pub sidedef: *mut side_t,
     pub linedef: *mut line_t,
     pub frontsector: *mut sector_t,
@@ -409,12 +404,12 @@ pub struct seg_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct node_t {
-    pub x: c_int,
-    pub y: c_int,
-    pub dx: c_int,
-    pub dy: c_int,
-    pub bbox: [[c_int; 4]; 2],
-    pub children: [c_ushort; 2],
+    pub x: i32,
+    pub y: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub bbox: [[i32; 4]; 2],
+    pub children: [u16; 2],
 }
 
 /// Draw segment: one visible wall segment produced by the BSP traversal
@@ -427,17 +422,17 @@ pub struct node_t {
 #[derive(Clone, Copy)]
 pub struct drawseg_t {
     pub curline: *mut seg_t,
-    pub x1: c_int,
-    pub x2: c_int,
-    pub scale1: c_int,
-    pub scale2: c_int,
-    pub scalestep: c_int,
-    pub silhouette: c_int,
-    pub bsilheight: c_int,
-    pub tsilheight: c_int,
-    pub sprtopclip: *mut c_short,
-    pub sprbottomclip: *mut c_short,
-    pub maskedtexturecol: *mut c_short,
+    pub x1: i32,
+    pub x2: i32,
+    pub scale1: i32,
+    pub scale2: i32,
+    pub scalestep: i32,
+    pub silhouette: i32,
+    pub bsilheight: i32,
+    pub tsilheight: i32,
+    pub sprtopclip: *mut i16,
+    pub sprbottomclip: *mut i16,
+    pub maskedtexturecol: *mut i16,
 }
 
 /// Visible sprite: a thing that is (partly) visible in the current frame
@@ -451,20 +446,20 @@ pub struct drawseg_t {
 pub struct vissprite_t {
     pub prev: *mut vissprite_t,
     pub next: *mut vissprite_t,
-    pub x1: c_int,
-    pub x2: c_int,
-    pub gx: c_int,
-    pub gy: c_int,
-    pub gz: c_int,
-    pub gzt: c_int,
-    pub startfrac: c_int,
-    pub scale: c_int,
-    pub xiscale: c_int,
-    pub texturemid: c_int,
-    pub patch: c_int,
+    pub x1: i32,
+    pub x2: i32,
+    pub gx: i32,
+    pub gy: i32,
+    pub gz: i32,
+    pub gzt: i32,
+    pub startfrac: i32,
+    pub scale: i32,
+    pub xiscale: i32,
+    pub texturemid: i32,
+    pub patch: i32,
     _pad: [u8; 4],
     pub colormap: *mut u8,
-    pub mobjflags: c_int,
+    pub mobjflags: i32,
     _pad2: [u8; 4],
 }
 
@@ -478,9 +473,9 @@ pub struct vissprite_t {
 #[derive(Clone, Copy)]
 pub struct spriteframe_t {
     /// 0 = use frame 0 for all rotations; 1 = use rotation-specific lumps.
-    pub rotate: c_int,
+    pub rotate: i32,
     /// WAD lump index (relative to firstspritelump) for each of 8 rotations.
-    pub lump: [c_short; 8],
+    pub lump: [i16; 8],
     /// 1 = horizontally flip the lump for this rotation; 0 = no flip.
     pub flip: [u8; 8],
 }
@@ -498,7 +493,7 @@ pub use crate::doom::g_game::{
 };
 
 /// Version code for cph's longtics hack ("v1.91") from `doomdef.h`.
-pub const DOOM_191_VERSION: c_int = 111;
+pub const DOOM_191_VERSION: i32 = 111;
 
 // ---------------------------------------------------------------------------
 // i_scale.c
@@ -517,15 +512,15 @@ pub const DOOM_191_VERSION: c_int = 111;
 #[repr(C)]
 pub struct screen_mode_t {
     /// Output buffer width in pixels.
-    pub width: c_int,
+    pub width: i32,
     /// Output buffer height in pixels.
-    pub height: c_int,
+    pub height: i32,
     /// Optional initialiser called once with the game palette.
     pub init_mode: Option<unsafe fn(*mut u8)>,
     /// Draw function: copies src buffer → dest buffer for the given rectangle.
-    pub draw_screen: Option<unsafe fn(c_int, c_int, c_int, c_int) -> c_int>,
+    pub draw_screen: Option<unsafe fn(i32, i32, i32, i32) -> i32>,
     /// True when this mode uses blended interpolation (lower visual quality).
-    pub poor_quality: c_int,
+    pub poor_quality: i32,
 }
 
 // Re-exported from the Rust port of i_scale.c.
@@ -540,36 +535,36 @@ pub use crate::doom::i_scale::{
 // ---------------------------------------------------------------------------
 
 /// Screen width used by the "squash" scale modes (SCREENWIDTH_4_3 in i_video.h).
-pub const SCREENWIDTH_4_3: c_int = 256;
+pub const SCREENWIDTH_4_3: i32 = 256;
 /// Screen height used by the "stretch" scale modes (SCREENHEIGHT_4_3 in i_video.h).
-pub const SCREENHEIGHT_4_3: c_int = 240;
+pub const SCREENHEIGHT_4_3: i32 = 240;
 
 /// Size of the body-object circular queue (BODYQUESIZE in g_game.c).
 pub const BODYQUESIZE: usize = 32;
 /// Number of tics during which slow-turn speed is used before switching to
 /// normal turn speed (SLOWTURNTICS in g_game.c).
-pub const SLOWTURNTICS: c_int = 6;
+pub const SLOWTURNTICS: i32 = 6;
 /// Speed threshold above which the turbo-cheat detector fires
 /// (TURBOTHRESHOLD in g_game.c = 0x32 = 50).
-pub const TURBOTHRESHOLD: c_int = 0x32;
+pub const TURBOTHRESHOLD: i32 = 0x32;
 
 /// Weapon-sprite lower speed (LOWERSPEED in p_pspr.c = FRACUNIT × 6).
-pub const LOWERSPEED: c_int = FRACUNIT * 6;
+pub const LOWERSPEED: i32 = FRACUNIT * 6;
 /// Weapon-sprite raise speed (RAISESPEED in p_pspr.c = FRACUNIT × 6).
-pub const RAISESPEED: c_int = FRACUNIT * 6;
+pub const RAISESPEED: i32 = FRACUNIT * 6;
 /// Y-position of the weapon at its lowest (off-screen) rest point
 /// (WEAPONBOTTOM in p_pspr.c = 128 × FRACUNIT).
-pub const WEAPONBOTTOM: c_int = 128 * FRACUNIT;
+pub const WEAPONBOTTOM: i32 = 128 * FRACUNIT;
 /// Y-position of the weapon at its highest (ready) position
 /// (WEAPONTOP in p_pspr.c = 32 × FRACUNIT).
-pub const WEAPONTOP: c_int = 32 * FRACUNIT;
+pub const WEAPONTOP: i32 = 32 * FRACUNIT;
 
 /// Minimum sprite Z distance; sprites closer than this are not projected
 /// (MINZ in r_things.c = FRACUNIT × 4).
-pub const MINZ: c_int = FRACUNIT * 4;
+pub const MINZ: i32 = FRACUNIT * 4;
 /// Vertical centre of the screen in pixels, used for sprite projection
 /// (BASEYCENTER in r_things.c = 100).
-pub const BASEYCENTER: c_int = 100;
+pub const BASEYCENTER: i32 = 100;
 
 // ---------------------------------------------------------------------------
 // p_inter.c — ammo and interaction constants
@@ -579,16 +574,16 @@ pub const BASEYCENTER: c_int = 100;
 pub const NUMAMMO: usize = 4;
 /// Bonus count added per pick-up for the screen flash effect
 /// (BONUSADD in p_inter.c = 6).
-pub const BONUSADD: c_int = 6;
+pub const BONUSADD: i32 = 6;
 
 // ---------------------------------------------------------------------------
 // p_mobj.c — map-object physics constants
 // ---------------------------------------------------------------------------
 
 /// Velocity below which horizontal momentum is zeroed (STOPSPEED = 0x1000).
-pub const STOPSPEED: c_int = 0x1000;
+pub const STOPSPEED: i32 = 0x1000;
 /// Friction factor applied to horizontal velocity each tic (FRICTION = 0xe800).
-pub const FRICTION: c_int = 0xe800_u32 as c_int;
+pub const FRICTION: i32 = 0xe800_u32 as i32;
 
 // ---------------------------------------------------------------------------
 // p_spec.c — sector-special and animation constants / globals
@@ -596,41 +591,41 @@ pub const FRICTION: c_int = 0xe800_u32 as c_int;
 
 /// Maximum number of running floor/ceiling/door animations at once
 /// (MAXANIMS in p_spec.c = 32).
-pub const MAXANIMS: c_int = 32;
+pub const MAXANIMS: i32 = 32;
 /// Maximum number of active line specials in a level
 /// (MAXLINEANIMS in p_spec.c = 64).
-pub const MAXLINEANIMS: c_int = 64;
+pub const MAXLINEANIMS: i32 = 64;
 
 /// Glow effect speed (GLOWSPEED in p_spec.h = 8).
-pub const GLOWSPEED: c_int = 8;
+pub const GLOWSPEED: i32 = 8;
 /// Bright strobe level (STROBEBRIGHT in p_spec.h = 5).
-pub const STROBEBRIGHT: c_int = 5;
+pub const STROBEBRIGHT: i32 = 5;
 /// Fast strobe dark duration in tics (FASTDARK in p_spec.h = 15).
-pub const FASTDARK: c_int = 15;
+pub const FASTDARK: i32 = 15;
 /// Slow strobe dark duration in tics (SLOWDARK in p_spec.h = 35).
-pub const SLOWDARK: c_int = 35;
+pub const SLOWDARK: i32 = 35;
 
 /// Vertical door speed (VDOORSPEED = FRACUNIT × 2).
-pub const VDOORSPEED: c_int = FRACUNIT * 2;
+pub const VDOORSPEED: i32 = FRACUNIT * 2;
 /// Vertical door wait time in tics (VDOORWAIT = 150).
-pub const VDOORWAIT: c_int = 150;
+pub const VDOORWAIT: i32 = 150;
 
 /// Ceiling movement speed (CEILSPEED = FRACUNIT).
-pub const CEILSPEED: c_int = FRACUNIT;
+pub const CEILSPEED: i32 = FRACUNIT;
 /// Maximum simultaneously active ceilings (MAXCEILINGS = 30).
-pub const MAXCEILINGS: c_int = 30;
+pub const MAXCEILINGS: i32 = 30;
 /// Ceiling movement wait time in tics (CEILWAIT = 150).
-pub const CEILWAIT: c_int = 150;
+pub const CEILWAIT: i32 = 150;
 
 /// Platform movement speed (PLATSPEED = FRACUNIT).
-pub const PLATSPEED: c_int = FRACUNIT;
+pub const PLATSPEED: i32 = FRACUNIT;
 /// Maximum simultaneously active platforms (MAXPLATS = 30).
-pub const MAXPLATS: c_int = 30;
+pub const MAXPLATS: i32 = 30;
 /// Platform wait time in seconds (PLATWAIT = 3).
-pub const PLATWAIT: c_int = 3;
+pub const PLATWAIT: i32 = 3;
 
 /// Floor movement speed (FLOORSPEED = FRACUNIT).
-pub const FLOORSPEED: c_int = FRACUNIT;
+pub const FLOORSPEED: i32 = FRACUNIT;
 
 // ---------------------------------------------------------------------------
 // p_map.c — collision detection globals and constants
@@ -638,7 +633,7 @@ pub const FLOORSPEED: c_int = FRACUNIT;
 
 /// Sentinel magic value used to detect the vanilla spechit overflow bug
 /// (DEFAULT_SPECHIT_MAGIC in p_map.c = 0x01C09C98).
-pub const DEFAULT_SPECHIT_MAGIC: c_uint = 0x01C09C98;
+pub const DEFAULT_SPECHIT_MAGIC: u32 = 0x01C09C98;
 
 // All p_map globals are now exported from `room/src/doom/p_map.rs`.
 
@@ -668,13 +663,13 @@ pub use crate::doom::p_saveg::{savegame_error, savegamelength};
 
 /// Angle turned per tic when pursuing a lost target
 /// (TRACEANGLE in p_enemy.c = 0xc000000).
-pub const TRACEANGLE: c_uint = 0xc000000;
+pub const TRACEANGLE: u32 = 0xc000000;
 /// Arc spread angle for the Mancubus fireball pattern
 /// (FATSPREAD = ANG90 / 8).
-pub const FATSPREAD: c_uint = ANG90 / 8;
+pub const FATSPREAD: u32 = ANG90 / 8;
 /// Speed of the Lost Soul charge attack in fixed-point units/tic
 /// (SKULLSPEED = 20 × FRACUNIT).
-pub const SKULLSPEED: c_int = 20 * FRACUNIT;
+pub const SKULLSPEED: i32 = 20 * FRACUNIT;
 
 /// Monster movement direction tables and boss brain targets (`p_enemy`).
 pub use crate::doom::p_enemy::{braintargeton, braintargets, numbraintargets, xspeed, yspeed};
@@ -699,21 +694,21 @@ pub const WI_NUMEPISODES: usize = 4;
 /// Number of maps per episode (NUMMAPS in wi_stuff.c = 9).
 pub const WI_NUMMAPS: usize = 9;
 /// Y-position of the level-name title on the intermission screen (WI_TITLEY = 2).
-pub const WI_TITLEY: c_int = 2;
+pub const WI_TITLEY: i32 = 2;
 /// Vertical spacing between player stats rows (WI_SPACINGY = 33).
-pub const WI_SPACINGY: c_int = 33;
+pub const WI_SPACINGY: i32 = 33;
 /// X-position of single-player stats (SP_STATSX = 50).
-pub const SP_STATSX: c_int = 50;
+pub const SP_STATSX: i32 = 50;
 /// Y-position of single-player stats (SP_STATSY = 50).
-pub const SP_STATSY: c_int = 50;
+pub const SP_STATSY: i32 = 50;
 /// X-position of the time display (SP_TIMEX = 16).
-pub const SP_TIMEX: c_int = 16;
+pub const SP_TIMEX: i32 = 16;
 /// Y-position of the time display (SP_TIMEY = SCREENHEIGHT − 32).
-pub const SP_TIMEY: c_int = SCREENHEIGHT - 32;
+pub const SP_TIMEY: i32 = SCREENHEIGHT - 32;
 /// Delay in tics before showing the "next level" location (SHOWNEXTLOCDELAY = 4).
-pub const SHOWNEXTLOCDELAY: c_int = 4;
+pub const SHOWNEXTLOCDELAY: i32 = 4;
 /// X spacing between deathmatch matrix columns (DM_SPACINGX = 40).
-pub const DM_SPACINGX: c_int = 40;
+pub const DM_SPACINGX: i32 = 40;
 /// Number of animated elements in episode 0 background (EPSD0ANIMINFO length).
 pub const WI_EPSD0_NANIM: usize = crate::doom::wi_stuff::EPSD0_NANIM;
 /// Number of animated elements in episode 1 background (EPSD1ANIMINFO length).
@@ -726,47 +721,47 @@ pub const WI_EPSD2_NANIM: usize = crate::doom::wi_stuff::EPSD2_NANIM;
 // ---------------------------------------------------------------------------
 
 /// Palette index at which red (pain) palette rotations begin (STARTREDPALS = 1).
-pub const STARTREDPALS: c_int = 1;
+pub const STARTREDPALS: i32 = 1;
 /// Palette index at which bonus (item pick-up) rotations begin (STARTBONUSPALS = 9).
-pub const STARTBONUSPALS: c_int = 9;
+pub const STARTBONUSPALS: i32 = 9;
 /// Number of red pain palette entries (NUMREDPALS = 8).
-pub const NUMREDPALS: c_int = 8;
+pub const NUMREDPALS: i32 = 8;
 /// Number of bonus pick-up palette entries (NUMBONUSPALS = 4).
-pub const NUMBONUSPALS: c_int = 4;
+pub const NUMBONUSPALS: i32 = 4;
 /// Palette index used for the radiation suit overlay (RADIATIONPAL = 13).
-pub const RADIATIONPAL: c_int = 13;
+pub const RADIATIONPAL: i32 = 13;
 /// 1-in-N probability of a random face change per tic (ST_FACEPROBABILITY = 96).
-pub const ST_FACEPROBABILITY: c_int = 96;
+pub const ST_FACEPROBABILITY: i32 = 96;
 /// Number of pain-level face groups (ST_NUMPAINFACES = 5).
-pub const ST_NUMPAINFACES: c_int = 5;
+pub const ST_NUMPAINFACES: i32 = 5;
 /// Number of straight (non-turning) faces per pain group (ST_NUMSTRAIGHTFACES = 3).
-pub const ST_NUMSTRAIGHTFACES: c_int = 3;
+pub const ST_NUMSTRAIGHTFACES: i32 = 3;
 /// Number of turning face variants per pain group (ST_NUMTURNFACES = 2).
-pub const ST_NUMTURNFACES: c_int = 2;
+pub const ST_NUMTURNFACES: i32 = 2;
 /// Number of special face frames (ST_NUMSPECIALFACES = 3: ouch, evil-grin, rampage).
-pub const ST_NUMSPECIALFACES: c_int = 3;
+pub const ST_NUMSPECIALFACES: i32 = 3;
 /// Number of extra face frames beyond the pain table (ST_NUMEXTRAFACES = 2: god, dead).
-pub const ST_NUMEXTRAFACES: c_int = 2;
+pub const ST_NUMEXTRAFACES: i32 = 2;
 /// Total face sprite count = pain × stride + extra.
-pub const ST_NUMFACES: c_int = ST_NUMPAINFACES
+pub const ST_NUMFACES: i32 = ST_NUMPAINFACES
     * (ST_NUMSTRAIGHTFACES + ST_NUMTURNFACES + ST_NUMSPECIALFACES)
     + ST_NUMEXTRAFACES;
 /// Tics of evil-grin display (ST_EVILGRINCOUNT = 2 × TICRATE).
-pub const ST_EVILGRINCOUNT: c_int = 2 * TICRATE;
+pub const ST_EVILGRINCOUNT: i32 = 2 * TICRATE;
 /// Tics of straight-face display (ST_STRAIGHTFACECOUNT = TICRATE / 2).
-pub const ST_STRAIGHTFACECOUNT: c_int = TICRATE / 2;
+pub const ST_STRAIGHTFACECOUNT: i32 = TICRATE / 2;
 /// Tics before turn-face times out (ST_TURNCOUNT = 1 × TICRATE).
-pub const ST_TURNCOUNT: c_int = TICRATE;
+pub const ST_TURNCOUNT: i32 = TICRATE;
 /// Tics of ouch-face display (ST_OUCHCOUNT = 1 × TICRATE).
-pub const ST_OUCHCOUNT: c_int = TICRATE;
+pub const ST_OUCHCOUNT: i32 = TICRATE;
 /// Tics of rampage-face display (ST_RAMPAGEDELAY = 2 × TICRATE).
-pub const ST_RAMPAGEDELAY: c_int = 2 * TICRATE;
+pub const ST_RAMPAGEDELAY: i32 = 2 * TICRATE;
 /// Damage threshold for the rampage face (ST_MUCHPAIN = 20).
-pub const ST_MUCHPAIN: c_int = 20;
+pub const ST_MUCHPAIN: i32 = 20;
 /// X pixel offset of the status bar (ST_X = 0).
-pub const ST_X: c_int = 0;
+pub const ST_X: i32 = 0;
 /// X pixel offset of the arms display (ST_X2 = 104).
-pub const ST_X2: c_int = 104;
+pub const ST_X2: i32 = 104;
 
 // ---------------------------------------------------------------------------
 // Re-exports of ported globals so C tests and remaining FFI consumers can

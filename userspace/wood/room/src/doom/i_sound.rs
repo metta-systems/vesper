@@ -22,7 +22,7 @@ use {
         w_wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength},
         z_zone::PU_CACHE,
     },
-    std::ffi::{c_char, c_int, c_uint, c_void},
+    std::ffi::c_void,
 };
 
 use crate::types::Boolean;
@@ -36,60 +36,50 @@ struct MusicHandle {
 /// Music device selector. C default is `SNDDEVICE_SB` (1); this port
 /// uses `3` (`SNDDEVICE_SB_PRO`) to match the original chocolate-doom
 /// behaviour observed at runtime. Configurable via `m_config`.
-pub static mut snd_musicdevice: c_int = 3;
+pub static mut snd_musicdevice: i32 = 3;
 
 /// SFX device selector. Same notes as `snd_musicdevice`.
-pub static mut snd_sfxdevice: c_int = 3;
+pub static mut snd_sfxdevice: i32 = 3;
 
 /// Output sample rate for digital sound, in Hz. Mirrors
 /// `snd_samplerate` from `i_sound.c`. Bound via `m_config`.
-pub static mut snd_samplerate: c_int = 44100;
+pub static mut snd_samplerate: i32 = 44100;
 
 /// Maximum number of bytes the SFX cache may hold. Default 64 MiB,
 /// matching the C source. Bound via `m_config`.
-pub static mut snd_cachesize: c_int = 64 * 1024 * 1024;
+pub static mut snd_cachesize: i32 = 64 * 1024 * 1024;
 
 /// Mixer slice length in milliseconds. Default 28 ms (~1 buffer per
 /// 35 Hz tic). Mirrors `snd_maxslicetime_ms` in `i_sound.c`.
-pub static mut snd_maxslicetime_ms: c_int = 28;
+pub static mut snd_maxslicetime_ms: i32 = 28;
 
 /// Legacy SoundBlaster I/O port. Retained only so the config file
 /// stays cross-compatible with chocolate-doom; not used at runtime.
-pub static mut snd_sbport: c_int = 0;
+pub static mut snd_sbport: i32 = 0;
 
 /// Legacy SoundBlaster IRQ. Same note as `snd_sbport`.
-pub static mut snd_sbirq: c_int = 0;
+pub static mut snd_sbirq: i32 = 0;
 
 /// Legacy SoundBlaster DMA channel. Same note as `snd_sbport`.
-pub static mut snd_sbdma: c_int = 0;
+pub static mut snd_sbdma: i32 = 0;
 
 /// Legacy MPU-401 MIDI port. Same note as `snd_sbport`.
-pub static mut snd_mport: c_int = 0;
+pub static mut snd_mport: i32 = 0;
 
 /// Pitch-shift toggle. Not consumed by the music hooks;
 /// preserved for config-file compatibility.
-pub static mut snd_pitchshift: c_int = 0;
+pub static mut snd_pitchshift: i32 = 0;
 
 /// Backing storage for the empty default `snd_musiccmd` C string.
 /// `m_config` may rewrite `snd_musiccmd` to point at a different
 /// buffer; this static merely supplies the initial NUL byte.
-static mut EMPTY_CSTR: [c_char; 1] = [0];
+static mut EMPTY_CSTR: [u8; 1] = [0];
 
 /// External shell command used by the original chocolate-doom to play
 /// back music via an external process. Unused by this port (the
 /// platform's music methods handle playback directly) but kept
 /// for config-file compatibility. Starts pointing at `EMPTY_CSTR`.
-pub static mut snd_musiccmd: *mut c_char = unsafe { std::ptr::addr_of_mut!(EMPTY_CSTR[0]) };
-
-/// Reinterpret a `&[u8]` as a `&[c_char]` without copying.
-///
-/// `c_char` is `i8` on most targets; this helper lets `M_BindVariable`
-/// calls below use byte-string literals while passing the same memory
-/// as a C-char slice. The signedness reinterpretation is sound
-/// because the byte values are pure ASCII.
-const fn c_bytes(s: &[u8]) -> &'static [c_char] {
-    unsafe { &*(s as *const [u8] as *const [c_char]) }
-}
+pub static mut snd_musiccmd: *mut u8 = unsafe { std::ptr::addr_of_mut!(EMPTY_CSTR[0]) };
 
 /// Initialise the audio subsystem through the platform's `sound_init`.
 ///
@@ -124,7 +114,7 @@ pub fn I_ShutdownSound() {
 /// In the C source this is delegated to `sound_module->GetSfxLumpNum`
 /// and the lump-name construction lives in the SDL backend. This port
 /// inlines the construction here.
-pub fn I_GetSfxLumpNum(sfxinfo: *mut c_void) -> c_int {
+pub fn I_GetSfxLumpNum(sfxinfo: *mut c_void) -> i32 {
     if sfxinfo.is_null() {
         return -1;
     }
@@ -135,16 +125,16 @@ pub fn I_GetSfxLumpNum(sfxinfo: *mut c_void) -> c_int {
             sfx = (*sfx).link;
             depth += 1;
         }
-        let mut lump_name = [0 as c_char; 9];
-        lump_name[0] = b'D' as c_char;
-        lump_name[1] = b'S' as c_char;
+        let mut lump_name = [0u8; 9];
+        lump_name[0] = b'D';
+        lump_name[1] = b'S';
         for (i, &c) in (*sfx).name.iter().take(6).enumerate() {
             if c == 0 {
                 break;
             }
             lump_name[2 + i] = c;
         }
-        W_CheckNumForName(lump_name.as_ptr())
+        W_CheckNumForName(&lump_name)
     }
 }
 
@@ -160,7 +150,7 @@ pub fn I_UpdateSound() {}
 /// fixed 8-channel mixer). The C source clamps `vol`/`sep` via
 /// `CheckVolumeSeparation`; the platform mixer performs equivalent
 /// clamping.
-pub fn I_UpdateSoundParams(channel: c_int, vol: c_int, sep: c_int) {
+pub fn I_UpdateSoundParams(channel: i32, vol: i32, sep: i32) {
     if !(0..8).contains(&channel) {
         return;
     }
@@ -175,7 +165,7 @@ pub fn I_UpdateSoundParams(channel: c_int, vol: c_int, sep: c_int) {
 /// Loads the sample data via `W_CacheLumpNum` with `PU_CACHE`, then
 /// hands the lump bytes to the platform's `sound_start`.
 /// The cache tag means the data may be evicted once the SFX finishes.
-pub fn I_StartSound(sfxinfo: *mut c_void, channel: c_int, vol: c_int, sep: c_int) -> c_int {
+pub fn I_StartSound(sfxinfo: *mut c_void, channel: i32, vol: i32, sep: i32) -> i32 {
     if sfxinfo.is_null() || !(0..8).contains(&channel) {
         return -1;
     }
@@ -185,7 +175,7 @@ pub fn I_StartSound(sfxinfo: *mut c_void, channel: c_int, vol: c_int, sep: c_int
         if lumpnum < 0 {
             return -1;
         }
-        let lump_len = W_LumpLength(lumpnum as c_uint);
+        let lump_len = W_LumpLength(lumpnum as u32);
         if lump_len <= 0 {
             return -1;
         }
@@ -204,7 +194,7 @@ pub fn I_StartSound(sfxinfo: *mut c_void, channel: c_int, vol: c_int, sep: c_int
 
 /// Stop the SFX currently playing on `channel`. Out-of-range channel
 /// numbers are silently ignored.
-pub fn I_StopSound(channel: c_int) {
+pub fn I_StopSound(channel: i32) {
     if !(0..8).contains(&channel) {
         return;
     }
@@ -214,17 +204,17 @@ pub fn I_StopSound(channel: c_int) {
 /// Return 1 if an SFX is currently audible on `channel`, 0 otherwise
 /// (including for out-of-range channels). Mirrors `I_SoundIsPlaying`
 /// from `i_sound.c`.
-pub fn I_SoundIsPlaying(channel: c_int) -> c_int {
+pub fn I_SoundIsPlaying(channel: i32) -> i32 {
     if !(0..8).contains(&channel) {
         return 0;
     }
-    c_int::from(platform().sound_is_playing(channel as usize))
+    i32::from(platform().sound_is_playing(channel as usize))
 }
 
 /// Hook for the SDL backend to pre-cache a batch of sounds. Sounds are
 /// handed to the platform as they start, so this is a no-op. Kept for
 /// API compatibility with the engine.
-pub fn I_PrecacheSounds(_sounds: *mut c_void, _num_sounds: c_int) {}
+pub fn I_PrecacheSounds(_sounds: *mut c_void, _num_sounds: i32) {}
 
 /// Initialise the music backend through the platform's `music_init`.
 pub fn I_InitMusic() {
@@ -238,7 +228,7 @@ pub fn I_ShutdownMusic() {
 
 /// Set the music output volume. The accepted range matches the
 /// engine convention (0..=127); the platform clamps it.
-pub fn I_SetMusicVolume(volume: c_int) {
+pub fn I_SetMusicVolume(volume: i32) {
     platform().music_set_volume(volume);
 }
 
@@ -263,7 +253,7 @@ pub fn I_ResumeSong() {
 /// In the C source the song data is the raw MUS lump, which the SDL
 /// backend hands to libtimidity. This port performs the MUS->MIDI
 /// conversion up front so the platform only ever plays MIDI.
-pub fn I_RegisterSong(data: *mut c_void, len: c_int) -> *mut c_void {
+pub fn I_RegisterSong(data: *mut c_void, len: i32) -> *mut c_void {
     if data.is_null() || len <= 0 {
         return std::ptr::null_mut();
     }
@@ -292,7 +282,7 @@ pub fn I_UnRegisterSong(handle: *mut c_void) {
 ///
 /// The MIDI bytes inside the handle are borrowed for the duration of
 /// the call; the platform copies what it needs to keep playing.
-pub fn I_PlaySong(handle: *mut c_void, looping: c_int) {
+pub fn I_PlaySong(handle: *mut c_void, looping: i32) {
     if handle.is_null() {
         return;
     }
@@ -308,8 +298,8 @@ pub fn I_StopSong() {
 
 /// Return 1 if a song is currently audible, 0 otherwise.
 /// Mirrors `I_MusicIsPlaying` from `i_sound.c`.
-pub fn I_MusicIsPlaying() -> c_int {
-    c_int::from(platform().music_is_playing())
+pub fn I_MusicIsPlaying() -> i32 {
+    i32::from(platform().music_is_playing())
 }
 
 /// Bind the `snd_*` globals to `m_config` so they survive across
@@ -319,43 +309,43 @@ pub fn I_MusicIsPlaying() -> c_int {
 /// here because this port doesn't use libsamplerate.
 pub fn I_BindSoundVariables() {
     M_BindVariable(
-        c_bytes(b"snd_musicdevice\0").as_ptr() as *mut c_char,
-        &raw mut snd_musicdevice as *mut c_int as *mut c_void,
+        c"snd_musicdevice".as_ptr().cast_mut().cast(),
+        &raw mut snd_musicdevice as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_sfxdevice\0").as_ptr() as *mut c_char,
-        &raw mut snd_sfxdevice as *mut c_int as *mut c_void,
+        c"snd_sfxdevice".as_ptr().cast_mut().cast(),
+        &raw mut snd_sfxdevice as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_sbport\0").as_ptr() as *mut c_char,
-        &raw mut snd_sbport as *mut c_int as *mut c_void,
+        c"snd_sbport".as_ptr().cast_mut().cast(),
+        &raw mut snd_sbport as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_sbirq\0").as_ptr() as *mut c_char,
-        &raw mut snd_sbirq as *mut c_int as *mut c_void,
+        c"snd_sbirq".as_ptr().cast_mut().cast(),
+        &raw mut snd_sbirq as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_sbdma\0").as_ptr() as *mut c_char,
-        &raw mut snd_sbdma as *mut c_int as *mut c_void,
+        c"snd_sbdma".as_ptr().cast_mut().cast(),
+        &raw mut snd_sbdma as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_mport\0").as_ptr() as *mut c_char,
-        &raw mut snd_mport as *mut c_int as *mut c_void,
+        c"snd_mport".as_ptr().cast_mut().cast(),
+        &raw mut snd_mport as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_maxslicetime_ms\0").as_ptr() as *mut c_char,
-        &raw mut snd_maxslicetime_ms as *mut c_int as *mut c_void,
+        c"snd_maxslicetime_ms".as_ptr().cast_mut().cast(),
+        &raw mut snd_maxslicetime_ms as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_musiccmd\0").as_ptr() as *mut c_char,
+        c"snd_musiccmd".as_ptr().cast_mut().cast(),
         &raw mut snd_musiccmd as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_samplerate\0").as_ptr() as *mut c_char,
-        &raw mut snd_samplerate as *mut c_int as *mut c_void,
+        c"snd_samplerate".as_ptr().cast_mut().cast(),
+        &raw mut snd_samplerate as *mut c_void,
     );
     M_BindVariable(
-        c_bytes(b"snd_cachesize\0").as_ptr() as *mut c_char,
-        &raw mut snd_cachesize as *mut c_int as *mut c_void,
+        c"snd_cachesize".as_ptr().cast_mut().cast(),
+        &raw mut snd_cachesize as *mut c_void,
     );
 }

@@ -11,8 +11,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_int;
-
 use crate::doom::m_fixed::FRACUNIT;
 
 /// WAD lump index of the sky flat (`F_SKY1`), filled in by `g_game.c`
@@ -21,21 +19,21 @@ use crate::doom::m_fixed::FRACUNIT;
 /// Sectors whose ceiling flat equals this value are treated as open sky by
 /// the BSP, seg, and plane renderers (`r_bsp.c`, `r_segs.c`, `r_plane.c`,
 /// `p_map.c`, `p_mobj.c`).
-pub static mut skyflatnum: c_int = 0;
+pub static mut skyflatnum: i32 = 0;
 
 /// Texture number of the current sky texture (SKY1 / SKY2 / SKY3 / SKY4),
 /// assigned by `g_game.c` at level start.
 ///
 /// `r_plane.c` uses this index when calling `R_GetColumn` to fetch sky
 /// columns, and `r_data.c` marks it as always-present during precaching.
-pub static mut skytexture: c_int = 0;
+pub static mut skytexture: i32 = 0;
 
 /// Vertical midpoint for sky column drawing, in 16.16 fixed-point units.
 ///
 /// Reset to `100 * FRACUNIT` every time the view size changes (see
 /// `R_InitSkyMap`).  Used by `r_plane.c` as `dc_texturemid` when rendering
 /// sky spans.
-pub static mut skytexturemid: c_int = 0;
+pub static mut skytexturemid: i32 = 0;
 
 /// Reset sky-mapping state whenever the view size changes.
 ///
@@ -72,7 +70,7 @@ mod tests {
     #[test]
     fn globals_default_to_zero() {
         // Only meaningful on the first run – still worth asserting
-        // that we're publishing three `c_int` symbols with the
+        // that we're publishing three `i32` symbols with the
         // expected names (compilation + linkage sanity).
         let _g = LOCK.lock().unwrap();
         unsafe {

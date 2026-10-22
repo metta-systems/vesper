@@ -14,12 +14,7 @@
 #[global_allocator]
 static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 
-use std::{
-    cell::Cell,
-    ffi::{c_char, c_int, CString},
-    mem::offset_of,
-    path::PathBuf,
-};
+use std::{cell::Cell, ffi::CString, mem::offset_of, path::PathBuf};
 
 // ---------------------------------------------------------------------------
 // headless:: TLS re-exports
@@ -109,17 +104,17 @@ struct Snapshot {
     tic: usize,
     virtual_ms: u32,
     frames: u64,
-    gametic: c_int,
-    gamestate: c_int,
-    rndindex: c_int,
-    prndindex: c_int,
-    health: c_int,
-    armorpoints: c_int,
-    killcount: c_int,
-    itemcount: c_int,
-    secretcount: c_int,
-    readyweapon: c_int,
-    ammo: [c_int; 4],
+    gametic: i32,
+    gamestate: i32,
+    rndindex: i32,
+    prndindex: i32,
+    health: i32,
+    armorpoints: i32,
+    killcount: i32,
+    itemcount: i32,
+    secretcount: i32,
+    readyweapon: i32,
+    ammo: [i32; 4],
     mo_x: i32,
     mo_y: i32,
     mo_z: i32,
@@ -752,10 +747,10 @@ fn demo_playthrough() {
         CString::new("-nograbmouse").unwrap(),
     ];
 
-    let mut c_argv: Vec<*mut c_char> = argv.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+    let mut c_argv: Vec<*mut u8> = argv.iter().map(|s| s.as_ptr() as *mut u8).collect();
     c_argv.push(std::ptr::null_mut());
 
-    let argc = (c_argv.len() - 1) as c_int;
+    let argc = (c_argv.len() - 1) as i32;
 
     // Enable singletics mode: one game tic per TryRunTics() call,
     // bypassing the real-time waiting loop.

@@ -5,10 +5,7 @@
 
 #![allow(non_snake_case)]
 
-use std::{
-    ffi::{c_int, c_short, c_uint, c_void},
-    sync::Mutex,
-};
+use std::{ffi::c_void, sync::Mutex};
 
 use crate::doom::{
     c_ffi,
@@ -134,7 +131,7 @@ fn aproxdist_mixed_sign() {
 
 /// Construct a minimal `line_t` for `P_PointOnLineSide` tests: only `v1`,
 /// `dx`, `dy` are meaningful; the remaining fields are zeroed.
-fn make_pols_line(v1: *mut vertex_t, dx: c_int, dy: c_int) -> line_t {
+fn make_pols_line(v1: *mut vertex_t, dx: i32, dy: i32) -> line_t {
     let mut line: line_t = unsafe { std::mem::zeroed() };
     line.v1 = v1;
     line.dx = dx;
@@ -279,7 +276,7 @@ fn point_on_line_side_diagonal_on_line_is_back() {
 // ---------------------------------------------------------------------------
 
 /// Build a `divline_t` from explicit origin and direction components.
-fn make_divline(x: c_int, y: c_int, dx: c_int, dy: c_int) -> divline_t {
+fn make_divline(x: i32, y: i32, dx: i32, dy: i32) -> divline_t {
     divline_t { x, y, dx, dy }
 }
 
@@ -616,7 +613,7 @@ fn box_crosses_line_returns_negative_one() {
 
 /// Zero-initialise a `sector_t` and set only the two height fields the
 /// line-opening tests care about.
-fn make_sector(floorheight: c_int, ceilingheight: c_int) -> c_ffi::sector_t {
+fn make_sector(floorheight: i32, ceilingheight: i32) -> c_ffi::sector_t {
     let mut s: c_ffi::sector_t = unsafe { std::mem::zeroed() };
     s.floorheight = floorheight;
     s.ceilingheight = ceilingheight;
@@ -628,7 +625,7 @@ fn make_sector(floorheight: c_int, ceilingheight: c_int) -> c_ffi::sector_t {
 /// not exercised by the function under test.
 fn make_line(
     v1: *mut vertex_t,
-    sidenum: [c_short; 2],
+    sidenum: [i16; 2],
     frontsector: *mut c_ffi::sector_t,
     backsector: *mut c_ffi::sector_t,
 ) -> line_t {
@@ -758,7 +755,7 @@ fn line_opening_negative_range() {
 
 /// Per-test scratch buffer used by the traverse-callback to record the
 /// fractions it was invoked with, in invocation order.
-static TRAVERSED_FRACS: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
+static TRAVERSED_FRACS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 
 /// Test callback: records the intercept fraction and returns 1 to ask
 /// `P_TraverseIntercepts` to continue iterating.
@@ -768,7 +765,7 @@ static TRAVERSED_FRACS: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_continue(intr: *mut c_ffi::intercept_t) -> c_uint {
+unsafe fn record_and_continue(intr: *mut c_ffi::intercept_t) -> u32 {
     TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
     1 // continue
 }
@@ -781,7 +778,7 @@ unsafe fn record_and_continue(intr: *mut c_ffi::intercept_t) -> c_uint {
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_stop(intr: *mut c_ffi::intercept_t) -> c_uint {
+unsafe fn record_and_stop(intr: *mut c_ffi::intercept_t) -> u32 {
     TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
     0 // stop
 }

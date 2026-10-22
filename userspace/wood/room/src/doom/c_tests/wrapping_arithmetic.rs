@@ -12,8 +12,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_int, c_uint};
-
 use crate::doom::{
     c_ffi,
     m_fixed::{FixedDiv, FixedMul, FRACUNIT},
@@ -31,7 +29,7 @@ fn fixedmul_max_max() {
     // (i32::MAX * i32::MAX) >> 16
     assert_eq!(
         FixedMul(i32::MAX, i32::MAX),
-        ((i32::MAX as i64 * i32::MAX as i64) >> 16) as c_int
+        ((i32::MAX as i64 * i32::MAX as i64) >> 16) as i32
     );
 }
 
@@ -40,7 +38,7 @@ fn fixedmul_max_max() {
 fn fixedmul_max_min() {
     assert_eq!(
         FixedMul(i32::MAX, i32::MIN),
-        ((i32::MAX as i64 * i32::MIN as i64) >> 16) as c_int
+        ((i32::MAX as i64 * i32::MIN as i64) >> 16) as i32
     );
 }
 
@@ -49,7 +47,7 @@ fn fixedmul_max_min() {
 fn fixedmul_min_max() {
     assert_eq!(
         FixedMul(i32::MIN, i32::MAX),
-        ((i32::MIN as i64 * i32::MAX as i64) >> 16) as c_int
+        ((i32::MIN as i64 * i32::MAX as i64) >> 16) as i32
     );
 }
 
@@ -58,7 +56,7 @@ fn fixedmul_min_max() {
 fn fixedmul_min_min() {
     assert_eq!(
         FixedMul(i32::MIN, i32::MIN),
-        ((i32::MIN as i64 * i32::MIN as i64) >> 16) as c_int
+        ((i32::MIN as i64 * i32::MIN as i64) >> 16) as i32
     );
 }
 
@@ -132,16 +130,16 @@ fn fine_mask_value() {
 /// `0xFFFFFFFF` (all-bits angle) maps to fine index 8191 (the last entry).
 #[test]
 fn angle_wraps_at_360() {
-    let angle: c_uint = 0xFFFFFFFF;
-    let fine = ((angle >> ANGLETOFINESHIFT) as c_int) & FINEMASK;
+    let angle: u32 = 0xFFFFFFFF;
+    let fine = ((angle >> ANGLETOFINESHIFT) as i32) & FINEMASK;
     assert_eq!(fine, 8191);
 }
 
 /// Angle 0 maps to fine index 0.
 #[test]
 fn angle_zero_to_fine() {
-    let angle: c_uint = 0;
-    let fine = ((angle >> ANGLETOFINESHIFT) as c_int) & FINEMASK;
+    let angle: u32 = 0;
+    let fine = ((angle >> ANGLETOFINESHIFT) as i32) & FINEMASK;
     assert_eq!(fine, 0);
 }
 
@@ -167,10 +165,10 @@ fn ang180_value() {
 /// index is 1023.  This is the canonical "angle wrap" path used by aim/movement.
 #[test]
 fn angle_addition_wraps() {
-    let a: c_uint = 0xFFFFFFFF;
-    let b: c_uint = ANG45;
+    let a: u32 = 0xFFFFFFFF;
+    let b: u32 = ANG45;
     let result = a.wrapping_add(b);
-    let fine = ((result >> ANGLETOFINESHIFT) as c_int) & FINEMASK;
+    let fine = ((result >> ANGLETOFINESHIFT) as i32) & FINEMASK;
     // 0xFFFFFFFF + 0x20000000 = 0x1FFFFFFF (32-bit wrap)
     // 0x1FFFFFFF >> 19 = 0x3FF = 1023
     assert_eq!(fine, 1023);
@@ -209,7 +207,7 @@ fn mapbtofrac_value() {
 /// block index 1.
 #[test]
 fn coord_on_block_boundary() {
-    let x: c_int = 128 << 16; // exactly 128 units
+    let x: i32 = 128 << 16; // exactly 128 units
     let blockx = x >> c_ffi::MAPBLOCKSHIFT;
     assert_eq!(blockx, 1);
 }
@@ -222,11 +220,11 @@ fn coord_on_block_boundary() {
 /// the vanilla deathmatch item-spawn queue.
 #[test]
 fn item_queue_wraps() {
-    let mut head: c_int = 0;
-    head = (head + 1) & (c_ffi::ITEMQUESIZE as c_int - 1);
+    let mut head: i32 = 0;
+    head = (head + 1) & (c_ffi::ITEMQUESIZE as i32 - 1);
     assert_eq!(head, 1);
     head = 127;
-    head = (head + 1) & (c_ffi::ITEMQUESIZE as c_int - 1);
+    head = (head + 1) & (c_ffi::ITEMQUESIZE as i32 - 1);
     assert_eq!(head, 0);
 }
 
@@ -239,7 +237,7 @@ fn item_queue_wraps() {
 /// vanilla wrap-around when adding any non-negative `n`.
 #[test]
 fn rndindex_wraps_at_256() {
-    let mut idx: c_int = 0;
+    let mut idx: i32 = 0;
     idx = (idx + 1) & 0xff;
     assert_eq!(idx, 1);
     idx = (idx + 255) & 0xff;

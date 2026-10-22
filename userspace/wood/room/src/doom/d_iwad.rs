@@ -17,10 +17,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::{
     doom::{d_mode, m_misc::M_StringJoinA},
@@ -35,7 +32,7 @@ const MAX_IWAD_DIRS: usize = 128;
 /// Path component separator character (`/`).
 ///
 /// Used when constructing full file paths from a directory and a filename.
-const DIR_SEPARATOR: c_char = b'/' as c_char;
+const DIR_SEPARATOR: u8 = b'/';
 
 /// Null-terminated string form of [`DIR_SEPARATOR`], suitable for passing to
 /// C string-joining functions.
@@ -44,19 +41,16 @@ const DIR_SEPARATOR_S: &[u8] = b"/\0";
 extern "C" {
     /// C standard `printf`; used to emit diagnostic messages during IWAD
     /// search.
-    fn printf(fmt: *const c_char, ...) -> c_int;
+    fn printf(fmt: *const u8, ...) -> i32;
 
     /// Case-insensitive string comparison (POSIX).
-    fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int;
+    fn strcasecmp(s1: *const u8, s2: *const u8) -> i32;
     /// Locates the last occurrence of character `c` in string `s`.
-    fn strrchr(s: *const c_char, c: c_int) -> *mut c_char;
+    fn strrchr(s: *const u8, c: i32) -> *mut u8;
     /// Case-sensitive string comparison.
-    fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
-    /// Returns the length of a null-terminated C string (not including the
-    /// terminator).
-    fn strlen(s: *const c_char) -> usize;
+    fn strcmp(s1: *const u8, s2: *const u8) -> i32;
     /// Duplicates a C string, returning a heap-allocated copy.
-    fn strdup(s: *const c_char) -> *mut c_char;
+    fn strdup(s: *const u8) -> *mut u8;
     /// Frees a heap-allocated block.
     fn free(ptr: *mut c_void);
     /// Allocates `size` bytes of uninitialised heap memory.
@@ -65,7 +59,7 @@ extern "C" {
 
 use crate::doom::{
     m_argv::{myargv, M_CheckParmWithArgs},
-    m_misc::M_FileExists,
+    m_misc::{strlen, M_FileExists},
 };
 
 /// Metadata for a single known IWAD file.
@@ -78,16 +72,16 @@ use crate::doom::{
 #[repr(C)]
 pub struct iwad_t {
     /// Canonical filename of the IWAD (e.g. `"doom2.wad\0"`).
-    pub name: *mut c_char,
+    pub name: *mut u8,
     /// Game mission identifier; one of the `d_mode::*` integer constants.
-    pub mission: c_int,
+    pub mission: i32,
     /// Game mode identifier (shareware, retail, commercial, etc.).
-    pub mode: c_int,
+    pub mode: i32,
     /// Human-readable name of the game (e.g. `"Doom II\0"`).
-    pub description: *mut c_char,
+    pub description: *mut u8,
 }
 
-// SAFETY: All `*mut c_char` fields point into static string literals and are
+// SAFETY: All `*mut u8` fields point into static string literals and are
 // never mutated; the struct is effectively immutable once constructed.
 unsafe impl Sync for iwad_t {}
 
@@ -98,88 +92,91 @@ unsafe impl Sync for iwad_t {}
 /// shareware releases. Mirrors `iwads[]` in `d_iwad.c`.
 static IWADS: [iwad_t; 14] = [
     iwad_t {
-        name: c"doom2.wad".as_ptr().cast_mut(),
+        name: c"doom2.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom2,
         mode: d_mode::commercial,
-        description: c"Doom II".as_ptr().cast_mut(),
+        description: c"Doom II".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"plutonia.wad".as_ptr().cast_mut(),
+        name: c"plutonia.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::pack_plut,
         mode: d_mode::commercial,
-        description: c"Final Doom: Plutonia Experiment".as_ptr().cast_mut(),
+        description: c"Final Doom: Plutonia Experiment"
+            .as_ptr()
+            .cast_mut()
+            .cast(),
     },
     iwad_t {
-        name: c"tnt.wad".as_ptr().cast_mut(),
+        name: c"tnt.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::pack_tnt,
         mode: d_mode::commercial,
-        description: c"Final Doom: TNT: Evilution".as_ptr().cast_mut(),
+        description: c"Final Doom: TNT: Evilution".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"doom.wad".as_ptr().cast_mut(),
+        name: c"doom.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom,
         mode: d_mode::retail,
-        description: c"Doom".as_ptr().cast_mut(),
+        description: c"Doom".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"doom1.wad".as_ptr().cast_mut(),
+        name: c"doom1.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom,
         mode: d_mode::shareware,
-        description: c"Doom Shareware".as_ptr().cast_mut(),
+        description: c"Doom Shareware".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"chex.wad".as_ptr().cast_mut(),
+        name: c"chex.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::pack_chex,
         mode: d_mode::shareware,
-        description: c"Chex Quest".as_ptr().cast_mut(),
+        description: c"Chex Quest".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"hacx.wad".as_ptr().cast_mut(),
+        name: c"hacx.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::pack_hacx,
         mode: d_mode::commercial,
-        description: c"Hacx".as_ptr().cast_mut(),
+        description: c"Hacx".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"freedm.wad".as_ptr().cast_mut(),
+        name: c"freedm.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom2,
         mode: d_mode::commercial,
-        description: c"FreeDM".as_ptr().cast_mut(),
+        description: c"FreeDM".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"freedoom2.wad".as_ptr().cast_mut(),
+        name: c"freedoom2.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom2,
         mode: d_mode::commercial,
-        description: c"Freedoom: Phase 2".as_ptr().cast_mut(),
+        description: c"Freedoom: Phase 2".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"freedoom1.wad".as_ptr().cast_mut(),
+        name: c"freedoom1.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::doom,
         mode: d_mode::retail,
-        description: c"Freedoom: Phase 1".as_ptr().cast_mut(),
+        description: c"Freedoom: Phase 1".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"heretic.wad".as_ptr().cast_mut(),
+        name: c"heretic.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::heretic,
         mode: d_mode::retail,
-        description: c"Heretic".as_ptr().cast_mut(),
+        description: c"Heretic".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"heretic1.wad".as_ptr().cast_mut(),
+        name: c"heretic1.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::heretic,
         mode: d_mode::shareware,
-        description: c"Heretic Shareware".as_ptr().cast_mut(),
+        description: c"Heretic Shareware".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"hexen.wad".as_ptr().cast_mut(),
+        name: c"hexen.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::hexen,
         mode: d_mode::commercial,
-        description: c"Hexen".as_ptr().cast_mut(),
+        description: c"Hexen".as_ptr().cast_mut().cast(),
     },
     iwad_t {
-        name: c"strife1.wad".as_ptr().cast_mut(),
+        name: c"strife1.wad".as_ptr().cast_mut().cast(),
         mission: d_mode::strife,
         mode: d_mode::commercial,
-        description: c"Strife".as_ptr().cast_mut(),
+        description: c"Strife".as_ptr().cast_mut().cast(),
     },
 ];
 
@@ -192,10 +189,10 @@ static mut iwad_dirs_built: bool = false;
 ///
 /// Populated lazily by `BuildIWADDirList`. At most [`MAX_IWAD_DIRS`]
 /// entries are stored. Corresponds to `iwad_dirs[]` in `d_iwad.c`.
-static mut iwad_dirs: [*mut c_char; MAX_IWAD_DIRS] = [ptr::null_mut(); MAX_IWAD_DIRS];
+static mut iwad_dirs: [*mut u8; MAX_IWAD_DIRS] = [ptr::null_mut(); MAX_IWAD_DIRS];
 
 /// Number of valid entries in [`iwad_dirs`].
-static mut num_iwad_dirs: c_int = 0;
+static mut num_iwad_dirs: i32 = 0;
 
 /// Appends `dir` to the global IWAD search directory list if the list is not
 /// already full.
@@ -209,8 +206,8 @@ static mut num_iwad_dirs: c_int = 0;
 /// only invoke this function from the single-threaded game-startup path, as it
 /// writes to the mutable globals `iwad_dirs` and `num_iwad_dirs` without
 /// synchronisation.
-unsafe fn AddIWADDir(dir: *mut c_char) {
-    if num_iwad_dirs < MAX_IWAD_DIRS as c_int {
+unsafe fn AddIWADDir(dir: *mut u8) {
+    if num_iwad_dirs < MAX_IWAD_DIRS as i32 {
         iwad_dirs[num_iwad_dirs as usize] = dir;
         num_iwad_dirs += 1;
     }
@@ -227,7 +224,7 @@ unsafe fn AddIWADDir(dir: *mut c_char) {
 /// null-terminated C strings. The strings must remain valid for the duration
 /// of the call. The function passes these pointers directly to the C FFI
 /// functions `strlen` and `strcasecmp`, which impose the same requirements.
-unsafe fn DirIsFile(path: *mut c_char, filename: *mut c_char) -> c_int {
+unsafe fn DirIsFile(path: *mut u8, filename: *mut u8) -> i32 {
     let path_len = strlen(path);
     let filename_len = strlen(filename);
 
@@ -260,25 +257,25 @@ unsafe fn DirIsFile(path: *mut c_char, filename: *mut c_char) -> c_int {
 /// and `free` via C FFI, all of which require the same pointer-validity
 /// guarantee. The heap-allocated string returned on success must be freed by
 /// the caller using `free`.
-unsafe fn CheckDirectoryHasIWAD(dir: *mut c_char, iwadname: *mut c_char) -> *mut c_char {
+unsafe fn CheckDirectoryHasIWAD(dir: *mut u8, iwadname: *mut u8) -> *mut u8 {
     if DirIsFile(dir, iwadname) != 0 && M_FileExists(dir) != 0 {
         return strdup(dir);
     }
 
-    let filename = if strcmp(dir, c".".as_ptr()) == 0 {
+    let filename = if strcmp(dir, c".".as_ptr().cast()) == 0 {
         strdup(iwadname)
     } else {
-        let strs: [*const c_char; 4] = [
-            dir as *const c_char,
-            DIR_SEPARATOR_S.as_ptr() as *const c_char,
-            iwadname as *const c_char,
+        let strs: [*const u8; 4] = [
+            dir as *const u8,
+            DIR_SEPARATOR_S.as_ptr(),
+            iwadname as *const u8,
             ptr::null(),
         ];
         // SAFETY: null-terminated pointer array; ownership transferred to caller via return.
         M_StringJoinA(strs.as_ptr())
     };
 
-    printf(c"Trying IWAD file:%s\n".as_ptr(), filename);
+    printf(c"Trying IWAD file:%s\n".as_ptr().cast(), filename);
 
     if M_FileExists(filename) != 0 {
         return filename;
@@ -298,11 +295,7 @@ unsafe fn CheckDirectoryHasIWAD(dir: *mut c_char, iwadname: *mut c_char) -> *mut
 ///
 /// # Safety
 /// `mission` must be a valid, non-null pointer.
-unsafe fn SearchDirectoryForIWAD(
-    dir: *mut c_char,
-    mask: c_int,
-    mission: *mut c_int,
-) -> *mut c_char {
+unsafe fn SearchDirectoryForIWAD(dir: *mut u8, mask: i32, mission: *mut i32) -> *mut u8 {
     for i in 0..IWADS.len() {
         if ((1 << IWADS[i].mission) & mask) == 0 {
             continue;
@@ -334,8 +327,8 @@ unsafe fn SearchDirectoryForIWAD(
 /// FFI functions `strrchr` and `strcasecmp`, which require a valid
 /// null-terminated string. The pointer returned by `strrchr` (if non-null) is
 /// an interior pointer into the same string and is used only within this call.
-unsafe fn IdentifyIWADByName(mut name: *mut c_char, mask: c_int) -> c_int {
-    let p = strrchr(name, DIR_SEPARATOR as c_int);
+unsafe fn IdentifyIWADByName(mut name: *mut u8, mask: i32) -> i32 {
+    let p = strrchr(name, DIR_SEPARATOR as i32);
     if !p.is_null() {
         name = p.add(1);
     }
@@ -370,7 +363,7 @@ unsafe fn IdentifyIWADByName(mut name: *mut c_char, mask: c_int) -> c_int {
 /// `iwad_dirs_built` without synchronisation, and calls `AddIWADDir` which
 /// imposes the same requirement.
 unsafe fn BuildIWADDirList() {
-    AddIWADDir(c".".as_ptr().cast_mut());
+    AddIWADDir(c".".as_ptr().cast_mut().cast());
     iwad_dirs_built = true;
 }
 
@@ -388,7 +381,7 @@ unsafe fn BuildIWADDirList() {
 ///
 /// # Safety
 /// `name` must be a valid, null-terminated C string.
-pub unsafe fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
+pub unsafe fn D_FindWADByName(name: *mut u8) -> *mut u8 {
     if M_FileExists(name) != 0 {
         return name;
     }
@@ -400,10 +393,10 @@ pub unsafe fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
             return strdup(iwad_dirs[i as usize]);
         }
 
-        let strs: [*const c_char; 4] = [
-            iwad_dirs[i as usize] as *const c_char,
-            DIR_SEPARATOR_S.as_ptr() as *const c_char,
-            name as *const c_char,
+        let strs: [*const u8; 4] = [
+            iwad_dirs[i as usize] as *const u8,
+            DIR_SEPARATOR_S.as_ptr(),
+            name as *const u8,
             ptr::null(),
         ];
         // SAFETY: null-terminated pointer array; freed below on miss, transferred to caller on hit.
@@ -428,7 +421,7 @@ pub unsafe fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
 ///
 /// # Safety
 /// `filename` must be a valid, null-terminated C string.
-pub unsafe fn D_TryFindWADByName(filename: *mut c_char) -> *mut c_char {
+pub unsafe fn D_TryFindWADByName(filename: *mut u8) -> *mut u8 {
     let result = D_FindWADByName(filename);
     if !result.is_null() {
         result
@@ -451,8 +444,8 @@ pub unsafe fn D_TryFindWADByName(filename: *mut c_char) -> *mut c_char {
 ///
 /// # Safety
 /// `mission` must be a valid, non-null pointer.
-pub unsafe fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_char {
-    let iwadparm = M_CheckParmWithArgs(c"-iwad".as_ptr(), 1);
+pub unsafe fn D_FindIWAD(mask: i32, mission: *mut i32) -> *mut u8 {
+    let iwadparm = M_CheckParmWithArgs(c"-iwad".as_ptr().cast(), 1);
 
     if iwadparm != 0 {
         let iwadfile = *myargv.offset((iwadparm + 1) as isize);
@@ -461,16 +454,20 @@ pub unsafe fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_char {
         if result.is_null() {
             i_error!(
                 "IWAD file '{}' not found!",
-                std::ffi::CStr::from_ptr(iwadfile).to_string_lossy()
+                std::ffi::CStr::from_ptr(iwadfile.cast()).to_string_lossy()
             );
         }
 
         *mission = IdentifyIWADByName(result, mask);
         result
     } else {
-        printf(c"-iwad not specified, trying a few iwad names\n".as_ptr());
+        printf(
+            c"-iwad not specified, trying a few iwad names\n"
+                .as_ptr()
+                .cast(),
+        );
 
-        let mut result: *mut c_char = ptr::null_mut();
+        let mut result: *mut u8 = ptr::null_mut();
 
         BuildIWADDirList();
 
@@ -495,7 +492,7 @@ pub unsafe fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_char {
 ///
 /// # Safety
 /// The returned pointer must be freed with `free` when no longer needed.
-pub unsafe fn D_FindAllIWADs(mask: c_int) -> *mut *const iwad_t {
+pub unsafe fn D_FindAllIWADs(mask: i32) -> *mut *const iwad_t {
     let result =
         malloc(std::mem::size_of::<*const iwad_t>() * (IWADS.len() + 1)) as *mut *const iwad_t;
     let mut result_len: usize = 0;
@@ -527,13 +524,13 @@ pub unsafe fn D_FindAllIWADs(mask: c_int) -> *mut *const iwad_t {
 /// and `doom1.wad` saves share the same location.
 ///
 /// Called from `d_main.c`.
-pub unsafe fn D_SaveGameIWADName(gamemission: c_int) -> *mut c_char {
+pub unsafe fn D_SaveGameIWADName(gamemission: i32) -> *mut u8 {
     for i in 0..IWADS.len() {
         if gamemission == IWADS[i].mission {
             return IWADS[i].name;
         }
     }
-    c"unknown.wad".as_ptr().cast_mut()
+    c"unknown.wad".as_ptr().cast_mut().cast()
 }
 
 /// Returns the canonical IWAD filename that best matches `mission` and `mode`.
@@ -542,13 +539,13 @@ pub unsafe fn D_SaveGameIWADName(gamemission: c_int) -> *mut c_char {
 /// `mission` and `mode` match. Falls back to `"unknown.wad"` if no match is
 /// found. The returned pointer points into a static string and must not be
 /// freed. Corresponds to `D_SuggestIWADName` in `d_iwad.c`.
-pub unsafe fn D_SuggestIWADName(mission: c_int, mode: c_int) -> *mut c_char {
+pub unsafe fn D_SuggestIWADName(mission: i32, mode: i32) -> *mut u8 {
     for i in 0..IWADS.len() {
         if IWADS[i].mission == mission && IWADS[i].mode == mode {
             return IWADS[i].name;
         }
     }
-    c"unknown.wad".as_ptr().cast_mut()
+    c"unknown.wad".as_ptr().cast_mut().cast()
 }
 
 /// Returns a human-readable game name for the given `mission` and `mode`.
@@ -558,19 +555,19 @@ pub unsafe fn D_SuggestIWADName(mission: c_int, mode: c_int) -> *mut c_char {
 /// `d_mode::indetermined`. Falls back to `"Unknown game?"` if no match is
 /// found. The returned pointer points into a static string and must not be
 /// freed. Called from `w_wad.c`.
-pub unsafe fn D_SuggestGameName(mission: c_int, mode: c_int) -> *mut c_char {
+pub unsafe fn D_SuggestGameName(mission: i32, mode: i32) -> *mut u8 {
     for i in 0..IWADS.len() {
         if IWADS[i].mission == mission && (mode == d_mode::indetermined || IWADS[i].mode == mode) {
             return IWADS[i].description;
         }
     }
-    c"Unknown game?".as_ptr().cast_mut()
+    c"Unknown game?".as_ptr().cast_mut().cast()
 }
 
 /// Validates that the loaded IWAD matches the expected `_mission`.
 ///
 /// This function is intentionally a no-op. The C original also provides an
 /// empty implementation in the doomgeneric fork. No validation is performed.
-pub fn D_CheckCorrectIWAD(_mission: c_int) {
+pub fn D_CheckCorrectIWAD(_mission: i32) {
     // Not implemented in original C codebase.
 }

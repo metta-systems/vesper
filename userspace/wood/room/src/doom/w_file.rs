@@ -12,10 +12,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{
-    ffi::{c_char, c_int, c_long, c_uint, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 
@@ -27,12 +24,12 @@ use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 pub struct wad_file_class_t {
     /// Open the WAD at `path` and return a heap-allocated descriptor, or
     /// null on failure.
-    pub OpenFile: unsafe fn(*mut c_char) -> *mut wad_file_t,
+    pub OpenFile: unsafe fn(*mut u8) -> *mut wad_file_t,
     /// Close and free the descriptor returned by `OpenFile`.
     pub CloseFile: unsafe fn(*mut wad_file_t),
     /// Read `buffer_len` bytes from `offset` in the WAD into `buffer`.
     /// Returns the number of bytes actually read.
-    pub Read: unsafe fn(*mut wad_file_t, c_uint, *mut c_void, usize) -> usize,
+    pub Read: unsafe fn(*mut wad_file_t, u32, *mut c_void, usize) -> usize,
 }
 
 /// Public WAD-file descriptor base class. The stdio backend extends this
@@ -47,7 +44,7 @@ pub struct wad_file_t {
     /// supports it; null for the stdio backend.
     pub mapped: *mut u8,
     /// Total file size in bytes.
-    pub length: c_uint,
+    pub length: u32,
 }
 
 /// Stdio-backed WAD descriptor. Layout is `wad_file_t` followed by the
@@ -78,14 +75,14 @@ use crate::doom::{
 /// `path` must point to a valid null-terminated C string. The returned
 /// pointer (if non-null) is owned by the caller and must eventually be
 /// passed to [`W_StdC_CloseFile`].
-unsafe fn W_StdC_OpenFile(path: *mut c_char) -> *mut wad_file_t {
-    let fstream = fopen(path as *const c_char, c"rb".as_ptr());
+unsafe fn W_StdC_OpenFile(path: *mut u8) -> *mut wad_file_t {
+    let fstream = fopen(path.cast(), c"rb".as_ptr());
     if fstream.is_null() {
         return ptr::null_mut();
     }
 
     let result = Z_Malloc(
-        std::mem::size_of::<stdc_wad_file_t>() as c_int,
+        std::mem::size_of::<stdc_wad_file_t>() as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut stdc_wad_file_t;
@@ -97,7 +94,7 @@ unsafe fn W_StdC_OpenFile(path: *mut c_char) -> *mut wad_file_t {
 
     (*result).wad.file_class = std::ptr::addr_of_mut!(stdc_wad_file);
     (*result).wad.mapped = ptr::null_mut();
-    (*result).wad.length = M_FileLength(fstream as *mut MiscFILE) as c_uint;
+    (*result).wad.length = M_FileLength(fstream as *mut MiscFILE) as u32;
     (*result).fstream = fstream;
 
     &mut (*result).wad
@@ -128,12 +125,12 @@ unsafe fn W_StdC_CloseFile(wad: *mut wad_file_t) {
 /// least `buffer_len` bytes.
 unsafe fn W_StdC_Read(
     wad: *mut wad_file_t,
-    offset: c_uint,
+    offset: u32,
     buffer: *mut c_void,
     buffer_len: usize,
 ) -> usize {
     let stdc_wad = wad as *mut stdc_wad_file_t;
-    fseek((*stdc_wad).fstream, offset as c_long, SEEK_SET);
+    fseek((*stdc_wad).fstream, offset as i64, SEEK_SET);
     fread(buffer, 1, buffer_len, (*stdc_wad).fstream)
 }
 
@@ -151,7 +148,7 @@ pub static mut stdc_wad_file: wad_file_class_t = wad_file_class_t {
 /// optionally tried a series of `wad_file_classes` based on the `-mmap`
 /// command-line argument, but this port omits the mmap backend so the
 /// dispatch collapses to a direct call into `W_StdC_OpenFile`.
-pub fn W_OpenFile(path: *mut c_char) -> *mut wad_file_t {
+pub fn W_OpenFile(path: *mut u8) -> *mut wad_file_t {
     unsafe { (stdc_wad_file.OpenFile)(path) }
 }
 
@@ -166,11 +163,6 @@ pub fn W_CloseFile(wad: *mut wad_file_t) {
 /// Read `buffer_len` bytes from `offset` in the given WAD into `buffer`
 /// by dispatching through the descriptor's vtable. Returns the number
 /// of bytes actually read.
-pub fn W_Read(
-    wad: *mut wad_file_t,
-    offset: c_uint,
-    buffer: *mut c_void,
-    buffer_len: usize,
-) -> usize {
+pub fn W_Read(wad: *mut wad_file_t, offset: u32, buffer: *mut c_void, buffer_len: usize) -> usize {
     unsafe { ((*(*wad).file_class).Read)(wad, offset, buffer, buffer_len) }
 }

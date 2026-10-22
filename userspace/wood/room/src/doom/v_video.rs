@@ -4,10 +4,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::{
     doom::{
@@ -43,14 +40,14 @@ pub struct post_t {
 
 pub type column_t = post_t;
 
-pub type vpatchclipfunc_t = Option<fn(*mut patch_t, c_int, c_int) -> c_int>;
+pub type vpatchclipfunc_t = Option<fn(*mut patch_t, i32, i32) -> i32>;
 
 #[repr(C, packed)]
 struct pcx_t {
-    manufacturer: c_char,
-    version: c_char,
-    encoding: c_char,
-    bits_per_pixel: c_char,
+    manufacturer: u8,
+    version: u8,
+    encoding: u8,
+    bits_per_pixel: u8,
     xmin: u16,
     ymin: u16,
     xmax: u16,
@@ -58,8 +55,8 @@ struct pcx_t {
     hres: u16,
     vres: u16,
     palette: [u8; 48],
-    reserved: c_char,
-    color_planes: c_char,
+    reserved: u8,
+    color_planes: u8,
     bytes_per_line: u16,
     palette_type: u16,
     filler: [u8; 58],
@@ -70,12 +67,12 @@ pub static mut tinttable: *mut u8 = ptr::null_mut();
 
 pub static mut xlatab: *mut u8 = ptr::null_mut();
 
-pub static mut dirtybox: [c_int; 4] = [0; 4];
+pub static mut dirtybox: [i32; 4] = [0; 4];
 
 static mut dest_screen: *mut u8 = ptr::null_mut();
 static mut patchclip_callback: vpatchclipfunc_t = None;
 
-pub fn V_MarkRect(x: c_int, y: c_int, width: c_int, height: c_int) {
+pub fn V_MarkRect(x: i32, y: i32, width: i32, height: i32) {
     unsafe {
         if dest_screen == I_VideoBuffer {
             M_AddToBox(std::ptr::addr_of_mut!(dirtybox[0]), x, y);
@@ -89,13 +86,13 @@ pub fn V_MarkRect(x: c_int, y: c_int, width: c_int, height: c_int) {
 }
 
 pub fn V_CopyRect(
-    srcx: c_int,
-    srcy: c_int,
+    srcx: i32,
+    srcy: i32,
     source: *mut u8,
-    width: c_int,
-    height: c_int,
-    destx: c_int,
-    desty: c_int,
+    width: i32,
+    height: i32,
+    destx: i32,
+    desty: i32,
 ) {
     unsafe {
         V_MarkRect(destx, desty, width, height);
@@ -119,10 +116,10 @@ pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
     }
 }
 
-pub fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -130,9 +127,9 @@ pub fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             }
         }
 
-        V_MarkRect(x, y, (*patch).width as c_int, (*patch).height as c_int);
+        V_MarkRect(x, y, (*patch).width as i32, (*patch).height as i32);
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
@@ -144,7 +141,7 @@ pub fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             while (*col_ptr).topdelta != 0xff {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     *dest = *source;
@@ -162,10 +159,10 @@ pub fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -173,9 +170,9 @@ pub fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
             }
         }
 
-        V_MarkRect(x, y, (*patch).width as c_int, (*patch).height as c_int);
+        V_MarkRect(x, y, (*patch).width as i32, (*patch).height as i32);
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
@@ -189,7 +186,7 @@ pub fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
             while (*col_ptr).topdelta != 0xff {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     *dest = *source;
@@ -207,16 +204,16 @@ pub fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawPatchDirect(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
     V_DrawPatch(x, y, patch);
 }
 
-pub fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
@@ -228,7 +225,7 @@ pub fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             while (*col_ptr).topdelta != 0xff {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     let idx = ((*dest as usize) << 8) + (*source as usize);
@@ -247,10 +244,10 @@ pub fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -258,7 +255,7 @@ pub fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             }
         }
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
@@ -270,7 +267,7 @@ pub fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             while (*col_ptr).topdelta != 0xff {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     let idx = (*dest as usize) + ((*source as usize) << 8);
@@ -289,12 +286,12 @@ pub fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
@@ -306,7 +303,7 @@ pub fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
             while (*col_ptr).topdelta != 0xff {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     let idx = ((*dest as usize) << 8) + (*source as usize);
@@ -325,12 +322,12 @@ pub fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as c_int;
-        let x = x - (*patch).leftoffset as c_int;
+        let y = y - (*patch).topoffset as i32;
+        let x = x - (*patch).leftoffset as i32;
 
-        let w = (*patch).width as c_int;
+        let w = (*patch).width as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
         let mut desttop2 = dest_screen.add(((y + 2) * SCREENWIDTH + (x + 2)) as usize);
 
@@ -344,7 +341,7 @@ pub fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
                 let mut source = (col_ptr as *mut u8).add(3);
                 let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
                 let mut dest2 = desttop2.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as c_int;
+                let mut count = (*col_ptr).length as i32;
 
                 while count > 0 {
                     let idx = (*dest2 as usize) << 8;
@@ -368,17 +365,17 @@ pub fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
 
 pub fn V_LoadTintTable() {
     unsafe {
-        tinttable = W_CacheLumpName(c"TINTTAB".as_ptr(), PU_STATIC) as *mut u8;
+        tinttable = W_CacheLumpName(b"TINTTAB", PU_STATIC) as *mut u8;
     }
 }
 
 pub fn V_LoadXlaTable() {
     unsafe {
-        xlatab = W_CacheLumpName(c"XLATAB".as_ptr(), PU_STATIC) as *mut u8;
+        xlatab = W_CacheLumpName(b"XLATAB", PU_STATIC) as *mut u8;
     }
 }
 
-pub fn V_DrawBlock(x: c_int, y: c_int, width: c_int, height: c_int, src: *mut u8) {
+pub fn V_DrawBlock(x: i32, y: i32, width: i32, height: i32, src: *mut u8) {
     unsafe {
         V_MarkRect(x, y, width, height);
 
@@ -395,7 +392,7 @@ pub fn V_DrawBlock(x: c_int, y: c_int, width: c_int, height: c_int, src: *mut u8
     }
 }
 
-pub fn V_DrawFilledBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
+pub fn V_DrawFilledBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
 
@@ -414,7 +411,7 @@ pub fn V_DrawFilledBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
     }
 }
 
-pub fn V_DrawHorizLine(x: c_int, y: c_int, w: c_int, c: c_int) {
+pub fn V_DrawHorizLine(x: i32, y: i32, w: i32, c: i32) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
         let mut x1 = 0;
@@ -426,7 +423,7 @@ pub fn V_DrawHorizLine(x: c_int, y: c_int, w: c_int, c: c_int) {
     }
 }
 
-pub fn V_DrawVertLine(x: c_int, y: c_int, h: c_int, c: c_int) {
+pub fn V_DrawVertLine(x: i32, y: i32, h: i32, c: i32) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
         let mut y1 = 0;
@@ -438,7 +435,7 @@ pub fn V_DrawVertLine(x: c_int, y: c_int, h: c_int, c: c_int) {
     }
 }
 
-pub fn V_DrawBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
+pub fn V_DrawBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
     V_DrawHorizLine(x, y, w, c);
     V_DrawHorizLine(x, y + h - 1, w, c);
     V_DrawVertLine(x, y, h, c);
@@ -467,13 +464,7 @@ pub fn V_RestoreBuffer() {
     }
 }
 
-pub fn WritePCXfile(
-    filename: *mut c_char,
-    data: *mut u8,
-    width: c_int,
-    height: c_int,
-    palette: *mut u8,
-) {
+pub fn WritePCXfile(filename: *mut u8, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
     unsafe {
         let pcx = Z_Malloc(width * height * 2 + 1000, PU_STATIC, ptr::null_mut()) as *mut pcx_t;
 
@@ -526,7 +517,7 @@ pub fn WritePCXfile(
             i += 1;
         }
 
-        let length = pack.offset_from(pcx as *mut u8) as c_int;
+        let length = pack.offset_from(pcx as *mut u8) as i32;
         M_WriteFile(filename, pcx as *mut c_void, length);
 
         Z_Free(pcx as *mut c_void);
@@ -542,12 +533,12 @@ fn screenshot_filename(i: i32) -> [u8; 16] {
     buf
 }
 
-pub fn V_ScreenShot(_format: *mut c_char) {
+pub fn V_ScreenShot(_format: *mut u8) {
     unsafe {
         let mut i = 0;
         while i <= 99 {
             let mut lbmname = screenshot_filename(i);
-            if M_FileExists(lbmname.as_mut_ptr() as *mut c_char) == 0 {
+            if M_FileExists(lbmname.as_mut_ptr()) == 0 {
                 break;
             }
             i += 1;
@@ -559,19 +550,19 @@ pub fn V_ScreenShot(_format: *mut c_char) {
 
         let mut lbmname = screenshot_filename(i);
         WritePCXfile(
-            lbmname.as_mut_ptr() as *mut c_char,
+            lbmname.as_mut_ptr(),
             I_VideoBuffer,
             SCREENWIDTH,
             SCREENHEIGHT,
-            W_CacheLumpName(c"PLAYPAL".as_ptr(), PU_CACHE) as *mut u8,
+            W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
         );
     }
 }
 
-const MOUSE_SPEED_BOX_WIDTH: c_int = 120;
-const MOUSE_SPEED_BOX_HEIGHT: c_int = 9;
+const MOUSE_SPEED_BOX_WIDTH: i32 = 120;
+const MOUSE_SPEED_BOX_HEIGHT: i32 = 9;
 
-pub fn V_DrawMouseSpeedBox(speed: c_int) {
+pub fn V_DrawMouseSpeedBox(speed: i32) {
     unsafe {
         let bgcolor = I_GetPaletteIndex(0x77, 0x77, 0x77);
         let bordercolor = I_GetPaletteIndex(0x55, 0x55, 0x55);
@@ -608,7 +599,7 @@ pub fn V_DrawMouseSpeedBox(speed: c_int) {
             speed
         } else {
             let mut s = speed - mouse_threshold;
-            s = (s as f32 / mouse_acceleration) as c_int;
+            s = (s as f32 / mouse_acceleration) as i32;
             s + mouse_threshold
         };
 

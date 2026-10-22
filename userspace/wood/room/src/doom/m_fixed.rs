@@ -5,10 +5,8 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-use std::ffi::c_int;
-
 /// `fixed_t` — matches `typedef int fixed_t;` in m_fixed.h.
-pub type fixed_t = c_int;
+pub type fixed_t = i32;
 
 /// `angle_t` — BAM angle, matches `typedef unsigned int angle_t;` in tables.h.
 pub type angle_t = u32;

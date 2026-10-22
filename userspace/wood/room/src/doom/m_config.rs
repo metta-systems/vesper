@@ -21,7 +21,7 @@
 use {
     crate::i_error,
     std::{
-        ffi::{c_char, c_float, c_int, c_void, CStr},
+        ffi::{c_void, CStr},
         ptr,
     },
 };
@@ -55,7 +55,7 @@ enum DefaultType {
 struct Default {
     /// Variable name, e.g. `"key_fire\0"`; pointers into `'static` byte
     /// literals supplied by the `cfg` helper.
-    name: *const c_char,
+    name: *const u8,
     /// Pointer to the in-memory location set by [`M_BindVariable`].
     /// NULL until binding.
     location: *mut c_void,
@@ -63,10 +63,10 @@ struct Default {
     ty: DefaultType,
     /// For `Key` variables: original DOS scancode read from the config
     /// file before translation through [`SCANTOKEY`]. Zero if never loaded.
-    untranslated: c_int,
+    untranslated: i32,
     /// For `Key` variables: the translated internal key code at the time
     /// the value was loaded; used to detect user edits when saving.
-    original_translated: c_int,
+    original_translated: i32,
     /// `true` once [`M_BindVariable`] has attached this entry to memory.
     bound: bool,
 }
@@ -78,10 +78,10 @@ struct DefaultCollection {
     /// Pointer to the first entry of an array of `numdefaults` `Default`s.
     defaults: *mut Default,
     /// Number of entries in the `defaults` array.
-    numdefaults: c_int,
+    numdefaults: i32,
     /// Filename used by [`M_LoadDefaults`] / [`M_SaveDefaults`]. NULL until
     /// set, owned by the caller's argv or by [`M_StringJoinA`].
-    filename: *mut c_char,
+    filename: *mut u8,
 }
 
 /// Construct a `Default` from a NUL-terminated name literal and a type tag.
@@ -90,7 +90,7 @@ struct DefaultCollection {
 /// module level. Replaces the C `CONFIG_VARIABLE_*` macros.
 const fn cfg(name: &'static [u8], ty: DefaultType) -> Default {
     Default {
-        name: name.as_ptr() as *const c_char,
+        name: name.as_ptr(),
         location: ptr::null_mut(),
         ty,
         untranslated: 0,
@@ -101,13 +101,13 @@ const fn cfg(name: &'static [u8], ty: DefaultType) -> Default {
 
 extern "C" {
     /// libc `printf`: used for the boot-time status messages.
-    fn printf(fmt: *const c_char, ...) -> c_int;
+    fn printf(fmt: *const u8, ...) -> i32;
     /// libc `strdup`: heap-duplicate a string (for `String` variables).
-    fn strdup(s: *const c_char) -> *mut c_char;
+    fn strdup(s: *const u8) -> *mut u8;
     /// libc `strcmp`: compare two C strings.
-    fn strcmp(a: *const c_char, b: *const c_char) -> c_int;
-    /// libc `atof`: parse a `c_char*` as a double-precision number.
-    fn atof(s: *const c_char) -> f64;
+    fn strcmp(a: *const u8, b: *const u8) -> i32;
+    /// libc `atof`: parse a `u8*` as a double-precision number.
+    fn atof(s: *const u8) -> f64;
     /// libc `malloc`: used by `GetDefaultConfigDir`.
     fn malloc(n: usize) -> *mut c_void;
 }
@@ -122,14 +122,14 @@ use crate::doom::{
 /// Initialised by [`M_SetConfigDir`] from the command line or from
 /// `GetDefaultConfigDir`. Read by [`M_LoadDefaults`] and
 /// [`M_GetSaveGameDir`].
-pub static mut configdir: *mut c_char = ptr::null_mut();
+pub static mut configdir: *mut u8 = ptr::null_mut();
 
 /// Filename component for the main `.cfg` file (e.g. `"default.cfg"`).
 /// Set by [`M_SetConfigFilenames`].
-static mut default_main_config: *mut c_char = ptr::null_mut();
+static mut default_main_config: *mut u8 = ptr::null_mut();
 /// Filename component for the extra (chocolate-doom) `.cfg` file. Set by
 /// [`M_SetConfigFilenames`].
-static mut default_extra_config: *mut c_char = ptr::null_mut();
+static mut default_extra_config: *mut u8 = ptr::null_mut();
 
 /// Static table backing the vanilla `doom_defaults` collection.
 ///
@@ -370,73 +370,73 @@ static mut extra_defaults: DefaultCollection = DefaultCollection {
 //   KEY_DEL=0xD3, KEY_F11=0xD7, KEY_F12=0xD8, KEY_PRTSCR=0xD9
 
 /// Doom internal code for the backspace key (C `KEY_BACKSPACE` from `doomkeys.h`).
-const KEY_BACKSPACE: c_int = 0x7f;
+const KEY_BACKSPACE: i32 = 0x7f;
 /// Doom internal code for the right Ctrl key (C `KEY_RCTRL`).
-const KEY_RCTRL: c_int = 0x9D;
+const KEY_RCTRL: i32 = 0x9D;
 /// Doom internal code for the right Shift key (C `KEY_RSHIFT`).
-const KEY_RSHIFT: c_int = 0xB6;
+const KEY_RSHIFT: i32 = 0xB6;
 /// Numpad `*` mapped to the ASCII `'*'`, matching C `KEYP_MULTIPLY`.
-const KEYP_MULTIPLY: c_int = b'*' as c_int;
+const KEYP_MULTIPLY: i32 = b'*' as i32;
 /// Doom internal code for the right Alt key (C `KEY_RALT`).
-const KEY_RALT: c_int = 0xB8;
+const KEY_RALT: i32 = 0xB8;
 /// Doom internal code for the Caps Lock key (C `KEY_CAPSLOCK`).
-const KEY_CAPSLOCK: c_int = 0xBA;
+const KEY_CAPSLOCK: i32 = 0xBA;
 /// Doom internal code for F1 (C `KEY_F1`).
-const KEY_F1: c_int = 0xBB;
+const KEY_F1: i32 = 0xBB;
 /// Doom internal code for F2 (C `KEY_F2`).
-const KEY_F2: c_int = 0xBC;
+const KEY_F2: i32 = 0xBC;
 /// Doom internal code for F3 (C `KEY_F3`).
-const KEY_F3: c_int = 0xBD;
+const KEY_F3: i32 = 0xBD;
 /// Doom internal code for F4 (C `KEY_F4`).
-const KEY_F4: c_int = 0xBE;
+const KEY_F4: i32 = 0xBE;
 /// Doom internal code for F5 (C `KEY_F5`).
-const KEY_F5: c_int = 0xBF;
+const KEY_F5: i32 = 0xBF;
 /// Doom internal code for F6 (C `KEY_F6`).
-const KEY_F6: c_int = 0xC0;
+const KEY_F6: i32 = 0xC0;
 /// Doom internal code for F7 (C `KEY_F7`).
-const KEY_F7: c_int = 0xC1;
+const KEY_F7: i32 = 0xC1;
 /// Doom internal code for F8 (C `KEY_F8`).
-const KEY_F8: c_int = 0xC2;
+const KEY_F8: i32 = 0xC2;
 /// Doom internal code for F9 (C `KEY_F9`).
-const KEY_F9: c_int = 0xC3;
+const KEY_F9: i32 = 0xC3;
 /// Doom internal code for F10 (C `KEY_F10`).
-const KEY_F10: c_int = 0xC4;
+const KEY_F10: i32 = 0xC4;
 /// Doom internal code for the Pause key (C `KEY_PAUSE`).
-const KEY_PAUSE: c_int = 0xFF;
+const KEY_PAUSE: i32 = 0xFF;
 /// Doom internal code for Scroll Lock (C `KEY_SCRLCK`).
-const KEY_SCRLCK: c_int = 0xC6;
+const KEY_SCRLCK: i32 = 0xC6;
 /// Doom internal code for the Home key (C `KEY_HOME`).
-const KEY_HOME: c_int = 0xC7;
+const KEY_HOME: i32 = 0xC7;
 /// Doom internal code for the up arrow (C `KEY_UPARROW`).
-const KEY_UPARROW: c_int = 0xAD;
+const KEY_UPARROW: i32 = 0xAD;
 /// Doom internal code for Page Up (C `KEY_PGUP`).
-const KEY_PGUP: c_int = 0xC9;
+const KEY_PGUP: i32 = 0xC9;
 /// Doom internal code for the `-` key (C `KEY_MINUS`).
-const KEY_MINUS: c_int = 0x2D;
+const KEY_MINUS: i32 = 0x2D;
 /// Doom internal code for the left arrow (C `KEY_LEFTARROW`).
-const KEY_LEFTARROW: c_int = 0xAC;
+const KEY_LEFTARROW: i32 = 0xAC;
 /// Numpad `5` mapped to the ASCII `'5'`, matching C `KEYP_5`.
-const KEYP_5: c_int = b'5' as c_int;
+const KEYP_5: i32 = b'5' as i32;
 /// Doom internal code for the right arrow (C `KEY_RIGHTARROW`).
-const KEY_RIGHTARROW: c_int = 0xAE;
+const KEY_RIGHTARROW: i32 = 0xAE;
 /// Numpad `+` mapped to the ASCII `'+'`, matching C `KEYP_PLUS`.
-const KEYP_PLUS: c_int = b'+' as c_int;
+const KEYP_PLUS: i32 = b'+' as i32;
 /// Doom internal code for the End key (C `KEY_END`).
-const KEY_END: c_int = 0xCF;
+const KEY_END: i32 = 0xCF;
 /// Doom internal code for the down arrow (C `KEY_DOWNARROW`).
-const KEY_DOWNARROW: c_int = 0xAF;
+const KEY_DOWNARROW: i32 = 0xAF;
 /// Doom internal code for Page Down (C `KEY_PGDN`).
-const KEY_PGDN: c_int = 0xD1;
+const KEY_PGDN: i32 = 0xD1;
 /// Doom internal code for the Insert key (C `KEY_INS`).
-const KEY_INS: c_int = 0xD2;
+const KEY_INS: i32 = 0xD2;
 /// Doom internal code for the Delete key (C `KEY_DEL`).
-const KEY_DEL: c_int = 0xD3;
+const KEY_DEL: i32 = 0xD3;
 /// Doom internal code for F11 (C `KEY_F11`).
-const KEY_F11: c_int = 0xD7;
+const KEY_F11: i32 = 0xD7;
 /// Doom internal code for F12 (C `KEY_F12`).
-const KEY_F12: c_int = 0xD8;
+const KEY_F12: i32 = 0xD8;
 /// Doom internal code for Print Screen (C `KEY_PRTSCR`).
-const KEY_PRTSCR: c_int = 0xD9;
+const KEY_PRTSCR: i32 = 0xD9;
 
 /// DOS PC keyboard scan-code -> Doom internal key-code lookup table.
 ///
@@ -444,65 +444,65 @@ const KEY_PRTSCR: c_int = 0xD9;
 /// `default.cfg`; the entry is the corresponding internal key code used
 /// throughout the engine. Used by [`set_variable`] to translate the
 /// `untranslated` value stored on disk into a runtime key constant.
-const SCANTOKEY: [c_int; 128] = [
+const SCANTOKEY: [i32; 128] = [
     0,
     27,
-    b'1' as c_int,
-    b'2' as c_int,
-    b'3' as c_int,
-    b'4' as c_int,
-    b'5' as c_int,
-    b'6' as c_int,
-    b'7' as c_int,
-    b'8' as c_int,
-    b'9' as c_int,
-    b'0' as c_int,
-    b'-' as c_int,
-    b'=' as c_int,
+    b'1' as i32,
+    b'2' as i32,
+    b'3' as i32,
+    b'4' as i32,
+    b'5' as i32,
+    b'6' as i32,
+    b'7' as i32,
+    b'8' as i32,
+    b'9' as i32,
+    b'0' as i32,
+    b'-' as i32,
+    b'=' as i32,
     KEY_BACKSPACE,
     9,
-    b'q' as c_int,
-    b'w' as c_int,
-    b'e' as c_int,
-    b'r' as c_int,
-    b't' as c_int,
-    b'y' as c_int,
-    b'u' as c_int,
-    b'i' as c_int,
-    b'o' as c_int,
-    b'p' as c_int,
-    b'[' as c_int,
-    b']' as c_int,
+    b'q' as i32,
+    b'w' as i32,
+    b'e' as i32,
+    b'r' as i32,
+    b't' as i32,
+    b'y' as i32,
+    b'u' as i32,
+    b'i' as i32,
+    b'o' as i32,
+    b'p' as i32,
+    b'[' as i32,
+    b']' as i32,
     13,
     KEY_RCTRL,
-    b'a' as c_int,
-    b's' as c_int,
-    b'd' as c_int,
-    b'f' as c_int,
-    b'g' as c_int,
-    b'h' as c_int,
-    b'j' as c_int,
-    b'k' as c_int,
-    b'l' as c_int,
-    b';' as c_int,
-    b'\'' as c_int,
-    b'`' as c_int,
+    b'a' as i32,
+    b's' as i32,
+    b'd' as i32,
+    b'f' as i32,
+    b'g' as i32,
+    b'h' as i32,
+    b'j' as i32,
+    b'k' as i32,
+    b'l' as i32,
+    b';' as i32,
+    b'\'' as i32,
+    b'`' as i32,
     KEY_RSHIFT,
-    b'\\' as c_int,
-    b'z' as c_int,
-    b'x' as c_int,
-    b'c' as c_int,
-    b'v' as c_int,
-    b'b' as c_int,
-    b'n' as c_int,
-    b'm' as c_int,
-    b',' as c_int,
-    b'.' as c_int,
-    b'/' as c_int,
+    b'\\' as i32,
+    b'z' as i32,
+    b'x' as i32,
+    b'c' as i32,
+    b'v' as i32,
+    b'b' as i32,
+    b'n' as i32,
+    b'm' as i32,
+    b',' as i32,
+    b'.' as i32,
+    b'/' as i32,
     KEY_RSHIFT,
     KEYP_MULTIPLY,
     KEY_RALT,
-    b' ' as c_int,
+    b' ' as i32,
     KEY_CAPSLOCK,
     KEY_F1,
     KEY_F2,
@@ -588,10 +588,7 @@ const DIR_SEPARATOR_S: &[u8] = b"/\0";
 ///
 /// `collection` must point to a valid, initialised [`DefaultCollection`].
 /// `name` must be a valid NUL-terminated C string.
-unsafe fn search_collection(
-    collection: *const DefaultCollection,
-    name: *const c_char,
-) -> *mut Default {
+unsafe fn search_collection(collection: *const DefaultCollection, name: *const u8) -> *mut Default {
     let collection = &*collection;
     for i in 0..collection.numdefaults {
         let def = collection.defaults.add(i as usize);
@@ -612,7 +609,7 @@ unsafe fn search_collection(
 /// # Safety
 ///
 /// `name` must be a valid NUL-terminated C string.
-unsafe fn get_default_for_name(name: *const c_char) -> *mut Default {
+unsafe fn get_default_for_name(name: *const u8) -> *mut Default {
     let mut result = search_collection(&doom_defaults, name);
     if result.is_null() {
         result = search_collection(&extra_defaults, name);
@@ -620,7 +617,7 @@ unsafe fn get_default_for_name(name: *const c_char) -> *mut Default {
     if result.is_null() {
         i_error!(
             "Unknown configuration variable: '{}'",
-            std::ffi::CStr::from_ptr(name).to_string_lossy()
+            std::ffi::CStr::from_ptr(name.cast()).to_string_lossy()
         );
     }
     result
@@ -634,7 +631,7 @@ unsafe fn get_default_for_name(name: *const c_char) -> *mut Default {
 /// `ParseIntParameter` in two ways flagged inline below: this port
 /// accepts the upper-case `0X` prefix and drops C's leading-zero octal
 /// fallback.
-fn parse_int_parameter(strparm: &CStr) -> c_int {
+fn parse_int_parameter(strparm: &CStr) -> i32 {
     let bytes = strparm.to_bytes();
     // FIXME: C `ParseIntParameter` only checks the lowercase `0x` prefix;
     // accepting `0X` is a Rust-port extension. Verify no `.cfg` file relied
@@ -647,7 +644,7 @@ fn parse_int_parameter(strparm: &CStr) -> c_int {
     // FIXME: C `ParseIntParameter` falls back to `sscanf("%i", ...)` which
     // also recognises leading-zero octal; Rust `parse::<i32>()` rejects it
     // and returns 0. Octal config values would silently become 0 here.
-    if let Ok(val) = std::str::from_utf8(bytes).unwrap_or("0").parse::<c_int>() {
+    if let Ok(val) = std::str::from_utf8(bytes).unwrap_or("0").parse::<i32>() {
         return val;
     }
     0
@@ -668,18 +665,18 @@ fn parse_int_parameter(strparm: &CStr) -> c_int {
 /// `def` must be a valid pointer to a `Default` whose `location` field has
 /// been bound by [`M_BindVariable`] to a memory cell of the matching type.
 /// `value` must be a valid NUL-terminated C string.
-unsafe fn set_variable(def: *mut Default, value: *const c_char) {
+unsafe fn set_variable(def: *mut Default, value: *const u8) {
     let def = &mut *def;
     match def.ty {
         DefaultType::String => {
-            *(def.location as *mut *mut c_char) = strdup(value);
+            *(def.location as *mut *mut u8) = strdup(value);
         }
         DefaultType::Int | DefaultType::IntHex => {
-            let strparm = CStr::from_ptr(value);
-            *(def.location as *mut c_int) = parse_int_parameter(strparm);
+            let strparm = CStr::from_ptr(value.cast());
+            *(def.location as *mut i32) = parse_int_parameter(strparm);
         }
         DefaultType::Key => {
-            let strparm = CStr::from_ptr(value);
+            let strparm = CStr::from_ptr(value.cast());
             let intparm = parse_int_parameter(strparm);
             def.untranslated = intparm;
             let translated = if (0..128).contains(&intparm) {
@@ -688,10 +685,10 @@ unsafe fn set_variable(def: *mut Default, value: *const c_char) {
                 0
             };
             def.original_translated = translated;
-            *(def.location as *mut c_int) = translated;
+            *(def.location as *mut i32) = translated;
         }
         DefaultType::Float => {
-            *(def.location as *mut c_float) = atof(value) as c_float;
+            *(def.location as *mut f32) = atof(value) as f32;
         }
     }
 }
@@ -701,7 +698,7 @@ unsafe fn set_variable(def: *mut Default, value: *const c_char) {
 /// Mirrors C `M_SetConfigFilenames`. Stores the pointers without copying;
 /// the caller owns the underlying buffers and must keep them alive for the
 /// remainder of the program.
-pub fn M_SetConfigFilenames(main_config: *mut c_char, extra_config: *mut c_char) {
+pub fn M_SetConfigFilenames(main_config: *mut u8, extra_config: *mut u8) {
     unsafe {
         default_main_config = main_config;
         default_extra_config = extra_config;
@@ -723,7 +720,7 @@ pub fn M_SaveDefaults() {
 /// Mirrors C `M_SaveDefaultsAlternate`. Because [`M_SaveDefaults`] is a
 /// no-op in this build, the function only manipulates filename pointers;
 /// no actual writes occur.
-pub fn M_SaveDefaultsAlternate(main: *mut c_char, extra: *mut c_char) {
+pub fn M_SaveDefaultsAlternate(main: *mut u8, extra: *mut u8) {
     unsafe {
         let orig_main = doom_defaults.filename;
         let orig_extra = extra_defaults.filename;
@@ -745,27 +742,27 @@ pub fn M_SaveDefaultsAlternate(main: *mut c_char, extra: *mut c_char) {
 /// `extra_defaults.filename` for any future call to [`M_SaveDefaults`].
 pub fn M_LoadDefaults() {
     unsafe {
-        let i = M_CheckParmWithArgs(c"-config".as_ptr().cast_mut(), 1);
+        let i = M_CheckParmWithArgs(b"-config\0".as_ptr().cast_mut(), 1);
         if i != 0 {
             doom_defaults.filename = *myargv.offset((i + 1) as isize);
-            printf(c"\tdefault file: %s\n".as_ptr(), doom_defaults.filename);
+            printf(b"\tdefault file: %s\n\0".as_ptr(), doom_defaults.filename);
         } else {
-            let strs: [*const c_char; 3] = [configdir, default_main_config, std::ptr::null()];
+            let strs: [*const u8; 3] = [configdir, default_main_config, std::ptr::null()];
             // SAFETY: null-terminated pointer array; result lives for the duration of the program.
             doom_defaults.filename = M_StringJoinA(strs.as_ptr());
         }
 
-        printf(c"saving config in %s\n".as_ptr(), doom_defaults.filename);
+        printf(b"saving config in %s\n\0".as_ptr(), doom_defaults.filename);
 
-        let i = M_CheckParmWithArgs(c"-extraconfig".as_ptr().cast_mut(), 1);
+        let i = M_CheckParmWithArgs(b"-extraconfig\0".as_ptr().cast_mut(), 1);
         if i != 0 {
             extra_defaults.filename = *myargv.offset((i + 1) as isize);
             printf(
-                c"        extra configuration file: %s\n".as_ptr(),
+                b"        extra configuration file: %s\n\0".as_ptr(),
                 extra_defaults.filename,
             );
         } else {
-            let strs: [*const c_char; 3] = [configdir, default_extra_config, std::ptr::null()];
+            let strs: [*const u8; 3] = [configdir, default_extra_config, std::ptr::null()];
             // SAFETY: null-terminated pointer array; result lives for the duration of the program.
             extra_defaults.filename = M_StringJoinA(strs.as_ptr());
         }
@@ -781,9 +778,9 @@ pub fn M_LoadDefaults() {
 /// After binding, [`M_LoadDefaults`] (and the chocolate-doom config UI)
 /// can read and write the value at the supplied pointer. Aborts via
 /// `I_Error` if the name is unknown. Mirrors C `M_BindVariable`.
-pub fn M_BindVariable(name: *mut c_char, location: *mut c_void) {
+pub fn M_BindVariable(name: *mut u8, location: *mut c_void) {
     unsafe {
-        let variable = get_default_for_name(name as *const c_char);
+        let variable = get_default_for_name(name as *const u8);
         (*variable).location = location;
         (*variable).bound = true;
     }
@@ -792,13 +789,13 @@ pub fn M_BindVariable(name: *mut c_char, location: *mut c_void) {
 /// Programmatic setter: parse `value` and store it at the bound location
 /// for the named variable. Returns `false` if the variable is unknown or
 /// unbound. Mirrors C `M_SetVariable`.
-pub fn M_SetVariable(name: *mut c_char, value: *mut c_char) -> bool {
+pub fn M_SetVariable(name: *mut u8, value: *mut u8) -> bool {
     unsafe {
-        let variable = get_default_for_name(name as *const c_char);
+        let variable = get_default_for_name(name as *const u8);
         if variable.is_null() || !(*variable).bound {
             return false;
         }
-        set_variable(variable, value as *const c_char);
+        set_variable(variable, value as *const u8);
         true
     }
 }
@@ -807,16 +804,16 @@ pub fn M_SetVariable(name: *mut c_char, value: *mut c_char) -> bool {
 ///
 /// Returns `0` if the variable is unknown, unbound, or has a non-integer
 /// type. Mirrors C `M_GetIntVariable`.
-pub fn M_GetIntVariable(name: *mut c_char) -> c_int {
+pub fn M_GetIntVariable(name: *mut u8) -> i32 {
     unsafe {
-        let variable = get_default_for_name(name as *const c_char);
+        let variable = get_default_for_name(name as *const u8);
         if variable.is_null()
             || !(*variable).bound
             || ((*variable).ty != DefaultType::Int && (*variable).ty != DefaultType::IntHex)
         {
             return 0;
         }
-        *((*variable).location as *mut c_int)
+        *((*variable).location as *mut i32)
     }
 }
 
@@ -825,13 +822,13 @@ pub fn M_GetIntVariable(name: *mut c_char) -> c_int {
 /// Returns NULL if the variable is unknown, unbound, or has a non-string
 /// type. The returned pointer aliases the storage held by the caller of
 /// [`M_BindVariable`]. Mirrors C `M_GetStrVariable`.
-pub fn M_GetStrVariable(name: *mut c_char) -> *const c_char {
+pub fn M_GetStrVariable(name: *mut u8) -> *const u8 {
     unsafe {
-        let variable = get_default_for_name(name as *const c_char);
+        let variable = get_default_for_name(name as *const u8);
         if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::String {
             return ptr::null();
         }
-        *((*variable).location as *mut *const c_char)
+        *((*variable).location as *mut *const u8)
     }
 }
 
@@ -839,13 +836,13 @@ pub fn M_GetStrVariable(name: *mut c_char) -> *const c_char {
 ///
 /// Returns `0.0` if the variable is unknown, unbound, or has a non-float
 /// type. Mirrors C `M_GetFloatVariable`.
-pub fn M_GetFloatVariable(name: *mut c_char) -> c_float {
+pub fn M_GetFloatVariable(name: *mut u8) -> f32 {
     unsafe {
-        let variable = get_default_for_name(name as *const c_char);
+        let variable = get_default_for_name(name as *const u8);
         if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::Float {
             return 0.0;
         }
-        *((*variable).location as *mut c_float)
+        *((*variable).location as *mut f32)
     }
 }
 
@@ -861,9 +858,9 @@ pub fn M_GetFloatVariable(name: *mut c_char) -> c_float {
 ///
 /// Relies on libc `malloc` succeeding; the result is not null-checked,
 /// matching the C source.
-unsafe fn GetDefaultConfigDir() -> *mut c_char {
-    let result = malloc(2) as *mut c_char;
-    *result = b'.' as c_char;
+unsafe fn GetDefaultConfigDir() -> *mut u8 {
+    let result = malloc(2) as *mut u8;
+    *result = b'.';
     *result.offset(1) = 0;
     result
 }
@@ -874,7 +871,7 @@ unsafe fn GetDefaultConfigDir() -> *mut c_char {
 /// echoed to the console. The path is created (recursive parents are NOT
 /// created - matches C semantics) via [`M_MakeDirectory`]. Mirrors C
 /// `M_SetConfigDir`.
-pub fn M_SetConfigDir(dir: *mut c_char) {
+pub fn M_SetConfigDir(dir: *mut u8) {
     unsafe {
         if !dir.is_null() {
             configdir = dir;
@@ -882,9 +879,9 @@ pub fn M_SetConfigDir(dir: *mut c_char) {
             configdir = GetDefaultConfigDir();
         }
 
-        if strcmp(configdir, c"".as_ptr()) != 0 {
+        if strcmp(configdir, b"\0".as_ptr()) != 0 {
             printf(
-                c"Using %s for configuration and saves\n".as_ptr(),
+                b"Using %s for configuration and saves\n\0".as_ptr(),
                 configdir,
             );
         }
@@ -902,21 +899,21 @@ pub fn M_SetConfigDir(dir: *mut c_char) {
 /// compatibility. Returns an empty `strdup("")` if `configdir` is empty
 /// (Windows-style "no config dir" mode). The returned pointer is owned by
 /// the caller and must be freed.
-pub fn M_GetSaveGameDir(_iwadname: *mut c_char) -> *mut c_char {
+pub fn M_GetSaveGameDir(_iwadname: *mut u8) -> *mut u8 {
     unsafe {
-        if strcmp(configdir, c"".as_ptr()) == 0 {
-            strdup(c"".as_ptr())
+        if strcmp(configdir, b"\0".as_ptr()) == 0 {
+            strdup(b"\0".as_ptr())
         } else {
-            let strs: [*const c_char; 4] = [
+            let strs: [*const u8; 4] = [
                 configdir,
-                DIR_SEPARATOR_S.as_ptr() as *const c_char,
-                c".savegame/".as_ptr(),
+                DIR_SEPARATOR_S.as_ptr(),
+                b".savegame/\0".as_ptr(),
                 std::ptr::null(),
             ];
             // SAFETY: null-terminated pointer array; ownership transferred to caller via return.
             let savegamedir = M_StringJoinA(strs.as_ptr());
             M_MakeDirectory(savegamedir);
-            printf(c"Using %s for savegames\n".as_ptr(), savegamedir);
+            printf(b"Using %s for savegames\n\0".as_ptr(), savegamedir);
             savegamedir
         }
     }

@@ -105,17 +105,6 @@ fn swingy_default_zero() {
     }
 }
 
-/// Both bob components are `fixed_t` (C `int`, 4 bytes).
-#[test]
-fn swing_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::swingx;
-        let _: c_int = c_ffi::swingy;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Relationship with FRACUNIT / FRACBITS
 // ---------------------------------------------------------------------------

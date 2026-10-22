@@ -11,8 +11,8 @@
 //!   data and makes borrowing semantics clearer.
 //! - `AnimStateTable` wraps `UnsafeCell` to give interior mutability to the state
 //!   arrays, which must be `Sync` for use as module-level statics.
-//! - `DEH_String` and `SHORT` are identity shims (Dehacked and endianness
-//!   conversion are not yet active in this port).
+//! - `DEH_String` (from `deh_str`) and `SHORT` are identities (Dehacked and
+//!   endianness conversion are not yet active in this port).
 
 #![allow(
     non_upper_case_globals,
@@ -29,11 +29,7 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::{
-        cell::UnsafeCell,
-        ffi::{c_char, c_int},
-        ptr,
-    },
+    std::{cell::UnsafeCell, ptr},
 };
 
 use crate::{
@@ -42,11 +38,11 @@ use crate::{
         d_event::event_t,
         d_mode,
         d_player::MAXPLAYERS,
+        deh_str::DEH_String,
         doomstat::gamemode,
         g_game::{deathmatch, netgame, playeringame, players, G_WorldDone},
         i_timer::TICRATE,
         i_video::{SCREENHEIGHT, SCREENWIDTH},
-        m_misc::M_StringCopy,
         m_random::M_Random,
         s_sound::{S_ChangeMusic, S_StartSound},
         sounds::Mus,
@@ -67,43 +63,43 @@ const NUMEPISODES: usize = 4;
 const NUMMAPS: usize = 9;
 
 /// Screen y coordinate of the level-name title patch (matches C `WI_TITLEY`).
-const WI_TITLEY: c_int = 2;
+const WI_TITLEY: i32 = 2;
 /// Vertical pixel spacing between player rows in the netgame and deathmatch views (matches C `WI_SPACINGY`).
-const WI_SPACINGY: c_int = 33;
+const WI_SPACINGY: i32 = 33;
 
 /// Screen x of the stats column in single-player view (matches C `SP_STATSX`).
-const SP_STATSX: c_int = 50;
+const SP_STATSX: i32 = 50;
 /// Screen y of the stats area in single-player view (matches C `SP_STATSY`).
-const SP_STATSY: c_int = 50;
+const SP_STATSY: i32 = 50;
 /// Screen x of the time display in single-player view (matches C `SP_TIMEX`).
-const SP_TIMEX: c_int = 16;
+const SP_TIMEX: i32 = 16;
 /// Screen y of the time display in single-player view (matches C `SP_TIMEY`).
-const SP_TIMEY: c_int = SCREENHEIGHT - 32;
+const SP_TIMEY: i32 = SCREENHEIGHT - 32;
 
 /// Screen y of the stats header row in netgame view (matches C `NG_STATSY`).
-const NG_STATSY: c_int = 50;
+const NG_STATSY: i32 = 50;
 /// Horizontal pixel spacing between stat columns in netgame view (matches C `NG_SPACINGX`).
-const NG_SPACINGX: c_int = 64;
+const NG_SPACINGX: i32 = 64;
 
 /// Screen x of the frag matrix top-left in deathmatch view (matches C `DM_MATRIXX`).
-const DM_MATRIXX: c_int = 42;
+const DM_MATRIXX: i32 = 42;
 /// Screen y of the frag matrix top in deathmatch view (matches C `DM_MATRIXY`).
-const DM_MATRIXY: c_int = 68;
+const DM_MATRIXY: i32 = 68;
 /// Horizontal spacing between columns in the deathmatch frag matrix (matches C `DM_SPACINGX`).
-const DM_SPACINGX: c_int = 40;
+const DM_SPACINGX: i32 = 40;
 /// Screen x of the "Totals" column in deathmatch view (matches C `DM_TOTALSX`).
-const DM_TOTALSX: c_int = 269;
+const DM_TOTALSX: i32 = 269;
 /// Screen x of the "Killers" label in deathmatch view (matches C `DM_KILLERSX`).
-const DM_KILLERSX: c_int = 10;
+const DM_KILLERSX: i32 = 10;
 /// Screen y of the "Killers" label in deathmatch view (matches C `DM_KILLERSY`).
-const DM_KILLERSY: c_int = 100;
+const DM_KILLERSY: i32 = 100;
 /// Screen x of the "Victims" label in deathmatch view (matches C `DM_VICTIMSX`).
-const DM_VICTIMSX: c_int = 5;
+const DM_VICTIMSX: i32 = 5;
 /// Screen y of the "Victims" label in deathmatch view (matches C `DM_VICTIMSY`).
-const DM_VICTIMSY: c_int = 50;
+const DM_VICTIMSY: i32 = 50;
 
 /// Number of seconds (in `TICRATE` units) the "Show Next Location" map is displayed (matches C `SHOWNEXTLOCDELAY`).
-const SHOWNEXTLOCDELAY: c_int = 4;
+const SHOWNEXTLOCDELAY: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // Types that must match C layout (g_game.c is still C)
@@ -116,19 +112,19 @@ const SHOWNEXTLOCDELAY: c_int = 4;
 #[derive(Clone, Copy)]
 pub struct wbplayerstruct_t {
     /// Non-zero if this player slot is in use.
-    pub in_: c_int,
+    pub in_: i32,
     /// Number of kills this player scored on the level.
-    pub skills: c_int,
+    pub skills: i32,
     /// Number of items this player collected.
-    pub sitems: c_int,
+    pub sitems: i32,
     /// Number of secrets this player found.
-    pub ssecret: c_int,
+    pub ssecret: i32,
     /// Elapsed level time in tics.
-    pub stime: c_int,
+    pub stime: i32,
     /// Frag counts against each of the 4 possible players.
-    pub frags: [c_int; 4],
+    pub frags: [i32; 4],
     /// Unused score field (carried from the C struct for ABI compatibility).
-    pub score: c_int,
+    pub score: i32,
 }
 
 /// Overall intermission input record passed from `G_WorldDone` (C typedef `wbstartstruct_t`).
@@ -138,25 +134,25 @@ pub struct wbplayerstruct_t {
 #[derive(Clone, Copy)]
 pub struct wbstartstruct_t {
     /// Episode index (0-based).
-    pub epsd: c_int,
+    pub epsd: i32,
     /// Non-zero if the player found the secret level on this episode.
-    pub didsecret: c_int,
+    pub didsecret: i32,
     /// Index of the map the player just completed (0-based).
-    pub last: c_int,
+    pub last: i32,
     /// Index of the map the player is going to next (0-based).
-    pub next: c_int,
+    pub next: i32,
     /// Total killable monsters on the level (denominator for kill percentage).
-    pub maxkills: c_int,
+    pub maxkills: i32,
     /// Total collectible items on the level (denominator for item percentage).
-    pub maxitems: c_int,
+    pub maxitems: i32,
     /// Total secrets on the level (denominator for secret percentage).
-    pub maxsecret: c_int,
+    pub maxsecret: i32,
     /// Maximum frag count (not used in single-player).
-    pub maxfrags: c_int,
+    pub maxfrags: i32,
     /// Par time for the level in tics.
-    pub partime: c_int,
+    pub partime: i32,
     /// Console player number (0-based).
-    pub pnum: c_int,
+    pub pnum: i32,
     /// Per-player stats for up to `MAXPLAYERS` players.
     pub plyr: [wbplayerstruct_t; MAXPLAYERS],
 }
@@ -176,9 +172,9 @@ enum stateenum_t {
 #[derive(Clone, Copy)]
 struct point_t {
     /// Horizontal screen pixel.
-    x: c_int,
+    x: i32,
     /// Vertical screen pixel.
-    y: c_int,
+    y: i32,
 }
 
 /// Animation playback mode for background animations (C `animenum_t`).
@@ -200,16 +196,16 @@ struct anim_config_t {
     /// Playback mode: always, random, or level-triggered.
     type_: animenum_t,
     /// Tics between frame advances (or between random retriggers for `ANIM_RANDOM`).
-    period: c_int,
+    period: i32,
     /// Number of patch frames in this animation (1-3).
-    nanims: c_int,
+    nanims: i32,
     /// Screen position where the animation is drawn.
     loc: point_t,
     /// For `ANIM_LEVEL`: the map index that triggers playback.
     /// For `ANIM_RANDOM`: the max additional delay (in tics) before the next play.
-    data1: c_int,
+    data1: i32,
     /// For `ANIM_RANDOM`: the minimum delay (in tics) before the next play.
-    data2: c_int,
+    data2: i32,
 }
 
 /// Mutable per-animation runtime state (zeroed at startup, written every frame).
@@ -220,13 +216,13 @@ struct anim_state_t {
     /// Cached patch pointers for each frame; loaded by `WI_loadData`.
     p: [*mut patch_t; 3],
     /// Game tic on which the next frame advance is scheduled.
-    nexttic: c_int,
+    nexttic: i32,
     /// Frame index drawn on the previous tic (unused in this port; kept for layout parity).
-    lastdrawn: c_int,
+    lastdrawn: i32,
     /// Current frame index within `p` (-1 = not yet started).
-    ctr: c_int,
+    ctr: i32,
     /// Internal sub-state for `ANIM_RANDOM` sequencing.
-    state: c_int,
+    state: i32,
 }
 
 /// Zero-initialised animation state used to fill state tables at program start.
@@ -576,10 +572,10 @@ unsafe fn anim_state_ptr(epsd: usize, j: usize) -> *mut anim_state_t {
 
 /// Count of background animations per episode, indexed by episode number (C `numanims`).
 /// Episode 3 (index 3) has no animations (0).
-static NUMANIMS: [c_int; NUMEPISODES] = [
-    EPSD0_NANIM as c_int,
-    EPSD1_NANIM as c_int,
-    EPSD2_NANIM as c_int,
+static NUMANIMS: [i32; NUMEPISODES] = [
+    EPSD0_NANIM as i32,
+    EPSD1_NANIM as i32,
+    EPSD2_NANIM as i32,
     0,
 ];
 
@@ -588,9 +584,9 @@ static NUMANIMS: [c_int; NUMEPISODES] = [
 // ---------------------------------------------------------------------------
 
 /// Non-zero when the player pressed fire/use to skip the current count-up animation.
-static mut acceleratestage: c_int = 0;
+static mut acceleratestage: i32 = 0;
 /// Console player index (0-based); set from `wbs.pnum` by `WI_initVariables`.
-static mut me: c_int = 0;
+static mut me: i32 = 0;
 /// Current intermission state machine state.
 static mut state: stateenum_t = stateenum_t::NoState;
 /// Pointer to the level-start record filled by `G_WorldDone`; valid for the duration of the intermission.
@@ -598,27 +594,27 @@ static mut wbs: *mut wbstartstruct_t = ptr::null_mut();
 /// Pointer to `wbs.plyr[0]`; used to index per-player stats by offset.
 static mut plrs: *mut wbplayerstruct_t = ptr::null_mut();
 /// Generic countdown used in `NoState` and `ShowNextLoc` states.
-static mut cnt: c_int = 0;
+static mut cnt: i32 = 0;
 /// Background animation beat counter; incremented every tic by `WI_Ticker`.
-static mut bcnt: c_int = 0;
+static mut bcnt: i32 = 0;
 /// Non-zero on the first draw call after `WI_Start`, triggers a full background blit.
-static mut firstrefresh: c_int = 0;
+static mut firstrefresh: i32 = 0;
 
 /// Running kill-percentage display values (count up toward actual percentage).
-static mut cnt_kills: [c_int; MAXPLAYERS] = [0; MAXPLAYERS];
+static mut cnt_kills: [i32; MAXPLAYERS] = [0; MAXPLAYERS];
 /// Running item-percentage display values.
-static mut cnt_items: [c_int; MAXPLAYERS] = [0; MAXPLAYERS];
+static mut cnt_items: [i32; MAXPLAYERS] = [0; MAXPLAYERS];
 /// Running secret-percentage display values.
-static mut cnt_secret: [c_int; MAXPLAYERS] = [0; MAXPLAYERS];
+static mut cnt_secret: [i32; MAXPLAYERS] = [0; MAXPLAYERS];
 /// Running displayed level time in seconds (counts up from 0).
-static mut cnt_time: c_int = 0;
+static mut cnt_time: i32 = 0;
 /// Running displayed par time in seconds (counts up from 0).
-static mut cnt_par: c_int = 0;
+static mut cnt_par: i32 = 0;
 /// Tic countdown used as a pause between successive stat reveals.
-static mut cnt_pause: c_int = 0;
+static mut cnt_pause: i32 = 0;
 
 /// Number of Doom II maps to load level-name patches for (32 for the retail release).
-static mut NUMCMAPS: c_int = 0;
+static mut NUMCMAPS: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Cached WAD patches (loaded by WI_loadData, released by WI_unloadData)
@@ -676,21 +672,21 @@ static mut lnames: *mut *mut patch_t = ptr::null_mut();
 static mut background: *mut patch_t = ptr::null_mut();
 
 /// Deathmatch count-up sub-state index (odd = pause, even = ticking).
-static mut dm_state: c_int = 0;
+static mut dm_state: i32 = 0;
 /// Running frag-count display for each `[killer][victim]` pair in deathmatch view.
-static mut dm_frags: [[c_int; MAXPLAYERS]; MAXPLAYERS] = [[0; MAXPLAYERS]; MAXPLAYERS];
+static mut dm_frags: [[i32; MAXPLAYERS]; MAXPLAYERS] = [[0; MAXPLAYERS]; MAXPLAYERS];
 /// Running per-player frag totals for deathmatch view.
-static mut dm_totals: [c_int; MAXPLAYERS] = [0; MAXPLAYERS];
+static mut dm_totals: [i32; MAXPLAYERS] = [0; MAXPLAYERS];
 
 /// Running frag-count display per player in cooperative netgame view.
-static mut cnt_frags: [c_int; MAXPLAYERS] = [0; MAXPLAYERS];
+static mut cnt_frags: [i32; MAXPLAYERS] = [0; MAXPLAYERS];
 /// Non-zero when at least one player has a non-zero frag count (gates frags column display).
-static mut dofrags: c_int = 0;
+static mut dofrags: i32 = 0;
 /// Netgame count-up sub-state index.
-static mut ng_state: c_int = 0;
+static mut ng_state: i32 = 0;
 
 /// Single-player count-up sub-state index.
-static mut sp_state: c_int = 0;
+static mut sp_state: i32 = 0;
 /// Non-zero when the "you are here" pointer should be drawn in `ShowNextLoc` state.
 static mut snl_pointeron: bool = false;
 
@@ -701,18 +697,6 @@ static mut snl_pointeron: bool = false;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Pass-through shim for Dehacked string replacement (not yet active in this port).
-///
-/// # Safety
-///
-/// Caller must ensure `s` is either null or a valid C-string pointer; this
-/// implementation does not dereference it and simply returns the pointer
-/// unchanged.
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
 
 /// Identity endian-swap shim; this port runs on little-endian hosts matching the WAD format.
 #[inline(always)]
@@ -750,7 +734,7 @@ pub unsafe fn WI_slamBackground() {
 ///
 /// `_ev` is not dereferenced. Caller may pass any pointer (including null).
 /// The function is `unsafe` to match the other responders' signature only.
-pub unsafe fn WI_Responder(_ev: *mut event_t) -> c_int {
+pub unsafe fn WI_Responder(_ev: *mut event_t) -> i32 {
     0
 }
 
@@ -774,13 +758,13 @@ unsafe fn WI_drawLF() {
 
     if gamemode != d_mode::commercial || (*wbs).last < NUMCMAPS {
         V_DrawPatch(
-            (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).last as isize))).width) as c_int) / 2,
+            (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).last as isize))).width) as i32) / 2,
             y,
             *lnames.offset((*wbs).last as isize),
         );
-        y += (5 * SHORT((*(*lnames.offset((*wbs).last as isize))).height) as c_int) / 4;
+        y += (5 * SHORT((*(*lnames.offset((*wbs).last as isize))).height) as i32) / 4;
         V_DrawPatch(
-            (SCREENWIDTH - SHORT((*finished).width) as c_int) / 2,
+            (SCREENWIDTH - SHORT((*finished).width) as i32) / 2,
             y,
             finished,
         );
@@ -813,15 +797,15 @@ unsafe fn WI_drawEL() {
     let mut y = WI_TITLEY;
 
     V_DrawPatch(
-        (SCREENWIDTH - SHORT((*entering).width) as c_int) / 2,
+        (SCREENWIDTH - SHORT((*entering).width) as i32) / 2,
         y,
         entering,
     );
 
-    y += (5 * SHORT((*(*lnames.offset((*wbs).next as isize))).height) as c_int) / 4;
+    y += (5 * SHORT((*(*lnames.offset((*wbs).next as isize))).height) as i32) / 4;
 
     V_DrawPatch(
-        (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).next as isize))).width) as c_int) / 2,
+        (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).next as isize))).width) as i32) / 2,
         y,
         *lnames.offset((*wbs).next as isize),
     );
@@ -842,17 +826,17 @@ unsafe fn WI_drawEL() {
 /// function reads index 0 unconditionally and index 1 only if index 0 does
 /// not fit on screen. Each non-null slot must point to a valid `patch_t`.
 /// Dereferences the global `wbs` for the current episode and reads `LNODES`.
-unsafe fn WI_drawOnLnode(n: c_int, c: *mut *mut patch_t) {
+unsafe fn WI_drawOnLnode(n: i32, c: *mut *mut patch_t) {
     let mut i = 0;
     let mut fits = false;
 
     loop {
         let left = LNODES[(*wbs).epsd as usize][n as usize].x
-            - SHORT((**c.offset(i as isize)).leftoffset) as c_int;
+            - SHORT((**c.offset(i as isize)).leftoffset) as i32;
         let top = LNODES[(*wbs).epsd as usize][n as usize].y
-            - SHORT((**c.offset(i as isize)).topoffset) as c_int;
-        let right = left + SHORT((**c.offset(i as isize)).width) as c_int;
-        let bottom = top + SHORT((**c.offset(i as isize)).height) as c_int;
+            - SHORT((**c.offset(i as isize)).topoffset) as i32;
+        let right = left + SHORT((**c.offset(i as isize)).width) as i32;
+        let bottom = top + SHORT((**c.offset(i as isize)).height) as i32;
 
         if left >= 0 && right < SCREENWIDTH && top >= 0 && bottom < SCREENHEIGHT {
             fits = true;
@@ -1021,8 +1005,8 @@ unsafe fn WI_drawAnimatedBack() {
 ///
 /// Reads the global `num` digit patches and `wiminus` patch. Caller must
 /// ensure `WI_loadData` has cached these patches before invoking.
-unsafe fn WI_drawNum(mut x: c_int, y: c_int, mut n: c_int, mut digits: c_int) -> c_int {
-    let fontwidth = SHORT((*num[0]).width) as c_int;
+unsafe fn WI_drawNum(mut x: i32, y: i32, mut n: i32, mut digits: i32) -> i32 {
+    let fontwidth = SHORT((*num[0]).width) as i32;
     let neg = n < 0;
     if neg {
         n = -n;
@@ -1069,7 +1053,7 @@ unsafe fn WI_drawNum(mut x: c_int, y: c_int, mut n: c_int, mut digits: c_int) ->
 ///
 /// Reads the global `percent` patch and delegates to `WI_drawNum`. Caller
 /// must ensure `WI_loadData` has cached the patches.
-unsafe fn WI_drawPercent(x: c_int, y: c_int, pct: c_int) {
+unsafe fn WI_drawPercent(x: i32, y: i32, pct: i32) {
     if pct < 0 {
         return;
     }
@@ -1086,7 +1070,7 @@ unsafe fn WI_drawPercent(x: c_int, y: c_int, pct: c_int) {
 ///
 /// Reads the global `colon` and `sucks` patches and delegates to
 /// `WI_drawNum`. Caller must ensure `WI_loadData` has cached the patches.
-unsafe fn WI_drawTime(mut x: c_int, y: c_int, t: c_int) {
+unsafe fn WI_drawTime(mut x: i32, y: i32, t: i32) {
     if t < 0 {
         return;
     }
@@ -1095,7 +1079,7 @@ unsafe fn WI_drawTime(mut x: c_int, y: c_int, t: c_int) {
         let mut div = 1;
         loop {
             let n = (t / div) % 60;
-            x = WI_drawNum(x, y, n, 2) - SHORT((*colon).width) as c_int;
+            x = WI_drawNum(x, y, n, 2) - SHORT((*colon).width) as i32;
             div *= 60;
             if div == 60 || t / div != 0 {
                 V_DrawPatch(x, y, colon);
@@ -1105,7 +1089,7 @@ unsafe fn WI_drawTime(mut x: c_int, y: c_int, t: c_int) {
             }
         }
     } else {
-        V_DrawPatch(x - SHORT((*sucks).width) as c_int, y, sucks);
+        V_DrawPatch(x - SHORT((*sucks).width) as i32, y, sucks);
     }
 }
 
@@ -1254,10 +1238,10 @@ unsafe fn WI_drawNoState() {
 /// (a pointer into `wbs.plyr`). Caller must ensure `WI_initVariables` has
 /// set `plrs` to a valid array and that `playernum` is within
 /// `0..MAXPLAYERS`.
-unsafe fn WI_fragSum(playernum: c_int) -> c_int {
+unsafe fn WI_fragSum(playernum: i32) -> i32 {
     let mut sum = 0;
     for i in 0..MAXPLAYERS {
-        if playeringame[i] != 0 && i as c_int != playernum {
+        if playeringame[i] != 0 && i as i32 != playernum {
             sum += (*plrs.offset(playernum as isize)).frags[i];
         }
     }
@@ -1319,16 +1303,16 @@ unsafe fn WI_updateDeathmatchStats() {
                         dm_frags[i][j] = (*plrs.offset(i as isize)).frags[j];
                     }
                 }
-                dm_totals[i] = WI_fragSum(i as c_int);
+                dm_totals[i] = WI_fragSum(i as i32);
             }
         }
-        S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+        S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
         dm_state = 4;
     }
 
     if dm_state == 2 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let mut stillticking = false;
         for i in 0..MAXPLAYERS {
@@ -1350,7 +1334,7 @@ unsafe fn WI_updateDeathmatchStats() {
                         stillticking = true;
                     }
                 }
-                dm_totals[i] = WI_fragSum(i as c_int);
+                dm_totals[i] = WI_fragSum(i as i32);
                 if dm_totals[i] > 99 {
                     dm_totals[i] = 99;
                 }
@@ -1360,12 +1344,12 @@ unsafe fn WI_updateDeathmatchStats() {
             }
         }
         if !stillticking {
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             dm_state += 1;
         }
     } else if dm_state == 4 {
         if acceleratestage != 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Slop as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Slop as i32);
             if gamemode == d_mode::commercial {
                 WI_initNoState();
             } else {
@@ -1395,7 +1379,7 @@ unsafe fn WI_drawDeathmatchStats() {
     WI_drawLF();
 
     V_DrawPatch(
-        DM_TOTALSX - SHORT((*total).width) as c_int / 2,
+        DM_TOTALSX - SHORT((*total).width) as i32 / 2,
         DM_MATRIXY - WI_SPACINGY + 10,
         total,
     );
@@ -1408,18 +1392,18 @@ unsafe fn WI_drawDeathmatchStats() {
     for i in 0..MAXPLAYERS {
         if playeringame[i] != 0 {
             V_DrawPatch(
-                x - SHORT((*p[i]).width) as c_int / 2,
+                x - SHORT((*p[i]).width) as i32 / 2,
                 DM_MATRIXY - WI_SPACINGY,
                 p[i],
             );
-            V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as c_int / 2, y, p[i]);
-            if i as c_int == me {
+            V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as i32 / 2, y, p[i]);
+            if i as i32 == me {
                 V_DrawPatch(
-                    x - SHORT((*p[i]).width) as c_int / 2,
+                    x - SHORT((*p[i]).width) as i32 / 2,
                     DM_MATRIXY - WI_SPACINGY,
                     bstar,
                 );
-                V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as c_int / 2, y, star);
+                V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as i32 / 2, y, star);
             }
         }
         x += DM_SPACINGX;
@@ -1427,7 +1411,7 @@ unsafe fn WI_drawDeathmatchStats() {
     }
 
     let mut y = DM_MATRIXY + 10;
-    let w = SHORT((*num[0]).width) as c_int;
+    let w = SHORT((*num[0]).width) as i32;
 
     for i in 0..MAXPLAYERS {
         let mut x = DM_MATRIXX + DM_SPACINGX;
@@ -1469,7 +1453,7 @@ unsafe fn WI_initNetgameStats() {
         cnt_items[i] = 0;
         cnt_secret[i] = 0;
         cnt_frags[i] = 0;
-        dofrags += WI_fragSum(i as c_int);
+        dofrags += WI_fragSum(i as i32);
     }
 
     dofrags = if dofrags != 0 { 1 } else { 0 };
@@ -1500,16 +1484,16 @@ unsafe fn WI_updateNetgameStats() {
             cnt_items[i] = ((*plrs.offset(i as isize)).sitems * 100) / (*wbs).maxitems;
             cnt_secret[i] = ((*plrs.offset(i as isize)).ssecret * 100) / (*wbs).maxsecret;
             if dofrags != 0 {
-                cnt_frags[i] = WI_fragSum(i as c_int);
+                cnt_frags[i] = WI_fragSum(i as i32);
             }
         }
-        S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+        S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
         ng_state = 10;
     }
 
     if ng_state == 2 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let mut stillticking = false;
         for i in 0..MAXPLAYERS {
@@ -1525,12 +1509,12 @@ unsafe fn WI_updateNetgameStats() {
             }
         }
         if !stillticking {
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             ng_state += 1;
         }
     } else if ng_state == 4 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let mut stillticking = false;
         for i in 0..MAXPLAYERS {
@@ -1546,12 +1530,12 @@ unsafe fn WI_updateNetgameStats() {
             }
         }
         if !stillticking {
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             ng_state += 1;
         }
     } else if ng_state == 6 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let mut stillticking = false;
         for i in 0..MAXPLAYERS {
@@ -1567,12 +1551,12 @@ unsafe fn WI_updateNetgameStats() {
             }
         }
         if !stillticking {
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             ng_state += 1 + 2 * if dofrags == 0 { 1 } else { 0 };
         }
     } else if ng_state == 8 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let mut stillticking = false;
         for i in 0..MAXPLAYERS {
@@ -1580,7 +1564,7 @@ unsafe fn WI_updateNetgameStats() {
                 continue;
             }
             cnt_frags[i] += 1;
-            let fsum = WI_fragSum(i as c_int);
+            let fsum = WI_fragSum(i as i32);
             if cnt_frags[i] >= fsum {
                 cnt_frags[i] = fsum;
             } else {
@@ -1588,12 +1572,12 @@ unsafe fn WI_updateNetgameStats() {
             }
         }
         if !stillticking {
-            S_StartSound(ptr::null_mut(), Sfx::Pldeth as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pldeth as i32);
             ng_state += 1;
         }
     } else if ng_state == 10 {
         if acceleratestage != 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Sgcock as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Sgcock as i32);
             if gamemode == d_mode::commercial {
                 WI_initNoState();
             } else {
@@ -1618,47 +1602,47 @@ unsafe fn WI_updateNetgameStats() {
 /// `playeringame`. Caller must ensure `WI_loadData` cached the patches
 /// and the netgame stats phase has been initialised.
 unsafe fn WI_drawNetgameStats() {
-    let pwidth = SHORT((*percent).width) as c_int;
+    let pwidth = SHORT((*percent).width) as i32;
 
     WI_slamBackground();
     WI_drawAnimatedBack();
     WI_drawLF();
 
-    let ng_statsx = 32 + SHORT((*star).width) as c_int / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
+    let ng_statsx = 32 + SHORT((*star).width) as i32 / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
 
     V_DrawPatch(
-        ng_statsx + NG_SPACINGX - SHORT((*kills).width) as c_int,
+        ng_statsx + NG_SPACINGX - SHORT((*kills).width) as i32,
         NG_STATSY,
         kills,
     );
     V_DrawPatch(
-        ng_statsx + 2 * NG_SPACINGX - SHORT((*items).width) as c_int,
+        ng_statsx + 2 * NG_SPACINGX - SHORT((*items).width) as i32,
         NG_STATSY,
         items,
     );
     V_DrawPatch(
-        ng_statsx + 3 * NG_SPACINGX - SHORT((*secret).width) as c_int,
+        ng_statsx + 3 * NG_SPACINGX - SHORT((*secret).width) as i32,
         NG_STATSY,
         secret,
     );
     if dofrags != 0 {
         V_DrawPatch(
-            ng_statsx + 4 * NG_SPACINGX - SHORT((*frags).width) as c_int,
+            ng_statsx + 4 * NG_SPACINGX - SHORT((*frags).width) as i32,
             NG_STATSY,
             frags,
         );
     }
 
-    let mut y = NG_STATSY + SHORT((*kills).height) as c_int;
+    let mut y = NG_STATSY + SHORT((*kills).height) as i32;
 
     for i in 0..MAXPLAYERS {
         if playeringame[i] == 0 {
             continue;
         }
         let mut x = ng_statsx;
-        V_DrawPatch(x - SHORT((*p[i]).width) as c_int, y, p[i]);
-        if i as c_int == me {
-            V_DrawPatch(x - SHORT((*p[i]).width) as c_int, y, star);
+        V_DrawPatch(x - SHORT((*p[i]).width) as i32, y, p[i]);
+        if i as i32 == me {
+            V_DrawPatch(x - SHORT((*p[i]).width) as i32, y, star);
         }
         x += NG_SPACINGX;
         WI_drawPercent(x - pwidth, y + 10, cnt_kills[i]);
@@ -1721,46 +1705,46 @@ unsafe fn WI_updateStats() {
         cnt_secret[0] = ((*plrs.offset(me as isize)).ssecret * 100) / (*wbs).maxsecret;
         cnt_time = (*plrs.offset(me as isize)).stime / TICRATE;
         cnt_par = (*wbs).partime / TICRATE;
-        S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+        S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
         sp_state = 10;
     }
 
     if sp_state == 2 {
         cnt_kills[0] += 2;
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let target = ((*plrs.offset(me as isize)).skills * 100) / (*wbs).maxkills;
         if cnt_kills[0] >= target {
             cnt_kills[0] = target;
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             sp_state += 1;
         }
     } else if sp_state == 4 {
         cnt_items[0] += 2;
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let target = ((*plrs.offset(me as isize)).sitems * 100) / (*wbs).maxitems;
         if cnt_items[0] >= target {
             cnt_items[0] = target;
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             sp_state += 1;
         }
     } else if sp_state == 6 {
         cnt_secret[0] += 2;
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         let target = ((*plrs.offset(me as isize)).ssecret * 100) / (*wbs).maxsecret;
         if cnt_secret[0] >= target {
             cnt_secret[0] = target;
-            S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
             sp_state += 1;
         }
     } else if sp_state == 8 {
         if bcnt & 3 == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
         }
         cnt_time += 3;
         let target_time = (*plrs.offset(me as isize)).stime / TICRATE;
@@ -1772,13 +1756,13 @@ unsafe fn WI_updateStats() {
         if cnt_par >= target_par {
             cnt_par = target_par;
             if cnt_time >= target_time {
-                S_StartSound(ptr::null_mut(), Sfx::Barexp as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Barexp as i32);
                 sp_state += 1;
             }
         }
     } else if sp_state == 10 {
         if acceleratestage != 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Sgcock as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Sgcock as i32);
             if gamemode == d_mode::commercial {
                 WI_initNoState();
             } else {
@@ -1803,7 +1787,7 @@ unsafe fn WI_updateStats() {
 /// decide whether to draw the par-time row. Caller must ensure
 /// `WI_loadData` cached the patches and the stats phase has been initialised.
 unsafe fn WI_drawStats() {
-    let lh = (3 * SHORT((*num[0]).height) as c_int) / 2;
+    let lh = (3 * SHORT((*num[0]).height) as i32) / 2;
 
     WI_slamBackground();
     WI_drawAnimatedBack();
@@ -1889,9 +1873,9 @@ pub unsafe fn WI_Ticker() {
 
     if bcnt == 1 {
         if gamemode == d_mode::commercial {
-            S_ChangeMusic(Mus::Dm2int as c_int, 1);
+            S_ChangeMusic(Mus::Dm2int as i32, 1);
         } else {
-            S_ChangeMusic(Mus::Inter as c_int, 1);
+            S_ChangeMusic(Mus::Inter as i32, 1);
         }
     }
 
@@ -1923,7 +1907,7 @@ pub unsafe fn WI_Ticker() {
 /// Function pointer type for the load/unload callback used by `WI_loadUnloadData`.
 ///
 /// The callback receives the lump name and a pointer to the patch pointer slot.
-type LoadCallback = unsafe fn(*mut c_char, *mut *mut patch_t);
+type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
 
 /// Walk every intermission lump name and invoke `callback` for each.
 ///
@@ -1940,22 +1924,22 @@ type LoadCallback = unsafe fn(*mut c_char, *mut *mut patch_t);
 /// and only reads/writes the single slot supplied. Dereferences `wbs` and
 /// the global `gamemode`; the WAD subsystem must be initialised.
 unsafe fn WI_loadUnloadData(callback: LoadCallback) {
-    let mut name: [c_char; 9] = [0; 9];
+    let mut name: [u8; 9] = [0; 9];
 
     if gamemode == d_mode::commercial {
         for i in 0..NUMCMAPS {
             DEH_snprintf!(name, "CWILV{:02}", i);
-            callback(name.as_mut_ptr(), lnames.offset(i as isize));
+            callback(&name, lnames.offset(i as isize));
         }
     } else {
-        for i in 0..NUMMAPS as c_int {
+        for i in 0..NUMMAPS as i32 {
             c_write!(name, "WILV{}{}", (*wbs).epsd, i);
-            callback(name.as_mut_ptr(), lnames.offset(i as isize));
+            callback(&name, lnames.offset(i as isize));
         }
 
-        callback(DEH_String(c"WIURH0".as_ptr().cast_mut()), &mut yah[0]);
-        callback(DEH_String(c"WIURH1".as_ptr().cast_mut()), &mut yah[1]);
-        callback(DEH_String(c"WISPLAT".as_ptr().cast_mut()), &mut splat[0]);
+        callback(DEH_String(b"WIURH0"), &mut yah[0]);
+        callback(DEH_String(b"WIURH1"), &mut yah[1]);
+        callback(DEH_String(b"WISPLAT"), &mut splat[0]);
 
         if (*wbs).epsd < 3 {
             let epsd = (*wbs).epsd as usize;
@@ -1965,7 +1949,7 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
                 for i in 0..cfg.nanims as usize {
                     if (*wbs).epsd != 1 || j != 8 {
                         c_write!(name, "WIA{}{:02}{:02}", (*wbs).epsd, j, i);
-                        callback(name.as_mut_ptr(), &mut (*st).p[i]);
+                        callback(&name, &mut (*st).p[i]);
                     } else {
                         (*st).p[i] = (*anim_state_ptr(1, 4)).p[i];
                     }
@@ -1974,68 +1958,63 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
         }
     }
 
-    callback(DEH_String(c"WIMINUS".as_ptr().cast_mut()), &mut wiminus);
+    callback(DEH_String(b"WIMINUS"), &mut wiminus);
 
     for i in 0..10i32 {
         DEH_snprintf!(name, "WINUM{}", i);
-        callback(name.as_mut_ptr(), &mut num[i as usize]);
+        callback(&name, &mut num[i as usize]);
     }
 
-    callback(DEH_String(c"WIPCNT".as_ptr().cast_mut()), &mut percent);
-    callback(DEH_String(c"WIF".as_ptr().cast_mut()), &mut finished);
-    callback(DEH_String(c"WIENTER".as_ptr().cast_mut()), &mut entering);
-    callback(DEH_String(c"WIOSTK".as_ptr().cast_mut()), &mut kills);
-    callback(DEH_String(c"WIOSTS".as_ptr().cast_mut()), &mut secret);
-    callback(DEH_String(c"WISCRT2".as_ptr().cast_mut()), &mut sp_secret);
+    callback(DEH_String(b"WIPCNT"), &mut percent);
+    callback(DEH_String(b"WIF"), &mut finished);
+    callback(DEH_String(b"WIENTER"), &mut entering);
+    callback(DEH_String(b"WIOSTK"), &mut kills);
+    callback(DEH_String(b"WIOSTS"), &mut secret);
+    callback(DEH_String(b"WISCRT2"), &mut sp_secret);
 
-    if W_CheckNumForName(DEH_String(c"WIOBJ".as_ptr().cast_mut())) >= 0 {
+    if W_CheckNumForName(DEH_String(b"WIOBJ")) >= 0 {
         if netgame != 0 && deathmatch == 0 {
-            callback(DEH_String(c"WIOBJ".as_ptr().cast_mut()), &mut items);
+            callback(DEH_String(b"WIOBJ"), &mut items);
         } else {
-            callback(DEH_String(c"WIOSTI".as_ptr().cast_mut()), &mut items);
+            callback(DEH_String(b"WIOSTI"), &mut items);
         }
     } else {
-        callback(DEH_String(c"WIOSTI".as_ptr().cast_mut()), &mut items);
+        callback(DEH_String(b"WIOSTI"), &mut items);
     }
 
-    callback(DEH_String(c"WIFRGS".as_ptr().cast_mut()), &mut frags);
-    callback(DEH_String(c"WICOLON".as_ptr().cast_mut()), &mut colon);
-    callback(DEH_String(c"WITIME".as_ptr().cast_mut()), &mut timepatch);
-    callback(DEH_String(c"WISUCKS".as_ptr().cast_mut()), &mut sucks);
-    callback(DEH_String(c"WIPAR".as_ptr().cast_mut()), &mut par);
-    callback(DEH_String(c"WIKILRS".as_ptr().cast_mut()), &mut killers);
-    callback(DEH_String(c"WIVCTMS".as_ptr().cast_mut()), &mut victims);
-    callback(DEH_String(c"WIMSTT".as_ptr().cast_mut()), &mut total);
+    callback(DEH_String(b"WIFRGS"), &mut frags);
+    callback(DEH_String(b"WICOLON"), &mut colon);
+    callback(DEH_String(b"WITIME"), &mut timepatch);
+    callback(DEH_String(b"WISUCKS"), &mut sucks);
+    callback(DEH_String(b"WIPAR"), &mut par);
+    callback(DEH_String(b"WIKILRS"), &mut killers);
+    callback(DEH_String(b"WIVCTMS"), &mut victims);
+    callback(DEH_String(b"WIMSTT"), &mut total);
 
     for i in 0..MAXPLAYERS {
         DEH_snprintf!(name, "STPB{}", i);
-        callback(name.as_mut_ptr(), &mut p[i]);
+        callback(&name, &mut p[i]);
         DEH_snprintf!(name, "WIBP{}", i + 1);
-        callback(name.as_mut_ptr(), &mut bp[i]);
+        callback(&name, &mut bp[i]);
     }
 
     if gamemode == d_mode::commercial || (gamemode == d_mode::retail && (*wbs).epsd == 3) {
-        M_StringCopy(
-            name.as_mut_ptr(),
-            DEH_String(c"INTERPIC".as_ptr().cast_mut()),
-            name.len(),
-        );
+        name = *DEH_String(b"INTERPIC\0");
     } else {
         DEH_snprintf!(name, "WIMAP{}", (*wbs).epsd);
     }
 
-    callback(name.as_mut_ptr(), &mut background);
+    callback(&name, &mut background);
 }
 
 /// Load callback: cache the named lump at `PU_STATIC` priority and store the pointer.
 ///
 /// # Safety
 ///
-/// Caller must ensure `name` is a valid NUL-terminated C-string pointer
-/// recognised by `W_CacheLumpName`, and `variable` is a valid, non-null,
-/// properly aligned pointer to a `*mut patch_t` slot the function may
-/// overwrite.
-unsafe fn WI_loadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
+/// Caller must ensure `name` names a lump present in the WAD, and
+/// `variable` is a valid, non-null, properly aligned pointer to a
+/// `*mut patch_t` slot the function may overwrite.
+unsafe fn WI_loadCallback(name: &[u8], variable: *mut *mut patch_t) {
     *variable = W_CacheLumpName(name, PU_STATIC) as *mut patch_t;
 }
 
@@ -2055,13 +2034,13 @@ pub unsafe fn WI_loadData() {
     if gamemode == d_mode::commercial {
         NUMCMAPS = 32;
         lnames = Z_Malloc(
-            (std::mem::size_of::<*mut patch_t>() * NUMCMAPS as usize) as c_int,
+            (std::mem::size_of::<*mut patch_t>() * NUMCMAPS as usize) as i32,
             PU_STATIC,
             ptr::null_mut(),
         ) as *mut *mut patch_t;
     } else {
         lnames = Z_Malloc(
-            (std::mem::size_of::<*mut patch_t>() * NUMMAPS) as c_int,
+            (std::mem::size_of::<*mut patch_t>() * NUMMAPS) as i32,
             PU_STATIC,
             ptr::null_mut(),
         ) as *mut *mut patch_t;
@@ -2069,19 +2048,19 @@ pub unsafe fn WI_loadData() {
 
     WI_loadUnloadData(WI_loadCallback);
 
-    star = W_CacheLumpName(DEH_String(c"STFST01".as_ptr().cast_mut()), PU_STATIC) as *mut patch_t;
-    bstar = W_CacheLumpName(DEH_String(c"STFDEAD0".as_ptr().cast_mut()), PU_STATIC) as *mut patch_t;
+    star = W_CacheLumpName(DEH_String(b"STFST01"), PU_STATIC) as *mut patch_t;
+    bstar = W_CacheLumpName(DEH_String(b"STFDEAD0"), PU_STATIC) as *mut patch_t;
 }
 
 /// Unload callback: release the named lump from the WAD cache and null the pointer.
 ///
 /// # Safety
 ///
-/// Caller must ensure `name` is a valid NUL-terminated C-string pointer
-/// previously cached via `W_CacheLumpName`, and `variable` is a valid,
-/// non-null, properly aligned pointer to a `*mut patch_t` slot that this
-/// function may overwrite with null.
-unsafe fn WI_unloadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
+/// Caller must ensure `name` names a lump previously cached via
+/// `W_CacheLumpName`, and `variable` is a valid, non-null, properly
+/// aligned pointer to a `*mut patch_t` slot that this function may
+/// overwrite with null.
+unsafe fn WI_unloadCallback(name: &[u8], variable: *mut *mut patch_t) {
     W_ReleaseLumpName(name);
     *variable = ptr::null_mut();
 }

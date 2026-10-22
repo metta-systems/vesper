@@ -7,10 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_short, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use super::{
     m_bbox::BBox,
@@ -125,31 +122,31 @@ pub struct sector_t {
     /// Ceiling height in fixed-point map units.
     pub ceilingheight: fixed_t,
     /// Flat lump index for the floor texture.
-    pub floorpic: c_short,
+    pub floorpic: i16,
     /// Flat lump index for the ceiling texture.
-    pub ceilingpic: c_short,
+    pub ceilingpic: i16,
     /// Ambient light level (0-255).
-    pub lightlevel: c_short,
+    pub lightlevel: i16,
     /// Special effect number (damage, secret, etc.).
-    pub special: c_short,
+    pub special: i16,
     /// Sector tag used to link with linedef specials.
-    pub tag: c_short,
+    pub tag: i16,
     /// Sound traversal counter (set during sound propagation).
-    pub soundtraversed: c_int,
+    pub soundtraversed: i32,
     /// Last thing to make a sound in this sector.
     pub soundtarget: *mut mobj_t,
     /// Bounding box used for blockmap queries (`BOXLEFT/BOXRIGHT/BOXTOP/BOXBOTTOM`).
-    pub blockbox: [c_int; 4],
+    pub blockbox: [i32; 4],
     /// Degenerate mobj used as the sector's spatial sound origin.
     pub soundorg: degenmobj_s,
     /// Validity counter for single-pass linedef and thing traversal.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Head of the linked list of things (mobjs) in this sector.
     pub thinglist: *mut mobj_t,
     /// Pointer to sector-specific special state (e.g. moving floor/ceiling).
     pub specialdata: *mut c_void,
     /// Number of linedefs bounding this sector.
-    pub linecount: c_int,
+    pub linecount: i32,
     /// Pointer to the array of linedef pointers bounding this sector.
     pub lines: *mut *mut line_s,
 }
@@ -164,11 +161,11 @@ pub struct side_t {
     /// Vertical texture offset in fixed-point units.
     pub rowoffset: fixed_t,
     /// Upper (above back sector ceiling) texture number; 0 = none.
-    pub toptexture: c_short,
+    pub toptexture: i16,
     /// Lower (below back sector floor) texture number; 0 = none.
-    pub bottomtexture: c_short,
+    pub bottomtexture: i16,
     /// Middle texture number; 0 = none.
-    pub midtexture: c_short,
+    pub midtexture: i16,
     /// The sector this sidedef faces.
     pub sector: *mut sector_t,
 }
@@ -200,13 +197,13 @@ pub struct line_s {
     /// Vertical delta `v2.y - v1.y` in fixed-point units.
     pub dy: fixed_t,
     /// Linedef flags (ML_* constants from `doomdef.h`).
-    pub flags: c_short,
+    pub flags: i16,
     /// Special action number (door, platform, exit, etc.).
-    pub special: c_short,
+    pub special: i16,
     /// Tag linking this linedef to a sector for special activations.
-    pub tag: c_short,
+    pub tag: i16,
     /// Side numbers: `sidenum[0]` = front, `sidenum[1]` = back (-1 = none).
-    pub sidenum: [c_short; 2],
+    pub sidenum: [i16; 2],
     /// Axis-aligned bounding box of the linedef.
     pub bbox: [fixed_t; 4],
     /// Pre-computed slope type for fast bbox intersection.
@@ -216,7 +213,7 @@ pub struct line_s {
     /// Sector on the back (left) side; null for single-sided lines.
     pub backsector: *mut sector_t,
     /// Validity counter to avoid processing the same linedef twice per query.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Pointer to active special state (e.g. a triggered door thinker).
     pub specialdata: *mut c_void,
 }
@@ -231,9 +228,9 @@ pub struct subsector_s {
     /// The sector this subsector belongs to.
     pub sector: *mut sector_t,
     /// Number of segs in this subsector.
-    pub numlines: c_short,
+    pub numlines: i16,
     /// Index of the first seg in the global `segs` array.
-    pub firstline: c_short,
+    pub firstline: i16,
 }
 /// Type alias for [`subsector_s`], matching the C `subsector_t` typedef.
 pub type subsector_t = subsector_s;
@@ -304,13 +301,13 @@ struct visplane_t {
     /// Height of this plane in fixed-point map units.
     pub height: fixed_t,
     /// Flat lump index for this plane's texture.
-    pub picnum: c_int,
+    pub picnum: i32,
     /// Light level for this plane (0-255).
-    pub lightlevel: c_int,
+    pub lightlevel: i32,
     /// Leftmost screen column covered by this plane.
-    pub minx: c_int,
+    pub minx: i32,
     /// Rightmost screen column covered by this plane.
-    pub maxx: c_int,
+    pub maxx: i32,
     /// Padding byte before the `top` array (matches C struct layout).
     pub pad1: u8,
     /// Per-column top clip (y coordinate); `0xff` means unset.
@@ -340,9 +337,9 @@ pub struct drawseg_t {
     /// The seg that generated this draw-seg.
     pub curline: *mut seg_t,
     /// Leftmost screen column of this draw-seg (inclusive).
-    pub x1: c_int,
+    pub x1: i32,
     /// Rightmost screen column of this draw-seg (inclusive).
-    pub x2: c_int,
+    pub x2: i32,
     /// Projection scale at column `x1`.
     pub scale1: fixed_t,
     /// Projection scale at column `x2`.
@@ -350,17 +347,17 @@ pub struct drawseg_t {
     /// Per-column scale increment: `(scale2 - scale1) / (x2 - x1)`.
     pub scalestep: fixed_t,
     /// Silhouette flags (`SIL_*`) indicating which edges clip sprites.
-    pub silhouette: c_int,
+    pub silhouette: i32,
     /// Bottom silhouette height in fixed-point units (for lower-unpegged walls).
     pub bsilheight: fixed_t,
     /// Top silhouette height in fixed-point units (for upper-unpegged walls).
     pub tsilheight: fixed_t,
     /// Pointer into the sprite-top clip column array; null if not needed.
-    pub sprtopclip: *mut c_short,
+    pub sprtopclip: *mut i16,
     /// Pointer into the sprite-bottom clip column array; null if not needed.
-    pub sprbottomclip: *mut c_short,
+    pub sprbottomclip: *mut i16,
     /// Pointer into the masked-texture column array; null for solid walls.
-    pub maskedtexturecol: *mut c_short,
+    pub maskedtexturecol: *mut i16,
 }
 
 /// Compile-time zero initializer for [`drawseg_t`], used to fill the static
@@ -488,9 +485,9 @@ mod layout_checks {
 #[derive(Clone, Copy)]
 struct cliprange_t {
     /// First (leftmost) solid column in this range, inclusive.
-    first: c_int,
+    first: i32,
     /// Last (rightmost) solid column in this range, inclusive.
-    last: c_int,
+    last: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +547,7 @@ static mut newend: *mut cliprange_t = ptr::null_mut();
 /// added by Rust to complete the array (the C original has only 11 entries,
 /// indices 0-10). Each entry is four `BBox::{TOP,BOTTOM,LEFT,RIGHT}` indices.
 /// Mirrors the `checkcoord` table from `r_bsp.c`.
-static CHECKCOORD: [[c_int; 4]; 12] = [
+static CHECKCOORD: [[i32; 4]; 12] = [
     [3, 0, 2, 1],
     [3, 0, 2, 0],
     [3, 1, 2, 0],
@@ -648,7 +645,7 @@ pub unsafe fn R_ClearClipSegs() {
 /// [`R_ClearClipSegs`] before this frame. `first` must be <= `last` for a
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Mutates the global `solidsegs` array and `newend`.
-pub unsafe fn R_ClipSolidWallSegment(first: c_int, last: c_int) {
+pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
     if first > last {
         log::debug!(
             "R_ClipSolidWallSegment INVALID: first={} > last={}",
@@ -757,7 +754,7 @@ pub unsafe fn R_ClipSolidWallSegment(first: c_int, last: c_int) {
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Reads the global `solidsegs` array without
 /// modifying it.
-pub unsafe fn R_ClipPassWallSegment(first: c_int, last: c_int) {
+pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
     if first > last {
         log::debug!(
             "R_ClipPassWallSegment INVALID: first={} > last={}",
@@ -1011,7 +1008,7 @@ unsafe fn R_AddLine(line: *mut seg_t) {
 /// Globals [`viewx`], [`viewy`], [`viewangle`], [`clipangle`],
 /// [`viewangletox`], and `solidsegs` must have been initialized for the
 /// current frame.
-pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> c_int {
+pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> i32 {
     let boxx = if viewx <= *bspcoord.add(BBox::LEFT) {
         0
     } else if viewx < *bspcoord.add(BBox::RIGHT) {
@@ -1110,31 +1107,31 @@ pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> c_int {
 /// not checked at runtime to match C behavior). The subsector's `sector`
 /// pointer and all `segs` it references must be valid. Globals [`viewz`],
 /// [`skyflatnum`], [`floorplane`], and [`ceilingplane`] must be accessible.
-pub unsafe fn R_Subsector(num: c_int) {
+pub unsafe fn R_Subsector(num: i32) {
     let num_usize = num as usize;
 
     sscount += 1;
 
     let sub = &*(subsectors.add(num_usize) as *mut subsector_t);
     frontsector = sub.sector;
-    let mut count = sub.numlines as c_int;
+    let mut count = sub.numlines as i32;
     let mut line = segs.add(sub.firstline as usize) as *mut seg_t;
 
     if (*frontsector).floorheight < viewz {
         floorplane = R_FindPlane(
             (*frontsector).floorheight,
-            (*frontsector).floorpic as c_int,
-            (*frontsector).lightlevel as c_int,
+            (*frontsector).floorpic as i32,
+            (*frontsector).lightlevel as i32,
         );
     } else {
         floorplane = ptr::null_mut();
     }
 
-    if (*frontsector).ceilingheight > viewz || (*frontsector).ceilingpic as c_int == skyflatnum {
+    if (*frontsector).ceilingheight > viewz || (*frontsector).ceilingpic as i32 == skyflatnum {
         ceilingplane = R_FindPlane(
             (*frontsector).ceilingheight,
-            (*frontsector).ceilingpic as c_int,
-            (*frontsector).lightlevel as c_int,
+            (*frontsector).ceilingpic as i32,
+            (*frontsector).lightlevel as i32,
         );
     } else {
         ceilingplane = ptr::null_mut();
@@ -1175,13 +1172,13 @@ pub unsafe fn R_Subsector(num: c_int) {
 /// subsector index. All node and subsector data must have been loaded by
 /// `P_SetupLevel`. Globals [`viewx`], [`viewy`], and the occlusion list must
 /// be initialized for the current frame.
-pub unsafe fn R_RenderBSPNode(bspnum: c_int) {
+pub unsafe fn R_RenderBSPNode(bspnum: i32) {
     // Found a subsector?
     if (bspnum as u32) & NF_SUBSECTOR != 0 {
         let sub_num = if bspnum == -1 {
             0
         } else {
-            (bspnum as u32 & !NF_SUBSECTOR) as c_int
+            (bspnum as u32 & !NF_SUBSECTOR) as i32
         };
         log::trace!(
             "R_RenderBSPNode: frame={} leaf subsector={} (bspnum={:#x})",
@@ -1206,7 +1203,7 @@ pub unsafe fn R_RenderBSPNode(bspnum: c_int) {
         bsp.children[(side ^ 1) as usize] as u32,
     );
 
-    R_RenderBSPNode(bsp.children[side as usize] as c_int);
+    R_RenderBSPNode(bsp.children[side as usize] as i32);
 
     let back_visible = R_CheckBBox(bsp.bbox[(side ^ 1) as usize].as_ptr() as *mut fixed_t) != 0;
     let back_box = bsp.bbox[(side ^ 1) as usize];
@@ -1221,6 +1218,6 @@ pub unsafe fn R_RenderBSPNode(bspnum: c_int) {
         back_box[BBox::BOTTOM],
     );
     if back_visible {
-        R_RenderBSPNode(bsp.children[(side ^ 1) as usize] as c_int);
+        R_RenderBSPNode(bsp.children[(side ^ 1) as usize] as i32);
     }
 }

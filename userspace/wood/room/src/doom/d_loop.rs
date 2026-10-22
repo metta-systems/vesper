@@ -14,8 +14,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::os::raw::c_int;
-
 use crate::{i_error, types::Boolean};
 
 use crate::doom::{
@@ -50,7 +48,7 @@ struct TiccmdSetT {
     /// Per-player input commands for this tic.
     cmds: [TiccmdT; NET_MAXPLAYERS],
     /// Non-zero for each player slot that is active this tic (`boolean` in C).
-    ingame: [c_int; NET_MAXPLAYERS],
+    ingame: [i32; NET_MAXPLAYERS],
 }
 
 /// Circular ring buffer of tic command sets, indexed by `tic % BACKUPTICS`.
@@ -63,50 +61,50 @@ static mut TICDATA: [TiccmdSetT; BACKUPTICS] = unsafe { std::mem::zeroed() };
 /// Index of the next tic for which a local `TiccmdT` has not yet been built.
 ///
 /// Incremented by `build_new_tic`. Corresponds to `maketic` in `d_loop.c`.
-static mut MAKETIC: c_int = 0;
+static mut MAKETIC: i32 = 0;
 
 /// Number of complete tic command sets received from the server.
 ///
 /// In single-player mode this advances in lock-step with `MAKETIC` via
 /// [`D_ReceiveTic`]. Corresponds to `recvtic` in `d_loop.c`.
-static mut RECVTIC: c_int = 0;
+static mut RECVTIC: i32 = 0;
 
 /// Index of the tic currently being run (or about to be run).
 ///
 /// Corresponds to `gametic` in `d_loop.c`.
-pub static mut gametic: c_int = 0;
+pub static mut gametic: i32 = 0;
 
 /// When non-zero, exactly one tic is built and run per [`TryRunTics`] call.
 /// Set by `-timedemo` mode.
 /// Corresponds to `singletics` in `d_loop.c` (type `boolean`).
-pub static mut singletics: c_int = 0; // boolean
+pub static mut singletics: i32 = 0; // boolean
 
 /// Index of the local player in the `NET_MAXPLAYERS` arrays.
 ///
 /// Always `0` in single-player mode. Corresponds to `localplayer` in
 /// `d_loop.c`.
-static mut LOCALPLAYER: c_int = 0;
+static mut LOCALPLAYER: i32 = 0;
 
 /// Number of tics to skip building during the next [`NetUpdate`] call.
 ///
 /// Used by the old net-sync algorithm to slow input generation when a follower
 /// player is too far ahead of the key player. Corresponds to `skiptics` in
 /// `d_loop.c`.
-static mut SKIPTICS: c_int = 0;
+static mut SKIPTICS: i32 = 0;
 
 /// Tic duplication factor: every `ticdup`-th input sample is sent over the
 /// network, reducing bandwidth at the cost of input resolution.
 ///
 /// Always `1` in single-player mode.
 /// Corresponds to `ticdup` in `d_loop.c`.
-pub static mut ticdup: c_int = 0;
+pub static mut ticdup: i32 = 0;
 
 /// Millisecond offset applied to the timer when `NEW_SYNC` is active.
 ///
 /// Allows the network client to nudge the local clock to stay in sync with the
 /// server. Stored as a `fixed_t` (i.e. scaled by [`FRACUNIT`]).
 /// Corresponds to `offsetms` in `d_loop.c`.
-pub static mut offsetms: c_int = 0; // fixed_t
+pub static mut offsetms: i32 = 0; // fixed_t
 
 /// Whether to use the new client synchronisation algorithm.
 ///
@@ -114,7 +112,7 @@ pub static mut offsetms: c_int = 0; // fixed_t
 /// and `build_new_tic` applies tighter buffering limits.
 /// Always `0` in this single-player build (hardcoded in [`D_StartNetGame`]).
 /// Corresponds to `new_sync` in `d_loop.c` (type `boolean`).
-static mut NEW_SYNC: c_int = 0; // boolean
+static mut NEW_SYNC: i32 = 0; // boolean
 
 /// Pointer to the registered loop callback table.
 ///
@@ -127,36 +125,36 @@ static mut LOOP_INTERFACE: *mut LoopInterfaceT = std::ptr::null_mut();
 /// Distinct from the `playeringame[]` array used by the game logic, which may
 /// be modified during demo playback. Corresponds to `local_playeringame[]` in
 /// `d_loop.c`.
-static mut LOCAL_PLAYERINGAME: [c_int; NET_MAXPLAYERS] = [0; NET_MAXPLAYERS];
+static mut LOCAL_PLAYERINGAME: [i32; NET_MAXPLAYERS] = [0; NET_MAXPLAYERS];
 
 /// Player class sent to the server at connection time.
 ///
 /// Stored here and copied into `NetGameSettingsT` by [`D_StartNetGame`].
 /// Corresponds to `player_class` in `d_loop.c`.
-static mut PLAYER_CLASS: c_int = 0;
+static mut PLAYER_CLASS: i32 = 0;
 
 /// Adjusted time (in tics) at the start of the previous [`NetUpdate`] call.
 ///
 /// Used to compute `newtics = nowtime - LASTTIME`. Corresponds to `lasttime`
 /// in `d_loop.c`.
-static mut LASTTIME: c_int = 0;
+static mut LASTTIME: i32 = 0;
 
 /// Frame counter used by the old net-sync algorithm.
 ///
 /// Corresponds to `frameon` in `d_loop.c`.
-static mut FRAMEON: c_int = 0;
+static mut FRAMEON: i32 = 0;
 
 /// Rolling window of four booleans used to detect consistent lag in the old
 /// net-sync algorithm. When all four entries are non-zero, `SKIPTICS` is set.
 ///
 /// Corresponds to `frameskip[4]` in `d_loop.c`.
-static mut FRAMESKIP: [c_int; 4] = [0; 4];
+static mut FRAMESKIP: [i32; 4] = [0; 4];
 
 /// `MAKETIC` value recorded at the previous old-net-sync frame.
 ///
 /// Compared against `RECVTIC` to determine whether the local player is ahead
 /// of the network. Corresponds to `oldnettics` in `d_loop.c`.
-static mut OLDNETTICS: c_int = 0;
+static mut OLDNETTICS: i32 = 0;
 
 use crate::doom::{
     dummy::{drone, net_client_connected},
@@ -175,7 +173,7 @@ use crate::doom::{
 /// Must be called from the single-threaded game loop only. The function reads
 /// the mutable globals `NEW_SYNC` and `offsetms` without synchronisation, and
 /// calls the C FFI function `I_GetTimeMS`.
-unsafe fn get_adjusted_time() -> c_int {
+unsafe fn get_adjusted_time() -> i32 {
     let mut time_ms = I_GetTimeMS();
     if NEW_SYNC != 0 {
         time_ms += offsetms / FRACUNIT;
@@ -304,8 +302,8 @@ unsafe fn d_disconnected() {
 /// # Safety
 /// When non-null, `ticcmds` must point to an array of at least
 /// `NET_MAXPLAYERS` `TiccmdT` elements, and `players_mask` must point to an
-/// array of at least `NET_MAXPLAYERS` `c_int` values.
-pub fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut c_int) {
+/// array of at least `NET_MAXPLAYERS` `i32` values.
+pub fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut i32) {
     unsafe {
         if ticcmds.is_null() && players_mask.is_null() {
             d_disconnected();
@@ -374,7 +372,7 @@ pub fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *const ()) {
 ///
 /// # Safety
 /// `connect_data` must be a valid, non-null pointer to a `NetConnectDataT`.
-pub fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> c_int {
+pub fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> i32 {
     unsafe {
         I_AtExit(D_QuitNetGame, Boolean::TRUE);
         PLAYER_CLASS = (*connect_data).player_class;
@@ -402,7 +400,7 @@ pub fn D_QuitNetGame() {
 /// Must be called from the single-threaded game loop only. The function reads
 /// the mutable globals `MAKETIC`, `RECVTIC`, `net_client_connected`, and
 /// `drone` without synchronisation.
-unsafe fn get_low_tic() -> c_int {
+unsafe fn get_low_tic() -> i32 {
     let mut lowtic = MAKETIC;
     if net_client_connected != 0 && (drone != 0 || RECVTIC < lowtic) {
         lowtic = RECVTIC;
@@ -429,7 +427,7 @@ unsafe fn old_net_sync() {
     let mut keyplayer = -1;
     for i in 0..NET_MAXPLAYERS {
         if LOCAL_PLAYERINGAME[i] != 0 {
-            keyplayer = i as c_int;
+            keyplayer = i as i32;
             break;
         }
     }
@@ -445,7 +443,7 @@ unsafe fn old_net_sync() {
             LASTTIME -= 1;
         }
 
-        FRAMESKIP[(FRAMEON & 3) as usize] = (OLDNETTICS > RECVTIC) as c_int;
+        FRAMESKIP[(FRAMEON & 3) as usize] = (OLDNETTICS > RECVTIC) as i32;
         OLDNETTICS = MAKETIC;
 
         if FRAMESKIP[0] != 0 && FRAMESKIP[1] != 0 && FRAMESKIP[2] != 0 && FRAMESKIP[3] != 0 {
@@ -532,7 +530,7 @@ unsafe fn single_player_clear(set: *mut TiccmdSetT) {
 pub fn TryRunTics() {
     unsafe {
         let entertic = I_GetTime() / ticdup;
-        static mut OLDENTERTICS: c_int = 0;
+        static mut OLDENTERTICS: i32 = 0;
         let realtics = entertic - OLDENTERTICS;
         OLDENTERTICS = entertic;
 
@@ -545,11 +543,11 @@ pub fn TryRunTics() {
         let mut lowtic = get_low_tic();
         let availabletics = lowtic - gametic / ticdup;
 
-        let counts: c_int;
+        let counts: i32;
         if NEW_SYNC != 0 {
             counts = availabletics;
         } else {
-            let mut c: c_int;
+            let mut c: i32;
             if realtics < availabletics - 1 {
                 c = realtics + 1;
             } else if realtics < availabletics {

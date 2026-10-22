@@ -58,10 +58,7 @@ use {
         m_argv::M_CheckParm,
         z_zone::{Z_Free, Z_Malloc},
     },
-    std::{
-        ffi::{c_int, c_void},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 /// Flush the "Generating lookup tables.." progress prints. `fflush(NULL)`
@@ -88,7 +85,7 @@ static mut dest_buffer: *mut u8 = ptr::null_mut();
 
 /// Pitch (bytes per row) of [`dest_buffer`]. May exceed
 /// `width * bytes_per_pixel` when the surface has trailing padding.
-static mut dest_pitch: c_int = 0;
+static mut dest_pitch: i32 = 0;
 
 /// 20/80 and 40/60 palette blend tables. `stretch_tables[0]` is the
 /// 20/80 mix, `stretch_tables[1]` is the 40/60 mix; the 60/40 and 80/20
@@ -118,7 +115,7 @@ static mut half_stretch_table: *mut u8 = ptr::null_mut();
 ///   reported height.
 /// - The buffers must outlive every driver call until the next
 ///   `I_InitScale` invocation.
-pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pitch: c_int) {
+pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pitch: i32) {
     src_buffer = _src_buffer;
     dest_buffer = _dest_buffer;
     dest_pitch = _dest_pitch;
@@ -139,7 +136,7 @@ pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pit
 ///
 /// Callable only after [`I_InitScale`] has installed valid buffers; the
 /// rectangle must lie within `[0, SCREENWIDTH) x [0, SCREENHEIGHT)`.
-unsafe fn i_scale_1x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_1x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     let w = (x2 - x1) as usize;
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
     let mut screenp = dest_buffer.add((y1 * dest_pitch + x1) as usize);
@@ -167,13 +164,13 @@ unsafe fn i_scale_1x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
 ///
 /// Same preconditions as [`i_scale_1x`]; additionally `N` must be in
 /// `1..=5` so the scratch row array is large enough.
-unsafe fn scale_nx<const N: usize>(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
-    let multi_pitch = dest_pitch * N as c_int;
+unsafe fn scale_nx<const N: usize>(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    let multi_pitch = dest_pitch * N as i32;
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
-    let base = dest_buffer.add(((y1 * dest_pitch + x1) * N as c_int) as usize);
+    let base = dest_buffer.add(((y1 * dest_pitch + x1) * N as i32) as usize);
     let mut rows: [*mut u8; 5] = [ptr::null_mut(); 5];
     for i in 0..N {
-        rows[i] = base.add((dest_pitch * i as c_int) as usize);
+        rows[i] = base.add((dest_pitch * i as i32) as usize);
     }
     let w = (x2 - x1) as usize;
 
@@ -207,7 +204,7 @@ unsafe fn scale_nx<const N: usize>(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe fn i_scale_2x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_2x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     scale_nx::<2>(x1, y1, x2, y2)
 }
 
@@ -217,7 +214,7 @@ unsafe fn i_scale_2x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe fn i_scale_3x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_3x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     scale_nx::<3>(x1, y1, x2, y2)
 }
 
@@ -227,7 +224,7 @@ unsafe fn i_scale_3x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe fn i_scale_4x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_4x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     scale_nx::<4>(x1, y1, x2, y2)
 }
 
@@ -237,7 +234,7 @@ unsafe fn i_scale_4x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe fn i_scale_5x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_5x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     scale_nx::<5>(x1, y1, x2, y2)
 }
 
@@ -334,20 +331,20 @@ unsafe fn write_blended_line_1x(
 /// # Safety
 ///
 /// `palette` must point to at least `256 * 3` readable bytes.
-unsafe fn find_nearest_color(palette: *mut u8, r: c_int, g: c_int, b: c_int) -> c_int {
-    let mut best: c_int = 0;
-    let mut best_diff = c_int::MAX;
+unsafe fn find_nearest_color(palette: *mut u8, r: i32, g: i32, b: i32) -> i32 {
+    let mut best: i32 = 0;
+    let mut best_diff = i32::MAX;
     for i in 0..256 {
         let col = palette.add(i * 3);
-        let dr = r - *col as c_int;
-        let dg = g - *col.add(1) as c_int;
-        let db = b - *col.add(2) as c_int;
+        let dr = r - *col as i32;
+        let dg = g - *col.add(1) as i32;
+        let db = b - *col.add(2) as i32;
         let diff = dr * dr + dg * dg + db * db;
         if diff == 0 {
-            return i as c_int;
+            return i as i32;
         }
         if diff < best_diff {
-            best = i as c_int;
+            best = i as i32;
             best_diff = diff;
         }
     }
@@ -368,15 +365,15 @@ unsafe fn find_nearest_color(palette: *mut u8, r: c_int, g: c_int, b: c_int) -> 
 /// # Safety
 ///
 /// `palette` must satisfy [`find_nearest_color`]'s contract.
-unsafe fn generate_stretch_table(palette: *mut u8, pct: c_int) -> *mut u8 {
+unsafe fn generate_stretch_table(palette: *mut u8, pct: i32) -> *mut u8 {
     let result = Z_Malloc(256 * 256, PU_STATIC, ptr::null_mut()) as *mut u8;
     for x in 0..256 {
         for y in 0..256 {
             let col1 = palette.add(x * 3);
             let col2 = palette.add(y * 3);
-            let r = ((*col1 as c_int) * pct + (*col2 as c_int) * (100 - pct)) / 100;
-            let g = ((*col1.add(1) as c_int) * pct + (*col2.add(1) as c_int) * (100 - pct)) / 100;
-            let b = ((*col1.add(2) as c_int) * pct + (*col2.add(2) as c_int) * (100 - pct)) / 100;
+            let r = ((*col1 as i32) * pct + (*col2 as i32) * (100 - pct)) / 100;
+            let g = ((*col1.add(1) as i32) * pct + (*col2.add(1) as i32) * (100 - pct)) / 100;
+            let b = ((*col1.add(2) as i32) * pct + (*col2.add(2) as i32) * (100 - pct)) / 100;
             *result.add(x * 256 + y) = find_nearest_color(palette, r, g, b) as u8;
         }
     }
@@ -396,13 +393,17 @@ unsafe fn i_init_stretch_tables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         return;
     }
-    libc::printf(c"I_InitStretchTables: Generating lookup tables..".as_ptr());
+    libc::printf(
+        c"I_InitStretchTables: Generating lookup tables.."
+            .as_ptr()
+            .cast(),
+    );
     flush_stdout();
     stretch_tables[0] = generate_stretch_table(palette, 20);
-    libc::printf(c"..".as_ptr());
+    libc::printf(c"..".as_ptr().cast());
     flush_stdout();
     stretch_tables[1] = generate_stretch_table(palette, 40);
-    libc::puts(c"".as_ptr());
+    libc::puts(c"".as_ptr().cast());
 }
 
 /// `init_mode` callback for [`mode_squash_3x`] (800x600). Lazily
@@ -416,10 +417,14 @@ unsafe fn i_init_squash_table(palette: *mut u8) {
     if !half_stretch_table.is_null() {
         return;
     }
-    libc::printf(c"I_InitSquashTable: Generating lookup table..".as_ptr());
+    libc::printf(
+        c"I_InitSquashTable: Generating lookup table.."
+            .as_ptr()
+            .cast(),
+    );
     flush_stdout();
     half_stretch_table = generate_stretch_table(palette, 50);
-    libc::puts(c"".as_ptr());
+    libc::puts(c"".as_ptr().cast());
 }
 
 /// Frees whichever blend tables are currently populated and regenerates
@@ -439,13 +444,21 @@ pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         Z_Free(stretch_tables[0] as *mut c_void);
         Z_Free(stretch_tables[1] as *mut c_void);
-        libc::printf(c"I_ResetScaleTables: Regenerating lookup tables..\n".as_ptr());
+        libc::printf(
+            c"I_ResetScaleTables: Regenerating lookup tables..\n"
+                .as_ptr()
+                .cast(),
+        );
         stretch_tables[0] = generate_stretch_table(palette, 20);
         stretch_tables[1] = generate_stretch_table(palette, 40);
     }
     if !half_stretch_table.is_null() {
         Z_Free(half_stretch_table as *mut c_void);
-        libc::printf(c"I_ResetScaleTables: Regenerating lookup table..\n".as_ptr());
+        libc::printf(
+            c"I_ResetScaleTables: Regenerating lookup table..\n"
+                .as_ptr()
+                .cast(),
+        );
         half_stretch_table = generate_stretch_table(palette, 50);
     }
 }
@@ -468,7 +481,7 @@ pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
 ///
 /// See [`I_InitScale`]; additionally [`i_init_stretch_tables`] must
 /// have been called so [`stretch_tables`] is populated.
-unsafe fn i_stretch_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -524,7 +537,7 @@ unsafe fn i_stretch_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int 
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe fn i_stretch_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -593,7 +606,7 @@ unsafe fn i_stretch_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int 
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe fn i_stretch_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -676,7 +689,7 @@ unsafe fn i_stretch_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int 
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe fn i_stretch_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -772,7 +785,7 @@ unsafe fn i_stretch_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int 
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe fn i_stretch_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -793,7 +806,7 @@ unsafe fn i_stretch_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int 
         screenp = screenp.add(dest_pitch as usize);
         bufp = bufp.add(SCREENWIDTH as usize);
     }
-    if M_CheckParm(c"-scanline".as_ptr().cast_mut()) > 0 {
+    if M_CheckParm(c"-scanline".as_ptr().cast_mut().cast()) > 0 {
         let mut screenp = dest_buffer.add((2 * dest_pitch) as usize);
         let mut y = 0;
         while y < 1198 {
@@ -1043,7 +1056,7 @@ unsafe fn write_squashed_line_5x(dest: *mut u8, src: *mut u8) {
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_1x`].
-unsafe fn i_squash_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1066,7 +1079,7 @@ unsafe fn i_squash_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_2x`].
-unsafe fn i_squash_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1089,7 +1102,7 @@ unsafe fn i_squash_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
 ///
 /// See [`i_stretch_1x`]; additionally [`half_stretch_table`] must be
 /// populated.
-unsafe fn i_squash_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1111,7 +1124,7 @@ unsafe fn i_squash_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_4x`].
-unsafe fn i_squash_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1133,7 +1146,7 @@ unsafe fn i_squash_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_5x`].
-unsafe fn i_squash_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }

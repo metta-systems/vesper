@@ -27,7 +27,7 @@ use {
         },
         i_error,
     },
-    std::ffi::{c_char, c_float, c_int, c_void},
+    std::ffi::c_void,
 };
 
 use {
@@ -40,10 +40,10 @@ use super::z_zone::PU_STATIC;
 /// Doom's logical screen width in palette-indexed pixels. The
 /// renderer always paints into a `SCREENWIDTH * SCREENHEIGHT`
 /// buffer; `I_FinishUpdate` scales/letterboxes from there.
-pub const SCREENWIDTH: c_int = 320;
+pub const SCREENWIDTH: i32 = 320;
 
 /// Doom's logical screen height in palette-indexed pixels.
-pub const SCREENHEIGHT: c_int = 200;
+pub const SCREENHEIGHT: i32 = 200;
 
 /// 32-bit pixel as the framebuffer expects it: BGRA with alpha last.
 ///
@@ -100,32 +100,32 @@ pub static mut I_VideoBuffer: *mut u8 = ptr::null_mut();
 
 /// Non-zero when the screen is visible; the C source sets this to
 /// `true` after init and never clears it. Mirrors `screenvisible`.
-pub static mut screenvisible: c_int = 0;
+pub static mut screenvisible: i32 = 0;
 
 /// Non-zero if the engine is running as a screensaver. Always 0 in
 /// this port. Mirrors `screensaver_mode`.
-pub static mut screensaver_mode: c_int = 0;
+pub static mut screensaver_mode: i32 = 0;
 
 /// Gamma-correction level index into `gammatable`. Mirrors `usegamma`.
 /// Bound via `m_config` (in the C source).
-pub static mut usegamma: c_int = 0;
+pub static mut usegamma: i32 = 0;
 
 /// DOS-style mouse acceleration factor. Movement above
 /// `mouse_threshold` is multiplied by this. Mirrors `mouse_acceleration`.
-pub static mut mouse_acceleration: c_float = 2.0;
+pub static mut mouse_acceleration: f32 = 2.0;
 
 /// Mouse-movement threshold above which acceleration kicks in.
 /// Mirrors `mouse_threshold`.
-pub static mut mouse_threshold: c_int = 10;
+pub static mut mouse_threshold: i32 = 10;
 
 /// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
 /// 320x200 Doom buffer to fit the framebuffer. Picked automatically
 /// in `I_InitGraphics` or overridden with `-scaling <n>`.
-pub static mut fb_scaling: c_int = 1;
+pub static mut fb_scaling: i32 = 1;
 
 /// Non-zero to enable mouse input. Always 0 in this port unless set
 /// by config. Mirrors `usemouse`.
-pub static mut usemouse: c_int = 0;
+pub static mut usemouse: i32 = 0;
 
 /// Active 256-entry gamma-corrected palette. Filled from the WAD
 /// PLAYPAL by `I_SetPalette` and consumed by `cmap_to_fb` /
@@ -174,7 +174,7 @@ static mut s_Fb: FB_ScreenInfo = FB_ScreenInfo {
 /// `inp` must be readable for `in_pixels` bytes. `out` must be
 /// writable for `in_pixels * fb_scaling * (bpp/8)` bytes. The
 /// caller is responsible for keeping `s_Fb` and `COLORS` valid.
-unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: c_int) {
+unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: i32) {
     let bpp = s_Fb.bits_per_pixel;
 
     if bpp == 16 {
@@ -217,7 +217,7 @@ unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: c_int) {
 /// # Safety
 ///
 /// Same preconditions as `cmap_to_fb` (with 2-byte pixels).
-unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: c_int) {
+unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: i32) {
     let mut out_ptr = out as *mut u16;
     let mut inp_ptr = inp;
 
@@ -270,11 +270,11 @@ pub unsafe fn I_InitGraphics() {
     s_Fb.transp.offset = 24;
 
     // Check for -gfxmode arg
-    let gfxmodeparm = M_CheckParmWithArgs(c"-gfxmode".as_ptr().cast_mut(), 1);
+    let gfxmodeparm = M_CheckParmWithArgs(c"-gfxmode".as_ptr().cast_mut().cast(), 1);
     if gfxmodeparm != 0 {
         let mode = *myargv.add((gfxmodeparm + 1) as usize);
         if !mode.is_null() {
-            let mode_str = std::ffi::CStr::from_ptr(mode);
+            let mode_str = std::ffi::CStr::from_ptr(mode.cast());
             if mode_str.to_bytes() == b"rgba8888" {
                 s_Fb.bits_per_pixel = 32;
                 s_Fb.blue.length = 8;
@@ -298,29 +298,29 @@ pub unsafe fn I_InitGraphics() {
             } else {
                 i_error!(
                     "Unknown gfxmode value: {}\n",
-                    std::ffi::CStr::from_ptr(mode).to_string_lossy()
+                    std::ffi::CStr::from_ptr(mode.cast()).to_string_lossy()
                 );
             }
         }
     }
 
     // Auto-scaling factor
-    let scale_parm = M_CheckParmWithArgs(c"-scaling".as_ptr().cast_mut(), 1);
+    let scale_parm = M_CheckParmWithArgs(c"-scaling".as_ptr().cast_mut().cast(), 1);
     if scale_parm != 0 {
         let val = *myargv.add((scale_parm + 1) as usize);
         if !val.is_null() {
             // Simple atoi-like conversion
-            let mut n: c_int = 0;
+            let mut n: i32 = 0;
             let mut p = val;
-            while *p >= b'0' as c_char && *p <= b'9' as c_char {
-                n = n * 10 + (*p as c_int - b'0' as c_int);
+            while *p >= b'0' && *p <= b'9' {
+                n = n * 10 + (*p as i32 - b'0' as i32);
                 p = p.add(1);
             }
             fb_scaling = n;
         }
     } else {
-        fb_scaling = (s_Fb.xres / SCREENWIDTH as u32) as c_int;
-        let y_scale = (s_Fb.yres / SCREENHEIGHT as u32) as c_int;
+        fb_scaling = (s_Fb.xres / SCREENWIDTH as u32) as i32;
+        let y_scale = (s_Fb.yres / SCREENHEIGHT as u32) as i32;
         if y_scale < fb_scaling {
             fb_scaling = y_scale;
         }
@@ -397,16 +397,14 @@ pub unsafe fn I_UpdateNoBlit() {}
 /// framebuffer geometry. Caller must ensure both pointers are valid
 /// and the framebuffer is large enough for the configured layout.
 pub unsafe fn I_FinishUpdate() {
-    let y_offset = (((s_Fb.yres as i32 - (SCREENHEIGHT as c_int * fb_scaling))
-        * (s_Fb.bits_per_pixel as c_int / 8))
-        / 2)
-    .max(0) as u32;
-    let x_offset = (((s_Fb.xres as i32 - (SCREENWIDTH as c_int * fb_scaling))
-        * (s_Fb.bits_per_pixel as c_int / 8))
-        / 2)
-    .max(0) as u32;
-    let x_offset_end = ((s_Fb.xres as i32 - (SCREENWIDTH as c_int * fb_scaling))
-        * (s_Fb.bits_per_pixel as c_int / 8)
+    let y_offset =
+        (((s_Fb.yres as i32 - (SCREENHEIGHT * fb_scaling)) * (s_Fb.bits_per_pixel as i32 / 8)) / 2)
+            .max(0) as u32;
+    let x_offset =
+        (((s_Fb.xres as i32 - (SCREENWIDTH * fb_scaling)) * (s_Fb.bits_per_pixel as i32 / 8)) / 2)
+            .max(0) as u32;
+    let x_offset_end = ((s_Fb.xres as i32 - (SCREENWIDTH * fb_scaling))
+        * (s_Fb.bits_per_pixel as i32 / 8)
         - x_offset as i32)
         .max(0) as u32;
 
@@ -418,10 +416,10 @@ pub unsafe fn I_FinishUpdate() {
         for _i in 0..fb_scaling {
             line_out = line_out.add(x_offset as usize);
 
-            cmap_to_fb(line_out, line_in, SCREENWIDTH as c_int);
+            cmap_to_fb(line_out, line_in, SCREENWIDTH);
 
             line_out = line_out.add(
-                (SCREENWIDTH as c_int * fb_scaling * (s_Fb.bits_per_pixel as c_int / 8)) as usize
+                (SCREENWIDTH * fb_scaling * (s_Fb.bits_per_pixel as i32 / 8)) as usize
                     + x_offset_end as usize,
             );
         }
@@ -484,13 +482,13 @@ pub unsafe fn I_SetPalette(palette: *mut u8) {
 ///
 /// Reads `static mut COLORS`. The caller must have run `I_SetPalette`
 /// at least once and must not race a concurrent writer.
-pub unsafe fn I_GetPaletteIndex(r: c_int, g: c_int, b: c_int) -> c_int {
+pub unsafe fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
     let r = r as i64;
     let g = g as i64;
     let b = b as i64;
     // `best = 0` is a sound default only because the palette is
     // always 256 entries and the loop visits all of them.
-    let mut best: c_int = 0;
+    let mut best: i32 = 0;
     let mut best_diff: i64 = i64::MAX;
     let colors = ptr::addr_of!(COLORS) as *const Color;
     for i in 0..256 {
@@ -500,7 +498,7 @@ pub unsafe fn I_GetPaletteIndex(r: c_int, g: c_int, b: c_int) -> c_int {
         let db = b - color.b as i64;
         let diff = dr * dr + dg * dg + db * db;
         if diff < best_diff {
-            best = i as c_int;
+            best = i as i32;
             best_diff = diff;
         }
         if diff == 0 {
@@ -531,8 +529,8 @@ pub unsafe fn I_EndRead() {}
 /// # Safety
 ///
 /// `title` must be a valid NUL-terminated C string.
-pub unsafe fn I_SetWindowTitle(title: *mut c_char) {
-    super::doomgeneric::platform().set_window_title(std::ffi::CStr::from_ptr(title));
+pub unsafe fn I_SetWindowTitle(title: *mut u8) {
+    super::doomgeneric::platform().set_window_title(std::ffi::CStr::from_ptr(title.cast()));
 }
 
 /// Parse video-related command-line switches. No-op in this port;
@@ -655,8 +653,8 @@ mod tests {
             );
 
             // Out-of-range inputs must not overflow the diff accumulator.
-            assert_eq!(I_GetPaletteIndex(c_int::MAX, 0, 0), 1, "saturate to red");
-            assert_eq!(I_GetPaletteIndex(c_int::MIN, 0, 0), 0, "saturate to black");
+            assert_eq!(I_GetPaletteIndex(i32::MAX, 0, 0), 1, "saturate to red");
+            assert_eq!(I_GetPaletteIndex(i32::MIN, 0, 0), 0, "saturate to black");
         }
     }
 

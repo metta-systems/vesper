@@ -12,8 +12,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_int, c_short};
-
 use crate::doom::{c_ffi, i_video::SCREENWIDTH, m_fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
@@ -180,16 +178,6 @@ fn screenheightarray_length_is_screenwidth() {
     }
 }
 
-/// Both arrays store `short` (c_short) elements.
-#[test]
-fn clipping_arrays_element_type_is_c_short() {
-    const _: () = assert!(std::mem::size_of::<c_short>() == 2);
-    unsafe {
-        let _: &[c_short] = &*&raw const c_ffi::negonearray;
-        let _: &[c_short] = &*&raw const c_ffi::screenheightarray;
-    }
-}
-
 /// Both clipping arrays start zeroed before any rendering takes place.
 /// (They are filled by `R_DrawMasked` at the start of each frame.)
 #[test]
@@ -231,19 +219,5 @@ fn sprtemp_starts_zeroed() {
                 assert_eq!(f, 0, "sprtemp[{i}].flip[{r}]");
             }
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// r_things.c stores scales as `fixed_t` (= `int` = 4 bytes).
-#[test]
-fn psprite_scale_globals_are_c_int() {
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::pspritescale;
-        let _: c_int = c_ffi::pspriteiscale;
     }
 }

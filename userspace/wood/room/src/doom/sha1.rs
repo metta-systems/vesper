@@ -17,8 +17,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_char, c_int, c_uint};
-
 /// 160-bit SHA-1 digest as 20 raw bytes, port of C `sha1_digest_t`.
 pub type sha1_digest_t = [u8; 20];
 
@@ -45,9 +43,9 @@ pub struct SHA1Context {
     pub nblocks: u32,
     /// Partial-block staging area for the streaming API.
     pub buf: [u8; 64],
-    /// Number of bytes currently held in `buf` (0..=64). Stored as `c_int`
+    /// Number of bytes currently held in `buf` (0..=64). Stored as `i32`
     /// for ABI parity with the C `int count` field.
-    pub count: c_int,
+    pub count: i32,
 }
 
 /// Initialises a `SHA1Context` with the standard SHA-1 IV.
@@ -443,7 +441,7 @@ pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
 /// `context` must be a valid, properly aligned pointer to a `SHA1Context`
 /// previously initialised with `SHA1_Init`, valid for read and write for
 /// the duration of the call.
-pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: c_uint) {
+pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: u32) {
     let context = &mut *context;
     let buf = [
         ((val >> 24) & 0xff) as u8,
@@ -468,9 +466,9 @@ pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: c_uint) {
 ///   the duration of the call.
 /// * `str` must point to a valid NUL-terminated C string. Memory up to and
 ///   including the NUL must be readable.
-pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut c_char) {
+pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut u8) {
     let context = &mut *context;
-    let cstr = std::ffi::CStr::from_ptr(str);
+    let cstr = std::ffi::CStr::from_ptr(str.cast());
     let bytes = cstr.to_bytes_with_nul();
     sha1_update(context, Some(bytes));
 }
@@ -479,7 +477,7 @@ pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut c_char) {
 /// as well as the doomgeneric-specific helper APIs.
 #[cfg(test)]
 mod tests {
-    use {super::*, std::ffi::c_char};
+    use super::*;
 
     /// Allocates a fresh zero-filled `SHA1Context` and initialises it.
     /// Zeroing first guarantees the staging `buf` is in a known state, which
@@ -553,7 +551,7 @@ mod tests {
         let mut ctx = make_ctx();
         let mut s = *b"doom\0";
         unsafe {
-            SHA1_UpdateString(&mut ctx, s.as_mut_ptr() as *mut c_char);
+            SHA1_UpdateString(&mut ctx, s.as_mut_ptr());
             let mut digest = [0u8; 20];
             SHA1_Final(digest.as_mut_ptr(), &mut ctx);
             let got: String = digest.iter().map(|b| format!("{:02x}", b)).collect();

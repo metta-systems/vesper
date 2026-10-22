@@ -9,8 +9,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, c_int};
-
 /// Maximum length of a cheat sequence including the NUL terminator,
 /// matching `MAX_CHEAT_LEN` in `m_cheat.h`.
 pub const MAX_CHEAT_LEN: usize = 25;
@@ -46,19 +44,19 @@ pub const MAX_CHEAT_PARAMS: usize = 5;
 #[repr(C)]
 pub struct cheatseq_t {
     /// NUL-terminated cheat sequence bytes (e.g. `"IDKFA"`).
-    pub sequence: [c_char; MAX_CHEAT_LEN],
+    pub sequence: [u8; MAX_CHEAT_LEN],
     /// Declared sequence length (vanilla uses this to suppress short
     /// cheats on parameter-bearing entries; see `cht_CheckCheat`).
     pub sequence_len: usize,
     /// Number of trailing parameter characters expected after the
     /// sequence matches (e.g. 2 for `IDCLEVxx`).
-    pub parameter_chars: c_int,
+    pub parameter_chars: i32,
     /// Cursor into `sequence`: number of correct keystrokes consumed.
     pub chars_read: usize,
     /// Cursor into `parameter_buf`: number of parameter chars consumed.
-    pub param_chars_read: c_int,
+    pub param_chars_read: i32,
     /// Captured parameter characters; readable via `cht_GetParam`.
-    pub parameter_buf: [c_char; MAX_CHEAT_PARAMS],
+    pub parameter_buf: [u8; MAX_CHEAT_PARAMS],
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -73,15 +71,15 @@ const _: () = assert!(
     "cheatseq_t size mismatch on 32-bit platform"
 );
 
-/// Helper: strlen for a raw c_char array (no C call needed).
-fn raw_strlen(buf: &[c_char]) -> usize {
+/// Helper: strlen for a raw u8 array (no C call needed).
+fn raw_strlen(buf: &[u8]) -> usize {
     buf.iter().position(|&c| c == 0).unwrap_or(buf.len())
 }
 
 /// `int cht_CheckCheat(cheatseq_t *cht, char key)`
 ///
 /// Returns 1 (true) if the cheat was successfully entered, 0 otherwise.
-pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: c_char) -> c_int {
+pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: u8) -> i32 {
     let cht = unsafe { &mut *cht };
 
     let seq_len = raw_strlen(&cht.sequence);
@@ -118,7 +116,7 @@ pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: c_char) -> c_int {
 }
 
 /// `void cht_GetParam(cheatseq_t *cht, char *buffer)`
-pub fn cht_GetParam(cht: *mut cheatseq_t, buffer: *mut c_char) {
+pub fn cht_GetParam(cht: *mut cheatseq_t, buffer: *mut u8) {
     let cht = unsafe { &*cht };
     let buf = unsafe { std::slice::from_raw_parts_mut(buffer, cht.parameter_chars as usize) };
     let param_chars = cht.parameter_chars as usize;
@@ -132,11 +130,11 @@ mod tests {
     /// Build a `cheatseq_t` from a Rust string for use in the tests below.
     /// `sequence_len` is set to the string length so the
     /// short-sequence-on-parameter-cheat guard does not fire.
-    fn make_cheat(seq: &str, param_chars: c_int) -> cheatseq_t {
-        let mut sequence = [0i8; MAX_CHEAT_LEN];
+    fn make_cheat(seq: &str, param_chars: i32) -> cheatseq_t {
+        let mut sequence = [0u8; MAX_CHEAT_LEN];
         let bytes = seq.as_bytes();
         for (i, &b) in bytes.iter().enumerate() {
-            sequence[i] = b as c_char;
+            sequence[i] = b;
         }
         cheatseq_t {
             sequence,
@@ -153,11 +151,11 @@ mod tests {
     #[test]
     fn simple_cheat_five_chars() {
         let mut cheat = make_cheat("IDKFA", 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'I' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'D' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'K' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'F' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'A' as c_char), 1); // matched!
+        assert_eq!(cht_CheckCheat(&mut cheat, b'I'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'D'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'K'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'F'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'A'), 1); // matched!
     }
 
     /// Same flow as `simple_cheat_five_chars` but with a 4-character
@@ -165,10 +163,10 @@ mod tests {
     #[test]
     fn simple_cheat_four_chars() {
         let mut cheat = make_cheat("IDFA", 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'I' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'D' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'F' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'A' as c_char), 1); // matched!
+        assert_eq!(cht_CheckCheat(&mut cheat, b'I'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'D'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'F'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'A'), 1); // matched!
     }
 
     /// A wrong keystroke must reset `chars_read` to 0 so the user has to
@@ -176,9 +174,9 @@ mod tests {
     #[test]
     fn wrong_char_resets() {
         let mut cheat = make_cheat("IDFA", 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'I' as c_char), 0);
-        assert_eq!(cht_CheckCheat(&mut cheat, b'X' as c_char), 0); // wrong, resets
-        assert_eq!(cht_CheckCheat(&mut cheat, b'I' as c_char), 0); // restart
+        assert_eq!(cht_CheckCheat(&mut cheat, b'I'), 0);
+        assert_eq!(cht_CheckCheat(&mut cheat, b'X'), 0); // wrong, resets
+        assert_eq!(cht_CheckCheat(&mut cheat, b'I'), 0); // restart
     }
 
     /// Cheats with `parameter_chars > 0` only fire once the parameter
@@ -187,7 +185,7 @@ mod tests {
     fn cheat_with_params() {
         let mut cheat = make_cheat("IDKFA", 1);
         for ch in b"IDKFA" {
-            let result = cht_CheckCheat(&mut cheat, *ch as c_char);
+            let result = cht_CheckCheat(&mut cheat, *ch);
             // The cheat has 1 param char, so after typing the sequence
             // we need to also type a param character
             if *ch == b'A' {
@@ -197,7 +195,7 @@ mod tests {
             }
         }
         // Now type a param char
-        assert_eq!(cht_CheckCheat(&mut cheat, b'7' as c_char), 1); // matched!
+        assert_eq!(cht_CheckCheat(&mut cheat, b'7'), 1); // matched!
     }
 
     /// After a successful cheat with parameters, `cht_GetParam` must
@@ -206,13 +204,13 @@ mod tests {
     fn get_param_copies_buffer() {
         let mut cheat = make_cheat("IDKFA", 1);
         for ch in b"IDKFA" {
-            cht_CheckCheat(&mut cheat, *ch as c_char);
+            cht_CheckCheat(&mut cheat, *ch);
         }
-        cht_CheckCheat(&mut cheat, b'7' as c_char); // completes the cheat
+        cht_CheckCheat(&mut cheat, b'7'); // completes the cheat
 
-        let mut param_buf = [0i8; MAX_CHEAT_PARAMS];
+        let mut param_buf = [0u8; MAX_CHEAT_PARAMS];
         cht_GetParam(&mut cheat, param_buf.as_mut_ptr());
-        assert_eq!(param_buf[0], b'7' as c_char);
+        assert_eq!(param_buf[0], b'7');
     }
 
     /// Runtime check that the 64-bit `cheatseq_t` layout still totals

@@ -28,10 +28,7 @@
 
 use {
     crate::i_error,
-    std::{
-        ffi::{c_char, c_int, c_void},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 use crate::doom::{
@@ -73,13 +70,13 @@ pub static mut save_stream: *mut libc::FILE = ptr::null_mut();
 /// Running byte count of data written to the current save stream.
 /// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
 /// C origin: `savegamelength` in `p_saveg.c`.
-pub static mut savegamelength: c_int = 0;
+pub static mut savegamelength: i32 = 0;
 
 /// Non-zero when a read or write error has occurred on `save_stream`.
 /// Set to `1` on the first I/O failure; callers check this after
 /// archiving/unarchiving to decide whether to accept the save.
 /// C origin: `savegame_error` in `p_saveg.c`.
-pub static mut savegame_error: c_int = 0;
+pub static mut savegame_error: i32 = 0;
 
 // The map arrays (`sectors`, `lines`, `sides`) hold `c_ffi`'s layout-identical
 // copies of this module's `sector_t`, `line_t` and `side_t`; uses cast them.
@@ -94,8 +91,6 @@ use crate::doom::{
 // ---------------------------------------------------------------------------
 // Low-level I/O — uses the C FILE * managed by g_game.c.
 // ---------------------------------------------------------------------------
-
-use std::os::raw::c_long;
 
 /// Reads one byte from `save_stream`.
 ///
@@ -173,7 +168,7 @@ unsafe fn saveg_write32(value: u32) {
 /// position. A stream already aligned reads zero bytes. C origin:
 /// `saveg_read_pad`.
 unsafe fn saveg_read_pad() {
-    let pos = libc::ftell(save_stream) as c_long;
+    let pos = libc::ftell(save_stream);
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_read8();
@@ -185,7 +180,7 @@ unsafe fn saveg_read_pad() {
 /// See `saveg_read_pad` for the alignment formula. C origin:
 /// `saveg_write_pad`.
 unsafe fn saveg_write_pad() {
-    let pos = libc::ftell(save_stream) as c_long;
+    let pos = libc::ftell(save_stream);
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_write8(0);
@@ -436,9 +431,9 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     }
 
     // x, y, z
-    (*mo).x = saveg_read32() as c_int;
-    (*mo).y = saveg_read32() as c_int;
-    (*mo).z = saveg_read32() as c_int;
+    (*mo).x = saveg_read32() as i32;
+    (*mo).y = saveg_read32() as i32;
+    (*mo).z = saveg_read32() as i32;
 
     // snext, sprev
     (*mo).snext = saveg_read32() as *mut c_void;
@@ -446,8 +441,8 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
 
     // angle, sprite, frame
     (*mo).angle = saveg_read32();
-    (*mo).sprite = saveg_read_enum() as c_int;
-    (*mo).frame = saveg_read32() as c_int;
+    (*mo).sprite = saveg_read_enum() as i32;
+    (*mo).frame = saveg_read32() as i32;
 
     // bnext, bprev
     (*mo).bnext = saveg_read32() as *mut c_void;
@@ -457,48 +452,48 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).subsector = saveg_read32() as *mut c_void;
 
     // floorz, ceilingz, radius, height
-    (*mo).floorz = saveg_read32() as c_int;
-    (*mo).ceilingz = saveg_read32() as c_int;
-    (*mo).radius = saveg_read32() as c_int;
-    (*mo).height = saveg_read32() as c_int;
+    (*mo).floorz = saveg_read32() as i32;
+    (*mo).ceilingz = saveg_read32() as i32;
+    (*mo).radius = saveg_read32() as i32;
+    (*mo).height = saveg_read32() as i32;
 
     // momx, momy, momz
-    (*mo).momx = saveg_read32() as c_int;
-    (*mo).momy = saveg_read32() as c_int;
-    (*mo).momz = saveg_read32() as c_int;
+    (*mo).momx = saveg_read32() as i32;
+    (*mo).momy = saveg_read32() as i32;
+    (*mo).momz = saveg_read32() as i32;
 
     // validcount
-    (*mo).validcount = saveg_read32() as c_int;
+    (*mo).validcount = saveg_read32() as i32;
 
     // type
-    (*mo).type_ = saveg_read_enum() as c_int;
+    (*mo).type_ = saveg_read_enum() as i32;
 
     // info (raw pointer)
     (*mo).info = saveg_read32() as *mut crate::doom::c_ffi::mobjinfo_t;
 
     // tics
-    (*mo).tics = saveg_read32() as c_int;
+    (*mo).tics = saveg_read32() as i32;
 
     // state (index into states array)
     let state_idx = saveg_read32();
     (*mo).state = saveg_read_state_ptr(state_idx) as *mut crate::doom::c_ffi::state_t;
 
     // flags
-    (*mo).flags = saveg_read32() as c_int;
+    (*mo).flags = saveg_read32() as i32;
 
     // health
-    (*mo).health = saveg_read32() as c_int;
+    (*mo).health = saveg_read32() as i32;
 
     // movedir, movecount
-    (*mo).movedir = saveg_read32() as c_int;
-    (*mo).movecount = saveg_read32() as c_int;
+    (*mo).movedir = saveg_read32() as i32;
+    (*mo).movecount = saveg_read32() as i32;
 
     // target (raw pointer)
     (*mo).target = saveg_read32() as *mut c_void;
 
     // reactiontime, threshold
-    (*mo).reactiontime = saveg_read32() as c_int;
-    (*mo).threshold = saveg_read32() as c_int;
+    (*mo).reactiontime = saveg_read32() as i32;
+    (*mo).threshold = saveg_read32() as i32;
 
     // player (index + 1)
     let pl = saveg_read32();
@@ -513,7 +508,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     }
 
     // lastlook
-    (*mo).lastlook = saveg_read32() as c_int;
+    (*mo).lastlook = saveg_read32() as i32;
 
     // spawnpoint
     saveg_read_mapthing_t(std::ptr::addr_of_mut!((*mo).spawnpoint));
@@ -688,9 +683,9 @@ unsafe fn saveg_read_pspdef_t(psp: *mut PspdefT) {
     } else {
         saveg_read_state_ptr(state_idx) as *mut crate::doom::d_player::state_t
     };
-    s.tics = saveg_read32() as c_int;
-    s.sx = saveg_read32() as c_int;
-    s.sy = saveg_read32() as c_int;
+    s.tics = saveg_read32() as i32;
+    s.sx = saveg_read32() as i32;
+    s.sy = saveg_read32() as i32;
 }
 
 /// Writes a `pspdef_t` to the save stream.
@@ -734,86 +729,86 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     s.mo = saveg_read32() as *mut crate::doom::d_player::mobj_t;
 
     // playerstate
-    s.playerstate = saveg_read_enum() as c_int;
+    s.playerstate = saveg_read_enum() as i32;
 
     // cmd
     saveg_read_ticcmd_t(&mut s.cmd);
 
     // viewz, viewheight, deltaviewheight, bob
-    s.viewz = saveg_read32() as c_int;
-    s.viewheight = saveg_read32() as c_int;
-    s.deltaviewheight = saveg_read32() as c_int;
-    s.bob = saveg_read32() as c_int;
+    s.viewz = saveg_read32() as i32;
+    s.viewheight = saveg_read32() as i32;
+    s.deltaviewheight = saveg_read32() as i32;
+    s.bob = saveg_read32() as i32;
 
     // health, armorpoints, armortype
-    s.health = saveg_read32() as c_int;
-    s.armorpoints = saveg_read32() as c_int;
-    s.armortype = saveg_read32() as c_int;
+    s.health = saveg_read32() as i32;
+    s.armorpoints = saveg_read32() as i32;
+    s.armortype = saveg_read32() as i32;
 
     // powers[NUMPOWERS]
     for i in 0..NUMPOWERS {
-        s.powers[i] = saveg_read32() as c_int;
+        s.powers[i] = saveg_read32() as i32;
     }
 
     // cards[NUMCARDS]
     for i in 0..NUMCARDS {
-        s.cards[i] = saveg_read32() as c_int;
+        s.cards[i] = saveg_read32() as i32;
     }
 
     // backpack
-    s.backpack = saveg_read32() as c_int;
+    s.backpack = saveg_read32() as i32;
 
     // frags[MAXPLAYERS]
     for i in 0..MAXPLAYERS {
-        s.frags[i] = saveg_read32() as c_int;
+        s.frags[i] = saveg_read32() as i32;
     }
 
     // readyweapon, pendingweapon
-    s.readyweapon = saveg_read_enum() as c_int;
-    s.pendingweapon = saveg_read_enum() as c_int;
+    s.readyweapon = saveg_read_enum() as i32;
+    s.pendingweapon = saveg_read_enum() as i32;
 
     // weaponowned[NUMWEAPONS]
     for i in 0..NUMWEAPONS {
-        s.weaponowned[i] = saveg_read32() as c_int;
+        s.weaponowned[i] = saveg_read32() as i32;
     }
 
     // ammo[NUMAMMO]
     for i in 0..NUMAMMO {
-        s.ammo[i] = saveg_read32() as c_int;
+        s.ammo[i] = saveg_read32() as i32;
     }
 
     // maxammo[NUMAMMO]
     for i in 0..NUMAMMO {
-        s.maxammo[i] = saveg_read32() as c_int;
+        s.maxammo[i] = saveg_read32() as i32;
     }
 
     // attackdown, usedown
-    s.attackdown = saveg_read32() as c_int;
-    s.usedown = saveg_read32() as c_int;
+    s.attackdown = saveg_read32() as i32;
+    s.usedown = saveg_read32() as i32;
 
     // cheats, refire
-    s.cheats = saveg_read32() as c_int;
-    s.refire = saveg_read32() as c_int;
+    s.cheats = saveg_read32() as i32;
+    s.refire = saveg_read32() as i32;
 
     // killcount, itemcount, secretcount
-    s.killcount = saveg_read32() as c_int;
-    s.itemcount = saveg_read32() as c_int;
-    s.secretcount = saveg_read32() as c_int;
+    s.killcount = saveg_read32() as i32;
+    s.itemcount = saveg_read32() as i32;
+    s.secretcount = saveg_read32() as i32;
 
     // message (raw pointer)
-    s.message = saveg_read32() as *mut c_char;
+    s.message = saveg_read32() as *mut u8;
 
     // damagecount, bonuscount
-    s.damagecount = saveg_read32() as c_int;
-    s.bonuscount = saveg_read32() as c_int;
+    s.damagecount = saveg_read32() as i32;
+    s.bonuscount = saveg_read32() as i32;
 
     // attacker (raw pointer)
     s.attacker = saveg_read32() as *mut crate::doom::d_player::mobj_t;
 
     // extralight, fixedcolormap, colormap
-    s.extralight = saveg_read32() as c_int;
-    s.fixedcolormap = saveg_read32() as c_int;
-    s.colormap = saveg_read32() as c_int;
+    s.extralight = saveg_read32() as i32;
+    s.fixedcolormap = saveg_read32() as i32;
+    s.colormap = saveg_read32() as i32;
 
     // psprites[NUMPSPRITES]
     for i in 0..NUMPSPRITES {
@@ -821,7 +816,7 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     }
 
     // didsecret
-    s.didsecret = saveg_read32() as c_int;
+    s.didsecret = saveg_read32() as i32;
 }
 
 /// Writes a full `player_t` record to the save stream from `*pl`.
@@ -897,16 +892,16 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
 unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
     let s = &mut *ceil;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as c_int;
+    s.r#type = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.bottomheight = saveg_read32() as c_int;
-    s.topheight = saveg_read32() as c_int;
-    s.speed = saveg_read32() as c_int;
-    s.crush = saveg_read32() as c_int;
-    s.direction = saveg_read32() as c_int;
-    s.tag = saveg_read32() as c_int;
-    s.olddirection = saveg_read32() as c_int;
+    s.bottomheight = saveg_read32() as i32;
+    s.topheight = saveg_read32() as i32;
+    s.speed = saveg_read32() as i32;
+    s.crush = saveg_read32() as i32;
+    s.direction = saveg_read32() as i32;
+    s.tag = saveg_read32() as i32;
+    s.olddirection = saveg_read32() as i32;
 }
 
 /// Writes a `ceiling_t` special thinker to the save stream from `*ceil`.
@@ -939,14 +934,14 @@ unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
 unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
     let s = &mut *door;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as c_int;
+    s.r#type = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.topheight = saveg_read32() as c_int;
-    s.speed = saveg_read32() as c_int;
-    s.direction = saveg_read32() as c_int;
-    s.topwait = saveg_read32() as c_int;
-    s.topcountdown = saveg_read32() as c_int;
+    s.topheight = saveg_read32() as i32;
+    s.speed = saveg_read32() as i32;
+    s.direction = saveg_read32() as i32;
+    s.topwait = saveg_read32() as i32;
+    s.topcountdown = saveg_read32() as i32;
 }
 
 /// Writes a `vldoor_t` thinker to the save stream.
@@ -976,15 +971,15 @@ unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
 unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
     let s = &mut *floor;
     saveg_read_thinker_t(&mut s.thinker);
-    s.r#type = saveg_read_enum() as c_int;
-    s.crush = saveg_read32() as c_int;
+    s.r#type = saveg_read_enum() as i32;
+    s.crush = saveg_read32() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.direction = saveg_read32() as c_int;
-    s.newspecial = saveg_read32() as c_int;
+    s.direction = saveg_read32() as i32;
+    s.newspecial = saveg_read32() as i32;
     s.texture = saveg_read16() as i16;
-    s.floordestheight = saveg_read32() as c_int;
-    s.speed = saveg_read32() as c_int;
+    s.floordestheight = saveg_read32() as i32;
+    s.speed = saveg_read32() as i32;
 }
 
 /// Writes a `floormove_t` thinker to the save stream.
@@ -1017,16 +1012,16 @@ unsafe fn saveg_read_plat_t(plat: *mut plat_t) {
     saveg_read_thinker_t(&mut s.thinker);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.speed = saveg_read32() as c_int;
-    s.low = saveg_read32() as c_int;
-    s.high = saveg_read32() as c_int;
-    s.wait = saveg_read32() as c_int;
-    s.count = saveg_read32() as c_int;
-    s.status = saveg_read_enum() as c_int;
-    s.oldstatus = saveg_read_enum() as c_int;
-    s.crush = saveg_read32() as c_int;
-    s.tag = saveg_read32() as c_int;
-    s.r#type = saveg_read_enum() as c_int;
+    s.speed = saveg_read32() as i32;
+    s.low = saveg_read32() as i32;
+    s.high = saveg_read32() as i32;
+    s.wait = saveg_read32() as i32;
+    s.count = saveg_read32() as i32;
+    s.status = saveg_read_enum() as i32;
+    s.oldstatus = saveg_read_enum() as i32;
+    s.crush = saveg_read32() as i32;
+    s.tag = saveg_read32() as i32;
+    s.r#type = saveg_read_enum() as i32;
 }
 
 /// Writes a `plat_t` thinker to the save stream.
@@ -1061,11 +1056,11 @@ unsafe fn saveg_read_lightflash_t(flash: *mut lightflash_t) {
     saveg_read_thinker_t(&mut s.thinker);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.count = saveg_read32() as c_int;
-    s.maxlight = saveg_read32() as c_int;
-    s.minlight = saveg_read32() as c_int;
-    s.maxtime = saveg_read32() as c_int;
-    s.mintime = saveg_read32() as c_int;
+    s.count = saveg_read32() as i32;
+    s.maxlight = saveg_read32() as i32;
+    s.minlight = saveg_read32() as i32;
+    s.maxtime = saveg_read32() as i32;
+    s.mintime = saveg_read32() as i32;
 }
 
 /// Writes a `lightflash_t` thinker to the save stream.
@@ -1095,11 +1090,11 @@ unsafe fn saveg_read_strobe_t(strobe: *mut strobe_t) {
     saveg_read_thinker_t(&mut s.thinker);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.count = saveg_read32() as c_int;
-    s.minlight = saveg_read32() as c_int;
-    s.maxlight = saveg_read32() as c_int;
-    s.darktime = saveg_read32() as c_int;
-    s.brighttime = saveg_read32() as c_int;
+    s.count = saveg_read32() as i32;
+    s.minlight = saveg_read32() as i32;
+    s.maxlight = saveg_read32() as i32;
+    s.darktime = saveg_read32() as i32;
+    s.brighttime = saveg_read32() as i32;
 }
 
 /// Writes a `strobe_t` thinker to the save stream.
@@ -1129,9 +1124,9 @@ unsafe fn saveg_read_glow_t(glow: *mut glow_t) {
     saveg_read_thinker_t(&mut s.thinker);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
-    s.minlight = saveg_read32() as c_int;
-    s.maxlight = saveg_read32() as c_int;
-    s.direction = saveg_read32() as c_int;
+    s.minlight = saveg_read32() as i32;
+    s.maxlight = saveg_read32() as i32;
+    s.direction = saveg_read32() as i32;
 }
 
 /// Writes a `glow_t` thinker to the save stream.
@@ -1155,7 +1150,7 @@ unsafe fn saveg_write_glow_t(glow: *const glow_t) {
 /// Writes at most `buf.len() - 1` bytes plus a NUL terminator. Returns the
 /// number of non-NUL bytes written. The caller must ensure `buf` is at least
 /// `dir.len() + 32` bytes to avoid truncation.
-fn fill_save_filename(buf: &mut [u8], dir: &str, slot: c_int) -> usize {
+fn fill_save_filename(buf: &mut [u8], dir: &str, slot: i32) -> usize {
     assert!(
         !buf.is_empty(),
         "fill_save_filename: buffer must have at least 1 byte"
@@ -1174,11 +1169,11 @@ fn fill_save_filename(buf: &mut [u8], dir: &str, slot: c_int) -> usize {
 
 /// Lazily allocated buffer holding the path to the temporary save file.
 /// Initialized once by `P_TempSaveGameFile`; never freed (process lifetime).
-static mut TEMP_SAVE_FILENAME: *mut c_char = std::ptr::null_mut();
+static mut TEMP_SAVE_FILENAME: *mut u8 = std::ptr::null_mut();
 
 /// Lazily allocated buffer holding the path to the current slot's save file.
 /// Allocated once by `P_SaveGameFile`, then reused for every slot.
-static mut SAVE_FILENAME: *mut c_char = std::ptr::null_mut();
+static mut SAVE_FILENAME: *mut u8 = std::ptr::null_mut();
 
 /// Base name prefix for save-game files; slot number and `.dsg` extension are
 /// appended. Matches the `SAVEGAMENAME` define in the C source.
@@ -1202,14 +1197,13 @@ const SAVEGAMENAME: &str = "doomsav";
 /// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
 /// this call. The returned pointer is valid until process exit; the caller must
 /// not free or mutate it.
-pub unsafe fn P_TempSaveGameFile() -> *mut c_char {
+pub unsafe fn P_TempSaveGameFile() -> *mut u8 {
     if TEMP_SAVE_FILENAME.is_null() {
-        let dir = std::ffi::CStr::from_ptr(savegamedir).to_string_lossy();
+        let dir = std::ffi::CStr::from_ptr(savegamedir.cast()).to_string_lossy();
         let full = format!("{}temp.dsg\0", dir);
         let bytes = full.into_bytes();
-        let ptr = std::alloc::alloc(std::alloc::Layout::from_size_align(bytes.len(), 1).unwrap())
-            as *mut c_char;
-        ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+        let ptr = std::alloc::alloc(std::alloc::Layout::from_size_align(bytes.len(), 1).unwrap());
+        ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
         TEMP_SAVE_FILENAME = ptr;
     }
     TEMP_SAVE_FILENAME
@@ -1228,8 +1222,10 @@ pub unsafe fn P_TempSaveGameFile() -> *mut c_char {
 /// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
 /// this call. `slot` must be in the range `0..=7`. The returned pointer is
 /// valid until the next call to this function; the caller must not free it.
-pub unsafe fn P_SaveGameFile(slot: c_int) -> *mut c_char {
-    let dir_len = std::ffi::CStr::from_ptr(savegamedir).to_bytes().len();
+pub unsafe fn P_SaveGameFile(slot: i32) -> *mut u8 {
+    let dir_len = std::ffi::CStr::from_ptr(savegamedir.cast())
+        .to_bytes()
+        .len();
     let alloc_size = dir_len + 32;
 
     if SAVE_FILENAME.is_null() {
@@ -1238,11 +1234,13 @@ pub unsafe fn P_SaveGameFile(slot: c_int) -> *mut c_char {
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
-        SAVE_FILENAME = ptr as *mut c_char;
+        SAVE_FILENAME = ptr;
     }
 
-    let dir_str = std::ffi::CStr::from_ptr(savegamedir).to_str().unwrap();
-    let buf = std::slice::from_raw_parts_mut(SAVE_FILENAME as *mut u8, alloc_size);
+    let dir_str = std::ffi::CStr::from_ptr(savegamedir.cast())
+        .to_str()
+        .unwrap();
+    let buf = std::slice::from_raw_parts_mut(SAVE_FILENAME, alloc_size);
     fill_save_filename(buf, dir_str, slot);
 
     SAVE_FILENAME
@@ -1266,8 +1264,8 @@ pub unsafe fn P_SaveGameFile(slot: c_int) -> *mut c_char {
 /// be an open, writable `FILE *` with enough capacity to hold the header bytes.
 /// The global state `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
 /// `leveltime` must have been set to valid values before this call.
-pub unsafe fn P_WriteSaveGameHeader(description: *const c_char) {
-    let desc = std::ffi::CStr::from_ptr(description);
+pub unsafe fn P_WriteSaveGameHeader(description: *const u8) {
+    let desc = std::ffi::CStr::from_ptr(description.cast());
     let desc_bytes = desc.to_bytes();
 
     // Write description (padded to SAVESTRINGSIZE)
@@ -1322,7 +1320,7 @@ pub unsafe fn P_WriteSaveGameHeader(description: *const c_char) {
 /// a save file written by `P_WriteSaveGameHeader`. On success, `gameskill`,
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
-pub unsafe fn P_ReadSaveGameHeader() -> c_int {
+pub unsafe fn P_ReadSaveGameHeader() -> i32 {
     // Skip description (SAVESTRINGSIZE bytes)
     for _ in 0..SAVESTRINGSIZE {
         saveg_read8();
@@ -1350,20 +1348,20 @@ pub unsafe fn P_ReadSaveGameHeader() -> c_int {
     }
 
     // Read skill, episode, map
-    gameskill = saveg_read8() as c_int;
-    gameepisode = saveg_read8() as c_int;
-    gamemap = saveg_read8() as c_int;
+    gameskill = saveg_read8() as i32;
+    gameepisode = saveg_read8() as i32;
+    gamemap = saveg_read8() as i32;
 
     // Read playeringame
     for i in 0..MAXPLAYERS {
-        playeringame[i] = saveg_read8() as c_int;
+        playeringame[i] = saveg_read8() as i32;
     }
 
     // Read leveltime (3 bytes, big-endian)
     let a = saveg_read8() as u32;
     let b = saveg_read8() as u32;
     let c = saveg_read8() as u32;
-    leveltime = ((a << 16) | (b << 8) | c) as c_int;
+    leveltime = ((a << 16) | (b << 8) | c) as i32;
 
     1 // success
 }
@@ -1379,7 +1377,7 @@ pub unsafe fn P_ReadSaveGameHeader() -> c_int {
 /// `save_stream` must be an open, readable `FILE *` positioned immediately
 /// after the last unarchived byte, i.e. where `P_WriteSaveGameEOF` wrote its
 /// marker. Reading from an invalid or exhausted stream is undefined behaviour.
-pub unsafe fn P_ReadSaveGameEOF() -> c_int {
+pub unsafe fn P_ReadSaveGameEOF() -> i32 {
     let value = saveg_read8();
     if value == SAVEGAME_EOF {
         1
@@ -1551,8 +1549,8 @@ pub unsafe fn P_UnArchiveWorld() {
     // do sectors
     for i in 0..num_sec {
         let sec = sectors.cast::<sector_t>().add(i);
-        (*sec).floorheight = (saveg_read16() as i16 as c_int) << 16;
-        (*sec).ceilingheight = (saveg_read16() as i16 as c_int) << 16;
+        (*sec).floorheight = (saveg_read16() as i16 as i32) << 16;
+        (*sec).ceilingheight = (saveg_read16() as i16 as i32) << 16;
         (*sec).floorpic = saveg_read16() as i16;
         (*sec).ceilingpic = saveg_read16() as i16;
         (*sec).lightlevel = saveg_read16() as i16;
@@ -1575,8 +1573,8 @@ pub unsafe fn P_UnArchiveWorld() {
             let si = sides
                 .cast::<side_t>()
                 .add((*li).sidenum[j as usize] as usize);
-            (*si).textureoffset = (saveg_read16() as i16 as c_int) << 16;
-            (*si).rowoffset = (saveg_read16() as i16 as c_int) << 16;
+            (*si).textureoffset = (saveg_read16() as i16 as i32) << 16;
+            (*si).rowoffset = (saveg_read16() as i16 as i32) << 16;
             (*si).toptexture = saveg_read16() as i16;
             (*si).bottomtexture = saveg_read16() as i16;
             (*si).midtexture = saveg_read16() as i16;
@@ -1697,7 +1695,7 @@ pub unsafe fn P_UnArchiveThinkers() {
             x if x == tc_mobj => {
                 saveg_read_pad();
                 let mobj = Z_Malloc(
-                    std::mem::size_of::<crate::doom::c_ffi::mobj_t>() as c_int,
+                    std::mem::size_of::<crate::doom::c_ffi::mobj_t>() as i32,
                     PU_LEVEL,
                     std::ptr::null_mut(),
                 );
@@ -1732,7 +1730,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_AddThinker(&mut (*thinker_ptr));
             }
             _ => {
-                i_error!("Unknown tclass {} in savegame", tclass as c_int);
+                i_error!("Unknown tclass {} in savegame", tclass as i32);
             }
         }
     }
@@ -1928,7 +1926,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_ceiling => {
                 saveg_read_pad();
                 let ceiling = Z_Malloc(
-                    std::mem::size_of::<ceiling_t>() as c_int,
+                    std::mem::size_of::<ceiling_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut ceiling_t;
@@ -1945,7 +1943,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_door => {
                 saveg_read_pad();
                 let door = Z_Malloc(
-                    std::mem::size_of::<vldoor_t>() as c_int,
+                    std::mem::size_of::<vldoor_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut vldoor_t;
@@ -1957,7 +1955,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_floor => {
                 saveg_read_pad();
                 let floor = Z_Malloc(
-                    std::mem::size_of::<floormove_t>() as c_int,
+                    std::mem::size_of::<floormove_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut floormove_t;
@@ -1969,7 +1967,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_plat => {
                 saveg_read_pad();
                 let plat = Z_Malloc(
-                    std::mem::size_of::<plat_t>() as c_int,
+                    std::mem::size_of::<plat_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut plat_t;
@@ -1986,7 +1984,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_flash => {
                 saveg_read_pad();
                 let flash = Z_Malloc(
-                    std::mem::size_of::<lightflash_t>() as c_int,
+                    std::mem::size_of::<lightflash_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut lightflash_t;
@@ -1997,7 +1995,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_strobe => {
                 saveg_read_pad();
                 let strobe = Z_Malloc(
-                    std::mem::size_of::<strobe_t>() as c_int,
+                    std::mem::size_of::<strobe_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut strobe_t;
@@ -2008,7 +2006,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_glow => {
                 saveg_read_pad();
                 let glow = Z_Malloc(
-                    std::mem::size_of::<glow_t>() as c_int,
+                    std::mem::size_of::<glow_t>() as i32,
                     PU_LEVSPEC,
                     std::ptr::null_mut(),
                 ) as *mut glow_t;
@@ -2019,7 +2017,7 @@ pub unsafe fn P_UnArchiveSpecials() {
             _ => {
                 i_error!(
                     "P_UnarchiveSpecials:Unknown tclass {} in savegame",
-                    tclass as c_int
+                    tclass as i32
                 );
             }
         }
@@ -2117,7 +2115,7 @@ mod tests {
         save_stream = libc::fmemopen(
             data.as_mut_ptr() as *mut libc::c_void,
             data.len(),
-            c"r".as_ptr() as *const libc::c_char,
+            c"r".as_ptr(),
         );
         savegame_error = 0;
         savegamelength = 0;

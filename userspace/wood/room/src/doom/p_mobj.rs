@@ -7,7 +7,7 @@
 
 use {
     crate::{doom::sounds::Sfx, i_error},
-    std::{ffi::c_void, os::raw::c_int, ptr},
+    std::{ffi::c_void, ptr},
 };
 
 use crate::doom::{
@@ -29,36 +29,36 @@ use crate::doom::{
 };
 
 /// Momentum magnitude below which an object's XY velocity is snapped to zero.
-const STOPSPEED: c_int = 0x1000;
+const STOPSPEED: i32 = 0x1000;
 /// Multiplicative XY friction applied each tic when an object is on the floor
 /// (0xe800 / 0x10000 ≈ 0.906).
-const FRICTION: c_int = 0xe800;
+const FRICTION: i32 = 0xe800;
 /// Maximum XY momentum per tic; momentum is clamped to this before integration.
-const MAXMOVE: c_int = 30 * FRACUNIT;
+const MAXMOVE: i32 = 30 * FRACUNIT;
 /// Gravitational acceleration applied to falling objects each tic (1 fixed unit).
-const GRAVITY: c_int = FRACUNIT;
+const GRAVITY: i32 = FRACUNIT;
 /// Vertical speed at which floating monsters adjust their altitude each tic.
-const FLOATSPEED: c_int = FRACUNIT * 4;
+const FLOATSPEED: i32 = FRACUNIT * 4;
 /// Sentinel Z value meaning "place on the floor of the current sector".
-const ONFLOORZ: c_int = i32::MIN;
+const ONFLOORZ: i32 = i32::MIN;
 /// Sentinel Z value meaning "place on the ceiling of the current sector".
-const ONCEILINGZ: c_int = i32::MAX;
+const ONCEILINGZ: i32 = i32::MAX;
 /// Default eye height above the floor for a live player (41 fixed units).
-const VIEWHEIGHT: c_int = 41 * FRACUNIT;
+const VIEWHEIGHT: i32 = 41 * FRACUNIT;
 /// Maximum reach for melee contact checks (64 map units in fixed-point).
-const MELEERANGE: c_int = 64 * FRACUNIT;
+const MELEERANGE: i32 = 64 * FRACUNIT;
 
 /// Thing-flag option bit: the thing was placed in ambush mode in the map editor.
-const MTF_AMBUSH: c_int = 8;
+const MTF_AMBUSH: i32 = 8;
 
 /// Player state: alive and playing.
-const PST_LIVE: c_int = 0;
+const PST_LIVE: i32 = 0;
 /// Player state: needs to respawn (set after death, cleared by `P_SpawnPlayer`).
-const PST_REBORN: c_int = 2;
+const PST_REBORN: i32 = 2;
 
 /// Game-version threshold at or above which the Lost Soul floor-bounce bug is
 /// corrected (corresponds to Ultimate Doom / `exe_ultimate`).
-const exe_ultimate: c_int = 6;
+const exe_ultimate: i32 = 6;
 
 use crate::doom::{
     d_main::nomonsters,
@@ -101,13 +101,13 @@ pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t {
 ///
 /// An item is eligible to respawn once `leveltime - itemrespawntime[iquetail]`
 /// exceeds 30 * `TICRATE`.
-pub static mut itemrespawntime: [c_int; ITEMQUESIZE] = [0; ITEMQUESIZE];
+pub static mut itemrespawntime: [i32; ITEMQUESIZE] = [0; ITEMQUESIZE];
 
 /// Write index (head) of the item-respawn circular queue.
-pub static mut iquehead: c_int = 0;
+pub static mut iquehead: i32 = 0;
 
 /// Read index (tail) of the item-respawn circular queue.
-pub static mut iquetail: c_int = 0;
+pub static mut iquetail: i32 = 0;
 
 /// Construct the sentinel `actionf_t` value used to detect that a thinker has
 /// been removed mid-tick (all-ones function pointer).
@@ -131,7 +131,7 @@ fn is_sentinel(f: actionf_t) -> bool {
 ///
 /// `mobj` must be a valid, non-null pointer to an initialised `mobj_t`.
 /// `state` must be a valid state-table index or `S_NULL`.
-pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: c_int) -> c_int {
+pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
     let mobj = &mut *mobj;
     let mut state = state;
     loop {
@@ -177,10 +177,7 @@ pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
     }
     mo.flags &= !MF_MISSILE;
     if (*info).deathsound != Sfx::None {
-        S_StartSound(
-            mo as *mut mobj_t as *mut c_void,
-            (*info).deathsound as c_int,
-        );
+        S_StartSound(mo as *mut mobj_t as *mut c_void, (*info).deathsound as i32);
     }
 }
 
@@ -194,11 +191,11 @@ pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
 /// active thinker list.
 pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
     let mo = &mut *mo;
-    let mut ptryx: c_int;
-    let mut ptryy: c_int;
+    let mut ptryx: i32;
+    let mut ptryy: i32;
     let player = mo.player as *mut PlayerT;
-    let mut xmove: c_int;
-    let mut ymove: c_int;
+    let mut xmove: i32;
+    let mut ymove: i32;
 
     if mo.momx == 0 && mo.momy == 0 {
         if mo.flags & MF_SKULLFLY != 0 {
@@ -291,7 +288,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             let states_ptr = std::ptr::addr_of!(info::states) as *const State;
             let state_idx =
                 (state_ptr as usize - states_ptr as usize) / std::mem::size_of::<State>();
-            let run_offset = state_idx as c_int - S_PLAY_RUN1;
+            let run_offset = state_idx as i32 - S_PLAY_RUN1;
             if (0..4).contains(&run_offset) {
                 P_SetMobjState(mo as *mut mobj_t, S_PLAY);
             }
@@ -316,8 +313,8 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
 /// active thinker list.
 pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
     let mo = &mut *mo;
-    let dist: c_int;
-    let delta: c_int;
+    let dist: i32;
+    let delta: i32;
 
     if !mo.player.is_null() && mo.z < mo.floorz {
         let player = mo.player as *mut PlayerT;
@@ -351,7 +348,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
             if !mo.player.is_null() && mo.momz < -GRAVITY * 8 {
                 let player = mo.player as *mut PlayerT;
                 (*player).deltaviewheight = mo.momz >> 3;
-                S_StartSound(mo as *mut mobj_t as *mut c_void, Sfx::Oof as c_int);
+                S_StartSound(mo as *mut mobj_t as *mut c_void, Sfx::Oof as i32);
             }
             mo.momz = 0;
         }
@@ -397,8 +394,8 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
 /// `MF_COUNTKILL` set and whose `spawnpoint` field is valid.
 pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
-    let x = (mobj.spawnpoint.x as c_int) << FRACBITS;
-    let y = (mobj.spawnpoint.y as c_int) << FRACBITS;
+    let x = (mobj.spawnpoint.x as i32) << FRACBITS;
+    let y = (mobj.spawnpoint.y as i32) << FRACBITS;
     if P_CheckPosition(mobj as *mut _ as *mut CffiMobj, x, y) == 0 {
         return;
     }
@@ -409,11 +406,11 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         (*(*mobj.subsector).sector).floorheight,
         MT_TFOG,
     );
-    S_StartSound(mo as *mut c_void, Sfx::Telept as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y) as *mut subsector_t;
     mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_TFOG);
-    S_StartSound(mo as *mut c_void, Sfx::Telept as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
     let info = mobj.info as *mut MobjInfo;
@@ -498,9 +495,9 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
 ///
 /// Must be called only while a level is active (zone memory must be
 /// initialised).  `type_` must be a valid `mobjtype_t` index.
-pub unsafe fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int) -> *mut mobj_t {
+pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, type_: i32) -> *mut mobj_t {
     let mobj = Z_Malloc(
-        std::mem::size_of::<mobj_t>() as c_int,
+        std::mem::size_of::<mobj_t>() as i32,
         PU_LEVEL,
         ptr::null_mut(),
     ) as *mut mobj_t;
@@ -522,7 +519,7 @@ pub unsafe fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int) -> *mut mo
         mobj_ref.reactiontime = (*info).reactiontime;
     }
 
-    mobj_ref.lastlook = P_Random() % MAXPLAYERS as c_int;
+    mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
 
     let st = &mut info::states[(*info).spawnstate as usize] as *mut State;
     mobj_ref.state = st as *mut crate::doom::p_telept::state_t;
@@ -573,9 +570,9 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
     {
         itemrespawnque[iquehead as usize] = mobj.spawnpoint;
         itemrespawntime[iquehead as usize] = leveltime;
-        iquehead = (iquehead + 1) & (ITEMQUESIZE as c_int - 1);
+        iquehead = (iquehead + 1) & (ITEMQUESIZE as i32 - 1);
         if iquehead == iquetail {
-            iquetail = (iquetail + 1) & (ITEMQUESIZE as c_int - 1);
+            iquetail = (iquetail + 1) & (ITEMQUESIZE as i32 - 1);
         }
     }
 
@@ -605,16 +602,16 @@ pub unsafe fn P_RespawnSpecials() {
     }
 
     let mthing = &itemrespawnque[iquetail as usize];
-    let x = (mthing.x as c_int) << FRACBITS;
-    let y = (mthing.y as c_int) << FRACBITS;
+    let x = (mthing.x as i32) << FRACBITS;
+    let y = (mthing.y as i32) << FRACBITS;
 
     let ss = R_PointInSubsector(x, y) as *mut subsector_t;
     let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
-    S_StartSound(mo as *mut c_void, Sfx::Itmbk as c_int);
+    S_StartSound(mo as *mut c_void, Sfx::Itmbk as i32);
 
     let mut i = 0;
     while i < NUMMOBJTYPES {
-        if mthing.r#type as c_int == info::mobjinfo[i].doomednum {
+        if mthing.r#type as i32 == info::mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -626,11 +623,11 @@ pub unsafe fn P_RespawnSpecials() {
         ONFLOORZ
     };
 
-    mo = P_SpawnMobj(x, y, z, i as c_int);
+    mo = P_SpawnMobj(x, y, z, i as i32);
     (*mo).spawnpoint = *mthing;
     (*mo).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
 
-    iquetail = (iquetail + 1) & (ITEMQUESIZE as c_int - 1);
+    iquetail = (iquetail + 1) & (ITEMQUESIZE as i32 - 1);
 }
 
 /// Spawn the player mobj for the player indicated by `mthing->type` (1-4).
@@ -645,7 +642,7 @@ pub unsafe fn P_RespawnSpecials() {
 /// memory active.
 pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
-    if mthing.r#type as c_int == 0 {
+    if mthing.r#type as i32 == 0 {
         return;
     }
     if playeringame[(mthing.r#type - 1) as usize] == 0 {
@@ -655,16 +652,16 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let p = &mut players[(mthing.r#type - 1) as usize] as *mut PlayerT;
 
     if (*p).playerstate == PST_REBORN {
-        G_PlayerReborn(mthing.r#type as c_int - 1);
+        G_PlayerReborn(mthing.r#type as i32 - 1);
     }
 
-    let x = (mthing.x as c_int) << FRACBITS;
-    let y = (mthing.y as c_int) << FRACBITS;
+    let x = (mthing.x as i32) << FRACBITS;
+    let y = (mthing.y as i32) << FRACBITS;
     let z = ONFLOORZ;
     let mobj = P_SpawnMobj(x, y, z, MT_PLAYER);
 
     if mthing.r#type > 1 {
-        (*mobj).flags |= ((mthing.r#type - 1) as c_int) << MF_TRANSSHIFT;
+        (*mobj).flags |= ((mthing.r#type - 1) as i32) << MF_TRANSSHIFT;
     }
 
     (*mobj).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
@@ -689,7 +686,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
         }
     }
 
-    if mthing.r#type as c_int - 1 == consoleplayer {
+    if mthing.r#type as i32 - 1 == consoleplayer {
         ST_Start();
         HU_Start();
     }
@@ -710,7 +707,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
     let mut i: usize;
 
-    if mthing.r#type as c_int == 11 {
+    if mthing.r#type as i32 == 11 {
         if deathmatch_p < std::ptr::addr_of_mut!(deathmatchstarts[0]).add(10) {
             *deathmatch_p = *(mthing as *mut _ as *mut SetupMapThing);
             deathmatch_p = deathmatch_p.add(1);
@@ -718,11 +715,11 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         return;
     }
 
-    if mthing.r#type as c_int <= 0 {
+    if mthing.r#type as i32 <= 0 {
         return;
     }
 
-    if mthing.r#type as c_int <= 4 {
+    if mthing.r#type as i32 <= 4 {
         let ps = std::ptr::addr_of_mut!(playerstarts[0]) as *mut mapthing_t;
         *ps.add((mthing.r#type - 1) as usize) = *mthing;
         if deathmatch == 0 {
@@ -751,7 +748,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
 
     i = 0;
     while i < NUMMOBJTYPES {
-        if mthing.r#type as c_int == info::mobjinfo[i].doomednum {
+        if mthing.r#type as i32 == info::mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -760,9 +757,9 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     if i == NUMMOBJTYPES {
         i_error!(
             "P_SpawnMapThing: Unknown type {} at ({}, {})",
-            mthing.r#type as c_int,
-            mthing.x as c_int,
-            mthing.y as c_int
+            mthing.r#type as i32,
+            mthing.x as i32,
+            mthing.y as i32
         );
     }
 
@@ -774,8 +771,8 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         return;
     }
 
-    let x = (mthing.x as c_int) << FRACBITS;
-    let y = (mthing.y as c_int) << FRACBITS;
+    let x = (mthing.x as i32) << FRACBITS;
+    let y = (mthing.y as i32) << FRACBITS;
 
     let z = if info::mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
@@ -783,7 +780,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         ONFLOORZ
     };
 
-    let mobj = P_SpawnMobj(x, y, z, i as c_int);
+    let mobj = P_SpawnMobj(x, y, z, i as i32);
     (*mobj).spawnpoint = *mthing;
 
     if (*mobj).tics > 0 {
@@ -809,7 +806,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnPuff(x: c_int, y: c_int, z: c_int) {
+pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
     let th = P_SpawnMobj(x, y, z, MT_PUFF);
     (*th).momz = FRACUNIT;
@@ -831,7 +828,7 @@ pub unsafe fn P_SpawnPuff(x: c_int, y: c_int, z: c_int) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnBlood(x: c_int, y: c_int, z: c_int, damage: c_int) {
+pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
     let th = P_SpawnMobj(x, y, z, MT_BLOOD);
     (*th).momz = FRACUNIT * 2;
@@ -904,13 +901,13 @@ pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
 ///
 /// `source` and `dest` must be valid, non-null pointers to `mobj_t` instances.
 /// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: c_int) -> *mut mobj_t {
+pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: i32) -> *mut mobj_t {
     let source = &*source;
     let dest = &*dest;
     let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, type_);
     let info = (*th).info as *mut MobjInfo;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th as *mut c_void, (*info).seesound as c_int);
+        S_StartSound(th as *mut c_void, (*info).seesound as i32);
     }
     (*th).target = source as *const mobj_t as *mut mobj_t;
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
@@ -940,7 +937,7 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: c_in
 ///
 /// `source` must be a valid, non-null pointer to a player `mobj_t`.
 /// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: c_int) {
+pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: i32) {
     let source = &mut *source;
     let mut an = source.angle;
     let mut slope = P_AimLineAttack(source as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
@@ -965,7 +962,7 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: c_int) {
     let th = P_SpawnMobj(x, y, z, type_);
     let info = (*th).info as *mut MobjInfo;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th as *mut c_void, (*info).seesound as c_int);
+        S_StartSound(th as *mut c_void, (*info).seesound as i32);
     }
     (*th).target = source as *const mobj_t as *mut mobj_t;
     (*th).angle = an;
@@ -995,15 +992,17 @@ mod tests {
 
     #[test]
     fn friction_is_less_than_fracunit() {
-        assert!(
-            FRICTION < FRACUNIT,
-            "FRICTION must be < FRACUNIT for deceleration"
-        );
+        const {
+            assert!(
+                FRICTION < FRACUNIT,
+                "FRICTION must be < FRACUNIT for deceleration"
+            )
+        };
     }
 
     #[test]
     fn stopspeed_is_small_fraction_of_fracunit() {
-        assert!(STOPSPEED < FRACUNIT);
+        const { assert!(STOPSPEED < FRACUNIT) };
         assert_eq!(FRACUNIT / STOPSPEED, 16);
     }
 
@@ -1043,15 +1042,6 @@ mod tests {
             for (i, &t) in (*&raw const itemrespawntime).iter().enumerate() {
                 assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
             }
-        }
-    }
-
-    #[test]
-    fn queue_indices_are_c_int_width() {
-        const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-        unsafe {
-            let _: c_int = iquehead;
-            let _: c_int = iquetail;
         }
     }
 }

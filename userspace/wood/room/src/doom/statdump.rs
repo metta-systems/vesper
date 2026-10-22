@@ -13,7 +13,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_int, c_void};
+use std::ffi::c_void;
 
 /// Snapshot of intermission-screen state captured at the end of every
 /// level. Mirrors the C `wbstartstruct_t` layout from `d_player.h`.
@@ -27,11 +27,11 @@ use std::ffi::{c_int, c_void};
 #[repr(C)]
 pub struct wbstartstruct_t {
     /// Episode number (0-based).
-    pub epsd: c_int,
+    pub epsd: i32,
     /// Index of the level just completed.
-    pub last: c_int,
+    pub last: i32,
     /// Par time for this level in tics.
-    pub partime: c_int,
+    pub partime: i32,
     /// Per-player statistics for up to 4 players.
     pub plyr: [wbplayerstruct_t; 4],
 }
@@ -44,17 +44,17 @@ pub struct wbstartstruct_t {
 pub struct wbplayerstruct_t {
     /// "in game" flag - non-zero if this player slot was active. Named
     /// `in` in C; renamed `in_` here to dodge the Rust keyword.
-    pub in_: c_int,
+    pub in_: i32,
     /// Kills count for this player.
-    pub skills: c_int,
+    pub skills: i32,
     /// Items collected.
-    pub sitems: c_int,
+    pub sitems: i32,
     /// Secrets found.
-    pub ssecret: c_int,
+    pub ssecret: i32,
     /// Total time spent on the level, in tics.
-    pub stime: c_int,
+    pub stime: i32,
     /// Frag counts indexed by victim player.
-    pub frags: [c_int; 4],
+    pub frags: [i32; 4],
 }
 
 /// Maximum number of intermission snapshots that can be captured during
@@ -86,7 +86,7 @@ static mut captured_stats: [wbstartstruct_t; MAX_CAPTURES] = {
 /// Number of snapshots currently stored in [`captured_stats`]. Increments
 /// on every [`StatCopy`] call until [`MAX_CAPTURES`] is reached. Mirrors
 /// the C `num_captured_stats` static.
-static mut num_captured_stats: c_int = 0;
+static mut num_captured_stats: i32 = 0;
 
 use crate::doom::m_argv::M_ParmExists;
 
@@ -110,7 +110,9 @@ extern "C" {
 /// at the end of every level.
 pub fn StatCopy(stats: *mut wbstartstruct_t) {
     unsafe {
-        if M_ParmExists(c"-statdump".as_ptr()) != 0 && num_captured_stats < MAX_CAPTURES as c_int {
+        if M_ParmExists(c"-statdump".as_ptr().cast()) != 0
+            && num_captured_stats < MAX_CAPTURES as i32
+        {
             memcpy(
                 std::ptr::addr_of_mut!(captured_stats[0]).offset(num_captured_stats as isize)
                     as *mut c_void,
@@ -149,8 +151,7 @@ mod tests {
     #[test]
     fn wbstartstruct_t_size_matches_c() {
         // epsd(4) + last(4) + partime(4) + plyr[4] (4 × 36 = 144) = 156
-        let expected =
-            3 * std::mem::size_of::<c_int>() + 4 * std::mem::size_of::<wbplayerstruct_t>();
+        let expected = 3 * std::mem::size_of::<i32>() + 4 * std::mem::size_of::<wbplayerstruct_t>();
         assert_eq!(std::mem::size_of::<wbstartstruct_t>(), expected);
     }
 

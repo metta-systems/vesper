@@ -10,29 +10,26 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::i_error;
 
 /// Pinned allocation; lives for the lifetime of the program unless
 /// explicitly freed. Matches `PU_STATIC` in `z_zone.h`.
-pub const PU_STATIC: c_int = 1;
+pub const PU_STATIC: i32 = 1;
 /// Tag value marking a block as currently free. Matches `PU_FREE`.
-pub const PU_FREE: c_int = 4;
+pub const PU_FREE: i32 = 4;
 /// Pinned to the current level; mass-freed by `Z_FreeTags(PU_LEVEL, ...)`
 /// when the player exits the map. Matches `PU_LEVEL`.
-pub const PU_LEVEL: c_int = 5;
+pub const PU_LEVEL: i32 = 5;
 /// Pinned to the current level for specials (sector effects, plats,
 /// doors). Matches `PU_LEVSPEC`.
-pub const PU_LEVSPEC: c_int = 6;
+pub const PU_LEVSPEC: i32 = 6;
 /// First purgeable tag; anything at or above this can be reclaimed by
 /// `Z_Malloc`. Matches `PU_PURGELEVEL`.
-pub const PU_PURGELEVEL: c_int = 7;
+pub const PU_PURGELEVEL: i32 = 7;
 /// Purgeable cache (textures, sprites). Matches `PU_CACHE`.
-pub const PU_CACHE: c_int = 8;
+pub const PU_CACHE: i32 = 8;
 
 /// Magic number stamped into `memblock_t::id` so `Z_Free`/`Z_ChangeTag`
 /// can detect double-free and pointer arithmetic mistakes. Mirrors the
@@ -41,7 +38,7 @@ const ZONEID: u32 = 0x1d4a11;
 /// Minimum free fragment that justifies splitting a block during
 /// `Z_Malloc`. Smaller leftovers stay attached to the allocation as
 /// internal padding. Matches `MINFRAGMENT` in `z_zone.c`.
-const MINFRAGMENT: c_int = 64;
+const MINFRAGMENT: i32 = 64;
 /// Allocation alignment (pointer size, matching `MEM_ALIGN` in
 /// `z_zone.c`). Sizes passed to `Z_Malloc` are rounded up to this.
 const MEM_ALIGN: usize = std::mem::size_of::<*mut ()>();
@@ -53,14 +50,14 @@ const MEM_ALIGN: usize = std::mem::size_of::<*mut ()>();
 #[derive(Clone, Copy)]
 struct memblock_t {
     /// Total bytes including header and any trailing fragment.
-    size: c_int,
+    size: i32,
     /// Optional back-pointer the user gave to `Z_Malloc`; nulled when
     /// the block is freed or purged.
     user: *mut *mut c_void,
     /// `PU_*` tag controlling lifetime / purgeability.
-    tag: c_int,
+    tag: i32,
     /// `ZONEID` for live blocks, 0 once freed.
-    id: c_int,
+    id: i32,
     /// Next block in the doubly-linked free/used list.
     next: *mut memblock_t,
     /// Previous block in the doubly-linked free/used list.
@@ -72,7 +69,7 @@ struct memblock_t {
 #[repr(C)]
 struct memzone_t {
     /// Total bytes of the backing buffer (including this header).
-    size: c_int,
+    size: i32,
     /// Sentinel block used as the doubly-linked-list anchor.
     blocklist: memblock_t,
     /// "Next-fit" cursor consulted by `Z_Malloc`.
@@ -106,7 +103,7 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
     (*block).prev = &mut (*zone).blocklist;
     (*block).next = &mut (*zone).blocklist;
     (*block).tag = PU_FREE;
-    (*block).size = (*zone).size - std::mem::size_of::<memzone_t>() as c_int;
+    (*block).size = (*zone).size - std::mem::size_of::<memzone_t>() as i32;
 }
 
 /// `void Z_Init(void)` — request the platform Zone buffer from
@@ -118,7 +115,7 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
 ///   `Z_*` entry point.
 /// - Reads/writes the global `mainzone`; not thread-safe.
 pub unsafe fn Z_Init() {
-    let mut size: c_int = 0;
+    let mut size: i32 = 0;
     mainzone = I_ZoneBase(&mut size) as *mut memzone_t;
     (*mainzone).size = size;
 
@@ -197,12 +194,12 @@ pub unsafe fn Z_Free(ptr: *mut c_void) {
 ///   future purge/free.
 /// - `tag` must be a valid `PU_*` value (other values are silently
 ///   accepted but break the purge logic, matching C).
-pub unsafe fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_void {
+pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
     if mainzone.is_null() {
         panic!("Z_Malloc: mainzone is null!");
     }
-    let size = (size + MEM_ALIGN as c_int - 1) & !(MEM_ALIGN as c_int - 1);
-    let size = size + std::mem::size_of::<memblock_t>() as c_int;
+    let size = (size + MEM_ALIGN as i32 - 1) & !(MEM_ALIGN as i32 - 1);
+    let size = size + std::mem::size_of::<memblock_t>() as i32;
 
     let mut base = (*mainzone).rover;
     if base.is_null() {
@@ -275,7 +272,7 @@ pub unsafe fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_voi
     // memset writing past the end into the next block header.
     // (ptr::write_bytes / memset may use SIMD that overshoots on
     //  non-aligned sizes under ASan instrumentation.)
-    let user_size = size - std::mem::size_of::<memblock_t>() as c_int;
+    let user_size = size - std::mem::size_of::<memblock_t>() as i32;
     let result_bytes = result as *mut u8;
     for i in 0..user_size as usize {
         *result_bytes.add(i) = 0;
@@ -286,7 +283,7 @@ pub unsafe fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_voi
     }
 
     (*mainzone).rover = (*base).next;
-    (*base).id = ZONEID as c_int;
+    (*base).id = ZONEID as i32;
 
     result
 }
@@ -303,7 +300,7 @@ pub unsafe fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_voi
 /// - `mainzone` must be initialised. All blocks in the active list must
 ///   be live `Z_Malloc` allocations (the sentinel's tag is PU_STATIC, so
 ///   it is skipped by the tag-range check).
-pub unsafe fn Z_FreeTags(lowtag: c_int, hightag: c_int) {
+pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
@@ -338,22 +335,22 @@ pub unsafe fn Z_FreeTags(lowtag: c_int, hightag: c_int) {
 /// - `mainzone` must be initialised.
 /// - Calls into `libc::printf` with hard-coded format strings; the
 ///   varargs must match (`%i`, `%p`, etc.).
-pub unsafe fn Z_DumpHeap(lowtag: c_int, hightag: c_int) {
+pub unsafe fn Z_DumpHeap(lowtag: i32, hightag: i32) {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
 
     let msg = b"zone size: %i  location: %p\n\0";
-    libc::printf(msg.as_ptr() as *const c_char, (*zone).size, zone);
+    libc::printf(msg.as_ptr().cast(), (*zone).size, zone);
 
     let msg2 = b"tag range: %i to %i\n\0";
-    libc::printf(msg2.as_ptr() as *const c_char, lowtag, hightag);
+    libc::printf(msg2.as_ptr().cast(), lowtag, hightag);
 
     let mut block = (*zone).blocklist.next;
     loop {
         if (*block).tag >= lowtag && (*block).tag <= hightag {
             let msg3 = b"block:%p    size:%7i    user:%p    tag:%3i\n\0";
             libc::printf(
-                msg3.as_ptr() as *const c_char,
+                msg3.as_ptr().cast(),
                 block,
                 (*block).size,
                 (*block).user,
@@ -367,17 +364,17 @@ pub unsafe fn Z_DumpHeap(lowtag: c_int, hightag: c_int) {
 
         if (block as *mut u8).add((*block).size as usize) != (*block).next as *mut u8 {
             let msg4 = b"ERROR: block size does not touch the next block\n\0";
-            libc::printf(msg4.as_ptr() as *const c_char);
+            libc::printf(msg4.as_ptr().cast());
         }
 
         if (*(*block).next).prev != block {
             let msg5 = b"ERROR: next block doesn't have proper back link\n\0";
-            libc::printf(msg5.as_ptr() as *const c_char);
+            libc::printf(msg5.as_ptr().cast());
         }
 
         if (*block).tag == PU_FREE && (*(*block).next).tag == PU_FREE {
             let msg6 = b"ERROR: two consecutive free blocks\n\0";
-            libc::printf(msg6.as_ptr() as *const c_char);
+            libc::printf(msg6.as_ptr().cast());
         }
 
         block = (*block).next;
@@ -541,7 +538,7 @@ pub unsafe fn Z_CheckHeapAfter(name: &str) {
 ///   `ZONEID`); otherwise `I_Error` is called.
 /// - `_file` / `_line` are unused but must still be valid pointers per
 ///   the C calling convention.
-pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: c_int, _file: *const c_char, _line: c_int) {
+pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: i32, _file: *const u8, _line: i32) {
     let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
@@ -582,10 +579,10 @@ pub unsafe fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
 ///
 /// # Safety
 /// - `mainzone` must be initialised.
-pub unsafe fn Z_FreeMemory() -> c_int {
+pub unsafe fn Z_FreeMemory() -> i32 {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
-    let mut free: c_int = 0;
+    let mut free: i32 = 0;
     let mut block = (*zone).blocklist.next;
 
     while block != sentinel {

@@ -6,14 +6,12 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::doom::{
     c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT},
     d_mode::commercial,
+    deh_str::DEH_String,
     doomstat::gamemode,
     i_video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
     m_fixed::FRACBITS,
@@ -41,19 +39,19 @@ const MAXHEIGHT: usize = 832;
 pub static mut viewimage: *mut u8 = ptr::null_mut();
 
 /// Width of the current render viewport in pixels.
-pub static mut viewwidth: c_int = 0;
+pub static mut viewwidth: i32 = 0;
 
 /// Width of the viewport scaled for the current detail mode (equals `viewwidth` in high-detail).
-pub static mut scaledviewwidth: c_int = 0;
+pub static mut scaledviewwidth: i32 = 0;
 
 /// Height of the current render viewport in pixels.
-pub static mut viewheight: c_int = 0;
+pub static mut viewheight: i32 = 0;
 
 /// X pixel offset from the left edge of the framebuffer to the left edge of the viewport.
-pub static mut viewwindowx: c_int = 0;
+pub static mut viewwindowx: i32 = 0;
 
 /// Y pixel offset from the top of the framebuffer to the top of the viewport.
-pub static mut viewwindowy: c_int = 0;
+pub static mut viewwindowy: i32 = 0;
 
 /// Per-row pointer LUT: `ylookup[y]` points to the first byte of row `y` in the framebuffer.
 /// Avoids a multiply by `SCREENWIDTH` in the inner rendering loops.
@@ -61,7 +59,7 @@ pub static mut ylookup: [*mut u8; MAXHEIGHT] = [ptr::null_mut(); MAXHEIGHT];
 
 /// Per-column byte offset LUT: `columnofs[x]` is the byte offset within a row for column `x`.
 /// Accounts for `viewwindowx` so that sub-window rendering works without extra arithmetic.
-pub static mut columnofs: [c_int; MAXWIDTH] = [0; MAXWIDTH];
+pub static mut columnofs: [i32; MAXWIDTH] = [0; MAXWIDTH];
 
 /// Color-translation tables for the three non-green player colors (gray, brown, red).
 /// Each table remaps the 16-entry green palette ramp (indices `0x70`-`0x7f`) to another ramp.
@@ -84,27 +82,27 @@ static mut background_buffer: *mut u8 = ptr::null_mut();
 pub static mut dc_colormap: *mut u8 = ptr::null_mut();
 
 /// Screen-space X coordinate of the column being drawn (0 = left edge of viewport).
-pub static mut dc_x: c_int = 0;
+pub static mut dc_x: i32 = 0;
 
 /// Topmost screen-space Y coordinate of the column segment to draw (inclusive).
-pub static mut dc_yl: c_int = 0;
+pub static mut dc_yl: i32 = 0;
 
 /// Bottommost screen-space Y coordinate of the column segment to draw (inclusive).
-pub static mut dc_yh: c_int = 0;
+pub static mut dc_yh: i32 = 0;
 
 /// Inverse texture scale in 16.16 fixed-point: the amount added to the texture fraction
 /// per screen row, equal to `textureheight / columnheight`.
-pub static mut dc_iscale: c_int = 0;
+pub static mut dc_iscale: i32 = 0;
 
 /// Texture mid-point fraction in 16.16 fixed-point, corresponding to the true center of
 /// the wall post; used together with `dc_iscale` to compute the starting texture row.
-pub static mut dc_texturemid: c_int = 0;
+pub static mut dc_texturemid: i32 = 0;
 
 /// First pixel in a column (possibly virtual).
 pub static mut dc_source: *mut u8 = ptr::null_mut();
 
 /// Just for profiling.
-pub static mut dccount: c_int = 0;
+pub static mut dccount: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Fuzz / spectre effect
@@ -113,7 +111,7 @@ pub static mut dccount: c_int = 0;
 /// Pre-computed table of per-pixel row offsets (in bytes) used by the fuzz/spectre effect.
 /// Each entry is either `+FUZZOFF` (one row down) or `-FUZZOFF` (one row up), giving the
 /// smeared, semi-transparent look of partial-invisibility.
-pub static mut fuzzoffset: [c_int; FUZZTABLE] = [
+pub static mut fuzzoffset: [i32; FUZZTABLE] = [
     FUZZOFF, -FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF,
     FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, -FUZZOFF,
     -FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF,
@@ -122,7 +120,7 @@ pub static mut fuzzoffset: [c_int; FUZZTABLE] = [
 ];
 
 /// Current position within `fuzzoffset`; wraps back to 0 when it reaches `FUZZTABLE`.
-pub static mut fuzzpos: c_int = 0;
+pub static mut fuzzpos: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Translation tables
@@ -141,34 +139,34 @@ pub static mut translationtables: *mut u8 = ptr::null_mut();
 // ---------------------------------------------------------------------------
 
 /// Screen-space Y row of the span being drawn.
-pub static mut ds_y: c_int = 0;
+pub static mut ds_y: i32 = 0;
 
 /// Leftmost screen-space X coordinate of the span (inclusive).
-pub static mut ds_x1: c_int = 0;
+pub static mut ds_x1: i32 = 0;
 
 /// Rightmost screen-space X coordinate of the span (inclusive).
-pub static mut ds_x2: c_int = 0;
+pub static mut ds_x2: i32 = 0;
 
 /// Colormap used by the span renderer; points into `colormaps` for the appropriate light level.
 pub static mut ds_colormap: *mut u8 = ptr::null_mut();
 
 /// Starting texture U (X) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-pub static mut ds_xfrac: c_int = 0;
+pub static mut ds_xfrac: i32 = 0;
 
 /// Starting texture V (Y) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-pub static mut ds_yfrac: c_int = 0;
+pub static mut ds_yfrac: i32 = 0;
 
 /// Per-pixel increment of `ds_xfrac` in 16.16 fixed-point along the span.
-pub static mut ds_xstep: c_int = 0;
+pub static mut ds_xstep: i32 = 0;
 
 /// Per-pixel increment of `ds_yfrac` in 16.16 fixed-point along the span.
-pub static mut ds_ystep: c_int = 0;
+pub static mut ds_ystep: i32 = 0;
 
 /// Start of a 64×64 tile image.
 pub static mut ds_source: *mut u8 = ptr::null_mut();
 
 /// Just for profiling.
-pub static mut dscount: c_int = 0;
+pub static mut dscount: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // R_DrawColumn
@@ -194,9 +192,9 @@ pub fn R_DrawColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawColumn: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
-            dc_x as c_int
+            { dc_yl },
+            { dc_yh },
+            { dc_x }
         );
 
         // Framebuffer destination address.
@@ -246,9 +244,9 @@ pub fn R_DrawColumnLow() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawColumnLow: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
-            dc_x as c_int
+            { dc_yl },
+            { dc_yh },
+            { dc_x }
         );
 
         let mut dest = ylookup[dc_yl as usize].add(columnofs[x as usize] as usize);
@@ -310,9 +308,9 @@ pub fn R_DrawFuzzColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawFuzzColumn: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
-            dc_x as c_int
+            { dc_yl },
+            { dc_yh },
+            { dc_x }
         );
 
         let mut dest = ylookup[dc_yl as usize].add(columnofs[dc_x as usize] as usize);
@@ -328,7 +326,7 @@ pub fn R_DrawFuzzColumn() {
 
             // Clamp table lookup index.
             fuzzpos += 1;
-            if fuzzpos == FUZZTABLE as c_int {
+            if fuzzpos == FUZZTABLE as i32 {
                 fuzzpos = 0;
             }
 
@@ -376,9 +374,9 @@ pub fn R_DrawFuzzColumnLow() {
         debug_assert!(
             (x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawFuzzColumnLow: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
-            dc_x as c_int
+            { dc_yl },
+            { dc_yh },
+            { dc_x }
         );
 
         let mut dest = ylookup[dc_yl as usize].add(columnofs[x as usize] as usize);
@@ -394,7 +392,7 @@ pub fn R_DrawFuzzColumnLow() {
 
             // Clamp table lookup index.
             fuzzpos += 1;
-            if fuzzpos == FUZZTABLE as c_int {
+            if fuzzpos == FUZZTABLE as i32 {
                 fuzzpos = 0;
             }
 
@@ -429,9 +427,9 @@ pub fn R_DrawTranslatedColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawTranslatedColumn: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
-            dc_x as c_int
+            { dc_yl },
+            { dc_yh },
+            { dc_x }
         );
 
         let mut dest = ylookup[dc_yl as usize].add(columnofs[dc_x as usize] as usize);
@@ -476,8 +474,8 @@ pub fn R_DrawTranslatedColumnLow() {
         debug_assert!(
             (x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawTranslatedColumnLow: {} to {} at {}",
-            dc_yl as c_int,
-            dc_yh as c_int,
+            { dc_yl },
+            { dc_yh },
             x
         );
 
@@ -573,9 +571,9 @@ pub fn R_DrawSpan() {
                 && ds_x2 < SCREENWIDTH
                 && (ds_y as u32) <= (SCREENHEIGHT as u32),
             "R_DrawSpan: {} to {} at {}",
-            ds_x1 as c_int,
-            ds_x2 as c_int,
-            ds_y as c_int
+            { ds_x1 },
+            { ds_x2 },
+            { ds_y }
         );
 
         loop {
@@ -632,9 +630,9 @@ pub fn R_DrawSpanLow() {
                 && ds_x2 < SCREENWIDTH
                 && (ds_y as u32) <= (SCREENHEIGHT as u32),
             "R_DrawSpanLow: {} to {} at {}",
-            ds_x1 as c_int,
-            ds_x2 as c_int,
-            ds_y as c_int
+            { ds_x1 },
+            { ds_x2 },
+            { ds_y }
         );
 
         let mut dest = ylookup[ds_y as usize].add(columnofs[ds_x1_low as usize] as usize);
@@ -674,7 +672,7 @@ pub fn R_DrawSpanLow() {
 ///
 /// Must be called whenever the viewport dimensions change (e.g. when the player resizes
 /// the view window).
-pub fn R_InitBuffer(width: c_int, height: c_int) {
+pub fn R_InitBuffer(width: i32, height: i32) {
     unsafe {
         // Handle resize, e.g. smaller view windows with border and/or status bar.
         viewwindowx = (SCREENWIDTH - width) >> 1;
@@ -696,23 +694,6 @@ pub fn R_InitBuffer(width: c_int, height: c_int) {
             ylookup[i as usize] = I_VideoBuffer.add(((i + viewwindowy) * SCREENWIDTH) as usize);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// DEH_String shim — identity in this build
-// ---------------------------------------------------------------------------
-
-/// Identity shim for the DeHackEd string-replacement function.
-///
-/// In the original C codebase `DEH_String` allows patch files to substitute string constants
-/// at runtime. This Rust build does not support DeHackEd patches, so the function simply
-/// returns its argument unchanged.
-///
-/// # Safety
-/// `s` must be a valid, non-null pointer to a NUL-terminated C string for the duration of
-/// any downstream C FFI call that receives the returned pointer.
-unsafe fn DEH_String(s: *const c_char) -> *const c_char {
-    s
 }
 
 // ---------------------------------------------------------------------------
@@ -749,10 +730,10 @@ pub fn R_FillBackScreen() {
             ) as *mut u8;
         }
 
-        let name = if gamemode == commercial {
-            DEH_String(c"GRNROCK".as_ptr())
+        let name: &[u8] = if gamemode == commercial {
+            DEH_String(b"GRNROCK")
         } else {
-            DEH_String(c"FLOOR7_2".as_ptr())
+            DEH_String(b"FLOOR7_2")
         };
 
         let src = W_CacheLumpName(name, 8) as *mut u8; // PU_CACHE = 8
@@ -774,22 +755,22 @@ pub fn R_FillBackScreen() {
         // Draw screen and bezel; this is done to a separate screen buffer.
         V_UseBuffer(background_buffer);
 
-        let mut patch = W_CacheLumpName(DEH_String(c"brdr_t".as_ptr()), 8) as *mut patch_t;
+        let mut patch = W_CacheLumpName(DEH_String(b"brdr_t"), 8) as *mut patch_t;
         for x in (0..scaledviewwidth).step_by(8) {
             V_DrawPatch(viewwindowx + x, viewwindowy - 8, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(c"brdr_b".as_ptr()), 8) as *mut patch_t;
+        patch = W_CacheLumpName(DEH_String(b"brdr_b"), 8) as *mut patch_t;
         for x in (0..scaledviewwidth).step_by(8) {
             V_DrawPatch(viewwindowx + x, viewwindowy + viewheight, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(c"brdr_l".as_ptr()), 8) as *mut patch_t;
+        patch = W_CacheLumpName(DEH_String(b"brdr_l"), 8) as *mut patch_t;
         for y in (0..viewheight).step_by(8) {
             V_DrawPatch(viewwindowx - 8, viewwindowy + y, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(c"brdr_r".as_ptr()), 8) as *mut patch_t;
+        patch = W_CacheLumpName(DEH_String(b"brdr_r"), 8) as *mut patch_t;
         for y in (0..viewheight).step_by(8) {
             V_DrawPatch(viewwindowx + scaledviewwidth, viewwindowy + y, patch);
         }
@@ -798,22 +779,22 @@ pub fn R_FillBackScreen() {
         V_DrawPatch(
             viewwindowx - 8,
             viewwindowy - 8,
-            W_CacheLumpName(DEH_String(c"brdr_tl".as_ptr()), 8) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"brdr_tl"), 8) as *mut patch_t,
         );
         V_DrawPatch(
             viewwindowx + scaledviewwidth,
             viewwindowy - 8,
-            W_CacheLumpName(DEH_String(c"brdr_tr".as_ptr()), 8) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"brdr_tr"), 8) as *mut patch_t,
         );
         V_DrawPatch(
             viewwindowx - 8,
             viewwindowy + viewheight,
-            W_CacheLumpName(DEH_String(c"brdr_bl".as_ptr()), 8) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"brdr_bl"), 8) as *mut patch_t,
         );
         V_DrawPatch(
             viewwindowx + scaledviewwidth,
             viewwindowy + viewheight,
-            W_CacheLumpName(DEH_String(c"brdr_br".as_ptr()), 8) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"brdr_br"), 8) as *mut patch_t,
         );
 
         V_RestoreBuffer();
@@ -828,7 +809,7 @@ pub fn R_FillBackScreen() {
 ///
 /// Used by `R_DrawViewBorder` to blit the pre-rendered bezel regions from `background_buffer`
 /// into `I_VideoBuffer`. Does nothing if `background_buffer` is null (full-screen mode).
-pub fn R_VideoErase(ofs: u32, count: c_int) {
+pub fn R_VideoErase(ofs: u32, count: i32) {
     unsafe {
         if !background_buffer.is_null() {
             ptr::copy_nonoverlapping(
@@ -862,11 +843,11 @@ pub fn R_DrawViewBorder() {
         let side = (SCREENWIDTH - scaledviewwidth) / 2;
 
         // copy top and one line of left side
-        R_VideoErase(0, (top * SCREENWIDTH + side) as c_int);
+        R_VideoErase(0, top * SCREENWIDTH + side);
 
         // copy one line of right side and bottom
         let ofs = ((viewheight + top) * SCREENWIDTH - side) as u32;
-        R_VideoErase(ofs, (top * SCREENWIDTH + side) as c_int);
+        R_VideoErase(ofs, top * SCREENWIDTH + side);
 
         // copy sides using wraparound
         let mut ofs = ((top * SCREENWIDTH) + SCREENWIDTH - side) as u32;
@@ -1446,7 +1427,7 @@ mod tests {
     /// Checks that `fuzzoffset` exactly matches the table from the C source (`r_draw.c`).
     #[test]
     fn fuzzoffset_exact_values() {
-        let expected: [c_int; FUZZTABLE] = [
+        let expected: [i32; FUZZTABLE] = [
             FUZZOFF, -FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF,
             -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF,
             -FUZZOFF, -FUZZOFF, -FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF,

@@ -24,10 +24,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{
-    ffi::{c_char, c_int, CStr},
-    ptr,
-};
+use std::{ffi::CStr, ptr};
 
 use super::{
     d_main::D_DoomMain,
@@ -185,11 +182,7 @@ pub fn platform() -> &'static dyn Platform {
 ///   process.
 /// - This function must be called exactly once; calling it a second time
 ///   would leak the first screen buffer and overwrite `myargc`/`myargv`.
-pub unsafe fn doomgeneric_Create(
-    platform: &'static dyn Platform,
-    argc: c_int,
-    argv: *mut *mut c_char,
-) {
+pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, argc: i32, argv: *mut *mut u8) {
     PLATFORM = Some(platform);
 
     myargc = argc;

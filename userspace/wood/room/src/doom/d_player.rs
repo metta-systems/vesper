@@ -9,7 +9,7 @@
 //!
 //! Rust differences from C:
 //! - Boolean fields (`cards`, `backpack`, `weaponowned`, `didsecret`) that are
-//!   `boolean` in C are stored as `c_int` here to keep the struct layout
+//!   `boolean` in C are stored as `i32` here to keep the struct layout
 //!   identical to the C ABI on x86-64 Linux (where `boolean = unsigned int =
 //!   4 bytes`).  Using a Rust `bool` would break layout because `bool` is 1
 //!   byte.
@@ -20,8 +20,6 @@
 //!   constructed" foreign types.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
-use std::{ffi::c_char, os::raw::c_int};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -43,13 +41,13 @@ pub const MAXPLAYERS: usize = 4;
 
 /// No-clip cheat flag: player passes through walls.  Matches `CF_NOCLIP` in `d_player.h`.
 // Cheat flags (d_player.h)
-pub const CF_NOCLIP: c_int = 1;
+pub const CF_NOCLIP: i32 = 1;
 
 /// God-mode cheat flag: player takes no damage.  Matches `CF_GODMODE` in `d_player.h`.
-pub const CF_GODMODE: c_int = 2;
+pub const CF_GODMODE: i32 = 2;
 
 /// No-momentum debug flag: player cannot move.  Matches `CF_NOMOMENTUM` in `d_player.h`.
-pub const CF_NOMOMENTUM: c_int = 4;
+pub const CF_NOMOMENTUM: i32 = 4;
 
 /// Opaque handle for the moving-object (`mobj_t`) C type.
 ///
@@ -104,7 +102,7 @@ pub struct TiccmdT {
     /// Strife-specific `BT2_*` secondary button bitfield (look, jump, inventory).
     pub buttons2: u8,
     /// Strife-specific inventory item index to use this tic.
-    pub inventory: c_int,
+    pub inventory: i32,
     /// Heretic/Hexen look-up/down/center command byte.
     pub lookfly: u8,
     /// Heretic/Hexen artifact (`artitype_t`) to activate this tic.
@@ -124,11 +122,11 @@ pub struct PspdefT {
     /// Pointer to the current animation state for this sprite overlay.
     pub state: *mut state_t,
     /// Remaining tics in the current animation state; 0 means advance to next.
-    pub tics: c_int,
+    pub tics: i32,
     /// Screen-space X position of the sprite, in fixed-point pixels.
-    pub sx: c_int,
+    pub sx: i32,
     /// Screen-space Y position of the sprite, in fixed-point pixels.
-    pub sy: c_int,
+    pub sy: i32,
 }
 
 /// Complete per-player state, updated every tic by the game logic.
@@ -147,73 +145,73 @@ pub struct PlayerT {
     /// Pointer to the player's map object (position, velocity, health during play).
     pub mo: *mut mobj_t,
     /// Current lifecycle state: alive (`PST_LIVE`), dead (`PST_DEAD`), or respawning (`PST_REBORN`).
-    pub playerstate: c_int,
+    pub playerstate: i32,
     /// The tic command built for this player this tic.
     pub cmd: TiccmdT,
     /// Camera height above the floor in fixed-point units (`fixed_t`).
-    pub viewz: c_int,
+    pub viewz: i32,
     /// Base eye height above the floor; normally 41 units.
-    pub viewheight: c_int,
+    pub viewheight: i32,
     /// Per-tic adjustment to `viewheight` for landing/bobbing smoothness.
-    pub deltaviewheight: c_int,
+    pub deltaviewheight: i32,
     /// Bounded total momentum magnitude used to drive weapon and view bob.
-    pub bob: c_int,
+    pub bob: i32,
     /// Player health between levels (during a level, `mo->health` is authoritative).
-    pub health: c_int,
+    pub health: i32,
     /// Armor point total; 0 = no armor.
-    pub armorpoints: c_int,
+    pub armorpoints: i32,
     /// Armor type: 0 = none, 1 = green armor (33%), 2 = blue armor (50%).
-    pub armortype: c_int,
+    pub armortype: i32,
     /// Active power-up tic counters (`pw_*` index); invulnerability/invisibility count down.
-    pub powers: [c_int; NUMPOWERS],
+    pub powers: [i32; NUMPOWERS],
     /// Key card / skull key possession flags (`it_*` index); non-zero means owned.
-    pub cards: [c_int; NUMCARDS],
+    pub cards: [i32; NUMCARDS],
     /// Non-zero if the player has picked up a backpack (doubles max ammo).
-    pub backpack: c_int,
+    pub backpack: i32,
     /// Per-player frag counts indexed by player number.
-    pub frags: [c_int; MAXPLAYERS],
+    pub frags: [i32; MAXPLAYERS],
     /// Currently active weapon (`weapontype_t` value).
-    pub readyweapon: c_int,
+    pub readyweapon: i32,
     /// Weapon the player has requested to switch to; `wp_nochange` if none.
-    pub pendingweapon: c_int,
+    pub pendingweapon: i32,
     /// Weapon ownership flags; non-zero at index `i` means weapon `i` is owned.
-    pub weaponowned: [c_int; NUMWEAPONS],
+    pub weaponowned: [i32; NUMWEAPONS],
     /// Current ammo count per ammo type (`am_*` index).
-    pub ammo: [c_int; NUMAMMO],
+    pub ammo: [i32; NUMAMMO],
     /// Maximum ammo capacity per ammo type; doubled after picking up a backpack.
-    pub maxammo: [c_int; NUMAMMO],
+    pub maxammo: [i32; NUMAMMO],
     /// Non-zero if the attack button was held last tic (prevents auto-fire restart).
-    pub attackdown: c_int,
+    pub attackdown: i32,
     /// Non-zero if the use button was held last tic (prevents repeated use on hold).
-    pub usedown: c_int,
+    pub usedown: i32,
     /// Bitmask of active cheat flags (`CF_NOCLIP`, `CF_GODMODE`, `CF_NOMOMENTUM`).
-    pub cheats: c_int,
+    pub cheats: i32,
     /// Refiring counter; incremented while the fire button is held; accuracy decreases while non-zero.
-    pub refire: c_int,
+    pub refire: i32,
     /// Total kills this level (used by intermission screen).
-    pub killcount: c_int,
+    pub killcount: i32,
     /// Total items picked up this level (used by intermission screen).
-    pub itemcount: c_int,
+    pub itemcount: i32,
     /// Total secrets found this level (used by intermission screen).
-    pub secretcount: c_int,
+    pub secretcount: i32,
     /// Pointer to the current HUD hint message string, or null if none.
-    pub message: *mut c_char,
+    pub message: *mut u8,
     /// Tic counter for red damage flash; decrements toward 0 each tic.
-    pub damagecount: c_int,
+    pub damagecount: i32,
     /// Tic counter for yellow bonus flash; decrements toward 0 each tic.
-    pub bonuscount: c_int,
+    pub bonuscount: i32,
     /// Pointer to the `mobj_t` that last damaged this player; null for environment damage.
     pub attacker: *mut mobj_t,
     /// Extra lighting bonus for gun flashes (added to sector light level during render).
-    pub extralight: c_int,
+    pub extralight: i32,
     /// If non-zero, overrides the colormap used to render the player's view (e.g., `REDCOLORMAP` for pain).
-    pub fixedcolormap: c_int,
+    pub fixedcolormap: i32,
     /// Player skin color shift index (0-3), used by the renderer to select the palette range.
-    pub colormap: c_int,
+    pub colormap: i32,
     /// Weapon and muzzle-flash overlay sprites drawn on top of the 3-D view.
     pub psprites: [PspdefT; NUMPSPRITES],
     /// Non-zero if this player has completed a secret level this episode.
-    pub didsecret: c_int,
+    pub didsecret: i32,
 }
 
 /// The player state array (`players`) and the index of the player whose view
@@ -234,9 +232,8 @@ pub use crate::doom::g_game::{consoleplayer, players};
 ///   valid at least until the next game tic clears the message field.
 /// - `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
 ///   function is called (guaranteed by the engine's startup sequence).
-pub unsafe fn M_Menu_SetPlayerMessage(msg: *const c_char) {
-    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
-        msg as *mut c_char;
+pub unsafe fn M_Menu_SetPlayerMessage(msg: *const u8) {
+    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message = msg as *mut u8;
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@
 //! resources through [`thread_local!`] statics, which is safe because
 //! everything runs on the main thread.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::CString;
 
 use winit::{
     application::ApplicationHandler,
@@ -50,7 +50,7 @@ struct App {
 
     /// Raw C-style pointer array derived from `args`, passed to
     /// `doomgeneric_Create` as `argv`.
-    argv: Vec<*mut c_char>,
+    argv: Vec<*mut u8>,
 
     /// `true` after `doomgeneric_Create` has returned and the first tick
     /// has been executed, so that subsequent `about_to_wait` calls use
@@ -82,7 +82,7 @@ impl App {
             .map(|a| CString::new(a).expect("argument contained null byte"))
             .collect();
 
-        let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+        let mut argv: Vec<*mut u8> = args.iter().map(|s| s.as_ptr().cast_mut().cast()).collect();
         // The C standard requires `argv[argc]` to be a null pointer.
         argv.push(std::ptr::null_mut());
 
@@ -199,7 +199,7 @@ impl ApplicationHandler for App {
             // SAFETY:
             // - `self.args` is alive for the lifetime of the programme.
             // - `self.argv` contains valid pointers into `self.args`.
-            let argc = (self.argv.len() - 1) as c_int; // exclude trailing null
+            let argc = (self.argv.len() - 1) as i32; // exclude trailing null
             unsafe {
                 room::doom::doomgeneric::doomgeneric_Create(&Host, argc, self.argv.as_mut_ptr());
             }

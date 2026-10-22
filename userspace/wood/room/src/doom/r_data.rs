@@ -33,7 +33,7 @@
 
 use {
     crate::i_error,
-    std::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void, CStr},
+    std::ffi::{c_void, CStr},
 };
 
 use std::ptr;
@@ -61,21 +61,8 @@ fn SHORT(x: i16) -> i16 {
 ///
 /// Analogous to `SHORT`; a no-op on little-endian hosts.
 #[inline]
-fn LONG(x: c_int) -> c_int {
+fn LONG(x: i32) -> i32 {
     x
-}
-
-/// Pass-through for DeHackEd string substitution (not implemented in this port).
-///
-/// In the upstream Chocolate Doom source `DEH_String` allows patch files to
-/// override lump names at runtime.  This port does not support DeHackEd, so
-/// the function returns its argument unchanged.
-///
-/// # Safety
-///
-/// `s` must be a valid, null-terminated C string for the lifetime of the call.
-unsafe fn DEH_String(s: *const c_char) -> *const c_char {
-    s
 }
 
 // ---------------------------------------------------------------------------
@@ -110,15 +97,15 @@ struct mappatch_t {
 #[derive(Clone, Copy)]
 struct maptexture_t {
     /// Texture name, up to 8 ASCII characters, NUL-padded.
-    name: [c_char; 8],
+    name: [u8; 8],
     /// Non-zero if the texture has transparent holes (unused by the renderer).
-    masked: c_int,
+    masked: i32,
     /// Texture width in pixels.
     width: i16,
     /// Texture height in pixels.
     height: i16,
     /// Obsolete field present in the WAD format; ignored.
-    obsolete: c_int,
+    obsolete: i32,
     /// Number of `mappatch_t` entries that follow this struct in memory.
     patchcount: i16,
     /// First patch entry; additional patches follow contiguously in WAD data.
@@ -137,7 +124,7 @@ struct texpatch_t {
     /// Vertical origin of the patch within the texture, in pixels.
     originy: i16,
     /// WAD lump number of the patch graphic.
-    patch: c_int,
+    patch: i32,
 }
 
 /// Runtime texture descriptor held in the `textures` pointer array (C layout).
@@ -150,13 +137,13 @@ struct texpatch_t {
 #[repr(C)]
 struct texture_t {
     /// Texture name, up to 8 ASCII characters, NUL-padded.
-    name: [c_char; 8],
+    name: [u8; 8],
     /// Texture width in pixels.
     width: i16,
     /// Texture height in pixels.
     height: i16,
     /// Index of this texture in the `textures` array; set by `GenerateTextureHashTable`.
-    index: c_int,
+    index: i32,
     /// Next entry in the hash-table chain for this bucket, or null.
     next: *mut texture_t,
     /// Number of `texpatch_t` entries that follow this struct in memory.
@@ -210,9 +197,9 @@ pub type column_t = post_t;
 #[derive(Clone, Copy)]
 struct spriteframe_t {
     /// Non-zero if the sprite has per-rotation variants; 0 for a single view.
-    pub rotate: c_int,
+    pub rotate: i32,
     /// Lump offsets (from `firstspritelump`) for each of the 8 rotations.
-    pub lump: [c_short; 8],
+    pub lump: [i16; 8],
     /// Mirror flags for each rotation (non-zero = draw flipped).
     pub flip: [u8; 8],
 }
@@ -224,7 +211,7 @@ struct spriteframe_t {
 #[repr(C)]
 struct spritedef_t {
     /// Number of animation frames.
-    pub numframes: c_int,
+    pub numframes: i32,
     /// Heap-allocated array of frame descriptors, length `numframes`.
     pub spriteframes: *mut spriteframe_t,
 }
@@ -233,12 +220,8 @@ struct spritedef_t {
 // C library
 // ---------------------------------------------------------------------------
 
-extern "C" {
-    /// POSIX case-insensitive string comparison, at most `n` bytes.
-    fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
-}
-
 use crate::doom::{
+    deh_str::DEH_String,
     g_game::demoplayback,
     i_system::I_ConsoleStdout,
     m_misc::M_StringCopy,
@@ -248,8 +231,8 @@ use crate::doom::{
     r_sky::skytexture,
     r_things::{numsprites, sprites},
     w_wad::{
-        lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName,
-        W_LumpLength, W_LumpNameHash, W_ReleaseLumpName,
+        lump_name, lump_names_equal, lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName,
+        W_GetNumForName, W_LumpLength, W_LumpNameHash, W_ReleaseLumpName,
     },
     z_zone::{Z_ChangeTag2, Z_Free, Z_Malloc},
 };
@@ -262,55 +245,55 @@ use crate::doom::{
 ///
 /// Exported as `extern int firstflat` in `r_state.h`.  Used by `r_plane.c`
 /// to compute lump numbers from flat indices: `lump = firstflat + flatnum`.
-pub static mut firstflat: c_int = 0;
+pub static mut firstflat: i32 = 0;
 
 /// WAD lump index of the last flat (the lump before `F_END`).
 ///
 /// Not in `r_state.h`; declared locally in `p_spec.c`.  Together with
 /// `firstflat` it defines the flat lump range in the WAD.
-pub static mut lastflat: c_int = 0;
+pub static mut lastflat: i32 = 0;
 
 /// Total number of flat lumps (`lastflat - firstflat + 1`).
 ///
 /// Declared locally in `p_spec.c` (not in `r_state.h`) as `extern int numflats`
 /// for animation bounds checking.
-pub static mut numflats: c_int = 0;
+pub static mut numflats: i32 = 0;
 
 /// WAD lump index of the first patch lump (the lump after the patch namespace marker).
 ///
 /// Initialized but not currently used by the renderer; present to mirror the C globals.
-pub static mut firstpatch: c_int = 0;
+pub static mut firstpatch: i32 = 0;
 
 /// WAD lump index of the last patch lump.
-pub static mut lastpatch: c_int = 0;
+pub static mut lastpatch: i32 = 0;
 
 /// Total number of patch lumps.
-pub static mut numpatches: c_int = 0;
+pub static mut numpatches: i32 = 0;
 
 /// WAD lump index of the first sprite lump (the lump after `S_START`).
 ///
 /// Exported via `r_state.h`.  Used by `r_things.c` and `f_finale.c` to
 /// convert sprite-relative lump indices to absolute WAD lump numbers:
 /// `lump = firstspritelump + relative`.
-pub static mut firstspritelump: c_int = 0;
+pub static mut firstspritelump: i32 = 0;
 
 /// WAD lump index of the last sprite lump (the lump before `S_END`).
 ///
 /// Exported via `r_state.h`.  Used by `r_things.c` when scanning the WAD for
 /// sprite frames.
-pub static mut lastspritelump: c_int = 0;
+pub static mut lastspritelump: i32 = 0;
 
 /// Total number of sprite lumps (`lastspritelump - firstspritelump + 1`).
 ///
 /// Exported via `r_state.h`.  Bounds the `spritewidth`, `spriteoffset`, and
 /// `spritetopoffset` arrays.
-pub static mut numspritelumps: c_int = 0;
+pub static mut numspritelumps: i32 = 0;
 
 /// Total number of wall textures loaded from TEXTURE1 and TEXTURE2.
 ///
 ///Bounds all per-texture arrays and the hash
 /// table.
-pub static mut numtextures: c_int = 0;
+pub static mut numtextures: i32 = 0;
 
 /// Array of pointers to runtime texture descriptors, length `numtextures`.
 ///
@@ -328,32 +311,32 @@ static mut textures_hashtable: *mut *mut texture_t = ptr::null_mut();
 ///
 /// Used by `R_GetColumn` to wrap column indices: `col & texturewidthmask[tex]`.
 /// Private; not exported to C.
-static mut texturewidthmask: *mut c_int = ptr::null_mut();
+static mut texturewidthmask: *mut i32 = ptr::null_mut();
 
 /// Per-texture height in 16.16 fixed-point units, length `numtextures`.
 ///
 /// Exported via `r_state.h` as `fixed_t *textureheight`.  Used by `r_segs.c`
 /// and `p_floor.c` for texture-pegging calculations.
-pub static mut textureheight: *mut c_int = ptr::null_mut();
+pub static mut textureheight: *mut i32 = ptr::null_mut();
 
 /// Per-texture total byte size of the composite column buffer, length `numtextures`.
 ///
 /// A zero entry means the texture has no multi-patch columns and no composite
 /// buffer is ever allocated.  Private.
-static mut texturecompositesize: *mut c_int = ptr::null_mut();
+static mut texturecompositesize: *mut i32 = ptr::null_mut();
 
 /// Per-texture array of column-lump indices, each array has `texture.width` entries.
 ///
 /// `texturecolumnlump[tex][col]` is the WAD lump number to use for column
 /// `col` of texture `tex`, or `-1` if the column requires compositing.
 /// Private.
-static mut texturecolumnlump: *mut *mut c_short = ptr::null_mut();
+static mut texturecolumnlump: *mut *mut i16 = ptr::null_mut();
 
 /// Per-texture array of column byte offsets, each array has `texture.width` entries.
 ///
 /// `texturecolumnofs[tex][col]` is the byte offset within the lump (or within
 /// the composite buffer) for the start of column data.  Private.
-static mut texturecolumnofs: *mut *mut c_ushort = ptr::null_mut();
+static mut texturecolumnofs: *mut *mut u16 = ptr::null_mut();
 
 /// Per-texture pointer to the composited column buffer, length `numtextures`.
 ///
@@ -367,32 +350,32 @@ static mut texturecomposite: *mut *mut u8 = ptr::null_mut();
 /// Exported via `r_state.h` as `int *flattranslation`.  `p_spec.c` updates
 /// entries during animated flat processing; `r_plane.c` uses
 /// `flattranslation[pl->picnum]` when fetching the actual lump to draw.
-pub static mut flattranslation: *mut c_int = ptr::null_mut();
+pub static mut flattranslation: *mut i32 = ptr::null_mut();
 
 /// Texture animation translation table, length `numtextures + 1`.
 ///
 /// Exported via `r_state.h` as `int *texturetranslation`.  `p_spec.c`
 /// updates entries for animated textures; `r_segs.c` applies the translation
 /// before calling `R_GetColumn`.
-pub static mut texturetranslation: *mut c_int = ptr::null_mut();
+pub static mut texturetranslation: *mut i32 = ptr::null_mut();
 
 /// Per-sprite-lump width in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spritewidth`.  Used by `r_things.c`
 /// to compute screen-space sprite extents.
-pub static mut spritewidth: *mut c_int = ptr::null_mut();
+pub static mut spritewidth: *mut i32 = ptr::null_mut();
 
 /// Per-sprite-lump horizontal draw offset in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spriteoffset`.  Used by `r_things.c`
 /// to position sprites relative to the thing's world coordinates.
-pub static mut spriteoffset: *mut c_int = ptr::null_mut();
+pub static mut spriteoffset: *mut i32 = ptr::null_mut();
 
 /// Per-sprite-lump vertical draw offset in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spritetopoffset`.  Used by
 /// `r_things.c` to compute the top screen row of each sprite.
-pub static mut spritetopoffset: *mut c_int = ptr::null_mut();
+pub static mut spritetopoffset: *mut i32 = ptr::null_mut();
 
 /// Pointer to the COLORMAP lump data: 34 colormaps of 256 bytes each.
 ///
@@ -405,17 +388,17 @@ pub static mut colormaps: *mut u8 = ptr::null_mut();
 /// Total bytes of flat data touched during `R_PrecacheLevel`, for diagnostics.
 ///
 ///Corresponds to `flatmemory` in `r_data.c`.
-pub static mut flatmemory: c_int = 0;
+pub static mut flatmemory: i32 = 0;
 
 /// Total bytes of texture patch data touched during `R_PrecacheLevel`, for diagnostics.
 ///
 ///Corresponds to `texturememory` in `r_data.c`.
-pub static mut texturememory: c_int = 0;
+pub static mut texturememory: i32 = 0;
 
 /// Total bytes of sprite lump data touched during `R_PrecacheLevel`, for diagnostics.
 ///
 ///Corresponds to `spritememory` in `r_data.c`.
-pub static mut spritememory: c_int = 0;
+pub static mut spritememory: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // R_DrawColumnInCache
@@ -444,14 +427,14 @@ pub static mut spritememory: c_int = 0;
 unsafe fn R_DrawColumnInCache(
     patch: *mut column_t,
     cache: *mut u8,
-    originy: c_int,
-    cacheheight: c_int,
+    originy: i32,
+    cacheheight: i32,
 ) {
     let mut patch = patch;
     while (*patch).topdelta != 0xff {
         let source = (patch as *mut u8).add(3);
-        let mut count = (*patch).length as c_int;
-        let mut position = originy + (*patch).topdelta as c_int;
+        let mut count = (*patch).length as i32;
+        let mut position = originy + (*patch).topdelta as i32;
 
         if position < 0 {
             count += position;
@@ -488,7 +471,7 @@ unsafe fn R_DrawColumnInCache(
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called first.
 /// - `texturecompositesize[texnum]` must be non-zero (ensured by
 ///   `R_GenerateLookup` for textures with overlapping patches).
-pub unsafe fn R_GenerateComposite(texnum: c_int) {
+pub unsafe fn R_GenerateComposite(texnum: i32) {
     let texture = *textures.add(texnum as usize);
 
     let block = Z_Malloc(
@@ -499,21 +482,21 @@ pub unsafe fn R_GenerateComposite(texnum: c_int) {
 
     let collump = *texturecolumnlump.add(texnum as usize);
     let colofs = *texturecolumnofs.add(texnum as usize);
-    let patchcount = (*texture).patchcount as c_int;
+    let patchcount = (*texture).patchcount as i32;
     let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
 
     for i in 0..patchcount {
         let patch = patches_base.add(i as usize);
         let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
-        let x1 = (*patch).originx as c_int;
-        let mut x2 = x1 + SHORT((*realpatch).width) as c_int;
+        let x1 = (*patch).originx as i32;
+        let mut x2 = x1 + SHORT((*realpatch).width) as i32;
 
         let mut x = if x1 < 0 { 0 } else { x1 };
-        if x2 > (*texture).width as c_int {
-            x2 = (*texture).width as c_int;
+        if x2 > (*texture).width as i32 {
+            x2 = (*texture).width as i32;
         }
 
-        let columnofs = (realpatch as *mut u8).add(8) as *mut c_int;
+        let columnofs = (realpatch as *mut u8).add(8) as *mut i32;
         while x < x2 {
             if *collump.add(x as usize) >= 0 {
                 x += 1;
@@ -525,8 +508,8 @@ pub unsafe fn R_GenerateComposite(texnum: c_int) {
             R_DrawColumnInCache(
                 patchcol,
                 block.add(*colofs.add(x as usize) as usize),
-                (*patch).originy as c_int,
-                (*texture).height as c_int,
+                (*patch).originy as i32,
+                (*texture).height as i32,
             );
             x += 1;
         }
@@ -558,9 +541,9 @@ pub unsafe fn R_GenerateComposite(texnum: c_int) {
 /// - `texnum` must be in `0..numtextures`.
 /// - `texturecolumnlump[texnum]` and `texturecolumnofs[texnum]` must already
 ///   be allocated (done by `R_InitTextures` before this call).
-pub unsafe fn R_GenerateLookup(texnum: c_int) {
+pub unsafe fn R_GenerateLookup(texnum: i32) {
     let texture = *textures.add(texnum as usize);
-    let width = (*texture).width as c_int;
+    let width = (*texture).width as i32;
 
     *texturecomposite.add(texnum as usize) = ptr::null_mut();
     *texturecompositesize.add(texnum as usize) = 0;
@@ -581,22 +564,22 @@ pub unsafe fn R_GenerateLookup(texnum: c_int) {
     }
 
     let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
-    for i in 0..(*texture).patchcount as c_int {
+    for i in 0..(*texture).patchcount as i32 {
         let patch = patches_base.add(i as usize);
         let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
-        let x1 = (*patch).originx as c_int;
-        let mut x2 = x1 + SHORT((*realpatch).width) as c_int;
+        let x1 = (*patch).originx as i32;
+        let mut x2 = x1 + SHORT((*realpatch).width) as i32;
 
         let mut x = if x1 < 0 { 0 } else { x1 };
         if x2 > width {
             x2 = width;
         }
 
-        let columnofs = (realpatch as *mut u8).add(8) as *mut c_int;
+        let columnofs = (realpatch as *mut u8).add(8) as *mut i32;
         while x < x2 {
             *patchcount.add(x as usize) += 1;
-            *collump.add(x as usize) = (*patch).patch as c_short;
-            *colofs.add(x as usize) = (LONG(*columnofs.add((x - x1) as usize)) + 3) as c_ushort;
+            *collump.add(x as usize) = (*patch).patch as i16;
+            *colofs.add(x as usize) = (LONG(*columnofs.add((x - x1) as usize)) + 3) as u16;
             x += 1;
         }
     }
@@ -604,7 +587,9 @@ pub unsafe fn R_GenerateLookup(texnum: c_int) {
     for x in 0..width {
         if *patchcount.add(x as usize) == 0 {
             libc::printf(
-                c"R_GenerateLookup: column without a patch (%s)\n".as_ptr(),
+                c"R_GenerateLookup: column without a patch (%s)\n"
+                    .as_ptr()
+                    .cast(),
                 (*texture).name.as_ptr(),
             );
             Z_Free(patchcount as *mut c_void);
@@ -612,12 +597,12 @@ pub unsafe fn R_GenerateLookup(texnum: c_int) {
         }
         if *patchcount.add(x as usize) > 1 {
             *collump.add(x as usize) = -1;
-            *colofs.add(x as usize) = *texturecompositesize.add(texnum as usize) as c_ushort;
+            *colofs.add(x as usize) = *texturecompositesize.add(texnum as usize) as u16;
 
-            if *texturecompositesize.add(texnum as usize) > 0x10000 - (*texture).height as c_int {
+            if *texturecompositesize.add(texnum as usize) > 0x10000 - (*texture).height as i32 {
                 i_error!("R_GenerateLookup: texture {} is >64k", texnum);
             }
-            *texturecompositesize.add(texnum as usize) += (*texture).height as c_int;
+            *texturecompositesize.add(texnum as usize) += (*texture).height as i32;
         }
     }
 
@@ -647,10 +632,10 @@ pub unsafe fn R_GenerateLookup(texnum: c_int) {
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called.
 /// - The returned pointer is valid until the zone allocator evicts the
 ///   underlying lump or composite buffer.
-pub unsafe fn R_GetColumn(tex: c_int, col: c_int) -> *mut u8 {
+pub unsafe fn R_GetColumn(tex: i32, col: i32) -> *mut u8 {
     let col = col & *texturewidthmask.add(tex as usize);
-    let lump = *(*texturecolumnlump.add(tex as usize)).add(col as usize) as c_int;
-    let ofs = *(*texturecolumnofs.add(tex as usize)).add(col as usize) as c_int;
+    let lump = *(*texturecolumnlump.add(tex as usize)).add(col as usize) as i32;
+    let ofs = *(*texturecolumnofs.add(tex as usize)).add(col as usize) as i32;
 
     if lump > 0 {
         return (W_CacheLumpNum(lump, PU_CACHE) as *mut u8).add(ofs as usize);
@@ -684,7 +669,7 @@ pub unsafe fn R_GetColumn(tex: c_int, col: c_int) -> *mut u8 {
 /// - Must not be called more than once per session (would leak the old table).
 unsafe fn GenerateTextureHashTable() {
     textures_hashtable = Z_Malloc(
-        ((std::mem::size_of::<*mut texture_t>() * numtextures as usize) as c_int) as c_int,
+        ((std::mem::size_of::<*mut texture_t>() * numtextures as usize) as i32) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
@@ -695,9 +680,9 @@ unsafe fn GenerateTextureHashTable() {
 
     for i in 0..numtextures as usize {
         let tex = *textures.add(i);
-        (*tex).index = i as c_int;
+        (*tex).index = i as i32;
 
-        let key = (W_LumpNameHash((*tex).name.as_ptr()) % numtextures as c_uint) as usize;
+        let key = (W_LumpNameHash(&(*tex).name) % numtextures as u32) as usize;
         let mut rover = textures_hashtable.add(key);
 
         while !(*rover).is_null() {
@@ -736,89 +721,89 @@ unsafe fn GenerateTextureHashTable() {
 /// - WAD must be fully loaded (`W_Init` must have been called).
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitTextures() {
-    let mut name: [c_char; 9] = [0; 9];
+    let mut name: [u8; 9] = [0; 9];
 
-    let names = W_CacheLumpName(DEH_String(c"PNAMES".as_ptr()), PU_STATIC) as *mut c_int;
+    let names = W_CacheLumpName(DEH_String(b"PNAMES"), PU_STATIC) as *mut i32;
     let nummappatches = LONG(*names);
-    let name_p = names.add(1) as *mut c_char;
+    let name_p = names.add(1) as *mut u8;
 
     let patchlookup = Z_Malloc(
-        (nummappatches as usize * std::mem::size_of::<c_int>()) as c_int,
+        (nummappatches as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
 
     for i in 0..nummappatches as usize {
         M_StringCopy(name.as_mut_ptr(), name_p.add(i * 8), name.len());
-        *patchlookup.add(i) = W_CheckNumForName(name.as_mut_ptr());
+        *patchlookup.add(i) = W_CheckNumForName(&name);
     }
-    W_ReleaseLumpName(DEH_String(c"PNAMES".as_ptr()));
+    W_ReleaseLumpName(DEH_String(b"PNAMES"));
 
-    let maptex1 = W_CacheLumpName(DEH_String(c"TEXTURE1".as_ptr()), PU_STATIC) as *mut c_int;
+    let maptex1 = W_CacheLumpName(DEH_String(b"TEXTURE1"), PU_STATIC) as *mut i32;
     let numtextures1 = LONG(*maptex1);
-    let maxoff = W_LumpLength(W_GetNumForName(DEH_String(c"TEXTURE1".as_ptr())) as c_uint);
+    let maxoff = W_LumpLength(W_GetNumForName(DEH_String(b"TEXTURE1")) as u32);
     let directory = maptex1.add(1);
 
-    let mut maptex2: *mut c_int = ptr::null_mut();
-    let mut numtextures2: c_int = 0;
-    let mut maxoff2: c_int = 0;
+    let mut maptex2: *mut i32 = ptr::null_mut();
+    let mut numtextures2: i32 = 0;
+    let mut maxoff2: i32 = 0;
 
-    if W_CheckNumForName(DEH_String(c"TEXTURE2".as_ptr())) != -1 {
-        maptex2 = W_CacheLumpName(DEH_String(c"TEXTURE2".as_ptr()), PU_STATIC) as *mut c_int;
+    if W_CheckNumForName(DEH_String(b"TEXTURE2")) != -1 {
+        maptex2 = W_CacheLumpName(DEH_String(b"TEXTURE2"), PU_STATIC) as *mut i32;
         numtextures2 = LONG(*maptex2);
-        maxoff2 = W_LumpLength(W_GetNumForName(DEH_String(c"TEXTURE2".as_ptr())) as c_uint);
+        maxoff2 = W_LumpLength(W_GetNumForName(DEH_String(b"TEXTURE2")) as u32);
     }
 
     numtextures = numtextures1 + numtextures2;
 
     textures = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut texture_t>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<*mut texture_t>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
     texturecolumnlump = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut c_short>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<*mut i16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut *mut c_short;
+    ) as *mut *mut i16;
     texturecolumnofs = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut c_ushort>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<*mut u16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut *mut c_ushort;
+    ) as *mut *mut u16;
     texturecomposite = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut u8>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<*mut u8>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut u8;
     texturecompositesize = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
     texturewidthmask = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
     textureheight = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
 
-    let temp1 = W_GetNumForName(DEH_String(c"S_START".as_ptr()));
-    let temp2 = W_GetNumForName(DEH_String(c"S_END".as_ptr())) - 1;
+    let temp1 = W_GetNumForName(DEH_String(b"S_START"));
+    let temp2 = W_GetNumForName(DEH_String(b"S_END")) - 1;
     let temp3 = ((temp2 - temp1 + 63) / 64) + ((numtextures + 63) / 64);
 
     if I_ConsoleStdout() != 0 {
-        libc::printf(c"[".as_ptr());
+        libc::printf(c"[".as_ptr().cast());
         for _ in 0..temp3 + 9 {
-            libc::printf(c" ".as_ptr());
+            libc::printf(c" ".as_ptr().cast());
         }
-        libc::printf(c"]".as_ptr());
+        libc::printf(c"]".as_ptr().cast());
         for _ in 0..temp3 + 10 {
-            libc::printf(c"\x08".as_ptr());
+            libc::printf(c"\x08".as_ptr().cast());
         }
     }
 
@@ -828,7 +813,7 @@ pub unsafe fn R_InitTextures() {
 
     for i in 0..numtextures as usize {
         if (i & 63) == 0 {
-            libc::printf(c".".as_ptr());
+            libc::printf(c".".as_ptr().cast());
         }
 
         if i == numtextures1 as usize {
@@ -845,10 +830,10 @@ pub unsafe fn R_InitTextures() {
         }
 
         let mtexture = (maptex as *mut u8).offset(offset) as *mut maptexture_t;
-        let patchcount = SHORT((*mtexture).patchcount) as c_int;
+        let patchcount = SHORT((*mtexture).patchcount) as i32;
         let texsize = std::mem::size_of::<texture_t>()
             + std::mem::size_of::<texpatch_t>() * (patchcount as usize - 1);
-        let texture = Z_Malloc(texsize as c_int, PU_STATIC, ptr::null_mut()) as *mut texture_t;
+        let texture = Z_Malloc(texsize as i32, PU_STATIC, ptr::null_mut()) as *mut texture_t;
         *textures.add(i) = texture;
 
         (*texture).width = SHORT((*mtexture).width);
@@ -869,48 +854,48 @@ pub unsafe fn R_InitTextures() {
             if (*patch).patch == -1 {
                 i_error!(
                     "R_InitTextures: Missing patch in texture {}",
-                    CStr::from_ptr((*texture).name.as_ptr()).to_string_lossy()
+                    CStr::from_ptr((*texture).name.as_ptr().cast()).to_string_lossy()
                 );
             }
         }
 
-        let twidth = (*texture).width as c_int;
+        let twidth = (*texture).width as i32;
         *texturecolumnlump.add(i) = Z_Malloc(
-            (twidth as usize * std::mem::size_of::<c_short>()) as c_int,
+            (twidth as usize * std::mem::size_of::<i16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
-        ) as *mut c_short;
+        ) as *mut i16;
         *texturecolumnofs.add(i) = Z_Malloc(
-            (twidth as usize * std::mem::size_of::<c_ushort>()) as c_int,
+            (twidth as usize * std::mem::size_of::<u16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
-        ) as *mut c_ushort;
+        ) as *mut u16;
 
         let mut j = 1;
         while j * 2 <= twidth {
             j <<= 1;
         }
         *texturewidthmask.add(i) = j - 1;
-        *textureheight.add(i) = ((*texture).height as c_int) << FRACBITS;
+        *textureheight.add(i) = ((*texture).height as i32) << FRACBITS;
     }
 
     Z_Free(patchlookup as *mut c_void);
-    W_ReleaseLumpName(DEH_String(c"TEXTURE1".as_ptr()));
+    W_ReleaseLumpName(DEH_String(b"TEXTURE1"));
     if !maptex2.is_null() {
-        W_ReleaseLumpName(DEH_String(c"TEXTURE2".as_ptr()));
+        W_ReleaseLumpName(DEH_String(b"TEXTURE2"));
     }
 
     for i in 0..numtextures as usize {
-        R_GenerateLookup(i as c_int);
+        R_GenerateLookup(i as i32);
     }
 
     texturetranslation = Z_Malloc(
-        ((numtextures as usize + 1) * std::mem::size_of::<c_int>()) as c_int,
+        ((numtextures as usize + 1) * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
     for i in 0..numtextures as usize {
-        *texturetranslation.add(i) = i as c_int;
+        *texturetranslation.add(i) = i as i32;
     }
 
     GenerateTextureHashTable();
@@ -933,18 +918,18 @@ pub unsafe fn R_InitTextures() {
 /// - WAD must be fully loaded; `F_START` and `F_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitFlats() {
-    firstflat = W_GetNumForName(DEH_String(c"F_START".as_ptr())) + 1;
-    lastflat = W_GetNumForName(DEH_String(c"F_END".as_ptr())) - 1;
+    firstflat = W_GetNumForName(DEH_String(b"F_START")) + 1;
+    lastflat = W_GetNumForName(DEH_String(b"F_END")) - 1;
     numflats = lastflat - firstflat + 1;
 
     flattranslation = Z_Malloc(
-        ((numflats as usize + 1) * std::mem::size_of::<c_int>()) as c_int,
+        ((numflats as usize + 1) * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
 
     for i in 0..numflats as usize {
-        *flattranslation.add(i) = i as c_int;
+        *flattranslation.add(i) = i as i32;
     }
 }
 
@@ -971,35 +956,35 @@ pub unsafe fn R_InitFlats() {
 /// - WAD must be fully loaded; `S_START` and `S_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitSpriteLumps() {
-    firstspritelump = W_GetNumForName(DEH_String(c"S_START".as_ptr())) + 1;
-    lastspritelump = W_GetNumForName(DEH_String(c"S_END".as_ptr())) - 1;
+    firstspritelump = W_GetNumForName(DEH_String(b"S_START")) + 1;
+    lastspritelump = W_GetNumForName(DEH_String(b"S_END")) - 1;
     numspritelumps = lastspritelump - firstspritelump + 1;
 
     spritewidth = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
     spriteoffset = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
     spritetopoffset = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<c_int>()) as c_int,
+        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
 
     for i in 0..numspritelumps as usize {
         if (i & 63) == 0 {
-            libc::printf(c".".as_ptr());
+            libc::printf(c".".as_ptr().cast());
         }
 
-        let patch = W_CacheLumpNum(firstspritelump + i as c_int, PU_CACHE) as *mut patch_t;
-        *spritewidth.add(i) = (SHORT((*patch).width) as c_int) << FRACBITS;
-        *spriteoffset.add(i) = (SHORT((*patch).leftoffset) as c_int) << FRACBITS;
-        *spritetopoffset.add(i) = (SHORT((*patch).topoffset) as c_int) << FRACBITS;
+        let patch = W_CacheLumpNum(firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
+        *spritewidth.add(i) = (SHORT((*patch).width) as i32) << FRACBITS;
+        *spriteoffset.add(i) = (SHORT((*patch).leftoffset) as i32) << FRACBITS;
+        *spritetopoffset.add(i) = (SHORT((*patch).topoffset) as i32) << FRACBITS;
     }
 }
 
@@ -1021,7 +1006,7 @@ pub unsafe fn R_InitSpriteLumps() {
 /// - WAD must be fully loaded; the `COLORMAP` lump must exist.
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitColormaps() {
-    let lump = W_GetNumForName(DEH_String(c"COLORMAP".as_ptr()));
+    let lump = W_GetNumForName(DEH_String(b"COLORMAP"));
     colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
 }
 
@@ -1048,11 +1033,11 @@ pub unsafe fn R_InitColormaps() {
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitData() {
     R_InitTextures();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitFlats();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitSpriteLumps();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitColormaps();
 }
 
@@ -1070,16 +1055,13 @@ pub unsafe fn R_InitData() {
 ///
 /// # Safety
 ///
-/// - `name` must be a valid, null-terminated C string of at most 8 characters.
-/// - `R_InitFlats` must have been called first.
-pub unsafe fn R_FlatNumForName(name: *mut c_char) -> c_int {
+/// `R_InitFlats` must have been called first.
+pub unsafe fn R_FlatNumForName(name: &[u8]) -> i32 {
     let i = W_CheckNumForName(name);
     if i == -1 {
-        let mut namet: [c_char; 9] = [0; 9];
-        std::ptr::copy_nonoverlapping(name, namet.as_mut_ptr(), 8);
         i_error!(
             "R_FlatNumForName: {} not found",
-            CStr::from_ptr(namet.as_ptr()).to_string_lossy()
+            String::from_utf8_lossy(lump_name(name))
         );
     }
     i - firstflat
@@ -1100,18 +1082,17 @@ pub unsafe fn R_FlatNumForName(name: *mut c_char) -> c_int {
 ///
 /// # Safety
 ///
-/// - `name` must be a valid, null-terminated C string of at most 8 characters.
-/// - `R_InitTextures` must have been called first.
-pub unsafe fn R_CheckTextureNumForName(name: *mut c_char) -> c_int {
-    if *name == b'-' as c_char {
+/// `R_InitTextures` must have been called first.
+pub unsafe fn R_CheckTextureNumForName(name: &[u8]) -> i32 {
+    if name.first() == Some(&b'-') {
         return 0;
     }
 
-    let key = (W_LumpNameHash(name) % numtextures as c_uint) as usize;
+    let key = (W_LumpNameHash(name) % numtextures as u32) as usize;
     let mut texture = *textures_hashtable.add(key);
 
     while !texture.is_null() {
-        if strncasecmp((*texture).name.as_ptr(), name, 8) == 0 {
+        if lump_names_equal(&(*texture).name, name) {
             return (*texture).index;
         }
         texture = (*texture).next;
@@ -1132,14 +1113,13 @@ pub unsafe fn R_CheckTextureNumForName(name: *mut c_char) -> c_int {
 ///
 /// # Safety
 ///
-/// - `name` must be a valid, null-terminated C string of at most 8 characters.
-/// - `R_InitTextures` must have been called first.
-pub unsafe fn R_TextureNumForName(name: *mut c_char) -> c_int {
+/// `R_InitTextures` must have been called first.
+pub unsafe fn R_TextureNumForName(name: &[u8]) -> i32 {
     let i = R_CheckTextureNumForName(name);
     if i == -1 {
         i_error!(
             "R_TextureNumForName: {} not found",
-            CStr::from_ptr(name).to_string_lossy()
+            String::from_utf8_lossy(lump_name(name))
         );
     }
     i
@@ -1187,7 +1167,7 @@ pub unsafe fn R_PrecacheLevel() {
     flatmemory = 0;
     for i in 0..numflats as usize {
         if *flatpresent.add(i) != 0 {
-            let lump = firstflat + i as c_int;
+            let lump = firstflat + i as i32;
             flatmemory += (*lumpinfo.add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }
@@ -1245,7 +1225,7 @@ pub unsafe fn R_PrecacheLevel() {
         for j in 0..(*sprdef).numframes as usize {
             let sf = (*sprdef).spriteframes.add(j);
             for k in 0..8usize {
-                let lump = firstspritelump + (*sf).lump[k] as c_int;
+                let lump = firstspritelump + (*sf).lump[k] as i32;
                 spritememory += (*lumpinfo.add(lump as usize)).size;
                 W_CacheLumpNum(lump, PU_CACHE);
             }

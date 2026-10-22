@@ -6,10 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_int, c_short, c_uint},
-    ptr,
-};
+use std::ptr;
 
 use crate::{
     doom::{
@@ -30,7 +27,7 @@ use crate::{
 
 /// Number of fine-angle steps spanning the horizontal field of view (90 degrees
 /// expressed in fine-angle units; `FINEANGLES / 4 = 2048`).
-const FIELDOFVIEW: c_int = 2048;
+const FIELDOFVIEW: i32 = 2048;
 
 /// Screen pixel width, mirrored from `i_video` as a `usize` for array sizing.
 const SCREENWIDTH: usize = SCREENWIDTH_IV as usize;
@@ -83,12 +80,12 @@ type lighttable_t = u8;
 /// Additive angle offset applied to the player's map angle before rendering,
 /// used by the automap and demo-playback angle overrides. Zero during normal
 /// gameplay.
-pub static mut viewangleoffset: c_int = 0;
+pub static mut viewangleoffset: i32 = 0;
 
 /// Monotonically incrementing counter; bumped once per frame in
 /// [`R_SetupFrame`]. Sectors and linedefs tag themselves with `validcount`
 /// when first visited in a frame so they are not processed twice.
-pub static mut validcount: c_int = 1;
+pub static mut validcount: i32 = 1;
 
 /// Active fixed colormap pointer, or null when no override is in effect.
 ///
@@ -101,12 +98,12 @@ pub static mut fixedcolormap: *mut lighttable_t = ptr::null_mut();
 /// X coordinate of the viewport centre in screen pixels.
 ///
 /// Recomputed by [`R_ExecuteSetViewSize`] whenever the view size changes.
-pub static mut centerx: c_int = 0;
+pub static mut centerx: i32 = 0;
 
 /// Y coordinate of the viewport centre in screen pixels.
 ///
 /// Recomputed by [`R_ExecuteSetViewSize`] whenever the view size changes.
-pub static mut centery: c_int = 0;
+pub static mut centery: i32 = 0;
 
 /// [`centerx`] expressed as a 16.16 fixed-point value (`centerx << FRACBITS`).
 ///
@@ -130,20 +127,20 @@ pub static mut projection: fixed_t = 0;
 /// Number of frames rendered since [`R_Init`] was called.
 ///
 /// Incremented once per frame in [`R_SetupFrame`]. Used for profiling.
-pub static mut framecount: c_int = 0;
+pub static mut framecount: i32 = 0;
 
 /// Number of subsectors drawn in the current frame.
 ///
 /// Reset to zero in [`R_SetupFrame`]; incremented in `r_bsp`. Used for
 /// profiling.
-pub static mut sscount: c_int = 0;
+pub static mut sscount: i32 = 0;
 
 /// Number of linedefs processed in the current frame (profiling counter).
-pub static mut linecount: c_int = 0;
+pub static mut linecount: i32 = 0;
 
 /// Number of BSP traversal iterations in the current frame (profiling
 /// counter).
-pub static mut loopcount: c_int = 0;
+pub static mut loopcount: i32 = 0;
 
 /// View position X in map fixed-point units. Set each frame by
 /// [`R_SetupFrame`] from the player mobj's `x` field.
@@ -181,7 +178,7 @@ pub static mut viewplayer: *mut PlayerT = ptr::null_mut();
 /// Detail level shift: `0` = high detail, `1` = low detail (half-width
 /// columns doubled horizontally). Controls which column/span draw functions
 /// are active and affects several scaling calculations.
-pub static mut detailshift: c_int = 0;
+pub static mut detailshift: i32 = 0;
 
 /// Half the horizontal field of view as a BAM angle.
 ///
@@ -197,10 +194,10 @@ pub static mut clipangle: angle_t = 0;
 /// by `(viewangle >> ANGLETOFINESHIFT)`. Sized one element larger than
 /// strictly necessary (`FINEANGLES/2 + 1`) to match `r_bsp`'s defensive
 /// bounds.
-// r_bsp.rs originally declared this as [c_int; FINEANGLES/2 + 1] to guard
+// r_bsp.rs originally declared this as [i32; FINEANGLES/2 + 1] to guard
 // against a potential off-by-one in the original C code. Keep the same
 // size so the two modules agree.
-pub static mut viewangletox: [c_int; tables::FINEANGLES / 2 + 1] = [0; tables::FINEANGLES / 2 + 1];
+pub static mut viewangletox: [i32; tables::FINEANGLES / 2 + 1] = [0; tables::FINEANGLES / 2 + 1];
 
 /// Maps screen X column to the smallest view angle that projects onto that
 /// column.
@@ -237,7 +234,7 @@ pub static mut zlight: [[*mut lighttable_t; MAXLIGHTZ]; LIGHTLEVELS] =
 /// Additional light bonus added to the sector's base light level, produced
 /// by muzzle flashes and similar effects. Set each frame from
 /// `player.extralight` in [`R_SetupFrame`].
-pub static mut extralight: c_int = 0;
+pub static mut extralight: i32 = 0;
 
 /// Active column-drawing function pointer.
 ///
@@ -281,11 +278,11 @@ pub static mut setsizeneeded: Boolean = Boolean::FALSE;
 /// Pending viewport block size (1-11). Set by [`R_SetViewSize`] and
 /// consumed by [`R_ExecuteSetViewSize`]. Value 11 selects full-screen
 /// rendering.
-pub static mut setblocks: c_int = 0;
+pub static mut setblocks: i32 = 0;
 
 /// Pending detail level (0 = high, 1 = low). Set by [`R_SetViewSize`] and
 /// consumed by [`R_ExecuteSetViewSize`].
-pub static mut setdetail: c_int = 0;
+pub static mut setdetail: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Imports from other modules
@@ -320,7 +317,7 @@ use crate::doom::{
 /// # Safety
 /// `box_` must point to a valid, writable array of at least four `fixed_t`
 /// values laid out in [`BBox`] index order.
-pub unsafe fn R_AddPointToBox(x: c_int, y: c_int, box_: *mut fixed_t) {
+pub unsafe fn R_AddPointToBox(x: i32, y: i32, box_: *mut fixed_t) {
     if x < *box_.add(BBox::LEFT) {
         *box_.add(BBox::LEFT) = x;
     }
@@ -349,18 +346,18 @@ pub unsafe fn R_AddPointToBox(x: c_int, y: c_int, box_: *mut fixed_t) {
 ///
 /// # Safety
 /// `node` must be a valid, non-null pointer to a [`node_t`].
-pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> c_int {
+pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> i32 {
     if (*node).dx == 0 {
         if x <= (*node).x {
-            return ((*node).dy > 0) as c_int;
+            return ((*node).dy > 0) as i32;
         }
-        return ((*node).dy < 0) as c_int;
+        return ((*node).dy < 0) as i32;
     }
     if (*node).dy == 0 {
         if y <= (*node).y {
-            return ((*node).dx < 0) as c_int;
+            return ((*node).dx < 0) as i32;
         }
-        return ((*node).dx > 0) as c_int;
+        return ((*node).dx > 0) as i32;
     }
 
     let dx = x - (*node).x;
@@ -398,7 +395,7 @@ pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> c_in
 /// # Safety
 /// `line` must be a valid, non-null pointer to a [`seg_t`] whose `v1` and
 /// `v2` vertex pointers are also valid.
-pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> c_int {
+pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> i32 {
     let lx = (*(*line).v1).x;
     let ly = (*(*line).v1).y;
 
@@ -407,15 +404,15 @@ pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> c_
 
     if ldx == 0 {
         if x <= lx {
-            return (ldy > 0) as c_int;
+            return (ldy > 0) as i32;
         }
-        return (ldy < 0) as c_int;
+        return (ldy < 0) as i32;
     }
     if ldy == 0 {
         if y <= ly {
-            return (ldx < 0) as c_int;
+            return (ldx < 0) as i32;
         }
-        return (ldx > 0) as c_int;
+        return (ldx > 0) as i32;
     }
 
     let dx = x - lx;
@@ -460,20 +457,20 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
             // dy >= 0
             if dx > dy {
                 // octant 0
-                tables::tantoangle[SlopeDiv(dy as c_uint, dx as c_uint) as usize]
+                tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 1
-                ANG90 - 1 - tables::tantoangle[SlopeDiv(dx as c_uint, dy as c_uint) as usize]
+                ANG90 - 1 - tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         } else {
             // dy < 0
             dy = -dy;
             if dx > dy {
                 // octant 8
-                0u32.wrapping_sub(tables::tantoangle[SlopeDiv(dy as c_uint, dx as c_uint) as usize])
+                0u32.wrapping_sub(tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize])
             } else {
                 // octant 7
-                ANG270 + tables::tantoangle[SlopeDiv(dx as c_uint, dy as c_uint) as usize]
+                ANG270 + tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         }
     } else {
@@ -483,20 +480,20 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
             // dy >= 0
             if dx > dy {
                 // octant 3
-                ANG180 - 1 - tables::tantoangle[SlopeDiv(dy as c_uint, dx as c_uint) as usize]
+                ANG180 - 1 - tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 2
-                ANG90 + tables::tantoangle[SlopeDiv(dx as c_uint, dy as c_uint) as usize]
+                ANG90 + tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         } else {
             // dy < 0
             dy = -dy;
             if dx > dy {
                 // octant 4
-                ANG180 + tables::tantoangle[SlopeDiv(dy as c_uint, dx as c_uint) as usize]
+                ANG180 + tables::tantoangle[SlopeDiv(dy as u32, dx as u32) as usize]
             } else {
                 // octant 5
-                ANG270 - 1 - tables::tantoangle[SlopeDiv(dx as c_uint, dy as c_uint) as usize]
+                ANG270 - 1 - tables::tantoangle[SlopeDiv(dx as u32, dy as u32) as usize]
             }
         }
     }
@@ -661,7 +658,7 @@ pub unsafe fn R_InitTextureMapping() {
     );
 
     for i in 0..tables::FINEANGLES / 2 {
-        let t: c_int;
+        let t: i32;
         if tables::finetangent[i] > FRACUNIT * 2 {
             t = -1;
         } else if tables::finetangent[i] < -FRACUNIT * 2 {
@@ -684,7 +681,7 @@ pub unsafe fn R_InitTextureMapping() {
     //  xtoviewangle will give the smallest view angle that maps to x.
     for x in 0..=viewwidth as usize {
         let mut i = 0usize;
-        while viewangletox[i] > x as c_int {
+        while viewangletox[i] > x as i32 {
             i += 1;
         }
         xtoviewangle[x] = ((i as u32) << ANGLETOFINESHIFT).wrapping_sub(ANG90);
@@ -724,20 +721,20 @@ pub unsafe fn R_InitTextureMapping() {
 /// to `NUMCOLORMAPS * 256` valid bytes. Called during startup by [`R_Init`].
 pub unsafe fn R_InitLightTables() {
     for i in 0..LIGHTLEVELS {
-        let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as c_int;
+        let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as i32;
         for j in 0..MAXLIGHTZ {
             let mut scale = FixedDiv(
-                (SCREENWIDTH as c_int / 2) * FRACUNIT,
-                ((j + 1) << LIGHTZSHIFT) as c_int,
+                (SCREENWIDTH as i32 / 2) * FRACUNIT,
+                ((j + 1) << LIGHTZSHIFT) as i32,
             );
             scale >>= LIGHTSCALESHIFT;
-            let mut level = startmap - scale / DISTMAP as c_int;
+            let mut level = startmap - scale / DISTMAP as i32;
 
             if level < 0 {
                 level = 0;
             }
-            if level >= NUMCOLORMAPS as c_int {
-                level = NUMCOLORMAPS as c_int - 1;
+            if level >= NUMCOLORMAPS as i32 {
+                level = NUMCOLORMAPS as i32 - 1;
             }
 
             zlight[i][j] = colormaps.add(level as usize * 256);
@@ -760,7 +757,7 @@ pub unsafe fn R_InitLightTables() {
 /// # Safety
 /// Writes three renderer globals; safe to call from any context as long as
 /// no other thread reads those globals concurrently (single-threaded engine).
-pub unsafe fn R_SetViewSize(blocks: c_int, detail: c_int) {
+pub unsafe fn R_SetViewSize(blocks: i32, detail: i32) {
     setsizeneeded = Boolean::TRUE;
     setblocks = blocks;
     setdetail = detail;
@@ -791,8 +788,8 @@ pub unsafe fn R_ExecuteSetViewSize() {
     setsizeneeded = Boolean::FALSE;
 
     if setblocks == 11 {
-        scaledviewwidth = SCREENWIDTH as c_int;
-        viewheight = SCREENHEIGHT as c_int;
+        scaledviewwidth = SCREENWIDTH as i32;
+        viewheight = SCREENHEIGHT as i32;
     } else {
         scaledviewwidth = setblocks * 32;
         viewheight = (setblocks * 168 / 10) & !7;
@@ -825,17 +822,17 @@ pub unsafe fn R_ExecuteSetViewSize() {
     R_InitTextureMapping();
 
     // psprite scales
-    pspritescale = FRACUNIT * viewwidth / SCREENWIDTH as c_int;
-    pspriteiscale = FRACUNIT * SCREENWIDTH as c_int / viewwidth;
+    pspritescale = FRACUNIT * viewwidth / SCREENWIDTH as i32;
+    pspriteiscale = FRACUNIT * SCREENWIDTH as i32 / viewwidth;
 
     // thing clipping
     for i in 0..viewwidth as usize {
-        screenheightarray[i] = viewheight as c_short;
+        screenheightarray[i] = viewheight as i16;
     }
 
     // planes
     for i in 0..viewheight as usize {
-        let mut dy = ((i as c_int - viewheight / 2) << FRACBITS) + FRACUNIT / 2;
+        let mut dy = ((i as i32 - viewheight / 2) << FRACBITS) + FRACUNIT / 2;
         dy = dy.wrapping_abs();
         crate::doom::r_plane::yslope[i] = FixedDiv((viewwidth << detailshift) / 2 * FRACUNIT, dy);
     }
@@ -850,18 +847,16 @@ pub unsafe fn R_ExecuteSetViewSize() {
 
     // Calculate the light levels to use for each level / scale combination.
     for i in 0..LIGHTLEVELS {
-        let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as c_int;
+        let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as i32;
         for j in 0..MAXLIGHTSCALE {
             let mut level = startmap
-                - (j as c_int * SCREENWIDTH as c_int)
-                    / (viewwidth << detailshift)
-                    / DISTMAP as c_int;
+                - (j as i32 * SCREENWIDTH as i32) / (viewwidth << detailshift) / DISTMAP as i32;
 
             if level < 0 {
                 level = 0;
             }
-            if level >= NUMCOLORMAPS as c_int {
-                level = NUMCOLORMAPS as c_int - 1;
+            if level >= NUMCOLORMAPS as i32 {
+                level = NUMCOLORMAPS as i32 - 1;
             }
 
             scalelight[i][j] = colormaps.add(level as usize * 256);
@@ -887,19 +882,19 @@ pub unsafe fn R_ExecuteSetViewSize() {
 /// frame is rendered. Calls multiple unsafe initialisers internally.
 pub unsafe fn R_Init() {
     R_InitData();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitPointToAngle();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitTables();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_SetViewSize(screenblocks, detailLevel);
     R_InitPlanes();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     R_InitLightTables();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
     crate::doom::r_sky::R_InitSkyMap();
     R_InitTranslationTables();
-    libc::printf(c".".as_ptr());
+    libc::printf(c".".as_ptr().cast());
 
     framecount = 0;
 }
@@ -936,7 +931,7 @@ pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
     while (nodenum as u32) & NF_SUBSECTOR == 0 {
         let node = nodes.add(nodenum as usize) as *const node_t;
         let side = R_PointOnSide(x, y, node);
-        nodenum = (*node).children[side as usize] as c_int;
+        nodenum = (*node).children[side as usize] as i32;
     }
 
     subsectors.add((nodenum as u32 & !NF_SUBSECTOR) as usize) as *mut subsector_t

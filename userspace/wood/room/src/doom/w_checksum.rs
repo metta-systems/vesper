@@ -13,7 +13,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::c_void;
 
 use crate::doom::{
     m_misc::M_StringCopy,
@@ -35,14 +35,14 @@ use crate::doom::{
 pub struct LumpInfo {
     /// Eight-character lump name (not null-terminated in the WAD on-disk
     /// format; copied through a 9-byte buffer before hashing).
-    pub name: [c_char; 8],
+    pub name: [u8; 8],
     /// Pointer to the owning `wad_file_t`. Used as the key for assigning a
     /// stable numeric file index via `get_file_number`.
     pub wad_file: *mut c_void,
     /// Byte offset of the lump payload inside its WAD.
-    pub position: c_int,
+    pub position: i32,
     /// Lump size in bytes.
-    pub size: c_int,
+    pub size: i32,
     /// Cached zone-allocated copy of the lump, if any (unused by
     /// checksumming).
     pub cache: *mut c_void,
@@ -65,14 +65,14 @@ pub struct LumpInfo {
 /// `open_wadfiles` must be a valid mutable reference. `handle` is only
 /// compared for equality and stored back into the vector, never
 /// dereferenced.
-unsafe fn get_file_number(handle: *mut c_void, open_wadfiles: &mut Vec<*mut c_void>) -> c_int {
+unsafe fn get_file_number(handle: *mut c_void, open_wadfiles: &mut Vec<*mut c_void>) -> i32 {
     for (i, &wad) in open_wadfiles.iter().enumerate() {
         if wad == handle {
-            return i as c_int;
+            return i as i32;
         }
     }
 
-    let result = open_wadfiles.len() as c_int;
+    let result = open_wadfiles.len() as i32;
     open_wadfiles.push(handle);
     result
 }
@@ -96,16 +96,16 @@ unsafe fn checksum_add_lump(
 ) {
     let lump = &*lump;
 
-    let mut buf: [c_char; 9] = [0; 9];
+    let mut buf: [u8; 9] = [0; 9];
     M_StringCopy(buf.as_mut_ptr(), lump.name.as_ptr(), buf.len());
 
     SHA1_UpdateString(sha1_context, buf.as_mut_ptr());
     SHA1_UpdateInt32(
         sha1_context,
-        get_file_number(lump.wad_file, open_wadfiles) as c_uint,
+        get_file_number(lump.wad_file, open_wadfiles) as u32,
     );
-    SHA1_UpdateInt32(sha1_context, lump.position as c_uint);
-    SHA1_UpdateInt32(sha1_context, lump.size as c_uint);
+    SHA1_UpdateInt32(sha1_context, lump.position as u32);
+    SHA1_UpdateInt32(sha1_context, lump.size as u32);
 }
 
 /// Compute a SHA-1 digest over the entire WAD directory and write it to

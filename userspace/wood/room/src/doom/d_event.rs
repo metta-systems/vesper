@@ -19,8 +19,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_int;
-
 /// Maximum number of events that can be queued before the oldest is dropped.
 ///
 /// Corresponds to `#define MAXEVENTS 64` in `d_event.c`.
@@ -38,22 +36,22 @@ const MAXEVENTS: usize = 64;
 /// | `ev_joystick` | button bitfield | X axis (turn) | Y axis (fwd/back) | Z axis (strafe) |
 /// | `ev_quit` | - | - | - | - |
 ///
-/// The `type_` field is typed as `c_int` rather than an enum to preserve
+/// The `type_` field is typed as `i32` rather than an enum to preserve
 /// exact ABI compatibility with the C `evtype_t` enum (which is an `int` in
 /// C).
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct event_t {
     /// Event type discriminant; one of the `ev_*` constants from `evtype_t`.
-    pub type_: c_int,
+    pub type_: i32,
     /// Primary event datum; interpretation depends on `type_`.
-    pub data1: c_int,
+    pub data1: i32,
     /// Secondary event datum; interpretation depends on `type_`.
-    pub data2: c_int,
+    pub data2: i32,
     /// Tertiary event datum; interpretation depends on `type_`.
-    pub data3: c_int,
+    pub data3: i32,
     /// Quaternary event datum; used only by `ev_joystick` for the strafe axis.
-    pub data4: c_int,
+    pub data4: i32,
 }
 
 /// A zero-initialised `event_t` used as the array fill value.
@@ -176,8 +174,8 @@ mod tests {
             let max = MAXEVENTS - 1;
             for i in 0..max {
                 let ev = event_t {
-                    type_: i as c_int,
-                    data1: i as c_int,
+                    type_: i as i32,
+                    data1: i as i32,
                     data2: 0,
                     data3: 0,
                     data4: 0,
@@ -188,8 +186,8 @@ mod tests {
             for i in 0..max {
                 let result = D_PopEvent();
                 assert!(!result.is_null());
-                assert_eq!((*result).type_, i as c_int);
-                assert_eq!((*result).data1, i as c_int);
+                assert_eq!((*result).type_, i as i32);
+                assert_eq!((*result).data1, i as i32);
             }
             assert!(D_PopEvent().is_null());
         }

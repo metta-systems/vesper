@@ -38,7 +38,7 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::ffi::{c_char, c_int, c_uint, c_void},
+    std::ffi::{c_void, CStr},
 };
 
 use std::ptr;
@@ -63,83 +63,81 @@ use crate::doom::{
 // ---------------------------------------------------------------------------
 
 /// Vanilla Doom `boolean`, matching the C `int` truthy/falsy convention.
-type boolean = c_int;
+type boolean = i32;
 /// Vanilla Doom `byte` (unsigned 8-bit).
 type byte = u8;
 /// Vanilla Doom `skill_t` enum stored as `int` (sk_baby=0 .. sk_nightmare=4).
-type skill_t = c_int;
+type skill_t = i32;
 /// Vanilla Doom 16.16 fixed-point type (`int`, with 16 fractional bits).
-type fixed_t = c_int;
-/// Platform `long`, used here for the savegame size limit.
-type c_long = libc::c_long;
+type fixed_t = i32;
 
 // ---------------------------------------------------------------------------
 // Game-state constants (from doomstat.h)
 // ---------------------------------------------------------------------------
 
 /// `GS_LEVEL` - actively playing a map; `P_Ticker` advances world simulation.
-const GS_LEVEL: c_int = 0;
+const GS_LEVEL: i32 = 0;
 /// `GS_INTERMISSION` - between-level statistics screen driven by `WI_Ticker`.
-const GS_INTERMISSION: c_int = 1;
+const GS_INTERMISSION: i32 = 1;
 /// `GS_FINALE` - end-of-episode text crawl / cast call, driven by `F_Ticker`.
-const GS_FINALE: c_int = 2;
+const GS_FINALE: i32 = 2;
 /// `GS_DEMOSCREEN` - title/credits/demo cycle, driven by `D_PageTicker`.
-const GS_DEMOSCREEN: c_int = 3;
+const GS_DEMOSCREEN: i32 = 3;
 
 // ---------------------------------------------------------------------------
 // Game-action constants (from doomstat.h)
 // ---------------------------------------------------------------------------
 
 /// No deferred action pending; `G_Ticker` falls through to normal state.
-const ga_nothing: c_int = 0;
+const ga_nothing: i32 = 0;
 /// Defer a level (re)load via `G_DoLoadLevel`.
-const ga_loadlevel: c_int = 1;
+const ga_loadlevel: i32 = 1;
 /// Defer a new game start via `G_DoNewGame`.
-const ga_newgame: c_int = 2;
+const ga_newgame: i32 = 2;
 /// Defer a savegame load via `G_DoLoadGame`.
-const ga_loadgame: c_int = 3;
+const ga_loadgame: i32 = 3;
 /// Defer a savegame write via `G_DoSaveGame`.
-const ga_savegame: c_int = 4;
+const ga_savegame: i32 = 4;
 /// Defer demo playback via `G_DoPlayDemo`.
-const ga_playdemo: c_int = 5;
+const ga_playdemo: i32 = 5;
 /// Defer the end-of-level transition via `G_DoCompleted`.
-const ga_completed: c_int = 6;
+const ga_completed: i32 = 6;
 /// Defer the end-of-game finale via `F_StartFinale`.
-const ga_victory: c_int = 7;
+const ga_victory: i32 = 7;
 /// Defer the intermission-to-next-level transition via `G_DoWorldDone`.
-const ga_worlddone: c_int = 8;
+const ga_worlddone: i32 = 8;
 /// Defer a screenshot grab via `V_ScreenShot`.
-const ga_screenshot: c_int = 9;
+const ga_screenshot: i32 = 9;
 
 // ---------------------------------------------------------------------------
 // Player state constants (from d_player.h)
 // ---------------------------------------------------------------------------
 
 /// `PST_LIVE` - player is alive and active.
-const PST_LIVE: c_int = 0;
+const PST_LIVE: i32 = 0;
 /// `PST_DEAD` - player is dead, awaiting respawn input.
-const PST_DEAD: c_int = 1;
+const PST_DEAD: i32 = 1;
 /// `PST_REBORN` - player should be respawned on the next tick.
-const PST_REBORN: c_int = 2;
+const PST_REBORN: i32 = 2;
 
 // ---------------------------------------------------------------------------
 // Weapon constants (from doomdef.h)
 // ---------------------------------------------------------------------------
 
 /// `wp_fist` weapon index (slot 1).
-const wp_fist: c_int = 0;
+const wp_fist: i32 = 0;
 /// `wp_pistol` weapon index (slot 2).
-const wp_pistol: c_int = 1;
+const wp_pistol: i32 = 1;
 /// `wp_chainsaw` weapon index (also slot 1).
-const wp_chainsaw: c_int = 7;
+const wp_chainsaw: i32 = 7;
 /// `wp_supershotgun` weapon index (Doom II only, also slot 3).
-const wp_supershotgun: c_int = 8;
+const wp_supershotgun: i32 = 8;
 /// `wp_plasma` weapon index (slot 6).
-const wp_plasma: c_int = 5;
+const wp_plasma: i32 = 5;
 /// `wp_bfg` weapon index (slot 7).
-const wp_bfg: c_int = 6;
+const wp_bfg: i32 = 6;
 /// `wp_nochange` sentinel - pending weapon means "keep current".
-const wp_nochange: c_int = 9;
+const wp_nochange: i32 = 9;
 
 // ---------------------------------------------------------------------------
 // Power types (from doomdef.h)
@@ -186,7 +184,7 @@ const MAX_MOUSE_BUTTONS: usize = 8;
 /// Maximum number of joystick buttons recognised by the engine.
 const MAX_JOY_BUTTONS: usize = 20;
 /// Vanilla Doom savegame size cap (bytes); enforced when `vanilla_savegame_limit` is set.
-const SAVEGAMESIZE: c_long = 0x2c000;
+const SAVEGAMESIZE: i64 = 0x2c000;
 /// End-of-stream sentinel byte written at the tail of every demo `.lmp`.
 const DEMOMARKER: byte = 0x80;
 /// Size of the version-text field in some legacy savegame headers.
@@ -194,12 +192,12 @@ const VERSIONSIZE: usize = 16;
 /// Ammo-type index for the clip (bullets) ammo class.
 const am_clip: usize = 0;
 /// `MT_TFOG` mobj type index - teleport fog spawned at player respawn spots.
-const MT_TFOG: c_int = 28;
+const MT_TFOG: i32 = 28;
 
 /// Default starting health (100); patched by Dehacked in vanilla.
-const DEH_INITIAL_HEALTH: c_int = 100;
+const DEH_INITIAL_HEALTH: i32 = 100;
 /// Default starting bullet count (50); patched by Dehacked in vanilla.
-const DEH_INITIAL_BULLETS: c_int = 50;
+const DEH_INITIAL_BULLETS: i32 = 50;
 
 /// Re-export of [`event_t`] from `d_event.rs` for input handling.
 use crate::doom::d_event::event_t;
@@ -215,9 +213,9 @@ use crate::doom::d_event::event_t;
 /// chainsaw cycle to slot 1, both shotgun and supershotgun to slot 3).
 struct WeaponOrder {
     /// Concrete weapon identifier (`wp_*`) used for selectability tests.
-    weapon: c_int,
+    weapon: i32,
     /// Slot number (1-8) encoded into the `BT_CHANGE` ticcmd field.
-    weapon_num: c_int,
+    weapon_num: i32,
 }
 
 /// Cyclic ordering of weapons used by next/previous-weapon hotkeys.
@@ -270,28 +268,28 @@ static WEAPON_ORDER_TABLE: [WeaponOrder; 9] = [
 
 /// Value of `gamestate` from the previous `G_Ticker` invocation, used to
 /// detect transitions (e.g. dismissing the intermission screen).
-pub static mut oldgamestate: c_int = GS_DEMOSCREEN;
+pub static mut oldgamestate: i32 = GS_DEMOSCREEN;
 
 /// Deferred game action queue (`ga_*`); drained at the top of `G_Ticker`.
-pub static mut gameaction: c_int = ga_nothing;
+pub static mut gameaction: i32 = ga_nothing;
 
 /// Active gameplay state machine slot (`GS_LEVEL`/`GS_INTERMISSION`/...).
-pub static mut gamestate: c_int = GS_DEMOSCREEN;
+pub static mut gamestate: i32 = GS_DEMOSCREEN;
 
 /// Currently selected skill level (`sk_baby` .. `sk_nightmare`).
-pub static mut gameskill: c_int = 0;
+pub static mut gameskill: i32 = 0;
 
 /// Non-zero when monsters respawn (nightmare skill or `-respawn` parm).
 pub static mut respawnmonsters: boolean = 0;
 
 /// Currently loaded episode number (1-based; 1-3 for Doom, up to 4 with Ultimate).
-pub static mut gameepisode: c_int = 0;
+pub static mut gameepisode: i32 = 0;
 
 /// Currently loaded map number (1-based; 1-9 in Doom, 1-32 in Doom II).
-pub static mut gamemap: c_int = 0;
+pub static mut gamemap: i32 = 0;
 
 /// If non-zero, exit the level after this number of minutes.
-pub static mut timelimit: c_int = 0;
+pub static mut timelimit: i32 = 0;
 
 /// Non-zero while gameplay is paused (sound is paused, ticker suspended).
 pub static mut paused: boolean = 0;
@@ -312,13 +310,13 @@ pub static mut timingdemo: boolean = 0;
 pub static mut nodrawers: boolean = 0;
 
 /// `I_GetTime()` value captured when a timed demo started.
-pub static mut starttime: c_int = 0;
+pub static mut starttime: i32 = 0;
 
 /// Non-zero while the 3D view is being rendered (false during intermission).
 pub static mut viewactive: boolean = 0;
 
 /// Deathmatch mode (`0`=co-op, `1`=DM, `2`=DM2 / altdeath).
-pub static mut deathmatch: c_int = 0;
+pub static mut deathmatch: i32 = 0;
 
 /// Non-zero in a networked game (changes consistency-check behaviour).
 pub static mut netgame: boolean = 0;
@@ -333,25 +331,25 @@ pub static mut players: [PlayerT; MAXPLAYERS] = unsafe { std::mem::zeroed() };
 pub static mut turbodetected: [boolean; MAXPLAYERS] = [0; MAXPLAYERS];
 
 /// Index of the local player receiving input events.
-pub static mut consoleplayer: c_int = 0;
+pub static mut consoleplayer: i32 = 0;
 
 /// Index of the player whose first-person view is being drawn (spy mode).
-pub static mut displayplayer: c_int = 0;
+pub static mut displayplayer: i32 = 0;
 
 /// `gametic` value captured when the current level was loaded.
-pub static mut levelstarttic: c_int = 0;
+pub static mut levelstarttic: i32 = 0;
 
 /// Sum of monster kills across all players for the current level.
-pub static mut totalkills: c_int = 0;
+pub static mut totalkills: i32 = 0;
 
 /// Sum of item pickups across all players for the current level.
-pub static mut totalitems: c_int = 0;
+pub static mut totalitems: i32 = 0;
 
 /// Sum of secret-sector finds across all players for the current level.
-pub static mut totalsecret: c_int = 0;
+pub static mut totalsecret: i32 = 0;
 
 /// File name of the demo currently being recorded (Z_Malloc'd).
-pub static mut demoname: *mut c_char = ptr::null_mut();
+pub static mut demoname: *mut u8 = ptr::null_mut();
 
 /// Non-zero while a `.lmp` demo is being written from input.
 pub static mut demorecording: boolean = 0;
@@ -389,7 +387,7 @@ pub static mut precache: boolean = 1; // true by default
 pub static mut testcontrols: boolean = 0;
 
 /// Low-pass-filtered mouse speed displayed by the test-controls thermometer.
-pub static mut testcontrols_mousespeed: c_int = 0;
+pub static mut testcontrols_mousespeed: i32 = 0;
 
 /// Parameters for the world-map / intermission screen, populated by
 /// `G_DoCompleted` before transitioning to `GS_INTERMISSION`.
@@ -420,13 +418,13 @@ pub static mut wminfo: wbstartstruct_t = wbstartstruct_t {
 pub static mut consistancy: [[byte; 128]; MAXPLAYERS] = [[0; 128]; MAXPLAYERS];
 
 /// Index into `bodyque` for the next corpse to add (modulo 32).
-pub static mut bodyqueslot: c_int = 0;
+pub static mut bodyqueslot: i32 = 0;
 
 /// Non-zero enforces the vanilla `SAVEGAMESIZE` cap (`I_Error` on overrun).
-pub static mut vanilla_savegame_limit: c_int = 1;
+pub static mut vanilla_savegame_limit: i32 = 1;
 
 /// Non-zero enforces the vanilla demo buffer cap; zero auto-grows it.
-pub static mut vanilla_demo_limit: c_int = 1;
+pub static mut vanilla_demo_limit: i32 = 1;
 
 /// Forward-movement speed table: `[slow=0x19, fast=0x32]` (`fixed_t` per tic).
 /// Indexed by the `speed` flag computed in `G_BuildTiccmd`.
@@ -444,21 +442,21 @@ pub static mut angleturn: [fixed_t; 3] = [640, 1280, 320];
 pub static mut secretexit: boolean = 0;
 
 /// File name of the demo deferred for playback (set by `G_DeferedPlayDemo`).
-pub static mut defdemoname: *mut c_char = ptr::null_mut();
+pub static mut defdemoname: *mut u8 = ptr::null_mut();
 
 /// File name buffer for the savegame currently being loaded.
-pub static mut savename: [c_char; 256] = [0; 256];
+pub static mut savename: [u8; 256] = [0; 256];
 
 /// Deferred `G_DeferedInitNew` parameter: skill level.
 pub static mut d_skill: skill_t = 0;
 /// Deferred `G_DeferedInitNew` parameter: episode.
-pub static mut d_episode: c_int = 0;
+pub static mut d_episode: i32 = 0;
 /// Deferred `G_DeferedInitNew` parameter: map number.
-pub static mut d_map: c_int = 0;
+pub static mut d_map: i32 = 0;
 
 /// Doom episode par times (episodes 1-3, maps 1-9), in seconds.
 /// Index `[0]` and `[*][0]` are dummies to keep the table 1-based.
-pub static mut pars: [[c_int; 10]; 4] = [
+pub static mut pars: [[i32; 10]; 4] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [0, 30, 75, 120, 90, 165, 180, 180, 30, 165],
     [0, 90, 90, 90, 120, 90, 360, 240, 30, 170],
@@ -466,7 +464,7 @@ pub static mut pars: [[c_int; 10]; 4] = [
 ];
 
 /// Doom II par times (maps 1-32), in seconds. Index `[0]` is map 1.
-pub static mut cpars: [c_int; 32] = [
+pub static mut cpars: [i32; 32] = [
     30, 90, 120, 120, 90, 150, 120, 120, 270, 90, 210, 150, 150, 150, 210, 150, 420, 150, 210, 150,
     240, 150, 180, 150, 150, 300, 330, 420, 300, 180, 120, 30,
 ];
@@ -482,55 +480,55 @@ pub static mut bodyque: [*mut mobj_t; 32] = [ptr::null_mut(); 32];
 /// Per-key "is held down" flags, indexed by Doom key code.
 static mut GAMEKEYDOWN: [boolean; NUMKEYS] = [0; NUMKEYS];
 /// Tics that turn input has been held; drives two-stage accelerative turning.
-static mut TURNHELD: c_int = 0;
+static mut TURNHELD: i32 = 0;
 
 /// Mouse button held-down flags (slot 0 unused to allow `[-1]` indexing).
 static mut MOUSEARRAY: [boolean; MAX_MOUSE_BUTTONS + 1] = [0; MAX_MOUSE_BUTTONS + 1];
 // mousebuttons is &mousearray[1] in C — negative indexing; access via MOUSEARRAY[1+n]
 /// Most recent raw mouse delta on the X axis (cleared each tic by `G_BuildTiccmd`).
-static mut MOUSEX: c_int = 0;
+static mut MOUSEX: i32 = 0;
 /// Most recent raw mouse delta on the Y axis (cleared each tic by `G_BuildTiccmd`).
-static mut MOUSEY: c_int = 0;
+static mut MOUSEY: i32 = 0;
 
 /// Tics since the last forward-mouse click for double-click-as-use detection.
-static mut DCLICKTIME: c_int = 0;
+static mut DCLICKTIME: i32 = 0;
 /// Last sampled state of the mousebforward button for double-click detection.
 static mut DCLICKSTATE: boolean = 0;
 /// Click count toward a forward-mouse double-click (2 triggers `BT_USE`).
-static mut DCLICKS: c_int = 0;
+static mut DCLICKS: i32 = 0;
 /// Tics since the last strafe-button click for double-click detection.
-static mut DCLICKTIME2: c_int = 0;
+static mut DCLICKTIME2: i32 = 0;
 /// Last sampled state of the strafe button for double-click detection.
 static mut DCLICKSTATE2: boolean = 0;
 /// Click count toward a strafe-button double-click (2 triggers `BT_USE`).
-static mut DCLICKS2: c_int = 0;
+static mut DCLICKS2: i32 = 0;
 
 /// Most recent joystick X (turn / strafe) axis value.
-static mut JOYXMOVE: c_int = 0;
+static mut JOYXMOVE: i32 = 0;
 /// Most recent joystick Y (forward / back) axis value.
-static mut JOYYMOVE: c_int = 0;
+static mut JOYYMOVE: i32 = 0;
 /// Most recent joystick strafe axis value.
-static mut JOYSTRAFEMOVE: c_int = 0;
+static mut JOYSTRAFEMOVE: i32 = 0;
 /// Joystick button held-down flags (slot 0 unused to allow `[-1]` indexing).
 static mut JOYARRAY: [boolean; MAX_JOY_BUTTONS + 1] = [0; MAX_JOY_BUTTONS + 1];
 // joybuttons is &joyarray[1] in C — negative indexing; access via JOYARRAY[1+n]
 
 /// Selected savegame slot for the next save (set by `G_SaveGame`).
-static mut SAVEGAMESLOT: c_int = 0;
+static mut SAVEGAMESLOT: i32 = 0;
 /// Description text for the next savegame (set by `G_SaveGame`).
-static mut SAVEDESCRIPTION: [c_char; 32] = [0; 32];
+static mut SAVEDESCRIPTION: [u8; 32] = [0; 32];
 
 /// Pending weapon-cycle direction: `-1` previous, `+1` next, `0` none.
-static mut NEXT_WEAPON: c_int = 0;
+static mut NEXT_WEAPON: i32 = 0;
 
 /// Carry for low-resolution turn rounding (static local in `G_BuildTiccmd`).
 static mut LOWRES_TURN_CARRY: i16 = 0;
 
 /// Buffer for turbo-cheat message (static local in `G_Ticker`).
-static mut TURBOMESSAGE: [c_char; 80] = [0; 80];
+static mut TURBOMESSAGE: [u8; 80] = [0; 80];
 
 /// Buffer for `DemoVersionDescription` (static local in `G_DoPlayDemo`).
-static mut DEMOVERSIONBUF: [c_char; 16] = [0; 16];
+static mut DEMOVERSIONBUF: [u8; 16] = [0; 16];
 
 // ---------------------------------------------------------------------------
 // External function and variable declarations
@@ -539,7 +537,7 @@ static mut DEMOVERSIONBUF: [c_char; 16] = [0; 16];
 extern "C" {
     /// libc `snprintf` - variadic; only the buffer-pointer / length form is
     /// actually invoked from this module (turbo banner and demo-version text).
-    fn snprintf(buf: *mut c_char, len: usize, fmt: *const c_char, ...) -> c_int;
+    fn snprintf(buf: *mut u8, len: usize, fmt: *const u8, ...) -> i32;
 }
 
 /// Engine-wide fatal error and clean shutdown from `i_system.c` (the
@@ -619,7 +617,7 @@ use crate::doom::s_sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 use crate::doom::m_menu::{mouseSensitivity, M_StartControlPanel};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
-use crate::doom::m_misc::{M_StringCopy, M_TempFile, M_WriteFile, M_snprintf_clamp};
+use crate::doom::m_misc::{strlen, M_StringCopy, M_TempFile, M_WriteFile, M_snprintf_clamp};
 
 /// Command-line argument table and lookup helpers from `m_argv.c`.
 use crate::doom::m_argv::{myargv, M_CheckParm, M_CheckParmWithArgs};
@@ -655,24 +653,8 @@ use crate::doom::m_controls::{
 /// `PU_STATIC` Z_Malloc purge tag used for the demo buffer and demo filename.
 use crate::doom::z_zone::PU_STATIC;
 
-// ---------------------------------------------------------------------------
-// DEH_String identity (no dehacked support)
-// ---------------------------------------------------------------------------
-
-/// Stand-in for the Dehacked string-substitution macro from `deh_str.h`.
-///
-/// This port does not implement Dehacked patches, so the lookup is the
-/// identity function. Kept as a wrapper to make the original C call sites
-/// translate cleanly and to leave a single seam where Dehacked support could
-/// later be added.
-///
-/// # Safety
-/// Caller must ensure `s` is a valid NUL-terminated C string for the
-/// lifetime of the returned pointer.
-#[inline]
-unsafe fn DEH_String(s: *const c_char) -> *const c_char {
-    s
-}
+/// Dehacked string-substitution hook (identity in this build).
+use crate::doom::deh_str::DEH_String;
 
 // ---------------------------------------------------------------------------
 // logical_gamemission helper (mirrors doomstat.h macro)
@@ -688,7 +670,7 @@ unsafe fn DEH_String(s: *const c_char) -> *const c_char {
 /// Reads the `gamemission` global; safe as long as the caller respects the
 /// single-threaded engine convention.
 #[inline]
-unsafe fn logical_gamemission() -> c_int {
+unsafe fn logical_gamemission() -> i32 {
     use crate::doom::d_mode::{doom2, pack_plut, pack_tnt};
     if gamemission == pack_tnt || gamemission == pack_plut {
         doom2
@@ -716,8 +698,8 @@ unsafe fn logical_gamemission() -> c_int {
 /// # Safety
 /// Reads the `MOUSEARRAY` global; safe under the single-threaded contract.
 #[inline]
-unsafe fn mousebutton(n: c_int) -> boolean {
-    if n < 0 || n >= MAX_MOUSE_BUTTONS as c_int {
+unsafe fn mousebutton(n: i32) -> boolean {
+    if n < 0 || n >= MAX_MOUSE_BUTTONS as i32 {
         return 0;
     }
     MOUSEARRAY[(n + 1) as usize]
@@ -728,8 +710,8 @@ unsafe fn mousebutton(n: c_int) -> boolean {
 /// # Safety
 /// Reads the `JOYARRAY` global; safe under the single-threaded contract.
 #[inline]
-unsafe fn joybutton(n: c_int) -> boolean {
-    if n < 0 || n >= MAX_JOY_BUTTONS as c_int {
+unsafe fn joybutton(n: i32) -> boolean {
+    if n < 0 || n >= MAX_JOY_BUTTONS as i32 {
         return 0;
     }
     JOYARRAY[(n + 1) as usize]
@@ -749,11 +731,11 @@ unsafe fn joybutton(n: c_int) -> boolean {
 /// # Safety
 /// `cmd` must point to a fully-initialised `TiccmdT` with at least
 /// `sizeof::<TiccmdT>()` valid bytes; reads through the pointer as a raw
-/// `c_int` array.
-pub unsafe fn G_CmdChecksum(cmd: *const TiccmdT) -> c_int {
+/// `i32` array.
+pub unsafe fn G_CmdChecksum(cmd: *const TiccmdT) -> i32 {
     let n = std::mem::size_of::<TiccmdT>() / 4 - 1;
-    let words = cmd as *const c_int;
-    let mut sum: c_int = 0;
+    let words = cmd as *const i32;
+    let mut sum: i32 = 0;
     for i in 0..n {
         sum = sum.wrapping_add(*words.add(i));
     }
@@ -776,7 +758,7 @@ pub unsafe fn G_CmdChecksum(cmd: *const TiccmdT) -> c_int {
 /// # Safety
 /// Reads several engine globals (`gamemission`, `gamemode`, `players`,
 /// `consoleplayer`); safe under the single-threaded engine convention.
-unsafe fn weapon_selectable(weapon: c_int) -> bool {
+unsafe fn weapon_selectable(weapon: i32) -> bool {
     // Can't select supershotgun in Doom 1.
     if weapon == wp_supershotgun && logical_gamemission() == doom {
         return false;
@@ -816,7 +798,7 @@ unsafe fn weapon_selectable(weapon: c_int) -> bool {
 /// # Safety
 /// Reads `players[consoleplayer]` and `WEAPON_ORDER_TABLE`; safe under the
 /// single-threaded engine convention.
-unsafe fn g_next_weapon(direction: c_int) -> c_int {
+unsafe fn g_next_weapon(direction: i32) -> i32 {
     let cp = consoleplayer as usize;
     let weapon = if players[cp].pendingweapon == wp_nochange {
         players[cp].readyweapon
@@ -824,7 +806,7 @@ unsafe fn g_next_weapon(direction: c_int) -> c_int {
         players[cp].pendingweapon
     };
 
-    let n = WEAPON_ORDER_TABLE.len() as c_int;
+    let n = WEAPON_ORDER_TABLE.len() as i32;
     let mut i = 0;
     while i < n {
         if WEAPON_ORDER_TABLE[i as usize].weapon == weapon {
@@ -872,7 +854,7 @@ unsafe fn g_next_weapon(direction: c_int) -> c_int {
 /// # Safety
 /// `cmd` must point to a writable `TiccmdT`; the entire struct is zeroed
 /// before assembly.
-pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
+pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
     use crate::doom::c_ffi::BACKUPTICS;
 
     let cmd = &mut *cmd;
@@ -885,14 +867,14 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
         || (joybutton(joybstrafe) != 0);
 
     // "joyb_speed = 31" autorun hack: key_speed >= NUMKEYS means always running
-    let speed = (key_speed >= NUMKEYS as c_int)
-        || (joybspeed >= MAX_JOY_BUTTONS as c_int)
+    let speed = (key_speed >= NUMKEYS as i32)
+        || (joybspeed >= MAX_JOY_BUTTONS as i32)
         || (GAMEKEYDOWN[key_speed as usize] != 0)
         || (joybutton(joybspeed) != 0);
     let speed = speed as usize;
 
-    let mut forward: c_int = 0;
-    let mut side: c_int = 0;
+    let mut forward: i32 = 0;
+    let mut side: i32 = 0;
 
     // Two-stage accelerative turning
     if JOYXMOVE != 0 || GAMEKEYDOWN[key_right as usize] != 0 || GAMEKEYDOWN[key_left as usize] != 0
@@ -961,7 +943,7 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
     }
 
     // Buttons
-    cmd.chatchar = HU_dequeueChatChar() as u8;
+    cmd.chatchar = HU_dequeueChatChar();
 
     if GAMEKEYDOWN[key_fire as usize] != 0
         || mousebutton(mousebfire) != 0
@@ -1078,8 +1060,8 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
         side = -maxplmove;
     }
 
-    cmd.forwardmove = (cmd.forwardmove as c_int + forward) as i8;
-    cmd.sidemove = (cmd.sidemove as c_int + side) as i8;
+    cmd.forwardmove = (cmd.forwardmove as i32 + forward) as i8;
+    cmd.sidemove = (cmd.sidemove as i32 + side) as i8;
 
     // Special buttons
     if sendpause != 0 {
@@ -1118,18 +1100,18 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
 /// Mutates many engine globals (`gamestate`, `wipegamestate`, `levelstarttic`,
 /// the input rings, the players array).
 pub unsafe fn G_DoLoadLevel() {
-    skyflatnum = R_FlatNumForName(DEH_String(c"F_SKY1".as_ptr()) as *mut c_char);
+    skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
 
     // Fix sky texture for Final Doom / Chex
     if gamemode == commercial && (gameversion == exe_final2 || gameversion == exe_chex) {
-        let skytexturename: *const c_char = if gamemap < 12 {
-            c"SKY1".as_ptr()
+        let skytexturename: &[u8] = if gamemap < 12 {
+            b"SKY1"
         } else if gamemap < 21 {
-            c"SKY2".as_ptr()
+            b"SKY2"
         } else {
-            c"SKY3".as_ptr()
+            b"SKY3"
         };
-        skytexture = R_TextureNumForName(DEH_String(skytexturename) as *mut c_char);
+        skytexture = R_TextureNumForName(DEH_String(skytexturename));
     }
 
     levelstarttic = gametic;
@@ -1167,7 +1149,8 @@ pub unsafe fn G_DoLoadLevel() {
     JOYARRAY = [0; MAX_JOY_BUTTONS + 1];
 
     if testcontrols != 0 {
-        players[consoleplayer as usize].message = c"Press escape to quit.".as_ptr().cast_mut();
+        players[consoleplayer as usize].message =
+            c"Press escape to quit.".as_ptr().cast_mut().cast();
     }
 }
 
@@ -1182,13 +1165,13 @@ pub unsafe fn G_DoLoadLevel() {
 /// # Safety
 /// Mutates `JOYARRAY` and `NEXT_WEAPON`; safe under the single-threaded
 /// engine convention.
-unsafe fn set_joy_buttons(buttons_mask: c_uint) {
+unsafe fn set_joy_buttons(buttons_mask: u32) {
     for i in 0..MAX_JOY_BUTTONS {
         let button_on = ((buttons_mask >> i) & 1) != 0;
         if JOYARRAY[i + 1] == 0 && button_on {
-            if i as c_int == joybprevweapon {
+            if i as i32 == joybprevweapon {
                 NEXT_WEAPON = -1;
-            } else if i as c_int == joybnextweapon {
+            } else if i as i32 == joybnextweapon {
                 NEXT_WEAPON = 1;
             }
         }
@@ -1202,13 +1185,13 @@ unsafe fn set_joy_buttons(buttons_mask: c_uint) {
 /// # Safety
 /// Mutates `MOUSEARRAY` and `NEXT_WEAPON`; safe under the single-threaded
 /// engine convention.
-unsafe fn set_mouse_buttons(buttons_mask: c_uint) {
+unsafe fn set_mouse_buttons(buttons_mask: u32) {
     for i in 0..MAX_MOUSE_BUTTONS {
         let button_on = ((buttons_mask >> i) & 1) != 0;
         if MOUSEARRAY[i + 1] == 0 && button_on {
-            if i as c_int == mousebprevweapon {
+            if i as i32 == mousebprevweapon {
                 NEXT_WEAPON = -1;
-            } else if i as c_int == mousebnextweapon {
+            } else if i as i32 == mousebnextweapon {
                 NEXT_WEAPON = 1;
             }
         }
@@ -1249,7 +1232,7 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
     {
         loop {
             displayplayer += 1;
-            if displayplayer == MAXPLAYERS as c_int {
+            if displayplayer == MAXPLAYERS as i32 {
                 displayplayer = 0;
             }
             if playeringame[displayplayer as usize] != 0 || displayplayer == consoleplayer {
@@ -1322,14 +1305,14 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
         }
         2 => {
             // ev_mouse
-            set_mouse_buttons(ev.data1 as c_uint);
+            set_mouse_buttons(ev.data1 as u32);
             MOUSEX = ev.data2 * (mouseSensitivity + 5) / 10;
             MOUSEY = ev.data3 * (mouseSensitivity + 5) / 10;
             return 1;
         }
         3 => {
             // ev_joystick
-            set_joy_buttons(ev.data1 as c_uint);
+            set_joy_buttons(ev.data1 as u32);
             JOYXMOVE = ev.data2;
             JOYYMOVE = ev.data3;
             JOYSTRAFEMOVE = ev.data4;
@@ -1373,7 +1356,7 @@ pub unsafe fn G_Ticker() {
     // Player reborns
     for i in 0..MAXPLAYERS {
         if playeringame[i] != 0 && players[i].playerstate == PST_REBORN {
-            G_DoReborn(i as c_int);
+            G_DoReborn(i as i32);
         }
     }
 
@@ -1389,9 +1372,9 @@ pub unsafe fn G_Ticker() {
             ga_victory => F_StartFinale(),
             ga_worlddone => G_DoWorldDone(),
             ga_screenshot => {
-                V_ScreenShot(c"DOOM%02i.%s".as_ptr().cast_mut());
+                V_ScreenShot(c"DOOM%02i.%s".as_ptr().cast_mut().cast());
                 players[consoleplayer as usize].message =
-                    DEH_String(c"screen shot".as_ptr()) as *mut c_char;
+                    DEH_String(c"screen shot".as_ptr().cast_mut().cast());
                 gameaction = ga_nothing;
             }
             _ => {}
@@ -1421,7 +1404,7 @@ pub unsafe fn G_Ticker() {
             }
 
             if (gametic & 31) == 0
-                && ((gametic >> 5) % MAXPLAYERS as c_int) == i as c_int
+                && ((gametic >> 5) % MAXPLAYERS as i32) == i as i32
                 && turbodetected[i] != 0
             {
                 M_snprintf_clamp(
@@ -1430,7 +1413,7 @@ pub unsafe fn G_Ticker() {
                     snprintf(
                         std::ptr::addr_of_mut!(TURBOMESSAGE[0]),
                         80,
-                        c"%s is turbo!".as_ptr(),
+                        c"%s is turbo!".as_ptr().cast(),
                         player_names[i],
                     ),
                 );
@@ -1439,11 +1422,11 @@ pub unsafe fn G_Ticker() {
             }
 
             if netgame != 0 && netdemo == 0 && (gametic % ticdup) == 0 {
-                if gametic > BACKUPTICS as c_int && consistancy[i][buf] != (*cmd).consistancy {
+                if gametic > BACKUPTICS as i32 && consistancy[i][buf] != (*cmd).consistancy {
                     crate::i_error!(
                         "consistency failure ({} should be {})",
-                        (*cmd).consistancy as c_int,
-                        consistancy[i][buf] as c_int,
+                        (*cmd).consistancy as i32,
+                        consistancy[i][buf] as i32,
                     );
                 }
                 let mo = players[i].mo as *mut mobj_t;
@@ -1474,11 +1457,11 @@ pub unsafe fn G_Ticker() {
                         if SAVEDESCRIPTION[0] == 0 {
                             M_StringCopy(
                                 std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]),
-                                c"NET GAME".as_ptr(),
+                                c"NET GAME".as_ptr().cast(),
                                 32,
                             );
                         }
-                        SAVEGAMESLOT = ((buttons & BTS_SAVEMASK) >> BTS_SAVESHIFT) as c_int;
+                        SAVEGAMESLOT = ((buttons & BTS_SAVEMASK) >> BTS_SAVESHIFT) as i32;
                         gameaction = ga_savegame;
                     }
                     _ => {}
@@ -1526,7 +1509,7 @@ pub unsafe fn G_Ticker() {
 ///
 /// # Safety
 /// `player` must be a valid index into `players[]` (0..`MAXPLAYERS`).
-pub unsafe fn G_InitPlayer(player: c_int) {
+pub unsafe fn G_InitPlayer(player: i32) {
     G_PlayerReborn(player);
 }
 
@@ -1544,7 +1527,7 @@ pub unsafe fn G_InitPlayer(player: c_int) {
 /// # Safety
 /// `player` must index a valid slot whose `mo` pointer is non-null (the
 /// caller is `G_DoCompleted`, which guarantees this).
-pub unsafe fn G_PlayerFinishLevel(player: c_int) {
+pub unsafe fn G_PlayerFinishLevel(player: i32) {
     let p = &mut players[player as usize];
     p.powers = [0; 6];
     p.cards = [0; 6];
@@ -1568,7 +1551,7 @@ pub unsafe fn G_PlayerFinishLevel(player: c_int) {
 ///
 /// # Safety
 /// `player` must be a valid index into `players[]`.
-pub unsafe fn G_PlayerReborn(player: c_int) {
+pub unsafe fn G_PlayerReborn(player: i32) {
     let idx = player as usize;
     let frags = players[idx].frags;
     let killcount = players[idx].killcount;
@@ -1619,7 +1602,7 @@ pub unsafe fn G_PlayerReborn(player: c_int) {
 /// # Safety
 /// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
 /// queue globals.
-pub unsafe fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) -> boolean {
+pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     if players[playernum as usize].mo.is_null() {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
@@ -1689,7 +1672,7 @@ pub unsafe fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) -> boolean 
     let mo = P_SpawnMobj(x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
     if players[consoleplayer as usize].viewz != 1 {
-        S_StartSound(mo as *mut c_void, Sfx::Telept as c_int);
+        S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
     }
     1
 }
@@ -1709,14 +1692,14 @@ pub unsafe fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) -> boolean 
 /// # Safety
 /// `playernum` must be in `0..MAXPLAYERS` and the level's deathmatch start
 /// table must already be populated by `P_SetupLevel`.
-pub unsafe fn G_DeathMatchSpawnPlayer(playernum: c_int) {
-    let selections = deathmatch_p.offset_from(std::ptr::addr_of!(deathmatchstarts[0])) as c_int;
+pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
+    let selections = deathmatch_p.offset_from(std::ptr::addr_of!(deathmatchstarts[0])) as i32;
     if selections < 4 {
         crate::i_error!("Only {} deathmatch spots, 4 required", selections);
     }
 
     for _ in 0..20 {
-        let i = (P_Random() % selections as c_int) as usize;
+        let i = (P_Random() % selections) as usize;
         if G_CheckSpot(
             playernum,
             &mut deathmatchstarts[i] as *mut SetupMapThing as *mut mapthing_t,
@@ -1745,7 +1728,7 @@ pub unsafe fn G_DeathMatchSpawnPlayer(playernum: c_int) {
 ///
 /// # Safety
 /// `playernum` must be a valid player index.
-pub unsafe fn G_DoReborn(playernum: c_int) {
+pub unsafe fn G_DoReborn(playernum: i32) {
     if netgame == 0 {
         gameaction = ga_loadlevel;
     } else {
@@ -1770,7 +1753,7 @@ pub unsafe fn G_DoReborn(playernum: c_int) {
             return;
         }
 
-        for i in 0..MAXPLAYERS as c_int {
+        for i in 0..MAXPLAYERS as i32 {
             if G_CheckSpot(
                 playernum,
                 &mut playerstarts[i as usize] as *mut SetupMapThing as *mut mapthing_t,
@@ -1826,7 +1809,7 @@ pub unsafe fn G_ExitLevel() {
 /// # Safety
 /// Writes the `secretexit` and `gameaction` globals.
 pub unsafe fn G_SecretExitLevel() {
-    if gamemode == commercial && W_CheckNumForName(c"map31".as_ptr()) < 0 {
+    if gamemode == commercial && W_CheckNumForName(b"map31") < 0 {
         secretexit = 0;
     } else {
         secretexit = 1;
@@ -1861,7 +1844,7 @@ pub unsafe fn G_DoCompleted() {
 
     for i in 0..MAXPLAYERS {
         if playeringame[i] != 0 {
-            G_PlayerFinishLevel(i as c_int);
+            G_PlayerFinishLevel(i as i32);
         }
     }
 
@@ -2022,7 +2005,7 @@ pub unsafe fn G_DoWorldDone() {
 ///
 /// # Safety
 /// `name` must be a valid NUL-terminated C string.
-pub unsafe fn G_LoadGame(name: *mut c_char) {
+pub unsafe fn G_LoadGame(name: *mut u8) {
     M_StringCopy(std::ptr::addr_of_mut!(savename[0]), name, 256);
     gameaction = ga_loadgame;
 }
@@ -2041,10 +2024,7 @@ pub unsafe fn G_LoadGame(name: *mut c_char) {
 pub unsafe fn G_DoLoadGame() {
     gameaction = ga_nothing;
 
-    save_stream = libc::fopen(
-        std::ptr::addr_of!(savename[0]),
-        c"rb".as_ptr() as *const libc::c_char,
-    );
+    save_stream = libc::fopen(std::ptr::addr_of!(savename[0]).cast(), c"rb".as_ptr());
     if save_stream.is_null() {
         return;
     }
@@ -2068,7 +2048,7 @@ pub unsafe fn G_DoLoadGame() {
     P_UnArchiveSpecials();
 
     if P_ReadSaveGameEOF() == 0 {
-        I_Error(c"Bad savegame".as_ptr());
+        I_Error(c"Bad savegame".as_ptr().cast());
     }
 
     libc::fclose(save_stream);
@@ -2091,7 +2071,7 @@ pub unsafe fn G_DoLoadGame() {
 ///
 /// # Safety
 /// `description` must be a valid NUL-terminated C string.
-pub unsafe fn G_SaveGame(slot: c_int, description: *const c_char) {
+pub unsafe fn G_SaveGame(slot: i32, description: *const u8) {
     SAVEGAMESLOT = slot;
     M_StringCopy(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]), description, 32);
     sendsave = 1;
@@ -2112,21 +2092,21 @@ pub unsafe fn G_SaveGame(slot: c_int, description: *const c_char) {
 /// Performs raw `libc` file I/O (`fopen`/`ftell`/`fclose`/`remove`/`rename`)
 /// and writes through the global `save_stream`.
 pub unsafe fn G_DoSaveGame() {
-    let recovery_savegame_file: *mut c_char;
+    let recovery_savegame_file: *mut u8;
     let temp_savegame_file = P_TempSaveGameFile();
     let savegame_file = P_SaveGameFile(SAVEGAMESLOT);
 
-    save_stream = libc::fopen(temp_savegame_file, c"wb".as_ptr() as *const libc::c_char);
+    save_stream = libc::fopen(temp_savegame_file.cast(), c"wb".as_ptr());
 
     if save_stream.is_null() {
-        let recovery = M_TempFile(c"recovery.dsg".as_ptr().cast_mut());
+        let recovery = M_TempFile(c"recovery.dsg".as_ptr().cast_mut().cast());
         recovery_savegame_file = recovery;
-        save_stream = libc::fopen(recovery, c"wb".as_ptr() as *const libc::c_char);
+        save_stream = libc::fopen(recovery.cast(), c"wb".as_ptr());
         if save_stream.is_null() {
             crate::i_error!(
                 "Failed to open either '{}' or '{}' to write savegame.",
-                std::ffi::CStr::from_ptr(temp_savegame_file).to_string_lossy(),
-                std::ffi::CStr::from_ptr(recovery_savegame_file).to_string_lossy(),
+                std::ffi::CStr::from_ptr(temp_savegame_file.cast()).to_string_lossy(),
+                std::ffi::CStr::from_ptr(recovery_savegame_file.cast()).to_string_lossy(),
             );
         }
     } else {
@@ -2143,7 +2123,7 @@ pub unsafe fn G_DoSaveGame() {
     P_WriteSaveGameEOF();
 
     if vanilla_savegame_limit != 0 && libc::ftell(save_stream) > SAVEGAMESIZE {
-        I_Error(c"Savegame buffer overrun".as_ptr());
+        I_Error(c"Savegame buffer overrun".as_ptr().cast());
     }
 
     libc::fclose(save_stream);
@@ -2151,18 +2131,22 @@ pub unsafe fn G_DoSaveGame() {
     if !recovery_savegame_file.is_null() {
         crate::i_error!(
             "Failed to open savegame file '{}' for writing.\nBut your game has been saved to '{}' for recovery.",
-            std::ffi::CStr::from_ptr(temp_savegame_file).to_string_lossy(),
-            std::ffi::CStr::from_ptr(recovery_savegame_file).to_string_lossy(),
+            std::ffi::CStr::from_ptr(temp_savegame_file.cast()).to_string_lossy(),
+            std::ffi::CStr::from_ptr(recovery_savegame_file.cast()).to_string_lossy(),
         );
     }
 
-    libc::remove(savegame_file);
-    libc::rename(temp_savegame_file, savegame_file);
+    libc::remove(savegame_file.cast());
+    libc::rename(temp_savegame_file.cast(), savegame_file.cast());
 
     gameaction = ga_nothing;
-    M_StringCopy(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]), c"".as_ptr(), 32);
+    M_StringCopy(
+        std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]),
+        c"".as_ptr().cast(),
+        32,
+    );
 
-    players[consoleplayer as usize].message = DEH_String(c"game saved.".as_ptr()) as *mut c_char;
+    players[consoleplayer as usize].message = DEH_String(c"game saved.".as_ptr().cast_mut().cast());
 
     R_FillBackScreen();
 }
@@ -2176,7 +2160,7 @@ pub unsafe fn G_DoSaveGame() {
 ///
 /// # Safety
 /// Writes the `d_skill`, `d_episode`, `d_map` and `gameaction` globals.
-pub unsafe fn G_DeferedInitNew(skill: skill_t, episode: c_int, map: c_int) {
+pub unsafe fn G_DeferedInitNew(skill: skill_t, episode: i32, map: i32) {
     d_skill = skill;
     d_episode = episode;
     d_map = map;
@@ -2222,7 +2206,7 @@ pub unsafe fn G_DoNewGame() {
 ///
 /// # Safety
 /// Mutates virtually every game-loop global.
-pub unsafe fn G_InitNew(skill: skill_t, episode: c_int, map: c_int) {
+pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
     let mut skill = skill;
     let mut episode = episode;
     let mut map = map;
@@ -2288,25 +2272,25 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: c_int, map: c_int) {
 
     // Set sky texture (vanilla Doom broken behaviour for Doom II: set once at
     // game start, not per level — deliberately preserved for compatibility).
-    let skytexturename: *const c_char = if gamemode == commercial {
+    let skytexturename: &[u8] = if gamemode == commercial {
         if gamemap < 12 {
-            c"SKY1".as_ptr()
+            b"SKY1"
         } else if gamemap < 21 {
-            c"SKY2".as_ptr()
+            b"SKY2"
         } else {
-            c"SKY3".as_ptr()
+            b"SKY3"
         }
     } else {
         match gameepisode {
-            1 => c"SKY1".as_ptr(),
-            2 => c"SKY2".as_ptr(),
-            3 => c"SKY3".as_ptr(),
-            4 => c"SKY4".as_ptr(),
-            _ => c"SKY1".as_ptr(),
+            1 => b"SKY1",
+            2 => b"SKY2",
+            3 => b"SKY3",
+            4 => b"SKY4",
+            _ => b"SKY1",
         }
     };
 
-    skytexture = R_TextureNumForName(DEH_String(skytexturename) as *mut c_char);
+    skytexture = R_TextureNumForName(DEH_String(skytexturename));
 
     G_DoLoadLevel();
 }
@@ -2354,7 +2338,7 @@ unsafe fn set_fast_monsters(fast: bool) {
 ///
 /// # Safety
 /// Mutates the shared `states` and `mobjinfo` arrays.
-pub unsafe fn G_SetFastMonsters(fast: c_int) {
+pub unsafe fn G_SetFastMonsters(fast: i32) {
     use crate::doom::info::{
         mobjinfo, states, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, S_SARG_PAIN2, S_SARG_RUN1,
     };
@@ -2454,7 +2438,7 @@ pub unsafe fn G_ReadDemoTiccmd(cmd: *mut TiccmdT) {
 /// All three demo pointer globals must be in a consistent state pointing
 /// into the same allocation before the call.
 unsafe fn increase_demo_buffer() {
-    let current_length = demoend.offset_from(demobuffer) as c_int;
+    let current_length = demoend.offset_from(demobuffer) as i32;
     let new_length = current_length * 2;
     let new_demobuffer = Z_Malloc(new_length, PU_STATIC, ptr::null_mut()) as *mut byte;
     let new_demop = new_demobuffer.add(demo_p.offset_from(demobuffer) as usize);
@@ -2539,20 +2523,20 @@ pub unsafe fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
 ///
 /// # Safety
 /// `name` must be a valid NUL-terminated C string.
-pub unsafe fn G_RecordDemo(name: *mut c_char) {
+pub unsafe fn G_RecordDemo(name: *mut u8) {
     usergame = 0;
-    let name_len = libc::strlen(name);
+    let name_len = strlen(name);
     let demoname_size = name_len + 5;
-    demoname = Z_Malloc(demoname_size as c_int, PU_STATIC, ptr::null_mut()) as *mut c_char;
+    demoname = Z_Malloc(demoname_size as i32, PU_STATIC, ptr::null_mut()) as *mut u8;
     M_snprintf_clamp(
         demoname,
         demoname_size,
-        snprintf(demoname, demoname_size, c"%s.lmp".as_ptr(), name),
+        snprintf(demoname, demoname_size, c"%s.lmp".as_ptr().cast(), name),
     );
-    let mut maxsize: c_int = 0x20000;
-    let i = M_CheckParmWithArgs(c"-maxdemo".as_ptr().cast_mut(), 1);
+    let mut maxsize: i32 = 0x20000;
+    let i = M_CheckParmWithArgs(c"-maxdemo".as_ptr().cast_mut().cast(), 1);
     if i != 0 {
-        maxsize = libc::atoi(*myargv.add(i as usize + 1) as *const libc::c_char);
+        maxsize = libc::atoi((*myargv.add(i as usize + 1)).cast());
         maxsize *= 1024;
     }
     demobuffer = Z_Malloc(maxsize, PU_STATIC, ptr::null_mut()) as *mut byte;
@@ -2567,16 +2551,18 @@ pub unsafe fn G_RecordDemo(name: *mut c_char) {
 ///
 /// # Safety
 /// Reads the `gameversion` global.
-pub unsafe fn G_VanillaVersionCode() -> c_int {
+pub unsafe fn G_VanillaVersionCode() -> i32 {
     g_vanilla_version_code_for(gameversion)
 }
 
 /// Pure helper for [`G_VanillaVersionCode`]: maps a `gameversion` value to
 /// its 1-byte demo header code without touching globals, so unit tests can
 /// exercise the table directly.
-fn g_vanilla_version_code_for(gv: c_int) -> c_int {
+fn g_vanilla_version_code_for(gv: i32) -> i32 {
     match gv {
-        v if v == exe_doom_1_2 => I_Error(c"Doom 1.2 does not have a version code!".as_ptr()),
+        v if v == exe_doom_1_2 => {
+            I_Error(c"Doom 1.2 does not have a version code!".as_ptr().cast())
+        }
         v if v == exe_doom_1_666 => 106,
         v if v == exe_doom_1_7 => 107,
         v if v == exe_doom_1_8 => 108,
@@ -2597,7 +2583,7 @@ fn g_vanilla_version_code_for(gv: c_int) -> c_int {
 pub unsafe fn G_BeginRecording() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
-    longtics = (M_CheckParm(c"-longtics".as_ptr().cast_mut()) != 0) as boolean;
+    longtics = (M_CheckParm(c"-longtics".as_ptr().cast_mut().cast()) != 0) as boolean;
     lowres_turn = (longtics == 0) as boolean;
 
     demo_p = demobuffer;
@@ -2642,8 +2628,8 @@ pub unsafe fn G_BeginRecording() {
 /// # Safety
 /// `name` must point to a NUL-terminated C string that lives at least until
 /// `G_DoPlayDemo` runs.
-pub unsafe fn G_DeferedPlayDemo(name: *const c_char) {
-    defdemoname = name as *mut c_char;
+pub unsafe fn G_DeferedPlayDemo(name: *const u8) {
+    defdemoname = name as *mut u8;
     gameaction = ga_playdemo;
 }
 
@@ -2659,17 +2645,17 @@ pub unsafe fn G_DeferedPlayDemo(name: *const c_char) {
 /// # Safety
 /// Writes the `DEMOVERSIONBUF` static; the returned pointer is invalidated
 /// by the next call.
-unsafe fn demo_version_description(version: c_int) -> *const c_char {
+unsafe fn demo_version_description(version: i32) -> *const u8 {
     match version {
-        104 => c"v1.4".as_ptr(),
-        105 => c"v1.5".as_ptr(),
-        106 => c"v1.6/v1.666".as_ptr(),
-        107 => c"v1.7/v1.7a".as_ptr(),
-        108 => c"v1.8".as_ptr(),
-        109 => c"v1.9".as_ptr(),
+        104 => c"v1.4".as_ptr().cast(),
+        105 => c"v1.5".as_ptr().cast(),
+        106 => c"v1.6/v1.666".as_ptr().cast(),
+        107 => c"v1.7/v1.7a".as_ptr().cast(),
+        108 => c"v1.8".as_ptr().cast(),
+        109 => c"v1.9".as_ptr().cast(),
         _ => {
             if (0..=4).contains(&version) {
-                c"v1.0/v1.1/v1.2".as_ptr()
+                c"v1.0/v1.1/v1.2".as_ptr().cast()
             } else {
                 M_snprintf_clamp(
                     std::ptr::addr_of_mut!(DEMOVERSIONBUF[0]),
@@ -2677,7 +2663,7 @@ unsafe fn demo_version_description(version: c_int) -> *const c_char {
                     snprintf(
                         std::ptr::addr_of_mut!(DEMOVERSIONBUF[0]),
                         16,
-                        c"%i.%i (unknown)".as_ptr(),
+                        c"%i.%i (unknown)".as_ptr().cast(),
                         version / 100,
                         version % 100,
                     ),
@@ -2710,10 +2696,11 @@ pub unsafe fn G_DoPlayDemo() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
     gameaction = ga_nothing;
-    demobuffer = W_CacheLumpName(defdemoname, PU_STATIC) as *mut byte;
+    demobuffer =
+        W_CacheLumpName(CStr::from_ptr(defdemoname.cast()).to_bytes(), PU_STATIC) as *mut byte;
     demo_p = demobuffer;
 
-    let demoversion = *demo_p as c_int;
+    let demoversion = *demo_p as i32;
     demo_p = demo_p.add(1);
 
     if demoversion == G_VanillaVersionCode() {
@@ -2728,7 +2715,7 @@ pub unsafe fn G_DoPlayDemo() {
             This appears to be %s.\0";
         // C code uses printf (not I_Error) here so demo playback continues
         libc::printf(
-            message.as_ptr() as *const libc::c_char,
+            message.as_ptr().cast(),
             demoversion,
             G_VanillaVersionCode(),
             demo_version_description(demoversion),
@@ -2737,21 +2724,21 @@ pub unsafe fn G_DoPlayDemo() {
 
     let skill = *demo_p as skill_t;
     demo_p = demo_p.add(1);
-    let episode = *demo_p as c_int;
+    let episode = *demo_p as i32;
     demo_p = demo_p.add(1);
-    let map = *demo_p as c_int;
+    let map = *demo_p as i32;
     demo_p = demo_p.add(1);
-    deathmatch = *demo_p as c_int;
+    deathmatch = *demo_p as i32;
     demo_p = demo_p.add(1);
-    respawnparm = *demo_p as c_int;
+    respawnparm = *demo_p as i32;
     demo_p = demo_p.add(1);
-    fastparm = *demo_p as c_int;
+    fastparm = *demo_p as i32;
     demo_p = demo_p.add(1);
-    nomonsters = *demo_p as c_int;
+    nomonsters = *demo_p as i32;
     demo_p = demo_p.add(1);
-    consoleplayer = *demo_p as c_int;
+    consoleplayer = *demo_p as i32;
     demo_p = demo_p.add(1);
-    if consoleplayer < 0 || consoleplayer >= MAXPLAYERS as c_int {
+    if consoleplayer < 0 || consoleplayer >= MAXPLAYERS as i32 {
         crate::i_error!("G_DoPlayDemo: consoleplayer {} out of range\n", {
             consoleplayer
         });
@@ -2763,8 +2750,8 @@ pub unsafe fn G_DoPlayDemo() {
     }
 
     if playeringame[1] != 0
-        || M_CheckParm(c"-solo-net".as_ptr().cast_mut()) > 0
-        || M_CheckParm(c"-netdemo".as_ptr().cast_mut()) > 0
+        || M_CheckParm(c"-solo-net".as_ptr().cast_mut().cast()) > 0
+        || M_CheckParm(c"-netdemo".as_ptr().cast_mut().cast()) > 0
     {
         netgame = 1;
         netdemo = 1;
@@ -2792,8 +2779,8 @@ pub unsafe fn G_DoPlayDemo() {
 ///
 /// # Safety
 /// Mutates `nodrawers`, `timingdemo`, `singletics`, `defdemoname`, `gameaction`.
-pub unsafe fn G_TimeDemo(name: *mut c_char) {
-    nodrawers = M_CheckParm(c"-nodraw".as_ptr().cast_mut());
+pub unsafe fn G_TimeDemo(name: *mut u8) {
+    nodrawers = M_CheckParm(c"-nodraw".as_ptr().cast_mut().cast());
     timingdemo = 1;
     use crate::doom::d_loop::singletics;
     singletics = 1;
@@ -2837,7 +2824,7 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
     }
 
     if demoplayback != 0 {
-        W_ReleaseLumpName(defdemoname);
+        W_ReleaseLumpName(CStr::from_ptr(defdemoname.cast()).to_bytes());
         demoplayback = 0;
         netdemo = 0;
         netgame = 0;
@@ -2864,13 +2851,13 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
         M_WriteFile(
             demoname,
             demobuffer as *mut c_void,
-            demo_p.offset_from(demobuffer) as c_int,
+            demo_p.offset_from(demobuffer) as i32,
         );
         Z_Free(demobuffer as *mut c_void);
         demorecording = 0;
         crate::i_error!(
             "Demo {} recorded",
-            std::ffi::CStr::from_ptr(demoname).to_string_lossy()
+            std::ffi::CStr::from_ptr(demoname.cast()).to_string_lossy()
         );
     }
 

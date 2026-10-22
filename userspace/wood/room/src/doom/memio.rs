@@ -16,7 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::{c_int, c_void};
+use std::ffi::c_void;
 
 #[cfg(not(test))]
 use crate::doom::z_zone::{Z_Free, Z_Malloc, PU_STATIC};
@@ -93,7 +93,7 @@ fn mem_free(ptr: *mut c_void) {
 /// `PU_STATIC` priority, matching the C source's use of `Z_Malloc`.
 #[cfg(not(test))]
 fn mem_malloc(size: usize) -> *mut c_void {
-    unsafe { Z_Malloc(size as c_int, PU_STATIC, std::ptr::null_mut()) }
+    unsafe { Z_Malloc(size as i32, PU_STATIC, std::ptr::null_mut()) }
 }
 
 /// Production deallocator: forwards to `Z_Free`, matching the C source.
@@ -267,11 +267,11 @@ pub fn mem_fclose(stream: *mut _MEMFILE) {
 
 /// Returns the current read/write position, like `ftell`.
 ///
-/// The return type is `c_int` for parity with the C signature (`long` in C,
+/// The return type is `i32` for parity with the C signature (`long` in C,
 /// but the existing callers only use small offsets).
-pub fn mem_ftell(stream: *mut _MEMFILE) -> c_int {
+pub fn mem_ftell(stream: *mut _MEMFILE) -> i32 {
     let stream = unsafe { &*stream };
-    stream.position as c_int
+    stream.position as i32
 }
 
 /// Repositions the cursor relative to `whence`.
@@ -283,13 +283,13 @@ pub fn mem_ftell(stream: *mut _MEMFILE) -> c_int {
 /// particular it suffers the same defects: `MEM_SEEK_CUR` and
 /// `MEM_SEEK_END` use 32-bit unsigned arithmetic and do not detect under-
 /// or overflow if a negative offset would seek past 0.
-pub fn mem_fseek(stream: *mut _MEMFILE, position: c_int, whence: mem_rel_t) -> c_int {
+pub fn mem_fseek(stream: *mut _MEMFILE, position: i32, whence: mem_rel_t) -> i32 {
     let stream = unsafe { &mut *stream };
 
     let newpos = match whence {
         mem_rel_t::MEM_SEEK_SET => position as u32,
         mem_rel_t::MEM_SEEK_CUR => stream.position.wrapping_add(position as u32),
-        mem_rel_t::MEM_SEEK_END => (stream.buflen as c_int + position) as u32,
+        mem_rel_t::MEM_SEEK_END => (stream.buflen as i32 + position) as u32,
     };
 
     if (newpos as usize) < stream.buflen {

@@ -8,17 +8,14 @@
 //! Notable Rust-vs-C differences:
 //! - Cheat-sequence tables are built at compile time with `const fn` helpers
 //!   instead of being initialised by `ST_Start`.
-//! - `DEH_String` is an identity shim; Dehacked string replacement is not yet
-//!   wired up.
+//! - `DEH_String` (from `deh_str`) is an identity; Dehacked string
+//!   replacement is not yet wired up.
 //! - `logical_gamemission` is duplicated here (it also lives in `st_stuff.c`
 //!   as a macro) to keep the file self-contained.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{
-    ffi::{c_char, c_int},
-    ptr,
-};
+use std::ptr;
 
 use crate::{
     c_write,
@@ -28,6 +25,7 @@ use crate::{
         d_items::weaponinfo,
         d_mode,
         d_player::{PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
+        deh_str::DEH_String,
         doomstat::{gamemission, gamemode, gameversion},
         g_game::{consoleplayer, deathmatch, gameskill, netgame, players, G_DeferedInitNew},
         i_timer::TICRATE,
@@ -56,228 +54,209 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 /// Height of the status bar in screen pixels (matches C `ST_HEIGHT`).
-const ST_HEIGHT: c_int = 32;
+const ST_HEIGHT: i32 = 32;
 /// Width of the status bar in screen pixels (matches C `ST_WIDTH`).
-const ST_WIDTH: c_int = 320;
+const ST_WIDTH: i32 = 320;
 /// Left edge of the status bar in screen coordinates (matches C `ST_X`).
-const ST_X: c_int = 0;
+const ST_X: i32 = 0;
 /// Top edge of the status bar in screen coordinates (matches C `ST_Y`).
-const ST_Y: c_int = 200 - ST_HEIGHT;
+const ST_Y: i32 = 200 - ST_HEIGHT;
 
 /// X pixel position of the face widget background (matches C `ST_FX`).
-const ST_FX: c_int = 143;
+const ST_FX: i32 = 143;
 /// Y pixel position of the face widget background (matches C `ST_FY`).
-const ST_FY: c_int = 169;
+const ST_FY: i32 = 169;
 
 /// Number of pain-level face rows (0 = healthy, 4 = critical; matches C `ST_NUMPAINFACES`).
-const ST_NUMPAINFACES: c_int = 5;
+const ST_NUMPAINFACES: i32 = 5;
 /// Straight-ahead frames per pain row (matches C `ST_NUMSTRAIGHTFACES`).
-const ST_NUMSTRAIGHTFACES: c_int = 3;
+const ST_NUMSTRAIGHTFACES: i32 = 3;
 /// Turn-direction frames per pain row (matches C `ST_NUMTURNFACES`).
-const ST_NUMTURNFACES: c_int = 2;
+const ST_NUMTURNFACES: i32 = 2;
 /// Special-expression frames per pain row: ouch, evil-grin, rampage (matches C `ST_NUMSPECIALFACES`).
-const ST_NUMSPECIALFACES: c_int = 3;
+const ST_NUMSPECIALFACES: i32 = 3;
 
 /// Total frames per pain-level row (matches C `ST_FACESTRIDE`).
-const ST_FACESTRIDE: c_int = ST_NUMSTRAIGHTFACES + ST_NUMTURNFACES + ST_NUMSPECIALFACES;
+const ST_FACESTRIDE: i32 = ST_NUMSTRAIGHTFACES + ST_NUMTURNFACES + ST_NUMSPECIALFACES;
 
 /// Number of frames appended after all pain rows: god-mode and dead (matches C `ST_NUMEXTRAFACES`).
-const ST_NUMEXTRAFACES: c_int = 2;
+const ST_NUMEXTRAFACES: i32 = 2;
 /// Total face patch count loaded from the WAD (matches C `ST_NUMFACES`).
-const ST_NUMFACES: c_int = ST_FACESTRIDE * ST_NUMPAINFACES + ST_NUMEXTRAFACES;
+const ST_NUMFACES: i32 = ST_FACESTRIDE * ST_NUMPAINFACES + ST_NUMEXTRAFACES;
 
 /// Offset within a pain-row to the first turn face (matches C `ST_TURNOFFSET`).
-const ST_TURNOFFSET: c_int = ST_NUMSTRAIGHTFACES;
+const ST_TURNOFFSET: i32 = ST_NUMSTRAIGHTFACES;
 /// Offset within a pain-row to the ouch face (matches C `ST_OUCHOFFSET`).
-const ST_OUCHOFFSET: c_int = ST_TURNOFFSET + ST_NUMTURNFACES;
+const ST_OUCHOFFSET: i32 = ST_TURNOFFSET + ST_NUMTURNFACES;
 /// Offset within a pain-row to the evil-grin face (matches C `ST_EVILGRINOFFSET`).
-const ST_EVILGRINOFFSET: c_int = ST_OUCHOFFSET + 1;
+const ST_EVILGRINOFFSET: i32 = ST_OUCHOFFSET + 1;
 /// Offset within a pain-row to the rampage face (matches C `ST_RAMPAGEOFFSET`).
-const ST_RAMPAGEOFFSET: c_int = ST_EVILGRINOFFSET + 1;
+const ST_RAMPAGEOFFSET: i32 = ST_EVILGRINOFFSET + 1;
 /// Index of the god-mode face in the flat `faces` array (matches C `ST_GODFACE`).
-const ST_GODFACE: c_int = ST_NUMPAINFACES * ST_FACESTRIDE;
+const ST_GODFACE: i32 = ST_NUMPAINFACES * ST_FACESTRIDE;
 /// Index of the dead face in the flat `faces` array (matches C `ST_DEADFACE`).
-const ST_DEADFACE: c_int = ST_GODFACE + 1;
+const ST_DEADFACE: i32 = ST_GODFACE + 1;
 
 /// X screen coordinate of the face widget (matches C `ST_FACESX`).
-const ST_FACESX: c_int = 143;
+const ST_FACESX: i32 = 143;
 /// Y screen coordinate of the face widget (matches C `ST_FACESY`).
-const ST_FACESY: c_int = 168;
+const ST_FACESY: i32 = 168;
 
 /// Duration of the evil-grin expression in tics (matches C `ST_EVILGRINCOUNT`).
-const ST_EVILGRINCOUNT: c_int = 2 * TICRATE;
+const ST_EVILGRINCOUNT: i32 = 2 * TICRATE;
 /// Duration of a straight-ahead expression in tics (matches C `ST_STRAIGHTFACECOUNT`).
-const ST_STRAIGHTFACECOUNT: c_int = TICRATE / 2;
+const ST_STRAIGHTFACECOUNT: i32 = TICRATE / 2;
 /// Duration of turn and ouch expressions in tics (matches C `ST_TURNCOUNT`).
-const ST_TURNCOUNT: c_int = TICRATE;
+const ST_TURNCOUNT: i32 = TICRATE;
 /// Duration of the ouch expression in tics (matches C `ST_OUCHCOUNT`).
-const ST_OUCHCOUNT: c_int = TICRATE;
+const ST_OUCHCOUNT: i32 = TICRATE;
 /// Tics of continuous fire before the rampage face appears (matches C `ST_RAMPAGEDELAY`).
-const ST_RAMPAGEDELAY: c_int = 2 * TICRATE;
+const ST_RAMPAGEDELAY: i32 = 2 * TICRATE;
 
 /// Health-point drop threshold that triggers the ouch face (matches C `ST_MUCHPAIN`).
-const ST_MUCHPAIN: c_int = 20;
+const ST_MUCHPAIN: i32 = 20;
 
 /// Digit width of the ready-ammo number widget (matches C `ST_AMMOWIDTH`).
-const ST_AMMOWIDTH: c_int = 3;
+const ST_AMMOWIDTH: i32 = 3;
 /// X coordinate of the ready-ammo display (matches C `ST_AMMOX`).
-const ST_AMMOX: c_int = 44;
+const ST_AMMOX: i32 = 44;
 /// Y coordinate of the ready-ammo display (matches C `ST_AMMOY`).
-const ST_AMMOY: c_int = 171;
+const ST_AMMOY: i32 = 171;
 
 /// Digit width of the health display (matches C `ST_HEALTHWIDTH`).
-const ST_HEALTHWIDTH: c_int = 3;
+const ST_HEALTHWIDTH: i32 = 3;
 /// X coordinate of the health display (matches C `ST_HEALTHX`).
-const ST_HEALTHX: c_int = 90;
+const ST_HEALTHX: i32 = 90;
 /// Y coordinate of the health display (matches C `ST_HEALTHY`).
-const ST_HEALTHY: c_int = 171;
+const ST_HEALTHY: i32 = 171;
 
 /// X coordinate of the weapons-owned grid (matches C `ST_ARMSX`).
-const ST_ARMSX: c_int = 111;
+const ST_ARMSX: i32 = 111;
 /// Y coordinate of the weapons-owned grid (matches C `ST_ARMSY`).
-const ST_ARMSY: c_int = 172;
+const ST_ARMSY: i32 = 172;
 /// X coordinate of the arms background patch (matches C `ST_ARMSBGX`).
-const ST_ARMSBGX: c_int = 104;
+const ST_ARMSBGX: i32 = 104;
 /// Y coordinate of the arms background patch (matches C `ST_ARMSBGY`).
-const ST_ARMSBGY: c_int = 168;
+const ST_ARMSBGY: i32 = 168;
 /// Horizontal spacing between arms-grid cells in pixels (matches C `ST_ARMSXSPACE`).
-const ST_ARMSXSPACE: c_int = 12;
+const ST_ARMSXSPACE: i32 = 12;
 /// Vertical spacing between arms-grid cells in pixels (matches C `ST_ARMSYSPACE`).
-const ST_ARMSYSPACE: c_int = 10;
+const ST_ARMSYSPACE: i32 = 10;
 
 /// X coordinate of the frag counter in deathmatch (matches C `ST_FRAGSX`).
-const ST_FRAGSX: c_int = 138;
+const ST_FRAGSX: i32 = 138;
 /// Y coordinate of the frag counter in deathmatch (matches C `ST_FRAGSY`).
-const ST_FRAGSY: c_int = 171;
+const ST_FRAGSY: i32 = 171;
 /// Digit width of the frag counter (matches C `ST_FRAGSWIDTH`).
-const ST_FRAGSWIDTH: c_int = 2;
+const ST_FRAGSWIDTH: i32 = 2;
 
 /// Digit width of the armor display (matches C `ST_ARMORWIDTH`).
-const ST_ARMORWIDTH: c_int = 3;
+const ST_ARMORWIDTH: i32 = 3;
 /// X coordinate of the armor display (matches C `ST_ARMORX`).
-const ST_ARMORX: c_int = 221;
+const ST_ARMORX: i32 = 221;
 /// Y coordinate of the armor display (matches C `ST_ARMORY`).
-const ST_ARMORY: c_int = 171;
+const ST_ARMORY: i32 = 171;
 
 /// X coordinate of the blue key slot (matches C `ST_KEY0X`).
-const ST_KEY0X: c_int = 239;
+const ST_KEY0X: i32 = 239;
 /// Y coordinate of the blue key slot (matches C `ST_KEY0Y`).
-const ST_KEY0Y: c_int = 171;
+const ST_KEY0Y: i32 = 171;
 /// X coordinate of the yellow key slot (matches C `ST_KEY1X`).
-const ST_KEY1X: c_int = 239;
+const ST_KEY1X: i32 = 239;
 /// Y coordinate of the yellow key slot (matches C `ST_KEY1Y`).
-const ST_KEY1Y: c_int = 181;
+const ST_KEY1Y: i32 = 181;
 /// X coordinate of the red key slot (matches C `ST_KEY2X`).
-const ST_KEY2X: c_int = 239;
+const ST_KEY2X: i32 = 239;
 /// Y coordinate of the red key slot (matches C `ST_KEY2Y`).
-const ST_KEY2Y: c_int = 191;
+const ST_KEY2Y: i32 = 191;
 
 /// Digit width of per-ammo-type current-ammo displays (matches C `ST_AMMO0WIDTH`).
-const ST_AMMO0WIDTH: c_int = 3;
+const ST_AMMO0WIDTH: i32 = 3;
 /// X coordinate of bullets current-ammo display (matches C `ST_AMMO0X`).
-const ST_AMMO0X: c_int = 288;
+const ST_AMMO0X: i32 = 288;
 /// Y coordinate of bullets current-ammo display (matches C `ST_AMMO0Y`).
-const ST_AMMO0Y: c_int = 173;
+const ST_AMMO0Y: i32 = 173;
 /// X coordinate of shells current-ammo display (matches C `ST_AMMO1X`).
-const ST_AMMO1X: c_int = 288;
+const ST_AMMO1X: i32 = 288;
 /// Y coordinate of shells current-ammo display (matches C `ST_AMMO1Y`).
-const ST_AMMO1Y: c_int = 179;
+const ST_AMMO1Y: i32 = 179;
 /// X coordinate of cells current-ammo display (matches C `ST_AMMO2X`).
-const ST_AMMO2X: c_int = 288;
+const ST_AMMO2X: i32 = 288;
 /// Y coordinate of cells current-ammo display (matches C `ST_AMMO2Y`).
-const ST_AMMO2Y: c_int = 191;
+const ST_AMMO2Y: i32 = 191;
 /// X coordinate of rockets current-ammo display (matches C `ST_AMMO3X`).
-const ST_AMMO3X: c_int = 288;
+const ST_AMMO3X: i32 = 288;
 /// Y coordinate of rockets current-ammo display (matches C `ST_AMMO3Y`).
-const ST_AMMO3Y: c_int = 185;
+const ST_AMMO3Y: i32 = 185;
 
 /// Digit width of per-ammo-type max-ammo displays (matches C `ST_MAXAMMO0WIDTH`).
-const ST_MAXAMMO0WIDTH: c_int = 3;
+const ST_MAXAMMO0WIDTH: i32 = 3;
 /// X coordinate of bullets max-ammo display (matches C `ST_MAXAMMO0X`).
-const ST_MAXAMMO0X: c_int = 314;
+const ST_MAXAMMO0X: i32 = 314;
 /// Y coordinate of bullets max-ammo display (matches C `ST_MAXAMMO0Y`).
-const ST_MAXAMMO0Y: c_int = 173;
+const ST_MAXAMMO0Y: i32 = 173;
 /// X coordinate of shells max-ammo display (matches C `ST_MAXAMMO1X`).
-const ST_MAXAMMO1X: c_int = 314;
+const ST_MAXAMMO1X: i32 = 314;
 /// Y coordinate of shells max-ammo display (matches C `ST_MAXAMMO1Y`).
-const ST_MAXAMMO1Y: c_int = 179;
+const ST_MAXAMMO1Y: i32 = 179;
 /// X coordinate of cells max-ammo display (matches C `ST_MAXAMMO2X`).
-const ST_MAXAMMO2X: c_int = 314;
+const ST_MAXAMMO2X: i32 = 314;
 /// Y coordinate of cells max-ammo display (matches C `ST_MAXAMMO2Y`).
-const ST_MAXAMMO2Y: c_int = 191;
+const ST_MAXAMMO2Y: i32 = 191;
 /// X coordinate of rockets max-ammo display (matches C `ST_MAXAMMO3X`).
-const ST_MAXAMMO3X: c_int = 314;
+const ST_MAXAMMO3X: i32 = 314;
 /// Y coordinate of rockets max-ammo display (matches C `ST_MAXAMMO3Y`).
-const ST_MAXAMMO3Y: c_int = 185;
+const ST_MAXAMMO3Y: i32 = 185;
 
 /// Header magic for automap messages sent via the event system (matches C `AM_MSGHEADER`).
-const AM_MSGHEADER: c_int = (('a' as c_int) << 24) + (('m' as c_int) << 16);
+const AM_MSGHEADER: i32 = (('a' as i32) << 24) + (('m' as i32) << 16);
 /// Event data value signalling that the automap was opened (matches C `AM_MSGENTERED`).
-const AM_MSGENTERED: c_int = AM_MSGHEADER | (('e' as c_int) << 8);
+const AM_MSGENTERED: i32 = AM_MSGHEADER | (('e' as i32) << 8);
 /// Event data value signalling that the automap was closed (matches C `AM_MSGEXITED`).
-const AM_MSGEXITED: c_int = AM_MSGHEADER | (('x' as c_int) << 8);
+const AM_MSGEXITED: i32 = AM_MSGHEADER | (('x' as i32) << 8);
 
 /// Index of the first red-damage palette in `PLAYPAL` (matches C `STARTREDPALS`).
-const STARTREDPALS: c_int = 1;
+const STARTREDPALS: i32 = 1;
 /// Index of the first bonus-pickup palette in `PLAYPAL` (matches C `STARTBONUSPALS`).
-const STARTBONUSPALS: c_int = 9;
+const STARTBONUSPALS: i32 = 9;
 /// Number of red-damage palette entries (matches C `NUMREDPALS`).
-const NUMREDPALS: c_int = 8;
+const NUMREDPALS: i32 = 8;
 /// Number of bonus-pickup palette entries (matches C `NUMBONUSPALS`).
-const NUMBONUSPALS: c_int = 4;
+const NUMBONUSPALS: i32 = 4;
 /// Index of the radiation-suit palette in `PLAYPAL` (matches C `RADIATIONPAL`).
-const RADIATIONPAL: c_int = 13;
+const RADIATIONPAL: i32 = 13;
 
 // ---------------------------------------------------------------------------
 // String literals (from d_englsh.h)
 // ---------------------------------------------------------------------------
 
 /// Message shown when god mode is activated (C `STSTR_DQDON` from `d_englsh.h`).
-const STSTR_DQDON: *mut c_char = c"Degreelessness Mode On".as_ptr().cast_mut();
+const STSTR_DQDON: *mut u8 = c"Degreelessness Mode On".as_ptr().cast_mut().cast();
 /// Message shown when god mode is deactivated (C `STSTR_DQDOFF` from `d_englsh.h`).
-const STSTR_DQDOFF: *mut c_char = c"Degreelessness Mode Off".as_ptr().cast_mut();
+const STSTR_DQDOFF: *mut u8 = c"Degreelessness Mode Off".as_ptr().cast_mut().cast();
 /// Message shown when `idfa` (ammo, no keys) cheat fires (C `STSTR_FAADDED`).
-const STSTR_FAADDED: *mut c_char = c"Ammo (no keys) Added".as_ptr().cast_mut();
+const STSTR_FAADDED: *mut u8 = c"Ammo (no keys) Added".as_ptr().cast_mut().cast();
 /// Message shown when `idkfa` (ammo + keys) cheat fires (C `STSTR_KFAADDED`).
-const STSTR_KFAADDED: *mut c_char = c"Very Happy Ammo Added".as_ptr().cast_mut();
+const STSTR_KFAADDED: *mut u8 = c"Very Happy Ammo Added".as_ptr().cast_mut().cast();
 /// Message shown when a music-change cheat fires (C `STSTR_MUS`).
-const STSTR_MUS: *mut c_char = c"Music Change".as_ptr().cast_mut();
+const STSTR_MUS: *mut u8 = c"Music Change".as_ptr().cast_mut().cast();
 /// Message shown when an invalid music number is entered (C `STSTR_NOMUS`).
-const STSTR_NOMUS: *mut c_char = c"IMPOSSIBLE SELECTION".as_ptr().cast_mut();
+const STSTR_NOMUS: *mut u8 = c"IMPOSSIBLE SELECTION".as_ptr().cast_mut().cast();
 /// Message shown when no-clip mode is activated (C `STSTR_NCON`).
-const STSTR_NCON: *mut c_char = c"No Clipping Mode ON".as_ptr().cast_mut();
+const STSTR_NCON: *mut u8 = c"No Clipping Mode ON".as_ptr().cast_mut().cast();
 /// Message shown when no-clip mode is deactivated (C `STSTR_NCOFF`).
-const STSTR_NCOFF: *mut c_char = c"No Clipping Mode OFF".as_ptr().cast_mut();
+const STSTR_NCOFF: *mut u8 = c"No Clipping Mode OFF".as_ptr().cast_mut().cast();
 /// Prompt shown when the `idbehold` cheat prefix fires (C `STSTR_BEHOLD`).
-const STSTR_BEHOLD: *mut c_char = c"inVuln, Str, Inviso, Rad, Allmap, or Lite-amp"
+const STSTR_BEHOLD: *mut u8 = c"inVuln, Str, Inviso, Rad, Allmap, or Lite-amp"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
 /// Message shown when a `idbeholdX` power-up cheat fires (C `STSTR_BEHOLDX`).
-const STSTR_BEHOLDX: *mut c_char = c"Power-up Toggled".as_ptr().cast_mut();
+const STSTR_BEHOLDX: *mut u8 = c"Power-up Toggled".as_ptr().cast_mut().cast();
 /// Message shown when the `idchoppers` cheat fires (C `STSTR_CHOPPERS`).
-const STSTR_CHOPPERS: *mut c_char = c"... doesn't suck - GM".as_ptr().cast_mut();
+const STSTR_CHOPPERS: *mut u8 = c"... doesn't suck - GM".as_ptr().cast_mut().cast();
 /// Message shown when the level-change cheat (`idclev`) fires (C `STSTR_CLEV`).
-const STSTR_CLEV: *mut c_char = c"Changing Level...".as_ptr().cast_mut();
-
-// ---------------------------------------------------------------------------
-// DEH_String shim — identity when dehacked is disabled.
-// ---------------------------------------------------------------------------
-
-/// Pass-through shim for Dehacked string replacement.
-///
-/// In the C codebase, `DEH_String` may substitute a string that was patched by
-/// a `.deh` file. This port does not yet support Dehacked, so the function
-/// returns its argument unchanged.
-///
-/// # Safety
-///
-/// Caller must ensure `s` is either null or a valid C-string pointer; this
-/// implementation does not dereference it and simply returns the pointer
-/// unchanged.
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
+const STSTR_CLEV: *mut u8 = c"Changing Level...".as_ptr().cast_mut().cast();
 
 // ---------------------------------------------------------------------------
 // Replicate the C `logical_gamemission` macro from `doomstat.h`.
@@ -294,7 +273,7 @@ unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
 ///
 /// Reads the global `gamemission` static. Caller must ensure `D_DoomMain` has
 /// initialised the game-mode globals before calling.
-unsafe fn logical_gamemission() -> c_int {
+unsafe fn logical_gamemission() -> i32 {
     if gamemission == d_mode::pack_chex {
         d_mode::doom
     } else if gamemission == d_mode::pack_hacx {
@@ -308,14 +287,14 @@ unsafe fn logical_gamemission() -> c_int {
 // Cheat helpers
 // ---------------------------------------------------------------------------
 
-/// Copy a byte slice into a 25-element `c_char` array, padding the remainder with zeros.
+/// Copy a byte slice into a 25-element `u8` array, padding the remainder with zeros.
 ///
 /// Used at compile time to initialise cheat-sequence buffers inside `cheatseq_t`.
-const fn make_cheat_seq(seq: &[u8]) -> [c_char; 25] {
-    let mut arr = [0i8; 25];
+const fn make_cheat_seq(seq: &[u8]) -> [u8; 25] {
+    let mut arr = [0u8; 25];
     let mut i = 0;
     while i < seq.len() {
-        arr[i] = seq[i] as c_char;
+        arr[i] = seq[i];
         i += 1;
     }
     arr
@@ -325,7 +304,7 @@ const fn make_cheat_seq(seq: &[u8]) -> [c_char; 25] {
 ///
 /// All runtime state fields (`chars_read`, `param_chars_read`, `parameter_buf`) are
 /// zeroed; they will be updated by `cht_CheckCheat` during gameplay.
-const fn cheat(seq: &[u8], params: c_int) -> cheatseq_t {
+const fn cheat(seq: &[u8], params: i32) -> cheatseq_t {
     cheatseq_t {
         sequence: make_cheat_seq(seq),
         sequence_len: seq.len(),
@@ -405,43 +384,43 @@ pub static mut cheat_mypos: cheatseq_t = cheat(b"idmypos", 0);
 static mut plyr: *mut PlayerT = ptr::null_mut();
 
 /// Non-zero when the status bar needs a full redraw on the next `ST_Drawer` call.
-static mut st_firsttime: c_int = 0;
+static mut st_firsttime: i32 = 0;
 
 /// WAD lump number of `PLAYPAL`, cached by `ST_loadData` for palette lookups.
-static mut lu_palette: c_int = 0;
+static mut lu_palette: i32 = 0;
 
 /// Monotonically increasing tic counter incremented by `ST_Ticker`.
 static mut st_clock: u32 = 0;
 
 /// Countdown used to temporarily suppress chat-message override of the HUD message.
-static mut st_msgcounter: c_int = 0;
+static mut st_msgcounter: i32 = 0;
 
 /// Current chat state: 0 = `StartChatState`, used to track HUD message display mode.
-static mut st_chatstate: c_int = 0; // StartChatState = 0
+static mut st_chatstate: i32 = 0; // StartChatState = 0
 
 /// Current view state: 0 = automap active, 1 = first-person view.
-static mut st_gamestate: c_int = 0; // AutomapState = 0
+static mut st_gamestate: i32 = 0; // AutomapState = 0
 
 /// Non-zero when the status bar should be rendered (i.e. not in full-screen mode).
-static mut st_statusbaron: c_int = 0;
+static mut st_statusbaron: i32 = 0;
 
 /// Non-zero while a chat message is being composed.
-static mut st_chat: c_int = 0;
+static mut st_chat: i32 = 0;
 
 /// Previous value of `st_chat`; restored after `st_msgcounter` expires.
-static mut st_oldchat: c_int = 0;
+static mut st_oldchat: i32 = 0;
 
 /// Blink flag for the chat cursor; toggled by `st_msgcounter`.
-static mut st_cursoron: c_int = 0;
+static mut st_cursoron: i32 = 0;
 
 /// Non-zero in cooperative (non-deathmatch) games; gates the weapons-owned display.
-static mut st_notdeathmatch: c_int = 0;
+static mut st_notdeathmatch: i32 = 0;
 
 /// Non-zero when the weapons-owned display should be shown.
-static mut st_armson: c_int = 0;
+static mut st_armson: i32 = 0;
 
 /// Non-zero when the frag counter should be shown (deathmatch only).
-static mut st_fragson: c_int = 0;
+static mut st_fragson: i32 = 0;
 
 /// Pointer to the `STBAR` background patch.
 static mut sbar: *mut patch_t = ptr::null_mut();
@@ -492,31 +471,31 @@ static mut w_ammo: [st_number_t; NUMAMMO] = unsafe { std::mem::zeroed() };
 static mut w_maxammo: [st_number_t; NUMAMMO] = unsafe { std::mem::zeroed() };
 
 /// Running frag total for the local player, updated each tic.
-static mut st_fragscount: c_int = 0;
+static mut st_fragscount: i32 = 0;
 
 /// Player health from the previous tic; used to detect large drops for the ouch face.
-static mut st_oldhealth: c_int = -1;
+static mut st_oldhealth: i32 = -1;
 
 /// Snapshot of which weapons the player owned at the previous tic; detects new pickups.
-static mut oldweaponsowned: [c_int; NUMWEAPONS] = [0; NUMWEAPONS];
+static mut oldweaponsowned: [i32; NUMWEAPONS] = [0; NUMWEAPONS];
 
 /// Countdown controlling how many tics the current face expression persists.
-static mut st_facecount: c_int = 0;
+static mut st_facecount: i32 = 0;
 
 /// Current index into `faces[]` that the face widget displays.
-static mut st_faceindex: c_int = 0;
+static mut st_faceindex: i32 = 0;
 
 /// Key-slot values: the card/skull index to display, or -1 for empty.
-static mut keyboxes: [c_int; 3] = [0; 3];
+static mut keyboxes: [i32; 3] = [0; 3];
 
 /// Random number sampled from `M_Random` each tic to vary the idle straight-face frame.
-static mut st_randomnumber: c_int = 0;
+static mut st_randomnumber: i32 = 0;
 
 /// Last palette index passed to `I_SetPalette`; avoids redundant calls.
-static mut st_palette: c_int = 0;
+static mut st_palette: i32 = 0;
 
 /// Non-zero when the status bar subsystem has been stopped via `ST_Stop`.
-static mut st_stopped: c_int = 1;
+static mut st_stopped: i32 = 1;
 
 // ---------------------------------------------------------------------------
 // Background refresh
@@ -564,7 +543,7 @@ pub unsafe fn ST_refreshBackground() {
 /// initialised `event_t`. Reads and mutates global cheat-sequence state and the
 /// status-bar game state (`st_gamestate`, `st_firsttime`, etc.); caller must
 /// ensure no concurrent access to these globals.
-pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
+pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
     let ev = &*ev;
 
     if ev.type_ == 1 && (ev.data1 as u32 & 0xffff0000) == AM_MSGHEADER as u32 {
@@ -583,7 +562,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
         // ev_keydown
         if netgame == 0 && gameskill != 4 {
             // sk_nightmare = 4
-            if cht_CheckCheat(&raw mut cheat_god, ev.data2 as c_char) != 0 {
+            if cht_CheckCheat(&raw mut cheat_god, ev.data2 as u8) != 0 {
                 (*plyr).cheats ^= 2; // CF_GODMODE
                 if (*plyr).cheats & 2 != 0 {
                     if !(*plyr).mo.is_null() {
@@ -594,7 +573,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
                 } else {
                     (*plyr).message = DEH_String(STSTR_DQDOFF);
                 }
-            } else if cht_CheckCheat(&raw mut cheat_ammonokey, ev.data2 as c_char) != 0 {
+            } else if cht_CheckCheat(&raw mut cheat_ammonokey, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idfa_armor
                 (*plyr).armortype = 2; // deh_idfa_armor_class
                 for i in 0..NUMWEAPONS {
@@ -604,7 +583,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
                     (*plyr).ammo[i] = (*plyr).maxammo[i];
                 }
                 (*plyr).message = DEH_String(STSTR_FAADDED);
-            } else if cht_CheckCheat(&raw mut cheat_ammo, ev.data2 as c_char) != 0 {
+            } else if cht_CheckCheat(&raw mut cheat_ammo, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idkfa_armor
                 (*plyr).armortype = 2; // deh_idkfa_armor_class
                 for i in 0..NUMWEAPONS {
@@ -617,39 +596,32 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
                     (*plyr).cards[i] = 1;
                 }
                 (*plyr).message = DEH_String(STSTR_KFAADDED);
-            } else if cht_CheckCheat(&raw mut cheat_mus, ev.data2 as c_char) != 0 {
-                let mut buf = [0i8; 3];
-                let musnum: c_int;
+            } else if cht_CheckCheat(&raw mut cheat_mus, ev.data2 as u8) != 0 {
+                let mut buf = [0u8; 3];
+                let musnum: i32;
                 (*plyr).message = DEH_String(STSTR_MUS);
                 cht_GetParam(&raw mut cheat_mus, buf.as_mut_ptr());
 
                 if gamemode == d_mode::commercial || gameversion < d_mode::exe_ultimate {
-                    musnum = 33
-                        + (buf[0] as c_int - '0' as c_int) * 10
-                        + (buf[1] as c_int - '0' as c_int)
-                        - 1;
-                    if ((buf[0] as c_int - '0' as c_int) * 10 + (buf[1] as c_int - '0' as c_int))
-                        > 35
-                    {
+                    musnum =
+                        33 + (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32) - 1;
+                    if ((buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32)) > 35 {
                         (*plyr).message = DEH_String(STSTR_NOMUS);
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
                 } else {
-                    musnum =
-                        1 + (buf[0] as c_int - '1' as c_int) * 9 + (buf[1] as c_int - '1' as c_int);
-                    if ((buf[0] as c_int - '1' as c_int) * 9 + (buf[1] as c_int - '1' as c_int))
-                        > 31
-                    {
+                    musnum = 1 + (buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32);
+                    if ((buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32)) > 31 {
                         (*plyr).message = DEH_String(STSTR_NOMUS);
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
                 }
             } else if (logical_gamemission() == d_mode::doom
-                && cht_CheckCheat(&raw mut cheat_noclip, ev.data2 as c_char) != 0)
+                && cht_CheckCheat(&raw mut cheat_noclip, ev.data2 as u8) != 0)
                 || (logical_gamemission() != d_mode::doom
-                    && cht_CheckCheat(&raw mut cheat_commercial_noclip, ev.data2 as c_char) != 0)
+                    && cht_CheckCheat(&raw mut cheat_commercial_noclip, ev.data2 as u8) != 0)
             {
                 (*plyr).cheats ^= 1; // CF_NOCLIP
                 if (*plyr).cheats & 1 != 0 {
@@ -660,9 +632,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
             }
 
             for i in 0..6 {
-                if cht_CheckCheat(&mut cheat_powerup[i], ev.data2 as c_char) != 0 {
+                if cht_CheckCheat(&mut cheat_powerup[i], ev.data2 as u8) != 0 {
                     if (*plyr).powers[i] == 0 {
-                        P_GivePower(plyr, i as c_int);
+                        P_GivePower(plyr, i as i32);
                     } else if i != 1 {
                         // pw_strength = 1
                         (*plyr).powers[i] = 1;
@@ -673,14 +645,14 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
                 }
             }
 
-            if cht_CheckCheat(&mut cheat_powerup[6], ev.data2 as c_char) != 0 {
+            if cht_CheckCheat(&mut cheat_powerup[6], ev.data2 as u8) != 0 {
                 (*plyr).message = DEH_String(STSTR_BEHOLD);
-            } else if cht_CheckCheat(&raw mut cheat_choppers, ev.data2 as c_char) != 0 {
+            } else if cht_CheckCheat(&raw mut cheat_choppers, ev.data2 as u8) != 0 {
                 (*plyr).weaponowned[7] = 1; // wp_chainsaw
                 (*plyr).powers[0] = 1; // pw_invulnerability
                 (*plyr).message = DEH_String(STSTR_CHOPPERS);
-            } else if cht_CheckCheat(&raw mut cheat_mypos, ev.data2 as c_char) != 0 {
-                static mut BUF: [c_char; 52] = [0; 52];
+            } else if cht_CheckCheat(&raw mut cheat_mypos, ev.data2 as u8) != 0 {
+                static mut BUF: [u8; 52] = [0; 52];
                 let mo = players[consoleplayer as usize].mo as *mut mobj_t;
                 c_write!(
                     BUF,
@@ -693,18 +665,18 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
             }
         }
 
-        if netgame == 0 && cht_CheckCheat(&raw mut cheat_clev, ev.data2 as c_char) != 0 {
-            let mut buf = [0i8; 3];
-            let mut epsd: c_int;
-            let map: c_int;
+        if netgame == 0 && cht_CheckCheat(&raw mut cheat_clev, ev.data2 as u8) != 0 {
+            let mut buf = [0u8; 3];
+            let mut epsd: i32;
+            let map: i32;
             cht_GetParam(&raw mut cheat_clev, buf.as_mut_ptr());
 
             if gamemode == d_mode::commercial {
                 epsd = 1;
-                map = (buf[0] as c_int - '0' as c_int) * 10 + (buf[1] as c_int - '0' as c_int);
+                map = (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32);
             } else {
-                epsd = buf[0] as c_int - '0' as c_int;
-                map = buf[1] as c_int - '0' as c_int;
+                epsd = buf[0] as i32 - '0' as i32;
+                map = buf[1] as i32 - '0' as i32;
             }
 
             if gameversion == d_mode::exe_chex {
@@ -756,9 +728,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> c_int {
 /// Dereferences the global `plyr` pointer and reads/writes function-local
 /// `static mut` cache slots. Caller must ensure `ST_initData` has set `plyr`
 /// to a valid player and that no concurrent access to the cache occurs.
-pub unsafe fn ST_calcPainOffset() -> c_int {
-    static mut lastcalc: c_int = 0;
-    static mut oldhealth: c_int = -1;
+pub unsafe fn ST_calcPainOffset() -> i32 {
+    static mut lastcalc: i32 = 0;
+    static mut oldhealth: i32 = -1;
 
     let health = if (*plyr).health > 100 {
         100
@@ -798,10 +770,10 @@ pub unsafe fn ST_calcPainOffset() -> c_int {
 /// `ST_Start`/`ST_initData` has been called and that no other thread accesses
 /// these globals concurrently.
 pub unsafe fn ST_updateFaceWidget() {
-    static mut lastattackdown: c_int = -1;
-    static mut priority: c_int = 0;
+    static mut lastattackdown: i32 = -1;
+    static mut priority: i32 = 0;
     let diffang: u32;
-    let i: c_int;
+    let i: i32;
 
     if priority < 10 && (*plyr).health == 0 {
         priority = 9;
@@ -926,11 +898,11 @@ pub unsafe fn ST_updateFaceWidget() {
 /// `st_fragscount`, `st_chat`, `st_msgcounter`). Caller must ensure
 /// `ST_createWidgets` has run and that `plyr` is valid.
 pub unsafe fn ST_updateWidgets() {
-    static mut largeammo: c_int = 1994;
+    static mut largeammo: i32 = 1994;
 
     if weaponinfo[(*plyr).readyweapon as usize].ammo == 5 {
         // am_noammo
-        w_ready.num = &raw mut largeammo as *mut c_int;
+        w_ready.num = &raw mut largeammo;
     } else {
         w_ready.num = (*plyr)
             .ammo
@@ -940,13 +912,9 @@ pub unsafe fn ST_updateWidgets() {
     w_ready.data = (*plyr).readyweapon;
 
     for i in 0..3 {
-        keyboxes[i] = if (*plyr).cards[i] != 0 {
-            i as c_int
-        } else {
-            -1
-        };
+        keyboxes[i] = if (*plyr).cards[i] != 0 { i as i32 } else { -1 };
         if (*plyr).cards[i + 3] != 0 {
-            keyboxes[i] = (i + 3) as c_int;
+            keyboxes[i] = (i + 3) as i32;
         }
     }
 
@@ -1024,7 +992,7 @@ pub unsafe fn ST_Ticker() {
 /// must be initialised, and `lu_palette` must hold a valid lump number set
 /// up by `ST_loadData`.
 pub unsafe fn ST_doPaletteStuff() {
-    let mut palette: c_int;
+    let mut palette: i32;
     let mut cnt = (*plyr).damagecount;
 
     if (*plyr).powers[1] != 0 {
@@ -1083,7 +1051,7 @@ pub unsafe fn ST_doPaletteStuff() {
 /// passing them to the `STlib_update*` family. Caller must ensure
 /// `ST_createWidgets` has been called so the widget pointers refer to live
 /// player/state values.
-pub unsafe fn ST_drawWidgets(refresh: c_int) {
+pub unsafe fn ST_drawWidgets(refresh: i32) {
     st_armson = if st_statusbaron != 0 && deathmatch == 0 {
         1
     } else {
@@ -1184,7 +1152,7 @@ pub unsafe fn ST_Drawer(fullscreen: Boolean, refresh: Boolean) {
 ///
 /// The callback receives a WAD lump name and a pointer to the patch pointer that
 /// should be updated: either cached (load path) or released and nulled (unload path).
-type LoadCallback = unsafe fn(*mut c_char, *mut *mut patch_t);
+type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
 
 /// Walk every status-bar lump name and invoke `callback` for each.
 ///
@@ -1200,75 +1168,72 @@ type LoadCallback = unsafe fn(*mut c_char, *mut *mut patch_t);
 /// reads/writes the single patch slot supplied. The WAD subsystem must be
 /// initialised before the load variant is invoked.
 unsafe fn ST_loadUnloadGraphics(callback: LoadCallback) {
-    let mut namebuf = [0i8; 9];
+    let mut namebuf = [0u8; 9];
 
     for i in 0..10i32 {
         c_write!(namebuf, "STTNUM{}", i);
-        callback(namebuf.as_mut_ptr(), &mut tallnum[i as usize]);
+        callback(&namebuf, &mut tallnum[i as usize]);
         c_write!(namebuf, "STYSNUM{}", i);
-        callback(namebuf.as_mut_ptr(), &mut shortnum[i as usize]);
+        callback(&namebuf, &mut shortnum[i as usize]);
     }
 
-    callback(c"STTPRCNT".as_ptr().cast_mut(), &raw mut tallpercent);
+    callback(b"STTPRCNT", &raw mut tallpercent);
 
-    for i in 0..NUMCARDS as c_int {
+    for i in 0..NUMCARDS as i32 {
         c_write!(namebuf, "STKEYS{}", i);
-        callback(namebuf.as_mut_ptr(), &mut keys[i as usize]);
+        callback(&namebuf, &mut keys[i as usize]);
     }
 
-    callback(c"STARMS".as_ptr().cast_mut(), &raw mut armsbg);
+    callback(b"STARMS", &raw mut armsbg);
 
     for i in 0..6i32 {
         c_write!(namebuf, "STGNUM{}", i + 2);
-        callback(namebuf.as_mut_ptr(), &mut arms[i as usize][0]);
+        callback(&namebuf, &mut arms[i as usize][0]);
         arms[i as usize][1] = shortnum[(i + 2) as usize];
     }
 
-    c_write!(namebuf, "STFB{}", consoleplayer as c_int);
-    callback(namebuf.as_mut_ptr(), &raw mut faceback);
+    c_write!(namebuf, "STFB{}", { consoleplayer });
+    callback(&namebuf, &raw mut faceback);
 
-    callback(c"STBAR".as_ptr().cast_mut(), &raw mut sbar);
+    callback(b"STBAR", &raw mut sbar);
 
-    let mut facenum: c_int = 0;
+    let mut facenum: i32 = 0;
     for i in 0..ST_NUMPAINFACES {
         for j in 0..ST_NUMSTRAIGHTFACES {
             c_write!(namebuf, "STFST{}{}", i, j);
-            callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+            callback(&namebuf, &mut faces[facenum as usize]);
             facenum += 1;
         }
         c_write!(namebuf, "STFTR{}0", i);
-        callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+        callback(&namebuf, &mut faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFTL{}0", i);
-        callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+        callback(&namebuf, &mut faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFOUCH{}", i);
-        callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+        callback(&namebuf, &mut faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFEVL{}", i);
-        callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+        callback(&namebuf, &mut faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFKILL{}", i);
-        callback(namebuf.as_mut_ptr(), &mut faces[facenum as usize]);
+        callback(&namebuf, &mut faces[facenum as usize]);
         facenum += 1;
     }
 
-    callback(c"STFGOD0".as_ptr().cast_mut(), &mut faces[facenum as usize]);
+    callback(b"STFGOD0", &mut faces[facenum as usize]);
     facenum += 1;
-    callback(
-        c"STFDEAD0".as_ptr().cast_mut(),
-        &mut faces[facenum as usize],
-    );
+    callback(b"STFDEAD0", &mut faces[facenum as usize]);
 }
 
 /// Load callback: cache the named WAD lump and store the pointer in `*variable`.
 ///
 /// # Safety
 ///
-/// Caller must ensure `lumpname` is a valid NUL-terminated C-string pointer
-/// recognised by `W_CacheLumpName`, and `variable` is a valid, non-null,
-/// properly aligned pointer to a `*mut patch_t` slot the function may overwrite.
-unsafe fn ST_loadCallback(lumpname: *mut c_char, variable: *mut *mut patch_t) {
+/// Caller must ensure `lumpname` names a lump present in the WAD, and
+/// `variable` is a valid, non-null, properly aligned pointer to a
+/// `*mut patch_t` slot the function may overwrite.
+unsafe fn ST_loadCallback(lumpname: &[u8], variable: *mut *mut patch_t) {
     *variable = W_CacheLumpName(lumpname, PU_STATIC) as *mut patch_t;
 }
 
@@ -1292,7 +1257,7 @@ pub unsafe fn ST_loadGraphics() {
 /// mutates the cached patch pointers. Caller must ensure the WAD subsystem
 /// is initialised.
 pub unsafe fn ST_loadData() {
-    lu_palette = W_GetNumForName(c"PLAYPAL".as_ptr());
+    lu_palette = W_GetNumForName(b"PLAYPAL");
     ST_loadGraphics();
 }
 
@@ -1300,11 +1265,11 @@ pub unsafe fn ST_loadData() {
 ///
 /// # Safety
 ///
-/// Caller must ensure `lumpname` is a valid NUL-terminated C-string pointer
-/// previously cached via `W_CacheLumpName`, and `variable` is a valid,
-/// non-null, properly aligned pointer to a `*mut patch_t` slot that this
-/// function may overwrite with null.
-unsafe fn ST_unloadCallback(lumpname: *mut c_char, variable: *mut *mut patch_t) {
+/// Caller must ensure `lumpname` names a lump previously cached via
+/// `W_CacheLumpName`, and `variable` is a valid, non-null, properly
+/// aligned pointer to a `*mut patch_t` slot that this function may
+/// overwrite with null.
+unsafe fn ST_unloadCallback(lumpname: &[u8], variable: *mut *mut patch_t) {
     W_ReleaseLumpName(lumpname);
     *variable = ptr::null_mut();
 }
@@ -1418,7 +1383,7 @@ pub unsafe fn ST_createWidgets() {
     );
 
     for i in 0..6 {
-        let i_i = i as c_int;
+        let i_i = i as i32;
         STlib_initMultIcon(
             std::ptr::addr_of_mut!(w_arms[0]).add(i),
             ST_ARMSX + (i_i % 3) * ST_ARMSXSPACE,

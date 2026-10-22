@@ -5,18 +5,13 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{
-        ffi::{c_char, c_void},
-        os::raw::c_int,
-    },
-};
+use {crate::doom::sounds::Sfx, std::ffi::c_void};
 
 use crate::doom::{
     c_ffi as cffi,
     c_ffi::mobj_t,
     d_player::PlayerT,
+    deh_str::DEH_String,
     i_timer::TICRATE,
     m_fixed::{fixed_t, FRACUNIT},
     p_floor::T_MovePlane,
@@ -33,33 +28,33 @@ use crate::doom::{
 const VDOORSPEED: fixed_t = FRACUNIT * 2;
 
 /// Number of tics a normal door waits at the top before closing (`VDOORWAIT` in C).
-const VDOORWAIT: c_int = 150;
+const VDOORWAIT: i32 = 150;
 
 // vldoor_e enum values
 /// Normal raise-and-wait door: opens, waits `VDOORWAIT` tics, then closes.
-const vld_normal: c_int = 0;
+const vld_normal: i32 = 0;
 /// Door that closes immediately, waits 30 seconds, then opens permanently.
-const vld_close30ThenOpen: c_int = 1;
+const vld_close30ThenOpen: i32 = 1;
 /// Door that closes and stays closed (no re-open).
-const vld_close: c_int = 2;
+const vld_close: i32 = 2;
 /// Door that opens and stays open (no auto-close).
-const vld_open: c_int = 3;
+const vld_open: i32 = 3;
 /// Door that starts waiting and raises after 5 minutes.
-const vld_raiseIn5Mins: c_int = 4;
+const vld_raiseIn5Mins: i32 = 4;
 /// Fast normal door (blaze speed: `VDOORSPEED * 4`), waits then closes.
-const vld_blazeRaise: c_int = 5;
+const vld_blazeRaise: i32 = 5;
 /// Fast door that opens and stays open.
-const vld_blazeOpen: c_int = 6;
+const vld_blazeOpen: i32 = 6;
 /// Fast door that closes and stays closed.
-const vld_blazeClose: c_int = 7;
+const vld_blazeClose: i32 = 7;
 
 // result_e enum values
 /// `T_MovePlane` return: plane moved without reaching destination or crushing.
-const result_ok: c_int = 0;
+const result_ok: i32 = 0;
 /// `T_MovePlane` return: plane was blocked by a thing (crushing).
-const result_crushed: c_int = 1;
+const result_crushed: i32 = 1;
 /// `T_MovePlane` return: plane reached its destination this tic.
-const result_pastdest: c_int = 2;
+const result_pastdest: i32 = 2;
 
 // card indices
 /// Index into the player card array for the blue keycard.
@@ -76,38 +71,38 @@ const it_yellowskull: usize = 4;
 const it_redskull: usize = 5;
 
 /// Locked-object message: blue key required.
-const PD_BLUEO: *mut c_char = c"You need a blue key to activate this object"
+const PD_BLUEO: *mut u8 = c"You need a blue key to activate this object"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
 /// Locked-object message: red key required.
-const PD_REDO: *mut c_char = c"You need a red key to activate this object"
+const PD_REDO: *mut u8 = c"You need a red key to activate this object"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
 /// Locked-object message: yellow key required.
-const PD_YELLOWO: *mut c_char = c"You need a yellow key to activate this object"
+const PD_YELLOWO: *mut u8 = c"You need a yellow key to activate this object"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
 /// Locked-door message: blue key required.
-const PD_BLUEK: *mut c_char = c"You need a blue key to open this door".as_ptr().cast_mut();
-/// Locked-door message: red key required.
-const PD_REDK: *mut c_char = c"You need a red key to open this door".as_ptr().cast_mut();
-/// Locked-door message: yellow key required.
-const PD_YELLOWK: *mut c_char = c"You need a yellow key to open this door"
+const PD_BLUEK: *mut u8 = c"You need a blue key to open this door"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
+/// Locked-door message: red key required.
+const PD_REDK: *mut u8 = c"You need a red key to open this door"
+    .as_ptr()
+    .cast_mut()
+    .cast();
+/// Locked-door message: yellow key required.
+const PD_YELLOWK: *mut u8 = c"You need a yellow key to open this door"
+    .as_ptr()
+    .cast_mut()
+    .cast();
 
-/// Passes `s` through unchanged.
-///
-/// When DEHacked support is compiled in this function would look up a patched
-/// string replacement. Here it is a no-op identity shim because
-/// `FEATURE_DEHACKED` is not defined.
 #[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
-
-#[inline(always)]
-unsafe fn locked_object_message(special: c_int) -> *mut c_char {
+unsafe fn locked_object_message(special: i32) -> *mut u8 {
     match special {
         99 | 133 => DEH_String(PD_BLUEO),
         134 | 135 => DEH_String(PD_REDO),
@@ -117,7 +112,7 @@ unsafe fn locked_object_message(special: c_int) -> *mut c_char {
 }
 
 #[inline(always)]
-unsafe fn locked_door_message(special: c_int) -> *mut c_char {
+unsafe fn locked_door_message(special: i32) -> *mut u8 {
     match special {
         26 | 32 => DEH_String(PD_BLUEK),
         27 | 34 => DEH_String(PD_YELLOWK),
@@ -140,7 +135,7 @@ pub struct vldoor_t {
     /// Embedded thinker header; must be the first field.
     pub thinker: thinker_t,
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
-    pub r#type: c_int,
+    pub r#type: i32,
     _pad0: [u8; 4],
     /// The sector this door controls (its ceiling is the moving plane).
     pub sector: *mut sector_t,
@@ -149,11 +144,11 @@ pub struct vldoor_t {
     /// Movement speed in fixed-point units per tic.
     pub speed: fixed_t,
     /// Current movement direction: `1` up, `-1` down, `0` waiting, `2` initial wait.
-    pub direction: c_int,
+    pub direction: i32,
     /// Tics to wait at the top before starting to close (set to `VDOORWAIT`).
-    pub topwait: c_int,
+    pub topwait: i32,
     /// Countdown tics remaining in the current wait phase.
-    pub topcountdown: c_int,
+    pub topcountdown: i32,
 }
 
 /// Compile-time layout checks for `vldoor_t` against the C struct on 64-bit.
@@ -186,7 +181,7 @@ mod layout_checks {
 /// `sector` pointer is also valid for the current map. Called exclusively by
 /// the thinker dispatcher from `P_RunThinkers`.
 pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
-    let res: c_int;
+    let res: i32;
 
     match (*door).direction {
         0 => {
@@ -198,21 +193,21 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                         (*door).direction = -1;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Bdcls as c_int,
+                            Sfx::Bdcls as i32,
                         );
                     }
                     x if x == vld_normal => {
                         (*door).direction = -1;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Dorcls as c_int,
+                            Sfx::Dorcls as i32,
                         );
                     }
                     x if x == vld_close30ThenOpen => {
                         (*door).direction = 1;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Doropn as c_int,
+                            Sfx::Doropn as i32,
                         );
                     }
                     _ => {}
@@ -229,7 +224,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                         (*door).r#type = vld_normal;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Doropn as c_int,
+                            Sfx::Doropn as i32,
                         );
                     }
                     _ => {}
@@ -253,7 +248,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                         P_RemoveThinker(&mut (*door).thinker);
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Bdcls as c_int,
+                            Sfx::Bdcls as i32,
                         );
                     }
                     x if x == vld_normal || x == vld_close => {
@@ -275,7 +270,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                         (*door).direction = 1;
                         S_StartSound(
                             &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                            Sfx::Doropn as c_int,
+                            Sfx::Doropn as i32,
                         );
                     }
                 }
@@ -317,30 +312,30 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: c_int, thing: *mut mobj_t) -> c_int {
+pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: i32, thing: *mut mobj_t) -> i32 {
     let Some(p) = ((*thing).player as *mut PlayerT).as_mut() else {
         return 0;
     };
 
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         99 | 133 => {
             if p.cards[it_bluecard] == 0 && p.cards[it_blueskull] == 0 {
-                p.message = locked_object_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                p.message = locked_object_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return 0;
             }
         }
         134 | 135 => {
             if p.cards[it_redcard] == 0 && p.cards[it_redskull] == 0 {
-                p.message = locked_object_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                p.message = locked_object_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return 0;
             }
         }
         136 | 137 => {
             if p.cards[it_yellowcard] == 0 && p.cards[it_yellowskull] == 0 {
-                p.message = locked_object_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                p.message = locked_object_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return 0;
             }
         }
@@ -362,9 +357,9 @@ pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: c_int, thing: *mut mobj
 ///
 /// `line` must be a valid non-null pointer for the current map; the global
 /// `sectors` array must be initialised.
-pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
-    let mut secnum: c_int = -1;
-    let mut rtn: c_int = 0;
+pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: i32) -> i32 {
+    let mut secnum: i32 = -1;
+    let mut rtn: i32 = 0;
 
     while {
         secnum = P_FindSectorFromLineTag(line as *mut cffi::line_t, secnum);
@@ -378,7 +373,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
 
         rtn = 1;
         let door = Z_Malloc(
-            std::mem::size_of::<vldoor_t>() as c_int,
+            std::mem::size_of::<vldoor_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut vldoor_t;
@@ -402,7 +397,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
                 (*door).speed = VDOORSPEED * 4;
                 S_StartSound(
                     &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Bdcls as c_int,
+                    Sfx::Bdcls as i32,
                 );
             }
             x if x == vld_close => {
@@ -411,7 +406,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
                 (*door).direction = -1;
                 S_StartSound(
                     &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Dorcls as c_int,
+                    Sfx::Dorcls as i32,
                 );
             }
             x if x == vld_close30ThenOpen => {
@@ -419,7 +414,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
                 (*door).direction = -1;
                 S_StartSound(
                     &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Dorcls as c_int,
+                    Sfx::Dorcls as i32,
                 );
             }
             x if x == vld_blazeRaise || x == vld_blazeOpen => {
@@ -430,7 +425,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
                 if (*door).topheight != (*sec).ceilingheight {
                     S_StartSound(
                         &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                        Sfx::Bdopn as c_int,
+                        Sfx::Bdopn as i32,
                     );
                 }
             }
@@ -441,7 +436,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
                 if (*door).topheight != (*sec).ceilingheight {
                     S_StartSound(
                         &(*(*door).sector).soundorg as *const [u8; 40] as *mut c_void,
-                        Sfx::Doropn as c_int,
+                        Sfx::Doropn as i32,
                     );
                 }
             }
@@ -471,14 +466,14 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     // Check for locks
     let player = (*thing).player as *mut PlayerT;
 
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         26 | 32 => {
             let Some(player) = player.as_mut() else {
                 return;
             };
             if player.cards[it_bluecard] == 0 && player.cards[it_blueskull] == 0 {
-                player.message = locked_door_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                player.message = locked_door_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return;
             }
         }
@@ -487,8 +482,8 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
                 return;
             };
             if player.cards[it_yellowcard] == 0 && player.cards[it_yellowskull] == 0 {
-                player.message = locked_door_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                player.message = locked_door_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return;
             }
         }
@@ -497,8 +492,8 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
                 return;
             };
             if player.cards[it_redcard] == 0 && player.cards[it_redskull] == 0 {
-                player.message = locked_door_message((*line).special as c_int);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as c_int);
+                player.message = locked_door_message((*line).special as i32);
+                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
                 return;
             }
         }
@@ -509,7 +504,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
 
     if !(*sec).specialdata.is_null() {
         let door = (*sec).specialdata as *mut vldoor_t;
-        match (*line).special as c_int {
+        match (*line).special as i32 {
             1 | 26 | 27 | 28 | 117 => {
                 if (*door).direction == -1 {
                     (*door).direction = 1;
@@ -542,30 +537,30 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     }
 
     // for proper sound
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         117 | 118 => {
             S_StartSound(
                 &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                Sfx::Bdopn as c_int,
+                Sfx::Bdopn as i32,
             );
         }
         1 | 31 => {
             S_StartSound(
                 &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                Sfx::Doropn as c_int,
+                Sfx::Doropn as i32,
             );
         }
         _ => {
             S_StartSound(
                 &(*sec).soundorg as *const [u8; 40] as *mut c_void,
-                Sfx::Doropn as c_int,
+                Sfx::Doropn as i32,
             );
         }
     }
 
     // new door thinker
     let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as c_int,
+        std::mem::size_of::<vldoor_t>() as i32,
         PU_LEVSPEC,
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
@@ -580,7 +575,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     (*door).speed = VDOORSPEED;
     (*door).topwait = VDOORWAIT;
 
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         1 | 26 | 27 | 28 => {
             (*door).r#type = vld_normal;
         }
@@ -615,7 +610,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
 /// `sec` must be a valid non-null pointer to a sector for the current map.
 pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
     let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as c_int,
+        std::mem::size_of::<vldoor_t>() as i32,
         PU_LEVSPEC,
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
@@ -646,9 +641,9 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
 ///
 /// `sec` must be a valid non-null pointer to a sector for the current map; the
 /// global `sectors` array must be initialised.
-pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: c_int) {
+pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: i32) {
     let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as c_int,
+        std::mem::size_of::<vldoor_t>() as i32,
         PU_LEVSPEC,
         std::ptr::null_mut(),
     ) as *mut vldoor_t;

@@ -18,7 +18,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{ffi::c_void, os::raw::c_int};
+use std::ffi::c_void;
 
 use crate::doom::m_random::M_Random;
 
@@ -37,7 +37,7 @@ use crate::doom::{
 ///
 /// Set to 1 by [`wipe_ScreenWipe`] on the first call and cleared when the
 /// wipe algorithm signals completion.  C origin: `static int go` in f_wipe.c.
-static mut GO: c_int = 0;
+static mut GO: i32 = 0;
 
 /// Snapshot of the screen taken at wipe-start (the "old" frame).
 ///
@@ -59,10 +59,10 @@ static mut WIPE_SCR: *mut u8 = std::ptr::null_mut();
 
 /// Per-column Y position array used by the melt algorithm.
 ///
-/// One `c_int` per screen column; negative values mean the column has not yet
+/// One `i32` per screen column; negative values mean the column has not yet
 /// started falling.  Allocated by `wipe_init_melt` and freed by
 /// `wipe_exit_melt`.  C origin: `y` (static) in f_wipe.c.
-static mut Y: *mut c_int = std::ptr::null_mut();
+static mut Y: *mut i32 = std::ptr::null_mut();
 
 /// Transpose a `width x height` array of `i16` from row-major to column-major
 /// in-place.
@@ -81,9 +81,9 @@ static mut Y: *mut c_int = std::ptr::null_mut();
 /// `array` must be a valid, non-null pointer to `width * height` `i16` values.
 /// The caller is responsible for ensuring no aliasing with the temporary
 /// `Z_Malloc` buffer.
-unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: c_int, height: c_int) {
+unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: i32, height: i32) {
     let total = (width * height) as usize;
-    let dest = Z_Malloc(total as c_int * 2, PU_STATIC, std::ptr::null_mut()) as *mut i16;
+    let dest = Z_Malloc(total as i32 * 2, PU_STATIC, std::ptr::null_mut()) as *mut i16;
 
     for y in 0..height {
         for x in 0..width {
@@ -105,7 +105,7 @@ unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: c_int, height: c_i
 ///
 /// `WIPE_SCR_START` and `WIPE_SCR` must both be valid pointers to at least
 /// `width * height` bytes.
-unsafe fn wipe_init_color_xform(width: c_int, height: c_int, _ticks: c_int) -> c_int {
+unsafe fn wipe_init_color_xform(width: i32, height: i32, _ticks: i32) -> i32 {
     let len = (width * height) as usize;
     std::ptr::copy(WIPE_SCR_START, WIPE_SCR, len);
     0
@@ -124,7 +124,7 @@ unsafe fn wipe_init_color_xform(width: c_int, height: c_int, _ticks: c_int) -> c
 ///
 /// `WIPE_SCR`, `WIPE_SCR_END` must both be valid pointers to at least
 /// `width * height` bytes.
-unsafe fn wipe_do_color_xform(width: c_int, height: c_int, ticks: c_int) -> c_int {
+unsafe fn wipe_do_color_xform(width: i32, height: i32, ticks: i32) -> i32 {
     let len = (width * height) as usize;
     let mut changed = false;
 
@@ -133,18 +133,18 @@ unsafe fn wipe_do_color_xform(width: c_int, height: c_int, ticks: c_int) -> c_in
         let e = *WIPE_SCR_END.add(i);
 
         if w != e {
-            let newval: c_int;
+            let newval: i32;
             if w > e {
-                newval = (w as c_int) - ticks;
-                if newval < e as c_int {
+                newval = (w as i32) - ticks;
+                if newval < e as i32 {
                     *WIPE_SCR.add(i) = e;
                 } else {
                     *WIPE_SCR.add(i) = newval as u8;
                 }
                 changed = true;
             } else {
-                newval = (w as c_int) + ticks;
-                if newval > e as c_int {
+                newval = (w as i32) + ticks;
+                if newval > e as i32 {
                     *WIPE_SCR.add(i) = e;
                 } else {
                     *WIPE_SCR.add(i) = newval as u8;
@@ -168,7 +168,7 @@ unsafe fn wipe_do_color_xform(width: c_int, height: c_int, ticks: c_int) -> c_in
 /// # Safety
 ///
 /// No preconditions beyond those required by `extern "C"` calling convention.
-unsafe fn wipe_exit_color_xform(_width: c_int, _height: c_int, _ticks: c_int) -> c_int {
+unsafe fn wipe_exit_color_xform(_width: i32, _height: i32, _ticks: i32) -> i32 {
     0
 }
 
@@ -185,7 +185,7 @@ unsafe fn wipe_exit_color_xform(_width: c_int, _height: c_int, _ticks: c_int) ->
 ///
 /// `WIPE_SCR_START`, `WIPE_SCR_END`, and `WIPE_SCR` must be valid pointers to
 /// at least `width * height` bytes.  `M_Random` must be safe to call.
-unsafe fn wipe_init_melt(width: c_int, height: c_int, _ticks: c_int) -> c_int {
+unsafe fn wipe_init_melt(width: i32, height: i32, _ticks: i32) -> i32 {
     let len = (width * height) as usize;
     std::ptr::copy(WIPE_SCR_START, WIPE_SCR, len);
 
@@ -193,14 +193,14 @@ unsafe fn wipe_init_melt(width: c_int, height: c_int, _ticks: c_int) -> c_int {
     wipe_shitty_col_major_xform(WIPE_SCR_END as *mut i16, width / 2, height);
 
     Y = Z_Malloc(
-        width * std::mem::size_of::<c_int>() as c_int,
+        width * std::mem::size_of::<i32>() as i32,
         PU_STATIC,
         std::ptr::null_mut(),
-    ) as *mut c_int;
+    ) as *mut i32;
 
-    *Y.add(0) = -((M_Random() % 16) as c_int);
+    *Y.add(0) = -(M_Random() % 16);
     for i in 1..width as usize {
-        let r = (M_Random() % 3) as c_int - 1;
+        let r = M_Random() % 3 - 1;
         *Y.add(i) = *Y.add(i - 1) + r;
         if *Y.add(i) > 0 {
             *Y.add(i) = 0;
@@ -231,7 +231,7 @@ unsafe fn wipe_init_melt(width: c_int, height: c_int, _ticks: c_int) -> c_int {
 ///
 /// `Y`, `WIPE_SCR_START`, `WIPE_SCR_END`, and `WIPE_SCR` must be valid
 /// pointers initialised by `wipe_init_melt`.
-unsafe fn wipe_do_melt(width: c_int, height: c_int, ticks: c_int) -> c_int {
+unsafe fn wipe_do_melt(width: i32, height: i32, ticks: i32) -> i32 {
     let width = width / 2;
     let mut done = true;
     let mut ticks = ticks;
@@ -243,7 +243,7 @@ unsafe fn wipe_do_melt(width: c_int, height: c_int, ticks: c_int) -> c_int {
                 *Y.add(i) += 1;
                 done = false;
             } else if *Y.add(i) < height {
-                let mut dy: c_int;
+                let mut dy: i32;
                 if *Y.add(i) < 16 {
                     dy = *Y.add(i) + 1;
                 } else {
@@ -289,7 +289,7 @@ unsafe fn wipe_do_melt(width: c_int, height: c_int, ticks: c_int) -> c_int {
 ///
 /// `Y`, `WIPE_SCR_START`, and `WIPE_SCR_END` must have been allocated by
 /// `wipe_init_melt` / `wipe_StartScreen` / `wipe_EndScreen`.
-unsafe fn wipe_exit_melt(_width: c_int, _height: c_int, _ticks: c_int) -> c_int {
+unsafe fn wipe_exit_melt(_width: i32, _height: i32, _ticks: i32) -> i32 {
     Z_Free(Y as *mut c_void);
     Z_Free(WIPE_SCR_START as *mut c_void);
     Z_Free(WIPE_SCR_END as *mut c_void);
@@ -304,7 +304,7 @@ unsafe fn wipe_exit_melt(_width: c_int, _height: c_int, _ticks: c_int) -> c_int 
 /// Arguments are `(width, height, ticks)`.  Return value: 0 = still running,
 /// 1 = complete.  C origin: the implicit function-pointer type used in the
 /// `wipes` table in f_wipe.c.
-type WipeFn = unsafe fn(c_int, c_int, c_int) -> c_int;
+type WipeFn = unsafe fn(i32, i32, i32) -> i32;
 
 /// Dispatch table for wipe algorithms.
 ///
@@ -329,7 +329,7 @@ const WIPES: [WipeFn; 6] = [
 ///
 /// Called by C code in `d_main.c` before the scene transition.
 /// C origin: `wipe_StartScreen` in f_wipe.c.
-pub fn wipe_StartScreen(_x: c_int, _y: c_int, _width: c_int, _height: c_int) -> c_int {
+pub fn wipe_StartScreen(_x: i32, _y: i32, _width: i32, _height: i32) -> i32 {
     unsafe {
         WIPE_SCR_START =
             Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8;
@@ -349,7 +349,7 @@ pub fn wipe_StartScreen(_x: c_int, _y: c_int, _width: c_int, _height: c_int) -> 
 ///
 /// Called by C code in `d_main.c` after drawing the new scene.
 /// C origin: `wipe_EndScreen` in f_wipe.c.
-pub fn wipe_EndScreen(x: c_int, y: c_int, width: c_int, height: c_int) -> c_int {
+pub fn wipe_EndScreen(x: i32, y: i32, width: i32, height: i32) -> i32 {
     unsafe {
         WIPE_SCR_END =
             Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8;
@@ -375,14 +375,7 @@ pub fn wipe_EndScreen(x: c_int, y: c_int, width: c_int, height: c_int) -> c_int 
 ///
 /// Called by C code in `d_main.c` each game tick while a wipe is active.
 /// C origin: `wipe_ScreenWipe` in f_wipe.c.
-pub fn wipe_ScreenWipe(
-    wipeno: c_int,
-    _x: c_int,
-    _y: c_int,
-    width: c_int,
-    height: c_int,
-    ticks: c_int,
-) -> c_int {
+pub fn wipe_ScreenWipe(wipeno: i32, _x: i32, _y: i32, width: i32, height: i32, ticks: i32) -> i32 {
     unsafe {
         if GO == 0 {
             GO = 1;

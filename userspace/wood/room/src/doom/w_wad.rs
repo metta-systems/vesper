@@ -12,11 +12,12 @@
 //! is consulted in preference to the linear scan once present.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+#![allow(clippy::manual_c_str_literals)]
 
 use {
     crate::i_error,
     std::{
-        ffi::{c_char, c_int, c_uint, c_void, CStr},
+        ffi::{c_void, CStr},
         ptr,
     },
 };
@@ -38,13 +39,13 @@ use crate::doom::{
 #[repr(C)]
 pub struct lumpinfo_t {
     /// 8-char ASCII lump name, **not** NUL-terminated when full.
-    pub name: [c_char; 8],
+    pub name: [u8; 8],
     /// File the lump lives in.
     pub wad_file: *mut wad_file_t,
     /// Offset of the lump payload inside the file, in bytes.
-    pub position: c_int,
+    pub position: i32,
     /// Payload size in bytes.
-    pub size: c_int,
+    pub size: i32,
     /// Zone-allocated cache pointer, or null if not yet loaded.
     /// Memory-mapped files leave this null; `W_CacheLumpNum`
     /// returns a pointer into the mapping directly.
@@ -61,11 +62,11 @@ pub struct lumpinfo_t {
 struct wadinfo_t {
     /// Magic identifier: `"IWAD"` for the main IWAD, `"PWAD"` for
     /// a patch WAD. Anything else triggers `I_Error`.
-    identification: [c_char; 4],
+    identification: [u8; 4],
     /// Little-endian number of lumps in the directory.
-    numlumps: c_int,
+    numlumps: i32,
     /// Little-endian byte offset to the lump-directory table.
-    infotableofs: c_int,
+    infotableofs: i32,
 }
 
 /// On-disk directory entry as it appears at `infotableofs`. Mirrors
@@ -73,11 +74,11 @@ struct wadinfo_t {
 #[repr(C)]
 struct filelump_t {
     /// Little-endian byte offset of the lump payload inside the WAD.
-    filepos: c_int,
+    filepos: i32,
     /// Little-endian payload length in bytes.
-    size: c_int,
+    size: i32,
     /// 8-char ASCII lump name, NUL-padded.
-    name: [c_char; 8],
+    name: [u8; 8],
 }
 
 /// Pointer to the global lump directory. Mirrors the `lumpinfo` C
@@ -87,7 +88,7 @@ struct filelump_t {
 pub static mut lumpinfo: *mut lumpinfo_t = ptr::null_mut();
 
 /// Number of entries in `lumpinfo`. Mirrors the C `numlumps` global.
-pub static mut numlumps: c_uint = 0;
+pub static mut numlumps: u32 = 0;
 
 /// Hash table: `numlumps` buckets, each a singly-linked list through
 /// `lumpinfo_t::next`. Built lazily by `W_GenerateHashTable` and
@@ -95,19 +96,6 @@ pub static mut numlumps: c_uint = 0;
 static mut lumphash: *mut *mut lumpinfo_t = ptr::null_mut();
 
 extern "C" {
-    /// libc: case-insensitive compare of first `n` bytes.
-    fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
-    /// libc: case-insensitive string compare.
-    fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int;
-    /// libc: byte-equal compare of first `n` bytes.
-    fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
-    /// libc: copy up to `n` bytes, NUL-padding the destination.
-    fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
-    /// libc: NUL-terminated string length.
-    fn strlen(s: *const c_char) -> usize;
-    /// libc: ASCII-upper-case.
-    fn toupper(c: c_int) -> c_int;
-
     /// libc: zero-initialised allocation.
     fn calloc(nmemb: usize, size: usize) -> *mut c_void;
     /// libc: free a `malloc`/`calloc` block.
@@ -128,7 +116,7 @@ extern "C" {
 /// Mutates the `lumpinfo` and `numlumps` globals. Assumes
 /// `newnumlumps >= numlumps`. Mirrors the file-static helper of
 /// the same name in `w_wad.c`.
-unsafe fn ExtendLumpInfo(newnumlumps: c_uint) {
+unsafe fn ExtendLumpInfo(newnumlumps: u32) {
     let newlumpinfo =
         calloc(newnumlumps as usize, std::mem::size_of::<lumpinfo_t>()) as *mut lumpinfo_t;
     if newlumpinfo.is_null() {
@@ -157,24 +145,33 @@ unsafe fn ExtendLumpInfo(newnumlumps: c_uint) {
     numlumps = newnumlumps;
 }
 
-/// djb2-style hash of an 8-char lump name (NUL-terminated or padded).
+/// The significant part of a lump name: at most 8 bytes, ending at
+/// the first NUL.
 ///
-/// The hash uses `((h << 5) ^ h) ^ toupper(ch)` per character, so
-/// the result is case-insensitive and matches the C reference in
-/// `w_wad.c` exactly. Caller must ensure `s` points to at least 8
-/// bytes (or a shorter NUL-terminated string).
-pub fn W_LumpNameHash(s: *const c_char) -> c_uint {
-    unsafe {
-        let mut result: c_uint = 5381;
-        for i in 0..8 {
-            let ch = *s.add(i);
-            if ch == 0 {
-                break;
-            }
-            result = ((result << 5) ^ result) ^ (toupper(ch as c_int) as c_uint);
-        }
-        result
-    }
+/// Lump names are stored as 8 NUL-padded bytes with no terminator
+/// when full, so every comparison and hash works on this prefix,
+/// matching the C code's `strncasecmp(a, b, 8)`.
+pub fn lump_name(name: &[u8]) -> &[u8] {
+    let name = &name[..name.len().min(8)];
+    name.iter()
+        .position(|&byte| byte == 0)
+        .map_or(name, |nul| &name[..nul])
+}
+
+/// Case-insensitive lump-name equality over the [`lump_name`] prefixes.
+pub fn lump_names_equal(first: &[u8], second: &[u8]) -> bool {
+    lump_name(first).eq_ignore_ascii_case(lump_name(second))
+}
+
+/// djb2-style hash of a lump name.
+///
+/// The hash uses `((h << 5) ^ h) ^ toupper(ch)` over the
+/// [`lump_name`] prefix, so the result is case-insensitive and
+/// matches the C reference in `w_wad.c` exactly.
+pub fn W_LumpNameHash(name: &[u8]) -> u32 {
+    lump_name(name).iter().fold(5381, |hash: u32, &byte| {
+        ((hash << 5) ^ hash) ^ u32::from(byte.to_ascii_uppercase())
+    })
 }
 
 /// Open `filename` and append its lumps to the global directory.
@@ -192,7 +189,7 @@ pub fn W_LumpNameHash(s: *const c_char) -> c_uint {
 /// returns null. Any existing `lumphash` is freed so the next
 /// lookup falls back to the linear scan until
 /// `W_GenerateHashTable` is called again.
-pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
+pub fn W_AddFile(filename: *mut u8) -> *mut wad_file_t {
     unsafe {
         let wad_file = W_OpenFile(filename);
         if wad_file.is_null() {
@@ -205,16 +202,16 @@ pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
 
         let fileinfo: *mut filelump_t;
 
-        let fname_len = strlen(filename);
-        if fname_len < 3 || strcasecmp(filename.add(fname_len - 3), c"wad".as_ptr()) != 0 {
+        let path = CStr::from_ptr(filename.cast()).to_bytes();
+        if path.len() < 3 || !path[path.len() - 3..].eq_ignore_ascii_case(b"wad") {
             // Single lump file
             fileinfo = Z_Malloc(
-                std::mem::size_of::<filelump_t>() as c_int,
+                std::mem::size_of::<filelump_t>() as i32,
                 PU_STATIC,
                 ptr::null_mut(),
             ) as *mut filelump_t;
             (*fileinfo).filepos = 0;
-            (*fileinfo).size = (*wad_file).length as c_int;
+            (*fileinfo).size = (*wad_file).length as i32;
             M_ExtractFileBase(filename, (*fileinfo).name.as_mut_ptr());
             newnumlumps += 1;
         } else {
@@ -227,12 +224,10 @@ pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
                 std::mem::size_of::<wadinfo_t>(),
             );
 
-            if strncmp(header.identification.as_ptr(), c"IWAD".as_ptr(), 4) != 0
-                && strncmp(header.identification.as_ptr(), c"PWAD".as_ptr(), 4) != 0
-            {
+            if header.identification != *b"IWAD" && header.identification != *b"PWAD" {
                 i_error!(
                     "Wad file {} doesn't have IWAD or PWAD id",
-                    CStr::from_ptr(filename).to_string_lossy()
+                    CStr::from_ptr(filename.cast()).to_string_lossy()
                 );
             }
 
@@ -240,15 +235,15 @@ pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
             let header_infotableofs = i32::from_le(header.infotableofs);
 
             let length = (header_numlumps as usize) * std::mem::size_of::<filelump_t>();
-            fileinfo = Z_Malloc(length as c_int, PU_STATIC, ptr::null_mut()) as *mut filelump_t;
+            fileinfo = Z_Malloc(length as i32, PU_STATIC, ptr::null_mut()) as *mut filelump_t;
 
             W_Read(
                 wad_file,
-                header_infotableofs as c_uint,
+                header_infotableofs as u32,
                 fileinfo as *mut c_void,
                 length,
             );
-            newnumlumps += header_numlumps as c_uint;
+            newnumlumps += header_numlumps as u32;
         }
 
         ExtendLumpInfo(newnumlumps);
@@ -261,7 +256,11 @@ pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
             (*lump_p).position = i32::from_le((*filerover).filepos);
             (*lump_p).size = i32::from_le((*filerover).size);
             (*lump_p).cache = ptr::null_mut();
-            strncpy((*lump_p).name.as_mut_ptr(), (*filerover).name.as_ptr(), 8);
+            // strncpy semantics: copy up to the first NUL, zero-pad the rest.
+            let name = lump_name(&(*filerover).name);
+            let mut padded = [0; 8];
+            padded[..name.len()].copy_from_slice(name);
+            (*lump_p).name = padded;
 
             lump_p = lump_p.add(1);
             filerover = filerover.add(1);
@@ -280,8 +279,8 @@ pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
 
 /// Return the total number of registered lumps as a signed integer.
 /// Mirrors `W_NumLumps` from `w_wad.c`.
-pub fn W_NumLumps() -> c_int {
-    unsafe { numlumps as c_int }
+pub fn W_NumLumps() -> i32 {
+    unsafe { numlumps as i32 }
 }
 
 /// Look up a lump by name and return its index, or `-1` if not
@@ -290,18 +289,16 @@ pub fn W_NumLumps() -> c_int {
 /// Uses the hash table when `W_GenerateHashTable` has been called;
 /// otherwise scans `lumpinfo` backwards so that later-loaded WADs
 /// override earlier ones (matching the C implementation).
-/// Comparison is via `strncasecmp` over 8 bytes, so trailing bytes
-/// past a NUL must match too (they're zeroed in `lumpinfo_t::name`
-/// after `strncpy`).
-pub fn W_CheckNumForName(name: *const c_char) -> c_int {
+/// Names compare case-insensitively via [`lump_names_equal`].
+pub fn W_CheckNumForName(name: &[u8]) -> i32 {
     unsafe {
         if !lumphash.is_null() {
             let hash = (W_LumpNameHash(name) % numlumps) as usize;
             let mut lump_p = *lumphash.add(hash);
             while !lump_p.is_null() {
-                if strncasecmp((*lump_p).name.as_ptr(), name, 8) == 0 {
-                    return (lump_p as usize - lumpinfo as usize) as c_int
-                        / std::mem::size_of::<lumpinfo_t>() as c_int;
+                if lump_names_equal(&(*lump_p).name, name) {
+                    return (lump_p as usize - lumpinfo as usize) as i32
+                        / std::mem::size_of::<lumpinfo_t>() as i32;
                 }
                 lump_p = (*lump_p).next;
             }
@@ -309,7 +306,7 @@ pub fn W_CheckNumForName(name: *const c_char) -> c_int {
             // Linear search, backwards so patch lumps take precedence
             let mut i = numlumps as i32 - 1;
             while i >= 0 {
-                if strncasecmp((*lumpinfo.add(i as usize)).name.as_ptr(), name, 8) == 0 {
+                if lump_names_equal(&(*lumpinfo.add(i as usize)).name, name) {
                     return i;
                 }
                 i -= 1;
@@ -323,25 +320,23 @@ pub fn W_CheckNumForName(name: *const c_char) -> c_int {
 /// (and never returns) if the lump is missing. The C source uses
 /// this as the strict variant; callers that tolerate misses use
 /// `W_CheckNumForName` directly.
-pub fn W_GetNumForName(name: *const c_char) -> c_int {
-    unsafe {
-        let i = W_CheckNumForName(name);
-        if i < 0 {
-            i_error!(
-                "W_GetNumForName: {} not found!",
-                CStr::from_ptr(name).to_string_lossy()
-            );
-        }
-        i
+pub fn W_GetNumForName(name: &[u8]) -> i32 {
+    let i = W_CheckNumForName(name);
+    if i < 0 {
+        i_error!(
+            "W_GetNumForName: {} not found!",
+            String::from_utf8_lossy(lump_name(name))
+        );
     }
+    i
 }
 
 /// Return the byte size of `lump`. Errors out via `I_Error` if
 /// `lump` is out of range. Mirrors `W_LumpLength` from `w_wad.c`.
-pub fn W_LumpLength(lump: c_uint) -> c_int {
+pub fn W_LumpLength(lump: u32) -> i32 {
     unsafe {
         if lump >= numlumps {
-            i_error!("W_LumpLength: {} >= numlumps", lump as c_int);
+            i_error!("W_LumpLength: {} >= numlumps", lump as i32);
         }
         (*lumpinfo.add(lump as usize)).size
     }
@@ -357,16 +352,16 @@ pub fn W_LumpLength(lump: c_uint) -> c_int {
 /// Differs from the C source by also emitting a stderr diagnostic
 /// when the actual read exceeds `lump.size` (a "shouldn't happen"
 /// defensive log, not present in `w_wad.c`).
-pub fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
+pub fn W_ReadLump(lump: u32, dest: *mut c_void) {
     unsafe {
         if lump >= numlumps {
-            i_error!("W_ReadLump: {} >= numlumps", lump as c_int);
+            i_error!("W_ReadLump: {} >= numlumps", lump as i32);
         }
         let l = lumpinfo.add(lump as usize);
         I_BeginRead();
         let c = W_Read(
             (*l).wad_file,
-            (*l).position as c_uint,
+            (*l).position as u32,
             dest,
             (*l).size as usize,
         );
@@ -382,9 +377,9 @@ pub fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
         if c < (*l).size as usize {
             i_error!(
                 "W_ReadLump: only read {} of {} on lump {}",
-                c as c_int,
+                c as i32,
                 (*l).size,
-                lump as c_int
+                lump as i32
             );
         }
         I_EndRead();
@@ -403,9 +398,9 @@ pub fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
 ///
 /// `tag` is typically `PU_STATIC` (long-lived) or `PU_CACHE`
 /// (purgeable). Out-of-range `lumpnum` triggers `I_Error`.
-pub fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
+pub fn W_CacheLumpNum(lumpnum: i32, tag: i32) -> *mut c_void {
     unsafe {
-        if lumpnum < 0 || (lumpnum as c_uint) >= numlumps {
+        if lumpnum < 0 || (lumpnum as u32) >= numlumps {
             i_error!("W_CacheLumpNum: {} >= numlumps", lumpnum);
         }
         let lump = lumpinfo.add(lumpnum as usize);
@@ -421,11 +416,11 @@ pub fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
         } else {
             // Not yet loaded
             (*lump).cache = Z_Malloc(
-                W_LumpLength(lumpnum as c_uint),
+                W_LumpLength(lumpnum as u32),
                 tag,
                 &mut (*lump).cache as *mut *mut c_void as *mut c_void,
             );
-            W_ReadLump(lumpnum as c_uint, (*lump).cache);
+            W_ReadLump(lumpnum as u32, (*lump).cache);
             (*lump).cache
         }
     }
@@ -433,7 +428,7 @@ pub fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
 
 /// Convenience wrapper: resolve `name` to a lump number via
 /// `W_GetNumForName` (fatal if missing) and call `W_CacheLumpNum`.
-pub fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void {
+pub fn W_CacheLumpName(name: &[u8], tag: i32) -> *mut c_void {
     W_CacheLumpNum(W_GetNumForName(name), tag)
 }
 
@@ -442,9 +437,9 @@ pub fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void {
 /// pressure. No-op for memory-mapped wads.
 ///
 /// Mirrors `W_ReleaseLumpNum` from `w_wad.c`.
-pub fn W_ReleaseLumpNum(lumpnum: c_int) {
+pub fn W_ReleaseLumpNum(lumpnum: i32) {
     unsafe {
-        if lumpnum < 0 || (lumpnum as c_uint) >= numlumps {
+        if lumpnum < 0 || (lumpnum as u32) >= numlumps {
             i_error!("W_ReleaseLumpNum: {} >= numlumps", lumpnum);
         }
         let lump = lumpinfo.add(lumpnum as usize);
@@ -458,7 +453,7 @@ pub fn W_ReleaseLumpNum(lumpnum: c_int) {
 
 /// Convenience wrapper: resolve `name` and call `W_ReleaseLumpNum`.
 /// Mirrors `W_ReleaseLumpName` from `w_wad.c`.
-pub fn W_ReleaseLumpName(name: *const c_char) {
+pub fn W_ReleaseLumpName(name: &[u8]) {
     W_ReleaseLumpNum(W_GetNumForName(name))
 }
 
@@ -478,15 +473,14 @@ pub fn W_GenerateHashTable() {
 
         if numlumps > 0 {
             lumphash = Z_Malloc(
-                (std::mem::size_of::<*mut lumpinfo_t>() * numlumps as usize) as c_int,
+                (std::mem::size_of::<*mut lumpinfo_t>() * numlumps as usize) as i32,
                 PU_STATIC,
                 ptr::null_mut(),
             ) as *mut *mut lumpinfo_t;
             std::ptr::write_bytes(lumphash, 0, numlumps as usize);
 
             for i in 0..numlumps {
-                let hash =
-                    (W_LumpNameHash((*lumpinfo.add(i as usize)).name.as_ptr()) % numlumps) as usize;
+                let hash = (W_LumpNameHash(&(*lumpinfo.add(i as usize)).name) % numlumps) as usize;
                 (*lumpinfo.add(i as usize)).next = *lumphash.add(hash);
                 *lumphash.add(hash) = lumpinfo.add(i as usize);
             }
@@ -504,13 +498,12 @@ pub fn W_GenerateHashTable() {
 ///
 /// The C source uses a `PROGRAM_PREFIX` macro for the binary name;
 /// this port hardcodes `"doomgeneric"`.
-pub fn W_CheckCorrectIWAD(mission: c_int) {
+pub fn W_CheckCorrectIWAD(mission: i32) {
     /// One row of the IWAD-mismatch detection table.
     struct UniqueLump {
         /// `GameMission_t` value for which this lump is expected.
-        mission: c_int,
-        /// 8-char lump name (NUL-padded) that uniquely identifies
-        /// the mission's IWAD.
+        mission: i32,
+        /// Lump name that uniquely identifies the mission's IWAD.
         lumpname: &'static [u8],
     }
 
@@ -519,34 +512,34 @@ pub fn W_CheckCorrectIWAD(mission: c_int) {
     const UNIQUE_LUMPS: [UniqueLump; 4] = [
         UniqueLump {
             mission: 0, // doom
-            lumpname: b"POSSA1\0\0",
+            lumpname: b"POSSA1",
         },
         UniqueLump {
             mission: 6, // heretic
-            lumpname: b"IMPXA1\0\0",
+            lumpname: b"IMPXA1",
         },
         UniqueLump {
             mission: 7, // hexen
-            lumpname: b"ETTNA1\0\0",
+            lumpname: b"ETTNA1",
         },
         UniqueLump {
             mission: 8, // strife
-            lumpname: b"AGRDA1\0\0",
+            lumpname: b"AGRDA1",
         },
     ];
 
     unsafe {
         for ul in &UNIQUE_LUMPS {
             if mission != ul.mission {
-                let lumpnum = W_CheckNumForName(ul.lumpname.as_ptr() as *mut c_char);
+                let lumpnum = W_CheckNumForName(ul.lumpname);
                 if lumpnum >= 0 {
                     i_error!(
                         "\nYou are trying to use a {} IWAD file with the {}{}binary.\nThis isn't going to work.\nYou probably want to use the {}{}binary.",
-                        CStr::from_ptr(D_SuggestGameName(ul.mission, 4)).to_string_lossy(),
+                        CStr::from_ptr(D_SuggestGameName(ul.mission, 4).cast()).to_string_lossy(),
                         "doomgeneric",
-                        CStr::from_ptr(D_GameMissionString(mission)).to_string_lossy(),
+                        CStr::from_ptr(D_GameMissionString(mission).cast()).to_string_lossy(),
                         "doomgeneric",
-                        CStr::from_ptr(D_GameMissionString(ul.mission)).to_string_lossy()
+                        CStr::from_ptr(D_GameMissionString(ul.mission).cast()).to_string_lossy()
                     );
                 }
             }
@@ -600,7 +593,7 @@ mod tests {
         /// Original `lumpinfo` pointer to restore on drop.
         saved_lumpinfo: *mut lumpinfo_t,
         /// Original `numlumps` count to restore on drop.
-        saved_numlumps: c_uint,
+        saved_numlumps: u32,
         /// Original `lumphash` pointer to restore on drop.
         saved_lumphash: *mut *mut lumpinfo_t,
     }
@@ -613,7 +606,7 @@ mod tests {
         ///
         /// `info` must remain live for the lifetime of the returned
         /// guard. The caller must serialise with `WAD_LOCK`.
-        unsafe fn install(info: *mut lumpinfo_t, count: c_uint) -> Self {
+        unsafe fn install(info: *mut lumpinfo_t, count: u32) -> Self {
             let scope = WadTestScope {
                 saved_lumpinfo: lumpinfo,
                 saved_numlumps: numlumps,
@@ -638,13 +631,12 @@ mod tests {
         }
     }
 
-    /// Build a `[c_char; 8]` lump name from a byte slice, NUL-padding
+    /// Build a `[u8; 8]` lump name from a byte slice, NUL-padding
     /// or truncating to 8 bytes.
-    fn make_lump_name(s: &[u8]) -> [c_char; 8] {
-        let mut name = [0i8; 8];
-        for (i, &b) in s.iter().take(8).enumerate() {
-            name[i] = b as c_char;
-        }
+    fn make_lump_name(s: &[u8]) -> [u8; 8] {
+        let mut name = [0u8; 8];
+        let len = s.len().min(8);
+        name[..len].copy_from_slice(&s[..len]);
         name
     }
 
@@ -684,7 +676,25 @@ mod tests {
         let mut lumps = [make_lump(b"TESTLUMP", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 1) };
 
-        W_ReleaseLumpName(c"TESTLUMP".as_ptr());
+        W_ReleaseLumpName(b"TESTLUMP");
+    }
+
+    /// Names are compared over their first 8 bytes up to a NUL, so a
+    /// full unterminated name, a padded name and a longer buffer agree.
+    #[test]
+    fn lump_names_compare_like_strncasecmp_8() {
+        assert_eq!(lump_name(b"POSSA1\0\0"), b"POSSA1");
+        assert_eq!(lump_name(b"TESTLUMPX"), b"TESTLUMP");
+        assert_eq!(lump_name(b"AB\0CD"), b"AB");
+        assert!(lump_names_equal(b"possa1", b"POSSA1\0\0"));
+        assert!(lump_names_equal(b"TESTLUMP", b"testlumpextra"));
+        assert!(!lump_names_equal(b"POSSA", b"POSSA1"));
+        assert_eq!(W_LumpNameHash(b"possa1"), W_LumpNameHash(b"POSSA1\0junk"));
+        // djb2-xor over "A": ((5381 << 5) ^ 5381) ^ 'A'
+        assert_eq!(
+            W_LumpNameHash(b"a"),
+            ((5381u32 << 5) ^ 5381) ^ u32::from(b'A')
+        );
     }
 
     /// The underlying `strncasecmp` lookup is case-insensitive, so
@@ -696,7 +706,7 @@ mod tests {
         let mut lumps = [make_lump(b"TESTLUMP", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 1) };
 
-        W_ReleaseLumpName(c"testlump".as_ptr());
+        W_ReleaseLumpName(b"testlump");
     }
 
     /// With multiple lumps loaded, each name must resolve to its
@@ -710,7 +720,7 @@ mod tests {
         let mut lumps = [make_lump(b"ALPHA", &mut wad), make_lump(b"BETA", &mut wad)];
         let _scope = unsafe { WadTestScope::install(lumps.as_mut_ptr(), 2) };
 
-        W_ReleaseLumpName(c"ALPHA".as_ptr());
-        W_ReleaseLumpName(c"BETA".as_ptr());
+        W_ReleaseLumpName(b"ALPHA");
+        W_ReleaseLumpName(b"BETA");
     }
 }

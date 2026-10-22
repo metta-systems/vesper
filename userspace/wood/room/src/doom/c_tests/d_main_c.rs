@@ -170,26 +170,3 @@ fn start_episode_and_map_default_zero() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// Boolean startup flags are C `int` (4 bytes).
-#[test]
-fn startup_flags_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::devparm;
-        let _: c_int = c_ffi::nomonsters;
-        let _: c_int = c_ffi::respawnparm;
-        let _: c_int = c_ffi::fastparm;
-        let _: c_int = c_ffi::autostart;
-        let _: c_int = c_ffi::advancedemo;
-        let _: c_int = c_ffi::storedemo;
-        let _: c_int = c_ffi::bfgedition;
-        let _: c_int = c_ffi::main_loop_started;
-        let _: c_int = c_ffi::show_endoom;
-    }
-}

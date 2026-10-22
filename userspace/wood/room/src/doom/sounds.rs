@@ -13,14 +13,14 @@
 //!
 //! Rust-vs-C differences:
 //! - Names are built with the `const fn name::<N>` helper at compile time,
-//!   producing fixed-size `[c_char; N]` arrays instead of C string literals.
+//!   producing fixed-size `[u8; N]` arrays instead of C string literals.
 //! - The C source initialises every `sfxinfo_t` field by hand. Here, the
 //!   `SfxInfo::new` / `with_pitch` / `with_volume` builders fill defaults
 //!   matching `S_sfx[]` in `sounds.c` (pitch = -1, volume = -1, etc.).
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::c_void;
 
 /// Rust mirror of `sfxinfo_t` (`sounds.h`).
 ///
@@ -31,23 +31,23 @@ use std::ffi::{c_char, c_int, c_void};
 #[repr(C)]
 pub struct SfxInfo {
     /// Tag name pointer (DEH support); unused at runtime, always null.
-    pub tagname: *mut c_char,
+    pub tagname: *mut u8,
     /// Short lump name (no `DS` prefix), NUL-terminated.
-    pub name: [c_char; 9],
+    pub name: [u8; 9],
     /// Channel priority; higher values evict lower ones in `S_GetChannel`.
-    pub priority: c_int,
+    pub priority: i32,
     /// Optional alias to another `SfxInfo` so several effects share audio.
     pub link: *mut SfxInfo,
     /// Pitch override (-1 = use sound default). Only meaningful when `link`.
-    pub pitch: c_int,
+    pub pitch: i32,
     /// Volume modifier in 0-127 range, added when the effect aliases via `link`.
-    pub volume: c_int,
+    pub volume: i32,
     /// Soft reference count for the cached lump; decremented on `S_StopChannel`.
-    pub usefulness: c_int,
+    pub usefulness: i32,
     /// Cached lump number, or -1 before the lump is first loaded.
-    pub lumpnum: c_int,
+    pub lumpnum: i32,
     /// Maximum simultaneous channels (-1 = unlimited).
-    pub numchannels: c_int,
+    pub numchannels: i32,
     /// Pointer to driver-side decoded audio data.
     pub driver_data: *mut c_void,
 }
@@ -61,9 +61,9 @@ pub struct SfxInfo {
 #[derive(Default)]
 pub struct MusicInfo {
     /// Short lump name (no `d_` prefix), NUL-terminated. Null for the sentinel.
-    pub name: *mut c_char,
+    pub name: *mut u8,
     /// Cached lump number; 0 means "not yet looked up".
-    pub lumpnum: c_int,
+    pub lumpnum: i32,
     /// Pointer to the cached MIDI/MUS lump in zone memory.
     pub data: *mut c_void,
     /// Driver-side song handle returned by `I_RegisterSong`.
@@ -78,12 +78,12 @@ pub const NUMSFX: usize = Sfx::Radio as usize + 1;
 pub const NUMMUSIC: usize = Mus::Dm2int as usize + 1;
 
 const _: () = assert!(
-    std::mem::size_of::<Sfx>() == std::mem::size_of::<std::ffi::c_int>(),
-    "Sfx must be the same size as c_int"
+    std::mem::size_of::<Sfx>() == std::mem::size_of::<i32>(),
+    "Sfx must be the same size as i32"
 );
 const _: () = assert!(
-    std::mem::size_of::<Mus>() == std::mem::size_of::<std::ffi::c_int>(),
-    "Mus must be the same size as c_int"
+    std::mem::size_of::<Mus>() == std::mem::size_of::<i32>(),
+    "Mus must be the same size as i32"
 );
 
 /// Sound effect IDs, matching the `sfxenum_t` C enum in `sounds.h`.
@@ -647,7 +647,7 @@ impl SfxInfo {
     /// Pitch and volume default to -1 (driver default), `numchannels` to -1
     /// (unlimited); other fields are null/zero. Matches the C
     /// `S_sfx[]` initialiser pattern in `sounds.c`.
-    const fn new(name: [c_char; 9], priority: c_int) -> Self {
+    const fn new(name: [u8; 9], priority: i32) -> Self {
         SfxInfo {
             tagname: std::ptr::null_mut(),
             name,
@@ -663,13 +663,13 @@ impl SfxInfo {
     }
 
     /// Builder helper: set the `pitch` override and return `self`.
-    const fn with_pitch(mut self, pitch: c_int) -> Self {
+    const fn with_pitch(mut self, pitch: i32) -> Self {
         self.pitch = pitch;
         self
     }
 
     /// Builder helper: set the `volume` modifier and return `self`.
-    const fn with_volume(mut self, volume: c_int) -> Self {
+    const fn with_volume(mut self, volume: i32) -> Self {
         self.volume = volume;
         self
     }
@@ -689,9 +689,9 @@ impl MusicInfo {
 
     /// `MusicInfo` pointing at the given const name buffer. The buffer must
     /// have static lifetime so the recorded pointer remains valid.
-    const fn new<const N: usize>(name: &'static [c_char; N]) -> Self {
+    const fn new<const N: usize>(name: &'static [u8; N]) -> Self {
         MusicInfo {
-            name: name.as_ptr() as *mut c_char,
+            name: name.as_ptr() as *mut u8,
             lumpnum: 0,
             data: std::ptr::null_mut(),
             handle: std::ptr::null_mut(),
@@ -699,374 +699,374 @@ impl MusicInfo {
     }
 }
 
-/// Compile-time helper: turn a Rust `&str` into a fixed `[c_char; N]` buffer,
+/// Compile-time helper: turn a Rust `&str` into a fixed `[u8; N]` buffer,
 /// NUL-padded. Panics at const-eval if `s` would not fit (must leave room for
 /// the trailing NUL).
-const fn name<const N: usize>(s: &str) -> [c_char; N] {
+const fn name<const N: usize>(s: &str) -> [u8; N] {
     let b = s.as_bytes();
     assert!(b.len() < N, "String is too long for the array");
-    let mut a = [0i8; N];
+    let mut a = [0u8; N];
     let mut i = 0;
     while i < b.len() {
-        a[i] = b[i] as c_char;
+        a[i] = b[i];
         i += 1;
     }
     a
 }
 
 /// Short lump-name buffer for SFX `DSNONE` (`sfx_none`).
-const N_none: [c_char; 9] = name("none");
+const N_none: [u8; 9] = name("none");
 /// Short lump-name buffer for SFX `DSPISTOL` (`sfx_pistol`).
-const N_pistol: [c_char; 9] = name("pistol");
+const N_pistol: [u8; 9] = name("pistol");
 /// Short lump-name buffer for SFX `DSSHOTGN` (`sfx_shotgn`).
-const N_shotgn: [c_char; 9] = name("shotgn");
+const N_shotgn: [u8; 9] = name("shotgn");
 /// Short lump-name buffer for SFX `DSSGCOCK` (`sfx_sgcock`).
-const N_sgcock: [c_char; 9] = name("sgcock");
+const N_sgcock: [u8; 9] = name("sgcock");
 /// Short lump-name buffer for SFX `DSDSHTGN` (`sfx_dshtgn`).
-const N_dshtgn: [c_char; 9] = name("dshtgn");
+const N_dshtgn: [u8; 9] = name("dshtgn");
 /// Short lump-name buffer for SFX `DSDBOPN` (`sfx_dbopn`).
-const N_dbopn: [c_char; 9] = name("dbopn");
+const N_dbopn: [u8; 9] = name("dbopn");
 /// Short lump-name buffer for SFX `DSDBCLS` (`sfx_dbcls`).
-const N_dbcls: [c_char; 9] = name("dbcls");
+const N_dbcls: [u8; 9] = name("dbcls");
 /// Short lump-name buffer for SFX `DSDBLOAD` (`sfx_dbload`).
-const N_dbload: [c_char; 9] = name("dbload");
+const N_dbload: [u8; 9] = name("dbload");
 /// Short lump-name buffer for SFX `DSPLASMA` (`sfx_plasma`).
-const N_plasma: [c_char; 9] = name("plasma");
+const N_plasma: [u8; 9] = name("plasma");
 /// Short lump-name buffer for SFX `DSBFG` (`sfx_bfg`).
-const N_bfg: [c_char; 9] = name("bfg");
+const N_bfg: [u8; 9] = name("bfg");
 /// Short lump-name buffer for SFX `DSSAWUP` (`sfx_sawup`).
-const N_sawup: [c_char; 9] = name("sawup");
+const N_sawup: [u8; 9] = name("sawup");
 /// Short lump-name buffer for SFX `DSSAWIDL` (`sfx_sawidl`).
-const N_sawidl: [c_char; 9] = name("sawidl");
+const N_sawidl: [u8; 9] = name("sawidl");
 /// Short lump-name buffer for SFX `DSSAWFUL` (`sfx_sawful`).
-const N_sawful: [c_char; 9] = name("sawful");
+const N_sawful: [u8; 9] = name("sawful");
 /// Short lump-name buffer for SFX `DSSAWHIT` (`sfx_sawhit`).
-const N_sawhit: [c_char; 9] = name("sawhit");
+const N_sawhit: [u8; 9] = name("sawhit");
 /// Short lump-name buffer for SFX `DSRLAUNC` (`sfx_rlaunc`).
-const N_rlaunc: [c_char; 9] = name("rlaunc");
+const N_rlaunc: [u8; 9] = name("rlaunc");
 /// Short lump-name buffer for SFX `DSRXPLOD` (`sfx_rxplod`).
-const N_rxplod: [c_char; 9] = name("rxplod");
+const N_rxplod: [u8; 9] = name("rxplod");
 /// Short lump-name buffer for SFX `DSFIRSHT` (`sfx_firsht`).
-const N_firsht: [c_char; 9] = name("firsht");
+const N_firsht: [u8; 9] = name("firsht");
 /// Short lump-name buffer for SFX `DSFIRXPL` (`sfx_firxpl`).
-const N_firxpl: [c_char; 9] = name("firxpl");
+const N_firxpl: [u8; 9] = name("firxpl");
 /// Short lump-name buffer for SFX `DSPSTART` (`sfx_pstart`).
-const N_pstart: [c_char; 9] = name("pstart");
+const N_pstart: [u8; 9] = name("pstart");
 /// Short lump-name buffer for SFX `DSPSTOP` (`sfx_pstop`).
-const N_pstop: [c_char; 9] = name("pstop");
+const N_pstop: [u8; 9] = name("pstop");
 /// Short lump-name buffer for SFX `DSDOROPN` (`sfx_doropn`).
-const N_doropn: [c_char; 9] = name("doropn");
+const N_doropn: [u8; 9] = name("doropn");
 /// Short lump-name buffer for SFX `DSDORCLS` (`sfx_dorcls`).
-const N_dorcls: [c_char; 9] = name("dorcls");
+const N_dorcls: [u8; 9] = name("dorcls");
 /// Short lump-name buffer for SFX `DSSTNMOV` (`sfx_stnmov`).
-const N_stnmov: [c_char; 9] = name("stnmov");
+const N_stnmov: [u8; 9] = name("stnmov");
 /// Short lump-name buffer for SFX `DSSWTCHN` (`sfx_swtchn`).
-const N_swtchn: [c_char; 9] = name("swtchn");
+const N_swtchn: [u8; 9] = name("swtchn");
 /// Short lump-name buffer for SFX `DSSWTCHX` (`sfx_swtchx`).
-const N_swtchx: [c_char; 9] = name("swtchx");
+const N_swtchx: [u8; 9] = name("swtchx");
 /// Short lump-name buffer for SFX `DSPLPAIN` (`sfx_plpain`).
-const N_plpain: [c_char; 9] = name("plpain");
+const N_plpain: [u8; 9] = name("plpain");
 /// Short lump-name buffer for SFX `DSDMPAIN` (`sfx_dmpain`).
-const N_dmpain: [c_char; 9] = name("dmpain");
+const N_dmpain: [u8; 9] = name("dmpain");
 /// Short lump-name buffer for SFX `DSPOPAIN` (`sfx_popain`).
-const N_popain: [c_char; 9] = name("popain");
+const N_popain: [u8; 9] = name("popain");
 /// Short lump-name buffer for SFX `DSVIPAIN` (`sfx_vipain`).
-const N_vipain: [c_char; 9] = name("vipain");
+const N_vipain: [u8; 9] = name("vipain");
 /// Short lump-name buffer for SFX `DSMNPAIN` (`sfx_mnpain`).
-const N_mnpain: [c_char; 9] = name("mnpain");
+const N_mnpain: [u8; 9] = name("mnpain");
 /// Short lump-name buffer for SFX `DSPEPAIN` (`sfx_pepain`).
-const N_pepain: [c_char; 9] = name("pepain");
+const N_pepain: [u8; 9] = name("pepain");
 /// Short lump-name buffer for SFX `DSSLOP` (`sfx_slop`).
-const N_slop: [c_char; 9] = name("slop");
+const N_slop: [u8; 9] = name("slop");
 /// Short lump-name buffer for SFX `DSITEMUP` (`sfx_itemup`).
-const N_itemup: [c_char; 9] = name("itemup");
+const N_itemup: [u8; 9] = name("itemup");
 /// Short lump-name buffer for SFX `DSWPNUP` (`sfx_wpnup`).
-const N_wpnup: [c_char; 9] = name("wpnup");
+const N_wpnup: [u8; 9] = name("wpnup");
 /// Short lump-name buffer for SFX `DSOOF` (`sfx_oof`).
-const N_oof: [c_char; 9] = name("oof");
+const N_oof: [u8; 9] = name("oof");
 /// Short lump-name buffer for SFX `DSTELEPT` (`sfx_telept`).
-const N_telept: [c_char; 9] = name("telept");
+const N_telept: [u8; 9] = name("telept");
 /// Short lump-name buffer for SFX `DSPOSIT1` (`sfx_posit1`).
-const N_posit1: [c_char; 9] = name("posit1");
+const N_posit1: [u8; 9] = name("posit1");
 /// Short lump-name buffer for SFX `DSPOSIT2` (`sfx_posit2`).
-const N_posit2: [c_char; 9] = name("posit2");
+const N_posit2: [u8; 9] = name("posit2");
 /// Short lump-name buffer for SFX `DSPOSIT3` (`sfx_posit3`).
-const N_posit3: [c_char; 9] = name("posit3");
+const N_posit3: [u8; 9] = name("posit3");
 /// Short lump-name buffer for SFX `DSBGSIT1` (`sfx_bgsit1`).
-const N_bgsit1: [c_char; 9] = name("bgsit1");
+const N_bgsit1: [u8; 9] = name("bgsit1");
 /// Short lump-name buffer for SFX `DSBGSIT2` (`sfx_bgsit2`).
-const N_bgsit2: [c_char; 9] = name("bgsit2");
+const N_bgsit2: [u8; 9] = name("bgsit2");
 /// Short lump-name buffer for SFX `DSSGTSIT` (`sfx_sgtsit`).
-const N_sgtsit: [c_char; 9] = name("sgtsit");
+const N_sgtsit: [u8; 9] = name("sgtsit");
 /// Short lump-name buffer for SFX `DSCACSIT` (`sfx_cacsit`).
-const N_cacsit: [c_char; 9] = name("cacsit");
+const N_cacsit: [u8; 9] = name("cacsit");
 /// Short lump-name buffer for SFX `DSBRSSIT` (`sfx_brssit`).
-const N_brssit: [c_char; 9] = name("brssit");
+const N_brssit: [u8; 9] = name("brssit");
 /// Short lump-name buffer for SFX `DSCYBSIT` (`sfx_cybsit`).
-const N_cybsit: [c_char; 9] = name("cybsit");
+const N_cybsit: [u8; 9] = name("cybsit");
 /// Short lump-name buffer for SFX `DSSPISIT` (`sfx_spisit`).
-const N_spisit: [c_char; 9] = name("spisit");
+const N_spisit: [u8; 9] = name("spisit");
 /// Short lump-name buffer for SFX `DSBSPSIT` (`sfx_bspit`).
-const N_bspit: [c_char; 9] = name("bspsit");
+const N_bspit: [u8; 9] = name("bspsit");
 /// Short lump-name buffer for SFX `DSKNTSIT` (`sfx_kntsit`).
-const N_kntsit: [c_char; 9] = name("kntsit");
+const N_kntsit: [u8; 9] = name("kntsit");
 /// Short lump-name buffer for SFX `DSVILSIT` (`sfx_vilsit`).
-const N_vilsit: [c_char; 9] = name("vilsit");
+const N_vilsit: [u8; 9] = name("vilsit");
 /// Short lump-name buffer for SFX `DSMANSIT` (`sfx_mansit`).
-const N_mansit: [c_char; 9] = name("mansit");
+const N_mansit: [u8; 9] = name("mansit");
 /// Short lump-name buffer for SFX `DSPESIT` (`sfx_pesit`).
-const N_pesit: [c_char; 9] = name("pesit");
+const N_pesit: [u8; 9] = name("pesit");
 /// Short lump-name buffer for SFX `DSSKLATK` (`sfx_sklatk`).
-const N_sklatk: [c_char; 9] = name("sklatk");
+const N_sklatk: [u8; 9] = name("sklatk");
 /// Short lump-name buffer for SFX `DSSGTATK` (`sfx_sgtatk`).
-const N_sgtatk: [c_char; 9] = name("sgtatk");
+const N_sgtatk: [u8; 9] = name("sgtatk");
 /// Short lump-name buffer for SFX `DSSKEPCH` (`sfx_skepch`).
-const N_skepch: [c_char; 9] = name("skepch");
+const N_skepch: [u8; 9] = name("skepch");
 /// Short lump-name buffer for SFX `DSVILATK` (`sfx_vilatk`).
-const N_vilatk: [c_char; 9] = name("vilatk");
+const N_vilatk: [u8; 9] = name("vilatk");
 /// Short lump-name buffer for SFX `DSCLAW` (`sfx_claw`).
-const N_claw: [c_char; 9] = name("claw");
+const N_claw: [u8; 9] = name("claw");
 /// Short lump-name buffer for SFX `DSSKESWG` (`sfx_skeswg`).
-const N_skeswg: [c_char; 9] = name("skeswg");
+const N_skeswg: [u8; 9] = name("skeswg");
 /// Short lump-name buffer for SFX `DSPLDETH` (`sfx_pldeth`).
-const N_pldeth: [c_char; 9] = name("pldeth");
+const N_pldeth: [u8; 9] = name("pldeth");
 /// Short lump-name buffer for SFX `DSPDIEHI` (`sfx_pdiehi`).
-const N_pdiehi: [c_char; 9] = name("pdiehi");
+const N_pdiehi: [u8; 9] = name("pdiehi");
 /// Short lump-name buffer for SFX `DSPODTH1` (`sfx_podth1`).
-const N_podth1: [c_char; 9] = name("podth1");
+const N_podth1: [u8; 9] = name("podth1");
 /// Short lump-name buffer for SFX `DSPODTH2` (`sfx_podth2`).
-const N_podth2: [c_char; 9] = name("podth2");
+const N_podth2: [u8; 9] = name("podth2");
 /// Short lump-name buffer for SFX `DSPODTH3` (`sfx_podth3`).
-const N_podth3: [c_char; 9] = name("podth3");
+const N_podth3: [u8; 9] = name("podth3");
 /// Short lump-name buffer for SFX `DSBGDTH1` (`sfx_bgdth1`).
-const N_bgdth1: [c_char; 9] = name("bgdth1");
+const N_bgdth1: [u8; 9] = name("bgdth1");
 /// Short lump-name buffer for SFX `DSBGDTH2` (`sfx_bgdth2`).
-const N_bgdth2: [c_char; 9] = name("bgdth2");
+const N_bgdth2: [u8; 9] = name("bgdth2");
 /// Short lump-name buffer for SFX `DSSGTDTH` (`sfx_sgtdth`).
-const N_sgtdth: [c_char; 9] = name("sgtdth");
+const N_sgtdth: [u8; 9] = name("sgtdth");
 /// Short lump-name buffer for SFX `DSCACDTH` (`sfx_cacdth`).
-const N_cacdth: [c_char; 9] = name("cacdth");
+const N_cacdth: [u8; 9] = name("cacdth");
 /// Short lump-name buffer for SFX `DSSKLDTH` (`sfx_skldth`).
-const N_skldth: [c_char; 9] = name("skldth");
+const N_skldth: [u8; 9] = name("skldth");
 /// Short lump-name buffer for SFX `DSBRSDTH` (`sfx_brsdth`).
-const N_brsdth: [c_char; 9] = name("brsdth");
+const N_brsdth: [u8; 9] = name("brsdth");
 /// Short lump-name buffer for SFX `DSCYBDTH` (`sfx_cybdth`).
-const N_cybdth: [c_char; 9] = name("cybdth");
+const N_cybdth: [u8; 9] = name("cybdth");
 /// Short lump-name buffer for SFX `DSSPIDTH` (`sfx_spidth`).
-const N_spidth: [c_char; 9] = name("spidth");
+const N_spidth: [u8; 9] = name("spidth");
 /// Short lump-name buffer for SFX `DSBSPDTH` (`sfx_bspdth`).
-const N_bspdth: [c_char; 9] = name("bspdth");
+const N_bspdth: [u8; 9] = name("bspdth");
 /// Short lump-name buffer for SFX `DSVILDTH` (`sfx_vildth`).
-const N_vildth: [c_char; 9] = name("vildth");
+const N_vildth: [u8; 9] = name("vildth");
 /// Short lump-name buffer for SFX `DSKNTDTH` (`sfx_kntdth`).
-const N_kntdth: [c_char; 9] = name("kntdth");
+const N_kntdth: [u8; 9] = name("kntdth");
 /// Short lump-name buffer for SFX `DSPEDTH` (`sfx_pedth`).
-const N_pedth: [c_char; 9] = name("pedth");
+const N_pedth: [u8; 9] = name("pedth");
 /// Short lump-name buffer for SFX `DSSKEDTH` (`sfx_skedth`).
-const N_skedth: [c_char; 9] = name("skedth");
+const N_skedth: [u8; 9] = name("skedth");
 /// Short lump-name buffer for SFX `DSPOSACT` (`sfx_posact`).
-const N_posact: [c_char; 9] = name("posact");
+const N_posact: [u8; 9] = name("posact");
 /// Short lump-name buffer for SFX `DSBGACT` (`sfx_bgact`).
-const N_bgact: [c_char; 9] = name("bgact");
+const N_bgact: [u8; 9] = name("bgact");
 /// Short lump-name buffer for SFX `DSDMACT` (`sfx_dmact`).
-const N_dmact: [c_char; 9] = name("dmact");
+const N_dmact: [u8; 9] = name("dmact");
 /// Short lump-name buffer for SFX `DSBSPACT` (`sfx_bspact`).
-const N_bspact: [c_char; 9] = name("bspact");
+const N_bspact: [u8; 9] = name("bspact");
 /// Short lump-name buffer for SFX `DSBSPWLK` (`sfx_bspwlk`).
-const N_bspwlk: [c_char; 9] = name("bspwlk");
+const N_bspwlk: [u8; 9] = name("bspwlk");
 /// Short lump-name buffer for SFX `DSVILACT` (`sfx_vilact`).
-const N_vilact: [c_char; 9] = name("vilact");
+const N_vilact: [u8; 9] = name("vilact");
 /// Short lump-name buffer for SFX `DSNOWAY` (`sfx_noway`).
-const N_noway: [c_char; 9] = name("noway");
+const N_noway: [u8; 9] = name("noway");
 /// Short lump-name buffer for SFX `DSBAREXP` (`sfx_barexp`).
-const N_barexp: [c_char; 9] = name("barexp");
+const N_barexp: [u8; 9] = name("barexp");
 /// Short lump-name buffer for SFX `DSPUNCH` (`sfx_punch`).
-const N_punch: [c_char; 9] = name("punch");
+const N_punch: [u8; 9] = name("punch");
 /// Short lump-name buffer for SFX `DSHOOF` (`sfx_hoof`).
-const N_hoof: [c_char; 9] = name("hoof");
+const N_hoof: [u8; 9] = name("hoof");
 /// Short lump-name buffer for SFX `DSMETAL` (`sfx_metal`).
-const N_metal: [c_char; 9] = name("metal");
+const N_metal: [u8; 9] = name("metal");
 /// Short lump-name buffer for SFX `DSCHGUN` (`sfx_chgun`).
-const N_chgun: [c_char; 9] = name("chgun");
+const N_chgun: [u8; 9] = name("chgun");
 /// Short lump-name buffer for SFX `DSTINK` (`sfx_tink`).
-const N_tink: [c_char; 9] = name("tink");
+const N_tink: [u8; 9] = name("tink");
 /// Short lump-name buffer for SFX `DSBDOPN` (`sfx_bdopn`).
-const N_bdopn: [c_char; 9] = name("bdopn");
+const N_bdopn: [u8; 9] = name("bdopn");
 /// Short lump-name buffer for SFX `DSBDCLS` (`sfx_bdcls`).
-const N_bdcls: [c_char; 9] = name("bdcls");
+const N_bdcls: [u8; 9] = name("bdcls");
 /// Short lump-name buffer for SFX `DSITMBK` (`sfx_itmbk`).
-const N_itmbk: [c_char; 9] = name("itmbk");
+const N_itmbk: [u8; 9] = name("itmbk");
 /// Short lump-name buffer for SFX `DSFLAME` (`sfx_flame`).
-const N_flame: [c_char; 9] = name("flame");
+const N_flame: [u8; 9] = name("flame");
 /// Short lump-name buffer for SFX `DSFLAMST` (`sfx_flamst`).
-const N_flamst: [c_char; 9] = name("flamst");
+const N_flamst: [u8; 9] = name("flamst");
 /// Short lump-name buffer for SFX `DSGETPOW` (`sfx_getpow`).
-const N_getpow: [c_char; 9] = name("getpow");
+const N_getpow: [u8; 9] = name("getpow");
 /// Short lump-name buffer for SFX `DSBOSPIT` (`sfx_bospit`).
-const N_bospit: [c_char; 9] = name("bospit");
+const N_bospit: [u8; 9] = name("bospit");
 /// Short lump-name buffer for SFX `DSBOSCUB` (`sfx_boscub`).
-const N_boscub: [c_char; 9] = name("boscub");
+const N_boscub: [u8; 9] = name("boscub");
 /// Short lump-name buffer for SFX `DSBOSSIT` (`sfx_bossit`).
-const N_bossit: [c_char; 9] = name("bossit");
+const N_bossit: [u8; 9] = name("bossit");
 /// Short lump-name buffer for SFX `DSBOSPN` (`sfx_bospn`).
-const N_bospn: [c_char; 9] = name("bospn");
+const N_bospn: [u8; 9] = name("bospn");
 /// Short lump-name buffer for SFX `DSBOSDTH` (`sfx_bosdth`).
-const N_bosdth: [c_char; 9] = name("bosdth");
+const N_bosdth: [u8; 9] = name("bosdth");
 /// Short lump-name buffer for SFX `DSMANATK` (`sfx_manatk`).
-const N_manatk: [c_char; 9] = name("manatk");
+const N_manatk: [u8; 9] = name("manatk");
 /// Short lump-name buffer for SFX `DSMANDTH` (`sfx_mandth`).
-const N_mandth: [c_char; 9] = name("mandth");
+const N_mandth: [u8; 9] = name("mandth");
 /// Short lump-name buffer for SFX `DSSSSIT` (`sfx_sssit`).
-const N_sssit: [c_char; 9] = name("sssit");
+const N_sssit: [u8; 9] = name("sssit");
 /// Short lump-name buffer for SFX `DSSSDTH` (`sfx_ssdth`).
-const N_ssdth: [c_char; 9] = name("ssdth");
+const N_ssdth: [u8; 9] = name("ssdth");
 /// Short lump-name buffer for SFX `DSKEENPN` (`sfx_keenpn`).
-const N_keenpn: [c_char; 9] = name("keenpn");
+const N_keenpn: [u8; 9] = name("keenpn");
 /// Short lump-name buffer for SFX `DSKEENDT` (`sfx_keendt`).
-const N_keendt: [c_char; 9] = name("keendt");
+const N_keendt: [u8; 9] = name("keendt");
 /// Short lump-name buffer for SFX `DSSKEACT` (`sfx_skeact`).
-const N_skeact: [c_char; 9] = name("skeact");
+const N_skeact: [u8; 9] = name("skeact");
 /// Short lump-name buffer for SFX `DSSKESIT` (`sfx_skesit`).
-const N_skesit: [c_char; 9] = name("skesit");
+const N_skesit: [u8; 9] = name("skesit");
 /// Short lump-name buffer for SFX `DSSKEATK` (`sfx_skeatk`).
-const N_skeatk: [c_char; 9] = name("skeatk");
+const N_skeatk: [u8; 9] = name("skeatk");
 /// Short lump-name buffer for SFX `DSRADIO` (`sfx_radio`).
-const N_radio: [c_char; 9] = name("radio");
+const N_radio: [u8; 9] = name("radio");
 
 /// Short lump-name buffer for music `D_E1M1` (`mus_e1m1`).
-const MUS_e1m1: [c_char; 5] = name("e1m1");
+const MUS_e1m1: [u8; 5] = name("e1m1");
 /// Short lump-name buffer for music `D_E1M2` (`mus_e1m2`).
-const MUS_e1m2: [c_char; 5] = name("e1m2");
+const MUS_e1m2: [u8; 5] = name("e1m2");
 /// Short lump-name buffer for music `D_E1M3` (`mus_e1m3`).
-const MUS_e1m3: [c_char; 5] = name("e1m3");
+const MUS_e1m3: [u8; 5] = name("e1m3");
 /// Short lump-name buffer for music `D_E1M4` (`mus_e1m4`).
-const MUS_e1m4: [c_char; 5] = name("e1m4");
+const MUS_e1m4: [u8; 5] = name("e1m4");
 /// Short lump-name buffer for music `D_E1M5` (`mus_e1m5`).
-const MUS_e1m5: [c_char; 5] = name("e1m5");
+const MUS_e1m5: [u8; 5] = name("e1m5");
 /// Short lump-name buffer for music `D_E1M6` (`mus_e1m6`).
-const MUS_e1m6: [c_char; 5] = name("e1m6");
+const MUS_e1m6: [u8; 5] = name("e1m6");
 /// Short lump-name buffer for music `D_E1M7` (`mus_e1m7`).
-const MUS_e1m7: [c_char; 5] = name("e1m7");
+const MUS_e1m7: [u8; 5] = name("e1m7");
 /// Short lump-name buffer for music `D_E1M8` (`mus_e1m8`).
-const MUS_e1m8: [c_char; 5] = name("e1m8");
+const MUS_e1m8: [u8; 5] = name("e1m8");
 /// Short lump-name buffer for music `D_E1M9` (`mus_e1m9`).
-const MUS_e1m9: [c_char; 5] = name("e1m9");
+const MUS_e1m9: [u8; 5] = name("e1m9");
 /// Short lump-name buffer for music `D_E2M1` (`mus_e2m1`).
-const MUS_e2m1: [c_char; 5] = name("e2m1");
+const MUS_e2m1: [u8; 5] = name("e2m1");
 /// Short lump-name buffer for music `D_E2M2` (`mus_e2m2`).
-const MUS_e2m2: [c_char; 5] = name("e2m2");
+const MUS_e2m2: [u8; 5] = name("e2m2");
 /// Short lump-name buffer for music `D_E2M3` (`mus_e2m3`).
-const MUS_e2m3: [c_char; 5] = name("e2m3");
+const MUS_e2m3: [u8; 5] = name("e2m3");
 /// Short lump-name buffer for music `D_E2M4` (`mus_e2m4`).
-const MUS_e2m4: [c_char; 5] = name("e2m4");
+const MUS_e2m4: [u8; 5] = name("e2m4");
 /// Short lump-name buffer for music `D_E2M5` (`mus_e2m5`).
-const MUS_e2m5: [c_char; 5] = name("e2m5");
+const MUS_e2m5: [u8; 5] = name("e2m5");
 /// Short lump-name buffer for music `D_E2M6` (`mus_e2m6`).
-const MUS_e2m6: [c_char; 5] = name("e2m6");
+const MUS_e2m6: [u8; 5] = name("e2m6");
 /// Short lump-name buffer for music `D_E2M7` (`mus_e2m7`).
-const MUS_e2m7: [c_char; 5] = name("e2m7");
+const MUS_e2m7: [u8; 5] = name("e2m7");
 /// Short lump-name buffer for music `D_E2M8` (`mus_e2m8`).
-const MUS_e2m8: [c_char; 5] = name("e2m8");
+const MUS_e2m8: [u8; 5] = name("e2m8");
 /// Short lump-name buffer for music `D_E2M9` (`mus_e2m9`).
-const MUS_e2m9: [c_char; 5] = name("e2m9");
+const MUS_e2m9: [u8; 5] = name("e2m9");
 /// Short lump-name buffer for music `D_E3M1` (`mus_e3m1`).
-const MUS_e3m1: [c_char; 5] = name("e3m1");
+const MUS_e3m1: [u8; 5] = name("e3m1");
 /// Short lump-name buffer for music `D_E3M2` (`mus_e3m2`).
-const MUS_e3m2: [c_char; 5] = name("e3m2");
+const MUS_e3m2: [u8; 5] = name("e3m2");
 /// Short lump-name buffer for music `D_E3M3` (`mus_e3m3`).
-const MUS_e3m3: [c_char; 5] = name("e3m3");
+const MUS_e3m3: [u8; 5] = name("e3m3");
 /// Short lump-name buffer for music `D_E3M4` (`mus_e3m4`).
-const MUS_e3m4: [c_char; 5] = name("e3m4");
+const MUS_e3m4: [u8; 5] = name("e3m4");
 /// Short lump-name buffer for music `D_E3M5` (`mus_e3m5`).
-const MUS_e3m5: [c_char; 5] = name("e3m5");
+const MUS_e3m5: [u8; 5] = name("e3m5");
 /// Short lump-name buffer for music `D_E3M6` (`mus_e3m6`).
-const MUS_e3m6: [c_char; 5] = name("e3m6");
+const MUS_e3m6: [u8; 5] = name("e3m6");
 /// Short lump-name buffer for music `D_E3M7` (`mus_e3m7`).
-const MUS_e3m7: [c_char; 5] = name("e3m7");
+const MUS_e3m7: [u8; 5] = name("e3m7");
 /// Short lump-name buffer for music `D_E3M8` (`mus_e3m8`).
-const MUS_e3m8: [c_char; 5] = name("e3m8");
+const MUS_e3m8: [u8; 5] = name("e3m8");
 /// Short lump-name buffer for music `D_E3M9` (`mus_e3m9`).
-const MUS_e3m9: [c_char; 5] = name("e3m9");
+const MUS_e3m9: [u8; 5] = name("e3m9");
 /// Short lump-name buffer for music `D_INTER` (`mus_inter`).
-const MUS_inter: [c_char; 6] = name("inter");
+const MUS_inter: [u8; 6] = name("inter");
 /// Short lump-name buffer for music `D_INTRO` (`mus_intro`).
-const MUS_intro: [c_char; 6] = name("intro");
+const MUS_intro: [u8; 6] = name("intro");
 /// Short lump-name buffer for music `D_BUNNY` (`mus_bunny`).
-const MUS_bunny: [c_char; 6] = name("bunny");
+const MUS_bunny: [u8; 6] = name("bunny");
 /// Short lump-name buffer for music `D_VICTOR` (`mus_victor`).
-const MUS_victor: [c_char; 7] = name("victor");
+const MUS_victor: [u8; 7] = name("victor");
 /// Short lump-name buffer for music `D_INTROA` (`mus_introa`).
-const MUS_introa: [c_char; 7] = name("introa");
+const MUS_introa: [u8; 7] = name("introa");
 /// Short lump-name buffer for music `D_RUNNIN` (`mus_runnin`).
-const MUS_runnin: [c_char; 7] = name("runnin");
+const MUS_runnin: [u8; 7] = name("runnin");
 /// Short lump-name buffer for music `D_STALKS` (`mus_stalks`).
-const MUS_stalks: [c_char; 7] = name("stalks");
+const MUS_stalks: [u8; 7] = name("stalks");
 /// Short lump-name buffer for music `D_COUNTD` (`mus_countd`).
-const MUS_countd: [c_char; 7] = name("countd");
+const MUS_countd: [u8; 7] = name("countd");
 /// Short lump-name buffer for music `D_BETWEE` (`mus_betwee`).
-const MUS_betwee: [c_char; 7] = name("betwee");
+const MUS_betwee: [u8; 7] = name("betwee");
 /// Short lump-name buffer for music `D_DOOM` (`mus_doom`).
-const MUS_doom: [c_char; 5] = name("doom");
+const MUS_doom: [u8; 5] = name("doom");
 /// Short lump-name buffer for music `D_THE_DA` (`mus_the_da`).
-const MUS_the_da: [c_char; 7] = name("the_da");
+const MUS_the_da: [u8; 7] = name("the_da");
 /// Short lump-name buffer for music `D_SHAWN` (`mus_shawn`).
-const MUS_shawn: [c_char; 6] = name("shawn");
+const MUS_shawn: [u8; 6] = name("shawn");
 /// Short lump-name buffer for music `D_DDTBLU` (`mus_ddtblu`).
-const MUS_ddtblu: [c_char; 7] = name("ddtblu");
+const MUS_ddtblu: [u8; 7] = name("ddtblu");
 /// Short lump-name buffer for music `D_IN_CIT` (`mus_in_cit`).
-const MUS_in_cit: [c_char; 7] = name("in_cit");
+const MUS_in_cit: [u8; 7] = name("in_cit");
 /// Short lump-name buffer for music `D_DEAD` (`mus_dead`).
-const MUS_dead: [c_char; 5] = name("dead");
+const MUS_dead: [u8; 5] = name("dead");
 /// Short lump-name buffer for music `D_STLKS2` (`mus_stlks2`).
-const MUS_stlks2: [c_char; 7] = name("stlks2");
+const MUS_stlks2: [u8; 7] = name("stlks2");
 /// Short lump-name buffer for music `D_THEDA2` (`mus_theda2`).
-const MUS_theda2: [c_char; 7] = name("theda2");
+const MUS_theda2: [u8; 7] = name("theda2");
 /// Short lump-name buffer for music `D_DOOM2` (`mus_doom2`).
-const MUS_doom2: [c_char; 6] = name("doom2");
+const MUS_doom2: [u8; 6] = name("doom2");
 /// Short lump-name buffer for music `D_DDTBL2` (`mus_ddtbl2`).
-const MUS_ddtbl2: [c_char; 7] = name("ddtbl2");
+const MUS_ddtbl2: [u8; 7] = name("ddtbl2");
 /// Short lump-name buffer for music `D_RUNNI2` (`mus_runni2`).
-const MUS_runni2: [c_char; 7] = name("runni2");
+const MUS_runni2: [u8; 7] = name("runni2");
 /// Short lump-name buffer for music `D_DEAD2` (`mus_dead2`).
-const MUS_dead2: [c_char; 6] = name("dead2");
+const MUS_dead2: [u8; 6] = name("dead2");
 /// Short lump-name buffer for music `D_STLKS3` (`mus_stlks3`).
-const MUS_stlks3: [c_char; 7] = name("stlks3");
+const MUS_stlks3: [u8; 7] = name("stlks3");
 /// Short lump-name buffer for music `D_ROMERO` (`mus_romero`).
-const MUS_romero: [c_char; 7] = name("romero");
+const MUS_romero: [u8; 7] = name("romero");
 /// Short lump-name buffer for music `D_SHAWN2` (`mus_shawn2`).
-const MUS_shawn2: [c_char; 7] = name("shawn2");
+const MUS_shawn2: [u8; 7] = name("shawn2");
 /// Short lump-name buffer for music `D_MESSAG` (`mus_messag`).
-const MUS_messag: [c_char; 7] = name("messag");
+const MUS_messag: [u8; 7] = name("messag");
 /// Short lump-name buffer for music `D_COUNT2` (`mus_count2`).
-const MUS_count2: [c_char; 7] = name("count2");
+const MUS_count2: [u8; 7] = name("count2");
 /// Short lump-name buffer for music `D_DDTBL3` (`mus_ddtbl3`).
-const MUS_ddtbl3: [c_char; 7] = name("ddtbl3");
+const MUS_ddtbl3: [u8; 7] = name("ddtbl3");
 /// Short lump-name buffer for music `D_AMPIE` (`mus_ampie`).
-const MUS_ampie: [c_char; 6] = name("ampie");
+const MUS_ampie: [u8; 6] = name("ampie");
 /// Short lump-name buffer for music `D_THEDA3` (`mus_theda3`).
-const MUS_theda3: [c_char; 7] = name("theda3");
+const MUS_theda3: [u8; 7] = name("theda3");
 /// Short lump-name buffer for music `D_ADRIAN` (`mus_adrian`).
-const MUS_adrian: [c_char; 7] = name("adrian");
+const MUS_adrian: [u8; 7] = name("adrian");
 /// Short lump-name buffer for music `D_MESSG2` (`mus_messg2`).
-const MUS_messg2: [c_char; 7] = name("messg2");
+const MUS_messg2: [u8; 7] = name("messg2");
 /// Short lump-name buffer for music `D_ROMER2` (`mus_romer2`).
-const MUS_romer2: [c_char; 7] = name("romer2");
+const MUS_romer2: [u8; 7] = name("romer2");
 /// Short lump-name buffer for music `D_TENSE` (`mus_tense`).
-const MUS_tense: [c_char; 6] = name("tense");
+const MUS_tense: [u8; 6] = name("tense");
 /// Short lump-name buffer for music `D_SHAWN3` (`mus_shawn3`).
-const MUS_shawn3: [c_char; 7] = name("shawn3");
+const MUS_shawn3: [u8; 7] = name("shawn3");
 /// Short lump-name buffer for music `D_OPENIN` (`mus_openin`).
-const MUS_openin: [c_char; 7] = name("openin");
+const MUS_openin: [u8; 7] = name("openin");
 /// Short lump-name buffer for music `D_EVIL` (`mus_evil`).
-const MUS_evil: [c_char; 5] = name("evil");
+const MUS_evil: [u8; 5] = name("evil");
 /// Short lump-name buffer for music `D_ULTIMA` (`mus_ultima`).
-const MUS_ultima: [c_char; 7] = name("ultima");
+const MUS_ultima: [u8; 7] = name("ultima");
 /// Short lump-name buffer for music `D_READ_M` (`mus_read_m`).
-const MUS_read_m: [c_char; 7] = name("read_m");
+const MUS_read_m: [u8; 7] = name("read_m");
 /// Short lump-name buffer for music `D_DM2TTL` (`mus_dm2ttl`).
-const MUS_dm2ttl: [c_char; 7] = name("dm2ttl");
+const MUS_dm2ttl: [u8; 7] = name("dm2ttl");
 /// Short lump-name buffer for music `D_DM2INT` (`mus_dm2int`).
-const MUS_dm2int: [c_char; 7] = name("dm2int");
+const MUS_dm2int: [u8; 7] = name("dm2int");
 
 /// Master SFX table indexed by `Sfx` ids. Mirrors `S_sfx[]` in `sounds.c`.
 ///
@@ -1505,9 +1505,8 @@ mod tests {
             let entry = &S_sfx[Sfx::Pistol as usize];
             assert_eq!(entry.priority, 64);
             // name must start with "pistol"
-            let name_bytes: Vec<u8> = entry.name.iter().map(|&c| c as u8).collect();
             assert!(
-                name_bytes.starts_with(b"pistol"),
+                entry.name.starts_with(b"pistol"),
                 "name should start with 'pistol'"
             );
         }

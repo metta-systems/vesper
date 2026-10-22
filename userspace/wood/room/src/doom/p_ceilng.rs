@@ -7,10 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{ffi::c_void, os::raw::c_int},
-};
+use {crate::doom::sounds::Sfx, std::ffi::c_void};
 
 use crate::doom::{
     c_ffi as cffi,
@@ -38,25 +35,25 @@ pub const MAXCEILINGS: usize = 30;
 
 // result_e enum values returned by T_MovePlane.
 /// `T_MovePlane` result: the plane moved without incident.
-const result_ok: c_int = 0;
+const result_ok: i32 = 0;
 /// `T_MovePlane` result: the plane crushed something while moving.
-const result_crushed: c_int = 1;
+const result_crushed: i32 = 1;
 /// `T_MovePlane` result: the plane reached its destination height.
-const result_pastdest: c_int = 2;
+const result_pastdest: i32 = 2;
 
 // ceiling_e enum values — ceiling mover types.
 /// Lower ceiling until it reaches the floor height of the sector.
-const lowerToFloor: c_int = 0;
+const lowerToFloor: i32 = 0;
 /// Raise ceiling to the highest surrounding ceiling height.
-const raiseToHighest: c_int = 1;
+const raiseToHighest: i32 = 1;
 /// Lower ceiling to 8 units above the floor, crushing things in the way.
-const lowerAndCrush: c_int = 2;
+const lowerAndCrush: i32 = 2;
 /// Crusher that bounces between floor+8 and its original height; normal speed.
-const crushAndRaise: c_int = 3;
+const crushAndRaise: i32 = 3;
 /// Crusher that bounces at twice the normal speed.
-const fastCrushAndRaise: c_int = 4;
+const fastCrushAndRaise: i32 = 4;
 /// Like [`crushAndRaise`] but does not play the movement sound each tic.
-const silentCrushAndRaise: c_int = 5;
+const silentCrushAndRaise: i32 = 5;
 
 /// Per-sector thinker for an active ceiling mover.
 ///
@@ -73,7 +70,7 @@ pub struct ceiling_t {
     /// Thinker header — must be at offset 0.
     pub thinker: thinker_t,
     /// Ceiling type (one of the `ceiling_e` integer constants).
-    pub r#type: c_int,
+    pub r#type: i32,
     _pad0: [u8; 4],
     /// The sector whose ceiling this thinker is moving.
     pub sector: *mut sector_t,
@@ -84,13 +81,13 @@ pub struct ceiling_t {
     /// Current movement speed in fixed-point units per tic.
     pub speed: fixed_t,
     /// Non-zero if the ceiling damages things it crushes.
-    pub crush: c_int,
+    pub crush: i32,
     /// Current movement direction: `1` = up, `-1` = down, `0` = in stasis.
-    pub direction: c_int,
+    pub direction: i32,
     /// Linedef tag that activated this ceiling (used for crush-stop matching).
-    pub tag: c_int,
+    pub tag: i32,
     /// Saved direction used to resume a ceiling that was put into stasis.
-    pub olddirection: c_int,
+    pub olddirection: i32,
     _pad1: [u8; 4],
 }
 
@@ -177,7 +174,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
             _ => {
                 S_StartSound(
                     &(*(*ceiling).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Stnmov as c_int,
+                    Sfx::Stnmov as i32,
                 );
             }
         }
@@ -191,7 +188,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
             x if x == silentCrushAndRaise => {
                 S_StartSound(
                     &(*(*ceiling).sector).soundorg as *const [u8; 40] as *mut c_void,
-                    Sfx::Pstop as c_int,
+                    Sfx::Pstop as i32,
                 );
             }
             x if x == fastCrushAndRaise || x == crushAndRaise => {
@@ -231,9 +228,9 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
 ///
 /// `line` must be a valid, non-null pointer.  The global `sectors` array must
 /// be initialised for the current level.
-pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> c_int {
-    let mut secnum: c_int = -1;
-    let mut rtn: c_int = 0;
+pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
+    let mut secnum: i32 = -1;
+    let mut rtn: i32 = 0;
 
     // Reactivate in-stasis ceilings for certain types.
     match ceilingtype {
@@ -255,7 +252,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> c_int {
 
         rtn = 1;
         let ceiling = Z_Malloc(
-            std::mem::size_of::<ceiling_t>() as c_int,
+            std::mem::size_of::<ceiling_t>() as i32,
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut ceiling_t;
@@ -296,7 +293,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> c_int {
             _ => {}
         }
 
-        (*ceiling).tag = (*sec).tag as c_int;
+        (*ceiling).tag = (*sec).tag as i32;
         (*ceiling).r#type = ceilingtype;
         P_AddActiveCeiling(ceiling);
     }
@@ -357,7 +354,7 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
     unsafe {
         for i in 0..MAXCEILINGS {
             if !activeceilings[i].is_null()
-                && (*activeceilings[i]).tag == (*line).tag as c_int
+                && (*activeceilings[i]).tag == (*line).tag as i32
                 && (*activeceilings[i]).direction == 0
             {
                 (*activeceilings[i]).direction = (*activeceilings[i]).olddirection;
@@ -384,12 +381,12 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-pub fn EV_CeilingCrushStop(line: *mut line_t) -> c_int {
+pub fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
     unsafe {
-        let mut rtn: c_int = 0;
+        let mut rtn: i32 = 0;
         for i in 0..MAXCEILINGS {
             if !activeceilings[i].is_null()
-                && (*activeceilings[i]).tag == (*line).tag as c_int
+                && (*activeceilings[i]).tag == (*line).tag as i32
                 && (*activeceilings[i]).direction != 0
             {
                 (*activeceilings[i]).olddirection = (*activeceilings[i]).direction;

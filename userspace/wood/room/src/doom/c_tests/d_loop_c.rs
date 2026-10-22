@@ -78,19 +78,3 @@ fn singletics_default_false() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// `gametic` and `ticdup` are C `int` (4 bytes).
-#[test]
-fn loop_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::gametic;
-        let _: c_int = c_ffi::ticdup;
-        let _: c_int = c_ffi::singletics;
-    }
-}

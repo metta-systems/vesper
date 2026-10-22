@@ -40,23 +40,6 @@ fn r_data_globals_readable_before_init() {
     }
 }
 
-/// All r_data globals are C `int` which must be exactly 4 bytes wide.
-/// This catches size mismatches between the Rust `c_int` and the C `int`.
-#[test]
-fn r_data_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = r_data::firstflat;
-        let _: c_int = r_data::lastflat;
-        let _: c_int = r_data::numflats;
-        let _: c_int = r_data::firstspritelump;
-        let _: c_int = r_data::lastspritelump;
-        let _: c_int = r_data::numspritelumps;
-        let _: c_int = r_data::numtextures;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Constants used internally by r_data.rs / r_textures
 // ---------------------------------------------------------------------------

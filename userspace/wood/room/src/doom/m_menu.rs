@@ -16,10 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{
-    ffi::{c_char, c_int, c_void},
-    ptr,
-};
+use std::{ffi::c_void, ptr};
 
 use crate::types::Boolean;
 
@@ -38,7 +35,7 @@ use {
 /// Mirrors the `logical_gamemission` macro from `doomstat.h`:
 /// `pack_chex` maps to `doom`, `pack_hacx` maps to `doom2`,
 /// all other values are returned as-is.
-fn logical_gamemission() -> c_int {
+fn logical_gamemission() -> i32 {
     unsafe {
         if gamemission == d_mode::pack_chex {
             d_mode::doom
@@ -51,14 +48,14 @@ fn logical_gamemission() -> c_int {
 }
 
 /// Vertical pixel stride between adjacent menu items (matches C `LINEHEIGHT`).
-const LINEHEIGHT: c_int = 16;
+const LINEHEIGHT: i32 = 16;
 /// Horizontal offset of the skull cursor relative to the menu item's x position (matches C `SKULLXOFF`).
-const SKULLXOFF: c_int = -32;
+const SKULLXOFF: i32 = -32;
 
 /// ASCII code of the first character in the HUD font (matches C `HU_FONTSTART`).
-const HU_FONTSTART: c_int = b'!' as c_int;
+const HU_FONTSTART: i32 = b'!' as i32;
 /// ASCII code of the last character in the HUD font (matches C `HU_FONTEND`).
-const HU_FONTEND: c_int = b'_' as c_int;
+const HU_FONTEND: i32 = b'_' as i32;
 /// Number of glyphs in the HUD font (derived from `HU_FONTSTART`/`HU_FONTEND`).
 const HU_FONTSIZE: usize = (HU_FONTEND - HU_FONTSTART + 1) as usize;
 
@@ -70,30 +67,30 @@ const SAVESTRINGSIZE: usize = 24;
 const MAXPLAYERS: usize = 4;
 
 /// Event type: key-down (matches C `ev_keydown`).
-const EV_KEYDOWN: c_int = 0;
+const EV_KEYDOWN: i32 = 0;
 /// Event type: key-up (matches C `ev_keyup`).
-const EV_KEYUP: c_int = 1;
+const EV_KEYUP: i32 = 1;
 /// Event type: mouse motion or button (matches C `ev_mouse`).
-const EV_MOUSE: c_int = 2;
+const EV_MOUSE: i32 = 2;
 /// Event type: joystick input (matches C `ev_joystick`).
-const EV_JOYSTICK: c_int = 3;
+const EV_JOYSTICK: i32 = 3;
 /// Event type: window close / quit request (matches C `ev_quit`).
-const EV_QUIT: c_int = 4;
+const EV_QUIT: i32 = 4;
 
 /// Key code for the Escape key (ASCII 27).
-const KEY_ESCAPE: c_int = 27;
+const KEY_ESCAPE: i32 = 27;
 /// Key code for the Enter/Return key (ASCII 13).
-const KEY_ENTER: c_int = 13;
+const KEY_ENTER: i32 = 13;
 /// Key code for the Backspace key (0x7f delete).
-const KEY_BACKSPACE: c_int = 0x7f;
+const KEY_BACKSPACE: i32 = 0x7f;
 /// Key code for the Pause key (matches C `KEY_PAUSE`).
-const KEY_PAUSE: c_int = 0xff;
+const KEY_PAUSE: i32 = 0xff;
 /// Key code for Caps Lock (matches C `KEY_CAPSLOCK`).
-const KEY_CAPSLOCK: c_int = 0x80 + 0x3a;
+const KEY_CAPSLOCK: i32 = 0x80 + 0x3a;
 /// Key code for Num Lock (matches C `KEY_NUMLOCK`).
-const KEY_NUMLOCK: c_int = 0x80 + 0x45;
+const KEY_NUMLOCK: i32 = 0x80 + 0x45;
 /// Key code for Scroll Lock (matches C `KEY_SCRLCK`).
-const KEY_SCRLCK: c_int = 0x80 + 0x46;
+const KEY_SCRLCK: i32 = 0x80 + 0x46;
 
 /// Build a `menuitem_t` at compile time.
 ///
@@ -101,30 +98,30 @@ const KEY_SCRLCK: c_int = 0x80 + 0x46;
 /// `name` is the WAD lump name (up to 10 bytes, NUL-padded).
 /// `routine` is the callback invoked on selection or slider movement.
 /// `alpha` is the keyboard shortcut character used for quick navigation.
-const fn mi(status: i16, name: &[u8], routine: Option<fn(c_int)>, alpha: u8) -> menuitem_t {
-    let mut n = [0i8; 10];
+const fn mi(status: i16, name: &[u8], routine: Option<fn(i32)>, alpha: u8) -> menuitem_t {
+    let mut n = [0u8; 10];
     let mut i = 0;
     while i < name.len() && i < 10 {
-        n[i] = name[i] as c_char;
+        n[i] = name[i];
         i += 1;
     }
     menuitem_t {
         status,
         name: n,
         routine,
-        alphaKey: alpha as c_char,
+        alphaKey: alpha,
     }
 }
 
-/// Convert a string literal into a fixed-length `[c_char; 26]` buffer at compile time.
+/// Convert a string literal into a fixed-length `[u8; 26]` buffer at compile time.
 ///
 /// Used to initialise the `gammamsg` table without heap allocation.
-const fn make_gamma_msg(s: &str) -> [c_char; 26] {
+const fn make_gamma_msg(s: &str) -> [u8; 26] {
     let bytes = s.as_bytes();
-    let mut arr = [0i8; 26];
+    let mut arr = [0u8; 26];
     let mut i = 0;
     while i < bytes.len() {
-        arr[i] = bytes[i] as c_char;
+        arr[i] = bytes[i];
         i += 1;
     }
     arr
@@ -142,11 +139,11 @@ pub struct menuitem_t {
     /// Item kind: 1 = action, 2 = slider, -1 = gap row.
     pub status: i16,
     /// WAD lump name for the item's graphic patch (NUL-terminated, 10 bytes).
-    pub name: [c_char; 10],
+    pub name: [u8; 10],
     /// Callback invoked when the item is activated or a slider is adjusted.
-    pub routine: Option<fn(c_int)>,
+    pub routine: Option<fn(i32)>,
     /// Keyboard shortcut character for fast navigation within the menu.
-    pub alphaKey: c_char,
+    pub alphaKey: u8,
 }
 
 /// A Doom menu page descriptor (C typedef `menu_t` from `m_menu.h`).
@@ -191,12 +188,11 @@ struct patch_stub {
 }
 
 extern "C" {
-    fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
+    fn fopen(path: *const u8, mode: *const u8) -> *mut c_void;
     fn fread(ptr: *mut c_void, size: usize, nmemb: usize, stream: *mut c_void) -> usize;
-    fn fclose(stream: *mut c_void) -> c_int;
-    fn toupper(c: c_int) -> c_int;
-    fn strlen(s: *const c_char) -> usize;
-    fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
+    fn fclose(stream: *mut c_void) -> i32;
+    fn toupper(c: i32) -> i32;
+    fn strcmp(s1: *const u8, s2: *const u8) -> i32;
 }
 
 use crate::doom::{
@@ -213,7 +209,7 @@ use crate::doom::{
     i_system::I_Quit,
     i_timer::{I_GetTime, I_WaitVBL},
     i_video::{usegamma, I_SetPalette},
-    m_misc::M_StringCopy,
+    m_misc::{strlen, M_StringCopy},
     p_saveg::P_SaveGameFile,
     r_main::R_SetViewSize,
     s_sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
@@ -223,37 +219,37 @@ use crate::doom::{
 };
 
 /// Current mouse sensitivity setting (0-9); exported to C for `m_config.c` serialization.
-pub static mut mouseSensitivity: c_int = 5;
+pub static mut mouseSensitivity: i32 = 5;
 /// Non-zero when player messages are enabled; exported for `hu_stuff.c` and config.
-pub static mut showMessages: c_int = 1;
+pub static mut showMessages: i32 = 1;
 /// Graphics detail level: 0 = high, 1 = low; exported for `r_main.c` and config.
-pub static mut detailLevel: c_int = 0;
+pub static mut detailLevel: i32 = 0;
 /// Number of screen blocks to render (3-12); exported for `r_main.c` and config.
-pub static mut screenblocks: c_int = 10;
+pub static mut screenblocks: i32 = 10;
 
 /// Current display size index (0-8), derived from `screenblocks - 3`; updated by `M_SizeDisplay`.
-static mut screenSize: c_int = 0;
+static mut screenSize: i32 = 0;
 /// Save slot used for quicksave/quickload (-1 = none, -2 = slot selection pending).
-static mut quickSaveSlot: c_int = -1;
+static mut quickSaveSlot: i32 = -1;
 /// Non-zero when a modal message/confirmation overlay is active.
-static mut messageToPrint: c_int = 0;
+static mut messageToPrint: i32 = 0;
 /// Pointer to the C-string displayed in the active modal overlay.
-static mut messageString: *mut c_char = ptr::null_mut();
+static mut messageString: *mut u8 = ptr::null_mut();
 /// Screen x pixel of the modal message's left edge.
-static mut messx: c_int = 0;
+static mut messx: i32 = 0;
 /// Screen y pixel of the modal message's top edge.
-static mut messy: c_int = 0;
+static mut messy: i32 = 0;
 /// Value of `menuactive` saved when a modal message was opened, restored on dismissal.
-static mut messageLastMenuActive: c_int = 0;
+static mut messageLastMenuActive: i32 = 0;
 /// Non-zero when the modal message requires a y/n or specific key response.
-static mut messageNeedsInput: c_int = 0;
+static mut messageNeedsInput: i32 = 0;
 /// Callback invoked with the key code when the modal message is dismissed.
-static mut messageRoutine: Option<fn(c_int)> = None;
+static mut messageRoutine: Option<fn(i32)> = None;
 
 /// Gamma-correction status messages displayed when the player cycles the gamma level.
 ///
 /// Index matches the `usegamma` value (0-4). Exported for C callers in `m_config.c`.
-pub static mut gammamsg: [[c_char; 26]; 5] = [
+pub static mut gammamsg: [[u8; 26]; 5] = [
     make_gamma_msg("Gamma correction OFF"),
     make_gamma_msg("Gamma correction level 1"),
     make_gamma_msg("Gamma correction level 2"),
@@ -262,24 +258,24 @@ pub static mut gammamsg: [[c_char; 26]; 5] = [
 ];
 
 /// Non-zero while the player is typing a save-game description string.
-static mut saveStringEnter: c_int = 0;
+static mut saveStringEnter: i32 = 0;
 /// Save slot index currently being named.
-static mut saveSlot: c_int = 0;
+static mut saveSlot: i32 = 0;
 /// Cursor position (character count) within the save-game description string.
-static mut saveCharIndex: c_int = 0;
+static mut saveCharIndex: i32 = 0;
 /// Copy of the original description before editing, restored on Escape.
-static mut saveOldString: [c_char; SAVESTRINGSIZE] = [0; SAVESTRINGSIZE];
+static mut saveOldString: [u8; SAVESTRINGSIZE] = [0; SAVESTRINGSIZE];
 
 /// Non-zero while a help/read-this screen is being displayed; suppresses status bar.
 /// Exported for `d_main.c` which checks it before re-drawing the play area.
-pub static mut inhelpscreens: c_int = 0;
+pub static mut inhelpscreens: i32 = 0;
 /// Non-zero while the menu overlay is open; read by `G_Responder` and `D_Display`.
-pub static mut menuactive: c_int = 0;
+pub static mut menuactive: i32 = 0;
 
 /// Save-game description strings for all 6 save slots, read from each save file header.
-static mut savegamestrings: [[c_char; SAVESTRINGSIZE]; 10] = [[0; SAVESTRINGSIZE]; 10];
+static mut savegamestrings: [[u8; SAVESTRINGSIZE]; 10] = [[0; SAVESTRINGSIZE]; 10];
 /// Formatted quit confirmation string (game-specific quip + y/n prompt).
-static mut endstring: [c_char; 160] = [0; 160];
+static mut endstring: [u8; 160] = [0; 160];
 
 /// Index of the currently highlighted menu item within the active page.
 static mut itemOn: i16 = 0;
@@ -289,7 +285,7 @@ static mut skullAnimCounter: i16 = 0;
 static mut whichSkull: i16 = 0;
 
 /// WAD lump names for the two skull cursor animation frames.
-static mut skullName: [*const c_char; 2] = [c"M_SKULL1".as_ptr(), c"M_SKULL2".as_ptr()];
+static skullName: [&[u8]; 2] = [b"M_SKULL1", b"M_SKULL2"];
 
 /// Pointer to the currently active menu page descriptor.
 /// Exported for C callers (e.g. `d_main.c`).
@@ -567,15 +563,15 @@ static mut SaveDef: menu_t = menu_t {
 fn M_ReadSaveStrings() {
     unsafe {
         for i in 0..load_end {
-            let name_ptr = P_SaveGameFile(i as c_int);
-            let mut name: [c_char; 256] = [0; 256];
+            let name_ptr = P_SaveGameFile(i as i32);
+            let mut name: [u8; 256] = [0; 256];
             M_StringCopy(name.as_mut_ptr(), name_ptr, name.len());
 
-            let handle = fopen(name.as_ptr() as *const c_char, c"rb".as_ptr());
+            let handle = fopen(name.as_ptr(), c"rb".as_ptr().cast());
             if handle.is_null() {
                 M_StringCopy(
                     savegamestrings[i].as_mut_ptr(),
-                    c"empty slot".as_ptr(),
+                    c"empty slot".as_ptr().cast(),
                     SAVESTRINGSIZE,
                 );
                 LoadMenu[i].status = 0;
@@ -596,20 +592,13 @@ fn M_ReadSaveStrings() {
 /// Draw the Load Game menu page: title patch plus one bordered slot row per save slot.
 fn M_DrawLoad() {
     unsafe {
-        V_DrawPatchDirect(
-            72,
-            28,
-            W_CacheLumpName(c"M_LOADG".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_LOADG", 0) as *mut patch_t);
 
         for i in 0..load_end {
-            M_DrawSaveLoadBorder(
-                LoadDef.x as c_int,
-                LoadDef.y as c_int + LINEHEIGHT * i as c_int,
-            );
+            M_DrawSaveLoadBorder(LoadDef.x as i32, LoadDef.y as i32 + LINEHEIGHT * i as i32);
             M_WriteText(
-                LoadDef.x as c_int,
-                LoadDef.y as c_int + LINEHEIGHT * i as c_int,
+                LoadDef.x as i32,
+                LoadDef.y as i32 + LINEHEIGHT * i as i32,
                 savegamestrings[i].as_mut_ptr(),
             );
         }
@@ -617,34 +606,26 @@ fn M_DrawLoad() {
 }
 
 /// Draw the left/center/right border patches around a save-game name text field at `(x, y)`.
-fn M_DrawSaveLoadBorder(x: c_int, y: c_int) {
+fn M_DrawSaveLoadBorder(x: i32, y: i32) {
     V_DrawPatchDirect(
         x - 8,
         y + 7,
-        W_CacheLumpName(c"M_LSLEFT".as_ptr(), 0) as *mut patch_t,
+        W_CacheLumpName(b"M_LSLEFT", 0) as *mut patch_t,
     );
 
     let mut xi = x;
     for _ in 0..24 {
-        V_DrawPatchDirect(
-            xi,
-            y + 7,
-            W_CacheLumpName(c"M_LSCNTR".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(xi, y + 7, W_CacheLumpName(b"M_LSCNTR", 0) as *mut patch_t);
         xi += 8;
     }
 
-    V_DrawPatchDirect(
-        xi,
-        y + 7,
-        W_CacheLumpName(c"M_LSRGHT".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(xi, y + 7, W_CacheLumpName(b"M_LSRGHT", 0) as *mut patch_t);
 }
 
 /// Load the game from save slot `choice` and close all menus.
-fn M_LoadSelect(choice: c_int) {
+fn M_LoadSelect(choice: i32) {
     unsafe {
-        let mut name: [c_char; 256] = [0; 256];
+        let mut name: [u8; 256] = [0; 256];
         M_StringCopy(name.as_mut_ptr(), P_SaveGameFile(choice), name.len());
         G_LoadGame(name.as_mut_ptr());
         M_ClearMenus();
@@ -652,13 +633,14 @@ fn M_LoadSelect(choice: c_int) {
 }
 
 /// Navigate to the Load Game menu page (suppressed during network games).
-fn M_LoadGame(_choice: c_int) {
+fn M_LoadGame(_choice: i32) {
     unsafe {
         if netgame != 0 {
             M_StartMessage(
                 c"you can't do load while in a net game!\n\npress a key."
                     .as_ptr()
-                    .cast_mut(),
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
@@ -672,19 +654,12 @@ fn M_LoadGame(_choice: c_int) {
 /// Draw the Save Game menu page: title, bordered slot rows, and a blinking cursor when editing.
 fn M_DrawSave() {
     unsafe {
-        V_DrawPatchDirect(
-            72,
-            28,
-            W_CacheLumpName(c"M_SAVEG".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_SAVEG", 0) as *mut patch_t);
         for i in 0..load_end {
-            M_DrawSaveLoadBorder(
-                LoadDef.x as c_int,
-                LoadDef.y as c_int + LINEHEIGHT * i as c_int,
-            );
+            M_DrawSaveLoadBorder(LoadDef.x as i32, LoadDef.y as i32 + LINEHEIGHT * i as i32);
             M_WriteText(
-                LoadDef.x as c_int,
-                LoadDef.y as c_int + LINEHEIGHT * i as c_int,
+                LoadDef.x as i32,
+                LoadDef.y as i32 + LINEHEIGHT * i as i32,
                 savegamestrings[i].as_mut_ptr(),
             );
         }
@@ -692,16 +667,16 @@ fn M_DrawSave() {
         if saveStringEnter != 0 {
             let w = M_StringWidth(savegamestrings[saveSlot as usize].as_mut_ptr());
             M_WriteText(
-                LoadDef.x as c_int + w,
-                LoadDef.y as c_int + LINEHEIGHT * saveSlot as c_int,
-                c"_".as_ptr().cast_mut(),
+                LoadDef.x as i32 + w,
+                LoadDef.y as i32 + LINEHEIGHT * saveSlot,
+                c"_".as_ptr().cast_mut().cast(),
             );
         }
     }
 }
 
 /// Commit the save to `slot`, clear the menus, and record the slot as the quicksave target.
-fn M_DoSave(slot: c_int) {
+fn M_DoSave(slot: i32) {
     unsafe {
         G_SaveGame(slot, savegamestrings[slot as usize].as_ptr());
         M_ClearMenus();
@@ -712,7 +687,7 @@ fn M_DoSave(slot: c_int) {
 }
 
 /// Enter string-editing mode for save slot `choice`, preserving the old description.
-fn M_SaveSelect(choice: c_int) {
+fn M_SaveSelect(choice: i32) {
     unsafe {
         saveStringEnter = 1;
         saveSlot = choice;
@@ -723,24 +698,25 @@ fn M_SaveSelect(choice: c_int) {
         );
         if strcmp(
             savegamestrings[choice as usize].as_ptr(),
-            c"empty slot".as_ptr(),
+            c"empty slot".as_ptr().cast(),
         ) == 0
         {
             savegamestrings[choice as usize][0] = 0;
         }
-        saveCharIndex = strlen(savegamestrings[choice as usize].as_ptr()) as c_int;
+        saveCharIndex = strlen(savegamestrings[choice as usize].as_ptr()) as i32;
     }
 }
 
 /// Navigate to the Save Game menu page (suppressed when not in-game or not at `GS_LEVEL`).
-fn M_SaveGame(_choice: c_int) {
-    const GS_LEVEL: c_int = 0;
+fn M_SaveGame(_choice: i32) {
+    const GS_LEVEL: i32 = 0;
     unsafe {
         if usergame == 0 {
             M_StartMessage(
                 c"you can't save if you aren't playing!\n\npress a key."
                     .as_ptr()
-                    .cast_mut(),
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
@@ -760,10 +736,10 @@ fn M_SaveGame(_choice: c_int) {
 /// If `quickSaveSlot` is -1, opens the save menu and sets it to -2 to indicate
 /// "waiting for slot selection". Otherwise shows a y/n confirmation prompt.
 fn M_QuickSave() {
-    const GS_LEVEL: c_int = 0;
+    const GS_LEVEL: i32 = 0;
     unsafe {
         if usergame == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Oof as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
             return;
         }
         if gamestate != GS_LEVEL {
@@ -776,9 +752,10 @@ fn M_QuickSave() {
             quickSaveSlot = -2;
             return;
         }
-        static mut QUICK_SAVE_MSG: [c_char; 80] = [0; 80];
-        let slot_str = std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr())
-            .to_string_lossy();
+        static mut QUICK_SAVE_MSG: [u8; 80] = [0; 80];
+        let slot_str =
+            std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr().cast())
+                .to_string_lossy();
         c_write!(
             QUICK_SAVE_MSG,
             "quicksave over your game named\n\n'{}'?\n\npress y or n.",
@@ -793,12 +770,12 @@ fn M_QuickSave() {
 }
 
 /// Confirmation callback for the quicksave y/n prompt; saves if `key` is the confirm key.
-fn M_QuickSaveResponse(key: c_int) {
+fn M_QuickSaveResponse(key: i32) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key == key_menu_confirm {
             M_DoSave(quickSaveSlot);
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
         }
     }
 }
@@ -812,7 +789,8 @@ fn M_QuickLoad() {
             M_StartMessage(
                 c"you can't quickload during a netgame!\n\npress a key."
                     .as_ptr()
-                    .cast_mut(),
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
@@ -820,15 +798,19 @@ fn M_QuickLoad() {
         }
         if quickSaveSlot < 0 {
             M_StartMessage(
-                c"you haven't picked a quicksave slot yet!\n\npress a key.".as_ptr() as *mut c_char,
+                c"you haven't picked a quicksave slot yet!\n\npress a key."
+                    .as_ptr()
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
             return;
         }
-        static mut QUICK_LOAD_MSG: [c_char; 80] = [0; 80];
-        let slot_str = std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr())
-            .to_string_lossy();
+        static mut QUICK_LOAD_MSG: [u8; 80] = [0; 80];
+        let slot_str =
+            std::ffi::CStr::from_ptr(savegamestrings[quickSaveSlot as usize].as_ptr().cast())
+                .to_string_lossy();
         c_write!(
             QUICK_LOAD_MSG,
             "do you want to quickload the game named\n\n'{}'?\n\npress y or n.",
@@ -843,12 +825,12 @@ fn M_QuickLoad() {
 }
 
 /// Confirmation callback for the quickload y/n prompt; loads if `key` is the confirm key.
-fn M_QuickLoadResponse(key: c_int) {
+fn M_QuickLoadResponse(key: i32) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key == key_menu_confirm {
             M_LoadSelect(quickSaveSlot);
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
         }
     }
 }
@@ -861,7 +843,7 @@ fn M_DrawReadThis1() {
     unsafe {
         inhelpscreens = 1;
 
-        let lumpname: *const c_char;
+        let lumpname: &[u8];
         let skullx: i16;
         let skully: i16;
 
@@ -872,22 +854,22 @@ fn M_DrawReadThis1() {
             | d_mode::exe_doom_1_9
             | d_mode::exe_hacx => {
                 if gamemode == d_mode::commercial {
-                    lumpname = c"HELP".as_ptr();
+                    lumpname = b"HELP";
                     skullx = 330;
                     skully = 165;
                 } else {
-                    lumpname = c"HELP2".as_ptr();
+                    lumpname = b"HELP2";
                     skullx = 280;
                     skully = 185;
                 }
             }
             d_mode::exe_ultimate | d_mode::exe_chex => {
-                lumpname = c"HELP1".as_ptr();
+                lumpname = b"HELP1";
                 skullx = 280;
                 skully = 185;
             }
             d_mode::exe_final | d_mode::exe_final2 => {
-                lumpname = c"HELP".as_ptr();
+                lumpname = b"HELP";
                 skullx = 330;
                 skully = 165;
             }
@@ -906,7 +888,7 @@ fn M_DrawReadThis1() {
 fn M_DrawReadThis2() {
     unsafe {
         inhelpscreens = 1;
-        V_DrawPatchDirect(0, 0, W_CacheLumpName(c"HELP1".as_ptr(), 0) as *mut patch_t);
+        V_DrawPatchDirect(0, 0, W_CacheLumpName(b"HELP1", 0) as *mut patch_t);
     }
 }
 
@@ -914,22 +896,18 @@ fn M_DrawReadThis2() {
 fn M_DrawSound() {
     use super::s_sound::{musicVolume, sfxVolume};
     unsafe {
-        V_DrawPatchDirect(
-            60,
-            38,
-            W_CacheLumpName(c"M_SVOL".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(60, 38, W_CacheLumpName(b"M_SVOL", 0) as *mut patch_t);
 
         M_DrawThermo(
-            SoundDef.x as c_int,
-            SoundDef.y as c_int + LINEHEIGHT * (sfx_vol as c_int + 1),
+            SoundDef.x as i32,
+            SoundDef.y as i32 + LINEHEIGHT * (sfx_vol as i32 + 1),
             16,
             sfxVolume,
         );
 
         M_DrawThermo(
-            SoundDef.x as c_int,
-            SoundDef.y as c_int + LINEHEIGHT * (music_vol as c_int + 1),
+            SoundDef.x as i32,
+            SoundDef.y as i32 + LINEHEIGHT * (music_vol as i32 + 1),
             16,
             musicVolume,
         );
@@ -937,10 +915,10 @@ fn M_DrawSound() {
 }
 
 /// No-op activation callback for the Sound Volume menu item (navigation handled elsewhere).
-fn M_Sound(_choice: c_int) {}
+fn M_Sound(_choice: i32) {}
 
 /// Adjust the SFX volume slider; `choice` 0 decrements, 1 increments (range 0-15).
-fn M_SfxVol(choice: c_int) {
+fn M_SfxVol(choice: i32) {
     use super::s_sound::sfxVolume;
     unsafe {
         match choice {
@@ -957,7 +935,7 @@ fn M_SfxVol(choice: c_int) {
 }
 
 /// Adjust the music volume slider; `choice` 0 decrements, 1 increments (range 0-15).
-fn M_MusicVol(choice: c_int) {
+fn M_MusicVol(choice: i32) {
     use super::s_sound::musicVolume;
     unsafe {
         match choice {
@@ -975,37 +953,27 @@ fn M_MusicVol(choice: c_int) {
 
 /// Draw the "DOOM" title graphic at the top of the main menu.
 fn M_DrawMainMenu() {
-    V_DrawPatchDirect(
-        94,
-        2,
-        W_CacheLumpName(c"M_DOOM".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(94, 2, W_CacheLumpName(b"M_DOOM", 0) as *mut patch_t);
 }
 
 /// Draw the "New Game" and "Skill Level" title patches above the skill menu.
 fn M_DrawNewGame() {
-    V_DrawPatchDirect(
-        96,
-        14,
-        W_CacheLumpName(c"M_NEWG".as_ptr(), 0) as *mut patch_t,
-    );
-    V_DrawPatchDirect(
-        54,
-        38,
-        W_CacheLumpName(c"M_SKILL".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(96, 14, W_CacheLumpName(b"M_NEWG", 0) as *mut patch_t);
+    V_DrawPatchDirect(54, 38, W_CacheLumpName(b"M_SKILL", 0) as *mut patch_t);
 }
 
 /// Handle "New Game" activation: navigate to the episode or skill menu as appropriate.
 ///
 /// Shows an error message if in a network game (except demo playback).
 /// Skips the episode menu for Doom II (commercial) and Chex Quest.
-fn M_NewGame(_choice: c_int) {
+fn M_NewGame(_choice: i32) {
     unsafe {
         if netgame != 0 && demoplayback == 0 {
             M_StartMessage(
-                c"you can't start a new game\nwhile in a network game.\n\npress a key.".as_ptr()
-                    as *mut c_char,
+                c"you can't start a new game\nwhile in a network game.\n\npress a key."
+                    .as_ptr()
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
@@ -1021,18 +989,14 @@ fn M_NewGame(_choice: c_int) {
 
 /// Draw the "Which Episode?" title patch above the episode menu.
 fn M_DrawEpisode() {
-    V_DrawPatchDirect(
-        54,
-        38,
-        W_CacheLumpName(c"M_EPISOD".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(54, 38, W_CacheLumpName(b"M_EPISOD", 0) as *mut patch_t);
 }
 
 /// Selected episode index (0-based), set by `M_Episode` and consumed by `M_ChooseSkill`.
-static mut epi: c_int = 0;
+static mut epi: i32 = 0;
 
 /// Confirmation callback for the Nightmare skill prompt; starts the game if `key` confirms.
-fn M_VerifyNightmare(key: c_int) {
+fn M_VerifyNightmare(key: i32) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1044,11 +1008,13 @@ fn M_VerifyNightmare(key: c_int) {
 }
 
 /// Start a new game at the given skill level, or prompt for confirmation on Nightmare.
-fn M_ChooseSkill(choice: c_int) {
+fn M_ChooseSkill(choice: i32) {
     if choice as usize == nightmare {
         M_StartMessage(
-            c"are you sure? this skill level\nisn't even remotely fair.\n\npress y or n.".as_ptr()
-                as *mut c_char,
+            c"are you sure? this skill level\nisn't even remotely fair.\n\npress y or n."
+                .as_ptr()
+                .cast_mut()
+                .cast(),
             Some(M_VerifyNightmare),
             1,
         );
@@ -1064,12 +1030,11 @@ fn M_ChooseSkill(choice: c_int) {
 ///
 /// Shows a shareware-restriction message if episode > 0 in shareware mode.
 /// Clamps episode 4 to episode 0 in registered mode (which only has three episodes).
-fn M_Episode(choice: c_int) {
+fn M_Episode(choice: i32) {
     unsafe {
         if gamemode == d_mode::shareware && choice != 0 {
             M_StartMessage(
-                c"this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.".as_ptr()
-                    as *mut c_char,
+                c"this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.".as_ptr().cast_mut().cast(),
                 None,
                 0,
             );
@@ -1088,37 +1053,33 @@ fn M_Episode(choice: c_int) {
 /// Draw the Options menu page: title patch, detail/message toggles, and thermometer sliders.
 fn M_DrawOptions() {
     unsafe {
-        V_DrawPatchDirect(
-            108,
-            15,
-            W_CacheLumpName(c"M_OPTTTL".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(108, 15, W_CacheLumpName(b"M_OPTTTL", 0) as *mut patch_t);
 
-        let detail_names: [*const c_char; 2] = [c"M_GDHIGH".as_ptr(), c"M_GDLOW".as_ptr()];
-        let msg_names: [*const c_char; 2] = [c"M_MSGOFF".as_ptr(), c"M_MSGON".as_ptr()];
+        let detail_names: [&[u8]; 2] = [b"M_GDHIGH", b"M_GDLOW"];
+        let msg_names: [&[u8]; 2] = [b"M_MSGOFF", b"M_MSGON"];
 
         V_DrawPatchDirect(
-            OptionsDef.x as c_int + 175,
-            OptionsDef.y as c_int + LINEHEIGHT * detail as c_int,
+            OptionsDef.x as i32 + 175,
+            OptionsDef.y as i32 + LINEHEIGHT * detail as i32,
             W_CacheLumpName(detail_names[detailLevel as usize], 0) as *mut patch_t,
         );
 
         V_DrawPatchDirect(
-            OptionsDef.x as c_int + 120,
-            OptionsDef.y as c_int + LINEHEIGHT * messages as c_int,
+            OptionsDef.x as i32 + 120,
+            OptionsDef.y as i32 + LINEHEIGHT * messages as i32,
             W_CacheLumpName(msg_names[showMessages as usize], 0) as *mut patch_t,
         );
 
         M_DrawThermo(
-            OptionsDef.x as c_int,
-            OptionsDef.y as c_int + LINEHEIGHT * (mousesens as c_int + 1),
+            OptionsDef.x as i32,
+            OptionsDef.y as i32 + LINEHEIGHT * (mousesens as i32 + 1),
             10,
             mouseSensitivity,
         );
 
         M_DrawThermo(
-            OptionsDef.x as c_int,
-            OptionsDef.y as c_int + LINEHEIGHT * (scrnsize as c_int + 1),
+            OptionsDef.x as i32,
+            OptionsDef.y as i32 + LINEHEIGHT * (scrnsize as i32 + 1),
             9,
             screenSize,
         );
@@ -1126,23 +1087,23 @@ fn M_DrawOptions() {
 }
 
 /// No-op activation callback for the Options menu item (navigation handled by `M_Responder`).
-fn M_Options(_choice: c_int) {}
+fn M_Options(_choice: i32) {}
 
 /// Toggle the `showMessages` setting and display a confirmation HUD message.
-fn M_ChangeMessages(_choice: c_int) {
+fn M_ChangeMessages(_choice: i32) {
     unsafe {
         showMessages = 1 - showMessages;
         if showMessages == 0 {
-            M_Menu_SetPlayerMessage(c"Messages OFF".as_ptr());
+            M_Menu_SetPlayerMessage(c"Messages OFF".as_ptr().cast());
         } else {
-            M_Menu_SetPlayerMessage(c"Messages ON".as_ptr());
+            M_Menu_SetPlayerMessage(c"Messages ON".as_ptr().cast());
         }
         message_dontfuckwithme = 1;
     }
 }
 
 /// Confirmation callback for "End Game"; clears menus if the player confirms.
-fn M_EndGameResponse(key: c_int) {
+fn M_EndGameResponse(key: i32) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1154,17 +1115,18 @@ fn M_EndGameResponse(key: c_int) {
 }
 
 /// Prompt the player to confirm ending the current game (suppressed if not in-game or in a network game).
-fn M_EndGame(_choice: c_int) {
+fn M_EndGame(_choice: i32) {
     unsafe {
         if usergame == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Oof as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
             return;
         }
         if netgame != 0 {
             M_StartMessage(
                 c"you can't end a netgame!\n\npress a key."
                     .as_ptr()
-                    .cast_mut(),
+                    .cast_mut()
+                    .cast(),
                 None,
                 0,
             );
@@ -1173,7 +1135,8 @@ fn M_EndGame(_choice: c_int) {
         M_StartMessage(
             c"are you sure you want to end the game?\n\npress y or n."
                 .as_ptr()
-                .cast_mut(),
+                .cast_mut()
+                .cast(),
             Some(M_EndGameResponse),
             1,
         );
@@ -1181,10 +1144,10 @@ fn M_EndGame(_choice: c_int) {
 }
 
 /// No-op placeholder for the "Read This" main-menu item (navigation is in `M_Responder`).
-fn M_ReadThis(_choice: c_int) {}
+fn M_ReadThis(_choice: i32) {}
 
 /// Handle "done" from the first help screen: advance to page 2 or finish, depending on game version.
-fn M_ReadThis2(_choice: c_int) {
+fn M_ReadThis2(_choice: i32) {
     unsafe {
         if gameversion <= d_mode::exe_doom_1_9 && gamemode != d_mode::commercial {
             M_SetupNextMenu(&raw mut ReadDef2);
@@ -1195,33 +1158,33 @@ fn M_ReadThis2(_choice: c_int) {
 }
 
 /// No-op: closing the last help screen returns to the previous menu via `M_Responder`'s back key.
-fn M_FinishReadThis(_choice: c_int) {}
+fn M_FinishReadThis(_choice: i32) {}
 
 /// Sound effects played on quit confirmation for Doom episode games (cycled by `gametic`).
-static mut quitsounds: [c_int; 8] = [
-    Sfx::Pldeth as c_int,
-    Sfx::Dmpain as c_int,
-    Sfx::Popain as c_int,
-    Sfx::Slop as c_int,
-    Sfx::Telept as c_int,
-    Sfx::Posit1 as c_int,
-    Sfx::Posit3 as c_int,
-    Sfx::Sgtatk as c_int,
+static mut quitsounds: [i32; 8] = [
+    Sfx::Pldeth as i32,
+    Sfx::Dmpain as i32,
+    Sfx::Popain as i32,
+    Sfx::Slop as i32,
+    Sfx::Telept as i32,
+    Sfx::Posit1 as i32,
+    Sfx::Posit3 as i32,
+    Sfx::Sgtatk as i32,
 ];
 /// Sound effects played on quit confirmation for Doom II (commercial) builds (cycled by `gametic`).
-static mut quitsounds2: [c_int; 8] = [
-    Sfx::Vilact as c_int,
-    Sfx::Getpow as c_int,
-    Sfx::Boscub as c_int,
-    Sfx::Slop as c_int,
-    Sfx::Skeswg as c_int,
-    Sfx::Kntdth as c_int,
-    Sfx::Bspact as c_int,
-    Sfx::Sgtatk as c_int,
+static mut quitsounds2: [i32; 8] = [
+    Sfx::Vilact as i32,
+    Sfx::Getpow as i32,
+    Sfx::Boscub as i32,
+    Sfx::Slop as i32,
+    Sfx::Skeswg as i32,
+    Sfx::Kntdth as i32,
+    Sfx::Bspact as i32,
+    Sfx::Sgtatk as i32,
 ];
 
 /// Confirmation callback for the quit prompt; plays a quit sound and exits if the player confirms.
-fn M_QuitResponse(key: c_int) {
+fn M_QuitResponse(key: i32) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1240,7 +1203,7 @@ fn M_QuitResponse(key: c_int) {
 }
 
 /// Select a game-specific quit quip from `doom1_endmsg` or `doom2_endmsg`, keyed by `gametic`.
-fn M_SelectEndMessage() -> *const c_char {
+fn M_SelectEndMessage() -> *const u8 {
     unsafe {
         if logical_gamemission() == d_mode::doom {
             doom1_endmsg[(gametic as usize) & 7].0
@@ -1251,10 +1214,10 @@ fn M_SelectEndMessage() -> *const c_char {
 }
 
 /// Show the quit confirmation dialog with a game-specific quip and a y/n prompt.
-fn M_QuitDOOM(_choice: c_int) {
+fn M_QuitDOOM(_choice: i32) {
     unsafe {
         let msg = M_SelectEndMessage();
-        let msg_str = std::ffi::CStr::from_ptr(msg).to_string_lossy();
+        let msg_str = std::ffi::CStr::from_ptr(msg.cast()).to_string_lossy();
         c_write!(endstring, "{}\n\n(press y to quit to dos.)", msg_str);
         M_StartMessage(
             std::ptr::addr_of_mut!(endstring[0]),
@@ -1265,7 +1228,7 @@ fn M_QuitDOOM(_choice: c_int) {
 }
 
 /// Adjust mouse sensitivity; `choice` 0 decrements, 1 increments (range 0-9).
-fn M_ChangeSensitivity(choice: c_int) {
+fn M_ChangeSensitivity(choice: i32) {
     unsafe {
         match choice {
             0 if mouseSensitivity > 0 => {
@@ -1280,14 +1243,14 @@ fn M_ChangeSensitivity(choice: c_int) {
 }
 
 /// Toggle graphics detail between high (0) and low (1) and display a HUD confirmation.
-fn M_ChangeDetail(_choice: c_int) {
+fn M_ChangeDetail(_choice: i32) {
     unsafe {
         detailLevel = 1 - detailLevel;
         R_SetViewSize(screenblocks, detailLevel);
         if detailLevel == 0 {
-            M_Menu_SetPlayerMessage(c"High detail".as_ptr());
+            M_Menu_SetPlayerMessage(c"High detail".as_ptr().cast());
         } else {
-            M_Menu_SetPlayerMessage(c"Low detail".as_ptr());
+            M_Menu_SetPlayerMessage(c"Low detail".as_ptr().cast());
         }
     }
 }
@@ -1295,7 +1258,7 @@ fn M_ChangeDetail(_choice: c_int) {
 /// Adjust the screen-size slider; `choice` 0 shrinks, 1 enlarges (range 0-8).
 ///
 /// Updates both `screenSize` and `screenblocks`, then calls `R_SetViewSize`.
-fn M_SizeDisplay(choice: c_int) {
+fn M_SizeDisplay(choice: i32) {
     unsafe {
         match choice {
             0 if screenSize > 0 => {
@@ -1315,46 +1278,34 @@ fn M_SizeDisplay(choice: c_int) {
 /// Draw a thermometer slider at `(x, y)` with `thermWidth` cells and a filled dot at `thermDot`.
 ///
 /// Renders left cap, `thermWidth` middle pieces, right cap, then the movable dot.
-fn M_DrawThermo(x: c_int, y: c_int, thermWidth: c_int, thermDot: c_int) {
+fn M_DrawThermo(x: i32, y: i32, thermWidth: i32, thermDot: i32) {
     let mut xx = x;
-    V_DrawPatchDirect(
-        xx,
-        y,
-        W_CacheLumpName(c"M_THERML".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERML", 0) as *mut patch_t);
     xx += 8;
     for _ in 0..thermWidth {
-        V_DrawPatchDirect(
-            xx,
-            y,
-            W_CacheLumpName(c"M_THERMM".as_ptr(), 0) as *mut patch_t,
-        );
+        V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERMM", 0) as *mut patch_t);
         xx += 8;
     }
-    V_DrawPatchDirect(
-        xx,
-        y,
-        W_CacheLumpName(c"M_THERMR".as_ptr(), 0) as *mut patch_t,
-    );
+    V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERMR", 0) as *mut patch_t);
 
     V_DrawPatchDirect(
         (x + 8) + thermDot * 8,
         y,
-        W_CacheLumpName(c"M_THERMO".as_ptr(), 0) as *mut patch_t,
+        W_CacheLumpName(b"M_THERMO", 0) as *mut patch_t,
     );
 }
 
 /// No-op: draw callback for an empty (non-selected) grid cell (unused in this port).
-fn M_DrawEmptyCell(_menu: *mut menu_t, _item: c_int) {}
+fn M_DrawEmptyCell(_menu: *mut menu_t, _item: i32) {}
 /// No-op: draw callback for the selected grid cell (unused in this port).
-fn M_DrawSelCell(_menu: *mut menu_t, _item: c_int) {}
+fn M_DrawSelCell(_menu: *mut menu_t, _item: i32) {}
 
 /// Display a modal overlay message.
 ///
 /// `string` is the message to display.
 /// `routine` is an optional callback invoked with the key pressed to dismiss.
 /// `input` is non-zero when a specific key (y/n or confirm/abort) is required.
-fn M_StartMessage(string: *mut c_char, routine: Option<fn(c_int)>, input: c_int) {
+fn M_StartMessage(string: *mut u8, routine: Option<fn(i32)>, input: i32) {
     unsafe {
         messageLastMenuActive = menuactive;
         messageToPrint = 1;
@@ -1376,17 +1327,17 @@ fn M_StopMessage() {
 /// Return the pixel width of `string` rendered in the HUD font.
 ///
 /// Non-printable characters (outside `HU_FONTSTART`..`HU_FONTEND`) contribute 4 pixels each.
-fn M_StringWidth(string: *mut c_char) -> c_int {
+fn M_StringWidth(string: *mut u8) -> i32 {
     unsafe {
         let len = strlen(string);
-        let mut w: c_int = 0;
+        let mut w: i32 = 0;
         for i in 0..len {
-            let c = toupper(*string.add(i) as c_int) - HU_FONTSTART;
+            let c = toupper(*string.add(i) as i32) - HU_FONTSTART;
             if c < 0 || c as usize >= HU_FONTSIZE {
                 w += 4;
             } else {
                 let patch = hu_font[c as usize] as *const patch_stub;
-                w += (*patch).width as c_int;
+                w += (*patch).width as i32;
             }
         }
         w
@@ -1394,14 +1345,14 @@ fn M_StringWidth(string: *mut c_char) -> c_int {
 }
 
 /// Return the pixel height of `string` rendered in the HUD font, accounting for newlines.
-fn M_StringHeight(string: *mut c_char) -> c_int {
+fn M_StringHeight(string: *mut u8) -> i32 {
     unsafe {
         let patch = hu_font[0] as *const patch_stub;
-        let height = (*patch).height as c_int;
+        let height = (*patch).height as i32;
         let mut h = height;
         let len = strlen(string);
         for i in 0..len {
-            if *string.add(i) == b'\n' as c_char {
+            if *string.add(i) == b'\n' {
                 h += height;
             }
         }
@@ -1414,7 +1365,7 @@ fn M_StringHeight(string: *mut c_char) -> c_int {
 /// Newline characters reset the x cursor and advance y by 12 pixels.
 /// Characters outside the font range are rendered as 4-pixel spaces.
 /// Rendering stops at the screen right edge.
-fn M_WriteText(x: c_int, y: c_int, string: *mut c_char) {
+fn M_WriteText(x: i32, y: i32, string: *mut u8) {
     unsafe {
         let mut ch_ptr = string;
         let mut cx = x;
@@ -1426,20 +1377,20 @@ fn M_WriteText(x: c_int, y: c_int, string: *mut c_char) {
                 break;
             }
             ch_ptr = ch_ptr.add(1);
-            if c == b'\n' as c_char {
+            if c == b'\n' {
                 cx = x;
                 cy += 12;
                 continue;
             }
 
-            let c = toupper(c as c_int) - HU_FONTSTART;
+            let c = toupper(c as i32) - HU_FONTSTART;
             if c < 0 || c as usize >= HU_FONTSIZE {
                 cx += 4;
                 continue;
             }
 
             let patch = hu_font[c as usize] as *const patch_stub;
-            let w = (*patch).width as c_int;
+            let w = (*patch).width as i32;
             if cx + w > SCREENWIDTH {
                 break;
             }
@@ -1452,22 +1403,22 @@ fn M_WriteText(x: c_int, y: c_int, string: *mut c_char) {
 /// Return `true` if `key` is a modifier key that should not terminate shortcut search.
 ///
 /// Pause, Caps Lock, Scroll Lock, and Num Lock are treated as null keys.
-fn IsNullKey(key: c_int) -> bool {
+fn IsNullKey(key: i32) -> bool {
     key == KEY_PAUSE || key == KEY_CAPSLOCK || key == KEY_SCRLCK || key == KEY_NUMLOCK
 }
 
 /// Tic time after which the next joystick event will be processed (rate-limiting).
-static mut RESP_joywait: c_int = 0;
+static mut RESP_joywait: i32 = 0;
 /// Tic time after which the next mouse event will be processed (rate-limiting).
-static mut RESP_mousewait: c_int = 0;
+static mut RESP_mousewait: i32 = 0;
 /// Accumulated mouse y movement since the last `RESP_lasty` reset.
-static mut RESP_mousey: c_int = 0;
+static mut RESP_mousey: i32 = 0;
 /// Mouse y baseline; updated in 30-unit steps to produce discrete menu scrolls.
-static mut RESP_lasty: c_int = 0;
+static mut RESP_lasty: i32 = 0;
 /// Accumulated mouse x movement since the last `RESP_lastx` reset.
-static mut RESP_mousex: c_int = 0;
+static mut RESP_mousex: i32 = 0;
 /// Mouse x baseline; updated in 30-unit steps to produce discrete menu navigation.
-static mut RESP_lastx: c_int = 0;
+static mut RESP_lastx: i32 = 0;
 
 /// Handle an input event for the menu system.
 ///
@@ -1511,14 +1462,14 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             {
                 M_QuitResponse(key_menu_confirm);
             } else {
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_QuitDOOM(0);
             }
             return Boolean::TRUE;
         }
 
-        let mut ch: c_int = 0;
-        let mut key: c_int = -1;
+        let mut ch: i32 = 0;
+        let mut key: i32 = -1;
 
         if ev.type_ == EV_JOYSTICK && RESP_joywait < I_GetTime() {
             if ev.data3 < 0 {
@@ -1616,18 +1567,18 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 }
                 ch = toupper(ch);
 
-                if ch != b' ' as c_int
-                    && (ch - HU_FONTSTART < 0 || ch - HU_FONTSTART >= HU_FONTSIZE as c_int)
+                if ch != b' ' as i32
+                    && (ch - HU_FONTSTART < 0 || ch - HU_FONTSTART >= HU_FONTSIZE as i32)
                 {
                     return Boolean::TRUE;
                 }
 
                 if (32..=127).contains(&ch)
-                    && saveCharIndex < (SAVESTRINGSIZE as c_int - 1)
+                    && saveCharIndex < (SAVESTRINGSIZE as i32 - 1)
                     && M_StringWidth(savegamestrings[saveSlot as usize].as_mut_ptr())
-                        < (SAVESTRINGSIZE as c_int - 2) * 8
+                        < (SAVESTRINGSIZE as i32 - 2) * 8
                 {
-                    savegamestrings[saveSlot as usize][saveCharIndex as usize] = ch as c_char;
+                    savegamestrings[saveSlot as usize][saveCharIndex as usize] = ch as u8;
                     saveCharIndex += 1;
                     savegamestrings[saveSlot as usize][saveCharIndex as usize] = 0;
                 }
@@ -1638,7 +1589,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         // Messages that need input
         if messageToPrint != 0 {
             if messageNeedsInput != 0
-                && key != b' ' as c_int
+                && key != b' ' as i32
                 && key != KEY_ESCAPE
                 && key != key_menu_confirm
                 && key != key_menu_abort
@@ -1652,7 +1603,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 r(key);
             }
             menuactive = 0;
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
             return Boolean::TRUE;
         }
 
@@ -1669,14 +1620,14 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                     return Boolean::FALSE;
                 }
                 M_SizeDisplay(0);
-                S_StartSound(ptr::null_mut(), Sfx::Stnmov as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_incscreen {
                 if automapactive != 0 || chat_on != 0 {
                     return Boolean::FALSE;
                 }
                 M_SizeDisplay(1);
-                S_StartSound(ptr::null_mut(), Sfx::Stnmov as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_help {
                 M_StartControlPanel();
@@ -1686,46 +1637,46 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                     currentMenu = &raw mut ReadDef1;
                 }
                 itemOn = 0;
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_save {
                 M_StartControlPanel();
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_SaveGame(0);
                 return Boolean::TRUE;
             } else if key == key_menu_load {
                 M_StartControlPanel();
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_LoadGame(0);
                 return Boolean::TRUE;
             } else if key == key_menu_volume {
                 M_StartControlPanel();
                 currentMenu = &raw mut SoundDef;
                 itemOn = sfx_vol as i16;
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_detail {
                 M_ChangeDetail(0);
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_qsave {
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_QuickSave();
                 return Boolean::TRUE;
             } else if key == key_menu_endgame {
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_EndGame(0);
                 return Boolean::TRUE;
             } else if key == key_menu_messages {
                 M_ChangeMessages(0);
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_qload {
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_QuickLoad();
                 return Boolean::TRUE;
             } else if key == key_menu_quit {
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 M_QuitDOOM(0);
                 return Boolean::TRUE;
             } else if key == key_menu_gamma {
@@ -1734,7 +1685,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                     usegamma = 0;
                 }
                 M_Menu_SetPlayerMessage(gammamsg[usegamma as usize].as_ptr());
-                I_SetPalette(W_CacheLumpName(c"PLAYPAL".as_ptr(), 0) as *mut u8);
+                I_SetPalette(W_CacheLumpName(b"PLAYPAL", 0) as *mut u8);
                 return Boolean::TRUE;
             }
         }
@@ -1743,7 +1694,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         if menuactive == 0 {
             if key == key_menu_activate {
                 M_StartControlPanel();
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             }
             return Boolean::FALSE;
@@ -1757,7 +1708,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 } else {
                     itemOn += 1;
                 }
-                S_StartSound(ptr::null_mut(), Sfx::Pstop as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                 if (*(*currentMenu).menuitems.offset(itemOn as isize)).status != -1 {
                     break;
                 }
@@ -1770,7 +1721,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 } else {
                     itemOn -= 1;
                 }
-                S_StartSound(ptr::null_mut(), Sfx::Pstop as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                 if (*(*currentMenu).menuitems.offset(itemOn as isize)).status != -1 {
                     break;
                 }
@@ -1780,7 +1731,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             let item = &*(*currentMenu).menuitems.offset(itemOn as isize);
             if item.status == 2 {
                 if let Some(routine) = item.routine {
-                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as c_int);
+                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     routine(0);
                 }
             }
@@ -1789,7 +1740,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             let item = &*(*currentMenu).menuitems.offset(itemOn as isize);
             if item.status == 2 {
                 if let Some(routine) = item.routine {
-                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as c_int);
+                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     routine(1);
                 }
             }
@@ -1801,10 +1752,10 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                     (*currentMenu).lastOn = itemOn;
                     if item.status == 2 {
                         routine(1);
-                        S_StartSound(ptr::null_mut(), Sfx::Stnmov as c_int);
+                        S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     } else {
-                        routine(itemOn as c_int);
-                        S_StartSound(ptr::null_mut(), Sfx::Pistol as c_int);
+                        routine(itemOn as i32);
+                        S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
                     }
                 }
             }
@@ -1812,32 +1763,32 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         } else if key == key_menu_activate {
             (*currentMenu).lastOn = itemOn;
             M_ClearMenus();
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as c_int);
+            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
             return Boolean::TRUE;
         } else if key == key_menu_back {
             (*currentMenu).lastOn = itemOn;
             if !(*currentMenu).prevMenu.is_null() {
                 currentMenu = (*currentMenu).prevMenu;
                 itemOn = (*currentMenu).lastOn;
-                S_StartSound(ptr::null_mut(), Sfx::Swtchn as c_int);
+                S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
             }
             return Boolean::TRUE;
         }
 
         // Keyboard shortcut
         if ch != 0 || IsNullKey(key) {
-            let ch_u = ch as c_char;
+            let ch_u = ch as u8;
             for i in (itemOn + 1)..(*currentMenu).numitems {
                 if (*(*currentMenu).menuitems.offset(i as isize)).alphaKey == ch_u {
                     itemOn = i;
-                    S_StartSound(ptr::null_mut(), Sfx::Pstop as c_int);
+                    S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                     return Boolean::TRUE;
                 }
             }
             for i in 0..=itemOn {
                 if (*(*currentMenu).menuitems.offset(i as isize)).alphaKey == ch_u {
                     itemOn = i;
-                    S_StartSound(ptr::null_mut(), Sfx::Pstop as c_int);
+                    S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                     return Boolean::TRUE;
                 }
             }
@@ -1878,10 +1829,10 @@ pub fn M_Drawer() {
             messy = SCREENHEIGHT / 2 - M_StringHeight(messageString) / 2;
             while *messageString.add(start) != 0 {
                 let mut foundnewline = 0;
-                let mut string: [c_char; 80] = [0; 80];
+                let mut string: [u8; 80] = [0; 80];
                 let remaining = strlen(messageString.add(start));
                 for i in 0..remaining {
-                    if *messageString.add(start + i) == b'\n' as c_char {
+                    if *messageString.add(start + i) == b'\n' {
                         M_StringCopy(string.as_mut_ptr(), messageString.add(start), string.len());
                         if i < string.len() {
                             string[i] = 0;
@@ -1899,7 +1850,7 @@ pub fn M_Drawer() {
                 messx = SCREENWIDTH / 2 - M_StringWidth(string.as_mut_ptr()) / 2;
                 M_WriteText(messx, messy, string.as_mut_ptr());
                 let patch = hu_font[0] as *const patch_stub;
-                messy += (*patch).height as c_int;
+                messy += (*patch).height as i32;
             }
             return;
         }
@@ -1912,16 +1863,16 @@ pub fn M_Drawer() {
             r();
         }
 
-        let x = (*currentMenu).x as c_int;
-        let y = (*currentMenu).y as c_int;
+        let x = (*currentMenu).x as i32;
+        let y = (*currentMenu).y as i32;
         let max = (*currentMenu).numitems as usize;
 
         for i in 0..max {
-            let name = (*(*currentMenu).menuitems.add(i)).name.as_ptr();
-            if *name != 0 {
+            let name = &(*(*currentMenu).menuitems.add(i)).name;
+            if name[0] != 0 {
                 V_DrawPatchDirect(
                     x,
-                    y + LINEHEIGHT * i as c_int,
+                    y + LINEHEIGHT * i as i32,
                     W_CacheLumpName(name, 0) as *mut patch_t,
                 );
             }
@@ -1929,7 +1880,7 @@ pub fn M_Drawer() {
 
         V_DrawPatchDirect(
             x + SKULLXOFF,
-            (*currentMenu).y as c_int - 5 + itemOn as c_int * LINEHEIGHT,
+            (*currentMenu).y as i32 - 5 + itemOn as i32 * LINEHEIGHT,
             W_CacheLumpName(skullName[whichSkull as usize], 0) as *mut patch_t,
         );
     }

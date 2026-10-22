@@ -7,7 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, os::raw::c_int};
+use std::ffi::c_void;
 
 use crate::doom::{d_player::PlayerT, info::*, p_tick::thinker_t, tables::ANGLETOFINESHIFT};
 
@@ -39,9 +39,9 @@ pub struct subsector_t {
 #[derive(Clone, Copy)]
 pub struct sector_t {
     /// Floor height in fixed-point units.
-    pub floorheight: c_int,
+    pub floorheight: i32,
     /// Ceiling height in fixed-point units.
-    pub ceilingheight: c_int,
+    pub ceilingheight: i32,
     /// Flat texture index for the floor.
     pub floorpic: i16,
     /// Flat texture index for the ceiling.
@@ -54,23 +54,23 @@ pub struct sector_t {
     pub tag: i16,
     _pad0: [u8; 2],
     /// Sound traversal counter, used to avoid duplicate sound propagation.
-    pub soundtraversed: c_int,
+    pub soundtraversed: i32,
     /// Last thing to make a sound in this sector (for monster alerting).
     pub soundtarget: *mut c_void,
     /// Bounding box of the sector in map units `[top, bottom, left, right]`.
-    pub blockbox: [c_int; 4],
+    pub blockbox: [i32; 4],
     /// Origin point for sounds emitted by this sector (opaque 40-byte blob
     /// matching `mobj_t::soundorg` in C).
     pub soundorg: [u8; 40],
     /// Incremented each time the sector is visited during a BFS/DFS.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Linked list of things currently in this sector.
     pub thinglist: *mut c_void,
     /// Pointer to the active special thinker for this sector (e.g. a moving
     /// ceiling or platform), or null if none is active.
     pub specialdata: *mut c_void,
     /// Number of linedefs bounding this sector.
-    pub linecount: c_int,
+    pub linecount: i32,
     /// Pointer to the array of linedef pointers for this sector.
     pub lines: *mut *mut c_void,
 }
@@ -114,11 +114,11 @@ pub struct mobj_t {
     /// Thinker header — must be the very first field (offset 0).
     pub thinker: thinker_t,
     /// Map X position in fixed-point units.
-    pub x: c_int,
+    pub x: i32,
     /// Map Y position in fixed-point units.
-    pub y: c_int,
+    pub y: i32,
     /// Map Z position (height above the floor) in fixed-point units.
-    pub z: c_int,
+    pub z: i32,
     _pad0: [u8; 4],
     /// Next thing in this sector's sprite-order linked list.
     pub snext: *mut mobj_t,
@@ -127,9 +127,9 @@ pub struct mobj_t {
     /// Facing angle in binary radians (BAMs); 0 = East.
     pub angle: u32,
     /// Current sprite number.
-    pub sprite: c_int,
+    pub sprite: i32,
     /// Current animation frame index.
-    pub frame: c_int,
+    pub frame: i32,
     _pad1: [u8; 4],
     /// Next thing in the blockmap block's linked list.
     pub bnext: *mut mobj_t,
@@ -138,49 +138,49 @@ pub struct mobj_t {
     /// The sub-sector this thing currently occupies.
     pub subsector: *mut subsector_t,
     /// Floor height at the thing's current position.
-    pub floorz: c_int,
+    pub floorz: i32,
     /// Ceiling height at the thing's current position.
-    pub ceilingz: c_int,
+    pub ceilingz: i32,
     /// Collision radius in fixed-point units.
-    pub radius: c_int,
+    pub radius: i32,
     /// Collision height in fixed-point units.
-    pub height: c_int,
+    pub height: i32,
     /// X momentum applied each tic.
-    pub momx: c_int,
+    pub momx: i32,
     /// Y momentum applied each tic.
-    pub momy: c_int,
+    pub momy: i32,
     /// Z momentum applied each tic.
-    pub momz: c_int,
+    pub momz: i32,
     /// Used to avoid processing the same thing twice in a single traversal.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Thing type index into `mobjinfo` table.
-    pub mobjtype: c_int,
+    pub mobjtype: i32,
     _pad2: [u8; 4],
     /// Pointer to the thing's type info record.
     pub info: *mut mobjinfo_t,
     /// Remaining tics in the current animation frame.
-    pub tics: c_int,
+    pub tics: i32,
     _pad3: [u8; 4],
     /// Pointer to the current animation frame state.
     pub state: *mut state_t,
     /// Bit-field of `MF_*` flags controlling collision, rendering, AI, etc.
-    pub flags: c_int,
+    pub flags: i32,
     /// Current hit points.
-    pub health: c_int,
+    pub health: i32,
     /// Current movement direction (0–7 compass directions, or `DI_NODIR`).
-    pub movedir: c_int,
+    pub movedir: i32,
     /// Tics remaining before the thing attempts a new movement decision.
-    pub movecount: c_int,
+    pub movecount: i32,
     /// Primary AI target (usually the last thing to attack this one).
     pub target: *mut mobj_t,
     /// Tics the thing must wait before it can attack again.
-    pub reactiontime: c_int,
+    pub reactiontime: i32,
     /// Decremented each tic while pursuing a target; reset on target change.
-    pub threshold: c_int,
+    pub threshold: i32,
     /// Non-null if this thing is a player; points to the `PlayerT` record.
     pub player: *mut player_s,
     /// Index used to cycle through potential targets during `P_LookForPlayers`.
-    pub lastlook: c_int,
+    pub lastlook: i32,
     /// The WAD spawn point from which this thing was created.
     pub spawnpoint: mapthing_t,
     _pad4: [u8; 2],
@@ -200,9 +200,9 @@ pub struct line_t {
     /// Second vertex of the line (opaque pointer).
     pub v2: *mut c_void,
     /// Delta X between the two vertices (used for slope/normal calculation).
-    pub dx: c_int,
+    pub dx: i32,
     /// Delta Y between the two vertices.
-    pub dy: c_int,
+    pub dy: i32,
     /// Linedef flags (blocking, two-sided, upper/lower unpegged, etc.).
     pub flags: i16,
     /// Linedef special action number.
@@ -212,15 +212,15 @@ pub struct line_t {
     /// Indices into the global `sides` array: `[front, back]`.
     pub sidenum: [i16; 2],
     /// Bounding box `[top, bottom, left, right]` in map units.
-    pub bbox: [c_int; 4],
+    pub bbox: [i32; 4],
     /// Slope type (horizontal, vertical, positive, negative).
-    pub slopetype: c_int,
+    pub slopetype: i32,
     /// Pointer to the front (right) sector.
     pub frontsector: *mut sector_t,
     /// Pointer to the back (left) sector, or null for a one-sided line.
     pub backsector: *mut sector_t,
     /// Used to avoid processing the same line twice in a BSP traversal.
-    pub validcount: c_int,
+    pub validcount: i32,
     /// Active special thinker attached to this line, or null.
     pub specialdata: *mut c_void,
 }
@@ -229,7 +229,7 @@ pub struct line_t {
 ///
 /// `EV_Teleport` uses this to preserve a known quirk: the original Final Doom
 /// binary does not set `thing->z` to `floorz` after teleporting.
-const EXE_FINAL: c_int = 7;
+const EXE_FINAL: i32 = 7;
 
 use crate::doom::{
     doomstat::gameversion,
@@ -274,7 +274,7 @@ type CffiSector = crate::doom::c_ffi::sector_t;
 /// `line` and `thing` must be valid, non-null pointers for the duration of
 /// the call.  The global arrays `sectors` and `thinkercap` must be initialised
 /// (i.e. a level must be loaded).
-pub fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t) -> c_int {
+pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
     unsafe {
         // Don't teleport missiles
         if (*thing).flags & MF_MISSILE != 0 {
@@ -341,7 +341,7 @@ pub fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t) -> c_int 
 
                 // Spawn teleport fog at source
                 let fog = P_SpawnMobj(oldx, oldy, oldz, MT_TFOG);
-                S_StartSound(fog as *mut c_void, Sfx::Telept as c_int);
+                S_StartSound(fog as *mut c_void, Sfx::Telept as i32);
 
                 // Spawn teleport fog at destination
                 let an = ((*m).angle >> ANGLETOFINESHIFT) as usize;
@@ -351,7 +351,7 @@ pub fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t) -> c_int 
                     (*thing).z,
                     MT_TFOG,
                 );
-                S_StartSound(fog as *mut c_void, Sfx::Telept as c_int);
+                S_StartSound(fog as *mut c_void, Sfx::Telept as i32);
 
                 // Don't move for a bit
                 if !(*thing).player.is_null() {

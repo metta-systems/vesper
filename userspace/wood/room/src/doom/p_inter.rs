@@ -7,15 +7,13 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::doom::sounds::Sfx,
-    std::{ffi::c_char, os::raw::c_int},
-};
+use crate::doom::sounds::Sfx;
 
 use crate::{
     doom::{
         d_items::weaponinfo,
         d_player::{consoleplayer, players, PlayerT, CF_GODMODE},
+        deh_str::DEH_String,
         doomstat::{gamemode, gameversion},
         info::{self, *},
         m_fixed::{FixedMul, FRACUNIT},
@@ -33,109 +31,109 @@ use crate::{
 
 /// Bonus-count increment added to `player.bonuscount` on most pickups,
 /// causing a brief gold screen-flash. Matches `BONUSADD` in `p_inter.c`.
-const BONUSADD: c_int = 6;
+const BONUSADD: i32 = 6;
 
 /// Number of distinct ammo types (clip, shell, cell, missile).
 const NUMAMMO: usize = 4;
 
 /// Maximum health for normal health items; over-100 bonuses use
 /// `DEH_DEFAULT_MAX_HEALTH` instead.
-const MAXHEALTH: c_int = 100;
+const MAXHEALTH: i32 = 100;
 
 /// Special Z value meaning "place mobj at floor level of its sector".
 /// Stored as `i32::MIN` to match the C `ONFLOORZ` sentinel.
-const ONFLOORZ: c_int = i32::MIN;
+const ONFLOORZ: i32 = i32::MIN;
 
 /// Initial `target.threshold` assigned when a monster acquires a new target.
-const BASETHRESHOLD: c_int = 100;
+const BASETHRESHOLD: i32 = 100;
 
 // Skill levels
 
 /// Skill 0 — "I'm Too Young to Die" / baby mode. Damage is halved.
-const sk_baby: c_int = 0;
+const sk_baby: i32 = 0;
 
 /// Skill 4 — Nightmare. Ammo doublers apply and monsters are fast.
-const sk_nightmare: c_int = 4;
+const sk_nightmare: i32 = 4;
 
 // Power-up durations (TICRATE = 35 tics/second)
 
 /// Duration of the invulnerability sphere power-up: 30 seconds.
-const INVULNTICS: c_int = 30 * 35;
+const INVULNTICS: i32 = 30 * 35;
 
 /// Duration of the partial-invisibility power-up: 60 seconds.
-const INVISTICS: c_int = 60 * 35;
+const INVISTICS: i32 = 60 * 35;
 
 /// Duration of the light-amplification visor power-up: 120 seconds.
-const INFRATICS: c_int = 120 * 35;
+const INFRATICS: i32 = 120 * 35;
 
 /// Duration of the radiation-shielding suit power-up: 60 seconds.
-const IRONTICS: c_int = 60 * 35;
+const IRONTICS: i32 = 60 * 35;
 
 // Weapon type indices (match `weapontype_t` in `info.h`)
 
 /// Fist — the starting melee weapon.
-const wp_fist: c_int = 0;
+const wp_fist: i32 = 0;
 
 /// Pistol — the starting ranged weapon.
-const wp_pistol: c_int = 1;
+const wp_pistol: i32 = 1;
 
 /// Single-barrelled shotgun.
-const wp_shotgun: c_int = 2;
+const wp_shotgun: i32 = 2;
 
 /// Chaingun.
-const wp_chaingun: c_int = 3;
+const wp_chaingun: i32 = 3;
 
 /// Rocket launcher.
-const wp_missile: c_int = 4;
+const wp_missile: i32 = 4;
 
 /// Plasma gun.
-const wp_plasma: c_int = 5;
+const wp_plasma: i32 = 5;
 
 /// BFG 9000.
-const wp_bfg: c_int = 6;
+const wp_bfg: i32 = 6;
 
 /// Chainsaw.
-const wp_chainsaw: c_int = 7;
+const wp_chainsaw: i32 = 7;
 
 /// Super shotgun (Doom II only).
-const wp_supershotgun: c_int = 8;
+const wp_supershotgun: i32 = 8;
 
 // Ammo type indices (match `ammotype_t`)
 
 /// Sentinel value meaning "this weapon uses no ammo".
-const am_noammo: c_int = 5;
+const am_noammo: i32 = 5;
 
 /// Bullet clip ammo (pistol / chaingun).
-const am_clip: c_int = 0;
+const am_clip: i32 = 0;
 
 /// Shell ammo (shotgun / super shotgun).
-const am_shell: c_int = 1;
+const am_shell: i32 = 1;
 
 /// Energy cell ammo (plasma gun / BFG).
-const am_cell: c_int = 2;
+const am_cell: i32 = 2;
 
 /// Rocket ammo.
-const am_misl: c_int = 3;
+const am_misl: i32 = 3;
 
 // Card/key type indices (match `card_t`)
 
 /// Blue keycard index.
-const it_bluecard: c_int = 0;
+const it_bluecard: i32 = 0;
 
 /// Yellow keycard index.
-const it_yellowcard: c_int = 1;
+const it_yellowcard: i32 = 1;
 
 /// Red keycard index.
-const it_redcard: c_int = 2;
+const it_redcard: i32 = 2;
 
 /// Blue skull key index.
-const it_blueskull: c_int = 3;
+const it_blueskull: i32 = 3;
 
 /// Yellow skull key index.
-const it_yellowskull: c_int = 4;
+const it_yellowskull: i32 = 4;
 
 /// Red skull key index.
-const it_redskull: c_int = 5;
+const it_redskull: i32 = 5;
 
 // Power type indices (match `powertype_t`)
 
@@ -160,34 +158,34 @@ const pw_infrared: usize = 5;
 // Game version / mode constants
 
 /// Chex Quest game-version code. Monsters drop no items in Chex Quest.
-const exe_chex: c_int = 9;
+const exe_chex: i32 = 9;
 
 /// Commercial game-mode code (Doom II / TNT / Plutonia). Required for
 /// MegaSphere pickup.
-const commercial: c_int = 2;
+const commercial: i32 = 2;
 
 // DEH defaults — used when FEATURE_DEHACKED is not compiled in.
 
 /// Maximum health achievable via bonus health spheres (not normal medikits).
-const DEH_DEFAULT_MAX_HEALTH: c_int = 200;
+const DEH_DEFAULT_MAX_HEALTH: i32 = 200;
 
 /// Maximum armor points achievable via armor bonuses.
-const DEH_DEFAULT_MAX_ARMOR: c_int = 200;
+const DEH_DEFAULT_MAX_ARMOR: i32 = 200;
 
 /// Armor class granted by the green security armor shirt.
-const DEH_DEFAULT_GREEN_ARMOR_CLASS: c_int = 1;
+const DEH_DEFAULT_GREEN_ARMOR_CLASS: i32 = 1;
 
 /// Armor class granted by the blue mega-armor.
-const DEH_DEFAULT_BLUE_ARMOR_CLASS: c_int = 2;
+const DEH_DEFAULT_BLUE_ARMOR_CLASS: i32 = 2;
 
 /// Upper health limit imposed by the soulsphere.
-const DEH_DEFAULT_MAX_SOULSPHERE: c_int = 200;
+const DEH_DEFAULT_MAX_SOULSPHERE: i32 = 200;
 
 /// Health points added by the soulsphere.
-const DEH_DEFAULT_SOULSPHERE_HEALTH: c_int = 100;
+const DEH_DEFAULT_SOULSPHERE_HEALTH: i32 = 100;
 
 /// Health set to when the megasphere is picked up.
-const DEH_DEFAULT_MEGASPHERE_HEALTH: c_int = 200;
+const DEH_DEFAULT_MEGASPHERE_HEALTH: i32 = 200;
 
 // ---------------------------------------------------------------------------
 // Runtime DEHacked-tunable globals.
@@ -200,120 +198,113 @@ const DEH_DEFAULT_MEGASPHERE_HEALTH: c_int = 200;
 // ---------------------------------------------------------------------------
 
 /// Runtime maximum health achievable via bonus health spheres.
-pub static mut deh_max_health: c_int = DEH_DEFAULT_MAX_HEALTH;
+pub static mut deh_max_health: i32 = DEH_DEFAULT_MAX_HEALTH;
 
 /// Runtime maximum armor achievable via armor bonuses.
-pub static mut deh_max_armor: c_int = DEH_DEFAULT_MAX_ARMOR;
+pub static mut deh_max_armor: i32 = DEH_DEFAULT_MAX_ARMOR;
 
 /// Runtime armor class granted by the green security armor shirt.
-pub static mut deh_green_armor_class: c_int = DEH_DEFAULT_GREEN_ARMOR_CLASS;
+pub static mut deh_green_armor_class: i32 = DEH_DEFAULT_GREEN_ARMOR_CLASS;
 
 /// Runtime armor class granted by the blue mega-armor.
-pub static mut deh_blue_armor_class: c_int = DEH_DEFAULT_BLUE_ARMOR_CLASS;
+pub static mut deh_blue_armor_class: i32 = DEH_DEFAULT_BLUE_ARMOR_CLASS;
 
 /// Runtime upper health limit imposed by the soulsphere.
-pub static mut deh_max_soulsphere: c_int = DEH_DEFAULT_MAX_SOULSPHERE;
+pub static mut deh_max_soulsphere: i32 = DEH_DEFAULT_MAX_SOULSPHERE;
 
 /// Runtime health points added by the soulsphere.
-pub static mut deh_soulsphere_health: c_int = DEH_DEFAULT_SOULSPHERE_HEALTH;
+pub static mut deh_soulsphere_health: i32 = DEH_DEFAULT_SOULSPHERE_HEALTH;
 
 /// Runtime health set when the megasphere is picked up.
-pub static mut deh_megasphere_health: c_int = DEH_DEFAULT_MEGASPHERE_HEALTH;
+pub static mut deh_megasphere_health: i32 = DEH_DEFAULT_MEGASPHERE_HEALTH;
 
 // ---------------------------------------------------------------------------
 // Pick-up message strings
 // ---------------------------------------------------------------------------
 
 /// "Picked up the armor." — displayed when the green armor is collected.
-const GOTARMOR: *mut c_char = c"Picked up the armor.".as_ptr().cast_mut();
+const GOTARMOR: *mut u8 = c"Picked up the armor.".as_ptr().cast_mut().cast();
 /// "Picked up the MegaArmor!" — displayed when the blue mega-armor is collected.
-const GOTMEGA: *mut c_char = c"Picked up the MegaArmor!".as_ptr().cast_mut();
+const GOTMEGA: *mut u8 = c"Picked up the MegaArmor!".as_ptr().cast_mut().cast();
 /// "Picked up a health bonus." — displayed for the health-bonus helmet.
-const GOTHTHBONUS: *mut c_char = c"Picked up a health bonus.".as_ptr().cast_mut();
+const GOTHTHBONUS: *mut u8 = c"Picked up a health bonus.".as_ptr().cast_mut().cast();
 /// "Picked up an armor bonus." — displayed for the armor-bonus helmet.
-const GOTARMBONUS: *mut c_char = c"Picked up an armor bonus.".as_ptr().cast_mut();
+const GOTARMBONUS: *mut u8 = c"Picked up an armor bonus.".as_ptr().cast_mut().cast();
 /// "Picked up a stimpack." — displayed for the stimpack.
-const GOTSTIM: *mut c_char = c"Picked up a stimpack.".as_ptr().cast_mut();
+const GOTSTIM: *mut u8 = c"Picked up a stimpack.".as_ptr().cast_mut().cast();
 /// Urgent medikit message when health is critically low (below 25).
-const GOTMEDINEED: *mut c_char = c"Picked up a medikit that you REALLY need!"
+const GOTMEDINEED: *mut u8 = c"Picked up a medikit that you REALLY need!"
     .as_ptr()
-    .cast_mut();
+    .cast_mut()
+    .cast();
 /// "Picked up a medikit." — normal medikit pickup message.
-const GOTMEDIKIT: *mut c_char = c"Picked up a medikit.".as_ptr().cast_mut();
+const GOTMEDIKIT: *mut u8 = c"Picked up a medikit.".as_ptr().cast_mut().cast();
 /// "Supercharge!" — displayed when the soulsphere is collected.
-const GOTSUPER: *mut c_char = c"Supercharge!".as_ptr().cast_mut();
+const GOTSUPER: *mut u8 = c"Supercharge!".as_ptr().cast_mut().cast();
 /// "MegaSphere!" — displayed when the megasphere is collected (Doom II only).
-const GOTMSPHERE: *mut c_char = c"MegaSphere!".as_ptr().cast_mut();
+const GOTMSPHERE: *mut u8 = c"MegaSphere!".as_ptr().cast_mut().cast();
 /// "Picked up a blue keycard." — displayed when the blue keycard is collected.
-const GOTBLUECARD: *mut c_char = c"Picked up a blue keycard.".as_ptr().cast_mut();
+const GOTBLUECARD: *mut u8 = c"Picked up a blue keycard.".as_ptr().cast_mut().cast();
 /// "Picked up a yellow keycard." — displayed when the yellow keycard is collected.
-const GOTYELWCARD: *mut c_char = c"Picked up a yellow keycard.".as_ptr().cast_mut();
+const GOTYELWCARD: *mut u8 = c"Picked up a yellow keycard.".as_ptr().cast_mut().cast();
 /// "Picked up a red keycard." — displayed when the red keycard is collected.
-const GOTREDCARD: *mut c_char = c"Picked up a red keycard.".as_ptr().cast_mut();
+const GOTREDCARD: *mut u8 = c"Picked up a red keycard.".as_ptr().cast_mut().cast();
 /// "Picked up a blue skull key." — displayed when the blue skull key is collected.
-const GOTBLUESKUL: *mut c_char = c"Picked up a blue skull key.".as_ptr().cast_mut();
+const GOTBLUESKUL: *mut u8 = c"Picked up a blue skull key.".as_ptr().cast_mut().cast();
 /// "Picked up a yellow skull key." — displayed when the yellow skull key is collected.
-const GOTYELWSKUL: *mut c_char = c"Picked up a yellow skull key.".as_ptr().cast_mut();
+const GOTYELWSKUL: *mut u8 = c"Picked up a yellow skull key.".as_ptr().cast_mut().cast();
 /// "Picked up a red skull key." — displayed when the red skull key is collected.
-const GOTREDSKULL: *mut c_char = c"Picked up a red skull key.".as_ptr().cast_mut();
+const GOTREDSKULL: *mut u8 = c"Picked up a red skull key.".as_ptr().cast_mut().cast();
 /// "Invulnerability!" — displayed when the invulnerability sphere is collected.
-const GOTINVUL: *mut c_char = c"Invulnerability!".as_ptr().cast_mut();
+const GOTINVUL: *mut u8 = c"Invulnerability!".as_ptr().cast_mut().cast();
 /// "Berserk!" — displayed when the berserk pack is collected.
-const GOTBERSERK: *mut c_char = c"Berserk!".as_ptr().cast_mut();
+const GOTBERSERK: *mut u8 = c"Berserk!".as_ptr().cast_mut().cast();
 /// "Partial Invisibility" — displayed when the blur-sphere is collected.
-const GOTINVIS: *mut c_char = c"Partial Invisibility".as_ptr().cast_mut();
+const GOTINVIS: *mut u8 = c"Partial Invisibility".as_ptr().cast_mut().cast();
 /// "Radiation Shielding Suit" — displayed when the rad suit is collected.
-const GOTSUIT: *mut c_char = c"Radiation Shielding Suit".as_ptr().cast_mut();
+const GOTSUIT: *mut u8 = c"Radiation Shielding Suit".as_ptr().cast_mut().cast();
 /// "Computer Area Map" — displayed when the automap power-up is collected.
-const GOTMAP: *mut c_char = c"Computer Area Map".as_ptr().cast_mut();
+const GOTMAP: *mut u8 = c"Computer Area Map".as_ptr().cast_mut().cast();
 /// "Light Amplification Visor" — displayed when the visor is collected.
-const GOTVISOR: *mut c_char = c"Light Amplification Visor".as_ptr().cast_mut();
+const GOTVISOR: *mut u8 = c"Light Amplification Visor".as_ptr().cast_mut().cast();
 /// "Picked up a clip." — bullet clip pickup message.
-const GOTCLIP: *mut c_char = c"Picked up a clip.".as_ptr().cast_mut();
+const GOTCLIP: *mut u8 = c"Picked up a clip.".as_ptr().cast_mut().cast();
 /// "Picked up a box of bullets." — ammo box pickup message.
-const GOTCLIPBOX: *mut c_char = c"Picked up a box of bullets.".as_ptr().cast_mut();
+const GOTCLIPBOX: *mut u8 = c"Picked up a box of bullets.".as_ptr().cast_mut().cast();
 /// "Picked up a rocket." — single rocket pickup message.
-const GOTROCKET: *mut c_char = c"Picked up a rocket.".as_ptr().cast_mut();
+const GOTROCKET: *mut u8 = c"Picked up a rocket.".as_ptr().cast_mut().cast();
 /// "Picked up a box of rockets." — rocket box pickup message.
-const GOTROCKBOX: *mut c_char = c"Picked up a box of rockets.".as_ptr().cast_mut();
+const GOTROCKBOX: *mut u8 = c"Picked up a box of rockets.".as_ptr().cast_mut().cast();
 /// "Picked up an energy cell." — single energy cell pickup message.
-const GOTCELL: *mut c_char = c"Picked up an energy cell.".as_ptr().cast_mut();
+const GOTCELL: *mut u8 = c"Picked up an energy cell.".as_ptr().cast_mut().cast();
 /// "Picked up an energy cell pack." — energy cell pack pickup message.
-const GOTCELLBOX: *mut c_char = c"Picked up an energy cell pack.".as_ptr().cast_mut();
+const GOTCELLBOX: *mut u8 = c"Picked up an energy cell pack.".as_ptr().cast_mut().cast();
 /// "Picked up 4 shotgun shells." — shotgun shell pickup message.
-const GOTSHELLS: *mut c_char = c"Picked up 4 shotgun shells.".as_ptr().cast_mut();
+const GOTSHELLS: *mut u8 = c"Picked up 4 shotgun shells.".as_ptr().cast_mut().cast();
 /// "Picked up a box of shotgun shells." — shell box pickup message.
-const GOTSHELLBOX: *mut c_char = c"Picked up a box of shotgun shells.".as_ptr().cast_mut();
+const GOTSHELLBOX: *mut u8 = c"Picked up a box of shotgun shells."
+    .as_ptr()
+    .cast_mut()
+    .cast();
 /// "Picked up a backpack full of ammo!" — backpack pickup message.
-const GOTBACKPACK: *mut c_char = c"Picked up a backpack full of ammo!".as_ptr().cast_mut();
+const GOTBACKPACK: *mut u8 = c"Picked up a backpack full of ammo!"
+    .as_ptr()
+    .cast_mut()
+    .cast();
 /// "You got the BFG9000!  Oh, yes." — BFG pickup message.
-const GOTBFG9000: *mut c_char = c"You got the BFG9000!  Oh, yes.".as_ptr().cast_mut();
+const GOTBFG9000: *mut u8 = c"You got the BFG9000!  Oh, yes.".as_ptr().cast_mut().cast();
 /// "You got the chaingun!" — chaingun pickup message.
-const GOTCHAINGUN: *mut c_char = c"You got the chaingun!".as_ptr().cast_mut();
+const GOTCHAINGUN: *mut u8 = c"You got the chaingun!".as_ptr().cast_mut().cast();
 /// "A chainsaw!  Find some meat!" — chainsaw pickup message.
-const GOTCHAINSAW: *mut c_char = c"A chainsaw!  Find some meat!".as_ptr().cast_mut();
+const GOTCHAINSAW: *mut u8 = c"A chainsaw!  Find some meat!".as_ptr().cast_mut().cast();
 /// "You got the rocket launcher!" — rocket launcher pickup message.
-const GOTLAUNCHER: *mut c_char = c"You got the rocket launcher!".as_ptr().cast_mut();
+const GOTLAUNCHER: *mut u8 = c"You got the rocket launcher!".as_ptr().cast_mut().cast();
 /// "You got the plasma gun!" — plasma gun pickup message.
-const GOTPLASMA: *mut c_char = c"You got the plasma gun!".as_ptr().cast_mut();
+const GOTPLASMA: *mut u8 = c"You got the plasma gun!".as_ptr().cast_mut().cast();
 /// "You got the shotgun!" — shotgun pickup message.
-const GOTSHOTGUN: *mut c_char = c"You got the shotgun!".as_ptr().cast_mut();
+const GOTSHOTGUN: *mut u8 = c"You got the shotgun!".as_ptr().cast_mut().cast();
 /// "You got the super shotgun!" — super shotgun pickup message (Doom II only).
-const GOTSHOTGUN2: *mut c_char = c"You got the super shotgun!".as_ptr().cast_mut();
-
-// ---------------------------------------------------------------------------
-// DEH_String shim — identity when dehacked is disabled.
-// ---------------------------------------------------------------------------
-
-/// Passes `s` through unchanged.
-///
-/// When DEHacked support is compiled in this function would look up a
-/// patched string replacement. Here it is a no-op identity shim because
-/// `FEATURE_DEHACKED` is not defined.
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
+const GOTSHOTGUN2: *mut u8 = c"You got the super shotgun!".as_ptr().cast_mut().cast();
 
 // ---------------------------------------------------------------------------
 // C globals still provided by unported C modules
@@ -335,13 +326,13 @@ use crate::doom::{
 /// Maximum ammo capacity for each ammo type when the player has no backpack.
 /// Indexed by `am_clip`, `am_shell`, `am_cell`, `am_misl` (0-3).
 /// Matches `maxammo[]` in `p_inter.c`.
-pub static mut maxammo: [c_int; NUMAMMO] = [200, 50, 300, 50];
+pub static mut maxammo: [i32; NUMAMMO] = [200, 50, 300, 50];
 
 /// Base ammo count per pickup for each ammo type.
 /// A weapon pickup grants 2× this amount; a dropped weapon grants 1×;
 /// passing `num=0` to `P_GiveAmmo` grants half a clip.
 /// Matches `clipammo[]` in `p_inter.c`.
-pub static mut clipammo: [c_int; NUMAMMO] = [10, 4, 20, 1];
+pub static mut clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 
 // ---------------------------------------------------------------------------
 // P_GiveAmmo
@@ -363,18 +354,18 @@ pub static mut clipammo: [c_int; NUMAMMO] = [10, 4, 20, 1];
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
 /// Global mutable statics `maxammo`, `clipammo`, `gameskill` must only be
 /// accessed from the game-logic thread.
-pub unsafe fn P_GiveAmmo(player: *mut PlayerT, ammo: c_int, num: c_int) -> c_int {
+pub unsafe fn P_GiveAmmo(player: *mut PlayerT, ammo: i32, num: i32) -> i32 {
     p_give_ammo(&mut *player, ammo, num)
 }
 
 /// Rust-side body of [`P_GiveAmmo`]. Takes `&mut PlayerT` so callers can
 /// pass an existing borrow without re-deriving a second `&mut` from the
 /// same raw pointer (which would violate aliasing rules).
-unsafe fn p_give_ammo(player: &mut PlayerT, ammo: c_int, mut num: c_int) -> c_int {
+unsafe fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     if ammo == am_noammo {
         return 0;
     }
-    if ammo > NUMAMMO as c_int {
+    if ammo > NUMAMMO as i32 {
         i_error!("P_GiveAmmo: bad type");
     }
     let idx = ammo as usize;
@@ -446,14 +437,14 @@ unsafe fn p_give_ammo(player: &mut PlayerT, ammo: c_int, mut num: c_int) -> c_in
 /// Global mutable statics `netgame`, `deathmatch`, `consoleplayer`,
 /// `players`, and `weaponinfo` must only be accessed from the game-logic
 /// thread.
-pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: c_int, dropped: c_int) -> c_int {
+pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     p_give_weapon(&mut *player, weapon, dropped)
 }
 
 /// Rust-side body of [`P_GiveWeapon`]. Takes `&mut PlayerT` so callers can
 /// pass an existing borrow; avoids re-deriving a second `&mut` from the
 /// same raw pointer.
-unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> c_int {
+unsafe fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
     if netgame != 0 && deathmatch != 2 && dropped == 0 {
@@ -473,11 +464,11 @@ unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> 
             player_ptr,
             std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
         ) {
-            S_StartSound(std::ptr::null_mut(), Sfx::Wpnup as c_int);
+            S_StartSound(std::ptr::null_mut(), Sfx::Wpnup as i32);
         }
         return 0;
     }
-    let gaveammo: c_int = if ammo_kind != am_noammo {
+    let gaveammo: i32 = if ammo_kind != am_noammo {
         if dropped != 0 {
             p_give_ammo(player, ammo_kind, 1)
         } else {
@@ -486,7 +477,7 @@ unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> 
     } else {
         0
     };
-    let gaveweapon: c_int;
+    let gaveweapon: i32;
     if player.weaponowned[widx] != 0 {
         gaveweapon = 0;
     } else {
@@ -494,7 +485,7 @@ unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> 
         player.weaponowned[widx] = 1;
         player.pendingweapon = weapon;
     }
-    (gaveweapon != 0 || gaveammo != 0) as c_int
+    (gaveweapon != 0 || gaveammo != 0) as i32
 }
 
 // ---------------------------------------------------------------------------
@@ -511,12 +502,12 @@ unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> 
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`, and
 /// `player.mo` must be a valid, non-null pointer to the player's map object.
-pub unsafe fn P_GiveBody(player: *mut PlayerT, num: c_int) -> c_int {
+pub unsafe fn P_GiveBody(player: *mut PlayerT, num: i32) -> i32 {
     p_give_body(&mut *player, num)
 }
 
 /// Rust-side body of [`P_GiveBody`]. See [`p_give_ammo`] for rationale.
-unsafe fn p_give_body(player: &mut PlayerT, num: c_int) -> c_int {
+unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
     if player.health >= MAXHEALTH {
         return 0;
     }
@@ -543,12 +534,12 @@ unsafe fn p_give_body(player: &mut PlayerT, num: c_int) -> c_int {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
-pub unsafe fn P_GiveArmor(player: *mut PlayerT, armortype: c_int) -> c_int {
+pub unsafe fn P_GiveArmor(player: *mut PlayerT, armortype: i32) -> i32 {
     p_give_armor(&mut *player, armortype)
 }
 
 /// Rust-side body of [`P_GiveArmor`]. See [`p_give_ammo`] for rationale.
-fn p_give_armor(player: &mut PlayerT, armortype: c_int) -> c_int {
+fn p_give_armor(player: &mut PlayerT, armortype: i32) -> i32 {
     let hits = armortype * 100;
     if player.armorpoints >= hits {
         return 0;
@@ -571,12 +562,12 @@ fn p_give_armor(player: &mut PlayerT, armortype: c_int) -> c_int {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
-pub unsafe fn P_GiveCard(player: *mut PlayerT, card: c_int) {
+pub unsafe fn P_GiveCard(player: *mut PlayerT, card: i32) {
     p_give_card(&mut *player, card)
 }
 
 /// Rust-side body of [`P_GiveCard`]. See [`p_give_ammo`] for rationale.
-fn p_give_card(player: &mut PlayerT, card: c_int) {
+fn p_give_card(player: &mut PlayerT, card: i32) {
     let idx = card as usize;
     if player.cards[idx] != 0 {
         return;
@@ -602,12 +593,12 @@ fn p_give_card(player: &mut PlayerT, card: c_int) {
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`, and for
 /// `pw_invisibility`, `player.mo` must also be valid.
-pub unsafe fn P_GivePower(player: *mut PlayerT, power: c_int) -> c_int {
+pub unsafe fn P_GivePower(player: *mut PlayerT, power: i32) -> i32 {
     p_give_power(&mut *player, power)
 }
 
 /// Rust-side body of [`P_GivePower`]. See [`p_give_ammo`] for rationale.
-unsafe fn p_give_power(player: &mut PlayerT, power: c_int) -> c_int {
+unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
     let power = power as usize;
     if power == pw_invulnerability {
         player.powers[power] = INVULNTICS;
@@ -678,7 +669,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         return;
     }
 
-    let mut sound: c_int = Sfx::Itemup as c_int;
+    let mut sound: i32 = Sfx::Itemup as i32;
     let player_ptr = (*toucher).player as *mut PlayerT;
     let sprite = (*special).sprite;
     let special_flags = (*special).flags;
@@ -741,7 +732,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             let mo = &mut *(player.mo as *mut mobj_t);
             mo.health = player.health;
             player.message = DEH_String(GOTSUPER);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_MEGA => {
             if gamemode != commercial {
@@ -757,7 +748,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             // (`SPR_ARM2`), not this one.
             p_give_armor(player, 2);
             player.message = DEH_String(GOTMSPHERE);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         // cards
         SPR_BKEY => {
@@ -833,49 +824,49 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         // power ups
         SPR_PINV => {
-            if p_give_power(player, pw_invulnerability as c_int) == 0 {
+            if p_give_power(player, pw_invulnerability as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTINVUL);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_PSTR => {
-            if p_give_power(player, pw_strength as c_int) == 0 {
+            if p_give_power(player, pw_strength as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTBERSERK);
             if player.readyweapon != wp_fist {
                 player.pendingweapon = wp_fist;
             }
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_PINS => {
-            if p_give_power(player, pw_invisibility as c_int) == 0 {
+            if p_give_power(player, pw_invisibility as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTINVIS);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_SUIT => {
-            if p_give_power(player, pw_ironfeet as c_int) == 0 {
+            if p_give_power(player, pw_ironfeet as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTSUIT);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_PMAP => {
-            if p_give_power(player, pw_allmap as c_int) == 0 {
+            if p_give_power(player, pw_allmap as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTMAP);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         SPR_PVIS => {
-            if p_give_power(player, pw_infrared as c_int) == 0 {
+            if p_give_power(player, pw_infrared as i32) == 0 {
                 return;
             }
             player.message = DEH_String(GOTVISOR);
-            sound = Sfx::Getpow as c_int;
+            sound = Sfx::Getpow as i32;
         }
         // ammo
         SPR_CLIP => {
@@ -939,7 +930,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.backpack = 1;
             }
             for i in 0..NUMAMMO {
-                p_give_ammo(player, i as c_int, 1);
+                p_give_ammo(player, i as i32, 1);
             }
             player.message = DEH_String(GOTBACKPACK);
         }
@@ -949,64 +940,64 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 return;
             }
             player.message = DEH_String(GOTBFG9000);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_MGUN => {
             if p_give_weapon(
                 player,
                 wp_chaingun,
-                ((special_flags & MF_DROPPED) != 0) as c_int,
+                ((special_flags & MF_DROPPED) != 0) as i32,
             ) == 0
             {
                 return;
             }
             player.message = DEH_String(GOTCHAINGUN);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_CSAW => {
             if p_give_weapon(player, wp_chainsaw, 0) == 0 {
                 return;
             }
             player.message = DEH_String(GOTCHAINSAW);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_LAUN => {
             if p_give_weapon(player, wp_missile, 0) == 0 {
                 return;
             }
             player.message = DEH_String(GOTLAUNCHER);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_PLAS => {
             if p_give_weapon(player, wp_plasma, 0) == 0 {
                 return;
             }
             player.message = DEH_String(GOTPLASMA);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_SHOT => {
             if p_give_weapon(
                 player,
                 wp_shotgun,
-                ((special_flags & MF_DROPPED) != 0) as c_int,
+                ((special_flags & MF_DROPPED) != 0) as i32,
             ) == 0
             {
                 return;
             }
             player.message = DEH_String(GOTSHOTGUN);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         SPR_SGN2 => {
             if p_give_weapon(
                 player,
                 wp_supershotgun,
-                ((special_flags & MF_DROPPED) != 0) as c_int,
+                ((special_flags & MF_DROPPED) != 0) as i32,
             ) == 0
             {
                 return;
             }
             player.message = DEH_String(GOTSHOTGUN2);
-            sound = Sfx::Wpnup as c_int;
+            sound = Sfx::Wpnup as i32;
         }
         _ => {
             i_error!("P_SpecialThing: Unknown gettable thing");
@@ -1108,7 +1099,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         return;
     }
 
-    let item: c_int = match (*target).mobjtype {
+    let item: i32 = match (*target).mobjtype {
         MT_WOLFSS | MT_POSSESSED => MT_CLIP,
         MT_SHOTGUY => MT_SHOTGUN,
         MT_CHAINGUY => MT_CHAINGUN,
@@ -1156,7 +1147,7 @@ pub unsafe fn P_DamageMobj(
     target: *mut mobj_t,
     inflictor: *mut mobj_t,
     source: *mut mobj_t,
-    mut damage: c_int,
+    mut damage: i32,
 ) {
     if ((*target).flags & MF_SHOOTABLE) == 0 {
         return;

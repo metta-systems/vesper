@@ -12,7 +12,7 @@
 //!   layout testing only.
 //! - `DonutOverrun` uses `static mut` locals to replicate C `static` locals;
 //!   first-call initialisation is guarded by a `first` flag exactly as in C.
-//! - Button `where` enum (C `bwhere_e`) is stored as a raw `c_int` (`0/1/2`)
+//! - Button `where` enum (C `bwhere_e`) is stored as a raw `i32` (`0/1/2`)
 //!   because the Rust FFI button type uses an integer discriminant.
 //! - `P_PlayerInSpecialSector` navigates via `subsector_t` to reach the
 //!   sector; the C version accesses `player->mo->subsector->sector` directly.
@@ -21,10 +21,7 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::{
-        ffi::{c_char, c_int, c_short, c_void},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 use crate::{
@@ -70,73 +67,73 @@ const MAX_ADJOINING_SECTORS: usize = 20;
 
 // vldoor_e — door direction/behaviour constants used by `EV_DoDoor`.
 /// Door opens and stays open. (`vld_open`)
-const vld_normal: c_int = 0;
+const vld_normal: i32 = 0;
 /// Door closes, waits 30 seconds, then opens again. (`vld_close30ThenOpen`)
-const vld_close30ThenOpen: c_int = 1;
+const vld_close30ThenOpen: i32 = 1;
 /// Door closes and stays closed. (`vld_close`)
-const vld_close: c_int = 2;
+const vld_close: i32 = 2;
 /// Door opens normally (raise then wait then lower). (`vld_open` in C is 3 here mapped as `vld_normal=0`)
-const vld_open: c_int = 3;
+const vld_open: i32 = 3;
 /// Blaze-speed raise-then-lower door. (`vld_blazeRaise`)
-const vld_blazeRaise: c_int = 5;
+const vld_blazeRaise: i32 = 5;
 /// Blaze-speed open door. (`vld_blazeOpen`)
-const vld_blazeOpen: c_int = 6;
+const vld_blazeOpen: i32 = 6;
 /// Blaze-speed close door. (`vld_blazeClose`)
-const vld_blazeClose: c_int = 7;
+const vld_blazeClose: i32 = 7;
 
 // floor_e — floor movement type constants used by `EV_DoFloor`.
 /// Lower floor to next lowest neighbouring floor. (`lowerFloor`)
-const lowerFloor: c_int = 0;
+const lowerFloor: i32 = 0;
 /// Lower floor to the absolute lowest neighbouring floor. (`lowerFloorToLowest`)
-const lowerFloorToLowest: c_int = 1;
+const lowerFloorToLowest: i32 = 1;
 /// Lower floor at turbo speed. (`turboLower`)
-const turboLower: c_int = 2;
+const turboLower: i32 = 2;
 /// Raise floor to next highest neighbouring floor. (`raiseFloor`)
-const raiseFloor: c_int = 3;
+const raiseFloor: i32 = 3;
 /// Raise floor to nearest neighbouring floor. (`raiseFloorToNearest`)
-const raiseFloorToNearest: c_int = 4;
+const raiseFloorToNearest: i32 = 4;
 /// Raise floor to the height of the shortest lower texture on a bounding wall. (`raiseToTexture`)
-const raiseToTexture: c_int = 5;
+const raiseToTexture: i32 = 5;
 /// Lower floor and change its texture/special to match the destination sector. (`lowerAndChange`)
-const lowerAndChange: c_int = 6;
+const lowerAndChange: i32 = 6;
 /// Raise floor by exactly 24 map units (fixed-point 16.16). (`raiseFloor24`)
-const raiseFloor24: c_int = 7;
+const raiseFloor24: i32 = 7;
 /// Raise floor by 24 map units and change texture/special. (`raiseFloor24AndChange`)
-const raiseFloor24AndChange: c_int = 8;
+const raiseFloor24AndChange: i32 = 8;
 /// Raise floor while crushing anything caught between floor and ceiling. (`raiseFloorCrush`)
-const raiseFloorCrush: c_int = 9;
+const raiseFloorCrush: i32 = 9;
 /// Raise floor at turbo speed. (`raiseFloorTurbo`)
-const raiseFloorTurbo: c_int = 10;
+const raiseFloorTurbo: i32 = 10;
 /// Raise floor to the height of the outer (ring) sector in a donut effect. (`donutRaise`)
-const donutRaise: c_int = 11;
+const donutRaise: i32 = 11;
 
 // ceiling_e — ceiling movement type constants used by `EV_DoCeiling`.
 /// Raise ceiling to the highest neighbouring ceiling. (`raiseToHighest`)
-const raiseToHighest: c_int = 1;
+const raiseToHighest: i32 = 1;
 /// Lower ceiling while crushing. (`lowerAndCrush`)
-const lowerAndCrush: c_int = 2;
+const lowerAndCrush: i32 = 2;
 /// Crush ceiling down then raise it repeatedly. (`crushAndRaise`)
-const crushAndRaise: c_int = 3;
+const crushAndRaise: i32 = 3;
 /// Fast crush-and-raise ceiling. (`fastCrushAndRaise`)
-const fastCrushAndRaise: c_int = 4;
+const fastCrushAndRaise: i32 = 4;
 /// Silent crush-and-raise ceiling (no grinding sound). (`silentCrushAndRaise`)
-const silentCrushAndRaise: c_int = 5;
+const silentCrushAndRaise: i32 = 5;
 
 // plattype_e — platform movement type constants used by `EV_DoPlat`.
 /// Platform goes down, waits, then rises back up. (`downWaitUpStay`)
-const downWaitUpStay: c_int = 1;
+const downWaitUpStay: i32 = 1;
 /// Platform raises to the nearest floor height and changes texture. (`raiseToNearestAndChange`)
-const raiseToNearestAndChange: c_int = 3;
+const raiseToNearestAndChange: i32 = 3;
 /// Blaze-speed down-wait-up-stay platform. (`blazeDWUS`)
-const blazeDWUS: c_int = 4;
+const blazeDWUS: i32 = 4;
 /// Platform oscillates perpetually up and down. (`perpetualRaise`)
-const perpetualRaise: c_int = 0;
+const perpetualRaise: i32 = 0;
 
 // stair_e — stair-building step size constants used by `EV_BuildStairs`.
 /// Build stairs in 8-unit steps. (`build8`)
-const build8: c_int = 0;
+const build8: i32 = 0;
 /// Build stairs in 16-unit turbo steps. (`turbo16`)
-const turbo16: c_int = 1;
+const turbo16: i32 = 1;
 
 // powers — index into `player_t::powers[]`.
 /// Index of the Radiation Suit power in the powers array; grants immunity to slime damage.
@@ -156,15 +153,15 @@ const pw_ironfeet: usize = 3;
 #[derive(Clone, Copy)]
 pub struct anim_t {
     /// Non-zero if this animation cycle is for wall textures; zero for flats.
-    pub istexture: c_int,
+    pub istexture: i32,
     /// WAD lump number of the last frame in the sequence.
-    pub picnum: c_int,
+    pub picnum: i32,
     /// WAD lump number of the first frame in the sequence.
-    pub basepic: c_int,
+    pub basepic: i32,
     /// Total number of frames in the cycle (`picnum - basepic + 1`).
-    pub numpics: c_int,
+    pub numpics: i32,
     /// Tic-count duration of each frame; the sequence advances every `speed` tics.
-    pub speed: c_int,
+    pub speed: i32,
 }
 
 /// Static definition of one animation cycle as loaded from the ANIMDEFS table.
@@ -178,13 +175,13 @@ pub struct anim_t {
 #[derive(Clone, Copy)]
 pub struct animdef_t {
     /// Non-zero for wall textures, zero for flats; -1 marks the sentinel entry.
-    pub istexture: c_int,
+    pub istexture: i32,
     /// Name of the last frame lump (NUL-padded to 9 bytes).
-    pub endname: [c_char; 9],
+    pub endname: [u8; 9],
     /// Name of the first frame lump (NUL-padded to 9 bytes).
-    pub startname: [c_char; 9],
+    pub startname: [u8; 9],
     /// Frame duration in tics.
-    pub speed: c_int,
+    pub speed: i32,
 }
 
 #[cfg(target_pointer_width = "64")]
@@ -201,143 +198,32 @@ mod layout_checks {
 /// Compile-time animation definition table, equivalent to C `animdefs[]`.
 ///
 /// Each tuple is `(istexture, endname, startname, speed)`.  A sentinel entry
-/// with `istexture == -1` terminates the list.  Pointers are created from
-/// C string literals and are valid for the program lifetime. Sourced from
-/// p_spec.c `animdefs[]`.
-const ANIMDEFS: &[(c_int, *mut c_char, *mut c_char, c_int)] = &[
-    (
-        0,
-        c"NUKAGE3".as_ptr().cast_mut(),
-        c"NUKAGE1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"FWATER4".as_ptr().cast_mut(),
-        c"FWATER1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"SWATER4".as_ptr().cast_mut(),
-        c"SWATER1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"LAVA4".as_ptr().cast_mut(),
-        c"LAVA1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"BLOOD3".as_ptr().cast_mut(),
-        c"BLOOD1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"RROCK08".as_ptr().cast_mut(),
-        c"RROCK05".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"SLIME04".as_ptr().cast_mut(),
-        c"SLIME01".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"SLIME08".as_ptr().cast_mut(),
-        c"SLIME05".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        0,
-        c"SLIME12".as_ptr().cast_mut(),
-        c"SLIME09".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"BLODGR4".as_ptr().cast_mut(),
-        c"BLODGR1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"SLADRIP3".as_ptr().cast_mut(),
-        c"SLADRIP1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"BLODRIP4".as_ptr().cast_mut(),
-        c"BLODRIP1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"FIREWALL".as_ptr().cast_mut(),
-        c"FIREWALA".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"GSTFONT3".as_ptr().cast_mut(),
-        c"GSTFONT1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"FIRELAVA".as_ptr().cast_mut(),
-        c"FIRELAV3".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"FIREMAG3".as_ptr().cast_mut(),
-        c"FIREMAG1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"FIREBLU2".as_ptr().cast_mut(),
-        c"FIREBLU1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"ROCKRED3".as_ptr().cast_mut(),
-        c"ROCKRED1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"BFALL4".as_ptr().cast_mut(),
-        c"BFALL1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"SFALL4".as_ptr().cast_mut(),
-        c"SFALL1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"WFALL4".as_ptr().cast_mut(),
-        c"WFALL1".as_ptr().cast_mut(),
-        8,
-    ),
-    (
-        1,
-        c"DBRAIN4".as_ptr().cast_mut(),
-        c"DBRAIN1".as_ptr().cast_mut(),
-        8,
-    ),
-    (-1, c"".as_ptr().cast_mut(), c"".as_ptr().cast_mut(), 0),
+/// with `istexture == -1` terminates the list. Sourced from p_spec.c
+/// `animdefs[]`.
+const ANIMDEFS: &[(i32, &[u8], &[u8], i32)] = &[
+    (0, b"NUKAGE3", b"NUKAGE1", 8),
+    (0, b"FWATER4", b"FWATER1", 8),
+    (0, b"SWATER4", b"SWATER1", 8),
+    (0, b"LAVA4", b"LAVA1", 8),
+    (0, b"BLOOD3", b"BLOOD1", 8),
+    (0, b"RROCK08", b"RROCK05", 8),
+    (0, b"SLIME04", b"SLIME01", 8),
+    (0, b"SLIME08", b"SLIME05", 8),
+    (0, b"SLIME12", b"SLIME09", 8),
+    (1, b"BLODGR4", b"BLODGR1", 8),
+    (1, b"SLADRIP3", b"SLADRIP1", 8),
+    (1, b"BLODRIP4", b"BLODRIP1", 8),
+    (1, b"FIREWALL", b"FIREWALA", 8),
+    (1, b"GSTFONT3", b"GSTFONT1", 8),
+    (1, b"FIRELAVA", b"FIRELAV3", 8),
+    (1, b"FIREMAG3", b"FIREMAG1", 8),
+    (1, b"FIREBLU2", b"FIREBLU1", 8),
+    (1, b"ROCKRED3", b"ROCKRED1", 8),
+    (1, b"BFALL4", b"BFALL1", 8),
+    (1, b"SFALL4", b"SFALL1", 8),
+    (1, b"WFALL4", b"WFALL1", 8),
+    (1, b"DBRAIN4", b"DBRAIN1", 8),
+    (-1, b"", b"", 0),
 ];
 
 // ---------------------------------------------------------------------------
@@ -367,7 +253,7 @@ pub static mut lastanim: *mut anim_t = ptr::null_mut();
 ///
 /// Counts lines with special 48 (first-column texture scroll).  Reset to zero
 /// by `P_SpawnSpecials` at map start; read by `P_UpdateSpecials`.
-pub static mut numlinespecials: c_short = 0;
+pub static mut numlinespecials: i16 = 0;
 
 /// List of pointers to linedefs that carry the scrolling-wall special (48).
 ///
@@ -379,22 +265,23 @@ pub static mut linespeciallist: [*mut line_t; MAXLINEANIMS] = [ptr::null_mut(); 
 /// Non-zero when a deathmatch level timer is active.
 ///
 /// Set to 1 by `P_SpawnSpecials` when `timelimit > 0` and `deathmatch != 0`.
-/// Checked each tic by `P_UpdateSpecials`.  Stored as `c_int` boolean to
+/// Checked each tic by `P_UpdateSpecials`.  Stored as `i32` boolean to
 /// match the C declaration `boolean levelTimer`.
-pub static mut levelTimer: c_int = 0; // boolean
+pub static mut levelTimer: i32 = 0; // boolean
 
 /// Remaining tics before the deathmatch time limit expires.
 ///
 /// Initialised by `P_SpawnSpecials` to `timelimit * 60 * TICRATE`.
 /// Decremented each tic by `P_UpdateSpecials`; reaching zero calls
 /// `G_ExitLevel`.
-pub static mut levelTimeCount: c_int = 0;
+pub static mut levelTimeCount: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Externs from other modules / remaining C code
 // ---------------------------------------------------------------------------
 
 use crate::doom::{
+    deh_str::DEH_String,
     g_game::{deathmatch, timelimit, totalsecret, G_ExitLevel, G_SecretExitLevel},
     p_ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
     p_doors::{EV_DoDoor, P_SpawnDoorCloseIn30, P_SpawnDoorRaiseIn5Mins},
@@ -419,28 +306,6 @@ type LightsSector = crate::doom::p_lights::sector_t;
 type TeleptLine = crate::doom::p_telept::line_t;
 /// `mobj_t` as seen by `p_telept` - `#[repr(C)]` layout identical to `c_ffi::mobj_t`.
 type TeleptMobj = crate::doom::p_telept::mobj_t;
-
-// ---------------------------------------------------------------------------
-// DEH_String shim — identity when dehacked is disabled.
-// ---------------------------------------------------------------------------
-
-/// Returns `s` unchanged; a no-op shim for the Dehacked string-replacement
-/// hook that exists in the full Chocolate Doom build.
-///
-/// In the C source, `DEH_String` may redirect a hard-coded string to a
-/// Dehacked patch string.  Because this port does not support Dehacked, the
-/// shim simply returns its argument so that all call sites compile without
-/// conditional compilation guards.
-///
-/// # Safety
-///
-/// `s` must be a valid, non-null pointer to a NUL-terminated C string for the
-/// duration of the call (the pointer is returned unchanged and must remain valid
-/// for however long the caller uses it).
-#[inline(always)]
-unsafe fn DEH_String(s: *mut c_char) -> *mut c_char {
-    s
-}
 
 // ---------------------------------------------------------------------------
 // P_InitPicAnims
@@ -488,8 +353,8 @@ pub unsafe fn P_InitPicAnims() {
         if (*lastanim).numpics < 2 {
             i_error!(
                 "P_InitPicAnims: bad cycle from {} to {}",
-                std::ffi::CStr::from_ptr(startname).to_string_lossy(),
-                std::ffi::CStr::from_ptr(endname).to_string_lossy()
+                String::from_utf8_lossy(startname),
+                String::from_utf8_lossy(endname)
             );
         }
 
@@ -512,7 +377,7 @@ pub unsafe fn P_InitPicAnims() {
 /// Returns a pointer into the global `sides` array.  The pointer is valid as
 /// long as the map data is loaded.  Called from p_spec.c and the floor/ceiling
 /// modules.
-pub unsafe fn getSide(currentSector: c_int, line: c_int, side: c_int) -> *mut side_t {
+pub unsafe fn getSide(currentSector: i32, line: i32, side: i32) -> *mut side_t {
     let line_ptr = *(*sectors.offset(currentSector as isize))
         .lines
         .offset(line as isize) as *mut line_t;
@@ -529,7 +394,7 @@ pub unsafe fn getSide(currentSector: c_int, line: c_int, side: c_int) -> *mut si
 /// Returns a pointer to the sector.  Callers must guard against the back sector
 /// being null (one-sided line) before dereferencing the result.  Called from
 /// p_spec.c and various map-action modules.
-pub unsafe fn getSector(currentSector: c_int, line: c_int, side: c_int) -> *mut sector_t {
+pub unsafe fn getSector(currentSector: i32, line: i32, side: i32) -> *mut sector_t {
     let line_ptr = *(*sectors.offset(currentSector as isize))
         .lines
         .offset(line as isize) as *mut line_t;
@@ -545,11 +410,11 @@ pub unsafe fn getSector(currentSector: c_int, line: c_int, side: c_int) -> *mut 
 /// Returns the `ML_TWOSIDED` flag value (non-zero) if the line has a back
 /// sector, or zero for one-sided lines.  Called from p_spec.c and the
 /// floor/ceiling/platform modules.
-pub unsafe fn twoSided(sector: c_int, line: c_int) -> c_int {
+pub unsafe fn twoSided(sector: i32, line: i32) -> i32 {
     let line_ptr = *(*sectors.offset(sector as isize))
         .lines
         .offset(line as isize) as *mut line_t;
-    ((*line_ptr).flags as c_int) & (LinedefFlag::TWOSIDED as c_int)
+    ((*line_ptr).flags as i32) & (LinedefFlag::TWOSIDED as i32)
 }
 
 /// Returns the sector on the opposite side of `line` from `sec`, or null.
@@ -558,7 +423,7 @@ pub unsafe fn twoSided(sector: c_int, line: c_int) -> c_int {
 /// returns whichever of the front/back sectors is not `sec`.  Called
 /// extensively by the `P_Find*Surrounding` family of functions.
 pub unsafe fn getNextSector(line: *mut line_t, sec: *mut sector_t) -> *mut sector_t {
-    if ((*line).flags as c_int) & (LinedefFlag::TWOSIDED as c_int) == 0 {
+    if ((*line).flags as i32) & (LinedefFlag::TWOSIDED as i32) == 0 {
         return ptr::null_mut();
     }
     if (*line).frontsector == sec as *mut c_void {
@@ -573,9 +438,9 @@ pub unsafe fn getNextSector(line: *mut line_t, sec: *mut sector_t) -> *mut secto
 /// `getNextSector`, and returns the minimum floor height seen.  If no
 /// two-sided lines are found the current sector's own floor height is returned.
 ///
-/// Heights are in fixed-point 16.16 (`fixed_t` / `c_int`).  Called from
+/// Heights are in fixed-point 16.16 (`fixed_t` / `i32`).  Called from
 /// p_floor and p_spec.
-pub unsafe fn P_FindLowestFloorSurrounding(sec: *mut sector_t) -> c_int {
+pub unsafe fn P_FindLowestFloorSurrounding(sec: *mut sector_t) -> i32 {
     let mut floor = (*sec).floorheight;
     for i in 0..(*sec).linecount {
         let check = *(*sec).lines.offset(i as isize) as *mut line_t;
@@ -598,7 +463,7 @@ pub unsafe fn P_FindLowestFloorSurrounding(sec: *mut sector_t) -> c_int {
 /// infinity for practical map heights.
 ///
 /// Heights are fixed-point 16.16.  Called from p_floor.c and p_spec.c.
-pub unsafe fn P_FindHighestFloorSurrounding(sec: *mut sector_t) -> c_int {
+pub unsafe fn P_FindHighestFloorSurrounding(sec: *mut sector_t) -> i32 {
     let mut floor = -500 * FRACUNIT;
     for i in 0..(*sec).linecount {
         let check = *(*sec).lines.offset(i as isize) as *mut line_t;
@@ -630,9 +495,9 @@ pub unsafe fn P_FindHighestFloorSurrounding(sec: *mut sector_t) -> c_int {
 ///
 /// Returns `currentheight` if no higher neighbour exists.  Heights are
 /// fixed-point 16.16.  Called from p_floor.c.
-pub unsafe fn P_FindNextHighestFloor(sec: *mut sector_t, currentheight: c_int) -> c_int {
+pub unsafe fn P_FindNextHighestFloor(sec: *mut sector_t, currentheight: i32) -> i32 {
     let mut height = currentheight;
-    let mut heightlist: [c_int; MAX_ADJOINING_SECTORS + 2] = [0; MAX_ADJOINING_SECTORS + 2];
+    let mut heightlist: [i32; MAX_ADJOINING_SECTORS + 2] = [0; MAX_ADJOINING_SECTORS + 2];
     let mut h = 0;
 
     for i in 0..(*sec).linecount {
@@ -667,13 +532,13 @@ pub unsafe fn P_FindNextHighestFloor(sec: *mut sector_t, currentheight: c_int) -
 
 /// Returns the lowest ceiling height among all sectors neighbouring `sec`.
 ///
-/// Starts from `c_int::MAX` (matching C `INT_MAX`) and walks every bounding
+/// Starts from `i32::MAX` (matching C `INT_MAX`) and walks every bounding
 /// line, returning the minimum neighbouring ceiling height.  If no two-sided
 /// neighbours exist returns `INT_MAX`.
 ///
 /// Heights are fixed-point 16.16.  Called from p_ceilng.c and p_spec.c.
-pub unsafe fn P_FindLowestCeilingSurrounding(sec: *mut sector_t) -> c_int {
-    let mut height = c_int::MAX;
+pub unsafe fn P_FindLowestCeilingSurrounding(sec: *mut sector_t) -> i32 {
+    let mut height = i32::MAX;
     for i in 0..(*sec).linecount {
         let check = *(*sec).lines.offset(i as isize) as *mut line_t;
         let other = getNextSector(check, sec);
@@ -693,7 +558,7 @@ pub unsafe fn P_FindLowestCeilingSurrounding(sec: *mut sector_t) -> c_int {
 /// neighbouring ceiling height.  If no two-sided neighbours exist returns 0.
 ///
 /// Heights are fixed-point 16.16.  Called from p_ceilng.c and p_spec.c.
-pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> c_int {
+pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> i32 {
     let mut height = 0;
     for i in 0..(*sec).linecount {
         let check = *(*sec).lines.offset(i as isize) as *mut line_t;
@@ -716,7 +581,7 @@ pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> c_int {
 ///
 /// Used as the iterator in all tag-based action loops (donut, door, floor,
 /// ceiling, etc.).  Called from many action functions including `EV_DoDonut`.
-pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: c_int) -> c_int {
+pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: i32) -> i32 {
     for i in (start + 1)..numsectors {
         if (*sectors.offset(i as isize)).tag == (*line).tag {
             return i;
@@ -732,9 +597,9 @@ pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: c_int) -> c_int 
 /// two-sided neighbour, and returns the smallest value found.  If all
 /// neighbours have light >= `max`, returns `max`.
 ///
-/// Light levels are raw `i16` values cast to `c_int`; the valid Doom range
+/// Light levels are raw `i16` values cast to `i32`; the valid Doom range
 /// is 0-255.  Called from p_lights.c to calculate strobe and flash targets.
-pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: c_int) -> c_int {
+pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: i32) -> i32 {
     let mut min = max;
     for i in 0..(*sector).linecount {
         let line = *(*sector).lines.offset(i as isize) as *mut line_t;
@@ -742,8 +607,8 @@ pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: c_int) -> c_
         if check.is_null() {
             continue;
         }
-        if ((*check).lightlevel as c_int) < min {
-            min = (*check).lightlevel as c_int;
+        if ((*check).lightlevel as i32) < min {
+            min = (*check).lightlevel as i32;
         }
     }
     min
@@ -776,7 +641,7 @@ pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: c_int) -> c_
 /// - `thing`: the map object that crossed the line.
 ///
 /// Called from `p_map.c` via C FFI.
-pub unsafe fn P_CrossSpecialLine(linenum: c_int, side: c_int, thing: *mut mobj_t) {
+pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
     let line = lines.offset(linenum as isize);
 
     if (*thing).player.is_null() {
@@ -788,7 +653,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: c_int, side: c_int, thing: *mut mobj_t
         }
 
         let mut ok = 0;
-        match (*line).special as c_int {
+        match (*line).special as i32 {
             39 | 97 | 125 | 126 | 4 | 10 | 88 => ok = 1,
             _ => {}
         }
@@ -797,7 +662,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: c_int, side: c_int, thing: *mut mobj_t
         }
     }
 
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         2 => {
             EV_DoDoor(line as *mut LightsLine, vld_open);
             (*line).special = 0;
@@ -1081,7 +946,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: c_int, side: c_int, thing: *mut mobj_t
 pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line: *mut line_t) {
     if (*thing).player.is_null() {
         let mut ok = 0;
-        if (*line).special as c_int == 46 {
+        if (*line).special as i32 == 46 {
             ok = 1
         }
         if ok == 0 {
@@ -1089,7 +954,7 @@ pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line: *mut line_t) {
         }
     }
 
-    match (*line).special as c_int {
+    match (*line).special as i32 {
         24 => {
             EV_DoFloor(line as *mut LightsLine, raiseFloor);
             P_ChangeSwitchTexture(line as *mut LightsLine, 0);
@@ -1140,7 +1005,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
         return;
     }
 
-    match (*sector).special as c_int {
+    match (*sector).special as i32 {
         5 => {
             if (*player).powers[pw_ironfeet] == 0 && leveltime & 0x1f == 0 {
                 P_DamageMobj(
@@ -1249,7 +1114,7 @@ pub unsafe fn P_UpdateSpecials() {
 
     for i in 0..numlinespecials as usize {
         let line = linespeciallist[i];
-        if (*line).special as c_int == 48 {
+        if (*line).special as i32 == 48 {
             let sidenum = (*line).sidenum[0] as isize;
             (*sides.offset(sidenum)).textureoffset += FRACUNIT;
         }
@@ -1274,7 +1139,7 @@ pub unsafe fn P_UpdateSpecials() {
                 }
                 S_StartSound(
                     &mut buttonlist[i].soundorg as *mut _ as *mut c_void,
-                    Sfx::Swtchn as c_int,
+                    Sfx::Swtchn as i32,
                 );
                 buttonlist[i] = std::mem::zeroed();
             }
@@ -1311,21 +1176,21 @@ pub unsafe fn P_UpdateSpecials() {
 /// `s3_floorheight` and `s3_floorpic` must be valid, non-null, writable
 /// pointers. They are written unconditionally on every call.
 unsafe fn DonutOverrun(
-    s3_floorheight: *mut c_int,
+    s3_floorheight: *mut i32,
     s3_floorpic: *mut i16,
     _line: *mut line_t,
     _pillar_sector: *mut sector_t,
 ) {
-    static mut first: c_int = 1;
-    static mut tmp_s3_floorheight: c_int = 0;
-    static mut tmp_s3_floorpic: c_int = 0;
+    static mut first: i32 = 1;
+    static mut tmp_s3_floorheight: i32 = 0;
+    static mut tmp_s3_floorpic: i32 = 0;
 
     if first != 0 {
         first = 0;
         tmp_s3_floorheight = 0;
         tmp_s3_floorpic = 0x16;
 
-        let p = M_CheckParmWithArgs(c"-donut".as_ptr(), 2);
+        let p = M_CheckParmWithArgs(c"-donut".as_ptr().cast(), 2);
         if p > 0 {
             M_StrToInt(
                 *myargv.offset((p + 1) as isize),
@@ -1335,7 +1200,7 @@ unsafe fn DonutOverrun(
             if tmp_s3_floorpic >= numflats {
                 eprintln!(
                     "DonutOverrun: The second parameter for \"-donut\" switch should be greater than 0 and less than number of flats ({}). Using default value ({}) instead. ",
-                    numflats as c_int, 0x16
+                    { numflats }, 0x16
                 );
                 tmp_s3_floorpic = 0x16;
             }
@@ -1375,7 +1240,7 @@ unsafe fn DonutOverrun(
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
 /// Called from p_spec.c via C when a donut-tagged line is activated.
-pub unsafe fn EV_DoDonut(line: *mut line_t) -> c_int {
+pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
     let mut secnum = -1;
     let mut rtn = 0;
 
@@ -1417,7 +1282,7 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> c_int {
 
             // Spawn rising slime
             let floor = Z_Malloc(
-                std::mem::size_of::<floormove_t>() as c_int,
+                std::mem::size_of::<floormove_t>() as i32,
                 PU_LEVSPEC,
                 ptr::null_mut(),
             ) as *mut floormove_t;
@@ -1438,7 +1303,7 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> c_int {
 
             // Spawn lowering donut-hole
             let floor = Z_Malloc(
-                std::mem::size_of::<floormove_t>() as c_int,
+                std::mem::size_of::<floormove_t>() as i32,
                 PU_LEVSPEC,
                 ptr::null_mut(),
             ) as *mut floormove_t;
@@ -1506,7 +1371,7 @@ pub unsafe fn P_SpawnSpecials() {
         if (*sector).special == 0 {
             continue;
         }
-        match (*sector).special as c_int {
+        match (*sector).special as i32 {
             1 => P_SpawnLightFlash(sector as *mut LightsSector),
             2 => P_SpawnStrobeFlash(sector as *mut LightsSector, crate::doom::c_ffi::FASTDARK, 0),
             3 => P_SpawnStrobeFlash(sector as *mut LightsSector, crate::doom::c_ffi::SLOWDARK, 0),
@@ -1529,8 +1394,8 @@ pub unsafe fn P_SpawnSpecials() {
 
     numlinespecials = 0;
     for i in 0..numlines {
-        if (*lines.offset(i as isize)).special as c_int == 48 {
-            if numlinespecials as c_int >= MAXLINEANIMS as c_int {
+        if (*lines.offset(i as isize)).special as i32 == 48 {
+            if numlinespecials as i32 >= MAXLINEANIMS as i32 {
                 i_error!("Too many scrolling wall linedefs! (Vanilla limit is 64)");
             }
             linespeciallist[numlinespecials as usize] = lines.offset(i as isize);
@@ -1598,7 +1463,7 @@ mod tests {
         assert_eq!(MAXLINEANIMS, 64);
         assert_eq!(MAX_ADJOINING_SECTORS, 20);
         assert_eq!(PU_LEVSPEC, 6);
-        assert_eq!(Sfx::Swtchn as c_int, 23);
+        assert_eq!(Sfx::Swtchn as i32, 23);
         assert_eq!(CF_GODMODE, 2);
         assert_eq!(pw_ironfeet, 3);
     }

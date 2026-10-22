@@ -82,18 +82,3 @@ fn savegame_error_default_false() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// `savegamelength` and `savegame_error` are C `int` (4 bytes).
-#[test]
-fn saveg_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::savegamelength;
-        let _: c_int = c_ffi::savegame_error;
-    }
-}

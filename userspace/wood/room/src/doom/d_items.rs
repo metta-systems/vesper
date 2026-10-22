@@ -7,23 +7,21 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_int;
-
 // ---------------------------------------------------------------------------
 // Ammo type enum values (from doomdef.h)
 // ---------------------------------------------------------------------------
 
 /// Clip (bullet) ammo type.
-const am_clip: c_int = 0;
+const am_clip: i32 = 0;
 /// Shell ammo type.
-const am_shell: c_int = 1;
+const am_shell: i32 = 1;
 /// Cell (energy) ammo type.
-const am_cell: c_int = 2;
+const am_cell: i32 = 2;
 /// Missile ammo type.
-const am_misl: c_int = 3;
+const am_misl: i32 = 3;
 // NUMAMMO = 4 (not used directly)
 /// Sentinel value: weapon uses no ammunition (fist, chainsaw).
-const am_noammo: c_int = 5;
+const am_noammo: i32 = 5;
 
 // ---------------------------------------------------------------------------
 // State index constants (from info.h statenum_t enum)
@@ -47,17 +45,17 @@ use crate::doom::statenum::*;
 #[repr(C)]
 pub struct weaponinfo_t {
     /// Ammo type consumed by this weapon (`am_*`).
-    pub ammo: c_int,
+    pub ammo: i32,
     /// State index for the raise (weapon-up) animation.
-    pub upstate: c_int,
+    pub upstate: i32,
     /// State index for the lower (weapon-down) animation.
-    pub downstate: c_int,
+    pub downstate: i32,
     /// State index for the idle (weapon-ready) animation.
-    pub readystate: c_int,
+    pub readystate: i32,
     /// State index for the attack/fire animation.
-    pub atkstate: c_int,
+    pub atkstate: i32,
     /// State index for the muzzle-flash animation (`S_NULL` if none).
-    pub flashstate: c_int,
+    pub flashstate: i32,
 }
 
 /// Number of weapons in the game (fist through super shotgun).
@@ -175,7 +173,7 @@ mod tests {
         assert_eq!(weaponinfo[8].flashstate, S_DSGUNFLASH1);
     }
 
-    /// Verify `weaponinfo_t` is 24 bytes (six `c_int` fields, 4 bytes each).
+    /// Verify `weaponinfo_t` is 24 bytes (six `i32` fields, 4 bytes each).
     #[test]
     fn test_weaponinfo_t_size() {
         assert_eq!(size_of::<weaponinfo_t>(), 24);

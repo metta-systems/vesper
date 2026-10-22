@@ -221,26 +221,3 @@ fn maskedtexturecol_ptr_initially_null() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// All fixed-point and integer globals in r_segs.c are `int` (4 bytes).
-#[test]
-fn rw_globals_are_c_int_width() {
-    use std::ffi::c_int;
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = c_ffi::rw_x;
-        let _: c_int = c_ffi::rw_stopx;
-        let _: c_int = c_ffi::rw_offset;
-        let _: c_int = c_ffi::rw_distance;
-        let _: c_int = c_ffi::rw_scale;
-        let _: c_int = c_ffi::rw_scalestep;
-        let _: c_int = c_ffi::worldtop;
-        let _: c_int = c_ffi::worldbottom;
-        let _: c_int = c_ffi::worldhigh;
-        let _: c_int = c_ffi::worldlow;
-    }
-}

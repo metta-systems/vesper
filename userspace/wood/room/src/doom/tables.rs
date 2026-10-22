@@ -68,8 +68,6 @@
 //! The tables keep the names of the original `tables.c`. The constants in
 //! this module mirror `tables.h` 1:1.
 
-use std::ffi::{c_int, c_uint};
-
 /// Number of fine-angle steps in a full circle (Doom's `FINEANGLES` macro).
 ///
 /// Used to size [`finesine`] and [`finetangent`] and as the divisor for
@@ -84,7 +82,7 @@ pub const FINEANGLES: usize = 8192;
 /// [`SlopeDiv`]); values above `SLOPERANGE` are clamped to `SLOPERANGE`. The
 /// `+1` slot in [`tantoangle`] handles the clamped (i.e. `x == y`) case
 /// without an extra branch.
-pub const SLOPERANGE: c_int = 2048;
+pub const SLOPERANGE: i32 = 2048;
 
 /// Right-shift to convert a 32-bit BAM angle into a fine-angle index
 /// (Doom's `ANGLETOFINESHIFT` macro).
@@ -98,7 +96,7 @@ pub const ANGLETOFINESHIFT: u32 = 19;
 ///
 /// Equivalent to `FINEANGLES - 1 == 8191`. Useful after adding an offset
 /// (e.g. `+ FINEANGLES / 4` when deriving cosine from sine inline).
-pub const FINEMASK: c_int = FINEANGLES as c_int - 1;
+pub const FINEMASK: i32 = FINEANGLES as i32 - 1;
 
 /// 45 degree binary angle (Doom's `ANG45` macro): one-eighth of the full
 /// `2^32` BAM circle.
@@ -131,7 +129,7 @@ pub const ANG270: u32 = 0xC000_0000;
 /// space (`0..4096`); callers are expected to keep the resulting index
 /// in range and to avoid the singular endpoints when divisor semantics
 /// matter.
-pub static finetangent: [c_int; 4096] = [
+pub static finetangent: [i32; 4096] = [
     -170910304, -56965752, -34178904, -24413316, -18988036, -15535599, -13145455, -11392683,
     -10052327, -8994149, -8137527, -7429880, -6835455, -6329090, -5892567, -5512368, -5178251,
     -4882318, -4618375, -4381502, -4167737, -3973855, -3797206, -3635590, -3487165, -3350381,
@@ -497,7 +495,7 @@ pub static finetangent: [c_int; 4096] = [
 /// let s = finesine[fine];                          // sine, Q16.16
 /// let c = finesine[(fine + FINEANGLES/4) & FINEMASK as usize]; // cosine
 /// ```
-pub static finesine: [c_int; 10240] = [
+pub static finesine: [i32; 10240] = [
     25, 75, 125, 175, 226, 276, 326, 376, 427, 477, 527, 578, 628, 678, 728, 779, 829, 879, 929,
     980, 1030, 1080, 1130, 1181, 1231, 1281, 1331, 1382, 1432, 1482, 1532, 1583, 1633, 1683, 1733,
     1784, 1834, 1884, 1934, 1985, 2035, 2085, 2135, 2186, 2236, 2286, 2336, 2387, 2437, 2487, 2537,
@@ -1302,7 +1300,7 @@ pub static finesine: [c_int; 10240] = [
     65535, 65535, 65535, 65535, 65535, 65535, 65535,
 ];
 
-/// Thin wrapper around a `*const c_int` that lets us expose [`finecosine`]
+/// Thin wrapper around a `*const i32` that lets us expose [`finecosine`]
 /// as a `Sync` static pointer.
 ///
 /// Rust forbids `static` raw pointers without an explicit `Sync` impl. The
@@ -1310,7 +1308,7 @@ pub static finesine: [c_int; 10240] = [
 /// bare pointer; from C this is indistinguishable from the original
 /// `const fixed_t *finecosine` declaration in `tables.h`.
 #[repr(transparent)]
-pub struct FineCosinePtr(pub *const c_int);
+pub struct FineCosinePtr(pub *const i32);
 
 /// SAFETY: the pointer aims into the read-only [`finesine`] static, which
 /// lives for the whole program and is never mutated. Sharing the pointer
@@ -1340,7 +1338,7 @@ pub static finecosine: FineCosinePtr =
 /// `ANG90`, `ANG180`, etc. depending on the original octant. The `+1` slot
 /// handles the `x == y` boundary (slope == `SLOPERANGE`) without a special
 /// case.
-pub static tantoangle: [c_uint; 2049] = [
+pub static tantoangle: [u32; 2049] = [
     0, 333772, 667544, 1001315, 1335086, 1668857, 2002626, 2336395, 2670163, 3003929, 3337694,
     3671457, 4005219, 4338979, 4672736, 5006492, 5340245, 5673995, 6007743, 6341488, 6675230,
     7008968, 7342704, 7676435, 8010164, 8343888, 8677609, 9011325, 9345037, 9678744, 10012447,
@@ -1713,13 +1711,13 @@ pub static gammatable: [[u8; 256]; 5] = [
 /// # C origin
 /// Called from `r_main::R_PointToAngle` / `R_PointToAngle2` and
 /// `p_maputl::P_AproxDistance`-adjacent helpers.
-pub fn SlopeDiv(num: c_uint, den: c_uint) -> c_int {
+pub fn SlopeDiv(num: u32, den: u32) -> i32 {
     if den < 512 {
         return SLOPERANGE;
     }
-    let ans: c_uint = (num << 3) / (den >> 8);
-    if ans <= SLOPERANGE as c_uint {
-        return ans as c_int;
+    let ans: u32 = (num << 3) / (den >> 8);
+    if ans <= SLOPERANGE as u32 {
+        return ans as i32;
     }
     SLOPERANGE
 }

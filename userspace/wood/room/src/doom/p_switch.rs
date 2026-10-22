@@ -9,10 +9,7 @@
 
 use {
     crate::doom::{c_ffi::LinedefFlag, sounds::Sfx},
-    std::{
-        ffi::{c_char, c_int, c_void},
-        os::raw::c_short,
-    },
+    std::ffi::c_void,
 };
 
 use crate::{
@@ -40,94 +37,94 @@ pub const MAXBUTTONS: usize = 16;
 
 /// Duration of a button press in game tics (1 second at 35 tics/s).
 /// Matches `BUTTONTIME` in `p_switch.c`.
-pub const BUTTONTIME: c_int = 35;
+pub const BUTTONTIME: i32 = 35;
 
 // bwhere_e values — which sidedef texture slot the switch occupies.
 
 /// Switch is on the upper sidedef texture.
-const top: c_int = 0;
+const top: i32 = 0;
 
 /// Switch is on the middle sidedef texture.
-const middle: c_int = 1;
+const middle: i32 = 1;
 
 /// Switch is on the lower sidedef texture.
-const bottom: c_int = 2;
+const bottom: i32 = 2;
 
 // vldoor_e values — door movement type passed to `EV_DoDoor` / `EV_VerticalDoor`.
 
 /// Normal door: opens then closes after a delay.
-const vld_normal: c_int = 0;
+const vld_normal: i32 = 0;
 
 /// Door closes immediately.
-const vld_close: c_int = 2;
+const vld_close: i32 = 2;
 
 /// Door opens and stays open.
-const vld_open: c_int = 3;
+const vld_open: i32 = 3;
 
 /// Blazing door: opens and closes at high speed.
-const vld_blazeRaise: c_int = 5;
+const vld_blazeRaise: i32 = 5;
 
 /// Blazing door: opens at high speed and stays open.
-const vld_blazeOpen: c_int = 6;
+const vld_blazeOpen: i32 = 6;
 
 /// Blazing door: closes at high speed.
-const vld_blazeClose: c_int = 7;
+const vld_blazeClose: i32 = 7;
 
 // floor_e values — floor movement type passed to `EV_DoFloor`.
 
 /// Lower floor to the highest neighboring floor.
-const floor_lowerFloor: c_int = 0;
+const floor_lowerFloor: i32 = 0;
 
 /// Lower floor to the lowest neighboring floor.
-const floor_lowerFloorToLowest: c_int = 1;
+const floor_lowerFloorToLowest: i32 = 1;
 
 /// Lower floor quickly (turbo speed).
-const floor_turboLower: c_int = 2;
+const floor_turboLower: i32 = 2;
 
 /// Raise floor to the lowest neighboring ceiling.
-const floor_raiseFloor: c_int = 3;
+const floor_raiseFloor: i32 = 3;
 
 /// Raise floor to the nearest higher floor.
-const floor_raiseFloorToNearest: c_int = 4;
+const floor_raiseFloorToNearest: i32 = 4;
 
 /// Raise floor while crushing — stays at the raised height.
-const floor_raiseFloorCrush: c_int = 9;
+const floor_raiseFloorCrush: i32 = 9;
 
 /// Raise floor at turbo speed.
-const floor_raiseFloorTurbo: c_int = 10;
+const floor_raiseFloorTurbo: i32 = 10;
 
 /// Raise floor exactly 512 map units.
-const floor_raiseFloor512: c_int = 12;
+const floor_raiseFloor512: i32 = 12;
 
 // ceiling_e values — ceiling movement type passed to `EV_DoCeiling`.
 
 /// Lower ceiling to the floor.
-const ceiling_lowerToFloor: c_int = 0;
+const ceiling_lowerToFloor: i32 = 0;
 
 /// Crush-and-raise: ceiling lowers, crushes, then rises repeatedly.
-const ceiling_crushAndRaise: c_int = 3;
+const ceiling_crushAndRaise: i32 = 3;
 
 // plattype_e values — platform movement type passed to `EV_DoPlat`.
 
 /// Platform lowers, waits, then rises and stays.
-const plat_downWaitUpStay: c_int = 1;
+const plat_downWaitUpStay: i32 = 1;
 
 /// Raise platform and change its texture to match the neighboring floor.
-const plat_raiseAndChange: c_int = 2;
+const plat_raiseAndChange: i32 = 2;
 
 /// Raise platform to the nearest higher floor and change texture.
-const plat_raiseToNearestAndChange: c_int = 3;
+const plat_raiseToNearestAndChange: i32 = 3;
 
 /// Blazing `downWaitUpStay` platform (high-speed version).
-const plat_blazeDWUS: c_int = 4;
+const plat_blazeDWUS: i32 = 4;
 
 // stair_e values — stair build type passed to `EV_BuildStairs`.
 
 /// Build stairs with 8-unit step height.
-const stair_build8: c_int = 0;
+const stair_build8: i32 = 0;
 
 /// Build stairs with 16-unit step height at turbo speed.
-const stair_turbo16: c_int = 1;
+const stair_turbo16: i32 = 1;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,11 +142,11 @@ pub struct button_t {
     /// Pointer to the linedef whose switch texture was activated.
     pub line: *mut line_t,
     /// Which sidedef texture slot the button lives in (`top`, `middle`, or `bottom`).
-    pub where_: c_int,
+    pub where_: i32,
     /// Texture number to restore when `btimer` expires.
-    pub btexture: c_int,
+    pub btexture: i32,
     /// Remaining tics before the button resets; `0` means this slot is free.
-    pub btimer: c_int,
+    pub btimer: i32,
     _pad: [u8; 4],
     /// Pointer to the front-sector sound origin used when the button fires.
     pub soundorg: *mut c_void,
@@ -407,12 +404,12 @@ const ALPH_SWITCH_LIST: [SwitchDef; 41] = [
 /// `numswitches * 2`.  The sentinel `switchlist[numswitches * 2] == -1`
 /// marks the end of valid data.
 /// Matches `switchlist[]` in `p_switch.c`.
-pub static mut switchlist: [c_int; MAXSWITCHES * 2] = [0; MAXSWITCHES * 2];
+pub static mut switchlist: [i32; MAXSWITCHES * 2] = [0; MAXSWITCHES * 2];
 
 /// Number of valid switch pairs in `switchlist` after `P_InitSwitchList`
 /// runs.  Zero before initialization.
 /// Matches `numswitches` in `p_switch.c`.
-pub static mut numswitches: c_int = 0;
+pub static mut numswitches: i32 = 0;
 
 /// Ring-buffer of active timed buttons.  Slots with `btimer == 0` are free.
 /// Decremented each tic by the thinker subsystem; when a slot's timer
@@ -477,14 +474,14 @@ pub fn P_InitSwitchList() {
         let mut index = 0usize;
         for sw in &ALPH_SWITCH_LIST {
             if sw.episode == 0 {
-                numswitches = (index / 2) as c_int;
+                numswitches = (index / 2) as i32;
                 switchlist[index] = -1;
                 break;
             }
             if sw.episode <= episode {
-                switchlist[index] = R_TextureNumForName(sw.name1.as_ptr() as *mut c_char);
+                switchlist[index] = R_TextureNumForName(sw.name1);
                 index += 1;
-                switchlist[index] = R_TextureNumForName(sw.name2.as_ptr() as *mut c_char);
+                switchlist[index] = R_TextureNumForName(sw.name2);
                 index += 1;
             }
         }
@@ -511,7 +508,7 @@ pub fn P_InitSwitchList() {
 ///
 /// `line` must be a valid, non-null pointer to a live `line_t`.
 /// `buttonlist` must only be accessed from the game-logic thread.
-pub unsafe fn P_StartButton(line: *mut line_t, w: c_int, texture: c_int, time: c_int) {
+pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) {
     // See if button is already pressed
     for i in 0..MAXBUTTONS {
         if buttonlist[i].btimer != 0 && buttonlist[i].line == line {
@@ -555,7 +552,7 @@ pub unsafe fn P_StartButton(line: *mut line_t, w: c_int, texture: c_int, time: c
 /// `line` must be a valid, non-null pointer to a live `line_t`.  The global
 /// `switchlist`, `numswitches`, `buttonlist`, and `sides` arrays must only
 /// be accessed from the game-logic thread.
-pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_int) {
+pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
     if useAgain == 0 {
         (*line).special = 0;
     }
@@ -565,31 +562,31 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_int) {
     let texMid = (*sides.offset(sidenum)).midtexture;
     let texBot = (*sides.offset(sidenum)).bottomtexture;
 
-    let mut sound = Sfx::Swtchn as c_int;
+    let mut sound = Sfx::Swtchn as i32;
 
     // EXIT SWITCH?
     if (*line).special == 11 {
-        sound = Sfx::Swtchx as c_int;
+        sound = Sfx::Swtchx as i32;
     }
 
     for i in 0..(numswitches * 2) as usize {
-        if switchlist[i] == texTop as c_int {
+        if switchlist[i] == texTop as i32 {
             S_StartSound(buttonlist[0].soundorg, sound);
-            (*sides.offset(sidenum)).toptexture = switchlist[i ^ 1] as c_short;
+            (*sides.offset(sidenum)).toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, top, switchlist[i], BUTTONTIME);
             }
             return;
-        } else if switchlist[i] == texMid as c_int {
+        } else if switchlist[i] == texMid as i32 {
             S_StartSound(buttonlist[0].soundorg, sound);
-            (*sides.offset(sidenum)).midtexture = switchlist[i ^ 1] as c_short;
+            (*sides.offset(sidenum)).midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, middle, switchlist[i], BUTTONTIME);
             }
             return;
-        } else if switchlist[i] == texBot as c_int {
+        } else if switchlist[i] == texBot as i32 {
             S_StartSound(buttonlist[0].soundorg, sound);
-            (*sides.offset(sidenum)).bottomtexture = switchlist[i ^ 1] as c_short;
+            (*sides.offset(sidenum)).bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, bottom, switchlist[i], BUTTONTIME);
             }
@@ -628,7 +625,7 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_int) {
 /// `thing` must be a valid, non-null pointer to a `mobj_t`.  `line` must
 /// be a valid, non-null pointer to a live `line_t`.  All global game-state
 /// statics must only be accessed from the game-logic thread.
-pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: c_int) -> c_int {
+pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32) -> i32 {
     // Err...
     // Use the back sides of VERY SPECIAL lines...
     if side != 0 {

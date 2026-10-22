@@ -9,22 +9,20 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::os::raw::c_int;
-
 use crate::doom::{d_event::event_t, doomkeys::KEY_RSHIFT};
 
 /// Configuration flag mirroring the C global `vanilla_keyboard_mapping`.
 ///
 /// When non-zero, classic Doom keyboard mapping is used. Exported with C
 /// linkage so the rest of the (still C) code base can read and write it.
-pub static mut vanilla_keyboard_mapping: c_int = 1;
+pub static mut vanilla_keyboard_mapping: i32 = 1;
 
 /// Net count of shift presses minus shift releases.
 ///
 /// Treated as boolean-ish: `> 0` means a shift key is currently held. Using
 /// a counter rather than a boolean tolerates lost key-up events without
 /// permanently latching the shift state, matching the C source.
-static mut shiftdown: c_int = 0;
+static mut shiftdown: i32 = 0;
 
 use crate::doom::d_event::D_PostEvent;
 
@@ -99,7 +97,7 @@ fn GetTypedChar(key: u8) -> u8 {
 ///
 /// Increments on press, decrements on release. Only `KEY_RSHIFT` is tracked,
 /// matching the C source. Mutates the `shiftdown` static.
-fn UpdateShiftStatus(pressed: c_int, key: u8) {
+fn UpdateShiftStatus(pressed: i32, key: u8) {
     let change = if pressed != 0 { 1 } else { -1 };
     if key == KEY_RSHIFT {
         unsafe {
@@ -123,7 +121,7 @@ pub fn I_InitInput() {}
 /// `d_main` calls it from the main loop.
 pub fn I_GetEvent() {
     while let Some((is_pressed, key)) = super::doomgeneric::platform().key() {
-        let pressed = c_int::from(is_pressed);
+        let pressed = i32::from(is_pressed);
         UpdateShiftStatus(pressed, key);
 
         let mut event = event_t {
@@ -136,14 +134,14 @@ pub fn I_GetEvent() {
 
         if pressed != 0 {
             event.type_ = 0; // ev_keydown
-            event.data1 = TranslateKey(key) as c_int;
-            event.data2 = GetTypedChar(key) as c_int;
+            event.data1 = TranslateKey(key) as i32;
+            event.data2 = GetTypedChar(key) as i32;
             if event.data1 != 0 {
                 D_PostEvent(&event);
             }
         } else {
             event.type_ = 1; // ev_keyup
-            event.data1 = TranslateKey(key) as c_int;
+            event.data1 = TranslateKey(key) as i32;
             event.data2 = 0;
             if event.data1 != 0 {
                 D_PostEvent(&event);

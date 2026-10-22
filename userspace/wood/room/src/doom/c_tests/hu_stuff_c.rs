@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::{c_char, CStr};
+use std::ffi::CStr;
 
 use crate::doom::hu_stuff;
 
@@ -123,7 +123,7 @@ fn chat_macros_default_strings() {
             .zip(expected.iter())
             .enumerate()
         {
-            let got = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+            let got = CStr::from_ptr(ptr.cast()).to_str().unwrap();
             assert_eq!(got, want, "chat_macros[{i}] mismatch");
         }
     }
@@ -156,7 +156,7 @@ fn player_names_default_strings() {
             .enumerate()
         {
             assert!(!ptr.is_null(), "player_names[{i}] should be non-null");
-            let got = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+            let got = CStr::from_ptr(ptr.cast()).to_str().unwrap();
             assert_eq!(got, want, "player_names[{i}] mismatch");
         }
     }
@@ -173,7 +173,7 @@ fn mapnames_first_entry_is_e1m1_hangar() {
     unsafe {
         let ptr = hu_stuff::mapnames[0];
         assert!(!ptr.is_null(), "mapnames[0] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "E1M1: Hangar");
     }
 }
@@ -184,7 +184,7 @@ fn mapnames_e2m1_is_at_index_9() {
     unsafe {
         let ptr = hu_stuff::mapnames[9];
         assert!(!ptr.is_null(), "mapnames[9] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "E2M1: Deimos Anomaly");
     }
 }
@@ -195,7 +195,7 @@ fn mapnames_e4m9_is_at_index_35() {
     unsafe {
         let ptr = hu_stuff::mapnames[35];
         assert!(!ptr.is_null(), "mapnames[35] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "E4M9: Fear");
     }
 }
@@ -209,7 +209,7 @@ fn mapnames_placeholders_are_newlevel() {
         for i in 36..45usize {
             let ptr = hu_stuff::mapnames[i];
             assert!(!ptr.is_null(), "mapnames[{i}] should not be null");
-            let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+            let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
             assert_eq!(name, "NEWLEVEL", "mapnames[{i}] should be NEWLEVEL");
         }
     }
@@ -225,7 +225,7 @@ fn mapnames_commercial_first_is_entryway() {
     unsafe {
         let ptr = hu_stuff::mapnames_commercial[0];
         assert!(!ptr.is_null(), "mapnames_commercial[0] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "level 1: entryway");
     }
 }
@@ -236,7 +236,7 @@ fn mapnames_commercial_map32_is_grosse() {
     unsafe {
         let ptr = hu_stuff::mapnames_commercial[31];
         assert!(!ptr.is_null(), "mapnames_commercial[31] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "level 32: grosse");
     }
 }
@@ -249,7 +249,7 @@ fn mapnames_commercial_plutonia_starts_at_index_32() {
     unsafe {
         let ptr = hu_stuff::mapnames_commercial[32];
         assert!(!ptr.is_null(), "mapnames_commercial[32] should not be null");
-        let name = CStr::from_ptr(ptr as *const c_char).to_str().unwrap();
+        let name = CStr::from_ptr(ptr.cast()).to_str().unwrap();
         assert_eq!(name, "level 1: congo");
     }
 }

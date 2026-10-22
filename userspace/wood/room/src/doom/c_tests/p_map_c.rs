@@ -13,8 +13,6 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_int;
-
 use crate::doom::{c_ffi, p_map};
 
 // ---------------------------------------------------------------------------
@@ -178,32 +176,5 @@ fn slide_fracs_default_zero() {
 fn bombdamage_default_zero() {
     unsafe {
         assert_eq!({ p_map::bombdamage }, 0, "bombdamage");
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Type-width checks
-// ---------------------------------------------------------------------------
-
-/// All collision scratchpad globals are `fixed_t` / `int` (4 bytes).
-#[test]
-fn collision_globals_are_c_int_width() {
-    const _: () = assert!(std::mem::size_of::<c_int>() == 4);
-    unsafe {
-        let _: c_int = p_map::tmflags;
-        let _: c_int = p_map::tmx;
-        let _: c_int = p_map::tmy;
-        let _: c_int = p_map::floatok;
-        let _: c_int = p_map::tmfloorz;
-        let _: c_int = p_map::tmceilingz;
-        let _: c_int = p_map::tmdropoffz;
-        let _: c_int = p_map::numspechit;
-        let _: c_int = p_map::shootz;
-        let _: c_int = p_map::la_damage;
-        let _: c_int = p_map::attackrange;
-        let _: c_int = p_map::aimslope;
-        let _: c_int = p_map::bestslidefrac;
-        let _: c_int = p_map::secondslidefrac;
-        let _: c_int = p_map::bombdamage;
     }
 }
