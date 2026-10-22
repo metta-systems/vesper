@@ -1,4 +1,4 @@
-Clean up image-build generators - use templates not direct output.
+Next is the read-only filesystem over `block_v1`: should it be exFAT or ext4?
 
 ---
 
