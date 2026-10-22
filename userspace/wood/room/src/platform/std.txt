@@ -79,15 +79,6 @@ Thread-local storage:
 
 Only spelled through std (the same items exist in core or alloc; a path
 change is enough):
-  std::ffi::CStr (= core::ffi::CStr):
-    src/doom/m_misc.rs: c_str
-    src/doom/p_saveg.rs: P_WriteSaveGameHeader
-    src/doom/r_data.rs, src/doom/r_things.rs: module imports
-    src/doom/s_sound.rs: S_ChangeMusic
-    src/doom/sha1.rs: SHA1_UpdateString
-  std::ffi::CString (= alloc::ffi::CString):
-    src/doom/g_game.rs: G_DoLoadGame, G_DoSaveGame
-    src/doom/w_file.rs: W_StdC_OpenFile
   std::borrow::Cow (= alloc::borrow::Cow):
     src/doom/g_game.rs, src/doom/hu_stuff.rs, src/doom/i_sound.rs,
     src/doom/m_config.rs: module imports

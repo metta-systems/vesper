@@ -17,6 +17,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
+use crate::doom::m_misc::until_nul;
+
 /// 160-bit SHA-1 digest as 20 raw bytes, port of C `sha1_digest_t`.
 pub type sha1_digest_t = [u8; 20];
 
@@ -452,25 +454,23 @@ pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: u32) {
     sha1_update(context, Some(&buf));
 }
 
-/// Feeds a NUL-terminated C string into `context`, including the trailing
-/// NUL byte.
+/// Feeds `text` into `context` followed by a NUL byte.
 ///
-/// Hashing the NUL is intentional in the C source (`SHA1_Update(context,
-/// (byte *) str, strlen(str) + 1)`), so back-to-back strings cannot collide
-/// the way `"ab"` + `"c"` would collide with `"a"` + `"bc"`.
+/// `text` is read up to its first NUL, so a fixed text buffer can be
+/// passed whole. Hashing the NUL is intentional in the C source
+/// (`SHA1_Update(context, (byte *) str, strlen(str) + 1)`), so back-to-back
+/// strings cannot collide the way `"ab"` + `"c"` would collide with
+/// `"a"` + `"bc"`.
 ///
 /// # Safety
 ///
-/// * `context` must be a valid, properly aligned pointer to a `SHA1Context`
-///   previously initialised with `SHA1_Init`, valid for read and write for
-///   the duration of the call.
-/// * `str` must point to a valid NUL-terminated C string. Memory up to and
-///   including the NUL must be readable.
-pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut u8) {
+/// `context` must be a valid, properly aligned pointer to a `SHA1Context`
+/// previously initialised with `SHA1_Init`, valid for read and write for
+/// the duration of the call.
+pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, text: &[u8]) {
     let context = &mut *context;
-    let cstr = std::ffi::CStr::from_ptr(str.cast());
-    let bytes = cstr.to_bytes_with_nul();
-    sha1_update(context, Some(bytes));
+    sha1_update(context, Some(until_nul(text)));
+    sha1_update(context, Some(&[0]));
 }
 
 /// Tests covering the published SHA-1 test vectors (RFC 3174 / FIPS 180-1)
@@ -548,14 +548,16 @@ mod tests {
     fn update_string_includes_nul_terminator() {
         let expected = sha1_hex(b"doom\0");
 
-        let mut ctx = make_ctx();
-        let mut s = *b"doom\0";
-        unsafe {
-            SHA1_UpdateString(&mut ctx, s.as_mut_ptr());
-            let mut digest = [0u8; 20];
-            SHA1_Final(digest.as_mut_ptr(), &mut ctx);
-            let got: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-            assert_eq!(got, expected);
+        // A plain slice and a NUL-padded buffer hash the same.
+        for text in [&b"doom"[..], &b"doom\0\0\0\0"[..]] {
+            let mut ctx = make_ctx();
+            unsafe {
+                SHA1_UpdateString(&mut ctx, text);
+                let mut digest = [0u8; 20];
+                SHA1_Final(digest.as_mut_ptr(), &mut ctx);
+                let got: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+                assert_eq!(got, expected);
+            }
         }
     }
 

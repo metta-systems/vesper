@@ -11,14 +11,15 @@
 //! - runtime-built text and paths are `String`;
 //! - editable text lives in fixed `[u8; N]` buffers, NUL-terminated, and
 //!   is read with [`until_nul`];
-//! - text still held as a C pointer is read with [`c_str`].
+//! - lump names are `&[u8]`, compared over at most 8 bytes up to a NUL
+//!   (see `w_wad::lump_name`).
 //!
 //! The C source supports both Windows and Unix paths; this port keeps only
 //! the Unix branch (`DIR_SEPARATOR = '/'`).
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{ffi::CStr, path::Path};
+use std::path::Path;
 
 /// Unix directory separator character (C: `DIR_SEPARATOR = '/'`).
 const DIR_SEPARATOR: u8 = b'/';
@@ -38,15 +39,6 @@ pub fn M_MakeDirectory(path: impl AsRef<Path>) {
 pub fn M_FileExists(path: impl AsRef<Path>) -> bool {
     let path = path.as_ref();
     std::fs::File::open(path).is_ok() || path.is_dir()
-}
-
-/// Bytes of the NUL-terminated string at `ptr`, without the terminator.
-///
-/// # Safety
-/// `ptr` must point to a readable NUL-terminated byte string that stays
-/// unchanged for `'a`.
-pub unsafe fn c_str<'a>(ptr: *const u8) -> &'a [u8] {
-    unsafe { CStr::from_ptr(ptr.cast()) }.to_bytes()
 }
 
 /// The part of a fixed text buffer before its first NUL (all of it if

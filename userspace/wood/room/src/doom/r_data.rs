@@ -511,7 +511,7 @@ pub unsafe fn R_GenerateComposite(texnum: i32) {
         }
     }
 
-    Z_ChangeTag2(block as *mut c_void, PU_CACHE, ptr::null(), 0);
+    Z_ChangeTag2(block as *mut c_void, PU_CACHE);
 }
 
 // ---------------------------------------------------------------------------

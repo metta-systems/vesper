@@ -16,7 +16,6 @@
 use std::ffi::c_void;
 
 use crate::doom::{
-    m_misc::M_StringCopy,
     sha1::{
         sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
     },
@@ -96,10 +95,9 @@ unsafe fn checksum_add_lump(
 ) {
     let lump = &*lump;
 
-    let mut buf: [u8; 9] = [0; 9];
-    M_StringCopy(&mut buf, &lump.name);
-
-    SHA1_UpdateString(sha1_context, buf.as_mut_ptr());
+    // The 8-byte name, up to its NUL, as the C code copied it into a
+    // 9-byte buffer before hashing.
+    SHA1_UpdateString(sha1_context, &lump.name);
     SHA1_UpdateInt32(
         sha1_context,
         get_file_number(lump.wad_file, open_wadfiles) as u32,

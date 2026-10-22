@@ -135,8 +135,6 @@ use crate::doom::m_fixed::FixedMul;
 // w_wad.rs
 use crate::doom::w_wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReleaseLumpNum};
 
-use crate::c_write;
-
 /// Heap-allocated array of `snd_channels` mixing channels. Allocated by
 /// `S_Init` from zone memory, never freed (PU_STATIC).
 static mut channels: *mut channel_t = std::ptr::null_mut();
@@ -615,10 +613,7 @@ pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
         S_StopMusic();
 
         if music.lumpnum == 0 {
-            let mut namebuf: [u8; 9] = [0; 9];
-            let name_str = std::ffi::CStr::from_ptr(music.name.cast()).to_string_lossy();
-            c_write!(namebuf, "d_{}", name_str);
-            music.lumpnum = W_GetNumForName(&namebuf);
+            music.lumpnum = W_GetNumForName(format!("d_{}", music.name).as_bytes());
         }
 
         music.data = W_CacheLumpNum(music.lumpnum, PU_STATIC);

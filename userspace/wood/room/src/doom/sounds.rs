@@ -2,18 +2,16 @@
 //!
 //! Holds the static SFX (`S_sfx`) and music (`S_music`) tables consumed by
 //! `s_sound.rs` and the low-level audio drivers, plus the matching id enums
-//! (`Sfx`, `Mus`). Layout of `SfxInfo`/`MusicInfo` exactly mirrors
-//! `sfxinfo_t`/`musicinfo_t` so the tables can be handed to C-linkage code
-//! unchanged.
+//! (`Sfx`, `Mus`). `SfxInfo`/`MusicInfo` hold the fields of
+//! `sfxinfo_t`/`musicinfo_t`, minus the unused DeHackEd `tagname`.
 //!
 //! Sound lump names live in the WAD as `DS<short_name>` (SFX) and
-//! `D_<short_name>` (music); only the short part is stored here. Each
-//! per-name byte array is exposed as a `const` so it has a stable address
-//! the table can take a pointer to.
+//! `D_<short_name>` (music); only the short part is stored here.
 //!
 //! Rust-vs-C differences:
 //! - Names are built with the `const fn name::<N>` helper at compile time,
-//!   producing fixed-size `[u8; N]` arrays instead of C string literals.
+//!   producing fixed-size `[u8; N]` arrays instead of C string literals;
+//!   music entries keep them as `&'static str`.
 //! - The C source initialises every `sfxinfo_t` field by hand. Here, the
 //!   `SfxInfo::new` / `with_pitch` / `with_volume` builders fill defaults
 //!   matching `S_sfx[]` in `sounds.c` (pitch = -1, volume = -1, etc.).
@@ -24,14 +22,11 @@ use std::ffi::c_void;
 
 /// Rust mirror of `sfxinfo_t` (`sounds.h`).
 ///
-/// The layout is locked to the C struct. `name` is a fixed 9-byte slot (8 chars +
-/// NUL) holding the short lump name; the engine prepends `DS` when looking
+/// `name` is a fixed 9-byte slot (8 chars + NUL) holding the short lump name; the engine prepends `DS` when looking
 /// up the actual WAD lump. `link` lets two effects share underlying audio
 /// (e.g. `sfx_chgun -> sfx_pistol`).
 #[repr(C)]
 pub struct SfxInfo {
-    /// Tag name pointer (DEH support); unused at runtime, always null.
-    pub tagname: *mut u8,
     /// Short lump name (no `DS` prefix), NUL-terminated.
     pub name: [u8; 9],
     /// Channel priority; higher values evict lower ones in `S_GetChannel`.
@@ -54,14 +49,13 @@ pub struct SfxInfo {
 
 /// Rust mirror of `musicinfo_t` (`sounds.h`).
 ///
-/// Layout-compatible with the C struct. `name` is the short lump name (the
-/// engine prepends `d_`),
-/// `data` holds the cached lump, `handle` is the driver-side song handle.
+/// `name` is the short lump name (the engine prepends `d_`), `data` holds
+/// the cached lump, `handle` is the driver-side song handle.
 #[repr(C)]
 #[derive(Default)]
 pub struct MusicInfo {
-    /// Short lump name (no `d_` prefix), NUL-terminated. Null for the sentinel.
-    pub name: *mut u8,
+    /// Short lump name (no `d_` prefix); empty for the sentinel.
+    pub name: &'static str,
     /// Cached lump number; 0 means "not yet looked up".
     pub lumpnum: i32,
     /// Pointer to the cached MIDI/MUS lump in zone memory.
@@ -649,7 +643,6 @@ impl SfxInfo {
     /// `S_sfx[]` initialiser pattern in `sounds.c`.
     const fn new(name: [u8; 9], priority: i32) -> Self {
         SfxInfo {
-            tagname: std::ptr::null_mut(),
             name,
             priority,
             link: std::ptr::null_mut(),
@@ -677,21 +670,26 @@ impl SfxInfo {
 
 /// Constructors used to build the static `S_music` table at compile time.
 impl MusicInfo {
-    /// `MusicInfo` for the slot-zero sentinel ("no music"); all fields null.
+    /// `MusicInfo` for the slot-zero sentinel ("no music"): an empty name
+    /// and null pointers.
     const fn none() -> Self {
         MusicInfo {
-            name: std::ptr::null_mut(),
+            name: "",
             lumpnum: 0,
             data: std::ptr::null_mut(),
             handle: std::ptr::null_mut(),
         }
     }
 
-    /// `MusicInfo` pointing at the given const name buffer. The buffer must
-    /// have static lifetime so the recorded pointer remains valid.
+    /// `MusicInfo` named by the given NUL-terminated name buffer (as built
+    /// by [`name`]), without its NUL.
     const fn new<const N: usize>(name: &'static [u8; N]) -> Self {
+        let (text, _nul) = name.split_at(N - 1);
+        let Ok(name) = std::str::from_utf8(text) else {
+            panic!("music name is not UTF-8");
+        };
         MusicInfo {
-            name: name.as_ptr() as *mut u8,
+            name,
             lumpnum: 0,
             data: std::ptr::null_mut(),
             handle: std::ptr::null_mut(),
@@ -1297,9 +1295,9 @@ pub static mut S_sfx: [SfxInfo; NUMSFX] = [
 
 /// Master music table indexed by `Mus` ids. Mirrors `S_music[]` in `sounds.c`.
 ///
-/// Each non-sentinel entry stores a pointer into one of the `MUS_*` short-name
-/// buffers, which `S_ChangeMusic` formats into the WAD lump name (prefixed
-/// with `d_`) on first use. Entry 0 is the "no music" sentinel.
+/// Each non-sentinel entry names one of the `MUS_*` short names, which
+/// `S_ChangeMusic` formats into the WAD lump name (prefixed with `d_`) on
+/// first use. Entry 0 is the "no music" sentinel.
 pub static mut S_music: [MusicInfo; NUMMUSIC] = [
     // [0] mus_none (sentinel)
     MusicInfo::none(),
@@ -1450,8 +1448,7 @@ pub fn S_InitSfxLinks() {
     }
 }
 
-/// Unit tests pinning enum counts, table sizes, and struct layout to the C
-/// definitions so silent drift cannot break the FFI surface.
+/// Unit tests pinning enum counts and table sizes to the C definitions.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1492,9 +1489,21 @@ mod tests {
             assert_eq!(S_sfx[0].priority, 0);
             assert_eq!(S_sfx[0].numchannels, -1);
             assert_eq!(S_sfx[0].lumpnum, 0);
-            // tagname and link are null initially
-            assert!(S_sfx[0].tagname.is_null());
+            // link is null initially
             assert!(S_sfx[0].link.is_null());
+        }
+    }
+
+    /// Music names drop the NUL of their name buffers; the sentinel's is empty.
+    #[test]
+    fn music_names_are_plain_text() {
+        unsafe {
+            let music = &*std::ptr::addr_of!(S_music);
+            assert_eq!(music[0].name, "");
+            assert_eq!(music[Mus::E1m1 as usize].name, "e1m1");
+            assert!(music[1..]
+                .iter()
+                .all(|entry| !entry.name.is_empty() && !entry.name.contains('\0')));
         }
     }
 
@@ -1524,21 +1533,5 @@ mod tests {
                 "sfx_chgun.link must point to sfx_pistol"
             );
         }
-    }
-
-    /// `sizeof(sfxinfo_t)` must be 64 on 64-bit, matching the C struct.
-    #[test]
-    fn sfx_info_size_matches_c() {
-        // sizeof(sfxinfo_t) in C on 64-bit: tagname(8) + name[9](9) + pad(3)
-        // + priority(4) + link(8) + pitch(4) + volume(4) + usefulness(4)
-        // + lumpnum(4) + numchannels(4) + pad(4) + driver_data(8) = 64 bytes
-        assert_eq!(std::mem::size_of::<SfxInfo>(), 64);
-    }
-
-    /// `sizeof(musicinfo_t)` must be 32 on 64-bit (four pointer-sized fields).
-    #[test]
-    fn music_info_size_matches_c() {
-        // sizeof(musicinfo_t) is 32 on 64-bit (four pointer-sized fields).
-        assert_eq!(std::mem::size_of::<MusicInfo>(), 32);
     }
 }

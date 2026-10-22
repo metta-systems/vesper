@@ -516,20 +516,17 @@ pub unsafe fn Z_CheckHeapAfter(name: &str) {
 }
 
 /// `void Z_ChangeTag2(void *ptr, int tag, char *file, int line)` —
-/// change the tag of an existing block. The `file`/`line` arguments come
-/// from the `Z_ChangeTag` macro in `z_zone.h`; the Rust port ignores
-/// them (the macro callsite is rewritten on the C side).
+/// change the tag of an existing block. The C `file`/`line` arguments
+/// (from the `Z_ChangeTag` macro, used only in debug output) are dropped.
 ///
 /// Refuses to mark a block purgeable (`tag >= PU_PURGELEVEL`) without a
 /// user back-pointer, since the purge would otherwise leave a dangling
 /// reference.
 ///
 /// # Safety
-/// - `ptr` must be a live `Z_Malloc` return value (header must carry
-///   `ZONEID`); otherwise `I_Error` is called.
-/// - `_file` / `_line` are unused but must still be valid pointers per
-///   the C calling convention.
-pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: i32, _file: *const u8, _line: i32) {
+/// `ptr` must be a live `Z_Malloc` return value (header must carry
+/// `ZONEID`); otherwise `I_Error` is called.
+pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: i32) {
     let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {

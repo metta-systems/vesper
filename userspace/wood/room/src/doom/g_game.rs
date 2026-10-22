@@ -1363,7 +1363,7 @@ pub unsafe fn G_Ticker() {
             ga_victory => F_StartFinale(),
             ga_worlddone => G_DoWorldDone(),
             ga_screenshot => {
-                V_ScreenShot(c"DOOM%02i.%s".as_ptr().cast_mut().cast());
+                V_ScreenShot();
                 players[consoleplayer as usize].message =
                     PlayerMessage::new(DEH_String("screen shot"));
                 gameaction = ga_nothing;
@@ -2096,7 +2096,7 @@ pub unsafe fn G_DoSaveGame() {
     save_stream = Cursor::default();
     savegame_error = 0;
 
-    P_WriteSaveGameHeader(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]));
+    P_WriteSaveGameHeader(&*ptr::addr_of!(SAVEDESCRIPTION));
     P_ArchivePlayers();
     P_ArchiveWorld();
     P_ArchiveThinkers();

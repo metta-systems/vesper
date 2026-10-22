@@ -96,6 +96,7 @@ pub static mut savegame_error: i32 = 0;
 use crate::doom::{
     d_main::savegamedir,
     g_game::G_VanillaVersionCode,
+    m_misc::until_nul,
     p_maputl::P_SetThingPosition,
     p_mobj::{P_MobjThinker, P_RemoveMobj},
     p_setup::{lines, numlines, numsectors, sectors, sides},
@@ -1212,13 +1213,14 @@ pub unsafe fn P_SaveGameFile(slot: i32) -> String {
 ///
 /// # Safety
 ///
-/// `description` must be a valid, NUL-terminated C string. `save_stream` must
-/// be the stream being written.
-/// The global state `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
-/// `leveltime` must have been set to valid values before this call.
-pub unsafe fn P_WriteSaveGameHeader(description: *const u8) {
-    let desc = std::ffi::CStr::from_ptr(description.cast());
-    let desc_bytes = desc.to_bytes();
+/// `save_stream` must be the stream being written. The global state
+/// `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and `leveltime`
+/// must have been set to valid values before this call.
+///
+/// `description` is read up to its first NUL, so the fixed description
+/// buffer can be passed whole.
+pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
+    let desc_bytes = until_nul(description);
 
     // Write description (padded to SAVESTRINGSIZE)
     for i in 0..SAVESTRINGSIZE {

@@ -173,10 +173,10 @@ mod layout_checks {
 /// and the minimum episode number required for the pair to be loaded.
 /// Corresponds to `switchlist_t` in `p_switch.c`.
 struct SwitchDef {
-    /// Null-terminated name of the switch-off texture.
-    name1: &'static [u8],
-    /// Null-terminated name of the switch-on texture.
-    name2: &'static [u8],
+    /// Name of the switch-off texture.
+    name1: &'static str,
+    /// Name of the switch-on texture.
+    name2: &'static str,
     /// Minimum episode number (1 = shareware, 2 = registered, 3 = commercial).
     episode: i16,
 }
@@ -186,211 +186,211 @@ struct SwitchDef {
 const ALPH_SWITCH_LIST: [SwitchDef; 41] = [
     // Doom shareware episode 1 switches
     SwitchDef {
-        name1: b"SW1BRCOM\0",
-        name2: b"SW2BRCOM\0",
+        name1: "SW1BRCOM",
+        name2: "SW2BRCOM",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1BRN1\0",
-        name2: b"SW2BRN1\0",
+        name1: "SW1BRN1",
+        name2: "SW2BRN1",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1BRN2\0",
-        name2: b"SW2BRN2\0",
+        name1: "SW1BRN2",
+        name2: "SW2BRN2",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1BRNGN\0",
-        name2: b"SW2BRNGN\0",
+        name1: "SW1BRNGN",
+        name2: "SW2BRNGN",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1BROWN\0",
-        name2: b"SW2BROWN\0",
+        name1: "SW1BROWN",
+        name2: "SW2BROWN",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1COMM\0",
-        name2: b"SW2COMM\0",
+        name1: "SW1COMM",
+        name2: "SW2COMM",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1COMP\0",
-        name2: b"SW2COMP\0",
+        name1: "SW1COMP",
+        name2: "SW2COMP",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1DIRT\0",
-        name2: b"SW2DIRT\0",
+        name1: "SW1DIRT",
+        name2: "SW2DIRT",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1EXIT\0",
-        name2: b"SW2EXIT\0",
+        name1: "SW1EXIT",
+        name2: "SW2EXIT",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1GRAY\0",
-        name2: b"SW2GRAY\0",
+        name1: "SW1GRAY",
+        name2: "SW2GRAY",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1GRAY1\0",
-        name2: b"SW2GRAY1\0",
+        name1: "SW1GRAY1",
+        name2: "SW2GRAY1",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1METAL\0",
-        name2: b"SW2METAL\0",
+        name1: "SW1METAL",
+        name2: "SW2METAL",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1PIPE\0",
-        name2: b"SW2PIPE\0",
+        name1: "SW1PIPE",
+        name2: "SW2PIPE",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1SLAD\0",
-        name2: b"SW2SLAD\0",
+        name1: "SW1SLAD",
+        name2: "SW2SLAD",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1STARG\0",
-        name2: b"SW2STARG\0",
+        name1: "SW1STARG",
+        name2: "SW2STARG",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1STON1\0",
-        name2: b"SW2STON1\0",
+        name1: "SW1STON1",
+        name2: "SW2STON1",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1STON2\0",
-        name2: b"SW2STON2\0",
+        name1: "SW1STON2",
+        name2: "SW2STON2",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1STONE\0",
-        name2: b"SW2STONE\0",
+        name1: "SW1STONE",
+        name2: "SW2STONE",
         episode: 1,
     },
     SwitchDef {
-        name1: b"SW1STRTN\0",
-        name2: b"SW2STRTN\0",
+        name1: "SW1STRTN",
+        name2: "SW2STRTN",
         episode: 1,
     },
     // Doom registered episodes 2&3 switches
     SwitchDef {
-        name1: b"SW1BLUE\0",
-        name2: b"SW2BLUE\0",
+        name1: "SW1BLUE",
+        name2: "SW2BLUE",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1CMT\0",
-        name2: b"SW2CMT\0",
+        name1: "SW1CMT",
+        name2: "SW2CMT",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1GARG\0",
-        name2: b"SW2GARG\0",
+        name1: "SW1GARG",
+        name2: "SW2GARG",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1GSTON\0",
-        name2: b"SW2GSTON\0",
+        name1: "SW1GSTON",
+        name2: "SW2GSTON",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1HOT\0",
-        name2: b"SW2HOT\0",
+        name1: "SW1HOT",
+        name2: "SW2HOT",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1LION\0",
-        name2: b"SW2LION\0",
+        name1: "SW1LION",
+        name2: "SW2LION",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1SATYR\0",
-        name2: b"SW2SATYR\0",
+        name1: "SW1SATYR",
+        name2: "SW2SATYR",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1SKIN\0",
-        name2: b"SW2SKIN\0",
+        name1: "SW1SKIN",
+        name2: "SW2SKIN",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1VINE\0",
-        name2: b"SW2VINE\0",
+        name1: "SW1VINE",
+        name2: "SW2VINE",
         episode: 2,
     },
     SwitchDef {
-        name1: b"SW1WOOD\0",
-        name2: b"SW2WOOD\0",
+        name1: "SW1WOOD",
+        name2: "SW2WOOD",
         episode: 2,
     },
     // Doom II switches
     SwitchDef {
-        name1: b"SW1PANEL\0",
-        name2: b"SW2PANEL\0",
+        name1: "SW1PANEL",
+        name2: "SW2PANEL",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1ROCK\0",
-        name2: b"SW2ROCK\0",
+        name1: "SW1ROCK",
+        name2: "SW2ROCK",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1MET2\0",
-        name2: b"SW2MET2\0",
+        name1: "SW1MET2",
+        name2: "SW2MET2",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1WDMET\0",
-        name2: b"SW2WDMET\0",
+        name1: "SW1WDMET",
+        name2: "SW2WDMET",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1BRIK\0",
-        name2: b"SW2BRIK\0",
+        name1: "SW1BRIK",
+        name2: "SW2BRIK",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1MOD1\0",
-        name2: b"SW2MOD1\0",
+        name1: "SW1MOD1",
+        name2: "SW2MOD1",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1ZIM\0",
-        name2: b"SW2ZIM\0",
+        name1: "SW1ZIM",
+        name2: "SW2ZIM",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1STON6\0",
-        name2: b"SW2STON6\0",
+        name1: "SW1STON6",
+        name2: "SW2STON6",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1TEK\0",
-        name2: b"SW2TEK\0",
+        name1: "SW1TEK",
+        name2: "SW2TEK",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1MARB\0",
-        name2: b"SW2MARB\0",
+        name1: "SW1MARB",
+        name2: "SW2MARB",
         episode: 3,
     },
     SwitchDef {
-        name1: b"SW1SKULL\0",
-        name2: b"SW2SKULL\0",
+        name1: "SW1SKULL",
+        name2: "SW2SKULL",
         episode: 3,
     },
     // terminator
     SwitchDef {
-        name1: b"\0",
-        name2: b"\0",
+        name1: "",
+        name2: "",
         episode: 0,
     },
 ];
@@ -479,9 +479,9 @@ pub fn P_InitSwitchList() {
                 break;
             }
             if sw.episode <= episode {
-                switchlist[index] = R_TextureNumForName(sw.name1);
+                switchlist[index] = R_TextureNumForName(sw.name1.as_bytes());
                 index += 1;
-                switchlist[index] = R_TextureNumForName(sw.name2);
+                switchlist[index] = R_TextureNumForName(sw.name2.as_bytes());
                 index += 1;
             }
         }

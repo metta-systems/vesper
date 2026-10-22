@@ -17,7 +17,7 @@
 //! - `logical_gamemission` has a safe signature (`fn`, not `unsafe fn`); the
 //!   C-linked global read is wrapped in an internal `unsafe { ... }` block.
 
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use std::{io::Read, ptr};
 
@@ -98,19 +98,13 @@ const KEY_SCRLCK: i32 = 0x80 + 0x46;
 /// Build a `menuitem_t` at compile time.
 ///
 /// `status` encodes the item type: 1 = activatable, 2 = slider, -1 = gap.
-/// `name` is the WAD lump name (up to 10 bytes, NUL-padded).
+/// `name` is the WAD lump name of the item's graphic, empty for none.
 /// `routine` is the callback invoked on selection or slider movement.
 /// `alpha` is the keyboard shortcut character used for quick navigation.
-const fn mi(status: i16, name: &[u8], routine: Option<fn(i32)>, alpha: u8) -> menuitem_t {
-    let mut n = [0u8; 10];
-    let mut i = 0;
-    while i < name.len() && i < 10 {
-        n[i] = name[i];
-        i += 1;
-    }
+const fn mi(status: i16, name: &'static str, routine: Option<fn(i32)>, alpha: u8) -> menuitem_t {
     menuitem_t {
         status,
-        name: n,
+        name,
         routine,
         alphaKey: alpha,
     }
@@ -118,17 +112,15 @@ const fn mi(status: i16, name: &[u8], routine: Option<fn(i32)>, alpha: u8) -> me
 
 /// A single entry in a Doom menu (C typedef `menuitem_t` from `m_menu.h`).
 ///
-/// Layout is ABI-identical to the C struct; `#[repr(C)]` ensures this.
 /// `status` encodes item kind: `1` = normal action, `2` = slider, `-1` = spacing row.
-/// `name` is a NUL-terminated WAD lump name (10 bytes, 0-padded).
+/// `name` is the WAD lump name of the item's graphic, empty for none.
 /// `routine` is called with the item index on activation.
 /// `alphaKey` is the lowercase ASCII shortcut character.
-#[repr(C)]
 pub struct menuitem_t {
     /// Item kind: 1 = action, 2 = slider, -1 = gap row.
     pub status: i16,
-    /// WAD lump name for the item's graphic patch (NUL-terminated, 10 bytes).
-    pub name: [u8; 10],
+    /// WAD lump name for the item's graphic patch; empty for none.
+    pub name: &'static str,
     /// Callback invoked when the item is activated or a slider is adjusted.
     pub routine: Option<fn(i32)>,
     /// Keyboard shortcut character for fast navigation within the menu.
@@ -159,10 +151,6 @@ pub struct menu_t {
     pub lastOn: i16,
 }
 
-const _: () = assert!(
-    std::mem::size_of::<menuitem_t>() == 32,
-    "menuitem_t size mismatch"
-);
 const _: () = assert!(std::mem::size_of::<menu_t>() == 40, "menu_t size mismatch");
 
 /// Minimal prefix of `patch_t` needed to read width/height without pulling in the full type.
@@ -415,75 +403,75 @@ const read2_end: usize = 1;
 
 /// Item array for the root main menu (New Game, Options, Load, Save, Read This, Quit).
 static mut MainMenu: [menuitem_t; 6] = [
-    mi(1, b"M_NGAME\0\0\0", Some(M_NewGame), b'n'),
-    mi(1, b"M_OPTION\0\0", Some(M_Options), b'o'),
-    mi(1, b"M_LOADG\0\0\0", Some(M_LoadGame), b'l'),
-    mi(1, b"M_SAVEG\0\0\0", Some(M_SaveGame), b's'),
-    mi(1, b"M_RDTHIS\0\0", Some(M_ReadThis), b'r'),
-    mi(1, b"M_QUITG\0\0\0", Some(M_QuitDOOM), b'q'),
+    mi(1, "M_NGAME", Some(M_NewGame), b'n'),
+    mi(1, "M_OPTION", Some(M_Options), b'o'),
+    mi(1, "M_LOADG", Some(M_LoadGame), b'l'),
+    mi(1, "M_SAVEG", Some(M_SaveGame), b's'),
+    mi(1, "M_RDTHIS", Some(M_ReadThis), b'r'),
+    mi(1, "M_QUITG", Some(M_QuitDOOM), b'q'),
 ];
 
 /// Item array for the episode selection menu (E1-E4).
 static mut EpisodeMenu: [menuitem_t; 4] = [
-    mi(1, b"M_EPI1\0\0\0\0", Some(M_Episode), b'k'),
-    mi(1, b"M_EPI2\0\0\0\0", Some(M_Episode), b't'),
-    mi(1, b"M_EPI3\0\0\0\0", Some(M_Episode), b'i'),
-    mi(1, b"M_EPI4\0\0\0\0", Some(M_Episode), b't'),
+    mi(1, "M_EPI1", Some(M_Episode), b'k'),
+    mi(1, "M_EPI2", Some(M_Episode), b't'),
+    mi(1, "M_EPI3", Some(M_Episode), b'i'),
+    mi(1, "M_EPI4", Some(M_Episode), b't'),
 ];
 
 /// Item array for the skill-level selection menu.
 static mut NewGameMenu: [menuitem_t; 5] = [
-    mi(1, b"M_JKILL\0\0\0", Some(M_ChooseSkill), b'i'),
-    mi(1, b"M_ROUGH\0\0\0", Some(M_ChooseSkill), b'h'),
-    mi(1, b"M_HURT\0\0\0\0", Some(M_ChooseSkill), b'h'),
-    mi(1, b"M_ULTRA\0\0\0", Some(M_ChooseSkill), b'u'),
-    mi(1, b"M_NMARE\0\0\0", Some(M_ChooseSkill), b'n'),
+    mi(1, "M_JKILL", Some(M_ChooseSkill), b'i'),
+    mi(1, "M_ROUGH", Some(M_ChooseSkill), b'h'),
+    mi(1, "M_HURT", Some(M_ChooseSkill), b'h'),
+    mi(1, "M_ULTRA", Some(M_ChooseSkill), b'u'),
+    mi(1, "M_NMARE", Some(M_ChooseSkill), b'n'),
 ];
 
 /// Item array for the Options menu (end game, messages, detail, screen size, mouse sensitivity, sound).
 static mut OptionsMenu: [menuitem_t; 8] = [
-    mi(1, b"M_ENDGAM\0\0", Some(M_EndGame), b'e'),
-    mi(1, b"M_MESSG\0\0\0", Some(M_ChangeMessages), b'm'),
-    mi(1, b"M_DETAIL\0\0", Some(M_ChangeDetail), b'g'),
-    mi(2, b"M_SCRNSZ\0\0", Some(M_SizeDisplay), b's'),
-    mi(-1, b"", None, 0),
-    mi(2, b"M_MSENS\0\0\0", Some(M_ChangeSensitivity), b'm'),
-    mi(-1, b"", None, 0),
-    mi(1, b"M_SVOL\0\0\0\0", Some(M_Sound), b's'),
+    mi(1, "M_ENDGAM", Some(M_EndGame), b'e'),
+    mi(1, "M_MESSG", Some(M_ChangeMessages), b'm'),
+    mi(1, "M_DETAIL", Some(M_ChangeDetail), b'g'),
+    mi(2, "M_SCRNSZ", Some(M_SizeDisplay), b's'),
+    mi(-1, "", None, 0),
+    mi(2, "M_MSENS", Some(M_ChangeSensitivity), b'm'),
+    mi(-1, "", None, 0),
+    mi(1, "M_SVOL", Some(M_Sound), b's'),
 ];
 
 /// Single-item array for the first "Read This" help page (advances to page 2).
-static mut ReadMenu1: [menuitem_t; 1] = [mi(1, b"", Some(M_ReadThis2), 0)];
+static mut ReadMenu1: [menuitem_t; 1] = [mi(1, "", Some(M_ReadThis2), 0)];
 
 /// Single-item array for the second "Read This" help page (returns to main menu).
-static mut ReadMenu2: [menuitem_t; 1] = [mi(1, b"", Some(M_FinishReadThis), 0)];
+static mut ReadMenu2: [menuitem_t; 1] = [mi(1, "", Some(M_FinishReadThis), 0)];
 
 /// Item array for the Sound Volume menu (SFX slider, music slider).
 static mut SoundMenu: [menuitem_t; 4] = [
-    mi(2, b"M_SFXVOL\0\0", Some(M_SfxVol), b's'),
-    mi(-1, b"", None, 0),
-    mi(2, b"M_MUSVOL\0\0", Some(M_MusicVol), b'm'),
-    mi(-1, b"", None, 0),
+    mi(2, "M_SFXVOL", Some(M_SfxVol), b's'),
+    mi(-1, "", None, 0),
+    mi(2, "M_MUSVOL", Some(M_MusicVol), b'm'),
+    mi(-1, "", None, 0),
 ];
 
 /// Item array for the Load Game menu (6 save slots).
 static mut LoadMenu: [menuitem_t; 6] = [
-    mi(1, b"", Some(M_LoadSelect), b'1'),
-    mi(1, b"", Some(M_LoadSelect), b'2'),
-    mi(1, b"", Some(M_LoadSelect), b'3'),
-    mi(1, b"", Some(M_LoadSelect), b'4'),
-    mi(1, b"", Some(M_LoadSelect), b'5'),
-    mi(1, b"", Some(M_LoadSelect), b'6'),
+    mi(1, "", Some(M_LoadSelect), b'1'),
+    mi(1, "", Some(M_LoadSelect), b'2'),
+    mi(1, "", Some(M_LoadSelect), b'3'),
+    mi(1, "", Some(M_LoadSelect), b'4'),
+    mi(1, "", Some(M_LoadSelect), b'5'),
+    mi(1, "", Some(M_LoadSelect), b'6'),
 ];
 
 /// Item array for the Save Game menu (6 save slots).
 static mut SaveMenu: [menuitem_t; 6] = [
-    mi(1, b"", Some(M_SaveSelect), b'1'),
-    mi(1, b"", Some(M_SaveSelect), b'2'),
-    mi(1, b"", Some(M_SaveSelect), b'3'),
-    mi(1, b"", Some(M_SaveSelect), b'4'),
-    mi(1, b"", Some(M_SaveSelect), b'5'),
-    mi(1, b"", Some(M_SaveSelect), b'6'),
+    mi(1, "", Some(M_SaveSelect), b'1'),
+    mi(1, "", Some(M_SaveSelect), b'2'),
+    mi(1, "", Some(M_SaveSelect), b'3'),
+    mi(1, "", Some(M_SaveSelect), b'4'),
+    mi(1, "", Some(M_SaveSelect), b'5'),
+    mi(1, "", Some(M_SaveSelect), b'6'),
 ];
 
 /// Page descriptor for the root main menu.
@@ -1805,12 +1793,12 @@ pub fn M_Drawer() {
         let max = (*currentMenu).numitems as usize;
 
         for i in 0..max {
-            let name = &(*(*currentMenu).menuitems.add(i)).name;
-            if name[0] != 0 {
+            let name = (*(*currentMenu).menuitems.add(i)).name;
+            if !name.is_empty() {
                 V_DrawPatchDirect(
                     x,
                     y + LINEHEIGHT * i as i32,
-                    W_CacheLumpName(name, 0) as *mut patch_t,
+                    W_CacheLumpName(name.as_bytes(), 0) as *mut patch_t,
                 );
             }
         }

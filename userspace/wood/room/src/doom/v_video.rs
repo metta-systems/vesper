@@ -527,13 +527,13 @@ pub fn WritePCXfile(filename: &str, data: *mut u8, width: i32, height: i32, pale
     }
 }
 
-/// Build a screenshot filename for index `i`: `"DOOM{i:02}.pcx"`.
-/// The only real caller always passes `"DOOM%02i.%s"` as format, so the pattern is fixed.
+/// Build a screenshot filename for index `i`: `"DOOM{i:02}.pcx"`, the
+/// `"DOOM%02i.%s"` format the C caller passed.
 fn screenshot_filename(i: i32) -> String {
     format!("DOOM{i:02}.pcx")
 }
 
-pub fn V_ScreenShot(_format: *mut u8) {
+pub fn V_ScreenShot() {
     unsafe {
         let mut i = 0;
         while i <= 99 {

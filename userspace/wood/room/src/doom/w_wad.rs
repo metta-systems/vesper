@@ -403,7 +403,7 @@ pub fn W_CacheLumpNum(lumpnum: i32, tag: i32) -> *mut c_void {
         } else if !(*lump).cache.is_null() {
             // Already cached
             let result = (*lump).cache;
-            Z_ChangeTag2(result, tag, ptr::null(), 0);
+            Z_ChangeTag2(result, tag);
             result
         } else {
             // Not yet loaded
@@ -438,7 +438,7 @@ pub fn W_ReleaseLumpNum(lumpnum: i32) {
         if !(*(*lump).wad_file).mapped.is_null() {
             // Memory-mapped: nothing to do
         } else {
-            Z_ChangeTag2((*lump).cache, PU_CACHE, ptr::null(), 0);
+            Z_ChangeTag2((*lump).cache, PU_CACHE);
         }
     }
 }
