@@ -284,11 +284,6 @@ const PACKS: [PackDesc; 3] = [
 
 use crate::doom::dummy::drone;
 
-extern "C" {
-    /// Terminates the process with the given exit `status` code.
-    fn exit(status: i32) -> !;
-}
-
 // g_game.rs
 use crate::doom::g_game::{
     deathmatch, demoplayback, demorecording, displayplayer, forwardmove, gameaction, gamestate,
@@ -328,8 +323,8 @@ use crate::doom::i_video::{screensaver_mode, screenvisible};
 
 // w_wad.rs
 use crate::doom::w_wad::{
-    lump_names_equal, lumpinfo, numlumps, W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD,
-    W_CheckNumForName, W_GenerateHashTable,
+    lump_name, lump_names_equal, lumpinfo, numlumps, W_AddFile, W_CacheLumpName,
+    W_CheckCorrectIWAD, W_CheckNumForName, W_GenerateHashTable,
 };
 
 // hu_stuff.rs
@@ -394,9 +389,6 @@ use crate::doom::m_controls::{
     M_ApplyPlatformDefaults, M_BindBaseControls, M_BindChatControls, M_BindMapControls,
     M_BindMenuControls, M_BindWeaponControls,
 };
-
-// m_misc.rs
-use crate::doom::m_misc::M_StringCopy;
 
 // m_menu.rs
 use crate::doom::m_menu::{M_Drawer, M_Init, M_Responder};
@@ -880,7 +872,7 @@ pub fn D_DoAdvanceDemo() {
                 }
             }
             1 => {
-                G_DeferedPlayDemo(c"demo1".as_ptr().cast());
+                G_DeferedPlayDemo("demo1");
             }
             2 => {
                 pagetic = 200;
@@ -888,7 +880,7 @@ pub fn D_DoAdvanceDemo() {
                 pagename = b"CREDIT";
             }
             3 => {
-                G_DeferedPlayDemo(c"demo2".as_ptr().cast());
+                G_DeferedPlayDemo("demo2");
             }
             4 => {
                 gamestate = GS_DEMOSCREEN;
@@ -906,11 +898,11 @@ pub fn D_DoAdvanceDemo() {
                 }
             }
             5 => {
-                G_DeferedPlayDemo(c"demo3".as_ptr().cast());
+                G_DeferedPlayDemo("demo3");
             }
             6 => {
                 // THE DEFINITIVE DOOM Special Edition demo
-                G_DeferedPlayDemo(c"demo4".as_ptr().cast());
+                G_DeferedPlayDemo("demo4");
             }
             _ => {}
         }
@@ -1258,7 +1250,9 @@ fn D_Endoom() {
         let endoom = W_CacheLumpName(DEH_String(b"ENDOOM"), PU_STATIC) as *mut u8;
         I_Endoom(endoom);
 
-        exit(0);
+        // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        std::process::exit(0);
     }
 }
 
@@ -1269,7 +1263,7 @@ fn D_Endoom() {
 /// Main entry point — initializes all subsystems.
 pub fn D_DoomMain() {
     unsafe {
-        let mut demolumpname: [u8; 9] = [0; 9];
+        let mut demolumpname = String::new();
 
         I_AtExit(D_Endoom, Boolean::FALSE);
 
@@ -1389,11 +1383,11 @@ pub fn D_DoomMain() {
             if D_AddFile(&file) {
                 // Copy lump name from the last loaded lump
                 let name = (*lumpinfo.add(numlumps as usize - 1)).name;
-                std::ptr::copy_nonoverlapping(name.as_ptr(), demolumpname.as_mut_ptr(), 8);
-                demolumpname[8] = 0;
+                demolumpname = String::from_utf8_lossy(lump_name(&name)).into_owned();
             } else {
-                // Still continue like Vanilla Doom
-                M_StringCopy(&mut demolumpname, arg.as_bytes());
+                // Still continue like Vanilla Doom (the lump lookup only
+                // reads the first 8 characters, as the C 9-byte copy kept).
+                demolumpname = arg.to_owned();
             }
 
             println!("Playing demo {file}.");
@@ -1572,7 +1566,7 @@ pub fn D_DoomMain() {
         let p = M_CheckParmWithArgs("-playdemo", 1);
         if p > 0 {
             singledemo = 1;
-            G_DeferedPlayDemo(demolumpname.as_ptr());
+            G_DeferedPlayDemo(&demolumpname);
             D_DoomLoop();
             return;
         }
@@ -1580,7 +1574,7 @@ pub fn D_DoomMain() {
         // -timedemo
         let p = M_CheckParmWithArgs("-timedemo", 1);
         if p > 0 {
-            G_TimeDemo(demolumpname.as_mut_ptr());
+            G_TimeDemo(&demolumpname);
             D_DoomLoop();
             return;
         }

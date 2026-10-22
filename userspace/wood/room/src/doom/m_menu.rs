@@ -691,7 +691,7 @@ fn M_DrawSave() {
 /// Commit the save to `slot`, clear the menus, and record the slot as the quicksave target.
 fn M_DoSave(slot: i32) {
     unsafe {
-        G_SaveGame(slot, savegamestrings[slot as usize].as_ptr());
+        G_SaveGame(slot, &*ptr::addr_of!(savegamestrings[slot as usize]));
         M_ClearMenus();
         if quickSaveSlot == -2 {
             quickSaveSlot = slot;

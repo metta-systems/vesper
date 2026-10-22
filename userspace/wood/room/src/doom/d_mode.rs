@@ -22,10 +22,7 @@
 //! Notable Rust-vs-C differences:
 //! * Enum discriminants are `pub const i32` rather than Rust `enum` variants
 //!   so that they can be stored in `i32` globals and passed directly over FFI.
-//! * `D_GameMissionString` returns `*mut u8` pointing into static string
-//!   literals rather than stack-allocated `char *` (the C version returns
-//!   read-only string literals cast to `char *` which would be UB to mutate;
-//!   the Rust port matches the C signature but the same caveat applies).
+//! * `D_GameMissionString` returns a `&'static str`.
 //! * The `skill_t` enum from `d_mode.h` is not present here; it lives in
 //!   `doomdef.h` and is ported elsewhere.
 
@@ -474,37 +471,32 @@ pub fn D_IsEpisodeMap(mission: i32) -> Boolean {
     }
 }
 
-/// Return a NUL-terminated C string naming the given mission.
+/// Name of the given mission.
 ///
 /// Returns one of `"doom"`, `"doom2"`, `"tnt"`, `"plutonia"`, `"hacx"`,
 /// `"chex"`, `"heretic"`, `"hexen"`, `"strife"`, or `"none"` for unrecognised
-/// values. The returned pointer refers to a static string literal embedded in
-/// the binary and must not be freed or written through.
-///
-/// The return type is `*mut u8` to match the C signature, but the memory
-/// is read-only; writing to it is undefined behaviour, as it would be in the C
-/// original.
+/// values.
 ///
 /// Called from `w_wad` during WAD loading.
 /// Corresponds to `D_GameMissionString` in `d_mode.c`.
-pub fn D_GameMissionString(mission: i32) -> *mut u8 {
+pub fn D_GameMissionString(mission: i32) -> &'static str {
     match mission {
-        doom => c"doom".as_ptr().cast_mut().cast(),
-        doom2 => c"doom2".as_ptr().cast_mut().cast(),
-        pack_tnt => c"tnt".as_ptr().cast_mut().cast(),
-        pack_plut => c"plutonia".as_ptr().cast_mut().cast(),
-        pack_hacx => c"hacx".as_ptr().cast_mut().cast(),
-        pack_chex => c"chex".as_ptr().cast_mut().cast(),
-        heretic => c"heretic".as_ptr().cast_mut().cast(),
-        hexen => c"hexen".as_ptr().cast_mut().cast(),
-        strife => c"strife".as_ptr().cast_mut().cast(),
-        _ => c"none".as_ptr().cast_mut().cast(),
+        doom => "doom",
+        doom2 => "doom2",
+        pack_tnt => "tnt",
+        pack_plut => "plutonia",
+        pack_hacx => "hacx",
+        pack_chex => "chex",
+        heretic => "heretic",
+        hexen => "hexen",
+        strife => "strife",
+        _ => "none",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::types::Boolean, std::ffi::CStr};
+    use {super::*, crate::types::Boolean};
 
     /// Verifies that `doom` shareware is a valid game mode combination.
     #[test]
@@ -539,17 +531,13 @@ mod tests {
     /// Verifies that `D_GameMissionString` returns `"heretic"` for the Heretic mission.
     #[test]
     fn game_mission_string_heretic() {
-        let ptr = D_GameMissionString(heretic);
-        let s = unsafe { CStr::from_ptr(ptr.cast()) };
-        assert_eq!(s.to_str().unwrap(), "heretic");
+        assert_eq!(D_GameMissionString(heretic), "heretic");
     }
 
     /// Verifies that an unrecognised mission value returns `"none"`.
     #[test]
     fn game_mission_string_unknown() {
-        let ptr = D_GameMissionString(42);
-        let s = unsafe { CStr::from_ptr(ptr.cast()) };
-        assert_eq!(s.to_str().unwrap(), "none");
+        assert_eq!(D_GameMissionString(42), "none");
     }
 
     /// Verifies that `exe_final2` is a valid game version for the `doom` mission.
@@ -667,7 +655,6 @@ mod tests {
     /// D_GameMissionString returns the right string for every known mission.
     #[test]
     fn game_mission_string_all_missions() {
-        use std::ffi::CStr;
         let cases: &[(i32, &str)] = &[
             (doom, "doom"),
             (doom2, "doom2"),
@@ -681,9 +668,11 @@ mod tests {
             (none, "none"),
         ];
         for (mission, expected) in cases {
-            let ptr = D_GameMissionString(*mission);
-            let s = unsafe { CStr::from_ptr(ptr.cast()) };
-            assert_eq!(s.to_str().unwrap(), *expected, "mission={mission}");
+            assert_eq!(
+                D_GameMissionString(*mission),
+                *expected,
+                "mission={mission}"
+            );
         }
     }
 }

@@ -38,10 +38,7 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::{
-        borrow::Cow,
-        ffi::{c_void, CStr},
-    },
+    std::{borrow::Cow, ffi::c_void},
 };
 
 use std::ptr;
@@ -444,8 +441,8 @@ pub static mut angleturn: [fixed_t; 3] = [640, 1280, 320];
 /// exit (set by `G_SecretExitLevel`).
 pub static mut secretexit: boolean = 0;
 
-/// File name of the demo deferred for playback (set by `G_DeferedPlayDemo`).
-pub static mut defdemoname: *mut u8 = ptr::null_mut();
+/// Lump name of the demo deferred for playback (set by `G_DeferedPlayDemo`).
+pub static mut defdemoname: String = String::new();
 
 /// File name of the savegame currently being loaded.
 pub static mut savename: String = String::new();
@@ -608,7 +605,7 @@ use crate::doom::s_sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 use crate::doom::m_menu::{mouseSensitivity, M_StartControlPanel};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
-use crate::doom::m_misc::{atoi, c_str, M_StringCopy, M_TempFile, M_WriteFile};
+use crate::doom::m_misc::{atoi, M_StringCopy, M_TempFile, M_WriteFile};
 
 /// Command-line argument table and lookup helpers from `m_argv.c`.
 use crate::doom::m_argv::{argument, M_CheckParm, M_CheckParmWithArgs};
@@ -2049,12 +2046,14 @@ pub unsafe fn G_DoLoadGame() {
 /// then set `sendsave` so the next `G_BuildTiccmd` emits a
 /// `BT_SPECIAL | BTS_SAVEGAME` ticcmd. `G_Ticker` decodes that and triggers
 /// `ga_savegame` -> `G_DoSaveGame`.
+/// `description` is read up to its first NUL, so a fixed text buffer can
+/// be passed whole.
 ///
 /// # Safety
-/// `description` must be a valid NUL-terminated C string.
-pub unsafe fn G_SaveGame(slot: i32, description: *const u8) {
+/// Mutates the `SAVEGAMESLOT`, `SAVEDESCRIPTION` and `sendsave` globals.
+pub unsafe fn G_SaveGame(slot: i32, description: &[u8]) {
     SAVEGAMESLOT = slot;
-    M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), c_str(description));
+    M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), description);
     sendsave = 1;
 }
 
@@ -2595,10 +2594,9 @@ pub unsafe fn G_BeginRecording() {
 /// `ga_playdemo` for the next `G_Ticker` pass.
 ///
 /// # Safety
-/// `name` must point to a NUL-terminated C string that lives at least until
-/// `G_DoPlayDemo` runs.
-pub unsafe fn G_DeferedPlayDemo(name: *const u8) {
-    defdemoname = name as *mut u8;
+/// Mutates the `defdemoname` and `gameaction` globals.
+pub unsafe fn G_DeferedPlayDemo(name: &str) {
+    defdemoname = name.to_owned();
     gameaction = ga_playdemo;
 }
 
@@ -2643,8 +2641,7 @@ pub unsafe fn G_DoPlayDemo() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
     gameaction = ga_nothing;
-    demobuffer =
-        W_CacheLumpName(CStr::from_ptr(defdemoname.cast()).to_bytes(), PU_STATIC) as *mut byte;
+    demobuffer = W_CacheLumpName((&*ptr::addr_of!(defdemoname)).as_bytes(), PU_STATIC) as *mut byte;
     demo_p = demobuffer;
 
     let demoversion = *demo_p as i32;
@@ -2722,12 +2719,12 @@ pub unsafe fn G_DoPlayDemo() {
 ///
 /// # Safety
 /// Mutates `nodrawers`, `timingdemo`, `singletics`, `defdemoname`, `gameaction`.
-pub unsafe fn G_TimeDemo(name: *mut u8) {
+pub unsafe fn G_TimeDemo(name: &str) {
     nodrawers = M_CheckParm("-nodraw");
     timingdemo = 1;
     use crate::doom::d_loop::singletics;
     singletics = 1;
-    defdemoname = name;
+    defdemoname = name.to_owned();
     gameaction = ga_playdemo;
 }
 
@@ -2767,7 +2764,7 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
     }
 
     if demoplayback != 0 {
-        W_ReleaseLumpName(CStr::from_ptr(defdemoname.cast()).to_bytes());
+        W_ReleaseLumpName((&*ptr::addr_of!(defdemoname)).as_bytes());
         demoplayback = 0;
         netdemo = 0;
         netgame = 0;

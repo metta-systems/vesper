@@ -115,18 +115,15 @@ struct column_t {
     length: u8,
 }
 
-// ---------------------------------------------------------------------------
-// C library
-// ---------------------------------------------------------------------------
-
-extern "C" {
-    /// Case-insensitive string comparison of at most `n` bytes.
-    /// Used to match 4-character sprite names from WAD lump headers.
-    fn strncasecmp(s1: *const u8, s2: *const u8, n: usize) -> i32;
+/// The 4-character sprite prefix of a lump or sprite name, up to the first
+/// NUL: what C's `strncasecmp(a, b, 4)` compares.
+fn sprite_prefix(name: &[u8]) -> &[u8] {
+    until_nul(&name[..name.len().min(4)])
 }
 
 use crate::doom::{
     doomstat::modifiedgame,
+    m_misc::{c_str, until_nul},
     r_bsp::{drawsegs, ds_p},
     r_data::{
         colormaps, firstspritelump, lastspritelump, spriteoffset, spritetopoffset, spritewidth,
@@ -345,7 +342,7 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
         // Scan the lumps, filling in the frames for whatever is found.
         for l in (start + 1)..end {
             let li = &*lumpinfo.add(l as usize);
-            if strncasecmp(li.name.as_ptr(), spritename, 4) == 0 {
+            if sprite_prefix(&li.name).eq_ignore_ascii_case(sprite_prefix(c_str(spritename))) {
                 let frame = (li.name[4] - b'A') as u32;
                 let rotation = (li.name[5] - b'0') as u32;
 

@@ -882,19 +882,19 @@ pub unsafe fn R_ExecuteSetViewSize() {
 /// frame is rendered. Calls multiple unsafe initialisers internally.
 pub unsafe fn R_Init() {
     R_InitData();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitPointToAngle();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitTables();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_SetViewSize(screenblocks, detailLevel);
     R_InitPlanes();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitLightTables();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     crate::doom::r_sky::R_InitSkyMap();
     R_InitTranslationTables();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
 
     framecount = 0;
 }

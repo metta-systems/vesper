@@ -13,11 +13,9 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
-
 /// Snapshot of intermission-screen state captured at the end of every
 /// level. Mirrors the C `wbstartstruct_t` layout from `d_player.h`.
-/// `#[repr(C)]` so it can be `memcpy`'d directly out of game memory.
+/// `#[repr(C)]` so it can be copied directly out of game memory.
 ///
 /// Layout invariant: the struct exposed here only includes the four
 /// fields the dump path inspects (`epsd`, `last`, `partime`, `plyr`).
@@ -90,19 +88,12 @@ static mut num_captured_stats: i32 = 0;
 
 use crate::doom::m_argv::M_ParmExists;
 
-extern "C" {
-    /// C `memcpy` from libc. Used for the bulk struct copy below; an
-    /// `std::ptr::copy_nonoverlapping` would do equally well but the
-    /// direct FFI call keeps the code byte-identical to the C source.
-    fn memcpy(dest: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
-}
-
 /// Capture a snapshot of `stats` into `captured_stats` if statistics
 /// dumping was requested on the command line.
 ///
 /// Behaviour matches the C original: when `-statdump` is present in
 /// `argv` and the buffer is not yet full, the entire `wbstartstruct_t`
-/// is `memcpy`'d into the next free slot and `num_captured_stats`
+/// is copied into the next free slot and `num_captured_stats`
 /// is bumped. When the buffer is full or the flag is absent, the call
 /// is silently dropped.
 ///
@@ -111,11 +102,10 @@ extern "C" {
 pub fn StatCopy(stats: *mut wbstartstruct_t) {
     unsafe {
         if M_ParmExists("-statdump") && num_captured_stats < MAX_CAPTURES as i32 {
-            memcpy(
-                std::ptr::addr_of_mut!(captured_stats[0]).offset(num_captured_stats as isize)
-                    as *mut c_void,
-                stats as *const c_void,
-                std::mem::size_of::<wbstartstruct_t>(),
+            std::ptr::copy_nonoverlapping(
+                stats,
+                std::ptr::addr_of_mut!(captured_stats[0]).offset(num_captured_stats as isize),
+                1,
             );
             num_captured_stats += 1;
         }

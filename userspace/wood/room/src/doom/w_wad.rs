@@ -12,14 +12,9 @@
 //! is consulted in preference to the linear scan once present.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-#![allow(clippy::manual_c_str_literals)]
-
 use {
     crate::i_error,
-    std::{
-        ffi::{c_void, CStr},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 use crate::doom::w_file::{wad_file_t, W_OpenFile, W_Read};
@@ -522,20 +517,18 @@ pub fn W_CheckCorrectIWAD(mission: i32) {
         },
     ];
 
-    unsafe {
-        for ul in &UNIQUE_LUMPS {
-            if mission != ul.mission {
-                let lumpnum = W_CheckNumForName(ul.lumpname);
-                if lumpnum >= 0 {
-                    i_error!(
-                        "\nYou are trying to use a {} IWAD file with the {}{}binary.\nThis isn't going to work.\nYou probably want to use the {}{}binary.",
-                        D_SuggestGameName(ul.mission, 4),
-                        "doomgeneric",
-                        CStr::from_ptr(D_GameMissionString(mission).cast()).to_string_lossy(),
-                        "doomgeneric",
-                        CStr::from_ptr(D_GameMissionString(ul.mission).cast()).to_string_lossy()
-                    );
-                }
+    for ul in &UNIQUE_LUMPS {
+        if mission != ul.mission {
+            let lumpnum = W_CheckNumForName(ul.lumpname);
+            if lumpnum >= 0 {
+                i_error!(
+                    "\nYou are trying to use a {} IWAD file with the {}{}binary.\nThis isn't going to work.\nYou probably want to use the {}{}binary.",
+                    D_SuggestGameName(ul.mission, 4),
+                    "doomgeneric",
+                    D_GameMissionString(mission),
+                    "doomgeneric",
+                    D_GameMissionString(ul.mission)
+                );
             }
         }
     }

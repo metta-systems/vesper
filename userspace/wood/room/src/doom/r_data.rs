@@ -585,11 +585,9 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
 
     for x in 0..width {
         if *patchcount.add(x as usize) == 0 {
-            libc::printf(
-                c"R_GenerateLookup: column without a patch (%s)\n"
-                    .as_ptr()
-                    .cast(),
-                (*texture).name.as_ptr(),
+            println!(
+                "R_GenerateLookup: column without a patch ({})",
+                String::from_utf8_lossy(lump_name(&(*texture).name))
             );
             Z_Free(patchcount as *mut c_void);
             return;
@@ -795,13 +793,13 @@ pub unsafe fn R_InitTextures() {
     let temp3 = ((temp2 - temp1 + 63) / 64) + ((numtextures + 63) / 64);
 
     if I_ConsoleStdout() != 0 {
-        libc::printf(c"[".as_ptr().cast());
+        print!("[");
         for _ in 0..temp3 + 9 {
-            libc::printf(c" ".as_ptr().cast());
+            print!(" ");
         }
-        libc::printf(c"]".as_ptr().cast());
+        print!("]");
         for _ in 0..temp3 + 10 {
-            libc::printf(c"\x08".as_ptr().cast());
+            print!("\x08");
         }
     }
 
@@ -811,7 +809,7 @@ pub unsafe fn R_InitTextures() {
 
     for i in 0..numtextures as usize {
         if (i & 63) == 0 {
-            libc::printf(c".".as_ptr().cast());
+            print!(".");
         }
 
         if i == numtextures1 as usize {
@@ -976,7 +974,7 @@ pub unsafe fn R_InitSpriteLumps() {
 
     for i in 0..numspritelumps as usize {
         if (i & 63) == 0 {
-            libc::printf(c".".as_ptr().cast());
+            print!(".");
         }
 
         let patch = W_CacheLumpNum(firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
@@ -1031,11 +1029,11 @@ pub unsafe fn R_InitColormaps() {
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitData() {
     R_InitTextures();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitFlats();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitSpriteLumps();
-    libc::printf(c".".as_ptr().cast());
+    print!(".");
     R_InitColormaps();
 }
 

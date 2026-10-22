@@ -61,11 +61,9 @@ use {
     std::{ffi::c_void, ptr},
 };
 
-/// Flush the "Generating lookup tables.." progress prints. `fflush(NULL)`
-/// flushes every output stream, `stdout` among them, without naming the
-/// `stdout` symbol, which macOS libc calls `__stdoutp`.
-unsafe fn flush_stdout() {
-    libc::fflush(ptr::null_mut());
+/// Flush the "Generating lookup tables.." progress prints.
+fn flush_stdout() {
+    let _ = std::io::Write::flush(&mut std::io::stdout());
 }
 
 use crate::doom::{
@@ -393,17 +391,13 @@ unsafe fn i_init_stretch_tables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         return;
     }
-    libc::printf(
-        c"I_InitStretchTables: Generating lookup tables.."
-            .as_ptr()
-            .cast(),
-    );
+    print!("I_InitStretchTables: Generating lookup tables..");
     flush_stdout();
     stretch_tables[0] = generate_stretch_table(palette, 20);
-    libc::printf(c"..".as_ptr().cast());
+    print!("..");
     flush_stdout();
     stretch_tables[1] = generate_stretch_table(palette, 40);
-    libc::puts(c"".as_ptr().cast());
+    println!();
 }
 
 /// `init_mode` callback for [`mode_squash_3x`] (800x600). Lazily
@@ -417,14 +411,10 @@ unsafe fn i_init_squash_table(palette: *mut u8) {
     if !half_stretch_table.is_null() {
         return;
     }
-    libc::printf(
-        c"I_InitSquashTable: Generating lookup table.."
-            .as_ptr()
-            .cast(),
-    );
+    print!("I_InitSquashTable: Generating lookup table..");
     flush_stdout();
     half_stretch_table = generate_stretch_table(palette, 50);
-    libc::puts(c"".as_ptr().cast());
+    println!();
 }
 
 /// Frees whichever blend tables are currently populated and regenerates
@@ -444,21 +434,13 @@ pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         Z_Free(stretch_tables[0] as *mut c_void);
         Z_Free(stretch_tables[1] as *mut c_void);
-        libc::printf(
-            c"I_ResetScaleTables: Regenerating lookup tables..\n"
-                .as_ptr()
-                .cast(),
-        );
+        println!("I_ResetScaleTables: Regenerating lookup tables..");
         stretch_tables[0] = generate_stretch_table(palette, 20);
         stretch_tables[1] = generate_stretch_table(palette, 40);
     }
     if !half_stretch_table.is_null() {
         Z_Free(half_stretch_table as *mut c_void);
-        libc::printf(
-            c"I_ResetScaleTables: Regenerating lookup table..\n"
-                .as_ptr()
-                .cast(),
-        );
+        println!("I_ResetScaleTables: Regenerating lookup table..");
         half_stretch_table = generate_stretch_table(palette, 50);
     }
 }

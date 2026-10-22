@@ -282,6 +282,8 @@ pub fn I_Error(msg: &str) -> ! {
             ZenityErrorBox(msg);
         }
 
+        // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
+        let _ = std::io::Write::flush(&mut std::io::stdout());
         std::process::exit(-1);
     }
 }

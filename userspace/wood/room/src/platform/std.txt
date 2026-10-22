@@ -12,33 +12,56 @@ Format: file: function: what it uses.
 1. Rust std-only APIs
 =====================
 
-Console output (println!, eprintln!, print!):
+Console output (print!, println!, eprintln!, std::io::stdout):
+  src/doom/d_iwad.rs: CheckDirectoryHasIWAD, D_FindIWAD: println!
   src/doom/d_main.rs: D_DoomLoop: eprintln!
-  src/doom/d_main.rs: SetMissionForPackName: println!
-  src/doom/d_main.rs: D_AddFile: println!
-  src/doom/d_main.rs: PrintDehackedBanners: print!, println!
-  src/doom/d_main.rs: InitGameVersion: println!
-  src/doom/d_main.rs: PrintGameVersion: println!
-  src/doom/d_main.rs: D_DoomMain: println!, print!
+  src/doom/d_main.rs: SetMissionForPackName, D_AddFile, InitGameVersion,
+    PrintGameVersion: println!
+  src/doom/d_main.rs: PrintDehackedBanners, D_DoomMain: print!, println!
+  src/doom/d_main.rs: D_Endoom: std::io::stdout, std::io::Write::flush
+  src/doom/g_game.rs: G_DoPlayDemo: print!
+  src/doom/i_scale.rs: flush_stdout: std::io::stdout, std::io::Write::flush
+  src/doom/i_scale.rs: i_init_stretch_tables, i_init_squash_table: print!,
+    println!
+  src/doom/i_scale.rs: I_ResetScaleTables: println!
+  src/doom/i_system.rs: I_ZoneBase, I_PrintBanner, I_PrintDivider: println!
+  src/doom/i_system.rs: I_PrintStartupBanner: print!
+  src/doom/i_system.rs: I_Error: eprintln!, std::io::stdout,
+    std::io::Write::flush
+  src/doom/m_argv.rs: LoadResponseFile: print!, println!
+  src/doom/m_config.rs: M_LoadDefaults, M_SetConfigDir, M_GetSaveGameDir:
+    println!
   src/doom/m_misc.rs: M_ExtractFileBase: eprintln!
   src/doom/p_doors.rs: EV_VerticalDoor: eprintln!
   src/doom/p_map.rs: SpechitOverrun: eprintln!
   src/doom/p_setup.rs: PadRejectArray: eprintln!
-  src/doom/p_spec.rs: DonutOverrun: eprintln!
-  src/doom/p_spec.rs: EV_DoDonut: eprintln!
+  src/doom/p_spec.rs: DonutOverrun, EV_DoDonut: eprintln!
+  src/doom/r_data.rs: R_GenerateLookup: println!
+  src/doom/r_data.rs: R_InitTextures, R_InitSpriteLumps, R_InitData: print!
+  src/doom/r_main.rs: R_Init: print!
+  src/doom/w_main.rs: W_ParseCommandLine: println!
+  src/doom/w_wad.rs: W_AddFile: println!
   src/doom/w_wad.rs: W_ReadLump: eprintln!
-  src/doom/z_zone.rs: Z_FreeTags: eprintln!
-  src/doom/z_zone.rs: Z_CheckHeap: eprintln!
-  src/doom/z_zone.rs: Z_CheckHeapQuiet: eprintln!
-  src/doom/z_zone.rs: Z_CheckHeapAfter: eprintln!
+  src/doom/wi_stuff.rs: WI_drawOnLnode: print!
+  src/doom/z_zone.rs: Z_FreeTags, Z_CheckHeap, Z_CheckHeapQuiet,
+    Z_CheckHeapAfter: eprintln!
+  src/doom/z_zone.rs: Z_DumpHeap: println!
+
+Files (std::fs, std::io::Read, std::path):
+  src/doom/g_game.rs: G_DoSaveGame: std::fs::remove_file, std::fs::rename
+  src/doom/m_argv.rs: LoadResponseFile: std::fs::File::open,
+    std::io::Read::read_to_end
+  src/doom/m_menu.rs: M_ReadSaveStrings: std::fs::File::open,
+    std::io::Read::read
+  src/doom/m_misc.rs: M_MakeDirectory: std::fs::create_dir, std::path::Path
+  src/doom/m_misc.rs: M_FileExists: std::fs::File::open, std::path::Path
+  src/doom/m_misc.rs: M_WriteFile: std::fs::write, std::path::Path
 
 Processes:
   src/doom/i_system.rs: ZenityAvailable: std::process::Command, Stdio
   src/doom/i_system.rs: ZenityErrorBox: std::process::Command
   src/doom/i_system.rs: I_Error: std::process::exit
-
-OS error code:
-  src/doom/m_misc.rs: errno: std::io::Error::last_os_error
+  src/doom/d_main.rs: D_Endoom: std::process::exit
 
 Thread-local storage:
   src/headless.rs: VIRTUAL_MS, FRAMES, TITLE (thread_local!), used by
@@ -46,15 +69,23 @@ Thread-local storage:
 
 Only spelled through std (the same items exist in core or alloc; a path
 change is enough):
-  std::os::raw::c_int / c_long (= core::ffi):
-    src/doom/c_ffi.rs: R_DrawViewBorder
-    src/doom/d_loop.rs, src/doom/i_input.rs, src/doom/p_sight.rs,
-    src/doom/st_lib.rs: module imports
-    src/doom/p_saveg.rs: G_VanillaVersionCode
-  std::format!, std::ffi::CString (= alloc::format!, alloc::ffi::CString):
+  std::ffi::CStr (= core::ffi::CStr):
+    src/doom/m_misc.rs: c_str
+    src/doom/p_saveg.rs: P_WriteSaveGameHeader
+    src/doom/r_data.rs, src/doom/r_things.rs: module imports
+    src/doom/s_sound.rs: S_ChangeMusic
+    src/doom/sha1.rs: SHA1_UpdateString
+  std::ffi::CString (= alloc::ffi::CString):
+    src/doom/g_game.rs: G_DoLoadGame, G_DoSaveGame
+    src/doom/w_file.rs: W_StdC_OpenFile
+  std::borrow::Cow (= alloc::borrow::Cow):
+    src/doom/g_game.rs, src/doom/hu_stuff.rs, src/doom/i_sound.rs,
+    src/doom/m_config.rs: module imports
+  std::format! (= alloc::format!):
     src/doom/m_misc.rs: macros c_write!, DEH_snprintf!, i_error!, used
     throughout the engine
-  std::ffi, std::ptr, std::mem, std::slice, ... (= core::*): everywhere
+  std::ffi::c_void, std::ptr, std::mem, std::slice, std::cell, ...
+  (= core::*): everywhere
 
 
 2. C library calls (libc crate or extern "C" declarations)
@@ -62,68 +93,23 @@ change is enough):
 
 Vesper has no C library, so these need a replacement too.
 
-Files:
+Files (stdio FILE streams):
   src/doom/g_game.rs: G_DoLoadGame: fopen, fclose
-  src/doom/g_game.rs: G_DoSaveGame: fopen, fclose, ftell, remove, rename
-  src/doom/m_argv.rs: LoadResponseFile: fopen, fread, fclose, malloc, printf
-  src/doom/m_menu.rs: M_ReadSaveStrings: fopen, fread, fclose
-  src/doom/m_misc.rs: M_FileExists: fopen, fclose
+  src/doom/g_game.rs: G_DoSaveGame: fopen, fclose, ftell
   src/doom/m_misc.rs: M_FileLength: fseek, ftell
-  src/doom/m_misc.rs: M_ReadFile: fopen, fread, fclose
-  src/doom/m_misc.rs: M_WriteFile: fopen, fwrite, fclose
-  src/doom/m_misc.rs: M_MakeDirectory: mkdir
+  src/doom/p_saveg.rs: save_stream (static): FILE
   src/doom/p_saveg.rs: saveg_read8: fread
   src/doom/p_saveg.rs: saveg_write8: fwrite
   src/doom/p_saveg.rs: saveg_read_pad, saveg_write_pad: ftell
   src/doom/w_file.rs: W_StdC_OpenFile: fopen, fclose
   src/doom/w_file.rs: W_StdC_Read: fseek, fread
   src/doom/w_file.rs: W_StdC_CloseFile: fclose
-
-Environment:
-  src/doom/m_misc.rs: M_HomeDir, M_DefaultConfigDir: getenv
-
-Console output (printf, puts, putchar, fflush):
-  src/doom/d_iwad.rs: CheckDirectoryHasIWAD: printf
-  src/doom/d_iwad.rs: D_FindIWAD: printf
-  src/doom/g_game.rs: G_DoPlayDemo: printf
-  src/doom/i_scale.rs: I_ResetScaleTables: printf
-  src/doom/i_scale.rs: i_init_squash_table, i_init_stretch_tables: printf, puts
-  src/doom/i_scale.rs: flush_stdout: fflush
-  src/doom/i_system.rs: I_PrintBanner: puts, putchar
-  src/doom/i_system.rs: I_PrintDivider: putchar
-  src/doom/i_system.rs: I_PrintStartupBanner: printf
-  src/doom/i_system.rs: I_ZoneBase: printf
-  src/doom/m_config.rs: M_GetSaveGameDir, M_LoadDefaults, M_SetConfigDir: printf
-  src/doom/r_data.rs: R_GenerateLookup, R_InitData, R_InitSpriteLumps,
-    R_InitTextures: printf
-  src/doom/r_main.rs: R_Init: printf
-  src/doom/w_main.rs: W_ParseCommandLine: printf
-  src/doom/w_wad.rs: W_AddFile: printf
-  src/doom/wi_stuff.rs: WI_drawOnLnode: printf
-  src/doom/z_zone.rs: Z_DumpHeap: printf
+  src/doom/z_zone.rs: Z_FileDumpHeap: FILE (no-op stub)
 
 Heap (malloc, calloc, free):
-  src/doom/d_iwad.rs: D_FindAllIWADs: malloc
-  src/doom/d_iwad.rs: CheckDirectoryHasIWAD, D_FindWADByName: free
   src/doom/i_system.rs: AutoAllocMemory, I_AtExit: malloc
-  src/doom/m_config.rs: GetDefaultConfigDir: malloc
-  src/doom/m_misc.rs: M_StringJoinA, M_StringReplace: malloc
   src/doom/w_wad.rs: ExtendLumpInfo: calloc, free
 
-Exit:
-  src/doom/d_main.rs: D_Endoom: exit
-
-Formatting and parsing (snprintf, sscanf, atoi, atof):
-  src/doom/d_main.rs: GetGameName: snprintf
-  src/doom/d_main.rs: D_DoomMain: atoi
-  src/doom/g_game.rs: G_RecordDemo: atoi, snprintf
-  src/doom/g_game.rs: G_Ticker, demo_version_description: snprintf
-  src/doom/i_system.rs: I_ZoneBase: atoi
-  src/doom/m_config.rs: set_variable: atof
-  src/doom/m_misc.rs: M_StrToInt: sscanf
-
-String and memory helpers (strlen, strcmp, strncmp, strcasecmp, strncasecmp,
-strncpy, strchr, strrchr, strstr, strdup, toupper, tolower, isspace, memcpy,
-memmove, memset) are also declared through extern "C" in many modules. They
-are small and need no OS; memcpy, memmove and memset come with
-compiler_builtins.
+Memory:
+  src/doom/p_setup.rs: P_LoadBlockMap: memset (comes with
+    compiler_builtins; std::ptr::write_bytes would do)

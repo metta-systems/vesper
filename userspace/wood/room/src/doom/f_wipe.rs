@@ -167,7 +167,7 @@ unsafe fn wipe_do_color_xform(width: i32, height: i32, ticks: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// No preconditions beyond those required by `extern "C"` calling convention.
+/// No preconditions; `unsafe` only to match the other wipe callbacks.
 unsafe fn wipe_exit_color_xform(_width: i32, _height: i32, _ticks: i32) -> i32 {
     0
 }
