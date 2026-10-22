@@ -5,7 +5,7 @@
 //! ticks it. Each method will be backed by a Vesper component (the
 //! compositor, `input_v1`, the timer, audio) as those land.
 
-use room::doom::doomgeneric::Platform;
+use room::engine::doomgeneric::Platform;
 
 /// The Vesper platform the engine runs on.
 struct Vesper;
@@ -15,8 +15,8 @@ impl Platform for Vesper {}
 /// Start the engine and tick it forever.
 pub fn run() {
     // SAFETY: called once, at startup.
-    unsafe { room::doom::doomgeneric::doomgeneric_Create(&Vesper, vec!["room".to_owned()]) };
+    unsafe { room::engine::doomgeneric::doomgeneric_Create(&Vesper, vec!["room".to_owned()]) };
     loop {
-        room::doom::d_main::doomgeneric_Tick();
+        room::engine::doom::main::doomgeneric_Tick();
     }
 }

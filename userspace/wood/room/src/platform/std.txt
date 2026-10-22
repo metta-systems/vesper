@@ -1,8 +1,8 @@
-Engine code (room::doom, room::headless, room::types) that needs more than
+Engine code (room::engine, room::headless, room::types) that needs more than
 core + alloc, i.e. what stops the engine building for Vesper.
 
 Scope: everything outside src/platform/, skipping #[cfg(test)] code and
-src/doom/c_tests/. Found by searching the source for std-only paths and
+src/engine/c_tests/. Found by searching the source for std-only paths and
 macros, and for calls to C library functions; a call made through a local
 alias or a function pointer would not show up.
 
@@ -13,65 +13,65 @@ Format: file: function: what it uses.
 =====================
 
 Console output (print!, println!, eprintln!, std::io::stdout):
-  src/doom/d_iwad.rs: CheckDirectoryHasIWAD, D_FindIWAD: println!
-  src/doom/d_main.rs: D_DoomLoop: eprintln!
-  src/doom/d_main.rs: SetMissionForPackName, D_AddFile, InitGameVersion,
+  src/engine/doom/iwad.rs: CheckDirectoryHasIWAD, D_FindIWAD: println!
+  src/engine/doom/main.rs: D_DoomLoop: eprintln!
+  src/engine/doom/main.rs: SetMissionForPackName, D_AddFile, InitGameVersion,
     PrintGameVersion: println!
-  src/doom/d_main.rs: PrintDehackedBanners, D_DoomMain: print!, println!
-  src/doom/d_main.rs: D_Endoom: std::io::stdout, std::io::Write::flush
-  src/doom/g_game.rs: G_DoPlayDemo: print!
-  src/doom/i_scale.rs: flush_stdout: std::io::stdout, std::io::Write::flush
-  src/doom/i_scale.rs: i_init_stretch_tables, i_init_squash_table: print!,
+  src/engine/doom/main.rs: PrintDehackedBanners, D_DoomMain: print!, println!
+  src/engine/doom/main.rs: D_Endoom: std::io::stdout, std::io::Write::flush
+  src/engine/game.rs: G_DoPlayDemo: print!
+  src/engine/interface/scale.rs: flush_stdout: std::io::stdout, std::io::Write::flush
+  src/engine/interface/scale.rs: i_init_stretch_tables, i_init_squash_table: print!,
     println!
-  src/doom/i_scale.rs: I_ResetScaleTables: println!
-  src/doom/i_system.rs: I_ZoneBase, I_PrintBanner, I_PrintDivider: println!
-  src/doom/i_system.rs: I_PrintStartupBanner: print!
-  src/doom/i_system.rs: I_Error: eprintln!, std::io::stdout,
+  src/engine/interface/scale.rs: I_ResetScaleTables: println!
+  src/engine/interface/system.rs: I_ZoneBase, I_PrintBanner, I_PrintDivider: println!
+  src/engine/interface/system.rs: I_PrintStartupBanner: print!
+  src/engine/interface/system.rs: I_Error: eprintln!, std::io::stdout,
     std::io::Write::flush
-  src/doom/m_argv.rs: LoadResponseFile: print!, println!
-  src/doom/m_config.rs: M_LoadDefaults, M_SetConfigDir, M_GetSaveGameDir:
+  src/engine/misc/argv.rs: LoadResponseFile: print!, println!
+  src/engine/misc/config.rs: M_LoadDefaults, M_SetConfigDir, M_GetSaveGameDir:
     println!
-  src/doom/m_misc.rs: M_ExtractFileBase: eprintln!
-  src/doom/p_doors.rs: EV_VerticalDoor: eprintln!
-  src/doom/p_map.rs: SpechitOverrun: eprintln!
-  src/doom/p_setup.rs: PadRejectArray: eprintln!
-  src/doom/p_spec.rs: DonutOverrun, EV_DoDonut: eprintln!
-  src/doom/r_data.rs: R_GenerateLookup: println!
-  src/doom/r_data.rs: R_InitTextures, R_InitSpriteLumps, R_InitData: print!
-  src/doom/r_main.rs: R_Init: print!
-  src/doom/w_main.rs: W_ParseCommandLine: println!
-  src/doom/w_wad.rs: W_AddFile: println!
-  src/doom/w_wad.rs: W_ReadLump: eprintln!
-  src/doom/wi_stuff.rs: WI_drawOnLnode: print!
-  src/doom/z_zone.rs: Z_FreeTags, Z_CheckHeap, Z_CheckHeapQuiet,
+  src/engine/misc/mod.rs: M_ExtractFileBase: eprintln!
+  src/engine/play/doors.rs: EV_VerticalDoor: eprintln!
+  src/engine/play/map.rs: SpechitOverrun: eprintln!
+  src/engine/play/setup.rs: PadRejectArray: eprintln!
+  src/engine/play/spec.rs: DonutOverrun, EV_DoDonut: eprintln!
+  src/engine/render_3d/data.rs: R_GenerateLookup: println!
+  src/engine/render_3d/data.rs: R_InitTextures, R_InitSpriteLumps, R_InitData: print!
+  src/engine/render_3d/main.rs: R_Init: print!
+  src/engine/wad/main.rs: W_ParseCommandLine: println!
+  src/engine/wad/mod.rs: W_AddFile: println!
+  src/engine/wad/mod.rs: W_ReadLump: eprintln!
+  src/engine/intermission.rs: WI_drawOnLnode: print!
+  src/engine/zone.rs: Z_FreeTags, Z_CheckHeap, Z_CheckHeapQuiet,
     Z_CheckHeapAfter: eprintln!
-  src/doom/z_zone.rs: Z_DumpHeap: println!
+  src/engine/zone.rs: Z_DumpHeap: println!
 
 Files (std::fs, std::io, std::path):
-  src/doom/g_game.rs: G_DoLoadGame: std::fs::read, std::io::Cursor
-  src/doom/g_game.rs: G_DoSaveGame: std::fs::File::create,
+  src/engine/game.rs: G_DoLoadGame: std::fs::read, std::io::Cursor
+  src/engine/game.rs: G_DoSaveGame: std::fs::File::create,
     std::io::Write::write_all, std::io::Cursor, std::fs::remove_file,
     std::fs::rename
-  src/doom/p_saveg.rs: save_stream (static), stream: std::io::Cursor
-  src/doom/p_saveg.rs: saveg_read8: std::io::Read::read
-  src/doom/p_saveg.rs: saveg_write8: std::io::Write::write
-  src/doom/p_saveg.rs: saveg_read_pad, saveg_write_pad: Cursor::position
-  src/doom/w_file.rs: W_StdC_OpenFile: std::fs::File::open, File::metadata
-  src/doom/w_file.rs: W_StdC_Read: std::io::Seek::seek, std::io::Read::read
-  src/doom/w_file.rs: W_StdC_CloseFile: drops the std::fs::File
-  src/doom/m_argv.rs: LoadResponseFile: std::fs::File::open,
+  src/engine/play/saveg.rs: save_stream (static), stream: std::io::Cursor
+  src/engine/play/saveg.rs: saveg_read8: std::io::Read::read
+  src/engine/play/saveg.rs: saveg_write8: std::io::Write::write
+  src/engine/play/saveg.rs: saveg_read_pad, saveg_write_pad: Cursor::position
+  src/engine/wad/file.rs: W_StdC_OpenFile: std::fs::File::open, File::metadata
+  src/engine/wad/file.rs: W_StdC_Read: std::io::Seek::seek, std::io::Read::read
+  src/engine/wad/file.rs: W_StdC_CloseFile: drops the std::fs::File
+  src/engine/misc/argv.rs: LoadResponseFile: std::fs::File::open,
     std::io::Read::read_to_end
-  src/doom/m_menu.rs: M_ReadSaveStrings: std::fs::File::open,
+  src/engine/misc/menu.rs: M_ReadSaveStrings: std::fs::File::open,
     std::io::Read::read
-  src/doom/m_misc.rs: M_MakeDirectory: std::fs::create_dir, std::path::Path
-  src/doom/m_misc.rs: M_FileExists: std::fs::File::open, std::path::Path
-  src/doom/m_misc.rs: M_WriteFile: std::fs::write, std::path::Path
+  src/engine/misc/mod.rs: M_MakeDirectory: std::fs::create_dir, std::path::Path
+  src/engine/misc/mod.rs: M_FileExists: std::fs::File::open, std::path::Path
+  src/engine/misc/mod.rs: M_WriteFile: std::fs::write, std::path::Path
 
 Processes:
-  src/doom/i_system.rs: ZenityAvailable: std::process::Command, Stdio
-  src/doom/i_system.rs: ZenityErrorBox: std::process::Command
-  src/doom/i_system.rs: I_Error: std::process::exit
-  src/doom/d_main.rs: D_Endoom: std::process::exit
+  src/engine/interface/system.rs: ZenityAvailable: std::process::Command, Stdio
+  src/engine/interface/system.rs: ZenityErrorBox: std::process::Command
+  src/engine/interface/system.rs: I_Error: std::process::exit
+  src/engine/doom/main.rs: D_Endoom: std::process::exit
 
 Thread-local storage:
   src/headless.rs: VIRTUAL_MS, FRAMES, TITLE (thread_local!), used by
@@ -80,15 +80,15 @@ Thread-local storage:
 Only spelled through std (the same items exist in core or alloc; a path
 change is enough):
   std::borrow::Cow (= alloc::borrow::Cow):
-    src/doom/g_game.rs, src/doom/hu_stuff.rs, src/doom/i_sound.rs,
-    src/doom/m_config.rs: module imports
+    src/engine/game.rs, src/engine/hud/stuff.rs, src/engine/interface/sound.rs,
+    src/engine/misc/config.rs: module imports
   std::format! (= alloc::format!):
-    src/doom/m_misc.rs: macros c_write!, DEH_snprintf!, i_error!, used
+    src/engine/misc/mod.rs: macros c_write!, DEH_snprintf!, i_error!, used
     throughout the engine
   std::alloc::{alloc, alloc_zeroed, dealloc, Layout}, Box
   (= alloc::alloc, alloc::boxed):
-    src/doom/i_system.rs: AutoAllocMemory, I_AtExit
-    src/doom/w_wad.rs: lumpinfo_layout, ExtendLumpInfo
+    src/engine/interface/system.rs: AutoAllocMemory, I_AtExit
+    src/engine/wad/mod.rs: lumpinfo_layout, ExtendLumpInfo
   std::ffi::c_void, std::ptr, std::mem, std::slice, std::cell, ...
   (= core::*): everywhere
 

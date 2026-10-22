@@ -3,7 +3,7 @@
 //!
 //! This module replaces Doom's original OPL2 music driver with a software
 //! synthesiser path built on `rustysynth`.  The engine converts MUS lumps to
-//! Standard MIDI Files (`room::doom::mus2midi`) before they reach here.
+//! Standard MIDI Files (`room::engine::mus2midi`) before they reach here.
 //!
 //! ## Pipeline
 //!

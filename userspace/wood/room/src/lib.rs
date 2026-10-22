@@ -3,18 +3,18 @@
 //! `room` is a Rust port of `chocolate-doom`/`doomgeneric`.  This file is the
 //! library crate root that re-exports the major subsystems:
 //!
-//! - [`doom`] - per-`.c`-file Rust ports of `doomgeneric`. The engine
-//!   reaches the platform only through the `DG_*` functions: doomgeneric's
-//!   video, input and timer callbacks plus this port's `DG_Sound*` and
-//!   `DG_Music*` audio hooks. The `room` binary provides them in
-//!   `src/platform/`.
+//! - [`engine`] - Rust ports of the `doomgeneric` C sources, grouped into
+//!   subsystem modules by their C prefix (see `doom.md`). The engine reaches
+//!   the platform only through the
+//!   [`Platform`](engine::doomgeneric::Platform) trait; the `room` binary
+//!   implements it in `src/platform/`.
 //! - [`headless`] - thread-local frame/tick counters used by the testing and
 //!   benchmarking harnesses to run the engine without a window or audio device.
 //! - [`types`] - cross-cutting FFI-safe type aliases (currently just the
 //!   tri-state [`types::Boolean`] mirroring Doom's `unsigned int boolean`).
 //!
 //! The `room` binary (`src/main.rs`, with its platforms in `src/platform/`)
-//! and the test harness in `doom::c_tests` consume this crate.
+//! and the test harness in `engine::c_tests` consume this crate.
 //!
 //! # Crate-wide lints
 //!
@@ -51,7 +51,7 @@
 // so converting to iterators would require from_raw_parts complexity.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
 
-pub mod doom;
+pub mod engine;
 pub mod headless;
 pub mod types;
 

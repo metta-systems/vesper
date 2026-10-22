@@ -1,0 +1,89 @@
+//! Tests for `p_switch.c` — switch/button constants and globals.
+//!
+//! `p_switch.c` manages the two-state (on/off) switch textures and the timed
+//! button list.  `P_InitSwitchList` populates `switchlist[]` from the
+//! `alphSwitchList` table at game start; `numswitches` is then the number of
+//! valid pairs.  The `buttonlist[]` array is zero-initialized and driven by
+//! `P_StartButton` during gameplay.
+//!
+//! These tests verify:
+//!   * `MAXSWITCHES`, `MAXBUTTONS`, and `BUTTONTIME` constants
+//!   * `switchlist` and `buttonlist` array sizes
+//!   * `numswitches` is zero before `P_InitSwitchList` is called
+//!   * The `switchlist` array is zeroed before initialization
+//!   * `BUTTONTIME` equals `TICRATE` (one second)
+
+#![allow(non_snake_case)]
+
+use crate::engine::{interface::timer::TICRATE, play};
+
+// ---------------------------------------------------------------------------
+// Switch / button size constants
+// ---------------------------------------------------------------------------
+
+/// `MAXSWITCHES = 50`: the alpha switch list has room for 50 texture pairs.
+#[test]
+fn maxswitches_is_50() {
+    assert_eq!(play::switch::MAXSWITCHES, 50);
+}
+
+/// `MAXBUTTONS = 16`: at most 16 simultaneously pressed timed buttons.
+#[test]
+fn maxbuttons_is_16() {
+    assert_eq!(play::switch::MAXBUTTONS, 16);
+}
+
+/// `BUTTONTIME = 35` tics = 1 second (TICRATE).
+/// A button pressed by the player reverts after exactly one second.
+#[test]
+fn buttontime_is_35() {
+    assert_eq!(play::switch::BUTTONTIME, 35);
+}
+
+/// `BUTTONTIME` equals `TICRATE` — one second of press duration.
+#[test]
+fn buttontime_equals_ticrate() {
+    assert_eq!(play::switch::BUTTONTIME, TICRATE);
+}
+
+// ---------------------------------------------------------------------------
+// switchlist — texture-pair flat array
+// ---------------------------------------------------------------------------
+
+/// `switchlist[MAXSWITCHES * 2]` has exactly 100 elements.
+#[test]
+fn switchlist_length_is_maxswitches_times_2() {
+    unsafe {
+        assert_eq!(
+            (*&raw const play::switch::switchlist).len(),
+            play::switch::MAXSWITCHES * 2
+        );
+        assert_eq!((*&raw const play::switch::switchlist).len(), 100);
+    }
+}
+
+/// Before `P_InitSwitchList` runs, the entire array is zero.
+#[test]
+fn switchlist_default_zero() {
+    unsafe {
+        for (i, &v) in (*&raw const play::switch::switchlist).iter().enumerate() {
+            assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// numswitches — count of valid pairs
+// ---------------------------------------------------------------------------
+
+/// `numswitches` is zero before `P_InitSwitchList` fills the table.
+#[test]
+fn numswitches_default_zero() {
+    unsafe {
+        assert_eq!(
+            { play::switch::numswitches },
+            0,
+            "numswitches should be 0 before P_InitSwitchList"
+        );
+    }
+}

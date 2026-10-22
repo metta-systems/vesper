@@ -25,7 +25,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use room::doom::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
+use room::engine::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 
 use super::{
     gpu::GpuState, init_start_time, keys::to_doom_key, Host, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW,
@@ -163,12 +163,12 @@ impl ApplicationHandler for App {
             // SAFETY: guarded by `doom_initialized`, so this runs once.
             let args = std::mem::take(&mut self.args);
             unsafe {
-                room::doom::doomgeneric::doomgeneric_Create(&Host, args);
+                room::engine::doomgeneric::doomgeneric_Create(&Host, args);
             }
             self.doom_initialized = true;
         } else {
             // Subsequent ticks: advance the game by one tick.
-            room::doom::d_main::doomgeneric_Tick();
+            room::engine::doom::main::doomgeneric_Tick();
         }
 
         // Request a redraw so winit doesn't throttle to zero FPS while idle.

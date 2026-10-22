@@ -1,5 +1,5 @@
 //! Host audio: the sound and music half of the host
-//! [`Platform`](room::doom::doomgeneric::Platform), on top of the sfx and
+//! [`Platform`](room::engine::doomgeneric::Platform), on top of the sfx and
 //! music submodules.
 //!
 //! The backend replaces the SDL2 mixer that the original `i_sound.c` and
@@ -23,7 +23,7 @@ use std::{
 
 use rodio::{buffer::SamplesBuffer, DeviceSinkBuilder, MixerDeviceSink, Player};
 
-use room::doom::m_argv::{argument, M_CheckParmWithArgs};
+use room::engine::misc::argv::{argument, M_CheckParmWithArgs};
 
 pub(crate) use sfx::{decode_doom_sfx, PannedSource};
 
@@ -194,7 +194,7 @@ thread_local! {
     /// Thread-local home for the singleton [`AudioState`].
     ///
     /// `None` until [`AudioState::new`] succeeds, after which callers in
-    /// `doom::i_sound` and `doom::s_sound` borrow it mutably to start/stop
+    /// `doom::interface::sound` and `doom::sound` borrow it mutably to start/stop
     /// sounds.  Keeping it thread-local avoids needing a `Mutex` because Doom
     /// only ever drives audio from the main loop thread.
     pub(crate) static AUDIO: RefCell<Option<AudioState>> = const { RefCell::new(None) };

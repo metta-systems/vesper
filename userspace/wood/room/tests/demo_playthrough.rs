@@ -49,7 +49,7 @@ fn frame_count() -> u64 {
 
 struct Headless;
 
-impl room::doom::doomgeneric::Platform for Headless {
+impl room::engine::doomgeneric::Platform for Headless {
     fn draw_frame(&self, _frame: &[u32]) {
         note_frame();
     }
@@ -63,10 +63,10 @@ impl room::doom::doomgeneric::Platform for Headless {
 // Engine globals
 // ---------------------------------------------------------------------------
 
-use room::doom::{
-    d_loop::{gametic, singletics},
-    g_game::{gamestate, longtics},
-    m_random::prndindex,
+use room::engine::{
+    doom::main_loop::{gametic, singletics},
+    game::{gamestate, longtics},
+    misc::random::prndindex,
 };
 
 // ---------------------------------------------------------------------------
@@ -663,9 +663,9 @@ fn is_checkpoint(tic: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 fn capture_snapshot(tic: usize) -> Snapshot {
-    use room::doom::{
-        d_player::{consoleplayer, players, MAXPLAYERS},
-        m_random::rndindex,
+    use room::engine::{
+        doom::player::{consoleplayer, players, MAXPLAYERS},
+        misc::random::rndindex,
     };
 
     let cp = unsafe { consoleplayer };
@@ -757,7 +757,7 @@ fn demo_playthrough() {
 
     // Initialize the Doom engine.
     unsafe {
-        room::doom::doomgeneric::doomgeneric_Create(&Headless, args);
+        room::engine::doomgeneric::doomgeneric_Create(&Headless, args);
     }
 
     // Sanity-check invariants that future agents often re-validate when
@@ -849,7 +849,7 @@ fn demo_playthrough() {
         TOTAL_TICS
     );
     for tic in 0..TOTAL_TICS {
-        room::doom::d_main::doomgeneric_Tick();
+        room::engine::doom::main::doomgeneric_Tick();
 
         if is_checkpoint(tic + 1) {
             let checkpoint_idx = snapshots.len();
@@ -862,7 +862,7 @@ fn demo_playthrough() {
                     pct,
                     tic + 1,
                     { gametic },
-                    { room::doom::p_tick::leveltime },
+                    { room::engine::play::tick::leveltime },
                 );
             }
             let snap = capture_snapshot(tic + 1);

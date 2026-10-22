@@ -17,7 +17,7 @@ idiomatic Rust yet, and contributions are welcome.
 
 The port was done **module-by-module**:
 
-1. Each module was rewritten in Rust inside `room/src/doom/` and exported
+1. Each module was rewritten in Rust inside `room/src/engine/` and exported
    with `#[no_mangle] extern "C"` so the linker picked the Rust symbol
    instead of the C one.
 2. Once replaced, the corresponding `.c` file was removed from
@@ -30,7 +30,7 @@ The `lib_sources` list in `doomgeneric-sys/build.rs` is now empty — all engine
 subsystems (`r_draw`, `p_setup`, `z_zone`, `g_game`, `d_main`, and every other
 module) are native Rust.
 
-A regression-test harness (`room/src/doom/c_tests/`) runs the original C
+A regression-test harness (`room/src/engine/c_tests/`) runs the original C
 functions alongside their Rust replacements to verify bit-for-bit behavioural
 compatibility before a module is declared ported.
 
@@ -45,24 +45,31 @@ room/
     ├── main.rs              Entry point: runs the selected platform
     ├── lib.rs               The engine library
     ├── platform/
-    │   ├── mod.rs           The DG_* platform interface, platform selection
+    │   ├── mod.rs           Platform selection
     │   ├── std.txt          Engine functions that still need std
     │   ├── host/            winit + wgpu + rodio
-    │   │   ├── mod.rs       DG_* video, input and timer callbacks
+    │   │   ├── mod.rs       The `Platform` impl: video, input, timer, audio calls
     │   │   ├── app.rs       winit ApplicationHandler, run()
     │   │   ├── gpu.rs       wgpu renderer (texture upload + fullscreen blit)
     │   │   ├── keys.rs      winit KeyCode → Doom key byte mapping
-    │   │   └── audio/       DG_Sound* / DG_Music* hooks on rodio + rustysynth
-    │   └── vesper/          Placeholder DG_* functions for the Vesper component
-    └── doom/
-        ├── mod.rs           Rust reimplementations of ported engine modules
-        ├── c_ffi.rs         FFI declarations for still-C modules (used by tests)
+    │   │   └── audio/       Sound and music on rodio + rustysynth
+    │   └── vesper/          Placeholder `Platform` impl for the Vesper component
+    └── engine/              Ported engine, one module per C file (see doom.md)
+        ├── mod.rs           Module list
+        ├── doomgeneric.rs   The `Platform` trait and engine entry point
+        ├── doom/            d_*: main loop, events, game state, startup
+        ├── game.rs          g_game: game control, save/load, level changes
+        ├── play/            p_*: world simulation
+        ├── render_3d/       r_*: 3D renderer
+        ├── render_2d.rs     v_video: 2D drawing
+        ├── interface/       i_*: platform-facing services
+        ├── wad/             w_*: WAD access
+        ├── zone.rs          z_zone: zone memory allocator
+        ├── misc/            m_*: menus, config, utilities
+        ├── hud/, status/    hu_*, st_*: HUD and status bar
+        ├── automap.rs, intermission.rs, finale/, sound.rs
         ├── c_tests/         Regression tests of the ported modules
-        ├── d_main.rs        Ported main entry point and game init
-        ├── r_draw.rs        Ported renderer core
-        ├── p_setup.rs       Ported map loader
-        ├── z_zone.rs        Ported zone memory allocator
-        └── …                One `.rs` module per original `.c` file
+        └── …                Unprefixed C files (info, tables, sounds, …)
 ```
 
 ## Prerequisites
