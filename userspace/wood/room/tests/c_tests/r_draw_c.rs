@@ -7,10 +7,12 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{
-    c_ffi,
-    c_tests::harness::C_GLOBAL_LOCK,
-    interface::video::{SCREENHEIGHT, SCREENWIDTH},
+use {
+    crate::harness::C_GLOBAL_LOCK,
+    room::engine::{
+        c_ffi,
+        interface::video::{SCREENHEIGHT, SCREENWIDTH},
+    },
 };
 
 // ---------------------------------------------------------------------------

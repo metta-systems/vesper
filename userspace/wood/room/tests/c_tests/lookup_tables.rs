@@ -7,7 +7,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_tests::harness::C_GLOBAL_LOCK, play};
+use {crate::harness::C_GLOBAL_LOCK, room::engine::play};
 
 // ---------------------------------------------------------------------------
 // p_inter.c: maxammo and clipammo

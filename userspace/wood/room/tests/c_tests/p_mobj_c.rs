@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, misc::fixed::FRACUNIT, play};
+use room::engine::{c_ffi, misc::fixed::FRACUNIT, play};
 
 // ---------------------------------------------------------------------------
 // STOPSPEED / FRICTION constants

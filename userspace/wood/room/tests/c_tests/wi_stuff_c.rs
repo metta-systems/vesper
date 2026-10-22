@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, interface::video::SCREENHEIGHT};
+use room::engine::{c_ffi, interface::video::SCREENHEIGHT};
 
 // ---------------------------------------------------------------------------
 // Episode / map count constants

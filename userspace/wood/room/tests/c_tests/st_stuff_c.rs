@@ -15,7 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, interface::timer::TICRATE};
+use room::engine::{c_ffi, interface::timer::TICRATE};
 
 // ---------------------------------------------------------------------------
 // Palette animation constants

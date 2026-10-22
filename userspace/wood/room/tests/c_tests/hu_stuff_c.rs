@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::hud;
+use room::engine::hud;
 
 // ---------------------------------------------------------------------------
 // HUD font constants

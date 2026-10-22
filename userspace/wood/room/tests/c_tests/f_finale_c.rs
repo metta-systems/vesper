@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::c_ffi;
+use room::engine::c_ffi;
 
 // ---------------------------------------------------------------------------
 // Text-crawl timing constants

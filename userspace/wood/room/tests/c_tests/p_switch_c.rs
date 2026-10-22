@@ -15,7 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{interface::timer::TICRATE, play};
+use room::engine::{interface::timer::TICRATE, play};
 
 // ---------------------------------------------------------------------------
 // Switch / button size constants

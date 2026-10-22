@@ -30,9 +30,9 @@ The `lib_sources` list in `doomgeneric-sys/build.rs` is now empty — all engine
 subsystems (`r_draw`, `p_setup`, `z_zone`, `g_game`, `d_main`, and every other
 module) are native Rust.
 
-A regression-test harness (`room/src/engine/c_tests/`) runs the original C
-functions alongside their Rust replacements to verify bit-for-bit behavioural
-compatibility before a module is declared ported.
+A regression-test suite (`room/tests/c_tests/`) pins the constants, tables
+and behaviour of the original C modules, so a change to the port that drifts
+from the C engine fails there.
 
 Sound effects and music are implemented via [rodio](https://github.com/RustAudio/rodio). SFX uses stereo panning; music uses the [Roland SC-55 SoundFont](https://github.com/GuihongWang/SC55Soundfont) via [rustysynth](https://github.com/sinshu/rustysynth). A custom soundfont can be specified with `-sf2 <path>`.
 
@@ -41,6 +41,10 @@ Sound effects and music are implemented via [rodio](https://github.com/RustAudio
 ```
 room/
 ├── Cargo.toml               Crate manifest
+├── doom.md                  C source prefix → engine module mapping
+├── tests/
+│   ├── c_tests/             Regression tests pinning the C modules' behaviour
+│   └── demo_playthrough.rs  Plays the demos headless against a frame baseline
 └── src/
     ├── main.rs              Entry point: runs the selected platform
     ├── lib.rs               The engine library
@@ -68,7 +72,6 @@ room/
         ├── misc/            m_*: menus, config, utilities
         ├── hud/, status/    hu_*, st_*: HUD and status bar
         ├── automap.rs, intermission.rs, finale/, sound.rs
-        ├── c_tests/         Regression tests of the ported modules
         └── …                Unprefixed C files (info, tables, sounds, …)
 ```
 

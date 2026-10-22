@@ -1,10 +1,13 @@
-//! Unit tests that call original C functions directly.
+//! Regression tests of the ported engine modules.
 //!
-//! Each submodule tests a specific unported C module, establishing
-//! behavioral baselines before the module is ported to Rust.
+//! Each submodule pins the constants, table contents and behaviour of one
+//! original C module (named `<c_module>_c`), so a change to the Rust port
+//! that drifts from the C engine fails here. They test the `room` library
+//! through its public API.
 
 // These tests pin constant values, so asserting on constants is the point.
 #![allow(clippy::assertions_on_constants)]
+#![allow(non_snake_case, non_upper_case_globals, static_mut_refs)]
 
 mod am_map_c;
 mod d_loop_c;

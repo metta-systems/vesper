@@ -14,7 +14,7 @@
 //!   tri-state [`types::Boolean`] mirroring Doom's `unsigned int boolean`).
 //!
 //! The `room` binary (`src/main.rs`, with its platforms in `src/platform/`)
-//! and the test harness in `engine::c_tests` consume this crate.
+//! and the regression tests in `tests/` consume this crate.
 //!
 //! # Crate-wide lints
 //!

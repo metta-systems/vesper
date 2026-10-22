@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, play};
+use room::engine::{c_ffi, play};
 
 // ---------------------------------------------------------------------------
 // DEFAULT_SPECHIT_MAGIC — spechit overflow sentinel

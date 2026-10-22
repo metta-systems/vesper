@@ -1,8 +1,8 @@
 Engine code (room::engine, room::headless, room::types) that needs more than
 core + alloc, i.e. what stops the engine building for Vesper.
 
-Scope: everything outside src/platform/, skipping #[cfg(test)] code and
-src/engine/c_tests/. Found by searching the source for std-only paths and
+Scope: everything outside src/platform/, skipping #[cfg(test)] code.
+Found by searching the source for std-only paths and
 macros, and for calls to C library functions; a call made through a local
 alias or a function pointer would not show up.
 

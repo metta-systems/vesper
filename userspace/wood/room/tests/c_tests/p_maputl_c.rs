@@ -7,12 +7,14 @@
 
 use std::{ffi::c_void, sync::Mutex};
 
-use crate::engine::{
-    c_ffi,
-    c_ffi::{divline_t, line_t, vertex_t},
-    c_tests::harness::C_GLOBAL_LOCK,
-    misc::{bbox::BBox, fixed::FRACUNIT},
-    play,
+use {
+    crate::harness::C_GLOBAL_LOCK,
+    room::engine::{
+        c_ffi,
+        c_ffi::{divline_t, line_t, vertex_t},
+        misc::{bbox::BBox, fixed::FRACUNIT},
+        play,
+    },
 };
 
 // ---------------------------------------------------------------------------

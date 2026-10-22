@@ -11,7 +11,7 @@
 
 use std::mem::{offset_of, size_of};
 
-use crate::engine::c_ffi;
+use room::engine::c_ffi;
 
 // ---------------------------------------------------------------------------
 // Rust mirrors of the PACKEDATTR (packed) C structs from doomdata.h.

@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, interface::video::SCREENWIDTH, misc::fixed::FRACUNIT};
+use room::engine::{c_ffi, interface::video::SCREENWIDTH, misc::fixed::FRACUNIT};
 
 // ---------------------------------------------------------------------------
 // Constants derived from r_things.c / r_defs.h

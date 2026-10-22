@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::engine::{c_ffi, play};
+use room::engine::{c_ffi, play};
 
 // ---------------------------------------------------------------------------
 // NUMAMMO / BONUSADD constants

@@ -41,6 +41,3 @@ pub mod sounds;
 pub mod statdump;
 pub mod statenum;
 pub mod tables;
-
-#[cfg(test)]
-mod c_tests;
