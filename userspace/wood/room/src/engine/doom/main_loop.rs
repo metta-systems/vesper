@@ -45,7 +45,6 @@ pub const BACKUPTICS: usize = 128;
 /// are actually active for this tic.
 ///
 /// Corresponds to `ticcmd_set_t` in `d_loop.c`.
-#[repr(C)]
 struct TiccmdSetT {
     /// Per-player input commands for this tic.
     cmds: [TiccmdT; NET_MAXPLAYERS],

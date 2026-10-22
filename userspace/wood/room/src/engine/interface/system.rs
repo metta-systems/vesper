@@ -35,9 +35,7 @@ type atexit_func_t = fn();
 
 /// Single entry in the linked list of registered exit callbacks.
 ///
-/// `#[repr(C)]` because C code in `i_system.c` (and the test harness)
-/// may walk this list. Fields mirror `struct atexit_listentry_s`.
-#[repr(C)]
+/// Fields mirror `struct atexit_listentry_s`.
 struct atexit_listentry_t {
     /// Callback to invoke when the engine exits or errors out.
     func: atexit_func_t,

@@ -51,10 +51,6 @@ const SHA1_DIGEST_SIZE: usize = 20;
 /// client's game configuration so the server can verify compatibility before
 /// starting a game. In this single-player port the struct is populated by
 /// `InitConnectData` and passed to the stub `D_InitNetGame`.
-///
-/// Layout must match the C struct exactly; enforced by the size test in the
-/// `tests` module.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct NetConnectDataT {
     /// Integer encoding of `GameMode_t` (shareware, registered, commercial, …).
@@ -87,10 +83,6 @@ pub struct NetConnectDataT {
 /// global state into this struct before calling `D_StartNetGame`; afterwards
 /// `LoadGameSettings` applies the (possibly server-modified) values back to
 /// the globals.
-///
-/// Layout must match the C struct exactly; enforced by the size test in the
-/// `tests` module.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct NetGameSettingsT {
     /// Number of game tics to duplicate per network packet (for lag
@@ -139,10 +131,6 @@ pub struct NetGameSettingsT {
 /// fields are `Option<unsafe fn(…)>` because the C struct uses raw
 /// function pointers that may theoretically be null, though in practice all
 /// four are always set before use.
-///
-/// Layout must match the C struct exactly; enforced by the size test in the
-/// `tests` module.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LoopInterfaceT {
     /// Called once per tic to drain the event queue. Bound to `D_ProcessEvents`.
@@ -453,52 +441,5 @@ pub fn D_CheckNetGame() {
         SaveGameSettings(&mut settings);
         D_StartNetGame(&mut settings, std::ptr::null());
         LoadGameSettings(&mut settings);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    const NET_CONNECT_DATA_T_SIZEOF: usize = 68;
-    const NET_GAMESETTINGS_T_SIZEOF: usize = 100;
-    const LOOP_INTERFACE_T_SIZEOF: usize = 32;
-
-    #[test]
-    fn net_connect_data_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<NetConnectDataT>(),
-            NET_CONNECT_DATA_T_SIZEOF,
-            "NetConnectDataT size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<NetConnectDataT>(),
-            NET_CONNECT_DATA_T_SIZEOF,
-        );
-    }
-
-    #[test]
-    fn net_gamesettings_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<NetGameSettingsT>(),
-            NET_GAMESETTINGS_T_SIZEOF,
-            "NetGameSettingsT size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<NetGameSettingsT>(),
-            NET_GAMESETTINGS_T_SIZEOF,
-        );
-    }
-
-    #[test]
-    fn loop_interface_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<LoopInterfaceT>(),
-            LOOP_INTERFACE_T_SIZEOF,
-            "LoopInterfaceT size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<LoopInterfaceT>(),
-            LOOP_INTERFACE_T_SIZEOF,
-        );
     }
 }

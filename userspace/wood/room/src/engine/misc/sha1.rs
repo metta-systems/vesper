@@ -27,9 +27,6 @@ pub type sha1_digest_t = [u8; 20];
 /// `h0..h4` are the five 32-bit chaining values; `nblocks` counts complete
 /// 64-byte blocks already absorbed; `buf` is the partial-block staging area
 /// and `count` (`0..=64`) is how many bytes of `buf` are currently valid.
-/// `#[repr(C)]` because the still-C call sites in `d_loop.c` and the save
-/// system stack-allocate this struct.
-#[repr(C)]
 pub struct SHA1Context {
     /// Chaining variable A.
     pub h0: u32,
@@ -46,7 +43,7 @@ pub struct SHA1Context {
     /// Partial-block staging area for the streaming API.
     pub buf: [u8; 64],
     /// Number of bytes currently held in `buf` (0..=64). Stored as `i32`
-    /// for ABI parity with the C `int count` field.
+    /// like the C `int count` field.
     pub count: i32,
 }
 

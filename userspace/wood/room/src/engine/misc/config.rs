@@ -27,10 +27,8 @@ use {
 /// Type tag for a configuration variable.
 ///
 /// Mirrors the C `default_type_t` enum (`DEFAULT_INT`, `DEFAULT_INT_HEX`,
-/// `DEFAULT_STRING`, `DEFAULT_FLOAT`, `DEFAULT_KEY`). The order is
-/// significant because the variant is serialised across the FFI boundary
-/// and compared with `PartialEq` in the getters below.
-#[repr(C)]
+/// `DEFAULT_STRING`, `DEFAULT_FLOAT`, `DEFAULT_KEY`). Variants are
+/// compared with `PartialEq` in the getters below.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DefaultType {
     /// Decimal integer (also accepts `0x` hex when read from disk).
@@ -49,7 +47,6 @@ enum DefaultType {
 ///
 /// Mirrors the C `default_t` struct, including the `untranslated` /
 /// `original_translated` bookkeeping used to roundtrip DOS scancodes.
-#[repr(C)]
 struct Default {
     /// Variable name as written in the `.cfg` file, e.g. `"key_fire"`.
     name: &'static str,

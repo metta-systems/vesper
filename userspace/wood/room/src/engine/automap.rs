@@ -203,7 +203,6 @@ const AM_MSGEXITED: i32 = AM_MSGHEADER | (('x' as i32) << 8);
 /// A 2-D point in frame (screen-pixel) coordinates.
 ///
 /// C origin: `fpoint_t` in am_map.c.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct fpoint_t {
     x: i32,
@@ -213,7 +212,6 @@ struct fpoint_t {
 /// A line segment in frame (screen-pixel) coordinates.
 ///
 /// C origin: `fline_t` in am_map.c.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct fline_t {
     a: fpoint_t,
@@ -223,7 +221,6 @@ struct fline_t {
 /// A 2-D point in map (fixed-point world) coordinates.
 ///
 /// C origin: `mpoint_t` in am_map.c.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct mpoint_t {
     x: fixed_t,
@@ -233,7 +230,6 @@ struct mpoint_t {
 /// A line segment in map (fixed-point world) coordinates.
 ///
 /// C origin: `mline_t` in am_map.c.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct mline_t {
     a: mpoint_t,
@@ -244,7 +240,6 @@ struct mline_t {
 ///
 /// `slp` is `dy/dx`; `islp` is `dx/dy`, both in fixed-point.
 /// C origin: `islope_t` in am_map.c.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct islope_t {
     slp: fixed_t,

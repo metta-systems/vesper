@@ -7,7 +7,7 @@
 //! including the quirk where a too-short sequence on a cheat with
 //! parameters never fires.
 
-#![allow(non_snake_case)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 /// Maximum length of a cheat sequence including the NUL terminator,
 /// matching `MAX_CHEAT_LEN` in `m_cheat.h`.
@@ -18,30 +18,6 @@ pub const MAX_CHEAT_LEN: usize = 25;
 pub const MAX_CHEAT_PARAMS: usize = 5;
 
 /// Matches `cheatseq_t` from `m_cheat.h`.
-///
-/// Layout on 64-bit (`usize` = 8):
-///   sequence[25]      -> offset 0, size 25
-///   (padding 7)       -> offset 25-31
-///   sequence_len      -> offset 32, size 8
-///   parameter_chars   -> offset 40, size 4
-///   (padding 4)       -> offset 44-47
-///   chars_read        -> offset 48, size 8
-///   param_chars_read  -> offset 56, size 4
-///   parameter_buf[5]  -> offset 60, size 5
-///   (padding 7)       -> offset 65-71
-/// Total: 72 bytes
-///
-/// Layout on 32-bit (`usize` = 4):
-///   sequence[25]      -> offset 0, size 25
-///   (padding 3)       -> offset 25-27
-///   sequence_len      -> offset 28, size 4
-///   parameter_chars   -> offset 32, size 4
-///   chars_read        -> offset 36, size 4
-///   param_chars_read  -> offset 40, size 4
-///   parameter_buf[5]  -> offset 44, size 5
-///   (padding 3)       -> offset 49-51
-/// Total: 52 bytes
-#[repr(C)]
 pub struct cheatseq_t {
     /// NUL-terminated cheat sequence bytes (e.g. `"IDKFA"`).
     pub sequence: [u8; MAX_CHEAT_LEN],
@@ -58,18 +34,6 @@ pub struct cheatseq_t {
     /// Captured parameter characters; readable via `cht_GetParam`.
     pub parameter_buf: [u8; MAX_CHEAT_PARAMS],
 }
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(
-    std::mem::size_of::<cheatseq_t>() == 72,
-    "cheatseq_t size mismatch on 64-bit platform"
-);
-
-#[cfg(target_pointer_width = "32")]
-const _: () = assert!(
-    std::mem::size_of::<cheatseq_t>() == 52,
-    "cheatseq_t size mismatch on 32-bit platform"
-);
 
 /// Helper: strlen for a raw u8 array (no C call needed).
 fn raw_strlen(buf: &[u8]) -> usize {
@@ -211,21 +175,5 @@ mod tests {
         let mut param_buf = [0u8; MAX_CHEAT_PARAMS];
         cht_GetParam(&mut cheat, param_buf.as_mut_ptr());
         assert_eq!(param_buf[0], b'7');
-    }
-
-    /// Runtime check that the 64-bit `cheatseq_t` layout still totals
-    /// 72 bytes (matches the layout comment on the struct).
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn struct_size_assertion() {
-        assert_eq!(std::mem::size_of::<cheatseq_t>(), 72);
-    }
-
-    /// Runtime check that the 32-bit `cheatseq_t` layout still totals
-    /// 52 bytes (matches the layout comment on the struct).
-    #[test]
-    #[cfg(target_pointer_width = "32")]
-    fn struct_size_assertion() {
-        assert_eq!(std::mem::size_of::<cheatseq_t>(), 52);
     }
 }

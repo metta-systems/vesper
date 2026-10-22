@@ -42,10 +42,9 @@ const ST_Y: i32 = 200 - ST_HEIGHT; // 168
 /// negative values. The magic value `1994` means "do not draw" (used when
 /// a slot is inactive).
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `p[0..9]` must point to valid digit patches when drawing.
 /// * `on` and `num` must be valid non-null pointers for the widget's lifetime.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct st_number_t {
     /// Right edge X coordinate of the number (digits extend leftward from here).
@@ -72,7 +71,6 @@ pub struct st_number_t {
 /// Corresponds to `st_percent_t` in `st_lib.h`. The embedded [`st_number_t`]
 /// renders the numeric portion; the additional `p` patch is drawn immediately
 /// to the right of the number on each refresh.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct st_percent_t {
     /// The underlying number widget (renders the digits).
@@ -89,11 +87,10 @@ pub struct st_percent_t {
 /// area is erased by blitting from the backing screen before the new patch is
 /// drawn.
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `p[0..N]` must contain valid patch pointers for all possible values of
 ///   `*inum`.
 /// * `inum == -1` means "no image"; the widget skips drawing entirely.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct st_multicon_t {
     /// Center-justified screen X position (patch offset subtracted at draw time).
@@ -120,10 +117,9 @@ pub struct st_multicon_t {
 /// patch area is erased from the backing screen. Used for key-card presence
 /// indicators and similar binary status elements.
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `p` must point to a valid patch for the lifetime of the widget.
 /// * `val` and `on` must be valid non-null pointers.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct st_binicon_t {
     /// Center-justified screen X position.
@@ -449,65 +445,5 @@ pub fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
 
             (*bi).oldval = *(*bi).val;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    const ST_NUMBER_T_SIZEOF: usize = 48;
-    const ST_PERCENT_T_SIZEOF: usize = 56;
-    const ST_MULTICON_T_SIZEOF: usize = 48;
-    const ST_BINICON_T_SIZEOF: usize = 48;
-
-    #[test]
-    fn st_number_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<st_number_t>(),
-            ST_NUMBER_T_SIZEOF,
-            "st_number_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<st_number_t>(),
-            ST_NUMBER_T_SIZEOF,
-        );
-    }
-
-    #[test]
-    fn st_percent_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<st_percent_t>(),
-            ST_PERCENT_T_SIZEOF,
-            "st_percent_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<st_percent_t>(),
-            ST_PERCENT_T_SIZEOF,
-        );
-    }
-
-    #[test]
-    fn st_multicon_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<st_multicon_t>(),
-            ST_MULTICON_T_SIZEOF,
-            "st_multicon_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<st_multicon_t>(),
-            ST_MULTICON_T_SIZEOF,
-        );
-    }
-
-    #[test]
-    fn st_binicon_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<st_binicon_t>(),
-            ST_BINICON_T_SIZEOF,
-            "st_binicon_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<st_binicon_t>(),
-            ST_BINICON_T_SIZEOF,
-        );
     }
 }

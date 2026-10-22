@@ -88,12 +88,6 @@
 //!
 //! Concurrent access is therefore the same as in the C codebase: the
 //! game thread owns these arrays.
-//!
-//! # Layout invariants
-//!
-//! [`State`] and [`MobjInfo`] are `#[repr(C)]` with a `const _: () =
-//! assert!(...)` size and offset check just below their definitions, so
-//! ABI drift against the C structs is caught at compile time.
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -776,12 +770,6 @@ pub const MT_MISC86: i32 = 136;
 /// counter from the new state. A self-looping entry with `tics == -1`
 /// is the standard "freeze on this frame" terminator (e.g. `S_NULL`,
 /// corpses, dropped items).
-///
-/// # Layout
-///
-/// `#[repr(C)]` for ABI compatibility with `state_t`. Size and field
-/// offsets are verified by a `const _: ()` assertion below.
-#[repr(C)]
 pub struct State {
     /// Sprite tag index into [`sprnames`] (a `SPR_*` constant).
     pub sprite: i32,
@@ -822,12 +810,6 @@ pub struct State {
 /// variants; `flags` is a bitmask of [`MF_*`](MF_SPECIAL) values; the
 /// `speed`, `radius`, `height` are in Doom fixed-point units (see
 /// [`FRACUNIT`]).
-///
-/// # Layout
-///
-/// `#[repr(C)]` for ABI compatibility with `mobjinfo_t`. Size and the
-/// `speed` field offset are verified by `const _: ()` assertions below.
-#[repr(C)]
 pub struct MobjInfo {
     /// Editor number recognised by WAD level files. `-1` means this
     /// type is spawned only by code (never placed in maps).
@@ -889,12 +871,6 @@ pub struct MobjInfo {
     /// or `S_NULL` if the actor cannot be raised.
     pub raisestate: i32,
 }
-
-const _: () = assert!(std::mem::size_of::<MobjInfo>() == 92);
-const _: () = assert!(std::mem::offset_of!(MobjInfo, speed) == 60);
-
-const _: () = assert!(std::mem::size_of::<State>() == 40);
-const _: () = assert!(std::mem::offset_of!(State, tics) == 8);
 
 // Every action function referenced from [`states`]. The bodies live in
 // `p_pspr` (player weapon actions, called as `fn(*mut PlayerT, *mut

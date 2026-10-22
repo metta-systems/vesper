@@ -10,9 +10,7 @@
 //! * [`hu_itext_t`] - a text-input widget with a protected left-margin prefix
 //!   (used for chat entry and cheat codes).
 //!
-//! Rust differences from C: `boolean` is `i32` (0/1); padding fields have
-//! been added to maintain identical ABI layout on 64-bit targets (verified by
-//! compile-time `assert!` in `layout_checks`).
+//! Rust differences from C: `boolean` is `i32` (0/1).
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -31,14 +29,12 @@ const HU_MAXLINELENGTH: usize = 80;
 /// A single line of text rendered with a patch font.
 ///
 /// Corresponds to `hu_textline_t` in `hu_lib.h`. All other HUD text widgets
-/// embed or inherit this struct. The layout is identical to the C struct on
-/// 64-bit targets (verified by `layout_checks`).
+/// embed or inherit this struct.
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `l[len] == 0` at all times (NUL-terminated prefix).
 /// * `len <= HU_MAXLINELENGTH` (the array has `HU_MAXLINELENGTH + 1` elements).
 /// * `f` points into the `hu_font` array and must not be null when drawing.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct hu_textline_t {
     /// Left-justified screen X position of the text line.
@@ -69,13 +65,10 @@ pub struct hu_textline_t {
 /// buffer; `cl` is the index of the most-recently-added line, and older lines
 /// are at `(cl - i + h) % h` for `i in 1..h`.
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `h <= HU_MAXLINES`.
 /// * `cl` is always in `0..h`.
 /// * `on` is a non-null pointer to a `i32` flag; 0 = hidden, non-zero = visible.
-/// * The four-byte `_pad` field exists solely to match the C ABI on 64-bit
-///   platforms where `boolean` following a pointer leaves a gap.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct hu_stext_t {
     /// Ring of text lines; only `l[0..h]` are used.
@@ -89,7 +82,6 @@ pub struct hu_stext_t {
     /// Cached value of `*on` from the previous frame, used to detect
     /// transitions from visible to hidden so dirty flags can be set.
     pub laston: i32,
-    _pad: [u8; 4],
 }
 
 /// A text-input widget with a protected prefix region.
@@ -100,11 +92,9 @@ pub struct hu_stext_t {
 /// via [`HUlib_delCharFromIText`] and [`HUlib_eraseLineFromIText`] refuse to
 /// go past this left margin.
 ///
-/// # Layout invariants
+/// # Invariants
 /// * `lm <= l.len` at all times.
 /// * `on` must be a non-null pointer.
-/// * `_pad0` and `_pad1` are ABI-alignment fillers only.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct hu_itext_t {
     /// The underlying text line that receives key input.
@@ -112,38 +102,10 @@ pub struct hu_itext_t {
     /// Left-margin character count: characters at indices `0..lm` are
     /// protected from deletion (`it->lm` in C).
     pub lm: i32,
-    _pad0: [u8; 4],
     /// Pointer to the visibility flag; widget is drawn only when `*on != 0`.
     pub on: *mut i32,
     /// Cached value of `*on` from the previous frame (see [`hu_stext_t::laston`]).
     pub laston: i32,
-    _pad1: [u8; 4],
-}
-
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<hu_textline_t>() == 112);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, x) == 0);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, y) == 4);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, f) == 8);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, sc) == 16);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, l) == 20);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, len) == 104);
-    const _: () = assert!(std::mem::offset_of!(hu_textline_t, needsupdate) == 108);
-
-    const _: () = assert!(std::mem::size_of::<hu_stext_t>() == 472);
-    const _: () = assert!(std::mem::offset_of!(hu_stext_t, l) == 0);
-    const _: () = assert!(std::mem::offset_of!(hu_stext_t, h) == 448);
-    const _: () = assert!(std::mem::offset_of!(hu_stext_t, cl) == 452);
-    const _: () = assert!(std::mem::offset_of!(hu_stext_t, on) == 456);
-    const _: () = assert!(std::mem::offset_of!(hu_stext_t, laston) == 464);
-
-    const _: () = assert!(std::mem::size_of::<hu_itext_t>() == 136);
-    const _: () = assert!(std::mem::offset_of!(hu_itext_t, l) == 0);
-    const _: () = assert!(std::mem::offset_of!(hu_itext_t, lm) == 112);
-    const _: () = assert!(std::mem::offset_of!(hu_itext_t, on) == 120);
-    const _: () = assert!(std::mem::offset_of!(hu_itext_t, laston) == 128);
 }
 
 use crate::engine::{
@@ -531,44 +493,6 @@ mod tests {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
-    const HU_TEXTLINE_T_SIZEOF: usize = 112;
-    const HU_STEXT_T_SIZEOF: usize = 472;
-    const HU_ITEXT_T_SIZEOF: usize = 136;
-
-    #[test]
-    fn hu_textline_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<hu_textline_t>(), HU_TEXTLINE_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, x), 0);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, y), 4);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, f), 8);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, sc), 16);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, l), 20);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, len), 104);
-        assert_eq!(std::mem::offset_of!(hu_textline_t, needsupdate), 108);
-    }
-
-    #[test]
-    fn hu_stext_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<hu_stext_t>(), HU_STEXT_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(hu_stext_t, l), 0);
-        assert_eq!(std::mem::offset_of!(hu_stext_t, h), 448);
-        assert_eq!(std::mem::offset_of!(hu_stext_t, cl), 452);
-        assert_eq!(std::mem::offset_of!(hu_stext_t, on), 456);
-        assert_eq!(std::mem::offset_of!(hu_stext_t, laston), 464);
-    }
-
-    #[test]
-    fn hu_itext_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<hu_itext_t>(), HU_ITEXT_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(hu_itext_t, l), 0);
-        assert_eq!(std::mem::offset_of!(hu_itext_t, lm), 112);
-        assert_eq!(std::mem::offset_of!(hu_itext_t, on), 120);
-        assert_eq!(std::mem::offset_of!(hu_itext_t, laston), 128);
-    }
-
     /// Build a zero-initialised hu_textline_t without a valid font pointer.
     /// Safe to use with clear/add/del because those don't dereference `f`.
     fn make_textline() -> hu_textline_t {
@@ -681,10 +605,8 @@ mod tests {
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            _pad0: [0; 4],
             on: &mut on,
             laston: 0,
-            _pad1: [0; 4],
         };
         HUlib_clearTextLine(&mut it.l);
 
@@ -703,10 +625,8 @@ mod tests {
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            _pad0: [0; 4],
             on: &mut on,
             laston: 0,
-            _pad1: [0; 4],
         };
         HUlib_clearTextLine(&mut it.l);
         HUlib_addCharToTextLine(&mut it.l, b'Z');
@@ -725,10 +645,8 @@ mod tests {
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            _pad0: [0; 4],
             on: &mut on,
             laston: 0,
-            _pad1: [0; 4],
         };
         HUlib_clearTextLine(&mut it.l);
 

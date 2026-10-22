@@ -24,7 +24,6 @@ use crate::engine::zone::{Z_Free, Z_Malloc, PU_STATIC};
 /// Direction of a `MEMFILE`: either a read view over an external buffer or a
 /// write sink that owns its own growable buffer. Mirrors the unnamed C
 /// `enum memfile_mode_t`.
-#[repr(C)]
 pub enum memfile_mode_t {
     /// Read mode: `buf` points at caller-owned data, `alloced` is unused.
     MODE_READ = 0,
@@ -34,7 +33,6 @@ pub enum memfile_mode_t {
 
 /// Origin selector for `mem_fseek`, mirroring `stdio.h` `SEEK_SET` /
 /// `SEEK_CUR` / `SEEK_END`. Direct port of C `mem_rel_t`.
-#[repr(C)]
 pub enum mem_rel_t {
     /// Seek relative to the start of the buffer.
     MEM_SEEK_SET = 0,
@@ -47,12 +45,11 @@ pub enum mem_rel_t {
 /// In-memory file handle, the port of C `struct _MEMFILE` (typedef
 /// `MEMFILE`).
 ///
-/// `#[repr(C)]` to keep the C layout. Field semantics depend on `mode`:
+/// Field semantics depend on `mode`:
 /// * read mode -- `buf` and `buflen` describe a borrowed buffer; `alloced`
 ///   is unused.
 /// * write mode -- `buf` is an owned allocation of `alloced` bytes; `buflen`
 ///   is the highest position ever written to (i.e. the logical file size).
-#[repr(C)]
 pub struct _MEMFILE {
     /// Pointer to the data buffer (borrowed in read mode, owned in write
     /// mode).

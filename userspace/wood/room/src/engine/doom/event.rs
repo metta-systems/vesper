@@ -17,7 +17,7 @@
 //! - `event_t.type_` is spelled with a trailing underscore to avoid collision
 //!   with the Rust keyword `type`.
 
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 /// Maximum number of events that can be queued before the oldest is dropped.
 ///
@@ -36,10 +36,8 @@ const MAXEVENTS: usize = 64;
 /// | `ev_joystick` | button bitfield | X axis (turn) | Y axis (fwd/back) | Z axis (strafe) |
 /// | `ev_quit` | - | - | - | - |
 ///
-/// The `type_` field is typed as `i32` rather than an enum to preserve
-/// exact ABI compatibility with the C `evtype_t` enum (which is an `int` in
-/// C).
-#[repr(C)]
+/// The `type_` field is typed as `i32` rather than an enum, mirroring the C
+/// `evtype_t` enum (which is an `int` in C).
 #[derive(Copy, Clone)]
 pub struct event_t {
     /// Event type discriminant; one of the `ev_*` constants from `evtype_t`.

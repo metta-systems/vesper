@@ -46,7 +46,6 @@ const MEM_ALIGN: usize = std::mem::size_of::<*mut ()>();
 /// Header that precedes every Zone allocation in memory. Matches
 /// `memblock_t` in `z_zone.c`; the `id` field carries `ZONEID` so
 /// stray frees can be detected.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct memblock_t {
     /// Total bytes including header and any trailing fragment.
@@ -66,7 +65,6 @@ struct memblock_t {
 
 /// Zone-level header sitting at the start of `mainzone`. Matches the
 /// anonymous `memzone_t` struct in `z_zone.c`.
-#[repr(C)]
 struct memzone_t {
     /// Total bytes of the backing buffer (including this header).
     size: i32,

@@ -490,7 +490,7 @@ mod tests {
         crate::engine::{
             doom::{
                 mode::{commercial, registered, retail, shareware},
-                player::{PspdefT, NUMPOWERS},
+                player::NUMPOWERS,
             },
             math::tables::ANG270,
         },
@@ -498,20 +498,6 @@ mod tests {
     };
 
     static LOCK: Mutex<()> = Mutex::new(());
-
-    const PSPDEF_T_SIZEOF: usize = 24;
-
-    #[test]
-    fn pspdef_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<PspdefT>(),
-            PSPDEF_T_SIZEOF,
-            "PspdefT size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<PspdefT>(),
-            PSPDEF_T_SIZEOF,
-        );
-    }
 
     #[test]
     fn onground_defaults_to_zero() {

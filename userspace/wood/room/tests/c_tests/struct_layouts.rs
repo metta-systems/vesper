@@ -4,16 +4,15 @@
 //! offset does not match the C compiler output, the test fails,
 //! catching data-type-size and alignment mismatches immediately.
 //!
-//! Coverage: `vertex_t`, `divline_t`, `line_t`, `sector_t`, `intercept_t`,
-//! `mobj_t`, `side_t`, `seg_t`, `node_t`, `drawseg_t`, `vissprite_t`.
+//! Coverage: `vertex_t`, `divline_t`, `line_t`, `sector_t`, `mobj_t`,
+//! `side_t`, `seg_t`, `node_t`, `drawseg_t`, `vissprite_t`.
 
 #![allow(non_snake_case)]
 
 use std::mem::{offset_of, size_of};
 
 use room::engine::c_ffi::{
-    divline_t, drawseg_t, intercept_t, line_t, mobj_t, node_t, sector_t, seg_t, side_t, vertex_t,
-    vissprite_t,
+    divline_t, drawseg_t, line_t, mobj_t, node_t, sector_t, seg_t, side_t, vertex_t, vissprite_t,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,25 +110,6 @@ fn sector_t_offsets() {
     assert_eq!(offset_of!(sector_t, specialdata), 104);
     assert_eq!(offset_of!(sector_t, linecount), 112);
     assert_eq!(offset_of!(sector_t, lines), 120);
-}
-
-// ---------------------------------------------------------------------------
-// intercept_t
-// ---------------------------------------------------------------------------
-
-/// `intercept_t` is 16 bytes (frac + isaline + union `d`).
-#[test]
-fn intercept_t_size() {
-    assert_eq!(size_of::<intercept_t>(), 16);
-}
-
-/// `intercept_t` exposes `frac` at offset 0 and `isaline` at offset 4; the
-/// union `d` begins at offset 8.
-#[test]
-fn intercept_t_offsets() {
-    assert_eq!(offset_of!(intercept_t, frac), 0);
-    assert_eq!(offset_of!(intercept_t, isaline), 4);
-    // union d starts at offset 8
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,6 @@
 //!
 //! These tests verify:
 //!   * Screen constants (`c_ffi::SCREENWIDTH_4_3`, `c_ffi::SCREENHEIGHT_4_3`)
-//!   * `screen_mode_t` struct layout (must match the C layout exactly)
 //!   * Dimensions of every named mode
 //!   * `poor_quality` flag for the lowest-resolution modes
 //!   * `draw_screen` function pointer is non-null (the mode is usable)
@@ -42,30 +41,6 @@ fn screenwidth_4_3_is_256() {
 #[test]
 fn screenheight_4_3_is_240() {
     assert_eq!(c_ffi::SCREENHEIGHT_4_3, 240);
-}
-
-// ---------------------------------------------------------------------------
-// screen_mode_t struct layout
-// ---------------------------------------------------------------------------
-
-/// On 64-bit Linux the struct layout is:
-///   +0  width         (int,    4 bytes)
-///   +4  height        (int,    4 bytes)
-///   +8  InitMode      (ptr,    8 bytes)
-///   +16 DrawScreen    (ptr,    8 bytes)
-///   +24 poor_quality  (int,    4 bytes)
-///   +28 [4 bytes tail-padding to align struct to 8]
-/// Total: 32 bytes.
-#[test]
-fn screen_mode_t_size_is_32() {
-    assert_eq!(std::mem::size_of::<c_ffi::screen_mode_t>(), 32);
-}
-
-/// `screen_mode_t` alignment is 8 — the largest member is a pointer
-/// (`InitMode`/`DrawScreen`) which on 64-bit Linux is 8-byte aligned.
-#[test]
-fn screen_mode_t_align_is_8() {
-    assert_eq!(std::mem::align_of::<c_ffi::screen_mode_t>(), 8);
 }
 
 // ---------------------------------------------------------------------------

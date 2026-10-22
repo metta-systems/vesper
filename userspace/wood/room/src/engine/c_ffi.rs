@@ -139,7 +139,6 @@ pub struct line_t {
 /// `frac` is the fractional position along the trace (fixed-point in
 /// `[0, FRACUNIT]`). `isaline` selects the active arm of [`intercept_t_d`]:
 /// non-zero means `d.line`, zero means `d.thing`.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct intercept_t {
     pub frac: i32,
@@ -152,7 +151,6 @@ pub struct intercept_t {
 ///
 /// Active arm is selected by [`intercept_t::isaline`]. Reading the inactive
 /// arm is undefined behaviour; callers must consult `isaline` first.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub union intercept_t_d {
     pub thing: *mut c_void,
@@ -268,7 +266,6 @@ pub const ST_NEGATIVE: i32 = 3;
 
 /// WAD map lump indices (`ML_*` in `doomdata.h`). Used as offsets from the
 /// map's header lump to locate each sub-lump.
-#[repr(C)]
 pub struct MapLump;
 /// `ML_*` lump-offset constants used to index a map's group of WAD lumps.
 impl MapLump {
@@ -303,7 +300,6 @@ const _: () = assert!(
 
 /// Linedef flag bits (`ML_*` in `doomdata.h`). Stored in `line_t.flags` as
 /// a bitmask; each constant is a single-bit mask.
-#[repr(C)]
 pub struct LinedefFlag;
 /// `ML_*` bit-mask constants stored in `line_t.flags`.
 impl LinedefFlag {
@@ -489,15 +485,6 @@ pub const DOOM_191_VERSION: i32 = 111;
 // ---------------------------------------------------------------------------
 
 /// A screen scaling mode descriptor, matching `screen_mode_t` in `i_video.h`.
-///
-/// Layout on 64-bit (32 bytes):
-///   +0  width          (int, 4 bytes)
-///   +4  height         (int, 4 bytes)
-///   +8  InitMode       (fn ptr, 8 bytes)
-///   +16 DrawScreen     (fn ptr, 8 bytes)
-///   +24 poor_quality   (int/boolean, 4 bytes)
-///   +28 [4 bytes tail-padding to align struct to 8]
-#[repr(C)]
 pub struct screen_mode_t {
     /// Output buffer width in pixels.
     pub width: i32,

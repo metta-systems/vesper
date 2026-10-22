@@ -9,10 +9,8 @@
 //!
 //! Rust differences from C:
 //! - Boolean fields (`cards`, `backpack`, `weaponowned`, `didsecret`) that are
-//!   `boolean` in C are stored as `i32` here to keep the struct layout
-//!   identical to the C ABI on x86-64 Linux (where `boolean = unsigned int =
-//!   4 bytes`).  Using a Rust `bool` would break layout because `bool` is 1
-//!   byte.
+//!   `boolean` in C are stored as `i32` here, like the C `boolean`
+//!   (`unsigned int`).
 //! - `TiccmdT` adds an explicit `_pad: [u8; 2]` after `arti` to match the
 //!   C compiler's padding and reach the expected struct size.
 //! - Opaque C types `mobj_t` and `state_t` are represented as empty enums,
@@ -116,7 +114,6 @@ pub struct TiccmdT {
 /// Corresponds to `pspdef_t` in `p_pspr.h`.  Each player has
 /// [`NUMPSPRITES`] slots (typically `ps_weapon` and `ps_flash`), stored in
 /// `PlayerT::psprites`.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PspdefT {
     /// Pointer to the current animation state for this sprite overlay.
@@ -137,7 +134,6 @@ pub struct PspdefT {
 /// needs to simulate, render, and save a single player's participation in a
 /// game session. It is `Copy` and valid when zeroed: `G_PlayerReborn` resets
 /// it with `mem::zeroed()`.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerT {
     /// Pointer to the player's map object (position, velocity, health during play).

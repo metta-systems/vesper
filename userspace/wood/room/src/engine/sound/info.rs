@@ -25,7 +25,6 @@ use std::ffi::c_void;
 /// `name` is a fixed 9-byte slot (8 chars + NUL) holding the short lump name; the engine prepends `DS` when looking
 /// up the actual WAD lump. `link` lets two effects share underlying audio
 /// (e.g. `sfx_chgun -> sfx_pistol`).
-#[repr(C)]
 pub struct SfxInfo {
     /// Short lump name (no `DS` prefix), NUL-terminated.
     pub name: [u8; 9],
@@ -51,7 +50,6 @@ pub struct SfxInfo {
 ///
 /// `name` is the short lump name (the engine prepends `d_`), `data` holds
 /// the cached lump, `handle` is the driver-side song handle.
-#[repr(C)]
 #[derive(Default)]
 pub struct MusicInfo {
     /// Short lump name (no `d_` prefix); empty for the sentinel.
@@ -71,18 +69,8 @@ pub const NUMSFX: usize = Sfx::Radio as usize + 1;
 // musicenum_t in sounds.h ends with NUMMUSIC = 68
 pub const NUMMUSIC: usize = Mus::Dm2int as usize + 1;
 
-const _: () = assert!(
-    std::mem::size_of::<Sfx>() == std::mem::size_of::<i32>(),
-    "Sfx must be the same size as i32"
-);
-const _: () = assert!(
-    std::mem::size_of::<Mus>() == std::mem::size_of::<i32>(),
-    "Mus must be the same size as i32"
-);
-
 /// Sound effect IDs, matching the `sfxenum_t` C enum in `sounds.h`.
 #[doc(alias = "sfxenum_t")]
-#[repr(C)]
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum Sfx {
     #[default]
@@ -417,7 +405,6 @@ pub enum Sfx {
 
 /// Music track IDs, matching the `musicenum_t` C enum in `sounds.h`.
 #[doc(alias = "musicenum_t")]
-#[repr(C)]
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum Mus {
     #[default]

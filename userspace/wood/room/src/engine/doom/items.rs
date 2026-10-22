@@ -42,7 +42,6 @@ use crate::engine::play::info::*;
 
 /// Weapon info: sprite frames, ammunition use.
 /// Matches `weaponinfo_t` from `d_items.h`.
-#[repr(C)]
 pub struct weaponinfo_t {
     /// Ammo type consumed by this weapon (`am_*`).
     pub ammo: i32,
@@ -171,11 +170,5 @@ mod tests {
     fn test_super_shotgun_entry() {
         assert_eq!(weaponinfo[8].ammo, am_shell);
         assert_eq!(weaponinfo[8].flashstate, S_DSGUNFLASH1);
-    }
-
-    /// Verify `weaponinfo_t` is 24 bytes (six `i32` fields, 4 bytes each).
-    #[test]
-    fn test_weaponinfo_t_size() {
-        assert_eq!(size_of::<weaponinfo_t>(), 24);
     }
 }

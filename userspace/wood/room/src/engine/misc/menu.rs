@@ -135,7 +135,6 @@ pub struct menuitem_t {
 /// `menuitems` points to the item array for this page; it cannot be initialised
 /// as a static const because Rust forbids raw-pointer cross-references between
 /// statics, so the pointer is wired up at runtime in `M_Init`.
-#[repr(C)]
 pub struct menu_t {
     /// Number of items in `menuitems`.
     pub numitems: i16,
@@ -152,8 +151,6 @@ pub struct menu_t {
     /// Index of the item that was last highlighted; restored on re-entry.
     pub lastOn: i16,
 }
-
-const _: () = assert!(std::mem::size_of::<menu_t>() == 40, "menu_t size mismatch");
 
 // ---------------------------------------------------------------------------
 // Menu text (from d_englsh.h)

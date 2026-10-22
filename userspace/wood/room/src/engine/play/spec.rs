@@ -8,8 +8,7 @@
 //!
 //! Notable Rust-vs-C differences:
 //! - The `animdefs` table is a Rust `const` slice of tuples instead of a
-//!   C array of `animdef_t` structs; the `animdef_t` struct is kept for
-//!   layout testing only.
+//!   C array of `animdef_t` structs.
 //! - `DonutOverrun` uses `static mut` locals to replicate C `static` locals;
 //!   first-call initialisation is guarded by a `first` flag exactly as in C.
 //! - Button `where` enum (C `bwhere_e`) is stored as a raw `i32` (`0/1/2`)
@@ -151,9 +150,6 @@ const pw_ironfeet: usize = 3;
 ///
 /// Maps to the C `anim_t` typedef in p_spec.c (also used internally in
 /// wi_stuff.c with different semantics, but this is the p_spec version).
-/// Layout invariant: the struct is `#[repr(C)]` and its size is asserted to
-/// be exactly 20 bytes on 64-bit targets (matching the C layout).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct anim_t {
     /// Non-zero if this animation cycle is for wall textures; zero for flats.
@@ -166,33 +162,6 @@ pub struct anim_t {
     pub numpics: i32,
     /// Tic-count duration of each frame; the sequence advances every `speed` tics.
     pub speed: i32,
-}
-
-/// Static definition of one animation cycle as loaded from the ANIMDEFS table.
-///
-/// Maps to the C `animdef_t` typedef in p_spec.c.  The Rust code uses a
-/// tuple-slice (`ANIMDEFS`) instead of an array of this struct for animation
-/// initialisation; `animdef_t` is retained only for ABI size verification.
-/// Layout invariant: 28 bytes on 64-bit (4-byte `istexture`, two 9-byte name
-/// arrays padded to alignment, 4-byte `speed`).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct animdef_t {
-    /// Non-zero for wall textures, zero for flats; -1 marks the sentinel entry.
-    pub istexture: i32,
-    /// Name of the last frame lump (NUL-padded to 9 bytes).
-    pub endname: [u8; 9],
-    /// Name of the first frame lump (NUL-padded to 9 bytes).
-    pub startname: [u8; 9],
-    /// Frame duration in tics.
-    pub speed: i32,
-}
-
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<anim_t>() == 20);
-    const _: () = assert!(std::mem::size_of::<animdef_t>() == 28);
 }
 
 // ---------------------------------------------------------------------------
@@ -1450,21 +1419,6 @@ mod tests {
     use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
-
-    const ANIM_T_SIZEOF: usize = 20;
-    const ANIMDEF_T_SIZEOF: usize = 28;
-
-    #[test]
-    fn anim_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<anim_t>(), ANIM_T_SIZEOF);
-    }
-
-    #[test]
-    fn animdef_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<animdef_t>(), ANIMDEF_T_SIZEOF);
-    }
 
     #[test]
     fn globals_are_zero_initialized() {

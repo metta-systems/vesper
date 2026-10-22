@@ -481,7 +481,6 @@ mod layout_checks {
 /// covered by a previously drawn wall. The `solidsegs` array is a sorted,
 /// non-overlapping list of these ranges, bounded by two sentinel entries.
 /// Mirrors the `cliprange_t` struct defined locally in `r_bsp.c`.
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct cliprange_t {
     /// First (leftmost) solid column in this range, inclusive.
