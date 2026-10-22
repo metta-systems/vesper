@@ -1961,6 +1961,7 @@ dependencies = [
  "rustysynth",
  "wgpu",
  "winit",
+ "zerocopy",
 ]
 
 [[package]]

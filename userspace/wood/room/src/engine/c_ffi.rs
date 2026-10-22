@@ -5,7 +5,7 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
-use std::ffi::c_void;
+use {super::wad::format::mapthing_t, std::ffi::c_void};
 
 pub use super::{
     interface::{
@@ -77,22 +77,6 @@ pub struct subsector_t {
     pub numlines: i16,
     pub firstline: i16,
     _pad: [u8; 4],
-}
-
-/// On-disk thing record (`mapthing_t` in `doomdata.h`).
-///
-/// 10-byte packed record from the WAD THINGS lump describing a spawn point.
-/// `x` and `y` are in map units (not fixed-point), `angle` is degrees,
-/// `type` is the Doom editor number, and `options` is a bit mask of skill
-/// and multiplayer flags.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct mapthing_t {
-    pub x: i16,
-    pub y: i16,
-    pub angle: i16,
-    pub r#type: i16,
-    pub options: i16,
 }
 
 /// Runtime sector record (`sector_t` in `r_defs.h`).

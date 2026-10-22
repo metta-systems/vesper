@@ -361,11 +361,11 @@ use crate::engine::doom::iwad::{D_FindIWAD, D_SaveGameIWADName};
 use crate::engine::zone::Z_Init;
 
 // w_main.rs
-use crate::engine::wad::main::W_ParseCommandLine;
+use crate::engine::wad::{format::patch_t, main::W_ParseCommandLine};
 
 // v_video.rs
 use crate::engine::render_2d::{
-    patch_t, V_DrawMouseSpeedBox, V_DrawPatch, V_DrawPatchDirect, V_Init, V_RestoreBuffer,
+    V_DrawMouseSpeedBox, V_DrawPatch, V_DrawPatchDirect, V_Init, V_RestoreBuffer,
 };
 
 // f_finale.rs

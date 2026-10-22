@@ -23,7 +23,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use crate::{
-    engine::{render_2d::patch_t, zone::PU_STATIC},
+    engine::{wad::format::patch_t, zone::PU_STATIC},
     i_error,
 };
 /// Height of the status bar in pixels.
@@ -34,13 +34,6 @@ const ST_HEIGHT: i32 = 32;
 /// All widget Y coordinates are expected to be at or below this value.
 /// Mirrors `ST_Y` from `st_stuff.h`.
 const ST_Y: i32 = 200 - ST_HEIGHT; // 168
-
-/// Byte-swap for little-endian (SHORT macro from i_swap.h).
-/// On x86_64 this is an identity cast.
-#[inline(always)]
-fn short_swap(v: i16) -> i16 {
-    v
-}
 
 /// A right-justified integer display widget.
 ///
@@ -225,8 +218,8 @@ pub fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
         let mut numdigits = (*n).width;
         let num = *(*n).num;
 
-        let w = short_swap((**(*n).p).width) as i32;
-        let h = short_swap((**(*n).p).height) as i32;
+        let w = (**(*n).p).width.get() as i32;
+        let h = (**(*n).p).height.get() as i32;
         (*n).oldnum = num;
 
         let neg = num < 0;
@@ -381,10 +374,10 @@ pub fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
         if *(*mi).on != 0 && ((*mi).oldinum != *(*mi).inum || refresh != 0) && *(*mi).inum != -1 {
             if (*mi).oldinum != -1 {
                 let old_patch = *(*mi).p.offset((*mi).oldinum as isize);
-                let x = (*mi).x - short_swap((*old_patch).leftoffset) as i32;
-                let y = (*mi).y - short_swap((*old_patch).topoffset) as i32;
-                let w = short_swap((*old_patch).width) as i32;
-                let h = short_swap((*old_patch).height) as i32;
+                let x = (*mi).x - (*old_patch).leftoffset.get() as i32;
+                let y = (*mi).y - (*old_patch).topoffset.get() as i32;
+                let w = (*old_patch).width.get() as i32;
+                let h = (*old_patch).height.get() as i32;
 
                 if y - ST_Y < 0 {
                     i_error!("updateMultIcon: y - ST_Y < 0");
@@ -439,10 +432,10 @@ pub fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
     unsafe {
         if *(*bi).on != 0 && ((*bi).oldval != *(*bi).val || refresh != 0) {
             let p = (*bi).p;
-            let x = (*bi).x - short_swap((*p).leftoffset) as i32;
-            let y = (*bi).y - short_swap((*p).topoffset) as i32;
-            let w = short_swap((*p).width) as i32;
-            let h = short_swap((*p).height) as i32;
+            let x = (*bi).x - (*p).leftoffset.get() as i32;
+            let y = (*bi).y - (*p).topoffset.get() as i32;
+            let w = (*p).width.get() as i32;
+            let h = (*p).height.get() as i32;
 
             if y - ST_Y < 0 {
                 i_error!("updateBinIcon: y - ST_Y < 0");

@@ -38,6 +38,9 @@ pollster = "0.4"
 # Safe transmutation between byte slices and typed buffers.
 bytemuck = { version = "1", features = ["derive"] }
 
+# Zero-copy views of the little-endian WAD on-disk records.
+zerocopy = { version = "0.8", features = ["derive"] }
+
 # Logging facade.
 log = "0.4"
 

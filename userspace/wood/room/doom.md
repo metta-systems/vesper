@@ -37,6 +37,7 @@ Files without a prefix, and the `m_` math files, go to the module their contents
 | `statenum`    | `S_*` state indices (`info.h` in C)               | `play::info`             |
 | `sounds`      | Sound effect and music tables                     | `sound::info`            |
 | `mus2midi`    | MUS to MIDI conversion                            | `sound::mus2midi`        |
+| `doomdata`    | On-disk WAD record formats                        | `wad::format`            |
 | `tables`      | Fixed-point trigonometry and gamma tables         | `math::tables`           |
 | `m_fixed`     | Fixed-point arithmetic                            | `math::fixed`            |
 | `m_bbox`      | Bounding boxes                                    | `math::bbox`             |

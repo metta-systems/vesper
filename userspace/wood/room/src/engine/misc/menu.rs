@@ -155,17 +155,6 @@ pub struct menu_t {
 
 const _: () = assert!(std::mem::size_of::<menu_t>() == 40, "menu_t size mismatch");
 
-/// Minimal prefix of `patch_t` needed to read width/height without pulling in the full type.
-///
-/// Used when measuring HUD font glyphs for text centering.
-#[repr(C)]
-struct patch_stub {
-    /// Pixel width of the patch.
-    width: i16,
-    /// Pixel height of the patch.
-    height: i16,
-}
-
 // ---------------------------------------------------------------------------
 // Menu text (from d_englsh.h)
 // ---------------------------------------------------------------------------
@@ -240,10 +229,10 @@ use crate::engine::{
     },
     misc::{until_nul, M_StringCopy},
     play::saveg::P_SaveGameFile,
-    render_2d::{patch_t, V_DrawPatchDirect},
+    render_2d::V_DrawPatchDirect,
     render_3d::main::R_SetViewSize,
     sound::{info::Sfx, S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
-    wad::W_CacheLumpName,
+    wad::{format::patch_t, W_CacheLumpName},
 };
 
 /// Current mouse sensitivity setting (0-9); exported to C for `m_config.c` serialization.
@@ -1278,8 +1267,7 @@ fn M_StringWidth(text: &[u8]) -> i32 {
             if c < 0 || c as usize >= HU_FONTSIZE {
                 w += 4;
             } else {
-                let patch = hu_font[c as usize] as *const patch_stub;
-                w += (*patch).width as i32;
+                w += (*hu_font[c as usize]).width.get() as i32;
             }
         }
         w
@@ -1289,8 +1277,7 @@ fn M_StringWidth(text: &[u8]) -> i32 {
 /// Return the pixel height of `text` rendered in the HUD font, accounting for newlines.
 fn M_StringHeight(text: &[u8]) -> i32 {
     unsafe {
-        let patch = hu_font[0] as *const patch_stub;
-        let height = (*patch).height as i32;
+        let height = (*hu_font[0]).height.get() as i32;
         let newlines = text.iter().filter(|&&byte| byte == b'\n').count() as i32;
         height + newlines * height
     }
@@ -1319,8 +1306,7 @@ fn M_WriteText(x: i32, y: i32, text: &[u8]) {
                 continue;
             }
 
-            let patch = hu_font[c as usize] as *const patch_stub;
-            let w = (*patch).width as i32;
+            let w = (*hu_font[c as usize]).width.get() as i32;
             if cx + w > SCREENWIDTH {
                 break;
             }
@@ -1779,8 +1765,7 @@ pub fn M_Drawer() {
 
                 messx = SCREENWIDTH / 2 - M_StringWidth(line) / 2;
                 M_WriteText(messx, messy, line);
-                let patch = hu_font[0] as *const patch_stub;
-                messy += (*patch).height as i32;
+                messy += (*hu_font[0]).height.get() as i32;
             }
             return;
         }

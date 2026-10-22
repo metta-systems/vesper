@@ -33,7 +33,7 @@
 
 use {crate::i_error, std::ffi::c_void};
 
-use std::ptr;
+use {std::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
     c_ffi::mobj_t,
@@ -45,18 +45,12 @@ use crate::engine::{
 // Constants & helpers
 // ---------------------------------------------------------------------------
 
-/// Identity byte-swap for little-endian targets (mirrors `i_swap.h` `SHORT`).
-///
-/// On all currently supported targets `i16` is already little-endian, so this
-/// is a no-op.  Present to keep the code structurally parallel to the C source.
-#[inline]
-fn SHORT(x: i16) -> i16 {
-    x
-}
-
 /// Identity word-swap for little-endian targets (mirrors `i_swap.h` `LONG`).
 ///
-/// Analogous to `SHORT`; a no-op on little-endian hosts.
+/// Used for the raw `int` counts and offsets of the PNAMES and TEXTURE1/2
+/// lumps; on all currently supported targets `i32` is already
+/// little-endian, so this is a no-op.  The record fields of
+/// `wad::format` carry their byte order themselves.
 #[inline]
 fn LONG(x: i32) -> i32 {
     x
@@ -65,49 +59,6 @@ fn LONG(x: i32) -> i32 {
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
-
-/// On-disk patch entry inside a `maptexture_t` WAD record (packed, C layout).
-///
-/// Corresponds to `mappatch_t` in `r_data.c`.  `stepdir` and `colormap` are
-/// present in the WAD format but unused by the renderer.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-struct mappatch_t {
-    /// Horizontal origin of the patch within the texture, in pixels.
-    originx: i16,
-    /// Vertical origin of the patch within the texture, in pixels.
-    originy: i16,
-    /// Index into the PNAMES patch directory.
-    patch: i16,
-    /// Unused animation field (always 1 in practice).
-    stepdir: i16,
-    /// Unused colormap field (always 0 in practice).
-    colormap: i16,
-}
-
-/// On-disk texture definition as stored in TEXTURE1 / TEXTURE2 WAD lumps (packed, C layout).
-///
-/// Corresponds to `maptexture_t` in `r_data.c`.  The `patches` field is a
-/// C flexible-array member: the struct is followed by `patchcount - 1`
-/// additional `mappatch_t` entries in memory.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-struct maptexture_t {
-    /// Texture name, up to 8 ASCII characters, NUL-padded.
-    name: [u8; 8],
-    /// Non-zero if the texture has transparent holes (unused by the renderer).
-    masked: i32,
-    /// Texture width in pixels.
-    width: i16,
-    /// Texture height in pixels.
-    height: i16,
-    /// Obsolete field present in the WAD format; ignored.
-    obsolete: i32,
-    /// Number of `mappatch_t` entries that follow this struct in memory.
-    patchcount: i16,
-    /// First patch entry; additional patches follow contiguously in WAD data.
-    patches: mappatch_t,
-}
 
 /// Runtime patch descriptor stored inside a `texture_t` (C layout).
 ///
@@ -148,42 +99,6 @@ struct texture_t {
     /// First patch descriptor; additional patches follow contiguously.
     patches: texpatch_t,
 }
-
-/// Patch graphic header, matching the WAD `patch_t` struct (packed, C layout).
-///
-/// Corresponds to `patch_t` in `r_local.h`.  Immediately after the four
-/// header fields, `width` 32-bit column offsets follow (the `columnofs[]`
-/// array), then the column data itself.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct patch_t {
-    /// Width of the patch in pixels.
-    pub width: i16,
-    /// Height of the patch in pixels.
-    pub height: i16,
-    /// Horizontal draw offset from the patch origin, in pixels.
-    pub leftoffset: i16,
-    /// Vertical draw offset from the patch origin, in pixels.
-    pub topoffset: i16,
-}
-
-/// Single run of opaque pixels within a column (a "post"), packed C layout.
-///
-/// Corresponds to `post_t` in `r_local.h`.  A column is a sequence of posts
-/// terminated by a `topdelta` value of `0xff`.  The actual pixel data follows
-/// immediately after the two-byte header (one byte of padding before the
-/// pixels and one byte of padding after).
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct post_t {
-    /// Row offset from the top of the texture column where this post begins.
-    pub topdelta: u8,
-    /// Number of pixels in this post.
-    pub length: u8,
-}
-
-/// Alias for `post_t`; used interchangeably in the C source as `column_t`.
-pub type column_t = post_t;
 
 /// Per-rotation frame data for one sprite animation frame (C layout).
 ///
@@ -231,6 +146,7 @@ use crate::engine::{
         things::{numsprites, sprites},
     },
     wad::{
+        format::{column_t, mappatch_t, maptexture_t, patch_t},
         lump_name, lump_names_equal, lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName,
         W_GetNumForName, W_LumpLength, W_LumpNameHash, W_ReleaseLumpName,
     },
@@ -478,21 +394,20 @@ pub unsafe fn R_GenerateComposite(texnum: i32) {
         let patch = patches_base.add(i as usize);
         let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
         let x1 = (*patch).originx as i32;
-        let mut x2 = x1 + SHORT((*realpatch).width) as i32;
+        let mut x2 = x1 + (*realpatch).width.get() as i32;
 
         let mut x = if x1 < 0 { 0 } else { x1 };
         if x2 > (*texture).width as i32 {
             x2 = (*texture).width as i32;
         }
 
-        let columnofs = (realpatch as *mut u8).add(8) as *mut i32;
         while x < x2 {
             if *collump.add(x as usize) >= 0 {
                 x += 1;
                 continue;
             }
             let patchcol = (realpatch as *mut u8)
-                .add(LONG(*columnofs.add((x - x1) as usize)) as usize)
+                .add(patch_t::column_offset(realpatch, (x - x1) as usize))
                 as *mut column_t;
             R_DrawColumnInCache(
                 patchcol,
@@ -557,18 +472,18 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
         let patch = patches_base.add(i as usize);
         let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
         let x1 = (*patch).originx as i32;
-        let mut x2 = x1 + SHORT((*realpatch).width) as i32;
+        let mut x2 = x1 + (*realpatch).width.get() as i32;
 
         let mut x = if x1 < 0 { 0 } else { x1 };
         if x2 > width {
             x2 = width;
         }
 
-        let columnofs = (realpatch as *mut u8).add(8) as *mut i32;
         while x < x2 {
             *patchcount.add(x as usize) += 1;
             *collump.add(x as usize) = (*patch).patch as i16;
-            *colofs.add(x as usize) = (LONG(*columnofs.add((x - x1) as usize)) + 3) as u16;
+            *colofs.add(x as usize) =
+                (patch_t::column_offset(realpatch, (x - x1) as usize) + 3) as u16;
             x += 1;
         }
     }
@@ -808,35 +723,48 @@ pub unsafe fn R_InitTextures() {
             directory = maptex2.add(1);
         }
 
-        let offset = LONG(*directory) as isize;
+        // A negative offset wraps to a huge one and fails the bound check.
+        let offset = LONG(*directory) as usize;
         directory = directory.add(1);
 
-        if offset > maxoff as isize {
+        if offset > maxoff as usize {
             i_error!("R_InitTextures: bad texture directory");
         }
 
-        let mtexture = (maptex as *mut u8).offset(offset) as *mut maptexture_t;
-        let patchcount = SHORT((*mtexture).patchcount) as i32;
+        let texture_lump = std::slice::from_raw_parts(maptex as *const u8, maxoff as usize);
+        let Ok((mtexture, after_header)) = maptexture_t::ref_from_prefix(&texture_lump[offset..])
+        else {
+            i_error!(
+                "R_InitTextures: truncated texture definition at offset {}",
+                offset
+            );
+        };
+        let patchcount = mtexture.patchcount.get() as i32;
+        let Ok((mpatches, _)) =
+            <[mappatch_t]>::ref_from_prefix_with_elems(after_header, patchcount as usize)
+        else {
+            i_error!(
+                "R_InitTextures: truncated patch list in texture {}",
+                String::from_utf8_lossy(lump_name(&mtexture.name))
+            );
+        };
         let texsize = std::mem::size_of::<texture_t>()
             + std::mem::size_of::<texpatch_t>() * (patchcount as usize - 1);
         let texture = Z_Malloc(texsize as i32, PU_STATIC, ptr::null_mut()) as *mut texture_t;
         *textures.add(i) = texture;
 
-        (*texture).width = SHORT((*mtexture).width);
-        (*texture).height = SHORT((*mtexture).height);
+        (*texture).width = mtexture.width.get();
+        (*texture).height = mtexture.height.get();
         (*texture).patchcount = patchcount as i16;
+        (*texture).name = mtexture.name;
 
-        std::ptr::copy_nonoverlapping((*mtexture).name.as_ptr(), (*texture).name.as_mut_ptr(), 8);
-
-        let mpatches_base = std::ptr::addr_of!((*mtexture).patches) as *mut mappatch_t;
         let tpatches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
 
-        for j in 0..patchcount as usize {
-            let mpatch = mpatches_base.add(j);
+        for (j, mpatch) in mpatches.iter().enumerate() {
             let patch = tpatches_base.add(j);
-            (*patch).originx = SHORT((*mpatch).originx);
-            (*patch).originy = SHORT((*mpatch).originy);
-            (*patch).patch = *patchlookup.add(SHORT((*mpatch).patch) as usize);
+            (*patch).originx = mpatch.originx.get();
+            (*patch).originy = mpatch.originy.get();
+            (*patch).patch = *patchlookup.add(mpatch.patch.get() as usize);
             if (*patch).patch == -1 {
                 i_error!(
                     "R_InitTextures: Missing patch in texture {}",
@@ -968,9 +896,9 @@ pub unsafe fn R_InitSpriteLumps() {
         }
 
         let patch = W_CacheLumpNum(firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
-        *spritewidth.add(i) = (SHORT((*patch).width) as i32) << FRACBITS;
-        *spriteoffset.add(i) = (SHORT((*patch).leftoffset) as i32) << FRACBITS;
-        *spritetopoffset.add(i) = (SHORT((*patch).topoffset) as i32) << FRACBITS;
+        *spritewidth.add(i) = ((*patch).width.get() as i32) << FRACBITS;
+        *spriteoffset.add(i) = ((*patch).leftoffset.get() as i32) << FRACBITS;
+        *spritetopoffset.add(i) = ((*patch).topoffset.get() as i32) << FRACBITS;
     }
 }
 

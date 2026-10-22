@@ -32,6 +32,7 @@ pub mod statdump;
 use {
     crate::engine::sound::info::Sfx,
     std::{cell::UnsafeCell, ptr},
+    zerocopy::little_endian::I16,
 };
 
 use crate::{
@@ -45,9 +46,9 @@ use crate::{
             video::{SCREENHEIGHT, SCREENWIDTH},
         },
         misc::random::M_Random,
-        render_2d::{patch_t, V_DrawPatch},
+        render_2d::V_DrawPatch,
         sound::{info::Mus, S_ChangeMusic, S_StartSound},
-        wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName},
+        wad::{format::patch_t, W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName},
         zone::{Z_Malloc, PU_STATIC},
     },
     DEH_snprintf,
@@ -695,16 +696,6 @@ static mut snl_pointeron: bool = false;
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Identity endian-swap shim; this port runs on little-endian hosts matching the WAD format.
-#[inline(always)]
-fn SHORT(x: i16) -> i16 {
-    x
-}
-
-// ---------------------------------------------------------------------------
 // WI_slamBackground
 // ---------------------------------------------------------------------------
 
@@ -758,13 +749,13 @@ unsafe fn WI_drawLF() {
 
     if gamemode != doom::mode::commercial || (*wbs).last < NUMCMAPS {
         V_DrawPatch(
-            (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).last as isize))).width) as i32) / 2,
+            (SCREENWIDTH - (*(*lnames.offset((*wbs).last as isize))).width.get() as i32) / 2,
             y,
             *lnames.offset((*wbs).last as isize),
         );
-        y += (5 * SHORT((*(*lnames.offset((*wbs).last as isize))).height) as i32) / 4;
+        y += (5 * (*(*lnames.offset((*wbs).last as isize))).height.get() as i32) / 4;
         V_DrawPatch(
-            (SCREENWIDTH - SHORT((*finished).width) as i32) / 2,
+            (SCREENWIDTH - (*finished).width.get() as i32) / 2,
             y,
             finished,
         );
@@ -773,10 +764,10 @@ unsafe fn WI_drawLF() {
     } else if (*wbs).last > NUMCMAPS {
         // Deliberately trigger a V_DrawPatch error
         let tmp: patch_t = patch_t {
-            width: SCREENWIDTH as i16,
-            height: SCREENHEIGHT as i16,
-            leftoffset: 1,
-            topoffset: 1,
+            width: I16::new(SCREENWIDTH as i16),
+            height: I16::new(SCREENHEIGHT as i16),
+            leftoffset: I16::new(1),
+            topoffset: I16::new(1),
         };
         V_DrawPatch(0, y, &tmp as *const patch_t as *mut patch_t);
     }
@@ -797,15 +788,15 @@ unsafe fn WI_drawEL() {
     let mut y = WI_TITLEY;
 
     V_DrawPatch(
-        (SCREENWIDTH - SHORT((*entering).width) as i32) / 2,
+        (SCREENWIDTH - (*entering).width.get() as i32) / 2,
         y,
         entering,
     );
 
-    y += (5 * SHORT((*(*lnames.offset((*wbs).next as isize))).height) as i32) / 4;
+    y += (5 * (*(*lnames.offset((*wbs).next as isize))).height.get() as i32) / 4;
 
     V_DrawPatch(
-        (SCREENWIDTH - SHORT((*(*lnames.offset((*wbs).next as isize))).width) as i32) / 2,
+        (SCREENWIDTH - (*(*lnames.offset((*wbs).next as isize))).width.get() as i32) / 2,
         y,
         *lnames.offset((*wbs).next as isize),
     );
@@ -832,11 +823,11 @@ unsafe fn WI_drawOnLnode(n: i32, c: *mut *mut patch_t) {
 
     loop {
         let left = LNODES[(*wbs).epsd as usize][n as usize].x
-            - SHORT((**c.offset(i as isize)).leftoffset) as i32;
+            - (**c.offset(i as isize)).leftoffset.get() as i32;
         let top = LNODES[(*wbs).epsd as usize][n as usize].y
-            - SHORT((**c.offset(i as isize)).topoffset) as i32;
-        let right = left + SHORT((**c.offset(i as isize)).width) as i32;
-        let bottom = top + SHORT((**c.offset(i as isize)).height) as i32;
+            - (**c.offset(i as isize)).topoffset.get() as i32;
+        let right = left + (**c.offset(i as isize)).width.get() as i32;
+        let bottom = top + (**c.offset(i as isize)).height.get() as i32;
 
         if left >= 0 && right < SCREENWIDTH && top >= 0 && bottom < SCREENHEIGHT {
             fits = true;
@@ -1006,7 +997,7 @@ unsafe fn WI_drawAnimatedBack() {
 /// Reads the global `num` digit patches and `wiminus` patch. Caller must
 /// ensure `WI_loadData` has cached these patches before invoking.
 unsafe fn WI_drawNum(mut x: i32, y: i32, mut n: i32, mut digits: i32) -> i32 {
-    let fontwidth = SHORT((*num[0]).width) as i32;
+    let fontwidth = (*num[0]).width.get() as i32;
     let neg = n < 0;
     if neg {
         n = -n;
@@ -1079,7 +1070,7 @@ unsafe fn WI_drawTime(mut x: i32, y: i32, t: i32) {
         let mut div = 1;
         loop {
             let n = (t / div) % 60;
-            x = WI_drawNum(x, y, n, 2) - SHORT((*colon).width) as i32;
+            x = WI_drawNum(x, y, n, 2) - (*colon).width.get() as i32;
             div *= 60;
             if div == 60 || t / div != 0 {
                 V_DrawPatch(x, y, colon);
@@ -1089,7 +1080,7 @@ unsafe fn WI_drawTime(mut x: i32, y: i32, t: i32) {
             }
         }
     } else {
-        V_DrawPatch(x - SHORT((*sucks).width) as i32, y, sucks);
+        V_DrawPatch(x - (*sucks).width.get() as i32, y, sucks);
     }
 }
 
@@ -1379,7 +1370,7 @@ unsafe fn WI_drawDeathmatchStats() {
     WI_drawLF();
 
     V_DrawPatch(
-        DM_TOTALSX - SHORT((*total).width) as i32 / 2,
+        DM_TOTALSX - (*total).width.get() as i32 / 2,
         DM_MATRIXY - WI_SPACINGY + 10,
         total,
     );
@@ -1392,18 +1383,18 @@ unsafe fn WI_drawDeathmatchStats() {
     for i in 0..MAXPLAYERS {
         if playeringame[i] != 0 {
             V_DrawPatch(
-                x - SHORT((*p[i]).width) as i32 / 2,
+                x - (*p[i]).width.get() as i32 / 2,
                 DM_MATRIXY - WI_SPACINGY,
                 p[i],
             );
-            V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as i32 / 2, y, p[i]);
+            V_DrawPatch(DM_MATRIXX - (*p[i]).width.get() as i32 / 2, y, p[i]);
             if i as i32 == me {
                 V_DrawPatch(
-                    x - SHORT((*p[i]).width) as i32 / 2,
+                    x - (*p[i]).width.get() as i32 / 2,
                     DM_MATRIXY - WI_SPACINGY,
                     bstar,
                 );
-                V_DrawPatch(DM_MATRIXX - SHORT((*p[i]).width) as i32 / 2, y, star);
+                V_DrawPatch(DM_MATRIXX - (*p[i]).width.get() as i32 / 2, y, star);
             }
         }
         x += DM_SPACINGX;
@@ -1411,7 +1402,7 @@ unsafe fn WI_drawDeathmatchStats() {
     }
 
     let mut y = DM_MATRIXY + 10;
-    let w = SHORT((*num[0]).width) as i32;
+    let w = (*num[0]).width.get() as i32;
 
     for i in 0..MAXPLAYERS {
         let mut x = DM_MATRIXX + DM_SPACINGX;
@@ -1602,47 +1593,47 @@ unsafe fn WI_updateNetgameStats() {
 /// `playeringame`. Caller must ensure `WI_loadData` cached the patches
 /// and the netgame stats phase has been initialised.
 unsafe fn WI_drawNetgameStats() {
-    let pwidth = SHORT((*percent).width) as i32;
+    let pwidth = (*percent).width.get() as i32;
 
     WI_slamBackground();
     WI_drawAnimatedBack();
     WI_drawLF();
 
-    let ng_statsx = 32 + SHORT((*star).width) as i32 / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
+    let ng_statsx = 32 + (*star).width.get() as i32 / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
 
     V_DrawPatch(
-        ng_statsx + NG_SPACINGX - SHORT((*kills).width) as i32,
+        ng_statsx + NG_SPACINGX - (*kills).width.get() as i32,
         NG_STATSY,
         kills,
     );
     V_DrawPatch(
-        ng_statsx + 2 * NG_SPACINGX - SHORT((*items).width) as i32,
+        ng_statsx + 2 * NG_SPACINGX - (*items).width.get() as i32,
         NG_STATSY,
         items,
     );
     V_DrawPatch(
-        ng_statsx + 3 * NG_SPACINGX - SHORT((*secret).width) as i32,
+        ng_statsx + 3 * NG_SPACINGX - (*secret).width.get() as i32,
         NG_STATSY,
         secret,
     );
     if dofrags != 0 {
         V_DrawPatch(
-            ng_statsx + 4 * NG_SPACINGX - SHORT((*frags).width) as i32,
+            ng_statsx + 4 * NG_SPACINGX - (*frags).width.get() as i32,
             NG_STATSY,
             frags,
         );
     }
 
-    let mut y = NG_STATSY + SHORT((*kills).height) as i32;
+    let mut y = NG_STATSY + (*kills).height.get() as i32;
 
     for i in 0..MAXPLAYERS {
         if playeringame[i] == 0 {
             continue;
         }
         let mut x = ng_statsx;
-        V_DrawPatch(x - SHORT((*p[i]).width) as i32, y, p[i]);
+        V_DrawPatch(x - (*p[i]).width.get() as i32, y, p[i]);
         if i as i32 == me {
-            V_DrawPatch(x - SHORT((*p[i]).width) as i32, y, star);
+            V_DrawPatch(x - (*p[i]).width.get() as i32, y, star);
         }
         x += NG_SPACINGX;
         WI_drawPercent(x - pwidth, y + 10, cnt_kills[i]);
@@ -1787,7 +1778,7 @@ unsafe fn WI_updateStats() {
 /// decide whether to draw the par-time row. Caller must ensure
 /// `WI_loadData` cached the patches and the stats phase has been initialised.
 unsafe fn WI_drawStats() {
-    let lh = (3 * SHORT((*num[0]).height) as i32) / 2;
+    let lh = (3 * (*num[0]).height.get() as i32) / 2;
 
     WI_slamBackground();
     WI_drawAnimatedBack();

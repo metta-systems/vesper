@@ -9,9 +9,10 @@
 //!
 //! # Rust-vs-C differences
 //!
-//! - All WAD data is little-endian; the `SHORT` helper performs an explicit
-//!   `i16::from_le` conversion instead of relying on the C `SHORT` macro from
-//!   `i_swap.h`.
+//! - All WAD data is little-endian. Map lumps are viewed as slices of the
+//!   little-endian records in `wad::format`; the raw BLOCKMAP shorts go
+//!   through the `SHORT` helper, an explicit `i16::from_le` conversion
+//!   instead of the C `SHORT` macro from `i_swap.h`.
 //! - `P_LoadThings` increments the `mt` pointer only after the spawn decision
 //!   so that a `break` on a non-commercial monster does not advance past it.
 //! - `P_SetupLevel` uses `format!` for lump-name construction instead of
@@ -37,7 +38,7 @@ use crate::engine::{
         info::sprnames,
         tick::{leveltime, P_InitThinkers},
     },
-    zone::{PU_LEVEL, PU_STATIC},
+    zone::PU_LEVEL,
 };
 
 // ---------------------------------------------------------------------------
@@ -93,127 +94,6 @@ const MAXRADIUS: i32 = 32 * FRACUNIT;
 /// Maximum number of deathmatch start positions in a level.
 /// Matches `MAX_DEATHMATCH_STARTS` in `p_setup.c`.
 pub const MAX_DEATHMATCH_STARTS: usize = 10;
-
-// ---------------------------------------------------------------------------
-// Packed WAD structs (exact on-disk layout)
-// ---------------------------------------------------------------------------
-
-/// On-disk vertex record from the WAD VERTEXES lump.
-/// Maps to `mapvertex_t` in `p_local.h`. Coordinates are 16-bit integers
-/// in map units; they are sign-extended and shifted left by `FRACBITS` when
-/// copied into the runtime `vertex_t`.
-#[repr(C, packed)]
-struct mapvertex_t {
-    x: i16,
-    y: i16,
-}
-
-/// On-disk sidedef record from the WAD SIDEDEFS lump.
-/// Maps to `mapsidedef_t` in `p_local.h`. Texture offsets are in map units
-/// and are shifted left by `FRACBITS` when copied to the runtime `side_t`.
-/// Texture name fields are 8-byte null-padded ASCII strings resolved to
-/// runtime texture indices by `R_TextureNumForName`.
-#[repr(C, packed)]
-struct mapsidedef_t {
-    textureoffset: i16,
-    rowoffset: i16,
-    toptexture: [u8; 8],
-    bottomtexture: [u8; 8],
-    midtexture: [u8; 8],
-    sector: i16,
-}
-
-/// On-disk linedef record from the WAD LINEDEFS lump.
-/// Maps to `maplinedef_t` in `p_local.h`. `sidenum[1]` is -1 for one-sided
-/// lines; the runtime `line_t` stores null pointers in that case.
-#[repr(C, packed)]
-struct maplinedef_t {
-    v1: i16,
-    v2: i16,
-    flags: i16,
-    special: i16,
-    tag: i16,
-    sidenum: [i16; 2],
-}
-
-/// On-disk sector record from the WAD SECTORS lump.
-/// Maps to `mapsector_t` in `p_local.h`. Floor/ceiling heights are in map
-/// units and shifted left by `FRACBITS` in the runtime `sector_t`. Flat name
-/// fields are 8-byte null-padded ASCII strings resolved via `R_FlatNumForName`.
-#[repr(C, packed)]
-struct mapsector_t {
-    floorheight: i16,
-    ceilingheight: i16,
-    floorpic: [u8; 8],
-    ceilingpic: [u8; 8],
-    lightlevel: i16,
-    special: i16,
-    tag: i16,
-}
-
-/// On-disk subsector record from the WAD SSECTORS lump.
-/// Maps to `mapsubsector_t` in `p_local.h`. `firstseg` is an index into the
-/// segs array; `numsegs` is the count of consecutive segs forming the convex
-/// polygon of this subsector.
-#[repr(C, packed)]
-struct mapsubsector_t {
-    numsegs: i16,
-    firstseg: i16,
-}
-
-/// On-disk seg record from the WAD SEGS lump.
-/// Maps to `mapseg_t` in `p_local.h`. `angle` is a BAM (Binary Angle
-/// Measurement) stored in the upper 16 bits of a `u32` after shifting.
-/// `offset` is the distance along the linedef to the seg's start vertex,
-/// in fixed-point.
-#[repr(C, packed)]
-struct mapseg_t {
-    v1: i16,
-    v2: i16,
-    angle: i16,
-    linedef: i16,
-    side: i16,
-    offset: i16,
-}
-
-/// On-disk BSP node record from the WAD NODES lump.
-/// Maps to `mapnode_t` in `p_local.h`. `x`, `y`, `dx`, `dy` define the
-/// partition line in map units. `bbox[2][4]` are the bounding boxes for each
-/// child subtree. `children[2]` are child indices; the high bit set indicates
-/// a subsector leaf.
-#[repr(C, packed)]
-struct mapnode_t {
-    x: i16,
-    y: i16,
-    dx: i16,
-    dy: i16,
-    bbox: [[i16; 4]; 2],
-    children: [u16; 2],
-}
-
-/// On-disk thing record from the WAD THINGS lump, and also the runtime spawn
-/// descriptor passed to `P_SpawnMapThing`.
-///
-/// Maps to `mapthing_t` in `p_local.h`. This struct is `pub` because it is
-/// referenced by `deathmatchstarts`, `deathmatch_p`, and `playerstarts`
-/// globals that are visible to C. `#[repr(C)]` ensures ABI compatibility;
-/// `#[derive(Clone, Copy)]` allows it to be used by value in initialization
-/// expressions.
-///
-/// Fields:
-/// - `x`, `y`: map-unit position (not fixed-point)
-/// - `angle`: facing direction in degrees (0, 45, 90, ...)
-/// - `type`: Doom editor number identifying the thing class
-/// - `options`: bit flags (skill levels, deaf, etc.)
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct mapthing_t {
-    pub x: i16,
-    pub y: i16,
-    pub angle: i16,
-    pub r#type: i16,
-    pub options: i16,
-}
 
 // ---------------------------------------------------------------------------
 // MAP-related lookup tables
@@ -335,13 +215,8 @@ pub static mut rejectmatrix: *mut u8 = ptr::null_mut();
 /// Holds up to `MAX_DEATHMATCH_STARTS` entries; the active count is tracked
 /// by `deathmatch_p - deathmatchstarts`.
 /// Referenced by `g_game.c`.
-pub static mut deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS] = [mapthing_t {
-    x: 0,
-    y: 0,
-    angle: 0,
-    r#type: 0,
-    options: 0,
-}; MAX_DEATHMATCH_STARTS];
+pub static mut deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS] =
+    [mapthing_t::ZERO; MAX_DEATHMATCH_STARTS];
 
 /// Write cursor into `deathmatchstarts`; points to the next free slot.
 /// Reset to `&deathmatchstarts[0]` at the start of each `P_SetupLevel`.
@@ -352,13 +227,7 @@ pub static mut deathmatch_p: *mut mapthing_t = ptr::null_mut();
 /// Holds `MAXPLAYERS` entries; populated by `P_SpawnMapThing` from THINGS
 /// with type 1-4 (player starts).
 /// Referenced by `g_game.c` for respawning.
-pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t {
-    x: 0,
-    y: 0,
-    angle: 0,
-    r#type: 0,
-    options: 0,
-}; MAXPLAYERS];
+pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t::ZERO; MAXPLAYERS];
 
 // ---------------------------------------------------------------------------
 // Extern declarations for still-unported C modules
@@ -383,7 +252,14 @@ use crate::engine::{
         things::R_InitSprites,
     },
     sound::S_Start,
-    wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum},
+    wad::{
+        cache_lump_records,
+        format::{
+            maplinedef_t, mapnode_t, mapsector_t, mapseg_t, mapsidedef_t, mapsubsector_t,
+            mapthing_t, mapvertex_t,
+        },
+        W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum,
+    },
     zone::{Z_FreeTags, Z_Malloc},
 };
 
@@ -432,22 +308,20 @@ pub fn GetSectorAtNullAddress() -> *mut sector_t {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadVertexes(lump: i32) {
     unsafe {
-        numvertexes = W_LumpLength(lump as u32) / std::mem::size_of::<mapvertex_t>() as i32;
+        let map_vertexes = cache_lump_records::<mapvertex_t>(lump);
+        numvertexes = map_vertexes.len() as i32;
         vertexes = Z_Malloc(
             numvertexes * std::mem::size_of::<vertex_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut vertex_t;
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut ml = data as *mut mapvertex_t;
         let mut li = vertexes;
 
-        for _ in 0..numvertexes {
-            (*li).x = (SHORT((*ml).x) as i32) << FRACBITS;
-            (*li).y = (SHORT((*ml).y) as i32) << FRACBITS;
+        for ml in map_vertexes {
+            (*li).x = (ml.x.get() as i32) << FRACBITS;
+            (*li).y = (ml.y.get() as i32) << FRACBITS;
             li = li.add(1);
-            ml = ml.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -478,7 +352,8 @@ pub fn P_LoadVertexes(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadSegs(lump: i32) {
     unsafe {
-        numsegs = W_LumpLength(lump as u32) / std::mem::size_of::<mapseg_t>() as i32;
+        let map_segs = cache_lump_records::<mapseg_t>(lump);
+        numsegs = map_segs.len() as i32;
         segs = Z_Malloc(
             numsegs * std::mem::size_of::<seg_t>() as i32,
             PU_LEVEL,
@@ -486,19 +361,17 @@ pub fn P_LoadSegs(lump: i32) {
         ) as *mut seg_t;
         // Zeroed by Z_Malloc internally
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut ml = data as *mut mapseg_t;
         let mut li = segs;
 
-        for _ in 0..numsegs {
-            (*li).v1 = vertexes.offset(SHORT((*ml).v1) as isize);
-            (*li).v2 = vertexes.offset(SHORT((*ml).v2) as isize);
-            (*li).angle = ((SHORT((*ml).angle) as i32) << 16) as u32;
-            (*li).offset = (SHORT((*ml).offset) as i32) << 16;
-            let linedef = SHORT((*ml).linedef) as i32;
+        for ml in map_segs {
+            (*li).v1 = vertexes.offset(ml.v1.get() as isize);
+            (*li).v2 = vertexes.offset(ml.v2.get() as isize);
+            (*li).angle = ((ml.angle.get() as i32) << 16) as u32;
+            (*li).offset = (ml.offset.get() as i32) << 16;
+            let linedef = ml.linedef.get() as i32;
             let ldef = lines.offset(linedef as isize);
             (*li).linedef = ldef;
-            let side = SHORT((*ml).side) as i32;
+            let side = ml.side.get() as i32;
             (*li).sidedef = sides.offset((*ldef).sidenum[side as usize] as isize);
             (*li).frontsector = (*sides.offset((*ldef).sidenum[side as usize] as isize)).sector;
 
@@ -514,7 +387,6 @@ pub fn P_LoadSegs(lump: i32) {
             }
 
             li = li.add(1);
-            ml = ml.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -530,14 +402,15 @@ pub fn P_LoadSegs(lump: i32) {
 /// Allocates `numsubsectors * sizeof(subsector_t)` bytes at `PU_LEVEL`
 /// (zero-initialized) and fills each entry from the corresponding on-disk
 /// `mapsubsector_t`. The `numlines` and `firstline` fields (confusingly named
-/// in the runtime struct - they actually count/index segs) are byte-swapped
-/// from little-endian.
+/// in the runtime struct - they actually count/index segs) are read from
+/// the little-endian record fields.
 ///
 /// `lump` must be the lump number of the SSECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadSubsectors(lump: i32) {
     unsafe {
-        numsubsectors = W_LumpLength(lump as u32) / std::mem::size_of::<mapsubsector_t>() as i32;
+        let map_subsectors = cache_lump_records::<mapsubsector_t>(lump);
+        numsubsectors = map_subsectors.len() as i32;
         subsectors = Z_Malloc(
             numsubsectors * std::mem::size_of::<subsector_t>() as i32,
             PU_LEVEL,
@@ -545,15 +418,12 @@ pub fn P_LoadSubsectors(lump: i32) {
         ) as *mut subsector_t;
         // Zeroed by Z_Malloc internally
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut ms = data as *mut mapsubsector_t;
         let mut ss = subsectors;
 
-        for _ in 0..numsubsectors {
-            (*ss).numlines = SHORT((*ms).numsegs);
-            (*ss).firstline = SHORT((*ms).firstseg);
+        for ms in map_subsectors {
+            (*ss).numlines = ms.numsegs.get();
+            (*ss).firstline = ms.firstseg.get();
             ss = ss.add(1);
-            ms = ms.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -576,7 +446,8 @@ pub fn P_LoadSubsectors(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadSectors(lump: i32) {
     unsafe {
-        numsectors = W_LumpLength(lump as u32) / std::mem::size_of::<mapsector_t>() as i32;
+        let map_sectors = cache_lump_records::<mapsector_t>(lump);
+        numsectors = map_sectors.len() as i32;
         sectors = Z_Malloc(
             numsectors * std::mem::size_of::<sector_t>() as i32,
             PU_LEVEL,
@@ -584,21 +455,18 @@ pub fn P_LoadSectors(lump: i32) {
         ) as *mut sector_t;
         // Zeroed by Z_Malloc internally
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut ms = data as *mut mapsector_t;
         let mut ss = sectors;
 
-        for _ in 0..numsectors {
-            (*ss).floorheight = (SHORT((*ms).floorheight) as i32) << FRACBITS;
-            (*ss).ceilingheight = (SHORT((*ms).ceilingheight) as i32) << FRACBITS;
-            (*ss).floorpic = R_FlatNumForName(&(*ms).floorpic) as i16;
-            (*ss).ceilingpic = R_FlatNumForName(&(*ms).ceilingpic) as i16;
-            (*ss).lightlevel = SHORT((*ms).lightlevel);
-            (*ss).special = SHORT((*ms).special);
-            (*ss).tag = SHORT((*ms).tag);
+        for ms in map_sectors {
+            (*ss).floorheight = (ms.floorheight.get() as i32) << FRACBITS;
+            (*ss).ceilingheight = (ms.ceilingheight.get() as i32) << FRACBITS;
+            (*ss).floorpic = R_FlatNumForName(&ms.floorpic) as i16;
+            (*ss).ceilingpic = R_FlatNumForName(&ms.ceilingpic) as i16;
+            (*ss).lightlevel = ms.lightlevel.get();
+            (*ss).special = ms.special.get();
+            (*ss).tag = ms.tag.get();
             (*ss).thinglist = ptr::null_mut();
             ss = ss.add(1);
-            ms = ms.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -622,30 +490,28 @@ pub fn P_LoadSectors(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadNodes(lump: i32) {
     unsafe {
-        numnodes = W_LumpLength(lump as u32) / std::mem::size_of::<mapnode_t>() as i32;
+        let map_nodes = cache_lump_records::<mapnode_t>(lump);
+        numnodes = map_nodes.len() as i32;
         nodes = Z_Malloc(
             numnodes * std::mem::size_of::<node_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut node_t;
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut mn = data as *mut mapnode_t;
         let mut no = nodes;
 
-        for _ in 0..numnodes {
-            (*no).x = (SHORT((*mn).x) as i32) << FRACBITS;
-            (*no).y = (SHORT((*mn).y) as i32) << FRACBITS;
-            (*no).dx = (SHORT((*mn).dx) as i32) << FRACBITS;
-            (*no).dy = (SHORT((*mn).dy) as i32) << FRACBITS;
+        for mn in map_nodes {
+            (*no).x = (mn.x.get() as i32) << FRACBITS;
+            (*no).y = (mn.y.get() as i32) << FRACBITS;
+            (*no).dx = (mn.dx.get() as i32) << FRACBITS;
+            (*no).dy = (mn.dy.get() as i32) << FRACBITS;
             for j in 0..2usize {
-                (*no).children[j] = SHORT((*mn).children[j] as i16) as u16;
+                (*no).children[j] = mn.children[j].get();
                 for k in 0..4usize {
-                    (*no).bbox[j][k] = (SHORT((*mn).bbox[j][k]) as i32) << FRACBITS;
+                    (*no).bbox[j][k] = (mn.bbox[j][k].get() as i32) << FRACBITS;
                 }
             }
             no = no.add(1);
-            mn = mn.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -665,7 +531,8 @@ pub fn P_LoadNodes(lump: i32) {
 /// processed either - this matches vanilla Doom's behavior and preserves
 /// demo-compatible RNG sequencing.
 ///
-/// Each surviving thing is byte-swapped and passed to `P_SpawnMapThing`.
+/// Each surviving thing is copied out of the lump and passed to
+/// `P_SpawnMapThing`.
 /// `P_SpawnMapThing` handles player starts, deathmatch starts, and all
 /// game objects.
 ///
@@ -676,15 +543,13 @@ pub fn P_LoadNodes(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadThings(lump: i32) {
     unsafe {
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let numthings = W_LumpLength(lump as u32) / std::mem::size_of::<mapthing_t>() as i32;
-        let mut mt = data as *mut mapthing_t;
+        let map_things = cache_lump_records::<mapthing_t>(lump);
 
-        for _ in 0..numthings {
+        for mt in map_things {
             let mut spawn = true;
 
             if gamemode != doom::mode::commercial {
-                let thing_type = SHORT((*mt).r#type);
+                let thing_type = mt.r#type.get();
                 match thing_type {
                     68 | 64 | 88 | 89 | 69 | 67 | 71 | 65 | 66 | 84 => {
                         spawn = false;
@@ -697,15 +562,8 @@ pub fn P_LoadThings(lump: i32) {
                 break;
             }
 
-            let mut spawnthing = mapthing_t {
-                x: SHORT((*mt).x),
-                y: SHORT((*mt).y),
-                angle: SHORT((*mt).angle),
-                r#type: SHORT((*mt).r#type),
-                options: SHORT((*mt).options),
-            };
-            P_SpawnMapThing(&raw mut spawnthing as *mut crate::engine::play::telept::mapthing_t);
-            mt = mt.add(1);
+            let mut spawnthing = *mt;
+            P_SpawnMapThing(&raw mut spawnthing);
         }
 
         W_ReleaseLumpNum(lump);
@@ -735,7 +593,8 @@ pub fn P_LoadThings(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadLineDefs(lump: i32) {
     unsafe {
-        numlines = W_LumpLength(lump as u32) / std::mem::size_of::<maplinedef_t>() as i32;
+        let map_linedefs = cache_lump_records::<maplinedef_t>(lump);
+        numlines = map_linedefs.len() as i32;
         lines = Z_Malloc(
             numlines * std::mem::size_of::<line_t>() as i32,
             PU_LEVEL,
@@ -743,16 +602,14 @@ pub fn P_LoadLineDefs(lump: i32) {
         ) as *mut line_t;
         // Zeroed by Z_Malloc internally
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut mld = data as *mut maplinedef_t;
         let mut ld = lines;
 
-        for _ in 0..numlines {
-            (*ld).flags = SHORT((*mld).flags);
-            (*ld).special = SHORT((*mld).special);
-            (*ld).tag = SHORT((*mld).tag);
-            let v1 = vertexes.offset(SHORT((*mld).v1) as isize);
-            let v2 = vertexes.offset(SHORT((*mld).v2) as isize);
+        for mld in map_linedefs {
+            (*ld).flags = mld.flags.get();
+            (*ld).special = mld.special.get();
+            (*ld).tag = mld.tag.get();
+            let v1 = vertexes.offset(mld.v1.get() as isize);
+            let v2 = vertexes.offset(mld.v2.get() as isize);
             (*ld).v1 = v1;
             (*ld).v2 = v2;
             (*ld).dx = (*v2).x - (*v1).x;
@@ -786,8 +643,8 @@ pub fn P_LoadLineDefs(lump: i32) {
                 (*ld).bbox[BBox::TOP] = (*v1).y;
             }
 
-            (*ld).sidenum[0] = SHORT((*mld).sidenum[0]);
-            (*ld).sidenum[1] = SHORT((*mld).sidenum[1]);
+            (*ld).sidenum[0] = mld.sidenum[0].get();
+            (*ld).sidenum[1] = mld.sidenum[1].get();
 
             if (*ld).sidenum[0] != -1 {
                 (*ld).frontsector = sides
@@ -810,7 +667,6 @@ pub fn P_LoadLineDefs(lump: i32) {
             }
 
             ld = ld.add(1);
-            mld = mld.add(1);
         }
 
         W_ReleaseLumpNum(lump);
@@ -835,7 +691,8 @@ pub fn P_LoadLineDefs(lump: i32) {
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadSideDefs(lump: i32) {
     unsafe {
-        numsides = W_LumpLength(lump as u32) / std::mem::size_of::<mapsidedef_t>() as i32;
+        let map_sidedefs = cache_lump_records::<mapsidedef_t>(lump);
+        numsides = map_sidedefs.len() as i32;
         sides = Z_Malloc(
             numsides * std::mem::size_of::<side_t>() as i32,
             PU_LEVEL,
@@ -843,19 +700,16 @@ pub fn P_LoadSideDefs(lump: i32) {
         ) as *mut side_t;
         // Zeroed by Z_Malloc internally
 
-        let data = W_CacheLumpNum(lump, PU_STATIC);
-        let mut msd = data as *mut mapsidedef_t;
         let mut sd = sides;
 
-        for _ in 0..numsides {
-            (*sd).textureoffset = (SHORT((*msd).textureoffset) as i32) << FRACBITS;
-            (*sd).rowoffset = (SHORT((*msd).rowoffset) as i32) << FRACBITS;
-            (*sd).toptexture = R_TextureNumForName(&(*msd).toptexture) as i16;
-            (*sd).bottomtexture = R_TextureNumForName(&(*msd).bottomtexture) as i16;
-            (*sd).midtexture = R_TextureNumForName(&(*msd).midtexture) as i16;
-            (*sd).sector = sectors.offset(SHORT((*msd).sector) as isize);
+        for msd in map_sidedefs {
+            (*sd).textureoffset = (msd.textureoffset.get() as i32) << FRACBITS;
+            (*sd).rowoffset = (msd.rowoffset.get() as i32) << FRACBITS;
+            (*sd).toptexture = R_TextureNumForName(&msd.toptexture) as i16;
+            (*sd).bottomtexture = R_TextureNumForName(&msd.bottomtexture) as i16;
+            (*sd).midtexture = R_TextureNumForName(&msd.midtexture) as i16;
+            (*sd).sector = sectors.offset(msd.sector.get() as isize);
             sd = sd.add(1);
-            msd = msd.add(1);
         }
 
         W_ReleaseLumpNum(lump);

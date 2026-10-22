@@ -85,35 +85,6 @@ struct spritedef_t {
     spriteframes: *mut spriteframe_t,
 }
 
-/// On-disk / in-memory header of a `patch_t` graphic lump.
-/// The column offset array immediately follows in the lump data (not part of
-/// this struct), accessed via pointer arithmetic in `R_DrawVisSprite`.
-/// Packed to match the WAD lump layout exactly.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-struct patch_t {
-    /// Total width of the patch in pixels.
-    width: i16,
-    /// Total height of the patch in pixels.
-    height: i16,
-    /// Horizontal draw offset from the patch origin to column 0.
-    leftoffset: i16,
-    /// Vertical draw offset from the patch origin to row 0.
-    topoffset: i16,
-}
-
-/// Header of a single vertical post (run of opaque pixels) within a `patch_t`
-/// column. The actual pixel bytes follow immediately after this struct in memory.
-/// A `topdelta` value of `0xff` signals the end of the column.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-struct column_t {
-    /// Y offset of the top of this post relative to the patch top.
-    topdelta: u8,
-    /// Number of pixel rows in this post.
-    length: u8,
-}
-
 /// The 4-character sprite prefix of a lump or sprite name, up to the first
 /// NUL: what C's `strncasecmp(a, b, 4)` compares.
 fn sprite_prefix(name: &[u8]) -> &[u8] {
@@ -139,7 +110,10 @@ use crate::engine::{
         },
         segs::R_RenderMaskedSegRange,
     },
-    wad::{lumpinfo, W_CacheLumpNum, W_GetNumForName},
+    wad::{
+        format::{column_t, patch_t},
+        lumpinfo, W_CacheLumpNum, W_GetNumForName,
+    },
     zone::Z_Malloc,
 };
 
@@ -566,15 +540,14 @@ pub unsafe fn R_DrawVisSprite(vis: *mut vissprite_t, _x1: i32, _x2: i32) {
 
         #[cfg(feature = "rangecheck")]
         {
-            let patch_width = (*patch).width as i32;
+            let patch_width = (*patch).width.get() as i32;
             if texturecolumn < 0 || texturecolumn >= patch_width {
                 i_error!("R_DrawSpriteRange: bad texturecolumn");
             }
         }
 
-        let columnofs = (patch as *mut u8).add(8) as *mut i32;
-        let col_offset = *columnofs.add(texturecolumn as usize);
-        let col = (patch as *mut u8).add(col_offset as usize) as *mut column_t;
+        let col_offset = patch_t::column_offset(patch, texturecolumn as usize);
+        let col = (patch as *mut u8).add(col_offset) as *mut column_t;
         R_DrawMaskedColumn(col as *mut c_void);
 
         frac += (*vis).xiscale;

@@ -34,7 +34,7 @@ use crate::{
         },
         hud::stuff::{hu_font, HU_FONTSIZE, HU_FONTSTART},
         play::info::*,
-        render_2d::patch_t,
+        wad::format::{column_t, patch_t},
     },
     DEH_snprintf,
 };
@@ -802,7 +802,7 @@ pub fn F_TextWrite() {
                 cx += 4;
                 continue;
             };
-            let w = (*font).width as i32;
+            let w = (*font).width.get() as i32;
             if cx + w > SCREENWIDTH {
                 break;
             }
@@ -1029,7 +1029,7 @@ pub fn F_CastPrint(text: &str) {
         // find width
         let width: i32 = text
             .bytes()
-            .map(|c| font_patch(c).map_or(4, |font| (*font).width as i32))
+            .map(|c| font_patch(c).map_or(4, |font| (*font).width.get() as i32))
             .sum();
 
         // draw it
@@ -1039,7 +1039,7 @@ pub fn F_CastPrint(text: &str) {
                 cx += 4;
                 continue;
             };
-            let w = (*font).width as i32;
+            let w = (*font).width.get() as i32;
             V_DrawPatch(cx, 180, font);
             cx += w;
         }
@@ -1103,8 +1103,8 @@ pub fn F_CastDrawer() {
 pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
     unsafe {
         let patch_ptr = patch as *mut u8;
-        let ofs = ptr::read_unaligned(patch_ptr.add(8 + col as usize * 4) as *mut i32);
-        let mut column = patch_ptr.add(ofs as usize) as *mut crate::engine::render_2d::column_t;
+        let ofs = patch_t::column_offset(patch, col as usize);
+        let mut column = patch_ptr.add(ofs) as *mut column_t;
         let desttop = I_VideoBuffer.add(x as usize);
 
         while (*column).topdelta != 0xff {
@@ -1117,8 +1117,7 @@ pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
                 source = source.add(1);
                 count -= 1;
             }
-            column = (column as *mut u8).add((*column).length as usize + 4)
-                as *mut crate::engine::render_2d::column_t;
+            column = (column as *mut u8).add((*column).length as usize + 4) as *mut column_t;
         }
     }
 }

@@ -13,6 +13,7 @@ use crate::engine::{
     doom::player::PlayerT,
     math::tables::ANGLETOFINESHIFT,
     play::{info::*, tick::thinker_t},
+    wad::format::mapthing_t,
 };
 
 /// A sub-sector: the smallest convex region of the BSP tree.
@@ -77,24 +78,6 @@ pub struct sector_t {
     pub linecount: i32,
     /// Pointer to the array of linedef pointers for this sector.
     pub lines: *mut *mut c_void,
-}
-
-/// Packed map spawn-point record as stored in the WAD THINGS lump.
-///
-/// Uses `#[repr(C, packed)]` to match the 10-byte on-disk layout.
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct mapthing_t {
-    /// Spawn X position in map units.
-    pub x: i16,
-    /// Spawn Y position in map units.
-    pub y: i16,
-    /// Facing angle in degrees (0–359, clockwise from East).
-    pub angle: i16,
-    /// Doom thing type number.
-    pub r#type: i16,
-    /// Spawn flags (skill levels, deaf, multiplayer, etc.).
-    pub options: i16,
 }
 
 /// Opaque stand-in for the C `player_s` struct; only used via raw pointer.

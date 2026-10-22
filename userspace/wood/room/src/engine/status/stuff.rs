@@ -37,7 +37,7 @@ use crate::{
             random::M_Random,
         },
         play::{inter::P_GivePower, telept::mobj_t},
-        render_2d::{patch_t, V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
+        render_2d::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
         status::lib::{
@@ -45,7 +45,9 @@ use crate::{
             STlib_initMultIcon, STlib_initNum, STlib_initPercent, STlib_updateBinIcon,
             STlib_updateMultIcon, STlib_updateNum, STlib_updatePercent,
         },
-        wad::{W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName},
+        wad::{
+            format::patch_t, W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName,
+        },
         zone::{Z_Malloc, PU_CACHE, PU_STATIC},
     },
     types::Boolean,

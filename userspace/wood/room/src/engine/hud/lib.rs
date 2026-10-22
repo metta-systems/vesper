@@ -16,7 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::render_2d::patch_t;
+use crate::engine::wad::format::patch_t;
 
 use crate::engine::interface::video::SCREENWIDTH;
 
@@ -152,12 +152,6 @@ use crate::engine::{
     render_3d::draw::{viewheight, viewwidth, viewwindowx, viewwindowy, R_VideoErase},
 };
 
-/// Byte-swap for little-endian (SHORT macro from i_swap.h).
-#[inline(always)]
-fn short_swap(v: i16) -> i16 {
-    v
-}
-
 /// Initialize the heads-up widget library (no-op in this port, matching C).
 ///
 /// Called once at startup from `HU_Init`. The C original also had no body.
@@ -251,7 +245,7 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
             let c = (*l).l[i].to_ascii_uppercase();
             if c != b' ' && c >= sc as u8 && c <= b'_' {
                 let patch = *f.add((c as i32 - sc) as usize);
-                let w = short_swap((*patch).width) as i32;
+                let w = (*patch).width.get() as i32;
                 if x + w > SCREENWIDTH {
                     break;
                 }
@@ -267,7 +261,7 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
 
         if drawcursor != 0 {
             let cursor_patch = *f.add((b'_' as i32 - sc) as usize);
-            let cursor_w = short_swap((*cursor_patch).width) as i32;
+            let cursor_w = (*cursor_patch).width.get() as i32;
             if x + cursor_w <= SCREENWIDTH {
                 V_DrawPatchDirect(x, (*l).y, cursor_patch);
             }
@@ -289,7 +283,7 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
 pub fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
     unsafe {
         if automapactive == 0 && viewwindowx != 0 && (*l).needsupdate != 0 {
-            let lh = short_swap((**(*l).f).height) as i32 + 1;
+            let lh = (**(*l).f).height.get() as i32 + 1;
             for y in (*l).y..(*l).y + lh {
                 let yoffset = y * SCREENWIDTH;
                 if y < viewwindowy || y >= viewwindowy + viewheight {
@@ -331,7 +325,7 @@ pub fn HUlib_initSText(
         (*s).on = on;
         (*s).laston = 1;
         (*s).cl = 0;
-        let font_h = short_swap((**font).height) as i32 + 1;
+        let font_h = (**font).height.get() as i32 + 1;
         for i in 0..h as usize {
             HUlib_initTextLine(&mut (*s).l[i], x, y - (i as i32) * font_h, font, startchar);
         }

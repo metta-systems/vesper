@@ -50,6 +50,7 @@ use crate::engine::{
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
         tick::{actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers},
     },
+    wad::format::mapthing_t,
     zone::{Z_Free, Z_Malloc, PU_LEVEL, PU_LEVSPEC},
 };
 
@@ -355,26 +356,26 @@ make_actionf_p1!(actionf_p1_glow, glow_t, T_Glow);
 ///
 /// Reads five `i16` fields in order: x, y, angle, type, options.
 /// C origin: `saveg_read_mapthing_t`.
-unsafe fn saveg_read_mapthing_t(mt: *mut crate::engine::c_ffi::mapthing_t) {
+unsafe fn saveg_read_mapthing_t(mt: *mut mapthing_t) {
     let s = &mut *mt;
-    s.x = saveg_read16() as i16;
-    s.y = saveg_read16() as i16;
-    s.angle = saveg_read16() as i16;
-    s.r#type = saveg_read16() as i16;
-    s.options = saveg_read16() as i16;
+    s.x.set(saveg_read16() as i16);
+    s.y.set(saveg_read16() as i16);
+    s.angle.set(saveg_read16() as i16);
+    s.r#type.set(saveg_read16() as i16);
+    s.options.set(saveg_read16() as i16);
 }
 
 /// Writes a `mapthing_t` to the save stream from `*mt`.
 ///
 /// Writes five `i16` fields in order: x, y, angle, type, options.
 /// C origin: `saveg_write_mapthing_t`.
-unsafe fn saveg_write_mapthing_t(mt: *const crate::engine::c_ffi::mapthing_t) {
+unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
     let s = &*mt;
-    saveg_write16(s.x as u16);
-    saveg_write16(s.y as u16);
-    saveg_write16(s.angle as u16);
-    saveg_write16(s.r#type as u16);
-    saveg_write16(s.options as u16);
+    saveg_write16(s.x.get() as u16);
+    saveg_write16(s.y.get() as u16);
+    saveg_write16(s.angle.get() as u16);
+    saveg_write16(s.r#type.get() as u16);
+    saveg_write16(s.options.get() as u16);
 }
 
 //

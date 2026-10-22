@@ -24,11 +24,12 @@ use crate::engine::{
         info::{self, *},
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
-        telept::{line_t, mapthing_t, mobj_t, subsector_t},
+        telept::{line_t, mobj_t, subsector_t},
         tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{MobjStub, S_StartSound, S_StopSound},
+    wad::format::mapthing_t,
     zone::PU_LEVEL,
 };
 
@@ -86,21 +87,12 @@ use crate::engine::{
 /// Type alias used for cross-module pointer casts where both sides are
 /// `#[repr(C)]`-identical `mobj_t` definitions.
 type CffiMobj = crate::engine::c_ffi::mobj_t;
-/// Type alias for the `mapthing_t` definition from `p_setup`, used when
-/// writing directly to the deathmatch-starts array.
-type SetupMapThing = crate::engine::play::setup::mapthing_t;
 
 /// Circular queue of map-thing spawn records for items that need to respawn.
 ///
 /// The queue is indexed by `iquehead` (write) and `iquetail` (read), both
 /// modulo `ITEMQUESIZE`.
-pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t {
-    x: 0,
-    y: 0,
-    angle: 0,
-    r#type: 0,
-    options: 0,
-}; ITEMQUESIZE];
+pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t::ZERO; ITEMQUESIZE];
 
 /// Level-time stamps recording when each item in `itemrespawnque` was removed.
 ///
@@ -399,8 +391,8 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
 /// `MF_COUNTKILL` set and whose `spawnpoint` field is valid.
 pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
-    let x = (mobj.spawnpoint.x as i32) << FRACBITS;
-    let y = (mobj.spawnpoint.y as i32) << FRACBITS;
+    let x = (mobj.spawnpoint.x.get() as i32) << FRACBITS;
+    let y = (mobj.spawnpoint.y.get() as i32) << FRACBITS;
     if P_CheckPosition(mobj as *mut _ as *mut CffiMobj, x, y) == 0 {
         return;
     }
@@ -427,8 +419,8 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
 
     mo = P_SpawnMobj(x, y, z, mobj.mobjtype);
     (*mo).spawnpoint = mobj.spawnpoint;
-    (*mo).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
-    if mthing.options & MTF_AMBUSH as i16 != 0 {
+    (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
         (*mo).flags |= MF_AMBUSH;
     }
     (*mo).reactiontime = 18;
@@ -607,8 +599,8 @@ pub unsafe fn P_RespawnSpecials() {
     }
 
     let mthing = &itemrespawnque[iquetail as usize];
-    let x = (mthing.x as i32) << FRACBITS;
-    let y = (mthing.y as i32) << FRACBITS;
+    let x = (mthing.x.get() as i32) << FRACBITS;
+    let y = (mthing.y.get() as i32) << FRACBITS;
 
     let ss = R_PointInSubsector(x, y) as *mut subsector_t;
     let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
@@ -616,7 +608,7 @@ pub unsafe fn P_RespawnSpecials() {
 
     let mut i = 0;
     while i < NUMMOBJTYPES {
-        if mthing.r#type as i32 == info::mobjinfo[i].doomednum {
+        if mthing.r#type.get() as i32 == info::mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -630,7 +622,7 @@ pub unsafe fn P_RespawnSpecials() {
 
     mo = P_SpawnMobj(x, y, z, i as i32);
     (*mo).spawnpoint = *mthing;
-    (*mo).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
+    (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
 
     iquetail = (iquetail + 1) & (ITEMQUESIZE as i32 - 1);
 }
@@ -647,29 +639,30 @@ pub unsafe fn P_RespawnSpecials() {
 /// memory active.
 pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
-    if mthing.r#type as i32 == 0 {
+    let thing_type = mthing.r#type.get();
+    if thing_type as i32 == 0 {
         return;
     }
-    if playeringame[(mthing.r#type - 1) as usize] == 0 {
+    if playeringame[(thing_type - 1) as usize] == 0 {
         return;
     }
 
-    let p = &mut players[(mthing.r#type - 1) as usize] as *mut PlayerT;
+    let p = &mut players[(thing_type - 1) as usize] as *mut PlayerT;
 
     if (*p).playerstate == PST_REBORN {
-        G_PlayerReborn(mthing.r#type as i32 - 1);
+        G_PlayerReborn(thing_type as i32 - 1);
     }
 
-    let x = (mthing.x as i32) << FRACBITS;
-    let y = (mthing.y as i32) << FRACBITS;
+    let x = (mthing.x.get() as i32) << FRACBITS;
+    let y = (mthing.y.get() as i32) << FRACBITS;
     let z = ONFLOORZ;
     let mobj = P_SpawnMobj(x, y, z, MT_PLAYER);
 
-    if mthing.r#type > 1 {
-        (*mobj).flags |= ((mthing.r#type - 1) as i32) << MF_TRANSSHIFT;
+    if thing_type > 1 {
+        (*mobj).flags |= ((thing_type - 1) as i32) << MF_TRANSSHIFT;
     }
 
-    (*mobj).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
+    (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     (*mobj).player = p as *mut crate::engine::play::telept::player_s;
     (*mobj).health = (*p).health;
 
@@ -691,7 +684,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
         }
     }
 
-    if mthing.r#type as i32 - 1 == consoleplayer {
+    if thing_type as i32 - 1 == consoleplayer {
         ST_Start();
         HU_Start();
     }
@@ -706,34 +699,36 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
 ///
 /// # Safety
 ///
-/// `mthing` must be a valid, non-null pointer to a `mapthing_t` with host
-/// byte order fields.  Must be called during level load.
+/// `mthing` must be a valid, non-null pointer to a `mapthing_t`.  Must be
+/// called during level load.
 pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
+    let thing_type = mthing.r#type.get();
+    let options = mthing.options.get();
     let mut i: usize;
 
-    if mthing.r#type as i32 == 11 {
+    if thing_type as i32 == 11 {
         if deathmatch_p < std::ptr::addr_of_mut!(deathmatchstarts[0]).add(10) {
-            *deathmatch_p = *(mthing as *mut _ as *mut SetupMapThing);
+            *deathmatch_p = *mthing;
             deathmatch_p = deathmatch_p.add(1);
         }
         return;
     }
 
-    if mthing.r#type as i32 <= 0 {
+    if thing_type as i32 <= 0 {
         return;
     }
 
-    if mthing.r#type as i32 <= 4 {
-        let ps = std::ptr::addr_of_mut!(playerstarts[0]) as *mut mapthing_t;
-        *ps.add((mthing.r#type - 1) as usize) = *mthing;
+    if thing_type as i32 <= 4 {
+        let ps = std::ptr::addr_of_mut!(playerstarts[0]);
+        *ps.add((thing_type - 1) as usize) = *mthing;
         if deathmatch == 0 {
-            P_SpawnPlayer(mthing as *mut mapthing_t);
+            P_SpawnPlayer(mthing);
         }
         return;
     }
 
-    if netgame == 0 && mthing.options & 16i16 != 0 {
+    if netgame == 0 && options & 16i16 != 0 {
         return;
     }
 
@@ -747,13 +742,13 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         1 << (gameskill - 1)
     };
 
-    if mthing.options & bit as i16 == 0 {
+    if options & bit as i16 == 0 {
         return;
     }
 
     i = 0;
     while i < NUMMOBJTYPES {
-        if mthing.r#type as i32 == info::mobjinfo[i].doomednum {
+        if thing_type as i32 == info::mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -762,9 +757,9 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     if i == NUMMOBJTYPES {
         i_error!(
             "P_SpawnMapThing: Unknown type {} at ({}, {})",
-            mthing.r#type as i32,
-            mthing.x as i32,
-            mthing.y as i32
+            thing_type as i32,
+            mthing.x.get() as i32,
+            mthing.y.get() as i32
         );
     }
 
@@ -776,8 +771,8 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         return;
     }
 
-    let x = (mthing.x as i32) << FRACBITS;
-    let y = (mthing.y as i32) << FRACBITS;
+    let x = (mthing.x.get() as i32) << FRACBITS;
+    let y = (mthing.y.get() as i32) << FRACBITS;
 
     let z = if info::mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
@@ -798,8 +793,8 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         totalitems += 1;
     }
 
-    (*mobj).angle = ANG45.wrapping_mul((mthing.angle as u32) / 45);
-    if mthing.options & MTF_AMBUSH as i16 != 0 {
+    (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    if options & MTF_AMBUSH as i16 != 0 {
         (*mobj).flags |= MF_AMBUSH;
     }
 }

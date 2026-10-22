@@ -4,7 +4,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use {
+    std::{mem::size_of, ptr},
+    zerocopy::{little_endian::U16, IntoBytes},
+};
 
 use crate::{
     engine::{
@@ -14,54 +17,16 @@ use crate::{
         },
         math::bbox::M_AddToBox,
         misc::{M_FileExists, M_WriteFile},
-        wad::W_CacheLumpName,
-        zone::{Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+        wad::{
+            format::{column_t, patch_t, pcx_t},
+            W_CacheLumpName,
+        },
+        zone::{PU_CACHE, PU_STATIC},
     },
     i_error,
 };
 
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct patch_t {
-    pub width: i16,
-    pub height: i16,
-    pub leftoffset: i16,
-    pub topoffset: i16,
-    // columnofs follows in the WAD data but is variable-length;
-    // we read it via pointer arithmetic to avoid Rust array bounds checks.
-}
-
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct post_t {
-    pub topdelta: u8,
-    pub length: u8,
-}
-
-pub type column_t = post_t;
-
 pub type vpatchclipfunc_t = Option<fn(*mut patch_t, i32, i32) -> i32>;
-
-#[repr(C, packed)]
-struct pcx_t {
-    manufacturer: u8,
-    version: u8,
-    encoding: u8,
-    bits_per_pixel: u8,
-    xmin: u16,
-    ymin: u16,
-    xmax: u16,
-    ymax: u16,
-    hres: u16,
-    vres: u16,
-    palette: [u8; 48],
-    reserved: u8,
-    color_planes: u8,
-    bytes_per_line: u16,
-    palette_type: u16,
-    filler: [u8; 58],
-    data: u8,
-}
 
 pub static mut tinttable: *mut u8 = ptr::null_mut();
 
@@ -118,8 +83,8 @@ pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
 
 pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -127,15 +92,20 @@ pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
             }
         }
 
-        V_MarkRect(x, y, (*patch).width as i32, (*patch).height as i32);
+        V_MarkRect(
+            x,
+            y,
+            (*patch).width.get() as i32,
+            (*patch).height.get() as i32,
+        );
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned((patch as *mut u8).add(8 + col as usize * 4) as *mut i32);
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, col as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -161,8 +131,8 @@ pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
 
 pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -170,17 +140,20 @@ pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
             }
         }
 
-        V_MarkRect(x, y, (*patch).width as i32, (*patch).height as i32);
+        V_MarkRect(
+            x,
+            y,
+            (*patch).width.get() as i32,
+            (*patch).height.get() as i32,
+        );
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned(
-                (patch as *mut u8).add(8 + (w - 1 - col) as usize * 4) as *mut i32
-            );
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, (w - 1 - col) as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -210,16 +183,16 @@ pub fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
 
 pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned((patch as *mut u8).add(8 + col as usize * 4) as *mut i32);
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, col as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -246,8 +219,8 @@ pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
 
 pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
         if let Some(cb) = patchclip_callback {
             if cb(patch, x, y) == 0 {
@@ -255,13 +228,13 @@ pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
             }
         }
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned((patch as *mut u8).add(8 + col as usize * 4) as *mut i32);
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, col as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -288,16 +261,16 @@ pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
 
 pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned((patch as *mut u8).add(8 + col as usize * 4) as *mut i32);
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, col as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -324,17 +297,17 @@ pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
 
 pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
     unsafe {
-        let y = y - (*patch).topoffset as i32;
-        let x = x - (*patch).leftoffset as i32;
+        let y = y - (*patch).topoffset.get() as i32;
+        let x = x - (*patch).leftoffset.get() as i32;
 
-        let w = (*patch).width as i32;
+        let w = (*patch).width.get() as i32;
         let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
         let mut desttop2 = dest_screen.add(((y + 2) * SCREENWIDTH + (x + 2)) as usize);
 
         let mut col = 0;
         while col < w {
-            let ofs = ptr::read_unaligned((patch as *mut u8).add(8 + col as usize * 4) as *mut i32);
-            let column = (patch as *mut u8).add(ofs as usize) as *mut column_t;
+            let ofs = patch_t::column_offset(patch, col as usize);
+            let column = (patch as *mut u8).add(ofs) as *mut column_t;
 
             let mut col_ptr = column;
             while (*col_ptr).topdelta != 0xff {
@@ -466,64 +439,42 @@ pub fn V_RestoreBuffer() {
 
 pub fn WritePCXfile(filename: &str, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
     unsafe {
-        let pcx = Z_Malloc(width * height * 2 + 1000, PU_STATIC, ptr::null_mut()) as *mut pcx_t;
+        let header = pcx_t {
+            manufacturer: 0x0a,
+            version: 5,
+            encoding: 1,
+            bits_per_pixel: 8,
+            xmin: U16::ZERO,
+            ymin: U16::ZERO,
+            xmax: U16::new((width - 1) as u16),
+            ymax: U16::new((height - 1) as u16),
+            hres: U16::new(width as u16),
+            vres: U16::new(height as u16),
+            palette: [0; 48],
+            reserved: 0,
+            color_planes: 1,
+            bytes_per_line: U16::new(width as u16),
+            palette_type: U16::new(2),
+            filler: [0; 58],
+        };
 
-        (*pcx).manufacturer = 0x0a;
-        (*pcx).version = 5;
-        (*pcx).encoding = 1;
-        (*pcx).bits_per_pixel = 8;
-        (*pcx).xmin = 0;
-        (*pcx).ymin = 0;
-        (*pcx).xmax = (width - 1) as u16;
-        (*pcx).ymax = (height - 1) as u16;
-        (*pcx).hres = width as u16;
-        (*pcx).vres = height as u16;
-        (*pcx).palette = [0; 48];
-        (*pcx).color_planes = 1;
-        (*pcx).bytes_per_line = width as u16;
-        (*pcx).palette_type = 2;
-        (*pcx).filler = [0; 58];
-
-        let mut pack = (pcx as *mut u8).add(std::mem::offset_of!(pcx_t, data));
-
-        let mut i = 0;
         let total = (width * height) as usize;
-        let mut data_ptr = data;
-        while i < total {
-            let byte = *data_ptr;
+        let mut pcx = Vec::with_capacity(size_of::<pcx_t>() + total * 2 + 1 + 768);
+        pcx.extend_from_slice(header.as_bytes());
+
+        for &byte in std::slice::from_raw_parts(data, total) {
             if (byte & 0xc0) != 0xc0 {
-                *pack = byte;
-                pack = pack.add(1);
+                pcx.push(byte);
             } else {
-                *pack = 0xc1;
-                pack = pack.add(1);
-                *pack = byte;
-                pack = pack.add(1);
+                pcx.extend_from_slice(&[0xc1, byte]);
             }
-            data_ptr = data_ptr.add(1);
-            i += 1;
         }
 
         // write palette
-        *pack = 0x0c;
-        pack = pack.add(1);
+        pcx.push(0x0c);
+        pcx.extend_from_slice(std::slice::from_raw_parts(palette, 768));
 
-        let mut palette_ptr = palette;
-        i = 0;
-        while i < 768 {
-            *pack = *palette_ptr;
-            pack = pack.add(1);
-            palette_ptr = palette_ptr.add(1);
-            i += 1;
-        }
-
-        let length = pack.offset_from(pcx as *mut u8) as usize;
-        M_WriteFile(
-            filename,
-            std::slice::from_raw_parts(pcx as *const u8, length),
-        );
-
-        Z_Free(pcx as *mut c_void);
+        M_WriteFile(filename, &pcx);
     }
 }
 

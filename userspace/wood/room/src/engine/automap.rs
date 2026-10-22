@@ -51,9 +51,9 @@ use crate::{
         play::setup::{
             bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
         },
-        render_2d::{patch_t, V_DrawPatch, V_MarkRect},
+        render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
-        wad::{W_CacheLumpName, W_ReleaseLumpName},
+        wad::{format::patch_t, W_CacheLumpName, W_ReleaseLumpName},
     },
 };
 

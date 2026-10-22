@@ -14,9 +14,9 @@ use crate::engine::{
     doom::{mode::commercial, stat::gamemode},
     interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
     math::fixed::FRACBITS,
-    render_2d::{patch_t, V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
+    render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
     render_3d::{data::colormaps, main::centery},
-    wad::W_CacheLumpName,
+    wad::{format::patch_t, W_CacheLumpName},
     zone::{Z_Free, Z_Malloc},
 };
 

@@ -46,7 +46,7 @@ use crate::engine::{
         controls::{key_message_refresh, key_multi_msg, key_multi_msgplayer},
         until_nul,
     },
-    render_2d::patch_t,
+    wad::format::patch_t,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,13 +95,6 @@ use crate::engine::zone::PU_STATIC;
 /// Capacity of the outgoing chat-character circular buffer.
 /// Must be a power of two so the modular index arithmetic uses bitwise AND.
 const QUEUESIZE: usize = 128;
-
-/// Byte-swap for little-endian (SHORT macro from `i_swap.h`).
-/// On x86_64 this is an identity cast; the value is returned unchanged.
-#[inline(always)]
-fn short_swap(v: i16) -> i16 {
-    v
-}
 
 /// Return the logical game mission, collapsing Chex Quest and HacX variants.
 ///
@@ -465,7 +458,7 @@ pub fn HU_Start() {
 
         // compute font height for title/input placement
         let font_h = if !hu_font[0].is_null() {
-            short_swap((*hu_font[0]).height) as i32
+            (*hu_font[0]).height.get() as i32
         } else {
             0
         };

@@ -12,22 +12,28 @@
 //! is consulted in preference to the linear scan once present.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+
 pub mod checksum;
 pub mod file;
+pub mod format;
 pub mod main;
 
 use {
-    crate::i_error,
+    crate::{
+        engine::{
+            doom::{iwad::D_SuggestGameName, mode::D_GameMissionString},
+            interface::video::{I_BeginRead, I_EndRead},
+            misc::{until_nul, M_ExtractFileBase},
+            wad::{
+                file::{wad_file_t, W_OpenFile, W_Read},
+                format::{filelump_t, wadinfo_t},
+            },
+            zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+        },
+        i_error,
+    },
     std::{ffi::c_void, ptr},
-};
-
-use crate::engine::wad::file::{wad_file_t, W_OpenFile, W_Read};
-
-use crate::engine::{
-    doom::{iwad::D_SuggestGameName, mode::D_GameMissionString},
-    interface::video::{I_BeginRead, I_EndRead},
-    misc::{until_nul, M_ExtractFileBase},
-    zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+    zerocopy::{little_endian::I32, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout},
 };
 
 /// One entry in the global lump directory. Mirrors `lumpinfo_t` in
@@ -51,32 +57,6 @@ pub struct lumpinfo_t {
     /// Next entry in the per-hash-bucket chain when `lumphash` is
     /// populated; null otherwise.
     pub next: *mut lumpinfo_t,
-}
-
-/// On-disk WAD header. Read from offset 0 of every `.wad` file
-/// loaded by `W_AddFile`. Layout matches `wadinfo_t` in `w_wad.c`,
-/// 12 bytes on x86_64.
-#[repr(C)]
-struct wadinfo_t {
-    /// Magic identifier: `"IWAD"` for the main IWAD, `"PWAD"` for
-    /// a patch WAD. Anything else triggers `I_Error`.
-    identification: [u8; 4],
-    /// Little-endian number of lumps in the directory.
-    numlumps: i32,
-    /// Little-endian byte offset to the lump-directory table.
-    infotableofs: i32,
-}
-
-/// On-disk directory entry as it appears at `infotableofs`. Mirrors
-/// `filelump_t` in `w_wad.c`, 16 bytes on x86_64.
-#[repr(C)]
-struct filelump_t {
-    /// Little-endian byte offset of the lump payload inside the WAD.
-    filepos: i32,
-    /// Little-endian payload length in bytes.
-    size: i32,
-    /// 8-char ASCII lump name, NUL-padded.
-    name: [u8; 8],
 }
 
 /// Pointer to the global lump directory. Mirrors the `lumpinfo` C
@@ -179,8 +159,8 @@ pub fn W_LumpNameHash(name: &[u8]) -> u32 {
 /// name is the file's basename (via `M_ExtractFileBase`). True WAD
 /// files read the 12-byte `wadinfo_t` header, validate the `IWAD`
 /// or `PWAD` magic, and then load the full directory at
-/// `infotableofs`. Little-endian fields are byte-swapped via
-/// `i32::from_le`.
+/// `infotableofs`. Both are read as the little-endian records of
+/// [`format`].
 ///
 /// On success returns the borrowed `wad_file_t*`, owned by
 /// `w_file`. On open failure prints `couldn't open <path>` and
@@ -195,73 +175,59 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
             return ptr::null_mut();
         }
 
-        let mut newnumlumps = numlumps;
         let startlump = numlumps;
 
-        let fileinfo: *mut filelump_t;
-
         let path = filename.as_bytes();
-        if path.len() < 3 || !path[path.len() - 3..].eq_ignore_ascii_case(b"wad") {
+        let fileinfo = if path.len() < 3 || !path[path.len() - 3..].eq_ignore_ascii_case(b"wad") {
             // Single lump file
-            fileinfo = Z_Malloc(
-                std::mem::size_of::<filelump_t>() as i32,
-                PU_STATIC,
-                ptr::null_mut(),
-            ) as *mut filelump_t;
-            (*fileinfo).filepos = 0;
-            (*fileinfo).size = (*wad_file).length as i32;
-            (*fileinfo).name = M_ExtractFileBase(path);
-            newnumlumps += 1;
+            vec![filelump_t {
+                filepos: I32::ZERO,
+                size: I32::new((*wad_file).length as i32),
+                name: M_ExtractFileBase(path),
+            }]
         } else {
             // WAD file
-            let mut header: wadinfo_t = std::mem::zeroed();
+            let mut header = wadinfo_t::new_zeroed();
+            let header_bytes = header.as_mut_bytes();
             W_Read(
                 wad_file,
                 0,
-                &mut header as *mut _ as *mut c_void,
-                std::mem::size_of::<wadinfo_t>(),
+                header_bytes.as_mut_ptr() as *mut c_void,
+                header_bytes.len(),
             );
 
             if header.identification != *b"IWAD" && header.identification != *b"PWAD" {
                 i_error!("Wad file {filename} doesn't have IWAD or PWAD id");
             }
 
-            let header_numlumps = i32::from_le(header.numlumps);
-            let header_infotableofs = i32::from_le(header.infotableofs);
-
-            let length = (header_numlumps as usize) * std::mem::size_of::<filelump_t>();
-            fileinfo = Z_Malloc(length as i32, PU_STATIC, ptr::null_mut()) as *mut filelump_t;
-
+            let mut directory = vec![filelump_t::new_zeroed(); header.numlumps.get() as usize];
+            let directory_bytes = directory.as_mut_bytes();
             W_Read(
                 wad_file,
-                header_infotableofs as u32,
-                fileinfo as *mut c_void,
-                length,
+                header.infotableofs.get() as u32,
+                directory_bytes.as_mut_ptr() as *mut c_void,
+                directory_bytes.len(),
             );
-            newnumlumps += header_numlumps as u32;
-        }
+            directory
+        };
 
-        ExtendLumpInfo(newnumlumps);
+        ExtendLumpInfo(startlump + fileinfo.len() as u32);
 
         let mut lump_p = lumpinfo.add(startlump as usize);
-        let mut filerover = fileinfo;
 
-        for _i in startlump..numlumps {
+        for filelump in &fileinfo {
             (*lump_p).wad_file = wad_file;
-            (*lump_p).position = i32::from_le((*filerover).filepos);
-            (*lump_p).size = i32::from_le((*filerover).size);
+            (*lump_p).position = filelump.filepos.get();
+            (*lump_p).size = filelump.size.get();
             (*lump_p).cache = ptr::null_mut();
             // strncpy semantics: copy up to the first NUL, zero-pad the rest.
-            let name = lump_name(&(*filerover).name);
+            let name = lump_name(&filelump.name);
             let mut padded = [0; 8];
             padded[..name.len()].copy_from_slice(name);
             (*lump_p).name = padded;
 
             lump_p = lump_p.add(1);
-            filerover = filerover.add(1);
         }
-
-        Z_Free(fileinfo as *mut c_void);
 
         if !lumphash.is_null() {
             Z_Free(lumphash as *mut c_void);
@@ -427,6 +393,42 @@ pub fn W_CacheLumpName(name: &[u8], tag: i32) -> *mut c_void {
     W_CacheLumpNum(W_GetNumForName(name), tag)
 }
 
+/// Cache lump `lumpnum` with `W_CacheLumpNum` and view its payload as
+/// bytes.
+///
+/// # Safety
+///
+/// The slice borrows the lump cache: it is valid only until the lump
+/// is released with `W_ReleaseLumpNum` or, at `PU_CACHE`, purged.
+pub unsafe fn cache_lump_bytes<'a>(lumpnum: i32, tag: i32) -> &'a [u8] {
+    let data = W_CacheLumpNum(lumpnum, tag) as *const u8;
+    std::slice::from_raw_parts(data, W_LumpLength(lumpnum as u32) as usize)
+}
+
+/// Cache lump `lumpnum` at `PU_STATIC` and view it as an array of
+/// on-disk records from [`format`]. A partial record at the end is
+/// ignored, as the C count `W_LumpLength / sizeof(record)` did.
+///
+/// # Safety
+///
+/// As for [`cache_lump_bytes`]: release the lump only after the last
+/// use of the slice.
+pub unsafe fn cache_lump_records<'a, Record>(lumpnum: i32) -> &'a [Record]
+where
+    Record: FromBytes + Immutable + KnownLayout,
+{
+    let bytes = cache_lump_bytes(lumpnum, PU_STATIC);
+    let count = bytes.len() / std::mem::size_of::<Record>();
+    match <[Record]>::ref_from_prefix_with_elems(bytes, count) {
+        Ok((records, _partial_record)) => records,
+        Err(_) => i_error!(
+            "cache_lump_records: lump {} is not an array of {}-byte records",
+            lumpnum,
+            std::mem::size_of::<Record>()
+        ),
+    }
+}
+
 /// Mark `lumpnum` as releasable by demoting its cached block to
 /// `PU_CACHE`, so the zone allocator may purge it under memory
 /// pressure. No-op for memory-mapped wads.
@@ -551,24 +553,6 @@ mod tests {
         // C lumpinfo_t = name[8] + wad_file* + position + size + cache + next
         // On x86_64: 8 + 8 + 4 + 4 + 8 + 8 = 40 bytes
         assert_eq!(std::mem::size_of::<lumpinfo_t>(), 40);
-    }
-
-    /// `wadinfo_t` must match the on-disk WAD header layout: 12
-    /// packed bytes.
-    #[test]
-    fn wadinfo_size_matches_c() {
-        // C wadinfo_t = ident[4] + numlumps + infotableofs
-        // On x86_64: 4 + 4 + 4 = 12 bytes
-        assert_eq!(std::mem::size_of::<wadinfo_t>(), 12);
-    }
-
-    /// `filelump_t` must match the on-disk directory-entry layout:
-    /// 16 packed bytes.
-    #[test]
-    fn filelump_size_matches_c() {
-        // C filelump_t = filepos + size + name[8]
-        // On x86_64: 4 + 4 + 8 = 16 bytes
-        assert_eq!(std::mem::size_of::<filelump_t>(), 16);
     }
 
     /// Mutex serialising tests that swap out the global

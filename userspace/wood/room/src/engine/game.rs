@@ -61,9 +61,10 @@ use crate::engine::{
     misc::random::P_Random,
     play::{
         inter::maxammo,
-        setup::{deathmatch_p, deathmatchstarts, mapthing_t as SetupMapThing, playerstarts},
-        telept::{mapthing_t, mobj_t},
+        setup::{deathmatch_p, deathmatchstarts, playerstarts},
+        telept::mobj_t,
     },
+    wad::format::mapthing_t,
 };
 
 // ---------------------------------------------------------------------------
@@ -1589,8 +1590,8 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
             let mo = players[i].mo as *mut mobj_t;
-            if (*mo).x == ((*mthing).x as fixed_t) << 16
-                && (*mo).y == ((*mthing).y as fixed_t) << 16
+            if (*mo).x == ((*mthing).x.get() as fixed_t) << 16
+                && (*mo).y == ((*mthing).y.get() as fixed_t) << 16
             {
                 return 0;
             }
@@ -1598,8 +1599,8 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
         return 1;
     }
 
-    let x = ((*mthing).x as fixed_t) << 16;
-    let y = ((*mthing).y as fixed_t) << 16;
+    let x = ((*mthing).x.get() as fixed_t) << 16;
+    let y = ((*mthing).y.get() as fixed_t) << 16;
 
     if P_CheckPosition(
         players[playernum as usize].mo as *mut crate::engine::c_ffi::mobj_t,
@@ -1621,7 +1622,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let ss = R_PointInSubsector(x, y);
 
     // Replicate vanilla signed-angle overflow (from PrBoom+)
-    let an_raw = (0x10000000i32).wrapping_mul((*mthing).angle as i32 / 45);
+    let an_raw = (0x10000000i32).wrapping_mul((*mthing).angle.get() as i32 / 45);
     let xa: fixed_t;
     let ya: fixed_t;
     match an_raw {
@@ -1682,17 +1683,13 @@ pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
 
     for _ in 0..20 {
         let i = (P_Random() % selections) as usize;
-        if G_CheckSpot(
-            playernum,
-            &mut deathmatchstarts[i] as *mut SetupMapThing as *mut mapthing_t,
-        ) != 0
-        {
-            deathmatchstarts[i].r#type = (playernum + 1) as i16;
-            P_SpawnPlayer(&mut deathmatchstarts[i] as *mut SetupMapThing as *mut mapthing_t);
+        if G_CheckSpot(playernum, &raw mut deathmatchstarts[i]) != 0 {
+            deathmatchstarts[i].r#type.set((playernum + 1) as i16);
+            P_SpawnPlayer(&raw mut deathmatchstarts[i]);
             return;
         }
     }
-    P_SpawnPlayer(&mut playerstarts[playernum as usize] as *mut SetupMapThing as *mut mapthing_t);
+    P_SpawnPlayer(&raw mut playerstarts[playernum as usize]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1724,34 +1721,20 @@ pub unsafe fn G_DoReborn(playernum: i32) {
             return;
         }
 
-        if G_CheckSpot(
-            playernum,
-            &mut playerstarts[playernum as usize] as *mut SetupMapThing as *mut mapthing_t,
-        ) != 0
-        {
-            P_SpawnPlayer(
-                &mut playerstarts[playernum as usize] as *mut SetupMapThing as *mut mapthing_t,
-            );
+        if G_CheckSpot(playernum, &raw mut playerstarts[playernum as usize]) != 0 {
+            P_SpawnPlayer(&raw mut playerstarts[playernum as usize]);
             return;
         }
 
         for i in 0..MAXPLAYERS as i32 {
-            if G_CheckSpot(
-                playernum,
-                &mut playerstarts[i as usize] as *mut SetupMapThing as *mut mapthing_t,
-            ) != 0
-            {
-                playerstarts[i as usize].r#type = (playernum + 1) as i16;
-                P_SpawnPlayer(
-                    &mut playerstarts[i as usize] as *mut SetupMapThing as *mut mapthing_t,
-                );
-                playerstarts[i as usize].r#type = (i + 1) as i16;
+            if G_CheckSpot(playernum, &raw mut playerstarts[i as usize]) != 0 {
+                playerstarts[i as usize].r#type.set((playernum + 1) as i16);
+                P_SpawnPlayer(&raw mut playerstarts[i as usize]);
+                playerstarts[i as usize].r#type.set((i + 1) as i16);
                 return;
             }
         }
-        P_SpawnPlayer(
-            &mut playerstarts[playernum as usize] as *mut SetupMapThing as *mut mapthing_t,
-        );
+        P_SpawnPlayer(&raw mut playerstarts[playernum as usize]);
     }
 }
 
