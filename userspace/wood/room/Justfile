@@ -1,2 +1,60 @@
+# Recipes for the room workspace (converted from Taskfile.dist.yaml).
+
+asan_options := "detect_leaks=1:halt_on_error=1:abort_on_error=1:symbolize=1"
+# The AddressSanitizer build instruments `std` too, so it needs an explicit target.
+asan_target := "x86_64-unknown-linux-gnu"
+
+# List the recipes
+default:
+    @just --list
+
+# Format the code
+fmt:
+    cargo fmt
+
+# Lint the code
+lint:
+    cargo clippy --all-targets
+
+# Apply clippy's fixes, then format
+lint-fix:
+    cargo clippy --fix --allow-staged
+    just fmt
+
+# Run all tests
+test:
+    RUST_BACKTRACE=full RUST_LOG=info cargo test
+
+# Check the workspace
+check:
+    cargo check
+
+# Build the workspace
+build:
+    cargo build
+
+# Run the game on the shareware WAD
 run:
-    cargo run --bin room --release -- -iwad ../wad/doom1.wad
+    RUST_BACKTRACE=full RUST_LOG=info cargo run --release -- -iwad ../wad/doom1.wad
+
+# Build rustdoc
+docs:
+    cargo doc --no-deps --all-features
+
+alias doc := docs
+
+# Build rustdoc (and open them)
+docs-open:
+    cargo doc --no-deps --all-features --open
+
+alias doc-open := docs-open
+
+# Run tests with AddressSanitizer (nightly required)
+asan-test *args:
+    ASAN=1 ASAN_OPTIONS="{{ asan_options }}" RUST_BACKTRACE=1 RUSTFLAGS="-Zsanitizer=address" \
+      cargo +nightly test -Zbuild-std --target {{ asan_target }} {{ args }}
+
+# Run the game with AddressSanitizer (nightly required)
+asan-run *args:
+    ASAN=1 ASAN_OPTIONS="{{ asan_options }}" RUST_BACKTRACE=1 RUSTFLAGS="-Zsanitizer=address" \
+      cargo +nightly run -Zbuild-std --target {{ asan_target }} {{ args }}

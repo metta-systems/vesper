@@ -19,8 +19,8 @@ ASan gives exact line numbers for memory corruption across the Rust/C boundary. 
 ### Quick Start
 
 ```bash
-# Via Taskfile
-task asan:test -- test_name -- --nocapture
+# Via the Justfile
+just asan-test test_name -- --nocapture
 
 # Manual
 ASAN_OPTIONS="detect_leaks=1:halt_on_error=1:abort_on_error=1:symbolize=1" \

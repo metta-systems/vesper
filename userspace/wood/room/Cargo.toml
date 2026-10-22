@@ -1,8 +1,54 @@
 [workspace]
-default-members = ["doomgeneric-sys", "room"]
-members = [
-    "c2rust-intermediate",
-    "doomgeneric-sys",
-    "room",
-]
-resolver = "2"
+
+[package]
+name = "room"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust implementation of the doomgeneric platform layer using winit and wgpu"
+repository = "https://github.com/sunsided/room"
+license = "GPL-2.0"
+authors = ["Markus Mayer <widemeadows@gmail.com>"]
+readme = "../README.md"
+
+[lib]
+name = "room"
+path = "src/lib.rs"
+
+[[bin]]
+name = "room"
+path = "src/main.rs"
+
+[features]
+dhat-heap = ["dep:dhat"]
+rangecheck = []
+
+[dependencies]
+# Cross-platform window creation and event handling.
+winit = "0.30"
+
+# Cross-platform GPU API.
+wgpu = { version = "29", features = ["wgsl"] }
+
+# Blocking async executor – used to wait for wgpu futures.
+pollster = "0.4"
+
+# Safe transmutation between byte slices and typed buffers.
+bytemuck = { version = "1", features = ["derive"] }
+
+# Logging facade.
+log = "0.4"
+
+# Cross-platform audio playback, used for SFX.
+rodio = "0.22"
+
+# Pure-Rust SF2 soundfont synthesizer, used for Doom music playback.
+rustysynth = "1"
+
+# Simple logger backed by stderr.
+env_logger = "0.11"
+
+# libc bindings for C FFI (FILE, fopen, fclose, fseek, fread, printf, etc.)
+libc = "0.2"
+
+# Optional heap profiler (use with --features dhat-heap).
+dhat = { version = "0.3", optional = true }
