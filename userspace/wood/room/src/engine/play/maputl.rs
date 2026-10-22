@@ -11,11 +11,50 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    c_ffi::{intercept_t, intercept_t_d, MAPBLOCKSHIFT, MAPBLOCKSIZE, MAPBTOFRAC},
     map::{line_t, slopetype_t},
     math::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
     play::{info::*, mobj::mobj_t},
 };
+
+/// Width/height of one blockmap cell in map units (`MAPBLOCKUNITS` in
+/// `p_local.h`).
+pub const MAPBLOCKUNITS: i32 = 128;
+/// Width/height of one blockmap cell in fixed-point units (`MAPBLOCKSIZE`
+/// in `p_local.h`).
+pub const MAPBLOCKSIZE: i32 = MAPBLOCKUNITS * FRACUNIT;
+/// Right-shift count converting a fixed-point coordinate to a blockmap
+/// cell index (`MAPBLOCKSHIFT` in `p_local.h`).
+pub const MAPBLOCKSHIFT: i32 = FRACBITS as i32 + 7;
+/// Mask isolating the in-cell offset of a fixed-point coordinate
+/// (`MAPBMASK` in `p_local.h`).
+pub const MAPBMASK: i32 = MAPBLOCKSIZE - 1;
+/// Shift count converting in-cell offsets back to fixed-point fractions
+/// (`MAPBTOFRAC` in `p_local.h`).
+pub const MAPBTOFRAC: i32 = MAPBLOCKSHIFT - FRACBITS as i32;
+
+/// Intercept record produced by `P_PathTraverse` (`intercept_t` in
+/// `p_local.h`).
+///
+/// `frac` is the fractional position along the trace (fixed-point in
+/// `[0, FRACUNIT]`). `isaline` selects the active arm of [`intercept_t_d`]:
+/// non-zero means `d.line`, zero means `d.thing`.
+#[derive(Clone, Copy)]
+pub struct intercept_t {
+    pub frac: i32,
+    pub isaline: i32, // boolean
+    pub d: intercept_t_d,
+}
+
+/// Untagged union holding the intercepted entity (`intercept_t.d` in
+/// `p_local.h`).
+///
+/// Active arm is selected by [`intercept_t::isaline`]. Reading the inactive
+/// arm is undefined behaviour; callers must consult `isaline` first.
+#[derive(Clone, Copy)]
+pub union intercept_t_d {
+    pub thing: *mut c_void,
+    pub line: *mut line_t,
+}
 
 /// Parametric dividing line (`divline_t` in `p_local.h`).
 ///

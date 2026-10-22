@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, game};
+use room::engine::game;
 
 // ---------------------------------------------------------------------------
 // Forward-movement speed table
@@ -146,7 +146,7 @@ fn forwardmove_fast_equals_turbothreshold() {
         // TURBOTHRESHOLD = 0x32 = 50 = forwardmove[1]
         assert_eq!(
             game::forwardmove[1],
-            c_ffi::TURBOTHRESHOLD,
+            game::TURBOTHRESHOLD,
             "forwardmove[1] (MAXPLMOVE) should equal TURBOTHRESHOLD (0x32)"
         );
     }
@@ -160,7 +160,7 @@ fn forwardmove_fast_equals_turbothreshold() {
 /// after that, the normal or fast speed is used.
 #[test]
 fn slowturntics_is_6() {
-    assert_eq!(c_ffi::SLOWTURNTICS, 6);
+    assert_eq!(game::SLOWTURNTICS, 6);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ fn slowturntics_is_6() {
 /// corpse-disappearance timing changes.
 #[test]
 fn bodyquesize_is_32() {
-    assert_eq!(c_ffi::BODYQUESIZE, 32);
+    assert_eq!(game::BODYQUESIZE, 32);
 }
 
 // ---------------------------------------------------------------------------

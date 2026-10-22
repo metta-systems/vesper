@@ -25,7 +25,6 @@ use {
 
 use crate::{
     engine::{
-        c_ffi::{LinedefFlag, FLOORSPEED},
         doom::player::{PlayerT, CF_GODMODE},
         interface::timer::TICRATE,
         map::{line_t, sector_t, side_t},
@@ -36,9 +35,12 @@ use crate::{
             M_StrToInt,
         },
         play::{
-            floor::floormove_t,
+            ceilng::MAXCEILINGS,
+            floor::{floormove_t, FLOORSPEED},
             info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
+            lights::{FASTDARK, SLOWDARK},
             mobj::mobj_t,
+            plats::MAXPLATS,
             setup::{lines, numlines, numsectors, sectors, sides},
             switch::{buttonlist, MAXBUTTONS},
             tick::{leveltime, P_AddThinker},
@@ -48,6 +50,7 @@ use crate::{
             R_FlatNumForName, R_TextureNumForName,
         },
         sound::S_StartSound,
+        wad::format::LinedefFlag,
         zone::PU_LEVSPEC,
     },
     i_error,
@@ -59,11 +62,11 @@ use crate::{
 
 /// Maximum number of animated texture/flat cycles that can be active at once.
 /// Corresponds to `MAXANIMS` in p_spec.c.
-const MAXANIMS: usize = 32;
+pub const MAXANIMS: usize = 32;
 
 /// Maximum number of scrolling-wall linedefs that may be registered per level.
 /// Corresponds to `MAXLINEANIMS` in p_spec.c (Vanilla Doom limit is 64).
-const MAXLINEANIMS: usize = 64;
+pub const MAXLINEANIMS: usize = 64;
 
 /// Maximum number of adjoining sectors examined by `P_FindNextHighestFloor`.
 /// Exceeding this limit emulates the vanilla stack-overflow behaviour.
@@ -1321,10 +1324,10 @@ pub unsafe fn P_SpawnSpecials() {
         }
         match (*sector).special as i32 {
             1 => P_SpawnLightFlash(sector),
-            2 => P_SpawnStrobeFlash(sector, crate::engine::c_ffi::FASTDARK, 0),
-            3 => P_SpawnStrobeFlash(sector, crate::engine::c_ffi::SLOWDARK, 0),
+            2 => P_SpawnStrobeFlash(sector, FASTDARK, 0),
+            3 => P_SpawnStrobeFlash(sector, SLOWDARK, 0),
             4 => {
-                P_SpawnStrobeFlash(sector, crate::engine::c_ffi::FASTDARK, 0);
+                P_SpawnStrobeFlash(sector, FASTDARK, 0);
                 (*sector).special = 4;
             }
             8 => P_SpawnGlowingLight(sector),
@@ -1332,8 +1335,8 @@ pub unsafe fn P_SpawnSpecials() {
                 totalsecret += 1;
             }
             10 => P_SpawnDoorCloseIn30(sector),
-            12 => P_SpawnStrobeFlash(sector, crate::engine::c_ffi::SLOWDARK, 1),
-            13 => P_SpawnStrobeFlash(sector, crate::engine::c_ffi::FASTDARK, 1),
+            12 => P_SpawnStrobeFlash(sector, SLOWDARK, 1),
+            13 => P_SpawnStrobeFlash(sector, FASTDARK, 1),
             14 => P_SpawnDoorRaiseIn5Mins(sector, i),
             17 => P_SpawnFireFlicker(sector),
             _ => {}
@@ -1351,10 +1354,10 @@ pub unsafe fn P_SpawnSpecials() {
         }
     }
 
-    for i in 0..crate::engine::c_ffi::MAXCEILINGS as usize {
+    for i in 0..MAXCEILINGS {
         crate::engine::play::ceilng::activeceilings[i] = ptr::null_mut();
     }
-    for i in 0..crate::engine::c_ffi::MAXPLATS as usize {
+    for i in 0..MAXPLATS {
         crate::engine::play::plats::activeplats[i] = ptr::null_mut();
     }
     for i in 0..MAXBUTTONS {

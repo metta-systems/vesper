@@ -34,7 +34,6 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::{mobjinfo_t, state_t, SAVEGAME_EOF, VERSIONSIZE},
     doom::player::{
         players, PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS,
         NUMPOWERS, NUMPSPRITES, NUMWEAPONS,
@@ -44,7 +43,7 @@ use crate::engine::{
         ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
         doors::{vldoor_t, T_VerticalDoor},
         floor::{floormove_t, T_MoveFloor},
-        info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
+        info::{mobjinfo, mobjinfo_t, state_t, states, MobjInfo, State, NUMSTATES},
         lights::{glow_t, lightflash_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash},
         mobj::{mobj_t, player_s},
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
@@ -62,6 +61,13 @@ use crate::engine::{
 /// description string written at the start of every save file.
 /// Corresponds to `SAVESTRINGSIZE` in the C source.
 const SAVESTRINGSIZE: usize = 24;
+
+/// End-of-file marker byte written at the end of every save game
+/// (SAVEGAME_EOF in p_saveg.c = 0x1d).
+pub const SAVEGAME_EOF: u8 = 0x1d;
+/// Length of the version string embedded in save-game headers
+/// (VERSIONSIZE in p_saveg.h = 16).
+pub const VERSIONSIZE: usize = 16;
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -694,7 +700,7 @@ unsafe fn saveg_read_pspdef_t(psp: *mut PspdefT) {
     s.state = if state_idx == 0 {
         std::ptr::null_mut()
     } else {
-        saveg_read_state_ptr(state_idx) as *mut crate::engine::doom::player::state_t
+        saveg_read_state_ptr(state_idx) as *mut state_t
     };
     s.tics = saveg_read32() as i32;
     s.sx = saveg_read32() as i32;

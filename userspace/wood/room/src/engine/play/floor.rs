@@ -27,7 +27,7 @@ use crate::engine::{
 };
 
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).
-const FLOORSPEED: fixed_t = FRACUNIT;
+pub const FLOORSPEED: fixed_t = FRACUNIT;
 
 /// Convenience alias for `i32::MAX`, used as an initial "infinity" in texture height searches.
 const INT_MAX: i32 = i32::MAX;
@@ -74,7 +74,7 @@ const stair_build8: i32 = 0;
 /// Build a 16-unit staircase at 4x speed (`FLOORSPEED * 4`).
 const stair_turbo16: i32 = 1;
 
-use crate::engine::c_ffi::LinedefFlag;
+use crate::engine::wad::format::LinedefFlag;
 
 /// Thinker state for a moving floor.
 ///

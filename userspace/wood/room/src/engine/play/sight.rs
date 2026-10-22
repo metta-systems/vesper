@@ -13,9 +13,9 @@ use crate::engine::math::fixed::{FixedDiv, FixedMul};
 use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::{
-    c_ffi::LinedefFlag,
     map::node_t,
     play::{maputl::divline_t, mobj::mobj_t},
+    wad::format::LinedefFlag,
 };
 
 /// BSP node flag: child index has this bit set when the child is a subsector

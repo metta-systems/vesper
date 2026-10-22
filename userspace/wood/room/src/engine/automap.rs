@@ -25,7 +25,6 @@ use std::ptr;
 use crate::{
     c_write,
     engine::{
-        c_ffi::{LinedefFlag, MAPBLOCKUNITS},
         dehacked::DEH_String,
         doom::{
             event::event_t,
@@ -48,12 +47,18 @@ use crate::{
                 key_map_zoomin, key_map_zoomout,
             },
         },
-        play::setup::{
-            bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
+        play::{
+            maputl::MAPBLOCKUNITS,
+            setup::{
+                bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
+            },
         },
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
-        wad::{format::patch_t, W_CacheLumpName, W_ReleaseLumpName},
+        wad::{
+            format::{patch_t, LinedefFlag},
+            W_CacheLumpName, W_ReleaseLumpName,
+        },
     },
 };
 

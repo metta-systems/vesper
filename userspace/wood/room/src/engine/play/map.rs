@@ -20,7 +20,6 @@ use std::{ffi::c_void, ptr};
 
 use crate::{
     engine::{
-        c_ffi::{intercept_t, LinedefFlag, DEFAULT_SPECHIT_MAGIC, MAPBLOCKSHIFT},
         map::{
             line_t, sector_t,
             slopetype_t::{ST_HORIZONTAL, ST_VERTICAL},
@@ -34,16 +33,17 @@ use crate::{
         play::{
             info::MobjInfo,
             maputl::{
-                lowfloor, openbottom, openrange, opentop, P_AproxDistance, P_BlockLinesIterator,
-                P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening, P_PathTraverse,
-                P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES,
-                PT_ADDTHINGS,
+                intercept_t, lowfloor, openbottom, openrange, opentop, P_AproxDistance,
+                P_BlockLinesIterator, P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening,
+                P_PathTraverse, P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition,
+                MAPBLOCKSHIFT, PT_ADDLINES, PT_ADDTHINGS,
             },
             mobj::mobj_t,
             setup::{bmaporgx, bmaporgy, lines},
             sight::{bottomslope, topslope, P_CheckSight},
         },
         render_3d::main::{validcount, R_PointInSubsector, R_PointToAngle2},
+        wad::format::LinedefFlag,
     },
     i_error,
 };
@@ -57,6 +57,10 @@ use crate::{
 /// The Rust port uses 20 slots (matching `MAXSPECIALCROSS` in the C source)
 /// while the original vanilla limit was 8 (`MAXSPECIALCROSS_ORIGINAL`).
 const MAXSPECIALCROSS: usize = 20;
+
+/// Sentinel magic value used to detect the vanilla spechit overflow bug
+/// (DEFAULT_SPECHIT_MAGIC in p_map.c = 0x01C09C98).
+pub const DEFAULT_SPECHIT_MAGIC: u32 = 0x01C09C98;
 
 /// Original vanilla Doom limit for special lines crossed per move.
 ///

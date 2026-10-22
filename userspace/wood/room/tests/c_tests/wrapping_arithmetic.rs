@@ -13,11 +13,11 @@
 #![allow(non_snake_case)]
 
 use room::engine::{
-    c_ffi,
     math::{
         fixed::{FixedDiv, FixedMul, FRACUNIT},
         tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
     },
+    play::{maputl, mobj},
 };
 
 // ---------------------------------------------------------------------------
@@ -184,25 +184,25 @@ fn angle_addition_wraps() {
 /// blockmap index (128 map units per block = `1 << (16+7)`).
 #[test]
 fn mapblockshift_value() {
-    assert_eq!(c_ffi::MAPBLOCKSHIFT, 23);
+    assert_eq!(maputl::MAPBLOCKSHIFT, 23);
 }
 
 /// `MAPBLOCKSIZE = 128 << 16` map-unit-fixed_t = one blockmap cell in fixed-point.
 #[test]
 fn mapblocksize_value() {
-    assert_eq!(c_ffi::MAPBLOCKSIZE, 128 << 16);
+    assert_eq!(maputl::MAPBLOCKSIZE, 128 << 16);
 }
 
 /// `MAPBMASK = MAPBLOCKSIZE - 1`: mask to extract the sub-block coordinate.
 #[test]
 fn mapbmask_value() {
-    assert_eq!(c_ffi::MAPBMASK, c_ffi::MAPBLOCKSIZE - 1);
+    assert_eq!(maputl::MAPBMASK, maputl::MAPBLOCKSIZE - 1);
 }
 
 /// `MAPBTOFRAC = 7`: shift to convert a block index back to fixed-point.
 #[test]
 fn mapbtofrac_value() {
-    assert_eq!(c_ffi::MAPBTOFRAC, 7);
+    assert_eq!(maputl::MAPBTOFRAC, 7);
 }
 
 /// A coordinate exactly on a block boundary (128 units = 0x800000) yields
@@ -210,7 +210,7 @@ fn mapbtofrac_value() {
 #[test]
 fn coord_on_block_boundary() {
     let x: i32 = 128 << 16; // exactly 128 units
-    let blockx = x >> c_ffi::MAPBLOCKSHIFT;
+    let blockx = x >> maputl::MAPBLOCKSHIFT;
     assert_eq!(blockx, 1);
 }
 
@@ -223,10 +223,10 @@ fn coord_on_block_boundary() {
 #[test]
 fn item_queue_wraps() {
     let mut head: i32 = 0;
-    head = (head + 1) & (c_ffi::ITEMQUESIZE as i32 - 1);
+    head = (head + 1) & (mobj::ITEMQUESIZE as i32 - 1);
     assert_eq!(head, 1);
     head = 127;
-    head = (head + 1) & (c_ffi::ITEMQUESIZE as i32 - 1);
+    head = (head + 1) & (mobj::ITEMQUESIZE as i32 - 1);
     assert_eq!(head, 0);
 }
 

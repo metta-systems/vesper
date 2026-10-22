@@ -51,13 +51,13 @@ use crate::engine::{
 /// Number of game ticks a single text character takes to appear on screen.
 ///
 /// C origin: `TEXTSPEED` in f_finale.c.
-const TEXTSPEED: i32 = 3;
+pub const TEXTSPEED: i32 = 3;
 
 /// Number of extra ticks to wait after all text has been displayed before
 /// advancing to the art-screen stage.
 ///
 /// C origin: `TEXTWAIT` in f_finale.c.
-const TEXTWAIT: i32 = 250;
+pub const TEXTWAIT: i32 = 250;
 
 /// `gamestate` value that indicates the finale is active.
 ///

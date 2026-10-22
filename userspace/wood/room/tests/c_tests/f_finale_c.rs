@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::c_ffi;
+use room::engine::finale;
 
 // ---------------------------------------------------------------------------
 // Text-crawl timing constants
@@ -24,19 +24,19 @@ use room::engine::c_ffi;
 /// The finale text advances one character every 3 game tics.
 #[test]
 fn textspeed_is_3() {
-    assert_eq!(c_ffi::TEXTSPEED, 3);
+    assert_eq!(finale::TEXTSPEED, 3);
 }
 
 /// `TEXTWAIT = 250` tics ≈ 7.1 seconds of idle time after the text is done.
 #[test]
 fn textwait_is_250() {
-    assert_eq!(c_ffi::TEXTWAIT, 250);
+    assert_eq!(finale::TEXTWAIT, 250);
 }
 
 /// TEXTWAIT is substantially longer than TEXTSPEED.
 #[test]
 fn textwait_longer_than_textspeed() {
-    assert!(c_ffi::TEXTWAIT > c_ffi::TEXTSPEED);
+    assert!(finale::TEXTWAIT > finale::TEXTSPEED);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ fn textwait_longer_than_textspeed() {
 fn finaletext_initially_empty() {
     unsafe {
         assert!(
-            c_ffi::finaletext.is_empty(),
+            finale::finaletext.is_empty(),
             "finaletext should be empty before F_StartFinale"
         );
     }
@@ -59,7 +59,7 @@ fn finaletext_initially_empty() {
 fn finaleflat_initially_empty() {
     unsafe {
         assert!(
-            c_ffi::finaleflat.is_empty(),
+            finale::finaleflat.is_empty(),
             "finaleflat should be empty before F_StartFinale"
         );
     }
@@ -73,7 +73,7 @@ fn finaleflat_initially_empty() {
 #[test]
 fn castnum_default_zero() {
     unsafe {
-        assert_eq!(c_ffi::castnum, 0, "castnum should be 0 before F_StartCast");
+        assert_eq!(finale::castnum, 0, "castnum should be 0 before F_StartCast");
     }
 }
 
@@ -82,7 +82,7 @@ fn castnum_default_zero() {
 fn casttics_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::casttics,
+            finale::casttics,
             0,
             "casttics should be 0 before F_StartCast"
         );
@@ -94,7 +94,7 @@ fn casttics_default_zero() {
 fn castdeath_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::castdeath,
+            finale::castdeath,
             0,
             "castdeath should be false before F_StartCast"
         );
@@ -106,7 +106,7 @@ fn castdeath_default_zero() {
 fn castframes_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::castframes,
+            finale::castframes,
             0,
             "castframes should be 0 before F_StartCast"
         );
@@ -119,7 +119,7 @@ fn castframes_default_zero() {
 fn castonmelee_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::castonmelee,
+            finale::castonmelee,
             0,
             "castonmelee should be false before F_StartCast"
         );
@@ -131,7 +131,7 @@ fn castonmelee_default_zero() {
 fn castattacking_default_zero() {
     unsafe {
         assert_eq!(
-            c_ffi::castattacking,
+            finale::castattacking,
             0,
             "castattacking should be false before F_StartCast"
         );

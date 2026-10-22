@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, play::saveg};
+use room::engine::play::saveg;
 
 // ---------------------------------------------------------------------------
 // SAVEGAME_EOF constant
@@ -24,8 +24,8 @@ use room::engine::{c_ffi, play::saveg};
 /// would silently corrupt all existing save files.
 #[test]
 fn savegame_eof_is_0x1d() {
-    assert_eq!(c_ffi::SAVEGAME_EOF, 0x1d);
-    assert_eq!(c_ffi::SAVEGAME_EOF, 29);
+    assert_eq!(saveg::SAVEGAME_EOF, 0x1d);
+    assert_eq!(saveg::SAVEGAME_EOF, 29);
 }
 
 // ---------------------------------------------------------------------------
@@ -36,13 +36,13 @@ fn savegame_eof_is_0x1d() {
 /// every save-game header.  Changing it would break save-file parsing.
 #[test]
 fn versionsize_is_16() {
-    assert_eq!(c_ffi::VERSIONSIZE, 16);
+    assert_eq!(saveg::VERSIONSIZE, 16);
 }
 
 /// `VERSIONSIZE` is a power of two, which is typical for fixed-length strings.
 #[test]
 fn versionsize_is_power_of_two() {
-    let n = c_ffi::VERSIONSIZE;
+    let n = saveg::VERSIONSIZE;
     assert!(
         n > 0 && (n & (n - 1)) == 0,
         "VERSIONSIZE={n} should be a power of two"

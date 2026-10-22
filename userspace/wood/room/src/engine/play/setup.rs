@@ -25,7 +25,6 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    c_ffi::{LinedefFlag, MapLump},
     doom::{
         self,
         player::{consoleplayer, players, MAXPLAYERS},
@@ -41,9 +40,11 @@ use crate::engine::{
     },
     play::{
         info::sprnames,
+        maputl::MAPBLOCKSHIFT,
         mobj::mobj_t,
         tick::{leveltime, P_InitThinkers},
     },
+    wad::format::{LinedefFlag, MapLump},
     zone::PU_LEVEL,
 };
 
@@ -70,10 +71,6 @@ const PU_PURGELEVEL: i32 = 7;
 // ---------------------------------------------------------------------------
 // Misc constants
 // ---------------------------------------------------------------------------
-
-/// Shift to convert a fixed-point map coordinate to a blockmap cell index.
-/// Equals `FRACBITS + 7`, i.e. each blockmap cell covers 128 map units.
-const MAPBLOCKSHIFT: i32 = FRACBITS as i32 + 7;
 
 /// Maximum radius added/subtracted when clamping sector bounding boxes to
 /// blockmap cells. 32 map units in fixed-point (32 << FRACBITS).

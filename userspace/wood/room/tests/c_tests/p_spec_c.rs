@@ -14,7 +14,11 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, interface::timer::TICRATE, math::fixed::FRACUNIT, play::tick};
+use room::engine::{
+    interface::timer::TICRATE,
+    math::fixed::FRACUNIT,
+    play::{ceilng, doors, floor, lights, plats, spec, tick},
+};
 
 // ---------------------------------------------------------------------------
 // leveltime — current game tic within the level
@@ -40,13 +44,13 @@ fn leveltime_default_zero() {
 /// `MAXANIMS = 32`: no more than 32 simultaneous floor/ceiling/door animations.
 #[test]
 fn maxanims_is_32() {
-    assert_eq!(c_ffi::MAXANIMS, 32);
+    assert_eq!(spec::MAXANIMS, 32);
 }
 
 /// `MAXLINEANIMS = 64`: the line-special list can hold up to 64 active entries.
 #[test]
 fn maxlineanims_is_64() {
-    assert_eq!(c_ffi::MAXLINEANIMS, 64);
+    assert_eq!(spec::MAXLINEANIMS, 64);
 }
 
 // ---------------------------------------------------------------------------
@@ -57,14 +61,14 @@ fn maxlineanims_is_64() {
 /// speed.  Any deviation changes the tempo of every door in the game.
 #[test]
 fn vdoorspeed_is_2_fracunits() {
-    assert_eq!(c_ffi::VDOORSPEED, FRACUNIT * 2);
-    assert_eq!(c_ffi::VDOORSPEED, 2 * 65536);
+    assert_eq!(doors::VDOORSPEED, FRACUNIT * 2);
+    assert_eq!(doors::VDOORSPEED, 2 * 65536);
 }
 
 /// `VDOORWAIT = 150` tics ≈ 4.3 seconds before a door auto-closes.
 #[test]
 fn vdoorwait_is_150() {
-    assert_eq!(c_ffi::VDOORWAIT, 150);
+    assert_eq!(doors::VDOORWAIT, 150);
 }
 
 // ---------------------------------------------------------------------------
@@ -74,20 +78,20 @@ fn vdoorwait_is_150() {
 /// `CEILSPEED = FRACUNIT`.  All standard ceiling crushers move 1 map unit/tic.
 #[test]
 fn ceilspeed_is_one_fracunit() {
-    assert_eq!(c_ffi::CEILSPEED, FRACUNIT);
-    assert_eq!(c_ffi::CEILSPEED, 65536);
+    assert_eq!(ceilng::CEILSPEED, FRACUNIT);
+    assert_eq!(ceilng::CEILSPEED, 65536);
 }
 
 /// `CEILWAIT = 150` tics: the pause between crusher strokes.
 #[test]
 fn ceilwait_is_150() {
-    assert_eq!(c_ffi::CEILWAIT, 150);
+    assert_eq!(ceilng::CEILWAIT, 150);
 }
 
 /// `MAXCEILINGS = 30`: at most 30 simultaneously active ceiling effects.
 #[test]
 fn maxceilings_is_30() {
-    assert_eq!(c_ffi::MAXCEILINGS, 30);
+    assert_eq!(ceilng::MAXCEILINGS, 30);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,20 +101,20 @@ fn maxceilings_is_30() {
 /// `PLATSPEED = FRACUNIT`.  All standard platforms move 1 map unit/tic.
 #[test]
 fn platspeed_is_one_fracunit() {
-    assert_eq!(c_ffi::PLATSPEED, FRACUNIT);
-    assert_eq!(c_ffi::PLATSPEED, 65536);
+    assert_eq!(plats::PLATSPEED, FRACUNIT);
+    assert_eq!(plats::PLATSPEED, 65536);
 }
 
 /// `PLATWAIT = 3` seconds (at TICRATE tics/sec) before a platform returns.
 #[test]
 fn platwait_is_3() {
-    assert_eq!(c_ffi::PLATWAIT, 3);
+    assert_eq!(plats::PLATWAIT, 3);
 }
 
 /// `MAXPLATS = 30`: at most 30 simultaneously active platforms.
 #[test]
 fn maxplats_is_30() {
-    assert_eq!(c_ffi::MAXPLATS, 30);
+    assert_eq!(plats::MAXPLATS, 30);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,8 +124,8 @@ fn maxplats_is_30() {
 /// `FLOORSPEED = FRACUNIT`.  Standard floor movements advance 1 map unit/tic.
 #[test]
 fn floorspeed_is_one_fracunit() {
-    assert_eq!(c_ffi::FLOORSPEED, FRACUNIT);
-    assert_eq!(c_ffi::FLOORSPEED, 65536);
+    assert_eq!(floor::FLOORSPEED, FRACUNIT);
+    assert_eq!(floor::FLOORSPEED, 65536);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,27 +135,27 @@ fn floorspeed_is_one_fracunit() {
 /// `GLOWSPEED = 8` fixed-point light units/tic for glow effects.
 #[test]
 fn glowspeed_is_8() {
-    assert_eq!(c_ffi::GLOWSPEED, 8);
+    assert_eq!(lights::GLOWSPEED, 8);
 }
 
 /// `STROBEBRIGHT = 5` tics for the bright phase of strobe lights.
 #[test]
 fn strobebright_is_5() {
-    assert_eq!(c_ffi::STROBEBRIGHT, 5);
+    assert_eq!(lights::STROBEBRIGHT, 5);
 }
 
 /// `FASTDARK = 15` tics for the dark phase of fast-strobe lights.
 #[test]
 fn fastdark_is_15() {
-    assert_eq!(c_ffi::FASTDARK, 15);
+    assert_eq!(lights::FASTDARK, 15);
 }
 
 /// `SLOWDARK = 35` tics for the dark phase of slow-strobe lights.
 /// Equals TICRATE (1 second), making slow strobes pulse once per second.
 #[test]
 fn slowdark_is_35() {
-    assert_eq!(c_ffi::SLOWDARK, 35);
-    assert_eq!(c_ffi::SLOWDARK, TICRATE);
+    assert_eq!(lights::SLOWDARK, 35);
+    assert_eq!(lights::SLOWDARK, TICRATE);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,20 +166,20 @@ fn slowdark_is_35() {
 /// FRACUNIT (no fractional component), ensuring whole-unit movement per tic.
 #[test]
 fn movement_speeds_are_fracunit_multiples() {
-    assert_eq!(c_ffi::VDOORSPEED % FRACUNIT, 0, "VDOORSPEED");
-    assert_eq!(c_ffi::CEILSPEED % FRACUNIT, 0, "CEILSPEED");
-    assert_eq!(c_ffi::PLATSPEED % FRACUNIT, 0, "PLATSPEED");
-    assert_eq!(c_ffi::FLOORSPEED % FRACUNIT, 0, "FLOORSPEED");
+    assert_eq!(doors::VDOORSPEED % FRACUNIT, 0, "VDOORSPEED");
+    assert_eq!(ceilng::CEILSPEED % FRACUNIT, 0, "CEILSPEED");
+    assert_eq!(plats::PLATSPEED % FRACUNIT, 0, "PLATSPEED");
+    assert_eq!(floor::FLOORSPEED % FRACUNIT, 0, "FLOORSPEED");
 }
 
 /// Door speed is exactly 2× platform/floor/ceiling speed.
 #[test]
 fn vdoorspeed_is_double_platspeed() {
-    assert_eq!(c_ffi::VDOORSPEED, 2 * c_ffi::PLATSPEED);
+    assert_eq!(doors::VDOORSPEED, 2 * plats::PLATSPEED);
 }
 
 /// Both wait constants are equal (150 tics = same pause for doors and crushers).
 #[test]
 fn door_and_ceil_wait_are_equal() {
-    assert_eq!(c_ffi::VDOORWAIT, c_ffi::CEILWAIT);
+    assert_eq!(doors::VDOORWAIT, ceilng::CEILWAIT);
 }

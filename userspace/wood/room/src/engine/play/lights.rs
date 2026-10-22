@@ -19,16 +19,16 @@ use crate::engine::{
 };
 
 /// Light change applied each step of the glow oscillation (light units per tic).
-const GLOWSPEED: i32 = 8;
+pub const GLOWSPEED: i32 = 8;
 
 /// Duration of the bright phase for strobe lights, in tics.
-const STROBEBRIGHT: i32 = 5;
+pub const STROBEBRIGHT: i32 = 5;
 
 /// Dark-phase duration for fast strobe lights, in tics (`FASTDARK` in C).
-const FASTDARK: i32 = 15;
+pub const FASTDARK: i32 = 15;
 
 /// Dark-phase duration for slow strobe lights, in tics (`SLOWDARK` in C).
-const SLOWDARK: i32 = 35;
+pub const SLOWDARK: i32 = 35;
 
 /// Thinker state for the fire-flicker lighting effect.
 ///

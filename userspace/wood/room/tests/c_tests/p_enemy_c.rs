@@ -14,7 +14,6 @@
 #![allow(non_snake_case)]
 
 use room::engine::{
-    c_ffi,
     math::{fixed::FRACUNIT, tables::ANG90},
     play::enemy,
 };
@@ -91,7 +90,7 @@ fn opposite_directions_are_negated() {
 /// when a homing missile tries to home in on its target.
 #[test]
 fn traceangle_value() {
-    assert_eq!(c_ffi::TRACEANGLE, 0xc000000);
+    assert_eq!(enemy::TRACEANGLE, 0xc000000);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,14 +100,14 @@ fn traceangle_value() {
 /// `FATSPREAD = ANG90 / 8`.  The angular spread between Mancubus fireballs.
 #[test]
 fn fatspread_is_ang90_over_8() {
-    assert_eq!(c_ffi::FATSPREAD, ANG90 / 8);
+    assert_eq!(enemy::FATSPREAD, (ANG90 / 8) as i32);
 }
 
 /// `SKULLSPEED = 20 × FRACUNIT`.  The Lost Soul charges at 20 map units/tic.
 #[test]
 fn skullspeed_is_20_fracunits() {
-    assert_eq!(c_ffi::SKULLSPEED, 20 * FRACUNIT);
-    assert_eq!(c_ffi::SKULLSPEED, 20 * 65536);
+    assert_eq!(enemy::SKULLSPEED, 20 * FRACUNIT);
+    assert_eq!(enemy::SKULLSPEED, 20 * 65536);
 }
 
 // ---------------------------------------------------------------------------

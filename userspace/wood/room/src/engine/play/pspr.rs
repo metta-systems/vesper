@@ -9,7 +9,6 @@
 use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::engine::{
-    c_ffi::{LOWERSPEED, RAISESPEED, WEAPONBOTTOM, WEAPONTOP},
     doom::{
         items::weaponinfo,
         mode::{commercial, shareware},
@@ -28,6 +27,17 @@ use crate::engine::{
     },
     sound::S_StartSound,
 };
+
+/// Weapon-sprite lower speed (LOWERSPEED in p_pspr.c = FRACUNIT × 6).
+pub const LOWERSPEED: i32 = FRACUNIT * 6;
+/// Weapon-sprite raise speed (RAISESPEED in p_pspr.c = FRACUNIT × 6).
+pub const RAISESPEED: i32 = FRACUNIT * 6;
+/// Y-position of the weapon at its lowest (off-screen) rest point
+/// (WEAPONBOTTOM in p_pspr.c = 128 × FRACUNIT).
+pub const WEAPONBOTTOM: i32 = 128 * FRACUNIT;
+/// Y-position of the weapon at its highest (ready) position
+/// (WEAPONTOP in p_pspr.c = 32 × FRACUNIT).
+pub const WEAPONTOP: i32 = 32 * FRACUNIT;
 
 // Weapon type constants (from doomdef.h)
 /// Weapon slot index for the fist (melee, no ammo).
@@ -131,7 +141,7 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
         }
 
         let state = &mut info::states[stnum as usize] as *mut State;
-        (*psp).state = state as *mut crate::engine::doom::player::state_t;
+        (*psp).state = state as *mut state_t;
         (*psp).tics = (*state).tics;
 
         if (*state).misc1 != 0 {

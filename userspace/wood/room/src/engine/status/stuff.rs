@@ -62,7 +62,9 @@ const ST_HEIGHT: i32 = 32;
 /// Width of the status bar in screen pixels (matches C `ST_WIDTH`).
 const ST_WIDTH: i32 = 320;
 /// Left edge of the status bar in screen coordinates (matches C `ST_X`).
-const ST_X: i32 = 0;
+pub const ST_X: i32 = 0;
+/// X pixel offset of the arms display (matches C `ST_X2`).
+pub const ST_X2: i32 = 104;
 /// Top edge of the status bar in screen coordinates (matches C `ST_Y`).
 const ST_Y: i32 = 200 - ST_HEIGHT;
 
@@ -71,22 +73,24 @@ const ST_FX: i32 = 143;
 /// Y pixel position of the face widget background (matches C `ST_FY`).
 const ST_FY: i32 = 169;
 
+/// 1-in-N probability of a random face change per tic (matches C `ST_FACEPROBABILITY`).
+pub const ST_FACEPROBABILITY: i32 = 96;
 /// Number of pain-level face rows (0 = healthy, 4 = critical; matches C `ST_NUMPAINFACES`).
-const ST_NUMPAINFACES: i32 = 5;
+pub const ST_NUMPAINFACES: i32 = 5;
 /// Straight-ahead frames per pain row (matches C `ST_NUMSTRAIGHTFACES`).
-const ST_NUMSTRAIGHTFACES: i32 = 3;
+pub const ST_NUMSTRAIGHTFACES: i32 = 3;
 /// Turn-direction frames per pain row (matches C `ST_NUMTURNFACES`).
-const ST_NUMTURNFACES: i32 = 2;
+pub const ST_NUMTURNFACES: i32 = 2;
 /// Special-expression frames per pain row: ouch, evil-grin, rampage (matches C `ST_NUMSPECIALFACES`).
-const ST_NUMSPECIALFACES: i32 = 3;
+pub const ST_NUMSPECIALFACES: i32 = 3;
 
 /// Total frames per pain-level row (matches C `ST_FACESTRIDE`).
 const ST_FACESTRIDE: i32 = ST_NUMSTRAIGHTFACES + ST_NUMTURNFACES + ST_NUMSPECIALFACES;
 
 /// Number of frames appended after all pain rows: god-mode and dead (matches C `ST_NUMEXTRAFACES`).
-const ST_NUMEXTRAFACES: i32 = 2;
+pub const ST_NUMEXTRAFACES: i32 = 2;
 /// Total face patch count loaded from the WAD (matches C `ST_NUMFACES`).
-const ST_NUMFACES: i32 = ST_FACESTRIDE * ST_NUMPAINFACES + ST_NUMEXTRAFACES;
+pub const ST_NUMFACES: i32 = ST_FACESTRIDE * ST_NUMPAINFACES + ST_NUMEXTRAFACES;
 
 /// Offset within a pain-row to the first turn face (matches C `ST_TURNOFFSET`).
 const ST_TURNOFFSET: i32 = ST_NUMSTRAIGHTFACES;
@@ -107,18 +111,18 @@ const ST_FACESX: i32 = 143;
 const ST_FACESY: i32 = 168;
 
 /// Duration of the evil-grin expression in tics (matches C `ST_EVILGRINCOUNT`).
-const ST_EVILGRINCOUNT: i32 = 2 * TICRATE;
+pub const ST_EVILGRINCOUNT: i32 = 2 * TICRATE;
 /// Duration of a straight-ahead expression in tics (matches C `ST_STRAIGHTFACECOUNT`).
-const ST_STRAIGHTFACECOUNT: i32 = TICRATE / 2;
+pub const ST_STRAIGHTFACECOUNT: i32 = TICRATE / 2;
 /// Duration of turn and ouch expressions in tics (matches C `ST_TURNCOUNT`).
-const ST_TURNCOUNT: i32 = TICRATE;
+pub const ST_TURNCOUNT: i32 = TICRATE;
 /// Duration of the ouch expression in tics (matches C `ST_OUCHCOUNT`).
-const ST_OUCHCOUNT: i32 = TICRATE;
+pub const ST_OUCHCOUNT: i32 = TICRATE;
 /// Tics of continuous fire before the rampage face appears (matches C `ST_RAMPAGEDELAY`).
-const ST_RAMPAGEDELAY: i32 = 2 * TICRATE;
+pub const ST_RAMPAGEDELAY: i32 = 2 * TICRATE;
 
 /// Health-point drop threshold that triggers the ouch face (matches C `ST_MUCHPAIN`).
-const ST_MUCHPAIN: i32 = 20;
+pub const ST_MUCHPAIN: i32 = 20;
 
 /// Digit width of the ready-ammo number widget (matches C `ST_AMMOWIDTH`).
 const ST_AMMOWIDTH: i32 = 3;
@@ -220,15 +224,15 @@ const AM_MSGENTERED: i32 = AM_MSGHEADER | (('e' as i32) << 8);
 const AM_MSGEXITED: i32 = AM_MSGHEADER | (('x' as i32) << 8);
 
 /// Index of the first red-damage palette in `PLAYPAL` (matches C `STARTREDPALS`).
-const STARTREDPALS: i32 = 1;
+pub const STARTREDPALS: i32 = 1;
 /// Index of the first bonus-pickup palette in `PLAYPAL` (matches C `STARTBONUSPALS`).
-const STARTBONUSPALS: i32 = 9;
+pub const STARTBONUSPALS: i32 = 9;
 /// Number of red-damage palette entries (matches C `NUMREDPALS`).
-const NUMREDPALS: i32 = 8;
+pub const NUMREDPALS: i32 = 8;
 /// Number of bonus-pickup palette entries (matches C `NUMBONUSPALS`).
-const NUMBONUSPALS: i32 = 4;
+pub const NUMBONUSPALS: i32 = 4;
 /// Index of the radiation-suit palette in `PLAYPAL` (matches C `RADIATIONPAL`).
-const RADIATIONPAL: i32 = 13;
+pub const RADIATIONPAL: i32 = 13;
 
 // ---------------------------------------------------------------------------
 // String literals (from d_englsh.h)

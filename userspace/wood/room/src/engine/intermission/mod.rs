@@ -59,23 +59,23 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 /// Number of Doom episodes (E1-E4, matches C `NUMEPISODES`).
-const NUMEPISODES: usize = 4;
+pub const NUMEPISODES: usize = 4;
 /// Maps per episode (1-9, matches C `NUMMAPS`).
-const NUMMAPS: usize = 9;
+pub const NUMMAPS: usize = 9;
 
 /// Screen y coordinate of the level-name title patch (matches C `WI_TITLEY`).
-const WI_TITLEY: i32 = 2;
+pub const WI_TITLEY: i32 = 2;
 /// Vertical pixel spacing between player rows in the netgame and deathmatch views (matches C `WI_SPACINGY`).
-const WI_SPACINGY: i32 = 33;
+pub const WI_SPACINGY: i32 = 33;
 
 /// Screen x of the stats column in single-player view (matches C `SP_STATSX`).
-const SP_STATSX: i32 = 50;
+pub const SP_STATSX: i32 = 50;
 /// Screen y of the stats area in single-player view (matches C `SP_STATSY`).
-const SP_STATSY: i32 = 50;
+pub const SP_STATSY: i32 = 50;
 /// Screen x of the time display in single-player view (matches C `SP_TIMEX`).
-const SP_TIMEX: i32 = 16;
+pub const SP_TIMEX: i32 = 16;
 /// Screen y of the time display in single-player view (matches C `SP_TIMEY`).
-const SP_TIMEY: i32 = SCREENHEIGHT - 32;
+pub const SP_TIMEY: i32 = SCREENHEIGHT - 32;
 
 /// Screen y of the stats header row in netgame view (matches C `NG_STATSY`).
 const NG_STATSY: i32 = 50;
@@ -87,7 +87,7 @@ const DM_MATRIXX: i32 = 42;
 /// Screen y of the frag matrix top in deathmatch view (matches C `DM_MATRIXY`).
 const DM_MATRIXY: i32 = 68;
 /// Horizontal spacing between columns in the deathmatch frag matrix (matches C `DM_SPACINGX`).
-const DM_SPACINGX: i32 = 40;
+pub const DM_SPACINGX: i32 = 40;
 /// Screen x of the "Totals" column in deathmatch view (matches C `DM_TOTALSX`).
 const DM_TOTALSX: i32 = 269;
 /// Screen x of the "Killers" label in deathmatch view (matches C `DM_KILLERSX`).
@@ -100,7 +100,7 @@ const DM_VICTIMSX: i32 = 5;
 const DM_VICTIMSY: i32 = 50;
 
 /// Number of seconds (in `TICRATE` units) the "Show Next Location" map is displayed (matches C `SHOWNEXTLOCDELAY`).
-const SHOWNEXTLOCDELAY: i32 = 4;
+pub const SHOWNEXTLOCDELAY: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // Types that must match C layout (g_game.c is still C)
@@ -292,11 +292,11 @@ static LNODES: [[point_t; NUMMAPS]; NUMEPISODES] =
     [LNODESEPSD0, LNODESEPSD1, LNODESEPSD2, LNODESEPSD3];
 
 /// Number of animated patches in Episode 1's background (matches C `NUMANIMS[0]`).
-pub(crate) const EPSD0_NANIM: usize = 10;
+pub const EPSD0_NANIM: usize = 10;
 /// Number of animated patches in Episode 2's background (matches C `NUMANIMS[1]`).
-pub(crate) const EPSD1_NANIM: usize = 9;
+pub const EPSD1_NANIM: usize = 9;
 /// Number of animated patches in Episode 3's background (matches C `NUMANIMS[2]`).
-pub(crate) const EPSD2_NANIM: usize = 6;
+pub const EPSD2_NANIM: usize = 6;
 
 /// Animation configurations for Episode 1's background overlay (C `epsd0animinfo`).
 static EPSD0_CONFIG: [anim_config_t; EPSD0_NANIM] = [

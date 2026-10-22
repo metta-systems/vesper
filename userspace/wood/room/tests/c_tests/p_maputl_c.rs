@@ -10,7 +10,6 @@ use std::sync::Mutex;
 use {
     crate::harness::C_GLOBAL_LOCK,
     room::engine::{
-        c_ffi,
         map::{line_t, sector_t, slopetype_t, vertex_t},
         math::{bbox::BBox, fixed::FRACUNIT},
         play::{self, maputl::divline_t},
@@ -787,7 +786,7 @@ static TRAVERSED_FRACS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_continue(intr: *mut c_ffi::intercept_t) -> u32 {
+unsafe fn record_and_continue(intr: *mut play::maputl::intercept_t) -> u32 {
     TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
     1 // continue
 }
@@ -800,7 +799,7 @@ unsafe fn record_and_continue(intr: *mut c_ffi::intercept_t) -> u32 {
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_stop(intr: *mut c_ffi::intercept_t) -> u32 {
+unsafe fn record_and_stop(intr: *mut play::maputl::intercept_t) -> u32 {
     TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
     0 // stop
 }
@@ -813,7 +812,7 @@ fn traverse_intercepts_empty() {
     unsafe {
         TRAVERSED_FRACS.lock().unwrap().clear();
         play::maputl::intercept_p =
-            (&raw mut play::maputl::intercepts).cast::<c_ffi::intercept_t>();
+            (&raw mut play::maputl::intercepts).cast::<play::maputl::intercept_t>();
         let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
         assert_eq!(result, 1); // true = all traversed
         assert!(TRAVERSED_FRACS.lock().unwrap().is_empty());
@@ -826,13 +825,13 @@ fn traverse_intercepts_single() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     unsafe {
         TRAVERSED_FRACS.lock().unwrap().clear();
-        play::maputl::intercepts[0] = c_ffi::intercept_t {
+        play::maputl::intercepts[0] = play::maputl::intercept_t {
             frac: FRACUNIT / 2,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
         play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<c_ffi::intercept_t>()
+            .cast::<play::maputl::intercept_t>()
             .add(1);
 
         let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
@@ -853,23 +852,23 @@ fn traverse_intercepts_sorted_order() {
         TRAVERSED_FRACS.lock().unwrap().clear();
 
         // Fill 3 intercepts with fracs out of order (all <= FRACUNIT).
-        play::maputl::intercepts[0] = c_ffi::intercept_t {
+        play::maputl::intercepts[0] = play::maputl::intercept_t {
             frac: FRACUNIT / 2,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
-        play::maputl::intercepts[1] = c_ffi::intercept_t {
+        play::maputl::intercepts[1] = play::maputl::intercept_t {
             frac: FRACUNIT / 4,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
-        play::maputl::intercepts[2] = c_ffi::intercept_t {
+        play::maputl::intercepts[2] = play::maputl::intercept_t {
             frac: 3 * FRACUNIT / 4,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
         play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<c_ffi::intercept_t>()
+            .cast::<play::maputl::intercept_t>()
             .add(3);
 
         let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
@@ -890,18 +889,18 @@ fn traverse_intercepts_respects_maxfrac() {
     unsafe {
         TRAVERSED_FRACS.lock().unwrap().clear();
 
-        play::maputl::intercepts[0] = c_ffi::intercept_t {
+        play::maputl::intercepts[0] = play::maputl::intercept_t {
             frac: FRACUNIT / 4,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
-        play::maputl::intercepts[1] = c_ffi::intercept_t {
+        play::maputl::intercepts[1] = play::maputl::intercept_t {
             frac: FRACUNIT,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
         play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<c_ffi::intercept_t>()
+            .cast::<play::maputl::intercept_t>()
             .add(2);
 
         // maxfrac = FRACUNIT/2 → only the first intercept (FRACUNIT/4) is in range.
@@ -921,18 +920,18 @@ fn traverse_intercepts_stop_early() {
     unsafe {
         TRAVERSED_FRACS.lock().unwrap().clear();
 
-        play::maputl::intercepts[0] = c_ffi::intercept_t {
+        play::maputl::intercepts[0] = play::maputl::intercept_t {
             frac: FRACUNIT / 4,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
-        play::maputl::intercepts[1] = c_ffi::intercept_t {
+        play::maputl::intercepts[1] = play::maputl::intercept_t {
             frac: FRACUNIT / 2,
             isaline: 0,
             d: std::mem::MaybeUninit::zeroed().assume_init(),
         };
         play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<c_ffi::intercept_t>()
+            .cast::<play::maputl::intercept_t>()
             .add(2);
 
         let result = play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT);

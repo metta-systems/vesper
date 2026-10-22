@@ -75,7 +75,7 @@ room/
         ├── hud/, status/    hu_*, st_*: HUD and status bar
         ├── automap.rs, intermission/, finale/, sound/
         ├── dehacked.rs      deh_str: DeHackEd string hook
-        └── c_ffi.rs, memio.rs  Not placed yet
+        └── memio.rs         Not placed yet
 ```
 
 ## Prerequisites

@@ -35,17 +35,17 @@ use crate::{
 /// Individual platform types multiply or divide this value:
 /// `downWaitUpStay` uses `PLATSPEED * 4`, `blazeDWUS` uses `PLATSPEED * 8`,
 /// and `raiseAndChange`/`raiseToNearestAndChange` use `PLATSPEED / 2`.
-const PLATSPEED: fixed_t = FRACUNIT;
+pub const PLATSPEED: fixed_t = FRACUNIT;
 
 /// Unitless platform wait count; multiplied by `TICRATE` at call sites to give
 /// the actual wait duration in tics (3 × 35 = 105 tics ≈ 3 s at 35 Hz).
-const PLATWAIT: i32 = 3;
+pub const PLATWAIT: i32 = 3;
 
 /// Maximum number of simultaneously active platform thinkers.
 ///
 /// Matches `MAXPLATS` in `p_local.h`.  If all slots are full,
 /// [`P_AddActivePlat`] calls `I_Error` and the engine aborts.
-const MAXPLATS: usize = 30;
+pub const MAXPLATS: usize = 30;
 
 // result_e enum values returned by T_MovePlane.
 /// `T_MovePlane` result: the floor moved without incident.

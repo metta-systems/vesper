@@ -196,8 +196,16 @@ const MAX_JOY_BUTTONS: usize = 20;
 const SAVEGAMESIZE: i64 = 0x2c000;
 /// End-of-stream sentinel byte written at the tail of every demo `.lmp`.
 const DEMOMARKER: byte = 0x80;
-/// Size of the version-text field in some legacy savegame headers.
-const VERSIONSIZE: usize = 16;
+/// Version code for cph's longtics hack ("v1.91") from `doomdef.h`.
+pub const DOOM_191_VERSION: i32 = 111;
+/// Size of the body-object circular queue (BODYQUESIZE in g_game.c).
+pub const BODYQUESIZE: usize = 32;
+/// Number of tics during which slow-turn speed is used before switching to
+/// normal turn speed (SLOWTURNTICS in g_game.c).
+pub const SLOWTURNTICS: i32 = 6;
+/// Speed threshold above which the turbo-cheat detector fires
+/// (TURBOTHRESHOLD in g_game.c = 0x32 = 50).
+pub const TURBOTHRESHOLD: i32 = 0x32;
 /// Ammo-type index for the clip (bullets) ammo class.
 const am_clip: usize = 0;
 /// `MT_TFOG` mobj type index - teleport fog spawned at player respawn spots.
@@ -426,7 +434,7 @@ pub static mut wminfo: wbstartstruct_t = wbstartstruct_t {
 /// A mismatch on a remote command triggers `I_Error("consistency failure ...")`.
 pub static mut consistancy: [[byte; 128]; MAXPLAYERS] = [[0; 128]; MAXPLAYERS];
 
-/// Index into `bodyque` for the next corpse to add (modulo 32).
+/// Index into `bodyque` for the next corpse to add (modulo [`BODYQUESIZE`]).
 pub static mut bodyqueslot: i32 = 0;
 
 /// Non-zero enforces the vanilla `SAVEGAMESIZE` cap (`I_Error` on overrun).
@@ -443,7 +451,7 @@ pub static mut forwardmove: [fixed_t; 2] = [0x19, 0x32];
 pub static mut sidemove: [fixed_t; 2] = [0x18, 0x28];
 
 /// Turn-speed table: `[normal=640, fast=1280, slow=320]` (BAM units per tic).
-/// The "slow" entry is selected for the first `SLOWTURNTICS` (6) of held input.
+/// The "slow" entry is selected for the first [`SLOWTURNTICS`] (6) of held input.
 pub static mut angleturn: [fixed_t; 3] = [640, 1280, 320];
 
 /// Non-zero when the next level transition should route through the secret
@@ -478,9 +486,9 @@ pub static cpars: [i32; 32] = [
     240, 150, 180, 150, 150, 300, 330, 420, 300, 180, 120, 30,
 ];
 
-/// Circular queue of `BODYQUESIZE=32` recent player corpses; the oldest is
+/// Circular queue of [`BODYQUESIZE`] recent player corpses; the oldest is
 /// removed when the queue wraps (see `G_CheckSpot`).
-pub static mut bodyque: [*mut mobj_t; 32] = [ptr::null_mut(); 32];
+pub static mut bodyque: [*mut mobj_t; BODYQUESIZE] = [ptr::null_mut(); BODYQUESIZE];
 
 // ---------------------------------------------------------------------------
 // Module-private statics
@@ -881,7 +889,11 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
         TURNHELD = 0;
     }
 
-    let tspeed = if TURNHELD < 6 { 2usize } else { speed };
+    let tspeed = if TURNHELD < SLOWTURNTICS {
+        2usize
+    } else {
+        speed
+    };
 
     if strafe {
         if GAMEKEYDOWN[key_right as usize] != 0 {
@@ -1395,7 +1407,7 @@ pub unsafe fn G_Ticker() {
             }
 
             // Turbo detection
-            if (*cmd).forwardmove > 0x32 {
+            if (*cmd).forwardmove as i32 > TURBOTHRESHOLD {
                 turbodetected[i] = 1;
             }
 
@@ -1607,10 +1619,10 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     }
 
     // Flush old corpse
-    if bodyqueslot >= 32 {
-        P_RemoveMobj(bodyque[(bodyqueslot % 32) as usize]);
+    if bodyqueslot >= BODYQUESIZE as i32 {
+        P_RemoveMobj(bodyque[(bodyqueslot % BODYQUESIZE as i32) as usize]);
     }
-    bodyque[(bodyqueslot % 32) as usize] = players[playernum as usize].mo;
+    bodyque[(bodyqueslot % BODYQUESIZE as i32) as usize] = players[playernum as usize].mo;
     bodyqueslot += 1;
 
     // Spawn teleport fog
@@ -2542,8 +2554,6 @@ fn g_vanilla_version_code_for(gv: i32) -> i32 {
 /// # Safety
 /// Mutates `longtics`, `lowres_turn`, the demo cursor and the demo buffer.
 pub unsafe fn G_BeginRecording() {
-    use crate::engine::c_ffi::DOOM_191_VERSION;
-
     longtics = (M_CheckParm("-longtics") != 0) as boolean;
     lowres_turn = (longtics == 0) as boolean;
 
@@ -2631,8 +2641,6 @@ fn demo_version_description(version: i32) -> Cow<'static, str> {
 /// # Safety
 /// Mutates global engine state extensively.
 pub unsafe fn G_DoPlayDemo() {
-    use crate::engine::c_ffi::DOOM_191_VERSION;
-
     gameaction = ga_nothing;
     demobuffer = W_CacheLumpName((&*ptr::addr_of!(defdemoname)).as_bytes(), PU_STATIC) as *mut byte;
     demo_p = demobuffer;

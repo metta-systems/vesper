@@ -54,12 +54,30 @@
 
 use {
     crate::engine::{
-        c_ffi::screen_mode_t,
         misc::argv::M_CheckParm,
         zone::{Z_Free, Z_Malloc},
     },
     std::{ffi::c_void, ptr},
 };
+
+/// A screen scaling mode descriptor, matching `screen_mode_t` in `i_video.h`.
+pub struct screen_mode_t {
+    /// Output buffer width in pixels.
+    pub width: i32,
+    /// Output buffer height in pixels.
+    pub height: i32,
+    /// Optional initialiser called once with the game palette.
+    pub init_mode: Option<unsafe fn(*mut u8)>,
+    /// Draw function: copies src buffer → dest buffer for the given rectangle.
+    pub draw_screen: Option<unsafe fn(i32, i32, i32, i32) -> i32>,
+    /// True when this mode uses blended interpolation (lower visual quality).
+    pub poor_quality: i32,
+}
+
+/// Screen width used by the "squash" scale modes (SCREENWIDTH_4_3 in i_video.h).
+pub const SCREENWIDTH_4_3: i32 = 256;
+/// Screen height used by the "stretch" scale modes (SCREENHEIGHT_4_3 in i_video.h).
+pub const SCREENHEIGHT_4_3: i32 = 240;
 
 /// Flush the "Generating lookup tables.." progress prints.
 fn flush_stdout() {

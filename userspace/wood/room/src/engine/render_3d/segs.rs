@@ -34,6 +34,7 @@ use crate::engine::{
         tables::{self, ANG180, ANG90, ANGLETOFINESHIFT},
     },
     render_3d::bsp::drawseg_t,
+    wad::format::LinedefFlag,
 };
 
 // ---------------------------------------------------------------------------
@@ -343,8 +344,7 @@ pub unsafe fn R_RenderMaskedSegRange(ds: *mut drawseg_t, x1: i32, x2: i32) {
     crate::engine::render_3d::things::mfloorclip = (*ds).sprbottomclip;
     crate::engine::render_3d::things::mceilingclip = (*ds).sprtopclip;
 
-    if (*(*curline).linedef).flags & (crate::engine::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0
-    {
+    if (*(*curline).linedef).flags & (LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
         dc_texturemid = if (*frontsector).floorheight > (*backsector).floorheight {
             (*frontsector).floorheight
         } else {
@@ -599,7 +599,7 @@ pub unsafe fn R_StoreWallRange(start: i32, stop: i32) {
     sidedef = (*curline).sidedef;
     linedef = (*curline).linedef;
 
-    (*linedef).flags |= crate::engine::c_ffi::LinedefFlag::MAPPED as i16;
+    (*linedef).flags |= LinedefFlag::MAPPED as i16;
 
     rw_normalangle = (*curline).angle.wrapping_add(ANG90);
     let mut offsetangle = (rw_normalangle.wrapping_sub(rw_angle1) as i32).unsigned_abs();
@@ -648,7 +648,7 @@ pub unsafe fn R_StoreWallRange(start: i32, stop: i32) {
         markfloor = 1;
         markceiling = 1;
 
-        if (*linedef).flags & (crate::engine::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
+        if (*linedef).flags & (LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
             let vtop =
                 (*frontsector).floorheight + *textureheight.add((*sidedef).midtexture as usize);
             rw_midtexturemid = vtop - viewz;
@@ -732,7 +732,7 @@ pub unsafe fn R_StoreWallRange(start: i32, stop: i32) {
 
         if worldhigh < worldtop {
             toptexture = *texturetranslation.add((*sidedef).toptexture as usize);
-            if (*linedef).flags & (crate::engine::c_ffi::LinedefFlag::DONTPEGTOP as i16) != 0 {
+            if (*linedef).flags & (LinedefFlag::DONTPEGTOP as i16) != 0 {
                 rw_toptexturemid = worldtop;
             } else {
                 let vtop = (*backsector).ceilingheight
@@ -743,7 +743,7 @@ pub unsafe fn R_StoreWallRange(start: i32, stop: i32) {
 
         if worldlow > worldbottom {
             bottomtexture = *texturetranslation.add((*sidedef).bottomtexture as usize);
-            if (*linedef).flags & (crate::engine::c_ffi::LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
+            if (*linedef).flags & (LinedefFlag::DONTPEGBOTTOM as i16) != 0 {
                 rw_bottomtexturemid = worldtop;
             } else {
                 rw_bottomtexturemid = worldlow;

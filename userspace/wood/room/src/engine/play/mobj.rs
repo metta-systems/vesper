@@ -11,7 +11,6 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::{mobjinfo_t, state_t, ITEMQUESIZE},
     doom::player::{PlayerMessage, PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
@@ -34,10 +33,13 @@ use crate::engine::{
 };
 
 /// Momentum magnitude below which an object's XY velocity is snapped to zero.
-const STOPSPEED: i32 = 0x1000;
+pub const STOPSPEED: i32 = 0x1000;
 /// Multiplicative XY friction applied each tic when an object is on the floor
 /// (0xe800 / 0x10000 ≈ 0.906).
-const FRICTION: i32 = 0xe800;
+pub const FRICTION: i32 = 0xe800;
+/// Capacity of the item-respawn circular queue (`ITEMQUESIZE` in
+/// `p_local.h`).
+pub const ITEMQUESIZE: usize = 128;
 /// Maximum XY momentum per tic; momentum is clamped to this before integration.
 const MAXMOVE: i32 = 30 * FRACUNIT;
 /// Gravitational acceleration applied to falling objects each tic (1 fixed unit).

@@ -14,7 +14,7 @@ use crate::{
         dehacked::DEH_String,
         doom::{
             items::weaponinfo,
-            player::{consoleplayer, players, PlayerMessage, PlayerT, CF_GODMODE},
+            player::{consoleplayer, players, PlayerMessage, PlayerT, CF_GODMODE, NUMAMMO},
             stat::{gamemode, gameversion},
         },
         math::{
@@ -37,10 +37,7 @@ use crate::{
 
 /// Bonus-count increment added to `player.bonuscount` on most pickups,
 /// causing a brief gold screen-flash. Matches `BONUSADD` in `p_inter.c`.
-const BONUSADD: i32 = 6;
-
-/// Number of distinct ammo types (clip, shell, cell, missile).
-const NUMAMMO: usize = 4;
+pub const BONUSADD: i32 = 6;
 
 /// Maximum health for normal health items; over-100 bonuses use
 /// `DEH_DEFAULT_MAX_HEALTH` instead.

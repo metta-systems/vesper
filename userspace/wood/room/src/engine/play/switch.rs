@@ -8,7 +8,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::{c_ffi::LinedefFlag, sound::info::Sfx},
+    crate::engine::{sound::info::Sfx, wad::format::LinedefFlag},
     std::ffi::c_void,
 };
 

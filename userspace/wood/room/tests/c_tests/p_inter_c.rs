@@ -12,7 +12,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, play};
+use room::engine::{doom::player, play};
 
 // ---------------------------------------------------------------------------
 // NUMAMMO / BONUSADD constants
@@ -21,13 +21,13 @@ use room::engine::{c_ffi, play};
 /// There are exactly 4 ammo types (am_clip, am_shell, am_cell, am_misl).
 #[test]
 fn numammo_is_4() {
-    assert_eq!(c_ffi::NUMAMMO, 4);
+    assert_eq!(player::NUMAMMO, 4);
 }
 
 /// `BONUSADD = 6`: each pick-up adds 6 tics of screen-flash bonus.
 #[test]
 fn bonusadd_is_6() {
-    assert_eq!(c_ffi::BONUSADD, 6);
+    assert_eq!(play::inter::BONUSADD, 6);
 }
 
 // ---------------------------------------------------------------------------

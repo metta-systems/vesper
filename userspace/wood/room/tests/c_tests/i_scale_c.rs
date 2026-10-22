@@ -12,38 +12,35 @@
 //! display to be initialized.
 //!
 //! These tests verify:
-//!   * Screen constants (`c_ffi::SCREENWIDTH_4_3`, `c_ffi::SCREENHEIGHT_4_3`)
+//!   * Screen constants (`scale::SCREENWIDTH_4_3`, `scale::SCREENHEIGHT_4_3`)
 //!   * Dimensions of every named mode
 //!   * `poor_quality` flag for the lowest-resolution modes
 //!   * `draw_screen` function pointer is non-null (the mode is usable)
 
 #![allow(non_snake_case)]
 
-use room::engine::{
-    c_ffi,
-    interface::{
-        scale,
-        video::{SCREENHEIGHT, SCREENWIDTH},
-    },
+use room::engine::interface::{
+    scale,
+    video::{SCREENHEIGHT, SCREENWIDTH},
 };
 
 // ---------------------------------------------------------------------------
 // Screen dimension constants
 // ---------------------------------------------------------------------------
 
-/// `c_ffi::SCREENWIDTH_4_3 = 256` — the horizontal resolution used by the squash
+/// `scale::SCREENWIDTH_4_3 = 256` — the horizontal resolution used by the squash
 /// modes.  The "correct" value should be ~266, but vanilla used 256 because
 /// it recycled the same blend tables as the stretch modes.
 #[test]
 fn screenwidth_4_3_is_256() {
-    assert_eq!(c_ffi::SCREENWIDTH_4_3, 256);
+    assert_eq!(scale::SCREENWIDTH_4_3, 256);
 }
 
-/// `c_ffi::SCREENHEIGHT_4_3 = 240` — the vertical resolution used by the stretch
+/// `scale::SCREENHEIGHT_4_3 = 240` — the vertical resolution used by the stretch
 /// modes to achieve a 4:3 aspect ratio from the 320×200 source.
 #[test]
 fn screenheight_4_3_is_240() {
-    assert_eq!(c_ffi::SCREENHEIGHT_4_3, 240);
+    assert_eq!(scale::SCREENHEIGHT_4_3, 240);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +234,7 @@ fn stretch_mode_widths_are_n_times_screenwidth() {
     }
 }
 
-/// Stretch-mode heights are `N × c_ffi::SCREENHEIGHT_4_3` for N in 1..=5.
+/// Stretch-mode heights are `N × scale::SCREENHEIGHT_4_3` for N in 1..=5.
 #[test]
 fn stretch_mode_heights_are_n_times_screenheight_4_3() {
     let modes = [
@@ -250,7 +247,7 @@ fn stretch_mode_heights_are_n_times_screenheight_4_3() {
     for (n, h) in modes {
         assert_eq!(
             h,
-            n * c_ffi::SCREENHEIGHT_4_3,
+            n * scale::SCREENHEIGHT_4_3,
             "mode_stretch_{n}x height mismatch"
         );
     }
@@ -287,7 +284,7 @@ fn mode_squash_2x_is_512x400() {
 }
 
 /// 3× squash: 800×600.  This is a quirk of the original C code: rather than
-/// using the formula `c_ffi::SCREENWIDTH_4_3 × 3 = 768`, vanilla used the nearest
+/// using the formula `scale::SCREENWIDTH_4_3 × 3 = 768`, vanilla used the nearest
 /// standard monitor resolution (800×600).
 #[test]
 fn mode_squash_3x_is_800x600() {
@@ -309,7 +306,7 @@ fn mode_squash_5x_is_1280x1000() {
     assert_eq!(scale::mode_squash_5x.height, 1000);
 }
 
-/// Squash-mode widths are `N × c_ffi::SCREENWIDTH_4_3` for N in 1, 2, 4, 5.
+/// Squash-mode widths are `N × scale::SCREENWIDTH_4_3` for N in 1, 2, 4, 5.
 /// Mode 3× is special-cased to 800 (a standard monitor resolution) rather
 /// than the formula value of 768 — this is an original C quirk.
 #[test]
@@ -324,7 +321,7 @@ fn squash_mode_widths_are_n_times_screenwidth_4_3() {
     for (n, w) in modes {
         assert_eq!(
             w,
-            n * c_ffi::SCREENWIDTH_4_3,
+            n * scale::SCREENWIDTH_4_3,
             "mode_squash_{n}x width mismatch"
         );
     }
@@ -336,7 +333,7 @@ fn squash_mode_widths_are_n_times_screenwidth_4_3() {
     );
     assert_ne!(
         scale::mode_squash_3x.width,
-        3 * c_ffi::SCREENWIDTH_4_3,
+        3 * scale::SCREENWIDTH_4_3,
         "mode_squash_3x should NOT follow the formula"
     );
 }

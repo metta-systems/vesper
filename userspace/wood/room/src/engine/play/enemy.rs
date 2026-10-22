@@ -39,7 +39,6 @@ fn abs(x: i32) -> i32 {
 
 use crate::{
     engine::{
-        c_ffi::{LinedefFlag, MAPBLOCKSHIFT},
         doom::{
             main_loop::gametic,
             player::{players, PlayerT, PspdefT, MAXPLAYERS},
@@ -68,7 +67,7 @@ use crate::{
             },
             maputl::{
                 openrange, P_AproxDistance, P_BlockThingsIterator, P_LineOpening,
-                P_SetThingPosition, P_UnsetThingPosition,
+                P_SetThingPosition, P_UnsetThingPosition, MAPBLOCKSHIFT,
             },
             mobj::{
                 mobj_t, P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj,
@@ -81,6 +80,7 @@ use crate::{
         },
         render_3d::main::{validcount, R_PointToAngle2},
         sound::S_StartSound,
+        wad::format::LinedefFlag,
     },
     i_error,
 };
@@ -141,9 +141,9 @@ const vld_open: i32 = 0;
 /// `mobjtype_t` index for the player map object; mirrors `MT_PLAYER` from `info.h`.
 const MT_PLAYER: i32 = 0;
 /// Angular spread (ANG90/8) used between Mancubus fire balls; mirrors `FATSPREAD` from `p_enemy.c`.
-const FATSPREAD: i32 = ANG90 as i32 / 8;
+pub const FATSPREAD: i32 = ANG90 as i32 / 8;
 /// Lost Soul charge speed in fixed-point units per tic (20 map units/tic); mirrors `SKULLSPEED`.
-const SKULLSPEED: i32 = 20 * FRACUNIT;
+pub const SKULLSPEED: i32 = 20 * FRACUNIT;
 
 use crate::engine::{
     doom::main::fastparm,

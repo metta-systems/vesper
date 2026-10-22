@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, math::fixed::FRACUNIT, play};
+use room::engine::{math::fixed::FRACUNIT, play};
 
 // ---------------------------------------------------------------------------
 // STOPSPEED / FRICTION constants
@@ -24,8 +24,8 @@ use room::engine::{c_ffi, math::fixed::FRACUNIT, play};
 /// velocity magnitude drops below this value, it is zeroed.
 #[test]
 fn stopspeed_is_0x1000() {
-    assert_eq!(c_ffi::STOPSPEED, 0x1000);
-    assert_eq!(c_ffi::STOPSPEED, 4096);
+    assert_eq!(play::mobj::STOPSPEED, 0x1000);
+    assert_eq!(play::mobj::STOPSPEED, 4096);
 }
 
 /// `FRICTION = 0xe800` is the per-tic velocity multiplier applied while the
@@ -35,8 +35,8 @@ fn stopspeed_is_0x1000() {
 #[test]
 fn friction_is_0xe800() {
     // The C constant is defined as 0xe800 which fits in a signed 32-bit int.
-    assert_eq!(c_ffi::FRICTION, 0xe800_u32 as i32);
-    assert_eq!(c_ffi::FRICTION, 59392_u32 as i32);
+    assert_eq!(play::mobj::FRICTION, 0xe800_u32 as i32);
+    assert_eq!(play::mobj::FRICTION, 59392_u32 as i32);
 }
 
 /// FRICTION is less than FRACUNIT, so it decelerates objects.
@@ -44,7 +44,7 @@ fn friction_is_0xe800() {
 fn friction_is_less_than_fracunit() {
     // 0xe800 = 59392 < 65536 = FRACUNIT, so every tic reduces velocity.
     assert!(
-        c_ffi::FRICTION < FRACUNIT,
+        play::mobj::FRICTION < FRACUNIT,
         "FRICTION must be < FRACUNIT for deceleration"
     );
 }
@@ -53,9 +53,9 @@ fn friction_is_less_than_fracunit() {
 /// it represents a tiny per-tic velocity threshold.
 #[test]
 fn stopspeed_is_small_fraction_of_fracunit() {
-    assert!(c_ffi::STOPSPEED < FRACUNIT);
+    assert!(play::mobj::STOPSPEED < FRACUNIT);
     // 0x1000 / 0x10000 = 1/16 of a map unit per tic.
-    assert_eq!(FRACUNIT / c_ffi::STOPSPEED, 16);
+    assert_eq!(FRACUNIT / play::mobj::STOPSPEED, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ fn stopspeed_is_small_fraction_of_fracunit() {
 /// `ITEMQUESIZE = 128`: the item-respawn ring buffer holds 128 slots.
 #[test]
 fn itemquesize_is_128() {
-    assert_eq!(c_ffi::ITEMQUESIZE, 128);
+    assert_eq!(play::mobj::ITEMQUESIZE, 128);
 }
 
 /// The respawn queue is exactly ITEMQUESIZE entries of mapthing_t.
@@ -74,7 +74,7 @@ fn itemrespawnque_length() {
     unsafe {
         assert_eq!(
             (*&raw const play::mobj::itemrespawnque).len(),
-            c_ffi::ITEMQUESIZE
+            play::mobj::ITEMQUESIZE
         );
     }
 }
@@ -131,7 +131,7 @@ fn itemrespawntime_length_is_itemquesize() {
     unsafe {
         assert_eq!(
             (*&raw const play::mobj::itemrespawntime).len(),
-            c_ffi::ITEMQUESIZE
+            play::mobj::ITEMQUESIZE
         );
     }
 }

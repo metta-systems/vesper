@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, math::fixed::FRACUNIT, play::pspr};
+use room::engine::{math::fixed::FRACUNIT, play::pspr};
 
 // ---------------------------------------------------------------------------
 // Weapon speed constants
@@ -24,24 +24,24 @@ use room::engine::{c_ffi, math::fixed::FRACUNIT, play::pspr};
 /// weapons).
 #[test]
 fn lowerspeed_is_6_fracunits() {
-    assert_eq!(c_ffi::LOWERSPEED, FRACUNIT * 6);
-    assert_eq!(c_ffi::LOWERSPEED, 6 * 65536);
-    assert_eq!(c_ffi::LOWERSPEED, 393216);
+    assert_eq!(pspr::LOWERSPEED, FRACUNIT * 6);
+    assert_eq!(pspr::LOWERSPEED, 6 * 65536);
+    assert_eq!(pspr::LOWERSPEED, 393216);
 }
 
 /// `RAISESPEED = FRACUNIT × 6`.  The weapon rises at the same speed it
 /// descends, producing symmetric raise/lower animations.
 #[test]
 fn raisespeed_is_6_fracunits() {
-    assert_eq!(c_ffi::RAISESPEED, FRACUNIT * 6);
-    assert_eq!(c_ffi::RAISESPEED, 6 * 65536);
-    assert_eq!(c_ffi::RAISESPEED, 393216);
+    assert_eq!(pspr::RAISESPEED, FRACUNIT * 6);
+    assert_eq!(pspr::RAISESPEED, 6 * 65536);
+    assert_eq!(pspr::RAISESPEED, 393216);
 }
 
 /// Lower and raise speeds are identical in vanilla Doom.
 #[test]
 fn lowerspeed_equals_raisespeed() {
-    assert_eq!(c_ffi::LOWERSPEED, c_ffi::RAISESPEED);
+    assert_eq!(pspr::LOWERSPEED, pspr::RAISESPEED);
 }
 
 // ---------------------------------------------------------------------------
@@ -53,9 +53,9 @@ fn lowerspeed_equals_raisespeed() {
 /// weapon-switch animations, `psy` starts at `WEAPONBOTTOM` and moves up.
 #[test]
 fn weaponbottom_is_128_fracunits() {
-    assert_eq!(c_ffi::WEAPONBOTTOM, 128 * FRACUNIT);
-    assert_eq!(c_ffi::WEAPONBOTTOM, 128 * 65536);
-    assert_eq!(c_ffi::WEAPONBOTTOM, 8388608);
+    assert_eq!(pspr::WEAPONBOTTOM, 128 * FRACUNIT);
+    assert_eq!(pspr::WEAPONBOTTOM, 128 * 65536);
+    assert_eq!(pspr::WEAPONBOTTOM, 8388608);
 }
 
 /// `WEAPONTOP = 32 × FRACUNIT`.  The Y-position at which the weapon sprite is
@@ -63,23 +63,23 @@ fn weaponbottom_is_128_fracunits() {
 /// normal gameplay.
 #[test]
 fn weapontop_is_32_fracunits() {
-    assert_eq!(c_ffi::WEAPONTOP, 32 * FRACUNIT);
-    assert_eq!(c_ffi::WEAPONTOP, 32 * 65536);
-    assert_eq!(c_ffi::WEAPONTOP, 2097152);
+    assert_eq!(pspr::WEAPONTOP, 32 * FRACUNIT);
+    assert_eq!(pspr::WEAPONTOP, 32 * 65536);
+    assert_eq!(pspr::WEAPONTOP, 2097152);
 }
 
 /// `WEAPONBOTTOM` is exactly 4× `WEAPONTOP`.  This relationship determines
 /// how far off-screen the weapon travels: 128 / 32 = 4.
 #[test]
 fn weaponbottom_is_4x_weapontop() {
-    assert_eq!(c_ffi::WEAPONBOTTOM, 4 * c_ffi::WEAPONTOP);
+    assert_eq!(pspr::WEAPONBOTTOM, 4 * pspr::WEAPONTOP);
 }
 
 /// `WEAPONBOTTOM − WEAPONTOP` is the total travel distance.
 /// = (128 − 32) × FRACUNIT = 96 × FRACUNIT.
 #[test]
 fn weapon_travel_range_is_96_fracunits() {
-    let travel = c_ffi::WEAPONBOTTOM - c_ffi::WEAPONTOP;
+    let travel = pspr::WEAPONBOTTOM - pspr::WEAPONTOP;
     assert_eq!(travel, 96 * FRACUNIT);
 }
 
@@ -113,8 +113,8 @@ fn swingy_default_zero() {
 /// If `FRACBITS` or `FRACUNIT` ever changes, all these constants break.
 #[test]
 fn pspr_constants_are_whole_fracunit_multiples() {
-    assert_eq!(c_ffi::LOWERSPEED % FRACUNIT, 0, "LOWERSPEED");
-    assert_eq!(c_ffi::RAISESPEED % FRACUNIT, 0, "RAISESPEED");
-    assert_eq!(c_ffi::WEAPONBOTTOM % FRACUNIT, 0, "WEAPONBOTTOM");
-    assert_eq!(c_ffi::WEAPONTOP % FRACUNIT, 0, "WEAPONTOP");
+    assert_eq!(pspr::LOWERSPEED % FRACUNIT, 0, "LOWERSPEED");
+    assert_eq!(pspr::RAISESPEED % FRACUNIT, 0, "RAISESPEED");
+    assert_eq!(pspr::WEAPONBOTTOM % FRACUNIT, 0, "WEAPONBOTTOM");
+    assert_eq!(pspr::WEAPONTOP % FRACUNIT, 0, "WEAPONTOP");
 }

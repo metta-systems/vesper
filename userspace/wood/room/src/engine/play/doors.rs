@@ -26,10 +26,10 @@ use crate::engine::{
 };
 
 /// Movement speed for normal vertical doors (in fixed-point units per tic).
-const VDOORSPEED: fixed_t = FRACUNIT * 2;
+pub const VDOORSPEED: fixed_t = FRACUNIT * 2;
 
 /// Number of tics a normal door waits at the top before closing (`VDOORWAIT` in C).
-const VDOORWAIT: i32 = 150;
+pub const VDOORWAIT: i32 = 150;
 
 // vldoor_e enum values
 /// Normal raise-and-wait door: opens, waits `VDOORWAIT` tics, then closes.

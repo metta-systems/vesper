@@ -872,6 +872,17 @@ pub struct MobjInfo {
     pub raisestate: i32,
 }
 
+/// Opaque animation-state record (`state_t` in `info.h`).
+///
+/// `mobj_t::state` and `PspdefT::state` point at entries of [`states`]
+/// through this pointer-only type; cast to `*mut State` to read the fields.
+pub enum state_t {}
+/// Opaque map-object class descriptor (`mobjinfo_t` in `info.h`).
+///
+/// `mobj_t::info` points at an entry of [`mobjinfo`] through this
+/// pointer-only type; cast to `*mut MobjInfo` to read the fields.
+pub enum mobjinfo_t {}
+
 // Every action function referenced from [`states`]. The bodies live in
 // `p_pspr` (player weapon actions, called as `fn(*mut PlayerT, *mut
 // PspdefT)`) and `p_enemy` (map object actions, called as `fn(*mut

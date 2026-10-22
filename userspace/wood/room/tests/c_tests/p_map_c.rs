@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::{c_ffi, play};
+use room::engine::play;
 
 // ---------------------------------------------------------------------------
 // DEFAULT_SPECHIT_MAGIC — spechit overflow sentinel
@@ -26,7 +26,7 @@ use room::engine::{c_ffi, play};
 /// checking that the word following the array still contains this sentinel.
 #[test]
 fn default_spechit_magic_value() {
-    assert_eq!(c_ffi::DEFAULT_SPECHIT_MAGIC, 0x01C09C98);
+    assert_eq!(play::map::DEFAULT_SPECHIT_MAGIC, 0x01C09C98);
 }
 
 // ---------------------------------------------------------------------------

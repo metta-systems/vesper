@@ -13,7 +13,6 @@ use {
 };
 
 use crate::engine::{
-    c_ffi::{BASEYCENTER, MINZ},
     doom::player::{PspdefT, NUMPSPRITES},
     map::sector_t,
     math::{
@@ -29,6 +28,13 @@ use crate::engine::{
 
 /// Screen width in pixels; mirrors `SCREENWIDTH` from `i_video`.
 const SCREENWIDTH: usize = crate::engine::interface::video::SCREENWIDTH as usize;
+
+/// Minimum sprite Z distance; sprites closer than this are not projected
+/// (MINZ in r_things.c = FRACUNIT × 4).
+pub const MINZ: i32 = FRACUNIT * 4;
+/// Vertical centre of the screen in pixels, used for sprite projection
+/// (BASEYCENTER in r_things.c = 100).
+pub const BASEYCENTER: i32 = 100;
 
 /// Maximum number of visible sprites that can be projected in a single frame.
 /// Sprites beyond this limit are silently dropped into `overflowsprite`.

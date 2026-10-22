@@ -9,7 +9,6 @@
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT},
     dehacked::DEH_String,
     doom::{mode::commercial, stat::gamemode},
     interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
@@ -28,6 +27,15 @@ use crate::engine::{
 const MAXWIDTH: usize = 1120;
 /// Maximum framebuffer height supported by the lookup tables.
 const MAXHEIGHT: usize = 832;
+
+/// Status-bar height at the bottom of the screen (SBARHEIGHT in r_draw.c,
+/// ST_HEIGHT in st_stuff.h).
+pub const SBARHEIGHT: i32 = 32;
+
+/// Number of entries in the fuzz offset lookup table (FUZZTABLE in r_draw.c).
+pub const FUZZTABLE: usize = 50;
+/// Column offset used when rendering the fuzz/spectre effect (FUZZOFF = SCREENWIDTH).
+pub const FUZZOFF: i32 = SCREENWIDTH;
 
 // ---------------------------------------------------------------------------
 // View-buffer globals

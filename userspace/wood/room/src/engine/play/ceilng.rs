@@ -26,7 +26,10 @@ use crate::engine::{
 ///
 /// Crusher ceilings slow to `CEILSPEED / 8` when they hit something, and fast
 /// crushers move at `CEILSPEED * 2`.  Matches `CEILSPEED` in `p_ceilng.c`.
-const CEILSPEED: fixed_t = FRACUNIT;
+pub const CEILSPEED: fixed_t = FRACUNIT;
+
+/// Ceiling movement wait time in tics (`CEILWAIT` in `p_spec.h` = 150).
+pub const CEILWAIT: i32 = 150;
 
 /// Maximum number of simultaneously active ceiling movers.
 ///

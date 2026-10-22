@@ -31,5 +31,4 @@ pub mod status;
 pub mod wad;
 pub mod zone;
 
-pub mod c_ffi;
 pub mod memio;

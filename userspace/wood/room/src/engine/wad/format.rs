@@ -7,7 +7,9 @@
 //! `packed`, can be viewed in place over unaligned lump bytes, and make
 //! the WAD's little-endian byte order explicit, so readers call `.get()`
 //! instead of a `SHORT`/`LONG` byte swap. Every type carries a
-//! compile-time assertion of its on-disk size.
+//! compile-time assertion of its on-disk size. The `ML_*` map lump
+//! indices and linedef flag bits from `doomdata.h` live here as well, as
+//! [`MapLump`] and [`LinedefFlag`].
 //!
 //! Records followed by a variable-length array in the WAD (`patch_t`,
 //! `maptexture_t`) are defined as their fixed-size header only; the
@@ -62,6 +64,37 @@ const _: () = assert!(size_of::<filelump_t>() == 16);
 // Map lumps (doomdata.h)
 // ---------------------------------------------------------------------------
 
+/// WAD map lump indices (`ML_*` in `doomdata.h`). Used as offsets from the
+/// map's header lump to locate each sub-lump: these are the fixed positions
+/// of each data lump within a map's group of WAD lumps, and `p_setup.c`
+/// indexes directly into the lump list using them.
+pub struct MapLump;
+/// `ML_*` lump-offset constants used to index a map's group of WAD lumps.
+impl MapLump {
+    #[doc(alias = "ML_LABEL")]
+    pub const LABEL: i32 = 0; // ExMx / MAPxx separator
+    #[doc(alias = "ML_THINGS")]
+    pub const THINGS: i32 = 1; // Monster/item placement
+    #[doc(alias = "ML_LINEDEFS")]
+    pub const LINEDEFS: i32 = 2; // Line definitions
+    #[doc(alias = "ML_SIDEDEFS")]
+    pub const SIDEDEFS: i32 = 3; // Side (texture) definitions
+    #[doc(alias = "ML_VERTEXES")]
+    pub const VERTEXES: i32 = 4; // Vertex coordinates
+    #[doc(alias = "ML_SEGS")]
+    pub const SEGS: i32 = 5; // BSP line segments
+    #[doc(alias = "ML_SSECTORS")]
+    pub const SSECTORS: i32 = 6; // BSP sub-sectors
+    #[doc(alias = "ML_NODES")]
+    pub const NODES: i32 = 7; // BSP nodes
+    #[doc(alias = "ML_SECTORS")]
+    pub const SECTORS: i32 = 8; // Sector definitions
+    #[doc(alias = "ML_REJECT")]
+    pub const REJECT: i32 = 9; // Sector-to-sector visibility table
+    #[doc(alias = "ML_BLOCKMAP")]
+    pub const BLOCKMAP: i32 = 10; // Motion-clipping blockmap
+}
+
 /// On-disk vertex record from the WAD VERTEXES lump.
 /// Maps to `mapvertex_t` in `doomdata.h`. Coordinates are 16-bit integers
 /// in map units; they are sign-extended and shifted left by `FRACBITS` when
@@ -108,6 +141,31 @@ pub struct maplinedef_t {
 }
 
 const _: () = assert!(size_of::<maplinedef_t>() == 14);
+
+/// Linedef flag bits (`ML_*` in `doomdata.h`). Stored in `line_t.flags` as
+/// a bitmask; each constant is a single-bit mask.
+pub struct LinedefFlag;
+/// `ML_*` bit-mask constants stored in `line_t.flags`.
+impl LinedefFlag {
+    #[doc(alias = "ML_BLOCKING")]
+    pub const BLOCKING: u16 = 1; // Solid obstacle
+    #[doc(alias = "ML_BLOCKMONSTERS")]
+    pub const BLOCKMONSTERS: u16 = 2; // Blocks monsters only
+    #[doc(alias = "ML_TWOSIDED")]
+    pub const TWOSIDED: u16 = 4; // Has a back sector
+    #[doc(alias = "ML_DONTPEGTOP")]
+    pub const DONTPEGTOP: u16 = 8; // Upper texture is unpegged
+    #[doc(alias = "ML_DONTPEGBOTTOM")]
+    pub const DONTPEGBOTTOM: u16 = 16; // Lower texture is unpegged
+    #[doc(alias = "ML_SECRET")]
+    pub const SECRET: u16 = 32; // Secret on automap
+    #[doc(alias = "ML_SOUNDBLOCK")]
+    pub const SOUNDBLOCK: u16 = 64; // Sound propagation barrier
+    #[doc(alias = "ML_DONTDRAW")]
+    pub const DONTDRAW: u16 = 128; // Hidden on automap
+    #[doc(alias = "ML_MAPPED")]
+    pub const MAPPED: u16 = 256; // Already revealed on automap
+}
 
 /// On-disk sector record from the WAD SECTORS lump.
 /// Maps to `mapsector_t` in `doomdata.h`. Floor/ceiling heights are in map
