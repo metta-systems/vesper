@@ -1,0 +1,8 @@
+[workspace]
+default-members = ["doomgeneric-sys", "room"]
+members = [
+    "c2rust-intermediate",
+    "doomgeneric-sys",
+    "room",
+]
+resolver = "2"

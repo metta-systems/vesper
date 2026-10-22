@@ -1,0 +1,16 @@
+[package]
+name = "c2rust-intermediate"
+version = "0.1.0"
+edition = "2021"
+
+# This crate is a pure reference / debugging aid.  It is NOT linked into the
+# main binary.  Do not attempt to resolve symbol conflicts with the hand-ported
+# code — they are expected to coexist only as a behavioural reference.
+
+[dependencies]
+c2rust-bitfields = "0.22"
+libc = "0.2"
+
+[lib]
+name = "c2rust_intermediate"
+path = "src/lib.rs"

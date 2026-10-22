@@ -1,0 +1,468 @@
+area-am_map:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/am_map.c'
+      - 'vendor/doomgeneric/am_map.h'
+      - 'room/src/doom/am_map.rs'
+      - 'c2rust-intermediate/src/am_map.rs'
+      - 'room/src/doom/c_tests/am_map_c.rs'
+
+area-d_loop:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/d_loop.c'
+      - 'vendor/doomgeneric/d_loop.h'
+      - 'room/src/doom/d_loop.rs'
+      - 'c2rust-intermediate/src/d_loop.rs'
+      - 'room/src/doom/c_tests/d_loop_c.rs'
+
+area-d_main:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/d_main.c'
+      - 'vendor/doomgeneric/d_main.h'
+      - 'room/src/doom/d_main.rs'
+      - 'c2rust-intermediate/src/d_main.rs'
+      - 'room/src/doom/c_tests/d_main_c.rs'
+
+area-d_mode:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/d_mode.c'
+      - 'vendor/doomgeneric/d_mode.h'
+      - 'room/src/doom/d_mode.rs'
+      - 'c2rust-intermediate/src/d_mode.rs'
+
+area-doomstat:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/doomstat.c'
+      - 'vendor/doomgeneric/doomstat.h'
+      - 'room/src/doom/doomstat.rs'
+      - 'c2rust-intermediate/src/doomstat.rs'
+
+area-dstrings:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/dstrings.c'
+      - 'vendor/doomgeneric/dstrings.h'
+      - 'room/src/doom/dstrings.rs'
+      - 'c2rust-intermediate/src/dstrings.rs'
+
+area-f_finale:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/f_finale.c'
+      - 'vendor/doomgeneric/f_finale.h'
+      - 'room/src/doom/f_finale.rs'
+      - 'c2rust-intermediate/src/f_finale.rs'
+      - 'room/src/doom/c_tests/f_finale_c.rs'
+
+area-g_game:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/g_game.c'
+      - 'vendor/doomgeneric/g_game.h'
+      - 'room/src/doom/g_game.rs'
+      - 'c2rust-intermediate/src/g_game.rs'
+      - 'room/src/doom/c_tests/g_game_c.rs'
+
+area-hu_stuff:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/hu_stuff.c'
+      - 'vendor/doomgeneric/hu_stuff.h'
+      - 'room/src/doom/hu_stuff.rs'
+      - 'c2rust-intermediate/src/hu_stuff.rs'
+      - 'room/src/doom/c_tests/hu_stuff_c.rs'
+
+area-i_scale:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/i_scale.c'
+      - 'vendor/doomgeneric/i_scale.h'
+      - 'room/src/doom/i_scale.rs'
+      - 'c2rust-intermediate/src/i_scale.rs'
+      - 'room/src/doom/c_tests/i_scale_c.rs'
+
+area-i_sound:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/i_sound.c'
+      - 'vendor/doomgeneric/i_sound.h'
+      - 'room/src/doom/i_sound.rs'
+      - 'c2rust-intermediate/src/i_sound.rs'
+
+area-i_system:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/i_system.c'
+      - 'vendor/doomgeneric/i_system.h'
+      - 'room/src/doom/i_system.rs'
+      - 'c2rust-intermediate/src/i_system.rs'
+
+area-i_timer:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/i_timer.c'
+      - 'vendor/doomgeneric/i_timer.h'
+      - 'room/src/doom/i_timer.rs'
+      - 'c2rust-intermediate/src/i_timer.rs'
+
+area-i_video:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/i_video.c'
+      - 'vendor/doomgeneric/i_video.h'
+      - 'room/src/doom/i_video.rs'
+      - 'c2rust-intermediate/src/i_video.rs'
+
+area-m_argv:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/m_argv.c'
+      - 'vendor/doomgeneric/m_argv.h'
+      - 'room/src/doom/m_argv.rs'
+      - 'c2rust-intermediate/src/m_argv.rs'
+
+area-m_cheat:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/m_cheat.c'
+      - 'vendor/doomgeneric/m_cheat.h'
+      - 'room/src/doom/m_cheat.rs'
+      - 'c2rust-intermediate/src/m_cheat.rs'
+
+area-m_config:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/m_config.c'
+      - 'vendor/doomgeneric/m_config.h'
+      - 'room/src/doom/m_config.rs'
+      - 'c2rust-intermediate/src/m_config.rs'
+
+area-m_menu:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/m_menu.c'
+      - 'vendor/doomgeneric/m_menu.h'
+      - 'room/src/doom/m_menu.rs'
+      - 'c2rust-intermediate/src/m_menu.rs'
+
+area-m_misc:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/m_misc.c'
+      - 'vendor/doomgeneric/m_misc.h'
+      - 'room/src/doom/m_misc.rs'
+      - 'c2rust-intermediate/src/m_misc.rs'
+
+area-memio:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/memio.c'
+      - 'vendor/doomgeneric/memio.h'
+      - 'room/src/doom/memio.rs'
+      - 'c2rust-intermediate/src/memio.rs'
+
+area-p_ceilng:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_ceilng.c'
+      - 'room/src/doom/p_ceilng.rs'
+      - 'c2rust-intermediate/src/p_ceilng.rs'
+
+area-p_doors:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_doors.c'
+      - 'room/src/doom/p_doors.rs'
+      - 'c2rust-intermediate/src/p_doors.rs'
+
+area-p_enemy:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_enemy.c'
+      - 'room/src/doom/p_enemy.rs'
+      - 'c2rust-intermediate/src/p_enemy.rs'
+      - 'room/src/doom/c_tests/p_enemy_c.rs'
+
+area-p_floor:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_floor.c'
+      - 'room/src/doom/p_floor.rs'
+      - 'c2rust-intermediate/src/p_floor.rs'
+
+area-p_inter:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_inter.c'
+      - 'vendor/doomgeneric/p_inter.h'
+      - 'room/src/doom/p_inter.rs'
+      - 'c2rust-intermediate/src/p_inter.rs'
+      - 'room/src/doom/c_tests/p_inter_c.rs'
+
+area-p_lights:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_lights.c'
+      - 'room/src/doom/p_lights.rs'
+      - 'c2rust-intermediate/src/p_lights.rs'
+
+area-p_map:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_map.c'
+      - 'room/src/doom/p_map.rs'
+      - 'c2rust-intermediate/src/p_map.rs'
+      - 'room/src/doom/c_tests/p_map_c.rs'
+
+area-p_maputl:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_maputl.c'
+      - 'room/src/doom/p_maputl.rs'
+      - 'c2rust-intermediate/src/p_maputl.rs'
+      - 'room/src/doom/c_tests/p_maputl_c.rs'
+
+area-p_mobj:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_mobj.c'
+      - 'vendor/doomgeneric/p_mobj.h'
+      - 'room/src/doom/p_mobj.rs'
+      - 'c2rust-intermediate/src/p_mobj.rs'
+      - 'room/src/doom/c_tests/p_mobj_c.rs'
+
+area-p_plats:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_plats.c'
+      - 'room/src/doom/p_plats.rs'
+      - 'c2rust-intermediate/src/p_plats.rs'
+
+area-p_pspr:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_pspr.c'
+      - 'vendor/doomgeneric/p_pspr.h'
+      - 'room/src/doom/p_pspr.rs'
+      - 'c2rust-intermediate/src/p_pspr.rs'
+      - 'room/src/doom/c_tests/p_pspr_c.rs'
+
+area-p_saveg:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_saveg.c'
+      - 'vendor/doomgeneric/p_saveg.h'
+      - 'room/src/doom/p_saveg.rs'
+      - 'c2rust-intermediate/src/p_saveg.rs'
+      - 'room/src/doom/c_tests/p_saveg_c.rs'
+
+area-p_setup:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_setup.c'
+      - 'vendor/doomgeneric/p_setup.h'
+      - 'room/src/doom/p_setup.rs'
+      - 'c2rust-intermediate/src/p_setup.rs'
+
+area-p_sight:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_sight.c'
+      - 'room/src/doom/p_sight.rs'
+      - 'c2rust-intermediate/src/p_sight.rs'
+
+area-p_spec:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_spec.c'
+      - 'vendor/doomgeneric/p_spec.h'
+      - 'room/src/doom/p_spec.rs'
+      - 'c2rust-intermediate/src/p_spec.rs'
+      - 'room/src/doom/c_tests/p_spec_c.rs'
+
+area-p_switch:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_switch.c'
+      - 'room/src/doom/p_switch.rs'
+      - 'c2rust-intermediate/src/p_switch.rs'
+      - 'room/src/doom/c_tests/p_switch_c.rs'
+
+area-p_telept:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_telept.c'
+      - 'room/src/doom/p_telept.rs'
+      - 'c2rust-intermediate/src/p_telept.rs'
+
+area-p_tick:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_tick.c'
+      - 'vendor/doomgeneric/p_tick.h'
+      - 'room/src/doom/p_tick.rs'
+      - 'c2rust-intermediate/src/p_tick.rs'
+
+area-p_user:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/p_user.c'
+      - 'room/src/doom/p_user.rs'
+      - 'c2rust-intermediate/src/p_user.rs'
+
+area-r_bsp:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_bsp.c'
+      - 'vendor/doomgeneric/r_bsp.h'
+      - 'room/src/doom/r_bsp.rs'
+      - 'c2rust-intermediate/src/r_bsp.rs'
+
+area-r_data:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_data.c'
+      - 'vendor/doomgeneric/r_data.h'
+      - 'room/src/doom/r_data.rs'
+      - 'c2rust-intermediate/src/r_data.rs'
+      - 'room/src/doom/c_tests/r_data_c.rs'
+
+area-r_draw:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_draw.c'
+      - 'vendor/doomgeneric/r_draw.h'
+      - 'room/src/doom/r_draw.rs'
+      - 'c2rust-intermediate/src/r_draw.rs'
+      - 'room/src/doom/c_tests/r_draw_c.rs'
+
+area-r_main:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_main.c'
+      - 'vendor/doomgeneric/r_main.h'
+      - 'room/src/doom/r_main.rs'
+      - 'c2rust-intermediate/src/r_main.rs'
+
+area-r_plane:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_plane.c'
+      - 'vendor/doomgeneric/r_plane.h'
+      - 'room/src/doom/r_plane.rs'
+      - 'c2rust-intermediate/src/r_plane.rs'
+
+area-r_segs:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_segs.c'
+      - 'vendor/doomgeneric/r_segs.h'
+      - 'room/src/doom/r_segs.rs'
+      - 'c2rust-intermediate/src/r_segs.rs'
+      - 'room/src/doom/c_tests/r_segs_c.rs'
+
+area-r_things:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/r_things.c'
+      - 'vendor/doomgeneric/r_things.h'
+      - 'room/src/doom/r_things.rs'
+      - 'c2rust-intermediate/src/r_things.rs'
+      - 'room/src/doom/c_tests/r_things_c.rs'
+
+area-s_sound:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/s_sound.c'
+      - 'vendor/doomgeneric/s_sound.h'
+      - 'room/src/doom/s_sound.rs'
+      - 'c2rust-intermediate/src/s_sound.rs'
+
+area-st_lib:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/st_lib.c'
+      - 'vendor/doomgeneric/st_lib.h'
+      - 'room/src/doom/st_lib.rs'
+      - 'c2rust-intermediate/src/st_lib.rs'
+
+area-st_stuff:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/st_stuff.c'
+      - 'vendor/doomgeneric/st_stuff.h'
+      - 'room/src/doom/st_stuff.rs'
+      - 'c2rust-intermediate/src/st_stuff.rs'
+      - 'room/src/doom/c_tests/st_stuff_c.rs'
+
+area-statdump:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/statdump.c'
+      - 'vendor/doomgeneric/statdump.h'
+      - 'room/src/doom/statdump.rs'
+      - 'c2rust-intermediate/src/statdump.rs'
+
+area-v_video:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/v_video.c'
+      - 'vendor/doomgeneric/v_video.h'
+      - 'room/src/doom/v_video.rs'
+      - 'c2rust-intermediate/src/v_video.rs'
+
+area-w_checksum:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/w_checksum.c'
+      - 'vendor/doomgeneric/w_checksum.h'
+      - 'room/src/doom/w_checksum.rs'
+      - 'c2rust-intermediate/src/w_checksum.rs'
+
+area-w_file:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/w_file.c'
+      - 'vendor/doomgeneric/w_file.h'
+      - 'vendor/doomgeneric/w_file_stdc.c'
+      - 'room/src/doom/w_file.rs'
+      - 'room/src/doom/w_file_stdc.rs'
+      - 'c2rust-intermediate/src/w_file.rs'
+      - 'c2rust-intermediate/src/w_file_stdc.rs'
+
+area-w_main:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/w_main.c'
+      - 'vendor/doomgeneric/w_main.h'
+      - 'room/src/doom/w_main.rs'
+      - 'c2rust-intermediate/src/w_main.rs'
+
+area-w_wad:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/w_wad.c'
+      - 'vendor/doomgeneric/w_wad.h'
+      - 'room/src/doom/w_wad.rs'
+      - 'c2rust-intermediate/src/w_wad.rs'
+
+area-wi_stuff:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/wi_stuff.c'
+      - 'vendor/doomgeneric/wi_stuff.h'
+      - 'room/src/doom/wi_stuff.rs'
+      - 'c2rust-intermediate/src/wi_stuff.rs'
+      - 'room/src/doom/c_tests/wi_stuff_c.rs'
+
+area-z_zone:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'vendor/doomgeneric/z_zone.c'
+      - 'vendor/doomgeneric/z_zone.h'
+      - 'room/src/doom/z_zone.rs'
+      - 'c2rust-intermediate/src/z_zone.rs'

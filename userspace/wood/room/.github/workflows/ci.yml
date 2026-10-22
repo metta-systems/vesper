@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main", "feature/*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository (with LFS)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          lfs: true
+
+      - name: Install Rust toolchain
+        id: rust-toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ steps.rust-toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ steps.rust-toolchain.outputs.cachekey }}-
+
+      - name: Install C build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libc6-dev \
+            pkg-config \
+            libasound2-dev
+
+      - name: Build (includes C compilation via FFI)
+        run: cargo build --workspace --locked --exclude c2rust-intermediate
+
+      - name: Run tests
+        run: cargo test --workspace --locked --exclude c2rust-intermediate
+        env:
+          RUST_LOG: info
+
+
+  dependencies:
+    name: Dependency Submission
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-sbom
+        uses: psastras/sbom-rs/actions/install-cargo-sbom@cargo-sbom-v0.10.0
+
+      - name: Generate SBOM
+        run: cargo-sbom --output-format=spdx_json_2_3 > sbom.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom.json
+
+      - name: Submit dependencies to GitHub
+        uses: advanced-security/spdx-dependency-submission-action@v0.3.2
+        with:
+          filePath: sbom.json

@@ -1,0 +1,15 @@
+[package]
+name = "doomgeneric-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Raw FFI bindings to the doomgeneric C library"
+license = "GPL-2.0"
+readme = "README.md"
+links = "doomgeneric"
+
+[build-dependencies]
+# Used to compile the vendored doomgeneric C source files.
+cc = "1"
+
+[lib]
+name = "doomgeneric_sys"
