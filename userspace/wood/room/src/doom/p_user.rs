@@ -117,9 +117,7 @@ const INVERSECOLORMAP: c_int = 32;
 
 /// Whether the player is standing on the floor (`mo->z == mo->floorz`).
 ///
-/// Stored as a `c_int` (0 or 1) for ABI compatibility with not-yet-ported C
-/// modules such as `p_pspr.c`. The `#[no_mangle]` export keeps the C name.
-#[no_mangle]
+/// Stored as a `c_int` (0 or 1), as in the C source.
 pub static mut onground: c_int = 0;
 
 use crate::doom::{
@@ -136,8 +134,7 @@ use crate::doom::{
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub extern "C" fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
+pub fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
@@ -158,8 +155,7 @@ pub extern "C" fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub extern "C" fn P_CalcHeight(player: *mut PlayerT) {
+pub fn P_CalcHeight(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
 
@@ -229,8 +225,7 @@ pub extern "C" fn P_CalcHeight(player: *mut PlayerT) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub extern "C" fn P_MovePlayer(player: *mut PlayerT) {
+pub fn P_MovePlayer(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
         let cmd = &(*player).cmd;
@@ -273,8 +268,7 @@ pub extern "C" fn P_MovePlayer(player: *mut PlayerT) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub extern "C" fn P_DeathThink(player: *mut PlayerT) {
+pub fn P_DeathThink(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
         let angle: u32;
@@ -346,8 +340,7 @@ pub extern "C" fn P_DeathThink(player: *mut PlayerT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t` with a valid `subsector`
 /// chain.
-#[no_mangle]
-pub extern "C" fn P_PlayerThink(player: *mut PlayerT) {
+pub fn P_PlayerThink(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo as *mut mobj_t;
         let mut newweapon: c_int;
@@ -487,20 +480,6 @@ pub extern "C" fn P_PlayerThink(player: *mut PlayerT) {
             (*player).fixedcolormap = 0;
         }
     }
-}
-
-/// Anchor function referenced from `doomgeneric_Create` to ensure all
-/// `#[no_mangle]` exports survive link-time dead-code elimination.
-#[no_mangle]
-pub extern "C" fn P_User_Link_Anchor() {
-    unsafe {
-        let _ = onground as usize;
-    }
-    let _ = P_Thrust as *const () as usize;
-    let _ = P_CalcHeight as *const () as usize;
-    let _ = P_MovePlayer as *const () as usize;
-    let _ = P_DeathThink as *const () as usize;
-    let _ = P_PlayerThink as *const () as usize;
 }
 
 #[cfg(test)]

@@ -124,8 +124,7 @@ unsafe fn checksum_add_lump(
 /// `digest` must point to a valid `sha1_digest_t` array with room for
 /// `SHA1_DIGEST_SIZE` bytes. The global `lumpinfo` and `numlumps` must be
 /// initialised (i.e. `W_InitMultipleFiles` has run).
-#[no_mangle]
-pub unsafe extern "C" fn W_Checksum(digest: *mut sha1_digest_t) {
+pub unsafe fn W_Checksum(digest: *mut sha1_digest_t) {
     let mut sha1_context = std::mem::MaybeUninit::<SHA1Context>::uninit();
     SHA1_Init(sha1_context.as_mut_ptr());
 

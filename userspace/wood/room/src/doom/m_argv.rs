@@ -1,9 +1,8 @@
 //! Rust port of vendor/doomgeneric/m_argv.c.
 //!
 //! Command-line argument handling: parameter lookup, `@responsefile`
-//! expansion, and basename extraction. `myargc`/`myargv` are exported
-//! with C linkage so the C side and the Rust side share a single mutable
-//! argv pair.
+//! expansion, and basename extraction. `myargc`/`myargv` are the engine's
+//! single mutable argv pair.
 
 #![allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
 
@@ -26,14 +25,10 @@ const DIR_SEPARATOR: c_char = b'/' as c_char;
 /// matching `MAXARGVS` in `m_argv.c`.
 const MAXARGVS: usize = 100;
 
-/// `int myargc` — process argument count. Exported with C linkage so the
-/// vendored C TUs share the same definition.
-#[no_mangle]
+/// `int myargc` — process argument count.
 pub static mut myargc: c_int = 0;
 
-/// `char **myargv` — process argument vector. Exported with C linkage so
-/// the vendored C TUs share the same definition.
-#[no_mangle]
+/// `char **myargv` — process argument vector.
 pub static mut myargv: *mut *mut c_char = std::ptr::null_mut();
 
 extern "C" {
@@ -65,8 +60,7 @@ use crate::doom::m_misc::{M_FileLength, FILE as MiscFILE};
 ///
 /// Returns the matched argument index (1..argc-num_args) or 0 if not
 /// present. Comparison is case-insensitive.
-#[no_mangle]
-pub extern "C" fn M_CheckParmWithArgs(check: *const c_char, num_args: c_int) -> c_int {
+pub fn M_CheckParmWithArgs(check: *const c_char, num_args: c_int) -> c_int {
     unsafe {
         let mut i: c_int = 1;
         while i < myargc - num_args {
@@ -81,15 +75,13 @@ pub extern "C" fn M_CheckParmWithArgs(check: *const c_char, num_args: c_int) -> 
 
 /// `boolean M_ParmExists(char *check)` — returns nonzero if `check` is
 /// present on the command line, 0 otherwise.
-#[no_mangle]
-pub extern "C" fn M_ParmExists(check: *const c_char) -> c_int {
+pub fn M_ParmExists(check: *const c_char) -> c_int {
     (M_CheckParm(check) != 0) as c_int
 }
 
 /// `int M_CheckParm(char *check)` — convenience wrapper for
 /// `M_CheckParmWithArgs(check, 0)`.
-#[no_mangle]
-pub extern "C" fn M_CheckParm(check: *const c_char) -> c_int {
+pub fn M_CheckParm(check: *const c_char) -> c_int {
     M_CheckParmWithArgs(check, 0)
 }
 
@@ -202,8 +194,7 @@ unsafe fn LoadResponseFile(argv_index: c_int) {
 
 /// `void M_FindResponseFile(void)` — scan `myargv` for arguments
 /// beginning with `'@'` and expand each via `LoadResponseFile`.
-#[no_mangle]
-pub extern "C" fn M_FindResponseFile() {
+pub fn M_FindResponseFile() {
     unsafe {
         let mut i: c_int = 1;
         while i < myargc {
@@ -218,8 +209,7 @@ pub extern "C" fn M_FindResponseFile() {
 /// `char *M_GetExecutableName(void)` — return the basename portion of
 /// `myargv[0]` (everything after the last `DIR_SEPARATOR`), or the whole
 /// `argv[0]` if no separator is found.
-#[no_mangle]
-pub extern "C" fn M_GetExecutableName() -> *mut c_char {
+pub fn M_GetExecutableName() -> *mut c_char {
     unsafe {
         let sep: *mut c_char = strrchr(*myargv as *const c_char, DIR_SEPARATOR as c_int);
         if sep.is_null() {

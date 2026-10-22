@@ -210,8 +210,7 @@ pub struct line_t {
 /// `flick` must be a valid, aligned, non-null pointer to a `fireflicker_t`
 /// whose embedded `sector` pointer is also valid for the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_FireFlicker(flick: *mut fireflicker_t) {
+pub unsafe fn T_FireFlicker(flick: *mut fireflicker_t) {
     (*flick).count -= 1;
     if (*flick).count != 0 {
         return;
@@ -233,8 +232,7 @@ pub unsafe extern "C" fn T_FireFlicker(flick: *mut fireflicker_t) {
 ///
 /// Clears the sector special, finds the minimum surrounding light level
 /// (used as the lower flicker bound + 16), and registers the thinker.
-#[no_mangle]
-pub extern "C" fn P_SpawnFireFlicker(sector: *mut sector_t) {
+pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
     unsafe {
         (*sector).special = 0;
 
@@ -247,8 +245,8 @@ pub extern "C" fn P_SpawnFireFlicker(sector: *mut sector_t) {
         P_AddThinker(&mut (*flick).thinker);
 
         (*flick).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut fireflicker_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut fireflicker_t),
+            unsafe fn(*mut c_void),
         >(T_FireFlicker));
         (*flick).sector = sector;
         (*flick).maxlight = (*sector).lightlevel as c_int;
@@ -269,8 +267,7 @@ pub extern "C" fn P_SpawnFireFlicker(sector: *mut sector_t) {
 /// `flash` must be a valid, aligned, non-null pointer to a `lightflash_t`
 /// whose embedded `sector` pointer is also valid for the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_LightFlash(flash: *mut lightflash_t) {
+pub unsafe fn T_LightFlash(flash: *mut lightflash_t) {
     (*flash).count -= 1;
     if (*flash).count != 0 {
         return;
@@ -291,8 +288,7 @@ pub unsafe extern "C" fn T_LightFlash(flash: *mut lightflash_t) {
 ///
 /// Sets `maxtime = 64` and `mintime = 7`, giving the flash a long bright phase
 /// and a short dark phase. The initial countdown is randomised.
-#[no_mangle]
-pub extern "C" fn P_SpawnLightFlash(sector: *mut sector_t) {
+pub fn P_SpawnLightFlash(sector: *mut sector_t) {
     unsafe {
         (*sector).special = 0;
 
@@ -305,8 +301,8 @@ pub extern "C" fn P_SpawnLightFlash(sector: *mut sector_t) {
         P_AddThinker(&mut (*flash).thinker);
 
         (*flash).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut lightflash_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut lightflash_t),
+            unsafe fn(*mut c_void),
         >(T_LightFlash));
         (*flash).sector = sector;
         (*flash).maxlight = (*sector).lightlevel as c_int;
@@ -329,8 +325,7 @@ pub extern "C" fn P_SpawnLightFlash(sector: *mut sector_t) {
 /// `flash` must be a valid, aligned, non-null pointer to a `strobe_t`
 /// whose embedded `sector` pointer is also valid for the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_StrobeFlash(flash: *mut strobe_t) {
+pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
     (*flash).count -= 1;
     if (*flash).count != 0 {
         return;
@@ -352,8 +347,7 @@ pub unsafe extern "C" fn T_StrobeFlash(flash: *mut strobe_t) {
 /// `fastOrSlow` sets `darktime` (use `FASTDARK` or `SLOWDARK`).
 /// `inSync = 1` starts the flash immediately; `inSync = 0` gives a random offset.
 /// If `minlight == maxlight`, `minlight` is forced to 0.
-#[no_mangle]
-pub extern "C" fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, inSync: c_int) {
+pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, inSync: c_int) {
     unsafe {
         let flash = Z_Malloc(
             std::mem::size_of::<strobe_t>() as c_int,
@@ -367,8 +361,8 @@ pub extern "C" fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, i
         (*flash).darktime = fastOrSlow;
         (*flash).brighttime = STROBEBRIGHT;
         (*flash).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut strobe_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut strobe_t),
+            unsafe fn(*mut c_void),
         >(T_StrobeFlash));
         (*flash).maxlight = (*sector).lightlevel as c_int;
         (*flash).minlight =
@@ -392,8 +386,7 @@ pub extern "C" fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: c_int, i
 ///
 /// Iterates over sectors whose tag matches `line`'s tag. Sectors that already
 /// have an active special effect are skipped.
-#[no_mangle]
-pub extern "C" fn EV_StartLightStrobing(line: *mut line_t) {
+pub fn EV_StartLightStrobing(line: *mut line_t) {
     unsafe {
         let mut secnum: c_int = -1;
         loop {
@@ -414,8 +407,7 @@ pub extern "C" fn EV_StartLightStrobing(line: *mut line_t) {
 ///
 /// For each sector whose tag matches `line`'s tag, scans adjacent sectors and
 /// sets the light level to the minimum found among all neighbors.
-#[no_mangle]
-pub extern "C" fn EV_TurnTagLightsOff(line: *mut line_t) {
+pub fn EV_TurnTagLightsOff(line: *mut line_t) {
     unsafe {
         for j in 0..numsectors as usize {
             let sec = sectors.add(j);
@@ -444,8 +436,7 @@ pub extern "C" fn EV_TurnTagLightsOff(line: *mut line_t) {
 ///
 /// If `bright == 0`, the function searches adjacent sectors and uses the
 /// highest light level found among them instead.
-#[no_mangle]
-pub extern "C" fn EV_LightTurnOn(line: *mut line_t, bright: c_int) {
+pub fn EV_LightTurnOn(line: *mut line_t, bright: c_int) {
     unsafe {
         let mut bright = bright;
         for i in 0..numsectors as usize {
@@ -482,8 +473,7 @@ pub extern "C" fn EV_LightTurnOn(line: *mut line_t, bright: c_int) {
 /// `g` must be a valid, aligned, non-null pointer to a `glow_t`
 /// whose embedded `sector` pointer is also valid for the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_Glow(g: *mut glow_t) {
+pub unsafe fn T_Glow(g: *mut glow_t) {
     let sec = &mut *(*g).sector;
     match (*g).direction {
         -1 => {
@@ -509,8 +499,7 @@ pub unsafe extern "C" fn T_Glow(g: *mut glow_t) {
 /// Sets `maxlight` to the sector's current light level and `minlight` to the
 /// lowest light level in adjacent sectors. The glow starts moving downward
 /// (`direction = -1`).
-#[no_mangle]
-pub extern "C" fn P_SpawnGlowingLight(sector: *mut sector_t) {
+pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
     unsafe {
         let g = Z_Malloc(
             std::mem::size_of::<glow_t>() as c_int,
@@ -525,36 +514,13 @@ pub extern "C" fn P_SpawnGlowingLight(sector: *mut sector_t) {
             P_FindMinSurroundingLight(sector as *mut cffi::sector_t, (*sector).lightlevel as c_int);
         (*g).maxlight = (*sector).lightlevel as c_int;
         (*g).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut glow_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut glow_t),
+            unsafe fn(*mut c_void),
         >(T_Glow));
         (*g).direction = -1;
 
         (*sector).special = 0;
     }
-}
-
-/// Anchor function referenced from `doomgeneric_Create` to ensure all
-/// `#[no_mangle]` light functions survive link-time dead-code elimination.
-///
-/// # Safety
-///
-/// Must only be called during engine initialisation before any thinker
-/// dispatch occurs; taking the address of each function is always safe.
-#[no_mangle]
-pub unsafe extern "C" fn P_Lights_Link_Anchor() {
-    // Force the linker to include every exported symbol from this module.
-    let _ = T_FireFlicker as *const () as usize;
-    let _ = T_LightFlash as *const () as usize;
-    let _ = T_StrobeFlash as *const () as usize;
-    let _ = T_Glow as *const () as usize;
-    let _ = P_SpawnFireFlicker as *const () as usize;
-    let _ = P_SpawnLightFlash as *const () as usize;
-    let _ = P_SpawnStrobeFlash as *const () as usize;
-    let _ = EV_StartLightStrobing as *const () as usize;
-    let _ = EV_TurnTagLightsOff as *const () as usize;
-    let _ = EV_LightTurnOn as *const () as usize;
-    let _ = P_SpawnGlowingLight as *const () as usize;
 }
 
 #[cfg(test)]

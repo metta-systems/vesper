@@ -1,9 +1,7 @@
-//! Centralized FFI declarations for unported C modules.
+//! Shared C-layout types and re-exports of engine items for the unit tests.
 //!
-//! Each `extern "C"` block is organized by the original `.c` source file.
-//! These declarations allow Rust unit tests to call the original C functions
-//! directly and read C global variables, establishing behavioral baselines
-//! before porting each module.
+//! The re-exports are grouped by the original `.c` source file, so tests
+//! can reach engine functions and globals through one module.
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
@@ -235,23 +233,11 @@ pub struct mobj_t {
 // r_draw.c — remaining C functions
 // ---------------------------------------------------------------------------
 
-extern "C" {
-    /// Initialise the view-window buffer for the given dimensions
-    /// (`R_InitBuffer` in `r_draw.c`).
-    pub fn R_InitBuffer(width: c_int, height: c_int);
-    /// Build per-player palette-translation tables
-    /// (`R_InitTranslationTables` in `r_draw.c`).
-    pub fn R_InitTranslationTables();
-    /// Fill the area outside the 3D view window with the back screen
-    /// (`R_FillBackScreen` in `r_draw.c`).
-    pub fn R_FillBackScreen();
-    /// Erase a horizontal run of pixels from the back-screen buffer
-    /// (`R_VideoErase` in `r_draw.c`).
-    pub fn R_VideoErase(ofs: c_uint, count: c_int);
-    /// Redraw the view-window border after a console or menu close
-    /// (`R_DrawViewBorder` in `r_draw.c`).
-    pub fn R_DrawViewBorder();
-}
+/// View-window buffer setup, translation tables, back screen and border
+/// (`r_draw`).
+pub use crate::doom::r_draw::{
+    R_DrawViewBorder, R_FillBackScreen, R_InitBuffer, R_InitTranslationTables, R_VideoErase,
+};
 
 // ---------------------------------------------------------------------------
 // Constants from C headers
@@ -504,36 +490,12 @@ pub struct spriteframe_t {
 // forwardmove / sidemove / angleturn are static initialisers (non-zero).
 // ---------------------------------------------------------------------------
 
-extern "C" {
-    /// Forward movement speed table: [slow, fast] (fixed_t, unit/tic).
-    /// Values: {0x19, 0x32} = {25, 50}.
-    pub static mut forwardmove: [c_int; 2];
-    /// Lateral (strafe) movement speed table: [slow, fast] (fixed_t, unit/tic).
-    /// Values: {0x18, 0x28} = {24, 40}.
-    pub static mut sidemove: [c_int; 2];
-    /// Turn-speed table: [normal, fast, slow] (BAM units/tic).
-    /// Values: {640, 1280, 320}.  Index 2 is used for the first SLOWTURNTICS (6)
-    /// tics; after that index 0 (or 1 with run) is used.
-    pub static mut angleturn: [c_int; 3];
-    /// Next slot in the circular body-queue ring buffer.
-    pub static mut bodyqueslot: c_int;
-    /// When true, savegame file size is capped at the vanilla limit (0x2c000).
-    pub static mut vanilla_savegame_limit: c_int;
-    /// When true, demo file size is capped at the vanilla limit.
-    pub static mut vanilla_demo_limit: c_int;
-    /// When true, all graphics are preloaded at level start.
-    pub static mut precache: c_int;
-    /// When true (set by -testcontrols), exit after the first tic.
-    pub static mut testcontrols: c_int;
-    /// Gametic at which the current level started.
-    pub static mut levelstarttic: c_int;
-    /// Total enemy count on the current level (for intermission).
-    pub static mut totalkills: c_int;
-    /// Total item count on the current level (for intermission).
-    pub static mut totalitems: c_int;
-    /// Total secret count on the current level (for intermission).
-    pub static mut totalsecret: c_int;
-}
+/// Movement and turn-speed tables, body queue, vanilla limits, precache and
+/// control-test flags, and level totals (`g_game`).
+pub use crate::doom::g_game::{
+    angleturn, bodyqueslot, forwardmove, levelstarttic, precache, sidemove, testcontrols,
+    totalitems, totalkills, totalsecret, vanilla_demo_limit, vanilla_savegame_limit,
+};
 
 /// Version code for cph's longtics hack ("v1.91") from `doomdef.h`.
 pub const DOOM_191_VERSION: c_int = 111;
@@ -559,9 +521,9 @@ pub struct screen_mode_t {
     /// Output buffer height in pixels.
     pub height: c_int,
     /// Optional initialiser called once with the game palette.
-    pub init_mode: Option<unsafe extern "C" fn(*mut u8)>,
+    pub init_mode: Option<unsafe fn(*mut u8)>,
     /// Draw function: copies src buffer → dest buffer for the given rectangle.
-    pub draw_screen: Option<unsafe extern "C" fn(c_int, c_int, c_int, c_int) -> c_int>,
+    pub draw_screen: Option<unsafe fn(c_int, c_int, c_int, c_int) -> c_int>,
     /// True when this mode uses blended interpolation (lower visual quality).
     pub poor_quality: c_int,
 }
@@ -697,12 +659,8 @@ pub const SAVEGAME_EOF: u8 = 0x1d;
 /// (VERSIONSIZE in p_saveg.c = 16).
 pub const VERSIONSIZE: usize = 16;
 
-extern "C" {
-    /// Total number of bytes written to the current save-game stream.
-    pub static mut savegamelength: c_int;
-    /// True when a write error has occurred during save serialization.
-    pub static mut savegame_error: c_int; // boolean
-}
+/// Save-game stream length and write-error flag (`p_saveg`).
+pub use crate::doom::p_saveg::{savegame_error, savegamelength};
 
 // ---------------------------------------------------------------------------
 // p_enemy.c — enemy AI globals and constants
@@ -718,20 +676,8 @@ pub const FATSPREAD: c_uint = ANG90 / 8;
 /// (SKULLSPEED = 20 × FRACUNIT).
 pub const SKULLSPEED: c_int = 20 * FRACUNIT;
 
-extern "C" {
-    /// Per-direction X velocity multipliers for 8-directional monster movement.
-    /// Values: {FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000}.
-    pub static mut xspeed: [c_int; 8];
-    /// Per-direction Y velocity multipliers for 8-directional monster movement.
-    /// Values: {0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000}.
-    pub static mut yspeed: [c_int; 8];
-    /// Array of potential brain-teleport destinations (Spider Mastermind).
-    pub static mut braintargets: [*mut c_void; 32];
-    /// Number of valid braintargets entries (set by P_SpawnBrainTargets).
-    pub static mut numbraintargets: c_int;
-    /// Index of the next braintarget to use in the round-robin sequence.
-    pub static mut braintargeton: c_int;
-}
+/// Monster movement direction tables and boss brain targets (`p_enemy`).
+pub use crate::doom::p_enemy::{braintargeton, braintargets, numbraintargets, xspeed, yspeed};
 
 // ---------------------------------------------------------------------------
 // d_main.rs — startup flag defaults and global state.

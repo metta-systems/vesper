@@ -22,18 +22,17 @@ use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 /// Vtable describing how to open / close / read one flavour of WAD-file
 /// backing store. Mirrors the C `wad_file_class_t`. `#[repr(C)]` so the
 /// struct layout matches the C definition exactly; `OpenFile`,
-/// `CloseFile` and `Read` are `unsafe extern "C" fn` so they call with
-/// the C ABI.
+/// `CloseFile` and `Read` are `unsafe fn` pointers.
 #[repr(C)]
 pub struct wad_file_class_t {
     /// Open the WAD at `path` and return a heap-allocated descriptor, or
     /// null on failure.
-    pub OpenFile: unsafe extern "C" fn(*mut c_char) -> *mut wad_file_t,
+    pub OpenFile: unsafe fn(*mut c_char) -> *mut wad_file_t,
     /// Close and free the descriptor returned by `OpenFile`.
-    pub CloseFile: unsafe extern "C" fn(*mut wad_file_t),
+    pub CloseFile: unsafe fn(*mut wad_file_t),
     /// Read `buffer_len` bytes from `offset` in the WAD into `buffer`.
     /// Returns the number of bytes actually read.
-    pub Read: unsafe extern "C" fn(*mut wad_file_t, c_uint, *mut c_void, usize) -> usize,
+    pub Read: unsafe fn(*mut wad_file_t, c_uint, *mut c_void, usize) -> usize,
 }
 
 /// Public WAD-file descriptor base class. The stdio backend extends this
@@ -79,7 +78,7 @@ use crate::doom::{
 /// `path` must point to a valid null-terminated C string. The returned
 /// pointer (if non-null) is owned by the caller and must eventually be
 /// passed to [`W_StdC_CloseFile`].
-unsafe extern "C" fn W_StdC_OpenFile(path: *mut c_char) -> *mut wad_file_t {
+unsafe fn W_StdC_OpenFile(path: *mut c_char) -> *mut wad_file_t {
     let fstream = fopen(path as *const c_char, c"rb".as_ptr());
     if fstream.is_null() {
         return ptr::null_mut();
@@ -111,7 +110,7 @@ unsafe extern "C" fn W_StdC_OpenFile(path: *mut c_char) -> *mut wad_file_t {
 ///
 /// `wad` must be a non-null pointer originally returned by
 /// [`W_StdC_OpenFile`].
-unsafe extern "C" fn W_StdC_CloseFile(wad: *mut wad_file_t) {
+unsafe fn W_StdC_CloseFile(wad: *mut wad_file_t) {
     let stdc_wad = wad as *mut stdc_wad_file_t;
     fclose((*stdc_wad).fstream);
     Z_Free(stdc_wad as *mut c_void);
@@ -127,7 +126,7 @@ unsafe extern "C" fn W_StdC_CloseFile(wad: *mut wad_file_t) {
 /// `wad` must be a non-null pointer originally returned by
 /// [`W_StdC_OpenFile`]. `buffer` must point to writable memory of at
 /// least `buffer_len` bytes.
-unsafe extern "C" fn W_StdC_Read(
+unsafe fn W_StdC_Read(
     wad: *mut wad_file_t,
     offset: c_uint,
     buffer: *mut c_void,
@@ -138,11 +137,9 @@ unsafe extern "C" fn W_StdC_Read(
     fread(buffer, 1, buffer_len, (*stdc_wad).fstream)
 }
 
-/// Concrete vtable for the stdio backend. Exported with C linkage so
-/// other translation units can reference it as `extern wad_file_class_t
-/// stdc_wad_file`. This is the only backend the Rust port instantiates;
+/// Concrete vtable for the stdio backend. This is the only backend the
+/// Rust port instantiates;
 /// the chocolate-doom mmap backend is not ported.
-#[no_mangle]
 pub static mut stdc_wad_file: wad_file_class_t = wad_file_class_t {
     OpenFile: W_StdC_OpenFile,
     CloseFile: W_StdC_CloseFile,
@@ -154,15 +151,13 @@ pub static mut stdc_wad_file: wad_file_class_t = wad_file_class_t {
 /// optionally tried a series of `wad_file_classes` based on the `-mmap`
 /// command-line argument, but this port omits the mmap backend so the
 /// dispatch collapses to a direct call into `W_StdC_OpenFile`.
-#[no_mangle]
-pub extern "C" fn W_OpenFile(path: *mut c_char) -> *mut wad_file_t {
+pub fn W_OpenFile(path: *mut c_char) -> *mut wad_file_t {
     unsafe { (stdc_wad_file.OpenFile)(path) }
 }
 
 /// Close a WAD descriptor by dispatching through its vtable. The
 /// descriptor must have been returned by [`W_OpenFile`].
-#[no_mangle]
-pub extern "C" fn W_CloseFile(wad: *mut wad_file_t) {
+pub fn W_CloseFile(wad: *mut wad_file_t) {
     unsafe {
         ((*(*wad).file_class).CloseFile)(wad);
     }
@@ -171,8 +166,7 @@ pub extern "C" fn W_CloseFile(wad: *mut wad_file_t) {
 /// Read `buffer_len` bytes from `offset` in the given WAD into `buffer`
 /// by dispatching through the descriptor's vtable. Returns the number
 /// of bytes actually read.
-#[no_mangle]
-pub extern "C" fn W_Read(
+pub fn W_Read(
     wad: *mut wad_file_t,
     offset: c_uint,
     buffer: *mut c_void,

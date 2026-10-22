@@ -21,7 +21,6 @@ use crate::doom::m_fixed::FRACUNIT;
 /// Sectors whose ceiling flat equals this value are treated as open sky by
 /// the BSP, seg, and plane renderers (`r_bsp.c`, `r_segs.c`, `r_plane.c`,
 /// `p_map.c`, `p_mobj.c`).
-#[no_mangle]
 pub static mut skyflatnum: c_int = 0;
 
 /// Texture number of the current sky texture (SKY1 / SKY2 / SKY3 / SKY4),
@@ -29,7 +28,6 @@ pub static mut skyflatnum: c_int = 0;
 ///
 /// `r_plane.c` uses this index when calling `R_GetColumn` to fetch sky
 /// columns, and `r_data.c` marks it as always-present during precaching.
-#[no_mangle]
 pub static mut skytexture: c_int = 0;
 
 /// Vertical midpoint for sky column drawing, in 16.16 fixed-point units.
@@ -37,7 +35,6 @@ pub static mut skytexture: c_int = 0;
 /// Reset to `100 * FRACUNIT` every time the view size changes (see
 /// `R_InitSkyMap`).  Used by `r_plane.c` as `dc_texturemid` when rendering
 /// sky spans.
-#[no_mangle]
 pub static mut skytexturemid: c_int = 0;
 
 /// Reset sky-mapping state whenever the view size changes.
@@ -48,8 +45,7 @@ pub static mut skytexturemid: c_int = 0;
 ///
 /// Called by `r_main.c` (`R_Init` -> `R_ExecuteSetViewSize`) whenever the
 /// view size is reconfigured.
-#[no_mangle]
-pub extern "C" fn R_InitSkyMap() {
+pub fn R_InitSkyMap() {
     unsafe {
         // skyflatnum = R_FlatNumForName(SKYFLATNAME);   // done elsewhere
         skytexturemid = 100 * FRACUNIT;

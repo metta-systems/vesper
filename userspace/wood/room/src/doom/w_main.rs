@@ -37,8 +37,7 @@ use crate::doom::{
 /// port does not implement the `FEATURE_WAD_MERGE` parameters
 /// (`-merge`, `-nwtmerge`, `-af`, `-as`, `-aa`) because doomgeneric
 /// `#undef`s that feature.
-#[no_mangle]
-pub extern "C" fn W_ParseCommandLine() -> Boolean {
+pub fn W_ParseCommandLine() -> Boolean {
     let mut modifiedgame: Boolean = Boolean::FALSE;
 
     unsafe {

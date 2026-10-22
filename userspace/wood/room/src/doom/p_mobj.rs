@@ -20,11 +20,6 @@ use crate::doom::{
     m_random::P_Random,
     p_maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
     p_pspr::P_SetupPsprites,
-};
-// deathmatch_p, deathmatchstarts, playerstarts are accessed via extern "C"
-// below to avoid type mismatches between p_setup::mapthing_t and
-// p_telept::mapthing_t.
-use crate::doom::{
     p_telept::{line_t, mapthing_t, mobj_t, subsector_t},
     p_tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
     r_main::{R_PointInSubsector, R_PointToAngle2},
@@ -94,7 +89,6 @@ type SetupMapThing = crate::doom::p_setup::mapthing_t;
 ///
 /// The queue is indexed by `iquehead` (write) and `iquetail` (read), both
 /// modulo `ITEMQUESIZE`.
-#[no_mangle]
 pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t {
     x: 0,
     y: 0,
@@ -107,21 +101,18 @@ pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t {
 ///
 /// An item is eligible to respawn once `leveltime - itemrespawntime[iquetail]`
 /// exceeds 30 * `TICRATE`.
-#[no_mangle]
 pub static mut itemrespawntime: [c_int; ITEMQUESIZE] = [0; ITEMQUESIZE];
 
 /// Write index (head) of the item-respawn circular queue.
-#[no_mangle]
 pub static mut iquehead: c_int = 0;
 
 /// Read index (tail) of the item-respawn circular queue.
-#[no_mangle]
 pub static mut iquetail: c_int = 0;
 
 /// Construct the sentinel `actionf_t` value used to detect that a thinker has
 /// been removed mid-tick (all-ones function pointer).
-fn sentinel_ac() -> Option<unsafe extern "C" fn()> {
-    Some(unsafe { core::mem::transmute::<usize, unsafe extern "C" fn()>(usize::MAX) })
+fn sentinel_ac() -> Option<unsafe fn()> {
+    Some(unsafe { core::mem::transmute::<usize, unsafe fn()>(usize::MAX) })
 }
 
 /// Return `true` if `f` is the removal-sentinel value, meaning the mobj was
@@ -140,8 +131,7 @@ fn is_sentinel(f: actionf_t) -> bool {
 ///
 /// `mobj` must be a valid, non-null pointer to an initialised `mobj_t`.
 /// `state` must be a valid state-table index or `S_NULL`.
-#[no_mangle]
-pub unsafe extern "C" fn P_SetMobjState(mobj: *mut mobj_t, state: c_int) -> c_int {
+pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: c_int) -> c_int {
     let mobj = &mut *mobj;
     let mut state = state;
     loop {
@@ -156,7 +146,7 @@ pub unsafe extern "C" fn P_SetMobjState(mobj: *mut mobj_t, state: c_int) -> c_in
         mobj.sprite = (*st).sprite;
         mobj.frame = (*st).frame;
         if let Some(action) = (*st).action {
-            let action: unsafe extern "C" fn(*mut c_void) = core::mem::transmute(action);
+            let action: unsafe fn(*mut c_void) = core::mem::transmute(action);
             action(mobj as *mut mobj_t as *mut c_void);
         }
         state = (*st).nextstate;
@@ -174,8 +164,7 @@ pub unsafe extern "C" fn P_SetMobjState(mobj: *mut mobj_t, state: c_int) -> c_in
 /// # Safety
 ///
 /// `mo` must be a valid, non-null pointer to an `mobj_t` with `MF_MISSILE` set.
-#[no_mangle]
-pub unsafe extern "C" fn P_ExplodeMissile(mo: *mut mobj_t) {
+pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
     let mo = &mut *mo;
     let info = mo.info as *mut MobjInfo;
     mo.momx = 0;
@@ -203,8 +192,7 @@ pub unsafe extern "C" fn P_ExplodeMissile(mo: *mut mobj_t) {
 ///
 /// `mo` must be a valid, non-null pointer to an `mobj_t` that is part of the
 /// active thinker list.
-#[no_mangle]
-pub unsafe extern "C" fn P_XYMovement(mo: *mut mobj_t) {
+pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
     let mo = &mut *mo;
     let mut ptryx: c_int;
     let mut ptryy: c_int;
@@ -326,8 +314,7 @@ pub unsafe extern "C" fn P_XYMovement(mo: *mut mobj_t) {
 ///
 /// `mo` must be a valid, non-null pointer to an `mobj_t` that is part of the
 /// active thinker list.
-#[no_mangle]
-pub unsafe extern "C" fn P_ZMovement(mo: *mut mobj_t) {
+pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
     let mo = &mut *mo;
     let dist: c_int;
     let delta: c_int;
@@ -408,8 +395,7 @@ pub unsafe extern "C" fn P_ZMovement(mo: *mut mobj_t) {
 ///
 /// `mobj` must be a valid, non-null pointer to an `mobj_t` that has
 /// `MF_COUNTKILL` set and whose `spawnpoint` field is valid.
-#[no_mangle]
-pub unsafe extern "C" fn P_NightmareRespawn(mobj: *mut mobj_t) {
+pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     let x = (mobj.spawnpoint.x as c_int) << FRACBITS;
     let y = (mobj.spawnpoint.y as c_int) << FRACBITS;
@@ -457,8 +443,7 @@ pub unsafe extern "C" fn P_NightmareRespawn(mobj: *mut mobj_t) {
 ///
 /// `mobj` must be a valid, non-null pointer to an `mobj_t` that is currently
 /// linked into the thinker list.
-#[no_mangle]
-pub unsafe extern "C" fn P_MobjThinker(mobj: *mut mobj_t) {
+pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     if mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0 {
         P_XYMovement(mobj as *mut mobj_t);
@@ -513,8 +498,7 @@ pub unsafe extern "C" fn P_MobjThinker(mobj: *mut mobj_t) {
 ///
 /// Must be called only while a level is active (zone memory must be
 /// initialised).  `type_` must be a valid `mobjtype_t` index.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int) -> *mut mobj_t {
+pub unsafe fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int) -> *mut mobj_t {
     let mobj = Z_Malloc(
         std::mem::size_of::<mobj_t>() as c_int,
         PU_LEVEL,
@@ -560,8 +544,8 @@ pub unsafe extern "C" fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int)
     }
 
     mobj_ref.thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe extern "C" fn(*mut mobj_t),
-        unsafe extern "C" fn(*mut c_void),
+        unsafe fn(*mut mobj_t),
+        unsafe fn(*mut c_void),
     >(P_MobjThinker));
 
     P_AddThinker(&mut mobj_ref.thinker as *mut thinker_t);
@@ -580,8 +564,7 @@ pub unsafe extern "C" fn P_SpawnMobj(x: c_int, y: c_int, z: c_int, type_: c_int)
 ///
 /// `mobj` must be a valid, non-null pointer to an `mobj_t` that is currently
 /// linked into the world.
-#[no_mangle]
-pub unsafe extern "C" fn P_RemoveMobj(mobj: *mut mobj_t) {
+pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     if mobj.flags & MF_SPECIAL != 0
         && mobj.flags & MF_DROPPED == 0
@@ -610,8 +593,7 @@ pub unsafe extern "C" fn P_RemoveMobj(mobj: *mut mobj_t) {
 /// # Safety
 ///
 /// Must be called only during an active level tick.
-#[no_mangle]
-pub unsafe extern "C" fn P_RespawnSpecials() {
+pub unsafe fn P_RespawnSpecials() {
     if deathmatch != 2 {
         return;
     }
@@ -661,8 +643,7 @@ pub unsafe extern "C" fn P_RespawnSpecials() {
 /// `mthing` must be a valid, non-null pointer to a `mapthing_t` whose `type`
 /// field is in `0..=4`.  Must be called only during level load with zone
 /// memory active.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnPlayer(mthing: *mut mapthing_t) {
+pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
     if mthing.r#type as c_int == 0 {
         return;
@@ -725,8 +706,7 @@ pub unsafe extern "C" fn P_SpawnPlayer(mthing: *mut mapthing_t) {
 ///
 /// `mthing` must be a valid, non-null pointer to a `mapthing_t` with host
 /// byte order fields.  Must be called during level load.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnMapThing(mthing: *mut mapthing_t) {
+pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
     let mut i: usize;
 
@@ -829,8 +809,7 @@ pub unsafe extern "C" fn P_SpawnMapThing(mthing: *mut mapthing_t) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnPuff(x: c_int, y: c_int, z: c_int) {
+pub unsafe fn P_SpawnPuff(x: c_int, y: c_int, z: c_int) {
     let z = z + ((P_Random() - P_Random()) << 10);
     let th = P_SpawnMobj(x, y, z, MT_PUFF);
     (*th).momz = FRACUNIT;
@@ -852,8 +831,7 @@ pub unsafe extern "C" fn P_SpawnPuff(x: c_int, y: c_int, z: c_int) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnBlood(x: c_int, y: c_int, z: c_int, damage: c_int) {
+pub unsafe fn P_SpawnBlood(x: c_int, y: c_int, z: c_int, damage: c_int) {
     let z = z + ((P_Random() - P_Random()) << 10);
     let th = P_SpawnMobj(x, y, z, MT_BLOOD);
     (*th).momz = FRACUNIT * 2;
@@ -876,8 +854,7 @@ pub unsafe extern "C" fn P_SpawnBlood(x: c_int, y: c_int, z: c_int, damage: c_in
 ///
 /// `th` must be a valid, non-null pointer to an `mobj_t` with `MF_MISSILE`
 /// set and non-zero momentum.
-#[no_mangle]
-pub unsafe extern "C" fn P_CheckMissileSpawn(th: *mut mobj_t) {
+pub unsafe fn P_CheckMissileSpawn(th: *mut mobj_t) {
     let th = &mut *th;
     th.tics -= P_Random() & 3;
     if th.tics < 1 {
@@ -903,8 +880,7 @@ pub unsafe extern "C" fn P_CheckMissileSpawn(th: *mut mobj_t) {
 ///
 /// The returned dummy pointer is valid only until the next call to this
 /// function from the same thread; callers must not store it across ticks.
-#[no_mangle]
-pub unsafe extern "C" fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
+pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
     if mobj.is_null() {
         static mut DUMMY_MOBJ: mobj_t = unsafe { std::mem::zeroed() };
         DUMMY_MOBJ.x = 0;
@@ -928,12 +904,7 @@ pub unsafe extern "C" fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
 ///
 /// `source` and `dest` must be valid, non-null pointers to `mobj_t` instances.
 /// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnMissile(
-    source: *mut mobj_t,
-    dest: *mut mobj_t,
-    type_: c_int,
-) -> *mut mobj_t {
+pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, type_: c_int) -> *mut mobj_t {
     let source = &*source;
     let dest = &*dest;
     let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, type_);
@@ -969,8 +940,7 @@ pub unsafe extern "C" fn P_SpawnMissile(
 ///
 /// `source` must be a valid, non-null pointer to a player `mobj_t`.
 /// `type_` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: c_int) {
+pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, type_: c_int) {
     let source = &mut *source;
     let mut an = source.angle;
     let mut slope = P_AimLineAttack(source as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);

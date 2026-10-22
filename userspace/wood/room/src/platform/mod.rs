@@ -1,23 +1,11 @@
 //! The platform the engine runs on.
 //!
-//! The engine (`room::doom`) reaches the platform only through `extern "C"`
-//! `DG_*` functions, which each platform module exports with `#[no_mangle]`,
-//! plus a `run()` that starts the game:
-//!
-//! | Function | Purpose |
-//! |----------|---------|
-//! | `DG_Init` | Platform initialisation, inside `doomgeneric_Create` |
-//! | `DG_DrawFrame` | Present the frame in `DG_ScreenBuffer` |
-//! | `DG_SleepMs` | Sleep for a number of milliseconds |
-//! | `DG_GetTicksMs` | Milliseconds since startup |
-//! | `DG_GetKey` | Pop the next key event |
-//! | `DG_SetWindowTitle` | Show the game's title |
-//! | `DG_SoundInit`, `DG_SoundShutdown` | Open and close the audio output |
-//! | `DG_SoundStart`, `DG_SoundStop`, `DG_SoundUpdate`, `DG_SoundIsPlaying` | Play DMX sound lumps on 8 channels |
-//! | `DG_MusicInit`, `DG_MusicPlay`, `DG_MusicStop`, `DG_MusicPause`, `DG_MusicResume`, `DG_MusicSetVolume`, `DG_MusicIsPlaying` | Play MIDI songs |
-//!
-//! The first six are doomgeneric's; the audio hooks are this port's, called
-//! from `room::doom::i_sound`.
+//! The engine (`room::doom`) reaches the platform only through the
+//! `room::doom::doomgeneric::Platform` trait: doomgeneric's six `DG_*`
+//! callbacks (init, draw a frame, sleep, the clock, keys, the window title)
+//! plus this port's sound and music methods, which `room::doom::i_sound`
+//! calls. Each platform module implements it and has a `run()` that hands
+//! its implementation to `doomgeneric_Create` and drives the game.
 //!
 //! - `host`: winit, wgpu and rodio, for desktop builds.
 //! - `vesper`: placeholders for the Vesper EL0 component, selected on

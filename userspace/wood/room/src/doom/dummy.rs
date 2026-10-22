@@ -23,7 +23,6 @@ use std::ffi::c_uint;
 /// module is not yet ported, this stub keeps it permanently `false`.
 /// Referenced from C as `net_client_connected`.
 // `boolean` in doomtype.h is `typedef unsigned int boolean;` — use c_uint.
-#[no_mangle]
 pub static mut net_client_connected: c_uint = 0; // false
 
 /// Whether this instance is running as a "drone" (observer) client.
@@ -32,7 +31,6 @@ pub static mut net_client_connected: c_uint = 0; // false
 /// network game but does not control a player; it is used for recording or
 /// observation purposes.  Initialised to `false` (0) and never set while the
 /// networking subsystem is stubbed out.  Referenced from C as `drone`.
-#[no_mangle]
 pub static mut drone: c_uint = 0; // false
 
 /// No-op stub for Timidity MIDI configuration initialisation.
@@ -45,8 +43,7 @@ pub static mut drone: c_uint = 0; // false
 ///
 /// # Note
 /// The original C stub is also empty; no `// FIXME` is needed here.
-#[no_mangle]
-pub extern "C" fn I_InitTimidityConfig() {}
+pub fn I_InitTimidityConfig() {}
 
 #[cfg(test)]
 mod tests {

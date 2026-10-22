@@ -117,8 +117,7 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
 /// - Must be called exactly once at program startup, before any other
 ///   `Z_*` entry point.
 /// - Reads/writes the global `mainzone`; not thread-safe.
-#[no_mangle]
-pub unsafe extern "C" fn Z_Init() {
+pub unsafe fn Z_Init() {
     let mut size: c_int = 0;
     mainzone = I_ZoneBase(&mut size) as *mut memzone_t;
     (*mainzone).size = size;
@@ -136,8 +135,7 @@ pub unsafe extern "C" fn Z_Init() {
 ///   freed; its header (immediately before `ptr`) must still carry
 ///   `ZONEID`. Mismatches call `I_Error`.
 /// - `mainzone` must be initialised (`Z_Init` ran).
-#[no_mangle]
-pub unsafe extern "C" fn Z_Free(ptr: *mut c_void) {
+pub unsafe fn Z_Free(ptr: *mut c_void) {
     let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
@@ -199,8 +197,7 @@ pub unsafe extern "C" fn Z_Free(ptr: *mut c_void) {
 ///   future purge/free.
 /// - `tag` must be a valid `PU_*` value (other values are silently
 ///   accepted but break the purge logic, matching C).
-#[no_mangle]
-pub unsafe extern "C" fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_void {
+pub unsafe fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_void {
     if mainzone.is_null() {
         panic!("Z_Malloc: mainzone is null!");
     }
@@ -306,8 +303,7 @@ pub unsafe extern "C" fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) ->
 /// - `mainzone` must be initialised. All blocks in the active list must
 ///   be live `Z_Malloc` allocations (the sentinel's tag is PU_STATIC, so
 ///   it is skipped by the tag-range check).
-#[no_mangle]
-pub unsafe extern "C" fn Z_FreeTags(lowtag: c_int, hightag: c_int) {
+pub unsafe fn Z_FreeTags(lowtag: c_int, hightag: c_int) {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
@@ -342,8 +338,7 @@ pub unsafe extern "C" fn Z_FreeTags(lowtag: c_int, hightag: c_int) {
 /// - `mainzone` must be initialised.
 /// - Calls into `libc::printf` with hard-coded format strings; the
 ///   varargs must match (`%i`, `%p`, etc.).
-#[no_mangle]
-pub unsafe extern "C" fn Z_DumpHeap(lowtag: c_int, hightag: c_int) {
+pub unsafe fn Z_DumpHeap(lowtag: c_int, hightag: c_int) {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
 
@@ -399,8 +394,7 @@ pub unsafe extern "C" fn Z_DumpHeap(lowtag: c_int, hightag: c_int) {
 /// # Safety
 /// - `mainzone` must be initialised. May call `I_Error` (does not
 ///   return) on corruption.
-#[no_mangle]
-pub unsafe extern "C" fn Z_CheckHeap() {
+pub unsafe fn Z_CheckHeap() {
     if !Z_CheckHeapQuiet() {
         // Already printed diagnostic info.
     }
@@ -452,8 +446,7 @@ pub unsafe extern "C" fn Z_CheckHeap() {
 /// - Reads `mainzone` and its linked block list; the caller must ensure
 ///   no other thread mutates the Zone concurrently.
 /// - Returns `true` if `mainzone` is null (nothing to check yet).
-#[no_mangle]
-pub unsafe extern "C" fn Z_CheckHeapQuiet() -> bool {
+pub unsafe fn Z_CheckHeapQuiet() -> bool {
     let zone = mainzone;
     if zone.is_null() {
         return true;
@@ -548,13 +541,7 @@ pub unsafe fn Z_CheckHeapAfter(name: &str) {
 ///   `ZONEID`); otherwise `I_Error` is called.
 /// - `_file` / `_line` are unused but must still be valid pointers per
 ///   the C calling convention.
-#[no_mangle]
-pub unsafe extern "C" fn Z_ChangeTag2(
-    ptr: *mut c_void,
-    tag: c_int,
-    _file: *const c_char,
-    _line: c_int,
-) {
+pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: c_int, _file: *const c_char, _line: c_int) {
     let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
@@ -577,8 +564,7 @@ pub unsafe extern "C" fn Z_ChangeTag2(
 ///   `ZONEID`); otherwise `I_Error` is called.
 /// - `user` must be a writable `*mut *mut c_void` whose storage will
 ///   outlive the block.
-#[no_mangle]
-pub unsafe extern "C" fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
+pub unsafe fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
     let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
@@ -596,8 +582,7 @@ pub unsafe extern "C" fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) 
 ///
 /// # Safety
 /// - `mainzone` must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn Z_FreeMemory() -> c_int {
+pub unsafe fn Z_FreeMemory() -> c_int {
     let zone = mainzone;
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut free: c_int = 0;
@@ -615,12 +600,11 @@ pub unsafe extern "C" fn Z_FreeMemory() -> c_int {
 
 /// `void Z_FileDumpHeap(FILE *f)` — stubbed out: the C original wrote a
 /// per-block dump to a `FILE *` for the diehard debug build, but no
-/// Rust call site exists. Kept as a no-op to satisfy the C linker.
+/// Rust call site exists. Kept as a no-op for API parity.
 ///
 /// # Safety
 /// - `_f` is ignored; any value (including null) is accepted.
-#[no_mangle]
-pub unsafe extern "C" fn Z_FileDumpHeap(_f: *mut libc::FILE) {
+pub unsafe fn Z_FileDumpHeap(_f: *mut libc::FILE) {
     // No Rust caller found; stubbed per plan.
 }
 
@@ -630,30 +614,6 @@ pub unsafe extern "C" fn Z_FileDumpHeap(_f: *mut libc::FILE) {
 /// # Safety
 /// - `mainzone` must be initialised; otherwise this dereferences a null
 ///   pointer.
-#[no_mangle]
-pub unsafe extern "C" fn Z_ZoneSize() -> u32 {
+pub unsafe fn Z_ZoneSize() -> u32 {
     (*mainzone).size as u32
-}
-/// Link-anchor shim: references every `Z_*` symbol so the static linker
-/// cannot dead-strip them. No runtime callers; only the C side calls the
-/// individual entry points, but Rust's GC of unused `extern "C"` items
-/// would otherwise drop them in release builds.
-///
-/// # Safety
-/// - Calls every wrapped function with placeholder null/zero arguments.
-///   Must never actually be invoked at runtime (it would corrupt the
-///   Zone immediately).
-#[no_mangle]
-pub unsafe extern "C" fn Z_Zone_Link_Anchor() {
-    Z_Init();
-    Z_Free(ptr::null_mut());
-    Z_Malloc(0, 0, ptr::null_mut());
-    Z_FreeTags(0, 0);
-    Z_DumpHeap(0, 0);
-    Z_FileDumpHeap(ptr::null_mut());
-    Z_CheckHeap();
-    Z_ChangeTag2(ptr::null_mut(), 0, ptr::null(), 0);
-    Z_ChangeUser(ptr::null_mut(), ptr::null_mut());
-    Z_FreeMemory();
-    Z_ZoneSize();
 }

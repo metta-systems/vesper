@@ -46,9 +46,6 @@ extern "C" {
     /// search.
     fn printf(fmt: *const c_char, ...) -> c_int;
 
-    /// Returns non-zero if `filename` names an existing regular file.
-    fn M_FileExists(filename: *mut c_char) -> c_int;
-
     /// Case-insensitive string comparison (POSIX).
     fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int;
     /// Locates the last occurrence of character `c` in string `s`.
@@ -64,16 +61,12 @@ extern "C" {
     fn free(ptr: *mut c_void);
     /// Allocates `size` bytes of uninitialised heap memory.
     fn malloc(size: usize) -> *mut c_void;
-
-    /// Number of command-line arguments (equivalent to C `argc`).
-    static mut myargc: c_int;
-    /// Command-line argument vector (equivalent to C `argv`).
-    static mut myargv: *mut *mut c_char;
-    /// Returns the index of the first occurrence of `check` in `myargv`,
-    /// provided that at least `num_args` further arguments follow it, or 0
-    /// if not found.
-    fn M_CheckParmWithArgs(check: *const c_char, num_args: c_int) -> c_int;
 }
+
+use crate::doom::{
+    m_argv::{myargv, M_CheckParmWithArgs},
+    m_misc::M_FileExists,
+};
 
 /// Metadata for a single known IWAD file.
 ///
@@ -81,8 +74,7 @@ extern "C" {
 /// Instances live in the static `IWADS` table.
 ///
 /// # Layout invariant
-/// This type is `#[repr(C)]` to match the C struct layout exactly, allowing
-/// pointers to array elements to be passed back to C callers.
+/// This type is `#[repr(C)]` to match the C struct layout exactly.
 #[repr(C)]
 pub struct iwad_t {
     /// Canonical filename of the IWAD (e.g. `"doom2.wad\0"`).
@@ -396,8 +388,7 @@ unsafe fn BuildIWADDirList() {
 ///
 /// # Safety
 /// `name` must be a valid, null-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
+pub unsafe fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
     if M_FileExists(name) != 0 {
         return name;
     }
@@ -437,8 +428,7 @@ pub unsafe extern "C" fn D_FindWADByName(name: *mut c_char) -> *mut c_char {
 ///
 /// # Safety
 /// `filename` must be a valid, null-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn D_TryFindWADByName(filename: *mut c_char) -> *mut c_char {
+pub unsafe fn D_TryFindWADByName(filename: *mut c_char) -> *mut c_char {
     let result = D_FindWADByName(filename);
     if !result.is_null() {
         result
@@ -461,8 +451,7 @@ pub unsafe extern "C" fn D_TryFindWADByName(filename: *mut c_char) -> *mut c_cha
 ///
 /// # Safety
 /// `mission` must be a valid, non-null pointer.
-#[no_mangle]
-pub unsafe extern "C" fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_char {
+pub unsafe fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_char {
     let iwadparm = M_CheckParmWithArgs(c"-iwad".as_ptr(), 1);
 
     if iwadparm != 0 {
@@ -506,8 +495,7 @@ pub unsafe extern "C" fn D_FindIWAD(mask: c_int, mission: *mut c_int) -> *mut c_
 ///
 /// # Safety
 /// The returned pointer must be freed with `free` when no longer needed.
-#[no_mangle]
-pub unsafe extern "C" fn D_FindAllIWADs(mask: c_int) -> *mut *const iwad_t {
+pub unsafe fn D_FindAllIWADs(mask: c_int) -> *mut *const iwad_t {
     let result =
         malloc(std::mem::size_of::<*const iwad_t>() * (IWADS.len() + 1)) as *mut *const iwad_t;
     let mut result_len: usize = 0;
@@ -539,8 +527,7 @@ pub unsafe extern "C" fn D_FindAllIWADs(mask: c_int) -> *mut *const iwad_t {
 /// and `doom1.wad` saves share the same location.
 ///
 /// Called from `d_main.c`.
-#[no_mangle]
-pub unsafe extern "C" fn D_SaveGameIWADName(gamemission: c_int) -> *mut c_char {
+pub unsafe fn D_SaveGameIWADName(gamemission: c_int) -> *mut c_char {
     for i in 0..IWADS.len() {
         if gamemission == IWADS[i].mission {
             return IWADS[i].name;
@@ -555,8 +542,7 @@ pub unsafe extern "C" fn D_SaveGameIWADName(gamemission: c_int) -> *mut c_char {
 /// `mission` and `mode` match. Falls back to `"unknown.wad"` if no match is
 /// found. The returned pointer points into a static string and must not be
 /// freed. Corresponds to `D_SuggestIWADName` in `d_iwad.c`.
-#[no_mangle]
-pub unsafe extern "C" fn D_SuggestIWADName(mission: c_int, mode: c_int) -> *mut c_char {
+pub unsafe fn D_SuggestIWADName(mission: c_int, mode: c_int) -> *mut c_char {
     for i in 0..IWADS.len() {
         if IWADS[i].mission == mission && IWADS[i].mode == mode {
             return IWADS[i].name;
@@ -572,8 +558,7 @@ pub unsafe extern "C" fn D_SuggestIWADName(mission: c_int, mode: c_int) -> *mut 
 /// `d_mode::indetermined`. Falls back to `"Unknown game?"` if no match is
 /// found. The returned pointer points into a static string and must not be
 /// freed. Called from `w_wad.c`.
-#[no_mangle]
-pub unsafe extern "C" fn D_SuggestGameName(mission: c_int, mode: c_int) -> *mut c_char {
+pub unsafe fn D_SuggestGameName(mission: c_int, mode: c_int) -> *mut c_char {
     for i in 0..IWADS.len() {
         if IWADS[i].mission == mission && (mode == d_mode::indetermined || IWADS[i].mode == mode) {
             return IWADS[i].description;
@@ -586,7 +571,6 @@ pub unsafe extern "C" fn D_SuggestGameName(mission: c_int, mode: c_int) -> *mut 
 ///
 /// This function is intentionally a no-op. The C original also provides an
 /// empty implementation in the doomgeneric fork. No validation is performed.
-#[no_mangle]
-pub extern "C" fn D_CheckCorrectIWAD(_mission: c_int) {
+pub fn D_CheckCorrectIWAD(_mission: c_int) {
     // Not implemented in original C codebase.
 }

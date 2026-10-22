@@ -121,9 +121,7 @@ use crate::doom::{
 ///
 /// Initialised by [`M_SetConfigDir`] from the command line or from
 /// `GetDefaultConfigDir`. Read by [`M_LoadDefaults`] and
-/// [`M_GetSaveGameDir`]. Exposed with C linkage because legacy C call sites
-/// read it directly.
-#[no_mangle]
+/// [`M_GetSaveGameDir`].
 pub static mut configdir: *mut c_char = ptr::null_mut();
 
 /// Filename component for the main `.cfg` file (e.g. `"default.cfg"`).
@@ -703,8 +701,7 @@ unsafe fn set_variable(def: *mut Default, value: *const c_char) {
 /// Mirrors C `M_SetConfigFilenames`. Stores the pointers without copying;
 /// the caller owns the underlying buffers and must keep them alive for the
 /// remainder of the program.
-#[no_mangle]
-pub extern "C" fn M_SetConfigFilenames(main_config: *mut c_char, extra_config: *mut c_char) {
+pub fn M_SetConfigFilenames(main_config: *mut c_char, extra_config: *mut c_char) {
     unsafe {
         default_main_config = main_config;
         default_extra_config = extra_config;
@@ -716,8 +713,7 @@ pub extern "C" fn M_SetConfigFilenames(main_config: *mut c_char, extra_config: *
 /// In the C source the body of `SaveDefaultCollection` is gated behind
 /// `#if ORIGCODE`, which is undefined in the chocolate-doom build used
 /// here, so the original is also a no-op at runtime.
-#[no_mangle]
-pub extern "C" fn M_SaveDefaults() {
+pub fn M_SaveDefaults() {
     // No-op: ORIGCODE is undefined, so the file-I/O body is never compiled
     // in the original C either.
 }
@@ -727,8 +723,7 @@ pub extern "C" fn M_SaveDefaults() {
 /// Mirrors C `M_SaveDefaultsAlternate`. Because [`M_SaveDefaults`] is a
 /// no-op in this build, the function only manipulates filename pointers;
 /// no actual writes occur.
-#[no_mangle]
-pub extern "C" fn M_SaveDefaultsAlternate(main: *mut c_char, extra: *mut c_char) {
+pub fn M_SaveDefaultsAlternate(main: *mut c_char, extra: *mut c_char) {
     unsafe {
         let orig_main = doom_defaults.filename;
         let orig_extra = extra_defaults.filename;
@@ -748,8 +743,7 @@ pub extern "C" fn M_SaveDefaultsAlternate(main: *mut c_char, extra: *mut c_char)
 /// command-line flags override the default filename construction. The
 /// resulting filenames are stored in `doom_defaults.filename` and
 /// `extra_defaults.filename` for any future call to [`M_SaveDefaults`].
-#[no_mangle]
-pub extern "C" fn M_LoadDefaults() {
+pub fn M_LoadDefaults() {
     unsafe {
         let i = M_CheckParmWithArgs(c"-config".as_ptr().cast_mut(), 1);
         if i != 0 {
@@ -787,8 +781,7 @@ pub extern "C" fn M_LoadDefaults() {
 /// After binding, [`M_LoadDefaults`] (and the chocolate-doom config UI)
 /// can read and write the value at the supplied pointer. Aborts via
 /// `I_Error` if the name is unknown. Mirrors C `M_BindVariable`.
-#[no_mangle]
-pub extern "C" fn M_BindVariable(name: *mut c_char, location: *mut c_void) {
+pub fn M_BindVariable(name: *mut c_char, location: *mut c_void) {
     unsafe {
         let variable = get_default_for_name(name as *const c_char);
         (*variable).location = location;
@@ -799,8 +792,7 @@ pub extern "C" fn M_BindVariable(name: *mut c_char, location: *mut c_void) {
 /// Programmatic setter: parse `value` and store it at the bound location
 /// for the named variable. Returns `false` if the variable is unknown or
 /// unbound. Mirrors C `M_SetVariable`.
-#[no_mangle]
-pub extern "C" fn M_SetVariable(name: *mut c_char, value: *mut c_char) -> bool {
+pub fn M_SetVariable(name: *mut c_char, value: *mut c_char) -> bool {
     unsafe {
         let variable = get_default_for_name(name as *const c_char);
         if variable.is_null() || !(*variable).bound {
@@ -815,8 +807,7 @@ pub extern "C" fn M_SetVariable(name: *mut c_char, value: *mut c_char) -> bool {
 ///
 /// Returns `0` if the variable is unknown, unbound, or has a non-integer
 /// type. Mirrors C `M_GetIntVariable`.
-#[no_mangle]
-pub extern "C" fn M_GetIntVariable(name: *mut c_char) -> c_int {
+pub fn M_GetIntVariable(name: *mut c_char) -> c_int {
     unsafe {
         let variable = get_default_for_name(name as *const c_char);
         if variable.is_null()
@@ -834,8 +825,7 @@ pub extern "C" fn M_GetIntVariable(name: *mut c_char) -> c_int {
 /// Returns NULL if the variable is unknown, unbound, or has a non-string
 /// type. The returned pointer aliases the storage held by the caller of
 /// [`M_BindVariable`]. Mirrors C `M_GetStrVariable`.
-#[no_mangle]
-pub extern "C" fn M_GetStrVariable(name: *mut c_char) -> *const c_char {
+pub fn M_GetStrVariable(name: *mut c_char) -> *const c_char {
     unsafe {
         let variable = get_default_for_name(name as *const c_char);
         if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::String {
@@ -849,8 +839,7 @@ pub extern "C" fn M_GetStrVariable(name: *mut c_char) -> *const c_char {
 ///
 /// Returns `0.0` if the variable is unknown, unbound, or has a non-float
 /// type. Mirrors C `M_GetFloatVariable`.
-#[no_mangle]
-pub extern "C" fn M_GetFloatVariable(name: *mut c_char) -> c_float {
+pub fn M_GetFloatVariable(name: *mut c_char) -> c_float {
     unsafe {
         let variable = get_default_for_name(name as *const c_char);
         if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::Float {
@@ -885,8 +874,7 @@ unsafe fn GetDefaultConfigDir() -> *mut c_char {
 /// echoed to the console. The path is created (recursive parents are NOT
 /// created - matches C semantics) via [`M_MakeDirectory`]. Mirrors C
 /// `M_SetConfigDir`.
-#[no_mangle]
-pub extern "C" fn M_SetConfigDir(dir: *mut c_char) {
+pub fn M_SetConfigDir(dir: *mut c_char) {
     unsafe {
         if !dir.is_null() {
             configdir = dir;
@@ -914,8 +902,7 @@ pub extern "C" fn M_SetConfigDir(dir: *mut c_char) {
 /// compatibility. Returns an empty `strdup("")` if `configdir` is empty
 /// (Windows-style "no config dir" mode). The returned pointer is owned by
 /// the caller and must be freed.
-#[no_mangle]
-pub extern "C" fn M_GetSaveGameDir(_iwadname: *mut c_char) -> *mut c_char {
+pub fn M_GetSaveGameDir(_iwadname: *mut c_char) -> *mut c_char {
     unsafe {
         if strcmp(configdir, c"".as_ptr()) == 0 {
             strdup(c"".as_ptr())

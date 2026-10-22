@@ -1,5 +1,6 @@
-//! Host audio: the `DG_Sound*` and `DG_Music*` hooks the engine's
-//! `i_sound` calls, on top of the sfx and music submodules.
+//! Host audio: the sound and music half of the host
+//! [`Platform`](room::doom::doomgeneric::Platform), on top of the sfx and
+//! music submodules.
 //!
 //! The backend replaces the SDL2 mixer that the original `i_sound.c` and
 //! `i_oplmusic.c` drive.  It is built on top of `rodio`: each Doom logical
@@ -16,7 +17,7 @@ pub(crate) mod sfx;
 
 use std::{
     cell::RefCell,
-    ffi::{c_int, CStr},
+    ffi::CStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -28,17 +29,11 @@ use room::doom::m_argv::{myargv, M_CheckParmWithArgs};
 pub(crate) use sfx::{decode_doom_sfx, PannedSource};
 
 // ---------------------------------------------------------------------------
-// DG_Sound* / DG_Music* hooks (C-callable)
+// Sound and music, as `Host` hands them over
 // ---------------------------------------------------------------------------
 
-/// The `0..8` SFX channel `channel` names, or `None`.
-fn channel_index(channel: c_int) -> Option<usize> {
-    usize::try_from(channel).ok().filter(|&index| index < 8)
-}
-
-/// Open the default audio device, once; non-zero when audio is available.
-#[no_mangle]
-pub extern "C" fn DG_SoundInit() -> c_int {
+/// Open the default audio device, once; `true` when audio is available.
+pub(super) fn sound_init() -> bool {
     AUDIO.with_borrow_mut(|audio| {
         if audio.is_none() {
             match AudioState::new() {
@@ -46,77 +41,48 @@ pub extern "C" fn DG_SoundInit() -> c_int {
                 Err(error) => log::warn!("Audio device: {error}"),
             }
         }
-        c_int::from(audio.is_some())
+        audio.is_some()
     })
 }
 
 /// Close the audio device, stopping every sound and song.
-#[no_mangle]
-pub extern "C" fn DG_SoundShutdown() {
+pub(super) fn sound_shutdown() {
     AUDIO.with_borrow_mut(|audio| *audio = None);
 }
 
-/// Play the DMX sound lump `data[..len]` on `channel`; non-zero on success.
-///
-/// # Safety
-///
-/// `data` must point to `len` readable bytes for the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn DG_SoundStart(
-    data: *const u8,
-    len: usize,
-    channel: c_int,
-    vol: c_int,
-    sep: c_int,
-) -> c_int {
-    let Some(index) = channel_index(channel) else {
-        return 0;
-    };
-    if data.is_null() {
-        return 0;
-    }
-    // SAFETY: the caller guarantees `data[..len]` is readable.
-    let lump = unsafe { std::slice::from_raw_parts(data, len) };
+/// Play the DMX sound lump `lump` on `channel`; `true` on success.
+pub(super) fn sound_start(lump: &[u8], channel: usize, vol: i32, sep: i32) -> bool {
     AUDIO.with_borrow_mut(|audio| {
-        c_int::from(
-            audio
-                .as_mut()
-                .is_some_and(|audio| audio.start_sound(lump, vol, sep, index)),
-        )
+        audio
+            .as_mut()
+            .is_some_and(|audio| audio.start_sound(lump, vol, sep, channel))
     })
 }
 
 /// Stop whatever is playing on `channel`.
-#[no_mangle]
-pub extern "C" fn DG_SoundStop(channel: c_int) {
-    if let Some(index) = channel_index(channel) {
-        AUDIO.with_borrow_mut(|audio| {
-            if let Some(audio) = audio.as_mut() {
-                audio.stop_sound(index);
-            }
-        });
-    }
+pub(super) fn sound_stop(channel: usize) {
+    AUDIO.with_borrow_mut(|audio| {
+        if let Some(audio) = audio.as_mut() {
+            audio.stop_sound(channel);
+        }
+    });
 }
 
 /// Change the volume and separation of the sound playing on `channel`.
-#[no_mangle]
-pub extern "C" fn DG_SoundUpdate(channel: c_int, vol: c_int, sep: c_int) {
-    if let Some(index) = channel_index(channel) {
-        AUDIO.with_borrow(|audio| {
-            if let Some(audio) = audio.as_ref() {
-                audio.update_sound_params(index, vol, sep);
-            }
-        });
-    }
+pub(super) fn sound_update(channel: usize, vol: i32, sep: i32) {
+    AUDIO.with_borrow(|audio| {
+        if let Some(audio) = audio.as_ref() {
+            audio.update_sound_params(channel, vol, sep);
+        }
+    });
 }
 
-/// Non-zero while `channel` still has samples to play.
-#[no_mangle]
-pub extern "C" fn DG_SoundIsPlaying(channel: c_int) -> c_int {
-    channel_index(channel).map_or(0, |index| {
-        AUDIO.with_borrow(|audio| {
-            c_int::from(audio.as_ref().is_some_and(|audio| audio.is_playing(index)))
-        })
+/// `true` while `channel` still has samples to play.
+pub(super) fn sound_is_playing(channel: usize) -> bool {
+    AUDIO.with_borrow(|audio| {
+        audio
+            .as_ref()
+            .is_some_and(|audio| audio.is_playing(channel))
     })
 }
 
@@ -131,7 +97,7 @@ pub extern "C" fn DG_SoundIsPlaying(channel: c_int) -> c_int {
 /// then play silently. Not present in the C source: chocolate-doom
 /// uses an external timidity config instead.
 fn find_soundfont_path() -> Option<PathBuf> {
-    // SAFETY: the engine set up `myargv` before calling `DG_MusicInit`.
+    // SAFETY: the engine set up `myargv` before calling `music_init`.
     unsafe {
         let p = M_CheckParmWithArgs(c"-sf2".as_ptr(), 1);
         if p != 0 {
@@ -167,8 +133,7 @@ fn find_soundfont_path() -> Option<PathBuf> {
 
 /// Load the SoundFont music is synthesised with. Music stays silent
 /// without one.
-#[no_mangle]
-pub extern "C" fn DG_MusicInit() {
+pub(super) fn music_init() {
     if let Some(path) = find_soundfont_path() {
         AUDIO.with_borrow_mut(|audio| {
             if let Some(audio) = audio.as_mut() {
@@ -178,29 +143,18 @@ pub extern "C" fn DG_MusicInit() {
     }
 }
 
-/// Play the Standard MIDI File `midi[..len]`, looping if `looping` is non-zero.
-///
-/// # Safety
-///
-/// `midi` must point to `len` readable bytes for the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn DG_MusicPlay(midi: *const u8, len: usize, looping: c_int) {
-    if midi.is_null() {
-        return;
-    }
-    // SAFETY: the caller guarantees `midi[..len]` is readable.
-    let song = unsafe { std::slice::from_raw_parts(midi, len) };
+/// Play the Standard MIDI File `midi`, looping if `looping`.
+pub(super) fn music_play(midi: &[u8], looping: bool) {
     AUDIO.with_borrow_mut(|audio| {
         if let Some(audio) = audio.as_mut() {
             let mixer = audio.mixer.clone();
-            audio.music.play(song, looping != 0, &mixer);
+            audio.music.play(midi, looping, &mixer);
         }
     });
 }
 
 /// Stop the current song.
-#[no_mangle]
-pub extern "C" fn DG_MusicStop() {
+pub(super) fn music_stop() {
     AUDIO.with_borrow_mut(|audio| {
         if let Some(audio) = audio.as_mut() {
             audio.music.stop();
@@ -209,8 +163,7 @@ pub extern "C" fn DG_MusicStop() {
 }
 
 /// Pause the current song.
-#[no_mangle]
-pub extern "C" fn DG_MusicPause() {
+pub(super) fn music_pause() {
     AUDIO.with_borrow(|audio| {
         if let Some(audio) = audio.as_ref() {
             audio.music.pause();
@@ -219,8 +172,7 @@ pub extern "C" fn DG_MusicPause() {
 }
 
 /// Resume a paused song.
-#[no_mangle]
-pub extern "C" fn DG_MusicResume() {
+pub(super) fn music_resume() {
     AUDIO.with_borrow(|audio| {
         if let Some(audio) = audio.as_ref() {
             audio.music.resume();
@@ -229,8 +181,7 @@ pub extern "C" fn DG_MusicResume() {
 }
 
 /// Set the music volume (`0..=127`).
-#[no_mangle]
-pub extern "C" fn DG_MusicSetVolume(volume: c_int) {
+pub(super) fn music_set_volume(volume: i32) {
     AUDIO.with_borrow(|audio| {
         if let Some(audio) = audio.as_ref() {
             audio.music.set_volume(volume);
@@ -238,12 +189,9 @@ pub extern "C" fn DG_MusicSetVolume(volume: c_int) {
     });
 }
 
-/// Non-zero while a song is playing.
-#[no_mangle]
-pub extern "C" fn DG_MusicIsPlaying() -> c_int {
-    AUDIO.with_borrow(|audio| {
-        c_int::from(audio.as_ref().is_some_and(|audio| audio.music.is_playing()))
-    })
+/// `true` while a song is playing.
+pub(super) fn music_is_playing() -> bool {
+    AUDIO.with_borrow(|audio| audio.as_ref().is_some_and(|audio| audio.music.is_playing()))
 }
 
 // ---------------------------------------------------------------------------

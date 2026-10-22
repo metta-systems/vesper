@@ -265,217 +265,134 @@ static WEAPON_ORDER_TABLE: [WeaponOrder; 9] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Public globals — #[no_mangle] so other Rust modules can access them via
-// `extern "C"` declarations (the same pattern used throughout this codebase).
+// Public globals, imported by the other engine modules.
 // ---------------------------------------------------------------------------
 
 /// Value of `gamestate` from the previous `G_Ticker` invocation, used to
 /// detect transitions (e.g. dismissing the intermission screen).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut oldgamestate: c_int = GS_DEMOSCREEN;
 
 /// Deferred game action queue (`ga_*`); drained at the top of `G_Ticker`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut gameaction: c_int = ga_nothing;
 
 /// Active gameplay state machine slot (`GS_LEVEL`/`GS_INTERMISSION`/...).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut gamestate: c_int = GS_DEMOSCREEN;
 
 /// Currently selected skill level (`sk_baby` .. `sk_nightmare`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut gameskill: c_int = 0;
 
 /// Non-zero when monsters respawn (nightmare skill or `-respawn` parm).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut respawnmonsters: boolean = 0;
 
 /// Currently loaded episode number (1-based; 1-3 for Doom, up to 4 with Ultimate).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut gameepisode: c_int = 0;
 
 /// Currently loaded map number (1-based; 1-9 in Doom, 1-32 in Doom II).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut gamemap: c_int = 0;
 
 /// If non-zero, exit the level after this number of minutes.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut timelimit: c_int = 0;
 
 /// Non-zero while gameplay is paused (sound is paused, ticker suspended).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut paused: boolean = 0;
 
 /// One-tic flag requesting a pause-toggle ticcmd from `G_BuildTiccmd`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut sendpause: boolean = 0;
 
 /// One-tic flag requesting a savegame ticcmd from `G_BuildTiccmd`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut sendsave: boolean = 0;
 
 /// Non-zero while a user-controlled game is in progress (vs demo / title).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut usergame: boolean = 0;
 
 /// Set by `-timedemo`; on demo end prints fps stats via `I_Error`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut timingdemo: boolean = 0;
 
 /// Set by `-nodraw`; disables rendering for benchmarking purposes.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut nodrawers: boolean = 0;
 
 /// `I_GetTime()` value captured when a timed demo started.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut starttime: c_int = 0;
 
 /// Non-zero while the 3D view is being rendered (false during intermission).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut viewactive: boolean = 0;
 
 /// Deathmatch mode (`0`=co-op, `1`=DM, `2`=DM2 / altdeath).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut deathmatch: c_int = 0;
 
 /// Non-zero in a networked game (changes consistency-check behaviour).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut netgame: boolean = 0;
 
 /// Per-slot presence flag for the four player slots (`MAXPLAYERS = 4`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut playeringame: [boolean; MAXPLAYERS] = [0; MAXPLAYERS];
 
 /// Player state slots (inventory, position, view angle, etc.).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut players: [PlayerT; MAXPLAYERS] = unsafe { std::mem::zeroed() };
 
 /// Per-player "turbo" detection latch consumed by `G_Ticker`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut turbodetected: [boolean; MAXPLAYERS] = [0; MAXPLAYERS];
 
 /// Index of the local player receiving input events.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut consoleplayer: c_int = 0;
 
 /// Index of the player whose first-person view is being drawn (spy mode).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut displayplayer: c_int = 0;
 
 /// `gametic` value captured when the current level was loaded.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut levelstarttic: c_int = 0;
 
 /// Sum of monster kills across all players for the current level.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut totalkills: c_int = 0;
 
 /// Sum of item pickups across all players for the current level.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut totalitems: c_int = 0;
 
 /// Sum of secret-sector finds across all players for the current level.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut totalsecret: c_int = 0;
 
 /// File name of the demo currently being recorded (Z_Malloc'd).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demoname: *mut c_char = ptr::null_mut();
 
 /// Non-zero while a `.lmp` demo is being written from input.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demorecording: boolean = 0;
 
 /// cph's Doom 1.91 longtics hack - encodes angleturn in 2 bytes per tic
 /// instead of 1, enabling smooth high-res turning in demos.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut longtics: boolean = 0;
 
 /// Round per-tic angleturn to the nearest 256 BAM when recording vanilla
 /// (non-longtics) demos so the 1-byte demo angleturn replays accurately.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut lowres_turn: boolean = 0;
 
 /// Non-zero while a `.lmp` demo is being played back.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demoplayback: boolean = 0;
 
 /// Non-zero when the active demo was recorded in a networked session.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut netdemo: boolean = 0;
 
 /// Base pointer to the current demo I/O buffer (Z_Malloc'd).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demobuffer: *mut byte = ptr::null_mut();
 
 /// Read/write cursor within `demobuffer`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demo_p: *mut byte = ptr::null_mut();
 
 /// One-past-the-end pointer for `demobuffer`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut demoend: *mut byte = ptr::null_mut();
 
 /// Non-zero when launched with `-playdemo`; quits after the demo ends.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut singledemo: boolean = 0;
 
 /// Non-zero (default) to precache all level graphics during map load.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut precache: boolean = 1; // true by default
 
 /// Non-zero while invoked from the setup utility's "test controls" mode.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut testcontrols: boolean = 0;
 
 /// Low-pass-filtered mouse speed displayed by the test-controls thermometer.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut testcontrols_mousespeed: c_int = 0;
 
 /// Parameters for the world-map / intermission screen, populated by
 /// `G_DoCompleted` before transitioning to `GS_INTERMISSION`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut wminfo: wbstartstruct_t = wbstartstruct_t {
     epsd: 0,
     didsecret: 0,
@@ -500,75 +417,47 @@ pub static mut wminfo: wbstartstruct_t = wbstartstruct_t {
 
 /// Net consistency check ring: `consistancy[player][gametic/ticdup % BACKUPTICS]`.
 /// A mismatch on a remote command triggers `I_Error("consistency failure ...")`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut consistancy: [[byte; 128]; MAXPLAYERS] = [[0; 128]; MAXPLAYERS];
 
 /// Index into `bodyque` for the next corpse to add (modulo 32).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut bodyqueslot: c_int = 0;
 
 /// Non-zero enforces the vanilla `SAVEGAMESIZE` cap (`I_Error` on overrun).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut vanilla_savegame_limit: c_int = 1;
 
 /// Non-zero enforces the vanilla demo buffer cap; zero auto-grows it.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut vanilla_demo_limit: c_int = 1;
 
 /// Forward-movement speed table: `[slow=0x19, fast=0x32]` (`fixed_t` per tic).
 /// Indexed by the `speed` flag computed in `G_BuildTiccmd`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut forwardmove: [fixed_t; 2] = [0x19, 0x32];
 
 /// Lateral strafe speed table: `[slow=0x18, fast=0x28]` (`fixed_t` per tic).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut sidemove: [fixed_t; 2] = [0x18, 0x28];
 
 /// Turn-speed table: `[normal=640, fast=1280, slow=320]` (BAM units per tic).
 /// The "slow" entry is selected for the first `SLOWTURNTICS` (6) of held input.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut angleturn: [fixed_t; 3] = [640, 1280, 320];
 
 /// Non-zero when the next level transition should route through the secret
 /// exit (set by `G_SecretExitLevel`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut secretexit: boolean = 0;
 
 /// File name of the demo deferred for playback (set by `G_DeferedPlayDemo`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut defdemoname: *mut c_char = ptr::null_mut();
 
 /// File name buffer for the savegame currently being loaded.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut savename: [c_char; 256] = [0; 256];
 
 /// Deferred `G_DeferedInitNew` parameter: skill level.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut d_skill: skill_t = 0;
 /// Deferred `G_DeferedInitNew` parameter: episode.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut d_episode: c_int = 0;
 /// Deferred `G_DeferedInitNew` parameter: map number.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut d_map: c_int = 0;
 
 /// Doom episode par times (episodes 1-3, maps 1-9), in seconds.
 /// Index `[0]` and `[*][0]` are dummies to keep the table 1-based.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut pars: [[c_int; 10]; 4] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [0, 30, 75, 120, 90, 165, 180, 180, 30, 165],
@@ -577,8 +466,6 @@ pub static mut pars: [[c_int; 10]; 4] = [
 ];
 
 /// Doom II par times (maps 1-32), in seconds. Index `[0]` is map 1.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut cpars: [c_int; 32] = [
     30, 90, 120, 120, 90, 150, 120, 120, 270, 90, 210, 150, 150, 150, 210, 150, 420, 150, 210, 150,
     240, 150, 180, 150, 150, 300, 330, 420, 300, 180, 120, 30,
@@ -586,8 +473,6 @@ pub static mut cpars: [c_int; 32] = [
 
 /// Circular queue of `BODYQUESIZE=32` recent player corpses; the oldest is
 /// removed when the queue wraps (see `G_CheckSpot`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut bodyque: [*mut mobj_t; 32] = [ptr::null_mut(); 32];
 
 // ---------------------------------------------------------------------------
@@ -655,13 +540,12 @@ extern "C" {
     /// libc `snprintf` - variadic; only the buffer-pointer / length form is
     /// actually invoked from this module (turbo banner and demo-version text).
     fn snprintf(buf: *mut c_char, len: usize, fmt: *const c_char, ...) -> c_int;
-
-    /// Engine-wide fatal error from `i_system.c`. Kept variadic because call
-    /// sites pass `printf`-style format arguments.
-    fn I_Error(format: *const c_char, ...) -> !;
-    /// Engine-wide clean shutdown from `i_system.c` (used by single demos).
-    fn I_Quit() -> !;
 }
+
+/// Engine-wide fatal error and clean shutdown from `i_system.c` (the
+/// latter used by single demos). Messages with arguments go through
+/// `i_error!`, which formats them with Rust syntax.
+use crate::doom::i_system::{I_Error, I_Quit};
 
 /// `gametic` is the global engine tic counter; `ticdup` is the demo dup factor.
 /// Both originate from `d_loop.c`.
@@ -865,9 +749,8 @@ unsafe fn joybutton(n: c_int) -> boolean {
 /// # Safety
 /// `cmd` must point to a fully-initialised `TiccmdT` with at least
 /// `sizeof::<TiccmdT>()` valid bytes; reads through the pointer as a raw
-/// `c_int` array. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_CmdChecksum(cmd: *const TiccmdT) -> c_int {
+/// `c_int` array.
+pub unsafe fn G_CmdChecksum(cmd: *const TiccmdT) -> c_int {
     let n = std::mem::size_of::<TiccmdT>() / 4 - 1;
     let words = cmd as *const c_int;
     let mut sum: c_int = 0;
@@ -988,9 +871,8 @@ unsafe fn g_next_weapon(direction: c_int) -> c_int {
 ///
 /// # Safety
 /// `cmd` must point to a writable `TiccmdT`; the entire struct is zeroed
-/// before assembly. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
+/// before assembly.
+pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
     use crate::doom::c_ffi::BACKUPTICS;
 
     let cmd = &mut *cmd;
@@ -1234,9 +1116,8 @@ pub unsafe extern "C" fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int) {
 ///
 /// # Safety
 /// Mutates many engine globals (`gamestate`, `wipegamestate`, `levelstarttic`,
-/// the input rings, the players array). Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoLoadLevel() {
+/// the input rings, the players array).
+pub unsafe fn G_DoLoadLevel() {
     skyflatnum = R_FlatNumForName(DEH_String(c"F_SKY1".as_ptr()) as *mut c_char);
 
     // Fix sky texture for Final Doom / Chex
@@ -1356,9 +1237,8 @@ unsafe fn set_mouse_buttons(buttons_mask: c_uint) {
 ///
 /// # Safety
 /// Dereferences `ev` and mutates many static input globals; safe under the
-/// single-threaded engine convention. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_Responder(ev: *mut event_t) -> boolean {
+/// single-threaded engine convention.
+pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
     let ev = &*ev;
 
     // Spy mode changes even during demo
@@ -1486,9 +1366,8 @@ pub unsafe extern "C" fn G_Responder(ev: *mut event_t) -> boolean {
 ///
 /// # Safety
 /// Mutates virtually every game-loop global; intended to be called at most
-/// once per tic from the engine main loop. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_Ticker() {
+/// once per tic from the engine main loop.
+pub unsafe fn G_Ticker() {
     use crate::doom::c_ffi::BACKUPTICS;
 
     // Player reborns
@@ -1561,8 +1440,8 @@ pub unsafe extern "C" fn G_Ticker() {
 
             if netgame != 0 && netdemo == 0 && (gametic % ticdup) == 0 {
                 if gametic > BACKUPTICS as c_int && consistancy[i][buf] != (*cmd).consistancy {
-                    I_Error(
-                        c"consistency failure (%i should be %i)".as_ptr(),
+                    crate::i_error!(
+                        "consistency failure ({} should be {})",
                         (*cmd).consistancy as c_int,
                         consistancy[i][buf] as c_int,
                     );
@@ -1647,9 +1526,7 @@ pub unsafe extern "C" fn G_Ticker() {
 ///
 /// # Safety
 /// `player` must be a valid index into `players[]` (0..`MAXPLAYERS`).
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_InitPlayer(player: c_int) {
+pub unsafe fn G_InitPlayer(player: c_int) {
     G_PlayerReborn(player);
 }
 
@@ -1666,10 +1543,8 @@ pub unsafe extern "C" fn G_InitPlayer(player: c_int) {
 ///
 /// # Safety
 /// `player` must index a valid slot whose `mo` pointer is non-null (the
-/// caller is `G_DoCompleted`, which guarantees this). Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_PlayerFinishLevel(player: c_int) {
+/// caller is `G_DoCompleted`, which guarantees this).
+pub unsafe fn G_PlayerFinishLevel(player: c_int) {
     let p = &mut players[player as usize];
     p.powers = [0; 6];
     p.cards = [0; 6];
@@ -1692,10 +1567,8 @@ pub unsafe extern "C" fn G_PlayerFinishLevel(player: c_int) {
 /// immediately fire or activate switches on the first tic after respawn.
 ///
 /// # Safety
-/// `player` must be a valid index into `players[]`. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_PlayerReborn(player: c_int) {
+/// `player` must be a valid index into `players[]`.
+pub unsafe fn G_PlayerReborn(player: c_int) {
     let idx = player as usize;
     let frags = players[idx].frags;
     let killcount = players[idx].killcount;
@@ -1745,9 +1618,8 @@ pub unsafe extern "C" fn G_PlayerReborn(player: c_int) {
 ///
 /// # Safety
 /// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
-/// queue globals. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) -> boolean {
+/// queue globals.
+pub unsafe fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) -> boolean {
     if players[playernum as usize].mo.is_null() {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
@@ -1809,7 +1681,7 @@ pub unsafe extern "C" fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) 
             ya = finesine[an_raw as usize];
         }
         _ => {
-            I_Error(c"G_CheckSpot: unexpected angle %d\n".as_ptr(), an_raw);
+            crate::i_error!("G_CheckSpot: unexpected angle {}\n", an_raw);
         }
     }
 
@@ -1836,13 +1708,11 @@ pub unsafe extern "C" fn G_CheckSpot(playernum: c_int, mthing: *mut mapthing_t) 
 ///
 /// # Safety
 /// `playernum` must be in `0..MAXPLAYERS` and the level's deathmatch start
-/// table must already be populated by `P_SetupLevel`. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DeathMatchSpawnPlayer(playernum: c_int) {
+/// table must already be populated by `P_SetupLevel`.
+pub unsafe fn G_DeathMatchSpawnPlayer(playernum: c_int) {
     let selections = deathmatch_p.offset_from(std::ptr::addr_of!(deathmatchstarts[0])) as c_int;
     if selections < 4 {
-        I_Error(c"Only %i deathmatch spots, 4 required".as_ptr(), selections);
+        crate::i_error!("Only {} deathmatch spots, 4 required", selections);
     }
 
     for _ in 0..20 {
@@ -1874,10 +1744,8 @@ pub unsafe extern "C" fn G_DeathMatchSpawnPlayer(playernum: c_int) {
 /// accepts them).
 ///
 /// # Safety
-/// `playernum` must be a valid player index. Exported as `#[no_mangle]` for
-/// C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoReborn(playernum: c_int) {
+/// `playernum` must be a valid player index.
+pub unsafe fn G_DoReborn(playernum: c_int) {
     if netgame == 0 {
         gameaction = ga_loadlevel;
     } else {
@@ -1930,9 +1798,8 @@ pub unsafe extern "C" fn G_DoReborn(playernum: c_int) {
 /// ga_screenshot`.
 ///
 /// # Safety
-/// Writes the `gameaction` global. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_ScreenShot() {
+/// Writes the `gameaction` global.
+pub unsafe fn G_ScreenShot() {
     gameaction = ga_screenshot;
 }
 
@@ -1944,10 +1811,8 @@ pub unsafe extern "C" fn G_ScreenShot() {
 /// next intermission picks the standard "next map" target.
 ///
 /// # Safety
-/// Writes the `secretexit` and `gameaction` globals. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_ExitLevel() {
+/// Writes the `secretexit` and `gameaction` globals.
+pub unsafe fn G_ExitLevel() {
     secretexit = 0;
     gameaction = ga_completed;
 }
@@ -1959,10 +1824,8 @@ pub unsafe extern "C" fn G_ExitLevel() {
 /// edition retail patch removed those maps).
 ///
 /// # Safety
-/// Writes the `secretexit` and `gameaction` globals. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_SecretExitLevel() {
+/// Writes the `secretexit` and `gameaction` globals.
+pub unsafe fn G_SecretExitLevel() {
     if gamemode == commercial && W_CheckNumForName(c"map31".as_ptr()) < 0 {
         secretexit = 0;
     } else {
@@ -1992,9 +1855,8 @@ pub unsafe extern "C" fn G_SecretExitLevel() {
 ///
 /// # Safety
 /// Mutates `wminfo`, `gamestate`, `viewactive`, `automapactive` and the
-/// `players` array. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoCompleted() {
+/// `players` array.
+pub unsafe fn G_DoCompleted() {
     gameaction = ga_nothing;
 
     for i in 0..MAXPLAYERS {
@@ -2114,10 +1976,8 @@ pub unsafe extern "C" fn G_DoCompleted() {
 /// the secret exit).
 ///
 /// # Safety
-/// Writes `gameaction`, `players[consoleplayer].didsecret`. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_WorldDone() {
+/// Writes `gameaction`, `players[consoleplayer].didsecret`.
+pub unsafe fn G_WorldDone() {
     gameaction = ga_worlddone;
 
     if secretexit != 0 {
@@ -2144,10 +2004,8 @@ pub unsafe extern "C" fn G_WorldDone() {
 /// to `wminfo.next + 1`, load the new level and re-enable the 3D view.
 ///
 /// # Safety
-/// Mutates `gamestate`, `gamemap`, `viewactive`, `gameaction`. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoWorldDone() {
+/// Mutates `gamestate`, `gamemap`, `viewactive`, `gameaction`.
+pub unsafe fn G_DoWorldDone() {
     gamestate = GS_LEVEL;
     gamemap = wminfo.next + 1;
     G_DoLoadLevel();
@@ -2163,10 +2021,8 @@ pub unsafe extern "C" fn G_DoWorldDone() {
 /// `ga_loadgame` for the next `G_Ticker`.
 ///
 /// # Safety
-/// `name` must be a valid NUL-terminated C string. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_LoadGame(name: *mut c_char) {
+/// `name` must be a valid NUL-terminated C string.
+pub unsafe fn G_LoadGame(name: *mut c_char) {
     M_StringCopy(std::ptr::addr_of_mut!(savename[0]), name, 256);
     gameaction = ga_loadgame;
 }
@@ -2181,10 +2037,8 @@ pub unsafe extern "C" fn G_LoadGame(name: *mut c_char) {
 /// state continues from the saved tic.
 ///
 /// # Safety
-/// Mutates a large amount of game state and performs raw file I/O. Exported
-/// as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoLoadGame() {
+/// Mutates a large amount of game state and performs raw file I/O.
+pub unsafe fn G_DoLoadGame() {
     gameaction = ga_nothing;
 
     save_stream = libc::fopen(
@@ -2236,10 +2090,8 @@ pub unsafe extern "C" fn G_DoLoadGame() {
 /// `ga_savegame` -> `G_DoSaveGame`.
 ///
 /// # Safety
-/// `description` must be a valid NUL-terminated C string. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_SaveGame(slot: c_int, description: *const c_char) {
+/// `description` must be a valid NUL-terminated C string.
+pub unsafe fn G_SaveGame(slot: c_int, description: *const c_char) {
     SAVEGAMESLOT = slot;
     M_StringCopy(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]), description, 32);
     sendsave = 1;
@@ -2258,10 +2110,8 @@ pub unsafe extern "C" fn G_SaveGame(slot: c_int, description: *const c_char) {
 ///
 /// # Safety
 /// Performs raw `libc` file I/O (`fopen`/`ftell`/`fclose`/`remove`/`rename`)
-/// and writes through the global `save_stream`. Exported as `#[no_mangle]`
-/// for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoSaveGame() {
+/// and writes through the global `save_stream`.
+pub unsafe fn G_DoSaveGame() {
     let recovery_savegame_file: *mut c_char;
     let temp_savegame_file = P_TempSaveGameFile();
     let savegame_file = P_SaveGameFile(SAVEGAMESLOT);
@@ -2273,10 +2123,10 @@ pub unsafe extern "C" fn G_DoSaveGame() {
         recovery_savegame_file = recovery;
         save_stream = libc::fopen(recovery, c"wb".as_ptr() as *const libc::c_char);
         if save_stream.is_null() {
-            I_Error(
-                c"Failed to open either '%s' or '%s' to write savegame.".as_ptr() as *const c_char,
-                temp_savegame_file,
-                recovery_savegame_file,
+            crate::i_error!(
+                "Failed to open either '{}' or '{}' to write savegame.",
+                std::ffi::CStr::from_ptr(temp_savegame_file).to_string_lossy(),
+                std::ffi::CStr::from_ptr(recovery_savegame_file).to_string_lossy(),
             );
         }
     } else {
@@ -2299,10 +2149,10 @@ pub unsafe extern "C" fn G_DoSaveGame() {
     libc::fclose(save_stream);
 
     if !recovery_savegame_file.is_null() {
-        I_Error(
-            c"Failed to open savegame file '%s' for writing.\nBut your game has been saved to '%s' for recovery.".as_ptr(),
-            temp_savegame_file,
-            recovery_savegame_file,
+        crate::i_error!(
+            "Failed to open savegame file '{}' for writing.\nBut your game has been saved to '{}' for recovery.",
+            std::ffi::CStr::from_ptr(temp_savegame_file).to_string_lossy(),
+            std::ffi::CStr::from_ptr(recovery_savegame_file).to_string_lossy(),
         );
     }
 
@@ -2326,9 +2176,7 @@ pub unsafe extern "C" fn G_DoSaveGame() {
 ///
 /// # Safety
 /// Writes the `d_skill`, `d_episode`, `d_map` and `gameaction` globals.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DeferedInitNew(skill: skill_t, episode: c_int, map: c_int) {
+pub unsafe fn G_DeferedInitNew(skill: skill_t, episode: c_int, map: c_int) {
     d_skill = skill;
     d_episode = episode;
     d_map = map;
@@ -2340,9 +2188,8 @@ pub unsafe extern "C" fn G_DeferedInitNew(skill: skill_t, episode: c_int, map: c
 /// map)`.
 ///
 /// # Safety
-/// Mutates many engine globals. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoNewGame() {
+/// Mutates many engine globals.
+pub unsafe fn G_DoNewGame() {
     demoplayback = 0;
     netdemo = 0;
     netgame = 0;
@@ -2374,10 +2221,8 @@ pub unsafe extern "C" fn G_DoNewGame() {
 /// Finally dispatches into `G_DoLoadLevel` to actually load the chosen map.
 ///
 /// # Safety
-/// Mutates virtually every game-loop global. Exported as `#[no_mangle]` for
-/// C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_InitNew(skill: skill_t, episode: c_int, map: c_int) {
+/// Mutates virtually every game-loop global.
+pub unsafe fn G_InitNew(skill: skill_t, episode: c_int, map: c_int) {
     let mut skill = skill;
     let mut episode = episode;
     let mut map = map;
@@ -2508,10 +2353,8 @@ unsafe fn set_fast_monsters(fast: bool) {
 /// only call this when the skill flips into or out of nightmare.
 ///
 /// # Safety
-/// Mutates the shared `states` and `mobjinfo` arrays. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_SetFastMonsters(fast: c_int) {
+/// Mutates the shared `states` and `mobjinfo` arrays.
+pub unsafe fn G_SetFastMonsters(fast: c_int) {
     use crate::doom::info::{
         mobjinfo, states, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, S_SARG_PAIN2, S_SARG_RUN1,
     };
@@ -2559,9 +2402,7 @@ pub unsafe extern "C" fn G_SetFastMonsters(fast: c_int) {
 ///
 /// # Safety
 /// Reads through `demo_p` and writes through `cmd`. Both must be valid.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_ReadDemoTiccmd(cmd: *mut TiccmdT) {
+pub unsafe fn G_ReadDemoTiccmd(cmd: *mut TiccmdT) {
     if *demo_p == DEMOMARKER {
         G_CheckDemoStatus();
         return;
@@ -2644,9 +2485,7 @@ unsafe fn increase_demo_buffer() {
 /// # Safety
 /// Writes through `demo_p` and reads back through it; requires the demo
 /// buffer to have at least 16 bytes of headroom or `vanilla_demo_limit == 0`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
+pub unsafe fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
     if GAMEKEYDOWN[key_demo_quit as usize] != 0 {
         G_CheckDemoStatus();
     }
@@ -2699,10 +2538,8 @@ pub unsafe extern "C" fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
 /// so save/load menus are disabled during recording.
 ///
 /// # Safety
-/// `name` must be a valid NUL-terminated C string. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_RecordDemo(name: *mut c_char) {
+/// `name` must be a valid NUL-terminated C string.
+pub unsafe fn G_RecordDemo(name: *mut c_char) {
     usergame = 0;
     let name_len = libc::strlen(name);
     let demoname_size = name_len + 5;
@@ -2729,9 +2566,8 @@ pub unsafe extern "C" fn G_RecordDemo(name: *mut c_char) {
 /// Raises `I_Error` for v1.2, which never had a demo version code.
 ///
 /// # Safety
-/// Reads the `gameversion` global. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_VanillaVersionCode() -> c_int {
+/// Reads the `gameversion` global.
+pub unsafe fn G_VanillaVersionCode() -> c_int {
     g_vanilla_version_code_for(gameversion)
 }
 
@@ -2740,9 +2576,7 @@ pub unsafe extern "C" fn G_VanillaVersionCode() -> c_int {
 /// exercise the table directly.
 fn g_vanilla_version_code_for(gv: c_int) -> c_int {
     match gv {
-        v if v == exe_doom_1_2 => unsafe {
-            I_Error(c"Doom 1.2 does not have a version code!".as_ptr())
-        },
+        v if v == exe_doom_1_2 => I_Error(c"Doom 1.2 does not have a version code!".as_ptr()),
         v if v == exe_doom_1_666 => 106,
         v if v == exe_doom_1_7 => 107,
         v if v == exe_doom_1_8 => 108,
@@ -2760,9 +2594,7 @@ fn g_vanilla_version_code_for(gv: c_int) -> c_int {
 ///
 /// # Safety
 /// Mutates `longtics`, `lowres_turn`, the demo cursor and the demo buffer.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_BeginRecording() {
+pub unsafe fn G_BeginRecording() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
     longtics = (M_CheckParm(c"-longtics".as_ptr().cast_mut()) != 0) as boolean;
@@ -2809,9 +2641,8 @@ pub unsafe extern "C" fn G_BeginRecording() {
 ///
 /// # Safety
 /// `name` must point to a NUL-terminated C string that lives at least until
-/// `G_DoPlayDemo` runs. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DeferedPlayDemo(name: *const c_char) {
+/// `G_DoPlayDemo` runs.
+pub unsafe fn G_DeferedPlayDemo(name: *const c_char) {
     defdemoname = name as *mut c_char;
     gameaction = ga_playdemo;
 }
@@ -2874,10 +2705,8 @@ unsafe fn demo_version_description(version: c_int) -> *const c_char {
 /// during timing demos does not skew the fps measurement.
 ///
 /// # Safety
-/// Mutates global engine state extensively. Exported as `#[no_mangle]` for
-/// C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_DoPlayDemo() {
+/// Mutates global engine state extensively.
+pub unsafe fn G_DoPlayDemo() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
     gameaction = ga_nothing;
@@ -2923,10 +2752,9 @@ pub unsafe extern "C" fn G_DoPlayDemo() {
     consoleplayer = *demo_p as c_int;
     demo_p = demo_p.add(1);
     if consoleplayer < 0 || consoleplayer >= MAXPLAYERS as c_int {
-        I_Error(
-            c"G_DoPlayDemo: consoleplayer %d out of range\n".as_ptr(),
-            consoleplayer,
-        );
+        crate::i_error!("G_DoPlayDemo: consoleplayer {} out of range\n", {
+            consoleplayer
+        });
     }
 
     for i in 0..MAXPLAYERS {
@@ -2964,9 +2792,7 @@ pub unsafe extern "C" fn G_DoPlayDemo() {
 ///
 /// # Safety
 /// Mutates `nodrawers`, `timingdemo`, `singletics`, `defdemoname`, `gameaction`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_TimeDemo(name: *mut c_char) {
+pub unsafe fn G_TimeDemo(name: *mut c_char) {
     nodrawers = M_CheckParm(c"-nodraw".as_ptr().cast_mut());
     timingdemo = 1;
     use crate::doom::d_loop::singletics;
@@ -2994,19 +2820,17 @@ pub unsafe extern "C" fn G_TimeDemo(name: *mut c_char) {
 /// Returns `0` when the call was a no-op (none of the conditions matched).
 ///
 /// # Safety
-/// Mutates demo / playback globals and performs file I/O. Exported as
-/// `#[no_mangle]` for C callers.
-#[no_mangle]
-pub unsafe extern "C" fn G_CheckDemoStatus() -> boolean {
+/// Mutates demo / playback globals and performs file I/O.
+pub unsafe fn G_CheckDemoStatus() -> boolean {
     if timingdemo != 0 {
         let endtime = I_GetTime();
         let realtics = endtime - starttime;
         let fps = (gametic as f32 * 35.0) / realtics as f32;
         timingdemo = 0;
         demoplayback = 0;
-        I_Error(
-            c"timed %i gametics in %i realtics (%f fps)".as_ptr(),
-            gametic,
+        crate::i_error!(
+            "timed {} gametics in {} realtics ({:.6} fps)",
+            { gametic },
             realtics,
             fps as f64,
         );
@@ -3044,7 +2868,10 @@ pub unsafe extern "C" fn G_CheckDemoStatus() -> boolean {
         );
         Z_Free(demobuffer as *mut c_void);
         demorecording = 0;
-        I_Error(c"Demo %s recorded".as_ptr(), demoname);
+        crate::i_error!(
+            "Demo {} recorded",
+            std::ffi::CStr::from_ptr(demoname).to_string_lossy()
+        );
     }
 
     0

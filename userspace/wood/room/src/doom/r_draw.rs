@@ -15,9 +15,13 @@ use crate::doom::{
     c_ffi::{FUZZOFF, FUZZTABLE, SBARHEIGHT},
     d_mode::commercial,
     doomstat::gamemode,
-    i_video::{SCREENHEIGHT, SCREENWIDTH},
+    i_video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
     m_fixed::FRACBITS,
+    r_data::colormaps,
+    r_main::centery,
     v_video::{patch_t, V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
+    w_wad::W_CacheLumpName,
+    z_zone::{Z_Free, Z_Malloc},
 };
 
 // ---------------------------------------------------------------------------
@@ -30,68 +34,37 @@ const MAXWIDTH: usize = 1120;
 const MAXHEIGHT: usize = 832;
 
 // ---------------------------------------------------------------------------
-// External symbols
-// ---------------------------------------------------------------------------
-
-extern "C" {
-    /// Prints a formatted error message and terminates the program.
-    fn I_Error(format: *const c_char, ...);
-    /// Returns a pointer to the cached lump with the given name, using the given zone tag.
-    fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void;
-    /// Allocates `size` bytes from the zone heap with the given tag; returns a pointer to the block.
-    fn Z_Malloc(size: c_int, tag: c_int, user: *mut c_void) -> *mut c_void;
-    /// Frees a block previously allocated from the zone heap.
-    fn Z_Free(ptr: *mut c_void);
-
-    /// Raw linear framebuffer written to the display; `screens[0]` in C terms.
-    static mut I_VideoBuffer: *mut u8;
-    /// Flat array of all 32 light-level colormaps (32 * 256 bytes); index 0 is fullbright.
-    static mut colormaps: *mut u8;
-    /// Screen-space Y coordinate of the view center, used to compute texture fractions.
-    static mut centery: c_int;
-}
-
-// ---------------------------------------------------------------------------
 // View-buffer globals
 // ---------------------------------------------------------------------------
 
 /// Base address of the view image written by the renderer (typically points into `I_VideoBuffer`).
-#[no_mangle]
 pub static mut viewimage: *mut u8 = ptr::null_mut();
 
 /// Width of the current render viewport in pixels.
-#[no_mangle]
 pub static mut viewwidth: c_int = 0;
 
 /// Width of the viewport scaled for the current detail mode (equals `viewwidth` in high-detail).
-#[no_mangle]
 pub static mut scaledviewwidth: c_int = 0;
 
 /// Height of the current render viewport in pixels.
-#[no_mangle]
 pub static mut viewheight: c_int = 0;
 
 /// X pixel offset from the left edge of the framebuffer to the left edge of the viewport.
-#[no_mangle]
 pub static mut viewwindowx: c_int = 0;
 
 /// Y pixel offset from the top of the framebuffer to the top of the viewport.
-#[no_mangle]
 pub static mut viewwindowy: c_int = 0;
 
 /// Per-row pointer LUT: `ylookup[y]` points to the first byte of row `y` in the framebuffer.
 /// Avoids a multiply by `SCREENWIDTH` in the inner rendering loops.
-#[no_mangle]
 pub static mut ylookup: [*mut u8; MAXHEIGHT] = [ptr::null_mut(); MAXHEIGHT];
 
 /// Per-column byte offset LUT: `columnofs[x]` is the byte offset within a row for column `x`.
 /// Accounts for `viewwindowx` so that sub-window rendering works without extra arithmetic.
-#[no_mangle]
 pub static mut columnofs: [c_int; MAXWIDTH] = [0; MAXWIDTH];
 
 /// Color-translation tables for the three non-green player colors (gray, brown, red).
 /// Each table remaps the 16-entry green palette ramp (indices `0x70`-`0x7f`) to another ramp.
-#[no_mangle]
 pub static mut translations: [[u8; 256]; 3] = [[0; 256]; 3];
 
 // ---------------------------------------------------------------------------
@@ -108,37 +81,29 @@ static mut background_buffer: *mut u8 = ptr::null_mut();
 
 /// Current colormap (light-level lookup table) used by the column renderer.
 /// Points into `colormaps`; index `colormap[p]` converts a palette index to a lit palette index.
-#[no_mangle]
 pub static mut dc_colormap: *mut u8 = ptr::null_mut();
 
 /// Screen-space X coordinate of the column being drawn (0 = left edge of viewport).
-#[no_mangle]
 pub static mut dc_x: c_int = 0;
 
 /// Topmost screen-space Y coordinate of the column segment to draw (inclusive).
-#[no_mangle]
 pub static mut dc_yl: c_int = 0;
 
 /// Bottommost screen-space Y coordinate of the column segment to draw (inclusive).
-#[no_mangle]
 pub static mut dc_yh: c_int = 0;
 
 /// Inverse texture scale in 16.16 fixed-point: the amount added to the texture fraction
 /// per screen row, equal to `textureheight / columnheight`.
-#[no_mangle]
 pub static mut dc_iscale: c_int = 0;
 
 /// Texture mid-point fraction in 16.16 fixed-point, corresponding to the true center of
 /// the wall post; used together with `dc_iscale` to compute the starting texture row.
-#[no_mangle]
 pub static mut dc_texturemid: c_int = 0;
 
 /// First pixel in a column (possibly virtual).
-#[no_mangle]
 pub static mut dc_source: *mut u8 = ptr::null_mut();
 
 /// Just for profiling.
-#[no_mangle]
 pub static mut dccount: c_int = 0;
 
 // ---------------------------------------------------------------------------
@@ -148,7 +113,6 @@ pub static mut dccount: c_int = 0;
 /// Pre-computed table of per-pixel row offsets (in bytes) used by the fuzz/spectre effect.
 /// Each entry is either `+FUZZOFF` (one row down) or `-FUZZOFF` (one row up), giving the
 /// smeared, semi-transparent look of partial-invisibility.
-#[no_mangle]
 pub static mut fuzzoffset: [c_int; FUZZTABLE] = [
     FUZZOFF, -FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF,
     FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, -FUZZOFF,
@@ -158,7 +122,6 @@ pub static mut fuzzoffset: [c_int; FUZZTABLE] = [
 ];
 
 /// Current position within `fuzzoffset`; wraps back to 0 when it reaches `FUZZTABLE`.
-#[no_mangle]
 pub static mut fuzzpos: c_int = 0;
 
 // ---------------------------------------------------------------------------
@@ -167,12 +130,10 @@ pub static mut fuzzpos: c_int = 0;
 
 /// Pointer to the 256-byte color-translation table currently active for `R_DrawTranslatedColumn`.
 /// Used to remap the player-sprite green ramp to another color set.
-#[no_mangle]
 pub static mut dc_translation: *mut u8 = ptr::null_mut();
 
 /// Heap-allocated block of 3 × 256 bytes holding the gray, brown, and red translation tables
 /// built by `R_InitTranslationTables`.
-#[no_mangle]
 pub static mut translationtables: *mut u8 = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
@@ -180,43 +141,33 @@ pub static mut translationtables: *mut u8 = ptr::null_mut();
 // ---------------------------------------------------------------------------
 
 /// Screen-space Y row of the span being drawn.
-#[no_mangle]
 pub static mut ds_y: c_int = 0;
 
 /// Leftmost screen-space X coordinate of the span (inclusive).
-#[no_mangle]
 pub static mut ds_x1: c_int = 0;
 
 /// Rightmost screen-space X coordinate of the span (inclusive).
-#[no_mangle]
 pub static mut ds_x2: c_int = 0;
 
 /// Colormap used by the span renderer; points into `colormaps` for the appropriate light level.
-#[no_mangle]
 pub static mut ds_colormap: *mut u8 = ptr::null_mut();
 
 /// Starting texture U (X) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-#[no_mangle]
 pub static mut ds_xfrac: c_int = 0;
 
 /// Starting texture V (Y) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-#[no_mangle]
 pub static mut ds_yfrac: c_int = 0;
 
 /// Per-pixel increment of `ds_xfrac` in 16.16 fixed-point along the span.
-#[no_mangle]
 pub static mut ds_xstep: c_int = 0;
 
 /// Per-pixel increment of `ds_yfrac` in 16.16 fixed-point along the span.
-#[no_mangle]
 pub static mut ds_ystep: c_int = 0;
 
 /// Start of a 64×64 tile image.
-#[no_mangle]
 pub static mut ds_source: *mut u8 = ptr::null_mut();
 
 /// Just for profiling.
-#[no_mangle]
 pub static mut dscount: c_int = 0;
 
 // ---------------------------------------------------------------------------
@@ -231,8 +182,7 @@ pub static mut dscount: c_int = 0;
 /// 16.16 fixed-point per screen row.
 ///
 /// Does nothing if `dc_yh < dc_yl` (empty column segment).
-#[no_mangle]
-pub extern "C" fn R_DrawColumn() {
+pub fn R_DrawColumn() {
     unsafe {
         let count = dc_yh - dc_yl;
 
@@ -281,8 +231,7 @@ pub extern "C" fn R_DrawColumn() {
 /// column-context globals (`dc_*`) have the same meaning as in `R_DrawColumn`.
 ///
 /// Does nothing if `dc_yh < dc_yl`.
-#[no_mangle]
-pub extern "C" fn R_DrawColumnLow() {
+pub fn R_DrawColumnLow() {
     unsafe {
         let count = dc_yh - dc_yl;
 
@@ -339,8 +288,7 @@ pub extern "C" fn R_DrawColumnLow() {
 /// lowered to `viewheight - 2` to avoid reading outside the viewport.
 ///
 /// Does nothing if the clamped range is empty (`dc_yh < dc_yl`).
-#[no_mangle]
-pub extern "C" fn R_DrawFuzzColumn() {
+pub fn R_DrawFuzzColumn() {
     unsafe {
         // Adjust borders. Low...
         if dc_yl == 0 {
@@ -403,8 +351,7 @@ pub extern "C" fn R_DrawFuzzColumn() {
 /// Both pixels receive the same fuzz-sampled value derived from column `dc_x * 2`'s
 /// neighbor; the fuzz table position advances once per row pair.
 /// Border clamping and early-exit behavior are identical to `R_DrawFuzzColumn`.
-#[no_mangle]
-pub extern "C" fn R_DrawFuzzColumnLow() {
+pub fn R_DrawFuzzColumnLow() {
     unsafe {
         // Adjust borders. Low...
         if dc_yl == 0 {
@@ -472,8 +419,7 @@ pub extern "C" fn R_DrawFuzzColumnLow() {
 /// set of player sprites to appear in multiple colors (gray, brown, red).
 ///
 /// Does nothing if `dc_yh < dc_yl`.
-#[no_mangle]
-pub extern "C" fn R_DrawTranslatedColumn() {
+pub fn R_DrawTranslatedColumn() {
     unsafe {
         let count = dc_yh - dc_yl;
         if count < 0 {
@@ -517,8 +463,7 @@ pub extern "C" fn R_DrawTranslatedColumn() {
 ///
 /// The pixel pipeline and border behavior are identical to `R_DrawTranslatedColumn`.
 /// Does nothing if `dc_yh < dc_yl`.
-#[no_mangle]
-pub extern "C" fn R_DrawTranslatedColumnLow() {
+pub fn R_DrawTranslatedColumnLow() {
     unsafe {
         let count = dc_yh - dc_yl;
         if count < 0 {
@@ -571,8 +516,7 @@ pub extern "C" fn R_DrawTranslatedColumnLow() {
 /// brown ramp (`0x40`), and red ramp (`0x20`). All other palette entries are identity-mapped.
 ///
 /// Sets the `translationtables` global to the allocated block.
-#[no_mangle]
-pub extern "C" fn R_InitTranslationTables() {
+pub fn R_InitTranslationTables() {
     unsafe {
         translationtables = Z_Malloc(256 * 3, 1, ptr::null_mut()) as *mut u8; // PU_STATIC = 1
 
@@ -606,8 +550,7 @@ pub extern "C" fn R_InitTranslationTables() {
 ///
 /// Writes pixels to `screens[0]` from column `ds_x1` to `ds_x2` inclusive on row `ds_y`.
 /// Does not check for zero-length spans; the caller must ensure `ds_x2 >= ds_x1`.
-#[no_mangle]
-pub extern "C" fn R_DrawSpan() {
+pub fn R_DrawSpan() {
     unsafe {
         let mut position: u32;
 
@@ -670,8 +613,7 @@ pub extern "C" fn R_DrawSpan() {
 /// This Rust port uses a local `ds_x1_low` and leaves the globals unchanged,
 /// so callers that read `ds_x1`/`ds_x2` after `R_DrawSpanLow` see different
 /// values than they would after the C version.
-#[no_mangle]
-pub extern "C" fn R_DrawSpanLow() {
+pub fn R_DrawSpanLow() {
     unsafe {
         let mut position: u32;
 
@@ -732,8 +674,7 @@ pub extern "C" fn R_DrawSpanLow() {
 ///
 /// Must be called whenever the viewport dimensions change (e.g. when the player resizes
 /// the view window).
-#[no_mangle]
-pub extern "C" fn R_InitBuffer(width: c_int, height: c_int) {
+pub fn R_InitBuffer(width: c_int, height: c_int) {
     unsafe {
         // Handle resize, e.g. smaller view windows with border and/or status bar.
         viewwindowx = (SCREENWIDTH - width) >> 1;
@@ -787,8 +728,7 @@ unsafe fn DEH_String(s: *const c_char) -> *const c_char {
 ///
 /// If the viewport covers the full screen (`scaledviewwidth == SCREENWIDTH`) the background
 /// buffer is freed and the function returns immediately.
-#[no_mangle]
-pub extern "C" fn R_FillBackScreen() {
+pub fn R_FillBackScreen() {
     unsafe {
         // If we are running full screen, there is no need to do any of this,
         // and the background buffer can be freed if it was previously in use.
@@ -888,8 +828,7 @@ pub extern "C" fn R_FillBackScreen() {
 ///
 /// Used by `R_DrawViewBorder` to blit the pre-rendered bezel regions from `background_buffer`
 /// into `I_VideoBuffer`. Does nothing if `background_buffer` is null (full-screen mode).
-#[no_mangle]
-pub extern "C" fn R_VideoErase(ofs: u32, count: c_int) {
+pub fn R_VideoErase(ofs: u32, count: c_int) {
     unsafe {
         if !background_buffer.is_null() {
             ptr::copy_nonoverlapping(
@@ -913,8 +852,7 @@ pub extern "C" fn R_VideoErase(ofs: u32, count: c_int) {
 ///
 /// Returns immediately without doing anything if `scaledviewwidth == SCREENWIDTH`
 /// (full-screen viewport, no border to draw).
-#[no_mangle]
-pub extern "C" fn R_DrawViewBorder() {
+pub fn R_DrawViewBorder() {
     unsafe {
         if scaledviewwidth == SCREENWIDTH {
             return;

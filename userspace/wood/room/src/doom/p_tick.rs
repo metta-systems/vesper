@@ -34,11 +34,11 @@ use crate::doom::{
 #[derive(Clone, Copy)]
 pub union actionf_t {
     /// No-argument action; also used to carry the removal sentinel (`-1`).
-    pub acv: Option<unsafe extern "C" fn()>,
+    pub acv: Option<unsafe fn()>,
     /// Single-argument action — the common thinker callback form.
-    pub acp1: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub acp1: Option<unsafe fn(*mut c_void)>,
     /// Two-argument action — used by a small number of thinker types.
-    pub acp2: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+    pub acp2: Option<unsafe fn(*mut c_void, *mut c_void)>,
 }
 
 /// Linked-list node embedded at offset 0 of every thinker-based game object.
@@ -62,9 +62,9 @@ pub struct thinker_t {
 /// Produce the sentinel value `(actionf_v)(-1)` that C uses to mark
 /// thinkers for removal.  We build it at runtime so the compiler doesn't
 /// try to validate the bit pattern as a real function pointer.
-fn sentinel_ac() -> Option<unsafe extern "C" fn()> {
+fn sentinel_ac() -> Option<unsafe fn()> {
     // -1 as pointer-sized integer, reinterpreted as a function pointer.
-    Some(unsafe { core::mem::transmute::<usize, unsafe extern "C" fn()>(usize::MAX) })
+    Some(unsafe { core::mem::transmute::<usize, unsafe fn()>(usize::MAX) })
 }
 
 /// Return `true` if `f` holds the removal-sentinel value (`(actionf_v)(-1)`).
@@ -74,9 +74,8 @@ fn is_sentinel(f: actionf_t) -> bool {
 
 /// Current level time in tics, incremented once per [`P_Ticker`] call.
 ///
-/// Exported as `leveltime` for C linkage.  Used throughout the engine to
+/// Used throughout the engine to
 /// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
-#[no_mangle]
 pub static mut leveltime: c_int = 0;
 
 /// Sentinel head/tail node of the doubly-linked thinker list.
@@ -84,9 +83,6 @@ pub static mut leveltime: c_int = 0;
 /// The list is circular: `thinkercap.next` is the first real thinker and
 /// `thinkercap.prev` is the last.  When the list is empty both fields point
 /// back to `thinkercap` itself (see [`P_InitThinkers`]).
-///
-/// Exported as `thinkercap` for C linkage.
-#[no_mangle]
 pub static mut thinkercap: thinker_t = thinker_t {
     prev: std::ptr::null_mut::<thinker_t>(),
     next: std::ptr::null_mut::<thinker_t>(),
@@ -97,8 +93,7 @@ pub static mut thinkercap: thinker_t = thinker_t {
 ///
 /// Must be called at the start of each level before any thinker is added.
 /// Corresponds to `P_InitThinkers` in `p_tick.c`.
-#[no_mangle]
-pub extern "C" fn P_InitThinkers() {
+pub fn P_InitThinkers() {
     unsafe {
         thinkercap.prev = &raw mut thinkercap;
         thinkercap.next = &raw mut thinkercap;
@@ -116,8 +111,7 @@ pub extern "C" fn P_InitThinkers() {
 /// allocated via `Z_Malloc` and will not be freed by the caller — ownership
 /// transfers to the thinker list, which frees it in [`P_RunThinkers`] once
 /// the removal sentinel is detected.
-#[no_mangle]
-pub extern "C" fn P_AddThinker(thinker: *mut thinker_t) {
+pub fn P_AddThinker(thinker: *mut thinker_t) {
     unsafe {
         let cap = &raw mut thinkercap;
         (*(*cap).prev).next = thinker;
@@ -138,8 +132,7 @@ pub extern "C" fn P_AddThinker(thinker: *mut thinker_t) {
 ///
 /// `thinker` must be a valid, non-null pointer to a thinker that is currently
 /// linked into the global thinker list.
-#[no_mangle]
-pub extern "C" fn P_RemoveThinker(thinker: *mut thinker_t) {
+pub fn P_RemoveThinker(thinker: *mut thinker_t) {
     unsafe {
         (*thinker).function.acv = sentinel_ac();
     }
@@ -149,8 +142,7 @@ pub extern "C" fn P_RemoveThinker(thinker: *mut thinker_t) {
 ///
 /// The original C function body is empty; this Rust port preserves that
 /// to keep the symbol available for any C caller that references it.
-#[no_mangle]
-pub extern "C" fn P_AllocateThinker(_thinker: *mut thinker_t) {}
+pub fn P_AllocateThinker(_thinker: *mut thinker_t) {}
 
 /// Iterate the thinker list, execute each thinker's callback, and free any
 /// thinkers that have been marked for removal.
@@ -166,8 +158,7 @@ pub extern "C" fn P_AllocateThinker(_thinker: *mut thinker_t) {}
 /// undefined behaviour.
 ///
 /// Corresponds to `P_RunThinkers` in `p_tick.c`.
-#[no_mangle]
-pub extern "C" fn P_RunThinkers() {
+pub fn P_RunThinkers() {
     unsafe {
         let cap = &raw mut thinkercap;
         let mut current = (*cap).next;
@@ -199,8 +190,7 @@ pub extern "C" fn P_RunThinkers() {
 /// player has been processed once the check is false and menus pause the game.
 ///
 /// Corresponds to `P_Ticker` in `p_tick.c`.
-#[no_mangle]
-pub extern "C" fn P_Ticker() {
+pub fn P_Ticker() {
     unsafe {
         if paused != 0 {
             return;

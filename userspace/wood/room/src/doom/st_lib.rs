@@ -157,7 +157,6 @@ pub struct st_binicon_t {
 /// most-significant digit when a number widget displays a negative value.
 /// Corresponds to `sttminus` in `st_lib.c`; exported so `st_stuff.c` can
 /// reference it directly.
-#[no_mangle]
 pub static mut sttminus: *mut patch_t = std::ptr::null_mut();
 
 use crate::doom::{
@@ -172,8 +171,7 @@ use crate::doom::{
 /// [`sttminus`]. All other widget state is initialized via the individual
 /// `STlib_init*` functions. Called once at startup from `ST_Init` in
 /// `st_stuff.c`.
-#[no_mangle]
-pub extern "C" fn STlib_init() {
+pub fn STlib_init() {
     unsafe {
         // DEH_String("STTMINUS") is identity — just pass the string.
         sttminus = W_CacheLumpName(c"STTMINUS".as_ptr(), PU_STATIC) as *mut patch_t;
@@ -188,8 +186,7 @@ pub extern "C" fn STlib_init() {
 /// # Preconditions
 /// * `pl` must point to at least 10 valid patch pointers (digits 0-9).
 /// * `num` and `on` must be valid non-null pointers for the widget's lifetime.
-#[no_mangle]
-pub extern "C" fn STlib_initNum(
+pub fn STlib_initNum(
     n: *mut st_number_t,
     x: c_int,
     y: c_int,
@@ -225,8 +222,7 @@ pub extern "C" fn STlib_initNum(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`n->y - ST_Y < 0`).
-#[no_mangle]
-pub extern "C" fn STlib_drawNum(n: *mut st_number_t, _refresh: c_int) {
+pub fn STlib_drawNum(n: *mut st_number_t, _refresh: c_int) {
     unsafe {
         let mut numdigits = (*n).width;
         let num = *(*n).num;
@@ -296,8 +292,7 @@ pub extern "C" fn STlib_drawNum(n: *mut st_number_t, _refresh: c_int) {
 /// Calls [`STlib_drawNum`] when `*n.on != 0`. In the C original this function
 /// also checked whether the value had changed before drawing; this port always
 /// redraws when visible (matching the `refresh` path).
-#[no_mangle]
-pub extern "C" fn STlib_updateNum(n: *mut st_number_t, refresh: c_int) {
+pub fn STlib_updateNum(n: *mut st_number_t, refresh: c_int) {
     unsafe {
         if *(*n).on != 0 {
             STlib_drawNum(n, refresh);
@@ -313,8 +308,7 @@ pub extern "C" fn STlib_updateNum(n: *mut st_number_t, refresh: c_int) {
 /// # Preconditions
 /// * `pl` must point to at least 10 valid digit patches.
 /// * `num`, `on`, and `percent` must be valid non-null pointers.
-#[no_mangle]
-pub extern "C" fn STlib_initPercent(
+pub fn STlib_initPercent(
     p: *mut st_percent_t,
     x: c_int,
     y: c_int,
@@ -335,8 +329,7 @@ pub extern "C" fn STlib_initPercent(
 ///
 /// When `refresh != 0` and the widget is visible, draws the `%` patch at the
 /// number's position before delegating to [`STlib_updateNum`].
-#[no_mangle]
-pub extern "C" fn STlib_updatePercent(per: *mut st_percent_t, refresh: c_int) {
+pub fn STlib_updatePercent(per: *mut st_percent_t, refresh: c_int) {
     unsafe {
         if refresh != 0 && *(*per).n.on != 0 {
             V_DrawPatch((*per).n.x, (*per).n.y, (*per).p);
@@ -353,8 +346,7 @@ pub extern "C" fn STlib_updatePercent(per: *mut st_percent_t, refresh: c_int) {
 /// # Preconditions
 /// * `inum` and `on` must be valid non-null pointers.
 /// * `il` must point to a valid patch array covering all expected index values.
-#[no_mangle]
-pub extern "C" fn STlib_initMultIcon(
+pub fn STlib_initMultIcon(
     i: *mut st_multicon_t,
     x: c_int,
     y: c_int,
@@ -386,8 +378,7 @@ pub extern "C" fn STlib_initMultIcon(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`) when erasing a previous icon.
-#[no_mangle]
-pub extern "C" fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: c_int) {
+pub fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: c_int) {
     unsafe {
         if *(*mi).on != 0 && ((*mi).oldinum != *(*mi).inum || refresh != 0) && *(*mi).inum != -1 {
             if (*mi).oldinum != -1 {
@@ -416,8 +407,7 @@ pub extern "C" fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: c_int) {
 ///
 /// # Preconditions
 /// * `i`, `val`, and `on` must be valid non-null pointers.
-#[no_mangle]
-pub extern "C" fn STlib_initBinIcon(
+pub fn STlib_initBinIcon(
     b: *mut st_binicon_t,
     x: c_int,
     y: c_int,
@@ -447,8 +437,7 @@ pub extern "C" fn STlib_initBinIcon(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`).
-#[no_mangle]
-pub extern "C" fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: c_int) {
+pub fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: c_int) {
     unsafe {
         if *(*bi).on != 0 && ((*bi).oldval != *(*bi).val || refresh != 0) {
             let p = (*bi).p;

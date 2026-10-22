@@ -170,8 +170,7 @@ mod layout_checks {
 /// - `result_ok` — moved without incident.
 /// - `result_crushed` — a thing was crushed; the plane may have been reversed.
 /// - `result_pastdest` — the plane reached `dest` this tic.
-#[no_mangle]
-pub extern "C" fn T_MovePlane(
+pub fn T_MovePlane(
     sector: *mut sector_t,
     speed: fixed_t,
     dest: fixed_t,
@@ -301,8 +300,7 @@ pub extern "C" fn T_MovePlane(
 /// `floor` must be a valid, aligned, non-null pointer to a `floormove_t`
 /// whose embedded `sector` pointer is also valid for the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_MoveFloor(floor: *mut floormove_t) {
+pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
     let res = T_MovePlane(
         (*floor).sector,
         (*floor).speed,
@@ -364,8 +362,7 @@ pub unsafe extern "C" fn T_MoveFloor(floor: *mut floormove_t) {
 /// `(*floor).floordestheight = (*floor).sector.offset_from(sec as *mut sector_t) as fixed_t`
 /// is a leftover dead assignment that is immediately overwritten. It is harmless
 /// (the correct value is set on the next line) but should be removed.
-#[no_mangle]
-pub unsafe extern "C" fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
+pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_int {
     let mut secnum: c_int = -1;
     let mut rtn: c_int = 0;
 
@@ -389,8 +386,8 @@ pub unsafe extern "C" fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_in
         P_AddThinker(&mut (*floor).thinker);
         (*sec).specialdata = floor as *mut c_void;
         (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut floormove_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut floormove_t),
+            unsafe fn(*mut c_void),
         >(T_MoveFloor));
         (*floor).r#type = floortype;
         (*floor).crush = 0;
@@ -544,8 +541,7 @@ pub unsafe extern "C" fn EV_DoFloor(line: *mut line_t, floortype: c_int) -> c_in
 ///
 /// `line` must be a valid non-null pointer for the current map; the global
 /// `sectors` array must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
+pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_int {
     let mut secnum: c_int = -1;
     let mut rtn: c_int = 0;
 
@@ -569,8 +565,8 @@ pub unsafe extern "C" fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_in
         P_AddThinker(&mut (*floor).thinker);
         (*sec).specialdata = floor as *mut c_void;
         (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut floormove_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut floormove_t),
+            unsafe fn(*mut c_void),
         >(T_MoveFloor));
         (*floor).direction = 1;
         (*floor).sector = sec as *mut sector_t;
@@ -628,8 +624,8 @@ pub unsafe extern "C" fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_in
 
                 (*sec).specialdata = floor as *mut c_void;
                 (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut floormove_t),
-                    unsafe extern "C" fn(*mut c_void),
+                    unsafe fn(*mut floormove_t),
+                    unsafe fn(*mut c_void),
                 >(T_MoveFloor));
                 (*floor).direction = 1;
                 (*floor).sector = sec as *mut sector_t;
@@ -644,18 +640,6 @@ pub unsafe extern "C" fn EV_BuildStairs(line: *mut line_t, stype: c_int) -> c_in
         }
     }
     rtn
-}
-
-/// Anchor function ensuring all `#[no_mangle]` floor functions survive
-/// link-time dead-code elimination.
-///
-/// Referenced from `doomgeneric_Create` during engine initialisation.
-#[no_mangle]
-pub extern "C" fn P_Floor_Link_Anchor() {
-    let _ = T_MovePlane as *const () as usize;
-    let _ = T_MoveFloor as *const () as usize;
-    let _ = EV_DoFloor as *const () as usize;
-    let _ = EV_BuildStairs as *const () as usize;
 }
 
 #[cfg(test)]

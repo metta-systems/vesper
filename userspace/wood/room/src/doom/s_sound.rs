@@ -13,8 +13,6 @@
 //! - `MobjStub` is a layout-compatible prefix of `mobj_t` (see the struct doc).
 //!   Only the fields actually touched by attenuation are named; the rest are
 //!   opaque padding so we do not need to mirror `r_defs::mobj_t` here.
-//! - C linkage is preserved via `#[no_mangle]` on every exported function and
-//!   tunable global so other ported modules and the test harness keep working.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
@@ -144,31 +142,25 @@ use crate::c_write;
 static mut channels: *mut channel_t = std::ptr::null_mut();
 
 /// User-facing SFX volume slider value (0-15). Mirrors `sfxVolume` in
-/// `s_sound.c`; `#[no_mangle]` so the menu and config code share the symbol.
-#[no_mangle]
+/// `s_sound.c`; shared with the menu and config code.
 pub static mut sfxVolume: c_int = 8;
 
 /// User-facing music volume slider value (0-15). Mirrors `musicVolume` in
-/// `s_sound.c`; exposed via `#[no_mangle]` for the menu and config code.
-#[no_mangle]
+/// `s_sound.c`; shared with the menu and config code.
 pub static mut musicVolume: c_int = 8;
 
 /// Number of mixing channels to allocate (default 8). Read by `S_Init`.
-#[no_mangle]
 pub static mut snd_channels: c_int = 8;
 
 /// Internal SFX volume on the 0-127 scale used by the driver. Set by
 /// `S_SetSfxVolume`. C name: `snd_SfxVolume`.
-#[no_mangle]
 pub static mut snd_SfxVolume: c_int = 8;
 
 /// Internal music volume on the 0-127 scale used by the driver. Set by
 /// `S_SetMusicVolume`. C name: `snd_MusicVolume`.
-#[no_mangle]
 pub static mut snd_MusicVolume: c_int = 8;
 
 /// Non-zero while music is paused, used by `S_PauseSound`/`S_ResumeSound`.
-#[no_mangle]
 pub static mut mus_paused: c_int = 0;
 
 /// Currently playing music entry, or null if no song is active.
@@ -184,8 +176,7 @@ static mut mus_playing: *mut MusicInfo = std::ptr::null_mut();
 ///
 /// C origin: `S_Init` in `s_sound.c`. The Rust port additionally calls
 /// `S_InitSfxLinks` here because that work is data-table-side in Rust.
-#[no_mangle]
-pub extern "C" fn S_Init(sfx_volume: c_int, music_volume: c_int) {
+pub fn S_Init(sfx_volume: c_int, music_volume: c_int) {
     unsafe {
         S_InitSfxLinks();
 
@@ -220,8 +211,7 @@ pub extern "C" fn S_Init(sfx_volume: c_int, music_volume: c_int) {
 
 /// Tear down the SFX and music drivers. Wired in at process exit via
 /// `I_AtExit` from `S_Init`. C origin: `S_Shutdown` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_Shutdown() {
+pub fn S_Shutdown() {
     I_ShutdownSound();
     I_ShutdownMusic();
 }
@@ -263,8 +253,7 @@ unsafe fn S_StopChannel(cnum: c_int) {
 /// For Doom 2 the track is `mus_runnin + gamemap - 1`. For Ultimate Doom
 /// episode 4 a hard-coded `spmus[]` table picks Romero's chosen songs.
 /// C origin: `S_Start` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_Start() {
+pub fn S_Start() {
     unsafe {
         for cnum in 0..snd_channels {
             if !(*channels.offset(cnum as isize)).sfxinfo.is_null() {
@@ -304,8 +293,7 @@ pub extern "C" fn S_Start() {
 
 /// Stop any sound whose `origin` matches the given mobj. Walks the channel
 /// list and stops the first match. C origin: `S_StopSound` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_StopSound(origin: *mut MobjStub) {
+pub fn S_StopSound(origin: *mut MobjStub) {
     unsafe {
         for cnum in 0..snd_channels {
             let ch = *channels.offset(cnum as isize);
@@ -435,8 +423,7 @@ unsafe fn S_AdjustSoundParams(
 /// listener (the console player) unless `origin` is the listener itself, in
 /// which case stereo is forced to centre. The chosen sfx replaces any sound
 /// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int) {
+pub fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int) {
     unsafe {
         let origin = origin_p as *mut MobjStub;
         let mut volume = snd_SfxVolume;
@@ -501,8 +488,7 @@ pub extern "C" fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int) {
 
 /// Pause the currently playing music if any. No-op if nothing is playing or
 /// the song is already paused. C origin: `S_PauseSound` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_PauseSound() {
+pub fn S_PauseSound() {
     unsafe {
         if !mus_playing.is_null() && mus_paused == 0 {
             I_PauseSong();
@@ -513,8 +499,7 @@ pub extern "C" fn S_PauseSound() {
 
 /// Resume music previously paused by `S_PauseSound`. No-op if nothing was
 /// paused. C origin: `S_ResumeSound` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_ResumeSound() {
+pub fn S_ResumeSound() {
     unsafe {
         if !mus_playing.is_null() && mus_paused != 0 {
             I_ResumeSong();
@@ -528,8 +513,7 @@ pub extern "C" fn S_ResumeSound() {
 /// channels whose sound stopped playing or fell out of audible range.
 ///
 /// C origin: `S_UpdateSounds` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_UpdateSounds(listener: *mut MobjStub) {
+pub fn S_UpdateSounds(listener: *mut MobjStub) {
     unsafe {
         I_UpdateSound();
 
@@ -572,8 +556,7 @@ pub extern "C" fn S_UpdateSounds(listener: *mut MobjStub) {
 
 /// Set the music volume (0-127). Values out of range are silently ignored to
 /// match the C behaviour. C origin: `S_SetMusicVolume` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_SetMusicVolume(volume: c_int) {
+pub fn S_SetMusicVolume(volume: c_int) {
     if !(0..=127).contains(&volume) {
         return;
     }
@@ -584,8 +567,7 @@ pub extern "C" fn S_SetMusicVolume(volume: c_int) {
 /// Set the SFX volume (0-127), stored in `snd_SfxVolume` and applied to
 /// subsequent `S_StartSound` calls. Values out of range are ignored.
 /// C origin: `S_SetSfxVolume` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_SetSfxVolume(volume: c_int) {
+pub fn S_SetSfxVolume(volume: c_int) {
     unsafe {
         if !(0..=127).contains(&volume) {
             return;
@@ -597,8 +579,7 @@ pub extern "C" fn S_SetSfxVolume(volume: c_int) {
 
 /// Start playing music `m_id` once (non-looping). Convenience wrapper around
 /// `S_ChangeMusic`. C origin: `S_StartMusic` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_StartMusic(m_id: c_int) {
+pub fn S_StartMusic(m_id: c_int) {
     S_ChangeMusic(m_id, 0);
 }
 
@@ -611,8 +592,7 @@ pub extern "C" fn S_StartMusic(m_id: c_int) {
 /// non-zero requests an infinite loop.
 ///
 /// C origin: `S_ChangeMusic` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
+pub fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
     unsafe {
         let mut musicnum = musicnum;
 
@@ -654,16 +634,14 @@ pub extern "C" fn S_ChangeMusic(musicnum: c_int, looping: c_int) {
 
 /// Return non-zero if the music driver reports an active song. Thin wrapper
 /// around `I_MusicIsPlaying`. C origin: `S_MusicPlaying` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_MusicPlaying() -> c_int {
+pub fn S_MusicPlaying() -> c_int {
     I_MusicIsPlaying()
 }
 
 /// Stop the currently playing music, unregister the song, and release its
 /// WAD lump back to zone memory. No-op if nothing is playing.
 /// C origin: `S_StopMusic` in `s_sound.c`.
-#[no_mangle]
-pub extern "C" fn S_StopMusic() {
+pub fn S_StopMusic() {
     unsafe {
         if !mus_playing.is_null() {
             let m = &mut *mus_playing;

@@ -101,96 +101,73 @@ const sk_noitems: skill_t = -1;
 use crate::doom::z_zone::{PU_CACHE, PU_STATIC};
 
 // ---------------------------------------------------------------------------
-// Globals — these are #[no_mangle] so remaining C code (g_game.c etc.)
-// can resolve them at link time.
+// Globals
 // ---------------------------------------------------------------------------
 
 /// Savegame directory.
-#[no_mangle]
 pub static mut savegamedir: *mut c_char = ptr::null_mut();
 
 /// Path to the currently loaded IWAD file.
-#[no_mangle]
 pub static mut iwadfile: *mut c_char = ptr::null_mut();
 
 /// Started game with -devparm.
-#[no_mangle]
 pub static mut devparm: c_int = 0;
 
 /// Checkparm of -nomonsters.
-#[no_mangle]
 pub static mut nomonsters: c_int = 0;
 
 /// Checkparm of -respawn.
-#[no_mangle]
 pub static mut respawnparm: c_int = 0;
 
 /// Checkparm of -fast.
-#[no_mangle]
 pub static mut fastparm: c_int = 0;
 
 /// Skill level to start at (set by -skill).
-#[no_mangle]
 pub static mut startskill: c_int = 0;
 
 /// Episode to start at (set by -episode).
-#[no_mangle]
 pub static mut startepisode: c_int = 0;
 
 /// Map to start at (set by -warp / -episode).
-#[no_mangle]
 pub static mut startmap: c_int = 0;
 
 /// True when -warp / -episode has provided an explicit start.
-#[no_mangle]
 pub static mut autostart: c_int = 0;
 
 /// Load game slot (-1 = not loading).
-#[no_mangle]
 pub static mut startloadgame: c_int = 0;
 
 /// True while playing back a built-in demo sequence.
-#[no_mangle]
 pub static mut advancedemo: c_int = 0;
 
 /// Store demo, do not accept any inputs.
-#[no_mangle]
 pub static mut storedemo: c_int = 0;
 
 /// True when the BFG edition of the IWAD is detected.
-#[no_mangle]
 pub static mut bfgedition: c_int = 0;
 
 /// True once the main event loop has started.
-#[no_mangle]
 pub static mut main_loop_started: c_int = 0;
 
 /// Primary WAD file path buffer.
-#[no_mangle]
 pub static mut wadfile: [c_char; 1024] = [0; 1024];
 
 /// Directory of development maps.
-#[no_mangle]
 pub static mut mapdir: [c_char; 1024] = [0; 1024];
 
 /// When non-zero, display the ENDOOM text on exit.
-#[no_mangle]
 pub static mut show_endoom: c_int = 1;
 
 /// Demo loop sequence counter.
-#[no_mangle]
 pub static mut demosequence: c_int = 0;
 
 /// Tics remaining on the current demo page.
-#[no_mangle]
 pub static mut pagetic: c_int = 0;
 
 /// Name of the current demo page lump.
-#[no_mangle]
 pub static mut pagename: *mut c_char = ptr::null_mut();
 
 /// Wipe gamestate for transition effects. -1 forces a wipe on next draw.
-#[no_mangle]
 pub static mut wipegamestate: c_int = GS_DEMOSCREEN;
 
 // D_Display static local state — these must persist across frames.
@@ -330,25 +307,12 @@ static PACKS: [PackDesc; 3] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Extern declarations for C code that is not yet ported (g_game.c)
+// C library functions
 // ---------------------------------------------------------------------------
 
+use crate::doom::dummy::drone;
+
 extern "C" {
-    // net_dedicated.c / net_query.c — not yet ported:
-    /// Runs the dedicated server loop; from `net_dedicated.c` (not yet ported).
-    fn NET_DedicatedServer();
-    /// Queries the master server for a game list; from `net_query.c` (not yet ported).
-    fn NET_MasterQuery();
-    /// Queries a specific network address for a game; from `net_query.c` (not yet ported).
-    fn NET_QueryAddress(addr: *mut c_char);
-    /// Scans the local network (LAN) for games; from `net_query.c` (not yet ported).
-    fn NET_LANQuery();
-
-    // d_loop.rs — drone not yet exported as pub static:
-    /// Whether this instance is a drone (spectator) player; from `d_loop.rs`.
-    static mut drone: c_int;
-
-    // C standard library:
     /// Returns the length of the null-terminated C string `s`, excluding the null terminator.
     fn strlen(s: *const c_char) -> usize;
     /// Compares two null-terminated C strings lexicographically; returns 0 if equal.
@@ -609,8 +573,7 @@ unsafe fn c_str_to_str(s: *const c_char) -> String {
 // ---------------------------------------------------------------------------
 
 /// Send all buffered events down the responder chain.
-#[no_mangle]
-pub extern "C" fn D_ProcessEvents() {
+pub fn D_ProcessEvents() {
     unsafe {
         // IF STORE DEMO, DO NOT ACCEPT INPUT
         if storedemo != 0 {
@@ -636,8 +599,7 @@ pub extern "C" fn D_ProcessEvents() {
 // ---------------------------------------------------------------------------
 
 /// Draw current display, possibly wiping it from the previous frame.
-#[no_mangle]
-pub extern "C" fn D_Display() {
+pub fn D_Display() {
     unsafe {
         if nodrawers != 0 {
             return;
@@ -796,8 +758,7 @@ pub extern "C" fn D_Display() {
 // ---------------------------------------------------------------------------
 
 /// Bind all configuration variables.
-#[no_mangle]
-pub extern "C" fn D_BindVariables() {
+pub fn D_BindVariables() {
     unsafe {
         M_ApplyPlatformDefaults();
 
@@ -876,7 +837,7 @@ pub extern "C" fn D_BindVariables() {
 /// Return `TRUE` when the window should grab (capture) the mouse pointer.
 ///
 /// The mouse is released for drone players, while the menu is open, or while a demo is playing.
-extern "C" fn D_GrabMouseCallback() -> Boolean {
+fn D_GrabMouseCallback() -> Boolean {
     unsafe {
         // Drone players don't need mouse focus
         if drone != 0 {
@@ -902,8 +863,7 @@ extern "C" fn D_GrabMouseCallback() -> Boolean {
 /// Execute one rendered frame: run game tics, update sounds, and draw the display.
 ///
 /// Called by the doomgeneric platform layer once per video frame.
-#[no_mangle]
-pub extern "C" fn doomgeneric_Tick() {
+pub fn doomgeneric_Tick() {
     unsafe {
         // Frame synchronous IO operations
         I_StartFrame();
@@ -931,8 +891,7 @@ pub extern "C" fn doomgeneric_Tick() {
 // ---------------------------------------------------------------------------
 
 /// Main game loop — never returns.
-#[no_mangle]
-pub extern "C" fn D_DoomLoop() {
+pub fn D_DoomLoop() {
     unsafe {
         if bfgedition != 0 {
             let is_recording = demorecording;
@@ -959,7 +918,7 @@ pub extern "C" fn D_DoomLoop() {
         I_GraphicsCheckCommandLine();
 
         // Cast the Rust callback to match the C signature
-        extern "C" fn grab_cb() -> Boolean {
+        fn grab_cb() -> Boolean {
             D_GrabMouseCallback()
         }
         I_SetGrabMouseCallback(grab_cb);
@@ -985,8 +944,7 @@ pub extern "C" fn D_DoomLoop() {
 // ---------------------------------------------------------------------------
 
 /// Handle timing for demo projection.
-#[no_mangle]
-pub extern "C" fn D_PageTicker() {
+pub fn D_PageTicker() {
     unsafe {
         pagetic -= 1;
         if pagetic < 0 {
@@ -996,24 +954,21 @@ pub extern "C" fn D_PageTicker() {
 }
 
 /// Draw the current demo page.
-#[no_mangle]
-pub extern "C" fn D_PageDrawer() {
+pub fn D_PageDrawer() {
     unsafe {
         V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t);
     }
 }
 
 /// Called after each demo or intro demosequence finishes.
-#[no_mangle]
-pub extern "C" fn D_AdvanceDemo() {
+pub fn D_AdvanceDemo() {
     unsafe {
         advancedemo = 1;
     }
 }
 
 /// Cycle through the demo sequences.
-#[no_mangle]
-pub extern "C" fn D_DoAdvanceDemo() {
+pub fn D_DoAdvanceDemo() {
     unsafe {
         // Set player state to live (PST_LIVE = 1)
         let cp = consoleplayer;
@@ -1098,8 +1053,7 @@ pub extern "C" fn D_DoAdvanceDemo() {
 }
 
 /// Start the title screen demo sequence.
-#[no_mangle]
-pub extern "C" fn D_StartTitle() {
+pub fn D_StartTitle() {
     unsafe {
         gameaction = ga_nothing;
         demosequence = -1;
@@ -1209,8 +1163,7 @@ unsafe fn SetMissionForPackName(pack_name: *mut c_char) {
 // ---------------------------------------------------------------------------
 
 /// Find out what version of Doom is playing.
-#[no_mangle]
-pub extern "C" fn D_IdentifyVersion() {
+pub fn D_IdentifyVersion() {
     unsafe {
         if gamemission == d_mode::none {
             for i in 0..numlumps {
@@ -1277,8 +1230,7 @@ unsafe fn logical_gamemission() -> c_int {
 // ---------------------------------------------------------------------------
 
 /// Set the gamedescription string.
-#[no_mangle]
-pub extern "C" fn D_SetGameDescription() {
+pub fn D_SetGameDescription() {
     unsafe {
         let is_freedoom = W_CheckNumForName(c"FREEDOOM".as_ptr()) >= 0;
         let is_freedm = W_CheckNumForName(c"FREEDM".as_ptr()) >= 0;
@@ -1466,8 +1418,7 @@ unsafe fn InitGameVersion() {
 // ---------------------------------------------------------------------------
 
 /// Print a startup message identifying which original executable version is being emulated.
-#[no_mangle]
-pub extern "C" fn PrintGameVersion() {
+pub fn PrintGameVersion() {
     unsafe {
         for gv in &GAME_VERSIONS {
             if gv.description.0.is_null() {
@@ -1492,7 +1443,7 @@ pub extern "C" fn PrintGameVersion() {
 ///
 /// Skipped when `show_endoom` is 0, when the main loop never started, or in
 /// screensaver / test-controls mode.
-extern "C" fn D_Endoom() {
+fn D_Endoom() {
     unsafe {
         // Don't show ENDOOM if disabled, or in screensaver/control test mode.
         // Only show it once the game has actually started.
@@ -1519,8 +1470,7 @@ extern "C" fn D_Endoom() {
 // ---------------------------------------------------------------------------
 
 /// Main entry point — initializes all subsystems.
-#[no_mangle]
-pub extern "C" fn D_DoomMain() {
+pub fn D_DoomMain() {
     unsafe {
         let mut file: [c_char; 256] = [0; 256];
         let mut demolumpname: [c_char; 9] = [0; 9];

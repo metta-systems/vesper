@@ -206,28 +206,24 @@ pub struct line_t {
 ///
 /// Set by `P_CheckSight` to `t1->z + t1->height - (t1->height >> 2)` before
 /// BSP traversal. Read by `P_CrossSubsector` for slope comparisons.
-#[no_mangle]
 pub static mut sightzstart: c_int = 0;
 
 /// Upper slope bound for the sight corridor (fixed-point).
 ///
 /// Initialised to the slope from `sightzstart` to the top of the target.
 /// Narrowed downward as occluding portals are encountered.
-#[no_mangle]
 pub static mut topslope: c_int = 0;
 
 /// Lower slope bound for the sight corridor (fixed-point).
 ///
 /// Initialised to the slope from `sightzstart` to the bottom of the target.
 /// Narrowed upward as occluding portals are encountered.
-#[no_mangle]
 pub static mut bottomslope: c_int = 0;
 
 /// The sight-trace ray from `t1` to `t2`, stored as a `divline_t`.
 ///
 /// Set by `P_CheckSight` and used throughout the BSP traversal in
 /// `P_CrossBSPNode` and `P_CrossSubsector`.
-#[no_mangle]
 pub static mut strace: divline_t = divline_t {
     x: 0,
     y: 0,
@@ -239,18 +235,15 @@ pub static mut strace: divline_t = divline_t {
 ///
 /// Stored separately from `strace` so that `P_CrossBSPNode` can test which
 /// side of each partition the target falls on without a full ray struct.
-#[no_mangle]
 pub static mut t2x: c_int = 0;
 
 /// Y coordinate of the sight target (`t2->y`).
 ///
 /// See `t2x`.
-#[no_mangle]
 pub static mut t2y: c_int = 0;
 
 /// Diagnostic counters: `sightcounts[0]` is REJECT table hits (early-out),
 /// `sightcounts[1]` is full BSP traversals attempted.
-#[no_mangle]
 pub static mut sightcounts: [c_int; 2] = [0, 0];
 
 use crate::doom::{
@@ -548,8 +541,7 @@ fn P_CrossBSPNode(bspnum: c_int) -> bool {
 /// Both `t1` and `t2` must be valid, non-null pointers to initialised
 /// `mobj_t` instances. Their `subsector` fields must point into the live
 /// subsector/sector arrays loaded by `p_setup`.
-#[no_mangle]
-pub extern "C" fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
+pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
     unsafe {
         // Cast both pointers through *const u8 to sidestep the fact that
         // mobj_t (from p_telept) references a different sector_t type than
@@ -587,12 +579,6 @@ pub extern "C" fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> c_int {
 
         P_CrossBSPNode(numnodes - 1) as c_int
     }
-}
-
-/// Anchor function to ensure exports survive linker dead-code elimination.
-#[no_mangle]
-pub extern "C" fn P_Sight_Link_Anchor() {
-    let _ = P_CheckSight as *const () as usize;
 }
 
 #[cfg(test)]

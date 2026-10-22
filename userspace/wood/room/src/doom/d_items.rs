@@ -67,7 +67,6 @@ const NUMWEAPONS: usize = 9;
 ///
 /// Order: wp_fist, wp_pistol, wp_shotgun, wp_chaingun, wp_missile,
 ///        wp_plasma, wp_bfg, wp_chainsaw, wp_supershotgun.
-#[no_mangle]
 pub static weaponinfo: [weaponinfo_t; NUMWEAPONS] = [
     // fist
     weaponinfo_t {

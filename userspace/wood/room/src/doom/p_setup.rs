@@ -16,8 +16,8 @@
 //!   so that a `break` on a non-commercial monster does not advance past it.
 //! - `P_SetupLevel` uses `format!` for lump-name construction instead of
 //!   `DEH_snprintf`, so DeHackEd lump-name patches are not applied.
-//! - Global map tables (`vertexes`, `lines`, etc.) are `#[no_mangle]`
-//!   `static mut` values with C linkage, matching the C extern declarations.
+//! - Global map tables (`vertexes`, `lines`, etc.) are `pub static mut`
+//!   values, as the C globals were.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -217,75 +217,61 @@ pub struct mapthing_t {
 // ---------------------------------------------------------------------------
 
 /// Total number of vertexes loaded from the current map's VERTEXES lump.
-/// C linkage: referenced by `r_bsp.c` and other renderer modules.
-#[no_mangle]
+/// Referenced by `r_bsp.c` and other renderer modules.
 pub static mut numvertexes: c_int = 0;
 /// Pointer to the runtime vertex array, allocated from zone memory at
 /// `PU_LEVEL`. Each entry holds fixed-point (16.16) x/y coordinates.
-/// C linkage: referenced by `p_map.c`, `r_bsp.c`, and many others.
-#[no_mangle]
+/// Referenced by `p_map.c`, `r_bsp.c`, and many others.
 pub static mut vertexes: *mut vertex_t = ptr::null_mut();
 
 /// Total number of segs loaded from the current map's SEGS lump.
-/// C linkage: referenced by `r_bsp.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c`.
 pub static mut numsegs: c_int = 0;
 /// Pointer to the runtime seg array, allocated from zone memory at `PU_LEVEL`.
-/// C linkage: referenced by `r_bsp.c` and `p_sight.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c` and `p_sight.c`.
 pub static mut segs: *mut seg_t = ptr::null_mut();
 
 /// Total number of sectors loaded from the current map's SECTORS lump.
-/// C linkage: referenced throughout the game and renderer.
-#[no_mangle]
+/// Referenced throughout the game and renderer.
 pub static mut numsectors: c_int = 0;
 /// Pointer to the runtime sector array, allocated from zone memory at
 /// `PU_LEVEL`. Sectors own the lighting, floor/ceiling heights, and thing
 /// lists used by most game logic.
-/// C linkage: referenced throughout the game and renderer.
-#[no_mangle]
+/// Referenced throughout the game and renderer.
 pub static mut sectors: *mut sector_t = ptr::null_mut();
 
 /// Total number of subsectors loaded from the current map's SSECTORS lump.
-/// C linkage: referenced by `r_bsp.c` and `p_sight.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c` and `p_sight.c`.
 pub static mut numsubsectors: c_int = 0;
 /// Pointer to the runtime subsector array, allocated from zone memory at
 /// `PU_LEVEL`. Each subsector is a convex polygon leaf of the BSP tree.
-/// C linkage: referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
 pub static mut subsectors: *mut subsector_t = ptr::null_mut();
 
 /// Total number of BSP nodes loaded from the current map's NODES lump.
-/// C linkage: referenced by `r_bsp.c` and `p_sight.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c` and `p_sight.c`.
 pub static mut numnodes: c_int = 0;
 /// Pointer to the runtime BSP node array, allocated from zone memory at
 /// `PU_LEVEL`. The root node is `nodes[numnodes - 1]`.
-/// C linkage: referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
-#[no_mangle]
+/// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
 pub static mut nodes: *mut node_t = ptr::null_mut();
 
 /// Total number of linedefs loaded from the current map's LINEDEFS lump.
-/// C linkage: referenced by `p_map.c`, `p_maputl.c`, and others.
-#[no_mangle]
+/// Referenced by `p_map.c`, `p_maputl.c`, and others.
 pub static mut numlines: c_int = 0;
 /// Pointer to the runtime linedef array, allocated from zone memory at
 /// `PU_LEVEL`. Each linedef connects two vertexes and references up to two
 /// sidedefs.
-/// C linkage: referenced throughout the game.
-#[no_mangle]
+/// Referenced throughout the game.
 pub static mut lines: *mut line_t = ptr::null_mut();
 
 /// Total number of sidedefs loaded from the current map's SIDEDEFS lump.
-/// C linkage: referenced by `r_segs.c` and others.
-#[no_mangle]
+/// Referenced by `r_segs.c` and others.
 pub static mut numsides: c_int = 0;
 /// Pointer to the runtime sidedef array, allocated from zone memory at
 /// `PU_LEVEL`. Sidedefs hold texture indices and offsets; each linedef
 /// references one or two.
-/// C linkage: referenced by `r_segs.c`, `p_spec.c`, and others.
-#[no_mangle]
+/// Referenced by `r_segs.c`, `p_spec.c`, and others.
 pub static mut sides: *mut side_t = ptr::null_mut();
 
 /// Running total of front+back linedef-sector references, used to size the
@@ -298,40 +284,33 @@ static mut totallines: c_int = 0;
 // ---------------------------------------------------------------------------
 
 /// Width of the blockmap grid in 128-unit cells.
-/// C linkage: referenced by `p_map.c` and `p_maputl.c` for collision queries.
-#[no_mangle]
+/// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
 pub static mut bmapwidth: c_int = 0;
 /// Height of the blockmap grid in 128-unit cells.
-/// C linkage: referenced by `p_map.c` and `p_maputl.c` for collision queries.
-#[no_mangle]
+/// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
 pub static mut bmapheight: c_int = 0;
 /// Pointer into `blockmaplump` offset by 4 shorts (past the header).
 /// Each entry is an offset from `blockmaplump` to the list of linedefs in that
 /// cell, terminated by -1.
-/// C linkage: referenced by `p_maputl.c`.
-#[no_mangle]
+/// Referenced by `p_maputl.c`.
 pub static mut blockmap: *mut c_short = ptr::null_mut();
 /// Base pointer to the raw blockmap lump data (including the 4-short header).
 /// Header layout: `[orgx, orgy, width, height]` in map units (not fixed-point
 /// before shifting). Allocated from zone memory at `PU_LEVEL`.
-/// C linkage: referenced by `p_maputl.c`.
-#[no_mangle]
+/// Referenced by `p_maputl.c`.
 pub static mut blockmaplump: *mut c_short = ptr::null_mut();
 /// X origin of the blockmap in fixed-point (16.16) map coordinates.
 /// Subtract from a thing's x to get the blockmap column.
-/// C linkage: referenced by `p_maputl.c`.
-#[no_mangle]
+/// Referenced by `p_maputl.c`.
 pub static mut bmaporgx: c_int = 0;
 /// Y origin of the blockmap in fixed-point (16.16) map coordinates.
 /// Subtract from a thing's y to get the blockmap row.
-/// C linkage: referenced by `p_maputl.c`.
-#[no_mangle]
+/// Referenced by `p_maputl.c`.
 pub static mut bmaporgy: c_int = 0;
 /// Pointer to the blockmap thing-chain heads, one per cell (`bmapwidth *
 /// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
 /// that cell's chain, or null. Zeroed at level load.
-/// C linkage: referenced by `p_maputl.c` and `p_map.c`.
-#[no_mangle]
+/// Referenced by `p_maputl.c` and `p_map.c`.
 pub static mut blocklinks: *mut *mut c_void = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
@@ -342,8 +321,7 @@ pub static mut blocklinks: *mut *mut c_void = ptr::null_mut();
 /// A 2-D bit array indexed by `[sector1 * numsectors + sector2]`; a set bit
 /// means the two sectors cannot see each other, so detailed LOS checks are
 /// skipped. Allocated from zone memory at `PU_LEVEL`.
-/// C linkage: referenced by `p_sight.c`.
-#[no_mangle]
+/// Referenced by `p_sight.c`.
 pub static mut rejectmatrix: *mut u8 = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
@@ -353,8 +331,7 @@ pub static mut rejectmatrix: *mut u8 = ptr::null_mut();
 /// Array of deathmatch start positions collected from the THINGS lump.
 /// Holds up to `MAX_DEATHMATCH_STARTS` entries; the active count is tracked
 /// by `deathmatch_p - deathmatchstarts`.
-/// C linkage: referenced by `g_game.c`.
-#[no_mangle]
+/// Referenced by `g_game.c`.
 pub static mut deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS] = [mapthing_t {
     x: 0,
     y: 0,
@@ -365,15 +342,13 @@ pub static mut deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS] = [mapthing
 
 /// Write cursor into `deathmatchstarts`; points to the next free slot.
 /// Reset to `&deathmatchstarts[0]` at the start of each `P_SetupLevel`.
-/// C linkage: advanced by `P_SpawnMapThing` when spawning deathmatch starts.
-#[no_mangle]
+/// Advanced by `P_SpawnMapThing` when spawning deathmatch starts.
 pub static mut deathmatch_p: *mut mapthing_t = ptr::null_mut();
 
 /// Per-player single-player start positions, indexed by player number.
 /// Holds `MAXPLAYERS` entries; populated by `P_SpawnMapThing` from THINGS
 /// with type 1-4 (player starts).
-/// C linkage: referenced by `g_game.c` for respawning.
-#[no_mangle]
+/// Referenced by `g_game.c` for respawning.
 pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t {
     x: 0,
     y: 0,
@@ -419,8 +394,7 @@ use crate::doom::{
 ///
 /// C callers: `P_LoadSegs` (this file). Also called via C FFI from legacy
 /// unported code that encounters two-sided linedefs with an invalid back sidenum.
-#[no_mangle]
-pub extern "C" fn GetSectorAtNullAddress() -> *mut sector_t {
+pub fn GetSectorAtNullAddress() -> *mut sector_t {
     static mut NULL_SECTOR_IS_INITIALIZED: bool = false;
     static mut NULL_SECTOR: sector_t = unsafe { std::mem::zeroed() };
 
@@ -457,8 +431,7 @@ pub extern "C" fn GetSectorAtNullAddress() -> *mut sector_t {
 /// `lump` must be the lump number of the VERTEXES entry for the current map
 /// (typically `lumpnum + MapLump::VERTEXES`).
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadVertexes(lump: c_int) {
+pub fn P_LoadVertexes(lump: c_int) {
     unsafe {
         numvertexes = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapvertex_t>() as c_int;
         vertexes = Z_Malloc(
@@ -504,8 +477,7 @@ pub extern "C" fn P_LoadVertexes(lump: c_int) {
 /// `lump` must be the lump number of the SEGS entry for the current map.
 /// Precondition: `vertexes`, `lines`, and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadSegs(lump: c_int) {
+pub fn P_LoadSegs(lump: c_int) {
     unsafe {
         numsegs = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapseg_t>() as c_int;
         segs = Z_Malloc(
@@ -564,8 +536,7 @@ pub extern "C" fn P_LoadSegs(lump: c_int) {
 ///
 /// `lump` must be the lump number of the SSECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadSubsectors(lump: c_int) {
+pub fn P_LoadSubsectors(lump: c_int) {
     unsafe {
         numsubsectors =
             W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsubsector_t>() as c_int;
@@ -605,8 +576,7 @@ pub extern "C" fn P_LoadSubsectors(lump: c_int) {
 ///
 /// `lump` must be the lump number of the SECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadSectors(lump: c_int) {
+pub fn P_LoadSectors(lump: c_int) {
     unsafe {
         numsectors = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsector_t>() as c_int;
         sectors = Z_Malloc(
@@ -653,8 +623,7 @@ pub extern "C" fn P_LoadSectors(lump: c_int) {
 ///
 /// `lump` must be the lump number of the NODES entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadNodes(lump: c_int) {
+pub fn P_LoadNodes(lump: c_int) {
     unsafe {
         numnodes = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapnode_t>() as c_int;
         nodes = Z_Malloc(
@@ -708,8 +677,7 @@ pub extern "C" fn P_LoadNodes(lump: c_int) {
 /// must already be loaded; `deathmatch_p` must be reset to the base of
 /// `deathmatchstarts`.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadThings(lump: c_int) {
+pub fn P_LoadThings(lump: c_int) {
     unsafe {
         let data = W_CacheLumpNum(lump, PU_STATIC);
         let numthings = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapthing_t>() as c_int;
@@ -768,8 +736,7 @@ pub extern "C" fn P_LoadThings(lump: c_int) {
 /// `lump` must be the lump number of the LINEDEFS entry for the current map.
 /// Preconditions: `vertexes` and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadLineDefs(lump: c_int) {
+pub fn P_LoadLineDefs(lump: c_int) {
     unsafe {
         numlines = W_LumpLength(lump as c_uint) / std::mem::size_of::<maplinedef_t>() as c_int;
         lines = Z_Malloc(
@@ -869,8 +836,7 @@ pub extern "C" fn P_LoadLineDefs(lump: c_int) {
 /// `lump` must be the lump number of the SIDEDEFS entry for the current map.
 /// Precondition: `sectors` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadSideDefs(lump: c_int) {
+pub fn P_LoadSideDefs(lump: c_int) {
     unsafe {
         numsides = W_LumpLength(lump as c_uint) / std::mem::size_of::<mapsidedef_t>() as c_int;
         sides = Z_Malloc(
@@ -923,8 +889,7 @@ pub extern "C" fn P_LoadSideDefs(lump: c_int) {
 ///
 /// `lump` must be the lump number of the BLOCKMAP entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_LoadBlockMap(lump: c_int) {
+pub fn P_LoadBlockMap(lump: c_int) {
     unsafe {
         let lumplen = W_LumpLength(lump as c_uint);
         let count = lumplen / 2;
@@ -982,8 +947,7 @@ pub extern "C" fn P_LoadBlockMap(lump: c_int) {
 ///
 /// Preconditions: all lump-load functions must have been called first.
 /// C callers: `P_SetupLevel` (this file).
-#[no_mangle]
-pub extern "C" fn P_GroupLines() {
+pub fn P_GroupLines() {
     unsafe {
         // Look up sector number for each subsector.
         let mut ss = subsectors;
@@ -1231,8 +1195,7 @@ unsafe fn P_LoadReject(lumpnum: c_int) {
 // FIXME: C uses DEH_snprintf for lump name construction, allowing DeHackEd
 // patches to rename map lumps. The Rust port uses format! and does not apply
 // DEH patches to the lump name, which may break modded WADs that rely on this.
-#[no_mangle]
-pub extern "C" fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _skill: c_int) {
+pub fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _skill: c_int) {
     unsafe {
         totalkills = 0;
         totalitems = 0;
@@ -1328,8 +1291,7 @@ pub extern "C" fn P_SetupLevel(episode: c_int, map: c_int, _playermask: c_int, _
 ///   sprite lump names, starting at `sprnames[0]`.
 ///
 /// C callers: `D_DoomMain` in `d_main.c`.
-#[no_mangle]
-pub extern "C" fn P_Init() {
+pub fn P_Init() {
     unsafe {
         P_InitSwitchList();
         P_InitPicAnims();

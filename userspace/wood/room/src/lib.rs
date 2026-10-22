@@ -22,13 +22,13 @@
 //! - `clippy::missing_safety_doc` - filled in progressively per-symbol; tracked
 //!   by the documentation drive in `DOCUMENTING.md`.
 //! - `dead_code`, `clashing_extern_declarations`, `private_interfaces` -
-//!   symbols are defined for FFI completeness even when Rust does not yet
-//!   call them, and a few `libc` prototypes intentionally differ.
+//!   ported symbols are kept even when nothing calls them yet, and a few
+//!   `libc` prototypes are redeclared per module with differing types.
 //! - `unpredictable_function_pointer_comparisons` - Doom's thinker dispatch
 //!   identifies thinkers by comparing their action function pointers; this is
 //!   reliable within a single statically-linked binary.
-//! - `clippy::not_unsafe_ptr_arg_deref` - many `extern "C"` ports accept raw
-//!   pointers that the C callers (re)validate before invoking.
+//! - `clippy::not_unsafe_ptr_arg_deref` - many ported functions keep the C
+//!   signatures, accepting raw pointers their callers validate.
 //! - `clippy::needless_range_loop`, `clippy::explicit_counter_loop` - direct
 //!   index loops are kept where the originals were so the diff with C stays
 //!   minimal; many arrays are `static mut` and would otherwise need
@@ -36,16 +36,16 @@
 
 // TODO: Add `# Safety` documentation to all unsafe functions.
 #![allow(clippy::missing_safety_doc)]
-// This crate is a C-to-Rust port. Many symbols are defined for FFI completeness
-// but not yet called from Rust code; libc functions are redeclared with
+// This crate is a C-to-Rust port. Many ported symbols are not yet called;
+// libc functions are redeclared with
 // compatible-but-different types; and internal pointer types are intentionally
 // less visible than their containing statics.
 #![allow(dead_code, clashing_extern_declarations, private_interfaces)]
 // Doom thinker dispatch compares function pointers for identity within a single
 // binary, which is a well-understood and reliable pattern in this context.
 #![allow(unpredictable_function_pointer_comparisons)]
-// This is a C-to-Rust port: extern "C" functions routinely take raw pointer
-// arguments that are dereferenced in the body. The C callers ensure validity.
+// This is a C-to-Rust port: ported functions routinely take raw pointer
+// arguments that are dereferenced in the body. The callers ensure validity.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 // C-style indexed loops are idiomatic in this port; many arrays are static mut,
 // so converting to iterators would require from_raw_parts complexity.

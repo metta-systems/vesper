@@ -3,9 +3,7 @@
 //! System interface: zone memory allocation, error handling, exit hooks,
 //! startup banners, and DOS memory-dump emulation for compatibility.
 //!
-//! All `#[no_mangle] pub extern "C"` entry points keep the original C
-//! symbol names so the rest of the engine (still partly C-shaped) can
-//! link against them unchanged. The Rust implementations use libc for
+//! The entry points keep the original C names. The Rust implementations use libc for
 //! the original printf/malloc behaviour and `std::process` for the
 //! Linux-only Zenity error dialog (the C source has Win32 / macOS /
 //! DJGPP variants which this port intentionally drops).
@@ -36,7 +34,7 @@ const MIN_RAM: c_int = 6; // MiB
 
 /// C signature for an exit callback registered via `I_AtExit`.
 /// Matches `typedef void (*atexit_func_t)(void)` from `i_system.h`.
-type atexit_func_t = extern "C" fn();
+type atexit_func_t = fn();
 
 /// Single entry in the linked list of registered exit callbacks.
 ///
@@ -97,8 +95,7 @@ unsafe fn AutoAllocMemory(size: *mut c_int, mut default_ram: c_int, min_ram: c_i
 /// Entries form a stack (LIFO): the most recently registered callback
 /// runs first. Mirrors `I_AtExit` from `i_system.c`. Allocates the
 /// list node with `libc::malloc` to match the C lifetime convention.
-#[no_mangle]
-pub extern "C" fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
+pub fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
     unsafe {
         let entry =
             libc::malloc(std::mem::size_of::<atexit_listentry_t>()) as *mut atexit_listentry_t;
@@ -111,8 +108,7 @@ pub extern "C" fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
 
 /// Tactile feedback hook. Originally targeted the Logitech Cyberman in
 /// the DOS Doom source; a no-op stub here, as in the C reference.
-#[no_mangle]
-pub extern "C" fn I_Tactile(_on: c_int, _off: c_int, _total: c_int) {}
+pub fn I_Tactile(_on: c_int, _off: c_int, _total: c_int) {}
 
 /// Allocate the engine's zone heap and return a pointer to its base.
 ///
@@ -122,8 +118,7 @@ pub extern "C" fn I_Tactile(_on: c_int, _off: c_int, _total: c_int) {}
 ///
 /// Mirrors `I_ZoneBase` from `i_system.c`. Called once at startup from
 /// `Z_Init` in `z_zone.c`.
-#[no_mangle]
-pub extern "C" fn I_ZoneBase(size: *mut c_int) -> *mut u8 {
+pub fn I_ZoneBase(size: *mut c_int) -> *mut u8 {
     unsafe {
         let mut default_ram = DEFAULT_RAM;
         let mut min_ram = MIN_RAM;
@@ -149,8 +144,7 @@ pub extern "C" fn I_ZoneBase(size: *mut c_int) -> *mut u8 {
 /// Print a NUL-terminated banner string centred in a 70-character
 /// column (35 leading spaces minus half the message length), followed
 /// by a newline. Mirrors `I_PrintBanner` from `i_system.c`.
-#[no_mangle]
-pub extern "C" fn I_PrintBanner(msg: *mut c_char) {
+pub fn I_PrintBanner(msg: *mut c_char) {
     unsafe {
         let len = libc::strlen(msg) as c_int;
         let spaces = 35 - len / 2;
@@ -164,8 +158,7 @@ pub extern "C" fn I_PrintBanner(msg: *mut c_char) {
 /// Print a 75-character horizontal divider made of `=` followed by a
 /// newline. Mirrors `I_PrintDivider` from `i_system.c`. Used by the
 /// startup banner and a few menu screens.
-#[no_mangle]
-pub extern "C" fn I_PrintDivider() {
+pub fn I_PrintDivider() {
     unsafe {
         for _ in 0..75 {
             libc::putchar(b'=' as c_int);
@@ -178,8 +171,7 @@ pub extern "C" fn I_PrintDivider() {
 /// between dividers, and the GPL copyright notice. Mirrors
 /// `I_PrintStartupBanner` from `i_system.c`, but substitutes the
 /// project name (the C source pulls it from `PACKAGE_NAME`).
-#[no_mangle]
-pub extern "C" fn I_PrintStartupBanner(gamedescription: *mut c_char) {
+pub fn I_PrintStartupBanner(gamedescription: *mut c_char) {
     unsafe {
         I_PrintDivider();
         I_PrintBanner(gamedescription);
@@ -197,8 +189,7 @@ pub extern "C" fn I_PrintStartupBanner(gamedescription: *mut c_char) {
 /// `i_system.c`: without that flag the C source also returns 0. The
 /// result is used by `I_Error` to decide whether to pop up a GUI
 /// dialog when no console is available to display the message.
-#[no_mangle]
-pub extern "C" fn I_ConsoleStdout() -> c_int {
+pub fn I_ConsoleStdout() -> c_int {
     0
 }
 
@@ -208,8 +199,7 @@ pub extern "C" fn I_ConsoleStdout() -> c_int {
 /// `std::process::exit`: the C source only does so when `ORIGCODE` is
 /// defined. The caller is expected to terminate after `I_Quit`
 /// returns. Mirrors `I_Quit` from `i_system.c`.
-#[no_mangle]
-pub extern "C" fn I_Quit() {
+pub fn I_Quit() {
     unsafe {
         let mut entry = exit_funcs;
         while !entry.is_null() {
@@ -281,8 +271,7 @@ unsafe fn ZenityErrorBox(message: *const c_char) -> c_int {
 /// format string and varargs, this entry point accepts a single
 /// pre-formatted C string - the `i_error!` macro takes care of
 /// formatting on the caller side.
-#[no_mangle]
-pub extern "C" fn I_Error(msg: *const c_char) {
+pub fn I_Error(msg: *const c_char) -> ! {
     unsafe {
         static mut already_quitting: bool = false;
 
@@ -318,9 +307,8 @@ pub extern "C" fn I_Error(msg: *const c_char) {
 /// The original C source expands `I_Error(...)` into a varargs call;
 /// in this port the `i_error!` macro produces a formatted C string
 /// and forwards to this function. Identical behaviour to `I_Error`.
-#[no_mangle]
-pub extern "C" fn I_ErrorV(msg: *const c_char) {
-    I_Error(msg);
+pub fn I_ErrorV(msg: *const c_char) -> ! {
+    I_Error(msg)
 }
 
 /// Length, in bytes, of the simulated low-memory dump exposed via
@@ -380,8 +368,7 @@ static mut dos_mem_dump: DosMemDump = DosMemDump::Dos622;
 /// a latent bug in the C source (missing `else` after the `dos622`
 /// branch lets it fall through to `dos71`). The custom-byte loop also
 /// uses a single index, fixing a double-increment bug in C.
-#[no_mangle]
-pub extern "C" fn I_GetMemoryValue(offset: c_uint, value: *mut c_void, size: c_int) -> c_int {
+pub fn I_GetMemoryValue(offset: c_uint, value: *mut c_void, size: c_int) -> c_int {
     unsafe {
         static mut firsttime: bool = true;
 
@@ -453,34 +440,4 @@ pub extern "C" fn I_GetMemoryValue(offset: c_uint, value: *mut c_void, size: c_i
             _ => 0,
         }
     }
-}
-/// Empty exit callback referenced only by `I_System_Link_Anchor` to
-/// give `I_AtExit` something to take the address of.
-extern "C" fn dummy_atexit() {}
-
-/// Link anchor that references every public C entry point of this
-/// module so the linker cannot drop them as dead code.
-///
-/// Not part of the original Doom API; exists purely so the
-/// statically-linked C side can find every `#[no_mangle]` symbol when
-/// the Rust crate is built as a library. Never call this; it would
-/// allocate and then exit through `I_Error`.
-///
-/// # Safety
-///
-/// All arguments are null/zero, so calling this would dereference
-/// null pointers in every wrapped entry. Treat as link-only.
-#[no_mangle]
-pub unsafe extern "C" fn I_System_Link_Anchor() {
-    I_AtExit(dummy_atexit, Boolean::FALSE);
-    I_Tactile(0, 0, 0);
-    let mut size: c_int = 0;
-    I_ZoneBase(&mut size);
-    I_ConsoleStdout();
-    I_Quit();
-    I_GetMemoryValue(0, ptr::null_mut(), 0);
-    I_PrintBanner(ptr::null_mut());
-    I_PrintDivider();
-    I_PrintStartupBanner(ptr::null_mut());
-    I_ErrorV(ptr::null());
 }

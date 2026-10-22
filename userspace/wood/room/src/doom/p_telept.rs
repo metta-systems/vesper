@@ -274,8 +274,7 @@ type CffiSector = crate::doom::c_ffi::sector_t;
 /// `line` and `thing` must be valid, non-null pointers for the duration of
 /// the call.  The global arrays `sectors` and `thinkercap` must be initialised
 /// (i.e. a level must be loaded).
-#[no_mangle]
-pub extern "C" fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t) -> c_int {
+pub fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t) -> c_int {
     unsafe {
         // Don't teleport missiles
         if (*thing).flags & MF_MISSILE != 0 {
@@ -299,8 +298,8 @@ pub extern "C" fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t
                 // Not a mobj
                 if (*thinker).function.acp1
                     != Some(core::mem::transmute::<
-                        unsafe extern "C" fn(*mut mobj_t),
-                        unsafe extern "C" fn(*mut c_void),
+                        unsafe fn(*mut mobj_t),
+                        unsafe fn(*mut c_void),
                     >(P_MobjThinker))
                 {
                     thinker = (*thinker).next;
@@ -368,13 +367,6 @@ pub extern "C" fn EV_Teleport(line: *mut line_t, side: c_int, thing: *mut mobj_t
         }
     }
     0
-}
-
-/// Anchor function referenced from `doomgeneric_Create` to ensure
-/// `EV_Teleport` survives link-time dead-code elimination.
-#[no_mangle]
-pub extern "C" fn P_Telept_Link_Anchor() {
-    let _ = EV_Teleport as *const () as usize;
 }
 
 #[cfg(test)]

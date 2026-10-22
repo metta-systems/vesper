@@ -17,8 +17,6 @@
 //!   `unsafe` inline functions rather than C preprocessor macros.
 //! - The Cohen-Sutherland clip loop in `AM_clipMline` uses Rust integer
 //!   arithmetic; the OC_* outcode constants are typed `c_int`.
-//! - `AM_Map_Link_Anchor` is a Rust addition: it forces the linker to retain
-//!   all exported symbols that would otherwise be dead-stripped.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -571,7 +569,6 @@ static mut leveljuststarted: c_int = 1;
 ///
 /// Exported so that other modules (e.g. `f_finale.rs`) can read/clear it.
 /// C origin: `automapactive` in am_map.c.
-#[no_mangle]
 pub static mut automapactive: c_int = 0;
 
 /// Width of the automap framebuffer window in pixels.
@@ -782,7 +779,6 @@ static mut followplayer: c_int = 1;
 ///
 /// Exported so that `AM_Responder` can pass a pointer to it to
 /// `cht_CheckCheat`.  C origin: `cheat_amap` in am_map.c.
-#[no_mangle]
 pub static mut cheat_amap: cheatseq_t = cheatseq_t {
     sequence: make_cheat_seq(b"iddt"),
     sequence_len: 4,
@@ -1209,8 +1205,7 @@ unsafe fn AM_LevelInit() {
 ///
 /// Must be called only when the automap was previously started; WAD must be
 /// loaded.
-#[no_mangle]
-pub unsafe extern "C" fn AM_Stop() {
+pub unsafe fn AM_Stop() {
     let st_notify = event_t {
         type_: 0, // ev_keydown
         data1: 1, // ev_keyup
@@ -1236,8 +1231,7 @@ pub unsafe extern "C" fn AM_Stop() {
 /// # Safety
 ///
 /// The game must be in an active level with valid map data loaded.
-#[no_mangle]
-pub unsafe extern "C" fn AM_Start() {
+pub unsafe fn AM_Start() {
     static mut lastlevel: c_int = -1;
     static mut lastepisode: c_int = -1;
 
@@ -1290,13 +1284,12 @@ unsafe fn AM_maxOutWindowScale() {
 ///
 /// Returns 1 if the event was consumed, 0 if it should be forwarded.
 ///
-/// Called from C code in `g_game.c`.  C origin: `AM_Responder` in am_map.c.
+/// Called from `g_game`.  C origin: `AM_Responder` in am_map.c.
 ///
 /// # Safety
 ///
 /// `ev` must be a valid pointer to an `event_t`; mutable statics are accessed.
-#[no_mangle]
-pub unsafe extern "C" fn AM_Responder(ev: *mut event_t) -> c_int {
+pub unsafe fn AM_Responder(ev: *mut event_t) -> c_int {
     let mut rc: c_int = 0;
     static mut bigstate: c_int = 0;
 
@@ -1488,15 +1481,14 @@ unsafe fn AM_updateLightLev() {
 /// `amclock`, updates the follow-player position, applies zoom, and pans the
 /// viewport.
 ///
-/// Called from C code in `g_game.c` once per game tick.
+/// Called from `g_game` once per game tick.
 /// C origin: `AM_Ticker` in am_map.c.
 ///
 /// # Safety
 ///
 /// Reads and writes mutable statics; `plr` must be valid while the automap is
 /// active.
-#[no_mangle]
-pub unsafe extern "C" fn AM_Ticker() {
+pub unsafe fn AM_Ticker() {
     if automapactive == 0 {
         return;
     }
@@ -2126,15 +2118,14 @@ unsafe fn AM_drawCrosshair(color: c_int) {
 /// `cheating == 2`), crosshair, and mark points, then marks the dirty
 /// rectangle via `V_MarkRect`.
 ///
-/// Called from C code in `g_game.c` once per frame.
+/// Called from `g_game` once per frame.
 /// C origin: `AM_Drawer` in am_map.c.
 ///
 /// # Safety
 ///
 /// All automap state must be valid (automap must be active with a level
 /// loaded).
-#[no_mangle]
-pub unsafe extern "C" fn AM_Drawer() {
+pub unsafe fn AM_Drawer() {
     if automapactive == 0 {
         return;
     }
@@ -2152,26 +2143,4 @@ pub unsafe extern "C" fn AM_Drawer() {
     AM_drawMarks();
 
     V_MarkRect(f_x, f_y, f_w, f_h);
-}
-
-// ---------------------------------------------------------------------------
-// Link anchor — ensures symbols are not dropped by the linker.
-// ---------------------------------------------------------------------------
-
-/// Ensure all exported automap symbols are retained by the linker.
-///
-/// Calls every public `extern "C"` function in this module with null/zero
-/// arguments.  Never intended to be called at runtime.
-/// C origin: not present in am_map.c; added for the Rust link model.
-///
-/// # Safety
-///
-/// This function must never be called at runtime; it exists solely to prevent
-/// the linker from discarding exported symbols during dead-code elimination.
-#[no_mangle]
-pub unsafe extern "C" fn AM_Map_Link_Anchor() {
-    AM_Responder(ptr::null_mut());
-    AM_Ticker();
-    AM_Drawer();
-    AM_Stop();
 }

@@ -47,8 +47,7 @@ pub enum mem_rel_t {
 /// In-memory file handle, the port of C `struct _MEMFILE` (typedef
 /// `MEMFILE`).
 ///
-/// `#[repr(C)]` so the still-C callers of `mem_fopen_*` can read fields
-/// directly if needed. Field semantics depend on `mode`:
+/// `#[repr(C)]` to keep the C layout. Field semantics depend on `mode`:
 /// * read mode -- `buf` and `buflen` describe a borrowed buffer; `alloced`
 ///   is unused.
 /// * write mode -- `buf` is an owned allocation of `alloced` bytes; `buflen`
@@ -127,10 +126,8 @@ fn mem_malloc_zero(size: usize) -> *mut c_void {
 ///
 /// The buffer is borrowed; `mem_fclose` does not free it. The C signature
 /// uses `void *` for parity with `fread`; the caller must keep `buf` alive
-/// until `mem_fclose` is called. Exported with C linkage for callers in
-/// `mus2mid.c` and `deh_io.c`.
-#[no_mangle]
-pub extern "C" fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFILE {
+/// until `mem_fclose` is called.
+pub fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFILE {
     let file: *mut _MEMFILE = mem_malloc(std::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
     unsafe {
         (*file).buf = buf as *mut u8;
@@ -150,13 +147,7 @@ pub extern "C" fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFI
 /// returns `(size_t)-1` here and prints a diagnostic; the Rust port returns
 /// 0, which the callers in this tree handle correctly without the wrap-around
 /// surprise of `SIZE_MAX`).
-#[no_mangle]
-pub extern "C" fn mem_fread(
-    buf: *mut c_void,
-    size: usize,
-    nmemb: usize,
-    stream: *mut _MEMFILE,
-) -> usize {
+pub fn mem_fread(buf: *mut c_void, size: usize, nmemb: usize, stream: *mut _MEMFILE) -> usize {
     let stream = unsafe { &mut *stream };
 
     if !matches!(stream.mode, memfile_mode_t::MODE_READ) {
@@ -186,10 +177,8 @@ pub extern "C" fn mem_fread(
 ///
 /// The backing buffer doubles each time `mem_fwrite` would overflow it.
 /// Use `mem_get_buf` to obtain the final buffer pointer and length, and
-/// `mem_fclose` to release the allocation. Exported with C linkage for use
-/// from `mus2mid.c`.
-#[no_mangle]
-pub extern "C" fn mem_fopen_write() -> *mut _MEMFILE {
+/// `mem_fclose` to release the allocation.
+pub fn mem_fopen_write() -> *mut _MEMFILE {
     let file: *mut _MEMFILE = mem_malloc(std::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
     let initial_alloc = 1024usize;
     let buf = mem_malloc(initial_alloc) as *mut u8;
@@ -211,13 +200,7 @@ pub extern "C" fn mem_fopen_write() -> *mut _MEMFILE {
 /// The C version returns `(size_t)-1` for the wrong-mode case; the Rust port
 /// returns 0 for the same defensive-coding reasons noted on `mem_fread`.
 /// Updates `stream.buflen` to the new high-water mark.
-#[no_mangle]
-pub extern "C" fn mem_fwrite(
-    ptr: *const c_void,
-    size: usize,
-    nmemb: usize,
-    stream: *mut _MEMFILE,
-) -> usize {
+pub fn mem_fwrite(ptr: *const c_void, size: usize, nmemb: usize, stream: *mut _MEMFILE) -> usize {
     let stream = unsafe { &mut *stream };
 
     if !matches!(stream.mode, memfile_mode_t::MODE_WRITE) {
@@ -259,8 +242,7 @@ pub extern "C" fn mem_fwrite(
 /// Useful on a write-mode stream once all data has been written: the
 /// returned pointer remains valid until the next `mem_fwrite` (which may
 /// reallocate) or `mem_fclose`.
-#[no_mangle]
-pub extern "C" fn mem_get_buf(stream: *mut _MEMFILE, buf: *mut *mut c_void, buflen: *mut usize) {
+pub fn mem_get_buf(stream: *mut _MEMFILE, buf: *mut *mut c_void, buflen: *mut usize) {
     let stream = unsafe { &*stream };
     unsafe {
         *buf = stream.buf as *mut c_void;
@@ -273,8 +255,7 @@ pub extern "C" fn mem_get_buf(stream: *mut _MEMFILE, buf: *mut *mut c_void, bufl
 /// In write mode also frees the owned data buffer; in read mode the borrowed
 /// buffer is left to the caller. After this call the `stream` pointer is
 /// dangling.
-#[no_mangle]
-pub extern "C" fn mem_fclose(stream: *mut _MEMFILE) {
+pub fn mem_fclose(stream: *mut _MEMFILE) {
     let stream = unsafe { &*stream };
 
     if matches!(stream.mode, memfile_mode_t::MODE_WRITE) {
@@ -288,8 +269,7 @@ pub extern "C" fn mem_fclose(stream: *mut _MEMFILE) {
 ///
 /// The return type is `c_int` for parity with the C signature (`long` in C,
 /// but the existing callers only use small offsets).
-#[no_mangle]
-pub extern "C" fn mem_ftell(stream: *mut _MEMFILE) -> c_int {
+pub fn mem_ftell(stream: *mut _MEMFILE) -> c_int {
     let stream = unsafe { &*stream };
     stream.position as c_int
 }
@@ -303,8 +283,7 @@ pub extern "C" fn mem_ftell(stream: *mut _MEMFILE) -> c_int {
 /// particular it suffers the same defects: `MEM_SEEK_CUR` and
 /// `MEM_SEEK_END` use 32-bit unsigned arithmetic and do not detect under-
 /// or overflow if a negative offset would seek past 0.
-#[no_mangle]
-pub extern "C" fn mem_fseek(stream: *mut _MEMFILE, position: c_int, whence: mem_rel_t) -> c_int {
+pub fn mem_fseek(stream: *mut _MEMFILE, position: c_int, whence: mem_rel_t) -> c_int {
     let stream = unsafe { &mut *stream };
 
     let newpos = match whence {

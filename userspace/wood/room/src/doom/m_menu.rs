@@ -101,12 +101,7 @@ const KEY_SCRLCK: c_int = 0x80 + 0x46;
 /// `name` is the WAD lump name (up to 10 bytes, NUL-padded).
 /// `routine` is the callback invoked on selection or slider movement.
 /// `alpha` is the keyboard shortcut character used for quick navigation.
-const fn mi(
-    status: i16,
-    name: &[u8],
-    routine: Option<extern "C" fn(c_int)>,
-    alpha: u8,
-) -> menuitem_t {
+const fn mi(status: i16, name: &[u8], routine: Option<fn(c_int)>, alpha: u8) -> menuitem_t {
     let mut n = [0i8; 10];
     let mut i = 0;
     while i < name.len() && i < 10 {
@@ -149,7 +144,7 @@ pub struct menuitem_t {
     /// WAD lump name for the item's graphic patch (NUL-terminated, 10 bytes).
     pub name: [c_char; 10],
     /// Callback invoked when the item is activated or a slider is adjusted.
-    pub routine: Option<extern "C" fn(c_int)>,
+    pub routine: Option<fn(c_int)>,
     /// Keyboard shortcut character for fast navigation within the menu.
     pub alphaKey: c_char,
 }
@@ -169,7 +164,7 @@ pub struct menu_t {
     /// Pointer to the first element of this page's `menuitem_t` array.
     pub menuitems: *mut menuitem_t,
     /// Draw callback invoked each frame while this page is active.
-    pub routine: Option<extern "C" fn()>,
+    pub routine: Option<fn()>,
     /// Screen x coordinate of the first menu item.
     pub x: i16,
     /// Screen y coordinate of the first menu item.
@@ -228,16 +223,12 @@ use crate::doom::{
 };
 
 /// Current mouse sensitivity setting (0-9); exported to C for `m_config.c` serialization.
-#[no_mangle]
 pub static mut mouseSensitivity: c_int = 5;
 /// Non-zero when player messages are enabled; exported for `hu_stuff.c` and config.
-#[no_mangle]
 pub static mut showMessages: c_int = 1;
 /// Graphics detail level: 0 = high, 1 = low; exported for `r_main.c` and config.
-#[no_mangle]
 pub static mut detailLevel: c_int = 0;
 /// Number of screen blocks to render (3-12); exported for `r_main.c` and config.
-#[no_mangle]
 pub static mut screenblocks: c_int = 10;
 
 /// Current display size index (0-8), derived from `screenblocks - 3`; updated by `M_SizeDisplay`.
@@ -257,12 +248,11 @@ static mut messageLastMenuActive: c_int = 0;
 /// Non-zero when the modal message requires a y/n or specific key response.
 static mut messageNeedsInput: c_int = 0;
 /// Callback invoked with the key code when the modal message is dismissed.
-static mut messageRoutine: Option<extern "C" fn(c_int)> = None;
+static mut messageRoutine: Option<fn(c_int)> = None;
 
 /// Gamma-correction status messages displayed when the player cycles the gamma level.
 ///
 /// Index matches the `usegamma` value (0-4). Exported for C callers in `m_config.c`.
-#[no_mangle]
 pub static mut gammamsg: [[c_char; 26]; 5] = [
     make_gamma_msg("Gamma correction OFF"),
     make_gamma_msg("Gamma correction level 1"),
@@ -282,10 +272,8 @@ static mut saveOldString: [c_char; SAVESTRINGSIZE] = [0; SAVESTRINGSIZE];
 
 /// Non-zero while a help/read-this screen is being displayed; suppresses status bar.
 /// Exported for `d_main.c` which checks it before re-drawing the play area.
-#[no_mangle]
 pub static mut inhelpscreens: c_int = 0;
 /// Non-zero while the menu overlay is open; read by `G_Responder` and `D_Display`.
-#[no_mangle]
 pub static mut menuactive: c_int = 0;
 
 /// Save-game description strings for all 6 save slots, read from each save file header.
@@ -305,7 +293,6 @@ static mut skullName: [*const c_char; 2] = [c"M_SKULL1".as_ptr(), c"M_SKULL2".as
 
 /// Pointer to the currently active menu page descriptor.
 /// Exported for C callers (e.g. `d_main.c`).
-#[no_mangle]
 pub static mut currentMenu: *mut menu_t = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
@@ -607,7 +594,7 @@ fn M_ReadSaveStrings() {
 }
 
 /// Draw the Load Game menu page: title patch plus one bordered slot row per save slot.
-extern "C" fn M_DrawLoad() {
+fn M_DrawLoad() {
     unsafe {
         V_DrawPatchDirect(
             72,
@@ -655,7 +642,7 @@ fn M_DrawSaveLoadBorder(x: c_int, y: c_int) {
 }
 
 /// Load the game from save slot `choice` and close all menus.
-extern "C" fn M_LoadSelect(choice: c_int) {
+fn M_LoadSelect(choice: c_int) {
     unsafe {
         let mut name: [c_char; 256] = [0; 256];
         M_StringCopy(name.as_mut_ptr(), P_SaveGameFile(choice), name.len());
@@ -665,7 +652,7 @@ extern "C" fn M_LoadSelect(choice: c_int) {
 }
 
 /// Navigate to the Load Game menu page (suppressed during network games).
-extern "C" fn M_LoadGame(_choice: c_int) {
+fn M_LoadGame(_choice: c_int) {
     unsafe {
         if netgame != 0 {
             M_StartMessage(
@@ -683,7 +670,7 @@ extern "C" fn M_LoadGame(_choice: c_int) {
 }
 
 /// Draw the Save Game menu page: title, bordered slot rows, and a blinking cursor when editing.
-extern "C" fn M_DrawSave() {
+fn M_DrawSave() {
     unsafe {
         V_DrawPatchDirect(
             72,
@@ -725,7 +712,7 @@ fn M_DoSave(slot: c_int) {
 }
 
 /// Enter string-editing mode for save slot `choice`, preserving the old description.
-extern "C" fn M_SaveSelect(choice: c_int) {
+fn M_SaveSelect(choice: c_int) {
     unsafe {
         saveStringEnter = 1;
         saveSlot = choice;
@@ -746,7 +733,7 @@ extern "C" fn M_SaveSelect(choice: c_int) {
 }
 
 /// Navigate to the Save Game menu page (suppressed when not in-game or not at `GS_LEVEL`).
-extern "C" fn M_SaveGame(_choice: c_int) {
+fn M_SaveGame(_choice: c_int) {
     const GS_LEVEL: c_int = 0;
     unsafe {
         if usergame == 0 {
@@ -806,7 +793,7 @@ fn M_QuickSave() {
 }
 
 /// Confirmation callback for the quicksave y/n prompt; saves if `key` is the confirm key.
-extern "C" fn M_QuickSaveResponse(key: c_int) {
+fn M_QuickSaveResponse(key: c_int) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key == key_menu_confirm {
@@ -856,7 +843,7 @@ fn M_QuickLoad() {
 }
 
 /// Confirmation callback for the quickload y/n prompt; loads if `key` is the confirm key.
-extern "C" fn M_QuickLoadResponse(key: c_int) {
+fn M_QuickLoadResponse(key: c_int) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key == key_menu_confirm {
@@ -870,7 +857,7 @@ extern "C" fn M_QuickLoadResponse(key: c_int) {
 ///
 /// Selects the correct WAD lump (`HELP`, `HELP1`, or `HELP2`) and skull
 /// position based on `gameversion` and `gamemode`.
-extern "C" fn M_DrawReadThis1() {
+fn M_DrawReadThis1() {
     unsafe {
         inhelpscreens = 1;
 
@@ -906,7 +893,6 @@ extern "C" fn M_DrawReadThis1() {
             }
             _ => {
                 i_error!("Unhandled game version");
-                return;
             }
         }
 
@@ -917,7 +903,7 @@ extern "C" fn M_DrawReadThis1() {
 }
 
 /// Draw the second "Read This" help screen (`HELP1` lump).
-extern "C" fn M_DrawReadThis2() {
+fn M_DrawReadThis2() {
     unsafe {
         inhelpscreens = 1;
         V_DrawPatchDirect(0, 0, W_CacheLumpName(c"HELP1".as_ptr(), 0) as *mut patch_t);
@@ -925,7 +911,7 @@ extern "C" fn M_DrawReadThis2() {
 }
 
 /// Draw the Sound Volume menu page: title patch and two thermometer sliders.
-extern "C" fn M_DrawSound() {
+fn M_DrawSound() {
     use super::s_sound::{musicVolume, sfxVolume};
     unsafe {
         V_DrawPatchDirect(
@@ -951,10 +937,10 @@ extern "C" fn M_DrawSound() {
 }
 
 /// No-op activation callback for the Sound Volume menu item (navigation handled elsewhere).
-extern "C" fn M_Sound(_choice: c_int) {}
+fn M_Sound(_choice: c_int) {}
 
 /// Adjust the SFX volume slider; `choice` 0 decrements, 1 increments (range 0-15).
-extern "C" fn M_SfxVol(choice: c_int) {
+fn M_SfxVol(choice: c_int) {
     use super::s_sound::sfxVolume;
     unsafe {
         match choice {
@@ -971,7 +957,7 @@ extern "C" fn M_SfxVol(choice: c_int) {
 }
 
 /// Adjust the music volume slider; `choice` 0 decrements, 1 increments (range 0-15).
-extern "C" fn M_MusicVol(choice: c_int) {
+fn M_MusicVol(choice: c_int) {
     use super::s_sound::musicVolume;
     unsafe {
         match choice {
@@ -988,7 +974,7 @@ extern "C" fn M_MusicVol(choice: c_int) {
 }
 
 /// Draw the "DOOM" title graphic at the top of the main menu.
-extern "C" fn M_DrawMainMenu() {
+fn M_DrawMainMenu() {
     V_DrawPatchDirect(
         94,
         2,
@@ -997,7 +983,7 @@ extern "C" fn M_DrawMainMenu() {
 }
 
 /// Draw the "New Game" and "Skill Level" title patches above the skill menu.
-extern "C" fn M_DrawNewGame() {
+fn M_DrawNewGame() {
     V_DrawPatchDirect(
         96,
         14,
@@ -1014,7 +1000,7 @@ extern "C" fn M_DrawNewGame() {
 ///
 /// Shows an error message if in a network game (except demo playback).
 /// Skips the episode menu for Doom II (commercial) and Chex Quest.
-extern "C" fn M_NewGame(_choice: c_int) {
+fn M_NewGame(_choice: c_int) {
     unsafe {
         if netgame != 0 && demoplayback == 0 {
             M_StartMessage(
@@ -1034,7 +1020,7 @@ extern "C" fn M_NewGame(_choice: c_int) {
 }
 
 /// Draw the "Which Episode?" title patch above the episode menu.
-extern "C" fn M_DrawEpisode() {
+fn M_DrawEpisode() {
     V_DrawPatchDirect(
         54,
         38,
@@ -1046,7 +1032,7 @@ extern "C" fn M_DrawEpisode() {
 static mut epi: c_int = 0;
 
 /// Confirmation callback for the Nightmare skill prompt; starts the game if `key` confirms.
-extern "C" fn M_VerifyNightmare(key: c_int) {
+fn M_VerifyNightmare(key: c_int) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1058,7 +1044,7 @@ extern "C" fn M_VerifyNightmare(key: c_int) {
 }
 
 /// Start a new game at the given skill level, or prompt for confirmation on Nightmare.
-extern "C" fn M_ChooseSkill(choice: c_int) {
+fn M_ChooseSkill(choice: c_int) {
     if choice as usize == nightmare {
         M_StartMessage(
             c"are you sure? this skill level\nisn't even remotely fair.\n\npress y or n.".as_ptr()
@@ -1078,7 +1064,7 @@ extern "C" fn M_ChooseSkill(choice: c_int) {
 ///
 /// Shows a shareware-restriction message if episode > 0 in shareware mode.
 /// Clamps episode 4 to episode 0 in registered mode (which only has three episodes).
-extern "C" fn M_Episode(choice: c_int) {
+fn M_Episode(choice: c_int) {
     unsafe {
         if gamemode == d_mode::shareware && choice != 0 {
             M_StartMessage(
@@ -1100,7 +1086,7 @@ extern "C" fn M_Episode(choice: c_int) {
 }
 
 /// Draw the Options menu page: title patch, detail/message toggles, and thermometer sliders.
-extern "C" fn M_DrawOptions() {
+fn M_DrawOptions() {
     unsafe {
         V_DrawPatchDirect(
             108,
@@ -1140,10 +1126,10 @@ extern "C" fn M_DrawOptions() {
 }
 
 /// No-op activation callback for the Options menu item (navigation handled by `M_Responder`).
-extern "C" fn M_Options(_choice: c_int) {}
+fn M_Options(_choice: c_int) {}
 
 /// Toggle the `showMessages` setting and display a confirmation HUD message.
-extern "C" fn M_ChangeMessages(_choice: c_int) {
+fn M_ChangeMessages(_choice: c_int) {
     unsafe {
         showMessages = 1 - showMessages;
         if showMessages == 0 {
@@ -1156,7 +1142,7 @@ extern "C" fn M_ChangeMessages(_choice: c_int) {
 }
 
 /// Confirmation callback for "End Game"; clears menus if the player confirms.
-extern "C" fn M_EndGameResponse(key: c_int) {
+fn M_EndGameResponse(key: c_int) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1168,7 +1154,7 @@ extern "C" fn M_EndGameResponse(key: c_int) {
 }
 
 /// Prompt the player to confirm ending the current game (suppressed if not in-game or in a network game).
-extern "C" fn M_EndGame(_choice: c_int) {
+fn M_EndGame(_choice: c_int) {
     unsafe {
         if usergame == 0 {
             S_StartSound(ptr::null_mut(), Sfx::Oof as c_int);
@@ -1195,10 +1181,10 @@ extern "C" fn M_EndGame(_choice: c_int) {
 }
 
 /// No-op placeholder for the "Read This" main-menu item (navigation is in `M_Responder`).
-extern "C" fn M_ReadThis(_choice: c_int) {}
+fn M_ReadThis(_choice: c_int) {}
 
 /// Handle "done" from the first help screen: advance to page 2 or finish, depending on game version.
-extern "C" fn M_ReadThis2(_choice: c_int) {
+fn M_ReadThis2(_choice: c_int) {
     unsafe {
         if gameversion <= d_mode::exe_doom_1_9 && gamemode != d_mode::commercial {
             M_SetupNextMenu(&raw mut ReadDef2);
@@ -1209,7 +1195,7 @@ extern "C" fn M_ReadThis2(_choice: c_int) {
 }
 
 /// No-op: closing the last help screen returns to the previous menu via `M_Responder`'s back key.
-extern "C" fn M_FinishReadThis(_choice: c_int) {}
+fn M_FinishReadThis(_choice: c_int) {}
 
 /// Sound effects played on quit confirmation for Doom episode games (cycled by `gametic`).
 static mut quitsounds: [c_int; 8] = [
@@ -1235,7 +1221,7 @@ static mut quitsounds2: [c_int; 8] = [
 ];
 
 /// Confirmation callback for the quit prompt; plays a quit sound and exits if the player confirms.
-extern "C" fn M_QuitResponse(key: c_int) {
+fn M_QuitResponse(key: c_int) {
     use super::m_controls::key_menu_confirm;
     unsafe {
         if key != key_menu_confirm {
@@ -1265,7 +1251,7 @@ fn M_SelectEndMessage() -> *const c_char {
 }
 
 /// Show the quit confirmation dialog with a game-specific quip and a y/n prompt.
-extern "C" fn M_QuitDOOM(_choice: c_int) {
+fn M_QuitDOOM(_choice: c_int) {
     unsafe {
         let msg = M_SelectEndMessage();
         let msg_str = std::ffi::CStr::from_ptr(msg).to_string_lossy();
@@ -1279,7 +1265,7 @@ extern "C" fn M_QuitDOOM(_choice: c_int) {
 }
 
 /// Adjust mouse sensitivity; `choice` 0 decrements, 1 increments (range 0-9).
-extern "C" fn M_ChangeSensitivity(choice: c_int) {
+fn M_ChangeSensitivity(choice: c_int) {
     unsafe {
         match choice {
             0 if mouseSensitivity > 0 => {
@@ -1294,7 +1280,7 @@ extern "C" fn M_ChangeSensitivity(choice: c_int) {
 }
 
 /// Toggle graphics detail between high (0) and low (1) and display a HUD confirmation.
-extern "C" fn M_ChangeDetail(_choice: c_int) {
+fn M_ChangeDetail(_choice: c_int) {
     unsafe {
         detailLevel = 1 - detailLevel;
         R_SetViewSize(screenblocks, detailLevel);
@@ -1309,7 +1295,7 @@ extern "C" fn M_ChangeDetail(_choice: c_int) {
 /// Adjust the screen-size slider; `choice` 0 shrinks, 1 enlarges (range 0-8).
 ///
 /// Updates both `screenSize` and `screenblocks`, then calls `R_SetViewSize`.
-extern "C" fn M_SizeDisplay(choice: c_int) {
+fn M_SizeDisplay(choice: c_int) {
     unsafe {
         match choice {
             0 if screenSize > 0 => {
@@ -1368,7 +1354,7 @@ fn M_DrawSelCell(_menu: *mut menu_t, _item: c_int) {}
 /// `string` is the message to display.
 /// `routine` is an optional callback invoked with the key pressed to dismiss.
 /// `input` is non-zero when a specific key (y/n or confirm/abort) is required.
-fn M_StartMessage(string: *mut c_char, routine: Option<extern "C" fn(c_int)>, input: c_int) {
+fn M_StartMessage(string: *mut c_char, routine: Option<fn(c_int)>, input: c_int) {
     unsafe {
         messageLastMenuActive = menuactive;
         messageToPrint = 1;
@@ -1492,8 +1478,7 @@ static mut RESP_lastx: c_int = 0;
 ///
 /// Returns `Boolean::TRUE` if the event was consumed, `Boolean::FALSE` otherwise.
 /// Called by `G_Responder` in `g_game.c`.
-#[no_mangle]
-pub extern "C" fn M_Responder(ev: *mut event_t) -> Boolean {
+pub fn M_Responder(ev: *mut event_t) -> Boolean {
     use super::m_controls::{
         joybmenu, key_menu_abort, key_menu_activate, key_menu_back, key_menu_confirm,
         key_menu_decscreen, key_menu_detail, key_menu_down, key_menu_endgame, key_menu_forward,
@@ -1866,8 +1851,7 @@ pub extern "C" fn M_Responder(ev: *mut event_t) -> Boolean {
 ///
 /// No-op if the menu is already active. Called from `M_Responder` and from
 /// game code that needs to force the menu open (e.g. after a level warp cheat).
-#[no_mangle]
-pub extern "C" fn M_StartControlPanel() {
+pub fn M_StartControlPanel() {
     unsafe {
         if menuactive != 0 {
             return;
@@ -1885,8 +1869,7 @@ pub extern "C" fn M_StartControlPanel() {
 /// draw callback is invoked, all item patches are blitted, and the animated
 /// skull cursor is drawn at the highlighted item. Called by `D_Display` in
 /// `d_main.c` every frame.
-#[no_mangle]
-pub extern "C" fn M_Drawer() {
+pub fn M_Drawer() {
     unsafe {
         inhelpscreens = 0;
 
@@ -1971,8 +1954,7 @@ fn M_SetupNextMenu(menudef: *mut menu_t) {
 ///
 /// Decrements `skullAnimCounter` and toggles `whichSkull` every 8 tics.
 /// Called by `G_Ticker` in `g_game.c`.
-#[no_mangle]
-pub extern "C" fn M_Ticker() {
+pub fn M_Ticker() {
     unsafe {
         skullAnimCounter -= 1;
         if skullAnimCounter <= 0 {
@@ -1989,8 +1971,7 @@ pub extern "C" fn M_Ticker() {
 /// raw-pointer cross-references between statics), trims the episode menu to
 /// three items for pre-Ultimate builds, and removes "Read This" from the main
 /// menu in commercial mode. Called once from `D_DoomMain` in `d_main.c`.
-#[no_mangle]
-pub extern "C" fn M_Init() {
+pub fn M_Init() {
     unsafe {
         currentMenu = &raw mut MainDef;
         menuactive = 0;

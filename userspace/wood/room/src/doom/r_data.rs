@@ -22,11 +22,11 @@
 //! `R_GetColumn` is the hot path: it returns a pointer to the column data,
 //! triggering composite generation as needed.
 //!
-//! # Globals exported to C
+//! # Shared globals
 //!
-//! Most `#[no_mangle]` statics in this module are declared `extern` in
-//! `r_state.h` and consumed by multiple renderer and physics C files.
-//! Exceptions: `lastflat` and `numflats` are only declared locally in
+//! Most statics in this module correspond to `extern` declarations in
+//! `r_state.h` and are read by several renderer and physics modules.
+//! Exceptions: `lastflat` and `numflats` were only declared locally in
 //! `p_spec.c`, not in `r_state.h`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
@@ -230,7 +230,7 @@ struct spritedef_t {
 }
 
 // ---------------------------------------------------------------------------
-// Externs from other modules
+// C library
 // ---------------------------------------------------------------------------
 
 extern "C" {
@@ -262,35 +262,29 @@ use crate::doom::{
 ///
 /// Exported as `extern int firstflat` in `r_state.h`.  Used by `r_plane.c`
 /// to compute lump numbers from flat indices: `lump = firstflat + flatnum`.
-#[no_mangle]
 pub static mut firstflat: c_int = 0;
 
 /// WAD lump index of the last flat (the lump before `F_END`).
 ///
 /// Not in `r_state.h`; declared locally in `p_spec.c`.  Together with
 /// `firstflat` it defines the flat lump range in the WAD.
-#[no_mangle]
 pub static mut lastflat: c_int = 0;
 
 /// Total number of flat lumps (`lastflat - firstflat + 1`).
 ///
 /// Declared locally in `p_spec.c` (not in `r_state.h`) as `extern int numflats`
 /// for animation bounds checking.
-#[no_mangle]
 pub static mut numflats: c_int = 0;
 
 /// WAD lump index of the first patch lump (the lump after the patch namespace marker).
 ///
 /// Initialized but not currently used by the renderer; present to mirror the C globals.
-#[no_mangle]
 pub static mut firstpatch: c_int = 0;
 
 /// WAD lump index of the last patch lump.
-#[no_mangle]
 pub static mut lastpatch: c_int = 0;
 
 /// Total number of patch lumps.
-#[no_mangle]
 pub static mut numpatches: c_int = 0;
 
 /// WAD lump index of the first sprite lump (the lump after `S_START`).
@@ -298,28 +292,24 @@ pub static mut numpatches: c_int = 0;
 /// Exported via `r_state.h`.  Used by `r_things.c` and `f_finale.c` to
 /// convert sprite-relative lump indices to absolute WAD lump numbers:
 /// `lump = firstspritelump + relative`.
-#[no_mangle]
 pub static mut firstspritelump: c_int = 0;
 
 /// WAD lump index of the last sprite lump (the lump before `S_END`).
 ///
 /// Exported via `r_state.h`.  Used by `r_things.c` when scanning the WAD for
 /// sprite frames.
-#[no_mangle]
 pub static mut lastspritelump: c_int = 0;
 
 /// Total number of sprite lumps (`lastspritelump - firstspritelump + 1`).
 ///
 /// Exported via `r_state.h`.  Bounds the `spritewidth`, `spriteoffset`, and
 /// `spritetopoffset` arrays.
-#[no_mangle]
 pub static mut numspritelumps: c_int = 0;
 
 /// Total number of wall textures loaded from TEXTURE1 and TEXTURE2.
 ///
-/// Exported as `#[no_mangle]`.  Bounds all per-texture arrays and the hash
+///Bounds all per-texture arrays and the hash
 /// table.
-#[no_mangle]
 pub static mut numtextures: c_int = 0;
 
 /// Array of pointers to runtime texture descriptors, length `numtextures`.
@@ -344,7 +334,6 @@ static mut texturewidthmask: *mut c_int = ptr::null_mut();
 ///
 /// Exported via `r_state.h` as `fixed_t *textureheight`.  Used by `r_segs.c`
 /// and `p_floor.c` for texture-pegging calculations.
-#[no_mangle]
 pub static mut textureheight: *mut c_int = ptr::null_mut();
 
 /// Per-texture total byte size of the composite column buffer, length `numtextures`.
@@ -378,7 +367,6 @@ static mut texturecomposite: *mut *mut u8 = ptr::null_mut();
 /// Exported via `r_state.h` as `int *flattranslation`.  `p_spec.c` updates
 /// entries during animated flat processing; `r_plane.c` uses
 /// `flattranslation[pl->picnum]` when fetching the actual lump to draw.
-#[no_mangle]
 pub static mut flattranslation: *mut c_int = ptr::null_mut();
 
 /// Texture animation translation table, length `numtextures + 1`.
@@ -386,28 +374,24 @@ pub static mut flattranslation: *mut c_int = ptr::null_mut();
 /// Exported via `r_state.h` as `int *texturetranslation`.  `p_spec.c`
 /// updates entries for animated textures; `r_segs.c` applies the translation
 /// before calling `R_GetColumn`.
-#[no_mangle]
 pub static mut texturetranslation: *mut c_int = ptr::null_mut();
 
 /// Per-sprite-lump width in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spritewidth`.  Used by `r_things.c`
 /// to compute screen-space sprite extents.
-#[no_mangle]
 pub static mut spritewidth: *mut c_int = ptr::null_mut();
 
 /// Per-sprite-lump horizontal draw offset in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spriteoffset`.  Used by `r_things.c`
 /// to position sprites relative to the thing's world coordinates.
-#[no_mangle]
 pub static mut spriteoffset: *mut c_int = ptr::null_mut();
 
 /// Per-sprite-lump vertical draw offset in 16.16 fixed-point units, length `numspritelumps`.
 ///
 /// Exported via `r_state.h` as `fixed_t *spritetopoffset`.  Used by
 /// `r_things.c` to compute the top screen row of each sprite.
-#[no_mangle]
 pub static mut spritetopoffset: *mut c_int = ptr::null_mut();
 
 /// Pointer to the COLORMAP lump data: 34 colormaps of 256 bytes each.
@@ -416,25 +400,21 @@ pub static mut spritetopoffset: *mut c_int = ptr::null_mut();
 /// indexes this as `colormaps + light_level * 256` to obtain a 256-entry
 /// palette remapping table.  Used by `r_main.c`, `r_draw.c`, `r_plane.c`,
 /// and `r_things.c`.
-#[no_mangle]
 pub static mut colormaps: *mut u8 = ptr::null_mut();
 
 /// Total bytes of flat data touched during `R_PrecacheLevel`, for diagnostics.
 ///
-/// Exported as `#[no_mangle]`.  Corresponds to `flatmemory` in `r_data.c`.
-#[no_mangle]
+///Corresponds to `flatmemory` in `r_data.c`.
 pub static mut flatmemory: c_int = 0;
 
 /// Total bytes of texture patch data touched during `R_PrecacheLevel`, for diagnostics.
 ///
-/// Exported as `#[no_mangle]`.  Corresponds to `texturememory` in `r_data.c`.
-#[no_mangle]
+///Corresponds to `texturememory` in `r_data.c`.
 pub static mut texturememory: c_int = 0;
 
 /// Total bytes of sprite lump data touched during `R_PrecacheLevel`, for diagnostics.
 ///
-/// Exported as `#[no_mangle]`.  Corresponds to `spritememory` in `r_data.c`.
-#[no_mangle]
+///Corresponds to `spritememory` in `r_data.c`.
 pub static mut spritememory: c_int = 0;
 
 // ---------------------------------------------------------------------------
@@ -508,8 +488,7 @@ unsafe fn R_DrawColumnInCache(
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called first.
 /// - `texturecompositesize[texnum]` must be non-zero (ensured by
 ///   `R_GenerateLookup` for textures with overlapping patches).
-#[no_mangle]
-pub unsafe extern "C" fn R_GenerateComposite(texnum: c_int) {
+pub unsafe fn R_GenerateComposite(texnum: c_int) {
     let texture = *textures.add(texnum as usize);
 
     let block = Z_Malloc(
@@ -579,8 +558,7 @@ pub unsafe extern "C" fn R_GenerateComposite(texnum: c_int) {
 /// - `texnum` must be in `0..numtextures`.
 /// - `texturecolumnlump[texnum]` and `texturecolumnofs[texnum]` must already
 ///   be allocated (done by `R_InitTextures` before this call).
-#[no_mangle]
-pub unsafe extern "C" fn R_GenerateLookup(texnum: c_int) {
+pub unsafe fn R_GenerateLookup(texnum: c_int) {
     let texture = *textures.add(texnum as usize);
     let width = (*texture).width as c_int;
 
@@ -669,8 +647,7 @@ pub unsafe extern "C" fn R_GenerateLookup(texnum: c_int) {
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called.
 /// - The returned pointer is valid until the zone allocator evicts the
 ///   underlying lump or composite buffer.
-#[no_mangle]
-pub unsafe extern "C" fn R_GetColumn(tex: c_int, col: c_int) -> *mut u8 {
+pub unsafe fn R_GetColumn(tex: c_int, col: c_int) -> *mut u8 {
     let col = col & *texturewidthmask.add(tex as usize);
     let lump = *(*texturecolumnlump.add(tex as usize)).add(col as usize) as c_int;
     let ofs = *(*texturecolumnofs.add(tex as usize)).add(col as usize) as c_int;
@@ -758,8 +735,7 @@ unsafe fn GenerateTextureHashTable() {
 ///
 /// - WAD must be fully loaded (`W_Init` must have been called).
 /// - Must be called exactly once per process lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn R_InitTextures() {
+pub unsafe fn R_InitTextures() {
     let mut name: [c_char; 9] = [0; 9];
 
     let names = W_CacheLumpName(DEH_String(c"PNAMES".as_ptr()), PU_STATIC) as *mut c_int;
@@ -956,8 +932,7 @@ pub unsafe extern "C" fn R_InitTextures() {
 ///
 /// - WAD must be fully loaded; `F_START` and `F_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn R_InitFlats() {
+pub unsafe fn R_InitFlats() {
     firstflat = W_GetNumForName(DEH_String(c"F_START".as_ptr())) + 1;
     lastflat = W_GetNumForName(DEH_String(c"F_END".as_ptr())) - 1;
     numflats = lastflat - firstflat + 1;
@@ -995,8 +970,7 @@ pub unsafe extern "C" fn R_InitFlats() {
 ///
 /// - WAD must be fully loaded; `S_START` and `S_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn R_InitSpriteLumps() {
+pub unsafe fn R_InitSpriteLumps() {
     firstspritelump = W_GetNumForName(DEH_String(c"S_START".as_ptr())) + 1;
     lastspritelump = W_GetNumForName(DEH_String(c"S_END".as_ptr())) - 1;
     numspritelumps = lastspritelump - firstspritelump + 1;
@@ -1046,8 +1020,7 @@ pub unsafe extern "C" fn R_InitSpriteLumps() {
 ///
 /// - WAD must be fully loaded; the `COLORMAP` lump must exist.
 /// - Must be called exactly once per process lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn R_InitColormaps() {
+pub unsafe fn R_InitColormaps() {
     let lump = W_GetNumForName(DEH_String(c"COLORMAP".as_ptr()));
     colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
 }
@@ -1073,8 +1046,7 @@ pub unsafe extern "C" fn R_InitColormaps() {
 ///
 /// - All of the above preconditions apply.
 /// - Must be called exactly once per process lifetime.
-#[no_mangle]
-pub unsafe extern "C" fn R_InitData() {
+pub unsafe fn R_InitData() {
     R_InitTextures();
     libc::printf(c".".as_ptr());
     R_InitFlats();
@@ -1100,8 +1072,7 @@ pub unsafe extern "C" fn R_InitData() {
 ///
 /// - `name` must be a valid, null-terminated C string of at most 8 characters.
 /// - `R_InitFlats` must have been called first.
-#[no_mangle]
-pub unsafe extern "C" fn R_FlatNumForName(name: *mut c_char) -> c_int {
+pub unsafe fn R_FlatNumForName(name: *mut c_char) -> c_int {
     let i = W_CheckNumForName(name);
     if i == -1 {
         let mut namet: [c_char; 9] = [0; 9];
@@ -1131,8 +1102,7 @@ pub unsafe extern "C" fn R_FlatNumForName(name: *mut c_char) -> c_int {
 ///
 /// - `name` must be a valid, null-terminated C string of at most 8 characters.
 /// - `R_InitTextures` must have been called first.
-#[no_mangle]
-pub unsafe extern "C" fn R_CheckTextureNumForName(name: *mut c_char) -> c_int {
+pub unsafe fn R_CheckTextureNumForName(name: *mut c_char) -> c_int {
     if *name == b'-' as c_char {
         return 0;
     }
@@ -1164,8 +1134,7 @@ pub unsafe extern "C" fn R_CheckTextureNumForName(name: *mut c_char) -> c_int {
 ///
 /// - `name` must be a valid, null-terminated C string of at most 8 characters.
 /// - `R_InitTextures` must have been called first.
-#[no_mangle]
-pub unsafe extern "C" fn R_TextureNumForName(name: *mut c_char) -> c_int {
+pub unsafe fn R_TextureNumForName(name: *mut c_char) -> c_int {
     let i = R_CheckTextureNumForName(name);
     if i == -1 {
         i_error!(
@@ -1199,8 +1168,7 @@ pub unsafe extern "C" fn R_TextureNumForName(name: *mut c_char) -> c_int {
 ///
 /// - All init functions (`R_InitData`, `p_setup` globals) must have run.
 /// - Must be called from the game-loop thread; touches global mutable state.
-#[no_mangle]
-pub unsafe extern "C" fn R_PrecacheLevel() {
+pub unsafe fn R_PrecacheLevel() {
     if demoplayback != 0 {
         return;
     }
@@ -1284,34 +1252,4 @@ pub unsafe extern "C" fn R_PrecacheLevel() {
         }
     }
     Z_Free(spritepresent as *mut c_void);
-}
-
-// ---------------------------------------------------------------------------
-// Anchor
-// ---------------------------------------------------------------------------
-
-/// Force the linker to retain all exported symbols in this module.
-///
-/// Rust's dead-code elimination would otherwise strip `#[no_mangle]` functions
-/// that are called only from C.  This anchor function references every exported
-/// function by address so the linker keeps them in the final binary.
-///
-/// # Safety
-///
-/// Must only be called from the C side during startup. Taking function
-/// addresses is safe; no pointers are dereferenced.
-#[no_mangle]
-pub unsafe extern "C" fn R_Data_Link_Anchor() {
-    let _ = R_GenerateComposite as *const () as usize;
-    let _ = R_GenerateLookup as *const () as usize;
-    let _ = R_GetColumn as *const () as usize;
-    let _ = R_InitTextures as *const () as usize;
-    let _ = R_InitFlats as *const () as usize;
-    let _ = R_InitSpriteLumps as *const () as usize;
-    let _ = R_InitColormaps as *const () as usize;
-    let _ = R_InitData as *const () as usize;
-    let _ = R_FlatNumForName as *const () as usize;
-    let _ = R_CheckTextureNumForName as *const () as usize;
-    let _ = R_TextureNumForName as *const () as usize;
-    let _ = R_PrecacheLevel as *const () as usize;
 }

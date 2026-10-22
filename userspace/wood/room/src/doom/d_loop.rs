@@ -73,15 +73,12 @@ static mut RECVTIC: c_int = 0;
 
 /// Index of the tic currently being run (or about to be run).
 ///
-/// Exported as `#[no_mangle]` so C code can read it directly.
 /// Corresponds to `gametic` in `d_loop.c`.
-#[no_mangle]
 pub static mut gametic: c_int = 0;
 
 /// When non-zero, exactly one tic is built and run per [`TryRunTics`] call.
-/// Set by `-timedemo` mode. Exported as `#[no_mangle]` for C access.
+/// Set by `-timedemo` mode.
 /// Corresponds to `singletics` in `d_loop.c` (type `boolean`).
-#[no_mangle]
 pub static mut singletics: c_int = 0; // boolean
 
 /// Index of the local player in the `NET_MAXPLAYERS` arrays.
@@ -100,17 +97,15 @@ static mut SKIPTICS: c_int = 0;
 /// Tic duplication factor: every `ticdup`-th input sample is sent over the
 /// network, reducing bandwidth at the cost of input resolution.
 ///
-/// Always `1` in single-player mode. Exported as `#[no_mangle]` for C access.
+/// Always `1` in single-player mode.
 /// Corresponds to `ticdup` in `d_loop.c`.
-#[no_mangle]
 pub static mut ticdup: c_int = 0;
 
 /// Millisecond offset applied to the timer when `NEW_SYNC` is active.
 ///
 /// Allows the network client to nudge the local clock to stay in sync with the
-/// server. Stored as a `fixed_t` (i.e. scaled by [`FRACUNIT`]). Exported as
-/// `#[no_mangle]` for C access. Corresponds to `offsetms` in `d_loop.c`.
-#[no_mangle]
+/// server. Stored as a `fixed_t` (i.e. scaled by [`FRACUNIT`]).
+/// Corresponds to `offsetms` in `d_loop.c`.
 pub static mut offsetms: c_int = 0; // fixed_t
 
 /// Whether to use the new client synchronisation algorithm.
@@ -163,31 +158,12 @@ static mut FRAMESKIP: [c_int; 4] = [0; 4];
 /// of the network. Corresponds to `oldnettics` in `d_loop.c`.
 static mut OLDNETTICS: c_int = 0;
 
-extern "C" {
-    /// Non-zero when running as a network drone (spectator only, no input).
-    static mut drone: c_int; // boolean
-    /// Non-zero when a network client connection is active.
-    static mut net_client_connected: c_int; // boolean
-
-    /// Returns the current time in milliseconds since startup.
-    fn I_GetTimeMS() -> c_int;
-    /// Returns the current time in tics (1/35 second units) since startup.
-    fn I_GetTime() -> c_int;
-    /// Polls the OS for new input events and queues them.
-    fn I_StartTic();
-    /// Sleeps for approximately `ms` milliseconds.
-    fn I_Sleep(ms: c_int);
-    /// Registers `func` to be called at clean exit; `run_on_error` controls
-    /// whether it also runs when `I_Error` is invoked.
-    fn I_AtExit(func: extern "C" fn(), run_on_error: Boolean);
-
-    /// Drains the event queue and dispatches events to handlers.
-    fn D_ProcessEvents();
-    /// Fills `cmd` with input state for the local player at tic `maketic`.
-    fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int);
-    /// Advances the menu state by one tic.
-    fn M_Ticker();
-}
+use crate::doom::{
+    dummy::{drone, net_client_connected},
+    i_system::I_AtExit,
+    i_timer::{I_GetTime, I_GetTimeMS, I_Sleep},
+    i_video::I_StartTic,
+};
 
 /// Returns the current game time in tics, optionally adjusted by [`offsetms`].
 ///
@@ -273,8 +249,7 @@ unsafe fn build_new_tic() -> bool {
 /// `singletics` mode this function returns immediately (the caller is
 /// expected to call `build_new_tic` directly). Corresponds to `NetUpdate` in
 /// `d_loop.c`. Called from `d_main.c` and `r_main.c`.
-#[no_mangle]
-pub extern "C" fn NetUpdate() {
+pub fn NetUpdate() {
     unsafe {
         if singletics != 0 {
             return;
@@ -323,15 +298,14 @@ unsafe fn d_disconnected() {
 /// written into `TICDATA`, skipping the local player's slot (to preserve
 /// locally-generated input). Increments `RECVTIC` on success.
 ///
-/// Exported as `#[no_mangle]` for C callers. The `FEATURE_MULTIPLAYER` net
-/// client calls this function when a server packet is processed.
+/// The `FEATURE_MULTIPLAYER` net client calls this function when a server
+/// packet is processed.
 ///
 /// # Safety
 /// When non-null, `ticcmds` must point to an array of at least
 /// `NET_MAXPLAYERS` `TiccmdT` elements, and `players_mask` must point to an
 /// array of at least `NET_MAXPLAYERS` `c_int` values.
-#[no_mangle]
-pub extern "C" fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut c_int) {
+pub fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut c_int) {
     unsafe {
         if ticcmds.is_null() && players_mask.is_null() {
             d_disconnected();
@@ -357,8 +331,7 @@ pub extern "C" fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut c_int) 
 /// [`TryRunTics`], so that the initial `newtics` calculation in [`NetUpdate`]
 /// is `0` rather than an arbitrary large value. Called from `d_main.c`.
 /// Corresponds to `D_StartGameLoop` in `d_loop.c`.
-#[no_mangle]
-pub extern "C" fn D_StartGameLoop() {
+pub fn D_StartGameLoop() {
     unsafe {
         LASTTIME = get_adjusted_time() / ticdup;
     }
@@ -375,8 +348,7 @@ pub extern "C" fn D_StartGameLoop() {
 ///
 /// # Safety
 /// `settings` must be a valid, non-null pointer to a `NetGameSettingsT`.
-#[no_mangle]
-pub extern "C" fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *const ()) {
+pub fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *const ()) {
     unsafe {
         (*settings).consoleplayer = 0;
         (*settings).num_players = 1;
@@ -402,8 +374,7 @@ pub extern "C" fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *co
 ///
 /// # Safety
 /// `connect_data` must be a valid, non-null pointer to a `NetConnectDataT`.
-#[no_mangle]
-pub extern "C" fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> c_int {
+pub fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> c_int {
     unsafe {
         I_AtExit(D_QuitNetGame, Boolean::TRUE);
         PLAYER_CLASS = (*connect_data).player_class;
@@ -417,8 +388,7 @@ pub extern "C" fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> c_int {
 /// server. In this single-player port the function is a no-op. It is
 /// registered via `I_AtExit` from [`D_InitNetGame`] and called automatically
 /// on both clean exit and error exit.
-#[no_mangle]
-pub extern "C" fn D_QuitNetGame() {
+pub fn D_QuitNetGame() {
     // No-op when FEATURE_MULTIPLAYER is not defined.
 }
 
@@ -559,8 +529,7 @@ unsafe fn single_player_clear(set: *mut TiccmdSetT) {
 ///    next `ticdup` sub-tic.
 ///
 /// Called from `d_main.c`. Corresponds to `TryRunTics` in `d_loop.c`.
-#[no_mangle]
-pub extern "C" fn TryRunTics() {
+pub fn TryRunTics() {
     unsafe {
         let entertic = I_GetTime() / ticdup;
         static mut OLDENTERTICS: c_int = 0;
@@ -661,8 +630,7 @@ pub extern "C" fn TryRunTics() {
 /// # Safety
 /// `i` must be a valid, non-null pointer to a fully-initialised
 /// `LoopInterfaceT` with all four function pointers set to non-null values.
-#[no_mangle]
-pub extern "C" fn D_RegisterLoopCallbacks(i: *mut LoopInterfaceT) {
+pub fn D_RegisterLoopCallbacks(i: *mut LoopInterfaceT) {
     unsafe {
         LOOP_INTERFACE = i;
     }

@@ -63,12 +63,10 @@
 //! exposed to the player (none, low, medium, high, max). Indexed by the
 //! 8-bit colour-channel value to be remapped to the corrected output.
 //!
-//! ## Layout / FFI
+//! ## Layout
 //!
-//! Every table is `#[no_mangle]` so the C portions of the engine (and the
-//! `c2rust-intermediate` sources) link against the same symbols as the
-//! original `vendor/doomgeneric/tables.c` exported. The constants in this
-//! module mirror `tables.h` 1:1.
+//! The tables keep the names of the original `tables.c`. The constants in
+//! this module mirror `tables.h` 1:1.
 
 use std::ffi::{c_int, c_uint};
 
@@ -133,10 +131,6 @@ pub const ANG270: u32 = 0xC000_0000;
 /// space (`0..4096`); callers are expected to keep the resulting index
 /// in range and to avoid the singular endpoints when divisor semantics
 /// matter.
-///
-/// `#[no_mangle]` because the C portions of the engine and the
-/// `c2rust-intermediate` translation link against this symbol by name.
-#[no_mangle]
 pub static finetangent: [c_int; 4096] = [
     -170910304, -56965752, -34178904, -24413316, -18988036, -15535599, -13145455, -11392683,
     -10052327, -8994149, -8137527, -7429880, -6835455, -6329090, -5892567, -5512368, -5178251,
@@ -503,10 +497,6 @@ pub static finetangent: [c_int; 4096] = [
 /// let s = finesine[fine];                          // sine, Q16.16
 /// let c = finesine[(fine + FINEANGLES/4) & FINEMASK as usize]; // cosine
 /// ```
-///
-/// `#[no_mangle]` because both the linked C objects and the
-/// `c2rust-intermediate` sources reference this symbol directly.
-#[no_mangle]
 pub static finesine: [c_int; 10240] = [
     25, 75, 125, 175, 226, 276, 326, 376, 427, 477, 527, 578, 628, 678, 728, 779, 829, 879, 929,
     980, 1030, 1080, 1130, 1181, 1231, 1281, 1331, 1382, 1432, 1482, 1532, 1583, 1633, 1683, 1733,
@@ -1331,12 +1321,8 @@ unsafe impl Sync for FineCosinePtr {}
 ///
 /// Exposes `&finesine[FINEANGLES/4 ..]` so that
 /// `finecosine[i] == finesine[(i + FINEANGLES/4) % FINEANGLES]`, i.e. the
-/// classic `cos(x) = sin(x + pi/2)` identity. C callers read it via the
-/// existing `extern const fixed_t *finecosine;` declaration; Rust callers
-/// must dereference `finecosine.0` and offset by a fine-angle index.
-///
-/// `#[no_mangle]` for FFI symbol parity with the original `tables.c`.
-#[no_mangle]
+/// classic `cos(x) = sin(x + pi/2)` identity. Callers must dereference
+/// `finecosine.0` and offset by a fine-angle index.
 pub static finecosine: FineCosinePtr =
     FineCosinePtr(unsafe { finesine.as_ptr().add(FINEANGLES / 4) });
 
@@ -1354,9 +1340,6 @@ pub static finecosine: FineCosinePtr =
 /// `ANG90`, `ANG180`, etc. depending on the original octant. The `+1` slot
 /// handles the `x == y` boundary (slope == `SLOPERANGE`) without a special
 /// case.
-///
-/// `#[no_mangle]` for FFI symbol parity with `tables.c`.
-#[no_mangle]
 pub static tantoangle: [c_uint; 2049] = [
     0, 333772, 667544, 1001315, 1335086, 1668857, 2002626, 2336395, 2670163, 3003929, 3337694,
     3671457, 4005219, 4338979, 4672736, 5006492, 5340245, 5673995, 6007743, 6341488, 6675230,
@@ -1619,11 +1602,7 @@ pub static tantoangle: [c_uint; 2049] = [
 /// curves (rows 1..4). The renderer applies `gammatable[gamma][channel]` to
 /// each 8-bit palette entry when building the screen palette. Index 0 of
 /// row 0 maps to `1` (not `0`) - this matches the original `tables.c`
-/// vendor data exactly; the test suite verifies the byte-for-byte match.
-///
-/// `#[no_mangle]` because the C frontend reads the table directly via its
-/// extern declaration in `tables.h`.
-#[no_mangle]
+/// vendor data exactly.
 pub static gammatable: [[u8; 256]; 5] = [
     [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -1732,12 +1711,9 @@ pub static gammatable: [[u8; 256]; 5] = [
 /// behaviour.
 ///
 /// # C origin
-/// Called from `r_main.c::R_PointToAngle` / `R_PointToAngle2` and
-/// `p_maputl.c::P_AproxDistance`-adjacent helpers via the linked C objects
-/// and the `c2rust-intermediate` translation; exported `#[no_mangle]` so
-/// those call sites resolve to this Rust definition at link time.
-#[no_mangle]
-pub extern "C" fn SlopeDiv(num: c_uint, den: c_uint) -> c_int {
+/// Called from `r_main::R_PointToAngle` / `R_PointToAngle2` and
+/// `p_maputl::P_AproxDistance`-adjacent helpers.
+pub fn SlopeDiv(num: c_uint, den: c_uint) -> c_int {
     if den < 512 {
         return SLOPERANGE;
     }

@@ -82,13 +82,11 @@ struct filelump_t {
 
 /// Pointer to the global lump directory. Mirrors the `lumpinfo` C
 /// global; sized by `numlumps`. Reallocated by `ExtendLumpInfo`
-/// every time a new file is added. C linkage so other translation
-/// units (and tests) can reach it.
-#[no_mangle]
+/// every time a new file is added. Public so other modules (and tests)
+/// can reach it.
 pub static mut lumpinfo: *mut lumpinfo_t = ptr::null_mut();
 
 /// Number of entries in `lumpinfo`. Mirrors the C `numlumps` global.
-#[no_mangle]
 pub static mut numlumps: c_uint = 0;
 
 /// Hash table: `numlumps` buckets, each a singly-linked list through
@@ -165,8 +163,7 @@ unsafe fn ExtendLumpInfo(newnumlumps: c_uint) {
 /// the result is case-insensitive and matches the C reference in
 /// `w_wad.c` exactly. Caller must ensure `s` points to at least 8
 /// bytes (or a shorter NUL-terminated string).
-#[no_mangle]
-pub extern "C" fn W_LumpNameHash(s: *const c_char) -> c_uint {
+pub fn W_LumpNameHash(s: *const c_char) -> c_uint {
     unsafe {
         let mut result: c_uint = 5381;
         for i in 0..8 {
@@ -195,8 +192,7 @@ pub extern "C" fn W_LumpNameHash(s: *const c_char) -> c_uint {
 /// returns null. Any existing `lumphash` is freed so the next
 /// lookup falls back to the linear scan until
 /// `W_GenerateHashTable` is called again.
-#[no_mangle]
-pub extern "C" fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
+pub fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
     unsafe {
         let wad_file = W_OpenFile(filename);
         if wad_file.is_null() {
@@ -284,8 +280,7 @@ pub extern "C" fn W_AddFile(filename: *mut c_char) -> *mut wad_file_t {
 
 /// Return the total number of registered lumps as a signed integer.
 /// Mirrors `W_NumLumps` from `w_wad.c`.
-#[no_mangle]
-pub extern "C" fn W_NumLumps() -> c_int {
+pub fn W_NumLumps() -> c_int {
     unsafe { numlumps as c_int }
 }
 
@@ -298,8 +293,7 @@ pub extern "C" fn W_NumLumps() -> c_int {
 /// Comparison is via `strncasecmp` over 8 bytes, so trailing bytes
 /// past a NUL must match too (they're zeroed in `lumpinfo_t::name`
 /// after `strncpy`).
-#[no_mangle]
-pub extern "C" fn W_CheckNumForName(name: *const c_char) -> c_int {
+pub fn W_CheckNumForName(name: *const c_char) -> c_int {
     unsafe {
         if !lumphash.is_null() {
             let hash = (W_LumpNameHash(name) % numlumps) as usize;
@@ -329,8 +323,7 @@ pub extern "C" fn W_CheckNumForName(name: *const c_char) -> c_int {
 /// (and never returns) if the lump is missing. The C source uses
 /// this as the strict variant; callers that tolerate misses use
 /// `W_CheckNumForName` directly.
-#[no_mangle]
-pub extern "C" fn W_GetNumForName(name: *const c_char) -> c_int {
+pub fn W_GetNumForName(name: *const c_char) -> c_int {
     unsafe {
         let i = W_CheckNumForName(name);
         if i < 0 {
@@ -345,8 +338,7 @@ pub extern "C" fn W_GetNumForName(name: *const c_char) -> c_int {
 
 /// Return the byte size of `lump`. Errors out via `I_Error` if
 /// `lump` is out of range. Mirrors `W_LumpLength` from `w_wad.c`.
-#[no_mangle]
-pub extern "C" fn W_LumpLength(lump: c_uint) -> c_int {
+pub fn W_LumpLength(lump: c_uint) -> c_int {
     unsafe {
         if lump >= numlumps {
             i_error!("W_LumpLength: {} >= numlumps", lump as c_int);
@@ -365,8 +357,7 @@ pub extern "C" fn W_LumpLength(lump: c_uint) -> c_int {
 /// Differs from the C source by also emitting a stderr diagnostic
 /// when the actual read exceeds `lump.size` (a "shouldn't happen"
 /// defensive log, not present in `w_wad.c`).
-#[no_mangle]
-pub extern "C" fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
+pub fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
     unsafe {
         if lump >= numlumps {
             i_error!("W_ReadLump: {} >= numlumps", lump as c_int);
@@ -412,8 +403,7 @@ pub extern "C" fn W_ReadLump(lump: c_uint, dest: *mut c_void) {
 ///
 /// `tag` is typically `PU_STATIC` (long-lived) or `PU_CACHE`
 /// (purgeable). Out-of-range `lumpnum` triggers `I_Error`.
-#[no_mangle]
-pub extern "C" fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
+pub fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
     unsafe {
         if lumpnum < 0 || (lumpnum as c_uint) >= numlumps {
             i_error!("W_CacheLumpNum: {} >= numlumps", lumpnum);
@@ -443,8 +433,7 @@ pub extern "C" fn W_CacheLumpNum(lumpnum: c_int, tag: c_int) -> *mut c_void {
 
 /// Convenience wrapper: resolve `name` to a lump number via
 /// `W_GetNumForName` (fatal if missing) and call `W_CacheLumpNum`.
-#[no_mangle]
-pub extern "C" fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void {
+pub fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void {
     W_CacheLumpNum(W_GetNumForName(name), tag)
 }
 
@@ -453,8 +442,7 @@ pub extern "C" fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_voi
 /// pressure. No-op for memory-mapped wads.
 ///
 /// Mirrors `W_ReleaseLumpNum` from `w_wad.c`.
-#[no_mangle]
-pub extern "C" fn W_ReleaseLumpNum(lumpnum: c_int) {
+pub fn W_ReleaseLumpNum(lumpnum: c_int) {
     unsafe {
         if lumpnum < 0 || (lumpnum as c_uint) >= numlumps {
             i_error!("W_ReleaseLumpNum: {} >= numlumps", lumpnum);
@@ -470,8 +458,7 @@ pub extern "C" fn W_ReleaseLumpNum(lumpnum: c_int) {
 
 /// Convenience wrapper: resolve `name` and call `W_ReleaseLumpNum`.
 /// Mirrors `W_ReleaseLumpName` from `w_wad.c`.
-#[no_mangle]
-pub extern "C" fn W_ReleaseLumpName(name: *const c_char) {
+pub fn W_ReleaseLumpName(name: *const c_char) {
     W_ReleaseLumpNum(W_GetNumForName(name))
 }
 
@@ -483,8 +470,7 @@ pub extern "C" fn W_ReleaseLumpName(name: *const c_char) {
 /// Called once after the last `W_AddFile`; subsequent additions
 /// invalidate (free) the table so a regeneration must be requested
 /// explicitly.
-#[no_mangle]
-pub extern "C" fn W_GenerateHashTable() {
+pub fn W_GenerateHashTable() {
     unsafe {
         if !lumphash.is_null() {
             Z_Free(lumphash as *mut c_void);
@@ -518,8 +504,7 @@ pub extern "C" fn W_GenerateHashTable() {
 ///
 /// The C source uses a `PROGRAM_PREFIX` macro for the binary name;
 /// this port hardcodes `"doomgeneric"`.
-#[no_mangle]
-pub extern "C" fn W_CheckCorrectIWAD(mission: c_int) {
+pub fn W_CheckCorrectIWAD(mission: c_int) {
     /// One row of the IWAD-mismatch detection table.
     struct UniqueLump {
         /// `GameMission_t` value for which this lump is expected.
@@ -568,29 +553,7 @@ pub extern "C" fn W_CheckCorrectIWAD(mission: c_int) {
         }
     }
 }
-/// Link anchor referencing every public C symbol in this module so
-/// the linker keeps them all. Not part of the original Doom API.
-///
-/// # Safety
-///
-/// Passes null pointers everywhere and would crash if called.
-/// Treat as link-only.
-#[no_mangle]
-pub unsafe extern "C" fn W_Wad_Link_Anchor() {
-    W_LumpNameHash(ptr::null());
-    W_AddFile(ptr::null_mut());
-    W_NumLumps();
-    W_CheckNumForName(ptr::null());
-    W_GetNumForName(ptr::null());
-    W_LumpLength(0);
-    W_ReadLump(0, ptr::null_mut());
-    W_CacheLumpNum(0, 0);
-    W_CacheLumpName(ptr::null(), 0);
-    W_ReleaseLumpNum(0);
-    W_ReleaseLumpName(ptr::null());
-    W_GenerateHashTable();
-    W_CheckCorrectIWAD(0);
-}
+
 #[cfg(test)]
 mod tests {
     use {super::*, std::sync::Mutex};

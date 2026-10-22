@@ -17,5 +17,4 @@
 ///
 /// Called from `D_DoomMain` during shutdown when the user has not requested
 /// `-noendoom`.
-#[no_mangle]
-pub extern "C" fn I_Endoom(_endoom_data: *mut u8) {}
+pub fn I_Endoom(_endoom_data: *mut u8) {}

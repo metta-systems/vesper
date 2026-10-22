@@ -42,12 +42,7 @@ static mut joystick_strafe_invert: c_int = 0;
 /// the identity mapping.
 static mut joystick_physical_buttons: [c_int; NUM_VIRTUAL_BUTTONS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
-extern "C" {
-    /// Bind a config variable name to its backing storage. Defined in
-    /// `m_config.c`; called below to expose the joystick statics to the
-    /// `default.cfg` parser.
-    fn M_BindVariable(name: *mut c_char, variable: *mut c_void);
-}
+use crate::doom::m_config::M_BindVariable;
 
 use crate::c_write;
 
@@ -56,12 +51,10 @@ use crate::c_write;
 /// No-op stub. The original opened the SDL joystick, validated the
 /// configured axes and registered an at-exit hook to shut it down. This
 /// port has no joystick backend.
-#[no_mangle]
-pub extern "C" fn I_InitJoystick() {}
+pub fn I_InitJoystick() {}
 
 /// Shut down the joystick subsystem. No-op stub.
-#[no_mangle]
-pub extern "C" fn I_ShutdownJoystick() {}
+pub fn I_ShutdownJoystick() {}
 
 /// Sample the joystick state and post an `ev_joystick` event into the
 /// input queue.
@@ -69,8 +62,7 @@ pub extern "C" fn I_ShutdownJoystick() {}
 /// No-op stub. The original read button mask plus three axes and called
 /// `D_PostEvent`. With no joystick backend the input queue simply never
 /// sees joystick events.
-#[no_mangle]
-pub extern "C" fn I_UpdateJoystick() {}
+pub fn I_UpdateJoystick() {}
 
 /// Register all joystick configuration variables with `M_BindVariable` so
 /// they are persisted to / loaded from `default.cfg`.
@@ -80,8 +72,7 @@ pub extern "C" fn I_UpdateJoystick() {}
 /// edit values that a future backend could honour. Variable names and
 /// order match the chocolate-doom original byte-for-byte so the resulting
 /// `default.cfg` is round-trip compatible.
-#[no_mangle]
-pub extern "C" fn I_BindJoystickVariables() {
+pub fn I_BindJoystickVariables() {
     unsafe {
         M_BindVariable(
             c"use_joystick".as_ptr().cast_mut(),

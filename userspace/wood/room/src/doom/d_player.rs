@@ -216,19 +216,9 @@ pub struct PlayerT {
     pub didsecret: c_int,
 }
 
-extern "C" {
-    /// Global array of player state structs; defined in C (`g_game.c`).
-    ///
-    /// Index 0 is the local player when `consoleplayer == 0`.  Slots
-    /// `[1..MAXPLAYERS-1]` are used in network games.
-    pub static mut players: [PlayerT; MAXPLAYERS];
-
-    /// Index into `players` for the player whose view is shown on the local screen.
-    ///
-    /// Defined in C (`g_game.c`).  Always 0 for single-player games; may differ
-    /// in split-screen or network configurations.
-    pub static mut consoleplayer: c_int;
-}
+/// The player state array (`players`) and the index of the player whose view
+/// is shown locally (`consoleplayer`), defined in `g_game`.
+pub use crate::doom::g_game::{consoleplayer, players};
 
 /// Set the HUD hint message for the console player.
 ///
@@ -244,8 +234,7 @@ extern "C" {
 ///   valid at least until the next game tic clears the message field.
 /// - `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
 ///   function is called (guaranteed by the engine's startup sequence).
-#[no_mangle]
-pub unsafe extern "C" fn M_Menu_SetPlayerMessage(msg: *const c_char) {
+pub unsafe fn M_Menu_SetPlayerMessage(msg: *const c_char) {
     (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
         msg as *mut c_char;
 }

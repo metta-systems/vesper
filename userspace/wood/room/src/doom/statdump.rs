@@ -108,8 +108,7 @@ extern "C" {
 ///
 /// Called from `WI_Drawer` / `WI_Ticker` (via the intermission code)
 /// at the end of every level.
-#[no_mangle]
-pub extern "C" fn StatCopy(stats: *mut wbstartstruct_t) {
+pub fn StatCopy(stats: *mut wbstartstruct_t) {
     unsafe {
         if M_ParmExists(c"-statdump".as_ptr()) != 0 && num_captured_stats < MAX_CAPTURES as c_int {
             memcpy(
@@ -131,8 +130,7 @@ pub extern "C" fn StatCopy(stats: *mut wbstartstruct_t) {
 /// discovery heuristic - sits inside `#if ORIGCODE` in the C source
 /// and is not ported. [`StatCopy`] still fills the buffer, so the
 /// data is there for any future implementation that wants it.
-#[no_mangle]
-pub extern "C" fn StatDump() {
+pub fn StatDump() {
     // All implementation is wrapped in #if ORIGCODE which is not defined
 }
 

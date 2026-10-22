@@ -594,55 +594,47 @@ const CASTORDER: [CastInfo; 18] = [
 /// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; null when
 /// no text-screen applies.  Read by C code in `f_finale.c` and `g_game.c`.
 /// C origin: `finaletext` in f_finale.c.
-#[no_mangle]
 pub static mut finaletext: *mut c_char = ptr::null_mut();
 
 /// Name of the WAD flat lump used as the tiling background in the Text stage.
 ///
 /// Set by [`F_StartFinale`].  Null when no text-screen applies.
 /// C origin: `finaleflat` in f_finale.c.
-#[no_mangle]
 pub static mut finaleflat: *mut c_char = ptr::null_mut();
 
 /// Index into `CASTORDER` for the enemy currently shown in the cast roll.
 ///
 /// Incremented by [`F_CastTicker`] when the current enemy finishes its death
 /// animation.  C origin: `castnum` in f_finale.c.
-#[no_mangle]
 pub static mut castnum: c_int = 0;
 
 /// Remaining ticks before the cast animation advances to the next state.
 ///
 /// Decremented each game tick by [`F_CastTicker`].
 /// C origin: `casttics` in f_finale.c.
-#[no_mangle]
 pub static mut casttics: c_int = 0;
 
 /// Non-zero while the current cast enemy is playing its death animation.
 ///
 /// Set by [`F_CastResponder`] when the player presses a key; cleared when the
 /// next enemy begins.  C origin: `castdeath` in f_finale.c.
-#[no_mangle]
 pub static mut castdeath: c_int = 0;
 
 /// Number of animation frames the current cast enemy has displayed so far.
 ///
 /// Used to decide when to trigger an attack sequence (at frame 12) and when to
 /// stop one (at frame 24).  C origin: `castframes` in f_finale.c.
-#[no_mangle]
 pub static mut castframes: c_int = 0;
 
 /// Alternates between 0 and 1 to select melee vs. ranged attack during the
 /// cast roll.
 ///
 /// C origin: `castonmelee` in f_finale.c.
-#[no_mangle]
 pub static mut castonmelee: c_int = 0;
 
 /// Non-zero while a cast enemy is in an attack animation.
 ///
 /// C origin: `castattacking` in f_finale.c.
-#[no_mangle]
 pub static mut castattacking: c_int = 0;
 
 /// Current stage of the finale sequence.
@@ -675,8 +667,7 @@ static mut FINALE_COUNT: c_uint = 0;
 /// Called from C code in `g_game.c` when `gameaction == ga_completed` and the
 /// appropriate episode/map conditions are met.  C origin: `F_StartFinale` in
 /// f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_StartFinale() {
+pub fn F_StartFinale() {
     unsafe {
         gameaction = ga_nothing;
         gamestate = GS_FINALE;
@@ -734,8 +725,7 @@ pub extern "C" fn F_StartFinale() {
 /// events are ignored at this level.
 ///
 /// Called from C code in `g_game.c`.  C origin: `F_Responder` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_Responder(event: *mut event_t) -> c_int {
+pub fn F_Responder(event: *mut event_t) -> c_int {
     unsafe {
         let _ev = &*event;
         if let FinaleStage::Cast = FINALE_STAGE {
@@ -756,8 +746,7 @@ pub extern "C" fn F_Responder(event: *mut event_t) -> c_int {
 ///
 /// Called from C code in `g_game.c` once per game tick.
 /// C origin: `F_Ticker` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_Ticker() {
+pub fn F_Ticker() {
     unsafe {
         // check for skipping
         if gamemode == d_mode::commercial && FINALE_COUNT > 50 {
@@ -807,8 +796,7 @@ pub extern "C" fn F_Ticker() {
 /// Unknown characters advance the cursor by 4 pixels.
 ///
 /// Called from [`F_Drawer`].  C origin: `F_TextWrite` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_TextWrite() {
+pub fn F_TextWrite() {
     unsafe {
         let src = W_CacheLumpName(finaleflat, PU_CACHE) as *mut u8;
         let mut dest = I_VideoBuffer;
@@ -878,8 +866,7 @@ pub extern "C" fn F_TextWrite() {
 ///
 /// Called by [`F_Ticker`] when the player presses fire on map 30.
 /// C origin: `F_StartCast` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_StartCast() {
+pub fn F_StartCast() {
     unsafe {
         wipegamestate = -1;
         castnum = 0;
@@ -899,10 +886,7 @@ pub extern "C" fn F_StartCast() {
 
 /// Pointer to the current animation state for the cast-roll entity.
 ///
-/// Exported with `#[no_mangle]` so that any remaining C code that reads
-/// `caststate` can still resolve the symbol.  C origin: `caststate` in
-/// f_finale.c.
-#[no_mangle]
+/// C origin: `caststate` in f_finale.c.
 pub static mut caststate: *mut State = ptr::null_mut();
 
 /// Advance the cast-roll animation by one game tick.
@@ -917,8 +901,7 @@ pub static mut caststate: *mut State = ptr::null_mut();
 ///
 /// Called by [`F_Ticker`] each game tick while in the Cast stage.
 /// C origin: `F_CastTicker` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_CastTicker() {
+pub fn F_CastTicker() {
     unsafe {
         casttics -= 1;
         if casttics > 0 {
@@ -1056,8 +1039,7 @@ unsafe fn goto_stopattack() {
 ///
 /// Called by [`F_Responder`] while in the Cast stage.
 /// C origin: `F_CastResponder` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_CastResponder(ev: *mut event_t) -> c_int {
+pub fn F_CastResponder(ev: *mut event_t) -> c_int {
     unsafe {
         let event = &*ev;
         if event.type_ != ev_keydown {
@@ -1087,8 +1069,7 @@ pub extern "C" fn F_CastResponder(ev: *mut event_t) -> c_int {
 /// The text is drawn with `V_DrawPatch` at the calculated x-offset.
 ///
 /// Called by [`F_CastDrawer`].  C origin: `F_CastPrint` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_CastPrint(text: *mut c_char) {
+pub fn F_CastPrint(text: *mut c_char) {
     unsafe {
         let mut ch = text;
         let mut width = 0;
@@ -1148,8 +1129,7 @@ pub extern "C" fn F_CastPrint(text: *mut c_char) {
 ///
 /// Called from [`F_Drawer`] during the Cast stage.
 /// C origin: `F_CastDrawer` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_CastDrawer() {
+pub fn F_CastDrawer() {
     unsafe {
         V_DrawPatch(
             0,
@@ -1180,8 +1160,7 @@ pub extern "C" fn F_CastDrawer() {
 /// Used by [`F_BunnyScroll`] to implement the horizontal scroll effect.
 /// The patch column is read as a standard Doom post-format column (topdelta /
 /// length / pixel data).  C origin: `F_DrawPatchCol` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
+pub fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
     unsafe {
         let patch_ptr = patch as *mut u8;
         let ofs = ptr::read_unaligned(patch_ptr.add(8 + col as usize * 4) as *mut i32);
@@ -1212,8 +1191,7 @@ pub extern "C" fn F_DrawPatchCol(x: c_int, patch: *mut patch_t, col: c_int) {
 /// ticks (up to frame 6), with a pistol sound on each new frame.
 ///
 /// Called by [`F_ArtScreenDrawer`].  C origin: `F_BunnyScroll` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_BunnyScroll() {
+pub fn F_BunnyScroll() {
     unsafe {
         let p1 =
             W_CacheLumpName(DEH_String(c"PFUB2".as_ptr().cast_mut()), PU_LEVEL) as *mut patch_t;
@@ -1278,8 +1256,7 @@ static mut LAST_STAGE: c_int = 0;
 /// Other episode numbers are silently ignored.
 ///
 /// Called from [`F_Drawer`].  C origin: `F_ArtScreenDrawer` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_ArtScreenDrawer() {
+pub fn F_ArtScreenDrawer() {
     unsafe {
         if gameepisode == 3 {
             F_BunnyScroll();
@@ -1311,8 +1288,7 @@ pub extern "C" fn F_ArtScreenDrawer() {
 ///
 /// Called from C code in `g_game.c` every frame while `gamestate == GS_FINALE`.
 /// C origin: `F_Drawer` in f_finale.c.
-#[no_mangle]
-pub extern "C" fn F_Drawer() {
+pub fn F_Drawer() {
     unsafe {
         match FINALE_STAGE {
             FinaleStage::Cast => F_CastDrawer(),
@@ -1320,37 +1296,6 @@ pub extern "C" fn F_Drawer() {
             FinaleStage::ArtScreen => F_ArtScreenDrawer(),
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Link anchor
-// ---------------------------------------------------------------------------
-
-/// Ensures all exported symbols are retained by the linker.
-///
-/// Calls every public `extern "C"` function in this module with null/zero
-/// arguments.  Never intended to be called at runtime.
-/// C origin: not present in f_finale.c; added for the Rust link model.
-///
-/// # Safety
-///
-/// This function must never be called at runtime; it exists solely to prevent
-/// the linker from discarding exported symbols during dead-code elimination.
-#[no_mangle]
-pub unsafe extern "C" fn F_Finale_Link_Anchor() {
-    F_StartFinale();
-    F_Responder(ptr::null_mut());
-    F_Ticker();
-    F_TextWrite();
-    F_StartCast();
-    F_CastTicker();
-    F_CastResponder(ptr::null_mut());
-    F_CastPrint(ptr::null_mut());
-    F_CastDrawer();
-    F_DrawPatchCol(0, ptr::null_mut(), 0);
-    F_BunnyScroll();
-    F_ArtScreenDrawer();
-    F_Drawer();
 }
 
 // ---------------------------------------------------------------------------

@@ -27,8 +27,7 @@ pub const FRACUNIT: fixed_t = 1 << FRACBITS;
 /// right by `FRACBITS` to land back in 16.16. Truncates the result; no
 /// overflow checking, matching the C original which is exported to and
 /// consumed by ~20 vendored `.c` files.
-#[no_mangle]
-pub extern "C" fn FixedMul(a: fixed_t, b: fixed_t) -> fixed_t {
+pub fn FixedMul(a: fixed_t, b: fixed_t) -> fixed_t {
     ((a as i64 * b as i64) >> FRACBITS) as fixed_t
 }
 
@@ -37,8 +36,7 @@ pub extern "C" fn FixedMul(a: fixed_t, b: fixed_t) -> fixed_t {
 /// C's `abs(INT_MIN)` is UB; Rust's `wrapping_abs()` returns `INT_MIN`,
 /// which still triggers the saturation branch — same effective behaviour
 /// but without UB or panics.
-#[no_mangle]
-pub extern "C" fn FixedDiv(a: fixed_t, b: fixed_t) -> fixed_t {
+pub fn FixedDiv(a: fixed_t, b: fixed_t) -> fixed_t {
     if (a.wrapping_abs() >> 14) >= b.wrapping_abs() {
         if (a ^ b) < 0 {
             i32::MIN

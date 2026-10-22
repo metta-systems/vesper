@@ -25,7 +25,7 @@
 use {
     crate::doom::sounds::Sfx,
     std::{
-        ffi::{c_char, c_int, c_void},
+        ffi::{c_char, c_int},
         ptr,
     },
 };
@@ -131,7 +131,6 @@ unsafe fn logical_gamemission() -> c_int {
 /// Corresponds to `chat_macros[]` in `hu_stuff.c`. Read by `HU_Responder`
 /// when Alt is held and a digit key is pressed during chat mode. Also exported
 /// to the C side so that `m_config.c` can bind user-configurable strings.
-#[no_mangle]
 pub static mut chat_macros: [*mut c_char; 10] = [
     c"No".as_ptr().cast_mut(),
     c"I'm ready to kick butt!".as_ptr().cast_mut(),
@@ -150,7 +149,6 @@ pub static mut chat_macros: [*mut c_char; 10] = [
 /// Corresponds to `player_names[]` in `hu_stuff.c`. Prepended to incoming
 /// chat messages so the recipient can identify the sender. Exported so the
 /// C side can substitute Dehacked strings (not implemented in this port).
-#[no_mangle]
 pub static mut player_names: [*mut c_char; 4] = [
     c"Green: ".as_ptr().cast_mut(),
     c"Indigo: ".as_ptr().cast_mut(),
@@ -162,7 +160,6 @@ pub static mut player_names: [*mut c_char; 4] = [
 ///
 /// Written by `HU_queueChatChar` and read by `D_ProcessEvents` / the network
 /// layer in `d_net.c`. Corresponds to `chat_char` in `hu_stuff.c`.
-#[no_mangle]
 pub static mut chat_char: c_char = 0;
 
 /// Loaded HUD font patches, one per glyph from `'!'` to `'_'`.
@@ -170,7 +167,6 @@ pub static mut chat_char: c_char = 0;
 /// Populated by [`HU_Init`] from the `STCFNxxx` WAD lumps. Index `i`
 /// corresponds to ASCII code `HU_FONTSTART + i`. Exported for use by
 /// `st_stuff.c` and other C modules that reference the font.
-#[no_mangle]
 pub static mut hu_font: [*mut patch_t; HU_FONTSIZE] = [ptr::null_mut(); HU_FONTSIZE];
 
 /// Non-zero while the chat input widget is active.
@@ -178,7 +174,6 @@ pub static mut hu_font: [*mut patch_t; HU_FONTSIZE] = [ptr::null_mut(); HU_FONTS
 /// Used as the `on` pointer for `w_chat`; also read by `g_game.c` to decide
 /// whether typing should be consumed by the chat system. Corresponds to
 /// `chat_on` in `hu_stuff.c`.
-#[no_mangle]
 pub static mut chat_on: c_int = 0;
 
 /// When non-zero, the next player message is treated as critical and will not
@@ -187,7 +182,6 @@ pub static mut chat_on: c_int = 0;
 /// Set by the game logic (e.g., picked-up key messages) and cleared after
 /// the message is displayed. Corresponds to `message_dontfuckwithme` in
 /// `hu_stuff.c`. Also exported so `p_inter.c` can set it from the C side.
-#[no_mangle]
 pub static mut message_dontfuckwithme: c_int = 0;
 
 /// Display names for Doom 1 / Ultimate Doom maps (E1M1-E4M9 plus stubs).
@@ -196,7 +190,6 @@ pub static mut message_dontfuckwithme: c_int = 0;
 /// entries are `"NEWLEVEL"` placeholders for episode 4 maps that have no
 /// canonical name in the original WAD. Corresponds to `mapnames[]` in
 /// `hu_stuff.c` and is also exported for access from the C side.
-#[no_mangle]
 pub static mut mapnames: [*mut c_char; 45] = [
     c"E1M1: Hangar".as_ptr().cast_mut(),
     c"E1M2: Nuclear Plant".as_ptr().cast_mut(),
@@ -251,7 +244,6 @@ pub static mut mapnames: [*mut c_char; 45] = [
 /// Indexed as `mapnames_commercial[gamemap - 1]` (Doom II) or with a +32/+64
 /// offset for the expansion packs. Corresponds to `mapnames_commercial[]` in
 /// `hu_stuff.c`.
-#[no_mangle]
 pub static mut mapnames_commercial: [*mut c_char; 96] = [
     // DOOM 2
     c"level 1: entryway".as_ptr().cast_mut(),
@@ -394,29 +386,14 @@ static mut head: usize = 0;
 /// Read index into [`chatchars`]; advanced by [`HU_dequeueChatChar`].
 static mut tail: usize = 0;
 
-extern "C" {
-    /// Load a WAD lump by name and return a pointer to its data (w_wad.c).
-    fn W_CacheLumpName(name: *const c_char, tag: c_int) -> *mut c_void;
-    /// Start a sound effect, optionally at a map-object origin (s_sound.c).
-    fn S_StartSound(origin_p: *mut c_void, sfx_id: c_int);
-    /// Non-zero while the automap overlay is active (am_map.c).
-    static mut automapactive: c_int;
-    /// Non-zero for network games (d_net.c).
-    static mut netgame: c_int;
-    /// Per-player presence flags; `playeringame[i]` is non-zero if player `i`
-    /// is active (doomstat.c / g_game.c).
-    static mut playeringame: [c_int; MAXPLAYERS];
-    /// Index of the local player (0-3) (doomstat.c).
-    static mut consoleplayer: c_int;
-    /// Non-zero if the "show messages" option is enabled (doomstat.c).
-    static mut showMessages: c_int;
-    /// Current game mode (retail, shareware, commercial, etc.) (doomstat.c).
-    static mut gamemode: c_int;
-    /// Current episode number (1-4) for Doom 1 (doomstat.c).
-    static mut gameepisode: c_int;
-    /// Current map number within the episode (doomstat.c).
-    static mut gamemap: c_int;
-}
+use crate::doom::{
+    am_map::automapactive,
+    doomstat::gamemode,
+    g_game::{consoleplayer, gameepisode, gamemap, netgame, playeringame},
+    m_menu::showMessages,
+    s_sound::S_StartSound,
+    w_wad::W_CacheLumpName,
+};
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -428,8 +405,7 @@ extern "C" {
 /// over `HU_FONTSIZE` slots, caching the `STCFNxxx` lump for each character
 /// from `HU_FONTSTART` to `HU_FONTEND` as `PU_STATIC`.
 /// Called from `D_DoomMain` in `d_main.c`.
-#[no_mangle]
-pub extern "C" fn HU_Init() {
+pub fn HU_Init() {
     unsafe {
         let mut j = HU_FONTSTART as c_int;
         for i in 0..HU_FONTSIZE {
@@ -445,8 +421,7 @@ pub extern "C" fn HU_Init() {
 /// Sets `headsupactive` to false. Called by [`HU_Start`] before
 /// re-initializing widgets, and may also be called directly when the HUD
 /// should be torn down (e.g., during intermission).
-#[no_mangle]
-pub extern "C" fn HU_Stop() {
+pub fn HU_Stop() {
     unsafe {
         headsupactive = false;
     }
@@ -461,8 +436,7 @@ pub extern "C" fn HU_Stop() {
 /// game mission and map number.
 ///
 /// Called from `G_DoLoadLevel` in `g_game.c` at the start of every level.
-#[no_mangle]
-pub extern "C" fn HU_Start() {
+pub fn HU_Start() {
     unsafe {
         if headsupactive {
             HU_Stop();
@@ -553,8 +527,7 @@ pub extern "C" fn HU_Start() {
 /// Draws the scrolling message widget, the chat input widget, and (if the
 /// automap is active) the map title line. Called once per frame from the
 /// renderer after the view has been rendered.
-#[no_mangle]
-pub extern "C" fn HU_Drawer() {
+pub fn HU_Drawer() {
     unsafe {
         HUlib_drawSText(&raw mut w_message);
         HUlib_drawIText(&raw mut w_chat);
@@ -569,8 +542,7 @@ pub extern "C" fn HU_Drawer() {
 /// Delegates to the erase functions for `w_message`, `w_chat`, and `w_title`.
 /// Called once per frame just before the view is rendered, so that old HUD
 /// graphics are removed before the new frame is drawn.
-#[no_mangle]
-pub extern "C" fn HU_Erase() {
+pub fn HU_Erase() {
     HUlib_eraseSText(&raw mut w_message);
     HUlib_eraseIText(&raw mut w_chat);
     HUlib_eraseTextLine(&raw mut w_title);
@@ -589,8 +561,7 @@ pub extern "C" fn HU_Erase() {
 ///    widget, and displays the completed message when Enter is received.
 ///
 /// Called from `G_Ticker` in `g_game.c` once per game tic.
-#[no_mangle]
-pub extern "C" fn HU_Ticker() {
+pub fn HU_Ticker() {
     unsafe {
         // tick down message counter if message is up
         if message_counter != 0 {
@@ -664,8 +635,7 @@ pub extern "C" fn HU_Ticker() {
 /// `"[Message unsent]"` notice to the player instead of enqueuing.
 /// The head index advances modulo `QUEUESIZE` (128; power-of-two bitmask).
 /// Called from `HU_Responder` and the macro-expansion path.
-#[no_mangle]
-pub extern "C" fn HU_queueChatChar(c: c_char) {
+pub fn HU_queueChatChar(c: c_char) {
     unsafe {
         if ((head + 1) & (QUEUESIZE - 1)) == tail {
             (*plr).message = c"[Message unsent]".as_ptr().cast_mut();
@@ -681,8 +651,7 @@ pub extern "C" fn HU_queueChatChar(c: c_char) {
 /// Returns the character at `tail` and advances `tail` modulo `QUEUESIZE` (128).
 /// Returns `0` (NUL) if the buffer is empty (`head == tail`).
 /// Called by the network layer (`d_net.c`) to read queued chat characters.
-#[no_mangle]
-pub extern "C" fn HU_dequeueChatChar() -> c_char {
+pub fn HU_dequeueChatChar() -> c_char {
     unsafe {
         if head != tail {
             let c = chatchars[tail];
@@ -707,8 +676,7 @@ pub extern "C" fn HU_dequeueChatChar() -> c_char {
 ///   and sends the message; Escape cancels.
 ///
 /// Called from `G_Responder` in `g_game.c`.
-#[no_mangle]
-pub extern "C" fn HU_Responder(ev: *mut event_t) -> c_int {
+pub fn HU_Responder(ev: *mut event_t) -> c_int {
     unsafe {
         static mut lastmessage: [c_char; 81] = [0; 81];
         static mut altdown: bool = false;

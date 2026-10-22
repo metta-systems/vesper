@@ -9,8 +9,7 @@
 //!
 //! This file covers the five variables whose definitions appeared in the
 //! original `doomstat.c`: `gamemode`, `gamemission`, `gameversion`,
-//! `gamedescription`, and `modifiedgame`.  All are `#[no_mangle]` so the
-//! remaining C translation units can link against them directly.
+//! `gamedescription`, and `modifiedgame`.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
@@ -28,7 +27,6 @@ use {super::d_mode, crate::types::Boolean};
 /// `d_mode::shareware`, `d_mode::registered`, `d_mode::retail`).
 /// Initialised to `indetermined`; set by `D_IdentifyVersion` during startup.
 /// Referenced by virtually every module that needs to branch on game edition.
-#[no_mangle]
 pub static mut gamemode: c_int = d_mode::indetermined;
 
 /// Identifies the game mission/product line (Doom, Doom II, TNT, Plutonia, etc.).
@@ -37,7 +35,6 @@ pub static mut gamemode: c_int = d_mode::indetermined;
 /// one of the `d_mode` integer constants (e.g., `d_mode::doom`,
 /// `d_mode::doom2`).  Initialised to `doom`; updated alongside `gamemode`
 /// during IWAD detection.
-#[no_mangle]
 pub static mut gamemission: c_int = d_mode::doom;
 
 /// Identifies the target engine version for compatibility purposes.
@@ -46,7 +43,6 @@ pub static mut gamemission: c_int = d_mode::doom;
 /// which demo format is used, whether certain Vanilla quirks are active, etc.
 /// Initialised to `exe_final2` and may be overridden by `-gameversion` on the
 /// command line.
-#[no_mangle]
 pub static mut gameversion: c_int = d_mode::exe_final2;
 
 /// Human-readable description of the loaded IWAD (e.g. `"DOOM Registered"`).
@@ -54,7 +50,6 @@ pub static mut gameversion: c_int = d_mode::exe_final2;
 /// Corresponds to `char *gamedescription` in `doomstat.c`.  Set by
 /// `D_SetGameDescription` during startup and used by the window title and
 /// help text.  Null until initialised.
-#[no_mangle]
 pub static mut gamedescription: *mut c_char = ptr::null_mut();
 
 /// `true` if any PWAD files have been loaded on top of the base IWAD.
@@ -63,7 +58,6 @@ pub static mut gamedescription: *mut c_char = ptr::null_mut();
 /// `W_CheckNumLumps` whenever a non-IWAD WAD is added.  When true, savegame
 /// compatibility warnings may be shown and certain strict-mode features are
 /// disabled.
-#[no_mangle]
 pub static mut modifiedgame: Boolean = Boolean::FALSE;
 
 #[cfg(test)]

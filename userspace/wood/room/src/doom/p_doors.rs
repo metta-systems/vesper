@@ -185,8 +185,7 @@ mod layout_checks {
 /// `door` must be a valid, aligned, non-null pointer to a `vldoor_t` whose
 /// `sector` pointer is also valid for the current map. Called exclusively by
 /// the thinker dispatcher from `P_RunThinkers`.
-#[no_mangle]
-pub unsafe extern "C" fn T_VerticalDoor(door: *mut vldoor_t) {
+pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
     let res: c_int;
 
     match (*door).direction {
@@ -318,12 +317,7 @@ pub unsafe extern "C" fn T_VerticalDoor(door: *mut vldoor_t) {
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-#[no_mangle]
-pub unsafe extern "C" fn EV_DoLockedDoor(
-    line: *mut line_t,
-    r#type: c_int,
-    thing: *mut mobj_t,
-) -> c_int {
+pub unsafe fn EV_DoLockedDoor(line: *mut line_t, r#type: c_int, thing: *mut mobj_t) -> c_int {
     let Some(p) = ((*thing).player as *mut PlayerT).as_mut() else {
         return 0;
     };
@@ -368,8 +362,7 @@ pub unsafe extern "C" fn EV_DoLockedDoor(
 ///
 /// `line` must be a valid non-null pointer for the current map; the global
 /// `sectors` array must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
+pub unsafe fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
     let mut secnum: c_int = -1;
     let mut rtn: c_int = 0;
 
@@ -393,8 +386,8 @@ pub unsafe extern "C" fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
         (*sec).specialdata = door as *mut c_void;
 
         (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut vldoor_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut vldoor_t),
+            unsafe fn(*mut c_void),
         >(T_VerticalDoor));
         (*door).sector = sec as *mut sector_t;
         (*door).r#type = r#type;
@@ -472,8 +465,7 @@ pub unsafe extern "C" fn EV_DoDoor(line: *mut line_t, r#type: c_int) -> c_int {
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-#[no_mangle]
-pub unsafe extern "C" fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
+pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     let side = 0;
 
     // Check for locks
@@ -526,12 +518,12 @@ pub unsafe extern "C" fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) 
                         return;
                     }
                     let t_vdoor = Some(core::mem::transmute::<
-                        unsafe extern "C" fn(*mut vldoor_t),
-                        unsafe extern "C" fn(*mut c_void),
+                        unsafe fn(*mut vldoor_t),
+                        unsafe fn(*mut c_void),
                     >(T_VerticalDoor));
                     let t_plat = Some(core::mem::transmute::<
-                        unsafe extern "C" fn(*mut plat_t),
-                        unsafe extern "C" fn(*mut c_void),
+                        unsafe fn(*mut plat_t),
+                        unsafe fn(*mut c_void),
                     >(T_PlatRaise));
                     if (*door).thinker.function.acp1 == t_vdoor {
                         (*door).direction = -1;
@@ -580,8 +572,8 @@ pub unsafe extern "C" fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) 
     P_AddThinker(&mut (*door).thinker);
     (*sec).specialdata = door as *mut c_void;
     (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe extern "C" fn(*mut vldoor_t),
-        unsafe extern "C" fn(*mut c_void),
+        unsafe fn(*mut vldoor_t),
+        unsafe fn(*mut c_void),
     >(T_VerticalDoor));
     (*door).sector = sec as *mut sector_t;
     (*door).direction = 1;
@@ -621,8 +613,7 @@ pub unsafe extern "C" fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) 
 /// # Safety
 ///
 /// `sec` must be a valid non-null pointer to a sector for the current map.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
+pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
     let door = Z_Malloc(
         std::mem::size_of::<vldoor_t>() as c_int,
         PU_LEVSPEC,
@@ -635,8 +626,8 @@ pub unsafe extern "C" fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
     (*sec).special = 0;
 
     (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe extern "C" fn(*mut vldoor_t),
-        unsafe extern "C" fn(*mut c_void),
+        unsafe fn(*mut vldoor_t),
+        unsafe fn(*mut c_void),
     >(T_VerticalDoor));
     (*door).sector = sec;
     (*door).direction = 0;
@@ -655,8 +646,7 @@ pub unsafe extern "C" fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
 ///
 /// `sec` must be a valid non-null pointer to a sector for the current map; the
 /// global `sectors` array must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: c_int) {
+pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: c_int) {
     let door = Z_Malloc(
         std::mem::size_of::<vldoor_t>() as c_int,
         PU_LEVSPEC,
@@ -669,8 +659,8 @@ pub unsafe extern "C" fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: c_
     (*sec).special = 0;
 
     (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe extern "C" fn(*mut vldoor_t),
-        unsafe extern "C" fn(*mut c_void),
+        unsafe fn(*mut vldoor_t),
+        unsafe fn(*mut c_void),
     >(T_VerticalDoor));
     (*door).sector = sec;
     (*door).direction = 2;
@@ -680,23 +670,6 @@ pub unsafe extern "C" fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: c_
     (*door).topheight -= 4 * FRACUNIT;
     (*door).topwait = VDOORWAIT;
     (*door).topcountdown = 5 * 60 * TICRATE;
-}
-
-/// Anchor function referenced from `doomgeneric_Create` to ensure all
-/// `#[no_mangle]` door functions survive link-time dead-code elimination.
-///
-/// # Safety
-///
-/// Must only be called during engine initialisation before any thinker
-/// dispatch occurs; taking the address of each function is always safe.
-#[no_mangle]
-pub unsafe extern "C" fn P_Doors_Link_Anchor() {
-    let _ = T_VerticalDoor as *const () as usize;
-    let _ = EV_DoLockedDoor as *const () as usize;
-    let _ = EV_DoDoor as *const () as usize;
-    let _ = EV_VerticalDoor as *const () as usize;
-    let _ = P_SpawnDoorCloseIn30 as *const () as usize;
-    let _ = P_SpawnDoorRaiseIn5Mins as *const () as usize;
 }
 
 #[cfg(test)]

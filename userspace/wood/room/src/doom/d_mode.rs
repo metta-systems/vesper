@@ -374,9 +374,8 @@ static VALID_VERSIONS: [ValidVersion; 10] = [
 /// game-mode/mission pair received over the network before accepting it.
 /// Returns `FALSE` for unrecognised combinations (e.g., `doom2` + `shareware`).
 ///
-/// Exported as `#[no_mangle]` for C callers. Corresponds to `D_ValidGameMode` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_ValidGameMode(mission: c_int, mode: c_int) -> Boolean {
+/// Corresponds to `D_ValidGameMode` in `d_mode.c`.
+pub fn D_ValidGameMode(mission: c_int, mode: c_int) -> Boolean {
     for vm in &VALID_MODES {
         if vm.mission == mission && vm.mode == mode {
             return Boolean::TRUE;
@@ -396,14 +395,8 @@ pub extern "C" fn D_ValidGameMode(mission: c_int, mode: c_int) -> Boolean {
 ///
 /// Returns `FALSE` for unknown mission/mode combinations.
 ///
-/// Exported as `#[no_mangle]` for C callers. Corresponds to `D_ValidEpisodeMap` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_ValidEpisodeMap(
-    mission: c_int,
-    mode: c_int,
-    episode: c_int,
-    map: c_int,
-) -> Boolean {
+/// Corresponds to `D_ValidEpisodeMap` in `d_mode.c`.
+pub fn D_ValidEpisodeMap(mission: c_int, mode: c_int, episode: c_int, map: c_int) -> Boolean {
     // Hacks for Heretic secret episodes
     if mission == heretic {
         if mode == retail && episode == 6 {
@@ -431,9 +424,8 @@ pub extern "C" fn D_ValidEpisodeMap(
 /// number. Commercial games (Doom 2, Hexen, Strife) have only episode 1.
 /// Returns 0 for unknown combinations.
 ///
-/// Exported as `#[no_mangle]` for C callers. Corresponds to `D_GetNumEpisodes` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_GetNumEpisodes(mission: c_int, mode: c_int) -> c_int {
+/// Corresponds to `D_GetNumEpisodes` in `d_mode.c`.
+pub fn D_GetNumEpisodes(mission: c_int, mode: c_int) -> c_int {
     let mut episode = 1;
     while D_ValidEpisodeMap(mission, mode, episode, 1).is_truthy() {
         episode += 1;
@@ -448,9 +440,8 @@ pub extern "C" fn D_GetNumEpisodes(mission: c_int, mode: c_int) -> c_int {
 /// the same set of valid executable versions. Returns `FALSE` for unknown
 /// combinations.
 ///
-/// Exported as `#[no_mangle]` for C callers. Corresponds to `D_ValidGameVersion` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_ValidGameVersion(mission: c_int, version: c_int) -> Boolean {
+/// Corresponds to `D_ValidGameVersion` in `d_mode.c`.
+pub fn D_ValidGameVersion(mission: c_int, version: c_int) -> Boolean {
     let mission = if mission == doom2
         || mission == pack_plut
         || mission == pack_tnt
@@ -477,9 +468,8 @@ pub extern "C" fn D_ValidGameVersion(mission: c_int, version: c_int) -> Boolean 
 /// All other missions use `MAPxx` (e.g., `MAP01`). This distinction drives
 /// level-name formatting and warp/cheat parsing throughout the engine.
 ///
-/// Exported as `#[no_mangle]` for C callers. Corresponds to `D_IsEpisodeMap` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_IsEpisodeMap(mission: c_int) -> Boolean {
+/// Corresponds to `D_IsEpisodeMap` in `d_mode.c`.
+pub fn D_IsEpisodeMap(mission: c_int) -> Boolean {
     match mission {
         doom | heretic | pack_chex => Boolean::TRUE,
         _ => Boolean::FALSE,
@@ -497,10 +487,9 @@ pub extern "C" fn D_IsEpisodeMap(mission: c_int) -> Boolean {
 /// is read-only; writing to it is undefined behaviour, as it would be in the C
 /// original.
 ///
-/// Exported as `#[no_mangle]`; called from `w_wad.c` during WAD loading.
+/// Called from `w_wad` during WAD loading.
 /// Corresponds to `D_GameMissionString` in `d_mode.c`.
-#[no_mangle]
-pub extern "C" fn D_GameMissionString(mission: c_int) -> *mut c_char {
+pub fn D_GameMissionString(mission: c_int) -> *mut c_char {
     match mission {
         doom => c"doom".as_ptr().cast_mut(),
         doom2 => c"doom2".as_ptr().cast_mut(),

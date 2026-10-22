@@ -24,8 +24,7 @@ use std::ffi::{c_char, c_int, c_void};
 
 /// Rust mirror of `sfxinfo_t` (`sounds.h`).
 ///
-/// The layout is locked to the C struct so the table can be passed to driver
-/// code via `#[no_mangle] S_sfx`. `name` is a fixed 9-byte slot (8 chars +
+/// The layout is locked to the C struct. `name` is a fixed 9-byte slot (8 chars +
 /// NUL) holding the short lump name; the engine prepends `DS` when looking
 /// up the actual WAD lump. `link` lets two effects share underlying audio
 /// (e.g. `sfx_chgun -> sfx_pistol`).
@@ -55,8 +54,8 @@ pub struct SfxInfo {
 
 /// Rust mirror of `musicinfo_t` (`sounds.h`).
 ///
-/// Layout-compatible with the C struct so `S_music` can be exposed via
-/// `#[no_mangle]`. `name` is the short lump name (the engine prepends `d_`),
+/// Layout-compatible with the C struct. `name` is the short lump name (the
+/// engine prepends `d_`),
 /// `data` holds the cached lump, `handle` is the driver-side song handle.
 #[repr(C)]
 #[derive(Default)]
@@ -1075,10 +1074,6 @@ const MUS_dm2int: [c_char; 7] = name("dm2int");
 /// priorities. Entry 0 is a "none" sentinel. `usefulness` is reset to -1 for
 /// every non-sentinel entry by `S_Init`. Linked entries (currently only
 /// `sfx_chgun -> sfx_pistol`) are wired up at runtime by `S_InitSfxLinks`.
-///
-/// `#[no_mangle]` so it is reachable from any remaining C-linkage callers
-/// (the test harness verifies layout against the C `sizeof`).
-#[no_mangle]
 pub static mut S_sfx: [SfxInfo; NUMSFX] = [
     // [0] sfx_none
     SfxInfo::new(N_none, 0),
@@ -1305,8 +1300,6 @@ pub static mut S_sfx: [SfxInfo; NUMSFX] = [
 /// Each non-sentinel entry stores a pointer into one of the `MUS_*` short-name
 /// buffers, which `S_ChangeMusic` formats into the WAD lump name (prefixed
 /// with `d_`) on first use. Entry 0 is the "no music" sentinel.
-/// `#[no_mangle]` so the symbol matches the original C linkage.
-#[no_mangle]
 pub static mut S_music: [MusicInfo; NUMMUSIC] = [
     // [0] mus_none (sentinel)
     MusicInfo::none(),
@@ -1451,8 +1444,7 @@ pub static mut S_music: [MusicInfo; NUMMUSIC] = [
 /// Currently only `sfx_chgun -> sfx_pistol` (sharing the pistol sample). Must
 /// be called before any `S_StartSound`. Called from `S_Init`. C origin:
 /// `S_InitSfxLinks` in `sounds.c`.
-#[no_mangle]
-pub extern "C" fn S_InitSfxLinks() {
+pub fn S_InitSfxLinks() {
     unsafe {
         S_sfx[Sfx::Chgun as usize].link = &mut S_sfx[Sfx::Pistol as usize] as *mut SfxInfo;
     }

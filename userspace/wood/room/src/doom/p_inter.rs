@@ -200,31 +200,24 @@ const DEH_DEFAULT_MEGASPHERE_HEALTH: c_int = 200;
 // ---------------------------------------------------------------------------
 
 /// Runtime maximum health achievable via bonus health spheres.
-#[no_mangle]
 pub static mut deh_max_health: c_int = DEH_DEFAULT_MAX_HEALTH;
 
 /// Runtime maximum armor achievable via armor bonuses.
-#[no_mangle]
 pub static mut deh_max_armor: c_int = DEH_DEFAULT_MAX_ARMOR;
 
 /// Runtime armor class granted by the green security armor shirt.
-#[no_mangle]
 pub static mut deh_green_armor_class: c_int = DEH_DEFAULT_GREEN_ARMOR_CLASS;
 
 /// Runtime armor class granted by the blue mega-armor.
-#[no_mangle]
 pub static mut deh_blue_armor_class: c_int = DEH_DEFAULT_BLUE_ARMOR_CLASS;
 
 /// Runtime upper health limit imposed by the soulsphere.
-#[no_mangle]
 pub static mut deh_max_soulsphere: c_int = DEH_DEFAULT_MAX_SOULSPHERE;
 
 /// Runtime health points added by the soulsphere.
-#[no_mangle]
 pub static mut deh_soulsphere_health: c_int = DEH_DEFAULT_SOULSPHERE_HEALTH;
 
 /// Runtime health set when the megasphere is picked up.
-#[no_mangle]
 pub static mut deh_megasphere_health: c_int = DEH_DEFAULT_MEGASPHERE_HEALTH;
 
 // ---------------------------------------------------------------------------
@@ -342,14 +335,12 @@ use crate::doom::{
 /// Maximum ammo capacity for each ammo type when the player has no backpack.
 /// Indexed by `am_clip`, `am_shell`, `am_cell`, `am_misl` (0-3).
 /// Matches `maxammo[]` in `p_inter.c`.
-#[no_mangle]
 pub static mut maxammo: [c_int; NUMAMMO] = [200, 50, 300, 50];
 
 /// Base ammo count per pickup for each ammo type.
 /// A weapon pickup grants 2× this amount; a dropped weapon grants 1×;
 /// passing `num=0` to `P_GiveAmmo` grants half a clip.
 /// Matches `clipammo[]` in `p_inter.c`.
-#[no_mangle]
 pub static mut clipammo: [c_int; NUMAMMO] = [10, 4, 20, 1];
 
 // ---------------------------------------------------------------------------
@@ -372,8 +363,7 @@ pub static mut clipammo: [c_int; NUMAMMO] = [10, 4, 20, 1];
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
 /// Global mutable statics `maxammo`, `clipammo`, `gameskill` must only be
 /// accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_GiveAmmo(player: *mut PlayerT, ammo: c_int, num: c_int) -> c_int {
+pub unsafe fn P_GiveAmmo(player: *mut PlayerT, ammo: c_int, num: c_int) -> c_int {
     p_give_ammo(&mut *player, ammo, num)
 }
 
@@ -456,12 +446,7 @@ unsafe fn p_give_ammo(player: &mut PlayerT, ammo: c_int, mut num: c_int) -> c_in
 /// Global mutable statics `netgame`, `deathmatch`, `consoleplayer`,
 /// `players`, and `weaponinfo` must only be accessed from the game-logic
 /// thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_GiveWeapon(
-    player: *mut PlayerT,
-    weapon: c_int,
-    dropped: c_int,
-) -> c_int {
+pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: c_int, dropped: c_int) -> c_int {
     p_give_weapon(&mut *player, weapon, dropped)
 }
 
@@ -526,8 +511,7 @@ unsafe fn p_give_weapon(player: &mut PlayerT, weapon: c_int, dropped: c_int) -> 
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`, and
 /// `player.mo` must be a valid, non-null pointer to the player's map object.
-#[no_mangle]
-pub unsafe extern "C" fn P_GiveBody(player: *mut PlayerT, num: c_int) -> c_int {
+pub unsafe fn P_GiveBody(player: *mut PlayerT, num: c_int) -> c_int {
     p_give_body(&mut *player, num)
 }
 
@@ -559,8 +543,7 @@ unsafe fn p_give_body(player: &mut PlayerT, num: c_int) -> c_int {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_GiveArmor(player: *mut PlayerT, armortype: c_int) -> c_int {
+pub unsafe fn P_GiveArmor(player: *mut PlayerT, armortype: c_int) -> c_int {
     p_give_armor(&mut *player, armortype)
 }
 
@@ -588,8 +571,7 @@ fn p_give_armor(player: &mut PlayerT, armortype: c_int) -> c_int {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_GiveCard(player: *mut PlayerT, card: c_int) {
+pub unsafe fn P_GiveCard(player: *mut PlayerT, card: c_int) {
     p_give_card(&mut *player, card)
 }
 
@@ -620,8 +602,7 @@ fn p_give_card(player: &mut PlayerT, card: c_int) {
 ///
 /// `player` must be a valid, non-null pointer to a live `PlayerT`, and for
 /// `pw_invisibility`, `player.mo` must also be valid.
-#[no_mangle]
-pub unsafe extern "C" fn P_GivePower(player: *mut PlayerT, power: c_int) -> c_int {
+pub unsafe fn P_GivePower(player: *mut PlayerT, power: c_int) -> c_int {
     p_give_power(&mut *player, power)
 }
 
@@ -681,8 +662,7 @@ unsafe fn p_give_power(player: &mut PlayerT, power: c_int) -> c_int {
 /// owning `PlayerT`.  Global game-state statics (`players`, `consoleplayer`,
 /// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
 /// game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
+pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
     // Read all primitives from `special` / `toucher` up front via raw
     // pointers so we never hold a `&mut` to either of them across the
     // FFI helper calls or `P_RemoveMobj` below; those reborrow the
@@ -1073,8 +1053,7 @@ pub unsafe extern "C" fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut
 /// `target` must be a valid, non-null pointer to a live `mobj_t`.
 /// `source` may be null (environmental kill).  All global game-state
 /// statics must only be accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
+pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     let info = (*target).info as *mut MobjInfo;
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
     if (*target).mobjtype != MT_SKULL {
@@ -1173,8 +1152,7 @@ pub unsafe extern "C" fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
 /// `inflictor` and `source` may be null.  If `target.player` is non-null
 /// it must point to a valid `PlayerT`.  All global game-state statics must
 /// only be accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_DamageMobj(
+pub unsafe fn P_DamageMobj(
     target: *mut mobj_t,
     inflictor: *mut mobj_t,
     source: *mut mobj_t,
@@ -1292,32 +1270,6 @@ pub unsafe extern "C" fn P_DamageMobj(
             P_SetMobjState(target, (*info).seestate);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Link anchor
-// ---------------------------------------------------------------------------
-
-/// Ensures all public symbols in this module are included in the final
-/// binary even when the linker would otherwise dead-strip them.
-///
-/// Called from the crate's link-anchor collection; not intended for direct
-/// use in game logic.
-#[no_mangle]
-pub extern "C" fn P_Inter_Link_Anchor() {
-    unsafe {
-        let _ = std::ptr::addr_of_mut!(maxammo[0]) as usize;
-        let _ = std::ptr::addr_of_mut!(clipammo[0]) as usize;
-    }
-    let _ = P_GiveAmmo as *const () as usize;
-    let _ = P_GiveWeapon as *const () as usize;
-    let _ = P_GiveBody as *const () as usize;
-    let _ = P_GiveArmor as *const () as usize;
-    let _ = P_GiveCard as *const () as usize;
-    let _ = P_GivePower as *const () as usize;
-    let _ = P_TouchSpecialThing as *const () as usize;
-    let _ = P_KillMobj as *const () as usize;
-    let _ = P_DamageMobj as *const () as usize;
 }
 
 // ---------------------------------------------------------------------------

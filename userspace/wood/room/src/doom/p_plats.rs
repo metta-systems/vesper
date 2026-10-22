@@ -142,9 +142,6 @@ mod layout_checks {
 /// Null entries represent free slots.  [`P_AddActivePlat`] fills the first
 /// null slot; [`P_RemoveActivePlat`] nulls the matching slot.  Unlike ceilings,
 /// overflowing this table is a fatal error.
-///
-/// Exported as `activeplats` for C linkage.
-#[no_mangle]
 pub static mut activeplats: [*mut plat_t; MAXPLATS] = [std::ptr::null_mut(); MAXPLATS];
 
 /// Per-tic update for a moving platform thinker.
@@ -174,8 +171,7 @@ pub static mut activeplats: [*mut plat_t; MAXPLATS] = [std::ptr::null_mut(); MAX
 ///
 /// `plat` must be a valid, non-null pointer to a `plat_t` that is currently
 /// linked in the thinker list and whose `sector` pointer is valid.
-#[no_mangle]
-pub unsafe extern "C" fn T_PlatRaise(plat: *mut plat_t) {
+pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
     match (*plat).status {
         x if x == up => {
             let res = T_MovePlane(
@@ -276,8 +272,7 @@ pub unsafe extern "C" fn T_PlatRaise(plat: *mut plat_t) {
 ///
 /// `line` must be a valid, non-null pointer.  The global `sectors` and `sides`
 /// arrays must be initialised for the current level.
-#[no_mangle]
-pub unsafe extern "C" fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_int {
+pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c_int) -> c_int {
     let mut secnum: c_int = -1;
     let mut rtn: c_int = 0;
 
@@ -311,8 +306,8 @@ pub unsafe extern "C" fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c
         (*plat).sector = sec as *mut sector_t;
         (*plat).sector.as_mut().unwrap().specialdata = plat as *mut c_void;
         (*plat).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut plat_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut plat_t),
+            unsafe fn(*mut c_void),
         >(T_PlatRaise));
         (*plat).crush = 0;
         (*plat).tag = (*line).tag as c_int;
@@ -401,8 +396,7 @@ pub unsafe extern "C" fn EV_DoPlat(line: *mut line_t, plattype: c_int, amount: c
 /// thinker callback.  Called by [`EV_DoPlat`] for the `perpetualRaise` type.
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
-#[no_mangle]
-pub extern "C" fn P_ActivateInStasis(tag: c_int) {
+pub fn P_ActivateInStasis(tag: c_int) {
     unsafe {
         for i in 0..MAXPLATS {
             if !activeplats[i].is_null()
@@ -411,8 +405,8 @@ pub extern "C" fn P_ActivateInStasis(tag: c_int) {
             {
                 (*activeplats[i]).status = (*activeplats[i]).oldstatus;
                 (*activeplats[i]).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut plat_t),
-                    unsafe extern "C" fn(*mut c_void),
+                    unsafe fn(*mut plat_t),
+                    unsafe fn(*mut c_void),
                 >(T_PlatRaise));
             }
         }
@@ -430,8 +424,7 @@ pub extern "C" fn P_ActivateInStasis(tag: c_int) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-#[no_mangle]
-pub extern "C" fn EV_StopPlat(line: *mut line_t) {
+pub fn EV_StopPlat(line: *mut line_t) {
     unsafe {
         for j in 0..MAXPLATS {
             if !activeplats[j].is_null()
@@ -452,8 +445,7 @@ pub extern "C" fn EV_StopPlat(line: *mut line_t) {
 /// `P_AddActiveCeiling` which silently discards overflows.
 ///
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
-#[no_mangle]
-pub extern "C" fn P_AddActivePlat(plat: *mut plat_t) {
+pub fn P_AddActivePlat(plat: *mut plat_t) {
     unsafe {
         for i in 0..MAXPLATS {
             if activeplats[i].is_null() {
@@ -472,8 +464,7 @@ pub extern "C" fn P_AddActivePlat(plat: *mut plat_t) {
 /// [`activeplats`].  Calls `I_Error` if the platform is not found.
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
-#[no_mangle]
-pub extern "C" fn P_RemoveActivePlat(plat: *mut plat_t) {
+pub fn P_RemoveActivePlat(plat: *mut plat_t) {
     unsafe {
         for i in 0..MAXPLATS {
             if plat == activeplats[i] {
@@ -485,21 +476,6 @@ pub extern "C" fn P_RemoveActivePlat(plat: *mut plat_t) {
         }
         i_error!("P_RemoveActivePlat: can't find plat!");
     }
-}
-
-/// Link anchor that prevents dead-code elimination of exported platform symbols.
-///
-/// Referenced from the engine initialisation path so the linker keeps every
-/// platform function in the final binary even if no Rust caller uses them
-/// directly.
-#[no_mangle]
-pub extern "C" fn P_Plats_Link_Anchor() {
-    let _ = T_PlatRaise as *const () as usize;
-    let _ = EV_DoPlat as *const () as usize;
-    let _ = P_ActivateInStasis as *const () as usize;
-    let _ = EV_StopPlat as *const () as usize;
-    let _ = P_AddActivePlat as *const () as usize;
-    let _ = P_RemoveActivePlat as *const () as usize;
 }
 
 #[cfg(test)]

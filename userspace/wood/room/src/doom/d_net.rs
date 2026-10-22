@@ -32,8 +32,6 @@
 
 use std::{ffi::c_char, os::raw::c_int};
 
-use crate::types::Boolean;
-
 use crate::doom::d_player::{consoleplayer, players, TiccmdT, MAXPLAYERS};
 
 /// Maximum number of players supported by the networking code.
@@ -140,7 +138,7 @@ pub struct NetGameSettingsT {
 ///
 /// Maps to `loop_interface_t` in `d_loop.h`. The loop layer (`d_loop.c`) calls
 /// these function pointers at the appropriate points during each tic. All
-/// fields are `Option<unsafe extern "C" fn(…)>` because the C struct uses raw
+/// fields are `Option<unsafe fn(…)>` because the C struct uses raw
 /// function pointers that may theoretically be null, though in practice all
 /// four are always set before use.
 ///
@@ -150,126 +148,45 @@ pub struct NetGameSettingsT {
 #[derive(Clone, Copy)]
 pub struct LoopInterfaceT {
     /// Called once per tic to drain the event queue. Bound to `D_ProcessEvents`.
-    pub ProcessEvents: Option<unsafe extern "C" fn()>,
+    pub ProcessEvents: Option<unsafe fn()>,
     /// Called to build a new [`TiccmdT`] from current input state. Bound to
     /// `G_BuildTiccmd`. The second argument is `maketic`, the tic number being
     /// constructed.
-    pub BuildTiccmd: Option<unsafe extern "C" fn(*mut TiccmdT, c_int)>,
+    pub BuildTiccmd: Option<unsafe fn(*mut TiccmdT, c_int)>,
     /// Called to advance the game by one tic with the given player commands.
     /// The `ingame` array has one boolean per player indicating whether that
     /// player is still connected. Bound to the Rust [`RunTic`] function.
-    pub RunTic: Option<unsafe extern "C" fn(*mut TiccmdT, *mut c_int)>,
+    pub RunTic: Option<unsafe fn(*mut TiccmdT, *mut c_int)>,
     /// Called once per tic to run the menu system. Bound to `M_Ticker`.
-    pub RunMenu: Option<unsafe extern "C" fn()>,
+    pub RunMenu: Option<unsafe fn()>,
 }
 
 /// Pointer to the array of per-player tic commands for the current tic.
 ///
 /// Set by `RunTic` at the start of each tic, pointing into the buffer
 /// provided by the loop layer. Downstream code (primarily `g_game.c`) reads
-/// `netcmds[consoleplayer]` to obtain the local player's input. Exported as
-/// `#[no_mangle]` so that C code in the loop layer can reference it directly.
+/// `netcmds[consoleplayer]` to obtain the local player's input.
 /// Corresponds to `ticcmd_t *netcmds` in `d_net.c`.
-#[no_mangle]
 pub static mut netcmds: *mut TiccmdT = std::ptr::null_mut();
 
-extern "C" {
-    /// Safe bounded string copy. Copies at most `dst_size - 1` bytes from `src`
-    /// to `dst`, always NUL-terminates, and returns non-zero on success.
-    /// From `vendor/doomgeneric/m_misc.c`.
-    fn M_StringCopy(dst: *mut c_char, src: *const c_char, dst_size: usize) -> Boolean;
-    /// Returns the index of a command-line parameter, or 0 if not present.
-    /// From `vendor/doomgeneric/m_argv.c`.
-    fn M_CheckParm(parm: *const c_char) -> c_int;
-    /// Checks whether the current demo recording or playback has finished; stops
-    /// it if so. From `vendor/doomgeneric/g_game.c`.
-    fn G_CheckDemoStatus() -> c_int;
-    /// Advances the game simulation by one tic, processing all player commands.
-    /// From `vendor/doomgeneric/g_game.c`.
-    fn G_Ticker();
-    /// Advances the attract-mode demo loop (title screen, demo playback, etc.).
-    /// From `vendor/doomgeneric/d_main.c`.
-    fn D_DoAdvanceDemo();
-    /// Drains the engine event queue for the current tic, dispatching input
-    /// events to the appropriate subsystem. From `vendor/doomgeneric/d_main.c`.
-    fn D_ProcessEvents();
-    /// Builds the player's tic command for tic `maketic` from the current input
-    /// state. From `vendor/doomgeneric/g_game.c`.
-    fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: c_int);
-    /// Advances menu animation and input handling by one tic.
-    /// From `vendor/doomgeneric/m_menu.c`.
-    fn M_Ticker();
-    /// Registers the loop interface callback table with the game loop layer so
-    /// that `d_loop.c` can invoke per-tic callbacks. From `vendor/doomgeneric/d_loop.c`.
-    fn D_RegisterLoopCallbacks(i: *mut LoopInterfaceT);
-    /// Initialises the network/demo subsystem and returns non-zero if a network
-    /// game is active. From the C side of `vendor/doomgeneric/d_net.c`.
-    fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> c_int;
-    /// Starts the network game, exchanging settings with the server (or stub).
-    /// From the C side of `vendor/doomgeneric/d_net.c`.
-    fn D_StartNetGame(settings: *mut NetGameSettingsT, callback: *const ());
-    /// Computes a SHA-1 checksum of the WAD directory into `digest` for
-    /// net-consistency checks. From `vendor/doomgeneric/w_checksum.c`.
-    fn W_Checksum(digest: *mut u8);
-    /// Returns the lump number for the given name, or -1 if not found.
-    /// From `vendor/doomgeneric/w_wad.c`.
-    fn W_CheckNumForName(name: *const c_char) -> c_int;
-
-    /// Deathmatch mode: 0 = cooperative, 1 = deathmatch, 2 = altdeath.
-    /// Defined in `doomstat.h`, set during net-game startup.
-    static mut deathmatch: c_int;
-    /// Starting episode number override (episode-based games only).
-    /// Defined in `doomstat.h`.
-    static mut startepisode: c_int;
-    /// Starting map number override within the episode.
-    /// Defined in `doomstat.h`.
-    static mut startmap: c_int;
-    /// Starting skill level override (0 = baby ... 4 = nightmare).
-    /// Defined in `doomstat.h`.
-    static mut startskill: c_int;
-    /// Save-game slot to load at startup; -1 means no load.
-    /// Defined in `doomstat.h`.
-    static mut startloadgame: c_int;
-    /// Non-zero when the player is using low-resolution (8-bit) turning, for
-    /// Vanilla demo compatibility. Defined in `doomstat.h`.
-    static mut lowres_turn: c_int;
-    /// Non-zero when monsters are disabled (`-nomonsters`).
-    /// Defined in `doomstat.h`.
-    static mut nomonsters: c_int;
-    /// Non-zero when fast monsters are enabled (`-fast`).
-    /// Defined in `doomstat.h`.
-    static mut fastparm: c_int;
-    /// Non-zero when monsters respawn after death (`-respawn`).
-    /// Defined in `doomstat.h`.
-    static mut respawnparm: c_int;
-    /// Net-game time limit in minutes; 0 means no limit.
-    /// Defined in `doomstat.h`.
-    static mut timelimit: c_int;
-    /// Current IWAD game mode (`GameMode_t` integer: shareware, registered,
-    /// commercial, retail, or indetermined). Defined in `doomstat.h`.
-    static mut gamemode: c_int;
-    /// Current IWAD game mission (`GameMission_t` integer: doom, doom2, etc.).
-    /// Defined in `doomstat.h`.
-    static mut gamemission: c_int;
-    /// Executable version being emulated (`GameVersion_t` integer), used
-    /// primarily for demo compatibility. Defined in `doomstat.h`.
-    static mut gameversion: c_int;
-    /// Player view-angle offset in fixed-point angle units; non-zero in
-    /// three-screen (spy) mode (`-left`/`-right`). Defined in `doomstat.h`.
-    static mut viewangleoffset: c_int;
-    /// Non-zero when the game should start automatically without waiting for a
-    /// title-screen keypress. Defined in `doomstat.h`.
-    static mut autostart: c_int;
-    /// Non-zero when running as a network game. Defined in `doomstat.h`.
-    static mut netgame: c_int;
-    /// Non-zero while a demo is being played back. Defined in `doomstat.h`.
-    static mut demoplayback: c_int;
-    /// Non-zero while a demo is being recorded. Defined in `doomstat.h`.
-    static mut demorecording: c_int;
-    /// Per-slot array indicating which player slots are occupied; non-zero
-    /// means that player is in-game. Defined in `doomstat.h`.
-    static mut playeringame: [c_int; MAXPLAYERS];
-}
+use crate::doom::{
+    d_loop::{D_InitNetGame, D_RegisterLoopCallbacks, D_StartNetGame},
+    d_main::{
+        advancedemo, autostart, fastparm, nomonsters, respawnparm, startepisode, startloadgame,
+        startmap, startskill, D_DoAdvanceDemo, D_ProcessEvents,
+    },
+    doomstat::{gamemission, gamemode, gameversion},
+    g_game::{
+        deathmatch, demoplayback, demorecording, lowres_turn, netgame, playeringame, timelimit,
+        G_BuildTiccmd, G_CheckDemoStatus, G_Ticker,
+    },
+    m_argv::M_CheckParm,
+    m_menu::M_Ticker,
+    m_misc::M_StringCopy,
+    r_main::viewangleoffset,
+    w_checksum::W_Checksum,
+    w_wad::W_CheckNumForName,
+};
 
 /// Notify the game that a player has disconnected.
 ///
@@ -333,7 +250,7 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
 /// `cmds` must point to a valid array of at least `MAXPLAYERS` [`TiccmdT`]
 /// values. `ingame` must point to a valid array of at least `MAXPLAYERS`
 /// `c_int` values. All global game state must be consistently initialised.
-unsafe extern "C" fn RunTic(cmds: *mut TiccmdT, ingame: *mut c_int) {
+unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut c_int) {
     for i in 0..MAXPLAYERS {
         if demoplayback == 0 && playeringame[i] != 0 && *ingame.add(i) == 0 {
             PlayerQuitGame(i);
@@ -342,12 +259,6 @@ unsafe extern "C" fn RunTic(cmds: *mut TiccmdT, ingame: *mut c_int) {
 
     netcmds = cmds;
 
-    extern "C" {
-        /// Flag set by the attract-mode sequencer when the demo loop should
-        /// advance to the next entry (next demo, intermission screen, etc.).
-        /// Defined in `d_main.c`; consumed here to call `D_DoAdvanceDemo`.
-        static mut advancedemo: c_int;
-    }
     if advancedemo != 0 {
         D_DoAdvanceDemo();
     }
@@ -469,7 +380,7 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
             0
         };
 
-    W_Checksum((*connect_data).wad_sha1sum.as_mut_ptr());
+    W_Checksum(&raw mut (*connect_data).wad_sha1sum);
 
     let name = b"FREEDOOM\0";
     (*connect_data).is_freedoom = if W_CheckNumForName(name.as_ptr() as *const c_char) >= 0 {
@@ -518,11 +429,9 @@ static mut DOOM_LOOP_INTERFACE: LoopInterfaceT = LoopInterfaceT {
 /// so that the engine behaves as if in a single-player net game (useful for
 /// playing back net-game demos).
 ///
-/// Called from `D_DoomMain` during startup. Exported as `#[no_mangle]` so
-/// that `d_main.c` can call it directly. Corresponds to `D_ConnectNetGame` in
-/// `d_net.c`.
-#[no_mangle]
-pub extern "C" fn D_ConnectNetGame() {
+/// Called from `D_DoomMain` during startup. Corresponds to `D_ConnectNetGame`
+/// in `d_net.c`.
+pub fn D_ConnectNetGame() {
     unsafe {
         let mut connect_data: NetConnectDataT = std::mem::zeroed();
         InitConnectData(&mut connect_data);
@@ -545,11 +454,9 @@ pub extern "C" fn D_ConnectNetGame() {
 /// The diagnostic `DEH_printf` calls present in the C original are omitted in
 /// this port.
 ///
-/// Called from `D_DoomMain` after `D_ConnectNetGame`. Exported as
-/// `#[no_mangle]` so that `d_main.c` can call it directly. Corresponds to
+/// Called from `D_DoomMain` after `D_ConnectNetGame`. Corresponds to
 /// `D_CheckNetGame` in `d_net.c`.
-#[no_mangle]
-pub extern "C" fn D_CheckNetGame() {
+pub fn D_CheckNetGame() {
     unsafe {
         if netgame != 0 {
             autostart = 1;

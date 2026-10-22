@@ -50,22 +50,18 @@ pub const PT_EARLYOUT: c_int = 4;
 
 /// Top of the open vertical range through the last line tested by
 /// `P_LineOpening` (fixed-point map units). Read by `p_map.c`.
-#[no_mangle]
 pub static mut opentop: fixed_t = 0;
 
 /// Bottom of the open vertical range through the last line tested by
 /// `P_LineOpening` (fixed-point map units). Read by `p_map.c`.
-#[no_mangle]
 pub static mut openbottom: fixed_t = 0;
 
 /// Height of the open range (`opentop - openbottom`). Zero means the line is
 /// closed (impassable). Read by `p_map.c`.
-#[no_mangle]
 pub static mut openrange: fixed_t = 0;
 
 /// The lower of the two floor heights on either side of the last line tested
 /// by `P_LineOpening`. Used for step-up logic in `p_map.c`.
-#[no_mangle]
 pub static mut lowfloor: fixed_t = 0;
 
 /// Array of intercept records accumulated during a `P_PathTraverse` call.
@@ -74,7 +70,6 @@ pub static mut lowfloor: fixed_t = 0;
 /// parametric fraction `t` along the ray. The array is indexed via
 /// `intercept_p`. Entries beyond index `MAXINTERCEPTS_ORIGINAL` trigger
 /// `InterceptsOverrun` to emulate vanilla memory layout behaviour.
-#[no_mangle]
 pub static mut intercepts: [intercept_t; MAXINTERCEPTS] = [intercept_t {
     frac: 0,
     isaline: 0,
@@ -89,14 +84,12 @@ pub static mut intercepts: [intercept_t; MAXINTERCEPTS] = [intercept_t {
 /// call and advanced by `PIT_AddLineIntercepts` / `PIT_AddThingIntercepts`.
 /// `P_TraverseIntercepts` uses `intercept_p - intercepts` to know how many
 /// entries were collected.
-#[no_mangle]
 pub static mut intercept_p: *mut intercept_t = ptr::null_mut();
 
 /// The current path-traverse ray, set by `P_PathTraverse`.
 ///
 /// `PIT_AddLineIntercepts` and `PIT_AddThingIntercepts` read this to
 /// determine whether each line/thing crosses the ray.
-#[no_mangle]
 pub static mut trace: divline_t = divline_t {
     x: 0,
     y: 0,
@@ -119,8 +112,7 @@ static mut earlyout: c_int = 0;
 /// required (enemy AI, sound attenuation).
 ///
 /// Matches `P_AproxDistance` in `p_maputl.c`.
-#[no_mangle]
-pub extern "C" fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
+pub fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
     let dx = dx.wrapping_abs();
     let dy = dy.wrapping_abs();
     if dx < dy {
@@ -145,8 +137,7 @@ pub extern "C" fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
 /// # Safety
 /// `line` must be a valid, non-null pointer to an initialised `line_t` whose
 /// `v1` field points to a valid `vertex_t`.
-#[no_mangle]
-pub extern "C" fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> c_int {
+pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> c_int {
     unsafe {
         let line = &*line;
         if line.dx == 0 {
@@ -187,8 +178,7 @@ pub extern "C" fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -
 ///
 /// # Safety
 /// `line` must be a valid, non-null pointer to an initialised `divline_t`.
-#[no_mangle]
-pub extern "C" fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> c_int {
+pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> c_int {
     unsafe {
         let line = &*line;
         if line.dx == 0 {
@@ -237,8 +227,7 @@ pub extern "C" fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divlin
 /// `li` must be a valid, non-null pointer to an initialised `line_t` whose
 /// `v1` field points to a valid `vertex_t`. `dl` must be a valid, non-null,
 /// writable pointer to a `divline_t`.
-#[no_mangle]
-pub extern "C" fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
+pub fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
     unsafe {
         let li = &*li;
         let dl = &mut *dl;
@@ -267,8 +256,7 @@ pub extern "C" fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
 /// # Safety
 /// Both `v1` and `v2` must be valid, non-null pointers to initialised
 /// `divline_t` values.
-#[no_mangle]
-pub extern "C" fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> fixed_t {
+pub fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> fixed_t {
     unsafe {
         let v1 = &*v1;
         let v2 = &*v2;
@@ -300,8 +288,7 @@ pub extern "C" fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> f
 /// # Safety
 /// `tmbox` must point to at least 4 consecutive `c_int` values. `ld` must be
 /// a valid, non-null pointer to an initialised `line_t` with valid `v1`.
-#[no_mangle]
-pub extern "C" fn P_BoxOnLineSide(tmbox: *mut c_int, ld: *mut line_t) -> c_int {
+pub fn P_BoxOnLineSide(tmbox: *mut c_int, ld: *mut line_t) -> c_int {
     unsafe {
         let tmbox = std::slice::from_raw_parts_mut(tmbox, 4);
         let ld = &*ld;
@@ -365,8 +352,7 @@ pub extern "C" fn P_BoxOnLineSide(tmbox: *mut c_int, ld: *mut line_t) -> c_int {
 /// `linedef` must be a valid, non-null pointer to an initialised `line_t`.
 /// If the line is two-sided, `frontsector` and `backsector` must also be
 /// valid non-null pointers to initialised `sector_t` values.
-#[no_mangle]
-pub extern "C" fn P_LineOpening(linedef: *mut line_t) {
+pub fn P_LineOpening(linedef: *mut line_t) {
     unsafe {
         let linedef = &*linedef;
         if linedef.sidenum[1] == -1 {
@@ -412,8 +398,7 @@ pub extern "C" fn P_LineOpening(linedef: *mut line_t) {
 /// linked-list pointers (`snext`, `sprev`, `bnext`, `bprev`) must be either
 /// null or valid `mobj_t` pointers. The global blockmap arrays from
 /// `p_setup` must be initialised.
-#[no_mangle]
-pub extern "C" fn P_UnsetThingPosition(thing: *mut mobj_t) {
+pub fn P_UnsetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
         if (thing.flags & MF_NOSECTOR) == 0 {
@@ -473,8 +458,7 @@ pub extern "C" fn P_UnsetThingPosition(thing: *mut mobj_t) {
 /// # Safety
 /// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
 /// global map data (sectors, blockmap) from `p_setup` must be loaded.
-#[no_mangle]
-pub extern "C" fn P_SetThingPosition(thing: *mut mobj_t) {
+pub fn P_SetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
         let ss = crate::doom::r_main::R_PointInSubsector(thing.x, thing.y) as *mut subsector_t;
@@ -533,11 +517,10 @@ pub extern "C" fn P_SetThingPosition(thing: *mut mobj_t) {
 /// The global blockmap arrays from `p_setup` must be initialised. `func` must
 /// be a valid function pointer; it will be called with non-null `line_t`
 /// pointers from the loaded map data.
-#[no_mangle]
-pub extern "C" fn P_BlockLinesIterator(
+pub fn P_BlockLinesIterator(
     x: c_int,
     y: c_int,
-    func: Option<unsafe extern "C" fn(*mut line_t) -> c_uint>,
+    func: Option<unsafe fn(*mut line_t) -> c_uint>,
 ) -> c_uint {
     unsafe {
         if x < 0
@@ -582,11 +565,10 @@ pub extern "C" fn P_BlockLinesIterator(
 /// The global `blocklinks` array from `p_setup` must be initialised. `func`
 /// must be a valid function pointer; it will be called with non-null `mobj_t`
 /// pointers from the live thing-list.
-#[no_mangle]
-pub extern "C" fn P_BlockThingsIterator(
+pub fn P_BlockThingsIterator(
     x: c_int,
     y: c_int,
-    func: Option<unsafe extern "C" fn(*mut mobj_t) -> c_uint>,
+    func: Option<unsafe fn(*mut mobj_t) -> c_uint>,
 ) -> c_uint {
     unsafe {
         if x < 0
@@ -732,8 +714,7 @@ unsafe fn InterceptsOverrun(num_intercepts: c_int, intercept: *mut intercept_t) 
 /// `ld` must be a valid, non-null pointer to an initialised `line_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-#[no_mangle]
-pub extern "C" fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
+pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
     unsafe {
         let ld = &*ld;
         let (s1, s2) = if trace.dx > FRACUNIT * 16
@@ -812,8 +793,7 @@ pub extern "C" fn PIT_AddLineIntercepts(ld: *mut line_t) -> c_uint {
 /// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-#[no_mangle]
-pub extern "C" fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
+pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
     unsafe {
         let thing = &*thing;
         // C: tracepositive = (trace.dx ^ trace.dy)>0;
@@ -880,9 +860,8 @@ pub extern "C" fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> c_uint {
 /// `func` must be a valid function pointer. `intercepts` and `intercept_p`
 /// must be in a consistent state as set by `P_PathTraverse` / the `PIT_Add*`
 /// callbacks.
-#[no_mangle]
-pub extern "C" fn P_TraverseIntercepts(
-    func: Option<unsafe extern "C" fn(*mut intercept_t) -> c_uint>,
+pub fn P_TraverseIntercepts(
+    func: Option<unsafe fn(*mut intercept_t) -> c_uint>,
     maxfrac: fixed_t,
 ) -> c_uint {
     unsafe {
@@ -937,14 +916,13 @@ pub extern "C" fn P_TraverseIntercepts(
 /// # Safety
 /// The global map data from `p_setup` must be loaded. `trav` must be a valid
 /// function pointer or `None`. All coordinates are in fixed-point map units.
-#[no_mangle]
-pub extern "C" fn P_PathTraverse(
+pub fn P_PathTraverse(
     x1: fixed_t,
     y1: fixed_t,
     x2: fixed_t,
     y2: fixed_t,
     flags: c_int,
-    trav: Option<unsafe extern "C" fn(*mut intercept_t) -> c_uint>,
+    trav: Option<unsafe fn(*mut intercept_t) -> c_uint>,
 ) -> c_uint {
     unsafe {
         earlyout = flags & PT_EARLYOUT;
@@ -1009,7 +987,7 @@ pub extern "C" fn P_PathTraverse(
                 && P_BlockLinesIterator(
                     mapx,
                     mapy,
-                    Some(PIT_AddLineIntercepts as unsafe extern "C" fn(*mut line_t) -> c_uint),
+                    Some(PIT_AddLineIntercepts as unsafe fn(*mut line_t) -> c_uint),
                 ) == 0
             {
                 return 0;
@@ -1018,7 +996,7 @@ pub extern "C" fn P_PathTraverse(
                 && P_BlockThingsIterator(
                     mapx,
                     mapy,
-                    Some(PIT_AddThingIntercepts as unsafe extern "C" fn(*mut mobj_t) -> c_uint),
+                    Some(PIT_AddThingIntercepts as unsafe fn(*mut mobj_t) -> c_uint),
                 ) == 0
             {
                 return 0;

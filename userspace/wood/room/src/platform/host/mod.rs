@@ -1,27 +1,15 @@
 //! Host platform: a winit window, a wgpu renderer and rodio audio.
 //!
-//! [`run`] drives the engine from the winit event loop (`app`); the audio
-//! hooks live in `audio`. This module provides the six C-callable functions
-//! that doomgeneric requires from a platform back-end:
-//!
-//! | C function | Purpose |
-//! |------------|---------|
-//! | `DG_Init` | Platform initialisation (window / GPU already set up) |
-//! | `DG_DrawFrame` | Present the current frame from `DG_ScreenBuffer` |
-//! | `DG_SleepMs` | Sleep for a number of milliseconds |
-//! | `DG_GetTicksMs` | Return elapsed milliseconds since startup |
-//! | `DG_GetKey` | Pop the next keyboard event from the queue |
-//! | `DG_SetWindowTitle` | Update the OS window title |
-//!
-//! All functions are exported with `#[no_mangle]` so the C linker can
-//! resolve the symbols when linking the doomgeneric static library.
+//! [`run`] drives the engine from the winit event loop (`app`) on [`Host`],
+//! the [`Platform`] implementation below; the sound and music it delegates
+//! to live in `audio`.
 //!
 //! ## Global state
 //!
-//! Because these functions are called from C code (which has no concept of
-//! Rust ownership), all shared mutable state is stored in [`thread_local!`]
-//! statics protected by [`std::cell::RefCell`].  This is safe because
-//! **all** calls originate from the main thread (the winit event loop).
+//! The window, GPU, key queue and clock are stored in [`thread_local!`]
+//! statics protected by [`std::cell::RefCell`], which [`Host`]'s methods
+//! reach.  This is safe because **all** calls originate from the main thread
+//! (the winit event loop).
 //!
 //! This design is an intentional *functional approximation* of the original
 //! C globals, to be refactored towards idiomatic Rust in future iterations.
@@ -36,12 +24,14 @@ pub use app::run;
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
-    ffi::{c_char, CStr},
+    ffi::CStr,
     sync::Arc,
     time::Instant,
 };
 
 use winit::window::Window;
+
+use room::doom::doomgeneric::Platform;
 
 use gpu::GpuState;
 
@@ -49,7 +39,7 @@ use gpu::GpuState;
 // Thread-local platform state
 // ---------------------------------------------------------------------------
 
-// GPU, window, keyboard and time state used by the DG_* callbacks.
+// GPU, window, keyboard and time state used by `Host`.
 // Doc comments are deliberately omitted on the macro invocation since
 // rustdoc does not process comments attached to `thread_local!` calls.
 thread_local! {
@@ -59,12 +49,12 @@ thread_local! {
     // OS window handle used for title updates.
     pub(crate) static WINDOW: RefCell<Option<Arc<Window>>> = const { RefCell::new(None) };
 
-    // Keyboard event queue consumed by `DG_GetKey`.
+    // Keyboard event queue consumed by `Host::key`.
     // Each entry is `(pressed, doom_key_byte)`.
     pub(crate) static KEY_QUEUE: RefCell<VecDeque<(bool, u8)>> =
         const { RefCell::new(VecDeque::new()) };
 
-    // Absolute time of programme launch, used by `DG_GetTicksMs`.
+    // Absolute time of programme launch, used by `Host::ticks_ms`.
     static START_TIME: Cell<Option<Instant>> = const { Cell::new(None) };
 
     // Set to `true` when the user asks to close the window.
@@ -75,133 +65,118 @@ thread_local! {
 // Initialisation helper
 // ---------------------------------------------------------------------------
 
-/// Record the programme start time so [`DG_GetTicksMs`] can compute elapsed
-/// milliseconds.  Must be called once, before `doomgeneric_Create`.
+/// Record the programme start time so [`Host::ticks_ms`] can compute
+/// elapsed milliseconds.  Must be called once, before `doomgeneric_Create`.
 pub fn init_start_time() {
     START_TIME.with(|t| t.set(Some(Instant::now())));
 }
 
 // ---------------------------------------------------------------------------
-// DG_* callbacks (C-callable)
+// The platform
 // ---------------------------------------------------------------------------
 
-/// Initialise the platform back-end.
-///
-/// Called by doomgeneric once, inside `doomgeneric_Create`, before the first
-/// game tick.  Because the window and GPU are created by the winit event loop
-/// *before* `doomgeneric_Create` is called, this function is a no-op: all
-/// resources are already available.
-#[no_mangle]
-pub extern "C" fn DG_Init() {
-    log::debug!("DG_Init: platform already initialised");
-}
+/// The host platform the engine runs on.
+pub struct Host;
 
-/// Present the current Doom frame to the screen.
-///
-/// Called by the engine's `I_FinishUpdate` function at the end of each
-/// rendered frame.  Reads pixels from the C-owned `DG_ScreenBuffer` (640 ×
-/// 400 pixels in BGRA8 format) and uploads them to the wgpu texture, then
-/// issues a render pass that blits the texture to the surface.
-///
-/// # Safety
-///
-/// `DG_ScreenBuffer` must be non-null and point to at least
-/// `DOOMGENERIC_RESX * DOOMGENERIC_RESY * 4` bytes of valid memory.
-/// This is guaranteed by `doomgeneric_Create`, which allocates the buffer
-/// before calling `DG_Init`.
-#[no_mangle]
-pub extern "C" fn DG_DrawFrame() {
-    // SAFETY: DG_ScreenBuffer is allocated by doomgeneric_Create and is
-    // valid for DOOMGENERIC_PIXELS * 4 bytes.
-    let pixel_bytes = unsafe {
-        let ptr = room::doom::doomgeneric::DG_ScreenBuffer as *const u8;
-        if ptr.is_null() {
-            log::warn!("DG_DrawFrame: DG_ScreenBuffer is null, skipping frame");
-            return;
-        }
-        std::slice::from_raw_parts(ptr, room::doom::doomgeneric::DOOMGENERIC_PIXELS * 4)
-    };
-
-    GPU.with_borrow(|opt| {
-        if let Some(gpu) = opt.as_ref() {
-            if let Err(e) = gpu.render(pixel_bytes) {
-                log::warn!("DG_DrawFrame: render error: {e}");
-            }
-        } else {
-            log::warn!("DG_DrawFrame: GPU state not ready");
-        }
-    });
-}
-
-/// Sleep the calling thread for `ms` milliseconds.
-///
-/// Used by the engine to throttle the game loop when running ahead of
-/// the target tick rate.
-#[no_mangle]
-pub extern "C" fn DG_SleepMs(ms: u32) {
-    std::thread::sleep(std::time::Duration::from_millis(u64::from(ms)));
-}
-
-/// Return the number of milliseconds elapsed since `doomgeneric_Create`.
-///
-/// The engine uses this to drive its fixed-rate game loop.
-#[no_mangle]
-pub extern "C" fn DG_GetTicksMs() -> u32 {
-    START_TIME.with(|t| {
-        t.get()
-            .map(|start| start.elapsed().as_millis() as u32)
-            .unwrap_or(0)
-    })
-}
-
-/// Pop the next keyboard event from the queue.
-///
-/// Returns `1` if an event was available, `0` if the queue is empty.
-/// On success, writes the pressed state (1 = pressed, 0 = released) to
-/// `*pressed` and the Doom key byte to `*doom_key`.
-///
-/// # Safety
-///
-/// `pressed` and `doom_key` must be valid, non-null pointers to writable
-/// memory for their respective types.
-#[no_mangle]
-pub extern "C" fn DG_GetKey(pressed: *mut i32, doom_key: *mut u8) -> i32 {
-    KEY_QUEUE.with_borrow_mut(|q| {
-        if let Some((is_pressed, key)) = q.pop_front() {
-            // SAFETY: caller guarantees the pointers are valid.
-            unsafe {
-                *pressed = i32::from(is_pressed);
-                *doom_key = key;
-            }
-            1
-        } else {
-            0
-        }
-    })
-}
-
-/// Update the OS window title.
-///
-/// Called by the engine when it discovers the game description from the
-/// loaded WAD file (e.g. "The Ultimate DOOM").
-///
-/// # Safety
-///
-/// `title` must be a valid, null-terminated C string for the duration of
-/// this call.
-#[no_mangle]
-pub extern "C" fn DG_SetWindowTitle(title: *const c_char) {
-    if title.is_null() {
-        return;
+impl Platform for Host {
+    /// The winit event loop creates the window and GPU before
+    /// `doomgeneric_Create` is called, so there is nothing left to do.
+    fn init(&self) {
+        log::debug!("Host::init: platform already initialised");
     }
 
-    // SAFETY: caller guarantees `title` is a valid C string.
-    let s = unsafe { CStr::from_ptr(title) };
-    let title_str = s.to_string_lossy();
+    /// Upload `frame` (640 × 400 pixels in BGRA8 format) to the wgpu texture
+    /// and blit it to the surface.
+    fn draw_frame(&self, frame: &[u32]) {
+        GPU.with_borrow(|opt| {
+            if let Some(gpu) = opt.as_ref() {
+                if let Err(e) = gpu.render(bytemuck::cast_slice(frame)) {
+                    log::warn!("Host::draw_frame: render error: {e}");
+                }
+            } else {
+                log::warn!("Host::draw_frame: GPU state not ready");
+            }
+        });
+    }
 
-    WINDOW.with_borrow(|w| {
-        if let Some(window) = w.as_ref() {
-            window.set_title(&title_str);
-        }
-    });
+    /// Sleep the calling thread; the engine throttles its loop with it.
+    fn sleep_ms(&self, ms: u32) {
+        std::thread::sleep(std::time::Duration::from_millis(u64::from(ms)));
+    }
+
+    /// Milliseconds since [`init_start_time`].
+    fn ticks_ms(&self) -> u32 {
+        START_TIME.with(|t| {
+            t.get()
+                .map(|start| start.elapsed().as_millis() as u32)
+                .unwrap_or(0)
+        })
+    }
+
+    /// Pop the next keyboard event the event loop queued.
+    fn key(&self) -> Option<(bool, u8)> {
+        KEY_QUEUE.with_borrow_mut(VecDeque::pop_front)
+    }
+
+    /// Update the OS window title, e.g. to "The Ultimate DOOM".
+    fn set_window_title(&self, title: &CStr) {
+        let title = title.to_string_lossy();
+        WINDOW.with_borrow(|w| {
+            if let Some(window) = w.as_ref() {
+                window.set_title(&title);
+            }
+        });
+    }
+
+    fn sound_init(&self) -> bool {
+        audio::sound_init()
+    }
+
+    fn sound_shutdown(&self) {
+        audio::sound_shutdown();
+    }
+
+    fn sound_start(&self, lump: &[u8], channel: usize, vol: i32, sep: i32) -> bool {
+        audio::sound_start(lump, channel, vol, sep)
+    }
+
+    fn sound_stop(&self, channel: usize) {
+        audio::sound_stop(channel);
+    }
+
+    fn sound_update(&self, channel: usize, vol: i32, sep: i32) {
+        audio::sound_update(channel, vol, sep);
+    }
+
+    fn sound_is_playing(&self, channel: usize) -> bool {
+        audio::sound_is_playing(channel)
+    }
+
+    fn music_init(&self) {
+        audio::music_init();
+    }
+
+    fn music_play(&self, midi: &[u8], looping: bool) {
+        audio::music_play(midi, looping);
+    }
+
+    fn music_stop(&self) {
+        audio::music_stop();
+    }
+
+    fn music_pause(&self) {
+        audio::music_pause();
+    }
+
+    fn music_resume(&self) {
+        audio::music_resume();
+    }
+
+    fn music_set_volume(&self, volume: i32) {
+        audio::music_set_volume(volume);
+    }
+
+    fn music_is_playing(&self) -> bool {
+        audio::music_is_playing()
+    }
 }

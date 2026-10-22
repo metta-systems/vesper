@@ -100,15 +100,12 @@ use crate::doom::{
 type CffiMobj = crate::doom::c_ffi::mobj_t;
 
 /// Horizontal weapon-bob offset; updated each tic by `P_CalcSwing`.
-#[no_mangle]
 pub static mut swingx: fixed_t = 0;
 
 /// Vertical weapon-bob offset; updated each tic by `P_CalcSwing`.
-#[no_mangle]
 pub static mut swingy: fixed_t = 0;
 
 /// Slope set by `P_BulletSlope` for near-miss aiming; read by `P_GunShot`.
-#[no_mangle]
 pub static mut bulletslope: fixed_t = 0;
 
 /// Transition a psprite slot to a new state, running action functions until a
@@ -121,8 +118,7 @@ pub static mut bulletslope: fixed_t = 0;
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
 /// `position` must be in `0..NUMPSPRITES`.  `stnum` must be a valid state
 /// index or `S_NULL` (0).
-#[no_mangle]
-pub unsafe extern "C" fn P_SetPsprite(player: *mut PlayerT, position: c_int, stnum: c_int) {
+pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: c_int, stnum: c_int) {
     let psp = (*player).psprites.as_mut_ptr().add(position as usize);
 
     let mut stnum = stnum;
@@ -143,8 +139,7 @@ pub unsafe extern "C" fn P_SetPsprite(player: *mut PlayerT, position: c_int, stn
 
         // Call action routine.
         if let Some(action) = (*state).action {
-            let action: unsafe extern "C" fn(*mut PlayerT, *mut PspdefT) =
-                std::mem::transmute(action);
+            let action: unsafe fn(*mut PlayerT, *mut PspdefT) = std::mem::transmute(action);
             action(player, psp);
             if (*psp).state.is_null() {
                 break;
@@ -166,8 +161,7 @@ pub unsafe extern "C" fn P_SetPsprite(player: *mut PlayerT, position: c_int, stn
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_CalcSwing(player: *mut PlayerT) {
+pub unsafe fn P_CalcSwing(player: *mut PlayerT) {
     let swing = (*player).bob;
 
     let mut angle = (FINEANGLES as c_int / 70 * leveltime) & FINEMASK;
@@ -183,8 +177,7 @@ pub unsafe extern "C" fn P_CalcSwing(player: *mut PlayerT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_BringUpWeapon(player: *mut PlayerT) {
+pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
     if (*player).pendingweapon == wp_nochange {
         (*player).pendingweapon = (*player).readyweapon;
     }
@@ -208,8 +201,7 @@ pub unsafe extern "C" fn P_BringUpWeapon(player: *mut PlayerT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_CheckAmmo(player: *mut PlayerT) -> c_int {
+pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> c_int {
     let ammo = weaponinfo[(*player).readyweapon as usize].ammo;
 
     let count: c_int;
@@ -284,8 +276,7 @@ pub unsafe extern "C" fn P_CheckAmmo(player: *mut PlayerT) -> c_int {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn P_FireWeapon(player: *mut PlayerT) {
+pub unsafe fn P_FireWeapon(player: *mut PlayerT) {
     if P_CheckAmmo(player) == 0 {
         return;
     }
@@ -301,8 +292,7 @@ pub unsafe extern "C" fn P_FireWeapon(player: *mut PlayerT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_DropWeapon(player: *mut PlayerT) {
+pub unsafe fn P_DropWeapon(player: *mut PlayerT) {
     P_SetPsprite(
         player,
         0,
@@ -319,8 +309,7 @@ pub unsafe extern "C" fn P_DropWeapon(player: *mut PlayerT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.  `psp` must point to the
 /// weapon psprite slot.
-#[no_mangle]
-pub unsafe extern "C" fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
 
     // Get out of attack state.
@@ -372,8 +361,7 @@ pub unsafe extern "C" fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) 
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn A_ReFire(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_ReFire(player: *mut PlayerT, _psp: *mut PspdefT) {
     if (*player).cmd.buttons & BT_ATTACK != 0
         && (*player).pendingweapon == wp_nochange
         && (*player).health != 0
@@ -394,8 +382,7 @@ pub unsafe extern "C" fn A_ReFire(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn A_CheckReload(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_CheckReload(player: *mut PlayerT, _psp: *mut PspdefT) {
     P_CheckAmmo(player);
 }
 
@@ -408,8 +395,7 @@ pub unsafe extern "C" fn A_CheckReload(player: *mut PlayerT, _psp: *mut PspdefT)
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
 /// `psp` must point to the weapon psprite slot.
-#[no_mangle]
-pub unsafe extern "C" fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
     (*psp).sy += LOWERSPEED;
 
     // Is already down.
@@ -443,8 +429,7 @@ pub unsafe extern "C" fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
 /// `psp` must point to the weapon psprite slot.
-#[no_mangle]
-pub unsafe extern "C" fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
     (*psp).sy -= RAISESPEED;
 
     if (*psp).sy > WEAPONTOP {
@@ -464,8 +449,7 @@ pub unsafe extern "C" fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     P_SetMobjState(mo, S_PLAY_ATK2);
     P_SetPsprite(
@@ -484,8 +468,7 @@ pub unsafe extern "C" fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
 
     let mut damage = ((P_Random() % 10) + 1) << 1;
@@ -520,8 +503,7 @@ pub unsafe extern "C" fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
 
     let damage = 2 * ((P_Random() % 10) + 1);
@@ -585,8 +567,7 @@ unsafe fn DecreaseAmmo(player: *mut PlayerT, ammonum: c_int, amount: c_int) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
     P_SpawnPlayerMissile(mo, MT_ROCKET);
@@ -599,8 +580,7 @@ pub unsafe extern "C" fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT)
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     DecreaseAmmo(
         player,
@@ -617,8 +597,7 @@ pub unsafe extern "C" fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
 
@@ -638,8 +617,7 @@ pub unsafe extern "C" fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) 
 /// # Safety
 ///
 /// `mo` must be a valid, non-null pointer to an initialised `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn P_BulletSlope(mo: *mut mobj_t) {
+pub unsafe fn P_BulletSlope(mo: *mut mobj_t) {
     let mut an = (*mo).angle;
     bulletslope = P_AimLineAttack(mo as *mut _ as *mut CffiMobj, an, 16 * 64 * FRACUNIT);
 
@@ -662,8 +640,7 @@ pub unsafe extern "C" fn P_BulletSlope(mo: *mut mobj_t) {
 /// `mo` must be a valid, non-null pointer to an initialised `mobj_t`.
 /// `P_BulletSlope` must have been called before this function so that
 /// `bulletslope` is valid.
-#[no_mangle]
-pub unsafe extern "C" fn P_GunShot(mo: *mut mobj_t, accurate: c_int) {
+pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: c_int) {
     let damage = 5 * ((P_Random() % 3) + 1);
     let mut angle = (*mo).angle;
 
@@ -686,8 +663,7 @@ pub unsafe extern "C" fn P_GunShot(mo: *mut mobj_t, accurate: c_int) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     S_StartSound(mo as *mut c_void, Sfx::Pistol as c_int);
 
@@ -710,8 +686,7 @@ pub unsafe extern "C" fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) 
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     S_StartSound(mo as *mut c_void, Sfx::Shotgn as c_int);
     P_SetMobjState(mo, S_PLAY_ATK2);
@@ -738,8 +713,7 @@ pub unsafe extern "C" fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT)
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     S_StartSound(mo as *mut c_void, Sfx::Dshtgn as c_int);
     P_SetMobjState(mo, S_PLAY_ATK2);
@@ -777,8 +751,7 @@ pub unsafe extern "C" fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT
 /// whose `mo` field points to a valid `mobj_t`.  `psp` must point to the
 /// weapon psprite slot which must currently be in state `S_CHAIN1` or
 /// `S_CHAIN2`.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo as *mut mobj_t;
     S_StartSound(mo as *mut c_void, Sfx::Pistol as c_int);
 
@@ -805,8 +778,7 @@ pub unsafe extern "C" fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn A_Light0(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_Light0(player: *mut PlayerT, _psp: *mut PspdefT) {
     (*player).extralight = 0;
 }
 
@@ -816,8 +788,7 @@ pub unsafe extern "C" fn A_Light0(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn A_Light1(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_Light1(player: *mut PlayerT, _psp: *mut PspdefT) {
     (*player).extralight = 1;
 }
 
@@ -827,8 +798,7 @@ pub unsafe extern "C" fn A_Light1(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn A_Light2(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_Light2(player: *mut PlayerT, _psp: *mut PspdefT) {
     (*player).extralight = 2;
 }
 
@@ -842,8 +812,7 @@ pub unsafe extern "C" fn A_Light2(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `mo` must be a valid, non-null pointer to an `mobj_t` whose `target` field
 /// points to a valid player `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_BFGSpray(mo: *mut mobj_t) {
+pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
     for i in 0..40 {
         let an = (*mo).angle - ANG90 / 2 + (ANG90 / 40) * i as u32;
 
@@ -884,8 +853,7 @@ pub unsafe extern "C" fn A_BFGSpray(mo: *mut mobj_t) {
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
+pub unsafe fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
     S_StartSound((*player).mo as *mut c_void, Sfx::Bfg as c_int);
 }
 
@@ -896,8 +864,7 @@ pub unsafe extern "C" fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_SetupPsprites(player: *mut PlayerT) {
+pub unsafe fn P_SetupPsprites(player: *mut PlayerT) {
     for i in 0..NUMPSPRITES {
         (*player).psprites[i].state = std::ptr::null_mut();
     }
@@ -912,8 +879,7 @@ pub unsafe extern "C" fn P_SetupPsprites(player: *mut PlayerT) {
 /// # Safety
 ///
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-#[no_mangle]
-pub unsafe extern "C" fn P_MovePsprites(player: *mut PlayerT) {
+pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
     let mut psp = (*player).psprites.as_mut_ptr();
 
     for i in 0..NUMPSPRITES {
@@ -933,50 +899,6 @@ pub unsafe extern "C" fn P_MovePsprites(player: *mut PlayerT) {
 
     (*player).psprites[1].sx = (*player).psprites[0].sx;
     (*player).psprites[1].sy = (*player).psprites[0].sy;
-}
-
-/// Dummy function whose body references every `#[no_mangle]` symbol exported
-/// by this module so that link-time dead-code elimination cannot strip them.
-///
-/// Must be reachable from at least one path the linker considers live; it is
-/// never actually called at runtime.
-#[no_mangle]
-pub extern "C" fn P_Pspr_Link_Anchor() {
-    unsafe {
-        let _ = swingx as usize;
-        let _ = swingy as usize;
-        let _ = bulletslope as usize;
-    }
-    let _ = P_SetPsprite as *const () as usize;
-    let _ = P_CalcSwing as *const () as usize;
-    let _ = P_BringUpWeapon as *const () as usize;
-    let _ = P_CheckAmmo as *const () as usize;
-    let _ = P_FireWeapon as *const () as usize;
-    let _ = P_DropWeapon as *const () as usize;
-    let _ = A_WeaponReady as *const () as usize;
-    let _ = A_ReFire as *const () as usize;
-    let _ = A_CheckReload as *const () as usize;
-    let _ = A_Lower as *const () as usize;
-    let _ = A_Raise as *const () as usize;
-    let _ = A_GunFlash as *const () as usize;
-    let _ = A_Punch as *const () as usize;
-    let _ = A_Saw as *const () as usize;
-    let _ = A_FireMissile as *const () as usize;
-    let _ = A_FireBFG as *const () as usize;
-    let _ = A_FirePlasma as *const () as usize;
-    let _ = P_BulletSlope as *const () as usize;
-    let _ = P_GunShot as *const () as usize;
-    let _ = A_FirePistol as *const () as usize;
-    let _ = A_FireShotgun as *const () as usize;
-    let _ = A_FireShotgun2 as *const () as usize;
-    let _ = A_FireCGun as *const () as usize;
-    let _ = A_Light0 as *const () as usize;
-    let _ = A_Light1 as *const () as usize;
-    let _ = A_Light2 as *const () as usize;
-    let _ = A_BFGSpray as *const () as usize;
-    let _ = A_BFGsound as *const () as usize;
-    let _ = P_SetupPsprites as *const () as usize;
-    let _ = P_MovePsprites as *const () as usize;
 }
 
 #[cfg(test)]

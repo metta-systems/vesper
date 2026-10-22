@@ -54,10 +54,8 @@ pub struct SHA1Context {
 ///
 /// Must be called before the first `SHA1_Update`. The `buf` field is left
 /// untouched (its contents are only ever read up to `count` bytes, and
-/// `count` is reset to 0 here). Exported with C linkage for legacy call
-/// sites.
-#[no_mangle]
-pub extern "C" fn SHA1_Init(hd: *mut SHA1Context) {
+/// `count` is reset to 0 here).
+pub fn SHA1_Init(hd: *mut SHA1Context) {
     unsafe {
         let hd = &mut *hd;
         hd.h0 = 0x67452301;
@@ -334,8 +332,7 @@ fn sha1_update(hd: &mut SHA1Context, inbuf: Option<&[u8]>) {
 /// * If `inbuf` is non-null, it must point to at least `inlen` readable
 ///   bytes that do not alias `hd`.
 /// * If `inbuf` is null, `inlen` is ignored.
-#[no_mangle]
-pub unsafe extern "C" fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen: usize) {
+pub unsafe fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen: usize) {
     let hd = &mut *hd;
     if inbuf.is_null() {
         sha1_update(hd, None);
@@ -361,8 +358,7 @@ pub unsafe extern "C" fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen
 ///   the duration of the call.
 /// * `digest` must point to at least 20 writable bytes that do not alias
 ///   `hd`.
-#[no_mangle]
-pub unsafe extern "C" fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
+pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
     let hd = &mut *hd;
 
     sha1_update(hd, None);
@@ -447,8 +443,7 @@ pub unsafe extern "C" fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
 /// `context` must be a valid, properly aligned pointer to a `SHA1Context`
 /// previously initialised with `SHA1_Init`, valid for read and write for
 /// the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn SHA1_UpdateInt32(context: *mut SHA1Context, val: c_uint) {
+pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: c_uint) {
     let context = &mut *context;
     let buf = [
         ((val >> 24) & 0xff) as u8,
@@ -473,8 +468,7 @@ pub unsafe extern "C" fn SHA1_UpdateInt32(context: *mut SHA1Context, val: c_uint
 ///   the duration of the call.
 /// * `str` must point to a valid NUL-terminated C string. Memory up to and
 ///   including the NUL must be readable.
-#[no_mangle]
-pub unsafe extern "C" fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut c_char) {
+pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, str: *mut c_char) {
     let context = &mut *context;
     let cstr = std::ffi::CStr::from_ptr(str);
     let bytes = cstr.to_bytes_with_nul();

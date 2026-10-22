@@ -41,8 +41,8 @@
 //!
 //! # Rust port notes
 //!
-//! All driver functions are `extern "C"` and stored as function pointers
-//! in the public `mode_*` statics consumed by `i_video.c`. The pointer
+//! All driver functions are stored as function pointers in the public
+//! `mode_*` statics consumed by `i_video`. The pointer
 //! arithmetic mirrors the C source exactly (raw `*mut u8`, byte indexing
 //! into `src_buffer`/`dest_buffer`). The per-scale-factor stretch/squash
 //! drivers in C were each a unique unrolled function; the Rust port
@@ -118,12 +118,7 @@ static mut half_stretch_table: *mut u8 = ptr::null_mut();
 ///   reported height.
 /// - The buffers must outlive every driver call until the next
 ///   `I_InitScale` invocation.
-#[no_mangle]
-pub unsafe extern "C" fn I_InitScale(
-    _src_buffer: *mut u8,
-    _dest_buffer: *mut u8,
-    _dest_pitch: c_int,
-) {
+pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pitch: c_int) {
     src_buffer = _src_buffer;
     dest_buffer = _dest_buffer;
     dest_pitch = _dest_pitch;
@@ -144,7 +139,7 @@ pub unsafe extern "C" fn I_InitScale(
 ///
 /// Callable only after [`I_InitScale`] has installed valid buffers; the
 /// rectangle must lie within `[0, SCREENWIDTH) x [0, SCREENHEIGHT)`.
-unsafe extern "C" fn i_scale_1x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_1x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
     let w = (x2 - x1) as usize;
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
     let mut screenp = dest_buffer.add((y1 * dest_pitch + x1) as usize);
@@ -212,7 +207,7 @@ unsafe fn scale_nx<const N: usize>(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe extern "C" fn i_scale_2x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_2x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
     scale_nx::<2>(x1, y1, x2, y2)
 }
 
@@ -222,7 +217,7 @@ unsafe extern "C" fn i_scale_2x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe extern "C" fn i_scale_3x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_3x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
     scale_nx::<3>(x1, y1, x2, y2)
 }
 
@@ -232,7 +227,7 @@ unsafe extern "C" fn i_scale_3x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe extern "C" fn i_scale_4x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_4x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
     scale_nx::<4>(x1, y1, x2, y2)
 }
 
@@ -242,7 +237,7 @@ unsafe extern "C" fn i_scale_4x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c
 /// # Safety
 ///
 /// See [`scale_nx`].
-unsafe extern "C" fn i_scale_5x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
+unsafe fn i_scale_5x(x1: c_int, y1: c_int, x2: c_int, y2: c_int) -> c_int {
     scale_nx::<5>(x1, y1, x2, y2)
 }
 
@@ -397,7 +392,7 @@ unsafe fn generate_stretch_table(palette: *mut u8, pct: c_int) -> *mut u8 {
 /// # Safety
 ///
 /// See [`generate_stretch_table`].
-unsafe extern "C" fn i_init_stretch_tables(palette: *mut u8) {
+unsafe fn i_init_stretch_tables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         return;
     }
@@ -417,7 +412,7 @@ unsafe extern "C" fn i_init_stretch_tables(palette: *mut u8) {
 /// # Safety
 ///
 /// See [`generate_stretch_table`].
-unsafe extern "C" fn i_init_squash_table(palette: *mut u8) {
+unsafe fn i_init_squash_table(palette: *mut u8) {
     if !half_stretch_table.is_null() {
         return;
     }
@@ -440,8 +435,7 @@ unsafe extern "C" fn i_init_squash_table(palette: *mut u8) {
 /// - `palette` must satisfy `find_nearest_color`'s contract.
 /// - Any pointers previously handed out from the `stretch_tables` /
 ///   `half_stretch_table` statics are invalidated by this call.
-#[no_mangle]
-pub unsafe extern "C" fn I_ResetScaleTables(palette: *mut u8) {
+pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         Z_Free(stretch_tables[0] as *mut c_void);
         Z_Free(stretch_tables[1] as *mut c_void);
@@ -474,7 +468,7 @@ pub unsafe extern "C" fn I_ResetScaleTables(palette: *mut u8) {
 ///
 /// See [`I_InitScale`]; additionally [`i_init_stretch_tables`] must
 /// have been called so [`stretch_tables`] is populated.
-unsafe extern "C" fn i_stretch_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -530,7 +524,7 @@ unsafe extern "C" fn i_stretch_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe extern "C" fn i_stretch_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -599,7 +593,7 @@ unsafe extern "C" fn i_stretch_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe extern "C" fn i_stretch_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -682,7 +676,7 @@ unsafe extern "C" fn i_stretch_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe extern "C" fn i_stretch_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -778,7 +772,7 @@ unsafe extern "C" fn i_stretch_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int
 /// # Safety
 ///
 /// See [`i_stretch_1x`].
-unsafe extern "C" fn i_stretch_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_stretch_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1049,7 +1043,7 @@ unsafe fn write_squashed_line_5x(dest: *mut u8, src: *mut u8) {
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_1x`].
-unsafe extern "C" fn i_squash_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1072,7 +1066,7 @@ unsafe extern "C" fn i_squash_1x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int)
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_2x`].
-unsafe extern "C" fn i_squash_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1095,7 +1089,7 @@ unsafe extern "C" fn i_squash_2x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int)
 ///
 /// See [`i_stretch_1x`]; additionally [`half_stretch_table`] must be
 /// populated.
-unsafe extern "C" fn i_squash_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1117,7 +1111,7 @@ unsafe extern "C" fn i_squash_3x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int)
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_4x`].
-unsafe extern "C" fn i_squash_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1139,7 +1133,7 @@ unsafe extern "C" fn i_squash_4x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int)
 ///
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_5x`].
-unsafe extern "C" fn i_squash_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
+unsafe fn i_squash_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int) -> c_int {
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1159,8 +1153,6 @@ unsafe extern "C" fn i_squash_5x(_x1: c_int, _y1: c_int, _x2: c_int, _y2: c_int)
 
 /// 320x200 pixel-doubling mode (1:1 source copy, no aspect correction).
 /// `poor_quality = 0` because the output is pixel-exact, just not 4:3.
-/// Exported via `#[no_mangle]` so `i_video.c` can select it by symbol.
-#[no_mangle]
 pub static mut mode_scale_1x: screen_mode_t = screen_mode_t {
     width: 320,
     height: 200,
@@ -1170,7 +1162,6 @@ pub static mut mode_scale_1x: screen_mode_t = screen_mode_t {
 };
 
 /// 640x400 pixel-doubling mode (2x). Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_scale_2x: screen_mode_t = screen_mode_t {
     width: 640,
     height: 400,
@@ -1180,7 +1171,6 @@ pub static mut mode_scale_2x: screen_mode_t = screen_mode_t {
 };
 
 /// 960x600 pixel-doubling mode (3x). Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_scale_3x: screen_mode_t = screen_mode_t {
     width: 960,
     height: 600,
@@ -1190,7 +1180,6 @@ pub static mut mode_scale_3x: screen_mode_t = screen_mode_t {
 };
 
 /// 1280x800 pixel-doubling mode (4x). Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_scale_4x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 800,
@@ -1200,7 +1189,6 @@ pub static mut mode_scale_4x: screen_mode_t = screen_mode_t {
 };
 
 /// 1600x1000 pixel-doubling mode (5x). Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_scale_5x: screen_mode_t = screen_mode_t {
     width: 1600,
     height: 1000,
@@ -1214,7 +1202,6 @@ pub static mut mode_scale_5x: screen_mode_t = screen_mode_t {
 /// visible interpolation banding; consumers default to a pixel-doubled
 /// mode when possible. Uses `i_init_stretch_tables` to populate the
 /// blend lookups on first selection. Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_stretch_1x: screen_mode_t = screen_mode_t {
     width: 320,
     height: 240,
@@ -1225,7 +1212,6 @@ pub static mut mode_stretch_1x: screen_mode_t = screen_mode_t {
 
 /// 640x480 aspect-corrected stretch mode (2x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_stretch_2x: screen_mode_t = screen_mode_t {
     width: 640,
     height: 480,
@@ -1236,7 +1222,6 @@ pub static mut mode_stretch_2x: screen_mode_t = screen_mode_t {
 
 /// 960x720 aspect-corrected stretch mode (3x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_stretch_3x: screen_mode_t = screen_mode_t {
     width: 960,
     height: 720,
@@ -1247,7 +1232,6 @@ pub static mut mode_stretch_3x: screen_mode_t = screen_mode_t {
 
 /// 1280x960 aspect-corrected stretch mode (4x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_stretch_4x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 960,
@@ -1258,7 +1242,6 @@ pub static mut mode_stretch_4x: screen_mode_t = screen_mode_t {
 
 /// 1600x1200 aspect-corrected stretch mode (5x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_stretch_5x: screen_mode_t = screen_mode_t {
     width: 1600,
     height: 1200,
@@ -1270,7 +1253,6 @@ pub static mut mode_stretch_5x: screen_mode_t = screen_mode_t {
 /// 256x200 aspect-corrected squash mode. Flagged `poor_quality = 1`
 /// because horizontal compression is more visible than the equivalent
 /// vertical stretch. Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_squash_1x: screen_mode_t = screen_mode_t {
     width: 256,
     height: 200,
@@ -1281,7 +1263,6 @@ pub static mut mode_squash_1x: screen_mode_t = screen_mode_t {
 
 /// 512x400 aspect-corrected squash mode (2x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_squash_2x: screen_mode_t = screen_mode_t {
     width: 512,
     height: 400,
@@ -1293,7 +1274,6 @@ pub static mut mode_squash_2x: screen_mode_t = screen_mode_t {
 /// 800x600 aspect-corrected squash mode (3x). The only mode that uses
 /// the 50/50 `half_stretch_table`, populated by
 /// `i_init_squash_table`. Exported for `i_video.c`.
-#[no_mangle]
 pub static mut mode_squash_3x: screen_mode_t = screen_mode_t {
     width: 800,
     height: 600,
@@ -1304,7 +1284,6 @@ pub static mut mode_squash_3x: screen_mode_t = screen_mode_t {
 
 /// 1024x800 aspect-corrected squash mode (4x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_squash_4x: screen_mode_t = screen_mode_t {
     width: 1024,
     height: 800,
@@ -1315,7 +1294,6 @@ pub static mut mode_squash_4x: screen_mode_t = screen_mode_t {
 
 /// 1280x1000 aspect-corrected squash mode (5x). Exported for
 /// `i_video.c`.
-#[no_mangle]
 pub static mut mode_squash_5x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 1000,

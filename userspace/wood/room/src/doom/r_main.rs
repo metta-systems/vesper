@@ -83,13 +83,11 @@ type lighttable_t = u8;
 /// Additive angle offset applied to the player's map angle before rendering,
 /// used by the automap and demo-playback angle overrides. Zero during normal
 /// gameplay.
-#[no_mangle]
 pub static mut viewangleoffset: c_int = 0;
 
 /// Monotonically incrementing counter; bumped once per frame in
 /// [`R_SetupFrame`]. Sectors and linedefs tag themselves with `validcount`
 /// when first visited in a frame so they are not processed twice.
-#[no_mangle]
 pub static mut validcount: c_int = 1;
 
 /// Active fixed colormap pointer, or null when no override is in effect.
@@ -98,33 +96,28 @@ pub static mut validcount: c_int = 1;
 /// light-amp powerup active (`player.fixedcolormap != 0`). When non-null,
 /// all walls, floors, and sprites use this single colormap instead of the
 /// distance-based `scalelight`/`zlight` entries.
-#[no_mangle]
 pub static mut fixedcolormap: *mut lighttable_t = ptr::null_mut();
 
 /// X coordinate of the viewport centre in screen pixels.
 ///
 /// Recomputed by [`R_ExecuteSetViewSize`] whenever the view size changes.
-#[no_mangle]
 pub static mut centerx: c_int = 0;
 
 /// Y coordinate of the viewport centre in screen pixels.
 ///
 /// Recomputed by [`R_ExecuteSetViewSize`] whenever the view size changes.
-#[no_mangle]
 pub static mut centery: c_int = 0;
 
 /// [`centerx`] expressed as a 16.16 fixed-point value (`centerx << FRACBITS`).
 ///
 /// Used by [`R_InitTextureMapping`] and projection arithmetic in
 /// [`R_ExecuteSetViewSize`].
-#[no_mangle]
 pub static mut centerxfrac: fixed_t = 0;
 
 /// [`centery`] expressed as a 16.16 fixed-point value (`centery << FRACBITS`).
 ///
 /// Precomputed by [`R_ExecuteSetViewSize`]; used by wall and sprite renderers
 /// in `r_segs` and `r_things` to project top/bottom screen coordinates.
-#[no_mangle]
 pub static mut centeryfrac: fixed_t = 0;
 
 /// Fixed-point focal length (horizontal projection constant).
@@ -132,44 +125,36 @@ pub static mut centeryfrac: fixed_t = 0;
 /// Equal to `centerxfrac`; used by [`R_ScaleFromGlobalAngle`] and the
 /// texture mapping setup in [`R_InitTextureMapping`]. Represents the
 /// distance from the eye to the projection plane in fixed-point units.
-#[no_mangle]
 pub static mut projection: fixed_t = 0;
 
 /// Number of frames rendered since [`R_Init`] was called.
 ///
 /// Incremented once per frame in [`R_SetupFrame`]. Used for profiling.
-#[no_mangle]
 pub static mut framecount: c_int = 0;
 
 /// Number of subsectors drawn in the current frame.
 ///
 /// Reset to zero in [`R_SetupFrame`]; incremented in `r_bsp`. Used for
 /// profiling.
-#[no_mangle]
 pub static mut sscount: c_int = 0;
 
 /// Number of linedefs processed in the current frame (profiling counter).
-#[no_mangle]
 pub static mut linecount: c_int = 0;
 
 /// Number of BSP traversal iterations in the current frame (profiling
 /// counter).
-#[no_mangle]
 pub static mut loopcount: c_int = 0;
 
 /// View position X in map fixed-point units. Set each frame by
 /// [`R_SetupFrame`] from the player mobj's `x` field.
-#[no_mangle]
 pub static mut viewx: fixed_t = 0;
 
 /// View position Y in map fixed-point units. Set each frame by
 /// [`R_SetupFrame`] from the player mobj's `y` field.
-#[no_mangle]
 pub static mut viewy: fixed_t = 0;
 
 /// View height Z in map fixed-point units (player eye height). Set each
 /// frame by [`R_SetupFrame`] from `player.viewz`.
-#[no_mangle]
 pub static mut viewz: fixed_t = 0;
 
 /// Current view angle as a Binary Angle Measurement (BAM) `u32`.
@@ -177,30 +162,25 @@ pub static mut viewz: fixed_t = 0;
 /// Set each frame in [`R_SetupFrame`] from the player mobj angle plus
 /// [`viewangleoffset`]. Used throughout the BSP traversal and texture
 /// mapping pipeline.
-#[no_mangle]
 pub static mut viewangle: angle_t = 0;
 
 /// `cos(viewangle)` in 16.16 fixed-point. Precomputed each frame in
 /// [`R_SetupFrame`] for fast world-space projection.
-#[no_mangle]
 pub static mut viewcos: fixed_t = 0;
 
 /// `sin(viewangle)` in 16.16 fixed-point. Precomputed each frame in
 /// [`R_SetupFrame`] for fast world-space projection.
-#[no_mangle]
 pub static mut viewsin: fixed_t = 0;
 
 /// Pointer to the player struct whose view is currently being rendered.
 ///
 /// Set at the start of each frame by [`R_SetupFrame`]; read by several
 /// renderer subsystems that need player-specific state (e.g. weapon sprites).
-#[no_mangle]
 pub static mut viewplayer: *mut PlayerT = ptr::null_mut();
 
 /// Detail level shift: `0` = high detail, `1` = low detail (half-width
 /// columns doubled horizontally). Controls which column/span draw functions
 /// are active and affects several scaling calculations.
-#[no_mangle]
 pub static mut detailshift: c_int = 0;
 
 /// Half the horizontal field of view as a BAM angle.
@@ -208,7 +188,6 @@ pub static mut detailshift: c_int = 0;
 /// Set by [`R_InitTextureMapping`] to `xtoviewangle[0]` - the largest view
 /// angle that still maps to screen column 0. Used by the BSP clipper in
 /// `r_bsp` to cull out-of-frustum segs.
-#[no_mangle]
 pub static mut clipangle: angle_t = 0;
 
 /// Maps fine-angle index to screen X column.
@@ -221,7 +200,6 @@ pub static mut clipangle: angle_t = 0;
 // r_bsp.rs originally declared this as [c_int; FINEANGLES/2 + 1] to guard
 // against a potential off-by-one in the original C code. Keep the same
 // size so the two modules agree.
-#[no_mangle]
 pub static mut viewangletox: [c_int; tables::FINEANGLES / 2 + 1] = [0; tables::FINEANGLES / 2 + 1];
 
 /// Maps screen X column to the smallest view angle that projects onto that
@@ -229,7 +207,6 @@ pub static mut viewangletox: [c_int; tables::FINEANGLES / 2 + 1] = [0; tables::F
 ///
 /// `xtoviewangle[x]` gives the left-edge angle of the frustum slice at
 /// column `x`. Sized `SCREENWIDTH + 1` to include the right-edge sentinel.
-#[no_mangle]
 pub static mut xtoviewangle: [angle_t; SCREENWIDTH + 1] = [0; SCREENWIDTH + 1];
 
 /// Distance-to-light lookup table indexed by `[light_level][scale]`.
@@ -238,7 +215,6 @@ pub static mut xtoviewangle: [angle_t; SCREENWIDTH + 1] = [0; SCREENWIDTH + 1];
 /// derived from the sector light level, `j` from the projected wall/sprite
 /// scale. Recomputed by [`R_ExecuteSetViewSize`] because it depends on
 /// `viewwidth`.
-#[no_mangle]
 pub static mut scalelight: [[*mut lighttable_t; MAXLIGHTSCALE]; LIGHTLEVELS] =
     [[ptr::null_mut(); MAXLIGHTSCALE]; LIGHTLEVELS];
 
@@ -247,7 +223,6 @@ pub static mut scalelight: [[*mut lighttable_t; MAXLIGHTSCALE]; LIGHTLEVELS] =
 /// All `MAXLIGHTSCALE` entries are set to [`fixedcolormap`] in
 /// [`R_SetupFrame`], so that wall-light lookup code does not need a special
 /// case for fixed-colormap mode.
-#[no_mangle]
 pub static mut scalelightfixed: [*mut lighttable_t; MAXLIGHTSCALE] =
     [ptr::null_mut(); MAXLIGHTSCALE];
 
@@ -256,14 +231,12 @@ pub static mut scalelightfixed: [*mut lighttable_t; MAXLIGHTSCALE] =
 /// `zlight[i][j]` points into `colormaps`. Used for flat (floor/ceiling)
 /// and sprite lighting. Computed once in [`R_InitLightTables`] (unlike
 /// `scalelight`, it does not depend on `viewwidth`).
-#[no_mangle]
 pub static mut zlight: [[*mut lighttable_t; MAXLIGHTZ]; LIGHTLEVELS] =
     [[ptr::null_mut(); MAXLIGHTZ]; LIGHTLEVELS];
 
 /// Additional light bonus added to the sector's base light level, produced
 /// by muzzle flashes and similar effects. Set each frame from
 /// `player.extralight` in [`R_SetupFrame`].
-#[no_mangle]
 pub static mut extralight: c_int = 0;
 
 /// Active column-drawing function pointer.
@@ -271,55 +244,47 @@ pub static mut extralight: c_int = 0;
 /// Points to either the normal or low-detail column renderer; may be
 /// temporarily overridden by `r_things` to a fuzz or translated variant.
 /// Reset to `basecolfunc` after each sprite.
-#[no_mangle]
-pub static mut colfunc: Option<unsafe extern "C" fn()> = None;
+pub static mut colfunc: Option<unsafe fn()> = None;
 
 /// Base (unmodified) column-drawing function pointer.
 ///
 /// Always points to the standard solid-column renderer for the current
 /// detail level (`R_DrawColumn` or `R_DrawColumnLow`). Used to restore
 /// `colfunc` after drawing special-effect sprites.
-#[no_mangle]
-pub static mut basecolfunc: Option<unsafe extern "C" fn()> = None;
+pub static mut basecolfunc: Option<unsafe fn()> = None;
 
 /// Fuzz (partial-invisibility) column-drawing function pointer.
 ///
 /// Points to `R_DrawFuzzColumn` or `R_DrawFuzzColumnLow` depending on the
 /// active detail level.
-#[no_mangle]
-pub static mut fuzzcolfunc: Option<unsafe extern "C" fn()> = None;
+pub static mut fuzzcolfunc: Option<unsafe fn()> = None;
 
 /// Translated (palette-remapped) column-drawing function pointer.
 ///
 /// Points to `R_DrawTranslatedColumn` or `R_DrawTranslatedColumnLow`.
 /// Used for colored player sprites in multiplayer.
-#[no_mangle]
-pub static mut transcolfunc: Option<unsafe extern "C" fn()> = None;
+pub static mut transcolfunc: Option<unsafe fn()> = None;
 
 /// Horizontal span (floor/ceiling) drawing function pointer.
 ///
 /// Points to `R_DrawSpan` or `R_DrawSpanLow` depending on the active
 /// detail level.
-#[no_mangle]
-pub static mut spanfunc: Option<unsafe extern "C" fn()> = None;
+pub static mut spanfunc: Option<unsafe fn()> = None;
 
 /// Flag set by [`R_SetViewSize`] when a view-size change is pending.
 ///
 /// [`R_ExecuteSetViewSize`] checks this at the start of each frame and
 /// applies the pending change if set. The deferred approach avoids changing
 /// viewport dimensions mid-frame.
-#[no_mangle]
 pub static mut setsizeneeded: Boolean = Boolean::FALSE;
 
 /// Pending viewport block size (1-11). Set by [`R_SetViewSize`] and
 /// consumed by [`R_ExecuteSetViewSize`]. Value 11 selects full-screen
 /// rendering.
-#[no_mangle]
 pub static mut setblocks: c_int = 0;
 
 /// Pending detail level (0 = high, 1 = low). Set by [`R_SetViewSize`] and
 /// consumed by [`R_ExecuteSetViewSize`].
-#[no_mangle]
 pub static mut setdetail: c_int = 0;
 
 // ---------------------------------------------------------------------------
@@ -355,8 +320,7 @@ use crate::doom::{
 /// # Safety
 /// `box_` must point to a valid, writable array of at least four `fixed_t`
 /// values laid out in [`BBox`] index order.
-#[no_mangle]
-pub unsafe extern "C" fn R_AddPointToBox(x: c_int, y: c_int, box_: *mut fixed_t) {
+pub unsafe fn R_AddPointToBox(x: c_int, y: c_int, box_: *mut fixed_t) {
     if x < *box_.add(BBox::LEFT) {
         *box_.add(BBox::LEFT) = x;
     }
@@ -385,8 +349,7 @@ pub unsafe extern "C" fn R_AddPointToBox(x: c_int, y: c_int, box_: *mut fixed_t)
 ///
 /// # Safety
 /// `node` must be a valid, non-null pointer to a [`node_t`].
-#[no_mangle]
-pub unsafe extern "C" fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> c_int {
+pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> c_int {
     if (*node).dx == 0 {
         if x <= (*node).x {
             return ((*node).dy > 0) as c_int;
@@ -435,8 +398,7 @@ pub unsafe extern "C" fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node
 /// # Safety
 /// `line` must be a valid, non-null pointer to a [`seg_t`] whose `v1` and
 /// `v2` vertex pointers are also valid.
-#[no_mangle]
-pub unsafe extern "C" fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> c_int {
+pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> c_int {
     let lx = (*(*line).v1).x;
     let ly = (*(*line).v1).y;
 
@@ -551,8 +513,7 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
 /// # Safety
 /// Reads the global [`viewx`] and [`viewy`]; these must have been
 /// initialised by [`R_SetupFrame`] before this function is called.
-#[no_mangle]
-pub unsafe extern "C" fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
+pub unsafe fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
     point_to_angle_from_delta(x - viewx, y - viewy)
 }
 
@@ -571,15 +532,8 @@ pub unsafe extern "C" fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
 /// trick removed.
 ///
 /// # Safety
-/// Pure computation; takes no globals. Marked `unsafe extern "C"` only to
-/// keep the C ABI for callers linked against the legacy engine.
-#[no_mangle]
-pub unsafe extern "C" fn R_PointToAngle2(
-    x1: fixed_t,
-    y1: fixed_t,
-    x2: fixed_t,
-    y2: fixed_t,
-) -> angle_t {
+/// Pure computation; takes no globals.
+pub unsafe fn R_PointToAngle2(x1: fixed_t, y1: fixed_t, x2: fixed_t, y2: fixed_t) -> angle_t {
     point_to_angle_from_delta(x2 - x1, y2 - y1)
 }
 
@@ -598,8 +552,7 @@ pub unsafe extern "C" fn R_PointToAngle2(
 /// # Safety
 /// Reads [`viewx`] and [`viewy`], which must have been set by
 /// [`R_SetupFrame`] before this is called in a rendering context.
-#[no_mangle]
-pub unsafe extern "C" fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
+pub unsafe fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
     let mut dx = (x - viewx).wrapping_abs();
     let mut dy = (y - viewy).wrapping_abs();
 
@@ -623,10 +576,7 @@ pub unsafe extern "C" fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
 /// In the original Doom source, `R_InitPointToAngle` built the `tantoangle`
 /// lookup table at runtime. The table is now precomputed in `tables.c` (and
 /// `tables.rs`), so this function has no work to do.
-///
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub extern "C" fn R_InitPointToAngle() {
+pub fn R_InitPointToAngle() {
     // UNUSED - now getting from tables.c
 }
 
@@ -651,8 +601,7 @@ pub extern "C" fn R_InitPointToAngle() {
 /// Reads [`viewangle`], [`projection`], [`detailshift`], and the `r_segs`
 /// globals [`rw_distance`] and [`rw_normalangle`]. All must be initialised
 /// before calling.
-#[no_mangle]
-pub unsafe extern "C" fn R_ScaleFromGlobalAngle(visangle: angle_t) -> fixed_t {
+pub unsafe fn R_ScaleFromGlobalAngle(visangle: angle_t) -> fixed_t {
     let anglea = ANG90.wrapping_add(visangle.wrapping_sub(viewangle));
     let angleb = ANG90.wrapping_add(visangle.wrapping_sub(rw_normalangle));
 
@@ -679,10 +628,7 @@ pub unsafe extern "C" fn R_ScaleFromGlobalAngle(visangle: angle_t) -> fixed_t {
 /// In the original source, `R_InitTables` computed `finetangent` and
 /// `finesine` at runtime. Both tables are now precomputed in `tables.c`
 /// (and `tables.rs`).
-///
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
-pub extern "C" fn R_InitTables() {
+pub fn R_InitTables() {
     // UNUSED: now getting from tables.c
 }
 
@@ -704,8 +650,7 @@ pub extern "C" fn R_InitTables() {
 /// Reads and writes numerous renderer globals ([`viewwidth`],
 /// [`centerxfrac`], [`clipangle`], etc.). Must be called after [`viewwidth`]
 /// and [`centerxfrac`] have been set by [`R_ExecuteSetViewSize`].
-#[no_mangle]
-pub unsafe extern "C" fn R_InitTextureMapping() {
+pub unsafe fn R_InitTextureMapping() {
     // Use tangent table to generate viewangletox:
     //  viewangletox will give the next greatest x after the view angle.
     //
@@ -777,8 +722,7 @@ pub unsafe extern "C" fn R_InitTextureMapping() {
 /// # Safety
 /// Reads `colormaps` from `r_data`; that pointer must be non-null and point
 /// to `NUMCOLORMAPS * 256` valid bytes. Called during startup by [`R_Init`].
-#[no_mangle]
-pub unsafe extern "C" fn R_InitLightTables() {
+pub unsafe fn R_InitLightTables() {
     for i in 0..LIGHTLEVELS {
         let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as c_int;
         for j in 0..MAXLIGHTZ {
@@ -816,8 +760,7 @@ pub unsafe extern "C" fn R_InitLightTables() {
 /// # Safety
 /// Writes three renderer globals; safe to call from any context as long as
 /// no other thread reads those globals concurrently (single-threaded engine).
-#[no_mangle]
-pub unsafe extern "C" fn R_SetViewSize(blocks: c_int, detail: c_int) {
+pub unsafe fn R_SetViewSize(blocks: c_int, detail: c_int) {
     setsizeneeded = Boolean::TRUE;
     setblocks = blocks;
     setdetail = detail;
@@ -844,8 +787,7 @@ pub unsafe extern "C" fn R_SetViewSize(blocks: c_int, detail: c_int) {
 /// # Safety
 /// Writes a large number of renderer globals and calls several initialisation
 /// helpers. Must not be called while a frame render is in progress.
-#[no_mangle]
-pub unsafe extern "C" fn R_ExecuteSetViewSize() {
+pub unsafe fn R_ExecuteSetViewSize() {
     setsizeneeded = Boolean::FALSE;
 
     if setblocks == 11 {
@@ -943,8 +885,7 @@ pub unsafe extern "C" fn R_ExecuteSetViewSize() {
 /// # Safety
 /// Initialises global renderer state; must be called exactly once before any
 /// frame is rendered. Calls multiple unsafe initialisers internally.
-#[no_mangle]
-pub unsafe extern "C" fn R_Init() {
+pub unsafe fn R_Init() {
     R_InitData();
     libc::printf(c".".as_ptr());
     R_InitPointToAngle();
@@ -984,8 +925,7 @@ const NF_SUBSECTOR: u32 = 0x8000;
 /// Reads the `nodes` and `subsectors` arrays from `p_setup`; both must be
 /// fully populated (i.e. the map must have been loaded) before this function
 /// is called.
-#[no_mangle]
-pub unsafe extern "C" fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
+pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
     // single subsector is a special case
     if numnodes == 0 {
         return subsectors as *mut subsector_t;
@@ -1021,8 +961,7 @@ pub unsafe extern "C" fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subs
 /// # Safety
 /// `player` must be a valid, non-null pointer to a [`PlayerT`] whose `mo`
 /// mobj pointer is also valid. Reads and writes numerous renderer globals.
-#[no_mangle]
-pub unsafe extern "C" fn R_SetupFrame(player: *mut PlayerT) {
+pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
     viewplayer = player;
     let mo = (*player).mo as *mut mobj_t;
     viewx = (*mo).x;
@@ -1074,8 +1013,7 @@ pub unsafe extern "C" fn R_SetupFrame(player: *mut PlayerT) {
 /// `player` must be a valid, non-null pointer to a fully-initialised
 /// [`PlayerT`]. All renderer globals and map data must have been loaded and
 /// initialised prior to this call.
-#[no_mangle]
-pub unsafe extern "C" fn R_RenderPlayerView(player: *mut PlayerT) {
+pub unsafe fn R_RenderPlayerView(player: *mut PlayerT) {
     R_SetupFrame(player);
 
     R_ClearClipSegs();
@@ -1090,42 +1028,6 @@ pub unsafe extern "C" fn R_RenderPlayerView(player: *mut PlayerT) {
     NetUpdate();
     R_DrawMasked();
     NetUpdate();
-}
-
-// ---------------------------------------------------------------------------
-// Anchor
-// ---------------------------------------------------------------------------
-
-/// Force-references all exported symbols so the linker does not strip them.
-///
-/// Each renderer function is referenced as a raw function pointer, preventing
-/// dead-code elimination when the crate is compiled as a library linked into
-/// the C engine.
-///
-/// Exported as `#[no_mangle]` for C callers.
-///
-/// # Safety
-/// This function only takes addresses of functions; no actual calls are made.
-/// Safe to call at any time.
-#[no_mangle]
-pub unsafe extern "C" fn R_Main_Link_Anchor() {
-    let _ = R_AddPointToBox as *const () as usize;
-    let _ = R_PointOnSide as *const () as usize;
-    let _ = R_PointOnSegSide as *const () as usize;
-    let _ = R_PointToAngle as *const () as usize;
-    let _ = R_PointToAngle2 as *const () as usize;
-    let _ = R_PointToDist as *const () as usize;
-    let _ = R_InitPointToAngle as *const () as usize;
-    let _ = R_ScaleFromGlobalAngle as *const () as usize;
-    let _ = R_InitTables as *const () as usize;
-    let _ = R_InitTextureMapping as *const () as usize;
-    let _ = R_InitLightTables as *const () as usize;
-    let _ = R_SetViewSize as *const () as usize;
-    let _ = R_ExecuteSetViewSize as *const () as usize;
-    let _ = R_Init as *const () as usize;
-    let _ = R_PointInSubsector as *const () as usize;
-    let _ = R_SetupFrame as *const () as usize;
-    let _ = R_RenderPlayerView as *const () as usize;
 }
 
 // ---------------------------------------------------------------------------

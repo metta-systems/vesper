@@ -96,43 +96,35 @@ struct FB_ScreenInfo {
 /// Pointer to the palette-indexed Doom screen buffer. Allocated in
 /// the zone heap (`PU_STATIC`) during `I_InitGraphics`. Mirrors
 /// the C global `I_VideoBuffer`.
-#[no_mangle]
 pub static mut I_VideoBuffer: *mut u8 = ptr::null_mut();
 
 /// Non-zero when the screen is visible; the C source sets this to
 /// `true` after init and never clears it. Mirrors `screenvisible`.
-#[no_mangle]
 pub static mut screenvisible: c_int = 0;
 
 /// Non-zero if the engine is running as a screensaver. Always 0 in
 /// this port. Mirrors `screensaver_mode`.
-#[no_mangle]
 pub static mut screensaver_mode: c_int = 0;
 
 /// Gamma-correction level index into `gammatable`. Mirrors `usegamma`.
 /// Bound via `m_config` (in the C source).
-#[no_mangle]
 pub static mut usegamma: c_int = 0;
 
 /// DOS-style mouse acceleration factor. Movement above
 /// `mouse_threshold` is multiplied by this. Mirrors `mouse_acceleration`.
-#[no_mangle]
 pub static mut mouse_acceleration: c_float = 2.0;
 
 /// Mouse-movement threshold above which acceleration kicks in.
 /// Mirrors `mouse_threshold`.
-#[no_mangle]
 pub static mut mouse_threshold: c_int = 10;
 
 /// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
 /// 320x200 Doom buffer to fit the framebuffer. Picked automatically
 /// in `I_InitGraphics` or overridden with `-scaling <n>`.
-#[no_mangle]
 pub static mut fb_scaling: c_int = 1;
 
 /// Non-zero to enable mouse input. Always 0 in this port unless set
 /// by config. Mirrors `usemouse`.
-#[no_mangle]
 pub static mut usemouse: c_int = 0;
 
 /// Active 256-entry gamma-corrected palette. Filled from the WAD
@@ -171,16 +163,6 @@ static mut s_Fb: FB_ScreenInfo = FB_ScreenInfo {
         length: 0,
     },
 };
-
-extern "C" {
-    /// Platform hook called once per frame after `I_FinishUpdate` has
-    /// filled `DG_ScreenBuffer`. Implemented by the host front-end
-    /// (GPU / headless / Wayland backend).
-    fn DG_DrawFrame();
-    /// Platform hook called from `I_SetWindowTitle` to update the
-    /// host window title with a NUL-terminated C string.
-    fn DG_SetWindowTitle(title: *const c_char);
-}
 
 /// Convert `in_pixels` palette indices at `inp` into framebuffer
 /// pixels at `out`, picking 16-bpp (delegates to `cmap_to_rgb565`)
@@ -269,8 +251,7 @@ unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: c_int) {
 /// `fb_scaling`, `screenvisible`) and calls back into the zone
 /// allocator. Must be called exactly once at startup before any
 /// other I_* graphics function.
-#[no_mangle]
-pub unsafe extern "C" fn I_InitGraphics() {
+pub unsafe fn I_InitGraphics() {
     s_Fb = mem::zeroed::<FB_ScreenInfo>();
     s_Fb.xres = super::doomgeneric::DOOMGENERIC_RESX as u32;
     s_Fb.yres = super::doomgeneric::DOOMGENERIC_RESY as u32;
@@ -363,8 +344,7 @@ pub unsafe extern "C" fn I_InitGraphics() {
 /// Calls into the zone allocator. After return, `I_VideoBuffer` is
 /// null - callers must not access it without calling
 /// `I_InitGraphics` again.
-#[no_mangle]
-pub unsafe extern "C" fn I_ShutdownGraphics() {
+pub unsafe fn I_ShutdownGraphics() {
     Z_Free(I_VideoBuffer as *mut c_void);
     I_VideoBuffer = ptr::null_mut();
 }
@@ -374,10 +354,9 @@ pub unsafe extern "C" fn I_ShutdownGraphics() {
 ///
 /// # Safety
 ///
-/// Trivially safe; declared `unsafe extern "C"` to match the
-/// engine's expected signature.
-#[no_mangle]
-pub unsafe extern "C" fn I_StartFrame() {}
+/// Trivially safe; declared `unsafe` to match the engine's expected
+/// signature.
+pub unsafe fn I_StartFrame() {}
 
 /// Per-tic "start" hook. Pumps one input event via `I_GetEvent`.
 /// Mirrors `I_StartTic` from `i_video.c`.
@@ -385,8 +364,7 @@ pub unsafe extern "C" fn I_StartFrame() {}
 /// # Safety
 ///
 /// Forwards to `I_GetEvent`, which dereferences input-queue globals.
-#[no_mangle]
-pub unsafe extern "C" fn I_StartTic() {
+pub unsafe fn I_StartTic() {
     I_GetEvent();
 }
 
@@ -396,8 +374,7 @@ pub unsafe extern "C" fn I_StartTic() {
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_UpdateNoBlit() {}
+pub unsafe fn I_UpdateNoBlit() {}
 
 /// Blit and present one frame.
 ///
@@ -419,8 +396,7 @@ pub unsafe extern "C" fn I_UpdateNoBlit() {}
 /// writes a region of `DG_ScreenBuffer` whose extent depends on the
 /// framebuffer geometry. Caller must ensure both pointers are valid
 /// and the framebuffer is large enough for the configured layout.
-#[no_mangle]
-pub unsafe extern "C" fn I_FinishUpdate() {
+pub unsafe fn I_FinishUpdate() {
     let y_offset = (((s_Fb.yres as i32 - (SCREENHEIGHT as c_int * fb_scaling))
         * (s_Fb.bits_per_pixel as c_int / 8))
         / 2)
@@ -452,7 +428,11 @@ pub unsafe extern "C" fn I_FinishUpdate() {
         line_in = line_in.add(SCREENWIDTH as usize);
     }
 
-    DG_DrawFrame();
+    let frame = std::slice::from_raw_parts(
+        super::doomgeneric::DG_ScreenBuffer,
+        super::doomgeneric::DOOMGENERIC_PIXELS,
+    );
+    super::doomgeneric::platform().draw_frame(frame);
 }
 
 /// Copy the entire palette-indexed screen buffer into `scr`. Used by
@@ -462,8 +442,7 @@ pub unsafe extern "C" fn I_FinishUpdate() {
 ///
 /// `scr` must be writable for `SCREENWIDTH * SCREENHEIGHT` bytes.
 /// `I_VideoBuffer` must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn I_ReadScreen(scr: *mut u8) {
+pub unsafe fn I_ReadScreen(scr: *mut u8) {
     std::ptr::copy(I_VideoBuffer, scr, (SCREENWIDTH * SCREENHEIGHT) as usize);
 }
 
@@ -475,8 +454,7 @@ pub unsafe extern "C" fn I_ReadScreen(scr: *mut u8) {
 ///
 /// `palette` must point to at least `256 * 3` readable bytes. The
 /// function trusts `usegamma` to index `gammatable` in range.
-#[no_mangle]
-pub unsafe extern "C" fn I_SetPalette(palette: *mut u8) {
+pub unsafe fn I_SetPalette(palette: *mut u8) {
     let mut p = palette;
     for i in 0..256 {
         COLORS[i].a = 0;
@@ -506,8 +484,7 @@ pub unsafe extern "C" fn I_SetPalette(palette: *mut u8) {
 ///
 /// Reads `static mut COLORS`. The caller must have run `I_SetPalette`
 /// at least once and must not race a concurrent writer.
-#[no_mangle]
-pub unsafe extern "C" fn I_GetPaletteIndex(r: c_int, g: c_int, b: c_int) -> c_int {
+pub unsafe fn I_GetPaletteIndex(r: c_int, g: c_int, b: c_int) -> c_int {
     let r = r as i64;
     let g = g as i64;
     let b = b as i64;
@@ -539,26 +516,23 @@ pub unsafe extern "C" fn I_GetPaletteIndex(r: c_int, g: c_int, b: c_int) -> c_in
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_BeginRead() {}
+pub unsafe fn I_BeginRead() {}
 
 /// SDL-era hook to signal the end of a disk read. No-op here.
 ///
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_EndRead() {}
+pub unsafe fn I_EndRead() {}
 
-/// Set the host-window title via the platform `DG_SetWindowTitle`
-/// callback. Mirrors `I_SetWindowTitle` from `i_video.c`.
+/// Set the host-window title via [`Platform::set_window_title`](super::doomgeneric::Platform::set_window_title).
+/// Mirrors `I_SetWindowTitle` from `i_video.c`.
 ///
 /// # Safety
 ///
 /// `title` must be a valid NUL-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn I_SetWindowTitle(title: *mut c_char) {
-    DG_SetWindowTitle(title);
+pub unsafe fn I_SetWindowTitle(title: *mut c_char) {
+    super::doomgeneric::platform().set_window_title(std::ffi::CStr::from_ptr(title));
 }
 
 /// Parse video-related command-line switches. No-op in this port;
@@ -568,8 +542,7 @@ pub unsafe extern "C" fn I_SetWindowTitle(title: *mut c_char) {
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_GraphicsCheckCommandLine() {}
+pub unsafe fn I_GraphicsCheckCommandLine() {}
 
 /// Register a callback that returns whether the mouse should be
 /// grabbed by the window. No-op in this port (no mouse capture).
@@ -577,16 +550,14 @@ pub unsafe extern "C" fn I_GraphicsCheckCommandLine() {}
 /// # Safety
 ///
 /// Trivially safe; the callback argument is stored nowhere.
-#[no_mangle]
-pub unsafe extern "C" fn I_SetGrabMouseCallback(_func: extern "C" fn() -> Boolean) {}
+pub unsafe fn I_SetGrabMouseCallback(_func: fn() -> Boolean) {}
 
 /// Enable the disk-activity icon overlay. No-op in this port.
 ///
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_EnableLoadingDisk() {}
+pub unsafe fn I_EnableLoadingDisk() {}
 
 /// Bind video-related `m_config` variables. No-op in this port;
 /// chocolate-doom binds things like `fullscreen`, `aspect_ratio_correct`,
@@ -595,16 +566,14 @@ pub unsafe extern "C" fn I_EnableLoadingDisk() {}
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_BindVideoVariables() {}
+pub unsafe fn I_BindVideoVariables() {}
 
 /// Toggle the on-screen FPS dot indicator. No-op in this port.
 ///
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_DisplayFPSDots(_dots_on: Boolean) {}
+pub unsafe fn I_DisplayFPSDots(_dots_on: Boolean) {}
 
 /// Detect whether the engine was launched as a screensaver. No-op
 /// in this port; `screensaver_mode` stays 0.
@@ -612,42 +581,7 @@ pub unsafe extern "C" fn I_DisplayFPSDots(_dots_on: Boolean) {}
 /// # Safety
 ///
 /// Trivially safe.
-#[no_mangle]
-pub unsafe extern "C" fn I_CheckIsScreensaver() {}
-
-/// Link anchor referencing every public C symbol in this module so
-/// the linker keeps them all. Not part of the original Doom API.
-///
-/// # Safety
-///
-/// Passes null pointers everywhere and would crash if called.
-/// Treat as link-only.
-#[no_mangle]
-pub unsafe extern "C" fn I_Video_Link_Anchor() {
-    I_InitGraphics();
-    I_ShutdownGraphics();
-    I_StartFrame();
-    I_StartTic();
-    I_UpdateNoBlit();
-    I_FinishUpdate();
-    I_ReadScreen(ptr::null_mut());
-    I_SetPalette(ptr::null_mut());
-    I_GetPaletteIndex(0, 0, 0);
-    I_BeginRead();
-    I_EndRead();
-    I_SetWindowTitle(ptr::null_mut());
-    I_GraphicsCheckCommandLine();
-    /// Inert mouse-grab callback used only to take a function pointer for
-    /// `I_SetGrabMouseCallback`; never invoked at runtime.
-    extern "C" fn _grab_anchor() -> Boolean {
-        Boolean::FALSE
-    }
-    I_SetGrabMouseCallback(_grab_anchor);
-    I_EnableLoadingDisk();
-    I_BindVideoVariables();
-    I_DisplayFPSDots(Boolean::FALSE);
-    I_CheckIsScreensaver();
-}
+pub unsafe fn I_CheckIsScreensaver() {}
 
 #[cfg(test)]
 mod tests {

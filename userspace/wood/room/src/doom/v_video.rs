@@ -43,7 +43,7 @@ pub struct post_t {
 
 pub type column_t = post_t;
 
-pub type vpatchclipfunc_t = Option<extern "C" fn(*mut patch_t, c_int, c_int) -> c_int>;
+pub type vpatchclipfunc_t = Option<fn(*mut patch_t, c_int, c_int) -> c_int>;
 
 #[repr(C, packed)]
 struct pcx_t {
@@ -66,20 +66,16 @@ struct pcx_t {
     data: u8,
 }
 
-#[no_mangle]
 pub static mut tinttable: *mut u8 = ptr::null_mut();
 
-#[no_mangle]
 pub static mut xlatab: *mut u8 = ptr::null_mut();
 
-#[no_mangle]
 pub static mut dirtybox: [c_int; 4] = [0; 4];
 
 static mut dest_screen: *mut u8 = ptr::null_mut();
 static mut patchclip_callback: vpatchclipfunc_t = None;
 
-#[no_mangle]
-pub extern "C" fn V_MarkRect(x: c_int, y: c_int, width: c_int, height: c_int) {
+pub fn V_MarkRect(x: c_int, y: c_int, width: c_int, height: c_int) {
     unsafe {
         if dest_screen == I_VideoBuffer {
             M_AddToBox(std::ptr::addr_of_mut!(dirtybox[0]), x, y);
@@ -92,8 +88,7 @@ pub extern "C" fn V_MarkRect(x: c_int, y: c_int, width: c_int, height: c_int) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_CopyRect(
+pub fn V_CopyRect(
     srcx: c_int,
     srcy: c_int,
     source: *mut u8,
@@ -118,15 +113,13 @@ pub extern "C" fn V_CopyRect(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
+pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
     unsafe {
         patchclip_callback = func;
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -169,8 +162,7 @@ pub extern "C" fn V_DrawPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -215,13 +207,11 @@ pub extern "C" fn V_DrawPatchFlipped(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawPatchDirect(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawPatchDirect(x: c_int, y: c_int, patch: *mut patch_t) {
     V_DrawPatch(x, y, patch);
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -257,8 +247,7 @@ pub extern "C" fn V_DrawTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -300,8 +289,7 @@ pub extern "C" fn V_DrawXlaPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -337,8 +325,7 @@ pub extern "C" fn V_DrawAltTLPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
+pub fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     unsafe {
         let y = y - (*patch).topoffset as c_int;
         let x = x - (*patch).leftoffset as c_int;
@@ -379,22 +366,19 @@ pub extern "C" fn V_DrawShadowedPatch(x: c_int, y: c_int, patch: *mut patch_t) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_LoadTintTable() {
+pub fn V_LoadTintTable() {
     unsafe {
         tinttable = W_CacheLumpName(c"TINTTAB".as_ptr(), PU_STATIC) as *mut u8;
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_LoadXlaTable() {
+pub fn V_LoadXlaTable() {
     unsafe {
         xlatab = W_CacheLumpName(c"XLATAB".as_ptr(), PU_STATIC) as *mut u8;
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawBlock(x: c_int, y: c_int, width: c_int, height: c_int, src: *mut u8) {
+pub fn V_DrawBlock(x: c_int, y: c_int, width: c_int, height: c_int, src: *mut u8) {
     unsafe {
         V_MarkRect(x, y, width, height);
 
@@ -411,8 +395,7 @@ pub extern "C" fn V_DrawBlock(x: c_int, y: c_int, width: c_int, height: c_int, s
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawFilledBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
+pub fn V_DrawFilledBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
 
@@ -431,8 +414,7 @@ pub extern "C" fn V_DrawFilledBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_i
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawHorizLine(x: c_int, y: c_int, w: c_int, c: c_int) {
+pub fn V_DrawHorizLine(x: c_int, y: c_int, w: c_int, c: c_int) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
         let mut x1 = 0;
@@ -444,8 +426,7 @@ pub extern "C" fn V_DrawHorizLine(x: c_int, y: c_int, w: c_int, c: c_int) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawVertLine(x: c_int, y: c_int, h: c_int, c: c_int) {
+pub fn V_DrawVertLine(x: c_int, y: c_int, h: c_int, c: c_int) {
     unsafe {
         let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
         let mut y1 = 0;
@@ -457,42 +438,36 @@ pub extern "C" fn V_DrawVertLine(x: c_int, y: c_int, h: c_int, c: c_int) {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
+pub fn V_DrawBox(x: c_int, y: c_int, w: c_int, h: c_int, c: c_int) {
     V_DrawHorizLine(x, y, w, c);
     V_DrawHorizLine(x, y + h - 1, w, c);
     V_DrawVertLine(x, y, h, c);
     V_DrawVertLine(x + w - 1, y, h, c);
 }
 
-#[no_mangle]
-pub extern "C" fn V_DrawRawScreen(raw: *mut u8) {
+pub fn V_DrawRawScreen(raw: *mut u8) {
     unsafe {
         ptr::copy_nonoverlapping(raw, dest_screen, (SCREENWIDTH * SCREENHEIGHT) as usize);
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_Init() {
+pub fn V_Init() {
     // no-op
 }
 
-#[no_mangle]
-pub extern "C" fn V_UseBuffer(buffer: *mut u8) {
+pub fn V_UseBuffer(buffer: *mut u8) {
     unsafe {
         dest_screen = buffer;
     }
 }
 
-#[no_mangle]
-pub extern "C" fn V_RestoreBuffer() {
+pub fn V_RestoreBuffer() {
     unsafe {
         dest_screen = I_VideoBuffer;
     }
 }
 
-#[no_mangle]
-pub extern "C" fn WritePCXfile(
+pub fn WritePCXfile(
     filename: *mut c_char,
     data: *mut u8,
     width: c_int,
@@ -567,8 +542,7 @@ fn screenshot_filename(i: i32) -> [u8; 16] {
     buf
 }
 
-#[no_mangle]
-pub extern "C" fn V_ScreenShot(_format: *mut c_char) {
+pub fn V_ScreenShot(_format: *mut c_char) {
     unsafe {
         let mut i = 0;
         while i <= 99 {
@@ -597,8 +571,7 @@ pub extern "C" fn V_ScreenShot(_format: *mut c_char) {
 const MOUSE_SPEED_BOX_WIDTH: c_int = 120;
 const MOUSE_SPEED_BOX_HEIGHT: c_int = 9;
 
-#[no_mangle]
-pub extern "C" fn V_DrawMouseSpeedBox(speed: c_int) {
+pub fn V_DrawMouseSpeedBox(speed: c_int) {
     unsafe {
         let bgcolor = I_GetPaletteIndex(0x77, 0x77, 0x77);
         let bordercolor = I_GetPaletteIndex(0x55, 0x55, 0x55);
@@ -675,38 +648,6 @@ pub extern "C" fn V_DrawMouseSpeedBox(speed: c_int) {
             red,
         );
     }
-}
-
-extern "C" fn dummy_clip(_: *mut patch_t, _: c_int, _: c_int) -> c_int {
-    0
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn V_Video_Link_Anchor() {
-    V_MarkRect(0, 0, 0, 0);
-    V_CopyRect(0, 0, ptr::null_mut(), 0, 0, 0, 0);
-    V_SetPatchClipCallback(Some(dummy_clip));
-    V_DrawPatch(0, 0, ptr::null_mut());
-    V_DrawPatchFlipped(0, 0, ptr::null_mut());
-    V_DrawPatchDirect(0, 0, ptr::null_mut());
-    V_DrawTLPatch(0, 0, ptr::null_mut());
-    V_DrawXlaPatch(0, 0, ptr::null_mut());
-    V_DrawAltTLPatch(0, 0, ptr::null_mut());
-    V_DrawShadowedPatch(0, 0, ptr::null_mut());
-    V_LoadTintTable();
-    V_LoadXlaTable();
-    V_DrawBlock(0, 0, 0, 0, ptr::null_mut());
-    V_DrawFilledBox(0, 0, 0, 0, 0);
-    V_DrawHorizLine(0, 0, 0, 0);
-    V_DrawVertLine(0, 0, 0, 0);
-    V_DrawBox(0, 0, 0, 0, 0);
-    V_DrawRawScreen(ptr::null_mut());
-    V_Init();
-    V_UseBuffer(ptr::null_mut());
-    V_RestoreBuffer();
-    WritePCXfile(ptr::null_mut(), ptr::null_mut(), 0, 0, ptr::null_mut());
-    V_ScreenShot(ptr::null_mut());
-    V_DrawMouseSpeedBox(0);
 }
 
 #[cfg(test)]

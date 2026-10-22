@@ -166,8 +166,6 @@ type PLineThing = crate::doom::p_lights::line_t;
 
 /// Lookup table mapping each of the eight directions to its 180-degree opposite, with
 /// `DI_NODIR` mapping to `DI_NODIR`; indexed by `dirtype_t` in `P_NewChaseDir`.
-/// Has C linkage (`#[no_mangle]`); referenced from `p_enemy.c` (C test harness).
-#[no_mangle]
 pub static mut opposite: [dirtype_t; 9] = [
     DI_WEST,
     DI_SOUTHWEST,
@@ -181,13 +179,9 @@ pub static mut opposite: [dirtype_t; 9] = [
 ];
 /// Lookup table mapping the two-bit index `(deltay<0)<<1 | (deltax>0)` to a diagonal
 /// `dirtype_t`; used by `P_NewChaseDir` to prefer diagonal movement toward the target.
-/// Has C linkage (`#[no_mangle]`); referenced from `p_enemy.c` (C test harness).
-#[no_mangle]
 pub static mut diags: [dirtype_t; 4] = [DI_NORTHWEST, DI_NORTHEAST, DI_SOUTHWEST, DI_SOUTHEAST];
 /// The monster or player whose noise triggered the current `P_RecursiveSound` traversal;
 /// written by `P_NoiseAlert`, read by `P_RecursiveSound` to stamp each sector.
-/// Has C linkage (`#[no_mangle]`); referenced directly from `p_enemy.c`.
-#[no_mangle]
 pub static mut soundtarget: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
 /// Recursively floods sound through adjacent sectors, stamping each with `soundtarget`.
 ///
@@ -202,9 +196,8 @@ pub static mut soundtarget: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
 ///
 /// `sec` must point to a valid, live `sector_t`. All sector/sidedef/linedef
 /// pointers reachable from `sec` must also be valid. `soundtarget` must be null
-/// or point to a valid `mobj_t`. This function is called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_RecursiveSound(sec: *mut sector_t, soundblocks: c_int) {
+/// or point to a valid `mobj_t`.
+pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: c_int) {
     let mut i: c_int;
 
     let mut check: *mut line_t;
@@ -252,9 +245,8 @@ pub unsafe extern "C" fn P_RecursiveSound(sec: *mut sector_t, soundblocks: c_int
 /// # Safety
 ///
 /// `target` and `emmiter` must both be non-null, valid `mobj_t` pointers. `emmiter`
-/// must have a valid `subsector` with a valid `sector`. This function is called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
+/// must have a valid `subsector` with a valid `sector`.
+pub unsafe fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
     soundtarget = target;
     validcount += 1;
     P_RecursiveSound((*(*emmiter).subsector).sector as *mut sector_t, 0 as c_int);
@@ -268,9 +260,8 @@ pub unsafe extern "C" fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t)
 /// # Safety
 ///
 /// `actor` must be a valid, non-null `mobj_t`. If `actor->target` is non-null it must
-/// also point to a valid `mobj_t` with a valid `info` pointer. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_CheckMeleeRange(actor: *mut mobj_t) -> Boolean {
+/// also point to a valid `mobj_t` with a valid `info` pointer.
+pub unsafe fn P_CheckMeleeRange(actor: *mut mobj_t) -> Boolean {
     if (*actor).target.is_null() {
         return Boolean::FALSE;
     }
@@ -298,9 +289,7 @@ pub unsafe extern "C" fn P_CheckMeleeRange(actor: *mut mobj_t) -> Boolean {
 /// # Safety
 ///
 /// `actor` must be non-null and have a valid `target`, `info`, and `reactiontime`.
-/// Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
+pub unsafe fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
     let mut dist: fixed_t;
 
     if P_CheckSight(actor, (*actor).target) == 0 {
@@ -351,8 +340,6 @@ pub unsafe extern "C" fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
 }
 /// Per-direction X-axis speed multiplier table indexed by `dirtype_t` (0=East..7=Southeast).
 /// Each entry is a fixed-point unit (FRACUNIT or ~0.718*FRACUNIT for diagonals).
-/// Has C linkage (`#[no_mangle]`); referenced from `p_enemy.c` (C test harness).
-#[no_mangle]
 pub static mut xspeed: [fixed_t; 8] = [
     FRACUNIT,
     47000 as c_int,
@@ -365,8 +352,6 @@ pub static mut xspeed: [fixed_t; 8] = [
 ];
 /// Per-direction Y-axis speed multiplier table indexed by `dirtype_t` (0=East..7=Southeast).
 /// Each entry is a fixed-point unit (FRACUNIT or ~0.718*FRACUNIT for diagonals).
-/// Has C linkage (`#[no_mangle]`); referenced from `p_enemy.c` (C test harness).
-#[no_mangle]
 pub static mut yspeed: [fixed_t; 8] = [
     0 as c_int,
     47000 as c_int,
@@ -392,9 +377,8 @@ pub static mut yspeed: [fixed_t; 8] = [
 ///
 /// `actor` must be a non-null, valid `mobj_t` with valid `info`. All globals
 /// `floatok`, `tmfloorz`, `numspechit`, and `spechit` must be consistent with the
-/// most recent `P_TryMove` call. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_Move(actor: *mut mobj_t) -> Boolean {
+/// most recent `P_TryMove` call.
+pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
     let mut ld: *mut line_t;
 
     let mut good: Boolean;
@@ -458,9 +442,8 @@ pub unsafe extern "C" fn P_Move(actor: *mut mobj_t) -> Boolean {
 ///
 /// # Safety
 ///
-/// `actor` must be a non-null, valid `mobj_t`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_TryWalk(actor: *mut mobj_t) -> Boolean {
+/// `actor` must be a non-null, valid `mobj_t`.
+pub unsafe fn P_TryWalk(actor: *mut mobj_t) -> Boolean {
     if P_Move(actor).is_false() {
         return Boolean::FALSE;
     }
@@ -482,9 +465,8 @@ pub unsafe extern "C" fn P_TryWalk(actor: *mut mobj_t) -> Boolean {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid, non-null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_NewChaseDir(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid, non-null `target`.
+pub unsafe fn P_NewChaseDir(actor: *mut mobj_t) {
     let mut d: [dirtype_t; 3] = [DI_EAST; 3];
     let mut tdir: c_int;
 
@@ -590,9 +572,8 @@ pub unsafe extern "C" fn P_NewChaseDir(actor: *mut mobj_t) {
 /// # Safety
 ///
 /// `actor` must be a non-null, valid `mobj_t`. The global `players` array and
-/// `playeringame` flags must be consistent. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean) -> Boolean {
+/// `playeringame` flags must be consistent.
+pub unsafe fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean) -> Boolean {
     let mut c: c_int;
 
     let mut player: *mut PlayerT;
@@ -652,9 +633,8 @@ pub unsafe extern "C" fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean
 /// # Safety
 ///
 /// `mo` must be a non-null, valid `mobj_t`. The thinker list (`thinkercap`) must be
-/// consistent. Called from C via the state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_KeenDie(mo: *mut mobj_t) {
+/// consistent. Called through the state-machine action pointer.
+pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
     let mut th: *mut thinker_t;
 
     let mut mo2: *mut mobj_t;
@@ -680,11 +660,9 @@ pub unsafe extern "C" fn A_KeenDie(mo: *mut mobj_t) {
     while !std::ptr::eq(th, &raw const thinkercap) {
         if (*th).function.acp1
             == core::mem::transmute::<
-                Option<unsafe extern "C" fn(*mut mobj_t) -> ()>,
-                Option<unsafe extern "C" fn(*mut c_void) -> ()>,
-            >(Some(
-                P_MobjThinker as unsafe extern "C" fn(*mut mobj_t) -> (),
-            ))
+                Option<unsafe fn(*mut mobj_t) -> ()>,
+                Option<unsafe fn(*mut c_void) -> ()>,
+            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
             if mo2 != mo
@@ -710,9 +688,8 @@ pub unsafe extern "C" fn A_KeenDie(mo: *mut mobj_t) {
 /// # Safety
 ///
 /// `actor` must be a non-null, valid `mobj_t` with valid `subsector`, `info`, and
-/// `flags`. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_Look(actor: *mut mobj_t) {
+/// `flags`. Called through the state-machine action pointer.
+pub unsafe fn A_Look(actor: *mut mobj_t) {
     (*actor).threshold = 0 as c_int;
     let targ: *mut mobj_t = (*(*(*actor).subsector).sector).soundtarget as *mut mobj_t;
     '_seeyou: {
@@ -768,9 +745,8 @@ pub unsafe extern "C" fn A_Look(actor: *mut mobj_t) {
 /// # Safety
 ///
 /// `actor` must be a non-null, valid `mobj_t` with valid `info`. All referenced
-/// globals (`gameskill`, `fastparm`, `netgame`) must be initialised. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Chase(actor: *mut mobj_t) {
+/// globals (`gameskill`, `fastparm`, `netgame`) must be initialised.
+pub unsafe fn A_Chase(actor: *mut mobj_t) {
     let delta: c_int;
 
     if (*actor).reactiontime != 0 {
@@ -863,9 +839,8 @@ pub unsafe extern "C" fn A_Chase(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FaceTarget(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_FaceTarget(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -889,9 +864,8 @@ pub unsafe extern "C" fn A_FaceTarget(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_PosAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_PosAttack(actor: *mut mobj_t) {
     let mut angle: c_int;
 
     if (*actor).target.is_null() {
@@ -919,9 +893,8 @@ pub unsafe extern "C" fn A_PosAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SPosAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_SPosAttack(actor: *mut mobj_t) {
     let mut i: c_int;
 
     let mut angle: c_int;
@@ -958,9 +931,8 @@ pub unsafe extern "C" fn A_SPosAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_CPosAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_CPosAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -987,9 +959,8 @@ pub unsafe extern "C" fn A_CPosAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_CPosRefire(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid `info`.
+pub unsafe fn A_CPosRefire(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     if P_Random() < 40 as c_int {
         return;
@@ -1011,9 +982,8 @@ pub unsafe extern "C" fn A_CPosRefire(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SpidRefire(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid `info`.
+pub unsafe fn A_SpidRefire(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     if P_Random() < 10 as c_int {
         return;
@@ -1032,9 +1002,8 @@ pub unsafe extern "C" fn A_SpidRefire(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_BspiAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_BspiAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1048,9 +1017,8 @@ pub unsafe extern "C" fn A_BspiAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_TroopAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_TroopAttack(actor: *mut mobj_t) {
     let damage: c_int;
 
     if (*actor).target.is_null() {
@@ -1071,9 +1039,8 @@ pub unsafe extern "C" fn A_TroopAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SargAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_SargAttack(actor: *mut mobj_t) {
     let damage: c_int;
 
     if (*actor).target.is_null() {
@@ -1091,9 +1058,8 @@ pub unsafe extern "C" fn A_SargAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_HeadAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_HeadAttack(actor: *mut mobj_t) {
     let damage: c_int;
 
     if (*actor).target.is_null() {
@@ -1111,9 +1077,8 @@ pub unsafe extern "C" fn A_HeadAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_CyberAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_CyberAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1127,9 +1092,8 @@ pub unsafe extern "C" fn A_CyberAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_BruisAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_BruisAttack(actor: *mut mobj_t) {
     let damage: c_int;
 
     if (*actor).target.is_null() {
@@ -1151,9 +1115,8 @@ pub unsafe extern "C" fn A_BruisAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SkelMissile(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_SkelMissile(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1166,8 +1129,6 @@ pub unsafe extern "C" fn A_SkelMissile(actor: *mut mobj_t) {
     (*mo).tracer = (*actor).target;
 }
 /// Maximum angular correction applied per active tic by `A_Tracer` (approx 11.25 degrees in BAM).
-/// Has C linkage (`#[no_mangle]`); referenced from `p_enemy.c` (C test harness).
-#[no_mangle]
 pub static mut TRACEANGLE: c_int = 0xc000000 as c_int;
 /// Per-tic homing update for the Revenant's tracer missile.
 ///
@@ -1182,9 +1143,8 @@ pub static mut TRACEANGLE: c_int = 0xc000000 as c_int;
 /// # Safety
 ///
 /// `actor` must be a non-null, valid `mobj_t` with valid `info`. If `actor->tracer` is
-/// non-null it must point to a valid `mobj_t`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Tracer(actor: *mut mobj_t) {
+/// non-null it must point to a valid `mobj_t`.
+pub unsafe fn A_Tracer(actor: *mut mobj_t) {
     let mut exact: angle_t;
 
     let mut dist: fixed_t;
@@ -1247,9 +1207,8 @@ pub unsafe extern "C" fn A_Tracer(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SkelWhoosh(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_SkelWhoosh(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1262,9 +1221,8 @@ pub unsafe extern "C" fn A_SkelWhoosh(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SkelFist(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_SkelFist(actor: *mut mobj_t) {
     let damage: c_int;
 
     if (*actor).target.is_null() {
@@ -1278,19 +1236,15 @@ pub unsafe extern "C" fn A_SkelFist(actor: *mut mobj_t) {
     }
 }
 /// The corpse most recently selected by `PIT_VileCheck` for resurrection; written by
-/// `PIT_VileCheck`, read and mutated by `A_VileChase`. Has C linkage.
-#[no_mangle]
+/// `PIT_VileCheck`, read and mutated by `A_VileChase`.
 pub static mut corpsehit: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
 /// The Archvile actor currently searching for a corpse to raise; set by `A_VileChase`
-/// before calling `P_BlockThingsIterator`. Has C linkage.
-#[no_mangle]
+/// before calling `P_BlockThingsIterator`.
 pub static mut vileobj: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
 /// X coordinate of the position the Archvile is moving toward, used as the centre of the
-/// corpse search radius in `PIT_VileCheck`. Has C linkage.
-#[no_mangle]
+/// corpse search radius in `PIT_VileCheck`.
 pub static mut viletryx: fixed_t = 0;
-/// Y coordinate of the position the Archvile is moving toward. Has C linkage.
-#[no_mangle]
+/// Y coordinate of the position the Archvile is moving toward.
 pub static mut viletryy: fixed_t = 0;
 /// Blockmap iterator callback: tests whether `thing` is a raiseable corpse near the Archvile.
 ///
@@ -1302,9 +1256,8 @@ pub static mut viletryy: fixed_t = 0;
 /// # Safety
 ///
 /// `thing` must be a non-null, valid `mobj_t`. `viletryx`/`viletryy` and `vileobj` must
-/// have been set by `A_VileChase`. Called from C via `P_BlockThingsIterator`.
-#[no_mangle]
-pub unsafe extern "C" fn PIT_VileCheck(thing: *mut mobj_t) -> Boolean {
+/// have been set by `A_VileChase`. Called through `P_BlockThingsIterator`.
+pub unsafe fn PIT_VileCheck(thing: *mut mobj_t) -> Boolean {
     if (*thing).flags & MF_CORPSE as c_int == 0 {
         return Boolean::TRUE;
     }
@@ -1345,9 +1298,8 @@ pub unsafe extern "C" fn PIT_VileCheck(thing: *mut mobj_t) -> Boolean {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with valid `info` and `movedir`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_VileChase(actor: *mut mobj_t) {
+/// `actor` must be non-null with valid `info` and `movedir`.
+pub unsafe fn A_VileChase(actor: *mut mobj_t) {
     let xl: c_int;
 
     let xh: c_int;
@@ -1388,8 +1340,8 @@ pub unsafe extern "C" fn A_VileChase(actor: *mut mobj_t) {
                     bx,
                     by,
                     Some(core::mem::transmute::<
-                        unsafe extern "C" fn(*mut mobj_t) -> Boolean,
-                        unsafe extern "C" fn(*mut CffiMobj) -> c_uint,
+                        unsafe fn(*mut mobj_t) -> Boolean,
+                        unsafe fn(*mut CffiMobj) -> c_uint,
                     >(PIT_VileCheck)),
                 ) == 0
                 {
@@ -1418,18 +1370,16 @@ pub unsafe extern "C" fn A_VileChase(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_VileStart(actor: *mut mobj_t) {
+/// `actor` must be non-null.
+pub unsafe fn A_VileStart(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Vilatk as c_int);
 }
 /// Archvile fire start: plays the flame start sound then positions the fire object.
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with valid `tracer` and `target` fields (or null). Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_StartFire(actor: *mut mobj_t) {
+/// `actor` must be non-null with valid `tracer` and `target` fields (or null).
+pub unsafe fn A_StartFire(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Flamst as c_int);
     A_Fire(actor);
 }
@@ -1437,9 +1387,8 @@ pub unsafe extern "C" fn A_StartFire(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with valid `tracer` and `target` fields (or null). Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FireCrackle(actor: *mut mobj_t) {
+/// `actor` must be non-null with valid `tracer` and `target` fields (or null).
+pub unsafe fn A_FireCrackle(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Flame as c_int);
     A_Fire(actor);
 }
@@ -1452,9 +1401,8 @@ pub unsafe extern "C" fn A_FireCrackle(actor: *mut mobj_t) {
 /// # Safety
 ///
 /// `actor` must be non-null. `actor->tracer` if non-null must be a valid `mobj_t`.
-/// `actor->target` if non-null must be a valid `mobj_t`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Fire(actor: *mut mobj_t) {
+/// `actor->target` if non-null must be a valid `mobj_t`.
+pub unsafe fn A_Fire(actor: *mut mobj_t) {
     let dest: *mut mobj_t = (*actor).tracer;
     if dest.is_null() {
         return;
@@ -1482,9 +1430,8 @@ pub unsafe extern "C" fn A_Fire(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_VileTarget(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_VileTarget(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1511,9 +1458,8 @@ pub unsafe extern "C" fn A_VileTarget(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target` and `tracer`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_VileAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target` and `tracer`.
+pub unsafe fn A_VileAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1539,9 +1485,8 @@ pub unsafe extern "C" fn A_VileAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FatRaise(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_FatRaise(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     S_StartSound(actor as *mut c_void, Sfx::Manatk as c_int);
 }
@@ -1553,9 +1498,8 @@ pub unsafe extern "C" fn A_FatRaise(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FatAttack1(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_FatAttack1(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     (*actor).angle = (*actor).angle.wrapping_add(FATSPREAD as angle_t);
     let target: *mut mobj_t = P_SubstNullMobj((*actor).target);
@@ -1579,9 +1523,8 @@ pub unsafe extern "C" fn A_FatAttack1(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FatAttack2(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_FatAttack2(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     (*actor).angle = (*actor).angle.wrapping_sub(FATSPREAD as angle_t);
     let target: *mut mobj_t = P_SubstNullMobj((*actor).target);
@@ -1607,9 +1550,8 @@ pub unsafe extern "C" fn A_FatAttack2(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_FatAttack3(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_FatAttack3(actor: *mut mobj_t) {
     let mut mo: *mut mobj_t;
 
     let mut an: c_int;
@@ -1651,9 +1593,8 @@ pub unsafe extern "C" fn A_FatAttack3(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target` and valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_SkullAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target` and valid `info`.
+pub unsafe fn A_SkullAttack(actor: *mut mobj_t) {
     let mut dist: c_int;
 
     if (*actor).target.is_null() {
@@ -1688,9 +1629,8 @@ pub unsafe extern "C" fn A_SkullAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with valid `info` and a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
+/// `actor` must be non-null with valid `info` and a valid or null `target`.
+pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
     let mut count: c_int;
 
     let mut currentthinker: *mut thinker_t;
@@ -1700,11 +1640,9 @@ pub unsafe extern "C" fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
     while !std::ptr::eq(currentthinker, &raw const thinkercap) {
         if (*currentthinker).function.acp1
             == core::mem::transmute::<
-                Option<unsafe extern "C" fn(*mut mobj_t) -> ()>,
-                Option<unsafe extern "C" fn(*mut c_void) -> ()>,
-            >(Some(
-                P_MobjThinker as unsafe extern "C" fn(*mut mobj_t) -> (),
-            ))
+                Option<unsafe fn(*mut mobj_t) -> ()>,
+                Option<unsafe fn(*mut c_void) -> ()>,
+            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
             && (*(currentthinker as *mut mobj_t)).mobjtype as c_uint == MT_SKULL as c_int as c_uint
         {
             count += 1;
@@ -1735,9 +1673,8 @@ pub unsafe extern "C" fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid or null `target`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_PainAttack(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid or null `target`.
+pub unsafe fn A_PainAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
@@ -1751,9 +1688,8 @@ pub unsafe extern "C" fn A_PainAttack(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_PainDie(actor: *mut mobj_t) {
+/// `actor` must be non-null.
+pub unsafe fn A_PainDie(actor: *mut mobj_t) {
     A_Fall(actor);
     A_PainShootSkull(actor, (*actor).angle.wrapping_add(ANG90 as angle_t));
     A_PainShootSkull(actor, (*actor).angle.wrapping_add(ANG180));
@@ -1767,9 +1703,8 @@ pub unsafe extern "C" fn A_PainDie(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Scream(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid `info`.
+pub unsafe fn A_Scream(actor: *mut mobj_t) {
     let sound = match (*((*actor).info as *mut MobjInfo)).deathsound {
         Sfx::None => return,
         Sfx::Podth1 | Sfx::Podth2 | Sfx::Podth3 => Sfx::Podth1 as c_int + P_Random() % 3 as c_int,
@@ -1788,18 +1723,16 @@ pub unsafe extern "C" fn A_Scream(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_XScream(actor: *mut mobj_t) {
+/// `actor` must be non-null.
+pub unsafe fn A_XScream(actor: *mut mobj_t) {
     S_StartSound(actor as *mut c_void, Sfx::Slop as c_int);
 }
 /// Plays the monster's pain sound if it has one.
 ///
 /// # Safety
 ///
-/// `actor` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Pain(actor: *mut mobj_t) {
+/// `actor` must be non-null with a valid `info`.
+pub unsafe fn A_Pain(actor: *mut mobj_t) {
     if (*((*actor).info as *mut MobjInfo)).painsound != Sfx::None {
         S_StartSound(
             actor as *mut c_void,
@@ -1811,9 +1744,8 @@ pub unsafe extern "C" fn A_Pain(actor: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `actor` must be non-null. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Fall(actor: *mut mobj_t) {
+/// `actor` must be non-null.
+pub unsafe fn A_Fall(actor: *mut mobj_t) {
     (*actor).flags &= !(MF_SOLID as c_int);
 }
 /// Triggers a 128-unit radius blast centred on `thingy`, sourced from `thingy->target`.
@@ -1824,9 +1756,8 @@ pub unsafe extern "C" fn A_Fall(actor: *mut mobj_t) {
 /// # Safety
 ///
 /// `actor` (`thingy`) must be non-null; `thingy->target` may be null (passed directly
-/// to `P_RadiusAttack`). Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Explode(thingy: *mut mobj_t) {
+/// to `P_RadiusAttack`).
+pub unsafe fn A_Explode(thingy: *mut mobj_t) {
     P_RadiusAttack(
         thingy as *mut CffiMobj,
         (*thingy).target as *mut CffiMobj,
@@ -1846,7 +1777,7 @@ pub unsafe extern "C" fn A_Explode(thingy: *mut mobj_t) {
 /// # Safety
 ///
 /// Reads `gameversion`, `gameepisode`, and `gamemap` globals which must be initialised.
-unsafe extern "C" fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
+unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
     if (gameversion as c_uint) < exe_ultimate as c_int as c_uint {
         if gamemap != 8 as c_int {
             return Boolean::FALSE;
@@ -1880,9 +1811,8 @@ unsafe extern "C" fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
 /// # Safety
 ///
 /// `mo` must be non-null with a valid `mobjtype`. The thinker list and game-state globals
-/// must be consistent. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_BossDeath(mo: *mut mobj_t) {
+/// must be consistent. Called through the state-machine action pointer.
+pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     let mut th: *mut thinker_t;
 
     let mut mo2: *mut mobj_t;
@@ -1930,11 +1860,9 @@ pub unsafe extern "C" fn A_BossDeath(mo: *mut mobj_t) {
     while !std::ptr::eq(th, &raw const thinkercap) {
         if (*th).function.acp1
             == core::mem::transmute::<
-                Option<unsafe extern "C" fn(*mut mobj_t) -> ()>,
-                Option<unsafe extern "C" fn(*mut c_void) -> ()>,
-            >(Some(
-                P_MobjThinker as unsafe extern "C" fn(*mut mobj_t) -> (),
-            ))
+                Option<unsafe fn(*mut mobj_t) -> ()>,
+                Option<unsafe fn(*mut c_void) -> ()>,
+            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             mo2 = th as *mut mobj_t;
             if mo2 != mo
@@ -1997,9 +1925,8 @@ pub unsafe extern "C" fn A_BossDeath(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Hoof(mo: *mut mobj_t) {
+/// `mo` must be non-null with a valid `info`.
+pub unsafe fn A_Hoof(mo: *mut mobj_t) {
     S_StartSound(mo as *mut c_void, Sfx::Hoof as c_int);
     A_Chase(mo);
 }
@@ -2007,9 +1934,8 @@ pub unsafe extern "C" fn A_Hoof(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_Metal(mo: *mut mobj_t) {
+/// `mo` must be non-null with a valid `info`.
+pub unsafe fn A_Metal(mo: *mut mobj_t) {
     S_StartSound(mo as *mut c_void, Sfx::Metal as c_int);
     A_Chase(mo);
 }
@@ -2017,9 +1943,8 @@ pub unsafe extern "C" fn A_Metal(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null with a valid `info`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_BabyMetal(mo: *mut mobj_t) {
+/// `mo` must be non-null with a valid `info`.
+pub unsafe fn A_BabyMetal(mo: *mut mobj_t) {
     S_StartSound(mo as *mut c_void, Sfx::Bspwlk as c_int);
     A_Chase(mo);
 }
@@ -2027,40 +1952,33 @@ pub unsafe extern "C" fn A_BabyMetal(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `player` must be non-null with a valid `mo`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_OpenShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
+/// `player` must be non-null with a valid `mo`.
+pub unsafe fn A_OpenShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
     S_StartSound((*player).mo as *mut c_void, Sfx::Dbopn as c_int);
 }
 /// Super Shotgun load action: plays the shell-load sound (`sfx_dbload`) for the player.
 ///
 /// # Safety
 ///
-/// `player` must be non-null with a valid `mo`. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_LoadShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
+/// `player` must be non-null with a valid `mo`.
+pub unsafe fn A_LoadShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
     S_StartSound((*player).mo as *mut c_void, Sfx::Dbload as c_int);
 }
 /// Super Shotgun close action: plays the close sound (`sfx_dbcls`) then checks for refire.
 ///
 /// # Safety
 ///
-/// `player` must be non-null with a valid `mo`; `psp` must be non-null. Called from C.
-#[no_mangle]
-pub unsafe extern "C" fn A_CloseShotgun2(player: *mut PlayerT, psp: *mut PspdefT) {
+/// `player` must be non-null with a valid `mo`; `psp` must be non-null.
+pub unsafe fn A_CloseShotgun2(player: *mut PlayerT, psp: *mut PspdefT) {
     S_StartSound((*player).mo as *mut c_void, Sfx::Dbcls as c_int);
     A_ReFire(player, psp);
 }
 /// Array of `MT_BOSSTARGET` map objects (Icon of Sin target spots) populated by `A_BrainAwake`.
-/// The brain cycles through these to choose spawn destinations. Has C linkage.
-#[no_mangle]
+/// The brain cycles through these to choose spawn destinations.
 pub static mut braintargets: [*mut mobj_t; 32] = [std::ptr::null_mut::<mobj_t>(); 32];
-/// Count of valid entries in `braintargets`; set by `A_BrainAwake`. Has C linkage.
-#[no_mangle]
+/// Count of valid entries in `braintargets`; set by `A_BrainAwake`.
 pub static mut numbraintargets: c_int = 0;
 /// Round-robin index into `braintargets` for the next cube launch; advanced by `A_BrainSpit`.
-/// Has C linkage.
-#[no_mangle]
 pub static mut braintargeton: c_int = 0 as c_int;
 /// Icon of Sin wake-up: scans the thinker list for `MT_BOSSTARGET` spots and plays `sfx_bossit`.
 ///
@@ -2070,9 +1988,8 @@ pub static mut braintargeton: c_int = 0 as c_int;
 ///
 /// # Safety
 ///
-/// The thinker list must be consistent. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainAwake(_mo: *mut mobj_t) {
+/// The thinker list must be consistent. Called through the state-machine action pointer.
+pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
     let mut thinker: *mut thinker_t;
 
     let mut m: *mut mobj_t;
@@ -2083,11 +2000,9 @@ pub unsafe extern "C" fn A_BrainAwake(_mo: *mut mobj_t) {
     while !std::ptr::eq(thinker, &raw const thinkercap) {
         if (*thinker).function.acp1
             == core::mem::transmute::<
-                Option<unsafe extern "C" fn(*mut mobj_t) -> ()>,
-                Option<unsafe extern "C" fn(*mut c_void) -> ()>,
-            >(Some(
-                P_MobjThinker as unsafe extern "C" fn(*mut mobj_t) -> (),
-            ))
+                Option<unsafe fn(*mut mobj_t) -> ()>,
+                Option<unsafe fn(*mut c_void) -> ()>,
+            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
         {
             m = thinker as *mut mobj_t;
             if (*m).mobjtype as c_uint == MT_BOSSTARGET as c_int as c_uint {
@@ -2103,9 +2018,8 @@ pub unsafe extern "C" fn A_BrainAwake(_mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// Called from C. No pointer dereference; safe with any (even null) `_mo`.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainPain(_mo: *mut mobj_t) {
+/// No pointer dereference; safe with any (even null) `_mo`.
+pub unsafe fn A_BrainPain(_mo: *mut mobj_t) {
     S_StartSound(std::ptr::null_mut::<c_void>(), Sfx::Bospn as c_int);
 }
 /// Icon of Sin death scream: spawns a row of exploding rockets across the brain's width.
@@ -2117,9 +2031,8 @@ pub unsafe extern "C" fn A_BrainPain(_mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainScream(mo: *mut mobj_t) {
+/// `mo` must be non-null. Called through the state-machine action pointer.
+pub unsafe fn A_BrainScream(mo: *mut mobj_t) {
     let mut x: c_int;
 
     let mut y: c_int;
@@ -2152,9 +2065,8 @@ pub unsafe extern "C" fn A_BrainScream(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainExplode(mo: *mut mobj_t) {
+/// `mo` must be non-null. Called through the state-machine action pointer.
+pub unsafe fn A_BrainExplode(mo: *mut mobj_t) {
     let x: c_int = (*mo).x as c_int + (P_Random() - P_Random()) * 2048 as c_int;
     let y: c_int = (*mo).y as c_int;
     let z: c_int = 128 as c_int + P_Random() * 2 as c_int * FRACUNIT;
@@ -2170,9 +2082,8 @@ pub unsafe extern "C" fn A_BrainExplode(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// Called from C. No pointer dereference beyond the ignored `_mo`.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainDie(_mo: *mut mobj_t) {
+/// No pointer dereference beyond the ignored `_mo`.
+pub unsafe fn A_BrainDie(_mo: *mut mobj_t) {
     G_ExitLevel();
 }
 /// Icon of Sin attack: launches a monster cube (`MT_SPAWNSHOT`) toward the next target spot.
@@ -2185,9 +2096,8 @@ pub unsafe extern "C" fn A_BrainDie(_mo: *mut mobj_t) {
 /// # Safety
 ///
 /// `mo` must be non-null. `braintargets` must have been populated by `A_BrainAwake` and
-/// `numbraintargets` must be > 0. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_BrainSpit(mo: *mut mobj_t) {
+/// `numbraintargets` must be > 0. Called through the state-machine action pointer.
+pub unsafe fn A_BrainSpit(mo: *mut mobj_t) {
     static mut easy: c_int = 0 as c_int;
     easy ^= 1 as c_int;
     if gameskill as c_int <= sk_easy as c_int && easy == 0 {
@@ -2206,9 +2116,8 @@ pub unsafe extern "C" fn A_BrainSpit(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_SpawnSound(mo: *mut mobj_t) {
+/// `mo` must be non-null. Called through the state-machine action pointer.
+pub unsafe fn A_SpawnSound(mo: *mut mobj_t) {
     S_StartSound(mo as *mut c_void, Sfx::Boscub as c_int);
     A_SpawnFly(mo);
 }
@@ -2225,9 +2134,8 @@ pub unsafe extern "C" fn A_SpawnSound(mo: *mut mobj_t) {
 /// # Safety
 ///
 /// `mo` must be non-null with a valid `target`. `mo->target` must point to a valid
-/// `mobj_t` (the boss target spot). Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_SpawnFly(mo: *mut mobj_t) {
+/// `mobj_t` (the boss target spot). Called through the state-machine action pointer.
+pub unsafe fn A_SpawnFly(mo: *mut mobj_t) {
     let type_0: mobjtype_t;
 
     (*mo).reactiontime -= 1;
@@ -2278,9 +2186,8 @@ pub unsafe extern "C" fn A_SpawnFly(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be non-null. Called from C via state-machine action pointer.
-#[no_mangle]
-pub unsafe extern "C" fn A_PlayerScream(mo: *mut mobj_t) {
+/// `mo` must be non-null. Called through the state-machine action pointer.
+pub unsafe fn A_PlayerScream(mo: *mut mobj_t) {
     let mut sound: c_int = Sfx::Pldeth as c_int;
     if gamemode as c_uint == commercial as c_int as c_uint && (*mo).health < -50 as c_int {
         sound = Sfx::Pdiehi as c_int;

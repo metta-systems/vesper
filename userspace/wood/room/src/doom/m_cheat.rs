@@ -81,8 +81,7 @@ fn raw_strlen(buf: &[c_char]) -> usize {
 /// `int cht_CheckCheat(cheatseq_t *cht, char key)`
 ///
 /// Returns 1 (true) if the cheat was successfully entered, 0 otherwise.
-#[no_mangle]
-pub extern "C" fn cht_CheckCheat(cht: *mut cheatseq_t, key: c_char) -> c_int {
+pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: c_char) -> c_int {
     let cht = unsafe { &mut *cht };
 
     let seq_len = raw_strlen(&cht.sequence);
@@ -119,8 +118,7 @@ pub extern "C" fn cht_CheckCheat(cht: *mut cheatseq_t, key: c_char) -> c_int {
 }
 
 /// `void cht_GetParam(cheatseq_t *cht, char *buffer)`
-#[no_mangle]
-pub extern "C" fn cht_GetParam(cht: *mut cheatseq_t, buffer: *mut c_char) {
+pub fn cht_GetParam(cht: *mut cheatseq_t, buffer: *mut c_char) {
     let cht = unsafe { &*cht };
     let buf = unsafe { std::slice::from_raw_parts_mut(buffer, cht.parameter_chars as usize) };
     let param_chars = cht.parameter_chars as usize;

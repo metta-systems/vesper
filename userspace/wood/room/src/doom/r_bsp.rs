@@ -494,45 +494,35 @@ struct cliprange_t {
 }
 
 // ---------------------------------------------------------------------------
-// Globals exported with #[no_mangle]
+// Globals shared with r_segs, r_plane and r_things
 // ---------------------------------------------------------------------------
 
 /// The seg currently being processed by `R_AddLine` and passed down to
-/// [`R_StoreWallRange`]. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
+/// [`R_StoreWallRange`].
 pub static mut curline: *mut seg_t = ptr::null_mut();
 
 /// The sidedef of the current seg (`curline->sidedef`). Set by `R_StoreWallRange`
-/// in `r_segs.c`. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
+/// in `r_segs.c`.
 pub static mut sidedef: *mut side_t = ptr::null_mut();
 
 /// The linedef of the current seg (`curline->linedef`). Set by `R_StoreWallRange`
-/// in `r_segs.c`. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
+/// in `r_segs.c`.
 pub static mut linedef: *mut line_t = ptr::null_mut();
 
 /// The sector on the front side of the current seg. Set by [`R_Subsector`]
-/// and read by `r_segs.c` and `r_plane.rs`. Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
+/// and read by `r_segs.c` and `r_plane.rs`.
 pub static mut frontsector: *mut sector_t = ptr::null_mut();
 
 /// The sector on the back side of the current seg, or null for single-sided
 /// lines. Set by `R_AddLine` and read by `r_segs.c`.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut backsector: *mut sector_t = ptr::null_mut();
 
 /// Fixed-size array of prepared draw-segs for the current frame. Filled
-/// sequentially via [`ds_p`]. Exported as `#[no_mangle]` for C callers
-/// (read during sprite clipping in `r_things.c`).
-#[no_mangle]
+/// sequentially via [`ds_p`] (read during sprite clipping in `r_things.c`).
 pub static mut drawsegs: [drawseg_t; MAXDRAWSEGS] = [ZERO_DRAWSEG; MAXDRAWSEGS];
 
 /// Pointer to the next free slot in [`drawsegs`]. Advanced by
 /// `R_StoreWallRange` each time a new draw-seg is committed.
-/// Exported as `#[no_mangle]` for C callers.
-#[no_mangle]
 pub static mut ds_p: *mut drawseg_t = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
@@ -602,8 +592,7 @@ use crate::doom::{
 ///
 /// # Safety
 /// Must be called from the render thread. Mutates the global [`ds_p`].
-#[no_mangle]
-pub unsafe extern "C" fn R_ClearDrawSegs() {
+pub unsafe fn R_ClearDrawSegs() {
     ds_p = std::ptr::addr_of_mut!(drawsegs[0]);
 }
 
@@ -620,8 +609,7 @@ pub unsafe extern "C" fn R_ClearDrawSegs() {
 /// # Safety
 /// Must be called from the render thread. Mutates `solidsegs`, `newend`,
 /// and `PROBE_FRAME`. Reads [`viewwidth`] and [`viewangle`].
-#[no_mangle]
-pub unsafe extern "C" fn R_ClearClipSegs() {
+pub unsafe fn R_ClearClipSegs() {
     solidsegs[0].first = -0x7fffffff;
     solidsegs[0].last = -1;
     solidsegs[1].first = viewwidth;
@@ -660,8 +648,7 @@ pub unsafe extern "C" fn R_ClearClipSegs() {
 /// [`R_ClearClipSegs`] before this frame. `first` must be <= `last` for a
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Mutates the global `solidsegs` array and `newend`.
-#[no_mangle]
-pub unsafe extern "C" fn R_ClipSolidWallSegment(first: c_int, last: c_int) {
+pub unsafe fn R_ClipSolidWallSegment(first: c_int, last: c_int) {
     if first > last {
         log::debug!(
             "R_ClipSolidWallSegment INVALID: first={} > last={}",
@@ -770,8 +757,7 @@ pub unsafe extern "C" fn R_ClipSolidWallSegment(first: c_int, last: c_int) {
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Reads the global `solidsegs` array without
 /// modifying it.
-#[no_mangle]
-pub unsafe extern "C" fn R_ClipPassWallSegment(first: c_int, last: c_int) {
+pub unsafe fn R_ClipPassWallSegment(first: c_int, last: c_int) {
     if first > last {
         log::debug!(
             "R_ClipPassWallSegment INVALID: first={} > last={}",
@@ -1025,8 +1011,7 @@ unsafe fn R_AddLine(line: *mut seg_t) {
 /// Globals [`viewx`], [`viewy`], [`viewangle`], [`clipangle`],
 /// [`viewangletox`], and `solidsegs` must have been initialized for the
 /// current frame.
-#[no_mangle]
-pub unsafe extern "C" fn R_CheckBBox(bspcoord: *mut fixed_t) -> c_int {
+pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> c_int {
     let boxx = if viewx <= *bspcoord.add(BBox::LEFT) {
         0
     } else if viewx < *bspcoord.add(BBox::RIGHT) {
@@ -1125,8 +1110,7 @@ pub unsafe extern "C" fn R_CheckBBox(bspcoord: *mut fixed_t) -> c_int {
 /// not checked at runtime to match C behavior). The subsector's `sector`
 /// pointer and all `segs` it references must be valid. Globals [`viewz`],
 /// [`skyflatnum`], [`floorplane`], and [`ceilingplane`] must be accessible.
-#[no_mangle]
-pub unsafe extern "C" fn R_Subsector(num: c_int) {
+pub unsafe fn R_Subsector(num: c_int) {
     let num_usize = num as usize;
 
     sscount += 1;
@@ -1191,8 +1175,7 @@ pub unsafe extern "C" fn R_Subsector(num: c_int) {
 /// subsector index. All node and subsector data must have been loaded by
 /// `P_SetupLevel`. Globals [`viewx`], [`viewy`], and the occlusion list must
 /// be initialized for the current frame.
-#[no_mangle]
-pub unsafe extern "C" fn R_RenderBSPNode(bspnum: c_int) {
+pub unsafe fn R_RenderBSPNode(bspnum: c_int) {
     // Found a subsector?
     if (bspnum as u32) & NF_SUBSECTOR != 0 {
         let sub_num = if bspnum == -1 {
@@ -1240,27 +1223,4 @@ pub unsafe extern "C" fn R_RenderBSPNode(bspnum: c_int) {
     if back_visible {
         R_RenderBSPNode(bsp.children[(side ^ 1) as usize] as c_int);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Anchor so linker doesn't discard
-// ---------------------------------------------------------------------------
-
-/// Linker anchor: references every public `#[no_mangle]` function in this
-/// module so the linker does not dead-strip them when building as a library.
-/// Not intended to be called at runtime.
-///
-/// # Safety
-/// Calls all exported functions with zero/null arguments purely to create
-/// symbol references. Behavior is undefined if called during normal
-/// execution; this function exists only to prevent linker GC.
-#[no_mangle]
-pub unsafe extern "C" fn R_Bsp_Link_Anchor() {
-    R_ClearDrawSegs();
-    R_ClearClipSegs();
-    R_RenderBSPNode(0);
-    R_Subsector(0);
-    R_ClipSolidWallSegment(0, 0);
-    R_ClipPassWallSegment(0, 0);
-    R_CheckBBox(ptr::null_mut());
 }

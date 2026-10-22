@@ -17,7 +17,6 @@ use crate::doom::{d_event::event_t, doomkeys::KEY_RSHIFT};
 ///
 /// When non-zero, classic Doom keyboard mapping is used. Exported with C
 /// linkage so the rest of the (still C) code base can read and write it.
-#[no_mangle]
 pub static mut vanilla_keyboard_mapping: c_int = 1;
 
 /// Net count of shift presses minus shift releases.
@@ -27,15 +26,7 @@ pub static mut vanilla_keyboard_mapping: c_int = 1;
 /// permanently latching the shift state, matching the C source.
 static mut shiftdown: c_int = 0;
 
-extern "C" {
-    /// Platform-layer key poll provided by `doomgeneric.c`.
-    ///
-    /// Fills `*pressed` with 1 for keydown / 0 for keyup and `*key` with the
-    /// Doom key code. Returns non-zero while events are available.
-    fn DG_GetKey(pressed: *mut c_int, key: *mut u8) -> c_int;
-    /// Doom event sink, defined in `d_main.c`.
-    fn D_PostEvent(ev: *const event_t);
-}
+use crate::doom::d_event::D_PostEvent;
 
 /// US-layout shift transform table.
 ///
@@ -119,11 +110,9 @@ fn UpdateShiftStatus(pressed: c_int, key: u8) {
 
 /// One-time input subsystem initialisation hook.
 ///
-/// No-op in the doomgeneric platform layer (all input setup happens in
-/// `DG_Init` / `DG_GetKey`). Exported with C linkage because `i_video.c`
-/// still calls it.
-#[no_mangle]
-pub extern "C" fn I_InitInput() {}
+/// No-op in the doomgeneric platform layer (all input setup happens in the
+/// platform's `init` / `key`). `i_video` still calls it.
+pub fn I_InitInput() {}
 
 /// Pumps the platform key queue, posting one `ev_keydown` event per pressed
 /// key and a single `ev_keyup` event before returning.
@@ -131,52 +120,35 @@ pub extern "C" fn I_InitInput() {}
 /// Mirrors the C control flow exactly: keydown events are posted in a loop
 /// (so multiple keys pressed in the same frame all flow through), but the
 /// first keyup event ends the call. Suppresses events whose `data1` is 0.
-/// Exported with C linkage because `d_main.c` calls it from the main loop.
-#[no_mangle]
-pub extern "C" fn I_GetEvent() {
-    unsafe {
-        let mut pressed: c_int = 0;
-        let mut key: u8 = 0;
+/// `d_main` calls it from the main loop.
+pub fn I_GetEvent() {
+    while let Some((is_pressed, key)) = super::doomgeneric::platform().key() {
+        let pressed = c_int::from(is_pressed);
+        UpdateShiftStatus(pressed, key);
 
-        while DG_GetKey(&mut pressed, &mut key) != 0 {
-            UpdateShiftStatus(pressed, key);
+        let mut event = event_t {
+            type_: 0,
+            data1: 0,
+            data2: 0,
+            data3: 0,
+            data4: 0,
+        };
 
-            let mut event = event_t {
-                type_: 0,
-                data1: 0,
-                data2: 0,
-                data3: 0,
-                data4: 0,
-            };
-
-            if pressed != 0 {
-                event.type_ = 0; // ev_keydown
-                event.data1 = TranslateKey(key) as c_int;
-                event.data2 = GetTypedChar(key) as c_int;
-                if event.data1 != 0 {
-                    D_PostEvent(&event);
-                }
-            } else {
-                event.type_ = 1; // ev_keyup
-                event.data1 = TranslateKey(key) as c_int;
-                event.data2 = 0;
-                if event.data1 != 0 {
-                    D_PostEvent(&event);
-                }
-                break;
+        if pressed != 0 {
+            event.type_ = 0; // ev_keydown
+            event.data1 = TranslateKey(key) as c_int;
+            event.data2 = GetTypedChar(key) as c_int;
+            if event.data1 != 0 {
+                D_PostEvent(&event);
             }
+        } else {
+            event.type_ = 1; // ev_keyup
+            event.data1 = TranslateKey(key) as c_int;
+            event.data2 = 0;
+            if event.data1 != 0 {
+                D_PostEvent(&event);
+            }
+            break;
         }
     }
-}
-
-/// Link-anchor symbol: forces the linker to keep the `extern "C"` exports
-/// in this module even when nothing in the Rust crate references them.
-///
-/// Doomgeneric's still-C call sites pull in `I_InitInput` and `I_GetEvent`
-/// by name, so this thunk takes their addresses to defeat dead-code
-/// elimination. Called from the platform layer's link table.
-#[no_mangle]
-pub extern "C" fn I_Input_Link_Anchor() {
-    let _ = I_InitInput as *const () as usize;
-    let _ = I_GetEvent as *const () as usize;
 }

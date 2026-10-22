@@ -110,8 +110,7 @@ unsafe fn errno() -> c_int {
 /// Wrapper around libc `mkdir`; the return value is ignored, so calling on
 /// an already-existing directory is a no-op. Mirrors the Unix branch of the
 /// C `M_MakeDirectory`.
-#[no_mangle]
-pub extern "C" fn M_MakeDirectory(path: *mut c_char) {
+pub fn M_MakeDirectory(path: *mut c_char) {
     unsafe {
         mkdir(path, 0o755);
     }
@@ -122,8 +121,7 @@ pub extern "C" fn M_MakeDirectory(path: *mut c_char) {
 /// Tries `fopen("r")`; on success the stream is immediately closed. If the
 /// open fails because the path is a directory (errno `EISDIR`), this still
 /// reports the entry as existing, matching the C original.
-#[no_mangle]
-pub extern "C" fn M_FileExists(filename: *mut c_char) -> c_int {
+pub fn M_FileExists(filename: *mut c_char) -> c_int {
     unsafe {
         let fstream = fopen(filename as *const c_char, c"r".as_ptr());
         if !fstream.is_null() {
@@ -138,8 +136,7 @@ pub extern "C" fn M_FileExists(filename: *mut c_char) -> c_int {
 ///
 /// Saves the current position, seeks to end to read the length, then
 /// restores the original position. The stream is left in its prior state.
-#[no_mangle]
-pub extern "C" fn M_FileLength(handle: *mut FILE) -> c_long {
+pub fn M_FileLength(handle: *mut FILE) -> c_long {
     unsafe {
         let savedpos = ftell(handle);
         fseek(handle, 0, SEEK_END);
@@ -153,8 +150,7 @@ pub extern "C" fn M_FileLength(handle: *mut FILE) -> c_long {
 ///
 /// Returns `1` on success, `0` if the file could not be opened for writing
 /// or if the short-write case is hit. The file is created/truncated (`"wb"`).
-#[no_mangle]
-pub extern "C" fn M_WriteFile(name: *mut c_char, source: *mut c_void, length: c_int) -> c_int {
+pub fn M_WriteFile(name: *mut c_char, source: *mut c_void, length: c_int) -> c_int {
     unsafe {
         let handle = fopen(name as *const c_char, c"wb".as_ptr());
         if handle.is_null() {
@@ -174,8 +170,7 @@ pub extern "C" fn M_WriteFile(name: *mut c_char, source: *mut c_void, length: c_
 /// On success, `*buffer` is set to point at the allocated buffer and the
 /// file length (in bytes) is returned. On failure (file missing or short
 /// read), `I_Error` is invoked and the process exits.
-#[no_mangle]
-pub extern "C" fn M_ReadFile(name: *mut c_char, buffer: *mut *mut c_char) -> c_int {
+pub fn M_ReadFile(name: *mut c_char, buffer: *mut *mut c_char) -> c_int {
     unsafe {
         let handle = fopen(name as *const c_char, c"rb".as_ptr());
         if handle.is_null() {
@@ -204,8 +199,7 @@ pub extern "C" fn M_ReadFile(name: *mut c_char, buffer: *mut *mut c_char) -> c_i
 /// Always uses `/tmp` on this port (the C original probes `TEMP` on Windows
 /// or `__DJGPP__`). The returned string is allocated by [`M_StringJoinA`]
 /// and must be freed by the caller.
-#[no_mangle]
-pub extern "C" fn M_TempFile(s: *mut c_char) -> *mut c_char {
+pub fn M_TempFile(s: *mut c_char) -> *mut c_char {
     let tempdir = c"/tmp".as_ptr();
     let sep = DIR_SEPARATOR_S.as_ptr() as *const c_char;
     let strs: [*const c_char; 4] = [tempdir, sep, s as *const c_char, std::ptr::null()];
@@ -218,8 +212,7 @@ pub extern "C" fn M_TempFile(s: *mut c_char) -> *mut c_char {
 /// Recognised forms (matching C `M_StrToInt`): `0x` / `0X` hex, leading-zero
 /// octal, and plain decimal. Returns `0` if none of the formats match. The C
 /// original returns a `boolean`; the Rust port keeps the `c_int` ABI.
-#[no_mangle]
-pub extern "C" fn M_StrToInt(str: *const c_char, result: *mut c_int) -> c_int {
+pub fn M_StrToInt(str: *const c_char, result: *mut c_int) -> c_int {
     unsafe {
         if sscanf(str, c" 0x%x".as_ptr(), result) == 1 {
             return 1;
@@ -244,8 +237,7 @@ pub extern "C" fn M_StrToInt(str: *const c_char, result: *mut c_int) -> c_int {
 /// up to a maximum of 8 bytes, converting each to upper case. The
 /// destination is zero-padded to 8 bytes. Names longer than 8 characters
 /// are truncated with a warning printed to stderr.
-#[no_mangle]
-pub extern "C" fn M_ExtractFileBase(path: *mut c_char, dest: *mut c_char) {
+pub fn M_ExtractFileBase(path: *mut c_char, dest: *mut c_char) {
     unsafe {
         let len = strlen(path);
         let mut src = path.add(len).sub(1);
@@ -278,8 +270,7 @@ pub extern "C" fn M_ExtractFileBase(path: *mut c_char, dest: *mut c_char) {
 /// Iterates byte-by-byte using libc `toupper`. The C original only
 /// implements the uppercase variant; the lowercase variant below is a
 /// symmetric helper added by chocolate-doom / this port.
-#[no_mangle]
-pub extern "C" fn M_ForceUppercase(text: *mut c_char) {
+pub fn M_ForceUppercase(text: *mut c_char) {
     unsafe {
         let mut p = text;
         while *p != 0 {
@@ -292,8 +283,7 @@ pub extern "C" fn M_ForceUppercase(text: *mut c_char) {
 /// Convert the null-terminated string `text` to lower case in place.
 ///
 /// Symmetric counterpart to [`M_ForceUppercase`].
-#[no_mangle]
-pub extern "C" fn M_ForceLowercase(text: *mut c_char) {
+pub fn M_ForceLowercase(text: *mut c_char) {
     unsafe {
         let mut p = text;
         while *p != 0 {
@@ -307,8 +297,7 @@ pub extern "C" fn M_ForceLowercase(text: *mut c_char) {
 ///
 /// Returns a pointer into `haystack` at the first match, or NULL if not
 /// found or if `needle` is longer than `haystack`. Mirrors C `M_StrCaseStr`.
-#[no_mangle]
-pub extern "C" fn M_StrCaseStr(haystack: *mut c_char, needle: *mut c_char) -> *mut c_char {
+pub fn M_StrCaseStr(haystack: *mut c_char, needle: *mut c_char) -> *mut c_char {
     unsafe {
         let haystack_len = strlen(haystack);
         let needle_len = strlen(needle);
@@ -328,8 +317,7 @@ pub extern "C" fn M_StrCaseStr(haystack: *mut c_char, needle: *mut c_char) -> *m
 /// Safe `strdup` that aborts via `I_Error` if allocation fails.
 ///
 /// Returns a malloc'd copy of `orig` that the caller must `free`.
-#[no_mangle]
-pub extern "C" fn M_StringDuplicate(orig: *const c_char) -> *mut c_char {
+pub fn M_StringDuplicate(orig: *const c_char) -> *mut c_char {
     unsafe {
         let result = strdup(orig);
         if result.is_null() {
@@ -348,8 +336,7 @@ pub extern "C" fn M_StringDuplicate(orig: *const c_char) -> *mut c_char {
 /// buffer, then performs the substitution in a second pass. The returned
 /// pointer must be freed with `free`. On allocation failure the function
 /// calls `I_Error` and returns NULL (unreachable).
-#[no_mangle]
-pub extern "C" fn M_StringReplace(
+pub fn M_StringReplace(
     haystack: *const c_char,
     needle: *const c_char,
     replacement: *const c_char,
@@ -371,7 +358,6 @@ pub extern "C" fn M_StringReplace(
         let result = malloc(result_len) as *mut c_char;
         if result.is_null() {
             i_error!("M_StringReplace: Failed to allocate new string");
-            return std::ptr::null_mut();
         }
         let mut dst = result;
         let mut dst_len = result_len;
@@ -399,8 +385,7 @@ pub extern "C" fn M_StringReplace(
 ///
 /// Returns `TRUE` if the entire source string fit, `FALSE` if it was
 /// truncated (or if `dest_size == 0`). Mirrors OpenBSD `strlcpy` semantics.
-#[no_mangle]
-pub extern "C" fn M_StringCopy(dest: *mut c_char, src: *const c_char, dest_size: usize) -> Boolean {
+pub fn M_StringCopy(dest: *mut c_char, src: *const c_char, dest_size: usize) -> Boolean {
     unsafe {
         if dest_size >= 1 {
             *dest.add(dest_size - 1) = 0;
@@ -418,12 +403,7 @@ pub extern "C" fn M_StringCopy(dest: *mut c_char, src: *const c_char, dest_size:
 ///
 /// Returns `TRUE` if the entire source string fit, `FALSE` if it was
 /// truncated. Mirrors OpenBSD `strlcat` semantics.
-#[no_mangle]
-pub extern "C" fn M_StringConcat(
-    dest: *mut c_char,
-    src: *const c_char,
-    dest_size: usize,
-) -> Boolean {
+pub fn M_StringConcat(dest: *mut c_char, src: *const c_char, dest_size: usize) -> Boolean {
     unsafe {
         let mut offset = strlen(dest);
         if offset > dest_size {
@@ -438,8 +418,7 @@ pub extern "C" fn M_StringConcat(
 /// Note: uses strict `>` against the prefix length (matching the C source),
 /// so an exact-length match returns `FALSE`. See the pinned test
 /// `test_string_starts_with_exact_match_broken` for details.
-#[no_mangle]
-pub extern "C" fn M_StringStartsWith(s: *const c_char, prefix: *const c_char) -> Boolean {
+pub fn M_StringStartsWith(s: *const c_char, prefix: *const c_char) -> Boolean {
     unsafe {
         let s_len = strlen(s);
         let prefix_len = strlen(prefix);
@@ -448,8 +427,7 @@ pub extern "C" fn M_StringStartsWith(s: *const c_char, prefix: *const c_char) ->
 }
 
 /// Returns `TRUE` if `s` ends with `suffix` (exact match also returns `TRUE`).
-#[no_mangle]
-pub extern "C" fn M_StringEndsWith(s: *const c_char, suffix: *const c_char) -> Boolean {
+pub fn M_StringEndsWith(s: *const c_char, suffix: *const c_char) -> Boolean {
     unsafe {
         let s_len = strlen(s);
         let suffix_len = strlen(suffix);
@@ -470,8 +448,7 @@ extern "C" {
 /// failure. Rust callers use this in place of the C variadic API; for the
 /// few sites where the C entry point is still needed, a separate shim
 /// wraps it.
-#[no_mangle]
-pub extern "C" fn M_StringJoinA(strs: *const *const c_char) -> *mut c_char {
+pub fn M_StringJoinA(strs: *const *const c_char) -> *mut c_char {
     unsafe {
         let mut result_len: usize = 1;
         let mut p = strs;
@@ -483,7 +460,6 @@ pub extern "C" fn M_StringJoinA(strs: *const *const c_char) -> *mut c_char {
         let result = malloc(result_len) as *mut c_char;
         if result.is_null() {
             i_error!("M_StringJoinA: Failed to allocate new string");
-            return std::ptr::null_mut();
         }
 
         let mut dst = result;
@@ -526,9 +502,8 @@ pub(crate) fn m_snprintf_clamp(buf: *mut c_char, len: usize, result: c_int) -> c
     }
 }
 
-/// C-linkage shim around `m_snprintf_clamp` for `extern "C"` callers.
-#[no_mangle]
-pub extern "C" fn M_snprintf_clamp(buf: *mut c_char, len: usize, result: c_int) -> c_int {
+/// Public wrapper around `m_snprintf_clamp`, under the C function's name.
+pub fn M_snprintf_clamp(buf: *mut c_char, len: usize, result: c_int) -> c_int {
     m_snprintf_clamp(buf, len, result)
 }
 
@@ -537,8 +512,7 @@ pub extern "C" fn M_snprintf_clamp(buf: *mut c_char, len: usize, result: c_int) 
 /// Note: not present in vanilla `m_misc.c` (that file's per-user paths are
 /// resolved inline via `getenv` calls scattered through `M_GetSaveGameDir`
 /// and friends); this port lifts the lookup into a named helper.
-#[no_mangle]
-pub extern "C" fn M_HomeDir() -> *const c_char {
+pub fn M_HomeDir() -> *const c_char {
     unsafe { getenv(c"HOME".as_ptr()) }
 }
 
@@ -556,8 +530,7 @@ pub extern "C" fn M_HomeDir() -> *const c_char {
 /// Note: not present in vanilla `m_misc.c` (`M_SetConfigDir` in the C port
 /// computes a fallback inline). This Rust helper centralises XDG-aware
 /// resolution.
-#[no_mangle]
-pub extern "C" fn M_DefaultConfigDir() -> *const c_char {
+pub fn M_DefaultConfigDir() -> *const c_char {
     unsafe {
         let home = M_HomeDir();
         if home.is_null() {
@@ -581,8 +554,7 @@ pub extern "C" fn M_DefaultConfigDir() -> *const c_char {
 /// strings to UTF-8 via `MultiByteToWideChar` / `WideCharToMultiByte`. The
 /// non-Windows build has no such call site; this stub exists only for ABI
 /// completeness.
-#[no_mangle]
-pub extern "C" fn M_OEMToUTF8(_oem: *const c_char) -> *mut c_char {
+pub fn M_OEMToUTF8(_oem: *const c_char) -> *mut c_char {
     std::ptr::null_mut()
 }
 

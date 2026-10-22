@@ -734,8 +734,7 @@ fn SHORT(x: i16) -> i16 {
 /// Reads the global `background` patch pointer and calls `V_DrawPatch`.
 /// Caller must ensure `WI_loadData` has cached the patch and the video
 /// backend is ready.
-#[no_mangle]
-pub unsafe extern "C" fn WI_slamBackground() {
+pub unsafe fn WI_slamBackground() {
     V_DrawPatch(0, 0, background);
 }
 
@@ -750,10 +749,8 @@ pub unsafe extern "C" fn WI_slamBackground() {
 /// # Safety
 ///
 /// `_ev` is not dereferenced. Caller may pass any pointer (including null).
-/// The function is `unsafe extern "C"` for ABI compatibility with the C
-/// responder signature only.
-#[no_mangle]
-pub unsafe extern "C" fn WI_Responder(_ev: *mut event_t) -> c_int {
+/// The function is `unsafe` to match the other responders' signature only.
+pub unsafe fn WI_Responder(_ev: *mut event_t) -> c_int {
     0
 }
 
@@ -1125,8 +1122,7 @@ unsafe fn WI_drawTime(mut x: c_int, y: c_int, t: c_int) {
 ///
 /// Delegates to `WI_unloadData`, which nulls every cached patch pointer.
 /// Caller must ensure no draw functions are still executing.
-#[no_mangle]
-pub unsafe extern "C" fn WI_End() {
+pub unsafe fn WI_End() {
     WI_unloadData();
 }
 
@@ -1888,8 +1884,7 @@ unsafe fn WI_checkForAccelerate() {
 /// invokes `WI_checkForAccelerate` and one of the per-state updaters, each
 /// with their own state-global dependencies. Caller must ensure `WI_Start`
 /// has been invoked and the sound subsystem is initialised.
-#[no_mangle]
-pub unsafe extern "C" fn WI_Ticker() {
+pub unsafe fn WI_Ticker() {
     bcnt += 1;
 
     if bcnt == 1 {
@@ -1928,7 +1923,7 @@ pub unsafe extern "C" fn WI_Ticker() {
 /// Function pointer type for the load/unload callback used by `WI_loadUnloadData`.
 ///
 /// The callback receives the lump name and a pointer to the patch pointer slot.
-type LoadCallback = unsafe extern "C" fn(*mut c_char, *mut *mut patch_t);
+type LoadCallback = unsafe fn(*mut c_char, *mut *mut patch_t);
 
 /// Walk every intermission lump name and invoke `callback` for each.
 ///
@@ -1938,7 +1933,7 @@ type LoadCallback = unsafe extern "C" fn(*mut c_char, *mut *mut patch_t);
 ///
 /// # Safety
 ///
-/// `callback` is invoked as an `unsafe extern "C"` function and is given raw
+/// `callback` is invoked as an `unsafe` function and is given raw
 /// pointers into the static patch globals (`lnames`, `yah`, `splat`, `num`,
 /// `percent`, `finished`, `entering`, etc.) and the per-episode animation
 /// state. Caller must pass a callback that respects those pointers' validity
@@ -2040,7 +2035,7 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
 /// recognised by `W_CacheLumpName`, and `variable` is a valid, non-null,
 /// properly aligned pointer to a `*mut patch_t` slot the function may
 /// overwrite.
-unsafe extern "C" fn WI_loadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
+unsafe fn WI_loadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
     *variable = W_CacheLumpName(name, PU_STATIC) as *mut patch_t;
 }
 
@@ -2056,8 +2051,7 @@ unsafe extern "C" fn WI_loadCallback(name: *mut c_char, variable: *mut *mut patc
 /// (`star`, `bstar`, and everything touched by `WI_loadUnloadData`). Caller
 /// must ensure the WAD and zone-memory subsystems are initialised and that
 /// `wbs` is valid (via `WI_initVariables`).
-#[no_mangle]
-pub unsafe extern "C" fn WI_loadData() {
+pub unsafe fn WI_loadData() {
     if gamemode == d_mode::commercial {
         NUMCMAPS = 32;
         lnames = Z_Malloc(
@@ -2087,7 +2081,7 @@ pub unsafe extern "C" fn WI_loadData() {
 /// previously cached via `W_CacheLumpName`, and `variable` is a valid,
 /// non-null, properly aligned pointer to a `*mut patch_t` slot that this
 /// function may overwrite with null.
-unsafe extern "C" fn WI_unloadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
+unsafe fn WI_unloadCallback(name: *mut c_char, variable: *mut *mut patch_t) {
     W_ReleaseLumpName(name);
     *variable = ptr::null_mut();
 }
@@ -2101,8 +2095,7 @@ unsafe extern "C" fn WI_unloadCallback(name: *mut c_char, variable: *mut *mut pa
 /// Nulls every cached patch pointer in the intermission globals and
 /// releases their WAD lumps. Caller must ensure no draw or update
 /// functions are still executing.
-#[no_mangle]
-pub unsafe extern "C" fn WI_unloadData() {
+pub unsafe fn WI_unloadData() {
     WI_loadUnloadData(WI_unloadCallback);
 }
 
@@ -2121,8 +2114,7 @@ pub unsafe extern "C" fn WI_unloadData() {
 /// dispatches to one of the per-phase draw functions, each of which
 /// dereferences the intermission globals (`wbs`, patch pointers, etc.).
 /// Caller must ensure `WI_Start` has been invoked.
-#[no_mangle]
-pub unsafe extern "C" fn WI_Drawer() {
+pub unsafe fn WI_Drawer() {
     match state {
         stateenum_t::StatCount => {
             if deathmatch != 0 {
@@ -2197,8 +2189,7 @@ unsafe fn WI_initVariables(wbstartstruct: *mut wbstartstruct_t) {
 /// intermission. Mutates every intermission global via `WI_initVariables`,
 /// `WI_loadData`, and the per-mode `WI_init*Stats` helpers; the WAD, zone,
 /// and sound subsystems must be initialised.
-#[no_mangle]
-pub unsafe extern "C" fn WI_Start(wbstartstruct: *mut wbstartstruct_t) {
+pub unsafe fn WI_Start(wbstartstruct: *mut wbstartstruct_t) {
     WI_initVariables(wbstartstruct);
     WI_loadData();
 

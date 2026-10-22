@@ -6,13 +6,13 @@
 //!       ├─ App::resumed()      → create Window + GpuState, store in TLS
 //!       ├─ App::window_event() → push key events into TLS queue
 //!       └─ App::about_to_wait()
-//!               first call  → doomgeneric_Create(argc, argv)
+//!               first call  → doomgeneric_Create(&Host, argc, argv)
 //!               later calls → doomgeneric_Tick()
-//!                                ├─ I_StartTic() → I_GetEvent() → DG_GetKey()
-//!                                └─ I_FinishUpdate() → DG_DrawFrame()
+//!                                ├─ I_StartTic() → I_GetEvent() → Host::key()
+//!                                └─ I_FinishUpdate() → Host::draw_frame()
 //! ```
 //!
-//! The `DG_*` functions (in the parent module) access window and GPU
+//! [`Host`]'s methods (in the parent module) access window and GPU
 //! resources through [`thread_local!`] statics, which is safe because
 //! everything runs on the main thread.
 
@@ -30,7 +30,7 @@ use winit::{
 use room::doom::doomgeneric::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 
 use super::{
-    gpu::GpuState, init_start_time, keys::to_doom_key, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW,
+    gpu::GpuState, init_start_time, keys::to_doom_key, Host, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW,
 };
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ impl ApplicationHandler for App {
     /// Called when the application becomes active (e.g. on launch or resume).
     ///
     /// Creates the OS window, initialises wgpu, and stores both in the
-    /// thread-local platform state so the `DG_*` callbacks can reach them.
+    /// thread-local platform state so [`Host`]'s methods can reach them.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         log::info!(
             "Creating window ({}×{})",
@@ -199,10 +199,9 @@ impl ApplicationHandler for App {
             // SAFETY:
             // - `self.args` is alive for the lifetime of the programme.
             // - `self.argv` contains valid pointers into `self.args`.
-            // - The `DG_*` callbacks are exported symbols in this binary.
             let argc = (self.argv.len() - 1) as c_int; // exclude trailing null
             unsafe {
-                room::doom::doomgeneric::doomgeneric_Create(argc, self.argv.as_mut_ptr());
+                room::doom::doomgeneric::doomgeneric_Create(&Host, argc, self.argv.as_mut_ptr());
             }
             self.doom_initialized = true;
         } else {

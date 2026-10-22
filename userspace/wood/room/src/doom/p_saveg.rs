@@ -67,56 +67,29 @@ const SAVESTRINGSIZE: usize = 24;
 // ---------------------------------------------------------------------------
 
 /// Active save-game `FILE *` stream; opened and closed by `g_game.c`.
-/// Exported with C linkage so `g_game.c` can assign it before calling any
-/// archive or unarchive function.
-#[no_mangle]
+/// `g_game` assigns it before calling any archive or unarchive function.
 pub static mut save_stream: *mut libc::FILE = ptr::null_mut();
 
 /// Running byte count of data written to the current save stream.
 /// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
 /// C origin: `savegamelength` in `p_saveg.c`.
-#[no_mangle]
 pub static mut savegamelength: c_int = 0;
 
 /// Non-zero when a read or write error has occurred on `save_stream`.
 /// Set to `1` on the first I/O failure; callers check this after
 /// archiving/unarchiving to decide whether to accept the save.
 /// C origin: `savegame_error` in `p_saveg.c`.
-#[no_mangle]
 pub static mut savegame_error: c_int = 0;
 
-// ---------------------------------------------------------------------------
-// External C declarations
-// ---------------------------------------------------------------------------
-
-extern "C" {
-    /// C-side mobj thinker; used for type dispatch when reading/writing the
-    /// thinker chain.
-    fn P_MobjThinker(mobj: *mut c_void);
-    /// Places a map object into the sector and blockmap spatial structures.
-    fn P_SetThingPosition(thing: *mut c_void);
-    /// Removes a mobj from the world without calling its death logic; used
-    /// when clearing the thinker list before loading.
-    fn P_RemoveMobj(th: *mut c_void);
-    /// Returns the vanilla Doom version code (e.g. 109) used in the save
-    /// header version string.
-    fn G_VanillaVersionCode() -> c_int;
-
-    /// Global array of all map sectors; indexed by sector number.
-    static mut sectors: *mut sector_t;
-    /// Global array of all map linedefs; indexed by linedef number.
-    static mut lines: *mut line_t;
-    /// Global array of all map sidedefs; indexed by sidedef number.
-    static mut sides: *mut side_t;
-    /// Count of entries in `sectors`.
-    static mut numsectors: c_int;
-    /// Count of entries in `lines`.
-    static mut numlines: c_int;
-
-    /// Path to the save-game directory (NUL-terminated C string); assigned
-    /// from the command-line or platform default by `g_game.c`.
-    static mut savegamedir: *mut c_char;
-}
+// The map arrays (`sectors`, `lines`, `sides`) hold `c_ffi`'s layout-identical
+// copies of this module's `sector_t`, `line_t` and `side_t`; uses cast them.
+use crate::doom::{
+    d_main::savegamedir,
+    g_game::G_VanillaVersionCode,
+    p_maputl::P_SetThingPosition,
+    p_mobj::{P_MobjThinker, P_RemoveMobj},
+    p_setup::{lines, numlines, numsectors, sectors, sides},
+};
 
 // ---------------------------------------------------------------------------
 // Low-level I/O — uses the C FILE * managed by g_game.c.
@@ -248,7 +221,7 @@ unsafe fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
     if sector.is_null() {
         0
     } else {
-        sector.offset_from(sectors) as u32
+        sector.offset_from(sectors.cast::<sector_t>()) as u32
     }
 }
 
@@ -258,7 +231,7 @@ unsafe fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
 /// performed; callers must trust that the index was written by a valid
 /// `saveg_write_sector_ptr` call.
 unsafe fn saveg_read_sector_ptr(index: u32) -> *mut sector_t {
-    sectors.add(index as usize)
+    sectors.cast::<sector_t>().add(index as usize)
 }
 
 /// Serializes a `State` pointer as a zero-based index into the global `states`
@@ -321,7 +294,7 @@ unsafe fn saveg_read_player_ptr(value: u32) -> *mut PlayerT {
 ///
 /// Each generated function (e.g. `actionf_p1_move_ceiling`) transmutes the
 /// concrete thinker function pointer (`T_MoveCeiling`, etc.) to the generic
-/// `unsafe extern "C" fn(*mut c_void)` required by `actionf_t::acp1`. This
+/// `unsafe fn(*mut c_void)` required by `actionf_t::acp1`. This
 /// is the Rust equivalent of the C cast
 /// `(actionf_p1)T_MoveCeiling`.
 macro_rules! make_actionf_p1 {
@@ -329,16 +302,19 @@ macro_rules! make_actionf_p1 {
         fn $fn_name() -> actionf_t {
             actionf_t {
                 acp1: Some(unsafe {
-                    core::mem::transmute::<
-                        unsafe extern "C" fn(*mut $arg_ty),
-                        unsafe extern "C" fn(*mut c_void),
-                    >($c_fn)
+                    core::mem::transmute::<unsafe fn(*mut $arg_ty), unsafe fn(*mut c_void)>($c_fn)
                 }),
             }
         }
     };
 }
 
+// Returns an `actionf_t` for `P_MobjThinker` (map object thinker).
+make_actionf_p1!(
+    actionf_p1_mobj_thinker,
+    crate::doom::p_telept::mobj_t,
+    P_MobjThinker
+);
 // Returns an `actionf_t` for `T_MoveCeiling` (ceiling special thinker).
 make_actionf_p1!(actionf_p1_move_ceiling, ceiling_t, T_MoveCeiling);
 // Returns an `actionf_t` for `T_VerticalDoor` (door special thinker).
@@ -410,10 +386,7 @@ unsafe fn saveg_read_thinker_t(th: *mut thinker_t) {
     s.function.acp1 = if raw == 0 {
         None
     } else {
-        Some(core::mem::transmute::<
-            usize,
-            unsafe extern "C" fn(*mut c_void),
-        >(raw))
+        Some(core::mem::transmute::<usize, unsafe fn(*mut c_void)>(raw))
     };
 }
 
@@ -458,10 +431,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
         (*thinker_ptr).function.acp1 = if raw == 0 {
             None
         } else {
-            Some(core::mem::transmute::<
-                usize,
-                unsafe extern "C" fn(*mut c_void),
-            >(raw))
+            Some(core::mem::transmute::<usize, unsafe fn(*mut c_void)>(raw))
         };
     }
 
@@ -1232,8 +1202,7 @@ const SAVEGAMENAME: &str = "doomsav";
 /// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
 /// this call. The returned pointer is valid until process exit; the caller must
 /// not free or mutate it.
-#[no_mangle]
-pub unsafe extern "C" fn P_TempSaveGameFile() -> *mut c_char {
+pub unsafe fn P_TempSaveGameFile() -> *mut c_char {
     if TEMP_SAVE_FILENAME.is_null() {
         let dir = std::ffi::CStr::from_ptr(savegamedir).to_string_lossy();
         let full = format!("{}temp.dsg\0", dir);
@@ -1259,8 +1228,7 @@ pub unsafe extern "C" fn P_TempSaveGameFile() -> *mut c_char {
 /// `savegamedir` must be a valid, NUL-terminated C string for the lifetime of
 /// this call. `slot` must be in the range `0..=7`. The returned pointer is
 /// valid until the next call to this function; the caller must not free it.
-#[no_mangle]
-pub unsafe extern "C" fn P_SaveGameFile(slot: c_int) -> *mut c_char {
+pub unsafe fn P_SaveGameFile(slot: c_int) -> *mut c_char {
     let dir_len = std::ffi::CStr::from_ptr(savegamedir).to_bytes().len();
     let alloc_size = dir_len + 32;
 
@@ -1298,8 +1266,7 @@ pub unsafe extern "C" fn P_SaveGameFile(slot: c_int) -> *mut c_char {
 /// be an open, writable `FILE *` with enough capacity to hold the header bytes.
 /// The global state `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
 /// `leveltime` must have been set to valid values before this call.
-#[no_mangle]
-pub unsafe extern "C" fn P_WriteSaveGameHeader(description: *const c_char) {
+pub unsafe fn P_WriteSaveGameHeader(description: *const c_char) {
     let desc = std::ffi::CStr::from_ptr(description);
     let desc_bytes = desc.to_bytes();
 
@@ -1355,8 +1322,7 @@ pub unsafe extern "C" fn P_WriteSaveGameHeader(description: *const c_char) {
 /// a save file written by `P_WriteSaveGameHeader`. On success, `gameskill`,
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
-#[no_mangle]
-pub unsafe extern "C" fn P_ReadSaveGameHeader() -> c_int {
+pub unsafe fn P_ReadSaveGameHeader() -> c_int {
     // Skip description (SAVESTRINGSIZE bytes)
     for _ in 0..SAVESTRINGSIZE {
         saveg_read8();
@@ -1413,8 +1379,7 @@ pub unsafe extern "C" fn P_ReadSaveGameHeader() -> c_int {
 /// `save_stream` must be an open, readable `FILE *` positioned immediately
 /// after the last unarchived byte, i.e. where `P_WriteSaveGameEOF` wrote its
 /// marker. Reading from an invalid or exhausted stream is undefined behaviour.
-#[no_mangle]
-pub unsafe extern "C" fn P_ReadSaveGameEOF() -> c_int {
+pub unsafe fn P_ReadSaveGameEOF() -> c_int {
     let value = saveg_read8();
     if value == SAVEGAME_EOF {
         1
@@ -1435,23 +1400,11 @@ pub unsafe extern "C" fn P_ReadSaveGameEOF() -> c_int {
 /// `save_stream` must be an open, writable `FILE *`. This must be called after
 /// all archive functions have finished writing so that the marker byte appears
 /// at the correct position for `P_ReadSaveGameEOF` to validate.
-#[no_mangle]
-pub unsafe extern "C" fn P_WriteSaveGameEOF() {
+pub unsafe fn P_WriteSaveGameEOF() {
     saveg_write8(SAVEGAME_EOF);
 }
 
-extern "C" {
-    /// Current skill level (0-4); serialized into the save header.
-    static mut gameskill: c_int;
-    /// Current episode number (1-based); serialized into the save header.
-    static mut gameepisode: c_int;
-    /// Current map number within the episode (1-based); serialized into the
-    /// save header.
-    static mut gamemap: c_int;
-    /// Per-player in-game flags; non-zero means the corresponding player slot
-    /// is active. Array of `MAXPLAYERS` elements.
-    static mut playeringame: [c_int; MAXPLAYERS];
-}
+use crate::doom::g_game::{gameepisode, gamemap, gameskill, playeringame};
 
 // ---------------------------------------------------------------------------
 // P_ArchivePlayers / P_UnArchivePlayers
@@ -1470,8 +1423,7 @@ extern "C" {
 /// The `players` array and `playeringame` flags must be fully initialized for
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
-#[no_mangle]
-pub unsafe extern "C" fn P_ArchivePlayers() {
+pub unsafe fn P_ArchivePlayers() {
     for i in 0..MAXPLAYERS {
         if playeringame[i] == 0 {
             continue;
@@ -1496,8 +1448,7 @@ pub unsafe extern "C" fn P_ArchivePlayers() {
 /// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// null and must not be dereferenced until thinkers are unarchived.
-#[no_mangle]
-pub unsafe extern "C" fn P_UnArchivePlayers() {
+pub unsafe fn P_UnArchivePlayers() {
     for i in 0..MAXPLAYERS {
         if playeringame[i] == 0 {
             continue;
@@ -1535,14 +1486,13 @@ pub unsafe extern "C" fn P_UnArchivePlayers() {
 /// The global `sectors` array (length `numsectors`), `lines` array (length
 /// `numlines`), and `sides` array must all be fully initialized. Every
 /// `line_t.sidenum[j]` that is not `-1` must be a valid index into `sides`.
-#[no_mangle]
-pub unsafe extern "C" fn P_ArchiveWorld() {
+pub unsafe fn P_ArchiveWorld() {
     let num_sec = numsectors as usize;
     let num_li = numlines as usize;
 
     // do sectors
     for i in 0..num_sec {
-        let sec = sectors.add(i);
+        let sec = sectors.cast::<sector_t>().add(i);
         saveg_write16(((*sec).floorheight >> 16) as u16);
         saveg_write16(((*sec).ceilingheight >> 16) as u16);
         saveg_write16((*sec).floorpic as u16);
@@ -1554,7 +1504,7 @@ pub unsafe extern "C" fn P_ArchiveWorld() {
 
     // do lines
     for i in 0..num_li {
-        let li = lines.add(i);
+        let li = lines.cast::<line_t>().add(i);
         saveg_write16((*li).flags as u16);
         saveg_write16((*li).special as u16);
         saveg_write16((*li).tag as u16);
@@ -1562,7 +1512,9 @@ pub unsafe extern "C" fn P_ArchiveWorld() {
             if (*li).sidenum[j as usize] == -1 {
                 continue;
             }
-            let si = sides.add((*li).sidenum[j as usize] as usize);
+            let si = sides
+                .cast::<side_t>()
+                .add((*li).sidenum[j as usize] as usize);
             saveg_write16(((*si).textureoffset >> 16) as u16);
             saveg_write16(((*si).rowoffset >> 16) as u16);
             saveg_write16((*si).toptexture as u16);
@@ -1592,14 +1544,13 @@ pub unsafe extern "C" fn P_ArchiveWorld() {
 /// all be allocated and at least partially initialized (map load must have
 /// completed). Every `line_t.sidenum[j]` that is not `-1` must be a valid
 /// index into `sides`.
-#[no_mangle]
-pub unsafe extern "C" fn P_UnArchiveWorld() {
+pub unsafe fn P_UnArchiveWorld() {
     let num_sec = numsectors as usize;
     let num_li = numlines as usize;
 
     // do sectors
     for i in 0..num_sec {
-        let sec = sectors.add(i);
+        let sec = sectors.cast::<sector_t>().add(i);
         (*sec).floorheight = (saveg_read16() as i16 as c_int) << 16;
         (*sec).ceilingheight = (saveg_read16() as i16 as c_int) << 16;
         (*sec).floorpic = saveg_read16() as i16;
@@ -1613,7 +1564,7 @@ pub unsafe extern "C" fn P_UnArchiveWorld() {
 
     // do lines
     for i in 0..num_li {
-        let li = lines.add(i);
+        let li = lines.cast::<line_t>().add(i);
         (*li).flags = saveg_read16() as i16;
         (*li).special = saveg_read16() as i16;
         (*li).tag = saveg_read16() as i16;
@@ -1621,7 +1572,9 @@ pub unsafe extern "C" fn P_UnArchiveWorld() {
             if (*li).sidenum[j as usize] == -1 {
                 continue;
             }
-            let si = sides.add((*li).sidenum[j as usize] as usize);
+            let si = sides
+                .cast::<side_t>()
+                .add((*li).sidenum[j as usize] as usize);
             (*si).textureoffset = (saveg_read16() as i16 as c_int) << 16;
             (*si).rowoffset = (saveg_read16() as i16 as c_int) << 16;
             (*si).toptexture = saveg_read16() as i16;
@@ -1663,8 +1616,7 @@ const tc_mobj: u8 = 1;
 /// The thinker chain rooted at `thinkercap` must be fully initialized and form
 /// a valid doubly-linked circular list. Every thinker in the chain whose
 /// function equals `P_MobjThinker` must point to a valid `mobj_t`.
-#[no_mangle]
-pub unsafe extern "C" fn P_ArchiveThinkers() {
+pub unsafe fn P_ArchiveThinkers() {
     let cap = &raw mut thinkercap;
     let mut th = (*cap).next;
 
@@ -1713,8 +1665,7 @@ pub unsafe extern "C" fn P_ArchiveThinkers() {
 /// (`sectors`, block-map, etc.) must be loaded so that `P_SetThingPosition`
 /// can place each restored mobj. Must be called before `P_UnArchiveSpecials`
 /// and before any code dereferences `players[i].mo`.
-#[no_mangle]
-pub unsafe extern "C" fn P_UnArchiveThinkers() {
+pub unsafe fn P_UnArchiveThinkers() {
     let cap = &raw mut thinkercap;
     let mut currentthinker = (*cap).next;
 
@@ -1725,7 +1676,7 @@ pub unsafe extern "C" fn P_UnArchiveThinkers() {
         let func = (*currentthinker).function.acp1;
         if let Some(fn_ptr) = func {
             if fn_ptr as usize == P_MobjThinker as *const () as usize {
-                P_RemoveMobj(currentthinker as *mut c_void);
+                P_RemoveMobj(currentthinker.cast());
             } else {
                 Z_Free(currentthinker as *mut c_void);
             }
@@ -1758,7 +1709,7 @@ pub unsafe extern "C" fn P_UnArchiveThinkers() {
                 (*mo).target = std::ptr::null_mut();
                 (*mo).tracer = std::ptr::null_mut();
 
-                P_SetThingPosition(mobj);
+                P_SetThingPosition(mobj.cast());
 
                 // rebuild info from mobjinfo
                 (*mo).info = &mut mobjinfo[(*mo).type_ as usize] as *mut MobjInfo
@@ -1776,9 +1727,7 @@ pub unsafe extern "C" fn P_UnArchiveThinkers() {
 
                 // set thinker function
                 let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker_prev) as *mut thinker_t;
-                (*thinker_ptr).function = actionf_t {
-                    acp1: Some(P_MobjThinker),
-                };
+                (*thinker_ptr).function = actionf_p1_mobj_thinker();
 
                 P_AddThinker(&mut (*thinker_ptr));
             }
@@ -1842,8 +1791,7 @@ const tc_endspecials: u8 = 7;
 /// initialized. Every thinker that matches a known special function pointer
 /// must point to a fully initialized special struct (`ceiling_t`, `vldoor_t`,
 /// etc.).
-#[no_mangle]
-pub unsafe extern "C" fn P_ArchiveSpecials() {
+pub unsafe fn P_ArchiveSpecials() {
     let cap = &raw mut thinkercap;
     let mut th = (*cap).next;
 
@@ -1972,8 +1920,7 @@ pub unsafe extern "C" fn P_ArchiveSpecials() {
 // FIXME: p_saveg.c allocates ceiling_t with PU_LEVEL, not PU_LEVSPEC; this
 // port uses PU_LEVSPEC here (consistent with other specials). The difference
 // affects when the zone allocator may purge the block.
-#[no_mangle]
-pub unsafe extern "C" fn P_UnArchiveSpecials() {
+pub unsafe fn P_UnArchiveSpecials() {
     loop {
         let tclass = saveg_read8();
         match tclass {
@@ -2077,33 +2024,6 @@ pub unsafe extern "C" fn P_UnArchiveSpecials() {
             }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Link anchor
-// ---------------------------------------------------------------------------
-
-/// Forces all public `extern "C"` functions in this module to be included in
-/// the final binary by taking their addresses.
-///
-/// Without this anchor the linker may dead-strip functions that are only called
-/// from C translation units, since Rust does not see those call sites.
-#[no_mangle]
-pub extern "C" fn P_Saveg_Link_Anchor() {
-    let _ = P_TempSaveGameFile as *const () as usize;
-    let _ = P_SaveGameFile as *const () as usize;
-    let _ = P_WriteSaveGameHeader as *const () as usize;
-    let _ = P_ReadSaveGameHeader as *const () as usize;
-    let _ = P_ReadSaveGameEOF as *const () as usize;
-    let _ = P_WriteSaveGameEOF as *const () as usize;
-    let _ = P_ArchivePlayers as *const () as usize;
-    let _ = P_UnArchivePlayers as *const () as usize;
-    let _ = P_ArchiveWorld as *const () as usize;
-    let _ = P_UnArchiveWorld as *const () as usize;
-    let _ = P_ArchiveThinkers as *const () as usize;
-    let _ = P_UnArchiveThinkers as *const () as usize;
-    let _ = P_ArchiveSpecials as *const () as usize;
-    let _ = P_UnArchiveSpecials as *const () as usize;
 }
 
 // ---------------------------------------------------------------------------

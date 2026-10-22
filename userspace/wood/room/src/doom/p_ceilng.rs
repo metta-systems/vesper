@@ -114,8 +114,6 @@ mod layout_checks {
 ///
 /// Null entries represent free slots.  [`P_AddActiveCeiling`] fills the first
 /// null slot; [`P_RemoveActiveCeiling`] nulls the matching slot.
-/// Exported as `activeceilings` for C linkage.
-#[no_mangle]
 pub static mut activeceilings: [*mut ceiling_t; MAXCEILINGS] = [std::ptr::null_mut(); MAXCEILINGS];
 
 /// Per-tic update for a moving ceiling thinker.
@@ -159,8 +157,7 @@ pub static mut activeceilings: [*mut ceiling_t; MAXCEILINGS] = [std::ptr::null_m
 ///
 /// `ceiling` must be a valid, non-null pointer to a `ceiling_t` that is
 /// currently linked in the thinker list and whose `sector` pointer is valid.
-#[no_mangle]
-pub unsafe extern "C" fn T_MoveCeiling(ceiling: *mut ceiling_t) {
+pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
     let res = T_MovePlane(
         (*ceiling).sector,
         (*ceiling).speed,
@@ -234,8 +231,7 @@ pub unsafe extern "C" fn T_MoveCeiling(ceiling: *mut ceiling_t) {
 ///
 /// `line` must be a valid, non-null pointer.  The global `sectors` array must
 /// be initialised for the current level.
-#[no_mangle]
-pub unsafe extern "C" fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> c_int {
+pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> c_int {
     let mut secnum: c_int = -1;
     let mut rtn: c_int = 0;
 
@@ -266,8 +262,8 @@ pub unsafe extern "C" fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> 
         P_AddThinker(&mut (*ceiling).thinker);
         (*sec).specialdata = ceiling as *mut c_void;
         (*ceiling).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe extern "C" fn(*mut ceiling_t),
-            unsafe extern "C" fn(*mut c_void),
+            unsafe fn(*mut ceiling_t),
+            unsafe fn(*mut c_void),
         >(T_MoveCeiling));
         (*ceiling).sector = sec as *mut sector_t;
         (*ceiling).crush = 0;
@@ -314,8 +310,7 @@ pub unsafe extern "C" fn EV_DoCeiling(line: *mut line_t, ceilingtype: c_int) -> 
 /// guard.
 ///
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
-#[no_mangle]
-pub extern "C" fn P_AddActiveCeiling(c: *mut ceiling_t) {
+pub fn P_AddActiveCeiling(c: *mut ceiling_t) {
     unsafe {
         for i in 0..MAXCEILINGS {
             if activeceilings[i].is_null() {
@@ -333,8 +328,7 @@ pub extern "C" fn P_AddActiveCeiling(c: *mut ceiling_t) {
 /// [`activeceilings`].  Does nothing if `c` is not found in the table.
 ///
 /// Corresponds to `P_RemoveActiveCeiling` in `p_ceilng.c`.
-#[no_mangle]
-pub extern "C" fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
+pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
     unsafe {
         for i in 0..MAXCEILINGS {
             if activeceilings[i] == c {
@@ -359,8 +353,7 @@ pub extern "C" fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-#[no_mangle]
-pub extern "C" fn P_ActivateInStasisCeiling(line: *mut line_t) {
+pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
     unsafe {
         for i in 0..MAXCEILINGS {
             if !activeceilings[i].is_null()
@@ -369,8 +362,8 @@ pub extern "C" fn P_ActivateInStasisCeiling(line: *mut line_t) {
             {
                 (*activeceilings[i]).direction = (*activeceilings[i]).olddirection;
                 (*activeceilings[i]).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut ceiling_t),
-                    unsafe extern "C" fn(*mut c_void),
+                    unsafe fn(*mut ceiling_t),
+                    unsafe fn(*mut c_void),
                 >(T_MoveCeiling));
             }
         }
@@ -391,8 +384,7 @@ pub extern "C" fn P_ActivateInStasisCeiling(line: *mut line_t) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-#[no_mangle]
-pub extern "C" fn EV_CeilingCrushStop(line: *mut line_t) -> c_int {
+pub fn EV_CeilingCrushStop(line: *mut line_t) -> c_int {
     unsafe {
         let mut rtn: c_int = 0;
         for i in 0..MAXCEILINGS {
@@ -408,21 +400,6 @@ pub extern "C" fn EV_CeilingCrushStop(line: *mut line_t) -> c_int {
         }
         rtn
     }
-}
-
-/// Link anchor that prevents dead-code elimination of exported ceiling symbols.
-///
-/// Referenced from the engine initialisation path so the linker keeps every
-/// ceiling function in the final binary even if no Rust caller uses them
-/// directly.
-#[no_mangle]
-pub extern "C" fn P_Ceilng_Link_Anchor() {
-    let _ = T_MoveCeiling as *const () as usize;
-    let _ = EV_DoCeiling as *const () as usize;
-    let _ = P_AddActiveCeiling as *const () as usize;
-    let _ = P_RemoveActiveCeiling as *const () as usize;
-    let _ = P_ActivateInStasisCeiling as *const () as usize;
-    let _ = EV_CeilingCrushStop as *const () as usize;
 }
 
 #[cfg(test)]

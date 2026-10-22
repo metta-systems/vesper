@@ -94,10 +94,9 @@ static mut EVENT_TAIL: usize = 0;
 ///
 /// # Safety
 /// `ev` must be a valid, aligned, non-null pointer to an initialised
-/// `event_t` for the duration of this call.  This function is called from C
-/// code, so the pointer validity guarantee rests with the caller.
-#[no_mangle]
-pub extern "C" fn D_PostEvent(ev: *const event_t) {
+/// `event_t` for the duration of this call; the pointer validity guarantee
+/// rests with the caller.
+pub fn D_PostEvent(ev: *const event_t) {
     unsafe {
         EVENTS[EVENT_HEAD] = *ev;
         EVENT_HEAD = (EVENT_HEAD + 1) % MAXEVENTS;
@@ -118,10 +117,8 @@ pub extern "C" fn D_PostEvent(ev: *const event_t) {
 /// # Safety
 /// The returned pointer aliases internal mutable state.  Callers must not
 /// retain the pointer across subsequent calls to [`D_PostEvent`] that could
-/// recycle the same slot.  This function is called from C code which observes
-/// those constraints.
-#[no_mangle]
-pub extern "C" fn D_PopEvent() -> *mut event_t {
+/// recycle the same slot.
+pub fn D_PopEvent() -> *mut event_t {
     unsafe {
         if EVENT_TAIL == EVENT_HEAD {
             return std::ptr::null_mut();

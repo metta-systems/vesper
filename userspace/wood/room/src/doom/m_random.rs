@@ -1,8 +1,7 @@
 //! Rust port of vendor/doomgeneric/m_random.c.
 //!
 //! `rndindex` is declared `extern int` in doomstat.h:276 and read by
-//! g_game.c:957 for the net-play consistency check. We must export it
-//! with C linkage so the C side resolves against our Rust definition.
+//! g_game.c:957 for the net-play consistency check.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
@@ -28,15 +27,12 @@ pub(crate) static RNDTABLE: [u8; 256] = [
 ];
 
 /// `extern int rndindex` — the game-thinker random cursor.
-/// Read by `g_game.c` to build net-play consistency hashes. Must have
-/// C linkage so the `extern` declaration in `doomstat.h` resolves here.
-#[no_mangle]
+/// Read by `g_game` to build net-play consistency hashes.
 pub static mut rndindex: c_int = 0;
 
 /// `int prndindex` — the play-simulation random cursor.
-/// Exported with C linkage so the demo-playthrough integration test can
-/// read it via `extern "C"` for consistency-check snapshots.
-#[no_mangle]
+/// The demo-playthrough integration test reads it for consistency-check
+/// snapshots.
 pub static mut prndindex: c_int = 0;
 
 /// `int P_Random(void)` — advance and read the play-simulation random
@@ -44,8 +40,7 @@ pub static mut prndindex: c_int = 0;
 /// This is the deterministic generator used by game logic; demos and
 /// net-play depend on its exact sequence.
 // Which one is deterministic?
-#[no_mangle]
-pub extern "C" fn P_Random() -> c_int {
+pub fn P_Random() -> c_int {
     unsafe {
         prndindex = (prndindex + 1) & 0xff;
         RNDTABLE[prndindex as usize] as c_int
@@ -56,8 +51,7 @@ pub extern "C" fn P_Random() -> c_int {
 /// cursor. Returns the next byte from `RNDTABLE` masked to `0..=255`.
 /// Used for non-simulation effects (e.g. menu animation) so its use
 /// does not perturb demo determinism.
-#[no_mangle]
-pub extern "C" fn M_Random() -> c_int {
+pub fn M_Random() -> c_int {
     unsafe {
         rndindex = (rndindex + 1) & 0xff;
         RNDTABLE[rndindex as usize] as c_int
@@ -67,8 +61,7 @@ pub extern "C" fn M_Random() -> c_int {
 /// `void M_ClearRandom(void)` — reset both `rndindex` and `prndindex` to
 /// 0. Called at the start of a new game/demo so the random sequence
 /// reproduces.
-#[no_mangle]
-pub extern "C" fn M_ClearRandom() {
+pub fn M_ClearRandom() {
     unsafe {
         rndindex = 0;
         prndindex = 0;

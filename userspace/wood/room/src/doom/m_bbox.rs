@@ -35,8 +35,7 @@ impl BBox {
 ///
 /// # Safety
 /// `bbox` must point to at least 4 contiguous `fixed_t` values.
-#[no_mangle]
-pub unsafe extern "C" fn M_ClearBox(bbox: *mut fixed_t) {
+pub unsafe fn M_ClearBox(bbox: *mut fixed_t) {
     let slice = std::slice::from_raw_parts_mut(bbox, 4);
     slice[BBox::TOP] = i32::MIN;
     slice[BBox::RIGHT] = i32::MIN;
@@ -48,8 +47,7 @@ pub unsafe extern "C" fn M_ClearBox(bbox: *mut fixed_t) {
 ///
 /// # Safety
 /// `bbox` must point to at least 4 contiguous `fixed_t` values.
-#[no_mangle]
-pub unsafe extern "C" fn M_AddToBox(bbox: *mut fixed_t, x: fixed_t, y: fixed_t) {
+pub unsafe fn M_AddToBox(bbox: *mut fixed_t, x: fixed_t, y: fixed_t) {
     let slice = std::slice::from_raw_parts_mut(bbox, 4);
     if x < slice[BBox::LEFT] {
         slice[BBox::LEFT] = x;

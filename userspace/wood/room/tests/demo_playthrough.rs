@@ -16,7 +16,7 @@ static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 
 use std::{
     cell::Cell,
-    ffi::{c_char, c_int, c_uint, CString},
+    ffi::{c_char, c_int, CString},
     mem::offset_of,
     path::PathBuf,
 };
@@ -49,98 +49,30 @@ fn frame_count() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
-// DG_* stubs (C-callable, replace the platform in room/src/platform/);
-// the playthrough runs silent
+// Headless platform: counts frames, runs on virtual time, silent
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
-pub extern "C" fn DG_SoundInit() -> c_int {
-    0
+struct Headless;
+
+impl room::doom::doomgeneric::Platform for Headless {
+    fn draw_frame(&self, _frame: &[u32]) {
+        note_frame();
+    }
+
+    fn ticks_ms(&self) -> u32 {
+        virtual_ms()
+    }
 }
-
-#[no_mangle]
-pub extern "C" fn DG_SoundShutdown() {}
-
-#[no_mangle]
-pub extern "C" fn DG_SoundStart(
-    _data: *const u8,
-    _len: usize,
-    _channel: c_int,
-    _vol: c_int,
-    _sep: c_int,
-) -> c_int {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn DG_SoundStop(_channel: c_int) {}
-
-#[no_mangle]
-pub extern "C" fn DG_SoundUpdate(_channel: c_int, _vol: c_int, _sep: c_int) {}
-
-#[no_mangle]
-pub extern "C" fn DG_SoundIsPlaying(_channel: c_int) -> c_int {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicInit() {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicPlay(_midi: *const u8, _len: usize, _looping: c_int) {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicStop() {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicPause() {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicResume() {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicSetVolume(_volume: c_int) {}
-
-#[no_mangle]
-pub extern "C" fn DG_MusicIsPlaying() -> c_int {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn DG_Init() {}
-
-#[no_mangle]
-pub extern "C" fn DG_DrawFrame() {
-    note_frame();
-}
-
-#[no_mangle]
-pub extern "C" fn DG_SleepMs(_ms: u32) {}
-
-#[no_mangle]
-pub extern "C" fn DG_GetTicksMs() -> u32 {
-    virtual_ms()
-}
-
-#[no_mangle]
-pub extern "C" fn DG_GetKey(_pressed: *mut i32, _doom_key: *mut u8) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn DG_SetWindowTitle(_title: *const c_char) {}
 
 // ---------------------------------------------------------------------------
-// C global declarations
+// Engine globals
 // ---------------------------------------------------------------------------
 
-extern "C" {
-    static gametic: c_int;
-    static gamestate: c_int;
-    static mut prndindex: c_int;
-    static mut singletics: c_uint;
-    static mut longtics: c_uint;
-}
+use room::doom::{
+    d_loop::{gametic, singletics},
+    g_game::{gamestate, longtics},
+    m_random::prndindex,
+};
 
 // ---------------------------------------------------------------------------
 // MobjPrefix – repr-C mirror of the first fields of mobj_s
@@ -833,7 +765,7 @@ fn demo_playthrough() {
 
     // Initialize the Doom engine.
     unsafe {
-        room::doom::doomgeneric::doomgeneric_Create(argc, c_argv.as_mut_ptr());
+        room::doom::doomgeneric::doomgeneric_Create(&Headless, argc, c_argv.as_mut_ptr());
     }
 
     // Sanity-check invariants that future agents often re-validate when
@@ -937,7 +869,7 @@ fn demo_playthrough() {
                     CHECKPOINTS.len(),
                     pct,
                     tic + 1,
-                    gametic,
+                    { gametic },
                     { room::doom::p_tick::leveltime },
                 );
             }

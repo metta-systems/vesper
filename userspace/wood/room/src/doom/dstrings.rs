@@ -45,9 +45,7 @@ impl Ptr {
 ///
 /// Corresponds to `char *doom1_endmsg[]` in `dstrings.c`.  The game picks
 /// one at random (via `M_Random`) when the quit dialog is opened in a Doom 1
-/// game session.  The `#[no_mangle]` export allows C code in `m_misc.c` (or
-/// equivalent) to access the table by its original symbol name.
-#[no_mangle]
+/// game session.
 pub static doom1_endmsg: [Ptr; 8] = [
     Ptr(c"are you sure you want to\nquit this great game?".as_ptr()),
     Ptr(c"please don't leave, there's more\ndemons to toast!".as_ptr()),
@@ -64,7 +62,6 @@ pub static doom1_endmsg: [Ptr; 8] = [
 /// Corresponds to `char *doom2_endmsg[]` in `dstrings.c`.  Functionally
 /// identical to [`doom1_endmsg`] but with Doom-II-themed text.  Used when
 /// `gamemission` is `doom2`, `pack_tnt`, or `pack_plut`.
-#[no_mangle]
 pub static doom2_endmsg: [Ptr; 8] = [
     Ptr(c"are you sure you want to\nquit this great game?".as_ptr()),
     Ptr(c"you want to quit?\nthen, thou hast lost an eighth!".as_ptr()),

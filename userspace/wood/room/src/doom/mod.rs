@@ -2,10 +2,8 @@
 //!
 //! This file mirrors the file layout of `vendor/doomgeneric/` one-for-one:
 //! each `pub mod` below corresponds to a single `.c` file in the original
-//! engine source.  Submodules export their public API with
-//! `#[no_mangle] extern "C"` so the residual C code (or other Rust ports that
-//! still go through the C ABI for parity testing) resolves them at final link
-//! time.
+//! engine source.  Submodules expose their public API as ordinary Rust
+//! items, imported by path where they are used.
 //!
 //! Adding a new ported file means dropping a `pub mod foo;` here in
 //! alphabetical order within its subsystem block.  The grouping (core, render,

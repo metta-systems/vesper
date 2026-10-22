@@ -407,20 +407,17 @@ const ALPH_SWITCH_LIST: [SwitchDef; 41] = [
 /// `numswitches * 2`.  The sentinel `switchlist[numswitches * 2] == -1`
 /// marks the end of valid data.
 /// Matches `switchlist[]` in `p_switch.c`.
-#[no_mangle]
 pub static mut switchlist: [c_int; MAXSWITCHES * 2] = [0; MAXSWITCHES * 2];
 
 /// Number of valid switch pairs in `switchlist` after `P_InitSwitchList`
 /// runs.  Zero before initialization.
 /// Matches `numswitches` in `p_switch.c`.
-#[no_mangle]
 pub static mut numswitches: c_int = 0;
 
 /// Ring-buffer of active timed buttons.  Slots with `btimer == 0` are free.
 /// Decremented each tic by the thinker subsystem; when a slot's timer
 /// reaches zero the original texture is restored.
 /// Matches `buttonlist[]` in `p_switch.c`.
-#[no_mangle]
 pub static mut buttonlist: [button_t; MAXBUTTONS] = [button_t {
     line: std::ptr::null_mut(),
     where_: 0,
@@ -469,8 +466,7 @@ type CffiMobj = crate::doom::c_ffi::mobj_t;
 /// `DEH_String()` before passing it to `R_TextureNumForName`, allowing
 /// DEHacked patches to rename switch textures.  This port omits that
 /// wrapper because `FEATURE_DEHACKED` is disabled.
-#[no_mangle]
-pub extern "C" fn P_InitSwitchList() {
+pub fn P_InitSwitchList() {
     unsafe {
         let episode: i16 = match gamemode {
             m if m == d_mode::registered || m == d_mode::retail => 2,
@@ -515,8 +511,7 @@ pub extern "C" fn P_InitSwitchList() {
 ///
 /// `line` must be a valid, non-null pointer to a live `line_t`.
 /// `buttonlist` must only be accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_StartButton(line: *mut line_t, w: c_int, texture: c_int, time: c_int) {
+pub unsafe fn P_StartButton(line: *mut line_t, w: c_int, texture: c_int, time: c_int) {
     // See if button is already pressed
     for i in 0..MAXBUTTONS {
         if buttonlist[i].btimer != 0 && buttonlist[i].line == line {
@@ -560,8 +555,7 @@ pub unsafe extern "C" fn P_StartButton(line: *mut line_t, w: c_int, texture: c_i
 /// `line` must be a valid, non-null pointer to a live `line_t`.  The global
 /// `switchlist`, `numswitches`, `buttonlist`, and `sides` arrays must only
 /// be accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_int) {
+pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_int) {
     if useAgain == 0 {
         (*line).special = 0;
     }
@@ -634,12 +628,7 @@ pub unsafe extern "C" fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: c_in
 /// `thing` must be a valid, non-null pointer to a `mobj_t`.  `line` must
 /// be a valid, non-null pointer to a live `line_t`.  All global game-state
 /// statics must only be accessed from the game-logic thread.
-#[no_mangle]
-pub unsafe extern "C" fn P_UseSpecialLine(
-    thing: *mut c_void,
-    line: *mut line_t,
-    side: c_int,
-) -> c_int {
+pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: c_int) -> c_int {
     // Err...
     // Use the back sides of VERY SPECIAL lines...
     if side != 0 {
@@ -831,26 +820,6 @@ pub unsafe extern "C" fn P_UseSpecialLine(
     }
 
     1 // true
-}
-
-// ---------------------------------------------------------------------------
-// Link anchor
-// ---------------------------------------------------------------------------
-
-/// Ensures all public symbols in this module are retained by the linker.
-///
-/// Not intended for direct use in game logic.
-///
-/// # Safety
-///
-/// Accesses function pointers as raw integers purely to prevent dead-code
-/// elimination; no actual function calls are made.
-#[no_mangle]
-pub unsafe extern "C" fn P_Switch_Link_Anchor() {
-    let _ = P_InitSwitchList as *const () as usize;
-    let _ = P_StartButton as *const () as usize;
-    let _ = P_ChangeSwitchTexture as *const () as usize;
-    let _ = P_UseSpecialLine as *const () as usize;
 }
 
 // ---------------------------------------------------------------------------
