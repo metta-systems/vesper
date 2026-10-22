@@ -1,0 +1,2 @@
+run:
+    cargo run --bin room --release -- -iwad ../wad/doom1.wad
