@@ -38,7 +38,11 @@
 
 use {
     crate::doom::sounds::Sfx,
-    std::{borrow::Cow, ffi::c_void},
+    std::{
+        borrow::Cow,
+        ffi::c_void,
+        io::{Cursor, Write},
+    },
 };
 
 use std::ptr;
@@ -1998,19 +2002,15 @@ pub fn G_LoadGame(name: &str) {
 pub unsafe fn G_DoLoadGame() {
     gameaction = ga_nothing;
 
-    // A name with an interior NUL cannot exist on disk; treat it as missing.
-    let Ok(path) = std::ffi::CString::new((*ptr::addr_of!(savename)).as_str()) else {
+    let Ok(contents) = std::fs::read(&*ptr::addr_of!(savename)) else {
         return;
     };
-    save_stream = libc::fopen(path.as_ptr(), c"rb".as_ptr());
-    if save_stream.is_null() {
-        return;
-    }
+    save_stream = Cursor::new(contents);
 
     savegame_error = 0;
 
     if P_ReadSaveGameHeader() == 0 {
-        libc::fclose(save_stream);
+        save_stream = Cursor::default();
         return;
     }
 
@@ -2029,7 +2029,7 @@ pub unsafe fn G_DoLoadGame() {
         I_Error("Bad savegame");
     }
 
-    libc::fclose(save_stream);
+    save_stream = Cursor::default();
 
     if setsizeneeded.is_truthy() {
         R_ExecuteSetViewSize();
@@ -2068,31 +2068,33 @@ pub unsafe fn G_SaveGame(slot: i32, description: &[u8]) {
 /// `I_Error("Savegame buffer overrun")` to match the DOS limit; otherwise
 /// the save is allowed to grow.
 ///
+/// The save is archived into the in-memory `save_stream`, then written to
+/// the file opened at the start, which the C code wrote to directly.
+///
 /// # Safety
-/// Performs raw `libc` file I/O (`fopen`/`ftell`/`fclose`/`remove`/`rename`)
-/// and writes through the global `save_stream`.
+/// Writes through the global `save_stream`.
 pub unsafe fn G_DoSaveGame() {
     let mut recovery_savegame_file: Option<String> = None;
     let temp_savegame_file = P_TempSaveGameFile();
     let savegame_file = P_SaveGameFile(SAVEGAMESLOT);
 
-    let temp_path = std::ffi::CString::new(temp_savegame_file.as_str()).unwrap();
-    save_stream = libc::fopen(temp_path.as_ptr(), c"wb".as_ptr());
-
-    if save_stream.is_null() {
-        let recovery = M_TempFile("recovery.dsg");
-        let recovery_path = std::ffi::CString::new(recovery.as_str()).unwrap();
-        save_stream = libc::fopen(recovery_path.as_ptr(), c"wb".as_ptr());
-        if save_stream.is_null() {
-            crate::i_error!(
-                "Failed to open either '{}' or '{}' to write savegame.",
-                temp_savegame_file,
-                recovery,
-            );
+    let mut save_file = match std::fs::File::create(&temp_savegame_file) {
+        Ok(file) => file,
+        Err(_) => {
+            let recovery = M_TempFile("recovery.dsg");
+            let Ok(file) = std::fs::File::create(&recovery) else {
+                crate::i_error!(
+                    "Failed to open either '{}' or '{}' to write savegame.",
+                    temp_savegame_file,
+                    recovery,
+                );
+            };
+            recovery_savegame_file = Some(recovery);
+            file
         }
-        recovery_savegame_file = Some(recovery);
-    }
+    };
 
+    save_stream = Cursor::default();
     savegame_error = 0;
 
     P_WriteSaveGameHeader(std::ptr::addr_of_mut!(SAVEDESCRIPTION[0]));
@@ -2102,11 +2104,19 @@ pub unsafe fn G_DoSaveGame() {
     P_ArchiveSpecials();
     P_WriteSaveGameEOF();
 
-    if vanilla_savegame_limit != 0 && libc::ftell(save_stream) > SAVEGAMESIZE {
+    let save_length = (*ptr::addr_of!(save_stream)).position();
+    if vanilla_savegame_limit != 0 && save_length > SAVEGAMESIZE as u64 {
         I_Error("Savegame buffer overrun");
     }
 
-    libc::fclose(save_stream);
+    // A failed write would have failed the C `fwrite`, which sets the flag.
+    if save_file
+        .write_all(std::mem::take(&mut *ptr::addr_of_mut!(save_stream)).get_ref())
+        .is_err()
+    {
+        savegame_error = 1;
+    }
+    drop(save_file);
 
     if let Some(recovery) = recovery_savegame_file {
         crate::i_error!(

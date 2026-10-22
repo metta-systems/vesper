@@ -5,19 +5,19 @@
 //! `W_StdC_OpenFile`, `W_StdC_CloseFile` and `W_StdC_Read` - and
 //! optionally swaps in a `posix_wad_file` mmap-based class when
 //! `-mmap` is passed and `HAVE_MMAP` is defined at build time. The
-//! Rust port only ships the stdio-backed class: [`W_OpenFile`] always
-//! calls `W_StdC_OpenFile`, bypassing the `-mmap` switch entirely.
-//! Behaviour is identical to a chocolate-doom build without
-//! `HAVE_MMAP`.
+//! Rust port only ships the stdio-style class, backed by
+//! [`std::fs::File`]: [`W_OpenFile`] always calls `W_StdC_OpenFile`,
+//! bypassing the `-mmap` switch entirely. Behaviour is identical to a
+//! chocolate-doom build without `HAVE_MMAP`.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use std::{
-    ffi::{c_void, CString},
+    ffi::c_void,
+    fs::File,
+    io::{Read, Seek, SeekFrom},
     ptr,
 };
-
-use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 
 /// Vtable describing how to open / close / read one flavour of WAD-file
 /// backing store. Mirrors the C `wad_file_class_t`. `#[repr(C)]` so the
@@ -50,8 +50,8 @@ pub struct wad_file_t {
     pub length: u32,
 }
 
-/// Stdio-backed WAD descriptor. Layout is `wad_file_t` followed by the
-/// owning `FILE *`, mirroring the C `stdc_wad_file_t` struct so that a
+/// Stdio-style WAD descriptor. Layout is `wad_file_t` followed by the
+/// owning [`File`], mirroring the C `stdc_wad_file_t` struct so that a
 /// `*mut wad_file_t` can be cast back to `*mut stdc_wad_file_t` whenever
 /// the vtable methods need access to the underlying file handle.
 #[repr(C)]
@@ -59,33 +59,26 @@ struct stdc_wad_file_t {
     /// Embedded base descriptor. Must be the first field so the cast
     /// from `*mut wad_file_t` is safe.
     wad: wad_file_t,
-    /// Open C `FILE *` used by `fseek` / `fread` / `fclose`.
-    fstream: *mut FILE,
+    /// The open WAD file.
+    fstream: File,
 }
 
-use crate::doom::{
-    m_misc::{M_FileLength, FILE as MiscFILE},
-    z_zone::{Z_Free, Z_Malloc, PU_STATIC},
-};
+use crate::doom::z_zone::{Z_Free, Z_Malloc, PU_STATIC};
 
-/// Stdio-backed `OpenFile` implementation. Opens `path` for reading in
-/// binary mode, allocates a [`stdc_wad_file_t`] in the static zone heap,
-/// queries the file length and wires up the vtable. Returns null if
-/// either the file cannot be opened or the allocation fails.
+/// `OpenFile` implementation. Opens `path` for reading, allocates a
+/// [`stdc_wad_file_t`] in the static zone heap, queries the file length
+/// and wires up the vtable. Returns null if either the file cannot be
+/// opened or the allocation fails.
 ///
 /// # Safety
 ///
 /// The returned pointer (if non-null) is owned by the caller and must
 /// eventually be passed to [`W_StdC_CloseFile`].
 unsafe fn W_StdC_OpenFile(path: &str) -> *mut wad_file_t {
-    // A path with an interior NUL cannot name a file.
-    let Ok(c_path) = CString::new(path) else {
+    let Ok(fstream) = File::open(path) else {
         return ptr::null_mut();
     };
-    let fstream = fopen(c_path.as_ptr(), c"rb".as_ptr());
-    if fstream.is_null() {
-        return ptr::null_mut();
-    }
+    let length = fstream.metadata().map_or(0, |metadata| metadata.len());
 
     let result = Z_Malloc(
         std::mem::size_of::<stdc_wad_file_t>() as i32,
@@ -94,20 +87,27 @@ unsafe fn W_StdC_OpenFile(path: &str) -> *mut wad_file_t {
     ) as *mut stdc_wad_file_t;
 
     if result.is_null() {
-        fclose(fstream);
         return ptr::null_mut();
     }
 
-    (*result).wad.file_class = std::ptr::addr_of_mut!(stdc_wad_file);
-    (*result).wad.mapped = ptr::null_mut();
-    (*result).wad.length = M_FileLength(fstream as *mut MiscFILE) as u32;
-    (*result).fstream = fstream;
+    // The zone block is uninitialised, so write the fields in place.
+    ptr::write(
+        result,
+        stdc_wad_file_t {
+            wad: wad_file_t {
+                file_class: std::ptr::addr_of_mut!(stdc_wad_file),
+                mapped: ptr::null_mut(),
+                length: length as u32,
+            },
+            fstream,
+        },
+    );
 
     &mut (*result).wad
 }
 
-/// Stdio-backed `CloseFile` implementation. Closes the owning `FILE *`
-/// and frees the descriptor allocated by [`W_StdC_OpenFile`].
+/// `CloseFile` implementation. Closes the owning [`File`] and frees the
+/// descriptor allocated by [`W_StdC_OpenFile`].
 ///
 /// # Safety
 ///
@@ -115,14 +115,14 @@ unsafe fn W_StdC_OpenFile(path: &str) -> *mut wad_file_t {
 /// [`W_StdC_OpenFile`].
 unsafe fn W_StdC_CloseFile(wad: *mut wad_file_t) {
     let stdc_wad = wad as *mut stdc_wad_file_t;
-    fclose((*stdc_wad).fstream);
+    ptr::drop_in_place(stdc_wad);
     Z_Free(stdc_wad as *mut c_void);
 }
 
-/// Stdio-backed `Read` implementation. Seeks to `offset` from the start
-/// of the file and reads up to `buffer_len` bytes into `buffer`. Returns
-/// the number of bytes actually transferred (which may be less than
-/// `buffer_len` at end of file or on error).
+/// `Read` implementation. Seeks to `offset` from the start of the file
+/// and reads up to `buffer_len` bytes into `buffer`, as `fread` does.
+/// Returns the number of bytes actually transferred (which may be less
+/// than `buffer_len` at end of file or on error).
 ///
 /// # Safety
 ///
@@ -135,9 +135,21 @@ unsafe fn W_StdC_Read(
     buffer: *mut c_void,
     buffer_len: usize,
 ) -> usize {
-    let stdc_wad = wad as *mut stdc_wad_file_t;
-    fseek((*stdc_wad).fstream, offset as i64, SEEK_SET);
-    fread(buffer, 1, buffer_len, (*stdc_wad).fstream)
+    let file = &mut (*(wad as *mut stdc_wad_file_t)).fstream;
+    let buffer = std::slice::from_raw_parts_mut(buffer as *mut u8, buffer_len);
+    if file.seek(SeekFrom::Start(offset.into())).is_err() {
+        return 0;
+    }
+    let mut transferred = 0;
+    while transferred < buffer_len {
+        match file.read(&mut buffer[transferred..]) {
+            Ok(0) => break,
+            Ok(count) => transferred += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    transferred
 }
 
 /// Concrete vtable for the stdio backend. This is the only backend the

@@ -47,8 +47,18 @@ Console output (print!, println!, eprintln!, std::io::stdout):
     Z_CheckHeapAfter: eprintln!
   src/doom/z_zone.rs: Z_DumpHeap: println!
 
-Files (std::fs, std::io::Read, std::path):
-  src/doom/g_game.rs: G_DoSaveGame: std::fs::remove_file, std::fs::rename
+Files (std::fs, std::io, std::path):
+  src/doom/g_game.rs: G_DoLoadGame: std::fs::read, std::io::Cursor
+  src/doom/g_game.rs: G_DoSaveGame: std::fs::File::create,
+    std::io::Write::write_all, std::io::Cursor, std::fs::remove_file,
+    std::fs::rename
+  src/doom/p_saveg.rs: save_stream (static), stream: std::io::Cursor
+  src/doom/p_saveg.rs: saveg_read8: std::io::Read::read
+  src/doom/p_saveg.rs: saveg_write8: std::io::Write::write
+  src/doom/p_saveg.rs: saveg_read_pad, saveg_write_pad: Cursor::position
+  src/doom/w_file.rs: W_StdC_OpenFile: std::fs::File::open, File::metadata
+  src/doom/w_file.rs: W_StdC_Read: std::io::Seek::seek, std::io::Read::read
+  src/doom/w_file.rs: W_StdC_CloseFile: drops the std::fs::File
   src/doom/m_argv.rs: LoadResponseFile: std::fs::File::open,
     std::io::Read::read_to_end
   src/doom/m_menu.rs: M_ReadSaveStrings: std::fs::File::open,
@@ -92,19 +102,6 @@ change is enough):
 ==========================================================
 
 Vesper has no C library, so these need a replacement too.
-
-Files (stdio FILE streams):
-  src/doom/g_game.rs: G_DoLoadGame: fopen, fclose
-  src/doom/g_game.rs: G_DoSaveGame: fopen, fclose, ftell
-  src/doom/m_misc.rs: M_FileLength: fseek, ftell
-  src/doom/p_saveg.rs: save_stream (static): FILE
-  src/doom/p_saveg.rs: saveg_read8: fread
-  src/doom/p_saveg.rs: saveg_write8: fwrite
-  src/doom/p_saveg.rs: saveg_read_pad, saveg_write_pad: ftell
-  src/doom/w_file.rs: W_StdC_OpenFile: fopen, fclose
-  src/doom/w_file.rs: W_StdC_Read: fseek, fread
-  src/doom/w_file.rs: W_StdC_CloseFile: fclose
-  src/doom/z_zone.rs: Z_FileDumpHeap: FILE (no-op stub)
 
 Heap (malloc, calloc, free):
   src/doom/i_system.rs: AutoAllocMemory, I_AtExit: malloc

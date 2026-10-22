@@ -586,16 +586,6 @@ pub unsafe fn Z_FreeMemory() -> i32 {
     free
 }
 
-/// `void Z_FileDumpHeap(FILE *f)` — stubbed out: the C original wrote a
-/// per-block dump to a `FILE *` for the diehard debug build, but no
-/// Rust call site exists. Kept as a no-op for API parity.
-///
-/// # Safety
-/// - `_f` is ignored; any value (including null) is accepted.
-pub unsafe fn Z_FileDumpHeap(_f: *mut libc::FILE) {
-    // No Rust caller found; stubbed per plan.
-}
-
 /// `unsigned int Z_ZoneSize(void)` — return the total backing-buffer
 /// size in bytes as reported to `Z_Init` by `I_ZoneBase`.
 ///

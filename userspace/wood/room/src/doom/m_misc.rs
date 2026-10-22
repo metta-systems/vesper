@@ -20,24 +20,8 @@
 
 use std::{ffi::CStr, path::Path};
 
-/// Opaque stand-in for libc's `FILE *`. Pointers are passed through to the
-/// `extern "C"` shims below; the contents are never accessed from Rust.
-pub enum FILE {}
-
 /// Unix directory separator character (C: `DIR_SEPARATOR = '/'`).
 const DIR_SEPARATOR: u8 = b'/';
-
-/// Mirror of libc's `SEEK_END` constant for use with [`fseek`].
-const SEEK_END: i32 = 2;
-/// Mirror of libc's `SEEK_SET` constant for use with [`fseek`].
-const SEEK_SET: i32 = 0;
-
-extern "C" {
-    /// libc `fseek`: reposition stream offset.
-    fn fseek(stream: *mut FILE, offset: i64, whence: i32) -> i32;
-    /// libc `ftell`: return current stream offset.
-    fn ftell(stream: *mut FILE) -> i64;
-}
 
 /// Create the directory at `path`.
 ///
@@ -80,20 +64,6 @@ pub fn until_nul(buffer: &[u8]) -> &[u8] {
         .iter()
         .position(|&byte| byte == 0)
         .map_or(buffer, |nul| &buffer[..nul])
-}
-
-/// Returns the total length in bytes of an open file `handle`.
-///
-/// Saves the current position, seeks to end to read the length, then
-/// restores the original position. The stream is left in its prior state.
-pub fn M_FileLength(handle: *mut FILE) -> i64 {
-    unsafe {
-        let savedpos = ftell(handle);
-        fseek(handle, 0, SEEK_END);
-        let length = ftell(handle);
-        fseek(handle, savedpos, SEEK_SET);
-        length
-    }
 }
 
 /// Write `data` to the file `path`, creating or truncating it.

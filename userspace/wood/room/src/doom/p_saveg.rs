@@ -3,8 +3,8 @@
 //! Implements save-game serialization and deserialization for the entire Doom
 //! game state. All active map objects (mobjs), player state, world geometry
 //! deltas, thinker chains, and sector specials (ceilings, doors, floors,
-//! platforms, lights) are written to or read from a `FILE *` stream managed
-//! by `g_game.c`.
+//! platforms, lights) are written to or read from the in-memory
+//! [`save_stream`], which `g_game` loads from or writes to the save file.
 //!
 //! The on-disk format is a flat byte stream. Multi-byte integers are always
 //! little-endian regardless of host byte order. Sector and state pointers are
@@ -26,7 +26,11 @@
 
 use {
     crate::i_error,
-    std::{ffi::c_void, ptr},
+    std::{
+        ffi::c_void,
+        io::{Cursor, Read, Write},
+        ptr,
+    },
 };
 
 use crate::doom::{
@@ -57,13 +61,24 @@ use crate::doom::{
 const SAVESTRINGSIZE: usize = 24;
 
 // ---------------------------------------------------------------------------
-// Globals — now owned by Rust since p_saveg.c is ported.
-// g_game.c still writes save_stream to open/close the file.
+// Globals
 // ---------------------------------------------------------------------------
 
-/// Active save-game `FILE *` stream; opened and closed by `g_game.c`.
-/// `g_game` assigns it before calling any archive or unarchive function.
-pub static mut save_stream: *mut libc::FILE = ptr::null_mut();
+/// The save game being read or written, held in memory.
+///
+/// `G_DoLoadGame` fills it with the save file's bytes before unarchiving;
+/// `G_DoSaveGame` archives into it and then writes its bytes to the file it
+/// opened. Positions in it are file offsets, so padding is computed from
+/// [`Cursor::position`] as the C code did with `ftell`.
+pub static mut save_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+/// The active [`save_stream`].
+///
+/// # Safety
+/// No other reference to `save_stream` may be live.
+unsafe fn stream() -> &'static mut Cursor<Vec<u8>> {
+    &mut *ptr::addr_of_mut!(save_stream)
+}
 
 /// Running byte count of data written to the current save stream.
 /// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
@@ -87,7 +102,7 @@ use crate::doom::{
 };
 
 // ---------------------------------------------------------------------------
-// Low-level I/O — uses the C FILE * managed by g_game.c.
+// Low-level I/O on save_stream.
 // ---------------------------------------------------------------------------
 
 /// Reads one byte from `save_stream`.
@@ -95,12 +110,12 @@ use crate::doom::{
 /// Sets `savegame_error = 1` on the first short read; subsequent calls still
 /// return `0` but do not double-set the flag. C origin: `saveg_read8`.
 unsafe fn saveg_read8() -> u8 {
-    let mut result: u8 = 0;
-    let n = libc::fread(&raw mut result as *mut c_void, 1, 1, save_stream);
+    let mut result = [0u8];
+    let n = stream().read(&mut result).unwrap_or(0);
     if n < 1 && savegame_error == 0 {
         savegame_error = 1;
     }
-    result
+    result[0]
 }
 
 /// Writes one byte to `save_stream` and increments `savegamelength`.
@@ -111,7 +126,7 @@ unsafe fn saveg_read8() -> u8 {
 /// does so to avoid a separate accounting pass.
 /// C origin: `saveg_write8`.
 unsafe fn saveg_write8(value: u8) {
-    let n = libc::fwrite(&value as *const u8 as *const c_void, 1, 1, save_stream);
+    let n = stream().write(&[value]).unwrap_or(0);
     if n < 1 && savegame_error == 0 {
         savegame_error = 1;
     }
@@ -166,7 +181,7 @@ unsafe fn saveg_write32(value: u32) {
 /// position. A stream already aligned reads zero bytes. C origin:
 /// `saveg_read_pad`.
 unsafe fn saveg_read_pad() {
-    let pos = libc::ftell(save_stream);
+    let pos = stream().position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_read8();
@@ -178,7 +193,7 @@ unsafe fn saveg_read_pad() {
 /// See `saveg_read_pad` for the alignment formula. C origin:
 /// `saveg_write_pad`.
 unsafe fn saveg_write_pad() {
-    let pos = libc::ftell(save_stream);
+    let pos = stream().position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_write8(0);
@@ -1198,7 +1213,7 @@ pub unsafe fn P_SaveGameFile(slot: i32) -> String {
 /// # Safety
 ///
 /// `description` must be a valid, NUL-terminated C string. `save_stream` must
-/// be an open, writable `FILE *` with enough capacity to hold the header bytes.
+/// be the stream being written.
 /// The global state `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
 /// `leveltime` must have been set to valid values before this call.
 pub unsafe fn P_WriteSaveGameHeader(description: *const u8) {
@@ -1253,7 +1268,7 @@ pub unsafe fn P_WriteSaveGameHeader(description: *const u8) {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned at the start of
+/// `save_stream` must be positioned at the start of
 /// a save file written by `P_WriteSaveGameHeader`. On success, `gameskill`,
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
@@ -1311,9 +1326,9 @@ pub unsafe fn P_ReadSaveGameHeader() -> i32 {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned immediately
+/// `save_stream` must be positioned immediately
 /// after the last unarchived byte, i.e. where `P_WriteSaveGameEOF` wrote its
-/// marker. Reading from an invalid or exhausted stream is undefined behaviour.
+/// marker. Reading past the end of the stream sets `savegame_error`.
 pub unsafe fn P_ReadSaveGameEOF() -> i32 {
     let value = saveg_read8();
     if value == SAVEGAME_EOF {
@@ -1332,7 +1347,7 @@ pub unsafe fn P_ReadSaveGameEOF() -> i32 {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, writable `FILE *`. This must be called after
+/// `save_stream` must be the stream being written. This must be called after
 /// all archive functions have finished writing so that the marker byte appears
 /// at the correct position for `P_ReadSaveGameEOF` to validate.
 pub unsafe fn P_WriteSaveGameEOF() {
@@ -1354,7 +1369,7 @@ use crate::doom::g_game::{gameepisode, gamemap, gameskill, playeringame};
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, writable `FILE *` with sufficient capacity.
+/// `save_stream` must be the stream being written.
 /// The `players` array and `playeringame` flags must be fully initialized for
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
@@ -1378,7 +1393,7 @@ pub unsafe fn P_ArchivePlayers() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned at the byte
+/// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchivePlayers`. `playeringame` must already have
 /// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
@@ -1417,7 +1432,7 @@ pub unsafe fn P_UnArchivePlayers() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, writable `FILE *` with sufficient capacity.
+/// `save_stream` must be the stream being written.
 /// The global `sectors` array (length `numsectors`), `lines` array (length
 /// `numlines`), and `sides` array must all be fully initialized. Every
 /// `line_t.sidenum[j]` that is not `-1` must be a valid index into `sides`.
@@ -1473,7 +1488,7 @@ pub unsafe fn P_ArchiveWorld() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned at the byte
+/// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchiveWorld`. The `sectors` array (length
 /// `numsectors`), `lines` array (length `numlines`), and `sides` array must
 /// all be allocated and at least partially initialized (map load must have
@@ -1547,7 +1562,7 @@ const tc_mobj: u8 = 1;
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, writable `FILE *` with sufficient capacity.
+/// `save_stream` must be the stream being written.
 /// The thinker chain rooted at `thinkercap` must be fully initialized and form
 /// a valid doubly-linked circular list. Every thinker in the chain whose
 /// function equals `P_MobjThinker` must point to a valid `mobj_t`.
@@ -1594,7 +1609,7 @@ pub unsafe fn P_ArchiveThinkers() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned at the byte
+/// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchiveThinkers`. The zone allocator must be
 /// operational (`Z_Malloc`/`Z_Free` must be safe to call). The map geometry
 /// (`sectors`, block-map, etc.) must be loaded so that `P_SetThingPosition`
@@ -1720,7 +1735,7 @@ const tc_endspecials: u8 = 7;
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, writable `FILE *` with sufficient capacity.
+/// `save_stream` must be the stream being written.
 /// The thinker chain rooted at `thinkercap` must be fully initialized and form
 /// a valid doubly-linked circular list. The `activeceilings` array must be
 /// initialized. Every thinker that matches a known special function pointer
@@ -1846,7 +1861,7 @@ pub unsafe fn P_ArchiveSpecials() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be an open, readable `FILE *` positioned at the byte
+/// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchiveSpecials`. The zone allocator must be
 /// operational. The `sectors` array must be fully initialized so that
 /// `sector->specialdata` can be set. Must be called after
@@ -2043,24 +2058,43 @@ mod tests {
         assert_eq!(SAVESTRINGSIZE, 24);
     }
 
-    /// Runs `f` with `save_stream` pointed at an in-memory buffer backed by
-    /// `data`, then restores the original stream and error globals on exit.
+    /// Runs `f` with `save_stream` reading a copy of `data`, then restores
+    /// the original stream and error globals on exit.
     unsafe fn with_mem_stream<F: FnOnce()>(data: &mut [u8], f: F) {
-        let old_stream = save_stream;
+        let old_stream = std::mem::replace(stream(), Cursor::new(data.to_vec()));
         let old_error = savegame_error;
         let old_len = savegamelength;
-        save_stream = libc::fmemopen(
-            data.as_mut_ptr() as *mut libc::c_void,
-            data.len(),
-            c"r".as_ptr(),
-        );
         savegame_error = 0;
         savegamelength = 0;
         f();
-        libc::fclose(save_stream);
-        save_stream = old_stream;
+        *stream() = old_stream;
         savegame_error = old_error;
         savegamelength = old_len;
+    }
+
+    /// Bytes written to `save_stream` read back in order, padding aligns
+    /// to the stream position, and reading past the end sets the error.
+    #[test]
+    fn save_stream_round_trip() {
+        let _g = LOCK.lock().unwrap();
+        unsafe {
+            with_mem_stream(&mut [], || {
+                *stream() = Cursor::default();
+                saveg_write8(0xAB);
+                saveg_write_pad();
+                saveg_write32(0x1234_5678);
+                assert_eq!(stream().get_ref(), &[0xAB, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]);
+                assert_eq!({ savegamelength }, 8);
+
+                stream().set_position(0);
+                assert_eq!(saveg_read8(), 0xAB);
+                saveg_read_pad();
+                assert_eq!(saveg_read32(), 0x1234_5678);
+                assert_eq!({ savegame_error }, 0);
+                assert_eq!(saveg_read8(), 0);
+                assert_eq!({ savegame_error }, 1);
+            });
+        }
     }
 
     #[test]
@@ -2095,7 +2129,7 @@ mod tests {
         unsafe {
             let mut mo = std::mem::MaybeUninit::<mobj_t>::zeroed().assume_init();
             with_mem_stream(&mut data, || {
-                saveg_read_mobj_t(&raw mut mo as *mut mobj_t as *mut libc::c_void);
+                saveg_read_mobj_t(&raw mut mo as *mut mobj_t as *mut c_void);
             });
             let thinker_ptr = std::ptr::addr_of!(mo.thinker_prev) as *const thinker_t;
             assert!(
