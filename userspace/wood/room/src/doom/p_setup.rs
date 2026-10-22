@@ -894,7 +894,7 @@ pub fn P_LoadBlockMap(lump: i32) {
 
         let bcount = std::mem::size_of::<*mut c_void>() * bmapwidth as usize * bmapheight as usize;
         blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut c_void;
-        libc::memset(blocklinks as *mut c_void, 0, bcount);
+        ptr::write_bytes(blocklinks.cast::<u8>(), 0, bcount);
     }
 }
 

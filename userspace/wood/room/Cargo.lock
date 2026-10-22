@@ -1955,7 +1955,6 @@ dependencies = [
  "bytemuck",
  "dhat",
  "env_logger",
- "libc",
  "log",
  "pollster",
  "rodio",

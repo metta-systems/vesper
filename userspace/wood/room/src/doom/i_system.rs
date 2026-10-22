@@ -63,9 +63,8 @@ static mut exit_funcs: *mut atexit_listentry_t = ptr::null_mut();
 ///
 /// # Safety
 ///
-/// `size` must be a valid mutable pointer to a `i32`. The returned
-/// pointer owns a `libc::malloc` allocation: it must be freed with
-/// `libc::free`, never with the Rust allocator. Mirrors the static
+/// `size` must be a valid mutable pointer to a `i32`. The returned block
+/// is never freed: the zone lives for the whole run. Mirrors the static
 /// helper of the same name in `i_system.c`.
 unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) -> *mut u8 {
     let mut zonemem: *mut u8 = ptr::null_mut();
@@ -76,7 +75,10 @@ unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) ->
         }
 
         *size = default_ram * 1024 * 1024;
-        zonemem = libc::malloc(*size as usize) as *mut u8;
+        // `alloc` returns null on failure, as `malloc` did, so a smaller
+        // size can be tried; 16 is malloc's alignment.
+        let layout = std::alloc::Layout::from_size_align(*size as usize, 16).unwrap();
+        zonemem = std::alloc::alloc(layout);
 
         if zonemem.is_null() {
             default_ram -= 1;
@@ -90,16 +92,15 @@ unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) ->
 /// the callback also fires from `I_Error`, not just `I_Quit`.
 ///
 /// Entries form a stack (LIFO): the most recently registered callback
-/// runs first. Mirrors `I_AtExit` from `i_system.c`. Allocates the
-/// list node with `libc::malloc` to match the C lifetime convention.
+/// runs first. Mirrors `I_AtExit` from `i_system.c`. List nodes are
+/// never freed, as in C.
 pub fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
     unsafe {
-        let entry =
-            libc::malloc(std::mem::size_of::<atexit_listentry_t>()) as *mut atexit_listentry_t;
-        (*entry).func = func;
-        (*entry).run_on_error = run_on_error;
-        (*entry).next = exit_funcs;
-        exit_funcs = entry;
+        exit_funcs = Box::into_raw(Box::new(atexit_listentry_t {
+            func,
+            run_on_error,
+            next: exit_funcs,
+        }));
     }
 }
 

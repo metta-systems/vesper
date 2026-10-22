@@ -94,6 +94,10 @@ change is enough):
   std::format! (= alloc::format!):
     src/doom/m_misc.rs: macros c_write!, DEH_snprintf!, i_error!, used
     throughout the engine
+  std::alloc::{alloc, alloc_zeroed, dealloc, Layout}, Box
+  (= alloc::alloc, alloc::boxed):
+    src/doom/i_system.rs: AutoAllocMemory, I_AtExit
+    src/doom/w_wad.rs: lumpinfo_layout, ExtendLumpInfo
   std::ffi::c_void, std::ptr, std::mem, std::slice, std::cell, ...
   (= core::*): everywhere
 
@@ -101,12 +105,5 @@ change is enough):
 2. C library calls (libc crate or extern "C" declarations)
 ==========================================================
 
-Vesper has no C library, so these need a replacement too.
-
-Heap (malloc, calloc, free):
-  src/doom/i_system.rs: AutoAllocMemory, I_AtExit: malloc
-  src/doom/w_wad.rs: ExtendLumpInfo: calloc, free
-
-Memory:
-  src/doom/p_setup.rs: P_LoadBlockMap: memset (comes with
-    compiler_builtins; std::ptr::write_bytes would do)
+None. The engine has no extern "C" declarations and does not depend on
+the libc crate.

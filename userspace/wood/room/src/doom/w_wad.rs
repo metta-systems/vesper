@@ -90,11 +90,11 @@ pub static mut numlumps: u32 = 0;
 /// dropped whenever a new file is added.
 static mut lumphash: *mut *mut lumpinfo_t = ptr::null_mut();
 
-extern "C" {
-    /// libc: zero-initialised allocation.
-    fn calloc(nmemb: usize, size: usize) -> *mut c_void;
-    /// libc: free a `malloc`/`calloc` block.
-    fn free(ptr: *mut c_void);
+/// Allocation layout of a `lumpinfo` array of `count` entries. At least
+/// one entry is reserved, because the allocator does not take zero-sized
+/// layouts.
+fn lumpinfo_layout(count: u32) -> std::alloc::Layout {
+    std::alloc::Layout::array::<lumpinfo_t>(count.max(1) as usize).unwrap()
 }
 
 /// Grow the global `lumpinfo` array to `newnumlumps` entries, copy
@@ -104,16 +104,17 @@ extern "C" {
 ///
 /// On allocation failure, calls `I_Error`. After return,
 /// `lumpinfo` points at the new array, `numlumps == newnumlumps`,
-/// and the old array has been `free`'d.
+/// and the old array has been freed. The arrays are allocated zeroed, as
+/// the C `calloc` did, with [`lumpinfo_layout`].
 ///
 /// # Safety
 ///
 /// Mutates the `lumpinfo` and `numlumps` globals. Assumes
-/// `newnumlumps >= numlumps`. Mirrors the file-static helper of
-/// the same name in `w_wad.c`.
+/// `newnumlumps >= numlumps` and that `lumpinfo` is null or was
+/// allocated here for `numlumps` entries. Mirrors the file-static helper
+/// of the same name in `w_wad.c`.
 unsafe fn ExtendLumpInfo(newnumlumps: u32) {
-    let newlumpinfo =
-        calloc(newnumlumps as usize, std::mem::size_of::<lumpinfo_t>()) as *mut lumpinfo_t;
+    let newlumpinfo = std::alloc::alloc_zeroed(lumpinfo_layout(newnumlumps)) as *mut lumpinfo_t;
     if newlumpinfo.is_null() {
         i_error!("Couldn't realloc lumpinfo");
     }
@@ -135,7 +136,9 @@ unsafe fn ExtendLumpInfo(newnumlumps: u32) {
         }
     }
 
-    free(lumpinfo as *mut c_void);
+    if !lumpinfo.is_null() {
+        std::alloc::dealloc(lumpinfo as *mut u8, lumpinfo_layout(numlumps));
+    }
     lumpinfo = newlumpinfo;
     numlumps = newnumlumps;
 }

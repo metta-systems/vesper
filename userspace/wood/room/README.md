@@ -46,7 +46,7 @@ room/
     ├── lib.rs               The engine library
     ├── platform/
     │   ├── mod.rs           The DG_* platform interface, platform selection
-    │   ├── std.txt          Engine functions that still need std or libc
+    │   ├── std.txt          Engine functions that still need std
     │   ├── host/            winit + wgpu + rodio
     │   │   ├── mod.rs       DG_* video, input and timer callbacks
     │   │   ├── app.rs       winit ApplicationHandler, run()
