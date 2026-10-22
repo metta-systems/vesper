@@ -317,9 +317,7 @@ unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
     (*settings).fast_monsters = fastparm;
     (*settings).respawn_monsters = respawnparm;
     (*settings).timelimit = timelimit;
-    (*settings).lowres_turn = if M_CheckParm(c"-record".as_ptr().cast()) > 0
-        && M_CheckParm(c"-longtics".as_ptr().cast()) == 0
-    {
+    (*settings).lowres_turn = if M_CheckParm("-record") > 0 && M_CheckParm("-longtics") == 0 {
         1
     } else {
         0
@@ -348,12 +346,12 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
     (*connect_data).max_players = MAXPLAYERS as i32;
     (*connect_data).drone = 0;
 
-    if M_CheckParm(c"-left".as_ptr().cast()) > 0 {
+    if M_CheckParm("-left") > 0 {
         viewangleoffset = 0x40000000u32 as i32;
         (*connect_data).drone = 1;
     }
 
-    if M_CheckParm(c"-right".as_ptr().cast()) > 0 {
+    if M_CheckParm("-right") > 0 {
         viewangleoffset = 0xC0000000u32 as i32;
         (*connect_data).drone = 1;
     }
@@ -361,9 +359,7 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
     (*connect_data).gamemode = gamemode;
     (*connect_data).gamemission = gamemission;
 
-    (*connect_data).lowres_turn = if M_CheckParm(c"-record".as_ptr().cast()) > 0
-        && M_CheckParm(c"-longtics".as_ptr().cast()) == 0
-    {
+    (*connect_data).lowres_turn = if M_CheckParm("-record") > 0 && M_CheckParm("-longtics") == 0 {
         1
     } else {
         0
@@ -414,7 +410,7 @@ pub fn D_ConnectNetGame() {
         InitConnectData(&mut connect_data);
         netgame = D_InitNetGame(&mut connect_data);
 
-        if M_CheckParm(c"-solo-net".as_ptr().cast()) > 0 {
+        if M_CheckParm("-solo-net") > 0 {
             netgame = 1;
         }
     }

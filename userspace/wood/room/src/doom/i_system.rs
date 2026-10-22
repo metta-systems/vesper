@@ -12,8 +12,8 @@
 
 use {
     crate::doom::{
-        m_argv::{myargc, myargv, M_CheckParmWithArgs, M_ParmExists},
-        m_misc::{c_str, M_StrToInt},
+        m_argv::{argument, argument_count, M_CheckParmWithArgs, M_ParmExists},
+        m_misc::{atoi, M_StrToInt},
     },
     std::{ffi::c_void, ptr},
 };
@@ -120,9 +120,9 @@ pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
         let mut default_ram = DEFAULT_RAM;
         let mut min_ram = MIN_RAM;
 
-        let p = M_CheckParmWithArgs(c"-mb".as_ptr().cast_mut().cast(), 1);
+        let p = M_CheckParmWithArgs("-mb", 1);
         if p > 0 {
-            default_ram = libc::atoi((*myargv.offset((p + 1) as isize)).cast());
+            default_ram = atoi(argument(p + 1));
             min_ram = default_ram;
         }
 
@@ -134,11 +134,10 @@ pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
     }
 }
 
-/// Print a NUL-terminated banner string centred in a 70-character
-/// column (35 leading spaces minus half the message length), followed
-/// by a newline. Mirrors `I_PrintBanner` from `i_system.c`.
-pub fn I_PrintBanner(msg: *mut u8) {
-    let msg = String::from_utf8_lossy(unsafe { c_str(msg) });
+/// Print a banner string centred in a 70-character column (35 leading
+/// spaces minus half the message length), followed by a newline.
+/// Mirrors `I_PrintBanner` from `i_system.c`.
+pub fn I_PrintBanner(msg: &str) {
     let spaces = (35 - msg.len() as i32 / 2).max(0) as usize;
     println!("{:spaces$}{msg}", "");
 }
@@ -162,7 +161,7 @@ const STARTUP_NOTICE: &str =
 /// between dividers, and the GPL copyright notice. Mirrors
 /// `I_PrintStartupBanner` from `i_system.c`, but substitutes the
 /// project name (the C source pulls it from `PACKAGE_NAME`).
-pub fn I_PrintStartupBanner(gamedescription: *mut u8) {
+pub fn I_PrintStartupBanner(gamedescription: &str) {
     I_PrintDivider();
     I_PrintBanner(gamedescription);
     I_PrintDivider();
@@ -278,7 +277,7 @@ pub fn I_Error(msg: &str) -> ! {
             entry = (*entry).next;
         }
 
-        let exit_gui_popup = M_ParmExists(c"-nogui".as_ptr().cast_mut().cast()) == 0;
+        let exit_gui_popup = !M_ParmExists("-nogui");
         if exit_gui_popup && I_ConsoleStdout() == 0 {
             ZenityErrorBox(msg);
         }
@@ -351,24 +350,24 @@ pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
         if firsttime {
             firsttime = false;
 
-            let p = M_CheckParmWithArgs(c"-setmem".as_ptr().cast_mut().cast(), 1);
+            let p = M_CheckParmWithArgs("-setmem", 1);
             if p > 0 {
-                let arg = c_str(*myargv.offset((p + 1) as isize));
-                if arg.eq_ignore_ascii_case(b"dos622") {
+                let arg = argument(p + 1);
+                if arg.eq_ignore_ascii_case("dos622") {
                     dos_mem_dump = DosMemDump::Dos622;
-                } else if arg.eq_ignore_ascii_case(b"dos71") {
+                } else if arg.eq_ignore_ascii_case("dos71") {
                     dos_mem_dump = DosMemDump::Win98;
-                } else if arg.eq_ignore_ascii_case(b"dosbox") {
+                } else if arg.eq_ignore_ascii_case("dosbox") {
                     dos_mem_dump = DosMemDump::Dosbox;
                 } else {
                     let mut idx: usize = 0;
-                    let mut pp = (p + 1) as isize;
+                    let mut pp = p + 1;
                     while idx < DOS_MEM_DUMP_SIZE {
                         pp += 1;
-                        if pp >= myargc as isize || **myargv.offset(pp) == b'-' {
+                        if pp >= argument_count() || argument(pp).starts_with('-') {
                             break;
                         }
-                        let val = M_StrToInt(c_str(*myargv.offset(pp))).unwrap_or(0);
+                        let val = M_StrToInt(argument(pp)).unwrap_or(0);
                         MEM_DUMP_CUSTOM[idx] = val as u8;
                         idx += 1;
                     }

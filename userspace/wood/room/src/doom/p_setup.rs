@@ -1094,7 +1094,7 @@ unsafe fn PadRejectArray(array: *mut u8, len: usize) {
             std::mem::size_of_val(&rejectpad)
         );
 
-        let padvalue = if M_CheckParm(c"-reject_pad_with_ff".as_ptr().cast_mut().cast()) != 0 {
+        let padvalue = if M_CheckParm("-reject_pad_with_ff") != 0 {
             0xff
         } else {
             0xf00

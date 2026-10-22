@@ -10,13 +10,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use libc::printf;
-
 use crate::types::Boolean;
 
 use crate::doom::{
     d_iwad::D_TryFindWADByName,
-    m_argv::{myargc, myargv, M_CheckParmWithArgs},
+    m_argv::{argument, argument_count, M_CheckParmWithArgs},
     w_wad::W_AddFile,
 };
 
@@ -25,7 +23,7 @@ use crate::doom::{
 ///
 /// Walks `myargv` starting after the `-file` parameter and feeds each
 /// non-flag argument through `D_TryFindWADByName` and `W_AddFile`. Logs
-/// `" adding <filename>\n"` via `printf` for each WAD loaded.
+/// `" adding <filename>"` for each WAD loaded.
 ///
 /// Returns `Boolean::TRUE` if at least one WAD was added (the original
 /// "homebrew levels" / `modifiedgame` flag, used downstream to disable
@@ -38,17 +36,15 @@ use crate::doom::{
 pub fn W_ParseCommandLine() -> Boolean {
     let mut modifiedgame: Boolean = Boolean::FALSE;
 
-    unsafe {
-        let p = M_CheckParmWithArgs(c"-file".as_ptr().cast(), 1);
-        if p != 0 {
-            let mut idx = p + 1;
-            modifiedgame = Boolean::TRUE;
-            while idx < myargc && **myargv.offset(idx as isize) != b'-' {
-                let filename = D_TryFindWADByName(*myargv.offset(idx as isize));
-                printf(c" adding %s\n".as_ptr().cast(), filename);
-                W_AddFile(filename);
-                idx += 1;
-            }
+    let p = M_CheckParmWithArgs("-file", 1);
+    if p != 0 {
+        let mut idx = p + 1;
+        modifiedgame = Boolean::TRUE;
+        while idx < argument_count() && !argument(idx).starts_with('-') {
+            let filename = D_TryFindWADByName(argument(idx));
+            println!(" adding {filename}");
+            W_AddFile(&filename);
+            idx += 1;
         }
     }
 

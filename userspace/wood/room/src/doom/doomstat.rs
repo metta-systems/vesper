@@ -13,8 +13,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ptr;
-
 use {super::d_mode, crate::types::Boolean};
 
 /// Identifies which IWAD variant is loaded (shareware, registered, retail, etc.).
@@ -46,8 +44,8 @@ pub static mut gameversion: i32 = d_mode::exe_final2;
 ///
 /// Corresponds to `char *gamedescription` in `doomstat.c`.  Set by
 /// `D_SetGameDescription` during startup and used by the window title and
-/// help text.  Null until initialised.
-pub static mut gamedescription: *mut u8 = ptr::null_mut();
+/// help text.  Empty until initialised.
+pub static mut gamedescription: String = String::new();
 
 /// `true` if any PWAD files have been loaded on top of the base IWAD.
 ///
@@ -70,7 +68,7 @@ mod tests {
             assert_eq!({ gamemode }, d_mode::indetermined);
             assert_eq!({ gamemission }, d_mode::doom);
             assert_eq!({ gameversion }, d_mode::exe_final2);
-            assert!(gamedescription.is_null());
+            assert!((&*std::ptr::addr_of!(gamedescription)).is_empty());
             assert_eq!({ modifiedgame }, Boolean::FALSE);
         }
     }

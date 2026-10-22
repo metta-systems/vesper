@@ -117,11 +117,7 @@ pub fn M_TempFile(name: &str) -> String {
 /// after a leading `0`, then signed decimal; trailing characters after
 /// the digits are ignored. Returns `None` if no form matches.
 pub fn M_StrToInt(text: impl AsRef<[u8]>) -> Option<i32> {
-    let text = text.as_ref();
-    let text = &text[text
-        .iter()
-        .take_while(|byte| byte.is_ascii_whitespace())
-        .count()..];
+    let text = skip_whitespace(text.as_ref());
 
     if let Some(hex) = text
         .strip_prefix(b"0x")
@@ -136,6 +132,25 @@ pub fn M_StrToInt(text: impl AsRef<[u8]>) -> Option<i32> {
             return Some(value);
         }
     }
+    parse_signed_decimal(text)
+}
+
+/// C `atoi`: leading whitespace, an optional sign and decimal digits, with
+/// trailing characters ignored; `0` if there are no digits.
+pub fn atoi(text: impl AsRef<[u8]>) -> i32 {
+    parse_signed_decimal(skip_whitespace(text.as_ref())).unwrap_or(0)
+}
+
+/// `text` without its leading whitespace.
+fn skip_whitespace(text: &[u8]) -> &[u8] {
+    &text[text
+        .iter()
+        .take_while(|byte| byte.is_ascii_whitespace())
+        .count()..]
+}
+
+/// Optionally signed decimal number at the start of `text`.
+fn parse_signed_decimal(text: &[u8]) -> Option<i32> {
     match text.split_first() {
         Some((b'-', digits)) => parse_digits(digits, 10).map(i32::wrapping_neg),
         Some((b'+', digits)) => parse_digits(digits, 10),
@@ -336,6 +351,15 @@ mod tests {
         assert_eq!(M_StrToInt("+5"), Some(5));
         assert_eq!(M_StrToInt("abc"), None);
         assert_eq!(M_StrToInt(""), None);
+    }
+
+    /// `atoi` reads decimal only, so a leading zero is not octal.
+    #[test]
+    fn test_atoi() {
+        assert_eq!(atoi(" 010"), 10);
+        assert_eq!(atoi("-7x"), -7);
+        assert_eq!(atoi("0x10"), 0);
+        assert_eq!(atoi("junk"), 0);
     }
 
     // -----------------------------------------------------------------------

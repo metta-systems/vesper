@@ -24,11 +24,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{ffi::CStr, ptr};
+use std::ptr;
 
 use super::{
     d_main::D_DoomMain,
-    m_argv::{myargc, myargv, M_FindResponseFile},
+    m_argv::{myargv, M_FindResponseFile},
 };
 
 /// Width of the doomgeneric frame buffer in pixels.
@@ -89,7 +89,7 @@ pub trait Platform {
     }
 
     /// `DG_SetWindowTitle`: show the game's title.
-    fn set_window_title(&self, _title: &CStr) {}
+    fn set_window_title(&self, _title: &str) {}
 
     /// Open the audio output; `true` when audio is available.
     fn sound_init(&self) -> bool {
@@ -167,7 +167,8 @@ pub fn platform() -> &'static dyn Platform {
 ///
 /// Steps performed:
 /// 1. Install `platform` for every later [`platform()`] call.
-/// 2. Store `argc`/`argv` in `myargc`/`myargv` so `M_Arg*` functions work.
+/// 2. Store `args` (program name first) in `myargv` so `M_Arg*` functions
+///    work.
 /// 3. Call `M_FindResponseFile` to expand any `@file` arguments.
 /// 4. Allocate the screen buffer ([`DOOMGENERIC_PIXELS`] × 4 bytes) via
 ///    `Vec` and intentionally leak it so the lifetime matches the C `malloc`
@@ -177,16 +178,12 @@ pub fn platform() -> &'static dyn Platform {
 /// 6. Call `D_DoomMain`, which never returns under normal operation.
 ///
 /// # Safety
-/// - `argv` must point to an array of at least `argc` valid NUL-terminated
-///   C strings, all of which must remain valid for the lifetime of the
-///   process.
-/// - This function must be called exactly once; calling it a second time
-///   would leak the first screen buffer and overwrite `myargc`/`myargv`.
-pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, argc: i32, argv: *mut *mut u8) {
+/// This function must be called exactly once; calling it a second time
+/// would leak the first screen buffer and overwrite `myargv`.
+pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, args: Vec<String>) {
     PLATFORM = Some(platform);
 
-    myargc = argc;
-    myargv = argv;
+    myargv = args;
 
     M_FindResponseFile();
 

@@ -30,9 +30,9 @@ use crate::{
         d_player::{PlayerT, CF_GODMODE},
         i_timer::TICRATE,
         info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
-        m_argv::{myargv, M_CheckParmWithArgs},
+        m_argv::{argument, M_CheckParmWithArgs},
         m_fixed::FRACUNIT,
-        m_misc::{c_str, M_StrToInt},
+        m_misc::M_StrToInt,
         m_random::P_Random,
         p_floor::floormove_t,
         p_setup::{lines, numlines, numsectors, sectors, sides},
@@ -1190,12 +1190,12 @@ unsafe fn DonutOverrun(
         tmp_s3_floorheight = 0;
         tmp_s3_floorpic = 0x16;
 
-        let p = M_CheckParmWithArgs(c"-donut".as_ptr().cast(), 2);
+        let p = M_CheckParmWithArgs("-donut", 2);
         if p > 0 {
-            if let Some(value) = M_StrToInt(c_str(*myargv.offset((p + 1) as isize))) {
+            if let Some(value) = M_StrToInt(argument(p + 1)) {
                 tmp_s3_floorheight = value;
             }
-            if let Some(value) = M_StrToInt(c_str(*myargv.offset((p + 2) as isize))) {
+            if let Some(value) = M_StrToInt(argument(p + 2)) {
                 tmp_s3_floorpic = value;
             }
             if tmp_s3_floorpic >= numflats {

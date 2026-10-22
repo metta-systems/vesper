@@ -21,7 +21,7 @@ use {
     crate::{
         doom::{
             i_input::{I_GetEvent, I_InitInput},
-            m_argv::{myargv, M_CheckParmWithArgs},
+            m_argv::{argument, M_CheckParmWithArgs},
             tables::gammatable,
             z_zone::{Z_Free, Z_Malloc},
         },
@@ -270,54 +270,42 @@ pub unsafe fn I_InitGraphics() {
     s_Fb.transp.offset = 24;
 
     // Check for -gfxmode arg
-    let gfxmodeparm = M_CheckParmWithArgs(c"-gfxmode".as_ptr().cast_mut().cast(), 1);
+    let gfxmodeparm = M_CheckParmWithArgs("-gfxmode", 1);
     if gfxmodeparm != 0 {
-        let mode = *myargv.add((gfxmodeparm + 1) as usize);
-        if !mode.is_null() {
-            let mode_str = std::ffi::CStr::from_ptr(mode.cast());
-            if mode_str.to_bytes() == b"rgba8888" {
-                s_Fb.bits_per_pixel = 32;
-                s_Fb.blue.length = 8;
-                s_Fb.green.length = 8;
-                s_Fb.red.length = 8;
-                s_Fb.transp.length = 8;
-                s_Fb.blue.offset = 0;
-                s_Fb.green.offset = 8;
-                s_Fb.red.offset = 16;
-                s_Fb.transp.offset = 24;
-            } else if mode_str.to_bytes() == b"rgb565" {
-                s_Fb.bits_per_pixel = 16;
-                s_Fb.blue.length = 5;
-                s_Fb.green.length = 6;
-                s_Fb.red.length = 5;
-                s_Fb.transp.length = 0;
-                s_Fb.blue.offset = 11;
-                s_Fb.green.offset = 5;
-                s_Fb.red.offset = 0;
-                s_Fb.transp.offset = 16;
-            } else {
-                i_error!(
-                    "Unknown gfxmode value: {}\n",
-                    std::ffi::CStr::from_ptr(mode.cast()).to_string_lossy()
-                );
-            }
+        let mode = argument(gfxmodeparm + 1);
+        if mode == "rgba8888" {
+            s_Fb.bits_per_pixel = 32;
+            s_Fb.blue.length = 8;
+            s_Fb.green.length = 8;
+            s_Fb.red.length = 8;
+            s_Fb.transp.length = 8;
+            s_Fb.blue.offset = 0;
+            s_Fb.green.offset = 8;
+            s_Fb.red.offset = 16;
+            s_Fb.transp.offset = 24;
+        } else if mode == "rgb565" {
+            s_Fb.bits_per_pixel = 16;
+            s_Fb.blue.length = 5;
+            s_Fb.green.length = 6;
+            s_Fb.red.length = 5;
+            s_Fb.transp.length = 0;
+            s_Fb.blue.offset = 11;
+            s_Fb.green.offset = 5;
+            s_Fb.red.offset = 0;
+            s_Fb.transp.offset = 16;
+        } else {
+            i_error!("Unknown gfxmode value: {mode}\n");
         }
     }
 
     // Auto-scaling factor
-    let scale_parm = M_CheckParmWithArgs(c"-scaling".as_ptr().cast_mut().cast(), 1);
+    let scale_parm = M_CheckParmWithArgs("-scaling", 1);
     if scale_parm != 0 {
-        let val = *myargv.add((scale_parm + 1) as usize);
-        if !val.is_null() {
-            // Simple atoi-like conversion
-            let mut n: i32 = 0;
-            let mut p = val;
-            while *p >= b'0' && *p <= b'9' {
-                n = n * 10 + (*p as i32 - b'0' as i32);
-                p = p.add(1);
-            }
-            fb_scaling = n;
-        }
+        // Leading digits only (no sign or whitespace), as the C loop reads.
+        fb_scaling = argument(scale_parm + 1)
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .fold(0, |scaling, digit| scaling * 10 + i32::from(digit - b'0'));
     } else {
         fb_scaling = (s_Fb.xres / SCREENWIDTH as u32) as i32;
         let y_scale = (s_Fb.yres / SCREENHEIGHT as u32) as i32;
@@ -525,12 +513,8 @@ pub unsafe fn I_EndRead() {}
 
 /// Set the host-window title via [`Platform::set_window_title`](super::doomgeneric::Platform::set_window_title).
 /// Mirrors `I_SetWindowTitle` from `i_video.c`.
-///
-/// # Safety
-///
-/// `title` must be a valid NUL-terminated C string.
-pub unsafe fn I_SetWindowTitle(title: *mut u8) {
-    super::doomgeneric::platform().set_window_title(std::ffi::CStr::from_ptr(title.cast()));
+pub fn I_SetWindowTitle(title: &str) {
+    super::doomgeneric::platform().set_window_title(title);
 }
 
 /// Parse video-related command-line switches. No-op in this port;

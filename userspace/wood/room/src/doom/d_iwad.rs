@@ -17,13 +17,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::CString;
-
 use crate::{
     doom::{
         d_mode,
-        m_argv::{myargv, M_CheckParmWithArgs},
-        m_misc::{c_str, M_FileExists},
+        m_argv::{argument, M_CheckParmWithArgs},
+        m_misc::M_FileExists,
     },
     i_error,
 };
@@ -146,14 +144,6 @@ const IWADS: [iwad_t; 14] = [
 /// `d_iwad.c`; this port only searches the current directory.
 const IWAD_DIRS: [&str; 1] = ["."];
 
-/// Hand `text` to code that still takes a C string.
-///
-/// shortcut: leaks the allocation, like the C original's `malloc`ed paths;
-/// drop once the callers take `&str`.
-fn into_c_string(text: &str) -> *mut u8 {
-    CString::new(text).unwrap().into_raw().cast()
-}
-
 /// Returns `true` if `path` is a file path whose final component equals
 /// `filename` (case-insensitive comparison).
 ///
@@ -255,19 +245,13 @@ pub fn D_FindWADByName(name: &str) -> Option<String> {
 }
 
 /// Searches for a WAD by filename, falling back to the original `filename`
-/// pointer if the file cannot be found.
+/// if the file cannot be found.
 ///
-/// Unlike [`D_FindWADByName`], this function always returns a non-null
-/// pointer: either the found path, or the original `filename` argument
-/// unchanged on failure. Called from `w_main.c`.
-///
-/// # Safety
-/// `filename` must be a valid, null-terminated C string.
-pub unsafe fn D_TryFindWADByName(filename: *mut u8) -> *mut u8 {
-    std::str::from_utf8(unsafe { c_str(filename) })
-        .ok()
-        .and_then(D_FindWADByName)
-        .map_or(filename, |path| into_c_string(&path))
+/// Unlike [`D_FindWADByName`], this function always returns a path: either
+/// the found one, or `filename` unchanged on failure. Called from
+/// `w_main.c`.
+pub fn D_TryFindWADByName(filename: &str) -> String {
+    D_FindWADByName(filename).unwrap_or_else(|| filename.to_owned())
 }
 
 /// Locates an IWAD file on disk and identifies its game mission.
@@ -277,31 +261,30 @@ pub unsafe fn D_TryFindWADByName(filename: *mut u8) -> *mut u8 {
 /// and its mission is identified by filename. Otherwise, the function scans
 /// all IWAD search directories for any IWAD whose mission bit is set in `mask`.
 ///
-/// Returns the path to the found IWAD, or null if none was found in the
+/// Returns the path to the found IWAD, or `None` if none was found in the
 /// auto-scan path. Writes the identified mission to `*mission`.
 ///
 /// Called from `d_main.c`.
 ///
 /// # Safety
 /// `mission` must be a valid, non-null pointer.
-pub unsafe fn D_FindIWAD(mask: i32, mission: *mut i32) -> *mut u8 {
-    let iwadparm = M_CheckParmWithArgs(c"-iwad".as_ptr().cast(), 1);
+pub unsafe fn D_FindIWAD(mask: i32, mission: *mut i32) -> Option<String> {
+    let iwadparm = M_CheckParmWithArgs("-iwad", 1);
 
     if iwadparm != 0 {
-        let iwadfile = String::from_utf8_lossy(c_str(*myargv.offset((iwadparm + 1) as isize)));
-        let Some(result) = D_FindWADByName(&iwadfile) else {
+        let iwadfile = argument(iwadparm + 1);
+        let Some(result) = D_FindWADByName(iwadfile) else {
             i_error!("IWAD file '{}' not found!", iwadfile);
         };
 
         *mission = IdentifyIWADByName(&result, mask);
-        into_c_string(&result)
+        Some(result)
     } else {
         println!("-iwad not specified, trying a few iwad names");
 
         IWAD_DIRS
             .iter()
             .find_map(|dir| SearchDirectoryForIWAD(dir, mask, &mut *mission))
-            .map_or(std::ptr::null_mut(), |path| into_c_string(&path))
     }
 }
 
@@ -335,13 +318,12 @@ pub fn D_SuggestIWADName(mission: i32, mode: i32) -> &'static str {
 /// Walks `IWADS` and returns the `description` field of the first entry
 /// where the mission matches and either the mode matches or `mode` is
 /// `d_mode::indetermined`. Falls back to `"Unknown game?"` if no match is
-/// found. Called from `w_wad.c`, which still takes a C string.
-pub fn D_SuggestGameName(mission: i32, mode: i32) -> *mut u8 {
-    let description = IWADS
+/// found. Called from `w_wad.c`.
+pub fn D_SuggestGameName(mission: i32, mode: i32) -> &'static str {
+    IWADS
         .iter()
         .find(|iwad| iwad.mission == mission && (mode == d_mode::indetermined || iwad.mode == mode))
-        .map_or("Unknown game?", |iwad| iwad.description);
-    into_c_string(description)
+        .map_or("Unknown game?", |iwad| iwad.description)
 }
 
 /// Validates that the loaded IWAD matches the expected `_mission`.

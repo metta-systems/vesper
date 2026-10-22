@@ -110,9 +110,7 @@ extern "C" {
 /// at the end of every level.
 pub fn StatCopy(stats: *mut wbstartstruct_t) {
     unsafe {
-        if M_ParmExists(c"-statdump".as_ptr().cast()) != 0
-            && num_captured_stats < MAX_CAPTURES as i32
-        {
+        if M_ParmExists("-statdump") && num_captured_stats < MAX_CAPTURES as i32 {
             memcpy(
                 std::ptr::addr_of_mut!(captured_stats[0]).offset(num_captured_stats as isize)
                     as *mut c_void,

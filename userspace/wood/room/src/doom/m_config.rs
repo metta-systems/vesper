@@ -97,8 +97,8 @@ const fn cfg(name: &'static str, ty: DefaultType) -> Default {
 }
 
 use crate::doom::{
-    m_argv::{myargv, M_CheckParmWithArgs},
-    m_misc::{c_str, M_MakeDirectory, M_StrToInt},
+    m_argv::{argument, M_CheckParmWithArgs},
+    m_misc::{M_MakeDirectory, M_StrToInt},
 };
 
 /// Global configuration directory (mirrors C `char *configdir`).
@@ -688,9 +688,9 @@ pub fn M_SaveDefaultsAlternate(main: &str, extra: &str) {
 /// `extra_defaults.filename` for any future call to [`M_SaveDefaults`].
 pub fn M_LoadDefaults() {
     unsafe {
-        let i = M_CheckParmWithArgs(c"-config".as_ptr().cast_mut().cast(), 1);
+        let i = M_CheckParmWithArgs("-config", 1);
         if i != 0 {
-            doom_defaults.filename = argument(i + 1);
+            doom_defaults.filename = argument(i + 1).to_owned();
             println!("\tdefault file: {}", doom_defaults.filename);
         } else {
             doom_defaults.filename = format!("{configdir}{default_main_config}");
@@ -698,9 +698,9 @@ pub fn M_LoadDefaults() {
 
         println!("saving config in {}", doom_defaults.filename);
 
-        let i = M_CheckParmWithArgs(c"-extraconfig".as_ptr().cast_mut().cast(), 1);
+        let i = M_CheckParmWithArgs("-extraconfig", 1);
         if i != 0 {
-            extra_defaults.filename = argument(i + 1);
+            extra_defaults.filename = argument(i + 1).to_owned();
             println!(
                 "        extra configuration file: {}",
                 extra_defaults.filename
@@ -713,14 +713,6 @@ pub fn M_LoadDefaults() {
         let _ = &doom_defaults;
         let _ = &extra_defaults;
     }
-}
-
-/// Command-line argument `index` as an owned string.
-///
-/// # Safety
-/// `index` must be below `myargc`.
-unsafe fn argument(index: i32) -> String {
-    String::from_utf8_lossy(c_str(*myargv.offset(index as isize))).into_owned()
 }
 
 /// Bind the named configuration variable to a memory `location`.

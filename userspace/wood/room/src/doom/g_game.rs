@@ -447,8 +447,8 @@ pub static mut secretexit: boolean = 0;
 /// File name of the demo deferred for playback (set by `G_DeferedPlayDemo`).
 pub static mut defdemoname: *mut u8 = ptr::null_mut();
 
-/// File name buffer for the savegame currently being loaded.
-pub static mut savename: [u8; 256] = [0; 256];
+/// File name of the savegame currently being loaded.
+pub static mut savename: String = String::new();
 
 /// Deferred `G_DeferedInitNew` parameter: skill level.
 pub static mut d_skill: skill_t = 0;
@@ -608,10 +608,10 @@ use crate::doom::s_sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 use crate::doom::m_menu::{mouseSensitivity, M_StartControlPanel};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
-use crate::doom::m_misc::{c_str, M_StringCopy, M_TempFile, M_WriteFile};
+use crate::doom::m_misc::{atoi, c_str, M_StringCopy, M_TempFile, M_WriteFile};
 
 /// Command-line argument table and lookup helpers from `m_argv.c`.
-use crate::doom::m_argv::{myargv, M_CheckParm, M_CheckParmWithArgs};
+use crate::doom::m_argv::{argument, M_CheckParm, M_CheckParmWithArgs};
 
 /// `rndindex` consistency-check cookie and seed reset from `m_random.c`.
 use crate::doom::m_random::{rndindex, M_ClearRandom};
@@ -1978,14 +1978,13 @@ pub unsafe fn G_DoWorldDone() {
 // G_LoadGame / G_DoLoadGame
 // ---------------------------------------------------------------------------
 
-/// Defer a savegame load: copy `name` into the `savename` buffer and queue
+/// Defer a savegame load: remember `name` in `savename` and queue
 /// `ga_loadgame` for the next `G_Ticker`.
-///
-/// # Safety
-/// `name` must be a valid NUL-terminated C string.
-pub unsafe fn G_LoadGame(name: *mut u8) {
-    M_StringCopy(&mut *ptr::addr_of_mut!(savename), c_str(name));
-    gameaction = ga_loadgame;
+pub fn G_LoadGame(name: &str) {
+    unsafe {
+        savename = name.to_owned();
+        gameaction = ga_loadgame;
+    }
 }
 
 /// Execute the deferred `ga_loadgame` action: open `savename`, validate the
@@ -2002,7 +2001,11 @@ pub unsafe fn G_LoadGame(name: *mut u8) {
 pub unsafe fn G_DoLoadGame() {
     gameaction = ga_nothing;
 
-    save_stream = libc::fopen(std::ptr::addr_of!(savename[0]).cast(), c"rb".as_ptr());
+    // A name with an interior NUL cannot exist on disk; treat it as missing.
+    let Ok(path) = std::ffi::CString::new((*ptr::addr_of!(savename)).as_str()) else {
+        return;
+    };
+    save_stream = libc::fopen(path.as_ptr(), c"rb".as_ptr());
     if save_stream.is_null() {
         return;
     }
@@ -2497,14 +2500,14 @@ pub unsafe fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
 /// so save/load menus are disabled during recording.
 ///
 /// # Safety
-/// `name` must be a valid NUL-terminated C string.
-pub unsafe fn G_RecordDemo(name: *mut u8) {
+/// Mutates the demo-recording globals.
+pub unsafe fn G_RecordDemo(name: &str) {
     usergame = 0;
-    demoname = format!("{}.lmp", String::from_utf8_lossy(c_str(name)));
+    demoname = format!("{name}.lmp");
     let mut maxsize: i32 = 0x20000;
-    let i = M_CheckParmWithArgs(c"-maxdemo".as_ptr().cast_mut().cast(), 1);
+    let i = M_CheckParmWithArgs("-maxdemo", 1);
     if i != 0 {
-        maxsize = libc::atoi((*myargv.add(i as usize + 1)).cast());
+        maxsize = atoi(argument(i + 1));
         maxsize *= 1024;
     }
     demobuffer = Z_Malloc(maxsize, PU_STATIC, ptr::null_mut()) as *mut byte;
@@ -2549,7 +2552,7 @@ fn g_vanilla_version_code_for(gv: i32) -> i32 {
 pub unsafe fn G_BeginRecording() {
     use crate::doom::c_ffi::DOOM_191_VERSION;
 
-    longtics = (M_CheckParm(c"-longtics".as_ptr().cast_mut().cast()) != 0) as boolean;
+    longtics = (M_CheckParm("-longtics") != 0) as boolean;
     lowres_turn = (longtics == 0) as boolean;
 
     demo_p = demobuffer;
@@ -2692,10 +2695,7 @@ pub unsafe fn G_DoPlayDemo() {
         demo_p = demo_p.add(1);
     }
 
-    if playeringame[1] != 0
-        || M_CheckParm(c"-solo-net".as_ptr().cast_mut().cast()) > 0
-        || M_CheckParm(c"-netdemo".as_ptr().cast_mut().cast()) > 0
-    {
+    if playeringame[1] != 0 || M_CheckParm("-solo-net") > 0 || M_CheckParm("-netdemo") > 0 {
         netgame = 1;
         netdemo = 1;
     }
@@ -2723,7 +2723,7 @@ pub unsafe fn G_DoPlayDemo() {
 /// # Safety
 /// Mutates `nodrawers`, `timingdemo`, `singletics`, `defdemoname`, `gameaction`.
 pub unsafe fn G_TimeDemo(name: *mut u8) {
-    nodrawers = M_CheckParm(c"-nodraw".as_ptr().cast_mut().cast());
+    nodrawers = M_CheckParm("-nodraw");
     timingdemo = 1;
     use crate::doom::d_loop::singletics;
     singletics = 1;

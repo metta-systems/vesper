@@ -806,7 +806,7 @@ unsafe fn i_stretch_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
         screenp = screenp.add(dest_pitch as usize);
         bufp = bufp.add(SCREENWIDTH as usize);
     }
-    if M_CheckParm(c"-scanline".as_ptr().cast_mut().cast()) > 0 {
+    if M_CheckParm("-scanline") > 0 {
         let mut screenp = dest_buffer.add((2 * dest_pitch) as usize);
         let mut y = 0;
         while y < 1198 {

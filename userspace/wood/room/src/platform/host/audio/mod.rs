@@ -17,14 +17,13 @@ pub(crate) mod sfx;
 
 use std::{
     cell::RefCell,
-    ffi::CStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use rodio::{buffer::SamplesBuffer, DeviceSinkBuilder, MixerDeviceSink, Player};
 
-use room::doom::m_argv::{myargv, M_CheckParmWithArgs};
+use room::doom::m_argv::{argument, M_CheckParmWithArgs};
 
 pub(crate) use sfx::{decode_doom_sfx, PannedSource};
 
@@ -97,20 +96,13 @@ pub(super) fn sound_is_playing(channel: usize) -> bool {
 /// then play silently. Not present in the C source: chocolate-doom
 /// uses an external timidity config instead.
 fn find_soundfont_path() -> Option<PathBuf> {
-    // SAFETY: the engine set up `myargv` before calling `music_init`.
-    unsafe {
-        let p = M_CheckParmWithArgs(c"-sf2".as_ptr().cast(), 1);
-        if p != 0 {
-            let arg = *myargv.add((p + 1) as usize);
-            if !arg.is_null() {
-                let s = CStr::from_ptr(arg.cast()).to_string_lossy();
-                let path = PathBuf::from(s.as_ref());
-                if path.exists() {
-                    return Some(path);
-                }
-                log::warn!("-sf2 path not found: {}", path.display());
-            }
+    let p = M_CheckParmWithArgs("-sf2", 1);
+    if p != 0 {
+        let path = PathBuf::from(argument(p + 1));
+        if path.exists() {
+            return Some(path);
         }
+        log::warn!("-sf2 path not found: {}", path.display());
     }
 
     let bundled = Path::new("soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2");

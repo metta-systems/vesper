@@ -14,7 +14,7 @@
 #[global_allocator]
 static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 
-use std::{cell::Cell, ffi::CString, mem::offset_of, path::PathBuf};
+use std::{cell::Cell, mem::offset_of, path::PathBuf};
 
 // ---------------------------------------------------------------------------
 // headless:: TLS re-exports
@@ -736,21 +736,18 @@ fn demo_playthrough() {
 
     let wad_str = wad_path.to_str().expect("WAD path is not valid UTF-8");
 
-    let argv: Vec<CString> = vec![
-        CString::new("room").unwrap(),
-        CString::new("-iwad").unwrap(),
-        CString::new(wad_str).unwrap(),
-        CString::new("-nomusic").unwrap(),
-        CString::new("-nosound").unwrap(),
-        CString::new("-nomouse").unwrap(),
-        CString::new("-nojoy").unwrap(),
-        CString::new("-nograbmouse").unwrap(),
-    ];
-
-    let mut c_argv: Vec<*mut u8> = argv.iter().map(|s| s.as_ptr() as *mut u8).collect();
-    c_argv.push(std::ptr::null_mut());
-
-    let argc = (c_argv.len() - 1) as i32;
+    let args: Vec<String> = [
+        "room",
+        "-iwad",
+        wad_str,
+        "-nomusic",
+        "-nosound",
+        "-nomouse",
+        "-nojoy",
+        "-nograbmouse",
+    ]
+    .map(str::to_owned)
+    .into();
 
     // Enable singletics mode: one game tic per TryRunTics() call,
     // bypassing the real-time waiting loop.
@@ -760,7 +757,7 @@ fn demo_playthrough() {
 
     // Initialize the Doom engine.
     unsafe {
-        room::doom::doomgeneric::doomgeneric_Create(&Headless, argc, c_argv.as_mut_ptr());
+        room::doom::doomgeneric::doomgeneric_Create(&Headless, args);
     }
 
     // Sanity-check invariants that future agents often re-validate when

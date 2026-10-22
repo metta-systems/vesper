@@ -128,8 +128,8 @@ const DEH_DEFAULT_SPECIES_INFIGHTING: i32 = 0;
 
 use crate::doom::{
     g_game::gamemap,
-    m_argv::{myargv, M_CheckParmWithArgs},
-    m_misc::{c_str, M_StrToInt},
+    m_argv::{argument, M_CheckParmWithArgs},
+    m_misc::M_StrToInt,
     p_inter::{P_DamageMobj, P_TouchSpecialThing},
     p_mobj::{
         P_RemoveMobj, P_SetMobjState, P_SpawnBlood, P_SpawnMobj, P_SpawnPuff, P_SubstNullMobj,
@@ -1453,9 +1453,9 @@ pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
 unsafe fn SpechitOverrun(ld: *mut line_t) {
     static mut baseaddr: u32 = 0;
     if baseaddr == 0 {
-        let p = M_CheckParmWithArgs(c"-spechit".as_ptr().cast_mut().cast(), 1);
+        let p = M_CheckParmWithArgs("-spechit", 1);
         if p > 0 {
-            if let Some(value) = M_StrToInt(c_str(*myargv.add((p + 1) as usize))) {
+            if let Some(value) = M_StrToInt(argument(p + 1)) {
                 baseaddr = value as u32;
             }
         } else {

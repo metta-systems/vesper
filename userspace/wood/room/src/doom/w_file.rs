@@ -12,7 +12,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::{ffi::c_void, ptr};
+use std::{
+    ffi::{c_void, CString},
+    ptr,
+};
 
 use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 
@@ -24,7 +27,7 @@ use libc::{fclose, fopen, fread, fseek, FILE, SEEK_SET};
 pub struct wad_file_class_t {
     /// Open the WAD at `path` and return a heap-allocated descriptor, or
     /// null on failure.
-    pub OpenFile: unsafe fn(*mut u8) -> *mut wad_file_t,
+    pub OpenFile: unsafe fn(&str) -> *mut wad_file_t,
     /// Close and free the descriptor returned by `OpenFile`.
     pub CloseFile: unsafe fn(*mut wad_file_t),
     /// Read `buffer_len` bytes from `offset` in the WAD into `buffer`.
@@ -72,11 +75,14 @@ use crate::doom::{
 ///
 /// # Safety
 ///
-/// `path` must point to a valid null-terminated C string. The returned
-/// pointer (if non-null) is owned by the caller and must eventually be
-/// passed to [`W_StdC_CloseFile`].
-unsafe fn W_StdC_OpenFile(path: *mut u8) -> *mut wad_file_t {
-    let fstream = fopen(path.cast(), c"rb".as_ptr());
+/// The returned pointer (if non-null) is owned by the caller and must
+/// eventually be passed to [`W_StdC_CloseFile`].
+unsafe fn W_StdC_OpenFile(path: &str) -> *mut wad_file_t {
+    // A path with an interior NUL cannot name a file.
+    let Ok(c_path) = CString::new(path) else {
+        return ptr::null_mut();
+    };
+    let fstream = fopen(c_path.as_ptr(), c"rb".as_ptr());
     if fstream.is_null() {
         return ptr::null_mut();
     }
@@ -148,7 +154,7 @@ pub static mut stdc_wad_file: wad_file_class_t = wad_file_class_t {
 /// optionally tried a series of `wad_file_classes` based on the `-mmap`
 /// command-line argument, but this port omits the mmap backend so the
 /// dispatch collapses to a direct call into `W_StdC_OpenFile`.
-pub fn W_OpenFile(path: *mut u8) -> *mut wad_file_t {
+pub fn W_OpenFile(path: &str) -> *mut wad_file_t {
     unsafe { (stdc_wad_file.OpenFile)(path) }
 }
 

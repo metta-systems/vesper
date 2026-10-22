@@ -186,11 +186,11 @@ pub fn W_LumpNameHash(name: &[u8]) -> u32 {
 /// returns null. Any existing `lumphash` is freed so the next
 /// lookup falls back to the linear scan until
 /// `W_GenerateHashTable` is called again.
-pub fn W_AddFile(filename: *mut u8) -> *mut wad_file_t {
+pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
     unsafe {
         let wad_file = W_OpenFile(filename);
         if wad_file.is_null() {
-            libc::printf(c" couldn't open %s\n".as_ptr(), filename);
+            println!(" couldn't open {filename}");
             return ptr::null_mut();
         }
 
@@ -199,7 +199,7 @@ pub fn W_AddFile(filename: *mut u8) -> *mut wad_file_t {
 
         let fileinfo: *mut filelump_t;
 
-        let path = CStr::from_ptr(filename.cast()).to_bytes();
+        let path = filename.as_bytes();
         if path.len() < 3 || !path[path.len() - 3..].eq_ignore_ascii_case(b"wad") {
             // Single lump file
             fileinfo = Z_Malloc(
@@ -222,10 +222,7 @@ pub fn W_AddFile(filename: *mut u8) -> *mut wad_file_t {
             );
 
             if header.identification != *b"IWAD" && header.identification != *b"PWAD" {
-                i_error!(
-                    "Wad file {} doesn't have IWAD or PWAD id",
-                    CStr::from_ptr(filename.cast()).to_string_lossy()
-                );
+                i_error!("Wad file {filename} doesn't have IWAD or PWAD id");
             }
 
             let header_numlumps = i32::from_le(header.numlumps);
@@ -532,7 +529,7 @@ pub fn W_CheckCorrectIWAD(mission: i32) {
                 if lumpnum >= 0 {
                     i_error!(
                         "\nYou are trying to use a {} IWAD file with the {}{}binary.\nThis isn't going to work.\nYou probably want to use the {}{}binary.",
-                        CStr::from_ptr(D_SuggestGameName(ul.mission, 4).cast()).to_string_lossy(),
+                        D_SuggestGameName(ul.mission, 4),
                         "doomgeneric",
                         CStr::from_ptr(D_GameMissionString(mission).cast()).to_string_lossy(),
                         "doomgeneric",

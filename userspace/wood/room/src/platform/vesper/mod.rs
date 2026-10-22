@@ -14,11 +14,8 @@ impl Platform for Vesper {}
 
 /// Start the engine and tick it forever.
 pub fn run() {
-    let mut name = *b"room\0";
-    let mut argv = [name.as_mut_ptr(), core::ptr::null_mut()];
-    // SAFETY: `argv` is a null-terminated array of one NUL-terminated
-    // string, and both outlive the engine, which never returns from here.
-    unsafe { room::doom::doomgeneric::doomgeneric_Create(&Vesper, 1, argv.as_mut_ptr()) };
+    // SAFETY: called once, at startup.
+    unsafe { room::doom::doomgeneric::doomgeneric_Create(&Vesper, vec!["room".to_owned()]) };
     loop {
         room::doom::d_main::doomgeneric_Tick();
     }

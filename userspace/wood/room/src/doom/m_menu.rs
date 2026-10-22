@@ -645,9 +645,7 @@ fn M_DrawSaveLoadBorder(x: i32, y: i32) {
 /// Load the game from save slot `choice` and close all menus.
 fn M_LoadSelect(choice: i32) {
     unsafe {
-        let mut name: [u8; 256] = [0; 256];
-        M_StringCopy(&mut name, P_SaveGameFile(choice).as_bytes());
-        G_LoadGame(name.as_mut_ptr());
+        G_LoadGame(&P_SaveGameFile(choice));
         M_ClearMenus();
     }
 }

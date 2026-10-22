@@ -6,7 +6,7 @@
 //!       ├─ App::resumed()      → create Window + GpuState, store in TLS
 //!       ├─ App::window_event() → push key events into TLS queue
 //!       └─ App::about_to_wait()
-//!               first call  → doomgeneric_Create(&Host, argc, argv)
+//!               first call  → doomgeneric_Create(&Host, args)
 //!               later calls → doomgeneric_Tick()
 //!                                ├─ I_StartTic() → I_GetEvent() → Host::key()
 //!                                └─ I_FinishUpdate() → Host::draw_frame()
@@ -15,8 +15,6 @@
 //! [`Host`]'s methods (in the parent module) access window and GPU
 //! resources through [`thread_local!`] statics, which is safe because
 //! everything runs on the main thread.
-
-use std::ffi::CString;
 
 use winit::{
     application::ApplicationHandler,
@@ -39,18 +37,9 @@ use super::{
 
 /// Application state threaded through the winit event loop.
 struct App {
-    /// Command-line arguments to forward to `doomgeneric_Create`.
-    ///
-    /// Stored as `CString`s to ensure they remain alive for the entire
-    /// duration of the programme (the engine saves `myargv` permanently).
-    /// The field is never read back; its purpose is to prevent the `CString`
-    /// heap allocations from being freed while the C engine is running.
-    #[allow(dead_code)]
-    args: Vec<CString>,
-
-    /// Raw C-style pointer array derived from `args`, passed to
-    /// `doomgeneric_Create` as `argv`.
-    argv: Vec<*mut u8>,
+    /// Command-line arguments to hand to `doomgeneric_Create`, which takes
+    /// them on the first tick.
+    args: Vec<String>,
 
     /// `true` after `doomgeneric_Create` has returned and the first tick
     /// has been executed, so that subsequent `about_to_wait` calls use
@@ -58,37 +47,12 @@ struct App {
     doom_initialized: bool,
 }
 
-/// Manual [`Send`] impl: the raw pointers in `argv` reference `CString` data
-/// owned by `args` in the same struct, so moving `App` between threads keeps
-/// the pointers valid.  In practice `App` is only used on the main thread.
-///
-/// # Safety
-///
-/// The raw pointers in `argv` point into the `CString` data owned by `args`,
-/// which lives alongside them and is never freed for the duration of the
-/// programme.  Concurrent mutation is impossible because `App` is only ever
-/// used on the main thread (the winit event loop does not send it across
-/// threads), so the non-`Send` raw pointers are fine.
-unsafe impl Send for App {}
-
 /// Constructor and helpers for [`App`].
 impl App {
     /// Build an `App` from the OS command-line arguments.
-    ///
-    /// Arguments are converted to null-terminated C strings, and a parallel
-    /// `argv` array of raw pointers is built.
     fn new() -> Self {
-        let args: Vec<CString> = std::env::args()
-            .map(|a| CString::new(a).expect("argument contained null byte"))
-            .collect();
-
-        let mut argv: Vec<*mut u8> = args.iter().map(|s| s.as_ptr().cast_mut().cast()).collect();
-        // The C standard requires `argv[argc]` to be a null pointer.
-        argv.push(std::ptr::null_mut());
-
         Self {
-            args,
-            argv,
+            args: std::env::args().collect(),
             doom_initialized: false,
         }
     }
@@ -196,12 +160,10 @@ impl ApplicationHandler for App {
 
         if !self.doom_initialized {
             // First tick: initialise the engine.
-            // SAFETY:
-            // - `self.args` is alive for the lifetime of the programme.
-            // - `self.argv` contains valid pointers into `self.args`.
-            let argc = (self.argv.len() - 1) as i32; // exclude trailing null
+            // SAFETY: guarded by `doom_initialized`, so this runs once.
+            let args = std::mem::take(&mut self.args);
             unsafe {
-                room::doom::doomgeneric::doomgeneric_Create(&Host, argc, self.argv.as_mut_ptr());
+                room::doom::doomgeneric::doomgeneric_Create(&Host, args);
             }
             self.doom_initialized = true;
         } else {

@@ -24,7 +24,6 @@ pub use app::run;
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
-    ffi::CStr,
     sync::Arc,
     time::Instant,
 };
@@ -119,11 +118,10 @@ impl Platform for Host {
     }
 
     /// Update the OS window title, e.g. to "The Ultimate DOOM".
-    fn set_window_title(&self, title: &CStr) {
-        let title = title.to_string_lossy();
+    fn set_window_title(&self, title: &str) {
         WINDOW.with_borrow(|w| {
             if let Some(window) = w.as_ref() {
-                window.set_title(&title);
+                window.set_title(title);
             }
         });
     }

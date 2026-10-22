@@ -3,12 +3,12 @@
 [package]
 name = "room"
 version = "0.1.0"
-edition = "2021"
-description = "A Rust implementation of the doomgeneric platform layer using winit and wgpu"
+edition = "2021" # TODO: 2024!
+description = "A Rust implementation of Doom Generic"
 repository = "https://github.com/sunsided/room"
 license = "GPL-2.0"
 authors = ["Markus Mayer <widemeadows@gmail.com>"]
-readme = "../README.md"
+readme = "README.md"
 
 [lib]
 name = "room"
@@ -59,3 +59,8 @@ dhat = { version = "0.3", optional = true }
 [lints.rust]
 # Vesper's custom target sets `target_os = "vesper"` (src/platform/mod.rs).
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("vesper"))'] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 's'

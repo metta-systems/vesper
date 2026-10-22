@@ -1,55 +1,36 @@
 //! Rust port of vendor/doomgeneric/m_argv.c.
 //!
-//! Command-line argument handling: parameter lookup, `@responsefile`
-//! expansion, and basename extraction. `myargc`/`myargv` are the engine's
-//! single mutable argv pair.
+//! Command-line argument handling: parameter lookup and `@responsefile`
+//! expansion. `myargv` is the engine's single argument vector; it is set
+//! once by `doomgeneric_Create` and only rewritten by response-file
+//! expansion during startup.
 
-#![allow(non_upper_case_globals, non_snake_case, clippy::upper_case_acronyms)]
+#![allow(non_upper_case_globals, non_snake_case)]
 
-use {crate::i_error, std::ffi::c_void};
+use {
+    crate::i_error,
+    std::{io::Read, ptr},
+};
 
-/// Opaque stdio `FILE` handle used by the local `fopen`/`fread`/`fclose`
-/// declarations below. Mirrors the C `FILE` typedef without exposing its
-/// internals to Rust.
-enum FILE {}
+/// `char **myargv` — process argument vector, `myargv[0]` being the
+/// program name.
+pub static mut myargv: Vec<String> = Vec::new();
 
-/// Path separator used to extract the executable basename in
-/// `M_GetExecutableName`. Matches `DIR_SEPARATOR` from the C headers
-/// (always `'/'` in this port; the upstream code uses `'\\'` on Windows).
-const DIR_SEPARATOR: u8 = b'/';
-
-/// Maximum number of arguments produced by a response-file expansion,
-/// matching `MAXARGVS` in `m_argv.c`.
-const MAXARGVS: usize = 100;
-
-/// `int myargc` — process argument count.
-pub static mut myargc: i32 = 0;
-
-/// `char **myargv` — process argument vector.
-pub static mut myargv: *mut *mut u8 = std::ptr::null_mut();
-
-extern "C" {
-    /// libc `strcasecmp` — case-insensitive string compare.
-    fn strcasecmp(s1: *const u8, s2: *const u8) -> i32;
-    /// libc `fopen` — open a file by path with the given mode string.
-    fn fopen(path: *const u8, mode: *const u8) -> *mut FILE;
-    /// libc `fread` — read up to `nmemb` elements of `size` bytes each.
-    fn fread(ptr: *mut c_void, size: usize, nmemb: usize, stream: *mut FILE) -> usize;
-    /// libc `fclose` — close a file handle previously opened with `fopen`.
-    fn fclose(stream: *mut FILE) -> i32;
-    /// libc `malloc` — uninitialised heap allocation.
-    fn malloc(size: usize) -> *mut c_void;
-    /// libc `memset` — fill `n` bytes at `s` with the byte value `c`.
-    fn memset(s: *mut c_void, c: i32, n: usize) -> *mut c_void;
-    /// libc `strrchr` — locate the last occurrence of `c` in the string `s`.
-    fn strrchr(s: *const u8, c: i32) -> *mut u8;
-    /// libc `isspace` — classify `c` as whitespace.
-    fn isspace(c: i32) -> i32;
-    /// libc `printf` — formatted output to stdout.
-    fn printf(format: *const u8, ...) -> i32;
+/// `myargc` — number of entries in [`myargv`].
+pub fn argument_count() -> i32 {
+    unsafe { (&*ptr::addr_of!(myargv)).len() as i32 }
 }
 
-use crate::doom::m_misc::{M_FileLength, FILE as MiscFILE};
+/// `myargv[index]`.
+///
+/// The `'static` borrow is sound because `myargv` is only replaced during
+/// startup, before any caller keeps an argument.
+///
+/// # Panics
+/// If `index` is not below [`argument_count`].
+pub fn argument(index: i32) -> &'static str {
+    unsafe { &(&*ptr::addr_of!(myargv))[index as usize] }
+}
 
 /// `int M_CheckParmWithArgs(char *check, int num_args)` — search the
 /// program command line for `check`, requiring at least `num_args`
@@ -57,161 +38,136 @@ use crate::doom::m_misc::{M_FileLength, FILE as MiscFILE};
 ///
 /// Returns the matched argument index (1..argc-num_args) or 0 if not
 /// present. Comparison is case-insensitive.
-pub fn M_CheckParmWithArgs(check: *const u8, num_args: i32) -> i32 {
-    unsafe {
-        let mut i: i32 = 1;
-        while i < myargc - num_args {
-            if strcasecmp(check, *myargv.offset(i as isize) as *const u8) == 0 {
-                return i;
-            }
-            i += 1;
-        }
-        0
-    }
+pub fn M_CheckParmWithArgs(check: &str, num_args: i32) -> i32 {
+    (1..argument_count() - num_args)
+        .find(|&index| argument(index).eq_ignore_ascii_case(check))
+        .unwrap_or(0)
 }
 
-/// `boolean M_ParmExists(char *check)` — returns nonzero if `check` is
-/// present on the command line, 0 otherwise.
-pub fn M_ParmExists(check: *const u8) -> i32 {
-    (M_CheckParm(check) != 0) as i32
+/// `boolean M_ParmExists(char *check)` — whether `check` is present on
+/// the command line.
+pub fn M_ParmExists(check: &str) -> bool {
+    M_CheckParm(check) != 0
 }
 
 /// `int M_CheckParm(char *check)` — convenience wrapper for
 /// `M_CheckParmWithArgs(check, 0)`.
-pub fn M_CheckParm(check: *const u8) -> i32 {
+pub fn M_CheckParm(check: &str) -> i32 {
     M_CheckParmWithArgs(check, 0)
 }
 
-/// Load a response file (`@filename` on the command line) and splice its
-/// tokens into `myargv` in place of the response-file argument.
+/// C `isspace` in the "C" locale.
+fn is_c_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
+}
+
+/// Split response-file `contents` into arguments, as `LoadResponseFile` in
+/// `m_argv.c` does: words are whitespace-separated, and a double-quoted run
+/// is one argument.
 ///
-/// Behaviour mirrors `LoadResponseFile` in `m_argv.c`: words are
-/// whitespace-separated, double-quoted runs become a single argument, and
-/// missing-file / unclosed-quote conditions raise an `I_Error`.
-///
-/// # Safety
-/// - `argv_index` must be a valid index into the current `myargv`.
-/// - `myargv[argv_index]` must be a NUL-terminated C string whose first
-///   character is `'@'`; the response-file path is the remainder.
-/// - All entries in `myargv` must remain readable for the duration of the
-///   call.
-unsafe fn LoadResponseFile(argv_index: i32) {
-    let response_filename: *mut u8 = (*myargv.offset(argv_index as isize)).offset(1);
+/// Returns `None` if a quoted run is not closed before a newline or the
+/// end of the file.
+fn response_file_arguments(contents: &[u8]) -> Option<Vec<String>> {
+    let mut arguments = Vec::new();
+    let mut rest = contents;
+    loop {
+        let start = rest.iter().position(|&byte| !is_c_space(byte));
+        let Some(start) = start else {
+            return Some(arguments);
+        };
+        rest = &rest[start..];
 
-    let handle: *mut FILE = fopen(response_filename, c"rb".as_ptr().cast());
-    if handle.is_null() {
-        printf(c"\nNo such response file!".as_ptr().cast());
-        return;
-    }
-
-    printf(
-        c"Found response file %s!\n".as_ptr().cast(),
-        response_filename,
-    );
-
-    let size: i64 = M_FileLength(handle as *mut MiscFILE);
-
-    let file: *mut u8 = malloc(size as usize + 1) as *mut u8;
-    let mut i: usize = 0;
-    while i < size as usize {
-        let k: usize = fread(file.add(i) as *mut c_void, 1, size as usize - i, handle);
-        if k == 0 {
-            i_error!(
-                "Failed to read full contents of '{}'",
-                std::ffi::CStr::from_ptr(response_filename.cast()).to_string_lossy()
-            );
-        }
-        i += k;
-    }
-    fclose(handle);
-    *file.add(size as usize) = 0;
-
-    let newargv: *mut *mut u8 = malloc(std::mem::size_of::<*mut u8>() * MAXARGVS) as *mut *mut u8;
-    let mut newargc: i32 = 0;
-    memset(
-        newargv as *mut c_void,
-        0,
-        std::mem::size_of::<*mut u8>() * MAXARGVS,
-    );
-
-    let mut idx: i32 = 0;
-    while idx < argv_index {
-        *newargv.offset(newargc as isize) = *myargv.offset(idx as isize);
-        newargc += 1;
-        idx += 1;
-    }
-
-    let infile: *mut u8 = file;
-    let mut k: usize = 0;
-    while (k as i64) < size {
-        while (k as i64) < size && isspace(*infile.add(k) as i32) != 0 {
-            k += 1;
-        }
-        if (k as i64) >= size {
-            break;
-        }
-
-        if *infile.add(k) == b'"' {
-            k += 1;
-            *newargv.offset(newargc as isize) = infile.add(k);
-            newargc += 1;
-            while (k as i64) < size && *infile.add(k) != b'"' && *infile.add(k) != b'\n' {
-                k += 1;
+        let (word, remainder) = if let Some(quoted) = rest.strip_prefix(b"\"") {
+            let end = quoted
+                .iter()
+                .position(|&byte| byte == b'"' || byte == b'\n')?;
+            if quoted[end] == b'\n' {
+                return None;
             }
-            if (k as i64) >= size || *infile.add(k) == b'\n' {
-                i_error!(
-                    "Quotes unclosed in response file '{}'",
-                    std::ffi::CStr::from_ptr(response_filename.cast()).to_string_lossy()
-                );
-            }
-            *infile.add(k) = 0;
-            k += 1;
+            (&quoted[..end], &quoted[end + 1..])
         } else {
-            *newargv.offset(newargc as isize) = infile.add(k);
-            newargc += 1;
-            while (k as i64) < size && isspace(*infile.add(k) as i32) == 0 {
-                k += 1;
-            }
-            *infile.add(k) = 0;
-            k += 1;
-        }
+            let end = rest
+                .iter()
+                .position(|&byte| is_c_space(byte))
+                .unwrap_or(rest.len());
+            (&rest[..end], rest.get(end + 1..).unwrap_or_default())
+        };
+        arguments.push(String::from_utf8_lossy(word).into_owned());
+        rest = remainder;
     }
+}
 
-    idx = argv_index + 1;
-    while idx < myargc {
-        *newargv.offset(newargc as isize) = *myargv.offset(idx as isize);
-        newargc += 1;
-        idx += 1;
+/// Load a response file (`@filename` on the command line) and splice its
+/// arguments into `myargv` in place of the response-file argument.
+///
+/// Behaviour mirrors `LoadResponseFile` in `m_argv.c`: a missing file is
+/// reported and skipped; a read failure or an unclosed quote raises an
+/// `I_Error`.
+fn LoadResponseFile(argv_index: i32) {
+    let response_filename = &argument(argv_index)[1..];
+
+    let Ok(mut handle) = std::fs::File::open(response_filename) else {
+        print!("\nNo such response file!");
+        return;
+    };
+    println!("Found response file {response_filename}!");
+
+    let mut contents = Vec::new();
+    if handle.read_to_end(&mut contents).is_err() {
+        i_error!("Failed to read full contents of '{response_filename}'");
     }
+    let Some(file_arguments) = response_file_arguments(&contents) else {
+        i_error!("Quotes unclosed in response file '{response_filename}'");
+    };
 
-    myargv = newargv;
-    myargc = newargc;
+    unsafe {
+        let arguments = &mut *ptr::addr_of_mut!(myargv);
+        let argv_index = argv_index as usize;
+        arguments.splice(argv_index..=argv_index, file_arguments);
+    }
 }
 
 /// `void M_FindResponseFile(void)` — scan `myargv` for arguments
 /// beginning with `'@'` and expand each via `LoadResponseFile`.
 pub fn M_FindResponseFile() {
-    unsafe {
-        let mut i: i32 = 1;
-        while i < myargc {
-            if **myargv.offset(i as isize) == b'@' {
-                LoadResponseFile(i);
-            }
-            i += 1;
+    let mut i = 1;
+    while i < argument_count() {
+        if argument(i).starts_with('@') {
+            LoadResponseFile(i);
         }
+        i += 1;
     }
 }
 
-/// `char *M_GetExecutableName(void)` — return the basename portion of
-/// `myargv[0]` (everything after the last `DIR_SEPARATOR`), or the whole
-/// `argv[0]` if no separator is found.
-pub fn M_GetExecutableName() -> *mut u8 {
-    unsafe {
-        let sep: *mut u8 = strrchr(*myargv as *const u8, DIR_SEPARATOR as i32);
-        if sep.is_null() {
-            *myargv
-        } else {
-            sep.offset(1)
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Words split on C whitespace; a quoted run is one argument.
+    #[test]
+    fn response_file_splits_words_and_quotes() {
+        let arguments =
+            response_file_arguments(b" -file a.wad\t\"my demo.lmp\"\n-warp\x0B1 1\r\n").unwrap();
+        assert_eq!(
+            arguments,
+            ["-file", "a.wad", "my demo.lmp", "-warp", "1", "1"]
+        );
+    }
+
+    /// An empty or blank file adds no arguments.
+    #[test]
+    fn response_file_blank() {
+        assert_eq!(response_file_arguments(b"").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            response_file_arguments(b" \n\t").unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A quote left open at a newline or at the end of the file is an error.
+    #[test]
+    fn response_file_unclosed_quote() {
+        assert!(response_file_arguments(b"\"open\nx").is_none());
+        assert!(response_file_arguments(b"\"open").is_none());
     }
 }
