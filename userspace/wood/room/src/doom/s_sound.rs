@@ -154,10 +154,6 @@ pub static mut snd_channels: i32 = 8;
 /// `S_SetSfxVolume`. C name: `snd_SfxVolume`.
 pub static mut snd_SfxVolume: i32 = 8;
 
-/// Internal music volume on the 0-127 scale used by the driver. Set by
-/// `S_SetMusicVolume`. C name: `snd_MusicVolume`.
-pub static mut snd_MusicVolume: i32 = 8;
-
 /// Non-zero while music is paused, used by `S_PauseSound`/`S_ResumeSound`.
 pub static mut mus_paused: i32 = 0;
 

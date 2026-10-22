@@ -13,9 +13,9 @@ use crate::doom::{d_event::event_t, doomkeys::KEY_RSHIFT};
 
 /// Configuration flag mirroring the C global `vanilla_keyboard_mapping`.
 ///
-/// When non-zero, classic Doom keyboard mapping is used. Exported with C
-/// linkage so the rest of the (still C) code base can read and write it.
-pub static mut vanilla_keyboard_mapping: i32 = 1;
+/// When non-zero, classic Doom keyboard mapping is used. Nothing changes it
+/// in this port, so it is a constant.
+pub const vanilla_keyboard_mapping: i32 = 1;
 
 /// Net count of shift presses minus shift releases.
 ///

@@ -1148,7 +1148,7 @@ unsafe fn i_squash_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 
 /// 320x200 pixel-doubling mode (1:1 source copy, no aspect correction).
 /// `poor_quality = 0` because the output is pixel-exact, just not 4:3.
-pub static mut mode_scale_1x: screen_mode_t = screen_mode_t {
+pub static mode_scale_1x: screen_mode_t = screen_mode_t {
     width: 320,
     height: 200,
     init_mode: None,
@@ -1157,7 +1157,7 @@ pub static mut mode_scale_1x: screen_mode_t = screen_mode_t {
 };
 
 /// 640x400 pixel-doubling mode (2x). Exported for `i_video.c`.
-pub static mut mode_scale_2x: screen_mode_t = screen_mode_t {
+pub static mode_scale_2x: screen_mode_t = screen_mode_t {
     width: 640,
     height: 400,
     init_mode: None,
@@ -1166,7 +1166,7 @@ pub static mut mode_scale_2x: screen_mode_t = screen_mode_t {
 };
 
 /// 960x600 pixel-doubling mode (3x). Exported for `i_video.c`.
-pub static mut mode_scale_3x: screen_mode_t = screen_mode_t {
+pub static mode_scale_3x: screen_mode_t = screen_mode_t {
     width: 960,
     height: 600,
     init_mode: None,
@@ -1175,7 +1175,7 @@ pub static mut mode_scale_3x: screen_mode_t = screen_mode_t {
 };
 
 /// 1280x800 pixel-doubling mode (4x). Exported for `i_video.c`.
-pub static mut mode_scale_4x: screen_mode_t = screen_mode_t {
+pub static mode_scale_4x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 800,
     init_mode: None,
@@ -1184,7 +1184,7 @@ pub static mut mode_scale_4x: screen_mode_t = screen_mode_t {
 };
 
 /// 1600x1000 pixel-doubling mode (5x). Exported for `i_video.c`.
-pub static mut mode_scale_5x: screen_mode_t = screen_mode_t {
+pub static mode_scale_5x: screen_mode_t = screen_mode_t {
     width: 1600,
     height: 1000,
     init_mode: None,
@@ -1197,7 +1197,7 @@ pub static mut mode_scale_5x: screen_mode_t = screen_mode_t {
 /// visible interpolation banding; consumers default to a pixel-doubled
 /// mode when possible. Uses `i_init_stretch_tables` to populate the
 /// blend lookups on first selection. Exported for `i_video.c`.
-pub static mut mode_stretch_1x: screen_mode_t = screen_mode_t {
+pub static mode_stretch_1x: screen_mode_t = screen_mode_t {
     width: 320,
     height: 240,
     init_mode: Some(i_init_stretch_tables),
@@ -1207,7 +1207,7 @@ pub static mut mode_stretch_1x: screen_mode_t = screen_mode_t {
 
 /// 640x480 aspect-corrected stretch mode (2x). Exported for
 /// `i_video.c`.
-pub static mut mode_stretch_2x: screen_mode_t = screen_mode_t {
+pub static mode_stretch_2x: screen_mode_t = screen_mode_t {
     width: 640,
     height: 480,
     init_mode: Some(i_init_stretch_tables),
@@ -1217,7 +1217,7 @@ pub static mut mode_stretch_2x: screen_mode_t = screen_mode_t {
 
 /// 960x720 aspect-corrected stretch mode (3x). Exported for
 /// `i_video.c`.
-pub static mut mode_stretch_3x: screen_mode_t = screen_mode_t {
+pub static mode_stretch_3x: screen_mode_t = screen_mode_t {
     width: 960,
     height: 720,
     init_mode: Some(i_init_stretch_tables),
@@ -1227,7 +1227,7 @@ pub static mut mode_stretch_3x: screen_mode_t = screen_mode_t {
 
 /// 1280x960 aspect-corrected stretch mode (4x). Exported for
 /// `i_video.c`.
-pub static mut mode_stretch_4x: screen_mode_t = screen_mode_t {
+pub static mode_stretch_4x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 960,
     init_mode: Some(i_init_stretch_tables),
@@ -1237,7 +1237,7 @@ pub static mut mode_stretch_4x: screen_mode_t = screen_mode_t {
 
 /// 1600x1200 aspect-corrected stretch mode (5x). Exported for
 /// `i_video.c`.
-pub static mut mode_stretch_5x: screen_mode_t = screen_mode_t {
+pub static mode_stretch_5x: screen_mode_t = screen_mode_t {
     width: 1600,
     height: 1200,
     init_mode: Some(i_init_stretch_tables),
@@ -1248,7 +1248,7 @@ pub static mut mode_stretch_5x: screen_mode_t = screen_mode_t {
 /// 256x200 aspect-corrected squash mode. Flagged `poor_quality = 1`
 /// because horizontal compression is more visible than the equivalent
 /// vertical stretch. Exported for `i_video.c`.
-pub static mut mode_squash_1x: screen_mode_t = screen_mode_t {
+pub static mode_squash_1x: screen_mode_t = screen_mode_t {
     width: 256,
     height: 200,
     init_mode: Some(i_init_stretch_tables),
@@ -1258,7 +1258,7 @@ pub static mut mode_squash_1x: screen_mode_t = screen_mode_t {
 
 /// 512x400 aspect-corrected squash mode (2x). Exported for
 /// `i_video.c`.
-pub static mut mode_squash_2x: screen_mode_t = screen_mode_t {
+pub static mode_squash_2x: screen_mode_t = screen_mode_t {
     width: 512,
     height: 400,
     init_mode: Some(i_init_stretch_tables),
@@ -1269,7 +1269,7 @@ pub static mut mode_squash_2x: screen_mode_t = screen_mode_t {
 /// 800x600 aspect-corrected squash mode (3x). The only mode that uses
 /// the 50/50 `half_stretch_table`, populated by
 /// `i_init_squash_table`. Exported for `i_video.c`.
-pub static mut mode_squash_3x: screen_mode_t = screen_mode_t {
+pub static mode_squash_3x: screen_mode_t = screen_mode_t {
     width: 800,
     height: 600,
     init_mode: Some(i_init_squash_table),
@@ -1279,7 +1279,7 @@ pub static mut mode_squash_3x: screen_mode_t = screen_mode_t {
 
 /// 1024x800 aspect-corrected squash mode (4x). Exported for
 /// `i_video.c`.
-pub static mut mode_squash_4x: screen_mode_t = screen_mode_t {
+pub static mode_squash_4x: screen_mode_t = screen_mode_t {
     width: 1024,
     height: 800,
     init_mode: Some(i_init_stretch_tables),
@@ -1289,7 +1289,7 @@ pub static mut mode_squash_4x: screen_mode_t = screen_mode_t {
 
 /// 1280x1000 aspect-corrected squash mode (5x). Exported for
 /// `i_video.c`.
-pub static mut mode_squash_5x: screen_mode_t = screen_mode_t {
+pub static mode_squash_5x: screen_mode_t = screen_mode_t {
     width: 1280,
     height: 1000,
     init_mode: Some(i_init_stretch_tables),

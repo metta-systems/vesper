@@ -83,7 +83,7 @@ pub static mut singletics: i32 = 0; // boolean
 ///
 /// Always `0` in single-player mode. Corresponds to `localplayer` in
 /// `d_loop.c`.
-static mut LOCALPLAYER: i32 = 0;
+const LOCALPLAYER: i32 = 0;
 
 /// Number of tics to skip building during the next [`NetUpdate`] call.
 ///
@@ -104,7 +104,7 @@ pub static mut ticdup: i32 = 0;
 /// Allows the network client to nudge the local clock to stay in sync with the
 /// server. Stored as a `fixed_t` (i.e. scaled by [`FRACUNIT`]).
 /// Corresponds to `offsetms` in `d_loop.c`.
-pub static mut offsetms: i32 = 0; // fixed_t
+pub const offsetms: i32 = 0; // fixed_t
 
 /// Whether to use the new client synchronisation algorithm.
 ///

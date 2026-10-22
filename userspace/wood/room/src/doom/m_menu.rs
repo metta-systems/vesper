@@ -1103,7 +1103,7 @@ fn M_ReadThis2(_choice: i32) {
 fn M_FinishReadThis(_choice: i32) {}
 
 /// Sound effects played on quit confirmation for Doom episode games (cycled by `gametic`).
-static mut quitsounds: [i32; 8] = [
+static quitsounds: [i32; 8] = [
     Sfx::Pldeth as i32,
     Sfx::Dmpain as i32,
     Sfx::Popain as i32,
@@ -1114,7 +1114,7 @@ static mut quitsounds: [i32; 8] = [
     Sfx::Sgtatk as i32,
 ];
 /// Sound effects played on quit confirmation for Doom II (commercial) builds (cycled by `gametic`).
-static mut quitsounds2: [i32; 8] = [
+static quitsounds2: [i32; 8] = [
     Sfx::Vilact as i32,
     Sfx::Getpow as i32,
     Sfx::Boscub as i32,

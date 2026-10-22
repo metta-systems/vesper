@@ -9,7 +9,7 @@
 //! * `w_chat` ([`hu_itext_t`]) - live chat input line in multiplayer games.
 //!
 //! Exported items (`chat_macros`, `player_names`, `hu_font`, `mapnames`,
-//! `mapnames_commercial`, `chat_on`, `message_dontfuckwithme`, `chat_char`)
+//! `mapnames_commercial`, `chat_on`, `message_dontfuckwithme`)
 //! match the C `extern` declarations in `hu_stuff.h`.
 //!
 //! Notable Rust-vs-C differences:
@@ -158,12 +158,6 @@ pub static mut chat_macros: [Cow<'static, str>; 10] = [
 /// Corresponds to `player_names[]` in `hu_stuff.c`. Prepended to incoming
 /// chat messages so the recipient can identify the sender.
 pub const player_names: [&str; 4] = ["Green: ", "Indigo: ", "Brown: ", "Red: "];
-
-/// Most-recently-transmitted chat character from the local player.
-///
-/// Written by `HU_queueChatChar` and read by `D_ProcessEvents` / the network
-/// layer in `d_net.c`. Corresponds to `chat_char` in `hu_stuff.c`.
-pub static mut chat_char: u8 = 0;
 
 /// Loaded HUD font patches, one per glyph from `'!'` to `'_'`.
 ///

@@ -35,9 +35,6 @@ const MAXHEIGHT: usize = 832;
 // View-buffer globals
 // ---------------------------------------------------------------------------
 
-/// Base address of the view image written by the renderer (typically points into `I_VideoBuffer`).
-pub static mut viewimage: *mut u8 = ptr::null_mut();
-
 /// Width of the current render viewport in pixels.
 pub static mut viewwidth: i32 = 0;
 
@@ -60,10 +57,6 @@ pub static mut ylookup: [*mut u8; MAXHEIGHT] = [ptr::null_mut(); MAXHEIGHT];
 /// Per-column byte offset LUT: `columnofs[x]` is the byte offset within a row for column `x`.
 /// Accounts for `viewwindowx` so that sub-window rendering works without extra arithmetic.
 pub static mut columnofs: [i32; MAXWIDTH] = [0; MAXWIDTH];
-
-/// Color-translation tables for the three non-green player colors (gray, brown, red).
-/// Each table remaps the 16-entry green palette ramp (indices `0x70`-`0x7f`) to another ramp.
-pub static mut translations: [[u8; 256]; 3] = [[0; 256]; 3];
 
 // ---------------------------------------------------------------------------
 // Background buffer (module-local)
@@ -100,9 +93,6 @@ pub static mut dc_texturemid: i32 = 0;
 
 /// First pixel in a column (possibly virtual).
 pub static mut dc_source: *mut u8 = ptr::null_mut();
-
-/// Just for profiling.
-pub static mut dccount: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // Fuzz / spectre effect
@@ -164,9 +154,6 @@ pub static mut ds_ystep: i32 = 0;
 
 /// Start of a 64×64 tile image.
 pub static mut ds_source: *mut u8 = ptr::null_mut();
-
-/// Just for profiling.
-pub static mut dscount: i32 = 0;
 
 // ---------------------------------------------------------------------------
 // R_DrawColumn

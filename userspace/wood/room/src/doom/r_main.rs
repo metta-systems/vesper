@@ -138,10 +138,6 @@ pub static mut sscount: i32 = 0;
 /// Number of linedefs processed in the current frame (profiling counter).
 pub static mut linecount: i32 = 0;
 
-/// Number of BSP traversal iterations in the current frame (profiling
-/// counter).
-pub static mut loopcount: i32 = 0;
-
 /// View position X in map fixed-point units. Set each frame by
 /// [`R_SetupFrame`] from the player mobj's `x` field.
 pub static mut viewx: fixed_t = 0;

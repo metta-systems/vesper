@@ -460,7 +460,7 @@ pub static mut d_map: i32 = 0;
 
 /// Doom episode par times (episodes 1-3, maps 1-9), in seconds.
 /// Index `[0]` and `[*][0]` are dummies to keep the table 1-based.
-pub static mut pars: [[i32; 10]; 4] = [
+pub static pars: [[i32; 10]; 4] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     [0, 30, 75, 120, 90, 165, 180, 180, 30, 165],
     [0, 90, 90, 90, 120, 90, 360, 240, 30, 170],
@@ -468,7 +468,7 @@ pub static mut pars: [[i32; 10]; 4] = [
 ];
 
 /// Doom II par times (maps 1-32), in seconds. Index `[0]` is map 1.
-pub static mut cpars: [i32; 32] = [
+pub static cpars: [i32; 32] = [
     30, 90, 120, 120, 90, 150, 120, 120, 270, 90, 210, 150, 150, 150, 210, 150, 420, 150, 210, 150,
     240, 150, 180, 150, 150, 300, 330, 420, 300, 180, 120, 30,
 ];

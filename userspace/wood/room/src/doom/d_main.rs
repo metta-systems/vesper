@@ -145,12 +145,6 @@ pub static mut bfgedition: i32 = 0;
 /// True once the main event loop has started.
 pub static mut main_loop_started: i32 = 0;
 
-/// Primary WAD file path buffer.
-pub static mut wadfile: [u8; 1024] = [0; 1024];
-
-/// Directory of development maps.
-pub static mut mapdir: [u8; 1024] = [0; 1024];
-
 /// When non-zero, display the ENDOOM text on exit.
 pub static mut show_endoom: i32 = 1;
 
@@ -1636,8 +1630,6 @@ mod tests {
     #[test]
     fn global_buffer_sizes() {
         unsafe {
-            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(wadfile)), 1024);
-            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(mapdir)), 1024);
             assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(title)), 128);
         }
     }

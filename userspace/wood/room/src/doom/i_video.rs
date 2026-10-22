@@ -104,7 +104,7 @@ pub static mut screenvisible: i32 = 0;
 
 /// Non-zero if the engine is running as a screensaver. Always 0 in
 /// this port. Mirrors `screensaver_mode`.
-pub static mut screensaver_mode: i32 = 0;
+pub const screensaver_mode: i32 = 0;
 
 /// Gamma-correction level index into `gammatable`. Mirrors `usegamma`.
 /// Bound via `m_config` (in the C source).
@@ -112,20 +112,20 @@ pub static mut usegamma: i32 = 0;
 
 /// DOS-style mouse acceleration factor. Movement above
 /// `mouse_threshold` is multiplied by this. Mirrors `mouse_acceleration`.
-pub static mut mouse_acceleration: f32 = 2.0;
+pub const mouse_acceleration: f32 = 2.0;
 
 /// Mouse-movement threshold above which acceleration kicks in.
 /// Mirrors `mouse_threshold`.
-pub static mut mouse_threshold: i32 = 10;
+pub const mouse_threshold: i32 = 10;
 
 /// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
 /// 320x200 Doom buffer to fit the framebuffer. Picked automatically
 /// in `I_InitGraphics` or overridden with `-scaling <n>`.
 pub static mut fb_scaling: i32 = 1;
 
-/// Non-zero to enable mouse input. Always 0 in this port unless set
-/// by config. Mirrors `usemouse`.
-pub static mut usemouse: i32 = 0;
+/// Non-zero to enable mouse input. Always 0 in this port. Mirrors
+/// `usemouse`.
+pub const usemouse: i32 = 0;
 
 /// Active 256-entry gamma-corrected palette. Filled from the WAD
 /// PLAYPAL by `I_SetPalette` and consumed by `cmap_to_fb` /

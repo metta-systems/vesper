@@ -255,17 +255,6 @@ pub static mut lastflat: i32 = 0;
 /// for animation bounds checking.
 pub static mut numflats: i32 = 0;
 
-/// WAD lump index of the first patch lump (the lump after the patch namespace marker).
-///
-/// Initialized but not currently used by the renderer; present to mirror the C globals.
-pub static mut firstpatch: i32 = 0;
-
-/// WAD lump index of the last patch lump.
-pub static mut lastpatch: i32 = 0;
-
-/// Total number of patch lumps.
-pub static mut numpatches: i32 = 0;
-
 /// WAD lump index of the first sprite lump (the lump after `S_START`).
 ///
 /// Exported via `r_state.h`.  Used by `r_things.c` and `f_finale.c` to

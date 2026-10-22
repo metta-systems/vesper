@@ -159,7 +159,7 @@ type PLineThing = crate::doom::p_lights::line_t;
 
 /// Lookup table mapping each of the eight directions to its 180-degree opposite, with
 /// `DI_NODIR` mapping to `DI_NODIR`; indexed by `dirtype_t` in `P_NewChaseDir`.
-pub static mut opposite: [dirtype_t; 9] = [
+pub static opposite: [dirtype_t; 9] = [
     DI_WEST,
     DI_SOUTHWEST,
     DI_SOUTH,
@@ -172,7 +172,7 @@ pub static mut opposite: [dirtype_t; 9] = [
 ];
 /// Lookup table mapping the two-bit index `(deltay<0)<<1 | (deltax>0)` to a diagonal
 /// `dirtype_t`; used by `P_NewChaseDir` to prefer diagonal movement toward the target.
-pub static mut diags: [dirtype_t; 4] = [DI_NORTHWEST, DI_NORTHEAST, DI_SOUTHWEST, DI_SOUTHEAST];
+pub static diags: [dirtype_t; 4] = [DI_NORTHWEST, DI_NORTHEAST, DI_SOUTHWEST, DI_SOUTHEAST];
 /// The monster or player whose noise triggered the current `P_RecursiveSound` traversal;
 /// written by `P_NoiseAlert`, read by `P_RecursiveSound` to stamp each sector.
 pub static mut soundtarget: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
@@ -329,10 +329,10 @@ pub unsafe fn P_CheckMissileRange(actor: *mut mobj_t) -> Boolean {
 }
 /// Per-direction X-axis speed multiplier table indexed by `dirtype_t` (0=East..7=Southeast).
 /// Each entry is a fixed-point unit (FRACUNIT or ~0.718*FRACUNIT for diagonals).
-pub static mut xspeed: [fixed_t; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
+pub static xspeed: [fixed_t; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
 /// Per-direction Y-axis speed multiplier table indexed by `dirtype_t` (0=East..7=Southeast).
 /// Each entry is a fixed-point unit (FRACUNIT or ~0.718*FRACUNIT for diagonals).
-pub static mut yspeed: [fixed_t; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
+pub static yspeed: [fixed_t; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
 /// Attempts to advance `actor` one step in its current `movedir`.
 ///
 /// Returns `FALSE` if `movedir` is `DI_NODIR`. Computes the target position using
@@ -1090,7 +1090,7 @@ pub unsafe fn A_SkelMissile(actor: *mut mobj_t) {
     (*mo).tracer = (*actor).target;
 }
 /// Maximum angular correction applied per active tic by `A_Tracer` (approx 11.25 degrees in BAM).
-pub static mut TRACEANGLE: i32 = 0xc000000;
+pub const TRACEANGLE: i32 = 0xc000000;
 /// Per-tic homing update for the Revenant's tracer missile.
 ///
 /// Only executes on tics where `gametic & 3 == 0` (every fourth tic). Each active tic:

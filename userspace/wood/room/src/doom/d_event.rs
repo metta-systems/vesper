@@ -129,18 +129,28 @@ pub fn D_PopEvent() -> *mut event_t {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::sync::Mutex};
 
-    unsafe fn reset_queue() {
+    /// Serialises the tests: they share the global event queue, and cargo
+    /// runs tests in parallel.
+    static QUEUE_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Empty the queue and hold it for the calling test until the returned
+    /// guard drops.
+    unsafe fn reset_queue() -> std::sync::MutexGuard<'static, ()> {
+        let guard = QUEUE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         EVENTS = [DEFAULT_EVENT; MAXEVENTS];
         EVENT_HEAD = 0;
         EVENT_TAIL = 0;
+        guard
     }
 
     #[test]
     fn post_then_pop_returns_same_values() {
         unsafe {
-            reset_queue();
+            let _queue = reset_queue();
             let ev = event_t {
                 type_: 1,
                 data1: 42,
@@ -162,7 +172,7 @@ mod tests {
     #[test]
     fn pop_on_empty_returns_null() {
         unsafe {
-            reset_queue();
+            let _queue = reset_queue();
             assert!(D_PopEvent().is_null());
         }
     }
@@ -170,7 +180,7 @@ mod tests {
     #[test]
     fn wrap_around_at_maxevents() {
         unsafe {
-            reset_queue();
+            let _queue = reset_queue();
             let max = MAXEVENTS - 1;
             for i in 0..max {
                 let ev = event_t {

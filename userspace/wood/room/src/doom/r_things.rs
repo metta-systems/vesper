@@ -192,9 +192,6 @@ static mut vissprites: [vissprite_t; MAXVISSPRITES] = unsafe { std::mem::zeroed(
 /// Pointer to the next free slot in `vissprites`; advanced by `R_NewVisSprite`.
 static mut vissprite_p: *mut vissprite_t = ptr::null_mut();
 
-/// Unused counter retained for ABI compatibility with the C original.
-static mut newvissprite: i32 = 0;
-
 /// Sentinel vissprite returned when the pool is exhausted so callers always
 /// receive a valid (though discarded) write target.
 static mut overflowsprite: vissprite_t = unsafe { std::mem::zeroed() };

@@ -85,45 +85,31 @@ fn maxammo_exact_values() {
 /// A single bullet clip gives 10 rounds.
 #[test]
 fn clipammo_bullets_is_10() {
-    unsafe {
-        assert_eq!(p_inter::clipammo[0], 10, "clipammo[am_clip] should be 10");
-    }
+    assert_eq!(p_inter::clipammo[0], 10, "clipammo[am_clip] should be 10");
 }
 
 /// A single shell box gives 4 shells.
 #[test]
 fn clipammo_shells_is_4() {
-    unsafe {
-        assert_eq!(p_inter::clipammo[1], 4, "clipammo[am_shell] should be 4");
-    }
+    assert_eq!(p_inter::clipammo[1], 4, "clipammo[am_shell] should be 4");
 }
 
 /// A single energy cell gives 20 charges.
 #[test]
 fn clipammo_cells_is_20() {
-    unsafe {
-        assert_eq!(p_inter::clipammo[2], 20, "clipammo[am_cell] should be 20");
-    }
+    assert_eq!(p_inter::clipammo[2], 20, "clipammo[am_cell] should be 20");
 }
 
 /// A single missile gives 1 rocket.
 #[test]
 fn clipammo_missiles_is_1() {
-    unsafe {
-        assert_eq!(p_inter::clipammo[3], 1, "clipammo[am_misl] should be 1");
-    }
+    assert_eq!(p_inter::clipammo[3], 1, "clipammo[am_misl] should be 1");
 }
 
 /// All four clipammo entries match the verbatim C initializer: {10, 4, 20, 1}.
 #[test]
 fn clipammo_exact_values() {
-    unsafe {
-        assert_eq!(
-            { p_inter::clipammo },
-            [10, 4, 20, 1],
-            "clipammo array mismatch"
-        );
-    }
+    assert_eq!(p_inter::clipammo, [10, 4, 20, 1], "clipammo array mismatch");
 }
 
 // ---------------------------------------------------------------------------

@@ -30,12 +30,10 @@ fn maxammo_values() {
 /// type.  Doubled for big boxes; halved for "give one clip" pickups.
 #[test]
 fn clipammo_values() {
-    unsafe {
-        assert_eq!(p_inter::clipammo[0], 10); // bullets per clip
-        assert_eq!(p_inter::clipammo[1], 4); // shells per clip
-        assert_eq!(p_inter::clipammo[2], 20); // cells per clip
-        assert_eq!(p_inter::clipammo[3], 1); // rockets per clip
-    }
+    assert_eq!(p_inter::clipammo[0], 10); // bullets per clip
+    assert_eq!(p_inter::clipammo[1], 4); // shells per clip
+    assert_eq!(p_inter::clipammo[2], 20); // cells per clip
+    assert_eq!(p_inter::clipammo[3], 1); // rockets per clip
 }
 
 /// Sanity check: every ammo type must allow a positive cap and pickup amount,

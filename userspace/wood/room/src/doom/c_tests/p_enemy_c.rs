@@ -26,14 +26,8 @@ use crate::doom::{c_ffi, m_fixed::FRACUNIT, tables::ANG90};
 #[test]
 fn xspeed_exact_values() {
     let expected: [i32; 8] = [FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000, 0, 47000];
-    unsafe {
-        for (i, (&got, &want)) in (*&raw const c_ffi::xspeed)
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-        {
-            assert_eq!(got, want, "xspeed[{i}]: got {got}, want {want}");
-        }
+    for (i, (&got, &want)) in c_ffi::xspeed.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(got, want, "xspeed[{i}]: got {got}, want {want}");
     }
 }
 
@@ -42,24 +36,16 @@ fn xspeed_exact_values() {
 #[test]
 fn yspeed_exact_values() {
     let expected: [i32; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUNIT, -47000];
-    unsafe {
-        for (i, (&got, &want)) in (*&raw const c_ffi::yspeed)
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-        {
-            assert_eq!(got, want, "yspeed[{i}]: got {got}, want {want}");
-        }
+    for (i, (&got, &want)) in c_ffi::yspeed.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(got, want, "yspeed[{i}]: got {got}, want {want}");
     }
 }
 
 /// Both speed tables have exactly 8 entries (one per movement direction).
 #[test]
 fn speed_tables_have_8_entries() {
-    unsafe {
-        assert_eq!((*&raw const c_ffi::xspeed).len(), 8, "xspeed");
-        assert_eq!((*&raw const c_ffi::yspeed).len(), 8, "yspeed");
-    }
+    assert_eq!(c_ffi::xspeed.len(), 8, "xspeed");
+    assert_eq!(c_ffi::yspeed.len(), 8, "yspeed");
 }
 
 /// The cardinal-direction entries (E, N, W, S) are ±FRACUNIT or 0.
@@ -68,35 +54,29 @@ fn speed_tables_have_8_entries() {
 /// vanilla quirk that must be preserved.
 #[test]
 fn diagonal_speed_is_47000() {
-    unsafe {
-        // NE: xspeed[1]=47000, yspeed[1]=47000
-        assert_eq!(c_ffi::xspeed[1], 47000);
-        assert_eq!(c_ffi::yspeed[1], 47000);
-        // NW: xspeed[3]=-47000, yspeed[3]=47000
-        assert_eq!(c_ffi::xspeed[3], -47000);
-        assert_eq!(c_ffi::yspeed[3], 47000);
-    }
+    // NE: xspeed[1]=47000, yspeed[1]=47000
+    assert_eq!(c_ffi::xspeed[1], 47000);
+    assert_eq!(c_ffi::yspeed[1], 47000);
+    // NW: xspeed[3]=-47000, yspeed[3]=47000
+    assert_eq!(c_ffi::xspeed[3], -47000);
+    assert_eq!(c_ffi::yspeed[3], 47000);
 }
 
 /// Cardinal-direction Y-speed at due-East (dir 0) is 0.
 #[test]
 fn east_direction_has_zero_yspeed() {
-    unsafe {
-        assert_eq!(c_ffi::yspeed[0], 0, "east yspeed should be 0");
-    }
+    assert_eq!(c_ffi::yspeed[0], 0, "east yspeed should be 0");
 }
 
 /// Opposite directions have negated X and Y components.
 #[test]
 fn opposite_directions_are_negated() {
-    unsafe {
-        // East (0) vs West (4)
-        assert_eq!(c_ffi::xspeed[0], -c_ffi::xspeed[4]);
-        assert_eq!(c_ffi::yspeed[0], -c_ffi::yspeed[4]);
-        // North (2) vs South (6)
-        assert_eq!(c_ffi::xspeed[2], -c_ffi::xspeed[6]);
-        assert_eq!(c_ffi::yspeed[2], -c_ffi::yspeed[6]);
-    }
+    // East (0) vs West (4)
+    assert_eq!(c_ffi::xspeed[0], -c_ffi::xspeed[4]);
+    assert_eq!(c_ffi::yspeed[0], -c_ffi::yspeed[4]);
+    // North (2) vs South (6)
+    assert_eq!(c_ffi::xspeed[2], -c_ffi::xspeed[6]);
+    assert_eq!(c_ffi::yspeed[2], -c_ffi::yspeed[6]);
 }
 
 // ---------------------------------------------------------------------------

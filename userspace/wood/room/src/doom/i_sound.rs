@@ -66,10 +66,6 @@ pub static mut snd_sbdma: i32 = 0;
 /// Legacy MPU-401 MIDI port. Same note as `snd_sbport`.
 pub static mut snd_mport: i32 = 0;
 
-/// Pitch-shift toggle. Not consumed by the music hooks;
-/// preserved for config-file compatibility.
-pub static mut snd_pitchshift: i32 = 0;
-
 /// External shell command used by the original chocolate-doom to play
 /// back music via an external process. Unused by this port (the
 /// platform's music methods handle playback directly) but kept

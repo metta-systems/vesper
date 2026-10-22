@@ -198,25 +198,25 @@ const DEH_DEFAULT_MEGASPHERE_HEALTH: i32 = 200;
 // ---------------------------------------------------------------------------
 
 /// Runtime maximum health achievable via bonus health spheres.
-pub static mut deh_max_health: i32 = DEH_DEFAULT_MAX_HEALTH;
+pub const deh_max_health: i32 = DEH_DEFAULT_MAX_HEALTH;
 
 /// Runtime maximum armor achievable via armor bonuses.
-pub static mut deh_max_armor: i32 = DEH_DEFAULT_MAX_ARMOR;
+pub const deh_max_armor: i32 = DEH_DEFAULT_MAX_ARMOR;
 
 /// Runtime armor class granted by the green security armor shirt.
-pub static mut deh_green_armor_class: i32 = DEH_DEFAULT_GREEN_ARMOR_CLASS;
+pub const deh_green_armor_class: i32 = DEH_DEFAULT_GREEN_ARMOR_CLASS;
 
 /// Runtime armor class granted by the blue mega-armor.
-pub static mut deh_blue_armor_class: i32 = DEH_DEFAULT_BLUE_ARMOR_CLASS;
+pub const deh_blue_armor_class: i32 = DEH_DEFAULT_BLUE_ARMOR_CLASS;
 
 /// Runtime upper health limit imposed by the soulsphere.
-pub static mut deh_max_soulsphere: i32 = DEH_DEFAULT_MAX_SOULSPHERE;
+pub const deh_max_soulsphere: i32 = DEH_DEFAULT_MAX_SOULSPHERE;
 
 /// Runtime health points added by the soulsphere.
-pub static mut deh_soulsphere_health: i32 = DEH_DEFAULT_SOULSPHERE_HEALTH;
+pub const deh_soulsphere_health: i32 = DEH_DEFAULT_SOULSPHERE_HEALTH;
 
 /// Runtime health set when the megasphere is picked up.
-pub static mut deh_megasphere_health: i32 = DEH_DEFAULT_MEGASPHERE_HEALTH;
+pub const deh_megasphere_health: i32 = DEH_DEFAULT_MEGASPHERE_HEALTH;
 
 // ---------------------------------------------------------------------------
 // Pick-up message strings
@@ -323,7 +323,7 @@ pub static mut maxammo: [i32; NUMAMMO] = [200, 50, 300, 50];
 /// A weapon pickup grants 2× this amount; a dropped weapon grants 1×;
 /// passing `num=0` to `P_GiveAmmo` grants half a clip.
 /// Matches `clipammo[]` in `p_inter.c`.
-pub static mut clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
+pub static clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 
 // ---------------------------------------------------------------------------
 // P_GiveAmmo
@@ -1275,9 +1275,7 @@ mod tests {
     #[test]
     fn clipammo_defaults() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ clipammo }, [10, 4, 20, 1]);
-        }
+        assert_eq!(clipammo, [10, 4, 20, 1]);
     }
 
     #[test]
@@ -1320,14 +1318,12 @@ mod tests {
     #[test]
     fn deh_runtime_globals_default_to_deh_values() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ deh_max_health }, DEH_DEFAULT_MAX_HEALTH);
-            assert_eq!({ deh_max_armor }, DEH_DEFAULT_MAX_ARMOR);
-            assert_eq!({ deh_green_armor_class }, DEH_DEFAULT_GREEN_ARMOR_CLASS);
-            assert_eq!({ deh_blue_armor_class }, DEH_DEFAULT_BLUE_ARMOR_CLASS);
-            assert_eq!({ deh_max_soulsphere }, DEH_DEFAULT_MAX_SOULSPHERE);
-            assert_eq!({ deh_soulsphere_health }, DEH_DEFAULT_SOULSPHERE_HEALTH);
-            assert_eq!({ deh_megasphere_health }, DEH_DEFAULT_MEGASPHERE_HEALTH);
-        }
+        assert_eq!(deh_max_health, DEH_DEFAULT_MAX_HEALTH);
+        assert_eq!(deh_max_armor, DEH_DEFAULT_MAX_ARMOR);
+        assert_eq!(deh_green_armor_class, DEH_DEFAULT_GREEN_ARMOR_CLASS);
+        assert_eq!(deh_blue_armor_class, DEH_DEFAULT_BLUE_ARMOR_CLASS);
+        assert_eq!(deh_max_soulsphere, DEH_DEFAULT_MAX_SOULSPHERE);
+        assert_eq!(deh_soulsphere_health, DEH_DEFAULT_SOULSPHERE_HEALTH);
+        assert_eq!(deh_megasphere_health, DEH_DEFAULT_MEGASPHERE_HEALTH);
     }
 }

@@ -576,13 +576,13 @@ pub static mut automapactive: i32 = 0;
 ///
 /// Initialised to `SCREENWIDTH`; the automap always fills the full screen
 /// width.  C origin: `finit_width` in am_map.c.
-static mut finit_width: i32 = SCREENWIDTH;
+const finit_width: i32 = SCREENWIDTH;
 
 /// Height of the automap framebuffer window in pixels.
 ///
 /// `SCREENHEIGHT - 32` to leave room for the status bar.
 /// C origin: `finit_height` in am_map.c.
-static mut finit_height: i32 = SCREENHEIGHT - 32;
+const finit_height: i32 = SCREENHEIGHT - 32;
 
 /// Left edge of the automap window in screen pixels.
 ///

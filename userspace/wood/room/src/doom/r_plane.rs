@@ -193,17 +193,6 @@ impl Default for visplane_t {
 // Global mutable state
 // ---------------------------------------------------------------------------
 
-/// Legacy floor-span callback pointer, carried over from the C source.
-///
-/// Not used in this port; `R_MapPlane` does not invoke it.
-pub static mut floorfunc: Option<planefunction_t> = None;
-
-/// Legacy ceiling-span callback pointer, carried over from the C source.
-///
-/// Not used in this port; `R_MapPlane` does not invoke it.
-/// Parallels [`floorfunc`].
-pub static mut ceilingfunc: Option<planefunction_t> = None;
-
 /// Fixed-size pool of visplane accumulators for one frame.
 ///
 ///[`lastvisplane`] tracks how
@@ -292,12 +281,6 @@ pub static mut ceilingclip: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
 /// left edge of a span in progress here; [`R_MapPlane`] reads it to obtain
 /// `x1` when the span ends.
 pub static mut spanstart: [i32; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Per-row span stop columns (unused in the current implementation).
-///
-///Present in the C source but
-/// never written; kept for ABI compatibility.
-pub static mut spanstop: [i32; SCREENHEIGHT] = [0; SCREENHEIGHT];
 
 /// Pointer into the distance-based light table for the current plane.
 ///
