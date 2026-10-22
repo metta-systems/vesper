@@ -30,7 +30,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::doom::d_player::{consoleplayer, players, TiccmdT, MAXPLAYERS};
+use crate::doom::d_player::{consoleplayer, players, PlayerMessage, TiccmdT, MAXPLAYERS};
 
 /// Maximum number of players supported by the networking code.
 ///
@@ -211,9 +211,8 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
     exit_message[7] += player_idx as u8;
 
     playeringame[player_idx] = 0;
-    // shortcut: leaks one small string per player quitting.
     (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
-        Some(String::from_utf8_lossy(&exit_message).into_owned().leak());
+        PlayerMessage::new(exit_message);
 
     if demorecording != 0 {
         G_CheckDemoStatus();

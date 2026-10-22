@@ -24,7 +24,7 @@ use crate::{
         d_event::event_t,
         d_items::weaponinfo,
         d_mode,
-        d_player::{PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
+        d_player::{PlayerMessage, PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
         deh_str::DEH_String,
         doomstat::{gamemission, gamemode, gameversion},
         g_game::{consoleplayer, deathmatch, gameskill, netgame, players, G_DeferedInitNew},
@@ -566,9 +566,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                         (*((*plyr).mo as *mut mobj_t)).health = 100;
                     }
                     (*plyr).health = 100; // deh_god_mode_health
-                    (*plyr).message = Some(DEH_String(STSTR_DQDON));
+                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDON));
                 } else {
-                    (*plyr).message = Some(DEH_String(STSTR_DQDOFF));
+                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDOFF));
                 }
             } else if cht_CheckCheat(&raw mut cheat_ammonokey, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idfa_armor
@@ -579,7 +579,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 for i in 0..NUMAMMO {
                     (*plyr).ammo[i] = (*plyr).maxammo[i];
                 }
-                (*plyr).message = Some(DEH_String(STSTR_FAADDED));
+                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_FAADDED));
             } else if cht_CheckCheat(&raw mut cheat_ammo, ev.data2 as u8) != 0 {
                 (*plyr).armorpoints = 200; // deh_idkfa_armor
                 (*plyr).armortype = 2; // deh_idkfa_armor_class
@@ -592,25 +592,25 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 for i in 0..NUMCARDS {
                     (*plyr).cards[i] = 1;
                 }
-                (*plyr).message = Some(DEH_String(STSTR_KFAADDED));
+                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_KFAADDED));
             } else if cht_CheckCheat(&raw mut cheat_mus, ev.data2 as u8) != 0 {
                 let mut buf = [0u8; 3];
                 let musnum: i32;
-                (*plyr).message = Some(DEH_String(STSTR_MUS));
+                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_MUS));
                 cht_GetParam(&raw mut cheat_mus, buf.as_mut_ptr());
 
                 if gamemode == d_mode::commercial || gameversion < d_mode::exe_ultimate {
                     musnum =
                         33 + (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32) - 1;
                     if ((buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32)) > 35 {
-                        (*plyr).message = Some(DEH_String(STSTR_NOMUS));
+                        (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
                 } else {
                     musnum = 1 + (buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32);
                     if ((buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32)) > 31 {
-                        (*plyr).message = Some(DEH_String(STSTR_NOMUS));
+                        (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
@@ -622,9 +622,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             {
                 (*plyr).cheats ^= 1; // CF_NOCLIP
                 if (*plyr).cheats & 1 != 0 {
-                    (*plyr).message = Some(DEH_String(STSTR_NCON));
+                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NCON));
                 } else {
-                    (*plyr).message = Some(DEH_String(STSTR_NCOFF));
+                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NCOFF));
                 }
             }
 
@@ -638,29 +638,24 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                     } else {
                         (*plyr).powers[i] = 0;
                     }
-                    (*plyr).message = Some(DEH_String(STSTR_BEHOLDX));
+                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_BEHOLDX));
                 }
             }
 
             if cht_CheckCheat(&mut cheat_powerup[6], ev.data2 as u8) != 0 {
-                (*plyr).message = Some(DEH_String(STSTR_BEHOLD));
+                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_BEHOLD));
             } else if cht_CheckCheat(&raw mut cheat_choppers, ev.data2 as u8) != 0 {
                 (*plyr).weaponowned[7] = 1; // wp_chainsaw
                 (*plyr).powers[0] = 1; // pw_invulnerability
-                (*plyr).message = Some(DEH_String(STSTR_CHOPPERS));
+                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if cht_CheckCheat(&raw mut cheat_mypos, ev.data2 as u8) != 0 {
                 let mo = players[consoleplayer as usize].mo as *mut mobj_t;
-                // shortcut: leaks one small string per idmypos use; keep a
-                // reusable buffer if messages ever get frequent.
-                (*plyr).message = Some(
-                    format!(
-                        "ang=0x{:x};x,y=(0x{:x},0x{:x})",
-                        (*mo).angle,
-                        (*mo).x,
-                        (*mo).y
-                    )
-                    .leak(),
-                );
+                (*plyr).message = PlayerMessage::new(format!(
+                    "ang=0x{:x};x,y=(0x{:x},0x{:x})",
+                    (*mo).angle,
+                    (*mo).x,
+                    (*mo).y
+                ));
             }
         }
 
@@ -701,7 +696,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 return 0;
             }
 
-            (*plyr).message = Some(DEH_String(STSTR_CLEV));
+            (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CLEV));
             G_DeferedInitNew(gameskill, epsd, map);
         }
     }

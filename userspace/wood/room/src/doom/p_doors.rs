@@ -10,7 +10,7 @@ use {crate::doom::sounds::Sfx, std::ffi::c_void};
 use crate::doom::{
     c_ffi as cffi,
     c_ffi::mobj_t,
-    d_player::PlayerT,
+    d_player::{PlayerMessage, PlayerT},
     deh_str::DEH_String,
     i_timer::TICRATE,
     m_fixed::{fixed_t, FRACUNIT},
@@ -84,23 +84,23 @@ const PD_REDK: &str = "You need a red key to open this door";
 const PD_YELLOWK: &str = "You need a yellow key to open this door";
 
 #[inline(always)]
-fn locked_object_message(special: i32) -> Option<&'static str> {
-    match special {
-        99 | 133 => Some(DEH_String(PD_BLUEO)),
-        134 | 135 => Some(DEH_String(PD_REDO)),
-        136 | 137 => Some(DEH_String(PD_YELLOWO)),
+fn locked_object_message(special: i32) -> PlayerMessage {
+    PlayerMessage::new(match special {
+        99 | 133 => DEH_String(PD_BLUEO),
+        134 | 135 => DEH_String(PD_REDO),
+        136 | 137 => DEH_String(PD_YELLOWO),
         _ => unreachable!("unexpected locked object special: {special}"),
-    }
+    })
 }
 
 #[inline(always)]
-fn locked_door_message(special: i32) -> Option<&'static str> {
-    match special {
-        26 | 32 => Some(DEH_String(PD_BLUEK)),
-        27 | 34 => Some(DEH_String(PD_YELLOWK)),
-        28 | 33 => Some(DEH_String(PD_REDK)),
+fn locked_door_message(special: i32) -> PlayerMessage {
+    PlayerMessage::new(match special {
+        26 | 32 => DEH_String(PD_BLUEK),
+        27 | 34 => DEH_String(PD_YELLOWK),
+        28 | 33 => DEH_String(PD_REDK),
         _ => unreachable!("unexpected locked door special: {special}"),
-    }
+    })
 }
 
 /// Thinker state for an active vertical door.
@@ -697,22 +697,22 @@ mod tests {
     #[test]
     fn locked_object_specials_map_to_dehacked_messages() {
         let _g = LOCK.lock().unwrap();
-        assert_eq!(locked_object_message(99), Some(DEH_String(PD_BLUEO)));
-        assert_eq!(locked_object_message(133), Some(DEH_String(PD_BLUEO)));
-        assert_eq!(locked_object_message(134), Some(DEH_String(PD_REDO)));
-        assert_eq!(locked_object_message(135), Some(DEH_String(PD_REDO)));
-        assert_eq!(locked_object_message(136), Some(DEH_String(PD_YELLOWO)));
-        assert_eq!(locked_object_message(137), Some(DEH_String(PD_YELLOWO)));
+        assert_eq!(locked_object_message(99).as_bytes(), PD_BLUEO.as_bytes());
+        assert_eq!(locked_object_message(133).as_bytes(), PD_BLUEO.as_bytes());
+        assert_eq!(locked_object_message(134).as_bytes(), PD_REDO.as_bytes());
+        assert_eq!(locked_object_message(135).as_bytes(), PD_REDO.as_bytes());
+        assert_eq!(locked_object_message(136).as_bytes(), PD_YELLOWO.as_bytes());
+        assert_eq!(locked_object_message(137).as_bytes(), PD_YELLOWO.as_bytes());
     }
 
     #[test]
     fn vertical_door_specials_map_to_dehacked_messages() {
         let _g = LOCK.lock().unwrap();
-        assert_eq!(locked_door_message(26), Some(DEH_String(PD_BLUEK)));
-        assert_eq!(locked_door_message(32), Some(DEH_String(PD_BLUEK)));
-        assert_eq!(locked_door_message(27), Some(DEH_String(PD_YELLOWK)));
-        assert_eq!(locked_door_message(34), Some(DEH_String(PD_YELLOWK)));
-        assert_eq!(locked_door_message(28), Some(DEH_String(PD_REDK)));
-        assert_eq!(locked_door_message(33), Some(DEH_String(PD_REDK)));
+        assert_eq!(locked_door_message(26).as_bytes(), PD_BLUEK.as_bytes());
+        assert_eq!(locked_door_message(32).as_bytes(), PD_BLUEK.as_bytes());
+        assert_eq!(locked_door_message(27).as_bytes(), PD_YELLOWK.as_bytes());
+        assert_eq!(locked_door_message(34).as_bytes(), PD_YELLOWK.as_bytes());
+        assert_eq!(locked_door_message(28).as_bytes(), PD_REDK.as_bytes());
+        assert_eq!(locked_door_message(33).as_bytes(), PD_REDK.as_bytes());
     }
 }

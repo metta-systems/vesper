@@ -27,7 +27,7 @@ use crate::{
     doom::{
         c_ffi::{mobj_t, sector_t, LinedefFlag, MAPBLOCKUNITS},
         d_event::event_t,
-        d_player::{PlayerT, MAXPLAYERS},
+        d_player::{PlayerMessage, PlayerT, MAXPLAYERS},
         deh_str::DEH_String,
         g_game::{
             consoleplayer, deathmatch, gameepisode, gamemap, netgame, playeringame, players,
@@ -1352,25 +1352,25 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             followplayer = !followplayer;
             f_oldloc.x = i32::MAX;
             if followplayer != 0 {
-                (*plr).message = Some(DEH_String(AMSTR_FOLLOWON));
+                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_FOLLOWON));
             } else {
-                (*plr).message = Some(DEH_String(AMSTR_FOLLOWOFF));
+                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_FOLLOWOFF));
             }
         } else if key == key_map_grid {
             grid = !grid;
             if grid != 0 {
-                (*plr).message = Some(DEH_String(AMSTR_GRIDON));
+                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_GRIDON));
             } else {
-                (*plr).message = Some(DEH_String(AMSTR_GRIDOFF));
+                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_GRIDOFF));
             }
         } else if key == key_map_mark {
-            // shortcut: leaks one small string per mark placed.
-            (*plr).message =
-                Some(format!("{} {}", DEH_String(AMSTR_MARKEDSPOT), { markpointnum }).leak());
+            (*plr).message = PlayerMessage::new(format!("{} {}", DEH_String(AMSTR_MARKEDSPOT), {
+                markpointnum
+            }));
             AM_addMark();
         } else if key == key_map_clearmark {
             AM_clearMarks();
-            (*plr).message = Some(DEH_String(AMSTR_MARKSCLEARED));
+            (*plr).message = PlayerMessage::new(DEH_String(AMSTR_MARKSCLEARED));
         } else {
             rc = 0;
         }

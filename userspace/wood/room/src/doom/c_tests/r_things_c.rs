@@ -141,14 +141,14 @@ fn maxframe_default_zero() {
     }
 }
 
-/// `spritename` points to the name of the sprite being processed; NULL until
+/// `spritename` is the name of the sprite being processed; empty until
 /// `R_InitSprites` sets it for the first sprite.
 #[test]
-fn spritename_initially_null() {
+fn spritename_initially_empty() {
     unsafe {
         assert!(
-            c_ffi::spritename.is_null(),
-            "spritename should be NULL before R_InitSprites"
+            { c_ffi::spritename }.is_empty(),
+            "spritename should be empty before R_InitSprites"
         );
     }
 }

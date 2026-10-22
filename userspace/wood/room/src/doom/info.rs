@@ -14,9 +14,9 @@
 //! `p_enemy.c`, `p_inter.c`, `p_pspr.c`, ...) and from the renderer
 //! (`r_things.c`).
 //!
-//! * [`sprnames`] - 138 four-character sprite root names plus a `NULL`
-//!   sentinel. The renderer scans the WAD directory for lump names whose
-//!   first four characters match these tags (e.g. `TROO` matches
+//! * [`sprnames`] - 138 four-character sprite root names. The renderer
+//!   scans the WAD directory for lump names whose first four characters
+//!   match these tags (e.g. `TROO` matches
 //!   `TROOA1`..`TROOR0`) to discover all rotation/frame lumps.
 //! * [`states`] - one [`State`] per entry in the `statenum_t` enum
 //!   (the [`crate::doom::statenum`] re-export). Each state describes one
@@ -87,11 +87,7 @@
 //!    and `P_SetMobjState` reads `states[]` every tic.
 //!
 //! Concurrent access is therefore the same as in the C codebase: the
-//! game thread owns these arrays. The `unsafe impl Sync` blocks below
-//! exist solely to satisfy Rust's type system because `*mut u8`
-//! (in `sprnames`) and `Option<unsafe fn()>` (in `states`)
-//! are not auto-`Sync`. The single-threaded discipline of the engine
-//! makes this safe in practice.
+//! game thread owns these arrays.
 //!
 //! # Layout invariants
 //!
@@ -941,8 +937,7 @@ macro_rules! action {
     };
 }
 
-/// Four-character sprite root tags, one per [`SPR_*`](SPR_TROO) index,
-/// terminated by a `NULL` sentinel.
+/// Four-character sprite root tags, one per [`SPR_*`](SPR_TROO) index.
 ///
 /// The renderer's sprite-lump scan (`R_InitSpriteDefs`) walks the WAD
 /// directory and groups every lump whose first four characters match
@@ -951,176 +946,22 @@ macro_rules! action {
 /// `frame` letter (`'A'`, `'B'`, ...) reconstructs the lump name
 /// `XXXXa0`, `XXXXb0`, ... that the renderer ultimately blits.
 ///
-/// The 138 entries + `NULL` exactly mirror the C declaration in
-/// `vendor/doomgeneric/info.c`.
-///
-/// # Mutability
-///
-/// Mutability is required only to match the C type `char *sprnames[]`
-/// (nothing writes to it). Per-entry pointers are produced by the local
-/// `cstr` helper,
-/// which casts `'static` byte literals to `*mut u8` - this is
-/// sound because nothing ever writes through them.
-pub static mut sprnames: [*mut u8; 139] = [
-    cstr(b"TROO\0"),
-    cstr(b"SHTG\0"),
-    cstr(b"PUNG\0"),
-    cstr(b"PISG\0"),
-    cstr(b"PISF\0"),
-    cstr(b"SHTF\0"),
-    cstr(b"SHT2\0"),
-    cstr(b"CHGG\0"),
-    cstr(b"CHGF\0"),
-    cstr(b"MISG\0"),
-    cstr(b"MISF\0"),
-    cstr(b"SAWG\0"),
-    cstr(b"PLSG\0"),
-    cstr(b"PLSF\0"),
-    cstr(b"BFGG\0"),
-    cstr(b"BFGF\0"),
-    cstr(b"BLUD\0"),
-    cstr(b"PUFF\0"),
-    cstr(b"BAL1\0"),
-    cstr(b"BAL2\0"),
-    cstr(b"PLSS\0"),
-    cstr(b"PLSE\0"),
-    cstr(b"MISL\0"),
-    cstr(b"BFS1\0"),
-    cstr(b"BFE1\0"),
-    cstr(b"BFE2\0"),
-    cstr(b"TFOG\0"),
-    cstr(b"IFOG\0"),
-    cstr(b"PLAY\0"),
-    cstr(b"POSS\0"),
-    cstr(b"SPOS\0"),
-    cstr(b"VILE\0"),
-    cstr(b"FIRE\0"),
-    cstr(b"FATB\0"),
-    cstr(b"FBXP\0"),
-    cstr(b"SKEL\0"),
-    cstr(b"MANF\0"),
-    cstr(b"FATT\0"),
-    cstr(b"CPOS\0"),
-    cstr(b"SARG\0"),
-    cstr(b"HEAD\0"),
-    cstr(b"BAL7\0"),
-    cstr(b"BOSS\0"),
-    cstr(b"BOS2\0"),
-    cstr(b"SKUL\0"),
-    cstr(b"SPID\0"),
-    cstr(b"BSPI\0"),
-    cstr(b"APLS\0"),
-    cstr(b"APBX\0"),
-    cstr(b"CYBR\0"),
-    cstr(b"PAIN\0"),
-    cstr(b"SSWV\0"),
-    cstr(b"KEEN\0"),
-    cstr(b"BBRN\0"),
-    cstr(b"BOSF\0"),
-    cstr(b"ARM1\0"),
-    cstr(b"ARM2\0"),
-    cstr(b"BAR1\0"),
-    cstr(b"BEXP\0"),
-    cstr(b"FCAN\0"),
-    cstr(b"BON1\0"),
-    cstr(b"BON2\0"),
-    cstr(b"BKEY\0"),
-    cstr(b"RKEY\0"),
-    cstr(b"YKEY\0"),
-    cstr(b"BSKU\0"),
-    cstr(b"RSKU\0"),
-    cstr(b"YSKU\0"),
-    cstr(b"STIM\0"),
-    cstr(b"MEDI\0"),
-    cstr(b"SOUL\0"),
-    cstr(b"PINV\0"),
-    cstr(b"PSTR\0"),
-    cstr(b"PINS\0"),
-    cstr(b"MEGA\0"),
-    cstr(b"SUIT\0"),
-    cstr(b"PMAP\0"),
-    cstr(b"PVIS\0"),
-    cstr(b"CLIP\0"),
-    cstr(b"AMMO\0"),
-    cstr(b"ROCK\0"),
-    cstr(b"BROK\0"),
-    cstr(b"CELL\0"),
-    cstr(b"CELP\0"),
-    cstr(b"SHEL\0"),
-    cstr(b"SBOX\0"),
-    cstr(b"BPAK\0"),
-    cstr(b"BFUG\0"),
-    cstr(b"MGUN\0"),
-    cstr(b"CSAW\0"),
-    cstr(b"LAUN\0"),
-    cstr(b"PLAS\0"),
-    cstr(b"SHOT\0"),
-    cstr(b"SGN2\0"),
-    cstr(b"COLU\0"),
-    cstr(b"SMT2\0"),
-    cstr(b"GOR1\0"),
-    cstr(b"POL2\0"),
-    cstr(b"POL5\0"),
-    cstr(b"POL4\0"),
-    cstr(b"POL3\0"),
-    cstr(b"POL1\0"),
-    cstr(b"POL6\0"),
-    cstr(b"GOR2\0"),
-    cstr(b"GOR3\0"),
-    cstr(b"GOR4\0"),
-    cstr(b"GOR5\0"),
-    cstr(b"SMIT\0"),
-    cstr(b"COL1\0"),
-    cstr(b"COL2\0"),
-    cstr(b"COL3\0"),
-    cstr(b"COL4\0"),
-    cstr(b"CAND\0"),
-    cstr(b"CBRA\0"),
-    cstr(b"COL6\0"),
-    cstr(b"TRE1\0"),
-    cstr(b"TRE2\0"),
-    cstr(b"ELEC\0"),
-    cstr(b"CEYE\0"),
-    cstr(b"FSKU\0"),
-    cstr(b"COL5\0"),
-    cstr(b"TBLU\0"),
-    cstr(b"TGRN\0"),
-    cstr(b"TRED\0"),
-    cstr(b"SMBT\0"),
-    cstr(b"SMGT\0"),
-    cstr(b"SMRT\0"),
-    cstr(b"HDB1\0"),
-    cstr(b"HDB2\0"),
-    cstr(b"HDB3\0"),
-    cstr(b"HDB4\0"),
-    cstr(b"HDB5\0"),
-    cstr(b"HDB6\0"),
-    cstr(b"POB1\0"),
-    cstr(b"POB2\0"),
-    cstr(b"BRS1\0"),
-    cstr(b"TLMP\0"),
-    cstr(b"TLP2\0"),
-    std::ptr::null_mut(),
+/// The 138 entries mirror the C declaration in `vendor/doomgeneric/info.c`,
+/// whose closing `NULL` sentinel is replaced by the array length.
+pub const sprnames: [&str; 138] = [
+    "TROO", "SHTG", "PUNG", "PISG", "PISF", "SHTF", "SHT2", "CHGG", "CHGF", "MISG", "MISF", "SAWG",
+    "PLSG", "PLSF", "BFGG", "BFGF", "BLUD", "PUFF", "BAL1", "BAL2", "PLSS", "PLSE", "MISL", "BFS1",
+    "BFE1", "BFE2", "TFOG", "IFOG", "PLAY", "POSS", "SPOS", "VILE", "FIRE", "FATB", "FBXP", "SKEL",
+    "MANF", "FATT", "CPOS", "SARG", "HEAD", "BAL7", "BOSS", "BOS2", "SKUL", "SPID", "BSPI", "APLS",
+    "APBX", "CYBR", "PAIN", "SSWV", "KEEN", "BBRN", "BOSF", "ARM1", "ARM2", "BAR1", "BEXP", "FCAN",
+    "BON1", "BON2", "BKEY", "RKEY", "YKEY", "BSKU", "RSKU", "YSKU", "STIM", "MEDI", "SOUL", "PINV",
+    "PSTR", "PINS", "MEGA", "SUIT", "PMAP", "PVIS", "CLIP", "AMMO", "ROCK", "BROK", "CELL", "CELP",
+    "SHEL", "SBOX", "BPAK", "BFUG", "MGUN", "CSAW", "LAUN", "PLAS", "SHOT", "SGN2", "COLU", "SMT2",
+    "GOR1", "POL2", "POL5", "POL4", "POL3", "POL1", "POL6", "GOR2", "GOR3", "GOR4", "GOR5", "SMIT",
+    "COL1", "COL2", "COL3", "COL4", "CAND", "CBRA", "COL6", "TRE1", "TRE2", "ELEC", "CEYE", "FSKU",
+    "COL5", "TBLU", "TGRN", "TRED", "SMBT", "SMGT", "SMRT", "HDB1", "HDB2", "HDB3", "HDB4", "HDB5",
+    "HDB6", "POB1", "POB2", "BRS1", "TLMP", "TLP2",
 ];
-
-/// Cast a `'static` NUL-terminated byte literal to `*mut u8` at
-/// `const` time, for use in the [`sprnames`] static initializer.
-///
-/// # Preconditions
-///
-/// The caller is responsible for ensuring `b` ends in a `0` byte; this
-/// function does not check. All call sites in this file use byte
-/// literals of the form `b"XXXX\0"`.
-///
-/// # Safety considerations
-///
-/// The result is *typed* `*mut` to match the C `char **` ABI of
-/// `sprnames`, but the underlying storage is read-only `.rodata`.
-/// Writing through the pointer is undefined behaviour; the C engine
-/// only reads from `sprnames`.
-const fn cstr(b: &[u8]) -> *mut u8 {
-    b.as_ptr() as *mut u8
-}
 
 /// The full per-state animation table: one [`State`] per `S_*` index
 /// from [`crate::doom::statenum`], in declaration order.

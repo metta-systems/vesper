@@ -36,8 +36,8 @@ use {
 use crate::doom::{
     c_ffi::{SAVEGAME_EOF, VERSIONSIZE},
     d_player::{
-        players, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES,
-        NUMWEAPONS,
+        players, PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS,
+        NUMPOWERS, NUMPSPRITES, NUMWEAPONS,
     },
     info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
     p_ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
@@ -810,7 +810,7 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
 
     // message: a pointer slot in the save format, never restored
     saveg_read32();
-    s.message = None;
+    s.message = PlayerMessage::NONE;
 
     // damagecount, bonuscount
     s.damagecount = saveg_read32() as i32;
@@ -1408,7 +1408,7 @@ pub unsafe fn P_UnArchivePlayers() {
 
         // will be set when unarc thinker
         players[i].mo = std::ptr::null_mut();
-        players[i].message = None;
+        players[i].message = PlayerMessage::NONE;
         players[i].attacker = std::ptr::null_mut();
     }
 }

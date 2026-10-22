@@ -27,7 +27,7 @@ use {
 use crate::doom::{
     d_event::event_t,
     d_mode,
-    d_player::{PlayerT, MAXPLAYERS},
+    d_player::{PlayerMessage, PlayerT, MAXPLAYERS},
     deh_str::DEH_String,
     doomkeys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT},
     doomstat::{gamemission, gameversion},
@@ -130,17 +130,6 @@ const HUSTR_TALKTOSELF3: &str = "You scare yourself";
 const HUSTR_TALKTOSELF4: &str = "You start to rave";
 /// Final reply to chatting with yourself.
 const HUSTR_TALKTOSELF5: &str = "You've lost it...";
-
-/// The chat text echoed back to the sender, truncated to 80 bytes like
-/// the C `lastmessage[81]` buffer.
-///
-/// shortcut: leaks one small string per chat message sent; keep a
-/// reusable buffer if chat traffic ever matters.
-fn last_message(text: &[u8]) -> &'static str {
-    String::from_utf8_lossy(&text[..text.len().min(80)])
-        .into_owned()
-        .leak()
-}
 
 // ---------------------------------------------------------------------------
 // Exported globals
@@ -586,12 +575,11 @@ pub fn HU_Ticker() {
 
         if showMessages != 0 || message_dontfuckwithme != 0 {
             // display message if necessary
-            if let Some(message) = (*plr)
-                .message
-                .filter(|_| message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
+            let message = (*plr).message;
+            if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
             {
                 HUlib_addMessageToSText(&raw mut w_message, None, message.as_bytes());
-                (*plr).message = None;
+                (*plr).message = PlayerMessage::NONE;
                 message_on = 1;
                 message_counter = HU_MSGTIMEOUT;
                 message_nottobefuckedwith = message_dontfuckwithme;
@@ -651,7 +639,7 @@ pub fn HU_Ticker() {
 pub fn HU_queueChatChar(c: u8) {
     unsafe {
         if ((head + 1) & (QUEUESIZE - 1)) == tail {
-            (*plr).message = Some(DEH_String(HUSTR_MSGU));
+            (*plr).message = PlayerMessage::new(DEH_String(HUSTR_MSGU));
         } else {
             chatchars[head] = c;
             head = (head + 1) & (QUEUESIZE - 1);
@@ -738,7 +726,7 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
                             break;
                         } else if i == consoleplayer as usize {
                             num_nobrainers += 1;
-                            (*plr).message = Some(DEH_String(match num_nobrainers {
+                            (*plr).message = PlayerMessage::new(DEH_String(match num_nobrainers {
                                 1..=2 => HUSTR_TALKTOSELF1,
                                 3..=5 => HUSTR_TALKTOSELF2,
                                 6..=8 => HUSTR_TALKTOSELF3,
@@ -763,7 +751,7 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
                 }
                 HU_queueChatChar(KEY_ENTER);
                 chat_on = 0;
-                (*plr).message = Some(last_message(macromessage));
+                (*plr).message = PlayerMessage::new(macromessage);
                 eatkey = true;
             } else {
                 let c = ev.data2 as u8;
@@ -775,7 +763,7 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
                     chat_on = 0;
                     if w_chat.l.len != 0 {
                         (*plr).message =
-                            Some(last_message(until_nul(&*std::ptr::addr_of!(w_chat.l.l))));
+                            PlayerMessage::new(until_nul(&*std::ptr::addr_of!(w_chat.l.l)));
                     }
                 } else if c == KEY_ESCAPE {
                     chat_on = 0;

@@ -52,7 +52,7 @@ use crate::doom::{
         commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_666, exe_doom_1_7, exe_doom_1_8,
         exe_final2, exe_ultimate, shareware,
     },
-    d_player::{PlayerT, TiccmdT, MAXPLAYERS},
+    d_player::{PlayerMessage, PlayerT, TiccmdT, MAXPLAYERS},
     doomstat::{gamemission, gamemode, gameversion},
     m_random::P_Random,
     p_inter::maxammo,
@@ -1141,7 +1141,7 @@ pub unsafe fn G_DoLoadLevel() {
     JOYARRAY = [0; MAX_JOY_BUTTONS + 1];
 
     if testcontrols != 0 {
-        players[consoleplayer as usize].message = Some("Press escape to quit.");
+        players[consoleplayer as usize].message = PlayerMessage::new("Press escape to quit.");
     }
 }
 
@@ -1364,7 +1364,8 @@ pub unsafe fn G_Ticker() {
             ga_worlddone => G_DoWorldDone(),
             ga_screenshot => {
                 V_ScreenShot(c"DOOM%02i.%s".as_ptr().cast_mut().cast());
-                players[consoleplayer as usize].message = Some(DEH_String("screen shot"));
+                players[consoleplayer as usize].message =
+                    PlayerMessage::new(DEH_String("screen shot"));
                 gameaction = ga_nothing;
             }
             _ => {}
@@ -1397,10 +1398,8 @@ pub unsafe fn G_Ticker() {
                 && ((gametic >> 5) % MAXPLAYERS as i32) == i as i32
                 && turbodetected[i] != 0
             {
-                // shortcut: leaks one small string per turbo warning (once
-                // every 32 tics while a player keeps turbo running).
                 players[consoleplayer as usize].message =
-                    Some(format!("{} is turbo!", player_names[i]).leak());
+                    PlayerMessage::new(format!("{} is turbo!", player_names[i]));
                 turbodetected[i] = 0;
             }
 
@@ -2133,7 +2132,7 @@ pub unsafe fn G_DoSaveGame() {
     gameaction = ga_nothing;
     M_StringCopy(&mut *ptr::addr_of_mut!(SAVEDESCRIPTION), b"");
 
-    players[consoleplayer as usize].message = Some(DEH_String("game saved."));
+    players[consoleplayer as usize].message = PlayerMessage::new(DEH_String("game saved."));
 
     R_FillBackScreen();
 }

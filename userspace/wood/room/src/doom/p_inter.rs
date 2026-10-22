@@ -12,7 +12,7 @@ use crate::doom::sounds::Sfx;
 use crate::{
     doom::{
         d_items::weaponinfo,
-        d_player::{consoleplayer, players, PlayerT, CF_GODMODE},
+        d_player::{consoleplayer, players, PlayerMessage, PlayerT, CF_GODMODE},
         deh_str::DEH_String,
         doomstat::{gamemode, gameversion},
         info::{self, *},
@@ -685,13 +685,13 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_armor(player, green_armor_class) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTARMOR));
+            player.message = PlayerMessage::new(DEH_String(GOTARMOR));
         }
         SPR_ARM2 => {
             if p_give_armor(player, blue_armor_class) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTMEGA));
+            player.message = PlayerMessage::new(DEH_String(GOTMEGA));
         }
         // bonus items
         SPR_BON1 => {
@@ -701,7 +701,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             let mo = &mut *(player.mo as *mut mobj_t);
             mo.health = player.health;
-            player.message = Some(DEH_String(GOTHTHBONUS));
+            player.message = PlayerMessage::new(DEH_String(GOTHTHBONUS));
         }
         SPR_BON2 => {
             player.armorpoints += 1;
@@ -713,7 +713,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.armortype == 0 {
                 player.armortype = 1;
             }
-            player.message = Some(DEH_String(GOTARMBONUS));
+            player.message = PlayerMessage::new(DEH_String(GOTARMBONUS));
         }
         SPR_SOUL => {
             player.health += soulsphere_health;
@@ -722,7 +722,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             let mo = &mut *(player.mo as *mut mobj_t);
             mo.health = player.health;
-            player.message = Some(DEH_String(GOTSUPER));
+            player.message = PlayerMessage::new(DEH_String(GOTSUPER));
             sound = Sfx::Getpow as i32;
         }
         SPR_MEGA => {
@@ -738,13 +738,13 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             // only affects the standalone MegaArmor pickup
             // (`SPR_ARM2`), not this one.
             p_give_armor(player, 2);
-            player.message = Some(DEH_String(GOTMSPHERE));
+            player.message = PlayerMessage::new(DEH_String(GOTMSPHERE));
             sound = Sfx::Getpow as i32;
         }
         // cards
         SPR_BKEY => {
             if player.cards[it_bluecard as usize] == 0 {
-                player.message = Some(DEH_String(GOTBLUECARD));
+                player.message = PlayerMessage::new(DEH_String(GOTBLUECARD));
             }
             p_give_card(player, it_bluecard);
             if netgame != 0 {
@@ -753,7 +753,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_YKEY => {
             if player.cards[it_yellowcard as usize] == 0 {
-                player.message = Some(DEH_String(GOTYELWCARD));
+                player.message = PlayerMessage::new(DEH_String(GOTYELWCARD));
             }
             p_give_card(player, it_yellowcard);
             if netgame != 0 {
@@ -762,7 +762,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_RKEY => {
             if player.cards[it_redcard as usize] == 0 {
-                player.message = Some(DEH_String(GOTREDCARD));
+                player.message = PlayerMessage::new(DEH_String(GOTREDCARD));
             }
             p_give_card(player, it_redcard);
             if netgame != 0 {
@@ -771,7 +771,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_BSKU => {
             if player.cards[it_blueskull as usize] == 0 {
-                player.message = Some(DEH_String(GOTBLUESKUL));
+                player.message = PlayerMessage::new(DEH_String(GOTBLUESKUL));
             }
             p_give_card(player, it_blueskull);
             if netgame != 0 {
@@ -780,7 +780,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_YSKU => {
             if player.cards[it_yellowskull as usize] == 0 {
-                player.message = Some(DEH_String(GOTYELWSKUL));
+                player.message = PlayerMessage::new(DEH_String(GOTYELWSKUL));
             }
             p_give_card(player, it_yellowskull);
             if netgame != 0 {
@@ -789,7 +789,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
         }
         SPR_RSKU => {
             if player.cards[it_redskull as usize] == 0 {
-                player.message = Some(DEH_String(GOTREDSKULL));
+                player.message = PlayerMessage::new(DEH_String(GOTREDSKULL));
             }
             p_give_card(player, it_redskull);
             if netgame != 0 {
@@ -801,16 +801,16 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_body(player, 10) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTSTIM));
+            player.message = PlayerMessage::new(DEH_String(GOTSTIM));
         }
         SPR_MEDI => {
             if p_give_body(player, 25) == 0 {
                 return;
             }
             if player.health < 25 {
-                player.message = Some(DEH_String(GOTMEDINEED));
+                player.message = PlayerMessage::new(DEH_String(GOTMEDINEED));
             } else {
-                player.message = Some(DEH_String(GOTMEDIKIT));
+                player.message = PlayerMessage::new(DEH_String(GOTMEDIKIT));
             }
         }
         // power ups
@@ -818,14 +818,14 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_power(player, pw_invulnerability as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTINVUL));
+            player.message = PlayerMessage::new(DEH_String(GOTINVUL));
             sound = Sfx::Getpow as i32;
         }
         SPR_PSTR => {
             if p_give_power(player, pw_strength as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTBERSERK));
+            player.message = PlayerMessage::new(DEH_String(GOTBERSERK));
             if player.readyweapon != wp_fist {
                 player.pendingweapon = wp_fist;
             }
@@ -835,28 +835,28 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_power(player, pw_invisibility as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTINVIS));
+            player.message = PlayerMessage::new(DEH_String(GOTINVIS));
             sound = Sfx::Getpow as i32;
         }
         SPR_SUIT => {
             if p_give_power(player, pw_ironfeet as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTSUIT));
+            player.message = PlayerMessage::new(DEH_String(GOTSUIT));
             sound = Sfx::Getpow as i32;
         }
         SPR_PMAP => {
             if p_give_power(player, pw_allmap as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTMAP));
+            player.message = PlayerMessage::new(DEH_String(GOTMAP));
             sound = Sfx::Getpow as i32;
         }
         SPR_PVIS => {
             if p_give_power(player, pw_infrared as i32) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTVISOR));
+            player.message = PlayerMessage::new(DEH_String(GOTVISOR));
             sound = Sfx::Getpow as i32;
         }
         // ammo
@@ -869,49 +869,49 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if p_give_ammo(player, am_clip, amount) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTCLIP));
+            player.message = PlayerMessage::new(DEH_String(GOTCLIP));
         }
         SPR_AMMO => {
             if p_give_ammo(player, am_clip, 5) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTCLIPBOX));
+            player.message = PlayerMessage::new(DEH_String(GOTCLIPBOX));
         }
         SPR_ROCK => {
             if p_give_ammo(player, am_misl, 1) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTROCKET));
+            player.message = PlayerMessage::new(DEH_String(GOTROCKET));
         }
         SPR_BROK => {
             if p_give_ammo(player, am_misl, 5) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTROCKBOX));
+            player.message = PlayerMessage::new(DEH_String(GOTROCKBOX));
         }
         SPR_CELL => {
             if p_give_ammo(player, am_cell, 1) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTCELL));
+            player.message = PlayerMessage::new(DEH_String(GOTCELL));
         }
         SPR_CELP => {
             if p_give_ammo(player, am_cell, 5) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTCELLBOX));
+            player.message = PlayerMessage::new(DEH_String(GOTCELLBOX));
         }
         SPR_SHEL => {
             if p_give_ammo(player, am_shell, 1) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTSHELLS));
+            player.message = PlayerMessage::new(DEH_String(GOTSHELLS));
         }
         SPR_SBOX => {
             if p_give_ammo(player, am_shell, 5) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTSHELLBOX));
+            player.message = PlayerMessage::new(DEH_String(GOTSHELLBOX));
         }
         SPR_BPAK => {
             if player.backpack == 0 {
@@ -923,14 +923,14 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             for i in 0..NUMAMMO {
                 p_give_ammo(player, i as i32, 1);
             }
-            player.message = Some(DEH_String(GOTBACKPACK));
+            player.message = PlayerMessage::new(DEH_String(GOTBACKPACK));
         }
         // weapons
         SPR_BFUG => {
             if p_give_weapon(player, wp_bfg, 0) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTBFG9000));
+            player.message = PlayerMessage::new(DEH_String(GOTBFG9000));
             sound = Sfx::Wpnup as i32;
         }
         SPR_MGUN => {
@@ -942,28 +942,28 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = Some(DEH_String(GOTCHAINGUN));
+            player.message = PlayerMessage::new(DEH_String(GOTCHAINGUN));
             sound = Sfx::Wpnup as i32;
         }
         SPR_CSAW => {
             if p_give_weapon(player, wp_chainsaw, 0) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTCHAINSAW));
+            player.message = PlayerMessage::new(DEH_String(GOTCHAINSAW));
             sound = Sfx::Wpnup as i32;
         }
         SPR_LAUN => {
             if p_give_weapon(player, wp_missile, 0) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTLAUNCHER));
+            player.message = PlayerMessage::new(DEH_String(GOTLAUNCHER));
             sound = Sfx::Wpnup as i32;
         }
         SPR_PLAS => {
             if p_give_weapon(player, wp_plasma, 0) == 0 {
                 return;
             }
-            player.message = Some(DEH_String(GOTPLASMA));
+            player.message = PlayerMessage::new(DEH_String(GOTPLASMA));
             sound = Sfx::Wpnup as i32;
         }
         SPR_SHOT => {
@@ -975,7 +975,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = Some(DEH_String(GOTSHOTGUN));
+            player.message = PlayerMessage::new(DEH_String(GOTSHOTGUN));
             sound = Sfx::Wpnup as i32;
         }
         SPR_SGN2 => {
@@ -987,7 +987,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             {
                 return;
             }
-            player.message = Some(DEH_String(GOTSHOTGUN2));
+            player.message = PlayerMessage::new(DEH_String(GOTSHOTGUN2));
             sound = Sfx::Wpnup as i32;
         }
         _ => {

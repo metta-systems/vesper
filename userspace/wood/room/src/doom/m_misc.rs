@@ -40,14 +40,6 @@ pub fn M_FileExists(path: impl AsRef<Path>) -> bool {
     std::fs::File::open(path).is_ok() || path.is_dir()
 }
 
-/// Length of the NUL-terminated string at `s`, excluding the terminator.
-///
-/// # Safety
-/// `s` must point to a readable NUL-terminated byte string.
-pub unsafe fn strlen(s: *const u8) -> usize {
-    unsafe { c_str(s) }.len()
-}
-
 /// Bytes of the NUL-terminated string at `ptr`, without the terminator.
 ///
 /// # Safety

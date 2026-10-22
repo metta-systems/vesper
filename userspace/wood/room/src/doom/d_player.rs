@@ -133,12 +133,10 @@ pub struct PspdefT {
 ///
 /// Corresponds to `player_t` in `d_player.h`.  One `PlayerT` exists for each
 /// active player (up to [`MAXPLAYERS`]); the local player is always
-/// `players[consoleplayer]`.  The struct is large (328 bytes on x86-64) and
-/// encapsulates everything the engine needs to simulate, render, and save a
-/// single player's participation in a game session.
-///
-/// Layout is verified at compile time by the tests below; the expected values
-/// were derived from a `layout_probe.c` run on x86-64 Linux.
+/// `players[consoleplayer]`.  The struct encapsulates everything the engine
+/// needs to simulate, render, and save a single player's participation in a
+/// game session. It is `Copy` and valid when zeroed: `G_PlayerReborn` resets
+/// it with `mem::zeroed()`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerT {
@@ -194,8 +192,8 @@ pub struct PlayerT {
     pub itemcount: i32,
     /// Total secrets found this level (used by intermission screen).
     pub secretcount: i32,
-    /// The current HUD hint message, or `None` if there is none.
-    pub message: Option<&'static str>,
+    /// The current HUD hint message; empty if there is none.
+    pub message: PlayerMessage,
     /// Tic counter for red damage flash; decrements toward 0 each tic.
     pub damagecount: i32,
     /// Tic counter for yellow bonus flash; decrements toward 0 each tic.
@@ -230,6 +228,77 @@ pub use crate::doom::g_game::{consoleplayer, players};
 /// # Safety
 /// `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
 /// function is called (guaranteed by the engine's startup sequence).
-pub unsafe fn M_Menu_SetPlayerMessage(msg: &'static str) {
-    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message = Some(msg);
+pub unsafe fn M_Menu_SetPlayerMessage(msg: &str) {
+    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
+        PlayerMessage::new(msg);
+}
+
+/// A HUD hint message, stored inline so [`PlayerT`] stays `Copy` and a
+/// zeroed player has no message.
+///
+/// Holds up to [`PlayerMessage::CAPACITY`] bytes, one HUD line (C
+/// `HU_MAXLINELENGTH`); longer text is truncated, as the HUD line would
+/// truncate it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerMessage {
+    /// Number of bytes of `bytes` in use; 0 means no message.
+    length: u8,
+    /// The message text.
+    bytes: [u8; PlayerMessage::CAPACITY],
+}
+
+impl PlayerMessage {
+    /// Longest message kept, in bytes.
+    pub const CAPACITY: usize = 80;
+
+    /// No message.
+    pub const NONE: Self = Self {
+        length: 0,
+        bytes: [0; Self::CAPACITY],
+    };
+
+    /// A message holding `text`, truncated to [`Self::CAPACITY`] bytes.
+    pub fn new(text: impl AsRef<[u8]>) -> Self {
+        let text = text.as_ref();
+        let length = text.len().min(Self::CAPACITY);
+        let mut message = Self::NONE;
+        message.bytes[..length].copy_from_slice(&text[..length]);
+        message.length = length as u8;
+        message
+    }
+
+    /// The message text; empty if there is no message.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.length)]
+    }
+
+    /// Whether there is no message.
+    pub fn is_none(&self) -> bool {
+        self.length == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A zeroed message (as in a zeroed `PlayerT`) is no message.
+    #[test]
+    fn zeroed_message_is_none() {
+        let message: PlayerMessage = unsafe { std::mem::zeroed() };
+        assert!(message.is_none());
+        assert_eq!(message, PlayerMessage::NONE);
+    }
+
+    /// Text is kept up to one HUD line and truncated beyond it.
+    #[test]
+    fn message_keeps_one_hud_line() {
+        assert_eq!(PlayerMessage::new("game saved.").as_bytes(), b"game saved.");
+        let long = [b'x'; 100];
+        assert_eq!(
+            PlayerMessage::new(long).as_bytes(),
+            &long[..PlayerMessage::CAPACITY]
+        );
+        assert!(PlayerMessage::new("").is_none());
+    }
 }

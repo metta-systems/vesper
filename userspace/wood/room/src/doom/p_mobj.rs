@@ -12,7 +12,7 @@ use {
 
 use crate::doom::{
     c_ffi::ITEMQUESIZE,
-    d_player::{PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
+    d_player::{PlayerMessage, PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
     hu_stuff::HU_Start,
     i_timer::TICRATE,
     info::{self, *},
@@ -671,7 +671,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     (*p).mo = mobj as *mut crate::doom::d_player::mobj_t;
     (*p).playerstate = PST_LIVE;
     (*p).refire = 0;
-    (*p).message = None;
+    (*p).message = PlayerMessage::NONE;
     (*p).damagecount = 0;
     (*p).bonuscount = 0;
     (*p).extralight = 0;

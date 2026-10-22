@@ -9,10 +9,7 @@
 
 use {
     crate::i_error,
-    std::{
-        ffi::{c_void, CStr},
-        ptr,
-    },
+    std::{ffi::c_void, ptr},
 };
 
 use crate::doom::{
@@ -123,7 +120,7 @@ fn sprite_prefix(name: &[u8]) -> &[u8] {
 
 use crate::doom::{
     doomstat::modifiedgame,
-    m_misc::{c_str, until_nul},
+    m_misc::until_nul,
     r_bsp::{drawsegs, ds_p},
     r_data::{
         colormaps, firstspritelump, lastspritelump, spriteoffset, spritetopoffset, spritewidth,
@@ -178,7 +175,7 @@ pub static mut sprtemp: [spriteframe_t; 29] = [spriteframe_t {
 pub static mut maxframe: i32 = 0;
 
 /// Name of the sprite currently being processed by R_InitSprites.
-pub static mut spritename: *mut u8 = ptr::null_mut();
+pub static mut spritename: &str = "";
 
 // ---------------------------------------------------------------------------
 // Module-local state
@@ -230,7 +227,6 @@ static mut vsprsortedhead: vissprite_t = unsafe { std::mem::zeroed() };
 /// Calls `i_error!` on duplicate or inconsistent assignments.
 ///
 /// # Safety
-/// `spritename` must be a valid, null-terminated C string pointer.
 /// `lump`, `frame`, and `rotation` must be within the ranges enforced by
 /// the guards at the top of the function.
 unsafe fn R_InstallSpriteLump(lump: i32, frame: u32, rotation: u32, flipped: i32) {
@@ -247,14 +243,14 @@ unsafe fn R_InstallSpriteLump(lump: i32, frame: u32, rotation: u32, flipped: i32
         if sprtemp[frame as usize].rotate == 0 {
             i_error!(
                 "R_InitSprites: Sprite {} frame {} has multip rot=0 lump",
-                CStr::from_ptr(spritename.cast()).to_string_lossy(),
+                { spritename },
                 char::from(b'A' + frame as u8)
             );
         }
         if sprtemp[frame as usize].rotate == 1 {
             i_error!(
                 "R_InitSprites: Sprite {} frame {} has rotations and a rot=0 lump",
-                CStr::from_ptr(spritename.cast()).to_string_lossy(),
+                { spritename },
                 char::from(b'A' + frame as u8)
             );
         }
@@ -270,7 +266,7 @@ unsafe fn R_InstallSpriteLump(lump: i32, frame: u32, rotation: u32, flipped: i32
     if sprtemp[frame as usize].rotate == 0 {
         i_error!(
             "R_InitSprites: Sprite {} frame {} has rotations and a rot=0 lump",
-            CStr::from_ptr(spritename.cast()).to_string_lossy(),
+            { spritename },
             char::from(b'A' + frame as u8)
         );
     }
@@ -282,7 +278,7 @@ unsafe fn R_InstallSpriteLump(lump: i32, frame: u32, rotation: u32, flipped: i32
     if sprtemp[frame as usize].lump[rot] != -1 {
         i_error!(
             "R_InitSprites: Sprite {} : {} : {} has two lumps mapped to it",
-            CStr::from_ptr(spritename.cast()).to_string_lossy(),
+            { spritename },
             char::from(b'A' + frame as u8),
             char::from(b'1' + rot as u8)
         );
@@ -309,16 +305,10 @@ unsafe fn R_InstallSpriteLump(lump: i32, frame: u32, rotation: u32, flipped: i32
 /// `W_GetNumForName` to respect WAD replacement ordering.
 ///
 /// # Safety
-/// `namelist` must be a null-terminated array of valid C string pointers.
 /// `firstspritelump` and `lastspritelump` from `r_data` must already be
 /// initialised before this function is called.
-unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
-    let mut check = namelist;
-    while !(*check).is_null() {
-        check = check.add(1);
-    }
-
-    numsprites = check.offset_from(namelist) as i32;
+unsafe fn R_InitSpriteDefs(namelist: &[&'static str]) {
+    numsprites = namelist.len() as i32;
 
     if numsprites == 0 {
         return;
@@ -334,7 +324,7 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
     let end = lastspritelump + 1;
 
     for i in 0..numsprites {
-        spritename = *namelist.add(i as usize);
+        spritename = namelist[i as usize];
         ptr::write_bytes(std::ptr::addr_of_mut!(sprtemp[0]), 0xFF, 29);
 
         maxframe = -1;
@@ -342,7 +332,9 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
         // Scan the lumps, filling in the frames for whatever is found.
         for l in (start + 1)..end {
             let li = &*lumpinfo.add(l as usize);
-            if sprite_prefix(&li.name).eq_ignore_ascii_case(sprite_prefix(c_str(spritename))) {
+            if sprite_prefix(&li.name)
+                .eq_ignore_ascii_case(sprite_prefix({ spritename }.as_bytes()))
+            {
                 let frame = (li.name[4] - b'A') as u32;
                 let rotation = (li.name[5] - b'0') as u32;
 
@@ -377,7 +369,7 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
                     // No rotations were found for that frame at all.
                     i_error!(
                         "R_InitSprites: No patches found for {} frame {}",
-                        CStr::from_ptr(spritename.cast()).to_string_lossy(),
+                        { spritename },
                         char::from(b'A' + frame as u8)
                     );
                 }
@@ -390,7 +382,7 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
                         if sprtemp[frame as usize].lump[rotation] == -1 {
                             i_error!(
                                 "R_InitSprites: Sprite {} frame {} is missing rotations",
-                                CStr::from_ptr(spritename.cast()).to_string_lossy(),
+                                { spritename },
                                 char::from(b'A' + frame as u8)
                             );
                         }
@@ -425,10 +417,10 @@ unsafe fn R_InitSpriteDefs(namelist: *mut *mut u8) {
 /// Fills `negonearray` with `-1` (used as the ceiling clip sentinel for psprites),
 /// then delegates to `R_InitSpriteDefs` to build the sprite frame lookup table.
 /// # Safety
-/// `namelist` must be a null-terminated array of valid C string pointers, each
-/// pointing to a 4-character sprite name. Must be called after WAD loading
-/// (`W_InitMultipleFiles`) has set up `firstspritelump` and `lastspritelump`.
-pub unsafe fn R_InitSprites(namelist: *mut *mut u8) {
+/// `namelist` holds the 4-character sprite names. Must be called after WAD
+/// loading (`W_InitMultipleFiles`) has set up `firstspritelump` and
+/// `lastspritelump`.
+pub unsafe fn R_InitSprites(namelist: &[&'static str]) {
     for i in 0..SCREENWIDTH {
         negonearray[i] = -1;
     }

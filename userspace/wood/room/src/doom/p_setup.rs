@@ -1279,7 +1279,7 @@ pub fn P_Init() {
     unsafe {
         P_InitSwitchList();
         P_InitPicAnims();
-        R_InitSprites(std::ptr::addr_of_mut!(sprnames[0]));
+        R_InitSprites(&sprnames);
     }
 }
 

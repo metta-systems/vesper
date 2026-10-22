@@ -31,10 +31,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::i_error,
-    std::ffi::{c_void, CStr},
-};
+use {crate::i_error, std::ffi::c_void};
 
 use std::ptr;
 
@@ -850,7 +847,7 @@ pub unsafe fn R_InitTextures() {
             if (*patch).patch == -1 {
                 i_error!(
                     "R_InitTextures: Missing patch in texture {}",
-                    CStr::from_ptr((*texture).name.as_ptr().cast()).to_string_lossy()
+                    String::from_utf8_lossy(lump_name(&(*texture).name))
                 );
             }
         }
