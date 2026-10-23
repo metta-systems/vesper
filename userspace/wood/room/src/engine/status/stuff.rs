@@ -674,8 +674,8 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             if check_cheat(|status| &mut status.cheat_god, key) {
                 (*plyr).cheats ^= 2; // CF_GODMODE
                 if (*plyr).cheats & 2 != 0 {
-                    if !(*plyr).mo.is_null() {
-                        (*(*plyr).mo).health = 100;
+                    if let Some(mo) = (*plyr).mo {
+                        (*mo.ptr()).health = 100;
                     }
                     (*plyr).health = 100; // deh_god_mode_health
                     (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDON));
@@ -762,7 +762,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).powers[0] = 1; // pw_invulnerability
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
-                let mo = (*console_player()).mo;
+                let mo = (*console_player()).mo().ptr();
                 (*plyr).message = PlayerMessage::new(format!(
                     "ang=0x{:x};x,y=(0x{:x},0x{:x})",
                     (*mo).angle,
@@ -897,25 +897,22 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
 
     if status.priority < 8
         && (*plyr).damagecount != 0
-        && !(*plyr).attacker.is_null()
-        && (*plyr).attacker != (*plyr).mo
+        && let Some(attacker) = (*plyr).attacker
+        && Some(attacker) != (*plyr).mo
     {
         status.priority = 7;
         if (*plyr).health - status.st_oldhealth > ST_MUCHPAIN {
             status.st_facecount = ST_TURNCOUNT;
             status.st_faceindex = ST_calcPainOffset(status) + ST_OUCHOFFSET;
         } else {
-            let badguyangle = R_PointToAngle2(
-                (*(*plyr).mo).x,
-                (*(*plyr).mo).y,
-                (*(*plyr).attacker).x,
-                (*(*plyr).attacker).y,
-            );
-            if badguyangle > (*(*plyr).mo).angle {
-                diffang = badguyangle - (*(*plyr).mo).angle;
+            let mo = (*plyr).mo().ptr();
+            let attacker = attacker.ptr();
+            let badguyangle = R_PointToAngle2((*mo).x, (*mo).y, (*attacker).x, (*attacker).y);
+            if badguyangle > (*mo).angle {
+                diffang = badguyangle - (*mo).angle;
                 i = if diffang > ANG180 { 1 } else { 0 };
             } else {
-                diffang = (*(*plyr).mo).angle - badguyangle;
+                diffang = (*mo).angle - badguyangle;
                 i = if diffang <= ANG180 { 1 } else { 0 };
             }
 

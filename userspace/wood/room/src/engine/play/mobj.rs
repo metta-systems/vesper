@@ -11,6 +11,7 @@ use {
 };
 
 use crate::engine::{
+    arena::Handle,
     doom::player::{CF_NOMOMENTUM, MAXPLAYERS, PlayerMessage, PlayerT},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
@@ -25,12 +26,11 @@ use crate::engine::{
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
         setup::LEVEL,
-        tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, thinker_t},
+        tick::{P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{S_StartSound, S_StopSound},
     wad::format::mapthing_t,
-    zone::PU_LEVEL,
 };
 
 /// Momentum magnitude below which an object's XY velocity is snapped to zero.
@@ -85,17 +85,37 @@ use crate::engine::{
     },
     render_3d::sky::SKY,
     status::stuff::ST_Start,
-    zone::Z_Malloc,
 };
+
+/// A map object in the mobj arena (C's `mobj_t *`).
+///
+/// Every reference between map objects, and from the rest of the engine to
+/// one, is a handle; [`Handle::ptr`] resolves it. A handle to a removed
+/// object goes stale once the thinker list frees it, and still reads the
+/// object's last data, as C's dangling pointers do (see
+/// [`crate::engine::arena`]).
+pub type MobjId = Handle<mobj_t>;
+
+/// Pointer to the map object `mobj` names, or null for `None`: C's nullable
+/// `mobj_t *`, for code that reads an optional object through its pointer.
+#[inline]
+#[track_caller]
+pub fn mobj_or_null(mobj: Option<MobjId>) -> *mut mobj_t {
+    match mobj {
+        Some(mobj) => mobj.ptr(),
+        None => std::ptr::null_mut(),
+    }
+}
 
 /// A map object (thing) that lives in the world and can think each tic
 /// (`mobj_t` in `p_mobj.h`).
 ///
-/// The embedded `thinker` is mapped back to its `mobj_t` through
-/// [`ThinkerContainer::from_thinker`](crate::engine::play::tick::ThinkerContainer).
+/// It lives in the [`MOBJ_ARENA`](crate::engine::play::tick::MOBJ_ARENA)
+/// and is listed in the thinker list as
+/// [`ThinkerId::Mobj`].
 #[derive(Clone, Copy)]
 pub struct mobj_t {
-    /// Thinker list node.
+    /// Thinker state: what the object does each tic.
     pub thinker: thinker_t,
     /// Map X position in fixed-point units.
     pub x: i32,
@@ -104,9 +124,9 @@ pub struct mobj_t {
     /// Map Z position (height above the floor) in fixed-point units.
     pub z: i32,
     /// Next thing in this sector's sprite-order linked list.
-    pub snext: *mut mobj_t,
+    pub snext: Option<MobjId>,
     /// Previous thing in this sector's sprite-order linked list.
-    pub sprev: *mut mobj_t,
+    pub sprev: Option<MobjId>,
     /// Facing angle in binary radians (BAMs); 0 = East.
     pub angle: u32,
     /// Current sprite number.
@@ -114,9 +134,9 @@ pub struct mobj_t {
     /// Current animation frame index.
     pub frame: i32,
     /// Next thing in the blockmap block's linked list.
-    pub bnext: *mut mobj_t,
+    pub bnext: Option<MobjId>,
     /// Previous thing in the blockmap block's linked list.
-    pub bprev: *mut mobj_t,
+    pub bprev: Option<MobjId>,
     /// The sub-sector this thing currently occupies.
     pub subsector: SubsectorId,
     /// Floor height at the thing's current position.
@@ -152,7 +172,7 @@ pub struct mobj_t {
     /// Tics remaining before the thing attempts a new movement decision.
     pub movecount: i32,
     /// Primary AI target (usually the last thing to attack this one).
-    pub target: *mut mobj_t,
+    pub target: Option<MobjId>,
     /// Tics the thing must wait before it can attack again.
     pub reactiontime: i32,
     /// Decremented each tic while pursuing a target; reset on target change.
@@ -164,7 +184,7 @@ pub struct mobj_t {
     /// The WAD spawn point from which this thing was created.
     pub spawnpoint: mapthing_t,
     /// Tracer target used by homing missiles (cyberdemon rockets, etc.).
-    pub tracer: *mut mobj_t,
+    pub tracer: Option<MobjId>,
 }
 
 /// The item-respawn queue and the null-object stand-in (`p_mobj.c` globals).
@@ -184,8 +204,9 @@ pub struct MobjState {
     /// Read index (tail) of the item-respawn circular queue.
     pub iquetail: i32,
     /// The zeroed stand-in `P_SubstNullMobj` returns for a null object
-    /// (static local `dummy_mobj` in C).
-    dummy_mobj: mobj_t,
+    /// (static local `dummy_mobj` in C). It is a slot of the mobj arena
+    /// that is never listed as a thinker, allocated on first use in a level.
+    dummy_mobj: Option<MobjId>,
 }
 
 impl MobjState {
@@ -196,8 +217,7 @@ impl MobjState {
             itemrespawntime: [0; ITEMQUESIZE],
             iquehead: 0,
             iquetail: 0,
-            // SAFETY: an all-zero `mobj_t` is a valid inert map object.
-            dummy_mobj: unsafe { std::mem::zeroed() },
+            dummy_mobj: None,
         }
     }
 }
@@ -219,15 +239,15 @@ pub static MOBJ: Global<MobjState> = Global::new(MobjState::new());
 ///
 /// # Safety
 ///
-/// `mobj` must be a valid, non-null pointer to an initialised `mobj_t`.
+/// `mobj_id` must name an initialised map object of the loaded level.
 /// `state` must be a valid state-table index or `S_NULL`.
-pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
-    let mobj = &mut *mobj;
+pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
+    let mobj = &mut *mobj_id.ptr();
     let mut state = state;
     loop {
         if state == S_NULL {
             mobj.state = ptr::null_mut();
-            P_RemoveMobj(mobj as *mut mobj_t);
+            P_RemoveMobj(mobj_id);
             return 0;
         }
         let st = state_ptr(state as usize);
@@ -237,7 +257,7 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
         mobj.frame = (*st).frame;
         match (*st).action {
             StateAction::None => {}
-            StateAction::Mobj(action) => action(mobj as *mut mobj_t),
+            StateAction::Mobj(action) => action(mobj_id),
             StateAction::Weapon(_) => {
                 unreachable!("P_SetMobjState: state {state} has a weapon action")
             }
@@ -256,21 +276,21 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `mo` must be a valid, non-null pointer to an `mobj_t` with `MF_MISSILE` set.
-pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
-    let mo = &mut *mo;
+/// `mo_id` must name a map object of the loaded level with `MF_MISSILE` set.
+pub unsafe fn P_ExplodeMissile(mo_id: MobjId) {
+    let mo = &mut *mo_id.ptr();
     let info = mo.info;
     mo.momx = 0;
     mo.momy = 0;
     mo.momz = 0;
-    P_SetMobjState(mo as *mut mobj_t, (*info).deathstate);
+    P_SetMobjState(mo_id, (*info).deathstate);
     mo.tics -= P_Random() & 3;
     if mo.tics < 1 {
         mo.tics = 1;
     }
     mo.flags &= !MF_MISSILE;
     if (*info).deathsound != Sfx::None {
-        S_StartSound(mo as *mut mobj_t, (*info).deathsound as i32);
+        S_StartSound(mo_id, (*info).deathsound as i32);
     }
 }
 
@@ -280,10 +300,9 @@ pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be a valid, non-null pointer to an `mobj_t` that is part of the
-/// active thinker list.
-pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
-    let mo = &mut *mo;
+/// `mo_id` must name a map object that is part of the active thinker list.
+pub unsafe fn P_XYMovement(mo_id: MobjId) {
+    let mo = &mut *mo_id.ptr();
     let mut ptryx: i32;
     let mut ptryy: i32;
     let player = mo.player;
@@ -297,7 +316,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             mo.momx = 0;
             mo.momy = 0;
             mo.momz = 0;
-            P_SetMobjState(mo as *mut mobj_t, (*info).spawnstate);
+            P_SetMobjState(mo_id, (*info).spawnstate);
         }
         return;
     }
@@ -321,9 +340,9 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             ymove = 0;
         }
 
-        if P_TryMove(mo as *mut mobj_t, ptryx, ptryy) == 0 {
+        if P_TryMove(mo_id, ptryx, ptryy) == 0 {
             if !mo.player.is_null() {
-                P_SlideMove(mo as *mut mobj_t);
+                P_SlideMove(mo_id);
             } else if mo.flags & MF_MISSILE != 0 {
                 if let Some(line) = ceilingline() {
                     let skyflatnum = SKY.borrow().skyflatnum as i16;
@@ -334,11 +353,11 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
                             .is_some_and(|back| level.sectors[back].ceilingpic == skyflatnum)
                     };
                     if hits_sky {
-                        P_RemoveMobj(mo as *mut mobj_t);
+                        P_RemoveMobj(mo_id);
                         return;
                     }
                 }
-                P_ExplodeMissile(mo as *mut mobj_t);
+                P_ExplodeMissile(mo_id);
             } else {
                 mo.momx = 0;
                 mo.momy = 0;
@@ -386,7 +405,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
                 (mobj_state as usize - states_ptr as usize) / std::mem::size_of::<State>();
             let run_offset = state_idx as i32 - S_PLAY_RUN1;
             if (0..4).contains(&run_offset) {
-                P_SetMobjState(mo as *mut mobj_t, S_PLAY);
+                P_SetMobjState(mo_id, S_PLAY);
             }
         }
         mo.momx = 0;
@@ -405,10 +424,9 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mo` must be a valid, non-null pointer to an `mobj_t` that is part of the
-/// active thinker list.
-pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
-    let mo = &mut *mo;
+/// `mo_id` must name a map object that is part of the active thinker list.
+pub unsafe fn P_ZMovement(mo_id: MobjId) {
+    let mo = &mut *mo_id.ptr();
     let dist: i32;
     let delta: i32;
 
@@ -421,11 +439,11 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
     mo.z += mo.momz;
 
     if mo.flags & MF_FLOAT != 0
-        && !mo.target.is_null()
+        && let Some(target) = mo.target
         && mo.flags & MF_SKULLFLY == 0
         && mo.flags & MF_INFLOAT == 0
     {
-        let target = mo.target;
+        let target = target.ptr();
         dist = P_AproxDistance(mo.x - (*target).x, mo.y - (*target).y);
         delta = ((*target).z + (mo.height >> 1)) - mo.z;
         if delta < 0 && dist < -(delta * 3) {
@@ -444,7 +462,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
             if !mo.player.is_null() && mo.momz < -GRAVITY * 8 {
                 let player = mo.player;
                 (*player).deltaviewheight = mo.momz >> 3;
-                S_StartSound(mo as *mut mobj_t, Sfx::Oof as i32);
+                S_StartSound(mo_id, Sfx::Oof as i32);
             }
             mo.momz = 0;
         }
@@ -453,7 +471,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
-            P_ExplodeMissile(mo as *mut mobj_t);
+            P_ExplodeMissile(mo_id);
             return;
         }
     } else if mo.flags & MF_NOGRAVITY == 0 {
@@ -473,7 +491,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
-            P_ExplodeMissile(mo as *mut mobj_t);
+            P_ExplodeMissile(mo_id);
         }
     }
 }
@@ -486,24 +504,24 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mobj` must be a valid, non-null pointer to an `mobj_t` that has
-/// `MF_COUNTKILL` set and whose `spawnpoint` field is valid.
-pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
-    let mobj = &mut *mobj;
+/// `mobj_id` must name a map object that has `MF_COUNTKILL` set and whose
+/// `spawnpoint` field is valid.
+pub unsafe fn P_NightmareRespawn(mobj_id: MobjId) {
+    let mobj = &mut *mobj_id.ptr();
     let x = (mobj.spawnpoint.x.get() as i32) << FRACBITS;
     let y = (mobj.spawnpoint.y.get() as i32) << FRACBITS;
-    if P_CheckPosition(mobj as *mut mobj_t, x, y) == 0 {
+    if P_CheckPosition(mobj_id, x, y) == 0 {
         return;
     }
 
     let floorheight = LEVEL.borrow().subsector_sector(mobj.subsector).floorheight;
-    let mut mo = P_SpawnMobj(mobj.x, mobj.y, floorheight, MT_TFOG);
-    S_StartSound(mo, Sfx::Telept as i32);
+    let fog = P_SpawnMobj(mobj.x, mobj.y, floorheight, MT_TFOG);
+    S_StartSound(fog, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
-    mo = P_SpawnMobj(x, y, floorheight, MT_TFOG);
-    S_StartSound(mo, Sfx::Telept as i32);
+    let fog = P_SpawnMobj(x, y, floorheight, MT_TFOG);
+    S_StartSound(fog, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
     let info = mobj.info;
@@ -513,14 +531,14 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         ONFLOORZ
     };
 
-    mo = P_SpawnMobj(x, y, z, mobj.kind);
-    (*mo).spawnpoint = mobj.spawnpoint;
-    (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    let respawned = &mut *P_SpawnMobj(x, y, z, mobj.kind).ptr();
+    respawned.spawnpoint = mobj.spawnpoint;
+    respawned.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
-        (*mo).flags |= MF_AMBUSH;
+        respawned.flags |= MF_AMBUSH;
     }
-    (*mo).reactiontime = 18;
-    P_RemoveMobj(mobj as *mut mobj_t);
+    respawned.reactiontime = 18;
+    P_RemoveMobj(mobj_id);
 }
 
 /// Per-tic thinker for every active map object.
@@ -531,18 +549,17 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `mobj` must be a valid, non-null pointer to an `mobj_t` that is currently
-/// linked into the thinker list.
-pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
-    let mobj = &mut *mobj;
+/// `mobj_id` must name a map object that is currently in the thinker list.
+pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
+    let mobj = &mut *mobj_id.ptr();
     if mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0 {
-        P_XYMovement(mobj as *mut mobj_t);
+        P_XYMovement(mobj_id);
         if mobj.thinker.kind.is_removed() {
             return;
         }
     }
     if mobj.z != mobj.floorz || mobj.momz != 0 {
-        P_ZMovement(mobj as *mut mobj_t);
+        P_ZMovement(mobj_id);
         if mobj.thinker.kind.is_removed() {
             return;
         }
@@ -551,7 +568,7 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
     if mobj.tics != -1 {
         mobj.tics -= 1;
         if mobj.tics == 0 {
-            P_SetMobjState(mobj as *mut mobj_t, (*mobj.state).nextstate);
+            P_SetMobjState(mobj_id, (*mobj.state).nextstate);
         }
     } else {
         if mobj.flags & MF_COUNTKILL == 0 {
@@ -570,7 +587,7 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
         if P_Random() > 4 {
             return;
         }
-        P_NightmareRespawn(mobj as *mut mobj_t);
+        P_NightmareRespawn(mobj_id);
     }
 }
 
@@ -581,20 +598,16 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
 /// `P_MobjThinker` is registered as the thinker.  Use `ONFLOORZ` / `ONCEILINGZ`
 /// for `z` to snap to the sector floor or ceiling respectively.
 ///
-/// Returns a pointer to the newly created `mobj_t`.
+/// Returns the handle of the newly created map object.
 ///
 /// # Safety
 ///
-/// Must be called only while a level is active (zone memory must be
-/// initialised).  `kind` must be a valid `mobjtype_t` index.
-pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
-    let mobj = Z_Malloc(
-        std::mem::size_of::<mobj_t>() as i32,
-        PU_LEVEL,
-        ptr::null_mut(),
-    ) as *mut mobj_t;
-    // Z_Malloc already zeroes the allocation internally.
-    let mobj_ref = &mut *mobj;
+/// Must be called only while a level is active (its map data loaded).
+/// `kind` must be a valid `mobjtype_t` index.
+pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
+    // A zeroed object, as C's `Z_Malloc` + `memset` gives.
+    let mobj = new_thinker::<mobj_t>();
+    let mobj_ref = &mut *mobj.ptr();
     let info = mobjinfo_ptr(kind as usize);
 
     mobj_ref.kind = kind;
@@ -638,7 +651,7 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
 
     mobj_ref.thinker.kind = ThinkerKind::Mobj;
 
-    P_AddThinker(&raw mut mobj_ref.thinker);
+    P_AddThinker(ThinkerId::Mobj(mobj));
 
     mobj
 }
@@ -652,10 +665,9 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
 ///
 /// # Safety
 ///
-/// `mobj` must be a valid, non-null pointer to an `mobj_t` that is currently
-/// linked into the world.
-pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
-    let mobj = &mut *mobj;
+/// `mobj_id` must name a map object that is currently linked into the world.
+pub unsafe fn P_RemoveMobj(mobj_id: MobjId) {
+    let mobj = &mut *mobj_id.ptr();
     if mobj.flags & MF_SPECIAL != 0
         && mobj.flags & MF_DROPPED == 0
         && mobj.kind != MT_INV
@@ -672,9 +684,9 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
         }
     }
 
-    P_UnsetThingPosition(mobj as *mut mobj_t);
-    S_StopSound(mobj as *mut mobj_t);
-    P_RemoveThinker(&raw mut mobj.thinker);
+    P_UnsetThingPosition(mobj_id);
+    S_StopSound(mobj_id);
+    P_RemoveThinker(&mut mobj.thinker);
 }
 
 /// Respawn the oldest queued special item if deathmatch mode 2 is active and
@@ -707,8 +719,8 @@ pub unsafe fn P_RespawnSpecials() {
 
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
-    let mut mo = P_SpawnMobj(x, y, floorheight, MT_IFOG);
-    S_StartSound(mo, Sfx::Itmbk as i32);
+    let fog = P_SpawnMobj(x, y, floorheight, MT_IFOG);
+    S_StartSound(fog, Sfx::Itmbk as i32);
 
     let (z, i) = {
         let mobjinfo = MOBJINFO.borrow();
@@ -728,9 +740,9 @@ pub unsafe fn P_RespawnSpecials() {
         (z, i)
     };
 
-    mo = P_SpawnMobj(x, y, z, i as i32);
-    (*mo).spawnpoint = mthing;
-    (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    let item = &mut *P_SpawnMobj(x, y, z, i as i32).ptr();
+    item.spawnpoint = mthing;
+    item.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
 
     let mut queue = MOBJ.borrow_mut();
     queue.iquetail = (queue.iquetail + 1) & (ITEMQUESIZE as i32 - 1);
@@ -765,17 +777,18 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
     let z = ONFLOORZ;
-    let mobj = P_SpawnMobj(x, y, z, MT_PLAYER);
+    let mobj_id = P_SpawnMobj(x, y, z, MT_PLAYER);
+    let mobj = &mut *mobj_id.ptr();
 
     if thing_type > 1 {
-        (*mobj).flags |= ((thing_type - 1) as i32) << MF_TRANSSHIFT;
+        mobj.flags |= ((thing_type - 1) as i32) << MF_TRANSSHIFT;
     }
 
-    (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    (*mobj).player = p;
-    (*mobj).health = (*p).health;
+    mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    mobj.player = p;
+    mobj.health = (*p).health;
 
-    (*p).mo = mobj;
+    (*p).mo = Some(mobj_id);
     (*p).playerstate = PST_LIVE;
     (*p).refire = 0;
     (*p).message = PlayerMessage::NONE;
@@ -892,7 +905,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     };
     drop(mobjinfo);
 
-    let mobj = P_SpawnMobj(x, y, z, i as i32);
+    let mobj = P_SpawnMobj(x, y, z, i as i32).ptr();
     (*mobj).spawnpoint = *mthing;
 
     if (*mobj).tics > 0 {
@@ -920,14 +933,15 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
 /// Must be called during an active level tick with zone memory available.
 pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
-    let th = P_SpawnMobj(x, y, z, MT_PUFF);
+    let th_id = P_SpawnMobj(x, y, z, MT_PUFF);
+    let th = th_id.ptr();
     (*th).momz = FRACUNIT;
     (*th).tics -= P_Random() & 3;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
     if attackrange() == MELEERANGE {
-        P_SetMobjState(th, S_PUFF3);
+        P_SetMobjState(th_id, S_PUFF3);
     }
 }
 
@@ -942,16 +956,17 @@ pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
 /// Must be called during an active level tick with zone memory available.
 pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
-    let th = P_SpawnMobj(x, y, z, MT_BLOOD);
+    let th_id = P_SpawnMobj(x, y, z, MT_BLOOD);
+    let th = th_id.ptr();
     (*th).momz = FRACUNIT * 2;
     (*th).tics -= P_Random() & 3;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
     if (9..=12).contains(&damage) {
-        P_SetMobjState(th, S_BLOOD2);
+        P_SetMobjState(th_id, S_BLOOD2);
     } else if damage < 9 {
-        P_SetMobjState(th, S_BLOOD3);
+        P_SetMobjState(th_id, S_BLOOD3);
     }
 }
 
@@ -961,10 +976,10 @@ pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
 ///
 /// # Safety
 ///
-/// `th` must be a valid, non-null pointer to an `mobj_t` with `MF_MISSILE`
-/// set and non-zero momentum.
-pub unsafe fn P_CheckMissileSpawn(th: *mut mobj_t) {
-    let th = &mut *th;
+/// `th_id` must name a map object with `MF_MISSILE` set and non-zero
+/// momentum.
+pub unsafe fn P_CheckMissileSpawn(th_id: MobjId) {
+    let th = &mut *th_id.ptr();
     th.tics -= P_Random() & 3;
     if th.tics < 1 {
         th.tics = 1;
@@ -972,35 +987,39 @@ pub unsafe fn P_CheckMissileSpawn(th: *mut mobj_t) {
     th.x += th.momx >> 1;
     th.y += th.momy >> 1;
     th.z += th.momz >> 1;
-    if P_TryMove(th as *mut mobj_t, th.x, th.y) == 0 {
-        P_ExplodeMissile(th as *mut mobj_t);
+    if P_TryMove(th_id, th.x, th.y) == 0 {
+        P_ExplodeMissile(th_id);
     }
 }
 
-/// Return `mobj` unchanged, or a pointer to a zeroed dummy `mobj_t` if
-/// `mobj` is null.
+/// Return `mobj` unchanged, or a zeroed dummy map object if `mobj` is null.
 ///
 /// This substitution avoids null-pointer crashes in code that assumes the
-/// pointer is always valid, emulating the original Vanilla Doom behaviour
+/// object always exists, emulating the original Vanilla Doom behaviour
 /// where unchecked null dereferences "worked" due to the absence of memory
 /// protection.
 ///
-/// # Safety
-///
-/// The returned dummy pointer is valid only until the next call to this
-/// function from the same thread; callers must not store it across ticks.
-pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
-    if mobj.is_null() {
-        // Callers keep the returned pointer, so it is the stable address of
-        // the field.
-        let dummy_mobj = &raw mut (*MOBJ.as_ptr()).dummy_mobj;
-        (*dummy_mobj).x = 0;
-        (*dummy_mobj).y = 0;
-        (*dummy_mobj).z = 0;
-        (*dummy_mobj).flags = 0;
-        return dummy_mobj;
+/// The dummy is a slot of the mobj arena that is not in the thinker list;
+/// it is allocated on first use in each level, and its position and flags
+/// are zeroed on every substitution, as C does.
+pub fn P_SubstNullMobj(mobj: Option<MobjId>) -> MobjId {
+    if let Some(mobj) = mobj {
+        return mobj;
     }
-    mobj
+    let existing = MOBJ.borrow().dummy_mobj.filter(|dummy| dummy.is_live());
+    let dummy_id = existing.unwrap_or_else(|| {
+        let dummy = new_thinker::<mobj_t>();
+        MOBJ.borrow_mut().dummy_mobj = Some(dummy);
+        dummy
+    });
+    // SAFETY: the dummy is not in the thinker list or any map list, so no
+    // other reference to it is live outside its callers' short reads.
+    let dummy = unsafe { &mut *dummy_id.ptr() };
+    dummy.x = 0;
+    dummy.y = 0;
+    dummy.z = 0;
+    dummy.flags = 0;
+    dummy_id
 }
 
 /// Launch a projectile of type `kind` from `source` toward `dest`.
@@ -1009,21 +1028,22 @@ pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
 /// `dest`'s centre (with random spread if `dest` has `MF_SHADOW`).  Vertical
 /// momentum is computed from the Z distance divided by travel time.
 ///
-/// Returns a pointer to the spawned missile `mobj_t`.
+/// Returns the spawned missile.
 ///
 /// # Safety
 ///
-/// `source` and `dest` must be valid, non-null pointers to `mobj_t` instances.
+/// `source_id` and `dest_id` must name map objects of the loaded level.
 /// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) -> *mut mobj_t {
-    let source = &*source;
-    let dest = &*dest;
-    let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
+pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> MobjId {
+    let source = &*source_id.ptr();
+    let dest = &*dest_id.ptr();
+    let th_id = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
+    let th = th_id.ptr();
     let info = (*th).info;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th, (*info).seesound as i32);
+        S_StartSound(th_id, (*info).seesound as i32);
     }
-    (*th).target = source as *const mobj_t as *mut mobj_t;
+    (*th).target = Some(source_id);
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
     if dest.flags & MF_SHADOW != 0 {
         an = an.wrapping_add(((P_Random() - P_Random()) << 20) as u32);
@@ -1039,8 +1059,8 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) 
         dist = 1;
     }
     (*th).momz = (dest.z - source.z) / dist;
-    P_CheckMissileSpawn(th);
-    th
+    P_CheckMissileSpawn(th_id);
+    th_id
 }
 
 /// Launch a projectile of type `kind` from the player's `source` mobj,
@@ -1049,20 +1069,20 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) 
 ///
 /// # Safety
 ///
-/// `source` must be a valid, non-null pointer to a player `mobj_t`.
+/// `source_id` must name a player's map object.
 /// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
-    let source = &mut *source;
+pub unsafe fn P_SpawnPlayerMissile(source_id: MobjId, kind: i32) {
+    let source = &mut *source_id.ptr();
     let mut an = source.angle;
-    let mut slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
+    let mut slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
 
-    if linetarget().is_null() {
+    if linetarget().is_none() {
         an = an.wrapping_add(1 << 26);
-        slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
-        if linetarget().is_null() {
+        slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
+        if linetarget().is_none() {
             an = an.wrapping_sub(2 << 26);
-            slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
-            if linetarget().is_null() {
+            slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
+            if linetarget().is_none() {
                 an = source.angle;
                 slope = 0;
             }
@@ -1073,19 +1093,20 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
     let y = source.y;
     let z = source.z + 4 * 8 * FRACUNIT;
 
-    let th = P_SpawnMobj(x, y, z, kind);
+    let th_id = P_SpawnMobj(x, y, z, kind);
+    let th = th_id.ptr();
     let info = (*th).info;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th, (*info).seesound as i32);
+        S_StartSound(th_id, (*info).seesound as i32);
     }
-    (*th).target = source as *const mobj_t as *mut mobj_t;
+    (*th).target = Some(source_id);
     (*th).angle = an;
     let fine_idx = (an >> ANGLETOFINESHIFT) as usize;
     (*th).momx = FixedMul((*info).speed, *finecosine.0.add(fine_idx));
     (*th).momy = FixedMul((*info).speed, finesine[fine_idx]);
     (*th).momz = FixedMul((*info).speed, slope);
 
-    P_CheckMissileSpawn(th);
+    P_CheckMissileSpawn(th_id);
 }
 
 #[cfg(test)]

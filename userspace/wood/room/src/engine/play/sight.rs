@@ -14,7 +14,7 @@ use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::{
     map::{NodeId, node_t},
-    play::{maputl::divline_t, mobj::mobj_t},
+    play::{maputl::divline_t, mobj::MobjId},
     wad::format::LinedefFlag,
 };
 
@@ -378,9 +378,10 @@ fn P_CrossBSPNode(sight: &mut SightState, level: &mut LevelState, bspnum: i32) -
 /// for its whole run; it calls no other play code.
 ///
 /// # Safety
-/// Both `t1` and `t2` must be valid, non-null pointers to initialised
-/// `mobj_t` instances whose `subsector` belongs to the loaded level.
-pub unsafe fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
+/// Both `t1` and `t2` must name initialised map objects whose `subsector`
+/// belongs to the loaded level.
+pub unsafe fn P_CheckSight(t1: MobjId, t2: MobjId) -> i32 {
+    let (t1, t2) = (t1.ptr(), t2.ptr());
     let mut level = LEVEL.borrow_mut();
     let mut sight = SIGHT.borrow_mut();
     unsafe {

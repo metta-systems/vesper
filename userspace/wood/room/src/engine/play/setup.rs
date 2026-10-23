@@ -44,7 +44,7 @@ use {
         play::{
             info::sprnames,
             maputl::MAPBLOCKSHIFT,
-            mobj::mobj_t,
+            mobj::MobjId,
             tick::{P_InitThinkers, TICK},
         },
         wad::format::{LinedefFlag, MapLump},
@@ -142,9 +142,9 @@ pub struct LevelState {
     /// Subtract from a thing's y to get the blockmap row.
     pub bmaporgy: i32,
     /// The blockmap thing-chain heads, one per cell (`bmapwidth *
-    /// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
-    /// that cell's chain, or null. Zeroed at level load.
-    pub blocklinks: Vec<*mut mobj_t>,
+    /// bmapheight` entries). Each entry is the first map object in that
+    /// cell's chain, or `None`. Emptied at level load.
+    pub blocklinks: Vec<Option<MobjId>>,
 
     /// The precomputed LOS (line-of-sight) reject table.
     /// A 2-D bit array indexed by `[sector1 * numsectors + sector2]`; a set bit
@@ -224,8 +224,7 @@ struct SetupState {
 static SETUP: Global<SetupState> = Global::new(SetupState {
     totallines: 0,
     null_sector_is_initialized: false,
-    // SAFETY: an all-zero `sector_t` is a valid empty sector.
-    null_sector: unsafe { std::mem::zeroed() },
+    null_sector: sector_t::ZERO,
 });
 
 // ---------------------------------------------------------------------------
@@ -340,10 +339,9 @@ fn GetSectorAtNullAddress(level: &mut LevelState) -> SectorId {
     let null_sector = {
         let mut setup = SETUP.borrow_mut();
         if !setup.null_sector_is_initialized {
-            // SAFETY: an all-zero `sector_t` is a valid empty sector, and each
-            // read fills one 4-byte height field.
+            setup.null_sector = sector_t::ZERO;
+            // SAFETY: each read fills one 4-byte height field.
             unsafe {
-                setup.null_sector = std::mem::zeroed();
                 I_GetMemoryValue(0, &raw mut setup.null_sector.floorheight as *mut c_void, 4);
                 I_GetMemoryValue(
                     4,
@@ -508,12 +506,12 @@ pub fn P_LoadSectors(lump: i32) {
             special: ms.special.get(),
             tag: ms.tag.get(),
             soundtraversed: 0,
-            soundtarget: ptr::null_mut(),
+            soundtarget: None,
             blockbox: [0; 4],
             soundorg: degenmobj_t { x: 0, y: 0, z: 0 },
             validcount: 0,
-            thinglist: ptr::null_mut(),
-            specialdata: ptr::null_mut(),
+            thinglist: None,
+            specialdata: None,
             linecount: 0,
             lines: 0,
         })
@@ -686,7 +684,7 @@ pub fn P_LoadLineDefs(lump: i32) {
             frontsector: side_sector(sidenum[0]),
             backsector: side_sector(sidenum[1]),
             validcount: 0,
-            specialdata: ptr::null_mut(),
+            specialdata: None,
         });
     }
 
@@ -764,7 +762,7 @@ pub fn P_LoadBlockMap(lump: i32) {
     level.bmaporgy = (blockmaplump[1] as i32) << FRACBITS;
     level.bmapwidth = bmapwidth;
     level.bmapheight = bmapheight;
-    level.blocklinks = vec![ptr::null_mut(); bmapwidth as usize * bmapheight as usize];
+    level.blocklinks = vec![None; bmapwidth as usize * bmapheight as usize];
     level.blockmaplump = blockmaplump;
 }
 
@@ -1093,7 +1091,7 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
         if deathmatch() != 0 {
             for i in 0..MAXPLAYERS {
                 if playeringame(i) != 0 {
-                    (*player(i)).mo = ptr::null_mut();
+                    (*player(i)).mo = None;
                     G_DeathMatchSpawnPlayer(i as i32);
                 }
             }
@@ -1178,8 +1176,7 @@ mod tests {
 
     /// A zeroed sector with only its tag set.
     fn tagged_sector(tag: i16) -> sector_t {
-        // SAFETY: an all-zero `sector_t` is a valid empty sector.
-        let mut sector: sector_t = unsafe { std::mem::zeroed() };
+        let mut sector = sector_t::ZERO;
         sector.tag = tag;
         sector
     }

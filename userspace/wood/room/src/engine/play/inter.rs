@@ -24,7 +24,11 @@ use crate::{
             tables::{ANG180, ANGLETOFINESHIFT, finecosine, finesine},
         },
         misc::random::P_Random,
-        play::{info::*, mobj::mobj_t, pspr::P_DropWeapon},
+        play::{
+            info::*,
+            mobj::{MobjId, mobj_or_null},
+            pspr::P_DropWeapon,
+        },
     },
     i_error,
 };
@@ -507,7 +511,7 @@ unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
     if player.health > MAXHEALTH {
         player.health = MAXHEALTH;
     }
-    let mo = &mut *player.mo;
+    let mo = &mut *player.mo().ptr();
     mo.health = player.health;
     1
 }
@@ -598,7 +602,7 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
     }
     if power == pw_invisibility {
         player.powers[power] = INVISTICS;
-        let mo = &mut *player.mo;
+        let mo = &mut *player.mo().ptr();
         mo.flags |= MF_SHADOW;
         return 1;
     }
@@ -640,12 +644,14 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// Both `special` and `toucher` must be valid, non-null pointers to live
-/// map objects.  `toucher.player` must be a valid, non-null pointer to the
-/// owning `PlayerT`.  Global game-state statics (`players`, `consoleplayer`,
+/// `special_id` and `toucher_id` must name map objects of the level.
+/// `toucher.player` must be a valid, non-null pointer to the owning
+/// `PlayerT`.  Global game-state statics (`players`, `consoleplayer`,
 /// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
 /// game-logic thread.
-pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
+pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
+    let special = special_id.ptr();
+    let toucher = toucher_id.ptr();
     // Read all primitives from `special` / `toucher` up front via raw
     // pointers so we never hold a `&mut` to either of them across the
     // FFI helper calls or `P_RemoveMobj` below; those reborrow the
@@ -700,7 +706,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.health > max_health {
                 player.health = max_health;
             }
-            let mo = &mut *player.mo;
+            let mo = &mut *player.mo().ptr();
             mo.health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTHTHBONUS));
         }
@@ -721,7 +727,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             if player.health > max_soulsphere {
                 player.health = max_soulsphere;
             }
-            let mo = &mut *player.mo;
+            let mo = &mut *player.mo().ptr();
             mo.health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTSUPER));
             sound = Sfx::Getpow as i32;
@@ -732,7 +738,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             }
             player.health = megasphere_health;
             {
-                let mo = &mut *player.mo;
+                let mo = &mut *player.mo().ptr();
                 mo.health = player.health;
             }
             // We always give armor type 2 for the megasphere; DEHacked
@@ -999,7 +1005,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
     if special_flags & MF_COUNTITEM != 0 {
         player.itemcount += 1;
     }
-    P_RemoveMobj(special);
+    P_RemoveMobj(special_id);
     player.bonuscount += BONUSADD;
     if std::ptr::eq(player_ptr, console_player()) {
         S_StartNonPositionalSound(sound);
@@ -1030,10 +1036,12 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `target` must be a valid, non-null pointer to a live `mobj_t`.
-/// `source` may be null (environmental kill).  All global game-state
-/// statics must only be accessed from the game-logic thread.
-pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
+/// `target_id` must name a map object of the level. `source_id` may be
+/// `None` (environmental kill).  All global game-state statics must only be
+/// accessed from the game-logic thread.
+pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
+    let source = mobj_or_null(source_id);
+    let target = target_id.ptr();
     let info = (*target).info;
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
     if (*target).kind != MT_SKULL {
@@ -1071,9 +1079,9 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     }
 
     if (*target).health < -(*info).spawnhealth && (*info).xdeathstate != 0 {
-        P_SetMobjState(target, (*info).xdeathstate);
+        P_SetMobjState(target_id, (*info).xdeathstate);
     } else {
-        P_SetMobjState(target, (*info).deathstate);
+        P_SetMobjState(target_id, (*info).deathstate);
     }
     (*target).tics -= P_Random() & 3;
     if (*target).tics < 1 {
@@ -1091,7 +1099,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         _ => return,
     };
 
-    let mo = P_SpawnMobj((*target).x, (*target).y, ONFLOORZ, item);
+    let mo = P_SpawnMobj((*target).x, (*target).y, ONFLOORZ, item).ptr();
     (*mo).flags |= MF_DROPPED;
 }
 
@@ -1124,16 +1132,19 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `target` must be a valid, non-null pointer to a live `mobj_t`.
-/// `inflictor` and `source` may be null.  If `target.player` is non-null
-/// it must point to a valid `PlayerT`.  All global game-state statics must
-/// only be accessed from the game-logic thread.
+/// `target_id` must name a map object of the level. `inflictor_id` and
+/// `source_id` may be `None`.  If `target.player` is non-null it must point
+/// to a valid `PlayerT`.  All global game-state statics must only be
+/// accessed from the game-logic thread.
 pub unsafe fn P_DamageMobj(
-    target: *mut mobj_t,
-    inflictor: *mut mobj_t,
-    source: *mut mobj_t,
+    target_id: MobjId,
+    inflictor_id: Option<MobjId>,
+    source_id: Option<MobjId>,
     mut damage: i32,
 ) {
+    let target = target_id.ptr();
+    let inflictor = mobj_or_null(inflictor_id);
+    let source = mobj_or_null(source_id);
     if ((*target).flags & MF_SHOOTABLE) == 0 {
         return;
     }
@@ -1206,7 +1217,7 @@ pub unsafe fn P_DamageMobj(
         if (*player).health < 0 {
             (*player).health = 0;
         }
-        (*player).attacker = source;
+        (*player).attacker = source_id;
         (*player).damagecount += damage;
         if (*player).damagecount > 100 {
             (*player).damagecount = 100;
@@ -1219,14 +1230,14 @@ pub unsafe fn P_DamageMobj(
 
     (*target).health -= damage;
     if (*target).health <= 0 {
-        P_KillMobj(source, target);
+        P_KillMobj(source_id, target_id);
         return;
     }
 
     let info = (*target).info;
     if P_Random() < (*info).painchance && ((*target).flags & MF_SKULLFLY) == 0 {
         (*target).flags |= MF_JUSTHIT;
-        P_SetMobjState(target, (*info).painstate);
+        P_SetMobjState(target_id, (*info).painstate);
     }
 
     (*target).reactiontime = 0;
@@ -1236,12 +1247,12 @@ pub unsafe fn P_DamageMobj(
         && source != target
         && (*source).kind != MT_VILE
     {
-        (*target).target = source;
+        (*target).target = source_id;
         (*target).threshold = BASETHRESHOLD;
         let target_state = (*target).state;
         let spawnstate_ptr = state_ptr((*info).spawnstate as usize);
         if std::ptr::eq(target_state, spawnstate_ptr) && (*info).seestate != S_NULL {
-            P_SetMobjState(target, (*info).seestate);
+            P_SetMobjState(target_id, (*info).seestate);
         }
     }
 }

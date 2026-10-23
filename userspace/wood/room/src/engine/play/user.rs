@@ -155,10 +155,10 @@ use crate::engine::{
 ///
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` field points to a valid `mobj_t`.
+/// whose `mo` is set.
 pub unsafe fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
     unsafe {
-        let mo = (*player).mo;
+        let mo = (*player).mo().ptr();
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
         (*mo).momx += FixedMul(move_, *finecosine.0.add(angle));
         (*mo).momy += FixedMul(move_, finesine[angle]);
@@ -176,10 +176,10 @@ pub unsafe fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
 ///
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` field points to a valid `mobj_t`.
+/// whose `mo` is set.
 pub unsafe fn P_CalcHeight(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo;
+        let mo = (*player).mo().ptr();
 
         // Regular movement bobbing
         (*player).bob = FixedMul((*mo).momx, (*mo).momx) + FixedMul((*mo).momy, (*mo).momy);
@@ -245,10 +245,10 @@ pub unsafe fn P_CalcHeight(player: *mut PlayerT) {
 ///
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` field points to a valid `mobj_t`.
+/// whose `mo` is set.
 pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo;
+        let mo = (*player).mo().ptr();
         let cmd = &(*player).cmd;
 
         (*mo).angle = (*mo)
@@ -274,7 +274,7 @@ pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
         // C: player->mo->state == &states[S_PLAY]
         let p_play = state_ptr(S_PLAY as usize);
         if (cmd.forwardmove != 0 || cmd.sidemove != 0) && std::ptr::eq((*mo).state, p_play) {
-            P_SetMobjState(mo, S_PLAY_RUN1);
+            P_SetMobjState((*player).mo(), S_PLAY_RUN1);
         }
     }
 }
@@ -289,10 +289,10 @@ pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
 ///
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` field points to a valid `mobj_t`.
+/// whose `mo` is set.
 pub unsafe fn P_DeathThink(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo;
+        let mo = (*player).mo().ptr();
         let angle: u32;
         let delta: u32;
 
@@ -311,8 +311,12 @@ pub unsafe fn P_DeathThink(player: *mut PlayerT) {
         USER.borrow_mut().onground = ((*mo).z <= (*mo).floorz) as i32;
         P_CalcHeight(player);
 
-        if !(*player).attacker.is_null() && (*player).attacker != (*player).mo {
-            let atk = (*player).attacker;
+        // The attacker may have been removed since (an exploded barrel); like
+        // C, its last position is read through the stale handle.
+        if let Some(attacker) = (*player).attacker
+            && Some(attacker) != (*player).mo
+        {
+            let atk = attacker.ptr();
             angle = R_PointToAngle2((*mo).x, (*mo).y, (*atk).x, (*atk).y);
 
             delta = angle.wrapping_sub((*mo).angle);
@@ -360,11 +364,11 @@ pub unsafe fn P_DeathThink(player: *mut PlayerT) {
 ///
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` field points to a valid `mobj_t` with a valid `subsector`
+/// whose `mo` is set and has a valid `subsector`
 /// chain.
 pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
     unsafe {
-        let mo = (*player).mo;
+        let mo = (*player).mo().ptr();
         let mut newweapon: i32;
 
         // Fixme: do this in the cheat code

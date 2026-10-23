@@ -14,18 +14,15 @@ use crate::engine::{
     map::{LineId, SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
     play::{
-        ceilng::ceiling_t,
-        floor::{T_MovePlane, floormove_t},
-        mobj::mobj_t,
-        plats::plat_t,
+        floor::T_MovePlane,
+        mobj::MobjId,
         setup::LEVEL,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind, thinker_t,
+            DoorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
         },
     },
     sound::{S_StartNonPositionalSound, S_StartSectorSound},
-    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Movement speed for normal vertical doors (in fixed-point units per tic).
@@ -117,7 +114,7 @@ fn locked_door_message(special: i32) -> PlayerMessage {
 /// - `2` = initial wait (used by `vld_raiseIn5Mins`)
 #[derive(Clone, Copy)]
 pub struct vldoor_t {
-    /// Thinker list node.
+    /// Thinker state: what the door does each tic.
     pub thinker: thinker_t,
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
     pub kind: i32,
@@ -146,13 +143,13 @@ pub struct vldoor_t {
 ///
 /// # Safety
 ///
-/// `door` must be a valid, aligned, non-null pointer to a `vldoor_t` whose
-/// `sector` belongs to the current map. Called exclusively by the thinker
-/// dispatcher from `P_RunThinkers`.
-pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
+/// `door_id` must name a door whose `sector` belongs to the current map.
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+pub unsafe fn T_VerticalDoor(door_id: DoorId) {
+    let door = door_id.ptr();
     let res: i32;
     let clear_specialdata =
-        |sector: SectorId| LEVEL.borrow_mut().sectors[sector].specialdata = std::ptr::null_mut();
+        |sector: SectorId| LEVEL.borrow_mut().sectors[sector].specialdata = None;
 
     match (*door).direction {
         0 => {
@@ -255,13 +252,13 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
 ///
 /// # Safety
 ///
-/// `thing` must be a valid non-null pointer; the zone and thinker list must
-/// be initialised and a level loaded.
+/// `thing` must name a map object whose `player` is null or valid; the
+/// thinker list must be initialised and a level loaded.
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: *mut mobj_t) -> i32 {
-    let Some(p) = (*thing).player.as_mut() else {
+pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: MobjId) -> i32 {
+    let Some(p) = (*thing.ptr()).player.as_mut() else {
         return 0;
     };
 
@@ -303,7 +300,7 @@ pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: *mut mobj_t) -> i
 ///
 /// # Safety
 ///
-/// The zone and thinker list must be initialised and a level loaded.
+/// The thinker list must be initialised and a level loaded.
 pub unsafe fn EV_DoDoor(line: &line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
@@ -314,18 +311,15 @@ pub unsafe fn EV_DoDoor(line: &line_t, kind: i32) -> i32 {
     } >= 0
     {
         let sec = SectorId::new(secnum as usize);
-        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
+        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
             continue;
         }
 
         rtn = 1;
-        let door = Z_Malloc(
-            std::mem::size_of::<vldoor_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut vldoor_t;
-        P_AddThinker(&raw mut (*door).thinker);
-        LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*door).thinker;
+        let door_id = new_thinker::<vldoor_t>();
+        let door = door_id.ptr();
+        P_AddThinker(ThinkerId::Door(door_id));
+        LEVEL.borrow_mut().sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
 
         (*door).thinker.kind = ThinkerKind::Door;
         (*door).sector = sec;
@@ -391,34 +385,38 @@ pub unsafe fn EV_DoDoor(line: &line_t, kind: i32) -> i32 {
 /// `floormove_t.texture` with the two padding bytes after it (see
 /// [`floormove_t::door_direction_alias`]).
 ///
-/// # Safety
+/// # Panics
 ///
-/// `special` must be the non-null `specialdata` of a sector: the thinker of a
-/// live door, platform, ceiling or floor.
-unsafe fn special_door_direction(special: *mut thinker_t) -> i32 {
-    match (*special).kind.class() {
-        Some(ThinkerClass::Door) => (*vldoor_t::from_thinker(special)).direction,
-        Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count,
-        Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed,
-        Some(ThinkerClass::Floor) => (*floormove_t::from_thinker(special)).door_direction_alias(),
-        other => unreachable!("sector special data is a {other:?} thinker"),
+/// If `special` is a light, which no sector holds as its special data.
+fn special_door_direction(special: ThinkerId) -> i32 {
+    // SAFETY (all arms): a read through an arena pointer; no reference to a
+    // sector special is live while a line is used.
+    unsafe {
+        match special {
+            ThinkerId::Door(door) => (*door.ptr()).direction,
+            ThinkerId::Plat(plat) => (*plat.ptr()).count,
+            ThinkerId::Ceiling(ceiling) => (*ceiling.ptr()).speed,
+            ThinkerId::Floor(floor) => (*floor.ptr()).door_direction_alias(),
+            other => unreachable!("sector special data is {other:?}"),
+        }
     }
 }
 
 /// Write `direction` where [`special_door_direction`] reads it.
 ///
-/// # Safety
+/// # Panics
 ///
 /// Same as [`special_door_direction`].
-unsafe fn set_special_door_direction(special: *mut thinker_t, direction: i32) {
-    match (*special).kind.class() {
-        Some(ThinkerClass::Door) => (*vldoor_t::from_thinker(special)).direction = direction,
-        Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count = direction,
-        Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed = direction,
-        Some(ThinkerClass::Floor) => {
-            (*floormove_t::from_thinker(special)).set_door_direction_alias(direction)
+fn set_special_door_direction(special: ThinkerId, direction: i32) {
+    // SAFETY (all arms): as in `special_door_direction`.
+    unsafe {
+        match special {
+            ThinkerId::Door(door) => (*door.ptr()).direction = direction,
+            ThinkerId::Plat(plat) => (*plat.ptr()).count = direction,
+            ThinkerId::Ceiling(ceiling) => (*ceiling.ptr()).speed = direction,
+            ThinkerId::Floor(floor) => (*floor.ptr()).set_door_direction_alias(direction),
+            other => unreachable!("sector special data is {other:?}"),
         }
-        other => unreachable!("sector special data is a {other:?} thinker"),
     }
 }
 
@@ -431,12 +429,13 @@ unsafe fn set_special_door_direction(special: *mut thinker_t, direction: i32) {
 ///
 /// # Safety
 ///
-/// `thing` must be a valid non-null pointer and `line_id` a linedef of the
-/// current map; the zone and thinker list must be initialised.
+/// `thing` must name a map object whose `player` is null or valid, and
+/// `line_id` a linedef of the current map; the thinker list must be
+/// initialised.
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
+pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: MobjId) {
     let side = 0;
     // The line's record as the use found it; clearing its special below
     // writes the level's line.
@@ -444,6 +443,7 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
     let line = &line_record;
 
     // Check for locks
+    let thing = thing.ptr();
     let player = (*thing).player;
 
     match line.special as i32 {
@@ -486,7 +486,7 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
         (sec, level.sectors[sec].specialdata)
     };
 
-    if !special.is_null() {
+    if let Some(special) = special {
         match line.special as i32 {
             1 | 26 | 27 | 28 | 117 => {
                 if special_door_direction(special) == -1 {
@@ -495,10 +495,12 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
                     if (*thing).player.is_null() {
                         return;
                     }
-                    if (*special).kind == ThinkerKind::Door {
+                    if special.kind() == ThinkerKind::Door {
                         set_special_door_direction(special, -1);
-                    } else if (*special).kind == ThinkerKind::Plat {
-                        (*plat_t::from_thinker(special)).wait = -1;
+                    } else if let ThinkerId::Plat(plat) = special
+                        && special.kind() == ThinkerKind::Plat
+                    {
+                        (*plat.ptr()).wait = -1;
                     } else {
                         eprintln!("EV_VerticalDoor: Tried to close something that wasn't a door.");
                         set_special_door_direction(special, -1);
@@ -524,14 +526,11 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
     }
 
     // new door thinker
-    let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as i32,
-        PU_LEVSPEC,
-        std::ptr::null_mut(),
-    ) as *mut vldoor_t;
-    P_AddThinker(&raw mut (*door).thinker);
+    let door_id = new_thinker::<vldoor_t>();
+    let door = door_id.ptr();
+    P_AddThinker(ThinkerId::Door(door_id));
     let mut level = LEVEL.borrow_mut();
-    level.sectors[sec].specialdata = &raw mut (*door).thinker;
+    level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 1;
@@ -570,29 +569,28 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `sec` must be a sector of the current map; the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnDoorCloseIn30(sec: SectorId) {
-    let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as i32,
-        PU_LEVSPEC,
-        std::ptr::null_mut(),
-    ) as *mut vldoor_t;
+/// # Panics
+///
+/// If `sec` is not a sector of the current map.
+pub fn P_SpawnDoorCloseIn30(sec: SectorId) {
+    let door_id = new_thinker::<vldoor_t>();
 
-    P_AddThinker(&raw mut (*door).thinker);
+    P_AddThinker(ThinkerId::Door(door_id));
 
     {
         let mut level = LEVEL.borrow_mut();
-        level.sectors[sec].specialdata = &raw mut (*door).thinker;
+        level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
         level.sectors[sec].special = 0;
     }
 
-    (*door).thinker.kind = ThinkerKind::Door;
-    (*door).sector = sec;
-    (*door).direction = 0;
-    (*door).kind = vld_normal;
-    (*door).speed = VDOORSPEED;
-    (*door).topcountdown = 30 * TICRATE;
+    // SAFETY: the door was just made; nothing else refers to it yet.
+    let door = unsafe { &mut *door_id.ptr() };
+    door.thinker.kind = ThinkerKind::Door;
+    door.sector = sec;
+    door.direction = 0;
+    door.kind = vld_normal;
+    door.speed = VDOORSPEED;
+    door.topcountdown = 30 * TICRATE;
 }
 
 /// Spawn a door thinker that opens `sec` after 5 minutes (`vld_raiseIn5Mins`).
@@ -601,32 +599,29 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: SectorId) {
 /// `topcountdown = 5 * 60 * TICRATE`. `_secnum` is accepted for C ABI
 /// compatibility but is not used.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `sec` must be a sector of the current map; the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: SectorId, _secnum: i32) {
-    let door = Z_Malloc(
-        std::mem::size_of::<vldoor_t>() as i32,
-        PU_LEVSPEC,
-        std::ptr::null_mut(),
-    ) as *mut vldoor_t;
+/// If `sec` is not a sector of the current map.
+pub fn P_SpawnDoorRaiseIn5Mins(sec: SectorId, _secnum: i32) {
+    let door_id = new_thinker::<vldoor_t>();
 
-    P_AddThinker(&raw mut (*door).thinker);
+    P_AddThinker(ThinkerId::Door(door_id));
 
     let mut level = LEVEL.borrow_mut();
-    level.sectors[sec].specialdata = &raw mut (*door).thinker;
+    level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     level.sectors[sec].special = 0;
 
-    (*door).thinker.kind = ThinkerKind::Door;
-    (*door).sector = sec;
-    (*door).direction = 2;
-    (*door).kind = vld_raiseIn5Mins;
-    (*door).speed = VDOORSPEED;
-    (*door).topheight = P_FindLowestCeilingSurrounding(&level, sec);
-    (*door).topheight -= 4 * FRACUNIT;
-    (*door).topwait = VDOORWAIT;
-    (*door).topcountdown = 5 * 60 * TICRATE;
+    // SAFETY: the door was just made; nothing else refers to it yet.
+    let door = unsafe { &mut *door_id.ptr() };
+    door.thinker.kind = ThinkerKind::Door;
+    door.sector = sec;
+    door.direction = 2;
+    door.kind = vld_raiseIn5Mins;
+    door.speed = VDOORSPEED;
+    door.topheight = P_FindLowestCeilingSurrounding(&level, sec);
+    door.topheight -= 4 * FRACUNIT;
+    door.topwait = VDOORWAIT;
+    door.topcountdown = 5 * 60 * TICRATE;
 }
 
 #[cfg(test)]

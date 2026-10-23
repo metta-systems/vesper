@@ -17,11 +17,13 @@ use crate::engine::{
             P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
             getSector, getSide, twoSided,
         },
-        tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, leveltime, thinker_t},
+        tick::{
+            FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, leveltime, new_thinker,
+            thinker_t,
+        },
     },
     render_3d::data::RENDER_DATA,
     sound::{S_StartSectorSound, info::Sfx},
-    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).
@@ -81,7 +83,7 @@ use crate::engine::wad::format::LinedefFlag;
 /// `floordestheight`.
 #[derive(Clone, Copy)]
 pub struct floormove_t {
-    /// Thinker list node.
+    /// Thinker state: what the floor does each tic.
     pub thinker: thinker_t,
     /// Floor movement type (`floor_*` constant).
     pub kind: i32,
@@ -290,10 +292,10 @@ pub unsafe fn T_MovePlane(
 ///
 /// # Safety
 ///
-/// `floor` must be a valid, aligned, non-null pointer to a `floormove_t`
-/// whose `sector` belongs to the current map. Called exclusively by the
-/// thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
+/// `floor_id` must name a floor mover whose `sector` belongs to the current
+/// map. Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+pub unsafe fn T_MoveFloor(floor_id: FloorId) {
+    let floor = floor_id.ptr();
     let res = T_MovePlane(
         (*floor).sector,
         (*floor).speed,
@@ -311,7 +313,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
         {
             let mut level = LEVEL.borrow_mut();
             let sec = &mut level.sectors[(*floor).sector];
-            sec.specialdata = std::ptr::null_mut();
+            sec.specialdata = None;
 
             if (*floor).direction == 1 {
                 if (*floor).kind == floor_donutRaise {
@@ -323,10 +325,22 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
                 sec.floorpic = (*floor).texture;
             }
         }
-        P_RemoveThinker(&raw mut (*floor).thinker);
+        P_RemoveThinker(&mut (*floor).thinker);
 
         S_StartSectorSound((*floor).sector, Sfx::Pstop as i32);
     }
+}
+
+/// Make a zeroed floor mover, list it as a thinker and make it `sector`'s
+/// special (C's `Z_Malloc`, `P_AddThinker` and `sec->specialdata = floor`).
+///
+/// The caller fills in the mover through the returned pointer, which stays
+/// valid for the rest of the program. The level must not be borrowed.
+pub fn add_floor_mover(sector: SectorId) -> *mut floormove_t {
+    let floor = new_thinker::<floormove_t>();
+    P_AddThinker(ThinkerId::Floor(floor));
+    LEVEL.borrow_mut().sectors[sector].specialdata = Some(ThinkerId::Floor(floor));
+    floor.ptr()
 }
 
 /// Linedef-triggered event: activate floor movement on all tagged sectors.
@@ -343,7 +357,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
 ///
 /// # Safety
 ///
-/// The zone and thinker list must be initialised and a level loaded.
+/// The thinker list must be initialised and a level loaded.
 pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
@@ -355,22 +369,16 @@ pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
     {
         let sec = SectorId::new(secnum as usize);
 
-        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
+        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
             continue;
         }
 
         rtn = 1;
-        let floor = Z_Malloc(
-            std::mem::size_of::<floormove_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut floormove_t;
-        P_AddThinker(&raw mut (*floor).thinker);
+        let floor = add_floor_mover(sec);
 
         // Setting up the floor runs no play code, so one borrow serves it.
         let mut level = LEVEL.borrow_mut();
         let level = &mut *level;
-        level.sectors[sec].specialdata = &raw mut (*floor).thinker;
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).kind = floortype;
         (*floor).crush = 0;
@@ -522,7 +530,7 @@ pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// The zone and thinker list must be initialised and a level loaded.
+/// The thinker list must be initialised and a level loaded.
 pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
@@ -534,18 +542,12 @@ pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
     {
         let mut sec = SectorId::new(secnum as usize);
 
-        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
+        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
             continue;
         }
 
         rtn = 1;
-        let mut floor = Z_Malloc(
-            std::mem::size_of::<floormove_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut floormove_t;
-        P_AddThinker(&raw mut (*floor).thinker);
-        LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*floor).thinker;
+        let mut floor = add_floor_mover(sec);
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).direction = 1;
         (*floor).sector = sec;
@@ -590,7 +592,7 @@ pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
 
                     height += stairsize;
 
-                    if !level.sectors[tsec].specialdata.is_null() {
+                    if level.sectors[tsec].specialdata.is_some() {
                         continue;
                     }
                     tsec
@@ -598,15 +600,7 @@ pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
 
                 sec = tsec;
                 secnum = tsec.index() as i32;
-                floor = Z_Malloc(
-                    std::mem::size_of::<floormove_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut floormove_t;
-
-                P_AddThinker(&raw mut (*floor).thinker);
-
-                LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*floor).thinker;
+                floor = add_floor_mover(sec);
                 (*floor).thinker.kind = ThinkerKind::Floor;
                 (*floor).direction = 1;
                 (*floor).sector = sec;
@@ -631,10 +625,9 @@ mod tests {
             map::{LineId, VertexId, sector_t, slopetype_t},
             play::{
                 setup::{LEVEL_TEST_LOCK, LevelState},
-                tick::{P_InitThinkers, ThinkerContainer},
+                tick::{P_InitThinkers, THINKER_TEST_LOCK},
             },
             wad::format::LinedefFlag,
-            zone::{Z_Init, ZONE_TEST_LOCK},
         },
         std::sync::Mutex,
     };
@@ -679,7 +672,7 @@ mod tests {
             frontsector: Some(SectorId::new(front)),
             backsector: Some(SectorId::new(back)),
             validcount: 0,
-            specialdata: std::ptr::null_mut(),
+            specialdata: None,
         }
     }
 
@@ -689,10 +682,9 @@ mod tests {
     #[test]
     fn build_stairs_raises_every_step() {
         let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
-        let _zone_guard = ZONE_TEST_LOCK.lock().unwrap();
+        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
         let step_sector = |tag: i16, lines: usize, linecount: i32| {
-            // SAFETY: an all-zero `sector_t` is a valid empty sector.
-            let mut sector: sector_t = unsafe { std::mem::zeroed() };
+            let mut sector = sector_t::ZERO;
             sector.tag = tag;
             sector.floorpic = 7;
             sector.lines = lines;
@@ -719,9 +711,8 @@ mod tests {
         let mut trigger = step_line(0, 1);
         trigger.tag = 1;
 
-        // SAFETY: the zone and thinker list are set up just before the call.
+        // SAFETY: the thinker list is set up just before the call.
         let destinations: Vec<fixed_t> = unsafe {
-            Z_Init();
             P_InitThinkers();
             assert_eq!(EV_BuildStairs(&trigger, stair_build8), 1);
             LEVEL
@@ -729,8 +720,10 @@ mod tests {
                 .sectors
                 .iter()
                 .map(|sector| {
-                    assert!(!sector.specialdata.is_null(), "every step gets a mover");
-                    (*floormove_t::from_thinker(sector.specialdata)).floordestheight
+                    let Some(ThinkerId::Floor(floor)) = sector.specialdata else {
+                        panic!("every step gets a mover");
+                    };
+                    (*floor.ptr()).floordestheight
                 })
                 .collect()
         };

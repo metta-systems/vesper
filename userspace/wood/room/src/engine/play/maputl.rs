@@ -8,7 +8,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use std::ptr;
 
 use crate::engine::{
     global::Global,
@@ -16,7 +16,7 @@ use crate::engine::{
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
     play::{
         info::*,
-        mobj::mobj_t,
+        mobj::MobjId,
         pspr::PSPR,
         setup::{LEVEL, LevelState, SPAWN_SPOTS, blockmap_origin},
     },
@@ -43,24 +43,28 @@ pub const MAPBTOFRAC: i32 = MAPBLOCKSHIFT - FRACBITS as i32;
 /// `p_local.h`).
 ///
 /// `frac` is the fractional position along the trace (fixed-point in
-/// `[0, FRACUNIT]`). `isaline` selects the active arm of [`intercept_t_d`]:
-/// non-zero means `d.line`, zero means `d.thing`.
+/// `[0, FRACUNIT]`). `hit` is what the trace crossed: C's `isaline` flag and
+/// the `d` union of a line and a thing pointer.
 #[derive(Clone, Copy)]
 pub struct intercept_t {
     pub frac: i32,
-    pub isaline: i32, // boolean
-    pub d: intercept_t_d,
+    pub hit: InterceptHit,
 }
 
-/// Untagged union holding the intercepted entity (`intercept_t.d` in
-/// `p_local.h`).
-///
-/// Active arm is selected by [`intercept_t::isaline`]. Reading the inactive
-/// arm is undefined behaviour; callers must consult `isaline` first.
-#[derive(Clone, Copy)]
-pub union intercept_t_d {
-    pub thing: *mut c_void,
-    pub line: LineId,
+/// What an intercept crossed (C's `intercept_t.isaline` and `d`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterceptHit {
+    /// A linedef (`isaline` true, `d.line`).
+    Line(LineId),
+    /// A map object (`isaline` false, `d.thing`).
+    Thing(MobjId),
+}
+
+impl intercept_t {
+    /// C's `isaline` flag: 1 for a line, 0 for a thing.
+    pub fn isaline(&self) -> i32 {
+        matches!(self.hit, InterceptHit::Line(_)) as i32
+    }
 }
 
 /// Parametric dividing line (`divline_t` in `p_local.h`).
@@ -184,10 +188,7 @@ pub static MAPUTL: Global<MapUtlState> = Global::new(MapUtlState::new());
 pub static INTERCEPTS: Global<[intercept_t; MAXINTERCEPTS]> = Global::new(
     [intercept_t {
         frac: 0,
-        isaline: 0,
-        d: intercept_t_d {
-            thing: ptr::null_mut(),
-        },
+        hit: InterceptHit::Line(LineId::new(0)),
     }; MAXINTERCEPTS],
 );
 
@@ -470,35 +471,31 @@ pub fn P_LineOpening(level: &LevelState, linedef: LineId) {
 /// Matches `P_UnsetThingPosition` in `p_maputl.c`.
 ///
 /// # Safety
-/// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. All
-/// linked-list pointers (`snext`, `sprev`, `bnext`, `bprev`) must be either
-/// null or valid `mobj_t` pointers. The global blockmap arrays from
-/// `p_setup` must be initialised.
-pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
+/// `thing_id` must name an initialised map object whose list links
+/// (`snext`, `sprev`, `bnext`, `bprev`) name objects of the loaded level,
+/// and no reference to those objects may be live. The global blockmap
+/// arrays from `p_setup` must be initialised.
+pub unsafe fn P_UnsetThingPosition(thing_id: MobjId) {
     unsafe {
-        let thing = &mut *thing;
+        let thing = &mut *thing_id.ptr();
         let mut level = LEVEL.borrow_mut();
         if (thing.flags & MF_NOSECTOR) == 0 {
-            if !thing.snext.is_null() {
-                let snext = thing.snext;
-                (*snext).sprev = thing.sprev;
+            if let Some(snext) = thing.snext {
+                (*snext.ptr()).sprev = thing.sprev;
             }
-            if !thing.sprev.is_null() {
-                let sprev = thing.sprev;
-                (*sprev).snext = thing.snext;
+            if let Some(sprev) = thing.sprev {
+                (*sprev.ptr()).snext = thing.snext;
             } else {
                 let sector = level.subsectors[thing.subsector].sector;
                 level.sectors[sector].thinglist = thing.snext;
             }
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
-            if !thing.bnext.is_null() {
-                let bnext = thing.bnext;
-                (*bnext).bprev = thing.bprev;
+            if let Some(bnext) = thing.bnext {
+                (*bnext.ptr()).bprev = thing.bprev;
             }
-            if !thing.bprev.is_null() {
-                let bprev = thing.bprev;
-                (*bprev).bnext = thing.bnext;
+            if let Some(bprev) = thing.bprev {
+                (*bprev.ptr()).bnext = thing.bnext;
             } else {
                 let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
                 let blocky = (thing.y - level.bmaporgy) >> MAPBLOCKSHIFT;
@@ -532,24 +529,24 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
 /// Matches `P_SetThingPosition` in `p_maputl.c`.
 ///
 /// # Safety
-/// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
+/// `thing_id` must name an initialised map object, and no reference to the
+/// objects at the head of its new sector and block lists may be live. The
 /// global map data (sectors, blockmap) from `p_setup` must be loaded.
-pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
+pub unsafe fn P_SetThingPosition(thing_id: MobjId) {
     unsafe {
-        let thing = &mut *thing;
+        let thing = &mut *thing_id.ptr();
         let ss = R_PointInSubsector(thing.x, thing.y);
         thing.subsector = ss;
         let mut level = LEVEL.borrow_mut();
         if (thing.flags & MF_NOSECTOR) == 0 {
             let sector = level.subsectors[ss].sector;
             let sec = &mut level.sectors[sector];
-            thing.sprev = ptr::null_mut();
+            thing.sprev = None;
             thing.snext = sec.thinglist;
-            if !sec.thinglist.is_null() {
-                let thinglist = sec.thinglist;
-                (*thinglist).sprev = thing as *mut mobj_t;
+            if let Some(thinglist) = sec.thinglist {
+                (*thinglist.ptr()).sprev = Some(thing_id);
             }
-            sec.thinglist = thing as *mut mobj_t;
+            sec.thinglist = Some(thing_id);
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
             let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
@@ -557,15 +554,15 @@ pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
             if blockx >= 0 && blockx < level.bmapwidth && blocky >= 0 && blocky < level.bmapheight {
                 let index = (blocky * level.bmapwidth + blockx) as usize;
                 let link = &mut level.blocklinks[index];
-                thing.bprev = ptr::null_mut();
+                thing.bprev = None;
                 thing.bnext = *link;
-                if !link.is_null() {
-                    (**link).bprev = thing as *mut mobj_t;
+                if let Some(head) = *link {
+                    (*head.ptr()).bprev = Some(thing_id);
                 }
-                *link = thing as *mut mobj_t;
+                *link = Some(thing_id);
             } else {
-                thing.bnext = ptr::null_mut();
-                thing.bprev = ptr::null_mut();
+                thing.bnext = None;
+                thing.bprev = None;
             }
         }
     }
@@ -643,11 +640,7 @@ pub unsafe fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(LineId
 /// objects must be sound in the caller's current state: it is an
 /// `unsafe fn` and this function discharges its contract on the caller's
 /// behalf.
-pub unsafe fn P_BlockThingsIterator(
-    x: i32,
-    y: i32,
-    func: Option<unsafe fn(*mut mobj_t) -> u32>,
-) -> u32 {
+pub unsafe fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(MobjId) -> u32>) -> u32 {
     let mut mobj = {
         let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
@@ -656,11 +649,13 @@ pub unsafe fn P_BlockThingsIterator(
         level.blocklinks[(y * level.bmapwidth + x) as usize]
     };
     unsafe {
-        while !mobj.is_null() {
-            if func.unwrap()(mobj) == 0 {
+        while let Some(current) = mobj {
+            if func.unwrap()(current) == 0 {
                 return 0;
             }
-            mobj = (*mobj).bnext;
+            // Read after the callback, as C does: it may have moved or
+            // removed the object, whose links still name its old neighbour.
+            mobj = (*current.ptr()).bnext;
         }
         1
     }
@@ -767,14 +762,12 @@ unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
     }
     let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL as i32 - 1) * 12;
     let intercept = *intercept;
-    let address = if intercept.isaline != 0 {
-        let line = intercept.d.line;
-        (&raw const LEVEL.borrow().lines[line]).addr()
-    } else {
-        intercept.d.thing.addr()
+    let address = match intercept.hit {
+        InterceptHit::Line(line) => (&raw const LEVEL.borrow().lines[line]).addr(),
+        InterceptHit::Thing(thing) => thing.address(),
     };
     InterceptsMemoryOverrun(location, intercept.frac);
-    InterceptsMemoryOverrun(location + 4, intercept.isaline);
+    InterceptsMemoryOverrun(location + 4, intercept.isaline());
     InterceptsMemoryOverrun(location + 8, address as i32);
 }
 
@@ -845,8 +838,7 @@ pub unsafe fn PIT_AddLineIntercepts(ld: LineId) -> u32 {
         }
         let intercept_p = MAPUTL.borrow().intercept_p;
         (*intercept_p).frac = frac;
-        (*intercept_p).isaline = 1;
-        (*intercept_p).d.line = ld;
+        (*intercept_p).hit = InterceptHit::Line(ld);
         InterceptsOverrun(
             intercept_p.offset_from(intercepts_base()) as i32,
             intercept_p,
@@ -873,12 +865,12 @@ pub unsafe fn PIT_AddLineIntercepts(ld: LineId) -> u32 {
 /// Matches `PIT_AddThingIntercepts` in `p_maputl.c`.
 ///
 /// # Safety
-/// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
-/// global `trace`, `intercepts`, and `intercept_p` must be set up by a
-/// preceding `P_PathTraverse` call.
-pub unsafe fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
+/// `thing_id` must name an initialised map object. The global `trace`,
+/// `intercepts`, and `intercept_p` must be set up by a preceding
+/// `P_PathTraverse` call.
+pub unsafe fn PIT_AddThingIntercepts(thing_id: MobjId) -> u32 {
     unsafe {
-        let thing = &*thing;
+        let thing = &*thing_id.ptr();
         let trace = trace();
         // C: tracepositive = (trace.dx ^ trace.dy)>0;
         let tracepositive = (trace.dx ^ trace.dy) > 0;
@@ -914,8 +906,7 @@ pub unsafe fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
         }
         let intercept_p = MAPUTL.borrow().intercept_p;
         (*intercept_p).frac = frac;
-        (*intercept_p).isaline = 0;
-        (*intercept_p).d.thing = thing as *const _ as *mut c_void;
+        (*intercept_p).hit = InterceptHit::Thing(thing_id);
         InterceptsOverrun(
             intercept_p.offset_from(intercepts_base()) as i32,
             intercept_p,
@@ -1094,7 +1085,7 @@ pub unsafe fn P_PathTraverse(
             && P_BlockThingsIterator(
                 mapx,
                 mapy,
-                Some(PIT_AddThingIntercepts as unsafe fn(*mut mobj_t) -> u32),
+                Some(PIT_AddThingIntercepts as unsafe fn(MobjId) -> u32),
             ) == 0
         {
             return 0;
@@ -1149,7 +1140,7 @@ mod tests {
             frontsector: None,
             backsector: None,
             validcount: 0,
-            specialdata: ptr::null_mut(),
+            specialdata: None,
         }
     }
 

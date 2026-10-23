@@ -14,7 +14,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::play::{info::State, mobj::mobj_t};
+use crate::engine::play::{info::State, mobj::MobjId};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -113,8 +113,9 @@ pub struct PspdefT {
 /// it with `mem::zeroed()`.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerT {
-    /// Pointer to the player's map object (position, velocity, health during play).
-    pub mo: *mut mobj_t,
+    /// The player's map object (position, velocity, health during play);
+    /// `None` before the player is first spawned. [`PlayerT::mo`] reads it.
+    pub mo: Option<MobjId>,
     /// Current lifecycle state: alive (`PST_LIVE`), dead (`PST_DEAD`), or respawning (`PST_REBORN`).
     pub playerstate: i32,
     /// The tic command built for this player this tic.
@@ -171,8 +172,8 @@ pub struct PlayerT {
     pub damagecount: i32,
     /// Tic counter for yellow bonus flash; decrements toward 0 each tic.
     pub bonuscount: i32,
-    /// Pointer to the `mobj_t` that last damaged this player; null for environment damage.
-    pub attacker: *mut mobj_t,
+    /// The map object that last damaged this player; `None` for environment damage.
+    pub attacker: Option<MobjId>,
     /// Extra lighting bonus for gun flashes (added to sector light level during render).
     pub extralight: i32,
     /// If non-zero, overrides the colormap used to render the player's view (e.g., `REDCOLORMAP` for pain).
@@ -183,6 +184,19 @@ pub struct PlayerT {
     pub psprites: [PspdefT; NUMPSPRITES],
     /// Non-zero if this player has completed a secret level this episode.
     pub didsecret: i32,
+}
+
+impl PlayerT {
+    /// The player's map object, which every player in a running level has
+    /// (C dereferences `player->mo` without a check).
+    ///
+    /// # Panics
+    ///
+    /// If the player has not been spawned.
+    #[track_caller]
+    pub fn mo(&self) -> MobjId {
+        self.mo.expect("player has no map object")
+    }
 }
 
 /// The player slot accessors (`&players[i]`, `&players[consoleplayer]`) and

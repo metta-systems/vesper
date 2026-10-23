@@ -33,20 +33,19 @@ use crate::{
         },
         play::{
             ceilng::{CEILINGS, MAXCEILINGS},
-            floor::{FLOORSPEED, floormove_t},
+            floor::{FLOORSPEED, add_floor_mover},
             info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
             lights::{FASTDARK, SLOWDARK},
-            mobj::mobj_t,
+            mobj::MobjId,
             plats::{MAXPLATS, PLATS},
             setup::{LEVEL, LevelState},
             switch::{MAXBUTTONS, SWITCHES, button_t, start_button_sound},
-            tick::{P_AddThinker, ThinkerKind, leveltime},
+            tick::{ThinkerKind, leveltime},
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
         },
         wad::format::LinedefFlag,
-        zone::PU_LEVSPEC,
     },
     i_error,
 };
@@ -311,7 +310,6 @@ use crate::engine::{
         telept::EV_Teleport,
     },
     wad::W_CheckNumForName,
-    zone::Z_Malloc,
 };
 
 // ---------------------------------------------------------------------------
@@ -628,15 +626,15 @@ pub fn P_FindMinSurroundingLight(level: &LevelState, sector: SectorId, max: i32)
 /// - `thing`: the map object that crossed the line.
 ///
 /// Called from `p_map.c` via C FFI.
-pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: *mut mobj_t) {
+pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
     // The line's record as the crossing found it; the actions read its tag
     // and sectors, and clearing the special writes the level's line.
     let line_record = LEVEL.borrow().lines[linenum];
     let line = &line_record;
     let clear_special = || LEVEL.borrow_mut().lines[linenum].special = 0;
 
-    if (*thing).player.is_null() {
-        match (*thing).kind {
+    if (*thing.ptr()).player.is_null() {
+        match (*thing.ptr()).kind {
             MT_ROCKET | MT_PLASMA | MT_BFG | MT_TROOPSHOT | MT_HEADSHOT | MT_BRUISERSHOT => {
                 return;
             }
@@ -801,7 +799,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: *mut mobj_t)
         124 => {
             G_SecretExitLevel();
         }
-        125 if (*thing).player.is_null() => {
+        125 if (*thing.ptr()).player.is_null() => {
             EV_Teleport(line, side, thing);
             clear_special();
         }
@@ -901,7 +899,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: *mut mobj_t)
         120 => {
             EV_DoPlat(line, blazeDWUS, 0);
         }
-        126 if (*thing).player.is_null() => {
+        126 if (*thing.ptr()).player.is_null() => {
             EV_Teleport(line, side, thing);
         }
         128 => {
@@ -934,10 +932,10 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: *mut mobj_t)
 ///
 /// Called from p_map.c (`PTR_ShootTraverse`) when a bullet or projectile
 /// hits a special linedef.
-pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line_id: LineId) {
+pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
     let line_record = LEVEL.borrow().lines[line_id];
     let line = &line_record;
-    if (*thing).player.is_null() {
+    if (*thing.ptr()).player.is_null() {
         let mut ok = 0;
         if line.special as i32 == 46 {
             ok = 1
@@ -990,7 +988,7 @@ pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line_id: LineId) {
 ///
 /// Called from g_game.c / p_tick.c each game tic for every active player.
 pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
-    let mo = (*player).mo;
+    let mo = (*player).mo().ptr();
     let (sector, floorheight, special) = {
         let level = LEVEL.borrow();
         let sector = level.subsectors[(*mo).subsector].sector;
@@ -1008,17 +1006,17 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
     match special as i32 {
         5 => {
             if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 10);
+                P_DamageMobj((*player).mo(), None, None, 10);
             }
         }
         7 => {
             if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 5);
+                P_DamageMobj((*player).mo(), None, None, 5);
             }
         }
         16 | 4 => {
             if ((*player).powers[pw_ironfeet] == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 20);
+                P_DamageMobj((*player).mo(), None, None, 20);
             }
         }
         9 => {
@@ -1028,7 +1026,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
         11 => {
             (*player).cheats &= !CF_GODMODE;
             if leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 20);
+                P_DamageMobj((*player).mo(), None, None, 20);
             }
             if (*player).health <= 10 {
                 G_ExitLevel();
@@ -1257,7 +1255,7 @@ pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
         let s1 = SectorId::new(secnum as usize);
         let s2 = {
             let level = LEVEL.borrow();
-            if !level.sectors[s1].specialdata.is_null() {
+            if level.sectors[s1].specialdata.is_some() {
                 continue;
             }
 
@@ -1302,13 +1300,7 @@ pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
             };
 
             // Spawn rising slime
-            let floor = Z_Malloc(
-                std::mem::size_of::<floormove_t>() as i32,
-                PU_LEVSPEC,
-                ptr::null_mut(),
-            ) as *mut floormove_t;
-            P_AddThinker(&raw mut (*floor).thinker);
-            LEVEL.borrow_mut().sectors[s2].specialdata = &raw mut (*floor).thinker;
+            let floor = add_floor_mover(s2);
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = donutRaise;
             (*floor).crush = 0;
@@ -1320,13 +1312,7 @@ pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
             (*floor).floordestheight = s3_floorheight;
 
             // Spawn lowering donut-hole
-            let floor = Z_Malloc(
-                std::mem::size_of::<floormove_t>() as i32,
-                PU_LEVSPEC,
-                ptr::null_mut(),
-            ) as *mut floormove_t;
-            P_AddThinker(&raw mut (*floor).thinker);
-            LEVEL.borrow_mut().sectors[s1].specialdata = &raw mut (*floor).thinker;
+            let floor = add_floor_mover(s1);
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = lowerFloor;
             (*floor).crush = 0;
@@ -1427,8 +1413,8 @@ pub unsafe fn P_SpawnSpecials() {
         }
     }
 
-    CEILINGS.borrow_mut().activeceilings = [ptr::null_mut(); MAXCEILINGS];
-    PLATS.borrow_mut().activeplats = [ptr::null_mut(); MAXPLATS];
+    CEILINGS.borrow_mut().activeceilings = [None; MAXCEILINGS];
+    PLATS.borrow_mut().activeplats = [None; MAXPLATS];
     SWITCHES.borrow_mut().buttonlist = [button_t::EMPTY; MAXBUTTONS];
 }
 
@@ -1461,7 +1447,6 @@ mod tests {
         assert_eq!(MAXANIMS, 32);
         assert_eq!(MAXLINEANIMS, 64);
         assert_eq!(MAX_ADJOINING_SECTORS, 20);
-        assert_eq!(PU_LEVSPEC, 6);
         assert_eq!(Sfx::Swtchn as i32, 23);
         assert_eq!(CF_GODMODE, 2);
         assert_eq!(pw_ironfeet, 3);

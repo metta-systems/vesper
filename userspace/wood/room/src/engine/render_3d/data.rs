@@ -41,7 +41,6 @@ use {std::ptr, zerocopy::FromBytes};
 use crate::engine::{
     global::Global,
     math::fixed::FRACBITS,
-    play::mobj::mobj_t,
     zone::{PU_CACHE, PU_STATIC},
 };
 
@@ -121,7 +120,7 @@ use crate::engine::{
     interface::system::I_ConsoleStdout,
     play::{
         setup::LEVEL,
-        tick::{ThinkerContainer, ThinkerKind, thinkercap},
+        tick::{ThinkerId, ThinkerKind, thinkers},
     },
     render_3d::{sky::SKY, things::SPRITES},
     wad::{
@@ -1172,14 +1171,12 @@ pub unsafe fn R_PrecacheLevel() {
         *spritepresent.add(i) = 0;
     }
 
-    let cap = thinkercap();
-    let mut th = (*cap).next;
-    while !std::ptr::eq(th, cap) {
-        if (*th).kind == ThinkerKind::Mobj {
-            let mobj = mobj_t::from_thinker(th);
-            *spritepresent.add((*mobj).sprite as usize) = 1;
+    for thinker in thinkers() {
+        if let ThinkerId::Mobj(mobj) = thinker
+            && thinker.kind() == ThinkerKind::Mobj
+        {
+            *spritepresent.add((*mobj.ptr()).sprite as usize) = 1;
         }
-        th = (*th).next;
     }
 
     data.spritememory = 0;

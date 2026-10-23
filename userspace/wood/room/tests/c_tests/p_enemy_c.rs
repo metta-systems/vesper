@@ -114,14 +114,14 @@ fn skullspeed_is_20_fracunits() {
 // Brain-target globals — default zero / NULL
 // ---------------------------------------------------------------------------
 
-/// `braintargets[32]` holds pointers to Boss Brain teleport targets; all NULL
+/// `braintargets[32]` holds the Boss Brain teleport targets; all empty
 /// before `P_SpawnBrainTargets` runs.
 #[test]
 fn braintargets_initially_null() {
-    for (i, &ptr) in enemy::EnemyState::new().braintargets.iter().enumerate() {
+    for (i, target) in enemy::EnemyState::new().braintargets.iter().enumerate() {
         assert!(
-            ptr.is_null(),
-            "braintargets[{i}] should be NULL before spawn"
+            target.is_none(),
+            "braintargets[{i}] should be empty before spawn"
         );
     }
 }

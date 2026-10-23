@@ -810,7 +810,7 @@ pub fn doomgeneric_Tick() {
         let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
             (*player(console as usize)).mo
         } else {
-            std::ptr::null_mut()
+            None
         };
         S_UpdateSounds(mo);
 

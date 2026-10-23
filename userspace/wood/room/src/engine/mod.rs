@@ -11,6 +11,7 @@
 //! Each submodule carries its own `//!` module header documenting the C file
 //! it ports and what it does; see the individual files for details.
 
+pub mod arena;
 pub mod automap;
 pub mod dehacked;
 pub mod doom;

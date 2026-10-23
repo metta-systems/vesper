@@ -10,7 +10,7 @@
 use crate::engine::{
     map::line_t,
     math::tables::ANGLETOFINESHIFT,
-    play::{info::*, mobj::mobj_t},
+    play::{info::*, mobj::MobjId},
 };
 
 /// Doom version constant for the first Final Doom executable.
@@ -26,7 +26,7 @@ use crate::engine::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
         setup::LEVEL,
-        tick::{ThinkerContainer, ThinkerKind, thinkercap},
+        tick::{ThinkerId, ThinkerKind, thinkers},
     },
     sound::{S_StartSound, info::Sfx},
 };
@@ -54,11 +54,11 @@ use crate::engine::{
 ///
 /// # Safety
 ///
-/// `thing` must be a valid, non-null pointer for the duration of the call.
-/// The level and `thinkercap` must be initialised (i.e. a level must be
-/// loaded).
-pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing: *mut mobj_t) -> i32 {
+/// `thing_id` must name a map object of the level, and a level must be
+/// loaded.
+pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
     unsafe {
+        let thing = thing_id.ptr();
         // Don't teleport missiles
         if (*thing).flags & MF_MISSILE != 0 {
             return 0;
@@ -71,33 +71,31 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing: *mut mobj_t) -> i32 {
 
         let tag = line.tag;
         let numsectors = LEVEL.borrow().numsectors;
-        let cap = thinkercap();
 
         for i in 0..numsectors as usize {
             if LEVEL.borrow().sectors[i].tag != tag {
                 continue;
             }
 
-            let mut thinker = (*cap).next;
-            while !std::ptr::eq(thinker, cap) {
+            for thinker in thinkers() {
                 // Not a mobj
-                if (*thinker).kind != ThinkerKind::Mobj {
-                    thinker = (*thinker).next;
+                let ThinkerId::Mobj(m) = thinker else {
+                    continue;
+                };
+                if thinker.kind() != ThinkerKind::Mobj {
                     continue;
                 }
 
-                let m = mobj_t::from_thinker(thinker);
+                let m = m.ptr();
 
                 // Not a teleportman
                 if (*m).kind != MT_TELEPORTMAN {
-                    thinker = (*thinker).next;
                     continue;
                 }
 
                 let sector = LEVEL.borrow().subsectors[(*m).subsector].sector;
                 // Wrong sector
                 if sector.index() != i {
-                    thinker = (*thinker).next;
                     continue;
                 }
 
@@ -105,7 +103,7 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing: *mut mobj_t) -> i32 {
                 let oldy = (*thing).y;
                 let oldz = (*thing).z;
 
-                if P_TeleportMove(thing, (*m).x, (*m).y) == 0 {
+                if P_TeleportMove(thing_id, (*m).x, (*m).y) == 0 {
                     return 0;
                 }
 

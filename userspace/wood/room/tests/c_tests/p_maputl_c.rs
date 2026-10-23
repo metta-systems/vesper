@@ -164,7 +164,7 @@ fn make_line_record(
         frontsector,
         backsector,
         validcount: 0,
-        specialdata: std::ptr::null_mut(),
+        specialdata: None,
     }
 }
 
@@ -570,7 +570,7 @@ fn box_crosses_line_returns_negative_one() {
 /// Zero-initialise a `sector_t` and set only the two height fields the
 /// line-opening tests care about.
 fn make_sector(floorheight: i32, ceilingheight: i32) -> sector_t {
-    let mut s: sector_t = unsafe { std::mem::zeroed() };
+    let mut s = sector_t::ZERO;
     s.floorheight = floorheight;
     s.ceilingheight = ceilingheight;
     s
@@ -720,19 +720,15 @@ unsafe fn record_and_stop(intr: *mut play::maputl::intercept_t) -> u32 {
     0 // stop
 }
 
-/// Fill the first intercepts with `fracs` (thing intercepts with a null
-/// thing) and point the write cursor just past them, as `P_PathTraverse`
-/// leaves it.
+/// Fill the first intercepts with `fracs` (line intercepts of line 0) and
+/// point the write cursor just past them, as `P_PathTraverse` leaves it.
 fn load_intercepts(fracs: &[i32]) {
     {
         let mut intercepts = play::maputl::INTERCEPTS.borrow_mut();
         for (slot, &frac) in intercepts.iter_mut().zip(fracs) {
             *slot = play::maputl::intercept_t {
                 frac,
-                isaline: 0,
-                d: play::maputl::intercept_t_d {
-                    thing: std::ptr::null_mut(),
-                },
+                hit: play::maputl::InterceptHit::Line(room::engine::map::LineId::new(0)),
             };
         }
     }

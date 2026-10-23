@@ -648,11 +648,12 @@ fn capture_snapshot(tic: usize) -> Snapshot {
         0
     };
     let p = unsafe { &*player(pidx) };
-    let (mo_x, mo_y, mo_z, mo_angle) = if p.mo.is_null() {
-        (0, 0, 0, 0)
-    } else {
-        let mo = unsafe { &*p.mo };
-        (mo.x, mo.y, mo.z, mo.angle)
+    let (mo_x, mo_y, mo_z, mo_angle) = match p.mo {
+        None => (0, 0, 0, 0),
+        Some(mo) => {
+            let mo = unsafe { &*mo.ptr() };
+            (mo.x, mo.y, mo.z, mo.angle)
+        }
     };
 
     Snapshot {
@@ -846,6 +847,15 @@ fn demo_playthrough() {
             }
             snapshots.push(snap);
         }
+    }
+
+    // Debug builds record every read of a freed map object or thinker
+    // through a stale handle (vanilla reads freed memory there).
+    for access in room::engine::arena::stale_accesses() {
+        eprintln!(
+            "demo_playthrough: stale {} read at {} ({} times)",
+            access.kind, access.site, access.count
+        );
     }
 
     if bless {

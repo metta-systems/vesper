@@ -7,10 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::engine::{sound::info::Sfx, wad::format::LinedefFlag},
-    std::ffi::c_void,
-};
+use crate::engine::{sound::info::Sfx, wad::format::LinedefFlag};
 
 use crate::{
     engine::{
@@ -21,7 +18,7 @@ use crate::{
             ceilng::EV_DoCeiling,
             floor::{EV_BuildStairs, EV_DoFloor},
             lights::EV_LightTurnOn,
-            mobj::mobj_t,
+            mobj::MobjId,
             plats::EV_DoPlat,
         },
     },
@@ -657,10 +654,10 @@ pub fn P_ChangeSwitchTexture(line: LineId, useAgain: i32) {
 ///
 /// # Safety
 ///
-/// `thing` must be a valid, non-null pointer to a `mobj_t`.  `line_id`
-/// must be a linedef of the loaded level.  All global game-state statics
-/// must only be accessed from the game-logic thread.
-pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -> i32 {
+/// `thing` must name a map object of the level.  `line_id` must be a
+/// linedef of the loaded level.  All global game-state statics must only be
+/// accessed from the game-logic thread.
+pub unsafe fn P_UseSpecialLine(thing: MobjId, line_id: LineId, side: i32) -> i32 {
     // The line's record as the use found it; the actions read its tag and
     // sectors, and every write goes to the level through `line_id`.
     let line_record = LEVEL.borrow().lines[line_id];
@@ -679,8 +676,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -
     }
 
     // Switches that other things can activate.
-    let mobj = thing as *mut mobj_t;
-    if (*mobj).player.is_null() {
+    if (*thing.ptr()).player.is_null() {
         // never open secret doors
         if line.flags & LinedefFlag::SECRET as i16 != 0 {
             return 0;
@@ -695,7 +691,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -
     match line.special {
         // MANUALS
         1 | 26 | 27 | 28 | 31 | 32 | 33 | 34 | 117 | 118 => {
-            EV_VerticalDoor(line_id, thing as *mut mobj_t);
+            EV_VerticalDoor(line_id, thing);
         }
 
         // SWITCHES
@@ -776,7 +772,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -
         131 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
             P_ChangeSwitchTexture(line_id, 0);
         }
-        133 | 135 | 137 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
+        133 | 135 | 137 if EV_DoLockedDoor(line, vld_blazeOpen, thing) != 0 => {
             P_ChangeSwitchTexture(line_id, 0);
         }
         140 if EV_DoFloor(line, floor_raiseFloor512) != 0 => {
@@ -841,7 +837,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -
         132 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
             P_ChangeSwitchTexture(line_id, 1);
         }
-        99 | 134 | 136 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
+        99 | 134 | 136 if EV_DoLockedDoor(line, vld_blazeOpen, thing) != 0 => {
             P_ChangeSwitchTexture(line_id, 1);
         }
         138 => {

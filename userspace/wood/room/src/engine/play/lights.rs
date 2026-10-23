@@ -11,9 +11,11 @@ use crate::engine::{
     play::{
         setup::LEVEL,
         spec::{P_FindMinSurroundingLight, P_FindSectorFromLineTag, getNextSector},
-        tick::{P_AddThinker, ThinkerKind, thinker_t},
+        tick::{
+            FireFlickerId, GlowId, LightFlashId, P_AddThinker, StrobeId, ThinkerId, ThinkerKind,
+            new_thinker, thinker_t,
+        },
     },
-    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Light change applied each step of the glow oscillation (light units per tic).
@@ -34,7 +36,7 @@ pub const SLOWDARK: i32 = 35;
 /// simulating a flickering fire (sector special 17 in Doom).
 #[derive(Clone, Copy)]
 pub struct fireflicker_t {
-    /// Thinker list node.
+    /// Thinker state: what the effect does each tic.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: SectorId,
@@ -52,7 +54,7 @@ pub struct fireflicker_t {
 /// bounded by `maxtime` and `mintime` (sector special 1 in Doom).
 #[derive(Clone, Copy)]
 pub struct lightflash_t {
-    /// Thinker list node.
+    /// Thinker state: what the effect does each tic.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: SectorId,
@@ -75,7 +77,7 @@ pub struct lightflash_t {
 /// (sector specials 3 and 13 in Doom, among others).
 #[derive(Clone, Copy)]
 pub struct strobe_t {
-    /// Thinker list node.
+    /// Thinker state: what the effect does each tic.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: SectorId,
@@ -97,7 +99,7 @@ pub struct strobe_t {
 /// and `maxlight` by `GLOWSPEED` units per tic (sector special 8 in Doom).
 #[derive(Clone, Copy)]
 pub struct glow_t {
-    /// Thinker list node.
+    /// Thinker state: what the effect does each tic.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: SectorId,
@@ -125,28 +127,31 @@ fn light_and_min_surrounding(sector: SectorId) -> (i32, i32) {
 /// Decrements the countdown; when it reaches zero, randomises the sector's
 /// light level and resets the 4-tic counter.
 ///
-/// # Safety
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
 ///
-/// `flick` must be a valid, aligned, non-null pointer to a `fireflicker_t`
-/// whose `sector` belongs to the current map. Called exclusively by the
-/// thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_FireFlicker(flick: *mut fireflicker_t) {
-    (*flick).count -= 1;
-    if (*flick).count != 0 {
+/// # Panics
+///
+/// If the effect's `sector` is not a sector of the current map.
+pub fn T_FireFlicker(flick: FireFlickerId) {
+    // SAFETY: light effects are only reached through arena pointers, and no
+    // other reference to this one is live while it thinks.
+    let flick = unsafe { &mut *flick.ptr() };
+    flick.count -= 1;
+    if flick.count != 0 {
         return;
     }
 
     let amount = (P_Random() & 3) * 16;
     let mut level = LEVEL.borrow_mut();
-    let sec = &mut level.sectors[(*flick).sector];
+    let sec = &mut level.sectors[flick.sector];
 
-    if (sec.lightlevel as i32) - amount < (*flick).minlight {
-        sec.lightlevel = (*flick).minlight as i16;
+    if (sec.lightlevel as i32) - amount < flick.minlight {
+        sec.lightlevel = flick.minlight as i16;
     } else {
-        sec.lightlevel = ((*flick).maxlight - amount) as i16;
+        sec.lightlevel = (flick.maxlight - amount) as i16;
     }
 
-    (*flick).count = 4;
+    flick.count = 4;
 }
 
 /// Allocate and initialise a fire-flicker thinker for `sector`.
@@ -154,29 +159,24 @@ pub unsafe fn T_FireFlicker(flick: *mut fireflicker_t) {
 /// Clears the sector special, finds the minimum surrounding light level
 /// (used as the lower flicker bound + 16), and registers the thinker.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `sector` must belong to the current map, and the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnFireFlicker(sector: SectorId) {
-    unsafe {
-        LEVEL.borrow_mut().sectors[sector].special = 0;
+/// If `sector` is not a sector of the current map.
+pub fn P_SpawnFireFlicker(sector: SectorId) {
+    LEVEL.borrow_mut().sectors[sector].special = 0;
 
-        let flick = Z_Malloc(
-            std::mem::size_of::<fireflicker_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut fireflicker_t;
+    let flick_id = new_thinker::<fireflicker_t>();
 
-        P_AddThinker(&raw mut (*flick).thinker);
+    P_AddThinker(ThinkerId::FireFlicker(flick_id));
 
-        let (lightlevel, minlight) = light_and_min_surrounding(sector);
-        (*flick).thinker.kind = ThinkerKind::FireFlicker;
-        (*flick).sector = sector;
-        (*flick).maxlight = lightlevel;
-        (*flick).minlight = minlight + 16;
-        (*flick).count = 4;
-    }
+    let (lightlevel, minlight) = light_and_min_surrounding(sector);
+    // SAFETY: the effect was just made; nothing else refers to it yet.
+    let flick = unsafe { &mut *flick_id.ptr() };
+    flick.thinker.kind = ThinkerKind::FireFlicker;
+    flick.sector = sector;
+    flick.maxlight = lightlevel;
+    flick.minlight = minlight + 16;
+    flick.count = 4;
 }
 
 /// Per-tic update for the random light-flash effect.
@@ -184,26 +184,29 @@ pub unsafe fn P_SpawnFireFlicker(sector: SectorId) {
 /// Decrements the countdown; when it reaches zero, toggles the sector's
 /// light between `maxlight` and `minlight`, picking a new random duration.
 ///
-/// # Safety
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
 ///
-/// `flash` must be a valid, aligned, non-null pointer to a `lightflash_t`
-/// whose `sector` belongs to the current map. Called exclusively by the
-/// thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_LightFlash(flash: *mut lightflash_t) {
-    (*flash).count -= 1;
-    if (*flash).count != 0 {
+/// # Panics
+///
+/// If the effect's `sector` is not a sector of the current map.
+pub fn T_LightFlash(flash: LightFlashId) {
+    // SAFETY: light effects are only reached through arena pointers, and no
+    // other reference to this one is live while it thinks.
+    let flash = unsafe { &mut *flash.ptr() };
+    flash.count -= 1;
+    if flash.count != 0 {
         return;
     }
 
     let mut level = LEVEL.borrow_mut();
-    let sec = &mut level.sectors[(*flash).sector];
+    let sec = &mut level.sectors[flash.sector];
 
-    if sec.lightlevel as i32 == (*flash).maxlight {
-        sec.lightlevel = (*flash).minlight as i16;
-        (*flash).count = (P_Random() & (*flash).mintime) + 1;
+    if sec.lightlevel as i32 == flash.maxlight {
+        sec.lightlevel = flash.minlight as i16;
+        flash.count = (P_Random() & flash.mintime) + 1;
     } else {
-        sec.lightlevel = (*flash).maxlight as i16;
-        (*flash).count = (P_Random() & (*flash).maxtime) + 1;
+        sec.lightlevel = flash.maxlight as i16;
+        flash.count = (P_Random() & flash.maxtime) + 1;
     }
 }
 
@@ -212,31 +215,26 @@ pub unsafe fn T_LightFlash(flash: *mut lightflash_t) {
 /// Sets `maxtime = 64` and `mintime = 7`, giving the flash a long bright phase
 /// and a short dark phase. The initial countdown is randomised.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `sector` must belong to the current map, and the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnLightFlash(sector: SectorId) {
-    unsafe {
-        LEVEL.borrow_mut().sectors[sector].special = 0;
+/// If `sector` is not a sector of the current map.
+pub fn P_SpawnLightFlash(sector: SectorId) {
+    LEVEL.borrow_mut().sectors[sector].special = 0;
 
-        let flash = Z_Malloc(
-            std::mem::size_of::<lightflash_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut lightflash_t;
+    let flash_id = new_thinker::<lightflash_t>();
 
-        P_AddThinker(&raw mut (*flash).thinker);
+    P_AddThinker(ThinkerId::LightFlash(flash_id));
 
-        let (lightlevel, minlight) = light_and_min_surrounding(sector);
-        (*flash).thinker.kind = ThinkerKind::LightFlash;
-        (*flash).sector = sector;
-        (*flash).maxlight = lightlevel;
-        (*flash).minlight = minlight;
-        (*flash).maxtime = 64;
-        (*flash).mintime = 7;
-        (*flash).count = (P_Random() & (*flash).maxtime) + 1;
-    }
+    let (lightlevel, minlight) = light_and_min_surrounding(sector);
+    // SAFETY: the effect was just made; nothing else refers to it yet.
+    let flash = unsafe { &mut *flash_id.ptr() };
+    flash.thinker.kind = ThinkerKind::LightFlash;
+    flash.sector = sector;
+    flash.maxlight = lightlevel;
+    flash.minlight = minlight;
+    flash.maxtime = 64;
+    flash.mintime = 7;
+    flash.count = (P_Random() & flash.maxtime) + 1;
 }
 
 /// Per-tic update for the strobe-flash effect.
@@ -245,26 +243,29 @@ pub unsafe fn P_SpawnLightFlash(sector: SectorId) {
 /// light between `minlight` (dark phase, `darktime` tics) and `maxlight`
 /// (bright phase, `brighttime` tics).
 ///
-/// # Safety
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
 ///
-/// `flash` must be a valid, aligned, non-null pointer to a `strobe_t`
-/// whose `sector` belongs to the current map. Called exclusively by the
-/// thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
-    (*flash).count -= 1;
-    if (*flash).count != 0 {
+/// # Panics
+///
+/// If the effect's `sector` is not a sector of the current map.
+pub fn T_StrobeFlash(flash: StrobeId) {
+    // SAFETY: light effects are only reached through arena pointers, and no
+    // other reference to this one is live while it thinks.
+    let flash = unsafe { &mut *flash.ptr() };
+    flash.count -= 1;
+    if flash.count != 0 {
         return;
     }
 
     let mut level = LEVEL.borrow_mut();
-    let sec = &mut level.sectors[(*flash).sector];
+    let sec = &mut level.sectors[flash.sector];
 
-    if sec.lightlevel as i32 == (*flash).minlight {
-        sec.lightlevel = (*flash).maxlight as i16;
-        (*flash).count = (*flash).brighttime;
+    if sec.lightlevel as i32 == flash.minlight {
+        sec.lightlevel = flash.maxlight as i16;
+        flash.count = flash.brighttime;
     } else {
-        sec.lightlevel = (*flash).minlight as i16;
-        (*flash).count = (*flash).darktime;
+        sec.lightlevel = flash.minlight as i16;
+        flash.count = flash.darktime;
     }
 }
 
@@ -274,39 +275,34 @@ pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
 /// `inSync = 1` starts the flash immediately; `inSync = 0` gives a random offset.
 /// If `minlight == maxlight`, `minlight` is forced to 0.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `sector` must belong to the current map, and the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnStrobeFlash(sector: SectorId, fastOrSlow: i32, inSync: i32) {
-    unsafe {
-        let flash = Z_Malloc(
-            std::mem::size_of::<strobe_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut strobe_t;
+/// If `sector` is not a sector of the current map.
+pub fn P_SpawnStrobeFlash(sector: SectorId, fastOrSlow: i32, inSync: i32) {
+    let flash_id = new_thinker::<strobe_t>();
 
-        P_AddThinker(&raw mut (*flash).thinker);
+    P_AddThinker(ThinkerId::Strobe(flash_id));
 
-        let (lightlevel, minlight) = light_and_min_surrounding(sector);
-        (*flash).sector = sector;
-        (*flash).darktime = fastOrSlow;
-        (*flash).brighttime = STROBEBRIGHT;
-        (*flash).thinker.kind = ThinkerKind::Strobe;
-        (*flash).maxlight = lightlevel;
-        (*flash).minlight = minlight;
+    let (lightlevel, minlight) = light_and_min_surrounding(sector);
+    // SAFETY: the effect was just made; nothing else refers to it yet.
+    let flash = unsafe { &mut *flash_id.ptr() };
+    flash.sector = sector;
+    flash.darktime = fastOrSlow;
+    flash.brighttime = STROBEBRIGHT;
+    flash.thinker.kind = ThinkerKind::Strobe;
+    flash.maxlight = lightlevel;
+    flash.minlight = minlight;
 
-        if (*flash).minlight == (*flash).maxlight {
-            (*flash).minlight = 0;
-        }
+    if flash.minlight == flash.maxlight {
+        flash.minlight = 0;
+    }
 
-        LEVEL.borrow_mut().sectors[sector].special = 0;
+    LEVEL.borrow_mut().sectors[sector].special = 0;
 
-        if inSync == 0 {
-            (*flash).count = (P_Random() & 7) + 1;
-        } else {
-            (*flash).count = 1;
-        }
+    if inSync == 0 {
+        flash.count = (P_Random() & 7) + 1;
+    } else {
+        flash.count = 1;
     }
 }
 
@@ -314,24 +310,18 @@ pub unsafe fn P_SpawnStrobeFlash(sector: SectorId, fastOrSlow: i32, inSync: i32)
 ///
 /// Iterates over sectors whose tag matches `line`'s tag. Sectors that already
 /// have an active special effect are skipped.
-///
-/// # Safety
-///
-/// The zone and thinker list must be initialised.
-pub unsafe fn EV_StartLightStrobing(line: &line_t) {
-    unsafe {
-        let mut secnum: i32 = -1;
-        loop {
-            secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
-            if secnum < 0 {
-                break;
-            }
-            let sec = SectorId::new(secnum as usize);
-            if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
-                continue;
-            }
-            P_SpawnStrobeFlash(sec, SLOWDARK, 0);
+pub fn EV_StartLightStrobing(line: &line_t) {
+    let mut secnum: i32 = -1;
+    loop {
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        if secnum < 0 {
+            break;
         }
+        let sec = SectorId::new(secnum as usize);
+        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+            continue;
+        }
+        P_SpawnStrobeFlash(sec, SLOWDARK, 0);
     }
 }
 
@@ -394,27 +384,30 @@ pub fn EV_LightTurnOn(line: &line_t, bright: i32) {
 /// Adjusts `lightlevel` by `GLOWSPEED` each tic, bouncing at `minlight` and
 /// `maxlight` by reversing `direction`.
 ///
-/// # Safety
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
 ///
-/// `g` must be a valid, aligned, non-null pointer to a `glow_t` whose
-/// `sector` belongs to the current map. Called exclusively by the thinker
-/// dispatcher from `P_RunThinkers`.
-pub unsafe fn T_Glow(g: *mut glow_t) {
+/// # Panics
+///
+/// If the effect's `sector` is not a sector of the current map.
+pub fn T_Glow(glow: GlowId) {
+    // SAFETY: light effects are only reached through arena pointers, and no
+    // other reference to this one is live while it thinks.
+    let g = unsafe { &mut *glow.ptr() };
     let mut level = LEVEL.borrow_mut();
-    let sec = &mut level.sectors[(*g).sector];
-    match (*g).direction {
+    let sec = &mut level.sectors[g.sector];
+    match g.direction {
         -1 => {
             sec.lightlevel -= GLOWSPEED as i16;
-            if (sec.lightlevel as i32) <= (*g).minlight {
+            if (sec.lightlevel as i32) <= g.minlight {
                 sec.lightlevel += GLOWSPEED as i16;
-                (*g).direction = 1;
+                g.direction = 1;
             }
         }
         1 => {
             sec.lightlevel += GLOWSPEED as i16;
-            if (sec.lightlevel as i32) >= (*g).maxlight {
+            if (sec.lightlevel as i32) >= g.maxlight {
                 sec.lightlevel -= GLOWSPEED as i16;
-                (*g).direction = -1;
+                g.direction = -1;
             }
         }
         _ => {}
@@ -427,27 +420,22 @@ pub unsafe fn T_Glow(g: *mut glow_t) {
 /// lowest light level in adjacent sectors. The glow starts moving downward
 /// (`direction = -1`).
 ///
-/// # Safety
+/// # Panics
 ///
-/// `sector` must belong to the current map, and the zone and thinker list
-/// must be initialised.
-pub unsafe fn P_SpawnGlowingLight(sector: SectorId) {
-    unsafe {
-        let g = Z_Malloc(
-            std::mem::size_of::<glow_t>() as i32,
-            PU_LEVSPEC,
-            std::ptr::null_mut(),
-        ) as *mut glow_t;
+/// If `sector` is not a sector of the current map.
+pub fn P_SpawnGlowingLight(sector: SectorId) {
+    let glow_id = new_thinker::<glow_t>();
 
-        P_AddThinker(&raw mut (*g).thinker);
+    P_AddThinker(ThinkerId::Glow(glow_id));
 
-        let (lightlevel, minlight) = light_and_min_surrounding(sector);
-        (*g).sector = sector;
-        (*g).minlight = minlight;
-        (*g).maxlight = lightlevel;
-        (*g).thinker.kind = ThinkerKind::Glow;
-        (*g).direction = -1;
+    let (lightlevel, minlight) = light_and_min_surrounding(sector);
+    // SAFETY: the effect was just made; nothing else refers to it yet.
+    let g = unsafe { &mut *glow_id.ptr() };
+    g.sector = sector;
+    g.minlight = minlight;
+    g.maxlight = lightlevel;
+    g.thinker.kind = ThinkerKind::Glow;
+    g.direction = -1;
 
-        LEVEL.borrow_mut().sectors[sector].special = 0;
-    }
+    LEVEL.borrow_mut().sectors[sector].special = 0;
 }

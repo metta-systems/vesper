@@ -13,14 +13,11 @@
 
 #![allow(non_camel_case_types)]
 
-use std::{
-    ffi::c_void,
-    ops::{Index, IndexMut},
-};
+use std::ops::{Index, IndexMut};
 
 use crate::engine::{
     math::fixed::{angle_t, fixed_t},
-    play::{mobj::mobj_t, tick::thinker_t},
+    play::{mobj::MobjId, tick::ThinkerId},
 };
 
 /// Define a typed index into one of the level's geometry arrays, and let
@@ -154,7 +151,7 @@ pub struct sector_t {
     /// Sound traversal counter (set during sound propagation).
     pub soundtraversed: i32,
     /// Last thing to make a sound in this sector (for monster alerting).
-    pub soundtarget: *mut mobj_t,
+    pub soundtarget: Option<MobjId>,
     /// Bounding box used for blockmap queries (`BOXTOP/BOXBOTTOM/BOXLEFT/BOXRIGHT`).
     pub blockbox: [i32; 4],
     /// Degenerate mobj used as the sector's spatial sound origin.
@@ -162,12 +159,10 @@ pub struct sector_t {
     /// Validity counter for single-pass linedef and thing traversal.
     pub validcount: i32,
     /// Head of the linked list of things (mobjs) in this sector.
-    pub thinglist: *mut mobj_t,
-    /// Thinker node of the active special for this sector (a door, a
-    /// moving floor, ceiling or platform), or null if none is active.
-    /// Its [`ThinkerKind`](crate::engine::play::tick::ThinkerKind) says
-    /// which struct embeds it.
-    pub specialdata: *mut thinker_t,
+    pub thinglist: Option<MobjId>,
+    /// The active special thinker for this sector (a door, a moving floor,
+    /// ceiling or platform), or `None` if none is active.
+    pub specialdata: Option<ThinkerId>,
     /// Number of linedefs bounding this sector.
     pub linecount: i32,
     /// Start of this sector's linedefs in the level's `linebuffer` (C keeps
@@ -177,6 +172,28 @@ pub struct sector_t {
 }
 
 impl sector_t {
+    /// An empty sector: every number zero, no things and no special (C's
+    /// zeroed `sector_t`; the handle fields are `None`, which is not all
+    /// zero bytes for `specialdata`, so the value is spelled out).
+    pub const ZERO: Self = Self {
+        floorheight: 0,
+        ceilingheight: 0,
+        floorpic: 0,
+        ceilingpic: 0,
+        lightlevel: 0,
+        special: 0,
+        tag: 0,
+        soundtraversed: 0,
+        soundtarget: None,
+        blockbox: [0; 4],
+        soundorg: degenmobj_t { x: 0, y: 0, z: 0 },
+        validcount: 0,
+        thinglist: None,
+        specialdata: None,
+        linecount: 0,
+        lines: 0,
+    };
+
     /// This sector's linedefs within the level's `linebuffer`.
     #[inline]
     pub fn lines_in<'a>(&self, linebuffer: &'a [LineId]) -> &'a [LineId] {
@@ -247,9 +264,9 @@ pub struct line_t {
     pub backsector: Option<SectorId>,
     /// Validity counter to avoid processing the same linedef twice per query.
     pub validcount: i32,
-    /// Active special thinker attached to this line (e.g. a triggered door),
-    /// or null.
-    pub specialdata: *mut c_void,
+    /// Active special thinker attached to this line, or `None` (C declares
+    /// it; nothing sets it).
+    pub specialdata: Option<ThinkerId>,
 }
 
 /// A BSP leaf convex region made up of one or more segs from the same sector
@@ -329,7 +346,7 @@ mod tests {
     #[test]
     fn sector_lines_are_a_window_of_the_line_buffer() {
         let linebuffer: Vec<LineId> = (0..6).map(LineId::new).collect();
-        let mut sector: sector_t = unsafe { std::mem::zeroed() };
+        let mut sector = sector_t::ZERO;
         sector.lines = 2;
         sector.linecount = 3;
         assert_eq!(

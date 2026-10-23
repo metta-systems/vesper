@@ -1,16 +1,16 @@
 //! Thinker management and the main per-tic game loop.
 //!
 //! Rust port of `vendor/doomgeneric/p_tick.c`.  Every game object that needs
-//! to update once per tic (monsters, moving platforms, ceilings, …) embeds a
-//! [`thinker_t`] and is linked into the global doubly-linked list headed by
-//! [`thinkercap`].  [`P_RunThinkers`] walks that list every tic and drives
-//! each object's logic according to the node's [`ThinkerKind`].
+//! to update once per tic (monsters, moving platforms, ceilings, …) lives in
+//! the [`Arena`] of its type and is listed, by [`ThinkerId`], in the ordered
+//! thinker list that replaces C's doubly-linked list headed by `thinkercap`.
+//! [`P_RunThinkers`] walks that list every tic and drives each object's logic
+//! according to its [`ThinkerKind`].
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::engine::{
+    arena::{Arena, Handle, Pooled},
     doom::player::MAXPLAYERS,
     game::{console_player, demoplayback, netgame, paused, player, playeringame},
     global::Global,
@@ -23,40 +23,12 @@ use crate::engine::{
             T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash, fireflicker_t, glow_t,
             lightflash_t, strobe_t,
         },
-        mobj::{P_MobjThinker, P_RespawnSpecials, mobj_t},
+        mobj::{MobjId, P_MobjThinker, P_RespawnSpecials, mobj_t},
         plats::{T_PlatRaise, plat_t},
         spec::P_UpdateSpecials,
         user::P_PlayerThink,
     },
-    zone::Z_Free,
 };
-
-/// Which struct embeds a [`thinker_t`], i.e. which `Z_Malloc` allocation the
-/// node lives in.
-///
-/// Carried by [`ThinkerKind::Removed`] so that [`P_RunThinkers`] can find the
-/// start of the allocation to free after the node's think function is gone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ThinkerClass {
-    /// [`mobj_t`].
-    Mobj,
-    /// [`ceiling_t`].
-    Ceiling,
-    /// [`vldoor_t`].
-    Door,
-    /// [`floormove_t`].
-    Floor,
-    /// [`plat_t`].
-    Plat,
-    /// [`lightflash_t`].
-    LightFlash,
-    /// [`strobe_t`].
-    Strobe,
-    /// [`glow_t`].
-    Glow,
-    /// [`fireflicker_t`].
-    FireFlicker,
-}
 
 /// What a thinker does each tic: the typed replacement for the C
 /// `thinker_t.function` pointer.
@@ -64,20 +36,20 @@ pub enum ThinkerClass {
 /// Each active variant names the think function [`P_RunThinkers`] calls
 /// (`Mobj` → [`P_MobjThinker`], `Ceiling` → [`T_MoveCeiling`], …).
 ///
-/// `repr(u8)` with `None = 0` so that a freshly zeroed `Z_Malloc` block holds
-/// a valid `None`, the equivalent of C's null function pointer.
+/// `repr(u8)` with `None = 0` so that a zeroed thinker holds a valid `None`,
+/// the equivalent of C's null function pointer.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThinkerKind {
-    /// No think function: the [`thinkercap`] head, or a node whose kind has
-    /// not been set yet. Skipped by [`P_RunThinkers`].
+    /// No think function: a node whose kind has not been set yet. Skipped by
+    /// [`P_RunThinkers`].
     None = 0,
     /// A map object; runs [`P_MobjThinker`].
     Mobj,
     /// A moving ceiling; runs [`T_MoveCeiling`].
     Ceiling,
     /// A crushing ceiling stopped by `EV_CeilingCrushStop`: C nulls its
-    /// function, so it stays linked but does not think until
+    /// function, so it stays listed but does not think until
     /// `P_ActivateInStasisCeiling` sets it back to [`ThinkerKind::Ceiling`].
     CeilingInStasis,
     /// A vertical door; runs [`T_VerticalDoor`].
@@ -87,7 +59,7 @@ pub enum ThinkerKind {
     /// A platform; runs [`T_PlatRaise`].
     Plat,
     /// A platform stopped by `EV_StopPlat`: C nulls its function, so it stays
-    /// linked but does not think until `P_ActivateInStasis` sets it back to
+    /// listed but does not think until `P_ActivateInStasis` sets it back to
     /// [`ThinkerKind::Plat`].
     PlatInStasis,
     /// A random light flash; runs [`T_LightFlash`].
@@ -99,143 +71,194 @@ pub enum ThinkerKind {
     /// A fire flicker; runs [`T_FireFlicker`].
     FireFlicker,
     /// Marked by [`P_RemoveThinker`] (C's `(actionf_v)(-1)` sentinel);
-    /// [`P_RunThinkers`] unlinks and frees the node when it reaches it.
-    Removed(ThinkerClass),
+    /// [`P_RunThinkers`] unlists and frees the object when it reaches it.
+    Removed,
 }
 
 impl ThinkerKind {
-    /// The struct that embeds a thinker of this kind, or `None` for
-    /// [`ThinkerKind::None`], which has no owning struct.
-    pub fn class(self) -> Option<ThinkerClass> {
-        match self {
-            ThinkerKind::None => None,
-            ThinkerKind::Mobj => Some(ThinkerClass::Mobj),
-            ThinkerKind::Ceiling | ThinkerKind::CeilingInStasis => Some(ThinkerClass::Ceiling),
-            ThinkerKind::Door => Some(ThinkerClass::Door),
-            ThinkerKind::Floor => Some(ThinkerClass::Floor),
-            ThinkerKind::Plat | ThinkerKind::PlatInStasis => Some(ThinkerClass::Plat),
-            ThinkerKind::LightFlash => Some(ThinkerClass::LightFlash),
-            ThinkerKind::Strobe => Some(ThinkerClass::Strobe),
-            ThinkerKind::Glow => Some(ThinkerClass::Glow),
-            ThinkerKind::FireFlicker => Some(ThinkerClass::FireFlicker),
-            ThinkerKind::Removed(class) => Some(class),
-        }
-    }
-
     /// `true` once [`P_RemoveThinker`] has marked the node for freeing.
     pub fn is_removed(self) -> bool {
-        matches!(self, ThinkerKind::Removed(_))
+        self == ThinkerKind::Removed
     }
 }
 
-/// Linked-list node embedded in every thinker-based game object.
+/// The thinker state embedded in every thinker-based game object.
 ///
-/// All thinkers must be allocated via `Z_Malloc` so that [`P_RunThinkers`] can
-/// call `Z_Free` on removed nodes.  The owning struct (e.g. `ceiling_t`,
-/// `plat_t`, `mobj_t`) implements [`ThinkerContainer`], which maps a
-/// `*mut thinker_t` back to the struct that embeds it.
+/// C's `thinker_t` also holds the list links; here the list is
+/// [`TickState::thinkers`], so only the think function remains.
 #[derive(Clone, Copy)]
 pub struct thinker_t {
-    /// Pointer to the previous node in the circular thinker list.
-    pub prev: *mut thinker_t,
-    /// Pointer to the next node in the circular thinker list.
-    pub next: *mut thinker_t,
     /// What this thinker does each tic, or [`ThinkerKind::Removed`] once
     /// [`P_RemoveThinker`] has marked it.
     pub kind: ThinkerKind,
 }
 
-/// A struct that embeds a [`thinker_t`] in its `thinker` field.
+/// A moving ceiling (`ceiling_t`) in its arena.
+pub type CeilingId = Handle<ceiling_t>;
+/// A vertical door (`vldoor_t`) in its arena.
+pub type DoorId = Handle<vldoor_t>;
+/// A moving floor (`floormove_t`) in its arena.
+pub type FloorId = Handle<floormove_t>;
+/// A platform (`plat_t`) in its arena.
+pub type PlatId = Handle<plat_t>;
+/// A light flash (`lightflash_t`) in its arena.
+pub type LightFlashId = Handle<lightflash_t>;
+/// A strobing light (`strobe_t`) in its arena.
+pub type StrobeId = Handle<strobe_t>;
+/// A glowing light (`glow_t`) in its arena.
+pub type GlowId = Handle<glow_t>;
+/// A fire flicker (`fireflicker_t`) in its arena.
+pub type FireFlickerId = Handle<fireflicker_t>;
+
+/// A thinker type whose all-zero value is valid, as the zeroed block C's
+/// `Z_Malloc` hands out is a valid (inert) thinker.
 ///
 /// # Safety
 ///
-/// `THINKER_OFFSET` must be `offset_of!(Self, thinker)`.
-pub unsafe trait ThinkerContainer: Sized {
-    /// Byte offset of the embedded `thinker` field.
-    const THINKER_OFFSET: usize;
-
-    /// The struct whose `thinker` field `thinker` points at.
-    ///
-    /// # Safety
-    ///
-    /// `thinker` must point at the `thinker` field of a live `Self`.
-    unsafe fn from_thinker(thinker: *mut thinker_t) -> *mut Self {
-        unsafe { thinker.byte_sub(Self::THINKER_OFFSET).cast::<Self>() }
+/// All-zero bytes must be a valid value of the type: no references, no
+/// non-optional handles, no enums without a zero variant.
+pub unsafe trait ZeroValid: Sized {
+    /// The all-zero value.
+    fn zeroed() -> Self {
+        // SAFETY: guaranteed by the implementer.
+        unsafe { std::mem::zeroed() }
     }
 }
 
-/// Implement [`ThinkerContainer`] for structs with a `thinker: thinker_t` field.
-macro_rules! thinker_container {
-    ($($container:ty),+ $(,)?) => {
+/// Put a zeroed `T` in its arena, as C's `Z_Malloc` of a thinker does; the
+/// caller fills it in and lists it with [`P_AddThinker`].
+pub fn new_thinker<T: Pooled + ZeroValid>() -> Handle<T> {
+    T::arena().borrow_mut().insert(T::zeroed())
+}
+
+/// Declare the arena of each thinker type and its [`Pooled`] impl.
+macro_rules! thinker_arenas {
+    ($($arena:ident: $kind:ty),+ $(,)?) => {
         $(
-            // SAFETY: the offset is computed by the compiler for this type.
-            unsafe impl ThinkerContainer for $container {
-                const THINKER_OFFSET: usize = std::mem::offset_of!($container, thinker);
+            #[doc = concat!("Every `", stringify!($kind), "` of the current level.")]
+            pub static $arena: Global<Arena<$kind>> = Global::new(Arena::new());
+
+            impl Pooled for $kind {
+                const NAME: &'static str = stringify!($kind);
+
+                fn arena() -> &'static Global<Arena<Self>> {
+                    &$arena
+                }
             }
+
+            // SAFETY: the thinker structs hold plain numbers, typed level
+            // indices, raw pointers, optional handles and `ThinkerKind`
+            // (whose zero is `None`), all valid when zero.
+            unsafe impl ZeroValid for $kind {}
         )+
+
+        /// Free every object of every thinker type: the level is over.
+        fn clear_thinker_arenas() {
+            $($arena.borrow_mut().clear();)+
+        }
     };
 }
 
-thinker_container!(
-    mobj_t,
-    ceiling_t,
-    vldoor_t,
-    floormove_t,
-    plat_t,
-    lightflash_t,
-    strobe_t,
-    glow_t,
-    fireflicker_t,
+thinker_arenas!(
+    MOBJ_ARENA: mobj_t,
+    CEILING_ARENA: ceiling_t,
+    DOOR_ARENA: vldoor_t,
+    FLOOR_ARENA: floormove_t,
+    PLAT_ARENA: plat_t,
+    LIGHT_FLASH_ARENA: lightflash_t,
+    STROBE_ARENA: strobe_t,
+    GLOW_ARENA: glow_t,
+    FIRE_FLICKER_ARENA: fireflicker_t,
 );
 
-/// Start of the `Z_Malloc` block holding `thinker`, which is embedded in a
-/// struct of type `class`.
-///
-/// # Safety
-///
-/// `thinker` must be the `thinker` field of a live struct of type `class`.
-pub unsafe fn thinker_allocation(thinker: *mut thinker_t, class: ThinkerClass) -> *mut c_void {
-    unsafe {
-        match class {
-            ThinkerClass::Mobj => mobj_t::from_thinker(thinker).cast(),
-            ThinkerClass::Ceiling => ceiling_t::from_thinker(thinker).cast(),
-            ThinkerClass::Door => vldoor_t::from_thinker(thinker).cast(),
-            ThinkerClass::Floor => floormove_t::from_thinker(thinker).cast(),
-            ThinkerClass::Plat => plat_t::from_thinker(thinker).cast(),
-            ThinkerClass::LightFlash => lightflash_t::from_thinker(thinker).cast(),
-            ThinkerClass::Strobe => strobe_t::from_thinker(thinker).cast(),
-            ThinkerClass::Glow => glow_t::from_thinker(thinker).cast(),
-            ThinkerClass::FireFlicker => fireflicker_t::from_thinker(thinker).cast(),
+/// A thinker in the thinker list: its type and its handle in that type's
+/// arena. Replaces C's `thinker_t *`, whose type was told by its function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThinkerId {
+    /// A map object.
+    Mobj(MobjId),
+    /// A moving ceiling.
+    Ceiling(CeilingId),
+    /// A vertical door.
+    Door(DoorId),
+    /// A moving floor.
+    Floor(FloorId),
+    /// A platform.
+    Plat(PlatId),
+    /// A light flash.
+    LightFlash(LightFlashId),
+    /// A strobing light.
+    Strobe(StrobeId),
+    /// A glowing light.
+    Glow(GlowId),
+    /// A fire flicker.
+    FireFlicker(FireFlickerId),
+}
+
+impl ThinkerId {
+    /// Pointer to the object's embedded thinker state.
+    #[track_caller]
+    pub fn thinker(self) -> *mut thinker_t {
+        // SAFETY (all arms): field projection on an arena pointer, which is
+        // valid for the rest of the program; no reference is made.
+        unsafe {
+            match self {
+                ThinkerId::Mobj(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Ceiling(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Door(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Floor(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Plat(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::LightFlash(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Strobe(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::Glow(id) => &raw mut (*id.ptr()).thinker,
+                ThinkerId::FireFlicker(id) => &raw mut (*id.ptr()).thinker,
+            }
+        }
+    }
+
+    /// The thinker's current kind.
+    #[track_caller]
+    pub fn kind(self) -> ThinkerKind {
+        // SAFETY: a read through a valid arena pointer; no reference to the
+        // thinker state outlives this read.
+        unsafe { (*self.thinker()).kind }
+    }
+
+    /// Free the object in its arena; its handles go stale.
+    fn free(self) {
+        match self {
+            ThinkerId::Mobj(id) => MOBJ_ARENA.borrow_mut().free(id),
+            ThinkerId::Ceiling(id) => CEILING_ARENA.borrow_mut().free(id),
+            ThinkerId::Door(id) => DOOR_ARENA.borrow_mut().free(id),
+            ThinkerId::Floor(id) => FLOOR_ARENA.borrow_mut().free(id),
+            ThinkerId::Plat(id) => PLAT_ARENA.borrow_mut().free(id),
+            ThinkerId::LightFlash(id) => LIGHT_FLASH_ARENA.borrow_mut().free(id),
+            ThinkerId::Strobe(id) => STROBE_ARENA.borrow_mut().free(id),
+            ThinkerId::Glow(id) => GLOW_ARENA.borrow_mut().free(id),
+            ThinkerId::FireFlicker(id) => FIRE_FLICKER_ARENA.borrow_mut().free(id),
         }
     }
 }
 
-/// The level clock and the thinker list head (`p_tick.c` globals).
+/// The level clock and the thinker list (`p_tick.c` globals).
 pub struct TickState {
     /// Current level time in tics, incremented once per [`P_Ticker`] call.
     ///
     /// Used throughout the engine to
     /// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
     pub leveltime: i32,
-    /// Sentinel head/tail node of the doubly-linked thinker list.
-    ///
-    /// The list is circular: `thinkercap.next` is the first real thinker and
-    /// `thinkercap.prev` is the last.  When the list is empty both fields point
-    /// back to `thinkercap` itself (see [`P_InitThinkers`]). Linked nodes
-    /// point at it, so it is reached through [`thinkercap`] only.
-    thinkercap: thinker_t,
+    /// Every thinker in run order: C's circular list from `thinkercap.next`
+    /// to `thinkercap.prev`. [`P_AddThinker`] appends; [`P_RunThinkers`]
+    /// drops removed thinkers when it reaches them.
+    thinkers: Vec<ThinkerId>,
 }
 
 impl TickState {
-    /// The state at program start: level time zero, thinker list unlinked.
+    /// The state at program start: level time zero, no thinkers.
     pub const fn new() -> Self {
         Self {
             leveltime: 0,
-            thinkercap: thinker_t {
-                prev: std::ptr::null_mut::<thinker_t>(),
-                next: std::ptr::null_mut::<thinker_t>(),
-                kind: ThinkerKind::None,
-            },
+            thinkers: Vec::new(),
         }
     }
 }
@@ -246,7 +269,7 @@ impl Default for TickState {
     }
 }
 
-/// The level clock and thinker list head.
+/// The level clock and thinker list.
 pub static TICK: Global<TickState> = Global::new(TickState::new());
 
 /// Current level time in tics (C `leveltime`).
@@ -254,96 +277,101 @@ pub fn leveltime() -> i32 {
     TICK.borrow().leveltime
 }
 
-/// The sentinel head of the thinker list (C `&thinkercap`).
+/// The thinker at `position` in the list, if the list is that long.
 ///
-/// Thinker nodes point back at the head, so its address must stay stable:
-/// it is taken from [`Global::as_ptr`].
-pub fn thinkercap() -> *mut thinker_t {
-    // SAFETY: field projection on the stable state pointer, no reference made.
-    unsafe { &raw mut (*TICK.as_ptr()).thinkercap }
+/// Walks of the list read one entry at a time, so the thinker can be acted
+/// on (spawning or removing others) without a borrow of the list.
+pub fn thinker_at(position: usize) -> Option<ThinkerId> {
+    TICK.borrow().thinkers.get(position).copied()
 }
 
-/// Reset the thinker list to empty by making [`thinkercap`] point to itself.
+/// Iterate the thinker list in run order, as C's walks from
+/// `thinkercap.next` do.
+///
+/// Each step reads the list afresh, so thinkers appended during the walk
+/// are reached too.
+pub fn thinkers() -> impl Iterator<Item = ThinkerId> {
+    (0..).map_while(thinker_at)
+}
+
+/// Empty the thinker list and free every thinker of the level.
 ///
 /// Must be called at the start of each level before any thinker is added.
-/// Corresponds to `P_InitThinkers` in `p_tick.c`.
+/// Corresponds to `P_InitThinkers` in `p_tick.c`; C's thinkers are freed with
+/// the level's zone memory just before it.
 pub fn P_InitThinkers() {
-    let cap = thinkercap();
-    unsafe {
-        (*cap).prev = cap;
-        (*cap).next = cap;
-    }
+    TICK.borrow_mut().thinkers.clear();
+    clear_thinker_arenas();
 }
 
-/// Append `thinker` to the end of the global thinker list.
+/// Append `thinker` to the end of the thinker list.
 ///
-/// The new node is inserted before [`thinkercap`], making it the logical
-/// tail of the list.  Corresponds to `P_AddThinker` in `p_tick.c`.
-///
-/// # Safety
-///
-/// `thinker` must be a valid, non-null pointer to the `thinker` field of a
-/// [`ThinkerContainer`] that was allocated via `Z_Malloc` and will not be
-/// freed by the caller — ownership transfers to the thinker list, which frees
-/// it in [`P_RunThinkers`] once it is marked [`ThinkerKind::Removed`].
-pub unsafe fn P_AddThinker(thinker: *mut thinker_t) {
-    let cap = thinkercap();
-    unsafe {
-        (*(*cap).prev).next = thinker;
-        (*thinker).next = cap;
-        (*thinker).prev = (*cap).prev;
-        (*cap).prev = thinker;
-    }
+/// Corresponds to `P_AddThinker` in `p_tick.c`. The list owns the object
+/// from now on: it is freed in [`P_RunThinkers`] once it is marked
+/// [`ThinkerKind::Removed`].
+pub fn P_AddThinker(thinker: ThinkerId) {
+    TICK.borrow_mut().thinkers.push(thinker);
 }
 
 /// Mark `thinker` for deferred removal by setting its kind to
-/// [`ThinkerKind::Removed`], keeping the class of its owning struct.
+/// [`ThinkerKind::Removed`].
 ///
-/// The thinker is not immediately unlinked or freed; [`P_RunThinkers`]
-/// performs the actual removal and deallocation on the next iteration.
+/// The thinker is not immediately unlisted or freed; [`P_RunThinkers`]
+/// performs the actual removal and deallocation when it reaches it.
 /// This matches the "lazy deallocation" comment in `p_tick.c`.
+///
+/// # Panics
+///
+/// If the thinker's kind was never set.
+pub fn P_RemoveThinker(thinker: &mut thinker_t) {
+    assert!(
+        thinker.kind != ThinkerKind::None,
+        "P_RemoveThinker: thinker has no kind"
+    );
+    thinker.kind = ThinkerKind::Removed;
+}
+
+/// Run the think function of one listed thinker, by kind.
 ///
 /// # Safety
 ///
-/// `thinker` must be a valid, non-null pointer to a thinker that is currently
-/// linked into the global thinker list and whose kind has been set.
-pub unsafe fn P_RemoveThinker(thinker: *mut thinker_t) {
+/// The thinker's think function must be sound to run in the current game
+/// state (a level is loaded).
+unsafe fn run_thinker(thinker: ThinkerId) {
     unsafe {
-        let Some(class) = (*thinker).kind.class() else {
-            panic!("P_RemoveThinker: thinker has no kind");
-        };
-        (*thinker).kind = ThinkerKind::Removed(class);
+        match (thinker, thinker.kind()) {
+            (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(id),
+            (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(id),
+            (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(id),
+            (ThinkerId::Floor(id), ThinkerKind::Floor) => T_MoveFloor(id),
+            (ThinkerId::Plat(id), ThinkerKind::Plat) => T_PlatRaise(id),
+            (ThinkerId::LightFlash(id), ThinkerKind::LightFlash) => T_LightFlash(id),
+            (ThinkerId::Strobe(id), ThinkerKind::Strobe) => T_StrobeFlash(id),
+            (ThinkerId::Glow(id), ThinkerKind::Glow) => T_Glow(id),
+            (ThinkerId::FireFlicker(id), ThinkerKind::FireFlicker) => T_FireFlicker(id),
+            // C's null function (stasis, not yet set) and removed thinkers
+            // do not think.
+            _ => {}
+        }
     }
 }
 
-/// No-op stub matching the C `P_AllocateThinker` signature.
+/// Walk the thinker list once: free each removed thinker when the walk
+/// reaches it, and hand every other one to `think`.
 ///
-/// The original C function body is empty; this Rust port preserves that
-/// to keep the symbol available for any C caller that references it.
-pub fn P_AllocateThinker(_thinker: *mut thinker_t) {}
-
-/// Run the think function of one linked thinker, by kind.
-///
-/// # Safety
-///
-/// `thinker` must be the `thinker` field of a live struct of the class its
-/// kind names.
-unsafe fn run_thinker(thinker: *mut thinker_t) {
-    unsafe {
-        match (*thinker).kind {
-            ThinkerKind::Mobj => P_MobjThinker(mobj_t::from_thinker(thinker)),
-            ThinkerKind::Ceiling => T_MoveCeiling(ceiling_t::from_thinker(thinker)),
-            ThinkerKind::Door => T_VerticalDoor(vldoor_t::from_thinker(thinker)),
-            ThinkerKind::Floor => T_MoveFloor(floormove_t::from_thinker(thinker)),
-            ThinkerKind::Plat => T_PlatRaise(plat_t::from_thinker(thinker)),
-            ThinkerKind::LightFlash => T_LightFlash(lightflash_t::from_thinker(thinker)),
-            ThinkerKind::Strobe => T_StrobeFlash(strobe_t::from_thinker(thinker)),
-            ThinkerKind::Glow => T_Glow(glow_t::from_thinker(thinker)),
-            ThinkerKind::FireFlicker => T_FireFlicker(fireflicker_t::from_thinker(thinker)),
-            ThinkerKind::None
-            | ThinkerKind::CeilingInStasis
-            | ThinkerKind::PlatInStasis
-            | ThinkerKind::Removed(_) => {}
+/// Thinkers appended while the walk runs are reached in the same walk, and a
+/// thinker removed ahead of the cursor is freed when the cursor gets there,
+/// as with C's linked list.
+fn run_thinker_list(mut think: impl FnMut(ThinkerId)) {
+    let mut position = 0;
+    // `thinker_at` releases its borrow of the list before the body runs.
+    while let Some(thinker) = thinker_at(position) {
+        if thinker.kind().is_removed() {
+            TICK.borrow_mut().thinkers.remove(position);
+            thinker.free();
+        } else {
+            think(thinker);
+            position += 1;
         }
     }
 }
@@ -351,38 +379,17 @@ unsafe fn run_thinker(thinker: *mut thinker_t) {
 /// Iterate the thinker list, execute each thinker's think function, and free
 /// any thinkers that have been marked for removal.
 ///
-/// For each node in the list:
-/// - If the node is [`ThinkerKind::Removed`], it is unlinked and its owning
-///   struct is freed via `Z_Free` (the allocation starts at the struct, not at
-///   the embedded thinker, so the pointer is mapped back through
-///   [`thinker_allocation`]).
+/// For each thinker in the list:
+/// - If it is [`ThinkerKind::Removed`], it is unlisted and freed in its
+///   arena; stale handles to it still read its data (see
+///   [`crate::engine::arena`]).
 /// - Otherwise, the think function its kind names is called; kinds without
-///   one (C's null function: stasis, the list head) are skipped.
-///
-/// The C original advances the cursor *after* `Z_Free`, reading from already-
-/// freed memory.  This Rust port saves `next` before freeing to avoid the
-/// undefined behaviour.
+///   one (C's null function: stasis) are skipped.
 ///
 /// Corresponds to `P_RunThinkers` in `p_tick.c`.
 pub fn P_RunThinkers() {
-    let cap = thinkercap();
-    unsafe {
-        let mut current = (*cap).next;
-
-        while current != cap {
-            if let ThinkerKind::Removed(class) = (*current).kind {
-                let prev = (*current).prev;
-                let next = (*current).next;
-                (*prev).next = next;
-                (*next).prev = prev;
-                Z_Free(thinker_allocation(current, class));
-                current = next;
-            } else {
-                run_thinker(current);
-                current = (*current).next;
-            }
-        }
-    }
+    // SAFETY: the ticker runs only while a level is loaded.
+    run_thinker_list(|thinker| unsafe { run_thinker(thinker) });
 }
 
 /// Run one game tic: advance all players, thinkers, specials, and the level
@@ -419,6 +426,10 @@ pub fn P_Ticker() {
     }
 }
 
+/// Serialises the tests that use the thinker list and arenas.
+#[cfg(test)]
+pub static THINKER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,53 +441,94 @@ mod tests {
 
     #[test]
     fn zeroed_kind_is_none() {
-        // Z_Malloc zeroes new blocks; a thinker read before its kind is set
-        // must be the C null function, not some other kind.
+        // A zeroed thinker read before its kind is set must be the C null
+        // function, not some other kind.
         let zeroed: ThinkerKind = unsafe { std::mem::zeroed() };
         assert_eq!(zeroed, ThinkerKind::None);
     }
 
     #[test]
-    fn removal_keeps_the_owning_class() {
+    fn removal_marks_the_thinker() {
         let mut thinker = thinker_t {
-            prev: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
             kind: ThinkerKind::CeilingInStasis,
         };
-        unsafe { P_RemoveThinker(&raw mut thinker) };
-        assert_eq!(thinker.kind, ThinkerKind::Removed(ThinkerClass::Ceiling));
+        P_RemoveThinker(&mut thinker);
+        assert_eq!(thinker.kind, ThinkerKind::Removed);
         assert!(thinker.kind.is_removed());
-        unsafe { P_RemoveThinker(&raw mut thinker) };
-        assert_eq!(thinker.kind, ThinkerKind::Removed(ThinkerClass::Ceiling));
+        P_RemoveThinker(&mut thinker);
+        assert_eq!(thinker.kind, ThinkerKind::Removed);
     }
 
-    #[test]
-    fn from_thinker_returns_the_container() {
-        let mut glow = std::mem::MaybeUninit::<glow_t>::zeroed();
-        let container = glow.as_mut_ptr();
-        let thinker = unsafe { &raw mut (*container).thinker };
-        assert_eq!(unsafe { glow_t::from_thinker(thinker) }, container);
-        assert_eq!(
-            unsafe { thinker_allocation(thinker, ThinkerClass::Glow) },
-            container.cast::<c_void>()
-        );
-
-        let mut mobj = std::mem::MaybeUninit::<mobj_t>::zeroed();
-        let container = mobj.as_mut_ptr();
-        let thinker = unsafe { &raw mut (*container).thinker };
-        assert_eq!(
-            unsafe { thinker_allocation(thinker, ThinkerClass::Mobj) },
-            container.cast::<c_void>()
-        );
+    /// A listed glow with the given light level, for telling thinkers apart.
+    fn add_glow(level: i32) -> GlowId {
+        let id = new_thinker::<glow_t>();
+        let glow = unsafe { &mut *id.ptr() };
+        glow.minlight = level;
+        glow.thinker.kind = ThinkerKind::Glow;
+        P_AddThinker(ThinkerId::Glow(id));
+        id
     }
 
+    fn glow_level(thinker: ThinkerId) -> i32 {
+        let ThinkerId::Glow(id) = thinker else {
+            panic!("{thinker:?} is not a glow");
+        };
+        unsafe { (*id.ptr()).minlight }
+    }
+
+    /// Thinkers run in insertion order; one removed ahead of the cursor is
+    /// skipped and freed when the walk reaches it, one added during the walk
+    /// runs in the same walk, at the tail.
     #[test]
-    fn init_sets_self_pointers() {
-        let cap = thinkercap();
+    fn walk_keeps_order_across_add_and_remove() {
+        let _guard = THINKER_TEST_LOCK.lock().unwrap();
         P_InitThinkers();
-        unsafe {
-            assert_eq!((*cap).prev, cap);
-            assert_eq!((*cap).next, cap);
-        }
+        let first = add_glow(1);
+        let second = add_glow(2);
+        let third = add_glow(3);
+
+        let mut ran = Vec::new();
+        run_thinker_list(|thinker| {
+            let level = glow_level(thinker);
+            ran.push(level);
+            if level == 1 {
+                // Remove the next thinker before the walk reaches it.
+                P_RemoveThinker(unsafe { &mut (*second.ptr()).thinker });
+                add_glow(4);
+            }
+        });
+        assert_eq!(ran, [1, 3, 4]);
+        assert!(first.is_live() && third.is_live());
+        assert!(!second.is_live(), "freed when the walk reached it");
+        let order: Vec<i32> = thinkers().map(glow_level).collect();
+        assert_eq!(order, [1, 3, 4]);
+        P_InitThinkers();
+    }
+
+    /// A removed thinker stays listed and readable until the walk frees it;
+    /// after that its handle is stale but still reads the old data.
+    #[test]
+    fn deferred_removal_keeps_the_slot_readable() {
+        let _guard = THINKER_TEST_LOCK.lock().unwrap();
+        P_InitThinkers();
+        let glow = add_glow(5);
+        P_RemoveThinker(unsafe { &mut (*glow.ptr()).thinker });
+        assert!(glow.is_live(), "removal is deferred");
+        assert_eq!(thinkers().count(), 1);
+
+        run_thinker_list(|thinker| panic!("{thinker:?} is removed and must not run"));
+        assert!(!glow.is_live());
+        assert_eq!(thinkers().count(), 0);
+        assert_eq!(unsafe { (*glow.ptr()).minlight }, 5);
+        P_InitThinkers();
+    }
+
+    #[test]
+    fn init_empties_the_list_and_frees_the_level() {
+        let _guard = THINKER_TEST_LOCK.lock().unwrap();
+        let glow = add_glow(6);
+        P_InitThinkers();
+        assert_eq!(thinkers().count(), 0);
+        assert!(!glow.is_live());
     }
 }

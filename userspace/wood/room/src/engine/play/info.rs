@@ -54,7 +54,7 @@
 //! `State::action` is the function the simulation invokes when the actor
 //! enters that state. In C it is the `actionf_t` union of `void (*)()`,
 //! `void (*)(void*)`, and `void (*)(void*, void*)`; in this Rust port it is
-//! a [`StateAction`]: `Mobj` for map-object actions (`fn(*mut mobj_t)`, run
+//! a [`StateAction`]: `Mobj` for map-object actions (`fn(MobjId)`, run
 //! by `P_SetMobjState`) and `Weapon` for player-sprite actions
 //! (`fn(*mut PlayerT, *mut PspdefT)`, run by `P_SetPsprite`). The `action!`
 //! macro picks the variant from the action's name, and the compiler checks
@@ -876,7 +876,7 @@ pub enum StateAction {
     /// No action (C null `actionf_t`).
     None,
     /// Map-object action, called with the actor entering the state.
-    Mobj(unsafe fn(*mut mobj_t)),
+    Mobj(unsafe fn(MobjId)),
     /// Player-sprite (weapon) action, called with the player and the
     /// psprite entering the state.
     Weapon(unsafe fn(*mut PlayerT, *mut PspdefT)),
@@ -884,8 +884,8 @@ pub enum StateAction {
 
 // Every action function referenced from [`STATES`]. The bodies live in
 // `p_pspr` (mostly player weapon actions, `fn(*mut PlayerT, *mut
-// PspdefT)`) and `p_enemy` (mostly map object actions, `fn(*mut
-// mobj_t)`); `action!` wraps each in its [`StateAction`] variant.
+// PspdefT)`) and `p_enemy` (mostly map object actions,
+// `fn(MobjId)`); `action!` wraps each in its [`StateAction`] variant.
 use crate::engine::{
     doom::player::{PlayerT, PspdefT},
     play::{
@@ -900,7 +900,7 @@ use crate::engine::{
             A_SpidRefire, A_StartFire, A_Tracer, A_TroopAttack, A_VileAttack, A_VileChase,
             A_VileStart, A_VileTarget, A_XScream,
         },
-        mobj::mobj_t,
+        mobj::MobjId,
         pspr::{
             A_BFGSpray, A_BFGsound, A_CheckReload, A_FireBFG, A_FireCGun, A_FireMissile,
             A_FirePistol, A_FirePlasma, A_FireShotgun, A_FireShotgun2, A_GunFlash, A_Light0,

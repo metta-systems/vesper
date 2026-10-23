@@ -940,8 +940,8 @@ unsafe fn AM_restoreScaleAndLoc(automap: &mut AutomapState) {
         automap.m_x = automap.old_m_x;
         automap.m_y = automap.old_m_y;
     } else {
-        automap.m_x = (*(*automap.plr).mo).x - automap.m_w / 2;
-        automap.m_y = (*(*automap.plr).mo).y - automap.m_h / 2;
+        automap.m_x = (*(*automap.plr).mo().ptr()).x - automap.m_w / 2;
+        automap.m_y = (*(*automap.plr).mo().ptr()).y - automap.m_h / 2;
     }
     automap.m_x2 = automap.m_x + automap.m_w;
     automap.m_y2 = automap.m_y + automap.m_h;
@@ -1079,8 +1079,8 @@ unsafe fn AM_initVariables(automap: &mut AutomapState) {
     }
     automap.plr = plr;
 
-    automap.m_x = (*(*plr).mo).x - automap.m_w / 2;
-    automap.m_y = (*(*plr).mo).y - automap.m_h / 2;
+    automap.m_x = (*(*plr).mo().ptr()).x - automap.m_w / 2;
+    automap.m_y = (*(*plr).mo().ptr()).y - automap.m_h / 2;
     AM_changeWindowLoc(automap);
 
     automap.old_m_x = automap.m_x;
@@ -1435,7 +1435,7 @@ fn AM_changeWindowScale(automap: &mut AutomapState) {
 ///
 /// `plr` must be a valid pointer.
 unsafe fn AM_doFollowPlayer(automap: &mut AutomapState) {
-    let mo = (*automap.plr).mo;
+    let mo = (*automap.plr).mo().ptr();
     if automap.f_oldloc.x != (*mo).x || automap.f_oldloc.y != (*mo).y {
         automap.m_x = FTOM(automap, MTOF(automap, (*mo).x)) - automap.m_w / 2;
         automap.m_y = FTOM(automap, MTOF(automap, (*mo).y)) - automap.m_h / 2;
@@ -1997,20 +1997,20 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
                 automap,
                 &CHEAT_ARROW,
                 0,
-                (*(*plr).mo).angle,
+                (*(*plr).mo().ptr()).angle,
                 WHITE,
-                (*(*plr).mo).x,
-                (*(*plr).mo).y,
+                (*(*plr).mo().ptr()).x,
+                (*(*plr).mo().ptr()).y,
             );
         } else {
             AM_drawLineCharacter(
                 automap,
                 &PLAYER_ARROW,
                 0,
-                (*(*plr).mo).angle,
+                (*(*plr).mo().ptr()).angle,
                 WHITE,
-                (*(*plr).mo).x,
-                (*(*plr).mo).y,
+                (*(*plr).mo().ptr()).x,
+                (*(*plr).mo().ptr()).y,
             );
         }
         return;
@@ -2039,10 +2039,10 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
             automap,
             &PLAYER_ARROW,
             0,
-            (*(*p).mo).angle,
+            (*(*p).mo().ptr()).angle,
             color,
-            (*(*p).mo).x,
-            (*(*p).mo).y,
+            (*(*p).mo().ptr()).x,
+            (*(*p).mo().ptr()).y,
         );
     }
 }
@@ -2062,8 +2062,9 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
 unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i32) {
     let level = LEVEL.borrow();
     for sector in &level.sectors[..level.numsectors as usize] {
-        let mut t = sector.thinglist;
-        while !t.is_null() {
+        let mut thing = sector.thinglist;
+        while let Some(current) = thing {
+            let t = current.ptr();
             let lightlev = automap.lightlev;
             AM_drawLineCharacter(
                 automap,
@@ -2074,7 +2075,7 @@ unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i3
                 (*t).x,
                 (*t).y,
             );
-            t = (*t).snext;
+            thing = (*t).snext;
         }
     }
 }

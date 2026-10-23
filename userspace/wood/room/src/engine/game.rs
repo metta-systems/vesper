@@ -61,7 +61,7 @@ use crate::engine::{
     misc::random::P_Random,
     play::{
         inter::maxammo,
-        mobj::mobj_t,
+        mobj::MobjId,
         setup::{LEVEL, deathmatch_p, deathmatchstart, playerstart},
     },
     wad::format::mapthing_t,
@@ -381,7 +381,7 @@ pub struct GameState {
     pub bodyqueslot: i32,
     /// Circular queue of [`BODYQUESIZE`] recent player corpses; the oldest is
     /// removed when the queue wraps (see `G_CheckSpot`).
-    bodyque: [*mut mobj_t; BODYQUESIZE],
+    bodyque: [Option<MobjId>; BODYQUESIZE],
     /// Non-zero enforces the vanilla `SAVEGAMESIZE` cap (`I_Error` on overrun).
     /// The config table binds it by its stable address.
     pub vanilla_savegame_limit: i32,
@@ -476,7 +476,7 @@ impl GameState {
             },
             consistancy: [[0; 128]; MAXPLAYERS],
             bodyqueslot: 0,
-            bodyque: [ptr::null_mut(); BODYQUESIZE],
+            bodyque: [None; BODYQUESIZE],
             vanilla_savegame_limit: 1,
             vanilla_demo_limit: 1,
             forwardmove: [0x19, 0x32],
@@ -1674,9 +1674,8 @@ pub unsafe fn G_Ticker() {
                         game.consistancy[i][buf] as i32,
                     );
                 }
-                let mo = (*player(i)).mo;
-                if !mo.is_null() {
-                    game.consistancy[i][buf] = (*mo).x as u8;
+                if let Some(mo) = (*player(i)).mo {
+                    game.consistancy[i][buf] = (*mo.ptr()).x as u8;
                 } else {
                     game.consistancy[i][buf] = RANDOM.get().rndindex as u8;
                 }
@@ -1783,7 +1782,7 @@ pub unsafe fn G_PlayerFinishLevel(player: i32) {
     let p = &mut *self::player(player as usize);
     p.powers = [0; 6];
     p.cards = [0; 6];
-    (*p.mo).flags &= !crate::engine::play::info::MF_SHADOW;
+    (*p.mo().ptr()).flags &= !crate::engine::play::info::MF_SHADOW;
     p.extralight = 0;
     p.fixedcolormap = 0;
     p.damagecount = 0;
@@ -1855,11 +1854,10 @@ pub unsafe fn G_PlayerReborn(player: i32) {
 /// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
 /// queue globals.
 pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
-    let spawning_mo = (*player(playernum as usize)).mo;
-    if spawning_mo.is_null() {
+    let Some(spawning_mo) = (*player(playernum as usize)).mo else {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
-            let mo = (*player(i)).mo;
+            let mo = (*player(i)).mo().ptr();
             if (*mo).x == ((*mthing).x.get() as fixed_t) << 16
                 && (*mo).y == ((*mthing).y.get() as fixed_t) << 16
             {
@@ -1867,7 +1865,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
             }
         }
         return 1;
-    }
+    };
 
     let x = ((*mthing).x.get() as fixed_t) << 16;
     let y = ((*mthing).y.get() as fixed_t) << 16;
@@ -1883,7 +1881,9 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
         (game.bodyqueslot, game.bodyque[slot])
     };
     if bodyqueslot >= BODYQUESIZE as i32 {
-        P_RemoveMobj(oldest_corpse);
+        // The queue has wrapped, so the slot holds a corpse (C removes it
+        // without a check).
+        P_RemoveMobj(oldest_corpse.expect("body queue slot is empty"));
     }
     {
         let mut game = GAME.borrow_mut();
@@ -1985,9 +1985,8 @@ pub unsafe fn G_DoReborn(playernum: i32) {
     if netgame() == 0 {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
-        let mo = (*player(playernum as usize)).mo;
-        if !mo.is_null() {
-            (*mo).player = ptr::null_mut();
+        if let Some(mo) = (*player(playernum as usize)).mo {
+            (*mo.ptr()).player = ptr::null_mut();
         }
 
         if deathmatch() != 0 {

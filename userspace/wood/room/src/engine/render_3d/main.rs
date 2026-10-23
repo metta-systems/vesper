@@ -1016,7 +1016,7 @@ pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
     let mut view = VIEW.borrow_mut();
 
     view.viewplayer = player;
-    let mo = (*player).mo;
+    let mo = (*player).mo().ptr();
     view.viewx = (*mo).x;
     view.viewy = (*mo).y;
     view.viewangle = (*mo).angle.wrapping_add(view.viewangleoffset as u32);

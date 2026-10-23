@@ -12,10 +12,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::i_error,
-    std::{ffi::c_void, ptr},
-};
+use {crate::i_error, std::ptr};
 
 use crate::engine::{
     doom::player::{NUMPSPRITES, PspdefT},
@@ -721,9 +718,7 @@ pub unsafe fn R_DrawVisSprite(
 ///   `spritetopoffset` must all be initialised by `R_InitSprites` before this
 ///   function is called.
 /// - The view state and `spritelights` must be valid for the current frame.
-pub unsafe fn R_ProjectSprite(thing: *mut c_void) {
-    let thing = thing as *mut mobj_t;
-
+pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
     let (sprites, spritelights) = {
         let sprite_state = SPRITES.borrow();
         (sprite_state.sprites, sprite_state.spritelights)
@@ -913,9 +908,10 @@ pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
 
     // Handle all things in sector.
     let mut thing = sec.thinglist;
-    while !thing.is_null() {
-        R_ProjectSprite(thing as *mut c_void);
-        thing = (*thing).snext;
+    while let Some(current) = thing {
+        let current = current.ptr();
+        R_ProjectSprite(current);
+        thing = (*current).snext;
     }
 }
 
@@ -1089,7 +1085,7 @@ pub unsafe fn R_DrawPlayerSprites() {
         let view = VIEW.borrow();
         (view.viewplayer, view.extralight)
     };
-    let mo = (*viewplayer).mo;
+    let mo = (*viewplayer).mo().ptr();
     let lightlevel = {
         let level = LEVEL.borrow();
         level.sectors[level.subsectors[(*mo).subsector].sector].lightlevel

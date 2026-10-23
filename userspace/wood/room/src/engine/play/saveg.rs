@@ -12,7 +12,10 @@
 //! serialized as array indices; player pointers use a 1-based index (0 means
 //! NULL). Thinker function slots stored in saves are raw addresses that are
 //! only tested against null on load; the thinker kind is re-established from
-//! the record's class (see [`saved_function_word`]).
+//! the record's class (see [`saved_function_word`]). References between map
+//! objects (and a player's `mo` and `attacker`) are written where C writes
+//! its pointers, as truncated arena-slot addresses ([`saved_mobj_word`]);
+//! they cannot be turned back into handles, so they load as `None`.
 //!
 //! Notable differences from the C source:
 //! - `saveg_write8` increments `savegamelength`; the C version does not.
@@ -28,7 +31,6 @@
 use {
     crate::i_error,
     std::{
-        ffi::c_void,
         io::{Cursor, Read, Write},
         ptr,
     },
@@ -50,15 +52,14 @@ use crate::engine::{
         lights::{
             T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash, glow_t, lightflash_t, strobe_t,
         },
-        mobj::mobj_t,
+        mobj::{MobjId, mobj_t},
         plats::{P_AddActivePlat, T_PlatRaise, plat_t},
         tick::{
-            P_AddThinker, P_InitThinkers, TICK, ThinkerContainer, ThinkerKind, leveltime,
-            thinker_allocation, thinker_t, thinkercap,
+            P_AddThinker, P_InitThinkers, TICK, ThinkerId, ThinkerKind, leveltime, new_thinker,
+            thinker_t, thinkers,
         },
     },
     wad::format::mapthing_t,
-    zone::{PU_LEVEL, PU_LEVSPEC, Z_Free, Z_Malloc},
 };
 
 // ---------------------------------------------------------------------------
@@ -341,7 +342,7 @@ fn saved_function_word(kind: ThinkerKind) -> u32 {
         ThinkerKind::Strobe => T_StrobeFlash as *const (),
         ThinkerKind::Glow => T_Glow as *const (),
         ThinkerKind::FireFlicker => T_FireFlicker as *const (),
-        ThinkerKind::Removed(_) => return u32::MAX,
+        ThinkerKind::Removed => return u32::MAX,
     };
     function as usize as u32
 }
@@ -386,19 +387,19 @@ unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
 
 /// Reads a `thinker_t` header (prev, next, function) from the save stream.
 ///
-/// The `prev` and `next` pointer values stored in the stream are raw addresses
-/// from the saving session and are not meaningful in the loading session; they
-/// will be overwritten when the thinker is re-linked. The saved function slot
-/// is only tested against null, as in C: `0` reads as [`ThinkerKind::None`],
-/// anything else as `kind_if_function_set`. The `P_UnArchive*` callers then
-/// settle the kind (C overwrites the function the same way).
+/// The `prev` and `next` words are list links from the saving session; the
+/// thinker list here is [`TICK`]'s ordered list, so they are read and
+/// dropped (C overwrites them when it relinks the thinker). The saved
+/// function slot is only tested against null, as in C: `0` reads as
+/// [`ThinkerKind::None`], anything else as `kind_if_function_set`. The
+/// `P_UnArchive*` callers then settle the kind (C overwrites the function
+/// the same way).
 /// C origin: `saveg_read_thinker_t`.
-unsafe fn saveg_read_thinker_t(th: *mut thinker_t, kind_if_function_set: ThinkerKind) {
-    let s = &mut *th;
-    // Read prev/next as raw pointer indices (will be rebuilt)
-    s.prev = saveg_read32() as usize as *mut thinker_t;
-    s.next = saveg_read32() as usize as *mut thinker_t;
-    s.kind = if saveg_read32() == 0 {
+fn saveg_read_thinker_t(th: &mut thinker_t, kind_if_function_set: ThinkerKind) {
+    // prev, next
+    saveg_read32();
+    saveg_read32();
+    th.kind = if saveg_read32() == 0 {
         ThinkerKind::None
     } else {
         kind_if_function_set
@@ -407,58 +408,72 @@ unsafe fn saveg_read_thinker_t(th: *mut thinker_t, kind_if_function_set: Thinker
 
 /// Writes a `thinker_t` header (prev, next, function) to the save stream.
 ///
-/// Pointer fields are written as raw 32-bit addresses; the function slot is
-/// written by [`saved_function_word`]. C origin: `saveg_write_thinker_t`.
-unsafe fn saveg_write_thinker_t(th: *const thinker_t) {
-    let s = &*th;
-    saveg_write32(s.prev as u32);
-    saveg_write32(s.next as u32);
-    saveg_write32(saved_function_word(s.kind));
+/// The thinker list keeps no links in the thinker, so `prev` and `next` are
+/// written as `0`; C writes the link addresses, which its loader ignores.
+/// The function slot is written by [`saved_function_word`].
+/// C origin: `saveg_write_thinker_t`.
+fn saveg_write_thinker_t(th: &thinker_t) {
+    saveg_write32(0);
+    saveg_write32(0);
+    saveg_write32(saved_function_word(th.kind));
+}
+
+/// The 32-bit word C writes for a map object pointer: the object's address
+/// truncated to 32 bits, or `0` for null. As meaningless across sessions as
+/// C's; it is never followed, so a stale handle is written without a
+/// liveness check.
+fn saved_mobj_word(mobj: Option<MobjId>) -> u32 {
+    mobj.map_or(0, |mobj| mobj.address() as u32)
 }
 
 //
 // mobj_t — serialized as C struct via FFI
 //
 
-/// Reads a full `mobj_t` record from the save stream into the memory at `mobj`.
+/// Reads a full `mobj_t` record from the save stream into the map object
+/// `mobj_id`.
 ///
-/// The `mobj` pointer must point to a valid `mobj_t`-sized allocation.
 /// After reading:
-/// - `prev`/`next` in the embedded thinker are raw addresses (stale from the
-///   saving session) and will be rebuilt by `P_AddThinker`.
-/// - `snext`, `sprev`, `bnext`, `bprev`, `target`, `tracer` are raw saved
-///   addresses that callers must NULL out or re-resolve.
+/// - The thinker's saved list links are dropped (see
+///   [`saveg_read_thinker_t`]); the caller lists it with `P_AddThinker`.
+/// - `snext`, `sprev`, `bnext`, `bprev` are saved addresses; they are
+///   dropped and rebuilt by `P_SetThingPosition`.
+/// - `target` and `tracer` are saved addresses too; they load as `None`.
 /// - `subsector` is saved as an address too; it is skipped and left as
 ///   subsector 0 until `P_SetThingPosition` finds the real one.
 /// - `state` is resolved from a stream index via `saveg_read_state_ptr`.
-/// - `player` is a 1-based index; re-resolved and the back-pointer
-///   `player->mo` is updated in place.
+/// - `player` is a 1-based index; re-resolved and the back-reference
+///   `player->mo` is set to `mobj_id`.
 /// - `info` is a raw saved pointer (will be overwritten by caller with
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
-unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
-    let mo = mobj as *mut mobj_t;
+unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
+    let mo = mobj_id.ptr();
 
     // thinker_t
-    saveg_read_thinker_t(&raw mut (*mo).thinker, ThinkerKind::Mobj);
+    saveg_read_thinker_t(&mut (*mo).thinker, ThinkerKind::Mobj);
 
     // x, y, z
     (*mo).x = saveg_read32() as i32;
     (*mo).y = saveg_read32() as i32;
     (*mo).z = saveg_read32() as i32;
 
-    // snext, sprev
-    (*mo).snext = saveg_read32() as *mut mobj_t;
-    (*mo).sprev = saveg_read32() as *mut mobj_t;
+    // snext, sprev (saved addresses, rebuilt by `P_SetThingPosition`)
+    saveg_read32();
+    saveg_read32();
+    (*mo).snext = None;
+    (*mo).sprev = None;
 
     // angle, sprite, frame
     (*mo).angle = saveg_read32();
     (*mo).sprite = saveg_read_enum() as i32;
     (*mo).frame = saveg_read32() as i32;
 
-    // bnext, bprev
-    (*mo).bnext = saveg_read32() as *mut mobj_t;
-    (*mo).bprev = saveg_read32() as *mut mobj_t;
+    // bnext, bprev (saved addresses, rebuilt by `P_SetThingPosition`)
+    saveg_read32();
+    saveg_read32();
+    (*mo).bnext = None;
+    (*mo).bprev = None;
 
     // subsector (a saved address, rebuilt by `P_SetThingPosition`)
     saveg_read32();
@@ -501,8 +516,11 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).movedir = saveg_read32() as i32;
     (*mo).movecount = saveg_read32() as i32;
 
-    // target (raw pointer)
-    (*mo).target = saveg_read32() as *mut mobj_t;
+    // target. Step 3b replaces this: the saved word is a truncated address,
+    // which a handle cannot be rebuilt from, so the reference is dropped (C
+    // loads it as a dangling pointer).
+    saveg_read32();
+    (*mo).target = None;
 
     // reactiontime, threshold
     (*mo).reactiontime = saveg_read32() as i32;
@@ -514,7 +532,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
         (*mo).player = saveg_read_player_ptr(pl);
         let player = (*mo).player;
         if !player.is_null() {
-            (*player).mo = mo;
+            (*player).mo = Some(mobj_id);
         }
     } else {
         (*mo).player = std::ptr::null_mut();
@@ -526,22 +544,26 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     // spawnpoint
     saveg_read_mapthing_t(std::ptr::addr_of_mut!((*mo).spawnpoint));
 
-    // tracer (raw pointer)
-    (*mo).tracer = saveg_read32() as *mut mobj_t;
+    // tracer. Step 3b replaces this: the saved word is a truncated address,
+    // which a handle cannot be rebuilt from, so the reference is dropped.
+    saveg_read32();
+    (*mo).tracer = None;
 }
 
 /// Writes a full `mobj_t` record to the save stream from `mobj`.
 ///
-/// Pointers (snext, sprev, bnext, bprev, subsector, target, tracer, info) are
-/// written as raw 32-bit addresses; they are not portable across sessions but
-/// are reconstructed on load. `state` is written as an index into `states`.
-/// `player` is written as a 1-based player index (0 for NULL).
+/// References (snext, sprev, bnext, bprev, target, tracer, as
+/// [`saved_mobj_word`]; subsector and info as addresses) are written as
+/// 32-bit addresses, as C writes its pointers; they are not portable across
+/// sessions and are dropped or reconstructed on load. `state` is written as
+/// an index into `states`. `player` is written as a 1-based player index
+/// (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
-    let mo = mobj as *const mobj_t;
+unsafe fn saveg_write_mobj_t(mobj: MobjId) {
+    let mo = mobj.ptr() as *const mobj_t;
 
     // thinker_t
-    saveg_write_thinker_t(&raw const (*mo).thinker);
+    saveg_write_thinker_t(&(*mo).thinker);
 
     // x, y, z
     saveg_write32((*mo).x as u32);
@@ -549,8 +571,8 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).z as u32);
 
     // snext, sprev
-    saveg_write32((*mo).snext as u32);
-    saveg_write32((*mo).sprev as u32);
+    saveg_write32(saved_mobj_word((*mo).snext));
+    saveg_write32(saved_mobj_word((*mo).sprev));
 
     // angle, sprite, frame
     saveg_write32((*mo).angle);
@@ -558,8 +580,8 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).frame as u32);
 
     // bnext, bprev
-    saveg_write32((*mo).bnext as u32);
-    saveg_write32((*mo).bprev as u32);
+    saveg_write32(saved_mobj_word((*mo).bnext));
+    saveg_write32(saved_mobj_word((*mo).bprev));
 
     // subsector (C writes the pointer: the subsector record's address)
     let subsector_address = (&raw const LEVEL.borrow().subsectors[(*mo).subsector]).addr();
@@ -606,8 +628,8 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).movedir as u32);
     saveg_write32((*mo).movecount as u32);
 
-    // target
-    saveg_write32((*mo).target as u32);
+    // target (step 3b replaces this word)
+    saveg_write32(saved_mobj_word((*mo).target));
 
     // reactiontime, threshold
     saveg_write32((*mo).reactiontime as u32);
@@ -627,8 +649,8 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     // spawnpoint
     saveg_write_mapthing_t(std::ptr::addr_of!((*mo).spawnpoint));
 
-    // tracer
-    saveg_write32((*mo).tracer as u32);
+    // tracer (step 3b replaces this word)
+    saveg_write32(saved_mobj_word((*mo).tracer));
 }
 
 //
@@ -715,21 +737,23 @@ unsafe fn saveg_write_pspdef_t(psp: *const PspdefT) {
 /// Reads a full `player_t` record from the save stream into `*pl`.
 ///
 /// Fields are read in the same order as the C version. Notable points:
-/// - `mo` is read as a raw pointer (will be set to NULL by `P_UnArchivePlayers`
-///   and rebuilt by `P_UnArchiveThinkers`).
+/// - `mo` is a saved address; it loads as `None` and is set again by
+///   `P_UnArchiveThinkers` when the player's map object is read.
 /// - `playerstate` and enum fields (`readyweapon`, `pendingweapon`) are read
 ///   as 32-bit values.
 /// - Power timers, key cards, frag counts, weapon ownership, ammo, and max
 ///   ammo are each 32-bit entries.
-/// - `message` and `attacker` are raw pointers; callers zero them after read.
+/// - `message` and `attacker` are saved addresses; they load as empty and
+///   `None`.
 /// - Each of `NUMPSPRITES` player-sprite slots is read via
 ///   `saveg_read_pspdef_t`.
 /// C origin: `saveg_read_player_t`.
 unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     let s = &mut *pl;
 
-    // mo (raw pointer, will be NULL after)
-    s.mo = saveg_read32() as *mut mobj_t;
+    // mo (a saved address; set when the player's map object is read)
+    saveg_read32();
+    s.mo = None;
 
     // playerstate
     s.playerstate = saveg_read_enum() as i32;
@@ -806,8 +830,11 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     s.damagecount = saveg_read32() as i32;
     s.bonuscount = saveg_read32() as i32;
 
-    // attacker (raw pointer)
-    s.attacker = saveg_read32() as *mut mobj_t;
+    // attacker. Step 3b replaces this: the saved word is a truncated
+    // address, which a handle cannot be rebuilt from, so the reference is
+    // dropped (C loads it as a dangling pointer).
+    saveg_read32();
+    s.attacker = None;
 
     // extralight, fixedcolormap, colormap
     s.extralight = saveg_read32() as i32;
@@ -825,14 +852,14 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
 
 /// Writes a full `player_t` record to the save stream from `*pl`.
 ///
-/// Raw pointers (`mo`, `message`, `attacker`) are written as 32-bit addresses;
-/// they are not valid across sessions but are zeroed on unarchive. All other
-/// fields mirror `saveg_read_player_t` in order.
+/// References (`mo`, `message`, `attacker`) are written as 32-bit addresses,
+/// as C writes its pointers; they are not valid across sessions and load as
+/// empty. All other fields mirror `saveg_read_player_t` in order.
 /// C origin: `saveg_write_player_t`.
 unsafe fn saveg_write_player_t(pl: *const PlayerT) {
     let s = &*pl;
 
-    saveg_write32(s.mo as u32);
+    saveg_write32(saved_mobj_word(s.mo));
     saveg_write_enum(s.playerstate as u32);
     saveg_write_ticcmd_t(&s.cmd);
     saveg_write32(s.viewz as u32);
@@ -873,7 +900,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
     saveg_write32(0); // message pointer slot
     saveg_write32(s.damagecount as u32);
     saveg_write32(s.bonuscount as u32);
-    saveg_write32(s.attacker as u32);
+    saveg_write32(saved_mobj_word(s.attacker));
     saveg_write32(s.extralight as u32);
     saveg_write32(s.fixedcolormap as u32);
     saveg_write32(s.colormap as u32);
@@ -1374,8 +1401,8 @@ pub unsafe fn P_ArchivePlayers() {
 ///
 /// For each active player slot, aligns the stream (`saveg_read_pad`) then
 /// reads the player record. After reading, `mo`, `message`, and `attacker` are
-/// reset to null pointers; they will be restored when thinkers are unarchived
-/// by `P_UnArchiveThinkers`.
+/// empty; `mo` is restored when `P_UnArchiveThinkers` reads the player's map
+/// object, `attacker` stays `None` (C keeps a dangling pointer).
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
 /// # Safety
@@ -1384,7 +1411,7 @@ pub unsafe fn P_ArchivePlayers() {
 /// sequence written by `P_ArchivePlayers`. `playeringame` must already have
 /// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
-/// null and must not be dereferenced until thinkers are unarchived.
+/// empty until thinkers are unarchived.
 pub unsafe fn P_UnArchivePlayers() {
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
@@ -1395,9 +1422,9 @@ pub unsafe fn P_UnArchivePlayers() {
         saveg_read_player_t(player);
 
         // will be set when unarc thinker
-        player.mo = std::ptr::null_mut();
+        player.mo = None;
         player.message = PlayerMessage::NONE;
-        player.attacker = std::ptr::null_mut();
+        player.attacker = None;
     }
 }
 
@@ -1455,7 +1482,7 @@ pub fn P_ArchiveWorld() {
 ///
 /// For each sector: reads heights as signed 16-bit integers and shifts them
 /// left 16 bits to restore the 16.16 fixed-point format. Clears
-/// `specialdata` and `soundtarget` to null (they will be rebuilt by
+/// `specialdata` and `soundtarget` to `None` (they will be rebuilt by
 /// `P_UnArchiveSpecials` and the sound code respectively).
 ///
 /// For each linedef: reads flags, special, tag, then each present sidedef's
@@ -1477,8 +1504,8 @@ pub fn P_UnArchiveWorld() {
         sec.lightlevel = saveg_read16() as i16;
         sec.special = saveg_read16() as i16;
         sec.tag = saveg_read16() as i16;
-        sec.specialdata = std::ptr::null_mut();
-        sec.soundtarget = std::ptr::null_mut();
+        sec.specialdata = None;
+        sec.soundtarget = None;
     }
 
     // do lines
@@ -1516,51 +1543,48 @@ const tc_mobj: u8 = 1;
 // P_ArchiveThinkers / P_UnArchiveThinkers
 // ---------------------------------------------------------------------------
 
-/// Serializes all `mobj_t` thinkers from the active thinker chain.
+/// Serializes all `mobj_t` thinkers from the thinker list.
 ///
-/// Walks `thinkercap.next ... thinkercap`; for each thinker of kind
+/// Walks the list in run order; for each [`ThinkerId::Mobj`] of kind
 /// [`ThinkerKind::Mobj`], writes a `tc_mobj` byte, 4-byte alignment padding,
-/// then the full `mobj_t` record. Non-mobj thinkers are silently skipped
-/// (the C version also skips them without error). Terminates the list with a
+/// then the full `mobj_t` record. Other thinkers are silently skipped (the C
+/// version also skips them without error). Terminates the list with a
 /// `tc_end` byte.
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
 /// # Safety
 ///
-/// `save_stream` must be the stream being written.
-/// The thinker chain rooted at `thinkercap` must be fully initialized and form
-/// a valid doubly-linked circular list. Every thinker in the chain of kind
-/// [`ThinkerKind::Mobj`] must be embedded in a valid `mobj_t`.
+/// `save_stream` must be the stream being written, and a level must be
+/// loaded (each map object's subsector is written by address).
 pub unsafe fn P_ArchiveThinkers() {
-    let cap = thinkercap();
-    let mut th = (*cap).next;
-
-    while th != cap {
-        if (*th).kind == ThinkerKind::Mobj {
+    for thinker in thinkers() {
+        if let ThinkerId::Mobj(mobj) = thinker
+            && thinker.kind() == ThinkerKind::Mobj
+        {
             saveg_write8(tc_mobj);
             saveg_write_pad();
-            saveg_write_mobj_t(mobj_t::from_thinker(th) as *const c_void);
+            saveg_write_mobj_t(mobj);
         }
-        th = (*th).next;
     }
 
     // terminating marker
     saveg_write8(tc_end);
 }
 
-/// Clears all existing thinkers then deserializes the thinker chain from
+/// Clears all existing thinkers then deserializes the thinker list from
 /// `save_stream`.
 ///
-/// First pass: walks the existing thinker chain; mobj thinkers are removed
-/// via `P_RemoveMobj`, all others (removed mobjs included) have their owning
-/// struct freed via `Z_Free`. Then
-/// `P_InitThinkers` resets the chain to empty.
+/// First pass: walks the existing thinker list; map objects whose kind is
+/// [`ThinkerKind::Mobj`] are removed via `P_RemoveMobj` (unlinking them from
+/// the map and their sounds), the others are dropped. Then `P_InitThinkers`
+/// empties the list and frees every thinker (C frees the non-mobjs with
+/// `Z_Free` and leaves the removed mobjs to the level's zone purge).
 ///
 /// Second pass: reads thinker-class bytes from the stream in a loop.
 /// - `tc_end`: returns immediately.
-/// - `tc_mobj`: allocates a `mobj_t` with `Z_Malloc(PU_LEVEL)`, reads its
-///   fields, nulls out `target` and `tracer`, calls `P_SetThingPosition`,
+/// - `tc_mobj`: puts a zeroed `mobj_t` in the mobj arena, reads its fields
+///   (`target` and `tracer` load as `None`), calls `P_SetThingPosition`,
 ///   rebuilds `info` from `mobjinfo[type]`, recomputes `floorz`/`ceilingz`
 ///   from the subsector's sector, sets the thinker kind to
 ///   [`ThinkerKind::Mobj`], and registers it with `P_AddThinker`.
@@ -1570,31 +1594,19 @@ pub unsafe fn P_ArchiveThinkers() {
 ///
 /// # Safety
 ///
-/// `save_stream` must be positioned at the byte
-/// sequence written by `P_ArchiveThinkers`. The zone allocator must be
-/// operational (`Z_Malloc`/`Z_Free` must be safe to call). The map geometry
-/// (`sectors`, block-map, etc.) must be loaded so that `P_SetThingPosition`
-/// can place each restored mobj. Must be called before `P_UnArchiveSpecials`
-/// and before any code dereferences `players[i].mo`.
+/// `save_stream` must be positioned at the byte sequence written by
+/// `P_ArchiveThinkers`. The map geometry (`sectors`, block-map, etc.) must
+/// be loaded so that `P_SetThingPosition` can place each restored mobj.
+/// Must be called before `P_UnArchiveSpecials` and before any code reads
+/// `players[i].mo`.
 pub unsafe fn P_UnArchiveThinkers() {
-    let cap = thinkercap();
-    let mut currentthinker = (*cap).next;
-
     // remove all current thinkers
-    while currentthinker != cap {
-        let next = (*currentthinker).next;
-
-        let kind = (*currentthinker).kind;
-        if kind == ThinkerKind::Mobj {
-            P_RemoveMobj(mobj_t::from_thinker(currentthinker));
-        } else {
-            let Some(class) = kind.class() else {
-                i_error!("P_UnArchiveThinkers: thinker has no kind");
-            };
-            Z_Free(thinker_allocation(currentthinker, class));
+    for thinker in thinkers() {
+        if let ThinkerId::Mobj(mobj) = thinker
+            && thinker.kind() == ThinkerKind::Mobj
+        {
+            P_RemoveMobj(mobj);
         }
-
-        currentthinker = next;
     }
 
     P_InitThinkers();
@@ -1606,20 +1618,12 @@ pub unsafe fn P_UnArchiveThinkers() {
             x if x == tc_end => return,
             x if x == tc_mobj => {
                 saveg_read_pad();
-                let mobj = Z_Malloc(
-                    std::mem::size_of::<mobj_t>() as i32,
-                    PU_LEVEL,
-                    std::ptr::null_mut(),
-                );
-                saveg_read_mobj_t(mobj);
+                let mobj_id = new_thinker::<mobj_t>();
+                saveg_read_mobj_t(mobj_id);
 
-                let mo = mobj as *mut mobj_t;
+                let mo = mobj_id.ptr();
 
-                // target/tracer set to NULL (will be rebuilt)
-                (*mo).target = std::ptr::null_mut();
-                (*mo).tracer = std::ptr::null_mut();
-
-                P_SetThingPosition(mobj.cast());
+                P_SetThingPosition(mobj_id);
 
                 // rebuild info from mobjinfo
                 (*mo).info = mobjinfo_ptr((*mo).kind as usize);
@@ -1635,7 +1639,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 // set thinker kind
                 (*mo).thinker.kind = ThinkerKind::Mobj;
 
-                P_AddThinker(&raw mut (*mo).thinker);
+                P_AddThinker(ThinkerId::Mobj(mobj_id));
             }
             _ => {
                 i_error!("Unknown tclass {} in savegame", tclass as i32);
@@ -1670,9 +1674,9 @@ const tc_endspecials: u8 = 7;
 // P_ArchiveSpecials / P_UnArchiveSpecials
 // ---------------------------------------------------------------------------
 
-/// Serializes all sector-special thinkers from the active thinker chain.
+/// Serializes all sector-special thinkers from the thinker list.
 ///
-/// Walks the thinker chain and identifies specials by their thinker kind:
+/// Walks the thinker list and identifies specials by their thinker kind:
 /// - Thinkers without a think function (C's `NULL`) that appear in the
 ///   `activeceilings` list are written as `tc_ceiling` records (these are
 ///   ceilings paused mid-crush).
@@ -1692,76 +1696,66 @@ const tc_endspecials: u8 = 7;
 ///
 /// # Safety
 ///
-/// `save_stream` must be the stream being written.
-/// The thinker chain rooted at `thinkercap` must be fully initialized and form
-/// a valid doubly-linked circular list. The `activeceilings` array must be
-/// initialized. Every thinker of a special kind must be embedded in a fully
-/// initialized special struct (`ceiling_t`, `vldoor_t`, etc.).
+/// `save_stream` must be the stream being written, and every listed special
+/// must belong to the loaded level.
 pub unsafe fn P_ArchiveSpecials() {
-    let cap = thinkercap();
-    let mut th = (*cap).next;
-
-    while th != cap {
-        match (*th).kind {
+    for thinker in thinkers() {
+        match (thinker, thinker.kind()) {
             // C's null function: a ceiling in stasis is still saved when it
             // is in `activeceilings`. A platform in stasis is not saved at
             // all (vanilla behaviour).
-            ThinkerKind::None | ThinkerKind::CeilingInStasis | ThinkerKind::PlatInStasis => {
+            (ThinkerId::Ceiling(ceiling), ThinkerKind::None | ThinkerKind::CeilingInStasis) => {
                 let activeceilings = CEILINGS.borrow().activeceilings;
-                let mut found = false;
-                for &ceiling in activeceilings.iter().take(MAXCEILINGS) {
-                    if !ceiling.is_null() && &raw mut (*ceiling).thinker == th {
-                        found = true;
-                        break;
-                    }
-                }
-                if found {
+                if activeceilings
+                    .iter()
+                    .take(MAXCEILINGS)
+                    .any(|&active| active == Some(ceiling))
+                {
                     saveg_write8(tc_ceiling);
                     saveg_write_pad();
-                    saveg_write_ceiling_t(ceiling_t::from_thinker(th));
+                    saveg_write_ceiling_t(ceiling.ptr());
                 }
             }
-            ThinkerKind::Ceiling => {
+            (ThinkerId::Ceiling(ceiling), ThinkerKind::Ceiling) => {
                 saveg_write8(tc_ceiling);
                 saveg_write_pad();
-                saveg_write_ceiling_t(ceiling_t::from_thinker(th));
+                saveg_write_ceiling_t(ceiling.ptr());
             }
-            ThinkerKind::Door => {
+            (ThinkerId::Door(door), ThinkerKind::Door) => {
                 saveg_write8(tc_door);
                 saveg_write_pad();
-                saveg_write_vldoor_t(vldoor_t::from_thinker(th));
+                saveg_write_vldoor_t(door.ptr());
             }
-            ThinkerKind::Floor => {
+            (ThinkerId::Floor(floor), ThinkerKind::Floor) => {
                 saveg_write8(tc_floor);
                 saveg_write_pad();
-                saveg_write_floormove_t(floormove_t::from_thinker(th));
+                saveg_write_floormove_t(floor.ptr());
             }
-            ThinkerKind::Plat => {
+            (ThinkerId::Plat(plat), ThinkerKind::Plat) => {
                 saveg_write8(tc_plat);
                 saveg_write_pad();
-                saveg_write_plat_t(plat_t::from_thinker(th));
+                saveg_write_plat_t(plat.ptr());
             }
-            ThinkerKind::LightFlash => {
+            (ThinkerId::LightFlash(flash), ThinkerKind::LightFlash) => {
                 saveg_write8(tc_flash);
                 saveg_write_pad();
-                saveg_write_lightflash_t(lightflash_t::from_thinker(th));
+                saveg_write_lightflash_t(flash.ptr());
             }
-            ThinkerKind::Strobe => {
+            (ThinkerId::Strobe(strobe), ThinkerKind::Strobe) => {
                 saveg_write8(tc_strobe);
                 saveg_write_pad();
-                saveg_write_strobe_t(strobe_t::from_thinker(th));
+                saveg_write_strobe_t(strobe.ptr());
             }
-            ThinkerKind::Glow => {
+            (ThinkerId::Glow(glow), ThinkerKind::Glow) => {
                 saveg_write8(tc_glow);
                 saveg_write_pad();
-                saveg_write_glow_t(glow_t::from_thinker(th));
+                saveg_write_glow_t(glow.ptr());
             }
-            // Map objects are saved by `P_ArchiveThinkers`; fire flickers are
-            // not saved (vanilla behaviour); removed thinkers are skipped.
-            ThinkerKind::Mobj | ThinkerKind::FireFlicker | ThinkerKind::Removed(_) => {}
+            // Map objects are saved by `P_ArchiveThinkers`; fire flickers and
+            // platforms in stasis are not saved (vanilla behaviour); removed
+            // thinkers are skipped.
+            _ => {}
         }
-
-        th = (*th).next;
     }
 
     saveg_write8(tc_endspecials);
@@ -1769,44 +1763,32 @@ pub unsafe fn P_ArchiveSpecials() {
 
 /// Deserializes all sector-special thinkers from `save_stream`.
 ///
-/// Reads thinker-class bytes in a loop until `tc_endspecials`:
-/// - `tc_ceiling`: allocates `ceiling_t` (`PU_LEVSPEC`), deserializes,
-///   links `sector->specialdata`, restores `T_MoveCeiling` if the function
-///   slot was non-null, registers with `P_AddThinker` and
-///   `P_AddActiveCeiling`.
-/// - `tc_door`: allocates `vldoor_t` (`PU_LEVSPEC`), deserializes, links
-///   `sector->specialdata`, unconditionally assigns `T_VerticalDoor`,
-///   registers with `P_AddThinker`.
-/// - `tc_floor`: allocates `floormove_t` (`PU_LEVSPEC`), deserializes,
-///   links `sector->specialdata`, assigns `T_MoveFloor`, registers.
-/// - `tc_plat`: allocates `plat_t` (`PU_LEVSPEC`), deserializes, links
-///   `sector->specialdata`, restores `T_PlatRaise` if function non-null,
-///   registers with `P_AddThinker` and `P_AddActivePlat`.
-/// - `tc_flash`: allocates `lightflash_t` (`PU_LEVSPEC`), deserializes,
-///   assigns `T_LightFlash`, registers.
-/// - `tc_strobe`: allocates `strobe_t` (`PU_LEVSPEC`), deserializes,
-///   assigns `T_StrobeFlash`, registers.
-/// - `tc_glow`: allocates `glow_t` (`PU_LEVSPEC`), deserializes, assigns
-///   `T_Glow`, registers.
+/// Reads thinker-class bytes in a loop until `tc_endspecials`. Each record
+/// is read into a zeroed thinker put in its type's arena:
+/// - `tc_ceiling`: `ceiling_t`; links `sector->specialdata`, restores
+///   `T_MoveCeiling` if the function slot was non-null, registers with
+///   `P_AddThinker` and `P_AddActiveCeiling`.
+/// - `tc_door`: `vldoor_t`; links `sector->specialdata`, unconditionally
+///   assigns `T_VerticalDoor`, registers with `P_AddThinker`.
+/// - `tc_floor`: `floormove_t`; links `sector->specialdata`, assigns
+///   `T_MoveFloor`, registers.
+/// - `tc_plat`: `plat_t`; links `sector->specialdata`, restores
+///   `T_PlatRaise` if function non-null, registers with `P_AddThinker` and
+///   `P_AddActivePlat`.
+/// - `tc_flash`: `lightflash_t`; assigns `T_LightFlash`, registers.
+/// - `tc_strobe`: `strobe_t`; assigns `T_StrobeFlash`, registers.
+/// - `tc_glow`: `glow_t`; assigns `T_Glow`, registers.
 /// - Any other byte: calls `i_error!` (fatal).
-///
-/// Note: the C version allocates ceilings with `PU_LEVEL`, not `PU_LEVSPEC`.
-/// This port uses `PU_LEVSPEC` consistently for all specials to match the
-/// `Z_Malloc` tag used for the other special types.
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
 /// # Safety
 ///
 /// `save_stream` must be positioned at the byte
-/// sequence written by `P_ArchiveSpecials`. The zone allocator must be
-/// operational. The `sectors` array must be fully initialized so that
-/// `sector->specialdata` can be set. Must be called after
-/// `P_UnArchiveThinkers` so the thinker chain is in a consistent state before
-/// new specials are registered with `P_AddThinker`.
-// FIXME: p_saveg.c allocates ceiling_t with PU_LEVEL, not PU_LEVSPEC; this
-// port uses PU_LEVSPEC here (consistent with other specials). The difference
-// affects when the zone allocator may purge the block.
+/// sequence written by `P_ArchiveSpecials`. The `sectors` array must be
+/// fully initialized so that `sector->specialdata` can be set. Must be
+/// called after `P_UnArchiveThinkers` so the thinker list is in a
+/// consistent state before new specials are registered with `P_AddThinker`.
 pub unsafe fn P_UnArchiveSpecials() {
     loop {
         let tclass = saveg_read8();
@@ -1814,14 +1796,11 @@ pub unsafe fn P_UnArchiveSpecials() {
             x if x == tc_endspecials => return,
             x if x == tc_ceiling => {
                 saveg_read_pad();
-                let ceiling = Z_Malloc(
-                    std::mem::size_of::<ceiling_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut ceiling_t;
+                let ceiling_id = new_thinker::<ceiling_t>();
+                let ceiling = ceiling_id.ptr();
                 saveg_read_ceiling_t(ceiling);
                 LEVEL.borrow_mut().sectors[(*ceiling).sector].specialdata =
-                    &raw mut (*ceiling).thinker;
+                    Some(ThinkerId::Ceiling(ceiling_id));
 
                 // A set function slot read as `Ceiling`; a null one (C keeps
                 // the function null) is a ceiling in stasis.
@@ -1829,42 +1808,36 @@ pub unsafe fn P_UnArchiveSpecials() {
                     (*ceiling).thinker.kind = ThinkerKind::CeilingInStasis;
                 }
 
-                P_AddThinker(&raw mut (*ceiling).thinker);
-                P_AddActiveCeiling(ceiling);
+                P_AddThinker(ThinkerId::Ceiling(ceiling_id));
+                P_AddActiveCeiling(ceiling_id);
             }
             x if x == tc_door => {
                 saveg_read_pad();
-                let door = Z_Malloc(
-                    std::mem::size_of::<vldoor_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut vldoor_t;
+                let door_id = new_thinker::<vldoor_t>();
+                let door = door_id.ptr();
                 saveg_read_vldoor_t(door);
-                LEVEL.borrow_mut().sectors[(*door).sector].specialdata = &raw mut (*door).thinker;
+                LEVEL.borrow_mut().sectors[(*door).sector].specialdata =
+                    Some(ThinkerId::Door(door_id));
                 (*door).thinker.kind = ThinkerKind::Door;
-                P_AddThinker(&raw mut (*door).thinker);
+                P_AddThinker(ThinkerId::Door(door_id));
             }
             x if x == tc_floor => {
                 saveg_read_pad();
-                let floor = Z_Malloc(
-                    std::mem::size_of::<floormove_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut floormove_t;
+                let floor_id = new_thinker::<floormove_t>();
+                let floor = floor_id.ptr();
                 saveg_read_floormove_t(floor);
-                LEVEL.borrow_mut().sectors[(*floor).sector].specialdata = &raw mut (*floor).thinker;
+                LEVEL.borrow_mut().sectors[(*floor).sector].specialdata =
+                    Some(ThinkerId::Floor(floor_id));
                 (*floor).thinker.kind = ThinkerKind::Floor;
-                P_AddThinker(&raw mut (*floor).thinker);
+                P_AddThinker(ThinkerId::Floor(floor_id));
             }
             x if x == tc_plat => {
                 saveg_read_pad();
-                let plat = Z_Malloc(
-                    std::mem::size_of::<plat_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut plat_t;
+                let plat_id = new_thinker::<plat_t>();
+                let plat = plat_id.ptr();
                 saveg_read_plat_t(plat);
-                LEVEL.borrow_mut().sectors[(*plat).sector].specialdata = &raw mut (*plat).thinker;
+                LEVEL.borrow_mut().sectors[(*plat).sector].specialdata =
+                    Some(ThinkerId::Plat(plat_id));
 
                 // A set function slot read as `Plat`; a null one (C keeps the
                 // function null) is a platform in stasis.
@@ -1872,41 +1845,32 @@ pub unsafe fn P_UnArchiveSpecials() {
                     (*plat).thinker.kind = ThinkerKind::PlatInStasis;
                 }
 
-                P_AddThinker(&raw mut (*plat).thinker);
-                P_AddActivePlat(plat);
+                P_AddThinker(ThinkerId::Plat(plat_id));
+                P_AddActivePlat(plat_id);
             }
             x if x == tc_flash => {
                 saveg_read_pad();
-                let flash = Z_Malloc(
-                    std::mem::size_of::<lightflash_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut lightflash_t;
+                let flash_id = new_thinker::<lightflash_t>();
+                let flash = flash_id.ptr();
                 saveg_read_lightflash_t(flash);
                 (*flash).thinker.kind = ThinkerKind::LightFlash;
-                P_AddThinker(&raw mut (*flash).thinker);
+                P_AddThinker(ThinkerId::LightFlash(flash_id));
             }
             x if x == tc_strobe => {
                 saveg_read_pad();
-                let strobe = Z_Malloc(
-                    std::mem::size_of::<strobe_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut strobe_t;
+                let strobe_id = new_thinker::<strobe_t>();
+                let strobe = strobe_id.ptr();
                 saveg_read_strobe_t(strobe);
                 (*strobe).thinker.kind = ThinkerKind::Strobe;
-                P_AddThinker(&raw mut (*strobe).thinker);
+                P_AddThinker(ThinkerId::Strobe(strobe_id));
             }
             x if x == tc_glow => {
                 saveg_read_pad();
-                let glow = Z_Malloc(
-                    std::mem::size_of::<glow_t>() as i32,
-                    PU_LEVSPEC,
-                    std::ptr::null_mut(),
-                ) as *mut glow_t;
+                let glow_id = new_thinker::<glow_t>();
+                let glow = glow_id.ptr();
                 saveg_read_glow_t(glow);
                 (*glow).thinker.kind = ThinkerKind::Glow;
-                P_AddThinker(&raw mut (*glow).thinker);
+                P_AddThinker(ThinkerId::Glow(glow_id));
             }
             _ => {
                 i_error!(
@@ -2050,21 +2014,30 @@ mod tests {
         let mut null_function = [0u8; 12];
         let mut set_function = [0u8; 12];
         set_function[8] = 0x40;
-        unsafe {
-            let mut th = thinker_t {
-                prev: ptr::null_mut(),
-                next: ptr::null_mut(),
-                kind: ThinkerKind::Glow,
-            };
-            with_mem_stream(&mut null_function, || {
-                saveg_read_thinker_t(&raw mut th, ThinkerKind::Ceiling);
+        let mut th = thinker_t {
+            kind: ThinkerKind::Glow,
+        };
+        with_mem_stream(&mut null_function, || {
+            saveg_read_thinker_t(&mut th, ThinkerKind::Ceiling);
+        });
+        assert_eq!(th.kind, ThinkerKind::None);
+        with_mem_stream(&mut set_function, || {
+            saveg_read_thinker_t(&mut th, ThinkerKind::Ceiling);
+        });
+        assert_eq!(th.kind, ThinkerKind::Ceiling);
+    }
+
+    /// The thinker header keeps C's layout: two zero link words, then the
+    /// function word.
+    #[test]
+    fn saveg_write_thinker_t_writes_zero_links_and_the_function_word() {
+        let _g = LOCK.lock().unwrap();
+        with_mem_stream(&mut [], || {
+            saveg_write_thinker_t(&thinker_t {
+                kind: ThinkerKind::None,
             });
-            assert_eq!(th.kind, ThinkerKind::None);
-            with_mem_stream(&mut set_function, || {
-                saveg_read_thinker_t(&raw mut th, ThinkerKind::Ceiling);
-            });
-            assert_eq!(th.kind, ThinkerKind::Ceiling);
-        }
+            assert_eq!(SAVEG.borrow().save_stream.get_ref(), &[0u8; 12]);
+        });
     }
 
     #[test]
@@ -2090,13 +2063,26 @@ mod tests {
         // The thinker (prev+next+fn) is the first 12 bytes.
         // saveg_read_mobj_t reads many fields — pad to 256 zeros.
         let mut data = [0u8; 256];
+        // Non-zero saved addresses in snext, sprev, bnext, bprev, target and
+        // tracer (byte offsets in the record); the function slot stays zero.
+        for offset in [24, 28, 44, 48, 120, 150] {
+            data[offset..offset + 4].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        }
+        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
+        let mobj = new_thinker::<mobj_t>();
         unsafe {
-            let mut mo = std::mem::MaybeUninit::<mobj_t>::zeroed().assume_init();
-            mo.thinker.kind = ThinkerKind::Mobj;
+            let mo = mobj.ptr();
+            (*mo).thinker.kind = ThinkerKind::Mobj;
             with_mem_stream(&mut data, || {
-                saveg_read_mobj_t(&raw mut mo as *mut c_void);
+                saveg_read_mobj_t(mobj);
             });
-            assert_eq!(mo.thinker.kind, ThinkerKind::None);
+            assert_eq!((*mo).thinker.kind, ThinkerKind::None);
+            // Saved addresses cannot become handles: the references load
+            // empty (step 3b replaces target and tracer).
+            assert_eq!((*mo).target, None);
+            assert_eq!((*mo).tracer, None);
+            assert_eq!((*mo).snext, None);
+            assert_eq!((*mo).bprev, None);
         }
     }
 
