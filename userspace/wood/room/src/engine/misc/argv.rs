@@ -1,35 +1,67 @@
 //! Rust port of vendor/doomgeneric/m_argv.c.
 //!
 //! Command-line argument handling: parameter lookup and `@responsefile`
-//! expansion. `myargv` is the engine's single argument vector; it is set
-//! once by `doomgeneric_Create` and only rewritten by response-file
-//! expansion during startup.
+//! expansion. `myargv` is the engine's single argument vector, held in
+//! [`ArgvState`]; it is set once by `doomgeneric_Create` through
+//! [`set_arguments`] and only rewritten by response-file expansion during
+//! startup.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use {
-    crate::i_error,
-    std::{io::Read, ptr},
+    crate::{engine::global::Global, i_error},
+    std::io::Read,
 };
 
-/// `char **myargv` — process argument vector, `myargv[0]` being the
-/// program name.
-pub static mut myargv: Vec<String> = Vec::new();
+/// Command-line state (C `m_argv.c` globals).
+pub struct ArgvState {
+    /// `char **myargv` — process argument vector, `myargv[0]` being the
+    /// program name.
+    ///
+    /// The strings are leaked when stored, as the C strings live for the
+    /// whole run, so [`argument`] can hand out `'static` borrows.
+    myargv: Vec<&'static str>,
+}
 
-/// `myargc` — number of entries in [`myargv`].
+impl ArgvState {
+    /// No arguments until `doomgeneric_Create` stores them.
+    pub const fn new() -> Self {
+        Self { myargv: Vec::new() }
+    }
+}
+
+impl Default for ArgvState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The command-line state.
+pub static ARGV: Global<ArgvState> = Global::new(ArgvState::new());
+
+/// Leak each argument so it lives for the rest of the run.
+fn leak_arguments(arguments: Vec<String>) -> impl Iterator<Item = &'static str> {
+    arguments
+        .into_iter()
+        .map(|argument| &*Box::leak(argument.into_boxed_str()))
+}
+
+/// Replace `myargv` with `arguments` (program name first).
+pub fn set_arguments(arguments: Vec<String>) {
+    ARGV.borrow_mut().myargv = leak_arguments(arguments).collect();
+}
+
+/// `myargc` — number of entries in `myargv`.
 pub fn argument_count() -> i32 {
-    unsafe { (&*ptr::addr_of!(myargv)).len() as i32 }
+    ARGV.borrow().myargv.len() as i32
 }
 
 /// `myargv[index]`.
 ///
-/// The `'static` borrow is sound because `myargv` is only replaced during
-/// startup, before any caller keeps an argument.
-///
 /// # Panics
 /// If `index` is not below [`argument_count`].
 pub fn argument(index: i32) -> &'static str {
-    unsafe { &(&*ptr::addr_of!(myargv))[index as usize] }
+    ARGV.borrow().myargv[index as usize]
 }
 
 /// `int M_CheckParmWithArgs(char *check, int num_args)` — search the
@@ -120,11 +152,10 @@ fn LoadResponseFile(argv_index: i32) {
         i_error!("Quotes unclosed in response file '{response_filename}'");
     };
 
-    unsafe {
-        let arguments = &mut *ptr::addr_of_mut!(myargv);
-        let argv_index = argv_index as usize;
-        arguments.splice(argv_index..=argv_index, file_arguments);
-    }
+    let argv_index = argv_index as usize;
+    ARGV.borrow_mut()
+        .myargv
+        .splice(argv_index..=argv_index, leak_arguments(file_arguments));
 }
 
 /// `void M_FindResponseFile(void)` — scan `myargv` for arguments

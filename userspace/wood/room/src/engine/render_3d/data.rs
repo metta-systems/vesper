@@ -1060,7 +1060,7 @@ pub unsafe fn R_PrecacheLevel() {
     for i in 0..numflats as usize {
         if *flatpresent.add(i) != 0 {
             let lump = firstflat + i as i32;
-            flatmemory += (*lumpinfo.add(lump as usize)).size;
+            flatmemory += (*lumpinfo().add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }
     }
@@ -1087,7 +1087,7 @@ pub unsafe fn R_PrecacheLevel() {
         let texture = *textures.add(i);
         for j in 0..(*texture).patchcount as usize {
             let lump = (*std::ptr::addr_of!((*texture).patches).add(j)).patch;
-            texturememory += (*lumpinfo.add(lump as usize)).size;
+            texturememory += (*lumpinfo().add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }
     }
@@ -1118,7 +1118,7 @@ pub unsafe fn R_PrecacheLevel() {
             let sf = (*sprdef).spriteframes.add(j);
             for k in 0..8usize {
                 let lump = firstspritelump + (*sf).lump[k] as i32;
-                spritememory += (*lumpinfo.add(lump as usize)).size;
+                spritememory += (*lumpinfo().add(lump as usize)).size;
                 W_CacheLumpNum(lump, PU_CACHE);
             }
         }

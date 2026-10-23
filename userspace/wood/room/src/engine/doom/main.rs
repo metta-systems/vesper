@@ -6,15 +6,16 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use std::ffi::c_void;
 
 use crate::{
     engine::{
         doom,
         doom::{
             player::{consoleplayer, players, MAXPLAYERS},
-            stat::{gamedescription, gamemission, gamemode, gameversion, modifiedgame},
+            stat::{gamemission, gamemode, gameversion, modifiedgame, STAT},
         },
+        global::Global,
         interface::{
             timer::TICRATE,
             video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
@@ -103,82 +104,122 @@ use crate::engine::zone::{PU_CACHE, PU_STATIC};
 // Globals
 // ---------------------------------------------------------------------------
 
-/// Savegame directory.
-pub static mut savegamedir: String = String::new();
+/// Startup and frame state (C `d_main.c` globals).
+pub struct DoomMainState {
+    /// Savegame directory.
+    pub savegamedir: String,
+    /// Path to the currently loaded IWAD file.
+    pub iwadfile: String,
+    /// Started game with -devparm.
+    pub devparm: i32,
+    /// Checkparm of -nomonsters.
+    pub nomonsters: i32,
+    /// Checkparm of -respawn.
+    pub respawnparm: i32,
+    /// Checkparm of -fast.
+    pub fastparm: i32,
+    /// Skill level to start at (set by -skill).
+    pub startskill: i32,
+    /// Episode to start at (set by -episode).
+    pub startepisode: i32,
+    /// Map to start at (set by -warp / -episode).
+    pub startmap: i32,
+    /// True when -warp / -episode has provided an explicit start.
+    pub autostart: i32,
+    /// Load game slot (-1 = not loading).
+    pub startloadgame: i32,
+    /// True while playing back a built-in demo sequence.
+    pub advancedemo: i32,
+    /// Store demo, do not accept any inputs.
+    pub storedemo: i32,
+    /// True when the BFG edition of the IWAD is detected.
+    pub bfgedition: i32,
+    /// True once the main event loop has started.
+    pub main_loop_started: i32,
+    /// When non-zero, display the ENDOOM text on exit. Bound to the
+    /// `show_endoom` config variable by address.
+    pub show_endoom: i32,
+    /// Demo loop sequence counter.
+    pub demosequence: i32,
+    /// Tics remaining on the current demo page.
+    pub pagetic: i32,
+    /// Name of the current demo page lump.
+    pub pagename: &'static [u8],
+    /// Wipe gamestate for transition effects. -1 forces a wipe on next draw.
+    pub wipegamestate: i32,
+    // D_Display static locals: these must persist across frames.
+    /// Cached `viewactive` value from the previous frame.
+    display_viewactive: i32,
+    /// Cached `menuactive` value from the previous frame.
+    display_menuactive: i32,
+    /// Cached `inhelpscreens` value from the previous frame.
+    display_inhelpscreens: i32,
+    /// Non-zero when the view fills the full screen (no status bar visible).
+    display_fullscreen: i32,
+    /// Game state from the previous frame; -1 forces border and palette
+    /// redraws.
+    display_old_gamestate: i32,
+    /// Remaining frames for which the view border must be redrawn.
+    display_borderdrawcount: i32,
+}
 
-/// Path to the currently loaded IWAD file.
-pub static mut iwadfile: String = String::new();
+impl DoomMainState {
+    /// The state at program start, before the command line is parsed.
+    pub const fn new() -> Self {
+        Self {
+            savegamedir: String::new(),
+            iwadfile: String::new(),
+            devparm: 0,
+            nomonsters: 0,
+            respawnparm: 0,
+            fastparm: 0,
+            startskill: 0,
+            startepisode: 0,
+            startmap: 0,
+            autostart: 0,
+            startloadgame: 0,
+            advancedemo: 0,
+            storedemo: 0,
+            bfgedition: 0,
+            main_loop_started: 0,
+            show_endoom: 1,
+            demosequence: 0,
+            pagetic: 0,
+            pagename: b"",
+            wipegamestate: GS_DEMOSCREEN,
+            display_viewactive: 0,
+            display_menuactive: 0,
+            display_inhelpscreens: 0,
+            display_fullscreen: 0,
+            display_old_gamestate: -1,
+            display_borderdrawcount: 0,
+        }
+    }
+}
 
-/// Started game with -devparm.
-pub static mut devparm: i32 = 0;
+impl Default for DoomMainState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Checkparm of -nomonsters.
-pub static mut nomonsters: i32 = 0;
+/// The startup and frame state.
+pub static DOOM_MAIN: Global<DoomMainState> = Global::new(DoomMainState::new());
 
-/// Checkparm of -respawn.
-pub static mut respawnparm: i32 = 0;
+/// Checkparm of -nomonsters (C `nomonsters`).
+pub fn nomonsters() -> i32 {
+    DOOM_MAIN.borrow().nomonsters
+}
 
-/// Checkparm of -fast.
-pub static mut fastparm: i32 = 0;
+/// Checkparm of -respawn (C `respawnparm`).
+pub fn respawnparm() -> i32 {
+    DOOM_MAIN.borrow().respawnparm
+}
 
-/// Skill level to start at (set by -skill).
-pub static mut startskill: i32 = 0;
-
-/// Episode to start at (set by -episode).
-pub static mut startepisode: i32 = 0;
-
-/// Map to start at (set by -warp / -episode).
-pub static mut startmap: i32 = 0;
-
-/// True when -warp / -episode has provided an explicit start.
-pub static mut autostart: i32 = 0;
-
-/// Load game slot (-1 = not loading).
-pub static mut startloadgame: i32 = 0;
-
-/// True while playing back a built-in demo sequence.
-pub static mut advancedemo: i32 = 0;
-
-/// Store demo, do not accept any inputs.
-pub static mut storedemo: i32 = 0;
-
-/// True when the BFG edition of the IWAD is detected.
-pub static mut bfgedition: i32 = 0;
-
-/// True once the main event loop has started.
-pub static mut main_loop_started: i32 = 0;
-
-/// When non-zero, display the ENDOOM text on exit.
-pub static mut show_endoom: i32 = 1;
-
-/// Demo loop sequence counter.
-pub static mut demosequence: i32 = 0;
-
-/// Tics remaining on the current demo page.
-pub static mut pagetic: i32 = 0;
-
-/// Name of the current demo page lump.
-pub static mut pagename: &[u8] = b"";
-
-/// Wipe gamestate for transition effects. -1 forces a wipe on next draw.
-pub static mut wipegamestate: i32 = GS_DEMOSCREEN;
-
-// D_Display static local state — these must persist across frames.
-/// Cached `viewactive` value from the previous frame.
-static mut D_DISP_VIEWACTIVE: i32 = 0;
-/// Cached `menuactive` value from the previous frame.
-static mut D_DISP_MENUACTIVE: i32 = 0;
-/// Cached `inhelpscreens` value from the previous frame.
-static mut D_DISP_INHELPSCREENS: i32 = 0;
-/// Non-zero when the view fills the full screen (no status bar visible).
-static mut D_DISP_FULLSCREEN: i32 = 0;
-/// Game state from the previous frame; -1 forces border and palette redraws.
-static mut D_DISP_OLD_GAMESTATE: i32 = -1;
-/// Remaining frames for which the view border must be redrawn.
-static mut D_DISP_BORDERDRAWCOUNT: i32 = 0;
-
-/// Title string printed at startup.
-static mut title: [u8; 128] = [0; 128];
+/// Checkparm of -fast (C `fastparm`).
+pub fn fastparm() -> i32 {
+    DOOM_MAIN.borrow().fastparm
+}
 
 /// Startup banner strings (may be replaced by dehacked). Each is a
 /// format containing one `%i.%i` version placeholder.
@@ -297,14 +338,10 @@ use crate::engine::automap::{automap_active, AM_Drawer};
 use crate::engine::dehacked::DEH_String;
 
 // m_menu.rs
-use crate::engine::misc::menu::{
-    detailLevel, inhelpscreens, menuactive, mouseSensitivity, screenblocks, showMessages,
-};
+use crate::engine::misc::menu::{menu_active, MENU};
 
 // s_sound.rs
-use crate::engine::sound::{
-    info::Mus, musicVolume, sfxVolume, snd_channels, S_Init, S_StartMusic, S_UpdateSounds,
-};
+use crate::engine::sound::{info::Mus, S_Init, S_StartMusic, S_UpdateSounds, SoundState, SOUND};
 
 // r_main.rs
 use crate::engine::render_3d::main::{
@@ -317,19 +354,19 @@ use crate::engine::render_3d::draw::{
 };
 
 // i_video.rs
-use crate::engine::interface::video::{screensaver_mode, screenvisible};
+use crate::engine::interface::video::{screensaver_mode, VIDEO};
 
 // w_wad.rs
 use crate::engine::wad::{
-    lump_name, lump_names_equal, lumpinfo, numlumps, W_AddFile, W_CacheLumpName,
-    W_CheckCorrectIWAD, W_CheckNumForName, W_GenerateHashTable,
+    lump_name, lump_names_equal, lumpinfo, W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD,
+    W_CheckNumForName, W_GenerateHashTable, W_NumLumps,
 };
 
 // hu_stuff.rs
 use crate::engine::hud::stuff::{HU_Drawer, HU_Init, HUD};
 
 // m_controls.rs
-use crate::engine::misc::controls::key_multi_msgplayer;
+use crate::engine::misc::controls::CONTROLS;
 
 // wi_stuff.rs
 use crate::engine::intermission::WI_Drawer;
@@ -467,7 +504,7 @@ fn first_byte(text: &str) -> i32 {
 pub fn D_ProcessEvents() {
     unsafe {
         // IF STORE DEMO, DO NOT ACCEPT INPUT
-        if storedemo != 0 {
+        if DOOM_MAIN.borrow().storedemo != 0 {
             return;
         }
 
@@ -501,32 +538,37 @@ pub fn D_Display() {
         // Change the view size if needed
         if setsizeneeded.is_truthy() {
             R_ExecuteSetViewSize();
-            D_DISP_OLD_GAMESTATE = -1; // force background redraw
-            D_DISP_BORDERDRAWCOUNT = 3;
+            let mut main = DOOM_MAIN.borrow_mut();
+            main.display_old_gamestate = -1; // force background redraw
+            main.display_borderdrawcount = 3;
         }
 
         // Save the current screen if about to wipe
-        let wipe = gamestate != wipegamestate;
+        let wipe = gamestate != DOOM_MAIN.borrow().wipegamestate;
         if wipe {
             wipe_StartScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
         }
 
         // Buffered drawing based on game state
         if gamestate == GS_LEVEL {
-            if gametic == 0 {
+            if gametic() == 0 {
                 // Skip level rendering
             } else {
                 if automap_active() {
                     AM_Drawer();
                 }
-                if wipe || (viewheight != 200 && D_DISP_FULLSCREEN != 0) {
+                let (fullscreen, previous_inhelpscreens) = {
+                    let main = DOOM_MAIN.borrow();
+                    (main.display_fullscreen, main.display_inhelpscreens)
+                };
+                if wipe || (viewheight != 200 && fullscreen != 0) {
                     redrawsbar = true;
                 }
-                if D_DISP_INHELPSCREENS != 0 && inhelpscreens == 0 {
+                if previous_inhelpscreens != 0 && MENU.borrow().inhelpscreens == 0 {
                     redrawsbar = true;
                 }
                 ST_Drawer(Boolean::from(viewheight == 200), Boolean::from(redrawsbar));
-                D_DISP_FULLSCREEN = (viewheight == 200) as i32;
+                DOOM_MAIN.borrow_mut().display_fullscreen = (viewheight == 200) as i32;
             }
         } else if gamestate == GS_INTERMISSION {
             WI_Drawer();
@@ -540,7 +582,7 @@ pub fn D_Display() {
         I_UpdateNoBlit();
 
         // Draw the view directly
-        if gamestate == GS_LEVEL && !automap_active() && gametic != 0 {
+        if gamestate == GS_LEVEL && !automap_active() && gametic() != 0 {
             let dp = displayplayer as usize;
             if dp < MAXPLAYERS {
                 R_RenderPlayerView(std::ptr::addr_of_mut!(players[dp]));
@@ -549,24 +591,29 @@ pub fn D_Display() {
         }
 
         // Set palette on state change (non-level states)
-        if gamestate != GS_LEVEL && gamestate != D_DISP_OLD_GAMESTATE {
+        let old_gamestate = DOOM_MAIN.borrow().display_old_gamestate;
+        if gamestate != GS_LEVEL && gamestate != old_gamestate {
             I_SetPalette(W_CacheLumpName(DEH_String(b"PLAYPAL"), PU_CACHE) as *mut byte);
         }
 
         // See if the border needs to be initially drawn
-        if gamestate == GS_LEVEL && D_DISP_OLD_GAMESTATE != GS_LEVEL {
-            D_DISP_VIEWACTIVE = 0;
+        if gamestate == GS_LEVEL && old_gamestate != GS_LEVEL {
+            DOOM_MAIN.borrow_mut().display_viewactive = 0;
             R_FillBackScreen();
         }
 
         // See if the border needs to be updated
         if gamestate == GS_LEVEL && !automap_active() && scaledviewwidth != 320 {
-            if menuactive != 0 || D_DISP_MENUACTIVE != 0 || D_DISP_VIEWACTIVE == 0 {
-                D_DISP_BORDERDRAWCOUNT = 3;
-            }
-            if D_DISP_BORDERDRAWCOUNT != 0 {
+            let border_needs_redraw = {
+                let mut main = DOOM_MAIN.borrow_mut();
+                if menu_active() || main.display_menuactive != 0 || main.display_viewactive == 0 {
+                    main.display_borderdrawcount = 3;
+                }
+                main.display_borderdrawcount != 0
+            };
+            if border_needs_redraw {
                 R_DrawViewBorder();
-                D_DISP_BORDERDRAWCOUNT -= 1;
+                DOOM_MAIN.borrow_mut().display_borderdrawcount -= 1;
             }
         }
 
@@ -576,11 +623,18 @@ pub fn D_Display() {
         }
 
         // Update static state trackers
-        D_DISP_MENUACTIVE = menuactive;
-        D_DISP_VIEWACTIVE = viewactive;
-        D_DISP_INHELPSCREENS = inhelpscreens;
-        D_DISP_OLD_GAMESTATE = gamestate;
-        wipegamestate = gamestate;
+        {
+            let (menuactive, inhelpscreens) = {
+                let menu = MENU.borrow();
+                (menu.menuactive, menu.inhelpscreens)
+            };
+            let mut main = DOOM_MAIN.borrow_mut();
+            main.display_menuactive = menuactive;
+            main.display_viewactive = viewactive;
+            main.display_inhelpscreens = inhelpscreens;
+            main.display_old_gamestate = gamestate;
+            main.wipegamestate = gamestate;
+        }
 
         // Draw pause pic
         if paused != 0 {
@@ -659,21 +713,28 @@ pub fn D_BindVariables() {
         M_BindMenuControls();
         M_BindChatControls(4); // MAXPLAYERS = 4
 
-        key_multi_msgplayer[0] = HUSTR_KEYGREEN as i32;
-        key_multi_msgplayer[1] = HUSTR_KEYINDIGO as i32;
-        key_multi_msgplayer[2] = HUSTR_KEYBROWN as i32;
-        key_multi_msgplayer[3] = HUSTR_KEYRED as i32;
+        {
+            let mut controls = CONTROLS.borrow_mut();
+            controls.key_multi_msgplayer[0] = HUSTR_KEYGREEN as i32;
+            controls.key_multi_msgplayer[1] = HUSTR_KEYINDIGO as i32;
+            controls.key_multi_msgplayer[2] = HUSTR_KEYBROWN as i32;
+            controls.key_multi_msgplayer[3] = HUSTR_KEYRED as i32;
+        }
 
+        // The config table keeps these pointers, so they take the stable
+        // addresses of the owning states' fields.
+        let menu = MENU.as_ptr();
+        let sound = SOUND.as_ptr();
         M_BindVariable(
             "mouse_sensitivity",
-            &raw mut mouseSensitivity as *mut c_void,
+            (&raw mut (*menu).mouseSensitivity).cast(),
         );
-        M_BindVariable("sfx_volume", &raw mut sfxVolume as *mut c_void);
-        M_BindVariable("music_volume", &raw mut musicVolume as *mut c_void);
-        M_BindVariable("show_messages", &raw mut showMessages as *mut c_void);
-        M_BindVariable("screenblocks", &raw mut screenblocks as *mut c_void);
-        M_BindVariable("detaillevel", &raw mut detailLevel as *mut c_void);
-        M_BindVariable("snd_channels", &raw mut snd_channels as *mut c_void);
+        M_BindVariable("sfx_volume", (&raw mut (*sound).sfxVolume).cast());
+        M_BindVariable("music_volume", (&raw mut (*sound).musicVolume).cast());
+        M_BindVariable("show_messages", (&raw mut (*menu).showMessages).cast());
+        M_BindVariable("screenblocks", (&raw mut (*menu).screenblocks).cast());
+        M_BindVariable("detaillevel", (&raw mut (*menu).detailLevel).cast());
+        M_BindVariable("snd_channels", (&raw mut (*sound).snd_channels).cast());
         M_BindVariable(
             "vanilla_savegame_limit",
             &raw mut vanilla_savegame_limit as *mut c_void,
@@ -682,7 +743,10 @@ pub fn D_BindVariables() {
             "vanilla_demo_limit",
             &raw mut vanilla_demo_limit as *mut c_void,
         );
-        M_BindVariable("show_endoom", &raw mut show_endoom as *mut c_void);
+        M_BindVariable(
+            "show_endoom",
+            (&raw mut (*DOOM_MAIN.as_ptr()).show_endoom).cast(),
+        );
 
         // Multiplayer chat macros
         for i in 0..10 {
@@ -710,13 +774,13 @@ fn D_GrabMouseCallback() -> Boolean {
         }
 
         // When menu is active or game is paused, release the mouse
-        if menuactive != 0 || paused != 0 {
+        if menu_active() || paused != 0 {
             return Boolean::FALSE;
         }
 
         // Only grab mouse when playing levels (but not demos)
         let demoplayback_val: i32 = demoplayback;
-        let advancedemo_val: i32 = advancedemo;
+        let advancedemo_val: i32 = DOOM_MAIN.borrow().advancedemo;
         Boolean::from(gamestate == GS_LEVEL && demoplayback_val == 0 && advancedemo_val == 0)
     }
 }
@@ -745,7 +809,7 @@ pub fn doomgeneric_Tick() {
         S_UpdateSounds(mo);
 
         // Update display
-        if screenvisible != 0 {
+        if VIDEO.borrow().screenvisible != 0 {
             D_Display();
         }
     }
@@ -758,7 +822,7 @@ pub fn doomgeneric_Tick() {
 /// Main game loop — never returns.
 pub fn D_DoomLoop() {
     unsafe {
-        if bfgedition != 0 {
+        if DOOM_MAIN.borrow().bfgedition != 0 {
             let is_recording = demorecording;
             let is_playdemo = gameaction == ga_playdemo;
             if is_recording != 0 || is_playdemo || netgame != 0 {
@@ -775,11 +839,12 @@ pub fn D_DoomLoop() {
             G_BeginRecording();
         }
 
-        main_loop_started = 1;
+        DOOM_MAIN.borrow_mut().main_loop_started = 1;
 
         TryRunTics();
 
-        I_SetWindowTitle(&*ptr::addr_of!(gamedescription));
+        let gamedescription = STAT.borrow().gamedescription.clone();
+        I_SetWindowTitle(&gamedescription);
         I_GraphicsCheckCommandLine();
 
         // Cast the Rust callback to match the C signature
@@ -797,7 +862,7 @@ pub fn D_DoomLoop() {
         D_StartGameLoop();
 
         if testcontrols != 0 {
-            wipegamestate = gamestate;
+            DOOM_MAIN.borrow_mut().wipegamestate = gamestate;
         }
 
         doomgeneric_Tick();
@@ -810,26 +875,32 @@ pub fn D_DoomLoop() {
 
 /// Handle timing for demo projection.
 pub fn D_PageTicker() {
-    unsafe {
-        pagetic -= 1;
-        if pagetic < 0 {
-            D_AdvanceDemo();
-        }
+    let pagetic = {
+        let mut main = DOOM_MAIN.borrow_mut();
+        main.pagetic -= 1;
+        main.pagetic
+    };
+    if pagetic < 0 {
+        D_AdvanceDemo();
     }
 }
 
 /// Draw the current demo page.
 pub fn D_PageDrawer() {
-    unsafe {
-        V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t);
-    }
+    let pagename = DOOM_MAIN.borrow().pagename;
+    V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t);
 }
 
 /// Called after each demo or intro demosequence finishes.
 pub fn D_AdvanceDemo() {
-    unsafe {
-        advancedemo = 1;
-    }
+    DOOM_MAIN.borrow_mut().advancedemo = 1;
+}
+
+/// Show demo page `pagename` for `pagetic` tics.
+fn set_page(pagetic: i32, pagename: &'static [u8]) {
+    let mut main = DOOM_MAIN.borrow_mut();
+    main.pagetic = pagetic;
+    main.pagename = pagename;
 }
 
 /// Cycle through the demo sequences.
@@ -841,31 +912,36 @@ pub fn D_DoAdvanceDemo() {
             players[cp as usize].playerstate = 1;
         }
 
-        advancedemo = 0;
+        DOOM_MAIN.borrow_mut().advancedemo = 0;
         usergame = 0;
         paused = 0;
         gameaction = ga_nothing;
 
         // Demo sequence: 7 for ultimate/final, 6 for others
         let max_seq = {
+            let gameversion = gameversion();
             if gameversion == doom::mode::exe_ultimate || gameversion == doom::mode::exe_final {
                 7
             } else {
                 6
             }
         };
-        demosequence = (demosequence + 1) % max_seq;
+        let demosequence = {
+            let mut main = DOOM_MAIN.borrow_mut();
+            main.demosequence = (main.demosequence + 1) % max_seq;
+            main.demosequence
+        };
 
         match demosequence {
             0 => {
-                if gamemode == doom::mode::commercial {
-                    pagetic = TICRATE * 11;
+                let pagetic = if gamemode() == doom::mode::commercial {
+                    TICRATE * 11
                 } else {
-                    pagetic = 170;
-                }
+                    170
+                };
                 gamestate = GS_DEMOSCREEN;
-                pagename = b"TITLEPIC";
-                if gamemode == doom::mode::commercial {
+                set_page(pagetic, b"TITLEPIC");
+                if gamemode() == doom::mode::commercial {
                     S_StartMusic(Mus::Dm2ttl as i32);
                 } else {
                     S_StartMusic(Mus::Intro as i32);
@@ -875,26 +951,21 @@ pub fn D_DoAdvanceDemo() {
                 G_DeferedPlayDemo("demo1");
             }
             2 => {
-                pagetic = 200;
                 gamestate = GS_DEMOSCREEN;
-                pagename = b"CREDIT";
+                set_page(200, b"CREDIT");
             }
             3 => {
                 G_DeferedPlayDemo("demo2");
             }
             4 => {
                 gamestate = GS_DEMOSCREEN;
-                if gamemode == doom::mode::commercial {
-                    pagetic = TICRATE * 11;
-                    pagename = b"TITLEPIC";
+                if gamemode() == doom::mode::commercial {
+                    set_page(TICRATE * 11, b"TITLEPIC");
                     S_StartMusic(Mus::Dm2ttl as i32);
+                } else if gamemode() == doom::mode::retail {
+                    set_page(200, b"CREDIT");
                 } else {
-                    pagetic = 200;
-                    if gamemode == doom::mode::retail {
-                        pagename = b"CREDIT";
-                    } else {
-                        pagename = b"HELP2";
-                    }
+                    set_page(200, b"HELP2");
                 }
             }
             5 => {
@@ -908,11 +979,15 @@ pub fn D_DoAdvanceDemo() {
         }
 
         // BFG Edition workaround: TITLEPIC missing, use INTERPIC
+        let (bfgedition, pagename) = {
+            let main = DOOM_MAIN.borrow();
+            (main.bfgedition, main.pagename)
+        };
         if bfgedition != 0
-            && { pagename }.eq_ignore_ascii_case(b"TITLEPIC")
+            && pagename.eq_ignore_ascii_case(b"TITLEPIC")
             && W_CheckNumForName(b"titlepic") < 0
         {
-            pagename = b"INTERPIC";
+            DOOM_MAIN.borrow_mut().pagename = b"INTERPIC";
         }
     }
 }
@@ -921,9 +996,9 @@ pub fn D_DoAdvanceDemo() {
 pub fn D_StartTitle() {
     unsafe {
         gameaction = ga_nothing;
-        demosequence = -1;
-        D_AdvanceDemo();
     }
+    DOOM_MAIN.borrow_mut().demosequence = -1;
+    D_AdvanceDemo();
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +1038,7 @@ fn GetGameName(gamename: &'static str) -> String {
 unsafe fn SetMissionForPackName(pack_name: &[u8]) {
     for pack in &PACKS {
         if pack_name.eq_ignore_ascii_case(pack.name.as_bytes()) {
-            gamemission = pack.mission;
+            STAT.borrow_mut().gamemission = pack.mission;
             return;
         }
     }
@@ -983,20 +1058,20 @@ unsafe fn SetMissionForPackName(pack_name: &[u8]) {
 /// Find out what version of Doom is playing.
 pub fn D_IdentifyVersion() {
     unsafe {
-        if gamemission == doom::mode::none {
-            for i in 0..numlumps {
-                let name = &(*lumpinfo.add(i as usize)).name;
+        if gamemission() == doom::mode::none {
+            for i in 0..W_NumLumps() {
+                let name = &(*lumpinfo().add(i as usize)).name;
 
                 if lump_names_equal(name, b"MAP01") {
-                    gamemission = doom::mode::doom2;
+                    STAT.borrow_mut().gamemission = doom::mode::doom2;
                     break;
                 } else if lump_names_equal(name, b"E1M1") {
-                    gamemission = doom::mode::doom;
+                    STAT.borrow_mut().gamemission = doom::mode::doom;
                     break;
                 }
             }
 
-            if gamemission == doom::mode::none {
+            if gamemission() == doom::mode::none {
                 i_error!("Unknown or invalid IWAD file.");
             }
         }
@@ -1005,16 +1080,17 @@ pub fn D_IdentifyVersion() {
         let logical_mission = logical_gamemission();
         if logical_mission == doom::mode::doom {
             // Doom 1. But which version?
-            if W_CheckNumForName(b"E4M1") > 0 {
-                gamemode = doom::mode::retail;
+            let gamemode = if W_CheckNumForName(b"E4M1") > 0 {
+                doom::mode::retail
             } else if W_CheckNumForName(b"E3M1") > 0 {
-                gamemode = doom::mode::registered;
+                doom::mode::registered
             } else {
-                gamemode = doom::mode::shareware;
-            }
+                doom::mode::shareware
+            };
+            STAT.borrow_mut().gamemode = gamemode;
         } else {
             // Doom 2 of some kind.
-            gamemode = doom::mode::commercial;
+            STAT.borrow_mut().gamemode = doom::mode::commercial;
 
             // Manually override gamemission with -pack
             let p = M_CheckParmWithArgs("-pack", 1);
@@ -1030,10 +1106,8 @@ pub fn D_IdentifyVersion() {
 /// Mirrors the `logical_gamemission` macro from `doomstat.h`: `pack_chex` maps to `doom` and
 /// `pack_hacx` maps to `doom2`; all other values are returned unchanged.
 ///
-/// # Safety
-///
-/// Reads the `gamemission` global; must be called in a context where the global is initialized.
-unsafe fn logical_gamemission() -> i32 {
+fn logical_gamemission() -> i32 {
+    let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
     } else if gamemission == doom::mode::pack_hacx {
@@ -1049,45 +1123,43 @@ unsafe fn logical_gamemission() -> i32 {
 
 /// Set the gamedescription string.
 pub fn D_SetGameDescription() {
-    unsafe {
-        let is_freedoom = W_CheckNumForName(b"FREEDOOM") >= 0;
-        let is_freedm = W_CheckNumForName(b"FREEDM") >= 0;
+    let is_freedoom = W_CheckNumForName(b"FREEDOOM") >= 0;
+    let is_freedm = W_CheckNumForName(b"FREEDM") >= 0;
 
-        let logical_mission = logical_gamemission();
-        let description = if logical_mission == doom::mode::doom {
-            // Doom 1. But which version?
-            if is_freedoom {
-                GetGameName("Freedoom: Phase 1")
-            } else if gamemode == doom::mode::retail {
-                GetGameName("The Ultimate DOOM")
-            } else if gamemode == doom::mode::registered {
-                GetGameName("DOOM Registered")
-            } else if gamemode == doom::mode::shareware {
-                GetGameName("DOOM Shareware")
-            } else {
-                "Unknown".to_owned()
-            }
+    let logical_mission = logical_gamemission();
+    let description = if logical_mission == doom::mode::doom {
+        // Doom 1. But which version?
+        if is_freedoom {
+            GetGameName("Freedoom: Phase 1")
+        } else if gamemode() == doom::mode::retail {
+            GetGameName("The Ultimate DOOM")
+        } else if gamemode() == doom::mode::registered {
+            GetGameName("DOOM Registered")
+        } else if gamemode() == doom::mode::shareware {
+            GetGameName("DOOM Shareware")
         } else {
-            // Doom 2 of some kind.
-            if is_freedoom {
-                if is_freedm {
-                    GetGameName("FreeDM")
-                } else {
-                    GetGameName("Freedoom: Phase 2")
-                }
-            } else if logical_mission == doom::mode::doom2 {
-                GetGameName("DOOM 2: Hell on Earth")
-            } else if logical_mission == doom::mode::pack_plut {
-                GetGameName("DOOM 2: Plutonia Experiment")
-            } else if logical_mission == doom::mode::pack_tnt {
-                GetGameName("DOOM 2: TNT - Evilution")
+            "Unknown".to_owned()
+        }
+    } else {
+        // Doom 2 of some kind.
+        if is_freedoom {
+            if is_freedm {
+                GetGameName("FreeDM")
             } else {
-                "Unknown".to_owned()
+                GetGameName("Freedoom: Phase 2")
             }
-        };
+        } else if logical_mission == doom::mode::doom2 {
+            GetGameName("DOOM 2: Hell on Earth")
+        } else if logical_mission == doom::mode::pack_plut {
+            GetGameName("DOOM 2: Plutonia Experiment")
+        } else if logical_mission == doom::mode::pack_tnt {
+            GetGameName("DOOM 2: TNT - Evilution")
+        } else {
+            "Unknown".to_owned()
+        }
+    };
 
-        gamedescription = description;
-    }
+    STAT.borrow_mut().gamedescription = description;
 }
 
 // ---------------------------------------------------------------------------
@@ -1159,7 +1231,7 @@ unsafe fn InitGameVersion() {
         let mut found = false;
         for gv in &GAME_VERSIONS {
             if arg == gv.cmdline {
-                gameversion = gv.version;
+                STAT.borrow_mut().gameversion = gv.version;
                 found = true;
                 break;
             }
@@ -1175,36 +1247,40 @@ unsafe fn InitGameVersion() {
         }
     } else {
         // Determine automatically
-        if gamemission == doom::mode::pack_chex {
-            gameversion = doom::mode::exe_chex;
-        } else if gamemission == doom::mode::pack_hacx {
-            gameversion = doom::mode::exe_hacx;
-        } else if gamemode == doom::mode::shareware || gamemode == doom::mode::registered {
-            gameversion = doom::mode::exe_doom_1_9;
-        } else if gamemode == doom::mode::retail {
-            gameversion = doom::mode::exe_ultimate;
-        } else if gamemode == doom::mode::commercial {
-            if gamemission == doom::mode::doom2 {
-                gameversion = doom::mode::exe_doom_1_9;
+        let mut stat = STAT.borrow_mut();
+        if stat.gamemission == doom::mode::pack_chex {
+            stat.gameversion = doom::mode::exe_chex;
+        } else if stat.gamemission == doom::mode::pack_hacx {
+            stat.gameversion = doom::mode::exe_hacx;
+        } else if stat.gamemode == doom::mode::shareware || stat.gamemode == doom::mode::registered
+        {
+            stat.gameversion = doom::mode::exe_doom_1_9;
+        } else if stat.gamemode == doom::mode::retail {
+            stat.gameversion = doom::mode::exe_ultimate;
+        } else if stat.gamemode == doom::mode::commercial {
+            if stat.gamemission == doom::mode::doom2 {
+                stat.gameversion = doom::mode::exe_doom_1_9;
             } else {
                 // Final Doom: tnt or plutonia
                 // Defaults to emulating the first Final Doom executable
-                gameversion = doom::mode::exe_final;
+                stat.gameversion = doom::mode::exe_final;
             }
         }
     }
 
+    let mut stat = STAT.borrow_mut();
+
     // Original exe does not support retail - 4th episode not supported
-    if gameversion < doom::mode::exe_ultimate && gamemode == doom::mode::retail {
-        gamemode = doom::mode::registered;
+    if stat.gameversion < doom::mode::exe_ultimate && stat.gamemode == doom::mode::retail {
+        stat.gamemode = doom::mode::registered;
     }
 
     // EXEs prior to Final Doom do not support Final Doom
-    if gameversion < doom::mode::exe_final
-        && gamemode == doom::mode::commercial
-        && (gamemission == doom::mode::pack_tnt || gamemission == doom::mode::pack_plut)
+    if stat.gameversion < doom::mode::exe_final
+        && stat.gamemode == doom::mode::commercial
+        && (stat.gamemission == doom::mode::pack_tnt || stat.gamemission == doom::mode::pack_plut)
     {
-        gamemission = doom::mode::doom2;
+        stat.gamemission = doom::mode::doom2;
     }
 }
 
@@ -1214,15 +1290,14 @@ unsafe fn InitGameVersion() {
 
 /// Print a startup message identifying which original executable version is being emulated.
 pub fn PrintGameVersion() {
-    unsafe {
-        for gv in &GAME_VERSIONS {
-            if gv.version == gameversion {
-                println!(
-                    "Emulating the behavior of the '{}' executable.",
-                    gv.description
-                );
-                break;
-            }
+    let gameversion = gameversion();
+    for gv in &GAME_VERSIONS {
+        if gv.version == gameversion {
+            println!(
+                "Emulating the behavior of the '{}' executable.",
+                gv.description
+            );
+            break;
         }
     }
 }
@@ -1236,24 +1311,26 @@ pub fn PrintGameVersion() {
 /// Skipped when `show_endoom` is 0, when the main loop never started, or in
 /// screensaver / test-controls mode.
 fn D_Endoom() {
-    unsafe {
-        // Don't show ENDOOM if disabled, or in screensaver/control test mode.
-        // Only show it once the game has actually started.
-        if show_endoom == 0 || main_loop_started == 0 || M_CheckParm("-testcontrols") > 0 {
-            return;
-        }
-
-        if screensaver_mode != 0 {
-            return;
-        }
-
-        let endoom = W_CacheLumpName(DEH_String(b"ENDOOM"), PU_STATIC) as *mut u8;
-        I_Endoom(endoom);
-
-        // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        std::process::exit(0);
+    // Don't show ENDOOM if disabled, or in screensaver/control test mode.
+    // Only show it once the game has actually started.
+    let (show_endoom, main_loop_started) = {
+        let main = DOOM_MAIN.borrow();
+        (main.show_endoom, main.main_loop_started)
+    };
+    if show_endoom == 0 || main_loop_started == 0 || M_CheckParm("-testcontrols") > 0 {
+        return;
     }
+
+    if screensaver_mode != 0 {
+        return;
+    }
+
+    let endoom = W_CacheLumpName(DEH_String(b"ENDOOM"), PU_STATIC) as *mut u8;
+    I_Endoom(endoom);
+
+    // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    std::process::exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,10 +1352,14 @@ pub fn D_DoomMain() {
         Z_Init();
 
         // Check command-line flags
-        nomonsters = (M_CheckParm("-nomonsters") != 0) as i32;
-        respawnparm = (M_CheckParm("-respawn") != 0) as i32;
-        fastparm = (M_CheckParm("-fast") != 0) as i32;
-        devparm = (M_CheckParm("-devparm") != 0) as i32;
+        let devparm = (M_CheckParm("-devparm") != 0) as i32;
+        {
+            let mut main = DOOM_MAIN.borrow_mut();
+            main.nomonsters = (M_CheckParm("-nomonsters") != 0) as i32;
+            main.respawnparm = (M_CheckParm("-respawn") != 0) as i32;
+            main.fastparm = (M_CheckParm("-fast") != 0) as i32;
+            main.devparm = devparm;
+        }
 
         I_DisplayFPSDots(Boolean::from(devparm != 0));
 
@@ -1328,16 +1409,18 @@ pub fn D_DoomMain() {
         I_AtExit(M_SaveDefaults, Boolean::FALSE);
 
         // Find main IWAD
-        let Some(found_iwad) = D_FindIWAD(1, &raw mut gamemission) else {
-            // IWAD_MASK_DOOM = 1
+        let mut mission = gamemission();
+        let found_iwad = D_FindIWAD(1, &mut mission); // IWAD_MASK_DOOM = 1
+        STAT.borrow_mut().gamemission = mission;
+        let Some(found_iwad) = found_iwad else {
             i_error!("Game mode indeterminate.  No IWAD file was found.  Try\nspecifying one with the '-iwad' command line parameter.\n");
         };
-        iwadfile = found_iwad;
+        DOOM_MAIN.borrow_mut().iwadfile = found_iwad.clone();
 
-        modifiedgame = Boolean::FALSE;
+        STAT.borrow_mut().modifiedgame = Boolean::FALSE;
 
         println!("W_Init: Init WADfiles.");
-        D_AddFile(&*ptr::addr_of!(iwadfile));
+        D_AddFile(&found_iwad);
 
         W_CheckCorrectIWAD(doom::mode::doom);
 
@@ -1348,14 +1431,15 @@ pub fn D_DoomMain() {
         // BFG Edition check
         if W_CheckNumForName(b"dmenupic") >= 0 {
             println!("BFG Edition: Using workarounds as needed.");
-            bfgedition = 1;
+            DOOM_MAIN.borrow_mut().bfgedition = 1;
 
             // BFG changes secret level names
             // (DEH replacements would go here, skipped since no dehacked)
         }
 
         // Load PWAD files
-        modifiedgame = W_ParseCommandLine();
+        let pwads_loaded = W_ParseCommandLine();
+        STAT.borrow_mut().modifiedgame = pwads_loaded;
 
         // Check for -playdemo / -timedemo
         let p = M_CheckParmWithArgs("-playdemo", 1);
@@ -1382,7 +1466,7 @@ pub fn D_DoomMain() {
 
             if D_AddFile(&file) {
                 // Copy lump name from the last loaded lump
-                let name = (*lumpinfo.add(numlumps as usize - 1)).name;
+                let name = (*lumpinfo().add(W_NumLumps() as usize - 1)).name;
                 demolumpname = String::from_utf8_lossy(lump_name(&name)).into_owned();
             } else {
                 // Still continue like Vanilla Doom (the lump lookup only
@@ -1401,16 +1485,17 @@ pub fn D_DoomMain() {
         D_SetGameDescription();
 
         // Savegame directory
-        savegamedir = M_GetSaveGameDir(D_SaveGameIWADName(gamemission));
+        let savegamedir = M_GetSaveGameDir(D_SaveGameIWADName(gamemission()));
+        DOOM_MAIN.borrow_mut().savegamedir = savegamedir;
 
         // Check for -file in shareware
-        if modifiedgame.is_truthy() {
-            if gamemode == doom::mode::shareware {
+        if modifiedgame().is_truthy() {
+            if gamemode() == doom::mode::shareware {
                 i_error!("\nYou cannot -file with the shareware version. Register!");
             }
 
             // Check for fake IWAD
-            if gamemode == doom::mode::registered {
+            if gamemode() == doom::mode::registered {
                 for i in 0..23 {
                     if W_CheckNumForName(IWAD_CHECK_NAMES[i]) < 0 {
                         i_error!("\nThis is not the registered version.");
@@ -1429,7 +1514,8 @@ pub fn D_DoomMain() {
         }
 
         // Print startup banner
-        I_PrintStartupBanner(&*ptr::addr_of!(gamedescription));
+        let gamedescription = STAT.borrow().gamedescription.clone();
+        I_PrintStartupBanner(&gamedescription);
         PrintDehackedBanners();
 
         // Freedoom warning
@@ -1455,10 +1541,10 @@ pub fn D_DoomMain() {
         D_ConnectNetGame();
 
         // Default skill/episode/map
-        startskill = sk_medium;
-        startepisode = 1;
-        startmap = 1;
-        autostart = 0;
+        let mut startskill = sk_medium;
+        let mut startepisode = 1;
+        let mut startmap = 1;
+        let mut autostart = 0;
 
         // -skill
         let p = M_CheckParmWithArgs("-skill", 1);
@@ -1491,7 +1577,7 @@ pub fn D_DoomMain() {
         // -warp
         let p = M_CheckParmWithArgs("-warp", 1);
         if p > 0 {
-            if gamemode == doom::mode::commercial {
+            if gamemode() == doom::mode::commercial {
                 startmap = atoi(argument(p + 1));
             } else {
                 startepisode = first_byte(argument(p + 1)) - b'0' as i32;
@@ -1514,10 +1600,15 @@ pub fn D_DoomMain() {
 
         // -loadgame
         let p = M_CheckParmWithArgs("-loadgame", 1);
-        if p > 0 {
-            startloadgame = atoi(argument(p + 1));
-        } else {
-            startloadgame = -1;
+        let startloadgame = if p > 0 { atoi(argument(p + 1)) } else { -1 };
+
+        {
+            let mut main = DOOM_MAIN.borrow_mut();
+            main.startskill = startskill;
+            main.startepisode = startepisode;
+            main.startmap = startmap;
+            main.autostart = autostart;
+            main.startloadgame = startloadgame;
         }
 
         // Init remaining subsystems
@@ -1532,6 +1623,11 @@ pub fn D_DoomMain() {
         P_Init();
 
         println!("S_Init: Setting up sound.");
+        let SoundState {
+            sfxVolume,
+            musicVolume,
+            ..
+        } = SOUND.get();
         S_Init(sfxVolume * 8, musicVolume * 8);
 
         println!("D_CheckNetGame: Checking network game status.");
@@ -1546,8 +1642,8 @@ pub fn D_DoomMain() {
         ST_Init();
 
         // Store demo check
-        if gamemode == doom::mode::commercial && W_CheckNumForName(b"map01") < 0 {
-            storedemo = 1;
+        if gamemode() == doom::mode::commercial && W_CheckNumForName(b"map01") < 0 {
+            DOOM_MAIN.borrow_mut().storedemo = 1;
         }
 
         // -statdump
@@ -1559,7 +1655,7 @@ pub fn D_DoomMain() {
         let p = M_CheckParmWithArgs("-record", 1);
         if p > 0 {
             G_RecordDemo(argument(p + 1));
-            autostart = 1;
+            DOOM_MAIN.borrow_mut().autostart = 1;
         }
 
         // -playdemo
@@ -1580,12 +1676,22 @@ pub fn D_DoomMain() {
         }
 
         // Load game
+        let startloadgame = DOOM_MAIN.borrow().startloadgame;
         if startloadgame >= 0 {
             G_LoadGame(&P_SaveGameFile(startloadgame));
         }
 
         // Start new game or title screen
         if gameaction != ga_loadgame {
+            let (autostart, startskill, startepisode, startmap) = {
+                let main = DOOM_MAIN.borrow();
+                (
+                    main.autostart,
+                    main.startskill,
+                    main.startepisode,
+                    main.startmap,
+                )
+            };
             if autostart != 0 || netgame != 0 {
                 G_InitNew(startskill, startepisode, startmap);
             } else {
@@ -1605,39 +1711,31 @@ pub fn D_DoomMain() {
 mod tests {
     use super::*;
 
-    /// Verify all startup flag globals are zero-initialized (except `show_endoom`).
+    /// Verify all startup flags start zeroed (except `show_endoom`).
     #[test]
     fn startup_flags_defaults() {
-        unsafe {
-            assert_eq!({ devparm }, 0);
-            assert_eq!({ nomonsters }, 0);
-            assert_eq!({ respawnparm }, 0);
-            assert_eq!({ fastparm }, 0);
-            assert_eq!({ autostart }, 0);
-            assert_eq!({ advancedemo }, 0);
-            assert_eq!({ storedemo }, 0);
-            assert_eq!({ bfgedition }, 0);
-            assert_eq!({ main_loop_started }, 0);
-            assert_eq!({ show_endoom }, 1);
-            assert_eq!({ startepisode }, 0);
-            assert_eq!({ startmap }, 0);
-        }
+        let main = DoomMainState::new();
+        assert_eq!(main.devparm, 0);
+        assert_eq!(main.nomonsters, 0);
+        assert_eq!(main.respawnparm, 0);
+        assert_eq!(main.fastparm, 0);
+        assert_eq!(main.autostart, 0);
+        assert_eq!(main.advancedemo, 0);
+        assert_eq!(main.storedemo, 0);
+        assert_eq!(main.bfgedition, 0);
+        assert_eq!(main.main_loop_started, 0);
+        assert_eq!(main.show_endoom, 1);
+        assert_eq!(main.startepisode, 0);
+        assert_eq!(main.startmap, 0);
     }
 
-    /// Verify `wipegamestate` starts at `GS_DEMOSCREEN` so the first frame always wipes.
+    /// Verify `wipegamestate` starts at `GS_DEMOSCREEN` so the first frame always wipes,
+    /// and the first `D_Display` forces border and palette redraws.
     #[test]
     fn wipegamestate_default() {
-        unsafe {
-            assert_eq!({ wipegamestate }, GS_DEMOSCREEN);
-        }
-    }
-
-    /// Verify the sizes of the fixed-length character buffers match their C counterparts.
-    #[test]
-    fn global_buffer_sizes() {
-        unsafe {
-            assert_eq!(std::mem::size_of_val(&*ptr::addr_of!(title)), 128);
-        }
+        let main = DoomMainState::new();
+        assert_eq!(main.wipegamestate, GS_DEMOSCREEN);
+        assert_eq!(main.display_old_gamestate, -1);
     }
 
     /// Every `GAME_VERSIONS` entry has a description and a command-line name.

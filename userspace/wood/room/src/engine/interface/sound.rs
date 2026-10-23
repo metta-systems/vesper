@@ -9,13 +9,15 @@
 //! ([`sound::mus2midi`](crate::engine::sound::mus2midi)) before they reach
 //! the platform.
 //!
-//! Public `static mut` `snd_*` globals are bound by address in
-//! `m_config` as user-configurable variables.
+//! The `snd_*` globals live in [`SoundInterfaceState`], held in the
+//! [`SOUND_INTERFACE`] global, and are bound by address in `m_config` as
+//! user-configurable variables.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use {
     crate::engine::{
+        global::Global,
         misc::config::M_BindVariable,
         platform::platform,
         sound::{info::SfxInfo, mus2midi::mus2midi},
@@ -33,45 +35,69 @@ struct MusicHandle {
     midi_bytes: Vec<u8>,
 }
 
-/// Music device selector. C default is `SNDDEVICE_SB` (1); this port
-/// uses `3` (`SNDDEVICE_SB_PRO`) to match the original chocolate-doom
-/// behaviour observed at runtime. Configurable via `m_config`.
-pub static mut snd_musicdevice: i32 = 3;
+/// Sound device configuration (C `i_sound.c` globals).
+///
+/// Every field is bound to a config variable by address, so it lives at a
+/// stable place inside [`SOUND_INTERFACE`].
+pub struct SoundInterfaceState {
+    /// Music device selector. C default is `SNDDEVICE_SB` (1); this port
+    /// uses `3` (`SNDDEVICE_SB_PRO`) to match the original chocolate-doom
+    /// behaviour observed at runtime. Configurable via `m_config`.
+    pub snd_musicdevice: i32,
+    /// SFX device selector. Same notes as `snd_musicdevice`.
+    pub snd_sfxdevice: i32,
+    /// Output sample rate for digital sound, in Hz. Mirrors
+    /// `snd_samplerate` from `i_sound.c`. Bound via `m_config`.
+    pub snd_samplerate: i32,
+    /// Maximum number of bytes the SFX cache may hold. Default 64 MiB,
+    /// matching the C source. Bound via `m_config`.
+    pub snd_cachesize: i32,
+    /// Mixer slice length in milliseconds. Default 28 ms (~1 buffer per
+    /// 35 Hz tic). Mirrors `snd_maxslicetime_ms` in `i_sound.c`.
+    pub snd_maxslicetime_ms: i32,
+    /// Legacy SoundBlaster I/O port. Retained only so the config file
+    /// stays cross-compatible with chocolate-doom; not used at runtime.
+    pub snd_sbport: i32,
+    /// Legacy SoundBlaster IRQ. Same note as `snd_sbport`.
+    pub snd_sbirq: i32,
+    /// Legacy SoundBlaster DMA channel. Same note as `snd_sbport`.
+    pub snd_sbdma: i32,
+    /// Legacy MPU-401 MIDI port. Same note as `snd_sbport`.
+    pub snd_mport: i32,
+    /// External shell command used by the original chocolate-doom to play
+    /// back music via an external process. Unused by this port (the
+    /// platform's music methods handle playback directly) but kept
+    /// for config-file compatibility. Empty by default; `m_config` may
+    /// replace it.
+    pub snd_musiccmd: Cow<'static, str>,
+}
 
-/// SFX device selector. Same notes as `snd_musicdevice`.
-pub static mut snd_sfxdevice: i32 = 3;
+impl SoundInterfaceState {
+    /// The C defaults.
+    pub const fn new() -> Self {
+        Self {
+            snd_musicdevice: 3,
+            snd_sfxdevice: 3,
+            snd_samplerate: 44100,
+            snd_cachesize: 64 * 1024 * 1024,
+            snd_maxslicetime_ms: 28,
+            snd_sbport: 0,
+            snd_sbirq: 0,
+            snd_sbdma: 0,
+            snd_mport: 0,
+            snd_musiccmd: Cow::Borrowed(""),
+        }
+    }
+}
 
-/// Output sample rate for digital sound, in Hz. Mirrors
-/// `snd_samplerate` from `i_sound.c`. Bound via `m_config`.
-pub static mut snd_samplerate: i32 = 44100;
+impl Default for SoundInterfaceState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Maximum number of bytes the SFX cache may hold. Default 64 MiB,
-/// matching the C source. Bound via `m_config`.
-pub static mut snd_cachesize: i32 = 64 * 1024 * 1024;
-
-/// Mixer slice length in milliseconds. Default 28 ms (~1 buffer per
-/// 35 Hz tic). Mirrors `snd_maxslicetime_ms` in `i_sound.c`.
-pub static mut snd_maxslicetime_ms: i32 = 28;
-
-/// Legacy SoundBlaster I/O port. Retained only so the config file
-/// stays cross-compatible with chocolate-doom; not used at runtime.
-pub static mut snd_sbport: i32 = 0;
-
-/// Legacy SoundBlaster IRQ. Same note as `snd_sbport`.
-pub static mut snd_sbirq: i32 = 0;
-
-/// Legacy SoundBlaster DMA channel. Same note as `snd_sbport`.
-pub static mut snd_sbdma: i32 = 0;
-
-/// Legacy MPU-401 MIDI port. Same note as `snd_sbport`.
-pub static mut snd_mport: i32 = 0;
-
-/// External shell command used by the original chocolate-doom to play
-/// back music via an external process. Unused by this port (the
-/// platform's music methods handle playback directly) but kept
-/// for config-file compatibility. Empty by default; `m_config` may
-/// replace it.
-pub static mut snd_musiccmd: Cow<'static, str> = Cow::Borrowed("");
+/// The sound device configuration.
+pub static SOUND_INTERFACE: Global<SoundInterfaceState> = Global::new(SoundInterfaceState::new());
 
 /// Initialise the audio subsystem through the platform's `sound_init`.
 ///
@@ -300,17 +326,25 @@ pub fn I_MusicIsPlaying() -> i32 {
 /// `libsamplerate_scale` under `FEATURE_SOUND`; those are omitted
 /// here because this port doesn't use libsamplerate.
 pub fn I_BindSoundVariables() {
-    M_BindVariable("snd_musicdevice", &raw mut snd_musicdevice as *mut c_void);
-    M_BindVariable("snd_sfxdevice", &raw mut snd_sfxdevice as *mut c_void);
-    M_BindVariable("snd_sbport", &raw mut snd_sbport as *mut c_void);
-    M_BindVariable("snd_sbirq", &raw mut snd_sbirq as *mut c_void);
-    M_BindVariable("snd_sbdma", &raw mut snd_sbdma as *mut c_void);
-    M_BindVariable("snd_mport", &raw mut snd_mport as *mut c_void);
-    M_BindVariable(
-        "snd_maxslicetime_ms",
-        &raw mut snd_maxslicetime_ms as *mut c_void,
-    );
-    M_BindVariable("snd_musiccmd", &raw mut snd_musiccmd as *mut c_void);
-    M_BindVariable("snd_samplerate", &raw mut snd_samplerate as *mut c_void);
-    M_BindVariable("snd_cachesize", &raw mut snd_cachesize as *mut c_void);
+    // Config binds by address: each location is a field at its stable place
+    // inside `SOUND_INTERFACE`.
+    let sound = SOUND_INTERFACE.as_ptr();
+    unsafe {
+        M_BindVariable(
+            "snd_musicdevice",
+            (&raw mut (*sound).snd_musicdevice).cast(),
+        );
+        M_BindVariable("snd_sfxdevice", (&raw mut (*sound).snd_sfxdevice).cast());
+        M_BindVariable("snd_sbport", (&raw mut (*sound).snd_sbport).cast());
+        M_BindVariable("snd_sbirq", (&raw mut (*sound).snd_sbirq).cast());
+        M_BindVariable("snd_sbdma", (&raw mut (*sound).snd_sbdma).cast());
+        M_BindVariable("snd_mport", (&raw mut (*sound).snd_mport).cast());
+        M_BindVariable(
+            "snd_maxslicetime_ms",
+            (&raw mut (*sound).snd_maxslicetime_ms).cast(),
+        );
+        M_BindVariable("snd_musiccmd", (&raw mut (*sound).snd_musiccmd).cast());
+        M_BindVariable("snd_samplerate", (&raw mut (*sound).snd_samplerate).cast());
+        M_BindVariable("snd_cachesize", (&raw mut (*sound).snd_cachesize).cast());
+    }
 }

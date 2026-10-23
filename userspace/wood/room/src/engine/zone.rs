@@ -74,12 +74,39 @@ struct memzone_t {
     rover: *mut memblock_t,
 }
 
-/// `memzone_t *mainzone` — the single global Zone instance. Initialised
-/// by `Z_Init`; null beforehand. Most allocator entry points dereference
-/// this unconditionally, so calls before `Z_Init` are programmer errors.
-pub static mut mainzone: *mut memzone_t = ptr::null_mut();
+/// Zone allocator state (C `z_zone.c` globals).
+#[derive(Clone, Copy)]
+pub struct ZoneState {
+    /// `memzone_t *mainzone` — the single global Zone instance. Initialised
+    /// by `Z_Init`; null beforehand. Most allocator entry points dereference
+    /// this unconditionally, so calls before `Z_Init` are programmer errors.
+    mainzone: *mut memzone_t,
+}
 
-use crate::engine::interface::system::I_ZoneBase;
+impl ZoneState {
+    /// No zone installed yet.
+    pub const fn new() -> Self {
+        Self {
+            mainzone: ptr::null_mut(),
+        }
+    }
+}
+
+impl Default for ZoneState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The zone allocator state.
+pub static ZONE: Global<ZoneState> = Global::new(ZoneState::new());
+
+/// The installed zone (`mainzone`), null before `Z_Init`.
+fn main_zone() -> *mut memzone_t {
+    ZONE.get().mainzone
+}
+
+use crate::engine::{global::Global, interface::system::I_ZoneBase};
 
 /// `void Z_ClearZone(memzone_t *zone)` — reset `zone` to a single free
 /// block spanning the entire backing buffer.
@@ -114,10 +141,11 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
 /// - Reads/writes the global `mainzone`; not thread-safe.
 pub unsafe fn Z_Init() {
     let mut size: i32 = 0;
-    mainzone = I_ZoneBase(&mut size) as *mut memzone_t;
-    (*mainzone).size = size;
+    let zone = I_ZoneBase(&mut size) as *mut memzone_t;
+    ZONE.borrow_mut().mainzone = zone;
+    (*zone).size = size;
 
-    Z_ClearZone(mainzone);
+    Z_ClearZone(zone);
 }
 
 /// `void Z_Free(void *ptr)` — release a block previously returned by
@@ -145,6 +173,7 @@ pub unsafe fn Z_Free(ptr: *mut c_void) {
     (*block).user = ptr::null_mut();
     (*block).id = 0;
 
+    let mainzone = main_zone();
     let mut block = block;
     let other = (*block).prev;
     if (*other).tag == PU_FREE {
@@ -193,6 +222,7 @@ pub unsafe fn Z_Free(ptr: *mut c_void) {
 /// - `tag` must be a valid `PU_*` value (other values are silently
 ///   accepted but break the purge logic, matching C).
 pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
+    let mainzone = main_zone();
     if mainzone.is_null() {
         panic!("Z_Malloc: mainzone is null!");
     }
@@ -299,7 +329,7 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
 ///   be live `Z_Malloc` allocations (the sentinel's tag is PU_STATIC, so
 ///   it is skipped by the tag-range check).
 pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
-    let zone = mainzone;
+    let zone = main_zone();
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
     let mut freed = 0;
@@ -332,7 +362,7 @@ pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
 /// # Safety
 /// `mainzone` must be initialised.
 pub unsafe fn Z_DumpHeap(lowtag: i32, hightag: i32) {
-    let zone = mainzone;
+    let zone = main_zone();
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
 
     println!("zone size: {}  location: {:p}", (*zone).size, zone);
@@ -384,7 +414,7 @@ pub unsafe fn Z_CheckHeap() {
     if !Z_CheckHeapQuiet() {
         // Already printed diagnostic info.
     }
-    let zone = mainzone;
+    let zone = main_zone();
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
 
@@ -433,7 +463,7 @@ pub unsafe fn Z_CheckHeap() {
 ///   no other thread mutates the Zone concurrently.
 /// - Returns `true` if `mainzone` is null (nothing to check yet).
 pub unsafe fn Z_CheckHeapQuiet() -> bool {
-    let zone = mainzone;
+    let zone = main_zone();
     if zone.is_null() {
         return true;
     }
@@ -566,7 +596,7 @@ pub unsafe fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
 /// # Safety
 /// - `mainzone` must be initialised.
 pub unsafe fn Z_FreeMemory() -> i32 {
-    let zone = mainzone;
+    let zone = main_zone();
     let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
     let mut free: i32 = 0;
     let mut block = (*zone).blocklist.next;
@@ -588,5 +618,5 @@ pub unsafe fn Z_FreeMemory() -> i32 {
 /// - `mainzone` must be initialised; otherwise this dereferences a null
 ///   pointer.
 pub unsafe fn Z_ZoneSize() -> u32 {
-    (*mainzone).size as u32
+    (*main_zone()).size as u32
 }

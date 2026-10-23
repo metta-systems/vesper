@@ -257,10 +257,10 @@ use crate::engine::automap::AUTOMAP;
 use crate::engine::doom::stat::gamemode;
 
 // d_main.rs
-use crate::engine::doom::main::wipegamestate;
+use crate::engine::doom::main::DOOM_MAIN;
 
 // i_video.rs
-use crate::engine::interface::video::I_VideoBuffer;
+use crate::engine::interface::video::video_buffer;
 
 // r_things.rs
 use crate::engine::render_3d::things::sprites;
@@ -287,6 +287,7 @@ use crate::engine::sound::{info::Mus, S_ChangeMusic, S_StartMusic, S_StartSound}
 /// Chex Quest maps to `doom`; HacX maps to `doom2`; all others are returned
 /// unchanged.  C origin: `logical_gamemission()` in f_finale.c.
 unsafe fn logical_gamemission() -> i32 {
+    let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
     } else if gamemission == doom::mode::pack_hacx {
@@ -686,18 +687,18 @@ pub fn F_StartFinale() {
 
         for screen in &TEXTSCREENS {
             // Hack for Chex Quest
-            if gameversion == doom::mode::exe_chex && screen.mission == doom::mode::doom {
+            if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
                 // In C this mutates the static array; we emulate by checking level 5.
                 // Actually the C code DOES mutate textscreens[i].level.
                 // For simplicity we just check the hacked level inline.
             }
 
-            let level = if gameversion == doom::mode::exe_chex && screen.mission == doom::mode::doom
-            {
-                5
-            } else {
-                screen.level
-            };
+            let level =
+                if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
+                    5
+                } else {
+                    screen.level
+                };
 
             if logical_gamemission() == screen.mission
                 && (logical_gamemission() != doom::mode::doom || gameepisode == screen.episode)
@@ -735,7 +736,7 @@ pub fn F_Responder(event: *mut event_t) -> i32 {
 
 /// Advance the finale state machine by one game tick.
 ///
-/// In commercial mode (`gamemode == commercial`), checks whether any player
+/// In commercial mode (`gamemode() == commercial`), checks whether any player
 /// has pressed a button to skip; on map 30 this starts the cast roll, otherwise
 /// it triggers `ga_worlddone`.  Increments the tick count; delegates to
 /// [`F_CastTicker`] during the Cast stage.  In non-commercial mode, advances
@@ -747,7 +748,7 @@ pub fn F_Responder(event: *mut event_t) -> i32 {
 pub fn F_Ticker() {
     unsafe {
         // check for skipping
-        if gamemode == doom::mode::commercial && FINALE.borrow().count > 50 {
+        if gamemode() == doom::mode::commercial && FINALE.borrow().count > 50 {
             for i in 0..MAXPLAYERS {
                 if players[i].cmd.buttons != 0 {
                     if gamemap == 30 {
@@ -771,7 +772,7 @@ pub fn F_Ticker() {
             return;
         }
 
-        if gamemode == doom::mode::commercial {
+        if gamemode() == doom::mode::commercial {
             return;
         }
 
@@ -788,7 +789,7 @@ pub fn F_Ticker() {
                 text_done
             };
             if text_done {
-                wipegamestate = -1;
+                DOOM_MAIN.borrow_mut().wipegamestate = -1;
                 if gameepisode == 3 {
                     S_StartMusic(Mus::Bunny as i32);
                 }
@@ -813,7 +814,7 @@ pub fn F_TextWrite() {
     };
     unsafe {
         let src = W_CacheLumpName(finaleflat, PU_CACHE) as *mut u8;
-        let mut dest = I_VideoBuffer;
+        let mut dest = video_buffer();
 
         for y in 0..SCREENHEIGHT {
             let row_src = src.add(((y & 63) << 6) as usize);
@@ -865,7 +866,7 @@ pub fn F_TextWrite() {
 /// C origin: `F_StartCast` in f_finale.c.
 pub fn F_StartCast() {
     unsafe {
-        wipegamestate = -1;
+        DOOM_MAIN.borrow_mut().wipegamestate = -1;
         {
             let mut finale = FINALE.borrow_mut();
             finale.castnum = 0;
@@ -1140,7 +1141,7 @@ pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
         let patch_ptr = patch as *mut u8;
         let ofs = patch_t::column_offset(patch, col as usize);
         let mut column = patch_ptr.add(ofs) as *mut column_t;
-        let desttop = I_VideoBuffer.add(x as usize);
+        let desttop = video_buffer().add(x as usize);
 
         while (*column).topdelta != 0xff {
             let mut source = (column as *mut u8).add(3);
@@ -1237,7 +1238,7 @@ pub fn F_ArtScreenDrawer() {
 
         let lumpname: &[u8] = match gameepisode {
             1 => {
-                if gamemode == doom::mode::retail {
+                if gamemode() == doom::mode::retail {
                     b"CREDIT"
                 } else {
                     b"HELP2"

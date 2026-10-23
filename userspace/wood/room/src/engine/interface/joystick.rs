@@ -12,35 +12,69 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
+use crate::engine::global::Global;
 
 /// Number of virtual joystick buttons exposed to the config system. Must
 /// match the `NUM_VIRTUAL_BUTTONS` define in `i_joystick.h`.
 const NUM_VIRTUAL_BUTTONS: usize = 10;
 
-/// Master enable flag bound to the `use_joystick` config variable.
-static mut usejoystick: i32 = 0;
-/// SDL joystick index to open, bound to `joystick_index`. `-1` means none
-/// selected.
-static mut joystick_index: i32 = -1;
-/// Axis used for horizontal (turn) movement, bound to `joystick_x_axis`.
-static mut joystick_x_axis: i32 = 0;
-/// Inversion flag for the horizontal axis, bound to `joystick_x_invert`.
-static mut joystick_x_invert: i32 = 0;
-/// Axis used for vertical (forward/back) movement, bound to
-/// `joystick_y_axis`.
-static mut joystick_y_axis: i32 = 1;
-/// Inversion flag for the vertical axis, bound to `joystick_y_invert`.
-static mut joystick_y_invert: i32 = 0;
-/// Axis used for strafing, bound to `joystick_strafe_axis`. `-1` disables
-/// strafing.
-static mut joystick_strafe_axis: i32 = -1;
-/// Inversion flag for the strafe axis, bound to `joystick_strafe_invert`.
-static mut joystick_strafe_invert: i32 = 0;
-/// Virtual-to-physical button mapping table, bound element-wise to
-/// `joystick_physical_button0` .. `joystick_physical_button9`. Default is
-/// the identity mapping.
-static mut joystick_physical_buttons: [i32; NUM_VIRTUAL_BUTTONS] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+/// Joystick configuration (C `i_joystick.c` globals).
+///
+/// Every field is bound to a config variable by address, so it lives at a
+/// stable place inside [`JOYSTICK`].
+pub struct JoystickState {
+    /// Master enable flag bound to the `use_joystick` config variable.
+    usejoystick: i32,
+    /// SDL joystick index to open, bound to `joystick_index`. `-1` means
+    /// none selected.
+    joystick_index: i32,
+    /// Axis used for horizontal (turn) movement, bound to
+    /// `joystick_x_axis`.
+    joystick_x_axis: i32,
+    /// Inversion flag for the horizontal axis, bound to `joystick_x_invert`.
+    joystick_x_invert: i32,
+    /// Axis used for vertical (forward/back) movement, bound to
+    /// `joystick_y_axis`.
+    joystick_y_axis: i32,
+    /// Inversion flag for the vertical axis, bound to `joystick_y_invert`.
+    joystick_y_invert: i32,
+    /// Axis used for strafing, bound to `joystick_strafe_axis`. `-1`
+    /// disables strafing.
+    joystick_strafe_axis: i32,
+    /// Inversion flag for the strafe axis, bound to
+    /// `joystick_strafe_invert`.
+    joystick_strafe_invert: i32,
+    /// Virtual-to-physical button mapping table, bound element-wise to
+    /// `joystick_physical_button0` .. `joystick_physical_button9`. Default
+    /// is the identity mapping.
+    joystick_physical_buttons: [i32; NUM_VIRTUAL_BUTTONS],
+}
+
+impl JoystickState {
+    /// The C defaults.
+    pub const fn new() -> Self {
+        Self {
+            usejoystick: 0,
+            joystick_index: -1,
+            joystick_x_axis: 0,
+            joystick_x_invert: 0,
+            joystick_y_axis: 1,
+            joystick_y_invert: 0,
+            joystick_strafe_axis: -1,
+            joystick_strafe_invert: 0,
+            joystick_physical_buttons: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        }
+    }
+}
+
+impl Default for JoystickState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The joystick configuration.
+pub static JOYSTICK: Global<JoystickState> = Global::new(JoystickState::new());
 
 use crate::engine::misc::config::M_BindVariable;
 
@@ -71,32 +105,44 @@ pub fn I_UpdateJoystick() {}
 /// order match the chocolate-doom original byte-for-byte so the resulting
 /// `default.cfg` is round-trip compatible.
 pub fn I_BindJoystickVariables() {
+    // Config binds by address: each location is a field at its stable place
+    // inside `JOYSTICK`.
+    let joystick = JOYSTICK.as_ptr();
     unsafe {
-        M_BindVariable("use_joystick", &raw mut usejoystick as *mut c_void);
-        M_BindVariable("joystick_index", &raw mut joystick_index as *mut c_void);
-        M_BindVariable("joystick_x_axis", &raw mut joystick_x_axis as *mut c_void);
-        M_BindVariable("joystick_y_axis", &raw mut joystick_y_axis as *mut c_void);
+        M_BindVariable("use_joystick", (&raw mut (*joystick).usejoystick).cast());
+        M_BindVariable(
+            "joystick_index",
+            (&raw mut (*joystick).joystick_index).cast(),
+        );
+        M_BindVariable(
+            "joystick_x_axis",
+            (&raw mut (*joystick).joystick_x_axis).cast(),
+        );
+        M_BindVariable(
+            "joystick_y_axis",
+            (&raw mut (*joystick).joystick_y_axis).cast(),
+        );
         M_BindVariable(
             "joystick_strafe_axis",
-            &raw mut joystick_strafe_axis as *mut c_void,
+            (&raw mut (*joystick).joystick_strafe_axis).cast(),
         );
         M_BindVariable(
             "joystick_x_invert",
-            &raw mut joystick_x_invert as *mut c_void,
+            (&raw mut (*joystick).joystick_x_invert).cast(),
         );
         M_BindVariable(
             "joystick_y_invert",
-            &raw mut joystick_y_invert as *mut c_void,
+            (&raw mut (*joystick).joystick_y_invert).cast(),
         );
         M_BindVariable(
             "joystick_strafe_invert",
-            &raw mut joystick_strafe_invert as *mut c_void,
+            (&raw mut (*joystick).joystick_strafe_invert).cast(),
         );
 
         for i in 0..NUM_VIRTUAL_BUTTONS {
             M_BindVariable(
                 &format!("joystick_physical_button{i}"),
-                &raw mut joystick_physical_buttons[i] as *mut c_void,
+                (&raw mut (*joystick).joystick_physical_buttons[i]).cast(),
             );
         }
     }

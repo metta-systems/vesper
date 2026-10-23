@@ -106,7 +106,7 @@ pub static mut savegamelength: i32 = 0;
 pub static mut savegame_error: i32 = 0;
 
 use crate::engine::{
-    doom::main::savegamedir,
+    doom::main::DOOM_MAIN,
     game::G_VanillaVersionCode,
     misc::until_nul,
     play::{
@@ -1159,9 +1159,9 @@ const SAVEGAMENAME: &str = "doomsav";
 ///
 /// # Safety
 ///
-/// Reads the `savegamedir` static; the caller must not be mutating it.
+/// Reads `savegamedir`.
 pub unsafe fn P_TempSaveGameFile() -> String {
-    format!("{}temp.dsg", *ptr::addr_of!(savegamedir))
+    format!("{}temp.dsg", DOOM_MAIN.borrow().savegamedir)
 }
 
 /// Returns the path to the save-game file for the given `slot` (0-7).
@@ -1170,9 +1170,9 @@ pub unsafe fn P_TempSaveGameFile() -> String {
 ///
 /// # Safety
 ///
-/// Reads the `savegamedir` static; the caller must not be mutating it.
+/// Reads `savegamedir`.
 pub unsafe fn P_SaveGameFile(slot: i32) -> String {
-    save_filename(&*ptr::addr_of!(savegamedir), slot)
+    save_filename(&DOOM_MAIN.borrow().savegamedir, slot)
 }
 
 /// Writes the save-game file header to the open `save_stream`.

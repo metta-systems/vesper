@@ -405,7 +405,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
     }
 
     if mo.z <= mo.floorz {
-        let correct_lost_soul_bounce = gameversion >= exe_ultimate;
+        let correct_lost_soul_bounce = gameversion() >= exe_ultimate;
         if correct_lost_soul_bounce && mo.flags & MF_SKULLFLY != 0 {
             mo.momz = -mo.momz;
         }
@@ -831,7 +831,8 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         return;
     }
 
-    if nomonsters != 0 && (i == MT_SKULL as usize || info::mobjinfo[i].flags & MF_COUNTKILL != 0) {
+    if nomonsters() != 0 && (i == MT_SKULL as usize || info::mobjinfo[i].flags & MF_COUNTKILL != 0)
+    {
         return;
     }
 

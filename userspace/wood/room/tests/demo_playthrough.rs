@@ -64,9 +64,9 @@ impl room::engine::platform::Platform for Headless {
 // ---------------------------------------------------------------------------
 
 use room::engine::{
-    doom::main_loop::{gametic, singletics},
+    doom::main_loop::{gametic, MAIN_LOOP},
     game::{gamestate, longtics},
-    misc::random::prndindex,
+    misc::random::RANDOM,
 };
 
 // ---------------------------------------------------------------------------
@@ -637,10 +637,9 @@ fn is_checkpoint(tic: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 fn capture_snapshot(tic: usize) -> Snapshot {
-    use room::engine::{
-        doom::player::{consoleplayer, players, MAXPLAYERS},
-        misc::random::rndindex,
-    };
+    use room::engine::doom::player::{consoleplayer, players, MAXPLAYERS};
+
+    let random = RANDOM.get();
 
     let cp = unsafe { consoleplayer };
     let pidx = if cp >= 0 && (cp as usize) < MAXPLAYERS {
@@ -660,10 +659,10 @@ fn capture_snapshot(tic: usize) -> Snapshot {
         tic,
         virtual_ms: virtual_ms(),
         frames: frame_count(),
-        gametic: unsafe { gametic },
+        gametic: gametic(),
         gamestate: unsafe { gamestate },
-        rndindex: unsafe { rndindex },
-        prndindex: unsafe { prndindex },
+        rndindex: random.rndindex,
+        prndindex: random.prndindex,
         health: p.health,
         armorpoints: p.armorpoints,
         killcount: p.killcount,
@@ -724,9 +723,7 @@ fn demo_playthrough() {
 
     // Enable singletics mode: one game tic per TryRunTics() call,
     // bypassing the real-time waiting loop.
-    unsafe {
-        singletics = 1;
-    }
+    MAIN_LOOP.borrow_mut().singletics = 1;
 
     // Initialize the Doom engine.
     unsafe {
@@ -834,7 +831,7 @@ fn demo_playthrough() {
                     CHECKPOINTS.len(),
                     pct,
                     tic + 1,
-                    { gametic },
+                    gametic(),
                     { room::engine::play::tick::leveltime },
                 );
             }

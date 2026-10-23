@@ -16,11 +16,15 @@
 //!   place of the C `CONFIG_VARIABLE_*` macros.
 //! - A `DEFAULT_STRING` variable is bound to a `Cow<'static, str>`, so its
 //!   default text stays a constant until a config value replaces it.
+//! - The C file-scope variables, including both collections, live in
+//!   [`ConfigState`], held in the [`CONFIG`] global. The variable tables
+//!   start as copies of the `DOOM_DEFAULTS_LIST` / `EXTRA_DEFAULTS_LIST`
+//!   constants.
 
-#![allow(non_upper_case_globals, non_snake_case, static_mut_refs)]
+#![allow(non_upper_case_globals, non_snake_case)]
 
 use {
-    crate::i_error,
+    crate::{engine::global::Global, i_error},
     std::{borrow::Cow, ffi::c_void, ptr},
 };
 
@@ -67,12 +71,11 @@ struct Default {
 
 /// A named group of `Default` entries shared by a single config file.
 ///
-/// Mirrors the C `default_collection_t` struct.
-struct DefaultCollection {
-    /// Pointer to the first entry of an array of `numdefaults` `Default`s.
-    defaults: *mut Default,
-    /// Number of entries in the `defaults` array.
-    numdefaults: i32,
+/// Mirrors the C `default_collection_t` struct; the C `defaults` pointer
+/// and `numdefaults` count become the `N`-entry array itself.
+struct DefaultCollection<const N: usize> {
+    /// The collection's variables.
+    defaults: [Default; N],
     /// Filename used by [`M_LoadDefaults`] / [`M_SaveDefaults`]; empty
     /// until set.
     filename: String,
@@ -98,26 +101,62 @@ use crate::engine::misc::{
     M_MakeDirectory, M_StrToInt,
 };
 
-/// Global configuration directory (mirrors C `char *configdir`).
-///
-/// Initialised by [`M_SetConfigDir`] from the command line or from
-/// `GetDefaultConfigDir`. Read by [`M_LoadDefaults`] and
-/// [`M_GetSaveGameDir`].
-static mut configdir: String = String::new();
+/// Configuration state (C `m_config.c` globals).
+pub struct ConfigState {
+    /// Global configuration directory (mirrors C `char *configdir`).
+    ///
+    /// Initialised by [`M_SetConfigDir`] from the command line or from
+    /// `GetDefaultConfigDir`. Read by [`M_LoadDefaults`] and
+    /// [`M_GetSaveGameDir`].
+    configdir: String,
+    /// Filename component for the main `.cfg` file (e.g. `"default.cfg"`).
+    /// Set by [`M_SetConfigFilenames`].
+    default_main_config: &'static str,
+    /// Filename component for the extra (chocolate-doom) `.cfg` file. Set
+    /// by [`M_SetConfigFilenames`].
+    default_extra_config: &'static str,
+    /// The vanilla config file's variables. Mirrors C
+    /// `static default_collection_t doom_defaults`.
+    doom_defaults: DefaultCollection<{ DOOM_DEFAULTS_LIST.len() }>,
+    /// The extended chocolate-doom config file's variables. Mirrors C
+    /// `static default_collection_t extra_defaults`.
+    extra_defaults: DefaultCollection<{ EXTRA_DEFAULTS_LIST.len() }>,
+}
 
-/// Filename component for the main `.cfg` file (e.g. `"default.cfg"`).
-/// Set by [`M_SetConfigFilenames`].
-static mut default_main_config: &str = "";
-/// Filename component for the extra (chocolate-doom) `.cfg` file. Set by
-/// [`M_SetConfigFilenames`].
-static mut default_extra_config: &str = "";
+impl ConfigState {
+    /// No directory or filenames set, every variable unbound.
+    pub const fn new() -> Self {
+        Self {
+            configdir: String::new(),
+            default_main_config: "",
+            default_extra_config: "",
+            doom_defaults: DefaultCollection {
+                defaults: DOOM_DEFAULTS_LIST,
+                filename: String::new(),
+            },
+            extra_defaults: DefaultCollection {
+                defaults: EXTRA_DEFAULTS_LIST,
+                filename: String::new(),
+            },
+        }
+    }
+}
 
-/// Static table backing the vanilla `doom_defaults` collection.
+impl std::default::Default for ConfigState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The configuration state.
+pub static CONFIG: Global<ConfigState> = Global::new(ConfigState::new());
+
+/// Table backing the vanilla `doom_defaults` collection.
 ///
 /// Order and names are kept verbatim from the C source so that on-disk
 /// `.cfg` files remain compatible. Entries become live once
 /// [`M_BindVariable`] attaches a memory location.
-static mut DOOM_DEFAULTS_LIST: [Default; 76] = [
+const DOOM_DEFAULTS_LIST: [Default; 76] = [
     cfg("mouse_sensitivity", DefaultType::Int),
     cfg("sfx_volume", DefaultType::Int),
     cfg("music_volume", DefaultType::Int),
@@ -196,19 +235,11 @@ static mut DOOM_DEFAULTS_LIST: [Default; 76] = [
     cfg("comport", DefaultType::Int),
 ];
 
-/// Collection wrapper around [`DOOM_DEFAULTS_LIST`] for the vanilla config
-/// file. Mirrors C `static default_collection_t doom_defaults`.
-static mut doom_defaults: DefaultCollection = DefaultCollection {
-    defaults: unsafe { &mut DOOM_DEFAULTS_LIST as *mut _ },
-    numdefaults: 76,
-    filename: String::new(),
-};
-
-/// Static table backing the chocolate-doom `extra_defaults` collection.
+/// Table backing the chocolate-doom `extra_defaults` collection.
 ///
 /// Holds the extended (non-vanilla) settings - video, joystick, mouse and
 /// extra key bindings. Order matches the C source.
-static mut EXTRA_DEFAULTS_LIST: [Default; 119] = [
+const EXTRA_DEFAULTS_LIST: [Default; 119] = [
     cfg("graphical_startup", DefaultType::Int),
     cfg("autoadjust_video_settings", DefaultType::Int),
     cfg("fullscreen", DefaultType::Int),
@@ -329,15 +360,6 @@ static mut EXTRA_DEFAULTS_LIST: [Default; 119] = [
     cfg("key_multi_msgplayer7", DefaultType::Key),
     cfg("key_multi_msgplayer8", DefaultType::Key),
 ];
-
-/// Collection wrapper around [`EXTRA_DEFAULTS_LIST`] for the extended
-/// chocolate-doom config file. Mirrors C `static default_collection_t
-/// extra_defaults`.
-static mut extra_defaults: DefaultCollection = DefaultCollection {
-    defaults: unsafe { &mut EXTRA_DEFAULTS_LIST as *mut _ },
-    numdefaults: 119,
-    filename: String::new(),
-};
 
 // scantokey mapping from DOS keyboard scan codes to internal key codes.
 // Key constant values from doomkeys.h:
@@ -558,37 +580,38 @@ const SCANTOKEY: [i32; 128] = [
 
 /// Linear search for the entry named `name` in a [`DefaultCollection`].
 ///
-/// Returns a raw pointer to the matching entry or NULL if no match exists.
-/// Mirrors C `SearchCollection`.
-///
-/// # Safety
-///
-/// `collection.defaults` must point to `numdefaults` valid entries.
-unsafe fn search_collection(collection: &DefaultCollection, name: &str) -> *mut Default {
-    for i in 0..collection.numdefaults {
-        let def = collection.defaults.add(i as usize);
-        if (*def).name == name {
-            return def;
-        }
-    }
-    ptr::null_mut()
+/// Returns the matching entry, or `None` if no match exists. Mirrors C
+/// `SearchCollection`.
+fn search_collection<'a, const N: usize>(
+    collection: &'a mut DefaultCollection<N>,
+    name: &str,
+) -> Option<&'a mut Default> {
+    collection
+        .defaults
+        .iter_mut()
+        .find(|default| default.name == name)
 }
 
-/// Find the named entry in either the main or extra collection.
+/// Find the named entry in either the main or extra collection and run
+/// `action` on it.
 ///
-/// Searches [`doom_defaults`] first and falls back to [`extra_defaults`];
+/// Searches `doom_defaults` first and falls back to `extra_defaults`;
 /// aborts via [`crate::i_error!`] if no match is found (an unknown
 /// configuration variable is a fatal programming error). Mirrors C
-/// `GetDefaultForName`.
-unsafe fn get_default_for_name(name: &str) -> *mut Default {
-    let mut result = search_collection(&doom_defaults, name);
-    if result.is_null() {
-        result = search_collection(&extra_defaults, name);
+/// `GetDefaultForName`. The config state is released before the error
+/// path runs.
+fn with_default_for_name<R>(name: &str, action: impl FnOnce(&mut Default) -> R) -> R {
+    let result = {
+        let mut config = CONFIG.borrow_mut();
+        let config = &mut *config;
+        search_collection(&mut config.doom_defaults, name)
+            .or_else(|| search_collection(&mut config.extra_defaults, name))
+            .map(action)
+    };
+    match result {
+        Some(result) => result,
+        None => i_error!("Unknown configuration variable: '{name}'"),
     }
-    if result.is_null() {
-        i_error!("Unknown configuration variable: '{name}'");
-    }
-    result
 }
 
 /// Parse an integer parameter as written in a `.cfg` file.
@@ -610,10 +633,9 @@ fn parse_int_parameter(value: &str) -> i32 {
 ///
 /// # Safety
 ///
-/// `def` must be a valid pointer to a `Default` whose `location` field has
-/// been bound by [`M_BindVariable`] to a memory cell of the matching type.
-unsafe fn set_variable(def: *mut Default, value: &str) {
-    let def = &mut *def;
+/// `def.location` must have been bound by [`M_BindVariable`] to a memory
+/// cell of the matching type.
+unsafe fn set_variable(def: &mut Default, value: &str) {
     match def.ty {
         DefaultType::String => {
             *(def.location as *mut Cow<'static, str>) = Cow::Owned(value.to_owned());
@@ -644,10 +666,9 @@ unsafe fn set_variable(def: *mut Default, value: &str) {
 ///
 /// Mirrors C `M_SetConfigFilenames`.
 pub fn M_SetConfigFilenames(main_config: &'static str, extra_config: &'static str) {
-    unsafe {
-        default_main_config = main_config;
-        default_extra_config = extra_config;
-    }
+    let mut config = CONFIG.borrow_mut();
+    config.default_main_config = main_config;
+    config.default_extra_config = extra_config;
 }
 
 /// Write configuration to disk - no-op on this port.
@@ -666,13 +687,17 @@ pub fn M_SaveDefaults() {
 /// no-op in this build, the function only swaps the filenames; no actual
 /// writes occur.
 pub fn M_SaveDefaultsAlternate(main: &str, extra: &str) {
-    unsafe {
-        let orig_main = std::mem::replace(&mut doom_defaults.filename, main.to_owned());
-        let orig_extra = std::mem::replace(&mut extra_defaults.filename, extra.to_owned());
-        M_SaveDefaults();
-        doom_defaults.filename = orig_main;
-        extra_defaults.filename = orig_extra;
-    }
+    let (orig_main, orig_extra) = {
+        let mut config = CONFIG.borrow_mut();
+        (
+            std::mem::replace(&mut config.doom_defaults.filename, main.to_owned()),
+            std::mem::replace(&mut config.extra_defaults.filename, extra.to_owned()),
+        )
+    };
+    M_SaveDefaults();
+    let mut config = CONFIG.borrow_mut();
+    config.doom_defaults.filename = orig_main;
+    config.extra_defaults.filename = orig_extra;
 }
 
 /// Compute filenames for the main/extra config files and announce them.
@@ -684,32 +709,33 @@ pub fn M_SaveDefaultsAlternate(main: &str, extra: &str) {
 /// resulting filenames are stored in `doom_defaults.filename` and
 /// `extra_defaults.filename` for any future call to [`M_SaveDefaults`].
 pub fn M_LoadDefaults() {
-    unsafe {
-        let i = M_CheckParmWithArgs("-config", 1);
-        if i != 0 {
-            doom_defaults.filename = argument(i + 1).to_owned();
-            println!("\tdefault file: {}", doom_defaults.filename);
-        } else {
-            doom_defaults.filename = format!("{configdir}{default_main_config}");
-        }
+    let mut config = CONFIG.borrow_mut();
+    let config = &mut *config;
 
-        println!("saving config in {}", doom_defaults.filename);
-
-        let i = M_CheckParmWithArgs("-extraconfig", 1);
-        if i != 0 {
-            extra_defaults.filename = argument(i + 1).to_owned();
-            println!(
-                "        extra configuration file: {}",
-                extra_defaults.filename
-            );
-        } else {
-            extra_defaults.filename = format!("{configdir}{default_extra_config}");
-        }
-
-        // No-ops because ORIGCODE is undefined
-        let _ = &doom_defaults;
-        let _ = &extra_defaults;
+    let i = M_CheckParmWithArgs("-config", 1);
+    if i != 0 {
+        config.doom_defaults.filename = argument(i + 1).to_owned();
+        println!("\tdefault file: {}", config.doom_defaults.filename);
+    } else {
+        config.doom_defaults.filename =
+            format!("{}{}", config.configdir, config.default_main_config);
     }
+
+    println!("saving config in {}", config.doom_defaults.filename);
+
+    let i = M_CheckParmWithArgs("-extraconfig", 1);
+    if i != 0 {
+        config.extra_defaults.filename = argument(i + 1).to_owned();
+        println!(
+            "        extra configuration file: {}",
+            config.extra_defaults.filename
+        );
+    } else {
+        config.extra_defaults.filename =
+            format!("{}{}", config.configdir, config.default_extra_config);
+    }
+
+    // No collection is parsed because ORIGCODE is undefined.
 }
 
 /// Bind the named configuration variable to a memory `location`.
@@ -720,25 +746,23 @@ pub fn M_LoadDefaults() {
 /// for strings. Aborts via `I_Error` if the name is unknown. Mirrors C
 /// `M_BindVariable`.
 pub fn M_BindVariable(name: &str, location: *mut c_void) {
-    unsafe {
-        let variable = get_default_for_name(name);
-        (*variable).location = location;
-        (*variable).bound = true;
-    }
+    with_default_for_name(name, |variable| {
+        variable.location = location;
+        variable.bound = true;
+    });
 }
 
 /// Programmatic setter: parse `value` and store it at the bound location
 /// for the named variable. Returns `false` if the variable is unbound.
 /// Mirrors C `M_SetVariable`.
 pub fn M_SetVariable(name: &str, value: &str) -> bool {
-    unsafe {
-        let variable = get_default_for_name(name);
-        if variable.is_null() || !(*variable).bound {
+    with_default_for_name(name, |variable| {
+        if !variable.bound {
             return false;
         }
-        set_variable(variable, value);
+        unsafe { set_variable(variable, value) };
         true
-    }
+    })
 }
 
 /// Read the value of a bound `Int` or `IntHex` variable by name.
@@ -746,16 +770,14 @@ pub fn M_SetVariable(name: &str, value: &str) -> bool {
 /// Returns `0` if the variable is unknown, unbound, or has a non-integer
 /// type. Mirrors C `M_GetIntVariable`.
 pub fn M_GetIntVariable(name: &str) -> i32 {
-    unsafe {
-        let variable = get_default_for_name(name);
-        if variable.is_null()
-            || !(*variable).bound
-            || ((*variable).ty != DefaultType::Int && (*variable).ty != DefaultType::IntHex)
+    with_default_for_name(name, |variable| {
+        if !variable.bound
+            || (variable.ty != DefaultType::Int && variable.ty != DefaultType::IntHex)
         {
             return 0;
         }
-        *((*variable).location as *mut i32)
-    }
+        unsafe { *(variable.location as *mut i32) }
+    })
 }
 
 /// Read the value of a bound `String` variable by name.
@@ -763,13 +785,12 @@ pub fn M_GetIntVariable(name: &str) -> i32 {
 /// Returns `None` if the variable is unknown, unbound, or has a non-string
 /// type. Mirrors C `M_GetStrVariable`.
 pub fn M_GetStrVariable(name: &str) -> Option<String> {
-    unsafe {
-        let variable = get_default_for_name(name);
-        if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::String {
+    with_default_for_name(name, |variable| {
+        if !variable.bound || variable.ty != DefaultType::String {
             return None;
         }
-        Some((*((*variable).location as *const Cow<'static, str>)).to_string())
-    }
+        Some(unsafe { (*(variable.location as *const Cow<'static, str>)).to_string() })
+    })
 }
 
 /// Read the value of a bound `Float` variable by name.
@@ -777,13 +798,12 @@ pub fn M_GetStrVariable(name: &str) -> Option<String> {
 /// Returns `0.0` if the variable is unknown, unbound, or has a non-float
 /// type. Mirrors C `M_GetFloatVariable`.
 pub fn M_GetFloatVariable(name: &str) -> f32 {
-    unsafe {
-        let variable = get_default_for_name(name);
-        if variable.is_null() || !(*variable).bound || (*variable).ty != DefaultType::Float {
+    with_default_for_name(name, |variable| {
+        if !variable.bound || variable.ty != DefaultType::Float {
             return 0.0;
         }
-        *((*variable).location as *mut f32)
-    }
+        unsafe { *(variable.location as *mut f32) }
+    })
 }
 
 /// The fallback configuration directory, used when [`M_SetConfigDir`] is
@@ -791,22 +811,21 @@ pub fn M_GetFloatVariable(name: &str) -> f32 {
 /// port keeps only the "current directory" fallback.
 const DEFAULT_CONFIG_DIR: &str = ".";
 
-/// Set the global [`configdir`] and create the directory if needed.
+/// Set the global `configdir` and create the directory if needed.
 ///
 /// `None` falls back to [`DEFAULT_CONFIG_DIR`]. A non-empty path is
 /// echoed to the console. The path is created (recursive parents are NOT
 /// created - matches C semantics) via [`M_MakeDirectory`]. Mirrors C
 /// `M_SetConfigDir`.
 pub fn M_SetConfigDir(dir: Option<&str>) {
-    unsafe {
-        configdir = dir.unwrap_or(DEFAULT_CONFIG_DIR).to_owned();
+    let configdir = dir.unwrap_or(DEFAULT_CONFIG_DIR).to_owned();
+    CONFIG.borrow_mut().configdir = configdir.clone();
 
-        if !configdir.is_empty() {
-            println!("Using {configdir} for configuration and saves");
-        }
-
-        M_MakeDirectory(&configdir);
+    if !configdir.is_empty() {
+        println!("Using {configdir} for configuration and saves");
     }
+
+    M_MakeDirectory(&configdir);
 }
 
 /// Compute and create the directory used to store save games.
@@ -816,33 +835,69 @@ pub fn M_SetConfigDir(dir: Option<&str>) {
 /// is defined, so `_iwadname` is unused. Returns an empty path if
 /// `configdir` is empty (Windows-style "no config dir" mode).
 pub fn M_GetSaveGameDir(_iwadname: &str) -> String {
-    unsafe {
-        if configdir.is_empty() {
-            return String::new();
-        }
-        let savegamedir = format!("{configdir}/.savegame/");
-        M_MakeDirectory(&savegamedir);
-        println!("Using {savegamedir} for savegames");
-        savegamedir
+    let configdir = CONFIG.borrow().configdir.clone();
+    if configdir.is_empty() {
+        return String::new();
     }
+    let savegamedir = format!("{configdir}/.savegame/");
+    M_MakeDirectory(&savegamedir);
+    println!("Using {savegamedir} for savegames");
+    savegamedir
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The tables start unbound and in C order, with no filenames.
+    #[test]
+    fn new_state_is_unbound() {
+        let config = ConfigState::new();
+        assert!(config.configdir.is_empty());
+        assert!(config.doom_defaults.filename.is_empty());
+        assert!(config.extra_defaults.filename.is_empty());
+        assert_eq!(config.doom_defaults.defaults.len(), 76);
+        assert_eq!(config.extra_defaults.defaults.len(), 119);
+        assert_eq!(config.doom_defaults.defaults[0].name, "mouse_sensitivity");
+        assert!(config
+            .doom_defaults
+            .defaults
+            .iter()
+            .chain(&config.extra_defaults.defaults)
+            .all(|default| !default.bound && default.location.is_null()));
+    }
+
+    /// Locations the test binds, at stable addresses.
+    struct TestVariables {
+        sensitivity: i32,
+        music_command: Cow<'static, str>,
+        acceleration: f32,
+        key: i32,
+    }
+
     /// A bound variable of each type takes a value through
     /// `M_SetVariable` and reads it back through the typed getters.
     #[test]
     fn set_variable_parses_each_type() {
-        static mut SENSITIVITY: i32 = 0;
-        static mut MUSIC_COMMAND: Cow<'static, str> = Cow::Borrowed("");
-        static mut ACCELERATION: f32 = 0.0;
-        static mut KEY: i32 = 0;
-        M_BindVariable("mouse_sensitivity", (&raw mut SENSITIVITY).cast());
-        M_BindVariable("snd_musiccmd", (&raw mut MUSIC_COMMAND).cast());
-        M_BindVariable("mouse_acceleration", (&raw mut ACCELERATION).cast());
-        M_BindVariable("key_right", (&raw mut KEY).cast());
+        static VARIABLES: Global<TestVariables> = Global::new(TestVariables {
+            sensitivity: 0,
+            music_command: Cow::Borrowed(""),
+            acceleration: 0.0,
+            key: 0,
+        });
+        let variables = VARIABLES.as_ptr();
+        unsafe {
+            M_BindVariable(
+                "mouse_sensitivity",
+                (&raw mut (*variables).sensitivity).cast(),
+            );
+            M_BindVariable("snd_musiccmd", (&raw mut (*variables).music_command).cast());
+            M_BindVariable(
+                "mouse_acceleration",
+                (&raw mut (*variables).acceleration).cast(),
+            );
+            M_BindVariable("key_right", (&raw mut (*variables).key).cast());
+        }
 
         assert!(M_SetVariable("mouse_sensitivity", "010"));
         assert_eq!(M_GetIntVariable("mouse_sensitivity"), 8); // %i reads octal
@@ -857,6 +912,6 @@ mod tests {
         assert_eq!(M_GetFloatVariable("mouse_acceleration"), 0.5);
 
         assert!(M_SetVariable("key_right", "0x4d")); // DOS scancode 77
-        assert_eq!(unsafe { KEY }, SCANTOKEY[0x4d]);
+        assert_eq!(VARIABLES.borrow().key, SCANTOKEY[0x4d]);
     }
 }

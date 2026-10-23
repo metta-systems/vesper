@@ -11,13 +11,16 @@
 //! the behaviour of the original C implementation.
 //!
 //! Rust differences from C:
-//! - The queue state (`EVENTS`, `EVENT_HEAD`, `EVENT_TAIL`) and the capacity
-//!   constant (`MAXEVENTS`) are private to this module; C exposed all of them
-//!   as file-static locals, which is equivalent visibility.
+//! - The queue state (`events`, `eventhead`, `eventtail`) lives in private
+//!   fields of [`EventState`], held in the [`EVENT`] global, and the
+//!   capacity constant (`MAXEVENTS`) is private to this module; C kept all
+//!   of them file-static, which is equivalent visibility.
 //! - `event_t.kind` is spelled with a trailing underscore to avoid collision
 //!   with the Rust keyword `type`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+
+use crate::engine::global::Global;
 
 /// Maximum number of events that can be queued before the oldest is dropped.
 ///
@@ -64,27 +67,50 @@ const DEFAULT_EVENT: event_t = event_t {
     data4: 0,
 };
 
-/// Ring-buffer storage for pending events.  Indexed by `EVENT_HEAD` and `EVENT_TAIL`.
-///
-/// Corresponds to `static event_t events[MAXEVENTS]` in `d_event.c`.
-static mut EVENTS: [event_t; MAXEVENTS] = [DEFAULT_EVENT; MAXEVENTS];
+/// Event queue state (C `d_event.c` globals).
+pub struct EventState {
+    /// Ring-buffer storage for pending events.  Indexed by `eventhead` and
+    /// `eventtail`. [`D_PopEvent`] hands out pointers into it, so it stays
+    /// in place inside [`EVENT`].
+    ///
+    /// Corresponds to `static event_t events[MAXEVENTS]` in `d_event.c`.
+    events: [event_t; MAXEVENTS],
+    /// Write index into `events`: next slot to be filled by [`D_PostEvent`].
+    ///
+    /// Corresponds to `static int eventhead` in `d_event.c`.
+    eventhead: usize,
+    /// Read index into `events`: next slot to be drained by [`D_PopEvent`].
+    ///
+    /// Corresponds to `static int eventtail` in `d_event.c`.
+    eventtail: usize,
+}
 
-/// Write index into [`EVENTS`]: next slot to be filled by [`D_PostEvent`].
-///
-/// Corresponds to `static int eventhead` in `d_event.c`.
-static mut EVENT_HEAD: usize = 0;
+impl EventState {
+    /// An empty queue.
+    pub const fn new() -> Self {
+        Self {
+            events: [DEFAULT_EVENT; MAXEVENTS],
+            eventhead: 0,
+            eventtail: 0,
+        }
+    }
+}
 
-/// Read index into [`EVENTS`]: next slot to be drained by [`D_PopEvent`].
-///
-/// Corresponds to `static int eventtail` in `d_event.c`.
-static mut EVENT_TAIL: usize = 0;
+impl Default for EventState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The event queue.
+pub static EVENT: Global<EventState> = Global::new(EventState::new());
 
 /// Enqueue an input event into the global event ring-buffer.
 ///
 /// Corresponds to `D_PostEvent` in `d_event.c`.  Called by I/O functions
 /// (keyboard, mouse, joystick drivers) whenever input is detected.
 ///
-/// The event pointed to by `ev` is copied into the queue at `EVENT_HEAD`;
+/// The event pointed to by `ev` is copied into the queue at `eventhead`;
 /// the head index then advances modulo `MAXEVENTS` (64).  If the queue is full,
 /// the oldest unread event is silently overwritten (same behaviour as C).
 ///
@@ -93,10 +119,11 @@ static mut EVENT_TAIL: usize = 0;
 /// `event_t` for the duration of this call; the pointer validity guarantee
 /// rests with the caller.
 pub fn D_PostEvent(ev: *const event_t) {
-    unsafe {
-        EVENTS[EVENT_HEAD] = *ev;
-        EVENT_HEAD = (EVENT_HEAD + 1) % MAXEVENTS;
-    }
+    let event = unsafe { *ev };
+    let mut queue = EVENT.borrow_mut();
+    let head = queue.eventhead;
+    queue.events[head] = event;
+    queue.eventhead = (head + 1) % MAXEVENTS;
 }
 
 /// Dequeue and return the oldest pending input event, or null if the queue is empty.
@@ -108,21 +135,25 @@ pub fn D_PostEvent(ev: *const event_t) {
 /// Returns a mutable pointer into the internal ring-buffer slot.  The pointer
 /// remains valid until the next call to [`D_PostEvent`] that overwrites the
 /// same slot (i.e., after another full cycle of `MAXEVENTS` (64) posts).
-/// Returns `null_mut()` when no events are pending (`EVENT_TAIL == EVENT_HEAD`).
+/// Returns `null_mut()` when no events are pending (`eventtail == eventhead`).
 ///
 /// # Safety
 /// The returned pointer aliases internal mutable state.  Callers must not
 /// retain the pointer across subsequent calls to [`D_PostEvent`] that could
 /// recycle the same slot.
 pub fn D_PopEvent() -> *mut event_t {
-    unsafe {
-        if EVENT_TAIL == EVENT_HEAD {
+    let tail = {
+        let mut queue = EVENT.borrow_mut();
+        let tail = queue.eventtail;
+        if tail == queue.eventhead {
             return std::ptr::null_mut();
         }
-        let result = &mut EVENTS[EVENT_TAIL];
-        EVENT_TAIL = (EVENT_TAIL + 1) % MAXEVENTS;
-        result
-    }
+        queue.eventtail = (tail + 1) % MAXEVENTS;
+        tail
+    };
+    // The responders read the event through this pointer, so it is taken
+    // from the slot's stable address inside `EVENT`.
+    unsafe { &raw mut (*EVENT.as_ptr()).events[tail] }
 }
 
 #[cfg(test)]
@@ -135,13 +166,11 @@ mod tests {
 
     /// Empty the queue and hold it for the calling test until the returned
     /// guard drops.
-    unsafe fn reset_queue() -> std::sync::MutexGuard<'static, ()> {
+    fn reset_queue() -> std::sync::MutexGuard<'static, ()> {
         let guard = QUEUE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        EVENTS = [DEFAULT_EVENT; MAXEVENTS];
-        EVENT_HEAD = 0;
-        EVENT_TAIL = 0;
+        *EVENT.borrow_mut() = EventState::new();
         guard
     }
 
@@ -169,10 +198,17 @@ mod tests {
 
     #[test]
     fn pop_on_empty_returns_null() {
-        unsafe {
-            let _queue = reset_queue();
-            assert!(D_PopEvent().is_null());
-        }
+        let _queue = reset_queue();
+        assert!(D_PopEvent().is_null());
+    }
+
+    /// The queue starts empty, with both cursors at slot 0.
+    #[test]
+    fn new_queue_is_empty() {
+        let queue = EventState::new();
+        assert_eq!(queue.eventhead, 0);
+        assert_eq!(queue.eventtail, 0);
+        assert!(queue.events.iter().all(|event| event.kind == 0));
     }
 
     #[test]
@@ -190,7 +226,7 @@ mod tests {
                 };
                 D_PostEvent(&ev);
             }
-            assert_eq!({ EVENT_HEAD }, max);
+            assert_eq!(EVENT.borrow().eventhead, max);
             for i in 0..max {
                 let result = D_PopEvent();
                 assert!(!result.is_null());

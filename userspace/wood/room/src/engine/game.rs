@@ -32,7 +32,7 @@
 //!   trigger map setup.
 //!
 //! Net/demo consistency is maintained via the `consistancy[]` table and the
-//! [`rndindex`] cookie tracked by `m_random`; a mismatch raises `I_Error`.
+//! `rndindex` cookie tracked by `m_random`; a mismatch raises `I_Error`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -557,8 +557,16 @@ use crate::engine::doom::main_loop::{gametic, ticdup};
 /// Command-line `-fast`, `-nomonsters`, `-respawn` toggles, the wipe-state
 /// latch, demo advancement, and the title-screen page ticker from `d_main.c`.
 use crate::engine::doom::main::{
-    fastparm, nomonsters, respawnparm, wipegamestate, D_AdvanceDemo, D_PageTicker,
+    fastparm, nomonsters, respawnparm, D_AdvanceDemo, D_PageTicker, DOOM_MAIN,
 };
+
+/// Clear the `-respawn`, `-fast` and `-nomonsters` toggles.
+fn clear_monster_parms() {
+    let mut main = DOOM_MAIN.borrow_mut();
+    main.respawnparm = 0;
+    main.fastparm = 0;
+    main.nomonsters = 0;
+}
 
 /// Automap toggle, responder, stop hook and ticker from `am_map.c`.
 use crate::engine::automap::{automap_active, AM_Responder, AM_Stop, AM_Ticker, AUTOMAP};
@@ -619,7 +627,7 @@ use crate::engine::finale::{F_Responder, F_StartFinale, F_Ticker};
 use crate::engine::sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 
 /// Mouse-sensitivity slider and main-menu opener from `m_menu.c`.
-use crate::engine::misc::menu::{mouseSensitivity, M_StartControlPanel};
+use crate::engine::misc::menu::{M_StartControlPanel, MENU};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
 use crate::engine::misc::{atoi, M_StringCopy, M_TempFile, M_WriteFile};
@@ -628,7 +636,7 @@ use crate::engine::misc::{atoi, M_StringCopy, M_TempFile, M_WriteFile};
 use crate::engine::misc::argv::{argument, M_CheckParm, M_CheckParmWithArgs};
 
 /// `rndindex` consistency-check cookie and seed reset from `m_random.c`.
-use crate::engine::misc::random::{rndindex, M_ClearRandom};
+use crate::engine::misc::random::{M_ClearRandom, RANDOM};
 
 /// Statistics-dump hook used after a level completes, from `statdump.c`.
 use crate::engine::intermission::statdump::StatCopy;
@@ -643,17 +651,9 @@ use crate::engine::interface::timer::I_GetTime;
 use crate::engine::wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName};
 
 /// Configurable key, joystick and mouse button bindings from `m_controls.c`.
-/// Imported in bulk because `G_BuildTiccmd` and `G_Responder` interrogate
-/// almost every binding to assemble each tic's command.
-use crate::engine::misc::controls::{
-    dclick_use, joybfire, joybnextweapon, joybprevweapon, joybspeed, joybstrafe, joybstrafeleft,
-    joybstraferight, joybuse, key_demo_quit, key_down, key_fire, key_left, key_nextweapon,
-    key_pause, key_prevweapon, key_right, key_speed, key_spy, key_strafe, key_strafeleft,
-    key_straferight, key_up, key_use, key_weapon1, key_weapon2, key_weapon3, key_weapon4,
-    key_weapon5, key_weapon6, key_weapon7, key_weapon8, mousebbackward, mousebfire, mousebforward,
-    mousebnextweapon, mousebprevweapon, mousebstrafe, mousebstrafeleft, mousebstraferight,
-    mousebuse,
-};
+/// `G_BuildTiccmd` and `G_Responder` copy the bindings they interrogate out
+/// of `CONTROLS` once per call.
+use crate::engine::misc::controls::{ControlsState, CONTROLS};
 
 /// `PU_STATIC` Z_Malloc purge tag used for the demo buffer and demo filename.
 use crate::engine::zone::PU_STATIC;
@@ -677,6 +677,7 @@ use crate::engine::dehacked::DEH_String;
 #[inline]
 unsafe fn logical_gamemission() -> i32 {
     use crate::engine::doom::mode::{doom2, pack_plut, pack_tnt};
+    let gamemission = gamemission();
     if gamemission == pack_tnt || gamemission == pack_plut {
         doom2
     } else {
@@ -769,7 +770,8 @@ unsafe fn weapon_selectable(weapon: i32) -> bool {
         return false;
     }
     // Plasma and BFG unavailable in shareware.
-    if (weapon == wp_plasma || weapon == wp_bfg) && gamemission == doom && gamemode == shareware {
+    if (weapon == wp_plasma || weapon == wp_bfg) && gamemission() == doom && gamemode() == shareware
+    {
         return false;
     }
     let cp = consoleplayer as usize;
@@ -861,6 +863,43 @@ unsafe fn g_next_weapon(direction: i32) -> i32 {
 /// before assembly.
 pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
     use crate::engine::doom::main_loop::BACKUPTICS;
+
+    let ControlsState {
+        key_strafe,
+        mousebstrafe,
+        joybstrafe,
+        key_speed,
+        joybspeed,
+        key_right,
+        key_left,
+        key_up,
+        key_down,
+        key_strafeleft,
+        joybstrafeleft,
+        mousebstrafeleft,
+        key_straferight,
+        joybstraferight,
+        mousebstraferight,
+        key_fire,
+        mousebfire,
+        joybfire,
+        key_use,
+        joybuse,
+        mousebuse,
+        key_weapon1,
+        key_weapon2,
+        key_weapon3,
+        key_weapon4,
+        key_weapon5,
+        key_weapon6,
+        key_weapon7,
+        key_weapon8,
+        mousebforward,
+        mousebbackward,
+        dclick_use,
+        ..
+    } = CONTROLS.get();
+    let ticdup = ticdup();
 
     let cmd = &mut *cmd;
     *cmd = std::mem::zeroed();
@@ -1112,7 +1151,7 @@ pub unsafe fn G_DoLoadLevel() {
     skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
 
     // Fix sky texture for Final Doom / Chex
-    if gamemode == commercial && (gameversion == exe_final2 || gameversion == exe_chex) {
+    if gamemode() == commercial && (gameversion() == exe_final2 || gameversion() == exe_chex) {
         let skytexturename: &[u8] = if gamemap < 12 {
             b"SKY1"
         } else if gamemap < 21 {
@@ -1123,10 +1162,13 @@ pub unsafe fn G_DoLoadLevel() {
         skytexture = R_TextureNumForName(DEH_String(skytexturename));
     }
 
-    levelstarttic = gametic;
+    levelstarttic = gametic();
 
-    if wipegamestate == GS_LEVEL {
-        wipegamestate = -1; // force a wipe
+    {
+        let mut main = DOOM_MAIN.borrow_mut();
+        if main.wipegamestate == GS_LEVEL {
+            main.wipegamestate = -1; // force a wipe
+        }
     }
 
     gamestate = GS_LEVEL;
@@ -1174,6 +1216,11 @@ pub unsafe fn G_DoLoadLevel() {
 /// Mutates `JOYARRAY` and `NEXT_WEAPON`; safe under the single-threaded
 /// engine convention.
 unsafe fn set_joy_buttons(buttons_mask: u32) {
+    let ControlsState {
+        joybprevweapon,
+        joybnextweapon,
+        ..
+    } = CONTROLS.get();
     for i in 0..MAX_JOY_BUTTONS {
         let button_on = ((buttons_mask >> i) & 1) != 0;
         if JOYARRAY[i + 1] == 0 && button_on {
@@ -1194,6 +1241,11 @@ unsafe fn set_joy_buttons(buttons_mask: u32) {
 /// Mutates `MOUSEARRAY` and `NEXT_WEAPON`; safe under the single-threaded
 /// engine convention.
 unsafe fn set_mouse_buttons(buttons_mask: u32) {
+    let ControlsState {
+        mousebprevweapon,
+        mousebnextweapon,
+        ..
+    } = CONTROLS.get();
     for i in 0..MAX_MOUSE_BUTTONS {
         let button_on = ((buttons_mask >> i) & 1) != 0;
         if MOUSEARRAY[i + 1] == 0 && button_on {
@@ -1231,6 +1283,13 @@ unsafe fn set_mouse_buttons(buttons_mask: u32) {
 /// single-threaded engine convention.
 pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
     let ev = &*ev;
+    let ControlsState {
+        key_spy,
+        key_prevweapon,
+        key_nextweapon,
+        key_pause,
+        ..
+    } = CONTROLS.get();
 
     // Spy mode changes even during demo
     if gamestate == GS_LEVEL
@@ -1314,8 +1373,9 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
         2 => {
             // ev_mouse
             set_mouse_buttons(ev.data1 as u32);
-            MOUSEX = ev.data2 * (mouseSensitivity + 5) / 10;
-            MOUSEY = ev.data3 * (mouseSensitivity + 5) / 10;
+            let mouse_sensitivity = MENU.borrow().mouseSensitivity;
+            MOUSEX = ev.data2 * (mouse_sensitivity + 5) / 10;
+            MOUSEY = ev.data3 * (mouse_sensitivity + 5) / 10;
             return 1;
         }
         3 => {
@@ -1390,6 +1450,7 @@ pub unsafe fn G_Ticker() {
     }
 
     // Get commands, check consistency, build new consistency check
+    let (gametic, ticdup) = (gametic(), ticdup());
     let buf = ((gametic / ticdup) as usize) % BACKUPTICS;
 
     for i in 0..MAXPLAYERS {
@@ -1397,7 +1458,7 @@ pub unsafe fn G_Ticker() {
             let cmd = &mut players[i].cmd as *mut TiccmdT;
 
             // Copy net command into player command
-            std::ptr::copy_nonoverlapping(netcmds.add(i), cmd, 1);
+            std::ptr::copy_nonoverlapping(netcmds().add(i), cmd, 1);
 
             if demoplayback != 0 {
                 G_ReadDemoTiccmd(cmd);
@@ -1432,7 +1493,7 @@ pub unsafe fn G_Ticker() {
                 if !mo.is_null() {
                     consistancy[i][buf] = (*mo).x as u8;
                 } else {
-                    consistancy[i][buf] = rndindex as u8;
+                    consistancy[i][buf] = RANDOM.get().rndindex as u8;
                 }
             }
         }
@@ -1781,7 +1842,7 @@ pub unsafe fn G_ExitLevel() {
 /// # Safety
 /// Writes the `secretexit` and `gameaction` globals.
 pub unsafe fn G_SecretExitLevel() {
-    if gamemode == commercial && W_CheckNumForName(b"map31") < 0 {
+    if gamemode() == commercial && W_CheckNumForName(b"map31") < 0 {
         secretexit = 0;
     } else {
         secretexit = 1;
@@ -1824,8 +1885,8 @@ pub unsafe fn G_DoCompleted() {
         AM_Stop();
     }
 
-    if gamemode != commercial {
-        if gameversion == exe_chex {
+    if gamemode() != commercial {
+        if gameversion() == exe_chex {
             if gamemap == 5 {
                 gameaction = ga_victory;
                 return;
@@ -1846,11 +1907,11 @@ pub unsafe fn G_DoCompleted() {
         }
     }
 
-    if gamemap == 8 && gamemode != commercial {
+    if gamemap == 8 && gamemode() != commercial {
         gameaction = ga_victory;
         return;
     }
-    if gamemap == 9 && gamemode != commercial {
+    if gamemap == 9 && gamemode() != commercial {
         for i in 0..MAXPLAYERS {
             players[i].didsecret = 1;
         }
@@ -1860,7 +1921,7 @@ pub unsafe fn G_DoCompleted() {
     wminfo.epsd = gameepisode - 1;
     wminfo.last = gamemap - 1;
 
-    if gamemode == commercial {
+    if gamemode() == commercial {
         wminfo.next = if secretexit != 0 {
             match gamemap {
                 15 => 30,
@@ -1894,7 +1955,7 @@ pub unsafe fn G_DoCompleted() {
     wminfo.maxsecret = totalsecret;
     wminfo.maxfrags = 0;
 
-    wminfo.partime = if gamemode == commercial {
+    wminfo.partime = if gamemode() == commercial {
         35 * cpars[(gamemap - 1) as usize]
     } else if gameepisode < 4 {
         35 * pars[gameepisode as usize][gamemap as usize]
@@ -1939,7 +2000,7 @@ pub unsafe fn G_WorldDone() {
         players[consoleplayer as usize].didsecret = 1;
     }
 
-    if gamemode == commercial {
+    if gamemode() == commercial {
         match gamemap {
             15 | 31 => {
                 if secretexit == 0 {
@@ -2161,9 +2222,7 @@ pub unsafe fn G_DoNewGame() {
     playeringame[1] = 0;
     playeringame[2] = 0;
     playeringame[3] = 0;
-    respawnparm = 0;
-    fastparm = 0;
-    nomonsters = 0;
+    clear_monster_parms();
     consoleplayer = 0;
     G_InitNew(d_skill, d_episode, d_map);
     gameaction = ga_nothing;
@@ -2201,7 +2260,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
         skill = 4;
     }
 
-    if gameversion >= exe_ultimate {
+    if gameversion() >= exe_ultimate {
         if episode == 0 {
             episode = 4;
         }
@@ -2209,20 +2268,20 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
         episode = episode.clamp(1, 3);
     }
 
-    if episode > 1 && gamemode == shareware {
+    if episode > 1 && gamemode() == shareware {
         episode = 1;
     }
 
     if map < 1 {
         map = 1;
     }
-    if map > 9 && gamemode != commercial {
+    if map > 9 && gamemode() != commercial {
         map = 9;
     }
 
     M_ClearRandom();
 
-    if skill == 4 || respawnparm != 0 {
+    if skill == 4 || respawnparm() != 0 {
         // sk_nightmare = 4
         respawnmonsters = 1;
     } else {
@@ -2230,7 +2289,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
     }
 
     // Fast monsters for nightmare or fastparm
-    if fastparm != 0 || (skill == 4 && gameskill != 4) {
+    if fastparm() != 0 || (skill == 4 && gameskill != 4) {
         set_fast_monsters(true);
     } else if skill != 4 && gameskill == 4 {
         set_fast_monsters(false);
@@ -2252,7 +2311,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
 
     // Set sky texture (vanilla Doom broken behaviour for Doom II: set once at
     // game start, not per level — deliberately preserved for compatibility).
-    let skytexturename: &[u8] = if gamemode == commercial {
+    let skytexturename: &[u8] = if gamemode() == commercial {
         if gamemap < 12 {
             b"SKY1"
         } else if gamemap < 21 {
@@ -2450,7 +2509,7 @@ unsafe fn increase_demo_buffer() {
 /// Writes through `demo_p` and reads back through it; requires the demo
 /// buffer to have at least 16 bytes of headroom or `vanilla_demo_limit == 0`.
 pub unsafe fn G_WriteDemoTiccmd(cmd: *mut TiccmdT) {
-    if GAMEKEYDOWN[key_demo_quit as usize] != 0 {
+    if GAMEKEYDOWN[CONTROLS.get().key_demo_quit as usize] != 0 {
         G_CheckDemoStatus();
     }
 
@@ -2525,7 +2584,7 @@ pub unsafe fn G_RecordDemo(name: &str) {
 /// # Safety
 /// Reads the `gameversion` global.
 pub unsafe fn G_VanillaVersionCode() -> i32 {
-    g_vanilla_version_code_for(gameversion)
+    g_vanilla_version_code_for(gameversion())
 }
 
 /// Pure helper for [`G_VanillaVersionCode`]: maps a `gameversion` value to
@@ -2572,11 +2631,11 @@ pub unsafe fn G_BeginRecording() {
     demo_p = demo_p.add(1);
     *demo_p = deathmatch as byte;
     demo_p = demo_p.add(1);
-    *demo_p = respawnparm as byte;
+    *demo_p = respawnparm() as byte;
     demo_p = demo_p.add(1);
-    *demo_p = fastparm as byte;
+    *demo_p = fastparm() as byte;
     demo_p = demo_p.add(1);
-    *demo_p = nomonsters as byte;
+    *demo_p = nomonsters() as byte;
     demo_p = demo_p.add(1);
     *demo_p = consoleplayer as byte;
     demo_p = demo_p.add(1);
@@ -2672,11 +2731,11 @@ pub unsafe fn G_DoPlayDemo() {
     demo_p = demo_p.add(1);
     deathmatch = *demo_p as i32;
     demo_p = demo_p.add(1);
-    respawnparm = *demo_p as i32;
+    DOOM_MAIN.borrow_mut().respawnparm = *demo_p as i32;
     demo_p = demo_p.add(1);
-    fastparm = *demo_p as i32;
+    DOOM_MAIN.borrow_mut().fastparm = *demo_p as i32;
     demo_p = demo_p.add(1);
-    nomonsters = *demo_p as i32;
+    DOOM_MAIN.borrow_mut().nomonsters = *demo_p as i32;
     demo_p = demo_p.add(1);
     consoleplayer = *demo_p as i32;
     demo_p = demo_p.add(1);
@@ -2721,8 +2780,9 @@ pub unsafe fn G_DoPlayDemo() {
 pub unsafe fn G_TimeDemo(name: &str) {
     nodrawers = M_CheckParm("-nodraw");
     timingdemo = 1;
-    use crate::engine::doom::main_loop::singletics;
-    singletics = 1;
+    crate::engine::doom::main_loop::MAIN_LOOP
+        .borrow_mut()
+        .singletics = 1;
     defdemoname = name.to_owned();
     gameaction = ga_playdemo;
 }
@@ -2751,12 +2811,13 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
     if timingdemo != 0 {
         let endtime = I_GetTime();
         let realtics = endtime - starttime;
+        let gametic = gametic();
         let fps = (gametic as f32 * 35.0) / realtics as f32;
         timingdemo = 0;
         demoplayback = 0;
         crate::i_error!(
             "timed {} gametics in {} realtics ({:.6} fps)",
-            { gametic },
+            gametic,
             realtics,
             fps as f64,
         );
@@ -2771,9 +2832,7 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
         playeringame[1] = 0;
         playeringame[2] = 0;
         playeringame[3] = 0;
-        respawnparm = 0;
-        fastparm = 0;
-        nomonsters = 0;
+        clear_monster_parms();
         consoleplayer = 0;
 
         if singledemo != 0 {

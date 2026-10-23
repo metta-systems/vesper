@@ -26,13 +26,16 @@ use crate::types::Boolean;
 
 use crate::engine::{
     doom,
+    global::Global,
     map::degenmobj_t,
     math::{
         fixed::{fixed_t, FRACBITS, FRACUNIT},
         tables::{finesine, ANGLETOFINESHIFT},
     },
     play::mobj::mobj_t,
-    sound::info::{Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX},
+    sound::info::{
+        music_table, sfx_table, Mus, MusicInfo, S_InitSfxLinks, SfxInfo, NUMMUSIC, NUMSFX,
+    },
     zone::PU_STATIC,
 };
 
@@ -131,7 +134,7 @@ use crate::engine::interface::sound::{
 use crate::engine::interface::system::I_AtExit;
 
 // i_sound.rs
-use crate::engine::interface::sound::snd_musicdevice;
+use crate::engine::interface::sound::SOUND_INTERFACE;
 
 // z_zone.rs
 use crate::engine::zone::Z_Malloc;
@@ -145,30 +148,55 @@ use crate::engine::math::fixed::FixedMul;
 // w_wad.rs
 use crate::engine::wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReleaseLumpNum};
 
-/// Heap-allocated array of `snd_channels` mixing channels. Allocated by
-/// `S_Init` from zone memory, never freed (PU_STATIC).
-static mut channels: *mut channel_t = std::ptr::null_mut();
+/// Sound subsystem state (C `s_sound.c` globals).
+///
+/// `sfxVolume`, `musicVolume` and `snd_channels` are bound to config
+/// variables by address, so they live at a stable place inside [`SOUND`].
+#[derive(Clone, Copy)]
+pub struct SoundState {
+    /// Heap-allocated array of `snd_channels` mixing channels. Allocated by
+    /// `S_Init` from zone memory, never freed (PU_STATIC).
+    channels: *mut channel_t,
+    /// User-facing SFX volume slider value (0-15). Mirrors `sfxVolume` in
+    /// `s_sound.c`; shared with the menu and config code.
+    pub sfxVolume: i32,
+    /// User-facing music volume slider value (0-15). Mirrors `musicVolume` in
+    /// `s_sound.c`; shared with the menu and config code.
+    pub musicVolume: i32,
+    /// Number of mixing channels to allocate (default 8). Read by `S_Init`.
+    pub snd_channels: i32,
+    /// Internal SFX volume on the 0-127 scale used by the driver. Set by
+    /// `S_SetSfxVolume`. C name: `snd_SfxVolume`.
+    snd_SfxVolume: i32,
+    /// Non-zero while music is paused, used by `S_PauseSound`/`S_ResumeSound`.
+    mus_paused: i32,
+    /// Currently playing music entry, or null if no song is active.
+    mus_playing: *mut MusicInfo,
+}
 
-/// User-facing SFX volume slider value (0-15). Mirrors `sfxVolume` in
-/// `s_sound.c`; shared with the menu and config code.
-pub static mut sfxVolume: i32 = 8;
+impl SoundState {
+    /// The C defaults: no channels allocated, volumes at 8, no music.
+    pub const fn new() -> Self {
+        Self {
+            channels: std::ptr::null_mut(),
+            sfxVolume: 8,
+            musicVolume: 8,
+            snd_channels: 8,
+            snd_SfxVolume: 8,
+            mus_paused: 0,
+            mus_playing: std::ptr::null_mut(),
+        }
+    }
+}
 
-/// User-facing music volume slider value (0-15). Mirrors `musicVolume` in
-/// `s_sound.c`; shared with the menu and config code.
-pub static mut musicVolume: i32 = 8;
+impl Default for SoundState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Number of mixing channels to allocate (default 8). Read by `S_Init`.
-pub static mut snd_channels: i32 = 8;
-
-/// Internal SFX volume on the 0-127 scale used by the driver. Set by
-/// `S_SetSfxVolume`. C name: `snd_SfxVolume`.
-pub static mut snd_SfxVolume: i32 = 8;
-
-/// Non-zero while music is paused, used by `S_PauseSound`/`S_ResumeSound`.
-pub static mut mus_paused: i32 = 0;
-
-/// Currently playing music entry, or null if no song is active.
-static mut mus_playing: *mut MusicInfo = std::ptr::null_mut();
+/// The sound subsystem state.
+pub static SOUND: Global<SoundState> = Global::new(SoundState::new());
 
 /// Initialise the sound subsystem.
 ///
@@ -184,15 +212,14 @@ pub fn S_Init(sfx_volume: i32, music_volume: i32) {
     unsafe {
         S_InitSfxLinks();
 
-        I_PrecacheSounds(
-            std::ptr::addr_of_mut!(S_sfx[0]) as *mut c_void,
-            NUMSFX as i32,
-        );
+        let sfx = sfx_table();
+        I_PrecacheSounds(sfx as *mut c_void, NUMSFX as i32);
 
         S_SetSfxVolume(sfx_volume);
         S_SetMusicVolume(music_volume);
 
-        channels = Z_Malloc(
+        let snd_channels = SOUND.get().snd_channels;
+        let channels = Z_Malloc(
             (snd_channels as usize * std::mem::size_of::<channel_t>()) as i32,
             PU_STATIC,
             std::ptr::null_mut(),
@@ -206,11 +233,15 @@ pub fn S_Init(sfx_volume: i32, music_volume: i32) {
             });
         }
 
-        mus_paused = 0;
+        {
+            let mut sound = SOUND.borrow_mut();
+            sound.channels = channels;
+            sound.mus_paused = 0;
+        }
 
         for i in 1..NUMSFX {
-            (*std::ptr::addr_of_mut!(S_sfx[0]).add(i)).lumpnum = -1;
-            (*std::ptr::addr_of_mut!(S_sfx[0]).add(i)).usefulness = -1;
+            (*sfx.add(i)).lumpnum = -1;
+            (*sfx.add(i)).usefulness = -1;
         }
 
         I_AtExit(S_Shutdown, Boolean::TRUE);
@@ -234,6 +265,11 @@ pub fn S_Shutdown() {
 /// # Safety
 /// `cnum` must be a valid index into the `channels` array (`0..snd_channels`).
 unsafe fn S_StopChannel(cnum: i32) {
+    let SoundState {
+        channels,
+        snd_channels,
+        ..
+    } = SOUND.get();
     let c = &mut *channels.offset(cnum as isize);
 
     if !c.sfxinfo.is_null() {
@@ -263,17 +299,22 @@ unsafe fn S_StopChannel(cnum: i32) {
 /// C origin: `S_Start` in `s_sound.c`.
 pub fn S_Start() {
     unsafe {
+        let SoundState {
+            channels,
+            snd_channels,
+            ..
+        } = SOUND.get();
         for cnum in 0..snd_channels {
             if !(*channels.offset(cnum as isize)).sfxinfo.is_null() {
                 S_StopChannel(cnum);
             }
         }
 
-        mus_paused = 0;
+        SOUND.borrow_mut().mus_paused = 0;
 
         let mnum: i32;
 
-        if gamemode == doom::mode::commercial {
+        if gamemode() == doom::mode::commercial {
             mnum = Mus::Runnin as i32 + gamemap - 1;
         } else {
             let spmus: [i32; 9] = [
@@ -308,6 +349,11 @@ pub fn S_StopSound(origin: *mut mobj_t) {
 /// Stop the first sound playing from `origin`; `None` matches the first
 /// non-positional sound, as a null origin does in C.
 fn S_StopOriginSound(origin: Option<SoundOrigin>) {
+    let SoundState {
+        channels,
+        snd_channels,
+        ..
+    } = SOUND.get();
     unsafe {
         for cnum in 0..snd_channels {
             let ch = *channels.offset(cnum as isize);
@@ -334,6 +380,11 @@ fn S_StopOriginSound(origin: Option<SoundOrigin>) {
 /// `sfxinfo` must point to a valid `SfxInfo`; `origin` may be `None`.
 /// `channels` must already be allocated (call `S_Init` first).
 unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i32 {
+    let SoundState {
+        channels,
+        snd_channels,
+        ..
+    } = SOUND.get();
     // `snd_channels` means "none found yet", as the C loop leaves `cnum`.
     let mut cnum: i32 = snd_channels;
 
@@ -414,6 +465,7 @@ unsafe fn S_AdjustSoundParams(
 
     *sep = 128 - (FixedMul(S_STEREO_SWING, finesine[angle as usize]) >> FRACBITS);
 
+    let snd_SfxVolume = SOUND.get().snd_SfxVolume;
     if approx_dist < S_CLOSE_DIST {
         *vol = snd_SfxVolume;
     } else if gamemap == 8 {
@@ -454,6 +506,7 @@ pub fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
 /// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
 fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
     unsafe {
+        let snd_SfxVolume = SOUND.get().snd_SfxVolume;
         let mut volume = snd_SfxVolume;
 
         if sfx_id < 1 || sfx_id > NUMSFX as i32 {
@@ -461,7 +514,7 @@ fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
             return;
         }
 
-        let sfx = &mut *std::ptr::addr_of_mut!(S_sfx[0]).offset(sfx_id as isize);
+        let sfx = &mut *sfx_table().offset(sfx_id as isize);
 
         if !sfx.link.is_null() {
             volume += sfx.volume;
@@ -508,30 +561,28 @@ fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
             sfx.lumpnum = I_GetSfxLumpNum(sfx as *mut SfxInfo as *mut c_void);
         }
 
-        (*channels.offset(cnum as isize)).handle =
-            I_StartSound(sfx as *mut SfxInfo as *mut c_void, cnum, volume, sep);
+        let handle = I_StartSound(sfx as *mut SfxInfo as *mut c_void, cnum, volume, sep);
+        (*SOUND.get().channels.offset(cnum as isize)).handle = handle;
     }
 }
 
 /// Pause the currently playing music if any. No-op if nothing is playing or
 /// the song is already paused. C origin: `S_PauseSound` in `s_sound.c`.
 pub fn S_PauseSound() {
-    unsafe {
-        if !mus_playing.is_null() && mus_paused == 0 {
-            I_PauseSong();
-            mus_paused = 1;
-        }
+    let sound = SOUND.get();
+    if !sound.mus_playing.is_null() && sound.mus_paused == 0 {
+        I_PauseSong();
+        SOUND.borrow_mut().mus_paused = 1;
     }
 }
 
 /// Resume music previously paused by `S_PauseSound`. No-op if nothing was
 /// paused. C origin: `S_ResumeSound` in `s_sound.c`.
 pub fn S_ResumeSound() {
-    unsafe {
-        if !mus_playing.is_null() && mus_paused != 0 {
-            I_ResumeSong();
-            mus_paused = 0;
-        }
+    let sound = SOUND.get();
+    if !sound.mus_playing.is_null() && sound.mus_paused != 0 {
+        I_ResumeSong();
+        SOUND.borrow_mut().mus_paused = 0;
     }
 }
 
@@ -544,6 +595,12 @@ pub fn S_UpdateSounds(listener: *mut mobj_t) {
     unsafe {
         I_UpdateSound();
 
+        let SoundState {
+            channels,
+            snd_channels,
+            snd_SfxVolume,
+            ..
+        } = SOUND.get();
         for cnum in 0..snd_channels {
             let c = &mut *channels.offset(cnum as isize);
             let sfx = c.sfxinfo;
@@ -597,13 +654,11 @@ pub fn S_SetMusicVolume(volume: i32) {
 /// subsequent `S_StartSound` calls. Values out of range are ignored.
 /// C origin: `S_SetSfxVolume` in `s_sound.c`.
 pub fn S_SetSfxVolume(volume: i32) {
-    unsafe {
-        if !(0..=127).contains(&volume) {
-            return;
-        }
-
-        snd_SfxVolume = volume;
+    if !(0..=127).contains(&volume) {
+        return;
     }
+
+    SOUND.borrow_mut().snd_SfxVolume = volume;
 }
 
 /// Start playing music `m_id` once (non-looping). Convenience wrapper around
@@ -625,6 +680,7 @@ pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
     unsafe {
         let mut musicnum = musicnum;
 
+        let snd_musicdevice = SOUND_INTERFACE.borrow().snd_musicdevice;
         if musicnum == Mus::Intro as i32
             && (snd_musicdevice == SNDDEVICE_ADLIB || snd_musicdevice == SNDDEVICE_SB)
         {
@@ -635,9 +691,9 @@ pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
             return;
         }
 
-        let music = &mut *std::ptr::addr_of_mut!(S_music[0]).offset(musicnum as isize);
+        let music = &mut *music_table().offset(musicnum as isize);
 
-        if mus_playing == music {
+        if SOUND.get().mus_playing == music {
             return;
         }
 
@@ -654,7 +710,7 @@ pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
         music.handle = handle;
         I_PlaySong(handle, looping);
 
-        mus_playing = music;
+        SOUND.borrow_mut().mus_playing = music;
     }
 }
 
@@ -668,20 +724,23 @@ pub fn S_MusicPlaying() -> i32 {
 /// WAD lump back to zone memory. No-op if nothing is playing.
 /// C origin: `S_StopMusic` in `s_sound.c`.
 pub fn S_StopMusic() {
-    unsafe {
-        if !mus_playing.is_null() {
-            let m = &mut *mus_playing;
+    let SoundState {
+        mus_playing,
+        mus_paused,
+        ..
+    } = SOUND.get();
+    if !mus_playing.is_null() {
+        let m = unsafe { &mut *mus_playing };
 
-            if mus_paused != 0 {
-                I_ResumeSong();
-            }
-
-            I_StopSong();
-            I_UnRegisterSong(m.handle);
-            W_ReleaseLumpNum(m.lumpnum);
-            m.data = std::ptr::null_mut();
-            mus_playing = std::ptr::null_mut();
+        if mus_paused != 0 {
+            I_ResumeSong();
         }
+
+        I_StopSong();
+        I_UnRegisterSong(m.handle);
+        W_ReleaseLumpNum(m.lumpnum);
+        m.data = std::ptr::null_mut();
+        SOUND.borrow_mut().mus_playing = std::ptr::null_mut();
     }
 }
 
@@ -746,10 +805,12 @@ mod tests {
         let mut test_channels = [busy(&raw mut important), busy(&raw mut unimportant)];
 
         unsafe {
-            let saved_channels = channels;
-            let saved_count = snd_channels;
-            channels = test_channels.as_mut_ptr();
-            snd_channels = test_channels.len() as i32;
+            let saved = SOUND.get();
+            {
+                let mut sound = SOUND.borrow_mut();
+                sound.channels = test_channels.as_mut_ptr();
+                sound.snd_channels = test_channels.len() as i32;
+            }
 
             assert_eq!(S_GetChannel(None, &raw mut incoming), 1);
             assert_eq!(test_channels[0].sfxinfo, &raw mut important);
@@ -761,8 +822,7 @@ mod tests {
             assert_eq!(test_channels[0].sfxinfo, &raw mut important);
             assert_eq!(test_channels[1].sfxinfo, &raw mut important);
 
-            channels = saved_channels;
-            snd_channels = saved_count;
+            SOUND.set(saved);
         }
     }
 }

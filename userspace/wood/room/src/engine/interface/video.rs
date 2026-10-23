@@ -7,7 +7,8 @@
 //!
 //! The C source supports two compile-time paths: an 8-bit `CMAP256`
 //! direct-blit and a 16/32-bit framebuffer path. Only the latter is
-//! ported here. The `s_Fb` structure tracks pixel layout chosen at
+//! ported here. The C globals live in [`VideoState`], held in the
+//! [`VIDEO`] global. Its `screen_info` (C `s_Fb`) tracks pixel layout chosen at
 //! init time via `-gfxmode rgba8888|rgb565`; `cmap_to_fb` /
 //! `cmap_to_rgb565` perform the conversion from palette indices to
 //! the chosen format. Many of the stub entry points
@@ -20,6 +21,7 @@
 use {
     crate::{
         engine::{
+            global::Global,
             interface::input::{I_GetEvent, I_InitInput},
             math::tables::gammatable,
             misc::argv::{argument, M_CheckParmWithArgs},
@@ -89,22 +91,84 @@ struct FB_ScreenInfo {
     transp: FB_BitField,
 }
 
-/// Pointer to the palette-indexed Doom screen buffer. Allocated in
-/// the zone heap (`PU_STATIC`) during `I_InitGraphics`. Mirrors
-/// the C global `I_VideoBuffer`.
-pub static mut I_VideoBuffer: *mut u8 = ptr::null_mut();
+/// Video state (C `i_video.c` globals).
+pub struct VideoState {
+    /// Pointer to the palette-indexed Doom screen buffer. Allocated in
+    /// the zone heap (`PU_STATIC`) during `I_InitGraphics`. Mirrors
+    /// the C global `I_VideoBuffer`; read through [`video_buffer`].
+    pub video_buffer: *mut u8,
+    /// Non-zero when the screen is visible; the C source sets this to
+    /// `true` after init and never clears it. Mirrors `screenvisible`.
+    pub screenvisible: i32,
+    /// Gamma-correction level index into `gammatable`. Mirrors `usegamma`.
+    /// Bound via `m_config` (in the C source).
+    pub usegamma: i32,
+    /// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
+    /// 320x200 Doom buffer to fit the framebuffer. Picked automatically
+    /// in `I_InitGraphics` or overridden with `-scaling <n>`. Mirrors
+    /// `fb_scaling`.
+    fb_scaling: i32,
+    /// Active 256-entry gamma-corrected palette. Filled from the WAD
+    /// PLAYPAL by `I_SetPalette` and consumed by `cmap_to_fb` /
+    /// `cmap_to_rgb565`. Mirrors the C `colors[256]` static array.
+    colors: [Color; 256],
+    /// Active framebuffer layout. Initialised by `I_InitGraphics`,
+    /// consumed by `cmap_to_fb` / `I_FinishUpdate`. Mirrors the C file
+    /// static `s_Fb`.
+    screen_info: FB_ScreenInfo,
+}
 
-/// Non-zero when the screen is visible; the C source sets this to
-/// `true` after init and never clears it. Mirrors `screenvisible`.
-pub static mut screenvisible: i32 = 0;
+impl VideoState {
+    /// The state before `I_InitGraphics`: no buffer, black palette.
+    pub const fn new() -> Self {
+        const NO_BITS: FB_BitField = FB_BitField {
+            offset: 0,
+            length: 0,
+        };
+        Self {
+            video_buffer: ptr::null_mut(),
+            screenvisible: 0,
+            usegamma: 0,
+            fb_scaling: 1,
+            colors: [Color {
+                b: 0,
+                g: 0,
+                r: 0,
+                a: 0,
+            }; 256],
+            screen_info: FB_ScreenInfo {
+                xres: 0,
+                yres: 0,
+                xres_virtual: 0,
+                yres_virtual: 0,
+                bits_per_pixel: 0,
+                red: NO_BITS,
+                green: NO_BITS,
+                blue: NO_BITS,
+                transp: NO_BITS,
+            },
+        }
+    }
+}
+
+impl Default for VideoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The video state.
+pub static VIDEO: Global<VideoState> = Global::new(VideoState::new());
+
+/// The palette-indexed screen buffer (C `I_VideoBuffer`), null before
+/// `I_InitGraphics`.
+pub fn video_buffer() -> *mut u8 {
+    VIDEO.borrow().video_buffer
+}
 
 /// Non-zero if the engine is running as a screensaver. Always 0 in
 /// this port. Mirrors `screensaver_mode`.
 pub const screensaver_mode: i32 = 0;
-
-/// Gamma-correction level index into `gammatable`. Mirrors `usegamma`.
-/// Bound via `m_config` (in the C source).
-pub static mut usegamma: i32 = 0;
 
 /// DOS-style mouse acceleration factor. Movement above
 /// `mouse_threshold` is multiplied by this. Mirrors `mouse_acceleration`.
@@ -114,67 +178,25 @@ pub const mouse_acceleration: f32 = 2.0;
 /// Mirrors `mouse_threshold`.
 pub const mouse_threshold: i32 = 10;
 
-/// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
-/// 320x200 Doom buffer to fit the framebuffer. Picked automatically
-/// in `I_InitGraphics` or overridden with `-scaling <n>`.
-pub static mut fb_scaling: i32 = 1;
-
 /// Non-zero to enable mouse input. Always 0 in this port. Mirrors
 /// `usemouse`.
 pub const usemouse: i32 = 0;
 
-/// Active 256-entry gamma-corrected palette. Filled from the WAD
-/// PLAYPAL by `I_SetPalette` and consumed by `cmap_to_fb` /
-/// `cmap_to_rgb565`. Mirrors the C `colors[256]` static array.
-static mut COLORS: [Color; 256] = [Color {
-    b: 0,
-    g: 0,
-    r: 0,
-    a: 0,
-}; 256];
-
-/// Active framebuffer layout. Initialised by `I_InitGraphics`,
-/// consumed by `cmap_to_fb` / `I_FinishUpdate`. Mirrors the C file
-/// static `s_Fb`.
-static mut s_Fb: FB_ScreenInfo = FB_ScreenInfo {
-    xres: 0,
-    yres: 0,
-    xres_virtual: 0,
-    yres_virtual: 0,
-    bits_per_pixel: 0,
-    red: FB_BitField {
-        offset: 0,
-        length: 0,
-    },
-    green: FB_BitField {
-        offset: 0,
-        length: 0,
-    },
-    blue: FB_BitField {
-        offset: 0,
-        length: 0,
-    },
-    transp: FB_BitField {
-        offset: 0,
-        length: 0,
-    },
-};
-
 /// Convert `in_pixels` palette indices at `inp` into framebuffer
 /// pixels at `out`, picking 16-bpp (delegates to `cmap_to_rgb565`)
-/// or 32-bpp packing based on `s_Fb.bits_per_pixel`. Honours
+/// or 32-bpp packing based on `screen_info.bits_per_pixel`. Honours
 /// `fb_scaling` by writing each pixel that many times.
 ///
 /// # Safety
 ///
 /// `inp` must be readable for `in_pixels` bytes. `out` must be
-/// writable for `in_pixels * fb_scaling * (bpp/8)` bytes. The
-/// caller is responsible for keeping `s_Fb` and `COLORS` valid.
-unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: i32) {
-    let bpp = s_Fb.bits_per_pixel;
+/// writable for `in_pixels * fb_scaling * (bpp/8)` bytes.
+unsafe fn cmap_to_fb(video: &VideoState, out: *mut u8, inp: *mut u8, in_pixels: i32) {
+    let screen_info = &video.screen_info;
+    let bpp = screen_info.bits_per_pixel;
 
     if bpp == 16 {
-        cmap_to_rgb565(out, inp, in_pixels);
+        cmap_to_rgb565(video, out, inp, in_pixels);
         return;
     }
 
@@ -191,13 +213,13 @@ unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: i32) {
 
     for _ in 0..in_pixels {
         let idx = *inp_ptr as usize;
-        let c = COLORS[idx];
+        let c = video.colors[idx];
 
-        let pix = ((c.r as u32) << s_Fb.red.offset)
-            | ((c.g as u32) << s_Fb.green.offset)
-            | ((c.b as u32) << s_Fb.blue.offset);
+        let pix = ((c.r as u32) << screen_info.red.offset)
+            | ((c.g as u32) << screen_info.green.offset)
+            | ((c.b as u32) << screen_info.blue.offset);
 
-        for _ in 0..fb_scaling {
+        for _ in 0..video.fb_scaling {
             (out_ptr as *mut u32).write_unaligned(pix);
             out_ptr = out_ptr.add(4);
         }
@@ -213,17 +235,17 @@ unsafe fn cmap_to_fb(out: *mut u8, inp: *mut u8, in_pixels: i32) {
 /// # Safety
 ///
 /// Same preconditions as `cmap_to_fb` (with 2-byte pixels).
-unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: i32) {
+unsafe fn cmap_to_rgb565(video: &VideoState, out: *mut u8, inp: *mut u8, in_pixels: i32) {
     let mut out_ptr = out as *mut u16;
     let mut inp_ptr = inp;
 
     for _ in 0..in_pixels {
         let idx = *inp_ptr as usize;
-        let c = COLORS[idx];
+        let c = video.colors[idx];
 
         let p = (((c.r as u16) & 0xF8) << 8) | (((c.g as u16) & 0xFC) << 3) | ((c.b as u16) >> 3);
 
-        for _ in 0..fb_scaling {
+        for _ in 0..video.fb_scaling {
             *out_ptr = p;
             out_ptr = out_ptr.add(1);
         }
@@ -243,52 +265,52 @@ unsafe fn cmap_to_rgb565(out: *mut u8, inp: *mut u8, in_pixels: i32) {
 ///
 /// # Safety
 ///
-/// Touches a number of mutable statics (`s_Fb`, `I_VideoBuffer`,
-/// `fb_scaling`, `screenvisible`) and calls back into the zone
+/// Sets the video state (`screen_info`, `video_buffer`, `fb_scaling`,
+/// `screenvisible`) and calls back into the zone
 /// allocator. Must be called exactly once at startup before any
 /// other I_* graphics function.
 pub unsafe fn I_InitGraphics() {
-    s_Fb = mem::zeroed::<FB_ScreenInfo>();
-    s_Fb.xres = crate::engine::platform::DOOMGENERIC_RESX as u32;
-    s_Fb.yres = crate::engine::platform::DOOMGENERIC_RESY as u32;
-    s_Fb.xres_virtual = s_Fb.xres;
-    s_Fb.yres_virtual = s_Fb.yres;
+    let mut screen_info = mem::zeroed::<FB_ScreenInfo>();
+    screen_info.xres = crate::engine::platform::DOOMGENERIC_RESX as u32;
+    screen_info.yres = crate::engine::platform::DOOMGENERIC_RESY as u32;
+    screen_info.xres_virtual = screen_info.xres;
+    screen_info.yres_virtual = screen_info.yres;
 
     // Default to rgba8888
-    s_Fb.bits_per_pixel = 32;
-    s_Fb.blue.length = 8;
-    s_Fb.green.length = 8;
-    s_Fb.red.length = 8;
-    s_Fb.transp.length = 8;
-    s_Fb.blue.offset = 0;
-    s_Fb.green.offset = 8;
-    s_Fb.red.offset = 16;
-    s_Fb.transp.offset = 24;
+    screen_info.bits_per_pixel = 32;
+    screen_info.blue.length = 8;
+    screen_info.green.length = 8;
+    screen_info.red.length = 8;
+    screen_info.transp.length = 8;
+    screen_info.blue.offset = 0;
+    screen_info.green.offset = 8;
+    screen_info.red.offset = 16;
+    screen_info.transp.offset = 24;
 
     // Check for -gfxmode arg
     let gfxmodeparm = M_CheckParmWithArgs("-gfxmode", 1);
     if gfxmodeparm != 0 {
         let mode = argument(gfxmodeparm + 1);
         if mode == "rgba8888" {
-            s_Fb.bits_per_pixel = 32;
-            s_Fb.blue.length = 8;
-            s_Fb.green.length = 8;
-            s_Fb.red.length = 8;
-            s_Fb.transp.length = 8;
-            s_Fb.blue.offset = 0;
-            s_Fb.green.offset = 8;
-            s_Fb.red.offset = 16;
-            s_Fb.transp.offset = 24;
+            screen_info.bits_per_pixel = 32;
+            screen_info.blue.length = 8;
+            screen_info.green.length = 8;
+            screen_info.red.length = 8;
+            screen_info.transp.length = 8;
+            screen_info.blue.offset = 0;
+            screen_info.green.offset = 8;
+            screen_info.red.offset = 16;
+            screen_info.transp.offset = 24;
         } else if mode == "rgb565" {
-            s_Fb.bits_per_pixel = 16;
-            s_Fb.blue.length = 5;
-            s_Fb.green.length = 6;
-            s_Fb.red.length = 5;
-            s_Fb.transp.length = 0;
-            s_Fb.blue.offset = 11;
-            s_Fb.green.offset = 5;
-            s_Fb.red.offset = 0;
-            s_Fb.transp.offset = 16;
+            screen_info.bits_per_pixel = 16;
+            screen_info.blue.length = 5;
+            screen_info.green.length = 6;
+            screen_info.red.length = 5;
+            screen_info.transp.length = 0;
+            screen_info.blue.offset = 11;
+            screen_info.green.offset = 5;
+            screen_info.red.offset = 0;
+            screen_info.transp.offset = 16;
         } else {
             i_error!("Unknown gfxmode value: {mode}\n");
         }
@@ -296,24 +318,28 @@ pub unsafe fn I_InitGraphics() {
 
     // Auto-scaling factor
     let scale_parm = M_CheckParmWithArgs("-scaling", 1);
-    if scale_parm != 0 {
+    let fb_scaling = if scale_parm != 0 {
         // Leading digits only (no sign or whitespace), as the C loop reads.
-        fb_scaling = argument(scale_parm + 1)
+        argument(scale_parm + 1)
             .bytes()
             .take_while(u8::is_ascii_digit)
-            .fold(0, |scaling, digit| scaling * 10 + i32::from(digit - b'0'));
+            .fold(0, |scaling, digit| scaling * 10 + i32::from(digit - b'0'))
     } else {
-        fb_scaling = (s_Fb.xres / SCREENWIDTH as u32) as i32;
-        let y_scale = (s_Fb.yres / SCREENHEIGHT as u32) as i32;
-        if y_scale < fb_scaling {
-            fb_scaling = y_scale;
-        }
-    }
+        let x_scale = (screen_info.xres / SCREENWIDTH as u32) as i32;
+        let y_scale = (screen_info.yres / SCREENHEIGHT as u32) as i32;
+        x_scale.min(y_scale)
+    };
 
     // Allocate video buffer
-    I_VideoBuffer = Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, ptr::null_mut()) as *mut u8;
+    let video_buffer = Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, ptr::null_mut()) as *mut u8;
 
-    screenvisible = 1;
+    {
+        let mut video = VIDEO.borrow_mut();
+        video.screen_info = screen_info;
+        video.fb_scaling = fb_scaling;
+        video.video_buffer = video_buffer;
+        video.screenvisible = 1;
+    }
 
     I_InitInput();
 }
@@ -329,8 +355,8 @@ pub unsafe fn I_InitGraphics() {
 /// null - callers must not access it without calling
 /// `I_InitGraphics` again.
 pub unsafe fn I_ShutdownGraphics() {
-    Z_Free(I_VideoBuffer as *mut c_void);
-    I_VideoBuffer = ptr::null_mut();
+    Z_Free(video_buffer() as *mut c_void);
+    VIDEO.borrow_mut().video_buffer = ptr::null_mut();
 }
 
 /// Per-frame "start" hook. No-op in this port (the C source also
@@ -364,7 +390,7 @@ pub unsafe fn I_UpdateNoBlit() {}
 ///
 /// Converts the 320x200 palette buffer at `I_VideoBuffer` into the
 /// final framebuffer at `DG_ScreenBuffer`, centring it inside the
-/// configured `s_Fb.xres x s_Fb.yres` window with `x_offset` and
+/// configured `screen_info.xres x screen_info.yres` window with `x_offset` and
 /// `y_offset` padding bytes per row, repeating each Doom scanline
 /// `fb_scaling` times to upscale. After the conversion, the platform
 /// callback `DG_DrawFrame` is invoked to present.
@@ -381,39 +407,43 @@ pub unsafe fn I_UpdateNoBlit() {}
 /// framebuffer geometry. Caller must ensure both pointers are valid
 /// and the framebuffer is large enough for the configured layout.
 pub unsafe fn I_FinishUpdate() {
-    let y_offset =
-        (((s_Fb.yres as i32 - (SCREENHEIGHT * fb_scaling)) * (s_Fb.bits_per_pixel as i32 / 8)) / 2)
-            .max(0) as u32;
-    let x_offset =
-        (((s_Fb.xres as i32 - (SCREENWIDTH * fb_scaling)) * (s_Fb.bits_per_pixel as i32 / 8)) / 2)
-            .max(0) as u32;
-    let x_offset_end = ((s_Fb.xres as i32 - (SCREENWIDTH * fb_scaling))
-        * (s_Fb.bits_per_pixel as i32 / 8)
-        - x_offset as i32)
+    let screen_buffer = crate::engine::platform::screen_buffer();
+    {
+        let video = VIDEO.borrow();
+        let screen_info = &video.screen_info;
+        let fb_scaling = video.fb_scaling;
+        let bytes_per_pixel = screen_info.bits_per_pixel as i32 / 8;
+        let y_offset = (((screen_info.yres as i32 - (SCREENHEIGHT * fb_scaling)) * bytes_per_pixel)
+            / 2)
         .max(0) as u32;
+        let x_offset = (((screen_info.xres as i32 - (SCREENWIDTH * fb_scaling)) * bytes_per_pixel)
+            / 2)
+        .max(0) as u32;
+        let x_offset_end = ((screen_info.xres as i32 - (SCREENWIDTH * fb_scaling))
+            * bytes_per_pixel
+            - x_offset as i32)
+            .max(0) as u32;
 
-    let mut line_in = I_VideoBuffer;
-    let screen_ptr = crate::engine::platform::DG_ScreenBuffer as *mut u8;
-    let mut line_out = screen_ptr.add(y_offset as usize + x_offset as usize);
+        let mut line_in = video.video_buffer;
+        let screen_ptr = screen_buffer as *mut u8;
+        let mut line_out = screen_ptr.add(y_offset as usize + x_offset as usize);
 
-    for _ in 0..SCREENHEIGHT as usize {
-        for _i in 0..fb_scaling {
-            line_out = line_out.add(x_offset as usize);
+        for _ in 0..SCREENHEIGHT as usize {
+            for _i in 0..fb_scaling {
+                line_out = line_out.add(x_offset as usize);
 
-            cmap_to_fb(line_out, line_in, SCREENWIDTH);
+                cmap_to_fb(&video, line_out, line_in, SCREENWIDTH);
 
-            line_out = line_out.add(
-                (SCREENWIDTH * fb_scaling * (s_Fb.bits_per_pixel as i32 / 8)) as usize
-                    + x_offset_end as usize,
-            );
+                line_out = line_out.add(
+                    (SCREENWIDTH * fb_scaling * bytes_per_pixel) as usize + x_offset_end as usize,
+                );
+            }
+            line_in = line_in.add(SCREENWIDTH as usize);
         }
-        line_in = line_in.add(SCREENWIDTH as usize);
     }
 
-    let frame = std::slice::from_raw_parts(
-        crate::engine::platform::DG_ScreenBuffer,
-        crate::engine::platform::DOOMGENERIC_PIXELS,
-    );
+    let frame =
+        std::slice::from_raw_parts(screen_buffer, crate::engine::platform::DOOMGENERIC_PIXELS);
     crate::engine::platform::platform().draw_frame(frame);
 }
 
@@ -425,26 +455,28 @@ pub unsafe fn I_FinishUpdate() {
 /// `scr` must be writable for `SCREENWIDTH * SCREENHEIGHT` bytes.
 /// `I_VideoBuffer` must be initialised.
 pub unsafe fn I_ReadScreen(scr: *mut u8) {
-    std::ptr::copy(I_VideoBuffer, scr, (SCREENWIDTH * SCREENHEIGHT) as usize);
+    std::ptr::copy(video_buffer(), scr, (SCREENWIDTH * SCREENHEIGHT) as usize);
 }
 
 /// Apply a new 768-byte (256 x R/G/B) PLAYPAL palette by
 /// gamma-correcting each component through `gammatable[usegamma]`
-/// and storing into `COLORS`. Mirrors `I_SetPalette` from `i_video.c`.
+/// and storing into `colors`. Mirrors `I_SetPalette` from `i_video.c`.
 ///
 /// # Safety
 ///
 /// `palette` must point to at least `256 * 3` readable bytes. The
 /// function trusts `usegamma` to index `gammatable` in range.
 pub unsafe fn I_SetPalette(palette: *mut u8) {
+    let mut video = VIDEO.borrow_mut();
+    let gamma = &gammatable[video.usegamma as usize];
     let mut p = palette;
-    for i in 0..256 {
-        COLORS[i].a = 0;
-        COLORS[i].r = gammatable[usegamma as usize][*p as usize];
+    for color in &mut video.colors {
+        color.a = 0;
+        color.r = gamma[*p as usize];
         p = p.add(1);
-        COLORS[i].g = gammatable[usegamma as usize][*p as usize];
+        color.g = gamma[*p as usize];
         p = p.add(1);
-        COLORS[i].b = gammatable[usegamma as usize][*p as usize];
+        color.b = gamma[*p as usize];
         p = p.add(1);
     }
 }
@@ -455,7 +487,7 @@ pub unsafe fn I_SetPalette(palette: *mut u8) {
 /// 256-entry active palette, returning the index with the smallest
 /// squared RGB distance. Exits early on the first exact match. The C
 /// source searches the gamma-corrected `rgb565_palette`; this port
-/// searches the gamma-corrected `COLORS` array directly (no 5/6/5
+/// searches the gamma-corrected `colors` array directly (no 5/6/5
 /// quantization because the Rust framebuffer is 32 bpp).
 ///
 /// The diff is accumulated in `i64` so out-of-range `r`/`g`/`b` values
@@ -464,8 +496,8 @@ pub unsafe fn I_SetPalette(palette: *mut u8) {
 ///
 /// # Safety
 ///
-/// Reads `static mut COLORS`. The caller must have run `I_SetPalette`
-/// at least once and must not race a concurrent writer.
+/// The caller must have run `I_SetPalette` at least once for the
+/// result to mean anything.
 pub unsafe fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
     let r = r as i64;
     let g = g as i64;
@@ -474,9 +506,8 @@ pub unsafe fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
     // always 256 entries and the loop visits all of them.
     let mut best: i32 = 0;
     let mut best_diff: i64 = i64::MAX;
-    let colors = ptr::addr_of!(COLORS) as *const Color;
-    for i in 0..256 {
-        let color = colors.add(i).read();
+    let video = VIDEO.borrow();
+    for (i, color) in video.colors.iter().enumerate() {
         let dr = r - color.r as i64;
         let dg = g - color.g as i64;
         let db = b - color.b as i64;
@@ -568,12 +599,12 @@ mod tests {
         std::sync::{Mutex, MutexGuard},
     };
 
-    /// `COLORS` is a `static mut` shared across the whole crate; the
-    /// tests below mutate it, so they must run serially.
+    /// The palette lives in the shared video state; the tests below
+    /// mutate it, so they must run serially.
     static PALETTE_LOCK: Mutex<()> = Mutex::new(());
 
     /// RAII guard that owns the palette lock for the duration of a
-    /// test and restores the `COLORS` snapshot captured at acquisition
+    /// test and restores the palette snapshot captured at acquisition
     /// time on drop, even on panic. Keeps the global palette
     /// invisible to subsequent tests in the same binary.
     struct PaletteGuard {
@@ -584,25 +615,33 @@ mod tests {
     impl PaletteGuard {
         fn acquire() -> Self {
             let lock = PALETTE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let saved = unsafe { ptr::addr_of!(COLORS).read() };
+            let saved = VIDEO.borrow().colors;
             Self { _lock: lock, saved }
         }
     }
 
     impl Drop for PaletteGuard {
         fn drop(&mut self) {
-            unsafe { ptr::addr_of_mut!(COLORS).write(self.saved) };
+            VIDEO.borrow_mut().colors = self.saved;
         }
     }
 
     fn set_test_palette(entries: &[(u8, u8, u8)]) {
-        let colors = ptr::addr_of_mut!(COLORS) as *mut Color;
-        unsafe {
-            for i in 0..256 {
-                let (r, g, b) = entries.get(i).copied().unwrap_or((0, 0, 0));
-                colors.add(i).write(Color { b, g, r, a: 0 });
-            }
+        let mut video = VIDEO.borrow_mut();
+        for (i, color) in video.colors.iter_mut().enumerate() {
+            let (r, g, b) = entries.get(i).copied().unwrap_or((0, 0, 0));
+            *color = Color { b, g, r, a: 0 };
         }
+    }
+
+    /// Before `I_InitGraphics` there is no buffer and the scale is 1.
+    #[test]
+    fn new_state_has_no_buffer() {
+        let video = VideoState::new();
+        assert!(video.video_buffer.is_null());
+        assert_eq!(video.screenvisible, 0);
+        assert_eq!(video.usegamma, 0);
+        assert_eq!(video.fb_scaling, 1);
     }
 
     #[test]

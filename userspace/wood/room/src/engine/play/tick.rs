@@ -13,7 +13,7 @@ use std::ffi::c_void;
 use crate::engine::{
     doom::player::{consoleplayer, players, MAXPLAYERS},
     game::{demoplayback, netgame, paused, playeringame},
-    misc::menu::menuactive,
+    misc::menu::menu_active,
     play::{
         ceilng::{ceiling_t, T_MoveCeiling},
         doors::{vldoor_t, T_VerticalDoor},
@@ -363,7 +363,7 @@ pub fn P_Ticker() {
         }
 
         if netgame == 0
-            && menuactive != 0
+            && menu_active()
             && demoplayback == 0
             && (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).viewz != 1
         {

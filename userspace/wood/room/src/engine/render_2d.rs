@@ -11,8 +11,9 @@ use {
 
 use crate::{
     engine::{
+        global::Global,
         interface::video::{
-            mouse_acceleration, mouse_threshold, usemouse, I_GetPaletteIndex, I_VideoBuffer,
+            mouse_acceleration, mouse_threshold, usemouse, video_buffer, I_GetPaletteIndex,
             SCREENHEIGHT, SCREENWIDTH,
         },
         math::bbox::M_AddToBox,
@@ -28,24 +29,52 @@ use crate::{
 
 pub type vpatchclipfunc_t = Option<fn(*mut patch_t, i32, i32) -> i32>;
 
-pub static mut tinttable: *mut u8 = ptr::null_mut();
+/// 2D drawing state (C `v_video.c` globals).
+#[derive(Clone, Copy)]
+pub struct Render2dState {
+    /// Translucency lookup table (`TINTTAB` lump), C `tinttable`.
+    tinttable: *mut u8,
+    /// Alternate translucency table (`XLATAB` lump), C `xlatab`.
+    xlatab: *mut u8,
+    /// Bounding box of the screen area drawn since the last update,
+    /// C `dirtybox`.
+    dirtybox: [i32; 4],
+    /// Buffer the drawing functions write to, C `dest_screen`.
+    dest_screen: *mut u8,
+    /// Clipping callback consulted before drawing a patch, C
+    /// `patchclip_callback`.
+    patchclip_callback: vpatchclipfunc_t,
+}
 
-pub static mut xlatab: *mut u8 = ptr::null_mut();
+impl Render2dState {
+    /// No tables loaded, no destination buffer.
+    pub const fn new() -> Self {
+        Self {
+            tinttable: ptr::null_mut(),
+            xlatab: ptr::null_mut(),
+            dirtybox: [0; 4],
+            dest_screen: ptr::null_mut(),
+            patchclip_callback: None,
+        }
+    }
+}
 
-pub static mut dirtybox: [i32; 4] = [0; 4];
+impl Default for Render2dState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-static mut dest_screen: *mut u8 = ptr::null_mut();
-static mut patchclip_callback: vpatchclipfunc_t = None;
+/// The 2D drawing state.
+pub static RENDER_2D: Global<Render2dState> = Global::new(Render2dState::new());
 
 pub fn V_MarkRect(x: i32, y: i32, width: i32, height: i32) {
-    unsafe {
-        if dest_screen == I_VideoBuffer {
-            M_AddToBox(std::ptr::addr_of_mut!(dirtybox[0]), x, y);
-            M_AddToBox(
-                std::ptr::addr_of_mut!(dirtybox[0]),
-                x + width - 1,
-                y + height - 1,
-            );
+    let mut render = RENDER_2D.borrow_mut();
+    if render.dest_screen == video_buffer() {
+        let dirtybox = render.dirtybox.as_mut_ptr();
+        unsafe {
+            M_AddToBox(dirtybox, x, y);
+            M_AddToBox(dirtybox, x + width - 1, y + height - 1);
         }
     }
 }
@@ -62,6 +91,7 @@ pub fn V_CopyRect(
     unsafe {
         V_MarkRect(destx, desty, width, height);
 
+        let dest_screen = RENDER_2D.get().dest_screen;
         let mut src = source.add((SCREENWIDTH * srcy + srcx) as usize);
         let mut dest = dest_screen.add((SCREENWIDTH * desty + destx) as usize);
 
@@ -76,12 +106,15 @@ pub fn V_CopyRect(
 }
 
 pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
-    unsafe {
-        patchclip_callback = func;
-    }
+    RENDER_2D.borrow_mut().patchclip_callback = func;
 }
 
 pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        patchclip_callback,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -130,6 +163,11 @@ pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        patchclip_callback,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -182,6 +220,11 @@ pub fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        tinttable,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -218,6 +261,12 @@ pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        xlatab,
+        patchclip_callback,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -260,6 +309,11 @@ pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        tinttable,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -296,6 +350,11 @@ pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
+    let Render2dState {
+        dest_screen,
+        tinttable,
+        ..
+    } = RENDER_2D.get();
     unsafe {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
@@ -337,22 +396,23 @@ pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
 }
 
 pub fn V_LoadTintTable() {
-    unsafe {
-        tinttable = W_CacheLumpName(b"TINTTAB", PU_STATIC) as *mut u8;
-    }
+    let tinttable = W_CacheLumpName(b"TINTTAB", PU_STATIC) as *mut u8;
+    RENDER_2D.borrow_mut().tinttable = tinttable;
 }
 
 pub fn V_LoadXlaTable() {
-    unsafe {
-        xlatab = W_CacheLumpName(b"XLATAB", PU_STATIC) as *mut u8;
-    }
+    let xlatab = W_CacheLumpName(b"XLATAB", PU_STATIC) as *mut u8;
+    RENDER_2D.borrow_mut().xlatab = xlatab;
 }
 
 pub fn V_DrawBlock(x: i32, y: i32, width: i32, height: i32, src: *mut u8) {
     unsafe {
         V_MarkRect(x, y, width, height);
 
-        let mut dest = dest_screen.add((y * SCREENWIDTH + x) as usize);
+        let mut dest = RENDER_2D
+            .get()
+            .dest_screen
+            .add((y * SCREENWIDTH + x) as usize);
         let mut source = src;
         let mut h = height;
 
@@ -367,7 +427,7 @@ pub fn V_DrawBlock(x: i32, y: i32, width: i32, height: i32, src: *mut u8) {
 
 pub fn V_DrawFilledBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
     unsafe {
-        let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
+        let mut buf = video_buffer().add((SCREENWIDTH * y + x) as usize);
 
         let mut y1 = 0;
         while y1 < h {
@@ -386,7 +446,7 @@ pub fn V_DrawFilledBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
 
 pub fn V_DrawHorizLine(x: i32, y: i32, w: i32, c: i32) {
     unsafe {
-        let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
+        let mut buf = video_buffer().add((SCREENWIDTH * y + x) as usize);
         let mut x1 = 0;
         while x1 < w {
             *buf = c as u8;
@@ -398,7 +458,7 @@ pub fn V_DrawHorizLine(x: i32, y: i32, w: i32, c: i32) {
 
 pub fn V_DrawVertLine(x: i32, y: i32, h: i32, c: i32) {
     unsafe {
-        let mut buf = I_VideoBuffer.add((SCREENWIDTH * y + x) as usize);
+        let mut buf = video_buffer().add((SCREENWIDTH * y + x) as usize);
         let mut y1 = 0;
         while y1 < h {
             *buf = c as u8;
@@ -417,7 +477,11 @@ pub fn V_DrawBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
 
 pub fn V_DrawRawScreen(raw: *mut u8) {
     unsafe {
-        ptr::copy_nonoverlapping(raw, dest_screen, (SCREENWIDTH * SCREENHEIGHT) as usize);
+        ptr::copy_nonoverlapping(
+            raw,
+            RENDER_2D.get().dest_screen,
+            (SCREENWIDTH * SCREENHEIGHT) as usize,
+        );
     }
 }
 
@@ -426,15 +490,12 @@ pub fn V_Init() {
 }
 
 pub fn V_UseBuffer(buffer: *mut u8) {
-    unsafe {
-        dest_screen = buffer;
-    }
+    RENDER_2D.borrow_mut().dest_screen = buffer;
 }
 
 pub fn V_RestoreBuffer() {
-    unsafe {
-        dest_screen = I_VideoBuffer;
-    }
+    let screen = video_buffer();
+    RENDER_2D.borrow_mut().dest_screen = screen;
 }
 
 pub fn WritePCXfile(filename: &str, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
@@ -485,27 +546,25 @@ fn screenshot_filename(i: i32) -> String {
 }
 
 pub fn V_ScreenShot() {
-    unsafe {
-        let mut i = 0;
-        while i <= 99 {
-            if !M_FileExists(screenshot_filename(i)) {
-                break;
-            }
-            i += 1;
+    let mut i = 0;
+    while i <= 99 {
+        if !M_FileExists(screenshot_filename(i)) {
+            break;
         }
-
-        if i == 100 {
-            i_error!("V_ScreenShot: Couldn't create a PCX");
-        }
-
-        WritePCXfile(
-            &screenshot_filename(i),
-            I_VideoBuffer,
-            SCREENWIDTH,
-            SCREENHEIGHT,
-            W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
-        );
+        i += 1;
     }
+
+    if i == 100 {
+        i_error!("V_ScreenShot: Couldn't create a PCX");
+    }
+
+    WritePCXfile(
+        &screenshot_filename(i),
+        video_buffer(),
+        SCREENWIDTH,
+        SCREENHEIGHT,
+        W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
+    );
 }
 
 const MOUSE_SPEED_BOX_WIDTH: i32 = 120;

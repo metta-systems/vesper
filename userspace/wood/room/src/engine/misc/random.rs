@@ -1,9 +1,12 @@
 //! Rust port of vendor/doomgeneric/m_random.c.
 //!
-//! `rndindex` is declared `extern int` in doomstat.h:276 and read by
+//! The two random cursors live in [`RandomState`], held in the [`RANDOM`]
+//! global. `rndindex` is declared `extern int` in doomstat.h:276 and read by
 //! g_game.c:957 for the net-play consistency check.
 
 #![allow(non_upper_case_globals, non_snake_case)]
+
+use crate::engine::global::Global;
 
 /// 256-entry lookup table backing both `M_Random` and `P_Random`.
 /// Byte-for-byte identical to `rndtable` in `m_random.c`; the values are
@@ -24,14 +27,36 @@ pub(crate) static RNDTABLE: [u8; 256] = [
     84, 118, 222, 187, 136, 120, 163, 236, 249,
 ];
 
-/// `extern int rndindex` — the game-thinker random cursor.
-/// Read by `g_game` to build net-play consistency hashes.
-pub static mut rndindex: i32 = 0;
+/// Random cursors (C `m_random.c` globals).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RandomState {
+    /// `extern int rndindex` — the game-thinker random cursor.
+    /// Read by `g_game` to build net-play consistency hashes.
+    pub rndindex: i32,
+    /// `int prndindex` — the play-simulation random cursor.
+    /// The demo-playthrough integration test reads it for consistency-check
+    /// snapshots.
+    pub prndindex: i32,
+}
 
-/// `int prndindex` — the play-simulation random cursor.
-/// The demo-playthrough integration test reads it for consistency-check
-/// snapshots.
-pub static mut prndindex: i32 = 0;
+impl RandomState {
+    /// Both cursors at the start of the table.
+    pub const fn new() -> Self {
+        Self {
+            rndindex: 0,
+            prndindex: 0,
+        }
+    }
+}
+
+impl Default for RandomState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The random cursors.
+pub static RANDOM: Global<RandomState> = Global::new(RandomState::new());
 
 /// `int P_Random(void)` — advance and read the play-simulation random
 /// cursor. Returns the next byte from `RNDTABLE` masked to `0..=255`.
@@ -39,10 +64,9 @@ pub static mut prndindex: i32 = 0;
 /// net-play depend on its exact sequence.
 // Which one is deterministic?
 pub fn P_Random() -> i32 {
-    unsafe {
-        prndindex = (prndindex + 1) & 0xff;
-        RNDTABLE[prndindex as usize] as i32
-    }
+    let mut random = RANDOM.borrow_mut();
+    random.prndindex = (random.prndindex + 1) & 0xff;
+    RNDTABLE[random.prndindex as usize] as i32
 }
 
 /// `int M_Random(void)` — advance and read the game-thinker random
@@ -50,20 +74,16 @@ pub fn P_Random() -> i32 {
 /// Used for non-simulation effects (e.g. menu animation) so its use
 /// does not perturb demo determinism.
 pub fn M_Random() -> i32 {
-    unsafe {
-        rndindex = (rndindex + 1) & 0xff;
-        RNDTABLE[rndindex as usize] as i32
-    }
+    let mut random = RANDOM.borrow_mut();
+    random.rndindex = (random.rndindex + 1) & 0xff;
+    RNDTABLE[random.rndindex as usize] as i32
 }
 
 /// `void M_ClearRandom(void)` — reset both `rndindex` and `prndindex` to
 /// 0. Called at the start of a new game/demo so the random sequence
 /// reproduces.
 pub fn M_ClearRandom() {
-    unsafe {
-        rndindex = 0;
-        prndindex = 0;
-    }
+    RANDOM.set(RandomState::new());
 }
 
 #[cfg(test)]
@@ -86,11 +106,23 @@ mod tests {
         assert_eq!(RNDTABLE.len(), 256);
     }
 
+    /// Both cursors start at zero.
+    #[test]
+    fn new_state_starts_at_zero() {
+        assert_eq!(
+            RandomState::new(),
+            RandomState {
+                rndindex: 0,
+                prndindex: 0
+            }
+        );
+    }
+
     /// Three consecutive `M_Random` calls should return entries 1, 2, 3
     /// of `RNDTABLE` in order (the pre-increment makes index 0 unused).
     #[test]
     fn m_random_walks_the_table() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_ClearRandom();
         assert_eq!(M_Random(), RNDTABLE[1] as i32);
         assert_eq!(M_Random(), RNDTABLE[2] as i32);
@@ -101,71 +133,61 @@ mod tests {
     /// first call to either after `M_ClearRandom` returns `RNDTABLE[1]`.
     #[test]
     fn p_and_m_independent() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_ClearRandom();
         let a = M_Random();
         let b = P_Random();
         assert_eq!(a, b);
-        unsafe {
-            assert_eq!({ rndindex }, 1);
-            assert_eq!({ prndindex }, 1);
-        }
+        assert_eq!(RANDOM.get().rndindex, 1);
+        assert_eq!(RANDOM.get().prndindex, 1);
     }
 
     /// `M_ClearRandom` must zero `rndindex` even if both cursors have
     /// been advanced by prior calls.
     #[test]
     fn clear_resets_both() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_Random();
         M_Random();
         P_Random();
         M_ClearRandom();
-        unsafe {
-            assert_eq!({ rndindex }, 0);
-        }
+        assert_eq!(RANDOM.get().rndindex, 0);
     }
 
     /// Two `P_Random` calls should leave `prndindex` at 2 and return
     /// `RNDTABLE[1]` then `RNDTABLE[2]`.
     #[test]
     fn p_random_increments_prndindex() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_ClearRandom();
         assert_eq!(P_Random(), RNDTABLE[1] as i32);
         assert_eq!(P_Random(), RNDTABLE[2] as i32);
-        unsafe {
-            assert_eq!({ prndindex }, 2);
-        }
+        assert_eq!(RANDOM.get().prndindex, 2);
     }
 
     /// `M_ClearRandom` must zero `prndindex` (in addition to `rndindex`,
     /// covered by `clear_resets_both`).
     #[test]
     fn clear_also_resets_prndindex() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         P_Random();
         P_Random();
         M_ClearRandom();
-        unsafe {
-            assert_eq!({ prndindex }, 0);
-        }
+        assert_eq!(RANDOM.get().prndindex, 0);
     }
 
     /// After exactly 256 calls to M_Random the index wraps back to 0,
     /// so the 257th call returns RNDTABLE[1] — identical to the first call.
     #[test]
     fn m_random_wraps_at_256() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_ClearRandom();
         let first = M_Random();
         for _ in 1..256 {
             M_Random();
         }
         // 256 calls done; rndindex = (0 + 256) & 0xFF = 0
-        unsafe {
-            assert_eq!({ rndindex }, 0);
-        }
+        assert_eq!(RANDOM.get().rndindex, 0);
         // 257th call should match the first (RNDTABLE[1])
         assert_eq!(M_Random(), first);
     }
@@ -173,7 +195,7 @@ mod tests {
     /// P_Random and M_Random share the same RNDTABLE but use independent cursors.
     #[test]
     fn p_and_m_cursors_are_independent() {
-        let _g = LOCK.lock().unwrap();
+        let _guard = LOCK.lock().unwrap();
         M_ClearRandom();
         // advance M five steps
         for _ in 0..5 {

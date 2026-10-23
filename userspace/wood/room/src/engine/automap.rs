@@ -36,18 +36,14 @@ use crate::{
             singledemo, viewactive,
         },
         global::Global,
-        interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
+        interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
         math::{
             fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
             tables::{finecosine, finesine, ANGLETOFINESHIFT},
         },
         misc::{
             cheat::{cheatseq_t, cht_CheckCheat},
-            controls::{
-                key_map_clearmark, key_map_east, key_map_follow, key_map_grid, key_map_mark,
-                key_map_maxzoom, key_map_north, key_map_south, key_map_toggle, key_map_west,
-                key_map_zoomin, key_map_zoomout,
-            },
+            controls::{ControlsState, CONTROLS},
         },
         play::{
             maputl::MAPBLOCKUNITS,
@@ -1060,7 +1056,7 @@ fn AM_changeWindowLoc(automap: &mut AutomapState) {
 /// `players` and `playeringame` must be valid.
 unsafe fn AM_initVariables(automap: &mut AutomapState) {
     automap.automapactive = 1;
-    automap.fb = I_VideoBuffer;
+    automap.fb = video_buffer();
 
     automap.f_oldloc.x = i32::MAX;
     automap.amclock = 0;
@@ -1284,6 +1280,21 @@ fn AM_maxOutWindowScale(automap: &mut AutomapState) {
 /// `ev` must be a valid pointer to an `event_t`.
 pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
     let mut rc: i32 = 0;
+    let ControlsState {
+        key_map_north,
+        key_map_south,
+        key_map_east,
+        key_map_west,
+        key_map_zoomin,
+        key_map_zoomout,
+        key_map_toggle,
+        key_map_maxzoom,
+        key_map_follow,
+        key_map_grid,
+        key_map_mark,
+        key_map_clearmark,
+        ..
+    } = CONTROLS.get();
 
     if !automap_active() {
         if (*ev).kind == 0 && (*ev).data1 == key_map_toggle {

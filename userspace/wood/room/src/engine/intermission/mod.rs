@@ -787,7 +787,7 @@ unsafe fn WI_drawLF(wi: &IntermissionState) {
     let numcmaps = wi.numcmaps;
     let mut y = WI_TITLEY;
 
-    if gamemode != doom::mode::commercial || (*wbs).last < numcmaps {
+    if gamemode() != doom::mode::commercial || (*wbs).last < numcmaps {
         V_DrawPatch(
             (SCREENWIDTH - (*(*lnames.offset((*wbs).last as isize))).width.get() as i32) / 2,
             y,
@@ -909,7 +909,7 @@ unsafe fn WI_drawOnLnode(wbs: *mut wbstartstruct_t, n: i32, c: *const *mut patch
 /// Dereferences the `wbs` pointer. Caller must ensure `wbs` has been
 /// initialised (typically by `WI_initVariables`).
 unsafe fn WI_initAnimatedBack(wi: &mut IntermissionState) {
-    if gamemode == doom::mode::commercial {
+    if gamemode() == doom::mode::commercial {
         return;
     }
     if (*wi.wbs).epsd > 2 {
@@ -945,7 +945,7 @@ unsafe fn WI_initAnimatedBack(wi: &mut IntermissionState) {
 /// Dereferences the `wbs` pointer. Caller must ensure `wbs` is valid and the
 /// animation state was initialised by `WI_initAnimatedBack`.
 unsafe fn WI_updateAnimatedBack(wi: &mut IntermissionState) {
-    if gamemode == doom::mode::commercial {
+    if gamemode() == doom::mode::commercial {
         return;
     }
     let wbs = wi.wbs;
@@ -1005,7 +1005,7 @@ unsafe fn WI_updateAnimatedBack(wi: &mut IntermissionState) {
 /// reference. Caller must ensure `wbs` is valid and animations have been
 /// initialised by `WI_initAnimatedBack`.
 unsafe fn WI_drawAnimatedBack(wi: &IntermissionState) {
-    if gamemode == doom::mode::commercial {
+    if gamemode() == doom::mode::commercial {
         return;
     }
     if (*wi.wbs).epsd > 2 {
@@ -1230,7 +1230,7 @@ unsafe fn WI_drawShowNextLoc(wi: &IntermissionState) {
     WI_slamBackground(wi);
     WI_drawAnimatedBack(wi);
 
-    if gamemode != doom::mode::commercial {
+    if gamemode() != doom::mode::commercial {
         if (*wbs).epsd > 2 {
             WI_drawEL(wi);
             return;
@@ -1255,7 +1255,7 @@ unsafe fn WI_drawShowNextLoc(wi: &IntermissionState) {
         }
     }
 
-    if gamemode != doom::mode::commercial || (*wbs).next != 30 {
+    if gamemode() != doom::mode::commercial || (*wbs).next != 30 {
         WI_drawEL(wi);
     }
 }
@@ -1399,7 +1399,7 @@ unsafe fn WI_updateDeathmatchStats() {
     } else if wi.dm_state == 4 {
         if wi.acceleratestage != 0 {
             sounds.push(Sfx::Slop);
-            if gamemode == doom::mode::commercial {
+            if gamemode() == doom::mode::commercial {
                 WI_initNoState(&mut wi);
             } else {
                 WI_initShowNextLoc(&mut wi);
@@ -1635,7 +1635,7 @@ unsafe fn WI_updateNetgameStats() {
     } else if wi.ng_state == 10 {
         if wi.acceleratestage != 0 {
             sounds.push(Sfx::Sgcock);
-            if gamemode == doom::mode::commercial {
+            if gamemode() == doom::mode::commercial {
                 WI_initNoState(&mut wi);
             } else {
                 WI_initShowNextLoc(&mut wi);
@@ -1829,7 +1829,7 @@ unsafe fn WI_updateStats() {
     } else if wi.sp_state == 10 {
         if wi.acceleratestage != 0 {
             sounds.push(Sfx::Sgcock);
-            if gamemode == doom::mode::commercial {
+            if gamemode() == doom::mode::commercial {
                 WI_initNoState(&mut wi);
             } else {
                 WI_initShowNextLoc(&mut wi);
@@ -1949,7 +1949,7 @@ pub unsafe fn WI_Ticker() {
     };
 
     if first_tic {
-        if gamemode == doom::mode::commercial {
+        if gamemode() == doom::mode::commercial {
             S_ChangeMusic(Mus::Dm2int as i32, 1);
         } else {
             S_ChangeMusic(Mus::Inter as i32, 1);
@@ -2010,7 +2010,7 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
     let wbs = wi.wbs;
     let lnames = wi.lnames;
 
-    if gamemode == doom::mode::commercial {
+    if gamemode() == doom::mode::commercial {
         for i in 0..wi.numcmaps {
             DEH_snprintf!(name, "CWILV{:02}", i);
             callback(&name, lnames.offset(i as isize));
@@ -2082,7 +2082,9 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
         callback(&name, &mut wi.bp[i]);
     }
 
-    if gamemode == doom::mode::commercial || (gamemode == doom::mode::retail && (*wbs).epsd == 3) {
+    if gamemode() == doom::mode::commercial
+        || (gamemode() == doom::mode::retail && (*wbs).epsd == 3)
+    {
         name = *DEH_String(b"INTERPIC\0");
     } else {
         DEH_snprintf!(name, "WIMAP{}", (*wbs).epsd);
@@ -2117,7 +2119,7 @@ unsafe fn WI_loadCallback(name: &[u8], variable: *mut *mut patch_t) {
 pub unsafe fn WI_loadData() {
     {
         let mut wi = INTERMISSION.borrow_mut();
-        if gamemode == doom::mode::commercial {
+        if gamemode() == doom::mode::commercial {
             wi.numcmaps = 32;
             wi.lnames = Z_Malloc(
                 (std::mem::size_of::<*mut patch_t>() * wi.numcmaps as usize) as i32,
@@ -2243,7 +2245,7 @@ unsafe fn WI_initVariables(wi: &mut IntermissionState, wbstartstruct: *mut wbsta
         (*wbs).maxsecret = 1;
     }
 
-    if gamemode != doom::mode::retail && (*wbs).epsd > 2 {
+    if gamemode() != doom::mode::retail && (*wbs).epsd > 2 {
         (*wbs).epsd -= 3;
     }
 }

@@ -10,7 +10,7 @@
 //! the OS directly.
 //!
 //! This module covers the library side: it owns the shared frame-buffer
-//! pointer [`DG_ScreenBuffer`] and implements [`doomgeneric_Create`], which
+//! pointer ([`screen_buffer`], in [`PlatformState`]) and implements [`doomgeneric_Create`], which
 //! records the platform, allocates that buffer, stores the command-line
 //! arguments, and launches the main engine entry point.
 //!
@@ -28,7 +28,8 @@ use std::ptr;
 
 use super::{
     doom::main::D_DoomMain,
-    misc::argv::{myargv, M_FindResponseFile},
+    global::Global,
+    misc::argv::{set_arguments, M_FindResponseFile},
 };
 
 /// Width of the doomgeneric frame buffer in pixels.
@@ -43,21 +44,8 @@ pub const DOOMGENERIC_RESY: usize = 400;
 
 /// Total pixel count for one complete frame (`RESX * RESY`).
 ///
-/// Convenience constant used when allocating or iterating over [`DG_ScreenBuffer`].
+/// Convenience constant used when allocating or iterating over [`screen_buffer`].
 pub const DOOMGENERIC_PIXELS: usize = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
-
-/// Shared frame-buffer pointer written by the renderer and read by the platform backend.
-///
-/// Corresponds to `pixel_t *DG_ScreenBuffer` in `doomgeneric.c`.  After
-/// [`doomgeneric_Create`] runs, this points to a heap-allocated array of
-/// [`DOOMGENERIC_PIXELS`] `u32` values (RGBA8 or BGRA8 depending on the
-/// build).  The renderer (`R_DrawColumn`, `R_DrawSpan`, etc.) writes pixels
-/// into this buffer each frame; the platform backend reads from it inside
-/// `DG_DrawFrame` to upload the frame to the display.
-///
-/// Initialised to `null`; valid only after [`doomgeneric_Create`] has been
-/// called.  Referenced from C as `DG_ScreenBuffer`.
-pub static mut DG_ScreenBuffer: *mut u32 = ptr::null_mut();
 
 /// What the engine needs from the platform it runs on.
 ///
@@ -72,7 +60,7 @@ pub trait Platform {
 
     /// `DG_DrawFrame`: present `frame`, [`DOOMGENERIC_PIXELS`] pixels of
     /// [`DOOMGENERIC_RESX`] per row, as the renderer wrote them into
-    /// [`DG_ScreenBuffer`].
+    /// [`screen_buffer`].
     fn draw_frame(&self, _frame: &[u32]) {}
 
     /// `DG_SleepMs`: sleep for `ms` milliseconds.
@@ -148,15 +136,55 @@ struct Silent;
 
 impl Platform for Silent {}
 
-/// The platform [`doomgeneric_Create`] installed.
-static mut PLATFORM: Option<&'static dyn Platform> = None;
+/// Platform state (C `doomgeneric.c` globals).
+#[derive(Clone, Copy)]
+pub struct PlatformState {
+    /// Shared frame-buffer pointer written by the renderer and read by the
+    /// platform backend.
+    ///
+    /// Corresponds to `pixel_t *DG_ScreenBuffer` in `doomgeneric.c`.  After
+    /// [`doomgeneric_Create`] runs, this points to a heap-allocated array of
+    /// [`DOOMGENERIC_PIXELS`] `u32` values (RGBA8 or BGRA8 depending on the
+    /// build).  The renderer (`R_DrawColumn`, `R_DrawSpan`, etc.) writes
+    /// pixels into this buffer each frame; the platform backend reads from it
+    /// inside `DG_DrawFrame` to upload the frame to the display.
+    ///
+    /// Initialised to `null`; valid only after [`doomgeneric_Create`] has
+    /// been called.
+    screen_buffer: *mut u32,
+    /// The platform [`doomgeneric_Create`] installed.
+    platform: Option<&'static dyn Platform>,
+}
+
+impl PlatformState {
+    /// No platform and no screen buffer yet.
+    pub const fn new() -> Self {
+        Self {
+            screen_buffer: ptr::null_mut(),
+            platform: None,
+        }
+    }
+}
+
+impl Default for PlatformState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The platform state.
+pub static PLATFORM: Global<PlatformState> = Global::new(PlatformState::new());
 
 /// The platform the engine runs on, or the silent default before
 /// [`doomgeneric_Create`].
 pub fn platform() -> &'static dyn Platform {
-    // SAFETY: written once by `doomgeneric_Create` on the engine's thread,
-    // before anything reads it; this copies the reference out.
-    unsafe { PLATFORM }.unwrap_or(&Silent)
+    PLATFORM.get().platform.unwrap_or(&Silent)
+}
+
+/// `DG_ScreenBuffer`: the [`DOOMGENERIC_PIXELS`]-pixel frame buffer, null
+/// before [`doomgeneric_Create`].
+pub fn screen_buffer() -> *mut u32 {
+    PLATFORM.get().screen_buffer
 }
 
 /// Initialise the Doom engine on `platform` and enter the main game loop.
@@ -181,15 +209,15 @@ pub fn platform() -> &'static dyn Platform {
 /// This function must be called exactly once; calling it a second time
 /// would leak the first screen buffer and overwrite `myargv`.
 pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, args: Vec<String>) {
-    PLATFORM = Some(platform);
+    PLATFORM.borrow_mut().platform = Some(platform);
 
-    myargv = args;
+    set_arguments(args);
 
     M_FindResponseFile();
 
     let total_pixels = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
     let mut buffer = vec![0u32; total_pixels];
-    DG_ScreenBuffer = buffer.as_mut_ptr();
+    PLATFORM.borrow_mut().screen_buffer = buffer.as_mut_ptr();
     std::mem::forget(buffer);
 
     platform.init();
@@ -202,8 +230,8 @@ mod tests {
 
     #[test]
     fn test_dg_screenbuffer_is_null_init() {
-        unsafe {
-            assert!(DG_ScreenBuffer.is_null());
-        }
+        let state = PlatformState::new();
+        assert!(state.screen_buffer.is_null());
+        assert!(state.platform.is_none());
     }
 }

@@ -5,17 +5,22 @@
 //! navigation and all related F-key shortcuts (quicksave, quickload, gamma, etc.).
 //!
 //! Notable Rust-vs-C differences:
-//! - Menu item arrays (`MainMenu`, `EpisodeMenu`, etc.) are `static mut` values
-//!   rather than global arrays; the `menuitems` pointers inside each `menu_t` are
-//!   wired up at runtime in `M_Init` because raw-pointer field initializers cannot
-//!   reference other statics in Rust's const evaluator.
+//! - The menu pages (item arrays `MainMenu`, `EpisodeMenu`, etc. and the
+//!   `menu_t` descriptors) are fields of [`MenuPages`], held in the
+//!   [`MENU_PAGES`] global. `currentMenu`, `prevMenu` and `menuitems` point
+//!   into it, so the pages stay in place and those pointers are followed
+//!   without holding a guard. The `menuitems` and `prevMenu` pointers are
+//!   wired up at runtime in `M_Init` because a const initializer cannot take
+//!   the address of the static it initialises.
+//! - The other C file-scope variables live in [`MenuState`], held in the
+//!   [`MENU`] global. Menu routines call each other and into the game, the
+//!   sound code and the config, so every function copies values out and
+//!   releases the guard before calling out.
 //! - `mi` is a `const fn` helper replacing C compound literals, keeping the
 //!   lookup tables in static storage.
 //! - Menu and prompt text are `const &str`; the active modal message is an
 //!   owned `String`, and save-game descriptions stay fixed `[u8; N]`
 //!   buffers because they are edited in place.
-//! - `logical_gamemission` has a safe signature (`fn`, not `unsafe fn`); the
-//!   C-linked global read is wrapped in an internal `unsafe { ... }` block.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -31,6 +36,7 @@ use crate::{
             player::M_Menu_SetPlayerMessage,
             stat::{gamemission, gamemode, gameversion},
         },
+        global::Global,
     },
     i_error,
 };
@@ -41,14 +47,13 @@ use crate::{
 /// `pack_chex` maps to `doom`, `pack_hacx` maps to `doom2`,
 /// all other values are returned as-is.
 fn logical_gamemission() -> i32 {
-    unsafe {
-        if gamemission == doom::mode::pack_chex {
-            doom::mode::doom
-        } else if gamemission == doom::mode::pack_hacx {
-            doom::mode::doom2
-        } else {
-            gamemission
-        }
+    let gamemission = gamemission();
+    if gamemission == doom::mode::pack_chex {
+        doom::mode::doom
+    } else if gamemission == doom::mode::pack_hacx {
+        doom::mode::doom2
+    } else {
+        gamemission
     }
 }
 
@@ -132,9 +137,9 @@ pub struct menuitem_t {
 /// A Doom menu page descriptor (C typedef `menu_t` from `m_menu.h`).
 ///
 /// Each menu screen is described by one of these structs.
-/// `menuitems` points to the item array for this page; it cannot be initialised
-/// as a static const because Rust forbids raw-pointer cross-references between
-/// statics, so the pointer is wired up at runtime in `M_Init`.
+/// `menuitems` points to the item array for this page inside [`MenuPages`];
+/// a const initializer cannot take that address, so the pointer is wired up
+/// at runtime in `M_Init`.
 pub struct menu_t {
     /// Number of items in `menuitems`.
     pub numitems: i16,
@@ -209,7 +214,7 @@ fn clamp_to_buffer(mut text: String, size: usize) -> String {
 use crate::engine::{
     automap::automap_active,
     doom::{
-        main::devparm,
+        main::DOOM_MAIN,
         main_loop::gametic,
         strings::{doom1_endmsg, doom2_endmsg},
     },
@@ -222,9 +227,12 @@ use crate::engine::{
         input::vanilla_keyboard_mapping,
         system::I_Quit,
         timer::{I_GetTime, I_WaitVBL},
-        video::{usegamma, I_SetPalette},
+        video::{I_SetPalette, VIDEO},
     },
-    misc::{until_nul, M_StringCopy},
+    misc::{
+        controls::{ControlsState, CONTROLS},
+        until_nul, M_StringCopy,
+    },
     play::saveg::P_SaveGameFile,
     render_2d::V_DrawPatchDirect,
     render_3d::main::R_SetViewSize,
@@ -232,33 +240,148 @@ use crate::engine::{
     wad::{format::patch_t, W_CacheLumpName},
 };
 
-/// Current mouse sensitivity setting (0-9); exported to C for `m_config.c` serialization.
-pub static mut mouseSensitivity: i32 = 5;
-/// Non-zero when player messages are enabled; exported for `hu_stuff.c` and config.
-pub static mut showMessages: i32 = 1;
-/// Graphics detail level: 0 = high, 1 = low; exported for `r_main.c` and config.
-pub static mut detailLevel: i32 = 0;
-/// Number of screen blocks to render (3-12); exported for `r_main.c` and config.
-pub static mut screenblocks: i32 = 10;
+/// Menu state (C `m_menu.c` globals other than the menu pages).
+///
+/// `mouseSensitivity`, `showMessages`, `detailLevel` and `screenblocks` are
+/// bound to config variables by address, so they live at a stable place
+/// inside [`MENU`].
+pub struct MenuState {
+    /// Current mouse sensitivity setting (0-9); serialised by `m_config.c`.
+    pub mouseSensitivity: i32,
+    /// Non-zero when player messages are enabled; read by `hu_stuff.c` and
+    /// config.
+    pub showMessages: i32,
+    /// Graphics detail level: 0 = high, 1 = low; read by `r_main.c` and
+    /// config.
+    pub detailLevel: i32,
+    /// Number of screen blocks to render (3-12); read by `r_main.c` and
+    /// config.
+    pub screenblocks: i32,
+    /// Current display size index (0-8), derived from `screenblocks - 3`;
+    /// updated by `M_SizeDisplay`.
+    screenSize: i32,
+    /// Save slot used for quicksave/quickload (-1 = none, -2 = slot
+    /// selection pending).
+    quickSaveSlot: i32,
+    /// Non-zero when a modal message/confirmation overlay is active.
+    messageToPrint: i32,
+    /// Text displayed in the active modal overlay.
+    messageString: String,
+    /// Screen x pixel of the modal message's left edge.
+    messx: i32,
+    /// Screen y pixel of the modal message's top edge.
+    messy: i32,
+    /// Value of `menuactive` saved when a modal message was opened, restored
+    /// on dismissal.
+    messageLastMenuActive: i32,
+    /// Non-zero when the modal message requires a y/n or specific key
+    /// response.
+    messageNeedsInput: i32,
+    /// Callback invoked with the key code when the modal message is
+    /// dismissed.
+    messageRoutine: Option<fn(i32)>,
+    /// Non-zero while the player is typing a save-game description string.
+    saveStringEnter: i32,
+    /// Save slot index currently being named.
+    saveSlot: i32,
+    /// Cursor position (character count) within the save-game description
+    /// string.
+    saveCharIndex: i32,
+    /// Copy of the original description before editing, restored on Escape.
+    saveOldString: [u8; SAVESTRINGSIZE],
+    /// Non-zero while a help/read-this screen is being displayed; suppresses
+    /// status bar. `d_main.c` checks it before re-drawing the play area.
+    pub inhelpscreens: i32,
+    /// Non-zero while the menu overlay is open; read by `G_Responder` and
+    /// `D_Display`, mostly through [`menu_active`].
+    pub menuactive: i32,
+    /// Save-game description strings for all 6 save slots, read from each
+    /// save file header.
+    savegamestrings: [[u8; SAVESTRINGSIZE]; 10],
+    /// Index of the currently highlighted menu item within the active page.
+    itemOn: i16,
+    /// Countdown (in tics) until the skull cursor frame toggles.
+    skullAnimCounter: i16,
+    /// Index into `skullName`: 0 = `M_SKULL1`, 1 = `M_SKULL2`.
+    whichSkull: i16,
+    /// Pointer to the currently active menu page descriptor, inside
+    /// [`MENU_PAGES`].
+    pub currentMenu: *mut menu_t,
+    /// Selected episode index (0-based), set by `M_Episode` and consumed by
+    /// `M_ChooseSkill`.
+    epi: i32,
+    /// Tic time after which the next joystick event will be processed
+    /// (static local `joywait` in C `M_Responder`).
+    joywait: i32,
+    /// Tic time after which the next mouse event will be processed (static
+    /// local `mousewait` in C `M_Responder`).
+    mousewait: i32,
+    /// Accumulated mouse y movement since the last `lasty` reset (static
+    /// local `mousey` in C `M_Responder`).
+    mousey: i32,
+    /// Mouse y baseline; updated in 30-unit steps to produce discrete menu
+    /// scrolls (static local `lasty` in C `M_Responder`).
+    lasty: i32,
+    /// Accumulated mouse x movement since the last `lastx` reset (static
+    /// local `mousex` in C `M_Responder`).
+    mousex: i32,
+    /// Mouse x baseline; updated in 30-unit steps to produce discrete menu
+    /// navigation (static local `lastx` in C `M_Responder`).
+    lastx: i32,
+}
 
-/// Current display size index (0-8), derived from `screenblocks - 3`; updated by `M_SizeDisplay`.
-static mut screenSize: i32 = 0;
-/// Save slot used for quicksave/quickload (-1 = none, -2 = slot selection pending).
-static mut quickSaveSlot: i32 = -1;
-/// Non-zero when a modal message/confirmation overlay is active.
-static mut messageToPrint: i32 = 0;
-/// Text displayed in the active modal overlay.
-static mut messageString: String = String::new();
-/// Screen x pixel of the modal message's left edge.
-static mut messx: i32 = 0;
-/// Screen y pixel of the modal message's top edge.
-static mut messy: i32 = 0;
-/// Value of `menuactive` saved when a modal message was opened, restored on dismissal.
-static mut messageLastMenuActive: i32 = 0;
-/// Non-zero when the modal message requires a y/n or specific key response.
-static mut messageNeedsInput: i32 = 0;
-/// Callback invoked with the key code when the modal message is dismissed.
-static mut messageRoutine: Option<fn(i32)> = None;
+impl MenuState {
+    /// The C initial values: menu closed, default settings.
+    pub const fn new() -> Self {
+        Self {
+            mouseSensitivity: 5,
+            showMessages: 1,
+            detailLevel: 0,
+            screenblocks: 10,
+            screenSize: 0,
+            quickSaveSlot: -1,
+            messageToPrint: 0,
+            messageString: String::new(),
+            messx: 0,
+            messy: 0,
+            messageLastMenuActive: 0,
+            messageNeedsInput: 0,
+            messageRoutine: None,
+            saveStringEnter: 0,
+            saveSlot: 0,
+            saveCharIndex: 0,
+            saveOldString: [0; SAVESTRINGSIZE],
+            inhelpscreens: 0,
+            menuactive: 0,
+            savegamestrings: [[0; SAVESTRINGSIZE]; 10],
+            itemOn: 0,
+            skullAnimCounter: 0,
+            whichSkull: 0,
+            currentMenu: ptr::null_mut(),
+            epi: 0,
+            joywait: 0,
+            mousewait: 0,
+            mousey: 0,
+            lasty: 0,
+            mousex: 0,
+            lastx: 0,
+        }
+    }
+}
+
+impl Default for MenuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The menu state.
+pub static MENU: Global<MenuState> = Global::new(MenuState::new());
+
+/// Whether the menu overlay is open (C `menuactive != 0`).
+pub fn menu_active() -> bool {
+    MENU.borrow().menuactive != 0
+}
 
 /// Gamma-correction status messages displayed when the player cycles the gamma level.
 ///
@@ -271,37 +394,8 @@ pub const gammamsg: [&str; 5] = [
     "Gamma correction level 4",
 ];
 
-/// Non-zero while the player is typing a save-game description string.
-static mut saveStringEnter: i32 = 0;
-/// Save slot index currently being named.
-static mut saveSlot: i32 = 0;
-/// Cursor position (character count) within the save-game description string.
-static mut saveCharIndex: i32 = 0;
-/// Copy of the original description before editing, restored on Escape.
-static mut saveOldString: [u8; SAVESTRINGSIZE] = [0; SAVESTRINGSIZE];
-
-/// Non-zero while a help/read-this screen is being displayed; suppresses status bar.
-/// Exported for `d_main.c` which checks it before re-drawing the play area.
-pub static mut inhelpscreens: i32 = 0;
-/// Non-zero while the menu overlay is open; read by `G_Responder` and `D_Display`.
-pub static mut menuactive: i32 = 0;
-
-/// Save-game description strings for all 6 save slots, read from each save file header.
-static mut savegamestrings: [[u8; SAVESTRINGSIZE]; 10] = [[0; SAVESTRINGSIZE]; 10];
-
-/// Index of the currently highlighted menu item within the active page.
-static mut itemOn: i16 = 0;
-/// Countdown (in tics) until the skull cursor frame toggles.
-static mut skullAnimCounter: i16 = 0;
-/// Index into `skullName`: 0 = `M_SKULL1`, 1 = `M_SKULL2`.
-static mut whichSkull: i16 = 0;
-
 /// WAD lump names for the two skull cursor animation frames.
 const skullName: [&[u8]; 2] = [b"M_SKULL1", b"M_SKULL2"];
-
-/// Pointer to the currently active menu page descriptor.
-/// Exported for C callers (e.g. `d_main.c`).
-pub static mut currentMenu: *mut menu_t = ptr::null_mut();
 
 // ---------------------------------------------------------------------------
 // Main menu item indices (C anonymous enums in m_menu.c)
@@ -392,179 +486,164 @@ const read1_end: usize = 1;
 /// Total items in the second "Read This" help page.
 const read2_end: usize = 1;
 
-/// Item array for the root main menu (New Game, Options, Load, Save, Read This, Quit).
-static mut MainMenu: [menuitem_t; 6] = [
-    mi(1, "M_NGAME", Some(M_NewGame), b'n'),
-    mi(1, "M_OPTION", Some(M_Options), b'o'),
-    mi(1, "M_LOADG", Some(M_LoadGame), b'l'),
-    mi(1, "M_SAVEG", Some(M_SaveGame), b's'),
-    mi(1, "M_RDTHIS", Some(M_ReadThis), b'r'),
-    mi(1, "M_QUITG", Some(M_QuitDOOM), b'q'),
-];
+/// The menu pages (C `m_menu.c` menu item arrays and `menu_t` descriptors).
+///
+/// `MenuState::currentMenu`, `menu_t::prevMenu` and `menu_t::menuitems`
+/// point into this struct, so it stays in place inside [`MENU_PAGES`];
+/// the functions below follow those pointers without holding a guard.
+pub struct MenuPages {
+    /// Item array for the root main menu (New Game, Options, Load, Save, Read This, Quit).
+    MainMenu: [menuitem_t; 6],
+    /// Item array for the episode selection menu (E1-E4).
+    EpisodeMenu: [menuitem_t; 4],
+    /// Item array for the skill-level selection menu.
+    NewGameMenu: [menuitem_t; 5],
+    /// Item array for the Options menu (end game, messages, detail, screen size, mouse sensitivity, sound).
+    OptionsMenu: [menuitem_t; 8],
+    /// Single-item array for the first "Read This" help page (advances to page 2).
+    ReadMenu1: [menuitem_t; 1],
+    /// Single-item array for the second "Read This" help page (returns to main menu).
+    ReadMenu2: [menuitem_t; 1],
+    /// Item array for the Sound Volume menu (SFX slider, music slider).
+    SoundMenu: [menuitem_t; 4],
+    /// Item array for the Load Game menu (6 save slots).
+    LoadMenu: [menuitem_t; 6],
+    /// Item array for the Save Game menu (6 save slots).
+    SaveMenu: [menuitem_t; 6],
+    /// Page descriptor for the root main menu.
+    MainDef: menu_t,
+    /// Page descriptor for the episode selection menu.
+    EpiDef: menu_t,
+    /// Page descriptor for the skill-level selection menu; defaults to "Hurt Me Plenty" (index 2).
+    NewDef: menu_t,
+    /// Page descriptor for the Options menu.
+    OptionsDef: menu_t,
+    /// Page descriptor for the first "Read This" help screen.
+    /// The skull position (x, y) may be adjusted at runtime by `M_DrawReadThis1`
+    /// depending on the game version.
+    ReadDef1: menu_t,
+    /// Page descriptor for the second "Read This" help screen (Doom 1.x only, non-commercial).
+    ReadDef2: menu_t,
+    /// Page descriptor for the Sound Volume menu.
+    SoundDef: menu_t,
+    /// Page descriptor for the Load Game menu.
+    LoadDef: menu_t,
+    /// Page descriptor for the Save Game menu (reuses `load_end` count and `LoadDef` geometry).
+    SaveDef: menu_t,
+}
 
-/// Item array for the episode selection menu (E1-E4).
-static mut EpisodeMenu: [menuitem_t; 4] = [
-    mi(1, "M_EPI1", Some(M_Episode), b'k'),
-    mi(1, "M_EPI2", Some(M_Episode), b't'),
-    mi(1, "M_EPI3", Some(M_Episode), b'i'),
-    mi(1, "M_EPI4", Some(M_Episode), b't'),
-];
+/// Build a `menu_t` at compile time, unlinked (`M_Init` sets `prevMenu`
+/// and `menuitems`).
+const fn unlinked_page(numitems: usize, routine: fn(), x: i16, y: i16, lastOn: i16) -> menu_t {
+    menu_t {
+        numitems: numitems as i16,
+        prevMenu: ptr::null_mut(),
+        menuitems: ptr::null_mut(),
+        routine: Some(routine),
+        x,
+        y,
+        lastOn,
+    }
+}
 
-/// Item array for the skill-level selection menu.
-static mut NewGameMenu: [menuitem_t; 5] = [
-    mi(1, "M_JKILL", Some(M_ChooseSkill), b'i'),
-    mi(1, "M_ROUGH", Some(M_ChooseSkill), b'h'),
-    mi(1, "M_HURT", Some(M_ChooseSkill), b'h'),
-    mi(1, "M_ULTRA", Some(M_ChooseSkill), b'u'),
-    mi(1, "M_NMARE", Some(M_ChooseSkill), b'n'),
-];
+impl MenuPages {
+    /// The pages as `m_menu.c` declares them, not yet linked.
+    pub const fn new() -> Self {
+        Self {
+            MainMenu: [
+                mi(1, "M_NGAME", Some(M_NewGame), b'n'),
+                mi(1, "M_OPTION", Some(M_Options), b'o'),
+                mi(1, "M_LOADG", Some(M_LoadGame), b'l'),
+                mi(1, "M_SAVEG", Some(M_SaveGame), b's'),
+                mi(1, "M_RDTHIS", Some(M_ReadThis), b'r'),
+                mi(1, "M_QUITG", Some(M_QuitDOOM), b'q'),
+            ],
+            EpisodeMenu: [
+                mi(1, "M_EPI1", Some(M_Episode), b'k'),
+                mi(1, "M_EPI2", Some(M_Episode), b't'),
+                mi(1, "M_EPI3", Some(M_Episode), b'i'),
+                mi(1, "M_EPI4", Some(M_Episode), b't'),
+            ],
+            NewGameMenu: [
+                mi(1, "M_JKILL", Some(M_ChooseSkill), b'i'),
+                mi(1, "M_ROUGH", Some(M_ChooseSkill), b'h'),
+                mi(1, "M_HURT", Some(M_ChooseSkill), b'h'),
+                mi(1, "M_ULTRA", Some(M_ChooseSkill), b'u'),
+                mi(1, "M_NMARE", Some(M_ChooseSkill), b'n'),
+            ],
+            OptionsMenu: [
+                mi(1, "M_ENDGAM", Some(M_EndGame), b'e'),
+                mi(1, "M_MESSG", Some(M_ChangeMessages), b'm'),
+                mi(1, "M_DETAIL", Some(M_ChangeDetail), b'g'),
+                mi(2, "M_SCRNSZ", Some(M_SizeDisplay), b's'),
+                mi(-1, "", None, 0),
+                mi(2, "M_MSENS", Some(M_ChangeSensitivity), b'm'),
+                mi(-1, "", None, 0),
+                mi(1, "M_SVOL", Some(M_Sound), b's'),
+            ],
+            ReadMenu1: [mi(1, "", Some(M_ReadThis2), 0)],
+            ReadMenu2: [mi(1, "", Some(M_FinishReadThis), 0)],
+            SoundMenu: [
+                mi(2, "M_SFXVOL", Some(M_SfxVol), b's'),
+                mi(-1, "", None, 0),
+                mi(2, "M_MUSVOL", Some(M_MusicVol), b'm'),
+                mi(-1, "", None, 0),
+            ],
+            LoadMenu: [
+                mi(1, "", Some(M_LoadSelect), b'1'),
+                mi(1, "", Some(M_LoadSelect), b'2'),
+                mi(1, "", Some(M_LoadSelect), b'3'),
+                mi(1, "", Some(M_LoadSelect), b'4'),
+                mi(1, "", Some(M_LoadSelect), b'5'),
+                mi(1, "", Some(M_LoadSelect), b'6'),
+            ],
+            SaveMenu: [
+                mi(1, "", Some(M_SaveSelect), b'1'),
+                mi(1, "", Some(M_SaveSelect), b'2'),
+                mi(1, "", Some(M_SaveSelect), b'3'),
+                mi(1, "", Some(M_SaveSelect), b'4'),
+                mi(1, "", Some(M_SaveSelect), b'5'),
+                mi(1, "", Some(M_SaveSelect), b'6'),
+            ],
+            MainDef: unlinked_page(main_end, M_DrawMainMenu, 97, 64, 0),
+            EpiDef: unlinked_page(ep_end, M_DrawEpisode, 48, 63, 0),
+            NewDef: unlinked_page(newg_end, M_DrawNewGame, 48, 63, 2),
+            OptionsDef: unlinked_page(opt_end, M_DrawOptions, 60, 37, 0),
+            ReadDef1: unlinked_page(read1_end, M_DrawReadThis1, 280, 185, 0),
+            ReadDef2: unlinked_page(read2_end, M_DrawReadThis2, 330, 175, 0),
+            SoundDef: unlinked_page(sound_end, M_DrawSound, 80, 64, 0),
+            LoadDef: unlinked_page(load_end, M_DrawLoad, 80, 54, 0),
+            SaveDef: unlinked_page(load_end, M_DrawSave, 80, 54, 0),
+        }
+    }
+}
 
-/// Item array for the Options menu (end game, messages, detail, screen size, mouse sensitivity, sound).
-static mut OptionsMenu: [menuitem_t; 8] = [
-    mi(1, "M_ENDGAM", Some(M_EndGame), b'e'),
-    mi(1, "M_MESSG", Some(M_ChangeMessages), b'm'),
-    mi(1, "M_DETAIL", Some(M_ChangeDetail), b'g'),
-    mi(2, "M_SCRNSZ", Some(M_SizeDisplay), b's'),
-    mi(-1, "", None, 0),
-    mi(2, "M_MSENS", Some(M_ChangeSensitivity), b'm'),
-    mi(-1, "", None, 0),
-    mi(1, "M_SVOL", Some(M_Sound), b's'),
-];
+impl Default for MenuPages {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Single-item array for the first "Read This" help page (advances to page 2).
-static mut ReadMenu1: [menuitem_t; 1] = [mi(1, "", Some(M_ReadThis2), 0)];
+/// The menu pages.
+pub static MENU_PAGES: Global<MenuPages> = Global::new(MenuPages::new());
 
-/// Single-item array for the second "Read This" help page (returns to main menu).
-static mut ReadMenu2: [menuitem_t; 1] = [mi(1, "", Some(M_FinishReadThis), 0)];
+/// Stable address of the menu page descriptor `$page` inside
+/// [`MENU_PAGES`], as stored in `currentMenu` and `prevMenu`.
+macro_rules! page {
+    ($page:ident) => {{
+        let pages = MENU_PAGES.as_ptr();
+        // Only the address is taken; `MENU_PAGES` is a static, so it stays valid.
+        #[allow(unused_unsafe)]
+        let page = unsafe { &raw mut (*pages).$page };
+        page
+    }};
+}
 
-/// Item array for the Sound Volume menu (SFX slider, music slider).
-static mut SoundMenu: [menuitem_t; 4] = [
-    mi(2, "M_SFXVOL", Some(M_SfxVol), b's'),
-    mi(-1, "", None, 0),
-    mi(2, "M_MUSVOL", Some(M_MusicVol), b'm'),
-    mi(-1, "", None, 0),
-];
-
-/// Item array for the Load Game menu (6 save slots).
-static mut LoadMenu: [menuitem_t; 6] = [
-    mi(1, "", Some(M_LoadSelect), b'1'),
-    mi(1, "", Some(M_LoadSelect), b'2'),
-    mi(1, "", Some(M_LoadSelect), b'3'),
-    mi(1, "", Some(M_LoadSelect), b'4'),
-    mi(1, "", Some(M_LoadSelect), b'5'),
-    mi(1, "", Some(M_LoadSelect), b'6'),
-];
-
-/// Item array for the Save Game menu (6 save slots).
-static mut SaveMenu: [menuitem_t; 6] = [
-    mi(1, "", Some(M_SaveSelect), b'1'),
-    mi(1, "", Some(M_SaveSelect), b'2'),
-    mi(1, "", Some(M_SaveSelect), b'3'),
-    mi(1, "", Some(M_SaveSelect), b'4'),
-    mi(1, "", Some(M_SaveSelect), b'5'),
-    mi(1, "", Some(M_SaveSelect), b'6'),
-];
-
-/// Page descriptor for the root main menu.
-static mut MainDef: menu_t = menu_t {
-    numitems: main_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawMainMenu),
-    x: 97,
-    y: 64,
-    lastOn: 0,
-};
-
-/// Page descriptor for the episode selection menu.
-static mut EpiDef: menu_t = menu_t {
-    numitems: ep_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawEpisode),
-    x: 48,
-    y: 63,
-    lastOn: 0,
-};
-
-/// Page descriptor for the skill-level selection menu; defaults to "Hurt Me Plenty" (index 2).
-static mut NewDef: menu_t = menu_t {
-    numitems: newg_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawNewGame),
-    x: 48,
-    y: 63,
-    lastOn: 2,
-};
-
-/// Page descriptor for the Options menu.
-static mut OptionsDef: menu_t = menu_t {
-    numitems: opt_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawOptions),
-    x: 60,
-    y: 37,
-    lastOn: 0,
-};
-
-/// Page descriptor for the first "Read This" help screen.
-/// The skull position (x, y) may be adjusted at runtime by `M_DrawReadThis1`
-/// depending on the game version.
-static mut ReadDef1: menu_t = menu_t {
-    numitems: read1_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawReadThis1),
-    x: 280,
-    y: 185,
-    lastOn: 0,
-};
-
-/// Page descriptor for the second "Read This" help screen (Doom 1.x only, non-commercial).
-static mut ReadDef2: menu_t = menu_t {
-    numitems: read2_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawReadThis2),
-    x: 330,
-    y: 175,
-    lastOn: 0,
-};
-
-/// Page descriptor for the Sound Volume menu.
-static mut SoundDef: menu_t = menu_t {
-    numitems: sound_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawSound),
-    x: 80,
-    y: 64,
-    lastOn: 0,
-};
-
-/// Page descriptor for the Load Game menu.
-static mut LoadDef: menu_t = menu_t {
-    numitems: load_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawLoad),
-    x: 80,
-    y: 54,
-    lastOn: 0,
-};
-
-/// Page descriptor for the Save Game menu (reuses `load_end` count and `LoadDef` geometry).
-static mut SaveDef: menu_t = menu_t {
-    numitems: load_end as i16,
-    prevMenu: ptr::null_mut(),
-    menuitems: ptr::null_mut(),
-    routine: Some(M_DrawSave),
-    x: 80,
-    y: 54,
-    lastOn: 0,
-};
+/// Screen position of the first save/load slot row (`LoadDef.x`, `LoadDef.y`).
+fn load_slot_origin() -> (i32, i32) {
+    let pages = MENU_PAGES.borrow();
+    (pages.LoadDef.x as i32, pages.LoadDef.y as i32)
+}
 
 /// Populate `savegamestrings` and `LoadMenu[*].status` by reading the header of each save file.
 ///
@@ -573,34 +652,33 @@ static mut SaveDef: menu_t = menu_t {
 /// Slots whose file does not exist receive the placeholder text "empty slot"
 /// and have their `status` set to 0 (non-selectable in the load menu).
 fn M_ReadSaveStrings() {
-    unsafe {
-        for i in 0..load_end {
-            let slot = &mut *ptr::addr_of_mut!(savegamestrings[i]);
-            let Ok(mut file) = std::fs::File::open(P_SaveGameFile(i as i32)) else {
-                M_StringCopy(slot, EMPTYSTRING);
-                LoadMenu[i].status = 0;
-                continue;
-            };
-            // Like the C `fread`, a short read is ignored.
-            let _ = file.read(slot);
-            LoadMenu[i].status = 1;
-        }
+    for i in 0..load_end {
+        let mut slot = MENU.borrow().savegamestrings[i];
+        let status = match std::fs::File::open(unsafe { P_SaveGameFile(i as i32) }) {
+            Ok(mut file) => {
+                // Like the C `fread`, a short read is ignored.
+                let _ = file.read(&mut slot);
+                1
+            }
+            Err(_) => {
+                M_StringCopy(&mut slot, EMPTYSTRING);
+                0
+            }
+        };
+        MENU.borrow_mut().savegamestrings[i] = slot;
+        MENU_PAGES.borrow_mut().LoadMenu[i].status = status;
     }
 }
 
 /// Draw the Load Game menu page: title patch plus one bordered slot row per save slot.
 fn M_DrawLoad() {
-    unsafe {
-        V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_LOADG", 0) as *mut patch_t);
+    V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_LOADG", 0) as *mut patch_t);
 
-        for i in 0..load_end {
-            M_DrawSaveLoadBorder(LoadDef.x as i32, LoadDef.y as i32 + LINEHEIGHT * i as i32);
-            M_WriteText(
-                LoadDef.x as i32,
-                LoadDef.y as i32 + LINEHEIGHT * i as i32,
-                until_nul(&*ptr::addr_of!(savegamestrings[i])),
-            );
-        }
+    let (x, y) = load_slot_origin();
+    let savegamestrings = MENU.borrow().savegamestrings;
+    for (i, description) in savegamestrings.iter().enumerate().take(load_end) {
+        M_DrawSaveLoadBorder(x, y + LINEHEIGHT * i as i32);
+        M_WriteText(x, y + LINEHEIGHT * i as i32, until_nul(description));
     }
 }
 
@@ -625,71 +703,64 @@ fn M_DrawSaveLoadBorder(x: i32, y: i32) {
 fn M_LoadSelect(choice: i32) {
     unsafe {
         G_LoadGame(&P_SaveGameFile(choice));
-        M_ClearMenus();
     }
+    M_ClearMenus();
 }
 
 /// Navigate to the Load Game menu page (suppressed during network games).
 fn M_LoadGame(_choice: i32) {
-    unsafe {
-        if netgame != 0 {
-            M_StartMessage(LOADNET, None, 0);
-            return;
-        }
-        M_SetupNextMenu(&raw mut LoadDef);
+    if unsafe { netgame } != 0 {
+        M_StartMessage(LOADNET, None, 0);
+        return;
     }
+    M_SetupNextMenu(page!(LoadDef));
     M_ReadSaveStrings();
 }
 
 /// Draw the Save Game menu page: title, bordered slot rows, and a blinking cursor when editing.
 fn M_DrawSave() {
-    unsafe {
-        V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_SAVEG", 0) as *mut patch_t);
-        for i in 0..load_end {
-            M_DrawSaveLoadBorder(LoadDef.x as i32, LoadDef.y as i32 + LINEHEIGHT * i as i32);
-            M_WriteText(
-                LoadDef.x as i32,
-                LoadDef.y as i32 + LINEHEIGHT * i as i32,
-                until_nul(&*ptr::addr_of!(savegamestrings[i])),
-            );
-        }
+    V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_SAVEG", 0) as *mut patch_t);
+    let (x, y) = load_slot_origin();
+    let (savegamestrings, save_string_enter, save_slot) = {
+        let menu = MENU.borrow();
+        (menu.savegamestrings, menu.saveStringEnter, menu.saveSlot)
+    };
+    for (i, description) in savegamestrings.iter().enumerate().take(load_end) {
+        M_DrawSaveLoadBorder(x, y + LINEHEIGHT * i as i32);
+        M_WriteText(x, y + LINEHEIGHT * i as i32, until_nul(description));
+    }
 
-        if saveStringEnter != 0 {
-            let w = M_StringWidth(until_nul(&*ptr::addr_of!(
-                savegamestrings[saveSlot as usize]
-            )));
-            M_WriteText(
-                LoadDef.x as i32 + w,
-                LoadDef.y as i32 + LINEHEIGHT * saveSlot,
-                b"_",
-            );
-        }
+    if save_string_enter != 0 {
+        let w = M_StringWidth(until_nul(&savegamestrings[save_slot as usize]));
+        M_WriteText(x + w, y + LINEHEIGHT * save_slot, b"_");
     }
 }
 
 /// Commit the save to `slot`, clear the menus, and record the slot as the quicksave target.
 fn M_DoSave(slot: i32) {
+    let description = MENU.borrow().savegamestrings[slot as usize];
     unsafe {
-        G_SaveGame(slot, &*ptr::addr_of!(savegamestrings[slot as usize]));
-        M_ClearMenus();
-        if quickSaveSlot == -2 {
-            quickSaveSlot = slot;
-        }
+        G_SaveGame(slot, &description);
+    }
+    M_ClearMenus();
+    let mut menu = MENU.borrow_mut();
+    if menu.quickSaveSlot == -2 {
+        menu.quickSaveSlot = slot;
     }
 }
 
 /// Enter string-editing mode for save slot `choice`, preserving the old description.
 fn M_SaveSelect(choice: i32) {
-    unsafe {
-        saveStringEnter = 1;
-        saveSlot = choice;
-        let slot = &mut *ptr::addr_of_mut!(savegamestrings[choice as usize]);
-        M_StringCopy(&mut *ptr::addr_of_mut!(saveOldString), slot);
-        if until_nul(slot) == EMPTYSTRING {
-            slot[0] = 0;
-        }
-        saveCharIndex = until_nul(slot).len() as i32;
+    let mut menu = MENU.borrow_mut();
+    let menu = &mut *menu;
+    menu.saveStringEnter = 1;
+    menu.saveSlot = choice;
+    let slot = &mut menu.savegamestrings[choice as usize];
+    M_StringCopy(&mut menu.saveOldString, slot);
+    if until_nul(slot) == EMPTYSTRING {
+        slot[0] = 0;
     }
+    menu.saveCharIndex = until_nul(slot).len() as i32;
 }
 
 /// Navigate to the Save Game menu page (suppressed when not in-game or not at `GS_LEVEL`).
@@ -703,8 +774,8 @@ fn M_SaveGame(_choice: i32) {
         if gamestate != GS_LEVEL {
             return;
         }
-        M_SetupNextMenu(&raw mut SaveDef);
     }
+    M_SetupNextMenu(page!(SaveDef));
     M_ReadSaveStrings();
 }
 
@@ -723,44 +794,43 @@ fn M_QuickSave() {
         if gamestate != GS_LEVEL {
             return;
         }
-        if quickSaveSlot < 0 {
-            M_StartControlPanel();
-            M_ReadSaveStrings();
-            M_SetupNextMenu(&raw mut SaveDef);
-            quickSaveSlot = -2;
-            return;
-        }
-        let prompt = format!(
-            "quicksave over your game named\n\n'{}'?\n\npress y or n.",
-            quick_save_name()
-        );
-        M_StartMessage(
-            &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
-            Some(M_QuickSaveResponse),
-            1,
-        );
     }
+    if MENU.borrow().quickSaveSlot < 0 {
+        M_StartControlPanel();
+        M_ReadSaveStrings();
+        M_SetupNextMenu(page!(SaveDef));
+        MENU.borrow_mut().quickSaveSlot = -2;
+        return;
+    }
+    let prompt = format!(
+        "quicksave over your game named\n\n'{}'?\n\npress y or n.",
+        quick_save_name()
+    );
+    M_StartMessage(
+        &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
+        Some(M_QuickSaveResponse),
+        1,
+    );
 }
 
 /// Description of the quicksave slot, for the quicksave/quickload prompts.
 ///
-/// # Safety
-/// `quickSaveSlot` must be a valid slot index.
-unsafe fn quick_save_name() -> String {
-    String::from_utf8_lossy(until_nul(&*ptr::addr_of!(
-        savegamestrings[quickSaveSlot as usize]
-    )))
+/// # Panics
+/// If `quickSaveSlot` is not a valid slot index.
+fn quick_save_name() -> String {
+    let menu = MENU.borrow();
+    String::from_utf8_lossy(until_nul(
+        &menu.savegamestrings[menu.quickSaveSlot as usize],
+    ))
     .into_owned()
 }
 
 /// Confirmation callback for the quicksave y/n prompt; saves if `key` is the confirm key.
 fn M_QuickSaveResponse(key: i32) {
-    use crate::engine::misc::controls::key_menu_confirm;
-    unsafe {
-        if key == key_menu_confirm {
-            M_DoSave(quickSaveSlot);
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
-        }
+    if key == CONTROLS.borrow().key_menu_confirm {
+        let slot = MENU.borrow().quickSaveSlot;
+        M_DoSave(slot);
+        S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
     }
 }
 
@@ -768,35 +838,31 @@ fn M_QuickSaveResponse(key: i32) {
 ///
 /// Suppressed during network games. Shows a y/n confirmation before loading.
 fn M_QuickLoad() {
-    unsafe {
-        if netgame != 0 {
-            M_StartMessage(QLOADNET, None, 0);
-            return;
-        }
-        if quickSaveSlot < 0 {
-            M_StartMessage(QSAVESPOT, None, 0);
-            return;
-        }
-        let prompt = format!(
-            "do you want to quickload the game named\n\n'{}'?\n\npress y or n.",
-            quick_save_name()
-        );
-        M_StartMessage(
-            &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
-            Some(M_QuickLoadResponse),
-            1,
-        );
+    if unsafe { netgame } != 0 {
+        M_StartMessage(QLOADNET, None, 0);
+        return;
     }
+    if MENU.borrow().quickSaveSlot < 0 {
+        M_StartMessage(QSAVESPOT, None, 0);
+        return;
+    }
+    let prompt = format!(
+        "do you want to quickload the game named\n\n'{}'?\n\npress y or n.",
+        quick_save_name()
+    );
+    M_StartMessage(
+        &clamp_to_buffer(prompt, PROMPT_BUFFER_SIZE),
+        Some(M_QuickLoadResponse),
+        1,
+    );
 }
 
 /// Confirmation callback for the quickload y/n prompt; loads if `key` is the confirm key.
 fn M_QuickLoadResponse(key: i32) {
-    use crate::engine::misc::controls::key_menu_confirm;
-    unsafe {
-        if key == key_menu_confirm {
-            M_LoadSelect(quickSaveSlot);
-            S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
-        }
+    if key == CONTROLS.borrow().key_menu_confirm {
+        let slot = MENU.borrow().quickSaveSlot;
+        M_LoadSelect(slot);
+        S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
     }
 }
 
@@ -805,78 +871,72 @@ fn M_QuickLoadResponse(key: i32) {
 /// Selects the correct WAD lump (`HELP`, `HELP1`, or `HELP2`) and skull
 /// position based on `gameversion` and `gamemode`.
 fn M_DrawReadThis1() {
-    unsafe {
-        inhelpscreens = 1;
+    MENU.borrow_mut().inhelpscreens = 1;
 
-        let lumpname: &[u8];
-        let skullx: i16;
-        let skully: i16;
+    let lumpname: &[u8];
+    let skullx: i16;
+    let skully: i16;
 
-        match gameversion {
-            doom::mode::exe_doom_1_666
-            | doom::mode::exe_doom_1_7
-            | doom::mode::exe_doom_1_8
-            | doom::mode::exe_doom_1_9
-            | doom::mode::exe_hacx => {
-                if gamemode == doom::mode::commercial {
-                    lumpname = b"HELP";
-                    skullx = 330;
-                    skully = 165;
-                } else {
-                    lumpname = b"HELP2";
-                    skullx = 280;
-                    skully = 185;
-                }
-            }
-            doom::mode::exe_ultimate | doom::mode::exe_chex => {
-                lumpname = b"HELP1";
-                skullx = 280;
-                skully = 185;
-            }
-            doom::mode::exe_final | doom::mode::exe_final2 => {
+    match gameversion() {
+        doom::mode::exe_doom_1_666
+        | doom::mode::exe_doom_1_7
+        | doom::mode::exe_doom_1_8
+        | doom::mode::exe_doom_1_9
+        | doom::mode::exe_hacx => {
+            if gamemode() == doom::mode::commercial {
                 lumpname = b"HELP";
                 skullx = 330;
                 skully = 165;
-            }
-            _ => {
-                i_error!("Unhandled game version");
+            } else {
+                lumpname = b"HELP2";
+                skullx = 280;
+                skully = 185;
             }
         }
-
-        V_DrawPatchDirect(0, 0, W_CacheLumpName(lumpname, 0) as *mut patch_t);
-        ReadDef1.x = skullx;
-        ReadDef1.y = skully;
+        doom::mode::exe_ultimate | doom::mode::exe_chex => {
+            lumpname = b"HELP1";
+            skullx = 280;
+            skully = 185;
+        }
+        doom::mode::exe_final | doom::mode::exe_final2 => {
+            lumpname = b"HELP";
+            skullx = 330;
+            skully = 165;
+        }
+        _ => {
+            i_error!("Unhandled game version");
+        }
     }
+
+    V_DrawPatchDirect(0, 0, W_CacheLumpName(lumpname, 0) as *mut patch_t);
+    let mut pages = MENU_PAGES.borrow_mut();
+    pages.ReadDef1.x = skullx;
+    pages.ReadDef1.y = skully;
 }
 
 /// Draw the second "Read This" help screen (`HELP1` lump).
 fn M_DrawReadThis2() {
-    unsafe {
-        inhelpscreens = 1;
-        V_DrawPatchDirect(0, 0, W_CacheLumpName(b"HELP1", 0) as *mut patch_t);
-    }
+    MENU.borrow_mut().inhelpscreens = 1;
+    V_DrawPatchDirect(0, 0, W_CacheLumpName(b"HELP1", 0) as *mut patch_t);
 }
 
 /// Draw the Sound Volume menu page: title patch and two thermometer sliders.
 fn M_DrawSound() {
-    use crate::engine::sound::{musicVolume, sfxVolume};
-    unsafe {
-        V_DrawPatchDirect(60, 38, W_CacheLumpName(b"M_SVOL", 0) as *mut patch_t);
+    use crate::engine::sound::{SoundState, SOUND};
+    let SoundState {
+        sfxVolume,
+        musicVolume,
+        ..
+    } = SOUND.get();
+    let (x, y) = {
+        let pages = MENU_PAGES.borrow();
+        (pages.SoundDef.x as i32, pages.SoundDef.y as i32)
+    };
+    V_DrawPatchDirect(60, 38, W_CacheLumpName(b"M_SVOL", 0) as *mut patch_t);
 
-        M_DrawThermo(
-            SoundDef.x as i32,
-            SoundDef.y as i32 + LINEHEIGHT * (sfx_vol as i32 + 1),
-            16,
-            sfxVolume,
-        );
+    M_DrawThermo(x, y + LINEHEIGHT * (sfx_vol as i32 + 1), 16, sfxVolume);
 
-        M_DrawThermo(
-            SoundDef.x as i32,
-            SoundDef.y as i32 + LINEHEIGHT * (music_vol as i32 + 1),
-            16,
-            musicVolume,
-        );
-    }
+    M_DrawThermo(x, y + LINEHEIGHT * (music_vol as i32 + 1), 16, musicVolume);
 }
 
 /// No-op activation callback for the Sound Volume menu item (navigation handled elsewhere).
@@ -884,36 +944,40 @@ fn M_Sound(_choice: i32) {}
 
 /// Adjust the SFX volume slider; `choice` 0 decrements, 1 increments (range 0-15).
 fn M_SfxVol(choice: i32) {
-    use crate::engine::sound::sfxVolume;
-    unsafe {
+    use crate::engine::sound::SOUND;
+    let sfxVolume = {
+        let mut sound = SOUND.borrow_mut();
         match choice {
-            0 if sfxVolume > 0 => {
-                sfxVolume -= 1;
+            0 if sound.sfxVolume > 0 => {
+                sound.sfxVolume -= 1;
             }
-            1 if sfxVolume < 15 => {
-                sfxVolume += 1;
+            1 if sound.sfxVolume < 15 => {
+                sound.sfxVolume += 1;
             }
             _ => {}
         }
-        S_SetSfxVolume(sfxVolume * 8);
-    }
+        sound.sfxVolume
+    };
+    S_SetSfxVolume(sfxVolume * 8);
 }
 
 /// Adjust the music volume slider; `choice` 0 decrements, 1 increments (range 0-15).
 fn M_MusicVol(choice: i32) {
-    use crate::engine::sound::musicVolume;
-    unsafe {
+    use crate::engine::sound::SOUND;
+    let musicVolume = {
+        let mut sound = SOUND.borrow_mut();
         match choice {
-            0 if musicVolume > 0 => {
-                musicVolume -= 1;
+            0 if sound.musicVolume > 0 => {
+                sound.musicVolume -= 1;
             }
-            1 if musicVolume < 15 => {
-                musicVolume += 1;
+            1 if sound.musicVolume < 15 => {
+                sound.musicVolume += 1;
             }
             _ => {}
         }
-        S_SetMusicVolume(musicVolume * 8);
-    }
+        sound.musicVolume
+    };
+    S_SetMusicVolume(musicVolume * 8);
 }
 
 /// Draw the "DOOM" title graphic at the top of the main menu.
@@ -932,16 +996,14 @@ fn M_DrawNewGame() {
 /// Shows an error message if in a network game (except demo playback).
 /// Skips the episode menu for Doom II (commercial) and Chex Quest.
 fn M_NewGame(_choice: i32) {
-    unsafe {
-        if netgame != 0 && demoplayback == 0 {
-            M_StartMessage(NEWGAME, None, 0);
-            return;
-        }
-        if gamemode == doom::mode::commercial || gameversion == doom::mode::exe_chex {
-            M_SetupNextMenu(&raw mut NewDef);
-        } else {
-            M_SetupNextMenu(&raw mut EpiDef);
-        }
+    if unsafe { netgame != 0 && demoplayback == 0 } {
+        M_StartMessage(NEWGAME, None, 0);
+        return;
+    }
+    if gamemode() == doom::mode::commercial || gameversion() == doom::mode::exe_chex {
+        M_SetupNextMenu(page!(NewDef));
+    } else {
+        M_SetupNextMenu(page!(EpiDef));
     }
 }
 
@@ -950,19 +1012,16 @@ fn M_DrawEpisode() {
     V_DrawPatchDirect(54, 38, W_CacheLumpName(b"M_EPISOD", 0) as *mut patch_t);
 }
 
-/// Selected episode index (0-based), set by `M_Episode` and consumed by `M_ChooseSkill`.
-static mut epi: i32 = 0;
-
 /// Confirmation callback for the Nightmare skill prompt; starts the game if `key` confirms.
 fn M_VerifyNightmare(key: i32) {
-    use crate::engine::misc::controls::key_menu_confirm;
-    unsafe {
-        if key != key_menu_confirm {
-            return;
-        }
-        G_DeferedInitNew(4, epi + 1, 1);
-        M_ClearMenus();
+    if key != CONTROLS.borrow().key_menu_confirm {
+        return;
     }
+    let epi = MENU.borrow().epi;
+    unsafe {
+        G_DeferedInitNew(4, epi + 1, 1);
+    }
+    M_ClearMenus();
 }
 
 /// Start a new game at the given skill level, or prompt for confirmation on Nightmare.
@@ -971,10 +1030,11 @@ fn M_ChooseSkill(choice: i32) {
         M_StartMessage(NIGHTMARE, Some(M_VerifyNightmare), 1);
         return;
     }
+    let epi = MENU.borrow().epi;
     unsafe {
         G_DeferedInitNew(choice, epi + 1, 1);
-        M_ClearMenus();
     }
+    M_ClearMenus();
 }
 
 /// Store the chosen episode index and navigate to the skill menu.
@@ -982,55 +1042,60 @@ fn M_ChooseSkill(choice: i32) {
 /// Shows a shareware-restriction message if episode > 0 in shareware mode.
 /// Clamps episode 4 to episode 0 in registered mode (which only has three episodes).
 fn M_Episode(choice: i32) {
-    unsafe {
-        if gamemode == doom::mode::shareware && choice != 0 {
-            M_StartMessage(SWSTRING, None, 0);
-            M_SetupNextMenu(&raw mut ReadDef1);
-            return;
-        }
-        if gamemode == doom::mode::registered && choice > 2 {
-            epi = 0;
-        } else {
-            epi = choice;
-        }
-        M_SetupNextMenu(&raw mut NewDef);
+    if gamemode() == doom::mode::shareware && choice != 0 {
+        M_StartMessage(SWSTRING, None, 0);
+        M_SetupNextMenu(page!(ReadDef1));
+        return;
     }
+    MENU.borrow_mut().epi = if gamemode() == doom::mode::registered && choice > 2 {
+        0
+    } else {
+        choice
+    };
+    M_SetupNextMenu(page!(NewDef));
 }
 
 /// Draw the Options menu page: title patch, detail/message toggles, and thermometer sliders.
 fn M_DrawOptions() {
-    unsafe {
-        V_DrawPatchDirect(108, 15, W_CacheLumpName(b"M_OPTTTL", 0) as *mut patch_t);
+    V_DrawPatchDirect(108, 15, W_CacheLumpName(b"M_OPTTTL", 0) as *mut patch_t);
 
-        let detail_names: [&[u8]; 2] = [b"M_GDHIGH", b"M_GDLOW"];
-        let msg_names: [&[u8]; 2] = [b"M_MSGOFF", b"M_MSGON"];
+    let detail_names: [&[u8]; 2] = [b"M_GDHIGH", b"M_GDLOW"];
+    let msg_names: [&[u8]; 2] = [b"M_MSGOFF", b"M_MSGON"];
 
-        V_DrawPatchDirect(
-            OptionsDef.x as i32 + 175,
-            OptionsDef.y as i32 + LINEHEIGHT * detail as i32,
-            W_CacheLumpName(detail_names[detailLevel as usize], 0) as *mut patch_t,
-        );
+    let (x, y) = {
+        let pages = MENU_PAGES.borrow();
+        (pages.OptionsDef.x as i32, pages.OptionsDef.y as i32)
+    };
+    let (detail_level, show_messages, mouse_sensitivity, screen_size) = {
+        let menu = MENU.borrow();
+        (
+            menu.detailLevel,
+            menu.showMessages,
+            menu.mouseSensitivity,
+            menu.screenSize,
+        )
+    };
 
-        V_DrawPatchDirect(
-            OptionsDef.x as i32 + 120,
-            OptionsDef.y as i32 + LINEHEIGHT * messages as i32,
-            W_CacheLumpName(msg_names[showMessages as usize], 0) as *mut patch_t,
-        );
+    V_DrawPatchDirect(
+        x + 175,
+        y + LINEHEIGHT * detail as i32,
+        W_CacheLumpName(detail_names[detail_level as usize], 0) as *mut patch_t,
+    );
 
-        M_DrawThermo(
-            OptionsDef.x as i32,
-            OptionsDef.y as i32 + LINEHEIGHT * (mousesens as i32 + 1),
-            10,
-            mouseSensitivity,
-        );
+    V_DrawPatchDirect(
+        x + 120,
+        y + LINEHEIGHT * messages as i32,
+        W_CacheLumpName(msg_names[show_messages as usize], 0) as *mut patch_t,
+    );
 
-        M_DrawThermo(
-            OptionsDef.x as i32,
-            OptionsDef.y as i32 + LINEHEIGHT * (scrnsize as i32 + 1),
-            9,
-            screenSize,
-        );
-    }
+    M_DrawThermo(
+        x,
+        y + LINEHEIGHT * (mousesens as i32 + 1),
+        10,
+        mouse_sensitivity,
+    );
+
+    M_DrawThermo(x, y + LINEHEIGHT * (scrnsize as i32 + 1), 9, screen_size);
 }
 
 /// No-op activation callback for the Options menu item (navigation handled by `M_Responder`).
@@ -1038,42 +1103,47 @@ fn M_Options(_choice: i32) {}
 
 /// Toggle the `showMessages` setting and display a confirmation HUD message.
 fn M_ChangeMessages(_choice: i32) {
+    let show_messages = {
+        let mut menu = MENU.borrow_mut();
+        menu.showMessages = 1 - menu.showMessages;
+        menu.showMessages
+    };
     unsafe {
-        showMessages = 1 - showMessages;
-        if showMessages == 0 {
+        if show_messages == 0 {
             M_Menu_SetPlayerMessage(MSGOFF);
         } else {
             M_Menu_SetPlayerMessage(MSGON);
         }
-        HUD.borrow_mut().message_dontfuckwithme = 1;
     }
+    HUD.borrow_mut().message_dontfuckwithme = 1;
 }
 
 /// Confirmation callback for "End Game"; clears menus if the player confirms.
 fn M_EndGameResponse(key: i32) {
-    use crate::engine::misc::controls::key_menu_confirm;
+    if key != CONTROLS.borrow().key_menu_confirm {
+        return;
+    }
+    let (current_menu, item_on) = {
+        let menu = MENU.borrow();
+        (menu.currentMenu, menu.itemOn)
+    };
     unsafe {
-        if key != key_menu_confirm {
-            return;
-        }
-        (*currentMenu).lastOn = itemOn;
+        (*current_menu).lastOn = item_on;
     }
     M_ClearMenus();
 }
 
 /// Prompt the player to confirm ending the current game (suppressed if not in-game or in a network game).
 fn M_EndGame(_choice: i32) {
-    unsafe {
-        if usergame == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
-            return;
-        }
-        if netgame != 0 {
-            M_StartMessage(NETEND, None, 0);
-            return;
-        }
-        M_StartMessage(ENDGAME, Some(M_EndGameResponse), 1);
+    if unsafe { usergame } == 0 {
+        S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
+        return;
     }
+    if unsafe { netgame } != 0 {
+        M_StartMessage(NETEND, None, 0);
+        return;
+    }
+    M_StartMessage(ENDGAME, Some(M_EndGameResponse), 1);
 }
 
 /// No-op placeholder for the "Read This" main-menu item (navigation is in `M_Responder`).
@@ -1081,12 +1151,10 @@ fn M_ReadThis(_choice: i32) {}
 
 /// Handle "done" from the first help screen: advance to page 2 or finish, depending on game version.
 fn M_ReadThis2(_choice: i32) {
-    unsafe {
-        if gameversion <= doom::mode::exe_doom_1_9 && gamemode != doom::mode::commercial {
-            M_SetupNextMenu(&raw mut ReadDef2);
-        } else {
-            M_FinishReadThis(0);
-        }
+    if gameversion() <= doom::mode::exe_doom_1_9 && gamemode() != doom::mode::commercial {
+        M_SetupNextMenu(page!(ReadDef2));
+    } else {
+        M_FinishReadThis(0);
     }
 }
 
@@ -1118,31 +1186,29 @@ static quitsounds2: [i32; 8] = [
 
 /// Confirmation callback for the quit prompt; plays a quit sound and exits if the player confirms.
 fn M_QuitResponse(key: i32) {
-    use crate::engine::misc::controls::key_menu_confirm;
-    unsafe {
-        if key != key_menu_confirm {
-            return;
-        }
-        if netgame == 0 {
-            if gamemode == doom::mode::commercial {
-                S_StartSound(ptr::null_mut(), quitsounds2[((gametic >> 2) & 7) as usize]);
-            } else {
-                S_StartSound(ptr::null_mut(), quitsounds[((gametic >> 2) & 7) as usize]);
-            }
-            I_WaitVBL(105);
-        }
-        I_Quit();
+    if key != CONTROLS.borrow().key_menu_confirm {
+        return;
     }
+    if unsafe { netgame } == 0 {
+        if gamemode() == doom::mode::commercial {
+            S_StartSound(
+                ptr::null_mut(),
+                quitsounds2[((gametic() >> 2) & 7) as usize],
+            );
+        } else {
+            S_StartSound(ptr::null_mut(), quitsounds[((gametic() >> 2) & 7) as usize]);
+        }
+        I_WaitVBL(105);
+    }
+    I_Quit();
 }
 
 /// Select a game-specific quit quip from `doom1_endmsg` or `doom2_endmsg`, keyed by `gametic`.
 fn M_SelectEndMessage() -> &'static str {
-    unsafe {
-        if logical_gamemission() == doom::mode::doom {
-            doom1_endmsg[(gametic as usize) & 7]
-        } else {
-            doom2_endmsg[(gametic as usize) & 7]
-        }
+    if logical_gamemission() == doom::mode::doom {
+        doom1_endmsg[(gametic() as usize) & 7]
+    } else {
+        doom2_endmsg[(gametic() as usize) & 7]
     }
 }
 
@@ -1158,25 +1224,28 @@ fn M_QuitDOOM(_choice: i32) {
 
 /// Adjust mouse sensitivity; `choice` 0 decrements, 1 increments (range 0-9).
 fn M_ChangeSensitivity(choice: i32) {
-    unsafe {
-        match choice {
-            0 if mouseSensitivity > 0 => {
-                mouseSensitivity -= 1;
-            }
-            1 if mouseSensitivity < 9 => {
-                mouseSensitivity += 1;
-            }
-            _ => {}
+    let mut menu = MENU.borrow_mut();
+    match choice {
+        0 if menu.mouseSensitivity > 0 => {
+            menu.mouseSensitivity -= 1;
         }
+        1 if menu.mouseSensitivity < 9 => {
+            menu.mouseSensitivity += 1;
+        }
+        _ => {}
     }
 }
 
 /// Toggle graphics detail between high (0) and low (1) and display a HUD confirmation.
 fn M_ChangeDetail(_choice: i32) {
+    let (screenblocks, detail_level) = {
+        let mut menu = MENU.borrow_mut();
+        menu.detailLevel = 1 - menu.detailLevel;
+        (menu.screenblocks, menu.detailLevel)
+    };
     unsafe {
-        detailLevel = 1 - detailLevel;
-        R_SetViewSize(screenblocks, detailLevel);
-        if detailLevel == 0 {
+        R_SetViewSize(screenblocks, detail_level);
+        if detail_level == 0 {
             M_Menu_SetPlayerMessage(DETAILHI);
         } else {
             M_Menu_SetPlayerMessage(DETAILLO);
@@ -1188,19 +1257,23 @@ fn M_ChangeDetail(_choice: i32) {
 ///
 /// Updates both `screenSize` and `screenblocks`, then calls `R_SetViewSize`.
 fn M_SizeDisplay(choice: i32) {
-    unsafe {
+    let (screenblocks, detail_level) = {
+        let mut menu = MENU.borrow_mut();
         match choice {
-            0 if screenSize > 0 => {
-                screenblocks -= 1;
-                screenSize -= 1;
+            0 if menu.screenSize > 0 => {
+                menu.screenblocks -= 1;
+                menu.screenSize -= 1;
             }
-            1 if screenSize < 8 => {
-                screenblocks += 1;
-                screenSize += 1;
+            1 if menu.screenSize < 8 => {
+                menu.screenblocks += 1;
+                menu.screenSize += 1;
             }
             _ => {}
         }
-        R_SetViewSize(screenblocks, detailLevel);
+        (menu.screenblocks, menu.detailLevel)
+    };
+    unsafe {
+        R_SetViewSize(screenblocks, detail_level);
     }
 }
 
@@ -1235,22 +1308,20 @@ fn M_DrawSelCell(_menu: *mut menu_t, _item: i32) {}
 /// `routine` is an optional callback invoked with the key pressed to dismiss.
 /// `input` is non-zero when a specific key (y/n or confirm/abort) is required.
 fn M_StartMessage(string: &str, routine: Option<fn(i32)>, input: i32) {
-    unsafe {
-        messageLastMenuActive = menuactive;
-        messageToPrint = 1;
-        messageString = string.to_owned();
-        messageRoutine = routine;
-        messageNeedsInput = input;
-        menuactive = 1;
-    }
+    let mut menu = MENU.borrow_mut();
+    menu.messageLastMenuActive = menu.menuactive;
+    menu.messageToPrint = 1;
+    menu.messageString = string.to_owned();
+    menu.messageRoutine = routine;
+    menu.messageNeedsInput = input;
+    menu.menuactive = 1;
 }
 
 /// Dismiss the current modal overlay message and restore the previous `menuactive` state.
 fn M_StopMessage() {
-    unsafe {
-        menuactive = messageLastMenuActive;
-        messageToPrint = 0;
-    }
+    let mut menu = MENU.borrow_mut();
+    menu.menuactive = menu.messageLastMenuActive;
+    menu.messageToPrint = 0;
 }
 
 /// Return the pixel width of `string` rendered in the HUD font.
@@ -1321,19 +1392,6 @@ fn IsNullKey(key: i32) -> bool {
     key == KEY_PAUSE || key == KEY_CAPSLOCK || key == KEY_SCRLCK || key == KEY_NUMLOCK
 }
 
-/// Tic time after which the next joystick event will be processed (rate-limiting).
-static mut RESP_joywait: i32 = 0;
-/// Tic time after which the next mouse event will be processed (rate-limiting).
-static mut RESP_mousewait: i32 = 0;
-/// Accumulated mouse y movement since the last `RESP_lasty` reset.
-static mut RESP_mousey: i32 = 0;
-/// Mouse y baseline; updated in 30-unit steps to produce discrete menu scrolls.
-static mut RESP_lasty: i32 = 0;
-/// Accumulated mouse x movement since the last `RESP_lastx` reset.
-static mut RESP_mousex: i32 = 0;
-/// Mouse x baseline; updated in 30-unit steps to produce discrete menu navigation.
-static mut RESP_lastx: i32 = 0;
-
 /// Handle an input event for the menu system.
 ///
 /// Translates joystick, mouse, and keyboard events into menu navigation actions
@@ -1344,13 +1402,33 @@ static mut RESP_lastx: i32 = 0;
 /// Returns `Boolean::TRUE` if the event was consumed, `Boolean::FALSE` otherwise.
 /// Called by `G_Responder` in `g_game.c`.
 pub fn M_Responder(ev: *mut event_t) -> Boolean {
-    use crate::engine::misc::controls::{
-        joybmenu, key_menu_abort, key_menu_activate, key_menu_back, key_menu_confirm,
-        key_menu_decscreen, key_menu_detail, key_menu_down, key_menu_endgame, key_menu_forward,
-        key_menu_gamma, key_menu_help, key_menu_incscreen, key_menu_left, key_menu_load,
-        key_menu_messages, key_menu_qload, key_menu_qsave, key_menu_quit, key_menu_right,
-        key_menu_save, key_menu_screenshot, key_menu_up, key_menu_volume,
-    };
+    let ControlsState {
+        joybmenu,
+        key_menu_abort,
+        key_menu_activate,
+        key_menu_back,
+        key_menu_confirm,
+        key_menu_decscreen,
+        key_menu_detail,
+        key_menu_down,
+        key_menu_endgame,
+        key_menu_forward,
+        key_menu_gamma,
+        key_menu_help,
+        key_menu_incscreen,
+        key_menu_left,
+        key_menu_load,
+        key_menu_messages,
+        key_menu_qload,
+        key_menu_qsave,
+        key_menu_quit,
+        key_menu_right,
+        key_menu_save,
+        key_menu_screenshot,
+        key_menu_up,
+        key_menu_volume,
+        ..
+    } = CONTROLS.get();
 
     unsafe {
         let ev = &*ev;
@@ -1369,9 +1447,13 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
 
         // window close button
         if ev.kind == EV_QUIT {
+            let (menuactive, message_to_print, message_routine) = {
+                let menu = MENU.borrow();
+                (menu.menuactive, menu.messageToPrint, menu.messageRoutine)
+            };
             if menuactive != 0
-                && messageToPrint != 0
-                && messageRoutine.map(|f| f as usize).unwrap_or(0)
+                && message_to_print != 0
+                && message_routine.map(|f| f as usize).unwrap_or(0)
                     == M_QuitResponse as *const () as usize
             {
                 M_QuitResponse(key_menu_confirm);
@@ -1385,68 +1467,84 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         let mut ch: i32 = 0;
         let mut key: i32 = -1;
 
-        if ev.kind == EV_JOYSTICK && RESP_joywait < I_GetTime() {
+        let (mut joywait, mut mousewait) = {
+            let menu = MENU.borrow();
+            (menu.joywait, menu.mousewait)
+        };
+        if ev.kind == EV_JOYSTICK && joywait < I_GetTime() {
             if ev.data3 < 0 {
                 key = key_menu_up;
-                RESP_joywait = I_GetTime() + 5;
+                joywait = I_GetTime() + 5;
             } else if ev.data3 > 0 {
                 key = key_menu_down;
-                RESP_joywait = I_GetTime() + 5;
+                joywait = I_GetTime() + 5;
             }
             if ev.data2 < 0 {
                 key = key_menu_left;
-                RESP_joywait = I_GetTime() + 2;
+                joywait = I_GetTime() + 2;
             } else if ev.data2 > 0 {
                 key = key_menu_right;
-                RESP_joywait = I_GetTime() + 2;
+                joywait = I_GetTime() + 2;
             }
             if ev.data1 & 1 != 0 {
                 key = key_menu_forward;
-                RESP_joywait = I_GetTime() + 5;
+                joywait = I_GetTime() + 5;
             }
             if ev.data1 & 2 != 0 {
                 key = key_menu_back;
-                RESP_joywait = I_GetTime() + 5;
+                joywait = I_GetTime() + 5;
             }
             if joybmenu >= 0 && (ev.data1 & (1 << joybmenu)) != 0 {
                 key = key_menu_activate;
-                RESP_joywait = I_GetTime() + 5;
+                joywait = I_GetTime() + 5;
             }
-        } else if ev.kind == EV_MOUSE && RESP_mousewait < I_GetTime() {
-            RESP_mousey += ev.data3;
-            if RESP_mousey < RESP_lasty - 30 {
+            MENU.borrow_mut().joywait = joywait;
+        } else if ev.kind == EV_MOUSE && mousewait < I_GetTime() {
+            let (mut mousey, mut lasty, mut mousex, mut lastx) = {
+                let menu = MENU.borrow();
+                (menu.mousey, menu.lasty, menu.mousex, menu.lastx)
+            };
+            mousey += ev.data3;
+            if mousey < lasty - 30 {
                 key = key_menu_down;
-                RESP_mousewait = I_GetTime() + 5;
-                RESP_lasty -= 30;
-                RESP_mousey = RESP_lasty;
-            } else if RESP_mousey > RESP_lasty + 30 {
+                mousewait = I_GetTime() + 5;
+                lasty -= 30;
+                mousey = lasty;
+            } else if mousey > lasty + 30 {
                 key = key_menu_up;
-                RESP_mousewait = I_GetTime() + 5;
-                RESP_lasty += 30;
-                RESP_mousey = RESP_lasty;
+                mousewait = I_GetTime() + 5;
+                lasty += 30;
+                mousey = lasty;
             }
 
-            RESP_mousex += ev.data2;
-            if RESP_mousex < RESP_lastx - 30 {
+            mousex += ev.data2;
+            if mousex < lastx - 30 {
                 key = key_menu_left;
-                RESP_mousewait = I_GetTime() + 5;
-                RESP_lastx -= 30;
-                RESP_mousex = RESP_lastx;
-            } else if RESP_mousex > RESP_lastx + 30 {
+                mousewait = I_GetTime() + 5;
+                lastx -= 30;
+                mousex = lastx;
+            } else if mousex > lastx + 30 {
                 key = key_menu_right;
-                RESP_mousewait = I_GetTime() + 5;
-                RESP_lastx += 30;
-                RESP_mousex = RESP_lastx;
+                mousewait = I_GetTime() + 5;
+                lastx += 30;
+                mousex = lastx;
             }
 
             if ev.data1 & 1 != 0 {
                 key = key_menu_forward;
-                RESP_mousewait = I_GetTime() + 15;
+                mousewait = I_GetTime() + 15;
             }
             if ev.data1 & 2 != 0 {
                 key = key_menu_back;
-                RESP_mousewait = I_GetTime() + 15;
+                mousewait = I_GetTime() + 15;
             }
+
+            let mut menu = MENU.borrow_mut();
+            menu.mousewait = mousewait;
+            menu.mousey = mousey;
+            menu.lasty = lasty;
+            menu.mousex = mousex;
+            menu.lastx = lastx;
         } else if ev.kind == EV_KEYDOWN {
             key = ev.data1;
             ch = ev.data2;
@@ -1457,22 +1555,33 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         }
 
         // Save Game string input
-        if saveStringEnter != 0 {
+        if MENU.borrow().saveStringEnter != 0 {
             if key == KEY_BACKSPACE {
-                if saveCharIndex > 0 {
-                    saveCharIndex -= 1;
-                    savegamestrings[saveSlot as usize][saveCharIndex as usize] = 0;
+                let mut menu = MENU.borrow_mut();
+                if menu.saveCharIndex > 0 {
+                    menu.saveCharIndex -= 1;
+                    let (slot, index) = (menu.saveSlot as usize, menu.saveCharIndex as usize);
+                    menu.savegamestrings[slot][index] = 0;
                 }
             } else if key == KEY_ESCAPE {
-                saveStringEnter = 0;
+                let mut menu = MENU.borrow_mut();
+                let menu = &mut *menu;
+                menu.saveStringEnter = 0;
                 M_StringCopy(
-                    &mut *ptr::addr_of_mut!(savegamestrings[saveSlot as usize]),
-                    &*ptr::addr_of!(saveOldString),
+                    &mut menu.savegamestrings[menu.saveSlot as usize],
+                    &menu.saveOldString,
                 );
             } else if key == KEY_ENTER {
-                saveStringEnter = 0;
-                if savegamestrings[saveSlot as usize][0] != 0 {
-                    M_DoSave(saveSlot);
+                let (save_slot, description_start) = {
+                    let mut menu = MENU.borrow_mut();
+                    menu.saveStringEnter = 0;
+                    (
+                        menu.saveSlot,
+                        menu.savegamestrings[menu.saveSlot as usize][0],
+                    )
+                };
+                if description_start != 0 {
+                    M_DoSave(save_slot);
                 }
             } else {
                 if vanilla_keyboard_mapping != 0 {
@@ -1488,23 +1597,35 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                     return Boolean::TRUE;
                 }
 
+                let (save_slot, save_char_index, description) = {
+                    let menu = MENU.borrow();
+                    (
+                        menu.saveSlot as usize,
+                        menu.saveCharIndex,
+                        menu.savegamestrings[menu.saveSlot as usize],
+                    )
+                };
                 if (32..=127).contains(&ch)
-                    && saveCharIndex < (SAVESTRINGSIZE as i32 - 1)
-                    && M_StringWidth(until_nul(&*ptr::addr_of!(
-                        savegamestrings[saveSlot as usize]
-                    ))) < (SAVESTRINGSIZE as i32 - 2) * 8
+                    && save_char_index < (SAVESTRINGSIZE as i32 - 1)
+                    && M_StringWidth(until_nul(&description)) < (SAVESTRINGSIZE as i32 - 2) * 8
                 {
-                    savegamestrings[saveSlot as usize][saveCharIndex as usize] = ch as u8;
-                    saveCharIndex += 1;
-                    savegamestrings[saveSlot as usize][saveCharIndex as usize] = 0;
+                    let mut menu = MENU.borrow_mut();
+                    let index = save_char_index as usize;
+                    menu.savegamestrings[save_slot][index] = ch as u8;
+                    menu.saveCharIndex += 1;
+                    menu.savegamestrings[save_slot][index + 1] = 0;
                 }
             }
             return Boolean::TRUE;
         }
 
         // Messages that need input
-        if messageToPrint != 0 {
-            if messageNeedsInput != 0
+        let (message_to_print, message_needs_input) = {
+            let menu = MENU.borrow();
+            (menu.messageToPrint, menu.messageNeedsInput)
+        };
+        if message_to_print != 0 {
+            if message_needs_input != 0
                 && key != b' ' as i32
                 && key != KEY_ESCAPE
                 && key != key_menu_confirm
@@ -1513,24 +1634,29 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 return Boolean::FALSE;
             }
 
-            menuactive = messageLastMenuActive;
-            messageToPrint = 0;
-            if let Some(r) = messageRoutine {
+            let message_routine = {
+                let mut menu = MENU.borrow_mut();
+                menu.menuactive = menu.messageLastMenuActive;
+                menu.messageToPrint = 0;
+                menu.messageRoutine
+            };
+            if let Some(r) = message_routine {
                 r(key);
             }
-            menuactive = 0;
+            MENU.borrow_mut().menuactive = 0;
             S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
             return Boolean::TRUE;
         }
 
         // Screenshot
+        let devparm = DOOM_MAIN.borrow().devparm;
         if (devparm != 0 && key == key_menu_help) || (key != 0 && key == key_menu_screenshot) {
             G_ScreenShot();
             return Boolean::TRUE;
         }
 
         // F-Keys (when menu not active)
-        if menuactive == 0 {
+        if !menu_active() {
             if key == key_menu_decscreen {
                 if automap_active() || HUD.borrow().chat_on != 0 {
                     return Boolean::FALSE;
@@ -1547,12 +1673,15 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 return Boolean::TRUE;
             } else if key == key_menu_help {
                 M_StartControlPanel();
-                if gamemode == doom::mode::retail {
-                    currentMenu = &raw mut ReadDef2;
-                } else {
-                    currentMenu = &raw mut ReadDef1;
+                {
+                    let mut menu = MENU.borrow_mut();
+                    menu.currentMenu = if gamemode() == doom::mode::retail {
+                        page!(ReadDef2)
+                    } else {
+                        page!(ReadDef1)
+                    };
+                    menu.itemOn = 0;
                 }
-                itemOn = 0;
                 S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_save {
@@ -1567,8 +1696,11 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 return Boolean::TRUE;
             } else if key == key_menu_volume {
                 M_StartControlPanel();
-                currentMenu = &raw mut SoundDef;
-                itemOn = sfx_vol as i16;
+                {
+                    let mut menu = MENU.borrow_mut();
+                    menu.currentMenu = page!(SoundDef);
+                    menu.itemOn = sfx_vol as i16;
+                }
                 S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_detail {
@@ -1596,10 +1728,14 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
                 M_QuitDOOM(0);
                 return Boolean::TRUE;
             } else if key == key_menu_gamma {
-                usegamma += 1;
-                if usegamma > 4 {
-                    usegamma = 0;
-                }
+                let usegamma = {
+                    let mut video = VIDEO.borrow_mut();
+                    video.usegamma += 1;
+                    if video.usegamma > 4 {
+                        video.usegamma = 0;
+                    }
+                    video.usegamma
+                };
                 M_Menu_SetPlayerMessage(gammamsg[usegamma as usize]);
                 I_SetPalette(W_CacheLumpName(b"PLAYPAL", 0) as *mut u8);
                 return Boolean::TRUE;
@@ -1607,7 +1743,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         }
 
         // Pop-up menu?
-        if menuactive == 0 {
+        if !menu_active() {
             if key == key_menu_activate {
                 M_StartControlPanel();
                 S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
@@ -1616,76 +1752,87 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             return Boolean::FALSE;
         }
 
-        // Keys usable within menu
+        // Keys usable within menu. The page is reached through
+        // `currentMenu`; no guard is held while an item routine runs.
+        let (current_menu, mut item_on) = {
+            let menu = MENU.borrow();
+            (menu.currentMenu, menu.itemOn)
+        };
+        let item_status = |index: i16| (*(*current_menu).menuitems.offset(index as isize)).status;
+        let item_routine = |index: i16| (*(*current_menu).menuitems.offset(index as isize)).routine;
         if key == key_menu_down {
             loop {
-                if itemOn + 1 > (*currentMenu).numitems - 1 {
-                    itemOn = 0;
+                if item_on + 1 > (*current_menu).numitems - 1 {
+                    item_on = 0;
                 } else {
-                    itemOn += 1;
+                    item_on += 1;
                 }
+                MENU.borrow_mut().itemOn = item_on;
                 S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
-                if (*(*currentMenu).menuitems.offset(itemOn as isize)).status != -1 {
+                if item_status(item_on) != -1 {
                     break;
                 }
             }
             return Boolean::TRUE;
         } else if key == key_menu_up {
             loop {
-                if itemOn == 0 {
-                    itemOn = (*currentMenu).numitems - 1;
+                if item_on == 0 {
+                    item_on = (*current_menu).numitems - 1;
                 } else {
-                    itemOn -= 1;
+                    item_on -= 1;
                 }
+                MENU.borrow_mut().itemOn = item_on;
                 S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
-                if (*(*currentMenu).menuitems.offset(itemOn as isize)).status != -1 {
+                if item_status(item_on) != -1 {
                     break;
                 }
             }
             return Boolean::TRUE;
         } else if key == key_menu_left {
-            let item = &*(*currentMenu).menuitems.offset(itemOn as isize);
-            if item.status == 2 {
-                if let Some(routine) = item.routine {
+            if item_status(item_on) == 2 {
+                if let Some(routine) = item_routine(item_on) {
                     S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     routine(0);
                 }
             }
             return Boolean::TRUE;
         } else if key == key_menu_right {
-            let item = &*(*currentMenu).menuitems.offset(itemOn as isize);
-            if item.status == 2 {
-                if let Some(routine) = item.routine {
+            if item_status(item_on) == 2 {
+                if let Some(routine) = item_routine(item_on) {
                     S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     routine(1);
                 }
             }
             return Boolean::TRUE;
         } else if key == key_menu_forward {
-            let item = &*(*currentMenu).menuitems.offset(itemOn as isize);
-            if let Some(routine) = item.routine {
-                if item.status != 0 {
-                    (*currentMenu).lastOn = itemOn;
-                    if item.status == 2 {
+            let status = item_status(item_on);
+            if let Some(routine) = item_routine(item_on) {
+                if status != 0 {
+                    (*current_menu).lastOn = item_on;
+                    if status == 2 {
                         routine(1);
                         S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                     } else {
-                        routine(itemOn as i32);
+                        routine(item_on as i32);
                         S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
                     }
                 }
             }
             return Boolean::TRUE;
         } else if key == key_menu_activate {
-            (*currentMenu).lastOn = itemOn;
+            (*current_menu).lastOn = item_on;
             M_ClearMenus();
             S_StartSound(ptr::null_mut(), Sfx::Swtchx as i32);
             return Boolean::TRUE;
         } else if key == key_menu_back {
-            (*currentMenu).lastOn = itemOn;
-            if !(*currentMenu).prevMenu.is_null() {
-                currentMenu = (*currentMenu).prevMenu;
-                itemOn = (*currentMenu).lastOn;
+            (*current_menu).lastOn = item_on;
+            let previous_menu = (*current_menu).prevMenu;
+            if !previous_menu.is_null() {
+                {
+                    let mut menu = MENU.borrow_mut();
+                    menu.currentMenu = previous_menu;
+                    menu.itemOn = (*previous_menu).lastOn;
+                }
                 S_StartSound(ptr::null_mut(), Sfx::Swtchn as i32);
             }
             return Boolean::TRUE;
@@ -1694,16 +1841,18 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         // Keyboard shortcut
         if ch != 0 || IsNullKey(key) {
             let ch_u = ch as u8;
-            for i in (itemOn + 1)..(*currentMenu).numitems {
-                if (*(*currentMenu).menuitems.offset(i as isize)).alphaKey == ch_u {
-                    itemOn = i;
+            let item_alpha_key =
+                |index: i16| (*(*current_menu).menuitems.offset(index as isize)).alphaKey;
+            for i in (item_on + 1)..(*current_menu).numitems {
+                if item_alpha_key(i) == ch_u {
+                    MENU.borrow_mut().itemOn = i;
                     S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                     return Boolean::TRUE;
                 }
             }
-            for i in 0..=itemOn {
-                if (*(*currentMenu).menuitems.offset(i as isize)).alphaKey == ch_u {
-                    itemOn = i;
+            for i in 0..=item_on {
+                if item_alpha_key(i) == ch_u {
+                    MENU.borrow_mut().itemOn = i;
                     S_StartSound(ptr::null_mut(), Sfx::Pstop as i32);
                     return Boolean::TRUE;
                 }
@@ -1719,14 +1868,13 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
 /// No-op if the menu is already active. Called from `M_Responder` and from
 /// game code that needs to force the menu open (e.g. after a level warp cheat).
 pub fn M_StartControlPanel() {
-    unsafe {
-        if menuactive != 0 {
-            return;
-        }
-        menuactive = 1;
-        currentMenu = &raw mut MainDef;
-        itemOn = (*currentMenu).lastOn;
+    let mut menu = MENU.borrow_mut();
+    if menu.menuactive != 0 {
+        return;
     }
+    menu.menuactive = 1;
+    menu.currentMenu = page!(MainDef);
+    menu.itemOn = unsafe { (*menu.currentMenu).lastOn };
 }
 
 /// Draw the menu overlay for the current frame.
@@ -1738,11 +1886,19 @@ pub fn M_StartControlPanel() {
 /// `d_main.c` every frame.
 pub fn M_Drawer() {
     unsafe {
-        inhelpscreens = 0;
+        let message_to_print = {
+            let mut menu = MENU.borrow_mut();
+            menu.inhelpscreens = 0;
+            menu.messageToPrint
+        };
 
-        if messageToPrint != 0 {
-            let message = (*ptr::addr_of!(messageString)).as_bytes();
-            messy = SCREENHEIGHT / 2 - M_StringHeight(message) / 2;
+        if message_to_print != 0 {
+            let (message, mut messx) = {
+                let menu = MENU.borrow();
+                (menu.messageString.clone(), menu.messx)
+            };
+            let message = message.as_bytes();
+            let mut messy = SCREENHEIGHT / 2 - M_StringHeight(message) / 2;
             // Each line is cut to the C `string[80]` buffer; text without a
             // newline that does not fit continues on the next line.
             let line_limit = MESSAGE_LINE_SIZE - 1;
@@ -1765,23 +1921,30 @@ pub fn M_Drawer() {
                 M_WriteText(messx, messy, line);
                 messy += (*HUD.borrow().hu_font[0]).height.get() as i32;
             }
+            let mut menu = MENU.borrow_mut();
+            menu.messx = messx;
+            menu.messy = messy;
             return;
         }
 
-        if menuactive == 0 {
+        if !menu_active() {
             return;
         }
 
-        if let Some(r) = (*currentMenu).routine {
+        if let Some(r) = (*MENU.borrow().currentMenu).routine {
             r();
         }
 
-        let x = (*currentMenu).x as i32;
-        let y = (*currentMenu).y as i32;
-        let max = (*currentMenu).numitems as usize;
+        let (current_menu, item_on, which_skull) = {
+            let menu = MENU.borrow();
+            (menu.currentMenu, menu.itemOn, menu.whichSkull)
+        };
+        let x = (*current_menu).x as i32;
+        let y = (*current_menu).y as i32;
+        let max = (*current_menu).numitems as usize;
 
         for i in 0..max {
-            let name = (*(*currentMenu).menuitems.add(i)).name;
+            let name = (*(*current_menu).menuitems.add(i)).name;
             if !name.is_empty() {
                 V_DrawPatchDirect(
                     x,
@@ -1793,25 +1956,22 @@ pub fn M_Drawer() {
 
         V_DrawPatchDirect(
             x + SKULLXOFF,
-            (*currentMenu).y as i32 - 5 + itemOn as i32 * LINEHEIGHT,
-            W_CacheLumpName(skullName[whichSkull as usize], 0) as *mut patch_t,
+            (*current_menu).y as i32 - 5 + item_on as i32 * LINEHEIGHT,
+            W_CacheLumpName(skullName[which_skull as usize], 0) as *mut patch_t,
         );
     }
 }
 
 /// Close all menus by setting `menuactive` to 0.
 fn M_ClearMenus() {
-    unsafe {
-        menuactive = 0;
-    }
+    MENU.borrow_mut().menuactive = 0;
 }
 
 /// Switch to `menudef` as the active menu page and restore its last-highlighted item.
 fn M_SetupNextMenu(menudef: *mut menu_t) {
-    unsafe {
-        currentMenu = menudef;
-        itemOn = (*currentMenu).lastOn;
-    }
+    let mut menu = MENU.borrow_mut();
+    menu.currentMenu = menudef;
+    menu.itemOn = unsafe { (*menudef).lastOn };
 }
 
 /// Advance the skull cursor animation by one game tic.
@@ -1819,69 +1979,75 @@ fn M_SetupNextMenu(menudef: *mut menu_t) {
 /// Decrements `skullAnimCounter` and toggles `whichSkull` every 8 tics.
 /// Called by `G_Ticker` in `g_game.c`.
 pub fn M_Ticker() {
-    unsafe {
-        skullAnimCounter -= 1;
-        if skullAnimCounter <= 0 {
-            whichSkull ^= 1;
-            skullAnimCounter = 8;
-        }
+    let mut menu = MENU.borrow_mut();
+    menu.skullAnimCounter -= 1;
+    if menu.skullAnimCounter <= 0 {
+        menu.whichSkull ^= 1;
+        menu.skullAnimCounter = 8;
     }
 }
 
 /// One-time initialisation of the menu subsystem.
 ///
 /// Resets all state variables, wires `menuitems` pointers and `prevMenu`
-/// cross-links that cannot be set at static-initialisation time (Rust forbids
-/// raw-pointer cross-references between statics), trims the episode menu to
-/// three items for pre-Ultimate builds, and removes "Read This" from the main
-/// menu in commercial mode. Called once from `D_DoomMain` in `d_main.c`.
+/// cross-links that a const initializer cannot set (they are addresses
+/// inside `MENU_PAGES` itself), trims the episode menu to three items for
+/// pre-Ultimate builds, and removes "Read This" from the main menu in
+/// commercial mode. Called once from `D_DoomMain` in `d_main.c`.
 pub fn M_Init() {
-    unsafe {
-        currentMenu = &raw mut MainDef;
-        menuactive = 0;
-        itemOn = (*currentMenu).lastOn;
-        whichSkull = 0;
-        skullAnimCounter = 10;
-        screenSize = screenblocks - 3;
-        messageToPrint = 0;
-        messageString = String::new();
-        messageLastMenuActive = menuactive;
-        quickSaveSlot = -1;
+    {
+        let mut menu = MENU.borrow_mut();
+        menu.currentMenu = page!(MainDef);
+        menu.menuactive = 0;
+        menu.itemOn = unsafe { (*menu.currentMenu).lastOn };
+        menu.whichSkull = 0;
+        menu.skullAnimCounter = 10;
+        menu.screenSize = menu.screenblocks - 3;
+        menu.messageToPrint = 0;
+        menu.messageString = String::new();
+        menu.messageLastMenuActive = menu.menuactive;
+        menu.quickSaveSlot = -1;
+    }
 
+    // The pages point at each other, so the links are taken from their
+    // stable addresses inside `MENU_PAGES`, and written through them.
+    let pages = MENU_PAGES.as_ptr();
+    unsafe {
         // Set menuitems pointers (couldn't be done at static init time)
-        MainDef.menuitems = std::ptr::addr_of_mut!(MainMenu[0]);
-        EpiDef.menuitems = std::ptr::addr_of_mut!(EpisodeMenu[0]);
-        NewDef.menuitems = std::ptr::addr_of_mut!(NewGameMenu[0]);
-        OptionsDef.menuitems = std::ptr::addr_of_mut!(OptionsMenu[0]);
-        ReadDef1.menuitems = std::ptr::addr_of_mut!(ReadMenu1[0]);
-        ReadDef2.menuitems = std::ptr::addr_of_mut!(ReadMenu2[0]);
-        SoundDef.menuitems = std::ptr::addr_of_mut!(SoundMenu[0]);
-        LoadDef.menuitems = std::ptr::addr_of_mut!(LoadMenu[0]);
-        SaveDef.menuitems = std::ptr::addr_of_mut!(SaveMenu[0]);
+        (*pages).MainDef.menuitems = (&raw mut (*pages).MainMenu).cast();
+        (*pages).EpiDef.menuitems = (&raw mut (*pages).EpisodeMenu).cast();
+        (*pages).NewDef.menuitems = (&raw mut (*pages).NewGameMenu).cast();
+        (*pages).OptionsDef.menuitems = (&raw mut (*pages).OptionsMenu).cast();
+        (*pages).ReadDef1.menuitems = (&raw mut (*pages).ReadMenu1).cast();
+        (*pages).ReadDef2.menuitems = (&raw mut (*pages).ReadMenu2).cast();
+        (*pages).SoundDef.menuitems = (&raw mut (*pages).SoundMenu).cast();
+        (*pages).LoadDef.menuitems = (&raw mut (*pages).LoadMenu).cast();
+        (*pages).SaveDef.menuitems = (&raw mut (*pages).SaveMenu).cast();
 
         // Set up prevMenu cross-links
-        EpiDef.prevMenu = &raw mut MainDef;
-        NewDef.prevMenu = &raw mut EpiDef;
-        OptionsDef.prevMenu = &raw mut MainDef;
-        ReadDef1.prevMenu = &raw mut MainDef;
-        ReadDef2.prevMenu = &raw mut ReadDef1;
-        SoundDef.prevMenu = &raw mut OptionsDef;
-        LoadDef.prevMenu = &raw mut MainDef;
-        SaveDef.prevMenu = &raw mut MainDef;
+        (*pages).EpiDef.prevMenu = &raw mut (*pages).MainDef;
+        (*pages).NewDef.prevMenu = &raw mut (*pages).EpiDef;
+        (*pages).OptionsDef.prevMenu = &raw mut (*pages).MainDef;
+        (*pages).ReadDef1.prevMenu = &raw mut (*pages).MainDef;
+        (*pages).ReadDef2.prevMenu = &raw mut (*pages).ReadDef1;
+        (*pages).SoundDef.prevMenu = &raw mut (*pages).OptionsDef;
+        (*pages).LoadDef.prevMenu = &raw mut (*pages).MainDef;
+        (*pages).SaveDef.prevMenu = &raw mut (*pages).MainDef;
 
-        match gamemode {
+        match gamemode() {
             doom::mode::commercial => {
-                ptr::write(&mut MainMenu[readthis], ptr::read(&MainMenu[quitdoom]));
-                MainDef.numitems -= 1;
-                MainDef.y += 8;
-                NewDef.prevMenu = &raw mut MainDef;
+                let quit_item = ptr::read(&raw const (*pages).MainMenu[quitdoom]);
+                ptr::write(&raw mut (*pages).MainMenu[readthis], quit_item);
+                (*pages).MainDef.numitems -= 1;
+                (*pages).MainDef.y += 8;
+                (*pages).NewDef.prevMenu = &raw mut (*pages).MainDef;
             }
             doom::mode::shareware | doom::mode::registered | doom::mode::retail => {}
             _ => {}
         }
 
-        if gameversion < doom::mode::exe_ultimate {
-            EpiDef.numitems -= 1;
+        if gameversion() < doom::mode::exe_ultimate {
+            (*pages).EpiDef.numitems -= 1;
         }
     }
 }

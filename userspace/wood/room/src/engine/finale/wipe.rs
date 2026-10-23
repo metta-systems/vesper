@@ -28,7 +28,7 @@ use crate::engine::{
 };
 
 use crate::engine::{
-    interface::video::{I_ReadScreen, I_VideoBuffer},
+    interface::video::{video_buffer, I_ReadScreen},
     render_2d::{V_DrawBlock, V_MarkRect},
     zone::{Z_Free, Z_Malloc},
 };
@@ -430,7 +430,7 @@ pub fn wipe_ScreenWipe(wipeno: i32, _x: i32, _y: i32, width: i32, height: i32, t
             let starting = wipe.go == 0;
             if starting {
                 wipe.go = 1;
-                wipe.scr = I_VideoBuffer;
+                wipe.scr = video_buffer();
             }
             starting
         };

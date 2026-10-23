@@ -289,7 +289,7 @@ pub static mut setdetail: i32 = 0;
 
 use crate::engine::{
     doom::main_loop::NetUpdate,
-    misc::menu::{detailLevel, screenblocks},
+    misc::menu::MENU,
     play::setup::{nodes, numnodes, subsectors},
     render_3d::{
         bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
@@ -891,7 +891,11 @@ pub unsafe fn R_Init() {
     print!(".");
     R_InitTables();
     print!(".");
-    R_SetViewSize(screenblocks, detailLevel);
+    let (screenblocks, detail_level) = {
+        let menu = MENU.borrow();
+        (menu.screenblocks, menu.detailLevel)
+    };
+    R_SetViewSize(screenblocks, detail_level);
     R_InitPlanes();
     print!(".");
     R_InitLightTables();

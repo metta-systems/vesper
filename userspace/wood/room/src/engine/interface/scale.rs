@@ -54,6 +54,7 @@
 
 use {
     crate::engine::{
+        global::Global,
         misc::argv::M_CheckParm,
         zone::{Z_Free, Z_Malloc},
     },
@@ -89,37 +90,59 @@ use crate::engine::{
     zone::PU_STATIC,
 };
 
-/// Source framebuffer for the current scale call, set by
-/// [`I_InitScale`]. Points to Doom's `SCREENWIDTH * SCREENHEIGHT`
-/// paletted backbuffer (usually `I_VideoBuffer`).
-static mut src_buffer: *mut u8 = ptr::null_mut();
+/// Scaler state (C `i_scale.c` globals).
+#[derive(Clone, Copy)]
+pub struct ScaleState {
+    /// Source framebuffer for the current scale call, set by
+    /// [`I_InitScale`]. Points to Doom's `SCREENWIDTH * SCREENHEIGHT`
+    /// paletted backbuffer (usually the video buffer).
+    src_buffer: *mut u8,
+    /// Destination framebuffer for the current scale call, set by
+    /// [`I_InitScale`]. Points to the platform surface pixels
+    /// (e.g. `screen->pixels` in the SDL backend).
+    dest_buffer: *mut u8,
+    /// Pitch (bytes per row) of `dest_buffer`. May exceed
+    /// `width * bytes_per_pixel` when the surface has trailing padding.
+    dest_pitch: i32,
+    /// 20/80 and 40/60 palette blend tables. `stretch_tables[0]` is the
+    /// 20/80 mix, `stretch_tables[1]` is the 40/60 mix; the 60/40 and 80/20
+    /// mixes are reached by swapping the two source pixels when indexing.
+    /// Each table is `256 * 256` bytes mapped to the nearest palette index.
+    /// Lazily populated by [`i_init_stretch_tables`].
+    stretch_tables: [*mut u8; 2],
+    /// 50/50 palette blend table used only by the `mode_squash_3x` mode
+    /// (800x600). Lazily populated by [`i_init_squash_table`].
+    half_stretch_table: *mut u8,
+}
 
-/// Destination framebuffer for the current scale call, set by
-/// [`I_InitScale`]. Points to the platform surface pixels
-/// (e.g. `screen->pixels` in the SDL backend).
-static mut dest_buffer: *mut u8 = ptr::null_mut();
+impl ScaleState {
+    /// No buffers installed, no tables generated.
+    pub const fn new() -> Self {
+        Self {
+            src_buffer: ptr::null_mut(),
+            dest_buffer: ptr::null_mut(),
+            dest_pitch: 0,
+            stretch_tables: [ptr::null_mut(); 2],
+            half_stretch_table: ptr::null_mut(),
+        }
+    }
+}
 
-/// Pitch (bytes per row) of [`dest_buffer`]. May exceed
-/// `width * bytes_per_pixel` when the surface has trailing padding.
-static mut dest_pitch: i32 = 0;
+impl Default for ScaleState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// 20/80 and 40/60 palette blend tables. `stretch_tables[0]` is the
-/// 20/80 mix, `stretch_tables[1]` is the 40/60 mix; the 60/40 and 80/20
-/// mixes are reached by swapping the two source pixels when indexing.
-/// Each table is `256 * 256` bytes mapped to the nearest palette index.
-/// Lazily populated by [`i_init_stretch_tables`].
-static mut stretch_tables: [*mut u8; 2] = [ptr::null_mut(); 2];
-
-/// 50/50 palette blend table used only by the `mode_squash_3x` mode
-/// (800x600). Lazily populated by [`i_init_squash_table`].
-static mut half_stretch_table: *mut u8 = ptr::null_mut();
+/// The scaler state.
+pub static SCALE: Global<ScaleState> = Global::new(ScaleState::new());
 
 /// Records the source/destination buffers and destination pitch that
 /// every subsequent driver call in this module will operate on.
 ///
 /// Called by `i_video.c` once per frame before invoking the active
 /// `screen_mode_t::draw_screen` callback. The function stashes the
-/// arguments in module-level statics so the C-style driver signature
+/// arguments in [`SCALE`] so the C-style driver signature
 /// `(x1, y1, x2, y2) -> bool` can remain stateless.
 ///
 /// # Safety
@@ -132,9 +155,16 @@ static mut half_stretch_table: *mut u8 = ptr::null_mut();
 /// - The buffers must outlive every driver call until the next
 ///   `I_InitScale` invocation.
 pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pitch: i32) {
-    src_buffer = _src_buffer;
-    dest_buffer = _dest_buffer;
-    dest_pitch = _dest_pitch;
+    let mut scale = SCALE.borrow_mut();
+    scale.src_buffer = _src_buffer;
+    scale.dest_buffer = _dest_buffer;
+    scale.dest_pitch = _dest_pitch;
+}
+
+/// The installed source buffer, destination buffer and destination pitch.
+fn buffers() -> (*mut u8, *mut u8, i32) {
+    let scale = SCALE.get();
+    (scale.src_buffer, scale.dest_buffer, scale.dest_pitch)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +183,7 @@ pub unsafe fn I_InitScale(_src_buffer: *mut u8, _dest_buffer: *mut u8, _dest_pit
 /// Callable only after [`I_InitScale`] has installed valid buffers; the
 /// rectangle must lie within `[0, SCREENWIDTH) x [0, SCREENHEIGHT)`.
 unsafe fn i_scale_1x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     let w = (x2 - x1) as usize;
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
     let mut screenp = dest_buffer.add((y1 * dest_pitch + x1) as usize);
@@ -181,6 +212,7 @@ unsafe fn i_scale_1x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
 /// Same preconditions as [`i_scale_1x`]; additionally `N` must be in
 /// `1..=5` so the scratch row array is large enough.
 unsafe fn scale_nx<const N: usize>(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     let multi_pitch = dest_pitch * N as i32;
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
     let base = dest_buffer.add(((y1 * dest_pitch + x1) * N as i32) as usize);
@@ -406,15 +438,17 @@ unsafe fn generate_stretch_table(palette: *mut u8, pct: i32) -> *mut u8 {
 ///
 /// See [`generate_stretch_table`].
 unsafe fn i_init_stretch_tables(palette: *mut u8) {
-    if !stretch_tables[0].is_null() {
+    if !SCALE.get().stretch_tables[0].is_null() {
         return;
     }
     print!("I_InitStretchTables: Generating lookup tables..");
     flush_stdout();
-    stretch_tables[0] = generate_stretch_table(palette, 20);
+    let twenty_eighty = generate_stretch_table(palette, 20);
+    SCALE.borrow_mut().stretch_tables[0] = twenty_eighty;
     print!("..");
     flush_stdout();
-    stretch_tables[1] = generate_stretch_table(palette, 40);
+    let forty_sixty = generate_stretch_table(palette, 40);
+    SCALE.borrow_mut().stretch_tables[1] = forty_sixty;
     println!();
 }
 
@@ -426,12 +460,13 @@ unsafe fn i_init_stretch_tables(palette: *mut u8) {
 ///
 /// See [`generate_stretch_table`].
 unsafe fn i_init_squash_table(palette: *mut u8) {
-    if !half_stretch_table.is_null() {
+    if !SCALE.get().half_stretch_table.is_null() {
         return;
     }
     print!("I_InitSquashTable: Generating lookup table..");
     flush_stdout();
-    half_stretch_table = generate_stretch_table(palette, 50);
+    let half_stretch_table = generate_stretch_table(palette, 50);
+    SCALE.borrow_mut().half_stretch_table = half_stretch_table;
     println!();
 }
 
@@ -447,19 +482,26 @@ unsafe fn i_init_squash_table(palette: *mut u8) {
 ///
 /// - `palette` must satisfy `find_nearest_color`'s contract.
 /// - Any pointers previously handed out from the `stretch_tables` /
-///   `half_stretch_table` statics are invalidated by this call.
+///   `half_stretch_table` fields are invalidated by this call.
 pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
+    let ScaleState {
+        stretch_tables,
+        half_stretch_table,
+        ..
+    } = SCALE.get();
     if !stretch_tables[0].is_null() {
         Z_Free(stretch_tables[0] as *mut c_void);
         Z_Free(stretch_tables[1] as *mut c_void);
         println!("I_ResetScaleTables: Regenerating lookup tables..");
-        stretch_tables[0] = generate_stretch_table(palette, 20);
-        stretch_tables[1] = generate_stretch_table(palette, 40);
+        let twenty_eighty = generate_stretch_table(palette, 20);
+        let forty_sixty = generate_stretch_table(palette, 40);
+        SCALE.borrow_mut().stretch_tables = [twenty_eighty, forty_sixty];
     }
     if !half_stretch_table.is_null() {
         Z_Free(half_stretch_table as *mut c_void);
         println!("I_ResetScaleTables: Regenerating lookup table..");
-        half_stretch_table = generate_stretch_table(palette, 50);
+        let half_stretch_table = generate_stretch_table(palette, 50);
+        SCALE.borrow_mut().half_stretch_table = half_stretch_table;
     }
 }
 
@@ -480,8 +522,15 @@ pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
 /// # Safety
 ///
 /// See [`I_InitScale`]; additionally [`i_init_stretch_tables`] must
-/// have been called so [`stretch_tables`] is populated.
+/// have been called so `stretch_tables` is populated.
 unsafe fn i_stretch_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let ScaleState {
+        src_buffer,
+        dest_buffer,
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -538,6 +587,13 @@ unsafe fn i_stretch_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 ///
 /// See [`i_stretch_1x`].
 unsafe fn i_stretch_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let ScaleState {
+        src_buffer,
+        dest_buffer,
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -607,6 +663,13 @@ unsafe fn i_stretch_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 ///
 /// See [`i_stretch_1x`].
 unsafe fn i_stretch_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let ScaleState {
+        src_buffer,
+        dest_buffer,
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -690,6 +753,13 @@ unsafe fn i_stretch_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 ///
 /// See [`i_stretch_1x`].
 unsafe fn i_stretch_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let ScaleState {
+        src_buffer,
+        dest_buffer,
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -786,6 +856,7 @@ unsafe fn i_stretch_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 ///
 /// See [`i_stretch_1x`].
 unsafe fn i_stretch_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -893,8 +964,9 @@ macro_rules! draw_pixel5 {
 ///
 /// `dest` must point to at least `(SCREENWIDTH / 5) * 4 = 256` writable
 /// bytes; `src` must point to at least `SCREENWIDTH` readable bytes.
-/// [`stretch_tables`] must be populated.
+/// `stretch_tables` must be populated.
 unsafe fn write_squashed_line_1x(dest: *mut u8, src: *mut u8) {
+    let stretch_tables = SCALE.get().stretch_tables;
     let mut d = dest;
     let mut s = src;
     for _ in 0..(SCREENWIDTH / 5) {
@@ -919,8 +991,13 @@ unsafe fn write_squashed_line_1x(dest: *mut u8, src: *mut u8) {
 ///
 /// `dest` must point to at least `(SCREENWIDTH / 5) * 8` writable bytes
 /// and the row at `dest + dest_pitch` must also be writable for the
-/// same width. [`stretch_tables`] must be populated.
+/// same width. `stretch_tables` must be populated.
 unsafe fn write_squashed_line_2x(dest: *mut u8, src: *mut u8) {
+    let ScaleState {
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     let mut d = dest;
     let mut d2 = dest.add(dest_pitch as usize);
     let mut s = src;
@@ -947,15 +1024,20 @@ unsafe fn write_squashed_line_2x(dest: *mut u8, src: *mut u8) {
 
 /// Compresses 2 source columns into 5 destination columns across three
 /// stacked rows for the 3x squash driver (800x600 mode). Uses the
-/// 50/50 [`half_stretch_table`] for the single blended column in each
+/// 50/50 `half_stretch_table` for the single blended column in each
 /// pair.
 ///
 /// # Safety
 ///
 /// `dest`, `dest + dest_pitch` and `dest + 2*dest_pitch` must each be
-/// writable for `(SCREENWIDTH / 2) * 5` bytes. [`half_stretch_table`]
+/// writable for `(SCREENWIDTH / 2) * 5` bytes. `half_stretch_table`
 /// must be populated.
 unsafe fn write_squashed_line_3x(dest: *mut u8, src: *mut u8) {
+    let ScaleState {
+        dest_pitch,
+        half_stretch_table,
+        ..
+    } = SCALE.get();
     let mut d = dest;
     let mut d2 = dest.add(dest_pitch as usize);
     let mut d3 = dest.add((dest_pitch * 2) as usize);
@@ -980,9 +1062,14 @@ unsafe fn write_squashed_line_3x(dest: *mut u8, src: *mut u8) {
 /// # Safety
 ///
 /// `dest` through `dest + 3*dest_pitch` must each be writable for
-/// `(SCREENWIDTH / 5) * 16` bytes. [`stretch_tables`] must be
+/// `(SCREENWIDTH / 5) * 16` bytes. `stretch_tables` must be
 /// populated.
 unsafe fn write_squashed_line_4x(dest: *mut u8, src: *mut u8) {
+    let ScaleState {
+        dest_pitch,
+        stretch_tables,
+        ..
+    } = SCALE.get();
     let mut d = dest;
     let mut d2 = dest.add(dest_pitch as usize);
     let mut d3 = dest.add((dest_pitch * 2) as usize);
@@ -1033,6 +1120,7 @@ unsafe fn write_squashed_line_4x(dest: *mut u8, src: *mut u8) {
 /// `dest` through `dest + 4*dest_pitch` must each be writable for
 /// `SCREENWIDTH * 4 = 1280` bytes.
 unsafe fn write_squashed_line_5x(dest: *mut u8, src: *mut u8) {
+    let dest_pitch = SCALE.get().dest_pitch;
     let mut d = dest;
     let mut d2 = dest.add(dest_pitch as usize);
     let mut d3 = dest.add((dest_pitch * 2) as usize);
@@ -1057,6 +1145,7 @@ unsafe fn write_squashed_line_5x(dest: *mut u8, src: *mut u8) {
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_1x`].
 unsafe fn i_squash_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1080,6 +1169,7 @@ unsafe fn i_squash_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_2x`].
 unsafe fn i_squash_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1095,14 +1185,15 @@ unsafe fn i_squash_2x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 
 /// 3x squash driver: 800x600 output. Each call to
 /// [`write_squashed_line_3x`] emits three output rows. This is the
-/// special case that relies on [`half_stretch_table`] (initialized by
+/// special case that relies on `half_stretch_table` (initialized by
 /// [`i_init_squash_table`]). Only supports full-screen updates.
 ///
 /// # Safety
 ///
-/// See [`i_stretch_1x`]; additionally [`half_stretch_table`] must be
+/// See [`i_stretch_1x`]; additionally `half_stretch_table` must be
 /// populated.
 unsafe fn i_squash_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1125,6 +1216,7 @@ unsafe fn i_squash_3x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_4x`].
 unsafe fn i_squash_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }
@@ -1147,6 +1239,7 @@ unsafe fn i_squash_4x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
 /// See [`i_stretch_1x`]; same preconditions plus
 /// [`write_squashed_line_5x`].
 unsafe fn i_squash_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
+    let (src_buffer, dest_buffer, dest_pitch) = buffers();
     if _x1 != 0 || _y1 != 0 || _x2 != SCREENWIDTH || _y2 != SCREENHEIGHT {
         return 0;
     }

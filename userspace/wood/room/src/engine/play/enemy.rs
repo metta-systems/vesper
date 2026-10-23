@@ -719,7 +719,7 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
     }
     if (*actor).flags & MF_JUSTATTACKED != 0 {
         (*actor).flags &= !(MF_JUSTATTACKED);
-        if gameskill != sk_nightmare && fastparm == 0 {
+        if gameskill != sk_nightmare && fastparm() == 0 {
             P_NewChaseDir(actor);
         }
         return;
@@ -732,7 +732,7 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
         return;
     }
     if (*(*actor).info).missilestate != 0
-        && !((gameskill) < sk_nightmare && fastparm == 0 && (*actor).movecount != 0)
+        && !((gameskill) < sk_nightmare && fastparm() == 0 && (*actor).movecount != 0)
         && P_CheckMissileRange(actor).is_truthy()
     {
         P_SetMobjState(actor, (*(*actor).info).missilestate as statenum_t);
@@ -1063,7 +1063,7 @@ pub unsafe fn A_Tracer(actor: *mut mobj_t) {
 
     let mut dist: fixed_t;
 
-    if gametic & 3 != 0 {
+    if gametic() & 3 != 0 {
         return;
     }
     P_SpawnPuff((*actor).x, (*actor).y, (*actor).z);
@@ -1637,7 +1637,7 @@ pub unsafe fn A_Explode(thingy: *mut mobj_t) {
 ///
 /// Reads `gameversion`, `gameepisode`, and `gamemap` globals which must be initialised.
 unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
-    if (gameversion as u32) < exe_ultimate as u32 {
+    if (gameversion() as u32) < exe_ultimate as u32 {
         if gamemap != 8 {
             return Boolean::FALSE;
         }
@@ -1692,7 +1692,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         specialdata: std::ptr::null_mut::<c_void>(),
     };
     let _i: i32 = 0;
-    if gamemode as u32 == commercial as u32 {
+    if gamemode() as u32 == commercial as u32 {
         if gamemap != 7 {
             return;
         }
@@ -1722,7 +1722,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         }
         th = (*th).next;
     }
-    if gamemode as u32 == commercial as u32 {
+    if gamemode() as u32 == commercial as u32 {
         if gamemap == 7 {
             if (*mo).kind as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
@@ -2018,7 +2018,7 @@ pub unsafe fn A_SpawnFly(mo: *mut mobj_t) {
 /// `mo` must be non-null. Called through the state-machine action pointer.
 pub unsafe fn A_PlayerScream(mo: *mut mobj_t) {
     let mut sound: i32 = Sfx::Pldeth as i32;
-    if gamemode as u32 == commercial as u32 && (*mo).health < -50 {
+    if gamemode() as u32 == commercial as u32 && (*mo).health < -50 {
         sound = Sfx::Pdiehi as i32;
     }
     S_StartSound(mo, sound);

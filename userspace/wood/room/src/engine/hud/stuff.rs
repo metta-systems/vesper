@@ -45,7 +45,7 @@ use crate::engine::{
         timer::TICRATE,
     },
     misc::{
-        controls::{key_message_refresh, key_multi_msg, key_multi_msgplayer},
+        controls::{ControlsState, CONTROLS},
         until_nul,
     },
     wad::format::patch_t,
@@ -105,6 +105,7 @@ const QUEUESIZE: usize = 128;
 /// * `pack_hacx` is treated as `doom2`.
 /// * All other missions are returned as-is.
 unsafe fn logical_gamemission() -> i32 {
+    let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
     } else if gamemission == doom::mode::pack_hacx {
@@ -437,7 +438,7 @@ use crate::engine::{
     automap::automap_active,
     doom::stat::gamemode,
     game::{consoleplayer, gameepisode, gamemap, netgame, playeringame},
-    misc::menu::showMessages,
+    misc::menu::MENU,
     sound::S_StartSound,
     wad::W_CacheLumpName,
 };
@@ -537,7 +538,7 @@ pub fn HU_Start() {
             _ => "Unknown level",
         };
 
-        if gameversion == doom::mode::exe_chex {
+        if gameversion() == doom::mode::exe_chex {
             title = mapnames[(gamemap - 1) as usize];
         }
 
@@ -635,7 +636,7 @@ pub fn HU_Ticker() {
             )
         };
 
-        if showMessages != 0 || message_dontfuckwithme != 0 {
+        if MENU.borrow().showMessages != 0 || message_dontfuckwithme != 0 {
             // display message if necessary
             let message = (*plr).message;
             if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
@@ -689,7 +690,7 @@ pub fn HU_Ticker() {
                                         hud.message_on = 1;
                                         hud.message_counter = HU_MSGTIMEOUT;
                                     }
-                                    if gamemode == doom::mode::commercial {
+                                    if gamemode() == doom::mode::commercial {
                                         S_StartSound(ptr::null_mut(), Sfx::Radio as i32);
                                     } else {
                                         S_StartSound(ptr::null_mut(), Sfx::Tink as i32);
@@ -783,6 +784,12 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
             (hud.chat_on, hud.altdown, hud.plr)
         };
 
+        let ControlsState {
+            key_message_refresh,
+            key_multi_msg,
+            key_multi_msgplayer,
+            ..
+        } = CONTROLS.get();
         if chat_on == 0 {
             if ev.data1 == key_message_refresh {
                 let mut hud = HUD.borrow_mut();

@@ -729,7 +729,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
             sound = Sfx::Getpow as i32;
         }
         SPR_MEGA => {
-            if gamemode != commercial {
+            if gamemode() != commercial {
                 return;
             }
             player.health = megasphere_health;
@@ -1089,7 +1089,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         (*target).tics = 1;
     }
 
-    if gameversion == exe_chex {
+    if gameversion() == exe_chex {
         return;
     }
 

@@ -450,7 +450,7 @@ use crate::engine::{
 /// wrapper because `FEATURE_DEHACKED` is disabled.
 pub fn P_InitSwitchList() {
     unsafe {
-        let episode: i16 = match gamemode {
+        let episode: i16 = match gamemode() {
             m if m == doom::mode::registered || m == doom::mode::retail => 2,
             m if m == doom::mode::commercial => 3,
             _ => 1,

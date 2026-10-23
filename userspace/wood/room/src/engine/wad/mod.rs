@@ -22,6 +22,7 @@ use {
     crate::{
         engine::{
             doom::{iwad::D_SuggestGameName, mode::D_GameMissionString},
+            global::Global,
             interface::video::{I_BeginRead, I_EndRead},
             misc::{until_nul, M_ExtractFileBase},
             wad::{
@@ -56,19 +57,46 @@ pub struct lumpinfo_t {
     pub next: *mut lumpinfo_t,
 }
 
-/// Pointer to the global lump directory. Mirrors the `lumpinfo` C
-/// global; sized by `numlumps`. Reallocated by `ExtendLumpInfo`
-/// every time a new file is added. Public so other modules (and tests)
-/// can reach it.
-pub static mut lumpinfo: *mut lumpinfo_t = ptr::null_mut();
+/// Lump directory state (C `w_wad.c` globals).
+#[derive(Clone, Copy)]
+pub struct WadState {
+    /// Pointer to the global lump directory. Mirrors the `lumpinfo` C
+    /// global; sized by `numlumps`. Reallocated by `ExtendLumpInfo`
+    /// every time a new file is added. Other modules reach it through
+    /// [`lumpinfo`].
+    lumpinfo: *mut lumpinfo_t,
+    /// Number of entries in `lumpinfo`. Mirrors the C `numlumps` global.
+    numlumps: u32,
+    /// Hash table: `numlumps` buckets, each a singly-linked list through
+    /// `lumpinfo_t::next`. Built lazily by `W_GenerateHashTable` and
+    /// dropped whenever a new file is added.
+    lumphash: *mut *mut lumpinfo_t,
+}
 
-/// Number of entries in `lumpinfo`. Mirrors the C `numlumps` global.
-pub static mut numlumps: u32 = 0;
+impl WadState {
+    /// No lumps loaded.
+    pub const fn new() -> Self {
+        Self {
+            lumpinfo: ptr::null_mut(),
+            numlumps: 0,
+            lumphash: ptr::null_mut(),
+        }
+    }
+}
 
-/// Hash table: `numlumps` buckets, each a singly-linked list through
-/// `lumpinfo_t::next`. Built lazily by `W_GenerateHashTable` and
-/// dropped whenever a new file is added.
-static mut lumphash: *mut *mut lumpinfo_t = ptr::null_mut();
+impl Default for WadState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The lump directory state.
+pub static WAD: Global<WadState> = Global::new(WadState::new());
+
+/// The global lump directory (C `lumpinfo`), [`W_NumLumps`] entries long.
+pub fn lumpinfo() -> *mut lumpinfo_t {
+    WAD.get().lumpinfo
+}
 
 /// Allocation layout of a `lumpinfo` array of `count` entries. At least
 /// one entry is reserved, because the allocator does not take zero-sized
@@ -94,6 +122,9 @@ fn lumpinfo_layout(count: u32) -> std::alloc::Layout {
 /// allocated here for `numlumps` entries. Mirrors the file-static helper
 /// of the same name in `w_wad.c`.
 unsafe fn ExtendLumpInfo(newnumlumps: u32) {
+    let WadState {
+        lumpinfo, numlumps, ..
+    } = WAD.get();
     let newlumpinfo = std::alloc::alloc_zeroed(lumpinfo_layout(newnumlumps)) as *mut lumpinfo_t;
     if newlumpinfo.is_null() {
         i_error!("Couldn't realloc lumpinfo");
@@ -119,8 +150,9 @@ unsafe fn ExtendLumpInfo(newnumlumps: u32) {
     if !lumpinfo.is_null() {
         std::alloc::dealloc(lumpinfo as *mut u8, lumpinfo_layout(numlumps));
     }
-    lumpinfo = newlumpinfo;
-    numlumps = newnumlumps;
+    let mut wad = WAD.borrow_mut();
+    wad.lumpinfo = newlumpinfo;
+    wad.numlumps = newnumlumps;
 }
 
 /// The significant part of a lump name: at most 8 bytes, ending at
@@ -172,7 +204,7 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
             return ptr::null_mut();
         }
 
-        let startlump = numlumps;
+        let startlump = WAD.get().numlumps;
 
         let path = filename.as_bytes();
         let fileinfo = if path.len() < 3 || !path[path.len() - 3..].eq_ignore_ascii_case(b"wad") {
@@ -210,7 +242,7 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
 
         ExtendLumpInfo(startlump + fileinfo.len() as u32);
 
-        let mut lump_p = lumpinfo.add(startlump as usize);
+        let mut lump_p = lumpinfo().add(startlump as usize);
 
         for filelump in &fileinfo {
             (*lump_p).wad_file = wad_file;
@@ -226,9 +258,10 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
             lump_p = lump_p.add(1);
         }
 
+        let lumphash = WAD.get().lumphash;
         if !lumphash.is_null() {
             Z_Free(lumphash as *mut c_void);
-            lumphash = ptr::null_mut();
+            WAD.borrow_mut().lumphash = ptr::null_mut();
         }
 
         wad_file
@@ -238,7 +271,7 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
 /// Return the total number of registered lumps as a signed integer.
 /// Mirrors `W_NumLumps` from `w_wad.c`.
 pub fn W_NumLumps() -> i32 {
-    unsafe { numlumps as i32 }
+    WAD.get().numlumps as i32
 }
 
 /// Look up a lump by name and return its index, or `-1` if not
@@ -249,6 +282,11 @@ pub fn W_NumLumps() -> i32 {
 /// override earlier ones (matching the C implementation).
 /// Names compare case-insensitively via [`lump_names_equal`].
 pub fn W_CheckNumForName(name: &[u8]) -> i32 {
+    let WadState {
+        lumpinfo,
+        numlumps,
+        lumphash,
+    } = WAD.get();
     unsafe {
         if !lumphash.is_null() {
             let hash = (W_LumpNameHash(name) % numlumps) as usize;
@@ -292,6 +330,9 @@ pub fn W_GetNumForName(name: &[u8]) -> i32 {
 /// Return the byte size of `lump`. Errors out via `I_Error` if
 /// `lump` is out of range. Mirrors `W_LumpLength` from `w_wad.c`.
 pub fn W_LumpLength(lump: u32) -> i32 {
+    let WadState {
+        lumpinfo, numlumps, ..
+    } = WAD.get();
     unsafe {
         if lump >= numlumps {
             i_error!("W_LumpLength: {} >= numlumps", lump as i32);
@@ -311,6 +352,9 @@ pub fn W_LumpLength(lump: u32) -> i32 {
 /// when the actual read exceeds `lump.size` (a "shouldn't happen"
 /// defensive log, not present in `w_wad.c`).
 pub fn W_ReadLump(lump: u32, dest: *mut c_void) {
+    let WadState {
+        lumpinfo, numlumps, ..
+    } = WAD.get();
     unsafe {
         if lump >= numlumps {
             i_error!("W_ReadLump: {} >= numlumps", lump as i32);
@@ -357,6 +401,9 @@ pub fn W_ReadLump(lump: u32, dest: *mut c_void) {
 /// `tag` is typically `PU_STATIC` (long-lived) or `PU_CACHE`
 /// (purgeable). Out-of-range `lumpnum` triggers `I_Error`.
 pub fn W_CacheLumpNum(lumpnum: i32, tag: i32) -> *mut c_void {
+    let WadState {
+        lumpinfo, numlumps, ..
+    } = WAD.get();
     unsafe {
         if lumpnum < 0 || (lumpnum as u32) >= numlumps {
             i_error!("W_CacheLumpNum: {} >= numlumps", lumpnum);
@@ -432,6 +479,9 @@ where
 ///
 /// Mirrors `W_ReleaseLumpNum` from `w_wad.c`.
 pub fn W_ReleaseLumpNum(lumpnum: i32) {
+    let WadState {
+        lumpinfo, numlumps, ..
+    } = WAD.get();
     unsafe {
         if lumpnum < 0 || (lumpnum as u32) >= numlumps {
             i_error!("W_ReleaseLumpNum: {} >= numlumps", lumpnum);
@@ -460,13 +510,18 @@ pub fn W_ReleaseLumpName(name: &[u8]) {
 /// invalidate (free) the table so a regeneration must be requested
 /// explicitly.
 pub fn W_GenerateHashTable() {
+    let WadState {
+        lumpinfo,
+        numlumps,
+        lumphash,
+    } = WAD.get();
     unsafe {
         if !lumphash.is_null() {
             Z_Free(lumphash as *mut c_void);
         }
 
         if numlumps > 0 {
-            lumphash = Z_Malloc(
+            let lumphash = Z_Malloc(
                 (std::mem::size_of::<*mut lumpinfo_t>() * numlumps as usize) as i32,
                 PU_STATIC,
                 ptr::null_mut(),
@@ -478,6 +533,7 @@ pub fn W_GenerateHashTable() {
                 (*lumpinfo.add(i as usize)).next = *lumphash.add(hash);
                 *lumphash.add(hash) = lumpinfo.add(i as usize);
             }
+            WAD.borrow_mut().lumphash = lumphash;
         }
     }
 }
@@ -555,12 +611,8 @@ mod tests {
     /// drops first (LIFO), restoring the globals before the storage
     /// itself goes out of scope.
     struct WadTestScope {
-        /// Original `lumpinfo` pointer to restore on drop.
-        saved_lumpinfo: *mut lumpinfo_t,
-        /// Original `numlumps` count to restore on drop.
-        saved_numlumps: u32,
-        /// Original `lumphash` pointer to restore on drop.
-        saved_lumphash: *mut *mut lumpinfo_t,
+        /// Original lump directory state to restore on drop.
+        saved: WadState,
     }
 
     impl WadTestScope {
@@ -572,14 +624,12 @@ mod tests {
         /// `info` must remain live for the lifetime of the returned
         /// guard. The caller must serialise with `WAD_LOCK`.
         unsafe fn install(info: *mut lumpinfo_t, count: u32) -> Self {
-            let scope = WadTestScope {
-                saved_lumpinfo: lumpinfo,
-                saved_numlumps: numlumps,
-                saved_lumphash: lumphash,
-            };
-            lumpinfo = info;
-            numlumps = count;
-            lumphash = ptr::null_mut(); // force linear scan, not hash table
+            let scope = WadTestScope { saved: WAD.get() };
+            WAD.set(WadState {
+                lumpinfo: info,
+                numlumps: count,
+                lumphash: ptr::null_mut(), // force linear scan, not hash table
+            });
             scope
         }
     }
@@ -588,11 +638,7 @@ mod tests {
     impl Drop for WadTestScope {
         /// Restore the saved globals.
         fn drop(&mut self) {
-            unsafe {
-                lumpinfo = self.saved_lumpinfo;
-                numlumps = self.saved_numlumps;
-                lumphash = self.saved_lumphash;
-            }
+            WAD.set(self.saved);
         }
     }
 

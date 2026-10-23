@@ -7,11 +7,12 @@
 //!
 //! These tests verify:
 //!   * `BACKUPTICS` constant value
-//!   * `gametic`, `ticdup`, and `singletics` default to zero/false at start
+//!   * `gametic`, `ticdup`, and `singletics` start at zero/false in a fresh
+//!     `MainLoopState`
 
 #![allow(non_snake_case)]
 
-use room::engine::doom::main_loop;
+use room::engine::doom::main_loop::{self, MainLoopState};
 
 // ---------------------------------------------------------------------------
 // BACKUPTICS constant
@@ -41,9 +42,11 @@ fn backuptics_is_power_of_two() {
 /// `gametic` is zero at program start; it increments once per rendered frame.
 #[test]
 fn gametic_default_zero() {
-    unsafe {
-        assert_eq!({ main_loop::gametic }, 0, "gametic should be 0 at startup");
-    }
+    assert_eq!(
+        MainLoopState::new().gametic,
+        0,
+        "gametic should be 0 at startup"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -54,13 +57,11 @@ fn gametic_default_zero() {
 /// After init it is normally 1 (single-player) or higher for net games.
 #[test]
 fn ticdup_default_zero() {
-    unsafe {
-        assert_eq!(
-            { main_loop::ticdup },
-            0,
-            "ticdup should be 0 before D_InitNetGame"
-        );
-    }
+    assert_eq!(
+        MainLoopState::new().ticdup,
+        0,
+        "ticdup should be 0 before D_InitNetGame"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +71,9 @@ fn ticdup_default_zero() {
 /// `singletics` is false (0) at program start; set true only by `-timedemo`.
 #[test]
 fn singletics_default_false() {
-    unsafe {
-        assert_eq!(
-            { main_loop::singletics },
-            0,
-            "singletics should be false at startup"
-        );
-    }
+    assert_eq!(
+        MainLoopState::new().singletics,
+        0,
+        "singletics should be false at startup"
+    );
 }

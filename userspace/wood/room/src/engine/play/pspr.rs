@@ -238,12 +238,12 @@ pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
     loop {
         if (*player).weaponowned[wp_plasma as usize] != 0
             && (*player).ammo[am_cell as usize] != 0
-            && gamemode != shareware
+            && gamemode() != shareware
         {
             (*player).pendingweapon = wp_plasma;
         } else if (*player).weaponowned[wp_supershotgun as usize] != 0
             && (*player).ammo[am_shell as usize] > 2
-            && gamemode == commercial
+            && gamemode() == commercial
         {
             (*player).pendingweapon = wp_supershotgun;
         } else if (*player).weaponowned[wp_chaingun as usize] != 0
@@ -264,7 +264,7 @@ pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
             (*player).pendingweapon = wp_missile;
         } else if (*player).weaponowned[wp_bfg as usize] != 0
             && (*player).ammo[am_cell as usize] > 40
-            && gamemode != shareware
+            && gamemode() != shareware
         {
             (*player).pendingweapon = wp_bfg;
         } else {

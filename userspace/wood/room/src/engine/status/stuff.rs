@@ -280,6 +280,7 @@ const STSTR_CLEV: &str = "Changing Level...";
 /// Reads the global `gamemission` static. Caller must ensure `D_DoomMain` has
 /// initialised the game-mode globals before calling.
 unsafe fn logical_gamemission() -> i32 {
+    let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
     } else if gamemission == doom::mode::pack_hacx {
@@ -701,7 +702,8 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_MUS));
                 cht_GetParam(&mut STATUS.borrow_mut().cheat_mus, buf.as_mut_ptr());
 
-                if gamemode == doom::mode::commercial || gameversion < doom::mode::exe_ultimate {
+                if gamemode() == doom::mode::commercial || gameversion() < doom::mode::exe_ultimate
+                {
                     musnum =
                         33 + (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32) - 1;
                     if ((buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32)) > 35 {
@@ -767,7 +769,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             let map: i32;
             cht_GetParam(&mut STATUS.borrow_mut().cheat_clev, buf.as_mut_ptr());
 
-            if gamemode == doom::mode::commercial {
+            if gamemode() == doom::mode::commercial {
                 epsd = 1;
                 map = (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32);
             } else {
@@ -775,7 +777,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 map = buf[1] as i32 - '0' as i32;
             }
 
-            if gameversion == doom::mode::exe_chex {
+            if gameversion() == doom::mode::exe_chex {
                 epsd = 1;
             }
 
@@ -785,16 +787,16 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             if map < 1 {
                 return 0;
             }
-            if gamemode == doom::mode::retail && (epsd > 4 || map > 9) {
+            if gamemode() == doom::mode::retail && (epsd > 4 || map > 9) {
                 return 0;
             }
-            if gamemode == doom::mode::registered && (epsd > 3 || map > 9) {
+            if gamemode() == doom::mode::registered && (epsd > 3 || map > 9) {
                 return 0;
             }
-            if gamemode == doom::mode::shareware && (epsd > 1 || map > 9) {
+            if gamemode() == doom::mode::shareware && (epsd > 1 || map > 9) {
                 return 0;
             }
-            if gamemode == doom::mode::commercial && (epsd > 1 || map > 40) {
+            if gamemode() == doom::mode::commercial && (epsd > 1 || map > 40) {
                 return 0;
             }
 
@@ -1110,7 +1112,7 @@ pub unsafe fn ST_doPaletteStuff() {
         palette = 0;
     }
 
-    if gameversion == doom::mode::exe_chex
+    if gameversion() == doom::mode::exe_chex
         && (STARTREDPALS..STARTREDPALS + NUMREDPALS).contains(&palette)
     {
         palette = RADIATIONPAL;

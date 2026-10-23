@@ -147,34 +147,57 @@ pub struct LoopInterfaceT {
     pub RunMenu: Option<unsafe fn()>,
 }
 
-/// Pointer to the array of per-player tic commands for the current tic.
-///
-/// Set by `RunTic` at the start of each tic, pointing into the buffer
-/// provided by the loop layer. Downstream code (primarily `g_game.c`) reads
-/// `netcmds[consoleplayer]` to obtain the local player's input.
-/// Corresponds to `ticcmd_t *netcmds` in `d_net.c`.
-pub static mut netcmds: *mut TiccmdT = std::ptr::null_mut();
+/// Net game state (C `d_net.c` globals).
+pub struct NetState {
+    /// Pointer to the array of per-player tic commands for the current tic.
+    ///
+    /// Set by `RunTic` at the start of each tic, pointing into the buffer
+    /// provided by the loop layer. Downstream code (primarily `g_game.c`)
+    /// reads `netcmds[consoleplayer]` through [`netcmds`] to obtain the local
+    /// player's input. Corresponds to `ticcmd_t *netcmds` in `d_net.c`.
+    netcmds: *mut TiccmdT,
+}
+
+impl NetState {
+    /// No tic commands yet.
+    pub const fn new() -> Self {
+        Self {
+            netcmds: std::ptr::null_mut(),
+        }
+    }
+}
+
+impl Default for NetState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The net game state.
+pub static NET: Global<NetState> = Global::new(NetState::new());
+
+/// The per-player tic commands of the current tic (C `netcmds`).
+pub fn netcmds() -> *mut TiccmdT {
+    NET.borrow().netcmds
+}
 
 /// Whether the client is connected to a network game session.
 ///
-/// Always false: the network client is not ported. Corresponds to
-/// `net_client_connected` in `dummy.c`.
-pub static mut net_client_connected: u32 = 0;
+/// Always false: the network client is not ported, so nothing sets it.
+/// Corresponds to `net_client_connected` in `dummy.c`.
+pub const net_client_connected: u32 = 0;
 
 /// Whether this instance is a "drone" (observer) client, which joins a
 /// network game without controlling a player.
 ///
-/// Always false: the network client is not ported. Corresponds to `drone`
-/// in `dummy.c`.
-pub static mut drone: u32 = 0;
+/// Always false: the network client is not ported, so nothing sets it.
+/// Corresponds to `drone` in `dummy.c`.
+pub const drone: u32 = 0;
 
 use crate::engine::{
     dehacked::DEH_String,
     doom::{
-        main::{
-            advancedemo, autostart, fastparm, nomonsters, respawnparm, startepisode, startloadgame,
-            startmap, startskill, D_DoAdvanceDemo, D_ProcessEvents,
-        },
+        main::{D_DoAdvanceDemo, D_ProcessEvents, DOOM_MAIN},
         main_loop::{D_InitNetGame, D_RegisterLoopCallbacks, D_StartNetGame},
         stat::{gamemission, gamemode, gameversion},
     },
@@ -182,6 +205,7 @@ use crate::engine::{
         deathmatch, demoplayback, demorecording, lowres_turn, netgame, playeringame, timelimit,
         G_BuildTiccmd, G_CheckDemoStatus, G_Ticker,
     },
+    global::Global,
     misc::{argv::M_CheckParm, menu::M_Ticker},
     render_3d::main::viewangleoffset,
     wad::{checksum::W_Checksum, W_CheckNumForName},
@@ -244,9 +268,9 @@ unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut i32) {
         }
     }
 
-    netcmds = cmds;
+    NET.borrow_mut().netcmds = cmds;
 
-    if advancedemo != 0 {
+    if DOOM_MAIN.borrow().advancedemo != 0 {
         D_DoAdvanceDemo();
     }
 
@@ -271,20 +295,24 @@ unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut i32) {
 /// `settings` must point to a fully initialised `NetGameSettingsT`. All
 /// destination globals must be safely mutable at the call site.
 unsafe fn LoadGameSettings(settings: *mut NetGameSettingsT) {
-    deathmatch = (*settings).deathmatch;
-    startepisode = (*settings).episode;
-    startmap = (*settings).map;
-    startskill = (*settings).skill;
-    startloadgame = (*settings).loadgame;
-    lowres_turn = (*settings).lowres_turn;
-    nomonsters = (*settings).nomonsters;
-    fastparm = (*settings).fast_monsters;
-    respawnparm = (*settings).respawn_monsters;
-    timelimit = (*settings).timelimit;
-    consoleplayer = (*settings).consoleplayer;
+    let settings = &*settings;
+    deathmatch = settings.deathmatch;
+    {
+        let mut main = DOOM_MAIN.borrow_mut();
+        main.startepisode = settings.episode;
+        main.startmap = settings.map;
+        main.startskill = settings.skill;
+        main.startloadgame = settings.loadgame;
+        main.nomonsters = settings.nomonsters;
+        main.fastparm = settings.fast_monsters;
+        main.respawnparm = settings.respawn_monsters;
+    }
+    lowres_turn = settings.lowres_turn;
+    timelimit = settings.timelimit;
+    consoleplayer = settings.consoleplayer;
 
     for i in 0..MAXPLAYERS {
-        playeringame[i] = if i < (*settings).num_players as usize {
+        playeringame[i] = if i < settings.num_players as usize {
             1
         } else {
             0
@@ -308,14 +336,17 @@ unsafe fn LoadGameSettings(settings: *mut NetGameSettingsT) {
 /// globals must be in a valid state.
 unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
     (*settings).deathmatch = deathmatch;
-    (*settings).episode = startepisode;
-    (*settings).map = startmap;
-    (*settings).skill = startskill;
-    (*settings).loadgame = startloadgame;
-    (*settings).gameversion = gameversion;
-    (*settings).nomonsters = nomonsters;
-    (*settings).fast_monsters = fastparm;
-    (*settings).respawn_monsters = respawnparm;
+    {
+        let main = DOOM_MAIN.borrow();
+        (*settings).episode = main.startepisode;
+        (*settings).map = main.startmap;
+        (*settings).skill = main.startskill;
+        (*settings).loadgame = main.startloadgame;
+        (*settings).nomonsters = main.nomonsters;
+        (*settings).fast_monsters = main.fastparm;
+        (*settings).respawn_monsters = main.respawnparm;
+    }
+    (*settings).gameversion = gameversion();
     (*settings).timelimit = timelimit;
     (*settings).lowres_turn = if M_CheckParm("-record") > 0 && M_CheckParm("-longtics") == 0 {
         1
@@ -356,8 +387,8 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
         (*connect_data).drone = 1;
     }
 
-    (*connect_data).gamemode = gamemode;
-    (*connect_data).gamemission = gamemission;
+    (*connect_data).gamemode = gamemode();
+    (*connect_data).gamemission = gamemission();
 
     (*connect_data).lowres_turn = if M_CheckParm("-record") > 0 && M_CheckParm("-longtics") == 0 {
         1
@@ -384,10 +415,10 @@ const EXIT_MSG: &str = "Player 1 left the game";
 /// The loop callback table registered with `d_loop.c`.
 ///
 /// The static table wires the four per-tic callbacks that the loop layer
-/// (`D_RegisterLoopCallbacks`) needs. It must remain `mut` because the C ABI
-/// requires a non-const pointer in `D_RegisterLoopCallbacks`. Corresponds to
+/// (`D_RegisterLoopCallbacks`) needs. Nothing writes it, so it is a plain
+/// `static` whose address the loop layer keeps. Corresponds to
 /// `doom_loop_interface` in `d_net.c`.
-static mut DOOM_LOOP_INTERFACE: LoopInterfaceT = LoopInterfaceT {
+static DOOM_LOOP_INTERFACE: LoopInterfaceT = LoopInterfaceT {
     ProcessEvents: Some(D_ProcessEvents),
     BuildTiccmd: Some(G_BuildTiccmd),
     RunTic: Some(RunTic),
@@ -432,10 +463,10 @@ pub fn D_ConnectNetGame() {
 pub fn D_CheckNetGame() {
     unsafe {
         if netgame != 0 {
-            autostart = 1;
+            DOOM_MAIN.borrow_mut().autostart = 1;
         }
 
-        D_RegisterLoopCallbacks(&raw mut DOOM_LOOP_INTERFACE);
+        D_RegisterLoopCallbacks(&DOOM_LOOP_INTERFACE);
 
         let mut settings: NetGameSettingsT = std::mem::zeroed();
         SaveGameSettings(&mut settings);

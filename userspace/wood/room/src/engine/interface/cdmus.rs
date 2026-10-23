@@ -10,19 +10,38 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-/// Last CD-ROM error code, mirroring the C `cd_Error` global. Set to a
-/// non-zero value by the original SDL backend on failure; in the
-/// doomgeneric stub it is only ever cleared to 0.
-pub static mut cd_Error: i32 = 0;
+use crate::engine::global::Global;
+
+/// CD music state (C `i_cdmus.c` globals).
+pub struct CdMusicState {
+    /// Last CD-ROM error code, mirroring the C `cd_Error` global. Set to a
+    /// non-zero value by the original SDL backend on failure; in the
+    /// doomgeneric stub it is only ever cleared to 0.
+    pub cd_Error: i32,
+}
+
+impl CdMusicState {
+    /// No error recorded.
+    pub const fn new() -> Self {
+        Self { cd_Error: 0 }
+    }
+}
+
+impl Default for CdMusicState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The CD music state.
+pub static CD_MUSIC: Global<CdMusicState> = Global::new(CdMusicState::new());
 
 /// Initialise the CD-ROM music subsystem.
 ///
 /// Stub that simply clears `cd_Error` and returns 0 (success). The original
 /// implementation opened an `SDL_CD` handle and reported drive presence.
 pub fn I_CDMusInit() -> i32 {
-    unsafe {
-        cd_Error = 0;
-    }
+    CD_MUSIC.borrow_mut().cd_Error = 0;
     0
 }
 
@@ -51,9 +70,7 @@ pub fn I_CDMusResume() -> i32 {
 /// matching the C version which was never implemented even outside
 /// `ORIGCODE` ("Not supported yet").
 pub fn I_CDMusSetVolume(_volume: i32) -> i32 {
-    unsafe {
-        cd_Error = 0;
-    }
+    CD_MUSIC.borrow_mut().cd_Error = 0;
     0
 }
 

@@ -11,7 +11,7 @@ use std::{ffi::c_void, ptr};
 use crate::engine::{
     dehacked::DEH_String,
     doom::{mode::commercial, stat::gamemode},
-    interface::video::{I_VideoBuffer, SCREENHEIGHT, SCREENWIDTH},
+    interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
     math::fixed::FRACBITS,
     render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
     render_3d::{data::colormaps, main::centery},
@@ -683,8 +683,9 @@ pub fn R_InitBuffer(width: i32, height: i32) {
         }
 
         // Precalculate all row offsets.
+        let screen = video_buffer();
         for i in 0..height {
-            ylookup[i as usize] = I_VideoBuffer.add(((i + viewwindowy) * SCREENWIDTH) as usize);
+            ylookup[i as usize] = screen.add(((i + viewwindowy) * SCREENWIDTH) as usize);
         }
     }
 }
@@ -723,7 +724,7 @@ pub fn R_FillBackScreen() {
             ) as *mut u8;
         }
 
-        let name: &[u8] = if gamemode == commercial {
+        let name: &[u8] = if gamemode() == commercial {
             DEH_String(b"GRNROCK")
         } else {
             DEH_String(b"FLOOR7_2")
@@ -807,7 +808,7 @@ pub fn R_VideoErase(ofs: u32, count: i32) {
         if !background_buffer.is_null() {
             ptr::copy_nonoverlapping(
                 background_buffer.add(ofs as usize),
-                I_VideoBuffer.add(ofs as usize),
+                video_buffer().add(ofs as usize),
                 count as usize,
             );
         }
@@ -861,7 +862,7 @@ pub fn R_DrawViewBorder() {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
+    use {super::*, crate::engine::interface::video::VIDEO, std::sync::Mutex};
 
     /// Serialises all tests that touch the shared mutable renderer globals.
     static LOCK: Mutex<()> = Mutex::new(());
@@ -878,8 +879,8 @@ mod tests {
         unsafe {
             // Allocate a fake video buffer so ylookup doesn't deref null.
             let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = I_VideoBuffer;
-            I_VideoBuffer = fake_buf.as_mut_ptr();
+            let orig_buf = video_buffer();
+            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
             R_InitBuffer(SCREENWIDTH, 168);
 
@@ -891,12 +892,12 @@ mod tests {
             for i in 0..168 {
                 assert_eq!(
                     ylookup[i as usize],
-                    I_VideoBuffer.add((i * SCREENWIDTH) as usize),
+                    fake_buf.as_mut_ptr().add((i * SCREENWIDTH) as usize),
                     "ylookup[{i}] mismatch"
                 );
             }
 
-            I_VideoBuffer = orig_buf;
+            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
     }
 
@@ -906,8 +907,8 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         unsafe {
             let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = I_VideoBuffer;
-            I_VideoBuffer = fake_buf.as_mut_ptr();
+            let orig_buf = video_buffer();
+            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
             R_InitBuffer(256, 168);
 
@@ -917,7 +918,7 @@ mod tests {
                 assert_eq!(columnofs[i as usize], viewwindowx + i);
             }
 
-            I_VideoBuffer = orig_buf;
+            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
     }
 
@@ -927,8 +928,8 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         unsafe {
             let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = I_VideoBuffer;
-            I_VideoBuffer = fake_buf.as_mut_ptr();
+            let orig_buf = video_buffer();
+            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
             R_InitBuffer(200, 100);
 
@@ -938,11 +939,13 @@ mod tests {
                 assert_eq!(columnofs[i as usize], viewwindowx + i);
             }
             for i in 0..100 {
-                let expected = I_VideoBuffer.add(((i + viewwindowy) * SCREENWIDTH) as usize);
+                let expected = fake_buf
+                    .as_mut_ptr()
+                    .add(((i + viewwindowy) * SCREENWIDTH) as usize);
                 assert_eq!(ylookup[i as usize], expected, "ylookup[{i}] mismatch");
             }
 
-            I_VideoBuffer = orig_buf;
+            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
     }
 
@@ -1222,8 +1225,8 @@ mod tests {
                 bg[i] = (i % 256) as u8;
             }
 
-            let orig_video = I_VideoBuffer;
-            I_VideoBuffer = video.as_mut_ptr();
+            let orig_video = video_buffer();
+            VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
             background_buffer = bg.as_mut_ptr();
 
             R_VideoErase(100, 10);
@@ -1235,7 +1238,7 @@ mod tests {
             assert_eq!(video[99], 0);
             assert_eq!(video[110], 0);
 
-            I_VideoBuffer = orig_video;
+            VIDEO.borrow_mut().video_buffer = orig_video;
             background_buffer = ptr::null_mut();
         }
     }
@@ -1246,8 +1249,8 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         unsafe {
             let mut video = vec![0xCCu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_video = I_VideoBuffer;
-            I_VideoBuffer = video.as_mut_ptr();
+            let orig_video = video_buffer();
+            VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
             background_buffer = ptr::null_mut();
 
             R_VideoErase(0, 10);
@@ -1256,7 +1259,7 @@ mod tests {
                 assert_eq!(video[i], 0xCC);
             }
 
-            I_VideoBuffer = orig_video;
+            VIDEO.borrow_mut().video_buffer = orig_video;
         }
     }
 

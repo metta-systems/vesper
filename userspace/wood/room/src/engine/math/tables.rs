@@ -1729,10 +1729,10 @@ mod tests {
     /// the pistol sound.
     #[test]
     fn sfx_chgun_links_to_pistol() {
-        use crate::engine::sound::info::{S_InitSfxLinks, S_sfx, Sfx};
+        use crate::engine::sound::info::{sfx_table, S_InitSfxLinks, Sfx};
         unsafe {
             S_InitSfxLinks();
-            let sfx = (&raw const S_sfx).cast::<crate::engine::sound::info::SfxInfo>();
+            let sfx = sfx_table();
             let chgun_link = (*sfx.add(Sfx::Chgun as usize)).link;
             let pistol_addr = sfx.add(Sfx::Pistol as usize);
             assert_eq!(

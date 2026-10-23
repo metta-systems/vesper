@@ -398,7 +398,7 @@ pub fn P_PlayerThink(player: *mut PlayerT) {
                 newweapon = wp_chainsaw;
             }
 
-            if gamemode == commercial
+            if gamemode() == commercial
                 && newweapon == wp_shotgun
                 && (*player).weaponowned[wp_supershotgun as usize] != 0
                 && (*player).readyweapon != wp_supershotgun
@@ -409,7 +409,7 @@ pub fn P_PlayerThink(player: *mut PlayerT) {
             if (*player).weaponowned[newweapon as usize] != 0 && newweapon != (*player).readyweapon
             {
                 // Do not go to plasma or BFG in shareware, even if cheated.
-                if (newweapon != wp_plasma && newweapon != wp_bfg) || gamemode != shareware {
+                if (newweapon != wp_plasma && newweapon != wp_bfg) || gamemode() != shareware {
                     (*player).pendingweapon = newweapon;
                 }
             }

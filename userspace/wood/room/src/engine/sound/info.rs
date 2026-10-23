@@ -1,6 +1,6 @@
 //! Rust port of `vendor/doomgeneric/sounds.c` plus the `sounds.h` enums.
 //!
-//! Holds the static SFX (`S_sfx`) and music (`S_music`) tables consumed by
+//! Holds the SFX (`S_sfx`) and music (`S_music`) tables consumed by
 //! `s_sound.rs` and the low-level audio drivers, plus the matching id enums
 //! (`Sfx`, `Mus`). `SfxInfo`/`MusicInfo` hold the fields of
 //! `sfxinfo_t`/`musicinfo_t`, minus the unused DeHackEd `tagname`.
@@ -15,10 +15,14 @@
 //! - The C source initialises every `sfxinfo_t` field by hand. Here, the
 //!   `SfxInfo::new` / `with_pitch` / `with_volume` builders fill defaults
 //!   matching `S_sfx[]` in `sounds.c` (pitch = -1, volume = -1, etc.).
+//! - The live tables are [`SoundInfoState`] fields, held in the
+//!   [`SOUND_INFO`] global and initialised from the [`SFX_TABLE`] and
+//!   [`MUSIC_TABLE`] constants. Channels and `link` point at SFX entries,
+//!   so entries are reached by raw pointer through [`sfx_table`].
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
+use {crate::engine::global::Global, std::ffi::c_void};
 
 /// Rust mirror of `sfxinfo_t` (`sounds.h`).
 ///
@@ -1053,13 +1057,14 @@ const MUS_dm2ttl: [u8; 7] = name("dm2ttl");
 /// Short lump-name buffer for music `D_DM2INT` (`mus_dm2int`).
 const MUS_dm2int: [u8; 7] = name("dm2int");
 
-/// Master SFX table indexed by `Sfx` ids. Mirrors `S_sfx[]` in `sounds.c`.
+/// Initial master SFX table indexed by `Sfx` ids. Mirrors `S_sfx[]` in
+/// `sounds.c`; the live copy is [`SoundInfoState::S_sfx`].
 ///
 /// Built at compile time from the `N_*` short-name buffers and per-entry
 /// priorities. Entry 0 is a "none" sentinel. `usefulness` is reset to -1 for
 /// every non-sentinel entry by `S_Init`. Linked entries (currently only
 /// `sfx_chgun -> sfx_pistol`) are wired up at runtime by `S_InitSfxLinks`.
-pub static mut S_sfx: [SfxInfo; NUMSFX] = [
+pub const SFX_TABLE: [SfxInfo; NUMSFX] = [
     // [0] sfx_none
     SfxInfo::new(N_none, 0),
     // [1] sfx_pistol
@@ -1280,12 +1285,13 @@ pub static mut S_sfx: [SfxInfo; NUMSFX] = [
     SfxInfo::new(N_radio, 60),
 ];
 
-/// Master music table indexed by `Mus` ids. Mirrors `S_music[]` in `sounds.c`.
+/// Initial master music table indexed by `Mus` ids. Mirrors `S_music[]` in
+/// `sounds.c`; the live copy is [`SoundInfoState::S_music`].
 ///
 /// Each non-sentinel entry names one of the `MUS_*` short names, which
 /// `S_ChangeMusic` formats into the WAD lump name (prefixed with `d_`) on
 /// first use. Entry 0 is the "no music" sentinel.
-pub static mut S_music: [MusicInfo; NUMMUSIC] = [
+pub const MUSIC_TABLE: [MusicInfo; NUMMUSIC] = [
     // [0] mus_none (sentinel)
     MusicInfo::none(),
     // [1] mus_e1m1
@@ -1430,9 +1436,54 @@ pub static mut S_music: [MusicInfo; NUMMUSIC] = [
 /// be called before any `S_StartSound`. Called from `S_Init`. C origin:
 /// `S_InitSfxLinks` in `sounds.c`.
 pub fn S_InitSfxLinks() {
+    let sfx = sfx_table();
     unsafe {
-        S_sfx[Sfx::Chgun as usize].link = &mut S_sfx[Sfx::Pistol as usize] as *mut SfxInfo;
+        (*sfx.add(Sfx::Chgun as usize)).link = sfx.add(Sfx::Pistol as usize);
     }
+}
+
+/// Sound tables (C `sounds.c` globals).
+pub struct SoundInfoState {
+    /// Master SFX table indexed by `Sfx` ids (C `S_sfx`). Channels and
+    /// `SfxInfo::link` point at its entries, so it stays in place inside
+    /// [`SOUND_INFO`].
+    pub S_sfx: [SfxInfo; NUMSFX],
+    /// Master music table indexed by `Mus` ids (C `S_music`).
+    pub S_music: [MusicInfo; NUMMUSIC],
+}
+
+impl SoundInfoState {
+    /// The tables as `sounds.c` initialises them.
+    pub const fn new() -> Self {
+        Self {
+            S_sfx: SFX_TABLE,
+            S_music: MUSIC_TABLE,
+        }
+    }
+}
+
+impl Default for SoundInfoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The sound tables.
+pub static SOUND_INFO: Global<SoundInfoState> = Global::new(SoundInfoState::new());
+
+/// Stable address of the first `S_sfx` entry; entry `id` is at `.add(id)`.
+///
+/// Channels keep `*mut SfxInfo` into the table, so entries are reached
+/// through this pointer rather than through a borrow.
+pub fn sfx_table() -> *mut SfxInfo {
+    // Only the address is taken; `SOUND_INFO` is a static, so it stays valid.
+    unsafe { (&raw mut (*SOUND_INFO.as_ptr()).S_sfx).cast() }
+}
+
+/// Stable address of the first `S_music` entry; entry `id` is at `.add(id)`.
+pub fn music_table() -> *mut MusicInfo {
+    // Only the address is taken; `SOUND_INFO` is a static, so it stays valid.
+    unsafe { (&raw mut (*SOUND_INFO.as_ptr()).S_music).cast() }
 }
 
 /// Unit tests pinning enum counts and table sizes to the C definitions.
@@ -1455,70 +1506,61 @@ mod tests {
     /// `S_sfx` length must equal `NUMSFX` (catches off-by-one in the table).
     #[test]
     fn sfx_table_has_correct_length() {
-        // The static array is sized by NUMSFX; this confirms no off-by-one.
-        unsafe {
-            assert_eq!((*&raw const S_sfx).len(), NUMSFX);
-        }
+        // The array is sized by NUMSFX; this confirms no off-by-one.
+        assert_eq!(SoundInfoState::new().S_sfx.len(), NUMSFX);
     }
 
     /// `S_music` length must equal `NUMMUSIC`.
     #[test]
     fn music_table_has_correct_length() {
-        unsafe {
-            assert_eq!((*&raw const S_music).len(), NUMMUSIC);
-        }
+        assert_eq!(SoundInfoState::new().S_music.len(), NUMMUSIC);
     }
 
     /// Entry 0 is the "none" sentinel - priority and numchannels must be 0 / -1.
     #[test]
     fn sfx_entry_zero_is_none_sentinel() {
-        unsafe {
-            assert_eq!(S_sfx[0].priority, 0);
-            assert_eq!(S_sfx[0].numchannels, -1);
-            assert_eq!(S_sfx[0].lumpnum, 0);
-            // link is null initially
-            assert!(S_sfx[0].link.is_null());
-        }
+        let tables = SoundInfoState::new();
+        assert_eq!(tables.S_sfx[0].priority, 0);
+        assert_eq!(tables.S_sfx[0].numchannels, -1);
+        assert_eq!(tables.S_sfx[0].lumpnum, 0);
+        // link is null initially
+        assert!(tables.S_sfx[0].link.is_null());
     }
 
     /// Music names drop the NUL of their name buffers; the sentinel's is empty.
     #[test]
     fn music_names_are_plain_text() {
-        unsafe {
-            let music = &*std::ptr::addr_of!(S_music);
-            assert_eq!(music[0].name, "");
-            assert_eq!(music[Mus::E1m1 as usize].name, "e1m1");
-            assert!(music[1..]
-                .iter()
-                .all(|entry| !entry.name.is_empty() && !entry.name.contains('\0')));
-        }
+        let music = SoundInfoState::new().S_music;
+        assert_eq!(music[0].name, "");
+        assert_eq!(music[Mus::E1m1 as usize].name, "e1m1");
+        assert!(music[1..]
+            .iter()
+            .all(|entry| !entry.name.is_empty() && !entry.name.contains('\0')));
     }
 
     /// sfx_pistol is entry 1 with priority 64.
     #[test]
     fn sfx_pistol_is_entry_1_with_priority_64() {
-        unsafe {
-            let entry = &S_sfx[Sfx::Pistol as usize];
-            assert_eq!(entry.priority, 64);
-            // name must start with "pistol"
-            assert!(
-                entry.name.starts_with(b"pistol"),
-                "name should start with 'pistol'"
-            );
-        }
+        let tables = SoundInfoState::new();
+        let entry = &tables.S_sfx[Sfx::Pistol as usize];
+        assert_eq!(entry.priority, 64);
+        // name must start with "pistol"
+        assert!(
+            entry.name.starts_with(b"pistol"),
+            "name should start with 'pistol'"
+        );
     }
 
     /// sfx_chgun (entry 86) must link to sfx_pistol after S_InitSfxLinks.
     #[test]
     fn sfx_chgun_links_to_pistol_after_init() {
-        unsafe {
-            S_InitSfxLinks();
-            let pistol_ptr = &S_sfx[Sfx::Pistol as usize] as *const SfxInfo;
-            let chgun_link = S_sfx[Sfx::Chgun as usize].link as *const SfxInfo;
-            assert_eq!(
-                chgun_link, pistol_ptr,
-                "sfx_chgun.link must point to sfx_pistol"
-            );
-        }
+        S_InitSfxLinks();
+        let sfx = sfx_table();
+        let pistol_ptr = unsafe { sfx.add(Sfx::Pistol as usize) };
+        let chgun_link = unsafe { (*sfx.add(Sfx::Chgun as usize)).link };
+        assert_eq!(
+            chgun_link, pistol_ptr,
+            "sfx_chgun.link must point to sfx_pistol"
+        );
     }
 }

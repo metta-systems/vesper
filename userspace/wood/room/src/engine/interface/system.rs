@@ -11,9 +11,12 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    crate::engine::misc::{
-        argv::{argument, argument_count, M_CheckParmWithArgs, M_ParmExists},
-        atoi, M_StrToInt,
+    crate::engine::{
+        global::Global,
+        misc::{
+            argv::{argument, argument_count, M_CheckParmWithArgs, M_ParmExists},
+            atoi, M_StrToInt,
+        },
     },
     std::{ffi::c_void, ptr},
 };
@@ -47,10 +50,48 @@ struct atexit_listentry_t {
     next: *mut atexit_listentry_t,
 }
 
-/// Head of the singly-linked list of registered exit callbacks.
-/// Mirrors the file-scope `exit_funcs` variable in `i_system.c`.
-/// Mutated only by `I_AtExit`, read by `I_Quit` and `I_Error`.
-static mut exit_funcs: *mut atexit_listentry_t = ptr::null_mut();
+/// System state (C `i_system.c` globals).
+pub struct SystemState {
+    /// Head of the singly-linked list of registered exit callbacks.
+    /// Mirrors the file-scope `exit_funcs` variable in `i_system.c`.
+    /// Mutated only by `I_AtExit`, read by `I_Quit` and `I_Error`.
+    exit_funcs: *mut atexit_listentry_t,
+    /// Set by the first `I_Error` so a recursive call only warns (static
+    /// local `already_quitting` in C `I_Error`).
+    already_quitting: bool,
+    /// User-supplied custom memory dump, populated from `-setmem <bytes>`
+    /// on the command line. Initially zeroed. Mirrors `mem_dump_custom`.
+    mem_dump_custom: [u8; DOS_MEM_DUMP_SIZE],
+    /// Currently selected DOS memory dump. Mirrors the file-scope
+    /// `dos_mem_dump` pointer in `i_system.c`, which is initialized to
+    /// `mem_dump_dos622`.
+    dos_mem_dump: DosMemDump,
+    /// `true` until `I_GetMemoryValue` has parsed `-setmem` (static local
+    /// `firsttime` in C `I_GetMemoryValue`).
+    firsttime: bool,
+}
+
+impl SystemState {
+    /// No exit callbacks, default DOS 6.22 memory dump.
+    pub const fn new() -> Self {
+        Self {
+            exit_funcs: ptr::null_mut(),
+            already_quitting: false,
+            mem_dump_custom: [0; DOS_MEM_DUMP_SIZE],
+            dos_mem_dump: DosMemDump::Dos622,
+            firsttime: true,
+        }
+    }
+}
+
+impl Default for SystemState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The system state.
+pub static SYSTEM: Global<SystemState> = Global::new(SystemState::new());
 
 /// Allocate zone memory, shrinking the requested size by 1 MiB at a
 /// time until `malloc` succeeds or the size drops below `min_ram`.
@@ -93,13 +134,12 @@ unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) ->
 /// runs first. Mirrors `I_AtExit` from `i_system.c`. List nodes are
 /// never freed, as in C.
 pub fn I_AtExit(func: atexit_func_t, run_on_error: Boolean) {
-    unsafe {
-        exit_funcs = Box::into_raw(Box::new(atexit_listentry_t {
-            func,
-            run_on_error,
-            next: exit_funcs,
-        }));
-    }
+    let mut system = SYSTEM.borrow_mut();
+    system.exit_funcs = Box::into_raw(Box::new(atexit_listentry_t {
+        func,
+        run_on_error,
+        next: system.exit_funcs,
+    }));
 }
 
 /// Tactile feedback hook. Originally targeted the Logitech Cyberman in
@@ -185,8 +225,9 @@ pub fn I_ConsoleStdout() -> i32 {
 /// defined. The caller is expected to terminate after `I_Quit`
 /// returns. Mirrors `I_Quit` from `i_system.c`.
 pub fn I_Quit() {
+    // Copy the head out: the callbacks may reach other system state.
+    let mut entry = SYSTEM.borrow().exit_funcs;
     unsafe {
-        let mut entry = exit_funcs;
         while !entry.is_null() {
             ((*entry).func)();
             entry = (*entry).next;
@@ -248,27 +289,27 @@ unsafe fn ZenityErrorBox(message: &str) -> i32 {
 /// `run_on_error` exit callbacks, optionally pops up a GUI dialog,
 /// then terminates with exit code -1. Never returns.
 ///
-/// Recursive calls are detected (via the function-local
-/// `already_quitting` static) and trigger only a warning print before
-/// continuing; this matches the safety net in `I_Error` from
-/// `i_system.c`. Unlike the C source, which takes a printf-style
-/// format string and varargs, this entry point accepts a single
-/// pre-formatted message - the `i_error!` macro takes care of
+/// Recursive calls are detected (via `already_quitting`) and trigger
+/// only a warning print before continuing; this matches the safety net
+/// in `I_Error` from `i_system.c`. Unlike the C source, which takes a
+/// printf-style format string and varargs, this entry point accepts a
+/// single pre-formatted message - the `i_error!` macro takes care of
 /// formatting on the caller side.
 pub fn I_Error(msg: &str) -> ! {
+    let (already_quitting, mut entry) = {
+        let mut system = SYSTEM.borrow_mut();
+        let already_quitting = system.already_quitting;
+        system.already_quitting = true;
+        (already_quitting, system.exit_funcs)
+    };
+    if already_quitting {
+        eprintln!("Warning: recursive call to I_Error detected.");
+    }
+
+    eprintln!("{msg}");
+    eprintln!();
+
     unsafe {
-        static mut already_quitting: bool = false;
-
-        if already_quitting {
-            eprintln!("Warning: recursive call to I_Error detected.");
-        } else {
-            already_quitting = true;
-        }
-
-        eprintln!("{msg}");
-        eprintln!();
-
-        let mut entry = exit_funcs;
         while !entry.is_null() {
             if (*entry).run_on_error.is_truthy() {
                 ((*entry).func)();
@@ -308,10 +349,6 @@ static MEM_DUMP_WIN98: [u8; DOS_MEM_DUMP_SIZE] =
 static MEM_DUMP_DOSBOX: [u8; DOS_MEM_DUMP_SIZE] =
     [0x00, 0x00, 0x00, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00];
 
-/// User-supplied custom memory dump, populated from `-setmem <bytes>`
-/// on the command line. Initially zeroed. Mirrors `mem_dump_custom`.
-static mut MEM_DUMP_CUSTOM: [u8; DOS_MEM_DUMP_SIZE] = [0; DOS_MEM_DUMP_SIZE];
-
 /// Which of the four built-in memory dumps `I_GetMemoryValue` returns.
 /// Selected from the `-setmem dos622|dos71|dosbox|<bytes...>` argument
 /// on first invocation. In the C source this is a `const unsigned
@@ -324,11 +361,6 @@ enum DosMemDump {
     Custom,
 }
 
-/// Currently selected DOS memory dump. Mirrors the file-scope
-/// `dos_mem_dump` pointer in `i_system.c`, which is initialized to
-/// `mem_dump_dos622`.
-static mut dos_mem_dump: DosMemDump = DosMemDump::Dos622;
-
 /// PrBoom+ read-access-violation emulator: returns the byte/word/dword
 /// at `offset` in the currently selected DOS memory dump. Writes the
 /// value through `value` and returns 1 on success, 0 on out-of-range
@@ -337,7 +369,7 @@ static mut dos_mem_dump: DosMemDump = DosMemDump::Dos622;
 /// On the first invocation the function parses `-setmem` from the
 /// command line to choose between `dos622`, `dos71` (treated as
 /// Win98), `dosbox`, or an explicit byte sequence. The byte sequence
-/// is parsed via `M_StrToInt` and copied into `MEM_DUMP_CUSTOM`.
+/// is parsed via `M_StrToInt` and copied into `mem_dump_custom`.
 ///
 /// Mirrors `I_GetMemoryValue` from `i_system.c`. The Rust port uses
 /// an `else if` chain for the dos622/dos71/dosbox cases, which avoids
@@ -345,45 +377,46 @@ static mut dos_mem_dump: DosMemDump = DosMemDump::Dos622;
 /// branch lets it fall through to `dos71`). The custom-byte loop also
 /// uses a single index, fixing a double-increment bug in C.
 pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
-    unsafe {
-        static mut firsttime: bool = true;
+    let mut system = SYSTEM.borrow_mut();
+    if system.firsttime {
+        system.firsttime = false;
 
-        if firsttime {
-            firsttime = false;
-
-            let p = M_CheckParmWithArgs("-setmem", 1);
-            if p > 0 {
-                let arg = argument(p + 1);
-                if arg.eq_ignore_ascii_case("dos622") {
-                    dos_mem_dump = DosMemDump::Dos622;
-                } else if arg.eq_ignore_ascii_case("dos71") {
-                    dos_mem_dump = DosMemDump::Win98;
-                } else if arg.eq_ignore_ascii_case("dosbox") {
-                    dos_mem_dump = DosMemDump::Dosbox;
-                } else {
-                    let mut idx: usize = 0;
-                    let mut pp = p + 1;
-                    while idx < DOS_MEM_DUMP_SIZE {
-                        pp += 1;
-                        if pp >= argument_count() || argument(pp).starts_with('-') {
-                            break;
-                        }
-                        let val = M_StrToInt(argument(pp)).unwrap_or(0);
-                        MEM_DUMP_CUSTOM[idx] = val as u8;
-                        idx += 1;
+        let p = M_CheckParmWithArgs("-setmem", 1);
+        if p > 0 {
+            let arg = argument(p + 1);
+            if arg.eq_ignore_ascii_case("dos622") {
+                system.dos_mem_dump = DosMemDump::Dos622;
+            } else if arg.eq_ignore_ascii_case("dos71") {
+                system.dos_mem_dump = DosMemDump::Win98;
+            } else if arg.eq_ignore_ascii_case("dosbox") {
+                system.dos_mem_dump = DosMemDump::Dosbox;
+            } else {
+                let mut idx: usize = 0;
+                let mut pp = p + 1;
+                while idx < DOS_MEM_DUMP_SIZE {
+                    pp += 1;
+                    if pp >= argument_count() || argument(pp).starts_with('-') {
+                        break;
                     }
-                    dos_mem_dump = DosMemDump::Custom;
+                    let val = M_StrToInt(argument(pp)).unwrap_or(0);
+                    system.mem_dump_custom[idx] = val as u8;
+                    idx += 1;
                 }
+                system.dos_mem_dump = DosMemDump::Custom;
             }
         }
+    }
 
-        let dump: *const u8 = match dos_mem_dump {
-            DosMemDump::Dos622 => MEM_DUMP_DOS622.as_ptr(),
-            DosMemDump::Win98 => MEM_DUMP_WIN98.as_ptr(),
-            DosMemDump::Dosbox => MEM_DUMP_DOSBOX.as_ptr(),
-            DosMemDump::Custom => std::ptr::addr_of!(MEM_DUMP_CUSTOM[0]),
-        };
+    let dump: [u8; DOS_MEM_DUMP_SIZE] = match system.dos_mem_dump {
+        DosMemDump::Dos622 => MEM_DUMP_DOS622,
+        DosMemDump::Win98 => MEM_DUMP_WIN98,
+        DosMemDump::Dosbox => MEM_DUMP_DOSBOX,
+        DosMemDump::Custom => system.mem_dump_custom,
+    };
+    drop(system);
+    let dump = dump.as_ptr();
 
+    unsafe {
         let offset = offset as usize;
         if offset >= DOS_MEM_DUMP_SIZE {
             return 0;

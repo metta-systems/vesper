@@ -347,14 +347,14 @@ unsafe fn R_InitSpriteDefs(namelist: &[&'static str]) {
 
         // Scan the lumps, filling in the frames for whatever is found.
         for l in (start + 1)..end {
-            let li = &*lumpinfo.add(l as usize);
+            let li = &*lumpinfo().add(l as usize);
             if sprite_prefix(&li.name)
                 .eq_ignore_ascii_case(sprite_prefix({ spritename }.as_bytes()))
             {
                 let frame = (li.name[4] - b'A') as u32;
                 let rotation = (li.name[5] - b'0') as u32;
 
-                let patched = if modifiedgame.is_truthy() {
+                let patched = if modifiedgame().is_truthy() {
                     W_GetNumForName(&li.name)
                 } else {
                     l

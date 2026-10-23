@@ -17,14 +17,33 @@ use crate::engine::{doom::event::event_t, interface::keys::KEY_RSHIFT};
 /// in this port, so it is a constant.
 pub const vanilla_keyboard_mapping: i32 = 1;
 
-/// Net count of shift presses minus shift releases.
-///
-/// Treated as boolean-ish: `> 0` means a shift key is currently held. Using
-/// a counter rather than a boolean tolerates lost key-up events without
-/// permanently latching the shift state, matching the C source.
-static mut shiftdown: i32 = 0;
+/// Input state (C `i_input.c` globals).
+pub struct InputState {
+    /// Net count of shift presses minus shift releases.
+    ///
+    /// Treated as boolean-ish: `> 0` means a shift key is currently held.
+    /// Using a counter rather than a boolean tolerates lost key-up events
+    /// without permanently latching the shift state, matching the C source.
+    shiftdown: i32,
+}
 
-use crate::engine::doom::event::D_PostEvent;
+impl InputState {
+    /// No shift key held.
+    pub const fn new() -> Self {
+        Self { shiftdown: 0 }
+    }
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The input state.
+pub static INPUT: Global<InputState> = Global::new(InputState::new());
+
+use crate::engine::{doom::event::D_PostEvent, global::Global};
 
 /// US-layout shift transform table.
 ///
@@ -77,17 +96,14 @@ fn TranslateKey(key: u8) -> u8 {
 /// shift transform if shift is currently held.
 ///
 /// Out-of-range key codes (`>= SHIFTXFORM.len()`) collapse to 0 when shift is
-/// held, matching the C `arrlen(shiftxform)` guard. Reads the `shiftdown`
-/// static, hence the `unsafe` block.
+/// held, matching the C `arrlen(shiftxform)` guard. Reads `shiftdown`.
 fn GetTypedChar(key: u8) -> u8 {
     let mut key = TranslateKey(key);
-    unsafe {
-        if shiftdown > 0 {
-            if (key as usize) < SHIFTXFORM.len() {
-                key = SHIFTXFORM[key as usize];
-            } else {
-                key = 0;
-            }
+    if INPUT.borrow().shiftdown > 0 {
+        if (key as usize) < SHIFTXFORM.len() {
+            key = SHIFTXFORM[key as usize];
+        } else {
+            key = 0;
         }
     }
     key
@@ -96,13 +112,11 @@ fn GetTypedChar(key: u8) -> u8 {
 /// Updates `shiftdown` for a shift key event.
 ///
 /// Increments on press, decrements on release. Only `KEY_RSHIFT` is tracked,
-/// matching the C source. Mutates the `shiftdown` static.
+/// matching the C source.
 fn UpdateShiftStatus(pressed: i32, key: u8) {
     let change = if pressed != 0 { 1 } else { -1 };
     if key == KEY_RSHIFT {
-        unsafe {
-            shiftdown += change;
-        }
+        INPUT.borrow_mut().shiftdown += change;
     }
 }
 

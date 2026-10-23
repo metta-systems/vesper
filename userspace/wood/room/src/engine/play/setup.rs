@@ -533,7 +533,7 @@ pub fn P_LoadThings(lump: i32) {
         for mt in map_things {
             let mut spawn = true;
 
-            if gamemode != doom::mode::commercial {
+            if gamemode() != doom::mode::commercial {
                 let thing_type = mt.kind.get();
                 match thing_type {
                     68 | 64 | 88 | 89 | 69 | 67 | 71 | 65 | 66 | 84 => {
@@ -1047,7 +1047,7 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
 
         // Find map name.
         let mut lumpname = [0u8; 9];
-        if gamemode == doom::mode::commercial {
+        if gamemode() == doom::mode::commercial {
             if map < 10 {
                 let s = format!("map0{}", map);
                 ptr::copy_nonoverlapping(s.as_ptr(), lumpname.as_mut_ptr(), s.len());

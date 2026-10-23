@@ -17,7 +17,7 @@ use crate::engine::{
     misc::sha1::{
         sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
     },
-    wad::{file::wad_file_t, lumpinfo, lumpinfo_t, numlumps},
+    wad::{file::wad_file_t, lumpinfo, lumpinfo_t, W_NumLumps},
 };
 
 /// Map a `wad_file` handle to a stable small integer for inclusion in the
@@ -97,8 +97,9 @@ pub unsafe fn W_Checksum(digest: *mut sha1_digest_t) {
 
     let mut open_wadfiles: Vec<*mut wad_file_t> = Vec::new();
 
-    for i in 0..numlumps {
-        let lump = &*lumpinfo.add(i as usize);
+    let lumps = lumpinfo();
+    for i in 0..W_NumLumps() {
+        let lump = &*lumps.add(i as usize);
         checksum_add_lump(sha1_context.as_mut_ptr(), lump, &mut open_wadfiles);
     }
 

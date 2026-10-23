@@ -108,7 +108,7 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
                 }
 
                 // Final Doom quirk: don't set z
-                if gameversion != EXE_FINAL {
+                if gameversion() != EXE_FINAL {
                     (*thing).z = (*thing).floorz;
                 }
 
