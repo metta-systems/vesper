@@ -13,47 +13,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-/// Snapshot of intermission-screen state captured at the end of every
-/// level. Mirrors the C `wbstartstruct_t` layout from `d_player.h`.
-/// `#[repr(C)]` so it can be copied directly out of game memory.
-///
-/// Layout invariant: the struct exposed here only includes the four
-/// fields the dump path inspects (`epsd`, `last`, `partime`, `plyr`).
-/// The full C struct has additional fields (`pnum`, `maxkills`,
-/// `maxitems`, `maxsecret`, etc.); the unit tests in this module assert
-/// the trimmed size matches `3 * sizeof(int) + 4 * sizeof(wbplayerstruct_t)`.
-#[repr(C)]
-pub struct wbstartstruct_t {
-    /// Episode number (0-based).
-    pub epsd: i32,
-    /// Index of the level just completed.
-    pub last: i32,
-    /// Par time for this level in tics.
-    pub partime: i32,
-    /// Per-player statistics for up to 4 players.
-    pub plyr: [wbplayerstruct_t; 4],
-}
-
-/// Per-player end-of-level statistics. Mirrors the C `wbplayerstruct_t`
-/// from `d_player.h`. The first field is named `in_` (with trailing
-/// underscore) because `in` is a Rust keyword; the original C name is
-/// `in` and the `#[repr(C)]` layout is unchanged.
-#[repr(C)]
-pub struct wbplayerstruct_t {
-    /// "in game" flag - non-zero if this player slot was active. Named
-    /// `in` in C; renamed `in_` here to dodge the Rust keyword.
-    pub in_: i32,
-    /// Kills count for this player.
-    pub skills: i32,
-    /// Items collected.
-    pub sitems: i32,
-    /// Secrets found.
-    pub ssecret: i32,
-    /// Total time spent on the level, in tics.
-    pub stime: i32,
-    /// Frag counts indexed by victim player.
-    pub frags: [i32; 4],
-}
+use crate::engine::{
+    doom::player::MAXPLAYERS,
+    intermission::{wbplayerstruct_t, wbstartstruct_t},
+};
 
 /// Maximum number of intermission snapshots that can be captured during
 /// a session. Mirrors the C `MAX_CAPTURES` define.
@@ -71,12 +34,20 @@ static mut captured_stats: [wbstartstruct_t; MAX_CAPTURES] = {
         ssecret: 0,
         stime: 0,
         frags: [0; 4],
+        score: 0,
     };
     const DEFAULT_WB: wbstartstruct_t = wbstartstruct_t {
         epsd: 0,
+        didsecret: 0,
         last: 0,
+        next: 0,
+        maxkills: 0,
+        maxitems: 0,
+        maxsecret: 0,
+        maxfrags: 0,
         partime: 0,
-        plyr: [DEFAULT; 4],
+        pnum: 0,
+        plyr: [DEFAULT; MAXPLAYERS],
     };
     [DEFAULT_WB; MAX_CAPTURES]
 };
@@ -99,14 +70,10 @@ use crate::engine::misc::argv::M_ParmExists;
 ///
 /// Called from `WI_Drawer` / `WI_Ticker` (via the intermission code)
 /// at the end of every level.
-pub fn StatCopy(stats: *mut wbstartstruct_t) {
+pub fn StatCopy(stats: *const wbstartstruct_t) {
     unsafe {
         if M_ParmExists("-statdump") && num_captured_stats < MAX_CAPTURES as i32 {
-            std::ptr::copy_nonoverlapping(
-                stats,
-                std::ptr::addr_of_mut!(captured_stats[0]).offset(num_captured_stats as isize),
-                1,
-            );
+            captured_stats[num_captured_stats as usize] = *stats;
             num_captured_stats += 1;
         }
     }
@@ -127,21 +94,6 @@ pub fn StatDump() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// wbplayerstruct_t must be 36 bytes: 5 × i32 (20) + [i32; 4] (16).
-    #[test]
-    fn wbplayerstruct_t_size_matches_c() {
-        // in_(4) + skills(4) + sitems(4) + ssecret(4) + stime(4) + frags[4](16) = 36
-        assert_eq!(std::mem::size_of::<wbplayerstruct_t>(), 36);
-    }
-
-    /// wbstartstruct_t: 3 × sizeof(int) + 4 × sizeof(wbplayerstruct_t).
-    #[test]
-    fn wbstartstruct_t_size_matches_c() {
-        // epsd(4) + last(4) + partime(4) + plyr[4] (4 × 36 = 144) = 156
-        let expected = 3 * std::mem::size_of::<i32>() + 4 * std::mem::size_of::<wbplayerstruct_t>();
-        assert_eq!(std::mem::size_of::<wbstartstruct_t>(), expected);
-    }
 
     /// StatDump must not panic (it is currently a no-op stub).
     #[test]

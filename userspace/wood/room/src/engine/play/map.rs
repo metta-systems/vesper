@@ -1185,7 +1185,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
     if (*in_.d.line).special == 0 {
         P_LineOpening(in_.d.line);
         if openrange <= 0 {
-            S_StartSound(usething as *mut c_void, Sfx::Noway as i32);
+            S_StartSound(usething, Sfx::Noway as i32);
             return 0;
         }
         return 1;

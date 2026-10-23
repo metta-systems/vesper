@@ -18,7 +18,7 @@ use crate::engine::{
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
     },
-    sound::S_StartSound,
+    sound::S_StartSectorSound,
     zone::{Z_Malloc, PU_LEVSPEC},
 };
 
@@ -176,10 +176,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
         match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
-                S_StartSound(
-                    &(*(*ceiling).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Stnmov as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*ceiling).sector).soundorg, Sfx::Stnmov as i32);
             }
         }
     }
@@ -190,10 +187,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
                 P_RemoveActiveCeiling(ceiling);
             }
             x if x == silentCrushAndRaise => {
-                S_StartSound(
-                    &(*(*ceiling).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstop as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*ceiling).sector).soundorg, Sfx::Pstop as i32);
             }
             x if x == fastCrushAndRaise || x == crushAndRaise => {
                 (*ceiling).direction = -1;

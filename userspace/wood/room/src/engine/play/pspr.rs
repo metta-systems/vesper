@@ -6,7 +6,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::ffi::c_void};
+use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     doom::{
@@ -195,7 +195,7 @@ pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
     }
 
     if (*player).pendingweapon == wp_chainsaw {
-        S_StartSound((*player).mo as *mut c_void, Sfx::Sawup as i32);
+        S_StartSound((*player).mo, Sfx::Sawup as i32);
     }
 
     let newstate = weaponinfo[(*player).pendingweapon as usize].upstate;
@@ -335,7 +335,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     if (*player).readyweapon == wp_chainsaw
         && std::ptr::eq((*psp).state, &info::states[S_SAW as usize])
     {
-        S_StartSound(mo as *mut c_void, Sfx::Sawidl as i32);
+        S_StartSound(mo, Sfx::Sawidl as i32);
     }
 
     // Check for change: if player is dead, put the weapon away.
@@ -495,7 +495,7 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 
     // Turn to face target.
     if !linetarget.is_null() {
-        S_StartSound(mo as *mut c_void, Sfx::Punch as i32);
+        S_StartSound(mo, Sfx::Punch as i32);
         (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
     }
 }
@@ -520,10 +520,10 @@ pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
     P_LineAttack(mo, angle, MELEERANGE + 1, slope, damage);
 
     if linetarget.is_null() {
-        S_StartSound(mo as *mut c_void, Sfx::Sawful as i32);
+        S_StartSound(mo, Sfx::Sawful as i32);
         return;
     }
-    S_StartSound(mo as *mut c_void, Sfx::Sawhit as i32);
+    S_StartSound(mo, Sfx::Sawhit as i32);
 
     // Turn to face target.
     let angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
@@ -659,7 +659,7 @@ pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: i32) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo;
-    S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
+    S_StartSound(mo, Sfx::Pistol as i32);
 
     P_SetMobjState(mo, S_PLAY_ATK2);
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
@@ -682,7 +682,7 @@ pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo;
-    S_StartSound(mo as *mut c_void, Sfx::Shotgn as i32);
+    S_StartSound(mo, Sfx::Shotgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
@@ -709,7 +709,7 @@ pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
     let mo = (*player).mo;
-    S_StartSound(mo as *mut c_void, Sfx::Dshtgn as i32);
+    S_StartSound(mo, Sfx::Dshtgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
     DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 2);
@@ -747,7 +747,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `S_CHAIN2`.
 pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo;
-    S_StartSound(mo as *mut c_void, Sfx::Pistol as i32);
+    S_StartSound(mo, Sfx::Pistol as i32);
 
     if (*player).ammo[weaponinfo[(*player).readyweapon as usize].ammo as usize] == 0 {
         return;
@@ -839,7 +839,7 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
 pub unsafe fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo as *mut c_void, Sfx::Bfg as i32);
+    S_StartSound((*player).mo, Sfx::Bfg as i32);
 }
 
 /// Initialise the player's psprite slots and begin raising the current weapon.

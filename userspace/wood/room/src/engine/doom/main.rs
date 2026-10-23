@@ -742,7 +742,7 @@ pub fn doomgeneric_Tick() {
         } else {
             std::ptr::null_mut()
         };
-        S_UpdateSounds(mo as *mut crate::engine::sound::MobjStub);
+        S_UpdateSounds(mo);
 
         // Update display
         if screenvisible != 0 {

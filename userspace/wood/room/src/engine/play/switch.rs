@@ -15,7 +15,7 @@ use {
 use crate::{
     engine::{
         doom,
-        map::line_t,
+        map::{degenmobj_t, line_t},
         play::{
             ceilng::EV_DoCeiling,
             floor::{EV_BuildStairs, EV_DoFloor},
@@ -153,12 +153,17 @@ pub struct button_t {
     pub btimer: i32,
     _pad: [u8; 4],
     /// Pointer to the front-sector sound origin used when the button fires.
-    pub soundorg: *mut c_void,
+    pub soundorg: *mut degenmobj_t,
 }
 
 #[cfg(target_pointer_width = "64")]
 mod layout_checks {
     use super::*;
+    // `P_UpdateSpecials` passes the address of `soundorg` itself as the sound
+    // origin, so the sound code reads `degenmobj_t::x`/`y` from the bytes
+    // that follow it: the next slot's `btimer` and padding.
+    const _: () = assert!(std::mem::offset_of!(degenmobj_t, x) == 24);
+    const _: () = assert!(std::mem::offset_of!(degenmobj_t, y) == 28);
     const _: () = assert!(std::mem::size_of::<button_t>() == 32);
     const _: () = assert!(std::mem::offset_of!(button_t, line) == 0);
     const _: () = assert!(std::mem::offset_of!(button_t, where_) == 8);
@@ -441,7 +446,7 @@ use crate::engine::{
         spec::EV_DoDonut,
     },
     render_3d::data::R_TextureNumForName,
-    sound::S_StartSound,
+    sound::S_StartSectorSound,
 };
 
 // ---------------------------------------------------------------------------
@@ -524,7 +529,7 @@ pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) 
             buttonlist[i].where_ = w;
             buttonlist[i].btexture = texture;
             buttonlist[i].btimer = time;
-            buttonlist[i].soundorg = &(*(*line).frontsector).soundorg as *const _ as *mut c_void;
+            buttonlist[i].soundorg = &raw mut (*(*line).frontsector).soundorg;
             return;
         }
     }
@@ -572,21 +577,21 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
 
     for i in 0..(numswitches * 2) as usize {
         if switchlist[i] == texTop as i32 {
-            S_StartSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(buttonlist[0].soundorg, sound);
             (*sides.offset(sidenum)).toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, top, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texMid as i32 {
-            S_StartSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(buttonlist[0].soundorg, sound);
             (*sides.offset(sidenum)).midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, middle, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texBot as i32 {
-            S_StartSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(buttonlist[0].soundorg, sound);
             (*sides.offset(sidenum)).bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, bottom, switchlist[i], BUTTONTIME);

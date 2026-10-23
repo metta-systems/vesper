@@ -7,48 +7,18 @@
 //!
 //! The C version keeps `open_wadfiles` and `num_open_wadfiles` as a
 //! `realloc`-grown global; the Rust port replaces those with a `Vec<*mut
-//! c_void>` allocated locally inside [`W_Checksum`] for the duration of
+//! wad_file_t>` allocated locally inside [`W_Checksum`] for the duration of
 //! the call. The numeric file-index assignment order is identical to the
 //! C version, so the resulting digest is unchanged.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
-
 use crate::engine::{
     misc::sha1::{
         sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
     },
-    wad::{lumpinfo, numlumps},
+    wad::{file::wad_file_t, lumpinfo, lumpinfo_t, numlumps},
 };
-
-/// Mirror of the C `lumpinfo_t` layout used by [`W_Checksum`] to read
-/// individual lump metadata out of the `lumpinfo` array.
-///
-/// Layout invariant: `#[repr(C)]` with the same field order, types and
-/// padding as the canonical `lumpinfo_t` defined in `w_wad.h`. Only the
-/// fields touched by checksumming are exposed; `cache` and `next` are
-/// present to keep the struct size and field offsets matching the C
-/// definition.
-#[repr(C)]
-pub struct LumpInfo {
-    /// Eight-character lump name (not null-terminated in the WAD on-disk
-    /// format; copied through a 9-byte buffer before hashing).
-    pub name: [u8; 8],
-    /// Pointer to the owning `wad_file_t`. Used as the key for assigning a
-    /// stable numeric file index via `get_file_number`.
-    pub wad_file: *mut c_void,
-    /// Byte offset of the lump payload inside its WAD.
-    pub position: i32,
-    /// Lump size in bytes.
-    pub size: i32,
-    /// Cached zone-allocated copy of the lump, if any (unused by
-    /// checksumming).
-    pub cache: *mut c_void,
-    /// Linked list pointer used by the WAD subsystem; unused here but
-    /// retained for layout parity with the C struct.
-    pub next: *mut LumpInfo,
-}
 
 /// Map a `wad_file` handle to a stable small integer for inclusion in the
 /// checksum.
@@ -64,7 +34,10 @@ pub struct LumpInfo {
 /// `open_wadfiles` must be a valid mutable reference. `handle` is only
 /// compared for equality and stored back into the vector, never
 /// dereferenced.
-unsafe fn get_file_number(handle: *mut c_void, open_wadfiles: &mut Vec<*mut c_void>) -> i32 {
+unsafe fn get_file_number(
+    handle: *mut wad_file_t,
+    open_wadfiles: &mut Vec<*mut wad_file_t>,
+) -> i32 {
     for (i, &wad) in open_wadfiles.iter().enumerate() {
         if wad == handle {
             return i as i32;
@@ -85,16 +58,12 @@ unsafe fn get_file_number(handle: *mut c_void, open_wadfiles: &mut Vec<*mut c_vo
 ///
 /// # Safety
 ///
-/// `sha1_context` must point to an initialised [`SHA1Context`]. `lump`
-/// must point to a valid [`LumpInfo`]. `open_wadfiles` must be a valid
-/// mutable reference.
+/// `sha1_context` must point to an initialised [`SHA1Context`].
 unsafe fn checksum_add_lump(
     sha1_context: *mut SHA1Context,
-    lump: *mut LumpInfo,
-    open_wadfiles: &mut Vec<*mut c_void>,
+    lump: &lumpinfo_t,
+    open_wadfiles: &mut Vec<*mut wad_file_t>,
 ) {
-    let lump = &*lump;
-
     // The 8-byte name, up to its NUL, as the C code copied it into a
     // 9-byte buffer before hashing.
     SHA1_UpdateString(sha1_context, &lump.name);
@@ -126,10 +95,10 @@ pub unsafe fn W_Checksum(digest: *mut sha1_digest_t) {
     let mut sha1_context = std::mem::MaybeUninit::<SHA1Context>::uninit();
     SHA1_Init(sha1_context.as_mut_ptr());
 
-    let mut open_wadfiles: Vec<*mut c_void> = Vec::new();
+    let mut open_wadfiles: Vec<*mut wad_file_t> = Vec::new();
 
     for i in 0..numlumps {
-        let lump = lumpinfo.add(i as usize) as *mut LumpInfo;
+        let lump = &*lumpinfo.add(i as usize);
         checksum_add_lump(sha1_context.as_mut_ptr(), lump, &mut open_wadfiles);
     }
 

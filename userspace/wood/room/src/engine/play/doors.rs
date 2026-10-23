@@ -21,7 +21,7 @@ use crate::engine::{
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{thinker_t, P_AddThinker, P_RemoveThinker},
     },
-    sound::S_StartSound,
+    sound::{S_StartSectorSound, S_StartSound},
     zone::{Z_Malloc, PU_LEVSPEC},
 };
 
@@ -174,24 +174,15 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                 match (*door).kind {
                     x if x == vld_blazeRaise => {
                         (*door).direction = -1;
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Bdcls as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal => {
                         (*door).direction = -1;
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Dorcls as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
                     }
                     x if x == vld_close30ThenOpen => {
                         (*door).direction = 1;
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Doropn as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -205,10 +196,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     x if x == vld_raiseIn5Mins => {
                         (*door).direction = 1;
                         (*door).kind = vld_normal;
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Doropn as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -229,10 +217,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
                         (*(*door).sector).specialdata = std::ptr::null_mut();
                         P_RemoveThinker(&mut (*door).thinker);
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Bdcls as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal || x == vld_close => {
                         (*(*door).sector).specialdata = std::ptr::null_mut();
@@ -251,10 +236,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     }
                     _ => {
                         (*door).direction = 1;
-                        S_StartSound(
-                            &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                            Sfx::Doropn as i32,
-                        );
+                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
                     }
                 }
             }
@@ -378,27 +360,18 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
                 (*door).speed = VDOORSPEED * 4;
-                S_StartSound(
-                    &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Bdcls as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
             }
             x if x == vld_close => {
                 (*door).topheight = P_FindLowestCeilingSurrounding(sec);
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
-                S_StartSound(
-                    &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Dorcls as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
             }
             x if x == vld_close30ThenOpen => {
                 (*door).topheight = (*sec).ceilingheight;
                 (*door).direction = -1;
-                S_StartSound(
-                    &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Dorcls as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
             }
             x if x == vld_blazeRaise || x == vld_blazeOpen => {
                 (*door).direction = 1;
@@ -406,10 +379,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).speed = VDOORSPEED * 4;
                 if (*door).topheight != (*sec).ceilingheight {
-                    S_StartSound(
-                        &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                        Sfx::Bdopn as i32,
-                    );
+                    S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdopn as i32);
                 }
             }
             x if x == vld_normal || x == vld_open => {
@@ -417,10 +387,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
                 (*door).topheight = P_FindLowestCeilingSurrounding(sec);
                 (*door).topheight -= 4 * FRACUNIT;
                 if (*door).topheight != (*sec).ceilingheight {
-                    S_StartSound(
-                        &(*(*door).sector).soundorg as *const _ as *mut c_void,
-                        Sfx::Doropn as i32,
-                    );
+                    S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
                 }
             }
             _ => {}
@@ -522,22 +489,13 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     // for proper sound
     match (*line).special as i32 {
         117 | 118 => {
-            S_StartSound(
-                &(*sec).soundorg as *const _ as *mut c_void,
-                Sfx::Bdopn as i32,
-            );
+            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Bdopn as i32);
         }
         1 | 31 => {
-            S_StartSound(
-                &(*sec).soundorg as *const _ as *mut c_void,
-                Sfx::Doropn as i32,
-            );
+            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Doropn as i32);
         }
         _ => {
-            S_StartSound(
-                &(*sec).soundorg as *const _ as *mut c_void,
-                Sfx::Doropn as i32,
-            );
+            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Doropn as i32);
         }
     }
 

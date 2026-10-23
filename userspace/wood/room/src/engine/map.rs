@@ -26,13 +26,14 @@ pub struct vertex_t {
 /// A degenerate map object used as a sound origin embedded inside
 /// [`sector_t`] (`degenmobj_t` in `r_defs.h`).
 ///
-/// `repr(C)` because the sound code reads a pointer to it as a map object:
-/// the [`thinker_t`] prefix followed by `x`, `y`, `z` must sit where they do
-/// in `mobj_t`.
+/// `repr(C)` only because of the switch-button sound quirk in
+/// `P_UpdateSpecials`, which reads a `degenmobj_t` over the bytes of a
+/// `button_t` (see the layout checks in `play::switch`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct degenmobj_t {
-    /// Thinker header; unused, present so `x`/`y`/`z` line up with `mobj_t`.
+    /// Thinker header; unused, present so `x`/`y` sit where the
+    /// switch-button sound quirk reads them.
     pub thinker: thinker_t,
     /// X position of the sound origin in map units.
     pub x: fixed_t,
@@ -41,12 +42,6 @@ pub struct degenmobj_t {
     /// Z position of the sound origin in map units.
     pub z: fixed_t,
 }
-
-// The sound code reads `x`/`y`/`z` of a `degenmobj_t` through a map-object
-// pointer, so they must sit at the same offsets as in `mobj_t`.
-const _: () = assert!(std::mem::offset_of!(degenmobj_t, x) == std::mem::offset_of!(mobj_t, x));
-const _: () = assert!(std::mem::offset_of!(degenmobj_t, y) == std::mem::offset_of!(mobj_t, y));
-const _: () = assert!(std::mem::offset_of!(degenmobj_t, z) == std::mem::offset_of!(mobj_t, z));
 
 /// A map sector describing the floor/ceiling geometry and lighting of a
 /// convex region (`sector_t` in `r_defs.h`).

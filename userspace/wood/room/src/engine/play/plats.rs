@@ -24,7 +24,7 @@ use crate::{
             },
             tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
         },
-        sound::S_StartSound,
+        sound::S_StartSectorSound,
         zone::{Z_Malloc, PU_LEVSPEC},
     },
     i_error,
@@ -184,26 +184,17 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
                 && (leveltime & 7) == 0
             {
-                S_StartSound(
-                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Stnmov as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Stnmov as i32);
             }
 
             if res == result_crushed && (*plat).crush == 0 {
                 (*plat).count = (*plat).wait;
                 (*plat).status = down;
-                S_StartSound(
-                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstart as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstart as i32);
             } else if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSound(
-                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstop as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstop as i32);
 
                 match (*plat).kind {
                     x if x == blazeDWUS
@@ -223,10 +214,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSound(
-                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstop as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstop as i32);
             }
         }
         x if x == waiting => {
@@ -237,10 +225,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
                 } else {
                     (*plat).status = down;
                 }
-                S_StartSound(
-                    &(*(*plat).sector).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstart as i32,
-                );
+                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstart as i32);
             }
         }
         x if x == in_stasis => {}
@@ -319,10 +304,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).wait = 0;
                 (*plat).status = up;
                 (*sec).special = 0;
-                S_StartSound(
-                    &(*sec).soundorg as *const _ as *mut c_void,
-                    Sfx::Stnmov as i32,
-                );
+                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Stnmov as i32);
             }
             x if x == raiseAndChange => {
                 (*plat).speed = PLATSPEED / 2;
@@ -331,10 +313,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).high = (*sec).floorheight + amount * FRACUNIT;
                 (*plat).wait = 0;
                 (*plat).status = up;
-                S_StartSound(
-                    &(*sec).soundorg as *const _ as *mut c_void,
-                    Sfx::Stnmov as i32,
-                );
+                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Stnmov as i32);
             }
             x if x == downWaitUpStay => {
                 (*plat).speed = PLATSPEED * 4;
@@ -345,10 +324,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).high = (*sec).floorheight;
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = down;
-                S_StartSound(
-                    &(*sec).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstart as i32,
-                );
+                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
             }
             x if x == blazeDWUS => {
                 (*plat).speed = PLATSPEED * 8;
@@ -359,10 +335,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 (*plat).high = (*sec).floorheight;
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = down;
-                S_StartSound(
-                    &(*sec).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstart as i32,
-                );
+                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
             }
             x if x == perpetualRaise => {
                 (*plat).speed = PLATSPEED;
@@ -376,10 +349,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
                 }
                 (*plat).wait = TICRATE * PLATWAIT;
                 (*plat).status = P_Random() & 1;
-                S_StartSound(
-                    &(*sec).soundorg as *const _ as *mut c_void,
-                    Sfx::Pstart as i32,
-                );
+                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
             }
             _ => {}
         }

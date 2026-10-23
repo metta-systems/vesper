@@ -27,7 +27,7 @@ use crate::engine::{
         tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
-    sound::{MobjStub, S_StartSound, S_StopSound},
+    sound::{S_StartSound, S_StopSound},
     wad::format::mapthing_t,
     zone::PU_LEVEL,
 };
@@ -260,7 +260,7 @@ pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
     }
     mo.flags &= !MF_MISSILE;
     if (*info).deathsound != Sfx::None {
-        S_StartSound(mo as *mut mobj_t as *mut c_void, (*info).deathsound as i32);
+        S_StartSound(mo as *mut mobj_t, (*info).deathsound as i32);
     }
 }
 
@@ -431,7 +431,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
             if !mo.player.is_null() && mo.momz < -GRAVITY * 8 {
                 let player = mo.player;
                 (*player).deltaviewheight = mo.momz >> 3;
-                S_StartSound(mo as *mut mobj_t as *mut c_void, Sfx::Oof as i32);
+                S_StartSound(mo as *mut mobj_t, Sfx::Oof as i32);
             }
             mo.momz = 0;
         }
@@ -489,11 +489,11 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         (*(*mobj.subsector).sector).floorheight,
         MT_TFOG,
     );
-    S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
+    S_StartSound(mo, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y);
     mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_TFOG);
-    S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
+    S_StartSound(mo, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
     let info = mobj.info;
@@ -659,7 +659,7 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
     }
 
     P_UnsetThingPosition(mobj as *mut mobj_t);
-    S_StopSound(mobj as *mut mobj_t as *mut MobjStub);
+    S_StopSound(mobj as *mut mobj_t);
     P_RemoveThinker(&mut mobj.thinker as *mut thinker_t);
 }
 
@@ -689,7 +689,7 @@ pub unsafe fn P_RespawnSpecials() {
 
     let ss = R_PointInSubsector(x, y);
     let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
-    S_StartSound(mo as *mut c_void, Sfx::Itmbk as i32);
+    S_StartSound(mo, Sfx::Itmbk as i32);
 
     let mut i = 0;
     while i < NUMMOBJTYPES {
@@ -992,7 +992,7 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) 
     let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
     let info = (*th).info;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th as *mut c_void, (*info).seesound as i32);
+        S_StartSound(th, (*info).seesound as i32);
     }
     (*th).target = source as *const mobj_t as *mut mobj_t;
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
@@ -1047,7 +1047,7 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
     let th = P_SpawnMobj(x, y, z, kind);
     let info = (*th).info;
     if (*info).seesound != Sfx::None {
-        S_StartSound(th as *mut c_void, (*info).seesound as i32);
+        S_StartSound(th, (*info).seesound as i32);
     }
     (*th).target = source as *const mobj_t as *mut mobj_t;
     (*th).angle = an;

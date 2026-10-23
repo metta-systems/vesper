@@ -10,11 +10,12 @@
 //! derived from listener-to-source distance and angle.
 //!
 //! Notable Rust-vs-C differences:
-//! - `MobjStub` is a layout-compatible prefix of `mobj_t` (see the struct doc).
-//!   Only the fields actually touched by attenuation are named; the rest are
-//!   opaque padding so we do not need to mirror `r_defs::mobj_t` here.
+//! - C passes sound origins as `void *` and reads them as `mobj_t`. Here an
+//!   origin is a typed [`SoundOrigin`]: a map object or a sector's
+//!   `degenmobj_t`. Map-object sounds go through `S_StartSound`, sector sounds
+//!   through `S_StartSectorSound`.
 
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 pub mod info;
 pub mod mus2midi;
@@ -25,10 +26,12 @@ use crate::types::Boolean;
 
 use crate::engine::{
     doom,
+    map::degenmobj_t,
     math::{
-        fixed::{FRACBITS, FRACUNIT},
+        fixed::{fixed_t, FRACBITS, FRACUNIT},
         tables::{finesine, ANGLETOFINESHIFT},
     },
+    play::mobj::mobj_t,
     sound::info::{Mus, MusicInfo, S_InitSfxLinks, S_music, S_sfx, SfxInfo, NUMMUSIC, NUMSFX},
     zone::PU_STATIC,
 };
@@ -62,51 +65,53 @@ const SNDDEVICE_SB: i32 = 3;
 
 /// Mixing channel slot. C counterpart: `channel_t` defined inside `s_sound.c`.
 ///
-/// A null `sfxinfo` marks the slot as free. `origin` points at the mobj the
-/// sound is attached to (used to keep stereo/volume in sync while it moves);
-/// it is `null` for player-local sounds. `handle` is the driver's opaque id.
-#[repr(C)]
+/// A null `sfxinfo` marks the slot as free. `origin` is what the sound is
+/// attached to (used to keep stereo/volume in sync while it moves); it is
+/// `None` for player-local sounds. `handle` is the driver's opaque id.
 #[derive(Clone, Copy)]
 pub struct channel_t {
     /// Currently playing sound's metadata, or null if the channel is free.
     pub sfxinfo: *mut SfxInfo,
-    /// Map object the sound emanates from, or null for non-positional sounds.
-    pub origin: *mut MobjStub,
+    /// What the sound emanates from, or `None` for non-positional sounds.
+    pub origin: Option<SoundOrigin>,
     /// Driver-side handle returned by `I_StartSound` for this channel.
     pub handle: i32,
 }
 
-/// Layout-compatible prefix of `mobj_t` (`p_mobj.h`).
+/// Where a positional sound comes from. C passes either kind as `void *`.
 ///
-/// The sound subsystem only needs the positional/orientation fields of an
-/// mobj, so we expose just those and keep the rest as opaque padding. The
-/// 24-byte `thinker_t` prefix MUST come first or sound effects whose `origin`
-/// is not the player will be positioned at garbage coordinates (see
-/// `MEMORY.md`'s `MobjStub layout bug` note).
-#[repr(C)]
-pub struct MobjStub {
-    // thinker_t prefix (3 pointers * 8 bytes = 24 bytes on 64-bit)
-    /// Padding: `thinker_t.prev` pointer.
-    _thinker_prev: *mut c_void,
-    /// Padding: `thinker_t.next` pointer.
-    _thinker_next: *mut c_void,
-    /// Padding: `thinker_t.function` pointer.
-    _thinker_fn: *mut c_void,
-    // mobj_t positional fields
-    /// World X coordinate, fixed-point.
-    pub x: i32,
-    /// World Y coordinate, fixed-point.
-    pub y: i32,
-    /// Padding: `mobj_t.z`.
-    _z: i32,
-    /// Padding: alignment slot before the sector list pointers.
-    _pad0: u32,
-    /// Padding: `mobj_t.snext`.
-    _snext: *mut c_void,
-    /// Padding: `mobj_t.sprev`.
-    _sprev: *mut c_void,
-    /// Facing angle of the mobj, BAM (binary angle) units.
-    pub angle: u32,
+/// Equality is pointer identity, which is how a new sound replaces the one
+/// already playing from the same origin.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SoundOrigin {
+    /// A map object; the sound follows it as it moves.
+    Mobj(*mut mobj_t),
+    /// A sector's sound origin (`sector_t::soundorg`), used by moving
+    /// floors, ceilings, doors, platforms and switches.
+    Sector(*mut degenmobj_t),
+}
+
+impl SoundOrigin {
+    /// Wrap a map object pointer; null means a non-positional sound.
+    fn from_mobj(mobj: *mut mobj_t) -> Option<Self> {
+        (!mobj.is_null()).then_some(Self::Mobj(mobj))
+    }
+
+    /// Wrap a sector sound origin pointer; null means a non-positional sound.
+    fn from_sector(sector_origin: *mut degenmobj_t) -> Option<Self> {
+        (!sector_origin.is_null()).then_some(Self::Sector(sector_origin))
+    }
+
+    /// Current map position of the origin.
+    ///
+    /// # Safety
+    /// The wrapped pointer must point at a live object.
+    unsafe fn position(self) -> (fixed_t, fixed_t) {
+        match self {
+            Self::Mobj(mobj) => ((*mobj).x, (*mobj).y),
+            Self::Sector(sector_origin) => ((*sector_origin).x, (*sector_origin).y),
+        }
+    }
 }
 
 // doomstat.rs
@@ -194,7 +199,11 @@ pub fn S_Init(sfx_volume: i32, music_volume: i32) {
         ) as *mut channel_t;
 
         for i in 0..snd_channels {
-            (*channels.offset(i as isize)).sfxinfo = std::ptr::null_mut();
+            channels.offset(i as isize).write(channel_t {
+                sfxinfo: std::ptr::null_mut(),
+                origin: None,
+                handle: 0,
+            });
         }
 
         mus_paused = 0;
@@ -292,7 +301,13 @@ pub fn S_Start() {
 
 /// Stop any sound whose `origin` matches the given mobj. Walks the channel
 /// list and stops the first match. C origin: `S_StopSound` in `s_sound.c`.
-pub fn S_StopSound(origin: *mut MobjStub) {
+pub fn S_StopSound(origin: *mut mobj_t) {
+    S_StopOriginSound(SoundOrigin::from_mobj(origin));
+}
+
+/// Stop the first sound playing from `origin`; `None` matches the first
+/// non-positional sound, as a null origin does in C.
+fn S_StopOriginSound(origin: Option<SoundOrigin>) {
     unsafe {
         for cnum in 0..snd_channels {
             let ch = *channels.offset(cnum as isize);
@@ -316,9 +331,9 @@ pub fn S_StopSound(origin: *mut MobjStub) {
 /// (numerically lower), the new sound is dropped and `-1` is returned.
 ///
 /// # Safety
-/// `sfxinfo` must point to a valid `SfxInfo`; `origin` may be null. `channels`
-/// must already be allocated (call `S_Init` first).
-unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> i32 {
+/// `sfxinfo` must point to a valid `SfxInfo`; `origin` may be `None`.
+/// `channels` must already be allocated (call `S_Init` first).
+unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i32 {
     let mut cnum: i32 = 0;
 
     for cnum_search in 0..snd_channels {
@@ -326,7 +341,7 @@ unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> i32 {
         if ch.sfxinfo.is_null() {
             cnum = cnum_search;
             break;
-        } else if !origin.is_null() && ch.origin == origin {
+        } else if origin.is_some() && ch.origin == origin {
             S_StopChannel(cnum_search);
             cnum = cnum_search;
             break;
@@ -369,13 +384,14 @@ unsafe fn S_GetChannel(origin: *mut MobjStub, sfxinfo: *mut SfxInfo) -> i32 {
 /// # Safety
 /// `listener`, `source`, `vol`, `sep` must all point at valid memory.
 unsafe fn S_AdjustSoundParams(
-    listener: *mut MobjStub,
-    source: *mut MobjStub,
+    listener: *mut mobj_t,
+    source: SoundOrigin,
     vol: *mut i32,
     sep: *mut i32,
 ) -> i32 {
-    let adx = (*listener).x.wrapping_sub((*source).x).wrapping_abs();
-    let ady = (*listener).y.wrapping_sub((*source).y).wrapping_abs();
+    let (source_x, source_y) = source.position();
+    let adx = (*listener).x.wrapping_sub(source_x).wrapping_abs();
+    let ady = (*listener).y.wrapping_sub(source_y).wrapping_abs();
 
     let approx_dist = adx
         .wrapping_add(ady)
@@ -385,7 +401,7 @@ unsafe fn S_AdjustSoundParams(
         return 0;
     }
 
-    let mut angle = R_PointToAngle2((*listener).x, (*listener).y, (*source).x, (*source).y);
+    let mut angle = R_PointToAngle2((*listener).x, (*listener).y, source_x, source_y);
 
     if angle > (*listener).angle {
         angle -= (*listener).angle;
@@ -415,16 +431,28 @@ unsafe fn S_AdjustSoundParams(
     (*vol > 0) as i32
 }
 
-/// Start an SFX from `origin_p` (an `mobj_t *`, may be null) with id `sfx_id`.
+/// Start an SFX from map object `origin` (may be null for a non-positional
+/// sound) with id `sfx_id`. C origin: `S_StartSound` in `s_sound.c`.
+pub fn S_StartSound(origin: *mut mobj_t, sfx_id: i32) {
+    S_StartOriginSound(SoundOrigin::from_mobj(origin), sfx_id);
+}
+
+/// Start an SFX from a sector's sound origin (`sector_t::soundorg`; may be
+/// null for a non-positional sound) with id `sfx_id`. C calls `S_StartSound`
+/// with the `degenmobj_t` address for these.
+pub fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
+    S_StartOriginSound(SoundOrigin::from_sector(origin), sfx_id);
+}
+
+/// Start an SFX from `origin` (`None` for a non-positional sound).
 ///
 /// Bogus ids are silently dropped. If the sfx has a `link`, its `volume`
 /// modifier is applied and clamped. Stereo/volume are computed from the
 /// listener (the console player) unless `origin` is the listener itself, in
 /// which case stereo is forced to centre. The chosen sfx replaces any sound
 /// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
-pub fn S_StartSound(origin_p: *mut c_void, sfx_id: i32) {
+fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
     unsafe {
-        let origin = origin_p as *mut MobjStub;
         let mut volume = snd_SfxVolume;
 
         if sfx_id < 1 || sfx_id > NUMSFX as i32 {
@@ -448,13 +476,12 @@ pub fn S_StartSound(origin_p: *mut c_void, sfx_id: i32) {
 
         let mut sep: i32 = NORM_SEP;
 
-        let player_mo =
-            (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).mo as *mut MobjStub;
-        if !origin.is_null() && origin != player_mo {
+        let player_mo = (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).mo;
+        if let Some(source) = origin.filter(|&source| source != SoundOrigin::Mobj(player_mo)) {
             let listener = player_mo;
-            let rc = S_AdjustSoundParams(listener, origin, &mut volume, &mut sep);
+            let rc = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
 
-            if (*origin).x == (*listener).x && (*origin).y == (*listener).y {
+            if source.position() == ((*listener).x, (*listener).y) {
                 sep = NORM_SEP;
             }
 
@@ -463,7 +490,7 @@ pub fn S_StartSound(origin_p: *mut c_void, sfx_id: i32) {
             }
         }
 
-        S_StopSound(origin);
+        S_StopOriginSound(origin);
 
         let cnum = S_GetChannel(origin, sfx);
 
@@ -512,7 +539,7 @@ pub fn S_ResumeSound() {
 /// channels whose sound stopped playing or fell out of audible range.
 ///
 /// C origin: `S_UpdateSounds` in `s_sound.c`.
-pub fn S_UpdateSounds(listener: *mut MobjStub) {
+pub fn S_UpdateSounds(listener: *mut mobj_t) {
     unsafe {
         I_UpdateSound();
 
@@ -535,9 +562,11 @@ pub fn S_UpdateSounds(listener: *mut MobjStub) {
                         }
                     }
 
-                    if !c.origin.is_null() && listener != c.origin {
-                        let audible =
-                            S_AdjustSoundParams(listener, c.origin, &mut volume, &mut sep);
+                    if let Some(source) = c
+                        .origin
+                        .filter(|&source| source != SoundOrigin::Mobj(listener))
+                    {
+                        let audible = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
 
                         if audible == 0 {
                             S_StopChannel(cnum);
@@ -652,5 +681,36 @@ pub fn S_StopMusic() {
             m.data = std::ptr::null_mut();
             mus_playing = std::ptr::null_mut();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Null origins are non-positional; map objects and sector origins
+    /// report their own position and compare by identity.
+    #[test]
+    fn sound_origin_position_and_identity() {
+        let mut mobj: mobj_t = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        mobj.x = 10 * FRACUNIT;
+        mobj.y = -3 * FRACUNIT;
+        let mut sector_origin: degenmobj_t =
+            unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        sector_origin.x = 7 * FRACUNIT;
+        sector_origin.y = 8 * FRACUNIT;
+
+        assert_eq!(SoundOrigin::from_mobj(std::ptr::null_mut()), None);
+        assert_eq!(SoundOrigin::from_sector(std::ptr::null_mut()), None);
+
+        let mobj_origin = SoundOrigin::from_mobj(&raw mut mobj).unwrap();
+        let sector_sound_origin = SoundOrigin::from_sector(&raw mut sector_origin).unwrap();
+        unsafe {
+            assert_eq!(mobj_origin.position(), (10 * FRACUNIT, -3 * FRACUNIT));
+            assert_eq!(sector_sound_origin.position(), (7 * FRACUNIT, 8 * FRACUNIT));
+        }
+
+        assert_eq!(mobj_origin, SoundOrigin::Mobj(&raw mut mobj));
+        assert_ne!(mobj_origin, sector_sound_origin);
     }
 }

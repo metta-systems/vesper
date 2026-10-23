@@ -103,13 +103,10 @@ const DM_VICTIMSY: i32 = 50;
 pub const SHOWNEXTLOCDELAY: i32 = 4;
 
 // ---------------------------------------------------------------------------
-// Types that must match C layout (g_game.c is still C)
+// Intermission input types (filled in by `G_DoCompleted`)
 // ---------------------------------------------------------------------------
 
 /// Per-player intermission data passed in from the game loop (C typedef `wbplayerstruct_t`).
-///
-/// Layout must be ABI-identical to the C struct because `g_game.c` populates it.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct wbplayerstruct_t {
     /// Non-zero if this player slot is in use.
@@ -124,14 +121,11 @@ pub struct wbplayerstruct_t {
     pub stime: i32,
     /// Frag counts against each of the 4 possible players.
     pub frags: [i32; 4],
-    /// Unused score field (carried from the C struct for ABI compatibility).
+    /// Unused score field, kept from the C struct.
     pub score: i32,
 }
 
 /// Overall intermission input record passed from `G_WorldDone` (C typedef `wbstartstruct_t`).
-///
-/// Layout must be ABI-identical to the C struct; `#[repr(C)]` ensures this.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct wbstartstruct_t {
     /// Episode index (0-based).

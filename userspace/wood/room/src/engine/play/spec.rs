@@ -27,7 +27,7 @@ use crate::{
     engine::{
         doom::player::{PlayerT, CF_GODMODE},
         interface::timer::TICRATE,
-        map::{line_t, sector_t, side_t},
+        map::{degenmobj_t, line_t, sector_t, side_t},
         math::fixed::FRACUNIT,
         misc::{
             argv::{argument, M_CheckParmWithArgs},
@@ -49,7 +49,7 @@ use crate::{
             flattranslation, numflats, texturetranslation, R_CheckTextureNumForName,
             R_FlatNumForName, R_TextureNumForName,
         },
-        sound::S_StartSound,
+        sound::S_StartSectorSound,
         wad::format::LinedefFlag,
         zone::PU_LEVSPEC,
     },
@@ -1088,8 +1088,12 @@ pub unsafe fn P_UpdateSpecials() {
                     }
                     _ => {}
                 }
-                S_StartSound(
-                    &mut buttonlist[i].soundorg as *mut _ as *mut c_void,
+                // Vanilla bug kept by Chocolate Doom: this passes the address
+                // of the `soundorg` field, not the origin it points to, so
+                // the sound is positioned from whatever bytes follow the
+                // field (see `button_t`'s layout checks).
+                S_StartSectorSound(
+                    &raw mut buttonlist[i].soundorg as *mut degenmobj_t,
                     Sfx::Swtchn as i32,
                 );
                 buttonlist[i] = std::mem::zeroed();

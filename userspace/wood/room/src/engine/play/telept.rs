@@ -126,7 +126,7 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
 
                 // Spawn teleport fog at source
                 let fog = P_SpawnMobj(oldx, oldy, oldz, MT_TFOG);
-                S_StartSound(fog as *mut c_void, Sfx::Telept as i32);
+                S_StartSound(fog, Sfx::Telept as i32);
 
                 // Spawn teleport fog at destination
                 let an = ((*m).angle >> ANGLETOFINESHIFT) as usize;
@@ -136,7 +136,7 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
                     (*thing).z,
                     MT_TFOG,
                 );
-                S_StartSound(fog as *mut c_void, Sfx::Telept as i32);
+                S_StartSound(fog, Sfx::Telept as i32);
 
                 // Don't move for a bit
                 if !(*thing).player.is_null() {

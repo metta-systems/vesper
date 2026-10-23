@@ -666,9 +666,9 @@ pub unsafe fn A_Look(actor: *mut mobj_t) {
             s => s as i32,
         };
         if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
-            S_StartSound(std::ptr::null_mut::<c_void>(), sound);
+            S_StartSound(std::ptr::null_mut(), sound);
         } else {
-            S_StartSound(actor as *mut c_void, sound);
+            S_StartSound(actor, sound);
         }
     }
     P_SetMobjState(actor, (*(*actor).info).seestate as statenum_t);
@@ -731,7 +731,7 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
     }
     if (*(*actor).info).meleestate != 0 && P_CheckMeleeRange(actor).is_truthy() {
         if (*(*actor).info).attacksound != Sfx::None {
-            S_StartSound(actor as *mut c_void, (*(*actor).info).attacksound as i32);
+            S_StartSound(actor, (*(*actor).info).attacksound as i32);
         }
         P_SetMobjState(actor, (*(*actor).info).meleestate as statenum_t);
         return;
@@ -756,7 +756,7 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
         P_NewChaseDir(actor);
     }
     if (*(*actor).info).activesound != Sfx::None && P_Random() < 3 {
-        S_StartSound(actor as *mut c_void, (*(*actor).info).activesound as i32);
+        S_StartSound(actor, (*(*actor).info).activesound as i32);
     }
 }
 /// Turns `actor` to face its `target` and clears the `MF_AMBUSH` flag.
@@ -802,7 +802,7 @@ pub unsafe fn A_PosAttack(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     angle = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(actor, angle as angle_t, MISSILERANGE) as i32;
-    S_StartSound(actor as *mut c_void, Sfx::Pistol as i32);
+    S_StartSound(actor, Sfx::Pistol as i32);
     angle = angle.wrapping_add((P_Random() - P_Random()) << 20);
     let damage: i32 = (P_Random() % 5 + 1) * 3;
     P_LineAttack(
@@ -831,7 +831,7 @@ pub unsafe fn A_SPosAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
-    S_StartSound(actor as *mut c_void, Sfx::Shotgn as i32);
+    S_StartSound(actor, Sfx::Shotgn as i32);
     A_FaceTarget(actor);
     let bangle: i32 = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(actor, bangle as angle_t, MISSILERANGE) as i32;
@@ -862,7 +862,7 @@ pub unsafe fn A_CPosAttack(actor: *mut mobj_t) {
     if (*actor).target.is_null() {
         return;
     }
-    S_StartSound(actor as *mut c_void, Sfx::Shotgn as i32);
+    S_StartSound(actor, Sfx::Shotgn as i32);
     A_FaceTarget(actor);
     let bangle: i32 = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(actor, bangle as angle_t, MISSILERANGE) as i32;
@@ -945,7 +945,7 @@ pub unsafe fn A_TroopAttack(actor: *mut mobj_t) {
     }
     A_FaceTarget(actor);
     if P_CheckMeleeRange(actor).is_truthy() {
-        S_StartSound(actor as *mut c_void, Sfx::Claw as i32);
+        S_StartSound(actor, Sfx::Claw as i32);
         damage = (P_Random() % 8 + 1) * 3;
         P_DamageMobj((*actor).target, actor, actor, damage);
         return;
@@ -1019,7 +1019,7 @@ pub unsafe fn A_BruisAttack(actor: *mut mobj_t) {
         return;
     }
     if P_CheckMeleeRange(actor).is_truthy() {
-        S_StartSound(actor as *mut c_void, Sfx::Claw as i32);
+        S_StartSound(actor, Sfx::Claw as i32);
         damage = (P_Random() % 8 + 1) * 10;
         P_DamageMobj((*actor).target, actor, actor, damage);
         return;
@@ -1129,7 +1129,7 @@ pub unsafe fn A_SkelWhoosh(actor: *mut mobj_t) {
         return;
     }
     A_FaceTarget(actor);
-    S_StartSound(actor as *mut c_void, Sfx::Skeswg as i32);
+    S_StartSound(actor, Sfx::Skeswg as i32);
 }
 /// Revenant melee strike: deals `(rnd%10+1)*6` damage (6-60) when in melee range.
 ///
@@ -1147,7 +1147,7 @@ pub unsafe fn A_SkelFist(actor: *mut mobj_t) {
     A_FaceTarget(actor);
     if P_CheckMeleeRange(actor).is_truthy() {
         damage = (P_Random() % 10 + 1) * 6;
-        S_StartSound(actor as *mut c_void, Sfx::Skepch as i32);
+        S_StartSound(actor, Sfx::Skepch as i32);
         P_DamageMobj((*actor).target, actor, actor, damage);
     }
 }
@@ -1254,7 +1254,7 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
                     A_FaceTarget(actor);
                     (*actor).target = temp;
                     P_SetMobjState(actor, S_VILE_HEAL1);
-                    S_StartSound(corpsehit as *mut c_void, Sfx::Slop as i32);
+                    S_StartSound(corpsehit, Sfx::Slop as i32);
                     info = (*corpsehit).info;
                     P_SetMobjState(corpsehit, (*info).raisestate as statenum_t);
                     (*corpsehit).height <<= 2;
@@ -1276,7 +1276,7 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
 ///
 /// `actor` must be non-null.
 pub unsafe fn A_VileStart(actor: *mut mobj_t) {
-    S_StartSound(actor as *mut c_void, Sfx::Vilatk as i32);
+    S_StartSound(actor, Sfx::Vilatk as i32);
 }
 /// Archvile fire start: plays the flame start sound then positions the fire object.
 ///
@@ -1284,7 +1284,7 @@ pub unsafe fn A_VileStart(actor: *mut mobj_t) {
 ///
 /// `actor` must be non-null with valid `tracer` and `target` fields (or null).
 pub unsafe fn A_StartFire(actor: *mut mobj_t) {
-    S_StartSound(actor as *mut c_void, Sfx::Flamst as i32);
+    S_StartSound(actor, Sfx::Flamst as i32);
     A_Fire(actor);
 }
 /// Archvile fire crackle: plays the sustained flame sound then repositions the fire object.
@@ -1293,7 +1293,7 @@ pub unsafe fn A_StartFire(actor: *mut mobj_t) {
 ///
 /// `actor` must be non-null with valid `tracer` and `target` fields (or null).
 pub unsafe fn A_FireCrackle(actor: *mut mobj_t) {
-    S_StartSound(actor as *mut c_void, Sfx::Flame as i32);
+    S_StartSound(actor, Sfx::Flame as i32);
     A_Fire(actor);
 }
 /// Repositions the Archvile fire object 24 units in front of its tracer (the victim).
@@ -1371,7 +1371,7 @@ pub unsafe fn A_VileAttack(actor: *mut mobj_t) {
     if P_CheckSight(actor, (*actor).target) == 0 {
         return;
     }
-    S_StartSound(actor as *mut c_void, Sfx::Barexp as i32);
+    S_StartSound(actor, Sfx::Barexp as i32);
     P_DamageMobj((*actor).target, actor, actor, 20);
     (*(*actor).target).momz = (1000 * FRACUNIT / (*(*(*actor).target).info).mass) as fixed_t;
     let an: i32 = ((*actor).angle >> ANGLETOFINESHIFT) as i32;
@@ -1391,7 +1391,7 @@ pub unsafe fn A_VileAttack(actor: *mut mobj_t) {
 /// `actor` must be non-null with a valid or null `target`.
 pub unsafe fn A_FatRaise(actor: *mut mobj_t) {
     A_FaceTarget(actor);
-    S_StartSound(actor as *mut c_void, Sfx::Manatk as i32);
+    S_StartSound(actor, Sfx::Manatk as i32);
 }
 /// Mancubus attack phase 1: two `MT_FATSHOT` fireballs spread to the right.
 ///
@@ -1487,7 +1487,7 @@ pub unsafe fn A_SkullAttack(actor: *mut mobj_t) {
     }
     let dest: *mut mobj_t = (*actor).target;
     (*actor).flags |= MF_SKULLFLY;
-    S_StartSound(actor as *mut c_void, (*(*actor).info).attacksound as i32);
+    S_StartSound(actor, (*(*actor).info).attacksound as i32);
     A_FaceTarget(actor);
     let an: angle_t = (*actor).angle >> ANGLETOFINESHIFT;
     (*actor).momx = FixedMul(SKULLSPEED, *finecosine.0.add(an as usize));
@@ -1589,9 +1589,9 @@ pub unsafe fn A_Scream(actor: *mut mobj_t) {
         s => s as i32,
     };
     if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
-        S_StartSound(std::ptr::null_mut::<c_void>(), sound);
+        S_StartSound(std::ptr::null_mut(), sound);
     } else {
-        S_StartSound(actor as *mut c_void, sound);
+        S_StartSound(actor, sound);
     };
 }
 /// Plays the player/monster gibbing scream (`sfx_slop`) positioned at the actor.
@@ -1600,7 +1600,7 @@ pub unsafe fn A_Scream(actor: *mut mobj_t) {
 ///
 /// `actor` must be non-null.
 pub unsafe fn A_XScream(actor: *mut mobj_t) {
-    S_StartSound(actor as *mut c_void, Sfx::Slop as i32);
+    S_StartSound(actor, Sfx::Slop as i32);
 }
 /// Plays the monster's pain sound if it has one.
 ///
@@ -1609,7 +1609,7 @@ pub unsafe fn A_XScream(actor: *mut mobj_t) {
 /// `actor` must be non-null with a valid `info`.
 pub unsafe fn A_Pain(actor: *mut mobj_t) {
     if (*(*actor).info).painsound != Sfx::None {
-        S_StartSound(actor as *mut c_void, (*(*actor).info).painsound as i32);
+        S_StartSound(actor, (*(*actor).info).painsound as i32);
     }
 }
 /// Clears `MF_SOLID` so the falling corpse can be walked over.
@@ -1780,7 +1780,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
 ///
 /// `mo` must be non-null with a valid `info`.
 pub unsafe fn A_Hoof(mo: *mut mobj_t) {
-    S_StartSound(mo as *mut c_void, Sfx::Hoof as i32);
+    S_StartSound(mo, Sfx::Hoof as i32);
     A_Chase(mo);
 }
 /// Spider Mastermind footstep: plays `sfx_metal` then advances via `A_Chase`.
@@ -1789,7 +1789,7 @@ pub unsafe fn A_Hoof(mo: *mut mobj_t) {
 ///
 /// `mo` must be non-null with a valid `info`.
 pub unsafe fn A_Metal(mo: *mut mobj_t) {
-    S_StartSound(mo as *mut c_void, Sfx::Metal as i32);
+    S_StartSound(mo, Sfx::Metal as i32);
     A_Chase(mo);
 }
 /// Arachnotron footstep: plays `sfx_bspwlk` then advances via `A_Chase`.
@@ -1798,7 +1798,7 @@ pub unsafe fn A_Metal(mo: *mut mobj_t) {
 ///
 /// `mo` must be non-null with a valid `info`.
 pub unsafe fn A_BabyMetal(mo: *mut mobj_t) {
-    S_StartSound(mo as *mut c_void, Sfx::Bspwlk as i32);
+    S_StartSound(mo, Sfx::Bspwlk as i32);
     A_Chase(mo);
 }
 /// Super Shotgun open action: plays the barrel-break sound (`sfx_dbopn`) for the player.
@@ -1807,7 +1807,7 @@ pub unsafe fn A_BabyMetal(mo: *mut mobj_t) {
 ///
 /// `player` must be non-null with a valid `mo`.
 pub unsafe fn A_OpenShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo as *mut c_void, Sfx::Dbopn as i32);
+    S_StartSound((*player).mo, Sfx::Dbopn as i32);
 }
 /// Super Shotgun load action: plays the shell-load sound (`sfx_dbload`) for the player.
 ///
@@ -1815,7 +1815,7 @@ pub unsafe fn A_OpenShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be non-null with a valid `mo`.
 pub unsafe fn A_LoadShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo as *mut c_void, Sfx::Dbload as i32);
+    S_StartSound((*player).mo, Sfx::Dbload as i32);
 }
 /// Super Shotgun close action: plays the close sound (`sfx_dbcls`) then checks for refire.
 ///
@@ -1823,7 +1823,7 @@ pub unsafe fn A_LoadShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// `player` must be non-null with a valid `mo`; `psp` must be non-null.
 pub unsafe fn A_CloseShotgun2(player: *mut PlayerT, psp: *mut PspdefT) {
-    S_StartSound((*player).mo as *mut c_void, Sfx::Dbcls as i32);
+    S_StartSound((*player).mo, Sfx::Dbcls as i32);
     A_ReFire(player, psp);
 }
 /// Array of `MT_BOSSTARGET` map objects (Icon of Sin target spots) populated by `A_BrainAwake`.
@@ -1865,7 +1865,7 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
         }
         thinker = (*thinker).next;
     }
-    S_StartSound(std::ptr::null_mut::<c_void>(), Sfx::Bossit as i32);
+    S_StartSound(std::ptr::null_mut(), Sfx::Bossit as i32);
 }
 /// Icon of Sin pain reaction: plays `sfx_bospn` at full (global) volume.
 ///
@@ -1873,7 +1873,7 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
 ///
 /// No pointer dereference; safe with any (even null) `_mo`.
 pub unsafe fn A_BrainPain(_mo: *mut mobj_t) {
-    S_StartSound(std::ptr::null_mut::<c_void>(), Sfx::Bospn as i32);
+    S_StartSound(std::ptr::null_mut(), Sfx::Bospn as i32);
 }
 /// Icon of Sin death scream: spawns a row of exploding rockets across the brain's width.
 ///
@@ -1907,7 +1907,7 @@ pub unsafe fn A_BrainScream(mo: *mut mobj_t) {
         }
         x += FRACUNIT * 8;
     }
-    S_StartSound(std::ptr::null_mut::<c_void>(), Sfx::Bosdth as i32);
+    S_StartSound(std::ptr::null_mut(), Sfx::Bosdth as i32);
 }
 /// Individual brain explosion particle: spawns one `MT_ROCKET` at a random horizontal offset.
 ///
@@ -1961,7 +1961,7 @@ pub unsafe fn A_BrainSpit(mo: *mut mobj_t) {
     let newmobj: *mut mobj_t = P_SpawnMissile(mo, targ, MT_SPAWNSHOT);
     (*newmobj).target = targ;
     (*newmobj).reactiontime = ((*targ).y - (*mo).y) / (*newmobj).momy / (*(*newmobj).state).tics;
-    S_StartSound(std::ptr::null_mut::<c_void>(), Sfx::Bospit as i32);
+    S_StartSound(std::ptr::null_mut(), Sfx::Bospit as i32);
 }
 /// In-flight cube sound: plays `sfx_boscub` while the cube travels, then calls `A_SpawnFly`.
 ///
@@ -1969,7 +1969,7 @@ pub unsafe fn A_BrainSpit(mo: *mut mobj_t) {
 ///
 /// `mo` must be non-null. Called through the state-machine action pointer.
 pub unsafe fn A_SpawnSound(mo: *mut mobj_t) {
-    S_StartSound(mo as *mut c_void, Sfx::Boscub as i32);
+    S_StartSound(mo, Sfx::Boscub as i32);
     A_SpawnFly(mo);
 }
 /// Monster cube arrival: materializes a random monster at the target spot when `reactiontime` hits 0.
@@ -1995,7 +1995,7 @@ pub unsafe fn A_SpawnFly(mo: *mut mobj_t) {
     }
     let targ: *mut mobj_t = P_SubstNullMobj((*mo).target);
     let fog: *mut mobj_t = P_SpawnMobj((*targ).x, (*targ).y, (*targ).z, MT_SPAWNFIRE);
-    S_StartSound(fog as *mut c_void, Sfx::Telept as i32);
+    S_StartSound(fog, Sfx::Telept as i32);
     let r: i32 = P_Random();
     if r < 50 {
         type_0 = MT_TROOP;
@@ -2040,5 +2040,5 @@ pub unsafe fn A_PlayerScream(mo: *mut mobj_t) {
     if gamemode as u32 == commercial as u32 && (*mo).health < -50 {
         sound = Sfx::Pdiehi as i32;
     }
-    S_StartSound(mo as *mut c_void, sound);
+    S_StartSound(mo, sound);
 }

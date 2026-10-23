@@ -1662,7 +1662,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let mo = P_SpawnMobj(x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
     if players[consoleplayer as usize].viewz != 1 {
-        S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
+        S_StartSound(mo, Sfx::Telept as i32);
     }
     1
 }
@@ -1917,9 +1917,7 @@ pub unsafe fn G_DoCompleted() {
     viewactive = 0;
     automapactive = 0;
 
-    StatCopy(
-        &raw mut wminfo as *mut _ as *mut crate::engine::intermission::statdump::wbstartstruct_t,
-    );
+    StatCopy(&raw const wminfo);
     WI_Start(&raw mut wminfo);
 }
 

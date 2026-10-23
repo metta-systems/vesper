@@ -22,7 +22,7 @@ use crate::engine::{
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
     },
     render_3d::data::textureheight,
-    sound::{info::Sfx, S_StartSound},
+    sound::{info::Sfx, S_StartSectorSound},
     zone::{Z_Malloc, PU_LEVSPEC},
 };
 
@@ -276,10 +276,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
     );
 
     if (leveltime & 7) == 0 {
-        S_StartSound(
-            &(*(*floor).sector).soundorg as *const _ as *mut c_void,
-            Sfx::Stnmov as i32,
-        );
+        S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Stnmov as i32);
     }
 
     if res == result_pastdest {
@@ -296,10 +293,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
         }
         P_RemoveThinker(&mut (*floor).thinker as *mut thinker_t);
 
-        S_StartSound(
-            &(*(*floor).sector).soundorg as *const _ as *mut c_void,
-            Sfx::Pstop as i32,
-        );
+        S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Pstop as i32);
     }
 }
 

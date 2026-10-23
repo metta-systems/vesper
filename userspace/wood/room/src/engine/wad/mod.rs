@@ -37,10 +37,7 @@ use {
 };
 
 /// One entry in the global lump directory. Mirrors `lumpinfo_t` in
-/// `w_wad.h`. The size (40 bytes on x86_64) is asserted by a
-/// `cfg(test)` test below since other modules read this layout
-/// across the FFI boundary.
-#[repr(C)]
+/// `w_wad.h`.
 pub struct lumpinfo_t {
     /// 8-char ASCII lump name, **not** NUL-terminated when full.
     pub name: [u8; 8],
@@ -546,15 +543,6 @@ pub fn W_CheckCorrectIWAD(mission: i32) {
 mod tests {
     use {super::*, std::sync::Mutex};
 
-    /// `lumpinfo_t` is shared with C code: its 40-byte size on
-    /// x86_64 must not silently change.
-    #[test]
-    fn lumpinfo_size_matches_c() {
-        // C lumpinfo_t = name[8] + wad_file* + position + size + cache + next
-        // On x86_64: 8 + 8 + 4 + 4 + 8 + 8 = 40 bytes
-        assert_eq!(std::mem::size_of::<lumpinfo_t>(), 40);
-    }
-
     /// Mutex serialising tests that swap out the global
     /// `lumpinfo` / `numlumps` / `lumphash` state. Cargo runs tests
     /// in parallel by default; without this guard two tests could
@@ -623,11 +611,7 @@ mod tests {
     /// the test harness).
     fn mapped_wad() -> wad_file_t {
         static SENTINEL: u8 = 0;
-        wad_file_t {
-            file_class: ptr::null_mut(),
-            mapped: std::ptr::addr_of!(SENTINEL).cast_mut(),
-            length: 0,
-        }
+        wad_file_t::mapped_for_test(std::ptr::addr_of!(SENTINEL).cast_mut())
     }
 
     /// Build a minimal `lumpinfo_t` for tests: just the name, the
