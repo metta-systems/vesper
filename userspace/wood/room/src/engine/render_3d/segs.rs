@@ -30,7 +30,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use std::ptr;
 
 use crate::engine::{
     global::Global,
@@ -96,7 +96,7 @@ const MAXDRAWSEGS: usize = 256;
 
 use crate::engine::render_3d::{
     bsp::BSP,
-    data::{R_GetColumn, RENDER_DATA, RenderDataState},
+    data::{R_GetColumn, R_GetMaskedColumn, RENDER_DATA, RenderDataState},
     draw::{ColumnParams, DRAW, DrawState},
     main::{R_PointToDist, R_ScaleFromGlobalAngle, VIEW, ViewState, scalelight_row},
     plane::{PLANES, PlaneState, R_CheckPlane},
@@ -425,19 +425,14 @@ pub unsafe fn R_RenderMaskedSegRange(ds: &drawseg_t, x1: i32, x2: i32) {
                 view.centeryfrac - FixedMul(column.dc_texturemid, masked.spryscale);
             column.dc_iscale = (0xffffffff_u32 / (masked.spryscale as u32)) as i32;
 
-            let raw = R_GetColumn(
+            // Drawing the column allocates nothing from the zone, so the
+            // cached lump or composite stays valid while it is used.
+            let masked_column = R_GetMaskedColumn(
                 &data,
                 texnum,
                 *maskedtexturecol.add(column.dc_x as usize) as i32,
             );
-            let col = raw.sub(3);
-            R_DrawMaskedColumn(
-                col as *mut c_void,
-                &masked,
-                &mut column,
-                &mut draw,
-                view.colfunc,
-            );
+            R_DrawMaskedColumn(masked_column, &masked, &mut column, &mut draw, view.colfunc);
 
             *maskedtexturecol.add(column.dc_x as usize) = i16::MAX;
         }

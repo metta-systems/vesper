@@ -27,7 +27,7 @@ use {
             misc::{M_ExtractFileBase, until_nul},
             wad::{
                 file::{W_OpenFile, W_Read, wad_file_t},
-                format::{filelump_t, wadinfo_t},
+                format::{Patch, filelump_t, wadinfo_t},
             },
             zone::{PU_CACHE, PU_STATIC, Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc},
         },
@@ -449,6 +449,44 @@ pub fn W_CacheLumpName(name: &[u8], tag: i32) -> *mut c_void {
 pub unsafe fn cache_lump_bytes<'a>(lumpnum: i32, tag: i32) -> &'a [u8] {
     let data = W_CacheLumpNum(lumpnum, tag) as *const u8;
     std::slice::from_raw_parts(data, W_LumpLength(lumpnum as u32) as usize)
+}
+
+/// Cache lump `lumpnum` with `W_CacheLumpNum` and view it as a [`Patch`].
+/// A lump that is not a patch is a fatal `I_Error`, naming the lump.
+///
+/// # Safety
+///
+/// The view borrows the lump cache, as for [`cache_lump_bytes`], so the
+/// caller picks `'a` no longer than the lump stays cached:
+///
+/// - At `PU_CACHE` the zone may purge the lump on any later `Z_Malloc`,
+///   including a `W_CacheLumpNum` miss for another lump, so use the view
+///   only until the next zone allocation.
+/// - At `PU_STATIC` (or `PU_LEVEL`) the lump stays until it is released
+///   with `W_ReleaseLumpNum`, freed with its tag, or cached again at a
+///   purgeable tag (`W_CacheLumpNum` re-tags a cached lump), so a
+///   `'static` view needs every such release to drop the view first.
+pub unsafe fn cache_patch_num<'a>(lumpnum: i32, tag: i32) -> Patch<'a> {
+    let bytes = cache_lump_bytes(lumpnum, tag);
+    match Patch::from_bytes(bytes) {
+        Ok(patch) => patch,
+        Err(error) => i_error!(
+            "cache_patch_num: lump {} ({}) is not a patch: {}",
+            lumpnum,
+            String::from_utf8_lossy(lump_name(&(*lumpinfo().add(lumpnum as usize)).name)),
+            error
+        ),
+    }
+}
+
+/// Resolve `name` with `W_GetNumForName` (fatal if missing) and call
+/// [`cache_patch_num`].
+///
+/// # Safety
+///
+/// As for [`cache_patch_num`].
+pub unsafe fn cache_patch_name<'a>(name: &[u8], tag: i32) -> Patch<'a> {
+    cache_patch_num(W_GetNumForName(name), tag)
 }
 
 /// Cache lump `lumpnum` at `PU_STATIC` and view it as an array of

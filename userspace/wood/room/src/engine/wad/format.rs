@@ -329,10 +329,9 @@ const _: () = assert!(size_of::<maptexture_t>() == 22);
 ///
 /// Corresponds to `patch_t` in `r_defs.h`, whose last field is the flexible
 /// array `int columnofs[width]`: the byte offset, from the start of the
-/// lump, of each column's post list. Only the fixed header is defined here.
-/// The renderers hold patches as raw pointers into the lump cache and walk
-/// the columns by pointer, so the offsets are read with
-/// [`patch_t::column_offset`].
+/// lump, of each column's post list. Only the fixed header is defined here;
+/// the renderers read a whole patch lump through the checked [`Patch`]
+/// view, which holds the header, the `columnofs` table and the post lists.
 #[repr(C)]
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 pub struct patch_t {
@@ -348,27 +347,14 @@ pub struct patch_t {
 
 const _: () = assert!(size_of::<patch_t>() == 8);
 
-impl patch_t {
-    /// Byte offset of column `column`'s post list from the start of the
-    /// patch lump (`columnofs[column]` in C).
-    ///
-    /// # Safety
-    ///
-    /// `patch` must point at a whole patch lump whose `columnofs` array has
-    /// more than `column` entries.
-    pub unsafe fn column_offset(patch: *const patch_t, column: usize) -> usize {
-        let columnofs = patch.add(1) as *const I32;
-        (*columnofs.add(column)).get() as usize
-    }
-}
-
-/// Single run of opaque pixels within a column (a "post").
+/// Header of a single run of opaque pixels within a column (a "post").
 ///
-/// Corresponds to `post_t` in `r_defs.h`. A column is a sequence of posts
-/// terminated by a `topdelta` value of `0xff`. The actual pixel data follows
-/// immediately after the two-byte header (one byte of padding before the
-/// pixels and one byte of padding after), so the next post starts
-/// `length + 4` bytes after this one.
+/// Corresponds to `post_t` in `r_defs.h` (`column_t` there is an alias of
+/// it). A column is a sequence of posts terminated by a `topdelta` value of
+/// [`POST_END`]. The pixels follow the two-byte header after one byte of
+/// padding, and one more byte of padding follows them, so the next post
+/// starts `length + 4` bytes after this one. [`Column`] walks the posts and
+/// yields each as a [`Post`].
 #[repr(C)]
 #[derive(Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 pub struct post_t {
@@ -380,8 +366,167 @@ pub struct post_t {
 
 const _: () = assert!(size_of::<post_t>() == 2);
 
-/// Alias for `post_t`; used interchangeably in the C source as `column_t`.
-pub type column_t = post_t;
+/// `topdelta` value that ends a column's post list.
+pub const POST_END: u8 = 0xff;
+
+/// Why a byte slice is not a patch lump; returned by [`Patch::from_bytes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatchError {
+    /// The lump is shorter than the 8-byte [`patch_t`] header.
+    TruncatedHeader { length: usize },
+    /// The header gives a negative width.
+    NegativeWidth { width: i16 },
+    /// The lump is too short for the `columnofs` table of `width` entries.
+    TruncatedColumnTable { width: usize, length: usize },
+}
+
+impl std::fmt::Display for PatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            PatchError::TruncatedHeader { length } => {
+                write!(formatter, "{length} bytes is too short for a patch header")
+            }
+            PatchError::NegativeWidth { width } => write!(formatter, "negative width {width}"),
+            PatchError::TruncatedColumnTable { width, length } => write!(
+                formatter,
+                "{length} bytes is too short for the offsets of {width} columns"
+            ),
+        }
+    }
+}
+
+/// A checked view of a patch graphic lump: the [`patch_t`] header, its
+/// `columnofs` table and the post lists the offsets point at.
+///
+/// [`Patch::from_bytes`] checks the header and the `columnofs` table against
+/// the lump length once. Columns are then read with [`Patch::column`], whose
+/// posts are bounds-checked against the lump as they are walked (see
+/// [`Column`]), so no read leaves the lump bytes.
+///
+/// The view borrows the lump bytes; where they come from the zone cache, see
+/// `wad::cache_patch_num` for how long they stay valid.
+#[derive(Clone, Copy)]
+pub struct Patch<'a> {
+    header: &'a patch_t,
+    column_offsets: &'a [I32],
+    lump: &'a [u8],
+}
+
+impl<'a> Patch<'a> {
+    /// View `lump` as a patch. Fails if it is too short for the header or
+    /// for the `columnofs` table the header's width calls for, or if the
+    /// width is negative.
+    pub fn from_bytes(lump: &'a [u8]) -> Result<Self, PatchError> {
+        let (header, after_header) = patch_t::ref_from_prefix(lump)
+            .map_err(|_| PatchError::TruncatedHeader { length: lump.len() })?;
+        let width = header.width.get();
+        let column_count =
+            usize::try_from(width).map_err(|_| PatchError::NegativeWidth { width })?;
+        let (column_offsets, _) = <[I32]>::ref_from_prefix_with_elems(after_header, column_count)
+            .map_err(|_| PatchError::TruncatedColumnTable {
+            width: column_count,
+            length: lump.len(),
+        })?;
+        Ok(Self {
+            header,
+            column_offsets,
+            lump,
+        })
+    }
+
+    /// Width of the patch in pixels (never negative).
+    pub fn width(&self) -> i32 {
+        self.header.width.get() as i32
+    }
+
+    /// Height of the patch in pixels.
+    pub fn height(&self) -> i32 {
+        self.header.height.get() as i32
+    }
+
+    /// Horizontal draw offset from the patch origin, in pixels.
+    pub fn leftoffset(&self) -> i32 {
+        self.header.leftoffset.get() as i32
+    }
+
+    /// Vertical draw offset from the patch origin, in pixels.
+    pub fn topoffset(&self) -> i32 {
+        self.header.topoffset.get() as i32
+    }
+
+    /// The whole lump the view was made from.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.lump
+    }
+
+    /// Byte offset of column `x`'s post list from the start of the lump
+    /// (`columnofs[x]` in C), as stored.
+    ///
+    /// Panics if `x` is not below [`Patch::width`], where C would read past
+    /// the `columnofs` table.
+    pub fn column_offset(&self, x: usize) -> i32 {
+        match self.column_offsets.get(x) {
+            Some(offset) => offset.get(),
+            None => panic!("patch column {x} is outside width {}", self.width()),
+        }
+    }
+
+    /// The posts of column `x`. Panics like [`Patch::column_offset`] if `x`
+    /// is not below the width.
+    pub fn column(&self, x: usize) -> Column<'a> {
+        // A negative offset becomes one past any lump, so the column is empty.
+        Column::at_offset(self.lump, self.column_offset(x) as usize)
+    }
+}
+
+/// The post list of one patch column, iterated as [`Post`]s.
+///
+/// Each post is bounds-checked against the lump before it is yielded. A
+/// post whose header or pixels would run past the end of the lump ends the
+/// column, as does an offset outside the lump: the posts before it are
+/// drawn and nothing is read out of bounds where C would. Vanilla lumps
+/// always end each column with [`POST_END`] inside the lump, so they render
+/// exactly as in C.
+#[derive(Clone, Copy)]
+pub struct Column<'a> {
+    lump: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Column<'a> {
+    /// The column whose first post header is at byte `offset` of `lump`.
+    pub fn at_offset(lump: &'a [u8], offset: usize) -> Self {
+        Self { lump, offset }
+    }
+}
+
+impl<'a> Iterator for Column<'a> {
+    type Item = Post<'a>;
+
+    fn next(&mut self) -> Option<Post<'a>> {
+        let topdelta = *self.lump.get(self.offset)?;
+        if topdelta == POST_END {
+            return None;
+        }
+        let length = *self.lump.get(self.offset + 1)? as usize;
+        // Header, then one byte of padding before the pixels.
+        let pixels_start = self.offset + 3;
+        let pixels = self.lump.get(pixels_start..pixels_start + length)?;
+        // One byte of padding after the pixels.
+        self.offset = pixels_start + length + 1;
+        Some(Post { topdelta, pixels })
+    }
+}
+
+/// One post of a column: `pixels.len()` opaque pixels starting `topdelta`
+/// rows below the top of the patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Post<'a> {
+    /// Row offset from the top of the column where the post begins.
+    pub topdelta: u8,
+    /// The post's pixels, top to bottom; the length is the C `length`.
+    pub pixels: &'a [u8],
+}
 
 // ---------------------------------------------------------------------------
 // Screenshot output (v_video.c)
@@ -416,7 +561,7 @@ pub struct pcx_t {
 const _: () = assert!(size_of::<pcx_t>() == 128);
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Two VERTEXES records and one LINEDEFS record decode from a byte
@@ -451,5 +596,155 @@ mod tests {
 
         // A lump whose length is not a whole number of records is refused.
         assert!(<[mapvertex_t]>::ref_from_bytes(&buffer[1..4]).is_err());
+    }
+
+    /// Build a patch lump: the header, the `columnofs` table, then each
+    /// column's posts as `(topdelta, pixels)` with C's padding bytes and a
+    /// `POST_END` terminator.
+    pub(crate) fn build_patch_lump(
+        height: i16,
+        leftoffset: i16,
+        topoffset: i16,
+        columns: &[&[(u8, &[u8])]],
+    ) -> Vec<u8> {
+        let mut lump = Vec::new();
+        for value in [columns.len() as i16, height, leftoffset, topoffset] {
+            lump.extend_from_slice(&value.to_le_bytes());
+        }
+        let table_start = lump.len();
+        lump.resize(table_start + 4 * columns.len(), 0);
+        for (index, posts) in columns.iter().enumerate() {
+            let offset = lump.len() as i32;
+            let entry = table_start + 4 * index;
+            lump[entry..entry + 4].copy_from_slice(&offset.to_le_bytes());
+            for &(topdelta, pixels) in posts.iter() {
+                lump.extend_from_slice(&[topdelta, pixels.len() as u8, 0xAA]);
+                lump.extend_from_slice(pixels);
+                lump.push(0xBB);
+            }
+            lump.push(POST_END);
+        }
+        lump
+    }
+
+    /// The header fields come back signed and widened, and the bytes are
+    /// the whole lump.
+    #[test]
+    fn patch_header_parses() {
+        let lump = build_patch_lump(-3, -7, 120, &[&[], &[]]);
+        let patch = Patch::from_bytes(&lump).unwrap();
+        assert_eq!(patch.width(), 2);
+        assert_eq!(patch.height(), -3);
+        assert_eq!(patch.leftoffset(), -7);
+        assert_eq!(patch.topoffset(), 120);
+        assert_eq!(patch.bytes().len(), lump.len());
+        assert_eq!(patch.column_offset(0), 16);
+    }
+
+    /// Each column yields its posts in order with their topdelta and
+    /// pixels, skipping the padding bytes, and stops at `POST_END`.
+    #[test]
+    fn patch_columns_yield_posts() {
+        let lump = build_patch_lump(
+            16,
+            0,
+            0,
+            &[&[(0, &[1, 2, 3]), (5, &[4])], &[], &[(254, &[9, 8])]],
+        );
+        let patch = Patch::from_bytes(&lump).unwrap();
+
+        let first: Vec<_> = patch.column(0).collect();
+        assert_eq!(
+            first,
+            [
+                Post {
+                    topdelta: 0,
+                    pixels: &[1, 2, 3]
+                },
+                Post {
+                    topdelta: 5,
+                    pixels: &[4]
+                },
+            ]
+        );
+        assert_eq!(patch.column(1).count(), 0);
+        let last: Vec<_> = patch.column(2).collect();
+        assert_eq!(
+            last,
+            [Post {
+                topdelta: 254,
+                pixels: &[9, 8]
+            }]
+        );
+
+        // The iterator stays finished after the terminator.
+        let mut column = patch.column(0);
+        assert_eq!(column.by_ref().count(), 2);
+        assert_eq!(column.next(), None);
+    }
+
+    /// A lump too short for the header or for the `columnofs` table, or
+    /// with a negative width, is not a patch.
+    #[test]
+    fn patch_rejects_truncated_lumps() {
+        let lump = build_patch_lump(8, 0, 0, &[&[(0, &[1])], &[(0, &[2])]]);
+
+        assert_eq!(
+            Patch::from_bytes(&lump[..7]).err(),
+            Some(PatchError::TruncatedHeader { length: 7 })
+        );
+        // Header plus one of the two column offsets.
+        assert_eq!(
+            Patch::from_bytes(&lump[..12]).err(),
+            Some(PatchError::TruncatedColumnTable {
+                width: 2,
+                length: 12
+            })
+        );
+        assert!(Patch::from_bytes(&lump[..16]).is_ok());
+
+        let mut negative = lump.clone();
+        negative[..2].copy_from_slice(&(-1i16).to_le_bytes());
+        assert_eq!(
+            Patch::from_bytes(&negative).err(),
+            Some(PatchError::NegativeWidth { width: -1 })
+        );
+    }
+
+    /// Posts are checked against the lump as they are walked: a post or
+    /// offset past the end ends the column instead of reading out of
+    /// bounds, and a column index past the width panics.
+    #[test]
+    fn patch_columns_stop_at_lump_end() {
+        let lump = build_patch_lump(8, 0, 0, &[&[(0, &[1, 2]), (4, &[3, 4, 5])]]);
+
+        // Cut inside the second post's pixels: only the first post remains.
+        // Header and one column offset (12 bytes), the first post (6), then
+        // the second post's header and padding (3).
+        let second_post_pixels = 12 + 6 + 3;
+        let truncated = Patch::from_bytes(&lump[..second_post_pixels + 2]).unwrap();
+        let posts: Vec<_> = truncated.column(0).collect();
+        assert_eq!(
+            posts,
+            [Post {
+                topdelta: 0,
+                pixels: &[1, 2]
+            }]
+        );
+
+        // Cut before the terminator: both posts, then the end of the lump.
+        let unterminated = Patch::from_bytes(&lump[..lump.len() - 1]).unwrap();
+        assert_eq!(unterminated.column(0).count(), 2);
+
+        // A column offset outside the lump (or negative) is an empty column.
+        for offset in [lump.len() as i32, -4] {
+            let mut moved = lump.clone();
+            moved[8..12].copy_from_slice(&offset.to_le_bytes());
+            assert_eq!(Patch::from_bytes(&moved).unwrap().column(0).count(), 0);
+        }
+
+        let patch = Patch::from_bytes(&lump).unwrap();
+        let outside_width = std::panic::catch_unwind(|| patch.column(1));
+        assert!(outside_width.is_err());
     }
 }

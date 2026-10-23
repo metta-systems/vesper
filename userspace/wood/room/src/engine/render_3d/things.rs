@@ -168,12 +168,8 @@ use crate::engine::{
         main::{R_PointOnSegSide, R_PointToAngle, VALIDCOUNT, VIEW, scalelight_row},
         segs::R_RenderMaskedSegRange,
     },
-    wad::{
-        W_CacheLumpNum, W_GetNumForName,
-        format::{column_t, patch_t},
-        lumpinfo,
-    },
-    zone::Z_Malloc,
+    wad::{W_GetNumForName, cache_patch_num, format::Column, lumpinfo},
+    zone::{PU_CACHE, Z_Malloc},
 };
 
 // ---------------------------------------------------------------------------
@@ -573,25 +569,24 @@ pub unsafe fn R_NewVisSprite() -> *mut vissprite_t {
 /// Draw one vertical column of a masked (partly transparent) sprite or
 /// mid-texture using `draw_column`.
 ///
-/// Iterates over the post list stored in `column`, clipping each post against
+/// Iterates over the posts of `column`, clipping each post against
 /// `mfloorclip` and `mceilingclip` before invoking `draw_column`. Used for both
 /// world sprites (via `R_DrawVisSprite`) and masked mid-textures
 /// (via `R_RenderMaskedSegRange`).
 /// Called from `r_segs.rs`.
 ///
 /// # Safety
-/// - `column` must point to a valid `column_t` sequence terminated by
-///   `topdelta == 0xff`.
 /// - `masked` and `params.dc_x` must be valid for the current column being
 ///   drawn.
+/// - `draw_column` reads each post through `dc_source`, as in C, so the
+///   column's bytes must stay valid until the call returns.
 pub unsafe fn R_DrawMaskedColumn(
-    column: *mut c_void,
+    column: Column<'_>,
     masked: &MaskedColumnParams,
     params: &mut ColumnParams,
     draw: &mut DrawState,
     draw_column: ColumnFunction,
 ) {
-    let mut column = column as *mut column_t;
     let basetexturemid = params.dc_texturemid;
     let MaskedColumnParams {
         mfloorclip,
@@ -600,10 +595,10 @@ pub unsafe fn R_DrawMaskedColumn(
         sprtopscreen,
     } = *masked;
 
-    while (*column).topdelta != 0xff {
+    for post in column {
         // Calculate unclipped screen coordinates for post.
-        let topscreen = sprtopscreen + spryscale * (*column).topdelta as i32;
-        let bottomscreen = topscreen + spryscale * (*column).length as i32;
+        let topscreen = sprtopscreen + spryscale * post.topdelta as i32;
+        let bottomscreen = topscreen + spryscale * post.pixels.len() as i32;
 
         params.dc_yl = (topscreen + FRACUNIT - 1) >> FRACBITS;
         params.dc_yh = (bottomscreen - 1) >> FRACBITS;
@@ -616,12 +611,11 @@ pub unsafe fn R_DrawMaskedColumn(
         }
 
         if params.dc_yl <= params.dc_yh {
-            params.dc_source = (column as *mut u8).add(3);
-            params.dc_texturemid = basetexturemid - (((*column).topdelta as i32) << FRACBITS);
+            params.dc_source = post.pixels.as_ptr();
+            params.dc_texturemid = basetexturemid - ((post.topdelta as i32) << FRACBITS);
 
             draw_column(params, draw);
         }
-        column = (column as *mut u8).add((*column).length as usize + 4) as *mut column_t;
     }
 
     params.dc_texturemid = basetexturemid;
@@ -646,8 +640,7 @@ pub unsafe fn R_DrawMaskedColumn(
 /// # Safety
 /// - `vis` must be a fully initialised `vissprite_t` as produced by
 ///   `R_ProjectSprite` or `R_DrawPSprite`.
-/// - The patch lump referenced by `vis.patch + firstspritelump` must be loaded
-///   in the WAD cache.
+/// - `vis.patch + firstspritelump` must be a sprite patch lump.
 /// - `mfloorclip` and `mceilingclip` must be valid arrays of at least
 ///   `SCREENWIDTH` elements.
 pub unsafe fn R_DrawVisSprite(
@@ -660,7 +653,9 @@ pub unsafe fn R_DrawVisSprite(
     let view = VIEW.borrow();
     let mut draw = DRAW.borrow_mut();
 
-    let patch = W_CacheLumpNum(vis.patch + data.firstspritelump, 8) as *mut patch_t; // PU_CACHE = 8
+    // Drawing the sprite allocates nothing from the zone, so the PU_CACHE
+    // lump stays cached while the view is used.
+    let patch = cache_patch_num(vis.patch + data.firstspritelump, PU_CACHE);
 
     let mut column = ColumnParams::new(view.centery, data.colormaps);
     column.dc_colormap = vis.colormap;
@@ -689,16 +684,13 @@ pub unsafe fn R_DrawVisSprite(
 
         #[cfg(feature = "rangecheck")]
         {
-            let patch_width = (*patch).width.get() as i32;
-            if texturecolumn < 0 || texturecolumn >= patch_width {
+            if texturecolumn < 0 || texturecolumn >= patch.width() {
                 i_error!("R_DrawSpriteRange: bad texturecolumn");
             }
         }
 
-        let col_offset = patch_t::column_offset(patch, texturecolumn as usize);
-        let col = (patch as *mut u8).add(col_offset) as *mut column_t;
         R_DrawMaskedColumn(
-            col as *mut c_void,
+            patch.column(texturecolumn as usize),
             masked,
             &mut column,
             &mut draw,

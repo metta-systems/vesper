@@ -42,12 +42,12 @@ use crate::{
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
         status::lib::{
-            STlib_init, STlib_initBinIcon, STlib_initMultIcon, STlib_initNum, STlib_initPercent,
-            STlib_updateBinIcon, STlib_updateMultIcon, STlib_updateNum, STlib_updatePercent,
-            st_binicon_t, st_multicon_t, st_number_t, st_percent_t,
+            PatchTable, STlib_init, STlib_initBinIcon, STlib_initMultIcon, STlib_initNum,
+            STlib_initPercent, STlib_updateBinIcon, STlib_updateMultIcon, STlib_updateNum,
+            STlib_updatePercent, st_binicon_t, st_multicon_t, st_number_t, st_percent_t,
         },
         wad::{
-            W_CacheLumpName, W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, format::patch_t,
+            W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch,
         },
         zone::{PU_CACHE, PU_STATIC, Z_Malloc},
     },
@@ -326,6 +326,12 @@ const fn cheat(seq: &[u8], params: i32) -> cheatseq_t {
 /// The widgets keep raw pointers to the patch tables and to the visibility
 /// and value fields here, and the `STlib_*` calls take the widgets by
 /// pointer, so those go through [`Global::as_ptr`] rather than a guard.
+///
+/// The patches are `'static` views of lumps cached at `PU_STATIC` by
+/// `ST_loadGraphics` (and `STlib_init` for `sttminus`); `None` is a patch
+/// not loaded. Only `ST_unloadGraphics` releases those lumps, clearing the
+/// slots, and it must not run while the widgets, which copy some patches,
+/// still draw.
 pub struct StatusState {
     /// Backing pixel buffer for the status bar, allocated in `ST_Init`.
     ///
@@ -335,7 +341,7 @@ pub struct StatusState {
     pub(super) st_backing_screen: *mut u8,
     /// The minus-sign patch (`STTMINUS`) used when rendering negative
     /// numbers, loaded by `STlib_init` (C `sttminus` in `st_lib.c`).
-    pub(super) sttminus: *mut patch_t,
+    pub(super) sttminus: Option<Patch<'static>>,
     /// Cheat sequence for changing the playing music track (`idmus##`).
     ///
     /// Two parameter characters encode the track number.
@@ -406,28 +412,28 @@ pub struct StatusState {
     st_armson: i32,
     /// Non-zero when the frag counter should be shown (deathmatch only).
     st_fragson: i32,
-    /// Pointer to the `STBAR` background patch.
-    sbar: *mut patch_t,
+    /// The `STBAR` background patch.
+    sbar: Option<Patch<'static>>,
     /// Tall digit patches 0-9 (`STTNUM0`-`STTNUM9`), used for health,
     /// armor, and ammo.
-    tallnum: [*mut patch_t; 10],
+    tallnum: [Option<Patch<'static>>; 10],
     /// Tall percent-sign patch (`STTPRCNT`).
-    tallpercent: *mut patch_t,
+    tallpercent: Option<Patch<'static>>,
     /// Short digit patches 0-9 (`STYSNUM0`-`STYSNUM9`), used in the
     /// per-ammo sidebar.
-    shortnum: [*mut patch_t; 10],
+    shortnum: [Option<Patch<'static>>; 10],
     /// Key icon patches, one per `NUMCARDS` card type.
-    keys: [*mut patch_t; NUMCARDS],
+    keys: [Option<Patch<'static>>; NUMCARDS],
     /// All face patches in a flat array; indexed by `st_faceindex`.
-    faces: [*mut patch_t; ST_NUMFACES as usize],
+    faces: [Option<Patch<'static>>; ST_NUMFACES as usize],
     /// Network-game face-background patch (`STFB#` where `#` is the console
     /// player index).
-    faceback: *mut patch_t,
+    faceback: Option<Patch<'static>>,
     /// Arms-grid background patch (`STARMS`).
-    armsbg: *mut patch_t,
+    armsbg: Option<Patch<'static>>,
     /// Arms patches: `arms[weapon][0]` = dim `STGNUM#`, `arms[weapon][1]` =
     /// bright short digit.
-    arms: [[*mut patch_t; 2]; 6],
+    arms: [[Option<Patch<'static>>; 2]; 6],
     /// Ready-ammo number widget state.
     w_ready: st_number_t,
     /// Frag-count number widget state (deathmatch only).
@@ -493,7 +499,7 @@ impl StatusState {
     pub const fn new() -> Self {
         Self {
             st_backing_screen: ptr::null_mut(),
-            sttminus: ptr::null_mut(),
+            sttminus: None,
             cheat_mus: cheat(b"idmus", 2),
             cheat_god: cheat(b"iddqd", 0),
             cheat_ammo: cheat(b"idkfa", 0),
@@ -526,25 +532,25 @@ impl StatusState {
             st_notdeathmatch: 0,
             st_armson: 0,
             st_fragson: 0,
-            sbar: ptr::null_mut(),
-            tallnum: [ptr::null_mut(); 10],
-            tallpercent: ptr::null_mut(),
-            shortnum: [ptr::null_mut(); 10],
-            keys: [ptr::null_mut(); NUMCARDS],
-            faces: [ptr::null_mut(); ST_NUMFACES as usize],
-            faceback: ptr::null_mut(),
-            armsbg: ptr::null_mut(),
-            arms: [[ptr::null_mut(); 2]; 6],
-            w_ready: unsafe { std::mem::zeroed() },
-            w_frags: unsafe { std::mem::zeroed() },
-            w_health: unsafe { std::mem::zeroed() },
-            w_armsbg: unsafe { std::mem::zeroed() },
+            sbar: None,
+            tallnum: [None; 10],
+            tallpercent: None,
+            shortnum: [None; 10],
+            keys: [None; NUMCARDS],
+            faces: [None; ST_NUMFACES as usize],
+            faceback: None,
+            armsbg: None,
+            arms: [[None; 2]; 6],
+            w_ready: st_number_t::EMPTY,
+            w_frags: st_number_t::EMPTY,
+            w_health: st_percent_t::EMPTY,
+            w_armsbg: st_binicon_t::EMPTY,
             w_arms: unsafe { std::mem::zeroed() },
             w_faces: unsafe { std::mem::zeroed() },
             w_keyboxes: unsafe { std::mem::zeroed() },
-            w_armor: unsafe { std::mem::zeroed() },
-            w_ammo: unsafe { std::mem::zeroed() },
-            w_maxammo: unsafe { std::mem::zeroed() },
+            w_armor: st_percent_t::EMPTY,
+            w_ammo: [st_number_t::EMPTY; NUMAMMO],
+            w_maxammo: [st_number_t::EMPTY; NUMAMMO],
             st_fragscount: 0,
             st_oldhealth: -1,
             oldweaponsowned: [0; NUMWEAPONS],
@@ -606,10 +612,18 @@ pub unsafe fn ST_refreshBackground() {
         )
     };
     if statusbaron != 0 {
-        V_UseBuffer(backing_screen);
-        V_DrawPatch(ST_X, 0, sbar);
+        V_UseBuffer(backing_screen, (ST_WIDTH * ST_HEIGHT) as usize);
+        V_DrawPatch(
+            ST_X,
+            0,
+            sbar.expect("ST_refreshBackground before ST_loadGraphics"),
+        );
         if netgame() != 0 {
-            V_DrawPatch(ST_FX, 0, faceback);
+            V_DrawPatch(
+                ST_FX,
+                0,
+                faceback.expect("ST_refreshBackground before ST_loadGraphics"),
+            );
         }
         V_RestoreBuffer();
         V_CopyRect(ST_X, 0, backing_screen, ST_WIDTH, ST_HEIGHT, ST_X, ST_Y);
@@ -1249,9 +1263,9 @@ pub unsafe fn ST_Drawer(fullscreen: Boolean, refresh: Boolean) {
 
 /// Function pointer type for the load/unload callback used by `ST_loadUnloadGraphics`.
 ///
-/// The callback receives a WAD lump name and a pointer to the patch pointer that
-/// should be updated: either cached (load path) or released and nulled (unload path).
-type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
+/// The callback receives a WAD lump name and the patch slot that should be
+/// updated: either cached (load path) or released and cleared (unload path).
+type LoadCallback = unsafe fn(&[u8], &mut Option<Patch<'static>>);
 
 /// Walk every status-bar lump name and invoke `callback` for each.
 ///
@@ -1261,8 +1275,8 @@ type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
 ///
 /// # Safety
 ///
-/// `callback` is invoked as an `unsafe` function and is given pointers
-/// into the `tallnum`/`shortnum`/`faces`/etc. arrays. Caller must pass a
+/// `callback` is invoked as an `unsafe` function and is given slots of
+/// the `tallnum`/`shortnum`/`faces`/etc. arrays. Caller must pass a
 /// callback that only reads/writes the single patch slot supplied and does
 /// not touch the status state. The WAD subsystem must be initialised before
 /// the load variant is invoked.
@@ -1326,15 +1340,16 @@ unsafe fn ST_loadUnloadGraphics(callback: LoadCallback) {
     callback(b"STFDEAD0", &mut status.faces[facenum as usize]);
 }
 
-/// Load callback: cache the named WAD lump and store the pointer in `*variable`.
+/// Load callback: cache the named WAD lump at `PU_STATIC` and store its
+/// patch view in `*variable`.
 ///
 /// # Safety
 ///
-/// Caller must ensure `lumpname` names a lump present in the WAD, and
-/// `variable` is a valid, non-null, properly aligned pointer to a
-/// `*mut patch_t` slot the function may overwrite.
-unsafe fn ST_loadCallback(lumpname: &[u8], variable: *mut *mut patch_t) {
-    *variable = W_CacheLumpName(lumpname, PU_STATIC) as *mut patch_t;
+/// Caller must ensure `lumpname` names a patch lump present in the WAD. The
+/// view is `'static` because the lump stays at `PU_STATIC` until
+/// `ST_unloadCallback` releases it and clears the slot.
+unsafe fn ST_loadCallback(lumpname: &[u8], variable: &mut Option<Patch<'static>>) {
+    *variable = Some(cache_patch_name(lumpname, PU_STATIC));
 }
 
 /// Cache all status-bar graphics from the WAD into `PU_STATIC` memory.
@@ -1362,17 +1377,16 @@ pub unsafe fn ST_loadData() {
     ST_loadGraphics();
 }
 
-/// Unload callback: release the named WAD lump and null the pointer in `*variable`.
+/// Unload callback: release the named WAD lump and clear `*variable`.
 ///
 /// # Safety
 ///
-/// Caller must ensure `lumpname` names a lump previously cached via
-/// `W_CacheLumpName`, and `variable` is a valid, non-null, properly
-/// aligned pointer to a `*mut patch_t` slot that this function may
-/// overwrite with null.
-unsafe fn ST_unloadCallback(lumpname: &[u8], variable: *mut *mut patch_t) {
+/// Caller must ensure `lumpname` names a lump previously cached by
+/// `ST_loadCallback`, and that no copy of the slot's patch is drawn after
+/// the release.
+unsafe fn ST_unloadCallback(lumpname: &[u8], variable: &mut Option<Patch<'static>>) {
     W_ReleaseLumpName(lumpname);
-    *variable = ptr::null_mut();
+    *variable = None;
 }
 
 /// Release all status-bar graphics and null their pointers.
@@ -1459,7 +1473,9 @@ pub unsafe fn ST_createWidgets() {
     let status = STATUS.as_ptr();
     let plyr = (*status).plyr;
     let statusbaron = &raw mut (*status).st_statusbaron;
-    let tallnum = &raw mut (*status).tallnum[0];
+    let tallnum: PatchTable = &raw const (*status).tallnum;
+    let shortnum: PatchTable = &raw const (*status).shortnum;
+    let keys: PatchTable = &raw const (*status).keys;
 
     STlib_initNum(
         &raw mut (*status).w_ready,
@@ -1500,7 +1516,7 @@ pub unsafe fn ST_createWidgets() {
             &raw mut (*status).w_arms[i],
             ST_ARMSX + (i_i % 3) * ST_ARMSXSPACE,
             ST_ARMSY + (i_i / 3) * ST_ARMSYSPACE,
-            &raw mut (*status).arms[i][0],
+            &raw const (*status).arms[i] as PatchTable,
             (*plyr).weaponowned.as_mut_ptr().add(i + 1),
             &raw mut (*status).st_armson,
         );
@@ -1520,7 +1536,7 @@ pub unsafe fn ST_createWidgets() {
         &raw mut (*status).w_faces,
         ST_FACESX,
         ST_FACESY,
-        &raw mut (*status).faces[0],
+        &raw const (*status).faces as PatchTable,
         &raw mut (*status).st_faceindex,
         statusbaron,
     );
@@ -1539,7 +1555,7 @@ pub unsafe fn ST_createWidgets() {
         &raw mut (*status).w_keyboxes[0],
         ST_KEY0X,
         ST_KEY0Y,
-        &raw mut (*status).keys[0],
+        keys,
         &raw mut (*status).keyboxes[0],
         statusbaron,
     );
@@ -1547,7 +1563,7 @@ pub unsafe fn ST_createWidgets() {
         &raw mut (*status).w_keyboxes[1],
         ST_KEY1X,
         ST_KEY1Y,
-        &raw mut (*status).keys[0],
+        keys,
         &raw mut (*status).keyboxes[1],
         statusbaron,
     );
@@ -1555,7 +1571,7 @@ pub unsafe fn ST_createWidgets() {
         &raw mut (*status).w_keyboxes[2],
         ST_KEY2X,
         ST_KEY2Y,
-        &raw mut (*status).keys[0],
+        keys,
         &raw mut (*status).keyboxes[2],
         statusbaron,
     );
@@ -1577,7 +1593,7 @@ pub unsafe fn ST_createWidgets() {
                 3 => ST_AMMO3Y,
                 _ => unreachable!(),
             },
-            &raw mut (*status).shortnum[0],
+            shortnum,
             (*plyr).ammo.as_mut_ptr().add(i),
             statusbaron,
             ST_AMMO0WIDTH,
@@ -1601,7 +1617,7 @@ pub unsafe fn ST_createWidgets() {
                 3 => ST_MAXAMMO3Y,
                 _ => unreachable!(),
             },
-            &raw mut (*status).shortnum[0],
+            shortnum,
             (*plyr).maxammo.as_mut_ptr().add(i),
             statusbaron,
             ST_MAXAMMO0WIDTH,

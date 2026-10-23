@@ -19,13 +19,45 @@
 //! Notable Rust-vs-C differences:
 //! * C `boolean*` is `*mut i32` throughout.
 //! * The `SHORT` macro (little-endian swap) is an identity function on x86_64.
+//! * C `patch_t**` patch arrays are `*const [Option<Patch<'static>>]`
+//!   pointers to the patch tables in the status state, and a single
+//!   `patch_t*` is an `Option<Patch<'static>>` copy; `None` is C's null.
+//!   The status bar caches its patches at `PU_STATIC` and releases them only
+//!   in `ST_unloadGraphics`, which must not run while the widgets draw.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::{
-    engine::{wad::format::patch_t, zone::PU_STATIC},
-    i_error,
+use {
+    crate::{
+        engine::{
+            wad::{cache_patch_name, format::Patch},
+            zone::PU_STATIC,
+        },
+        i_error,
+    },
+    std::ptr,
 };
+
+/// A widget's table of patches: a pointer to one of the patch arrays in the
+/// status state, C `patch_t**`.
+pub type PatchTable = *const [Option<Patch<'static>>];
+
+/// Patch `index` of `table`. Panics if the index is outside the table or
+/// the patch is not loaded, where C would read out of bounds or through a
+/// null pointer.
+///
+/// # Safety
+/// `table` must point to a live patch table.
+unsafe fn table_patch(table: PatchTable, index: i32) -> Patch<'static> {
+    let table = unsafe { &*table };
+    table[index as usize].expect("status bar patch used before ST_loadGraphics")
+}
+
+/// The patch in `slot`. Panics if it is not loaded, where C would read
+/// through a null pointer.
+fn loaded_patch(slot: Option<Patch<'static>>) -> Patch<'static> {
+    slot.expect("status bar patch used before ST_loadGraphics")
+}
 /// Height of the status bar in pixels.
 /// Mirrors `ST_HEIGHT` from `st_stuff.h`.
 const ST_HEIGHT: i32 = 32;
@@ -43,7 +75,7 @@ const ST_Y: i32 = 200 - ST_HEIGHT; // 168
 /// a slot is inactive).
 ///
 /// # Invariants
-/// * `p[0..9]` must point to valid digit patches when drawing.
+/// * `p` must point to a table of the loaded digit patches 0-9 when drawing.
 /// * `on` and `num` must be valid non-null pointers for the widget's lifetime.
 #[derive(Clone, Copy)]
 pub struct st_number_t {
@@ -61,9 +93,23 @@ pub struct st_number_t {
     /// Maps to `boolean*` in C.
     pub on: *mut i32, // boolean* (i32 in C)
     /// Array of digit patches; `p[d]` is the patch for digit `d` (0-9).
-    pub p: *mut *mut patch_t,
+    pub p: PatchTable,
     /// User-defined auxiliary data (unused by the widget library itself).
     pub data: i32,
+}
+
+impl st_number_t {
+    /// A number widget before [`STlib_initNum`]: no value, no patches.
+    pub const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        width: 0,
+        oldnum: 0,
+        num: ptr::null_mut(),
+        on: ptr::null_mut(),
+        p: ptr::slice_from_raw_parts(ptr::null(), 0),
+        data: 0,
+    };
 }
 
 /// A percentage display widget: a number followed by a `%` sign patch.
@@ -76,7 +122,15 @@ pub struct st_percent_t {
     /// The underlying number widget (renders the digits).
     pub n: st_number_t,
     /// The `%` percent-sign patch drawn after the number.
-    pub p: *mut patch_t,
+    pub p: Option<Patch<'static>>,
+}
+
+impl st_percent_t {
+    /// A percent widget before [`STlib_initPercent`].
+    pub const EMPTY: Self = Self {
+        n: st_number_t::EMPTY,
+        p: None,
+    };
 }
 
 /// A widget that displays one patch selected from an indexed array.
@@ -88,8 +142,8 @@ pub struct st_percent_t {
 /// drawn.
 ///
 /// # Invariants
-/// * `p[0..N]` must contain valid patch pointers for all possible values of
-///   `*inum`.
+/// * `p` must point to a table holding loaded patches for all possible
+///   values of `*inum`.
 /// * `inum == -1` means "no image"; the widget skips drawing entirely.
 #[derive(Clone, Copy)]
 pub struct st_multicon_t {
@@ -105,7 +159,7 @@ pub struct st_multicon_t {
     /// Visibility flag pointer; widget is only drawn when `*on != 0`.
     pub on: *mut i32,
     /// Array of icon patches indexed by `*inum`.
-    pub p: *mut *mut patch_t,
+    pub p: PatchTable,
     /// User-defined auxiliary data (unused by the widget library itself).
     pub data: i32,
 }
@@ -118,7 +172,7 @@ pub struct st_multicon_t {
 /// indicators and similar binary status elements.
 ///
 /// # Invariants
-/// * `p` must point to a valid patch for the lifetime of the widget.
+/// * `p` must be loaded when the widget draws.
 /// * `val` and `on` must be valid non-null pointers.
 #[derive(Clone, Copy)]
 pub struct st_binicon_t {
@@ -133,15 +187,27 @@ pub struct st_binicon_t {
     /// Visibility flag pointer; widget is only drawn when `*on != 0`.
     pub on: *mut i32,
     /// The patch to display when `*val != 0`.
-    pub p: *mut patch_t,
+    pub p: Option<Patch<'static>>,
     /// User-defined auxiliary data (unused by the widget library itself).
     pub data: i32,
+}
+
+impl st_binicon_t {
+    /// A binary icon widget before [`STlib_initBinIcon`].
+    pub const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        oldval: 0,
+        val: ptr::null_mut(),
+        on: ptr::null_mut(),
+        p: None,
+        data: 0,
+    };
 }
 
 use crate::engine::{
     render_2d::{V_CopyRect, V_DrawPatch},
     status::stuff::STATUS,
-    wad::W_CacheLumpName,
 };
 
 /// The status bar backing buffer the widgets erase from.
@@ -158,8 +224,9 @@ fn backing_screen() -> *mut u8 {
 /// functions. Called from `ST_initData` in `st_stuff.c`.
 pub fn STlib_init() {
     // DEH_String("STTMINUS") is identity — just pass the string.
-    let sttminus = W_CacheLumpName(b"STTMINUS", PU_STATIC) as *mut patch_t;
-    STATUS.borrow_mut().sttminus = sttminus;
+    // SAFETY: STTMINUS is cached at PU_STATIC and never released.
+    let sttminus = unsafe { cache_patch_name(b"STTMINUS", PU_STATIC) };
+    STATUS.borrow_mut().sttminus = Some(sttminus);
 }
 
 /// Initialize a number widget.
@@ -169,13 +236,14 @@ pub fn STlib_init() {
 ///
 /// # Safety
 /// * `n` must be a valid non-null pointer.
-/// * `pl` must point to at least 10 valid patch pointers (digits 0-9).
+/// * `pl` must point to a table of the 10 digit patches (0-9) for the
+///   widget's lifetime.
 /// * `num` and `on` must be valid non-null pointers for the widget's lifetime.
 pub unsafe fn STlib_initNum(
     n: *mut st_number_t,
     x: i32,
     y: i32,
-    pl: *mut *mut patch_t,
+    pl: PatchTable,
     num: *mut i32,
     on: *mut i32,
     width: i32,
@@ -216,8 +284,9 @@ pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
         let mut numdigits = (*n).width;
         let num = *(*n).num;
 
-        let w = (**(*n).p).width.get() as i32;
-        let h = (**(*n).p).height.get() as i32;
+        let digit_zero = table_patch((*n).p, 0);
+        let w = digit_zero.width();
+        let h = digit_zero.height();
         (*n).oldnum = num;
 
         let neg = num < 0;
@@ -258,20 +327,21 @@ pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
 
         // in the special case of 0, you draw 0
         if num == 0 {
-            V_DrawPatch(x - w, (*n).y, *(*n).p);
+            V_DrawPatch(x - w, (*n).y, digit_zero);
         }
 
         // draw the new number
         while num != 0 && numdigits > 0 {
             x -= w;
-            V_DrawPatch(x, (*n).y, *(*n).p.offset((num % 10) as isize));
+            V_DrawPatch(x, (*n).y, table_patch((*n).p, num % 10));
             num /= 10;
             numdigits -= 1;
         }
 
         // draw a minus sign if necessary
         if neg {
-            V_DrawPatch(x - 8, (*n).y, STATUS.borrow().sttminus);
+            let sttminus = STATUS.borrow().sttminus;
+            V_DrawPatch(x - 8, (*n).y, loaded_patch(sttminus));
         }
     }
 }
@@ -300,16 +370,17 @@ pub unsafe fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
 ///
 /// # Safety
 /// * `p` must be a valid non-null pointer.
-/// * `pl` must point to at least 10 valid digit patches.
-/// * `num`, `on`, and `percent` must be valid non-null pointers.
+/// * `pl` must point to a table of the 10 digit patches for the widget's
+///   lifetime.
+/// * `num` and `on` must be valid non-null pointers.
 pub unsafe fn STlib_initPercent(
     p: *mut st_percent_t,
     x: i32,
     y: i32,
-    pl: *mut *mut patch_t,
+    pl: PatchTable,
     num: *mut i32,
     on: *mut i32,
-    percent: *mut patch_t,
+    percent: Option<Patch<'static>>,
 ) {
     unsafe {
         STlib_initNum(&mut (*p).n, x, y, pl, num, on, 3);
@@ -330,7 +401,7 @@ pub unsafe fn STlib_initPercent(
 pub unsafe fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
     unsafe {
         if refresh != 0 && *(*per).n.on != 0 {
-            V_DrawPatch((*per).n.x, (*per).n.y, (*per).p);
+            V_DrawPatch((*per).n.x, (*per).n.y, loaded_patch((*per).p));
         }
         STlib_updateNum(&mut (*per).n, refresh);
     }
@@ -343,12 +414,13 @@ pub unsafe fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
 ///
 /// # Safety
 /// * `i`, `inum` and `on` must be valid non-null pointers.
-/// * `il` must point to a valid patch array covering all expected index values.
+/// * `il` must point to a patch table covering all expected index values
+///   for the widget's lifetime.
 pub unsafe fn STlib_initMultIcon(
     i: *mut st_multicon_t,
     x: i32,
     y: i32,
-    il: *mut *mut patch_t,
+    il: PatchTable,
     inum: *mut i32,
     on: *mut i32,
 ) {
@@ -384,11 +456,11 @@ pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
     unsafe {
         if *(*mi).on != 0 && ((*mi).oldinum != *(*mi).inum || refresh != 0) && *(*mi).inum != -1 {
             if (*mi).oldinum != -1 {
-                let old_patch = *(*mi).p.offset((*mi).oldinum as isize);
-                let x = (*mi).x - (*old_patch).leftoffset.get() as i32;
-                let y = (*mi).y - (*old_patch).topoffset.get() as i32;
-                let w = (*old_patch).width.get() as i32;
-                let h = (*old_patch).height.get() as i32;
+                let old_patch = table_patch((*mi).p, (*mi).oldinum);
+                let x = (*mi).x - old_patch.leftoffset();
+                let y = (*mi).y - old_patch.topoffset();
+                let w = old_patch.width();
+                let h = old_patch.height();
 
                 if y - ST_Y < 0 {
                     i_error!("updateMultIcon: y - ST_Y < 0");
@@ -396,7 +468,7 @@ pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
 
                 V_CopyRect(x, y - ST_Y, backing_screen(), w, h, x, y);
             }
-            V_DrawPatch((*mi).x, (*mi).y, *(*mi).p.offset(*(*mi).inum as isize));
+            V_DrawPatch((*mi).x, (*mi).y, table_patch((*mi).p, *(*mi).inum));
             (*mi).oldinum = *(*mi).inum;
         }
     }
@@ -408,12 +480,12 @@ pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
 /// initialized to 0.
 ///
 /// # Safety
-/// * `b`, `i`, `val`, and `on` must be valid non-null pointers.
+/// * `b`, `val`, and `on` must be valid non-null pointers.
 pub unsafe fn STlib_initBinIcon(
     b: *mut st_binicon_t,
     x: i32,
     y: i32,
-    i: *mut patch_t,
+    i: Option<Patch<'static>>,
     val: *mut i32,
     on: *mut i32,
 ) {
@@ -446,11 +518,11 @@ pub unsafe fn STlib_initBinIcon(
 pub unsafe fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
     unsafe {
         if *(*bi).on != 0 && ((*bi).oldval != *(*bi).val || refresh != 0) {
-            let p = (*bi).p;
-            let x = (*bi).x - (*p).leftoffset.get() as i32;
-            let y = (*bi).y - (*p).topoffset.get() as i32;
-            let w = (*p).width.get() as i32;
-            let h = (*p).height.get() as i32;
+            let p = loaded_patch((*bi).p);
+            let x = (*bi).x - p.leftoffset();
+            let y = (*bi).y - p.topoffset();
+            let w = p.width();
+            let h = p.height();
 
             if y - ST_Y < 0 {
                 i_error!("updateBinIcon: y - ST_Y < 0");

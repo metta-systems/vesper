@@ -237,7 +237,7 @@ use crate::engine::{
     render_2d::V_DrawPatchDirect,
     render_3d::main::R_SetViewSize,
     sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartNonPositionalSound, info::Sfx},
-    wad::{W_CacheLumpName, format::patch_t},
+    wad::{W_CacheLumpName, cache_patch_name},
 };
 
 /// Menu state (C `m_menu.c` globals other than the menu pages).
@@ -680,9 +680,10 @@ fn M_ReadSaveStrings() {
 
 /// Cache the patch lump `name` and draw it at (`x`, `y`).
 fn draw_patch_lump(x: i32, y: i32, name: &[u8]) {
-    let patch = W_CacheLumpName(name, 0) as *mut patch_t;
-    // SAFETY: the lump was just cached, and every menu graphic is a patch.
-    unsafe { V_DrawPatchDirect(x, y, patch) };
+    // SAFETY: the view is drawn at once; tag 0 is below PU_PURGELEVEL, so
+    // the zone does not purge the lump meanwhile either way.
+    let patch = unsafe { cache_patch_name(name, 0) };
+    V_DrawPatchDirect(x, y, patch);
 }
 
 /// Draw the Load Game menu page: title patch plus one bordered slot row per save slot.
@@ -1318,27 +1319,23 @@ fn M_StopMessage() {
 ///
 /// Non-printable characters (outside `HU_FONTSTART`..`HU_FONTEND`) contribute 4 pixels each.
 fn M_StringWidth(text: &[u8]) -> i32 {
-    unsafe {
-        let mut w: i32 = 0;
-        for &byte in text {
-            let c = byte.to_ascii_uppercase() as i32 - HU_FONTSTART;
-            if c < 0 || c as usize >= HU_FONTSIZE {
-                w += 4;
-            } else {
-                w += (*HUD.borrow().hu_font[c as usize]).width.get() as i32;
-            }
+    let mut w: i32 = 0;
+    for &byte in text {
+        let c = byte.to_ascii_uppercase() as i32 - HU_FONTSTART;
+        if c < 0 || c as usize >= HU_FONTSIZE {
+            w += 4;
+        } else {
+            w += HUD.borrow().hu_font[c as usize].width();
         }
-        w
     }
+    w
 }
 
 /// Return the pixel height of `text` rendered in the HUD font, accounting for newlines.
 fn M_StringHeight(text: &[u8]) -> i32 {
-    unsafe {
-        let height = (*HUD.borrow().hu_font[0]).height.get() as i32;
-        let newlines = text.iter().filter(|&&byte| byte == b'\n').count() as i32;
-        height + newlines * height
-    }
+    let height = HUD.borrow().hu_font[0].height();
+    let newlines = text.iter().filter(|&&byte| byte == b'\n').count() as i32;
+    height + newlines * height
 }
 
 /// Render `text` using the HUD font at screen position `(x, y)`.
@@ -1347,31 +1344,29 @@ fn M_StringHeight(text: &[u8]) -> i32 {
 /// Characters outside the font range are rendered as 4-pixel spaces.
 /// Rendering stops at the screen right edge.
 fn M_WriteText(x: i32, y: i32, text: &[u8]) {
-    unsafe {
-        let mut cx = x;
-        let mut cy = y;
+    let mut cx = x;
+    let mut cy = y;
 
-        for &c in text {
-            if c == b'\n' {
-                cx = x;
-                cy += 12;
-                continue;
-            }
-
-            let c = c.to_ascii_uppercase() as i32 - HU_FONTSTART;
-            if c < 0 || c as usize >= HU_FONTSIZE {
-                cx += 4;
-                continue;
-            }
-
-            let patch = HUD.borrow().hu_font[c as usize];
-            let w = (*patch).width.get() as i32;
-            if cx + w > SCREENWIDTH {
-                break;
-            }
-            V_DrawPatchDirect(cx, cy, patch);
-            cx += w;
+    for &c in text {
+        if c == b'\n' {
+            cx = x;
+            cy += 12;
+            continue;
         }
+
+        let c = c.to_ascii_uppercase() as i32 - HU_FONTSTART;
+        if c < 0 || c as usize >= HU_FONTSIZE {
+            cx += 4;
+            continue;
+        }
+
+        let patch = HUD.borrow().hu_font[c as usize];
+        let w = patch.width();
+        if cx + w > SCREENWIDTH {
+            break;
+        }
+        V_DrawPatchDirect(cx, cy, patch);
+        cx += w;
     }
 }
 
@@ -1912,7 +1907,7 @@ pub fn M_Drawer() {
 
                 messx = SCREENWIDTH / 2 - M_StringWidth(line) / 2;
                 M_WriteText(messx, messy, line);
-                messy += (*HUD.borrow().hu_font[0]).height.get() as i32;
+                messy += HUD.borrow().hu_font[0].height();
             }
             let mut menu = MENU.borrow_mut();
             menu.messx = messx;
@@ -1936,13 +1931,15 @@ pub fn M_Drawer() {
         let y = (*current_menu).y as i32;
         let max = (*current_menu).numitems as usize;
 
+        // Each view is drawn at once; tag 0 is below PU_PURGELEVEL, so the
+        // zone does not purge the lumps meanwhile either way.
         for i in 0..max {
             let name = (*(*current_menu).menuitems.add(i)).name;
             if !name.is_empty() {
                 V_DrawPatchDirect(
                     x,
                     y + LINEHEIGHT * i as i32,
-                    W_CacheLumpName(name.as_bytes(), 0) as *mut patch_t,
+                    cache_patch_name(name.as_bytes(), 0),
                 );
             }
         }
@@ -1950,7 +1947,7 @@ pub fn M_Drawer() {
         V_DrawPatchDirect(
             x + SKULLXOFF,
             (*current_menu).y as i32 - 5 + item_on as i32 * LINEHEIGHT,
-            W_CacheLumpName(skullName[which_skull as usize], 0) as *mut patch_t,
+            cache_patch_name(skullName[which_skull as usize], 0),
         );
     }
 }

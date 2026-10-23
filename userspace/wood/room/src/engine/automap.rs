@@ -51,8 +51,8 @@ use crate::{
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
         wad::{
-            W_CacheLumpName, W_ReleaseLumpName,
-            format::{LinedefFlag, patch_t},
+            W_ReleaseLumpName, cache_patch_name,
+            format::{LinedefFlag, Patch},
         },
     },
 };
@@ -686,12 +686,12 @@ pub struct AutomapState {
     /// Set to the console player (or the first active player in a network
     /// game) in [`AM_initVariables`].  C origin: `plr`.
     plr: *mut PlayerT,
-    /// Cached patch pointers for the ten mark-number glyphs
-    /// (`AMMNUM0`-`AMMNUM9`).
+    /// Cached patches for the ten mark-number glyphs (`AMMNUM0`-`AMMNUM9`),
+    /// `None` while not loaded.
     ///
     /// Loaded from the WAD by [`AM_loadPics`] and released by
     /// [`AM_unloadPics`].  C origin: `marknums[]`.
-    marknums: [*mut patch_t; AM_NUMMARKPOINTS],
+    marknums: [Option<Patch<'static>>; AM_NUMMARKPOINTS],
     /// Map-coordinate positions of the player-placed mark points.
     ///
     /// An `x` value of `-1` indicates an unused slot.
@@ -775,7 +775,7 @@ impl AutomapState {
             scale_mtof: INITSCALEMTOF,
             scale_ftom: 0,
             plr: ptr::null_mut(),
-            marknums: [ptr::null_mut(); AM_NUMMARKPOINTS],
+            marknums: [None; AM_NUMMARKPOINTS],
             markpoints: [mpoint_t { x: -1, y: -1 }; AM_NUMMARKPOINTS],
             markpointnum: 0,
             followplayer: 1,
@@ -1105,19 +1105,23 @@ fn AM_loadPics(automap: &mut AutomapState) {
     let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);
-        automap.marknums[i as usize] = W_CacheLumpName(&namebuf, PU_STATIC) as *mut patch_t;
+        // SAFETY: the lump stays at PU_STATIC until `AM_unloadPics`
+        // releases it and clears the slot.
+        automap.marknums[i as usize] = Some(unsafe { cache_patch_name(&namebuf, PU_STATIC) });
     }
 }
 
-/// Release the ten `AMMNUM*` mark-point glyph patches back to the WAD cache.
+/// Release the ten `AMMNUM*` mark-point glyph patches back to the WAD cache
+/// and clear their slots.
 ///
 /// Called by [`AM_Stop`] when the automap closes.
 /// C origin: `AM_unloadPics` in am_map.c.
-fn AM_unloadPics() {
+fn AM_unloadPics(automap: &mut AutomapState) {
     let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);
         W_ReleaseLumpName(&namebuf);
+        automap.marknums[i as usize] = None;
     }
 }
 
@@ -1184,7 +1188,7 @@ pub unsafe fn AM_Stop() {
         data3: 0,
         data4: 0,
     };
-    AM_unloadPics();
+    AM_unloadPics(&mut AUTOMAP.borrow_mut());
     AUTOMAP.borrow_mut().automapactive = 0;
     AM_notifyStatusBar(st_notify);
     AUTOMAP.borrow_mut().stopped = 1;
@@ -2082,10 +2086,9 @@ unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i3
 ///
 /// C origin: `AM_drawMarks` in am_map.c.
 ///
-/// # Safety
-///
-/// `marknums` patches must have been loaded by [`AM_loadPics`].
-unsafe fn AM_drawMarks(automap: &AutomapState) {
+/// Panics if a mark is drawn while the `marknums` patches are not loaded by
+/// [`AM_loadPics`].
+fn AM_drawMarks(automap: &AutomapState) {
     for i in 0..AM_NUMMARKPOINTS {
         let mark = automap.markpoints[i];
         if mark.x != -1 {
@@ -2098,7 +2101,8 @@ unsafe fn AM_drawMarks(automap: &AutomapState) {
                 && fy >= automap.f_y
                 && fy <= automap.f_h - h
             {
-                V_DrawPatch(fx, fy, automap.marknums[i]);
+                let marknum = automap.marknums[i].expect("automap mark drawn before AM_loadPics");
+                V_DrawPatch(fx, fy, marknum);
             }
         }
     }

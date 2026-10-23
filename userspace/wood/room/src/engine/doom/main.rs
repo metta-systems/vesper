@@ -390,7 +390,7 @@ use crate::engine::doom::iwad::{D_FindIWAD, D_SaveGameIWADName};
 use crate::engine::zone::Z_Init;
 
 // w_main.rs
-use crate::engine::wad::{format::patch_t, main::W_ParseCommandLine};
+use crate::engine::wad::{cache_patch_name, main::W_ParseCommandLine};
 
 // v_video.rs
 use crate::engine::render_2d::{
@@ -645,10 +645,11 @@ pub fn D_Display() {
                 (draw.viewwindowx, draw.viewwindowy, draw.scaledviewwidth)
             };
             let y = if automap_active() { 4 } else { viewwindowy + 4 };
+            // The PU_CACHE lump is drawn at once; drawing allocates nothing.
             V_DrawPatchDirect(
                 viewwindowx + (scaledviewwidth - 68) / 2,
                 y,
-                W_CacheLumpName(DEH_String(b"M_PAUSE"), PU_CACHE) as *mut patch_t,
+                cache_patch_name(DEH_String(b"M_PAUSE"), PU_CACHE),
             );
         }
 
@@ -893,7 +894,8 @@ pub fn D_PageTicker() {
 /// Draw the current demo page.
 pub fn D_PageDrawer() {
     let pagename = DOOM_MAIN.borrow().pagename;
-    unsafe { V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t) };
+    // SAFETY: the PU_CACHE lump is drawn at once; drawing allocates nothing.
+    V_DrawPatch(0, 0, unsafe { cache_patch_name(pagename, PU_CACHE) });
 }
 
 /// Called after each demo or intro demosequence finishes.

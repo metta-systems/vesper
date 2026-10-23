@@ -36,7 +36,7 @@ use crate::{
         global::Global,
         hud::stuff::{HU_FONTSIZE, HU_FONTSTART, HUD},
         play::info::*,
-        wad::format::{column_t, patch_t},
+        wad::format::Patch,
     },
 };
 
@@ -269,10 +269,12 @@ use crate::engine::render_3d::things::SPRITES;
 use crate::engine::render_3d::data::RENDER_DATA;
 
 // w_wad.rs
-use crate::engine::wad::{W_CacheLumpName, W_CacheLumpNum};
+use crate::engine::wad::{W_CacheLumpName, cache_patch_name, cache_patch_num};
 
 // v_video.rs
-use crate::engine::render_2d::{V_DrawPatch, V_DrawPatchFlipped, V_MarkRect};
+use crate::engine::render_2d::{
+    V_DrawPatch, V_DrawPatchFlipped, V_MarkRect, draw_column_to_video_buffer,
+};
 
 // s_sound.rs
 use crate::engine::sound::{S_ChangeMusic, S_StartMusic, S_StartNonPositionalSound, info::Mus};
@@ -849,7 +851,7 @@ pub fn F_TextWrite() {
                 cx += 4;
                 continue;
             };
-            let w = (*font).width.get() as i32;
+            let w = font.width();
             if cx + w > SCREENWIDTH {
                 break;
             }
@@ -1063,39 +1065,33 @@ pub unsafe fn F_CastResponder(ev: *mut event_t) -> i32 {
 ///
 /// Called by [`F_CastDrawer`].  C origin: `F_CastPrint` in f_finale.c.
 pub fn F_CastPrint(text: &str) {
-    unsafe {
-        // find width
-        let width: i32 = text
-            .bytes()
-            .map(|c| font_patch(c).map_or(4, |font| (*font).width.get() as i32))
-            .sum();
+    // find width
+    let width: i32 = text
+        .bytes()
+        .map(|c| font_patch(c).map_or(4, |font| font.width()))
+        .sum();
 
-        // draw it
-        let mut cx = 160 - width / 2;
-        for c in text.bytes() {
-            let Some(font) = font_patch(c) else {
-                cx += 4;
-                continue;
-            };
-            let w = (*font).width.get() as i32;
-            V_DrawPatch(cx, 180, font);
-            cx += w;
-        }
+    // draw it
+    let mut cx = 160 - width / 2;
+    for c in text.bytes() {
+        let Some(font) = font_patch(c) else {
+            cx += 4;
+            continue;
+        };
+        let w = font.width();
+        V_DrawPatch(cx, 180, font);
+        cx += w;
     }
 }
 
 /// The HUD font patch for character `c` (upper-cased), or `None` if the
-/// font has no glyph for it.
-///
-/// # Safety
-/// Reads the `hu_font` table; `HU_Init` must have loaded it.
-unsafe fn font_patch(c: u8) -> Option<*mut patch_t> {
+/// font has no glyph for it or `HU_Init` has not loaded the font.
+fn font_patch(c: u8) -> Option<Patch<'static>> {
     let index = c.to_ascii_uppercase().checked_sub(HU_FONTSTART)? as usize;
     if index >= HU_FONTSIZE {
         return None;
     }
-    let font = HUD.borrow().hu_font[index];
-    (!font.is_null()).then_some(font)
+    HUD.borrow().hu_font.get(index).copied()
 }
 
 /// Draw the current cast-roll frame: BOSSBACK background, centred enemy sprite,
@@ -1109,11 +1105,9 @@ unsafe fn font_patch(c: u8) -> Option<*mut patch_t> {
 /// C origin: `F_CastDrawer` in f_finale.c.
 pub fn F_CastDrawer() {
     unsafe {
-        V_DrawPatch(
-            0,
-            0,
-            W_CacheLumpName(DEH_String(b"BOSSBACK"), PU_CACHE) as *mut patch_t,
-        );
+        // Each PU_CACHE lump below is drawn at once; drawing allocates
+        // nothing from the zone.
+        V_DrawPatch(0, 0, cache_patch_name(DEH_String(b"BOSSBACK"), PU_CACHE));
         let (castnum, caststate) = {
             let finale = FINALE.borrow();
             (finale.castnum, finale.caststate)
@@ -1128,7 +1122,7 @@ pub fn F_CastDrawer() {
         let flip = sprframe.flip[0] as i32;
 
         let firstspritelump = RENDER_DATA.borrow().firstspritelump;
-        let patch = W_CacheLumpNum(lump + firstspritelump, PU_CACHE) as *mut patch_t;
+        let patch = cache_patch_num(lump + firstspritelump, PU_CACHE);
         if flip != 0 {
             V_DrawPatchFlipped(160, 170, patch);
         } else {
@@ -1138,35 +1132,15 @@ pub fn F_CastDrawer() {
 }
 
 /// Draw a single column `col` of `patch` to column `x` of the video buffer,
-/// stretching vertically according to the patch's column offsets.
+/// each post at its `topdelta` row.
 ///
 /// Used by [`F_BunnyScroll`] to implement the horizontal scroll effect.
-/// The patch column is read as a standard Doom post-format column (topdelta /
-/// length / pixel data).  C origin: `F_DrawPatchCol` in f_finale.c.
+/// C origin: `F_DrawPatchCol` in f_finale.c.
 ///
-/// # Safety
-/// `patch` must point to a valid, cached patch with a column `col`, and `x`
-/// must be a column of the video buffer.
-pub unsafe fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
-    unsafe {
-        let patch_ptr = patch as *mut u8;
-        let ofs = patch_t::column_offset(patch, col as usize);
-        let mut column = patch_ptr.add(ofs) as *mut column_t;
-        let desttop = video_buffer().add(x as usize);
-
-        while (*column).topdelta != 0xff {
-            let mut source = (column as *mut u8).add(3);
-            let mut dest = desttop.add((*column).topdelta as usize * SCREENWIDTH as usize);
-            let mut count = (*column).length as i32;
-            while count > 0 {
-                *dest = *source;
-                dest = dest.add(SCREENWIDTH as usize);
-                source = source.add(1);
-                count -= 1;
-            }
-            column = (column as *mut u8).add((*column).length as usize + 4) as *mut column_t;
-        }
-    }
+/// Panics if `col` is not a column of `patch`. Rows below the screen and an
+/// `x` outside it are clipped, where C wrote out of bounds.
+pub fn F_DrawPatchCol(x: i32, patch: Patch<'_>, col: i32) {
+    draw_column_to_video_buffer(x, patch.column(col as usize));
 }
 
 /// Draw the episode-3 bunny-scroll art-screen.
@@ -1178,8 +1152,14 @@ pub unsafe fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
 ///
 /// Called by [`F_ArtScreenDrawer`].  C origin: `F_BunnyScroll` in f_finale.c.
 pub fn F_BunnyScroll() {
-    let p1 = W_CacheLumpName(DEH_String(b"PFUB2"), PU_LEVEL) as *mut patch_t;
-    let p2 = W_CacheLumpName(DEH_String(b"PFUB1"), PU_LEVEL) as *mut patch_t;
+    // SAFETY: PU_LEVEL pins both lumps, so caching the second cannot purge
+    // the first, and both views are used only in the column loop below.
+    let (p1, p2) = unsafe {
+        (
+            cache_patch_name(DEH_String(b"PFUB2"), PU_LEVEL),
+            cache_patch_name(DEH_String(b"PFUB1"), PU_LEVEL),
+        )
+    };
 
     V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
@@ -1187,15 +1167,13 @@ pub fn F_BunnyScroll() {
     let mut scrolled = 320 - ((finalecount as i32 - 230) / 2);
     scrolled = scrolled.clamp(0, 320);
 
+    // Both patches are 320 columns wide, and `scrolled` keeps each column
+    // index inside them.
     for x in 0..SCREENWIDTH {
-        // SAFETY: both patches are cached 320-column lumps and `scrolled`
-        // keeps each column index inside them.
-        unsafe {
-            if x + scrolled < 320 {
-                F_DrawPatchCol(x, p1, x + scrolled);
-            } else {
-                F_DrawPatchCol(x, p2, x + scrolled - 320);
-            }
+        if x + scrolled < 320 {
+            F_DrawPatchCol(x, p1, x + scrolled);
+        } else {
+            F_DrawPatchCol(x, p2, x + scrolled - 320);
         }
     }
 
@@ -1203,13 +1181,10 @@ pub fn F_BunnyScroll() {
         return;
     }
     if finalecount < 1180 {
-        unsafe {
-            V_DrawPatch(
-                (SCREENWIDTH - 13 * 8) / 2,
-                (SCREENHEIGHT - 8 * 8) / 2,
-                W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
-            );
-        }
+        // SAFETY: the PU_CACHE lump is drawn at once; drawing allocates
+        // nothing from the zone.
+        let end = unsafe { cache_patch_name(DEH_String(b"END0"), PU_CACHE) };
+        V_DrawPatch((SCREENWIDTH - 13 * 8) / 2, (SCREENHEIGHT - 8 * 8) / 2, end);
         FINALE.borrow_mut().last_stage = 0;
         return;
     }
@@ -1232,13 +1207,10 @@ pub fn F_BunnyScroll() {
 
     let mut namebuf: [u8; 10] = [0; 10];
     DEH_snprintf!(namebuf, "END{}", stage);
-    unsafe {
-        V_DrawPatch(
-            (SCREENWIDTH - 13 * 8) / 2,
-            (SCREENHEIGHT - 8 * 8) / 2,
-            W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
-        );
-    }
+    // SAFETY: the PU_CACHE lump is drawn at once; drawing allocates nothing
+    // from the zone.
+    let end = unsafe { cache_patch_name(&namebuf, PU_CACHE) };
+    V_DrawPatch((SCREENWIDTH - 13 * 8) / 2, (SCREENHEIGHT - 8 * 8) / 2, end);
 }
 
 /// Draw the art-screen for the current episode (non-Cast, non-Text stage).
@@ -1268,13 +1240,10 @@ pub fn F_ArtScreenDrawer() {
         _ => return,
     };
 
-    unsafe {
-        V_DrawPatch(
-            0,
-            0,
-            W_CacheLumpName(DEH_String(lumpname), PU_CACHE) as *mut patch_t,
-        );
-    }
+    // SAFETY: the PU_CACHE lump is drawn at once; drawing allocates nothing
+    // from the zone.
+    let screen = unsafe { cache_patch_name(DEH_String(lumpname), PU_CACHE) };
+    V_DrawPatch(0, 0, screen);
 }
 
 /// Dispatch to the appropriate draw function based on the current finale stage.

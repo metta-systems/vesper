@@ -35,7 +35,7 @@ use crate::engine::{
     },
     global::Global,
     hud::lib::{
-        HUlib_addCharToTextLine, HUlib_addMessageToSText, HUlib_drawIText, HUlib_drawSText,
+        Font, HUlib_addCharToTextLine, HUlib_addMessageToSText, HUlib_drawIText, HUlib_drawSText,
         HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText, HUlib_eraseTextLine,
         HUlib_initIText, HUlib_initSText, HUlib_initTextLine, HUlib_keyInIText, HUlib_resetIText,
         hu_itext_t, hu_stext_t, hu_textline_t,
@@ -48,7 +48,7 @@ use crate::engine::{
         controls::{CONTROLS, ControlsState},
         until_nul,
     },
-    wad::format::patch_t,
+    wad::cache_patch_name,
 };
 
 // ---------------------------------------------------------------------------
@@ -311,8 +311,8 @@ pub const mapnames_commercial: [&str; 96] = [
 
 /// Heads-up display state (C `hu_stuff.c` globals).
 ///
-/// The widgets keep raw pointers to `hu_font` and to their `on` flags, and
-/// the `HUlib_*` calls take the widgets by pointer, so those go through
+/// The widgets keep raw pointers to their `on` flags, and the `HUlib_*`
+/// calls take the widgets by pointer, so those go through
 /// [`Global::as_ptr`] rather than a guard.
 pub struct HudState {
     /// Default chat macro strings bound to Alt+0 through Alt+9.
@@ -324,10 +324,10 @@ pub struct HudState {
     pub chat_macros: [Cow<'static, str>; 10],
     /// Loaded HUD font patches, one per glyph from `'!'` to `'_'`.
     ///
-    /// Populated by [`HU_Init`] from the `STCFNxxx` WAD lumps. Index `i`
-    /// corresponds to ASCII code `HU_FONTSTART + i`. Also read by the menu
-    /// and the finale text screens.
-    pub hu_font: [*mut patch_t; HU_FONTSIZE],
+    /// Populated by [`HU_Init`] from the `STCFNxxx` WAD lumps; empty before
+    /// that. Index `i` corresponds to ASCII code `HU_FONTSTART + i`. Also
+    /// read by the menu and the finale text screens.
+    pub hu_font: Font,
     /// Non-zero while the chat input widget is active.
     ///
     /// Used as the `on` pointer for `w_chat`; also read by the menu to
@@ -402,18 +402,18 @@ impl HudState {
                 Cow::Borrowed("I'll take care of it."),
                 Cow::Borrowed("Yes"),
             ],
-            hu_font: [ptr::null_mut(); HU_FONTSIZE],
+            hu_font: &[],
             chat_on: 0,
             message_dontfuckwithme: 0,
             plr: ptr::null_mut(),
-            w_title: unsafe { std::mem::zeroed() },
-            w_chat: unsafe { std::mem::zeroed() },
+            w_title: hu_textline_t::EMPTY,
+            w_chat: hu_itext_t::EMPTY,
             always_off: 0,
             chat_dest: [0; MAXPLAYERS],
-            w_inputbuffer: unsafe { std::mem::zeroed() },
+            w_inputbuffer: [hu_itext_t::EMPTY; MAXPLAYERS],
             message_on: 0,
             message_nottobefuckedwith: 0,
-            w_message: unsafe { std::mem::zeroed() },
+            w_message: hu_stext_t::EMPTY,
             message_counter: 0,
             headsupactive: false,
             chatchars: [0; QUEUESIZE],
@@ -440,7 +440,6 @@ use crate::engine::{
     game::{console_player, consoleplayer, gameepisode, gamemap, netgame, player, playeringame},
     misc::menu::MENU,
     sound::S_StartNonPositionalSound,
-    wad::W_CacheLumpName,
 };
 
 // ---------------------------------------------------------------------------
@@ -453,14 +452,19 @@ use crate::engine::{
 /// over `HU_FONTSIZE` slots, caching the `STCFNxxx` lump for each character
 /// from `HU_FONTSTART` to `HU_FONTEND` as `PU_STATIC`.
 /// Called from `D_DoomMain` in `d_main.c`.
+///
+/// The font lumps are never released, so their views are `'static`, and the
+/// table holding them is leaked to give the widgets a `'static` font (the
+/// size of one table per call; `D_DoomMain` calls this once).
 pub fn HU_Init() {
-    let mut j = HU_FONTSTART as i32;
-    for i in 0..HU_FONTSIZE {
-        let name = format!("STCFN{:03}", j);
-        let patch = W_CacheLumpName(name.as_bytes(), PU_STATIC) as *mut patch_t;
-        HUD.borrow_mut().hu_font[i] = patch;
-        j += 1;
-    }
+    let font: Vec<_> = (HU_FONTSTART..=HU_FONTEND)
+        .map(|character| {
+            let name = format!("STCFN{:03}", character);
+            // SAFETY: the lump stays at PU_STATIC; nothing releases it.
+            unsafe { cache_patch_name(name.as_bytes(), PU_STATIC) }
+        })
+        .collect();
+    HUD.borrow_mut().hu_font = font.leak();
 }
 
 /// Mark the heads-up display as inactive.
@@ -487,7 +491,7 @@ pub fn HU_Start() {
             HU_Stop();
         }
 
-        let font_h = {
+        let (font, font_h) = {
             let mut hud = HUD.borrow_mut();
             hud.plr = console_player();
             hud.message_on = 0;
@@ -496,15 +500,12 @@ pub fn HU_Start() {
             hud.chat_on = 0;
 
             // compute font height for title/input placement
-            if !hud.hu_font[0].is_null() {
-                (*hud.hu_font[0]).height.get() as i32
-            } else {
-                0
-            }
+            let font_h = hud.hu_font.first().map_or(0, |glyph| glyph.height());
+            (hud.hu_font, font_h)
         };
 
-        // The widgets keep pointers to the font and to their `on` flags, so
-        // they all point into the stable address of `HUD`.
+        // The widgets keep pointers to their `on` flags, so they all point
+        // into the stable address of `HUD`.
         let hud_state = HUD.as_ptr();
 
         // create the message widget
@@ -513,7 +514,7 @@ pub fn HU_Start() {
             HU_MSGX,
             HU_MSGY,
             HU_MSGHEIGHT,
-            &raw mut (*hud_state).hu_font[0],
+            font,
             HU_FONTSTART as i32,
             &raw mut (*hud_state).message_on,
         );
@@ -525,7 +526,7 @@ pub fn HU_Start() {
             &raw mut (*hud_state).w_title,
             0,
             title_y,
-            &raw mut (*hud_state).hu_font[0],
+            font,
             HU_FONTSTART as i32,
         );
 
@@ -552,7 +553,7 @@ pub fn HU_Start() {
             &raw mut (*hud_state).w_chat,
             HU_MSGX,
             input_y,
-            &raw mut (*hud_state).hu_font[0],
+            font,
             HU_FONTSTART as i32,
             &raw mut (*hud_state).chat_on,
         );
@@ -563,7 +564,7 @@ pub fn HU_Start() {
                 &raw mut (*hud_state).w_inputbuffer[i],
                 0,
                 0,
-                ptr::null_mut(),
+                &[],
                 0,
                 &raw mut (*hud_state).always_off,
             );

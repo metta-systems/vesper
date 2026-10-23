@@ -25,7 +25,7 @@
 
 pub mod statdump;
 
-use {crate::engine::sound::info::Sfx, std::ptr, zerocopy::little_endian::I16};
+use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
     DEH_snprintf, c_write,
@@ -41,9 +41,10 @@ use crate::{
         misc::random::M_Random,
         render_2d::V_DrawPatch,
         sound::{S_ChangeMusic, S_StartNonPositionalSound, info::Mus},
-        wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName, format::patch_t},
-        zone::{PU_STATIC, Z_Malloc},
+        wad::{W_CheckNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch},
+        zone::PU_STATIC,
     },
+    i_error,
 };
 
 // ---------------------------------------------------------------------------
@@ -200,8 +201,8 @@ struct anim_config_t {
 /// Corresponds to the mutable fields of C `anim_t` in `wi_stuff.c`.
 #[derive(Clone, Copy)]
 struct anim_state_t {
-    /// Cached patch pointers for each frame; loaded by `WI_loadData`.
-    p: [*mut patch_t; 3],
+    /// Cached patches for each frame; loaded by `WI_loadData`.
+    p: [Option<Patch<'static>>; 3],
     /// Game tic on which the next frame advance is scheduled.
     nexttic: i32,
     /// Frame index drawn on the previous tic (unused in this port; kept for layout parity).
@@ -214,7 +215,7 @@ struct anim_state_t {
 
 /// Zero-initialised animation state used to fill state tables at program start.
 const ZERO_STATE: anim_state_t = anim_state_t {
-    p: [ptr::null_mut(); 3],
+    p: [None; 3],
     nexttic: 0,
     lastdrawn: 0,
     ctr: 0,
@@ -555,57 +556,63 @@ pub struct IntermissionState {
     /// Mutable runtime animation states for Episode 3's background animations.
     epsd2_anims: [anim_state_t; EPSD2_NANIM],
 
-    // Cached WAD patches (loaded by WI_loadData, released by WI_unloadData)
+    // Cached WAD patches (loaded by WI_loadData, released by WI_unloadData).
+    // They are `'static` views of lumps cached at PU_STATIC; `WI_unloadData`
+    // releases the lumps and clears the slots together. `None` is a patch
+    // not loaded (null in C).
     /// "You Are Here" arrow patches (2 frames, `WIURH0`/`WIURH1`); third slot unused.
-    yah: [*mut patch_t; 3],
+    yah: [Option<Patch<'static>>; 3],
     /// Completed-level splat patches (`WISPLAT`); second slot unused.
-    splat: [*mut patch_t; 2],
+    splat: [Option<Patch<'static>>; 2],
     /// Percent sign patch (`WIPCNT`).
-    percent: *mut patch_t,
+    percent: Option<Patch<'static>>,
     /// Colon separator patch (`WICOLON`) for time display.
-    colon: *mut patch_t,
+    colon: Option<Patch<'static>>,
     /// Digit patches 0-9 (`WINUM0`-`WINUM9`).
-    num: [*mut patch_t; 10],
+    num: [Option<Patch<'static>>; 10],
     /// Minus sign patch (`WIMINUS`) for negative frag counts.
-    wiminus: *mut patch_t,
+    wiminus: Option<Patch<'static>>,
     /// "Finished" label patch (`WIF`).
-    finished: *mut patch_t,
+    finished: Option<Patch<'static>>,
     /// "Entering" label patch (`WIENTER`).
-    entering: *mut patch_t,
+    entering: Option<Patch<'static>>,
     /// Single-player secret label patch (`WISCRT2`).
-    sp_secret: *mut patch_t,
+    sp_secret: Option<Patch<'static>>,
     /// Kills column header patch (`WIOSTK`).
-    kills: *mut patch_t,
+    kills: Option<Patch<'static>>,
     /// Secrets column header patch (`WIOSTS`).
-    secret: *mut patch_t,
+    secret: Option<Patch<'static>>,
     /// Items column header patch (`WIOSTI` or `WIOBJ` in co-op).
-    items: *mut patch_t,
+    items: Option<Patch<'static>>,
     /// Frags column header patch (`WIFRGS`).
-    frags: *mut patch_t,
+    frags: Option<Patch<'static>>,
     /// Time label patch (`WITIME`).
-    timepatch: *mut patch_t,
+    timepatch: Option<Patch<'static>>,
     /// Par-time label patch (`WIPAR`).
-    par: *mut patch_t,
+    par: Option<Patch<'static>>,
     /// "Sucks" patch displayed when the level time exceeds the representable maximum (`WISUCKS`).
-    sucks: *mut patch_t,
+    sucks: Option<Patch<'static>>,
     /// "Killers" row label patch (`WIKILRS`) used in deathmatch view.
-    killers: *mut patch_t,
+    killers: Option<Patch<'static>>,
     /// "Victims" column label patch (`WIVCTMS`) used in deathmatch view.
-    victims: *mut patch_t,
+    victims: Option<Patch<'static>>,
     /// "Total" column header patch (`WIMSTT`) used in deathmatch view.
-    total: *mut patch_t,
-    /// "You are here" star patch (`STFST01`) marking the local player in netgame view.
-    star: *mut patch_t,
+    total: Option<Patch<'static>>,
+    /// "You are here" star patch (`STFST01`) marking the local player in
+    /// netgame view. Loaded by `WI_loadData` but never released, as in C.
+    star: Option<Patch<'static>>,
     /// Dead-face patch (`STFDEAD0`) marking the local player when dead.
-    bstar: *mut patch_t,
+    /// Loaded by `WI_loadData` but never released, as in C.
+    bstar: Option<Patch<'static>>,
     /// Player face patches for each slot (`STPB0`-`STPB3`).
-    p: [*mut patch_t; MAXPLAYERS],
+    p: [Option<Patch<'static>>; MAXPLAYERS],
     /// Alternative player face patches for each slot (`WIBP1`-`WIBP4`).
-    bp: [*mut patch_t; MAXPLAYERS],
-    /// Heap-allocated array of level-name patches (`WILV##` or `CWILV##`); length is `numcmaps` or `NUMMAPS`.
-    lnames: *mut *mut patch_t,
+    bp: [Option<Patch<'static>>; MAXPLAYERS],
+    /// Level-name patches (`WILV##` or `CWILV##`); length is `numcmaps` or
+    /// `NUMMAPS` once `WI_loadData` has run.
+    lnames: Vec<Option<Patch<'static>>>,
     /// Background map graphic for the current episode (`WIMAP#` or `INTERPIC`).
-    background: *mut patch_t,
+    background: Option<Patch<'static>>,
 
     /// Deathmatch count-up sub-state index (odd = pause, even = ticking).
     dm_state: i32,
@@ -647,31 +654,31 @@ impl IntermissionState {
             epsd0_anims: [ZERO_STATE; EPSD0_NANIM],
             epsd1_anims: [ZERO_STATE; EPSD1_NANIM],
             epsd2_anims: [ZERO_STATE; EPSD2_NANIM],
-            yah: [ptr::null_mut(); 3],
-            splat: [ptr::null_mut(); 2],
-            percent: ptr::null_mut(),
-            colon: ptr::null_mut(),
-            num: [ptr::null_mut(); 10],
-            wiminus: ptr::null_mut(),
-            finished: ptr::null_mut(),
-            entering: ptr::null_mut(),
-            sp_secret: ptr::null_mut(),
-            kills: ptr::null_mut(),
-            secret: ptr::null_mut(),
-            items: ptr::null_mut(),
-            frags: ptr::null_mut(),
-            timepatch: ptr::null_mut(),
-            par: ptr::null_mut(),
-            sucks: ptr::null_mut(),
-            killers: ptr::null_mut(),
-            victims: ptr::null_mut(),
-            total: ptr::null_mut(),
-            star: ptr::null_mut(),
-            bstar: ptr::null_mut(),
-            p: [ptr::null_mut(); MAXPLAYERS],
-            bp: [ptr::null_mut(); MAXPLAYERS],
-            lnames: ptr::null_mut(),
-            background: ptr::null_mut(),
+            yah: [None; 3],
+            splat: [None; 2],
+            percent: None,
+            colon: None,
+            num: [None; 10],
+            wiminus: None,
+            finished: None,
+            entering: None,
+            sp_secret: None,
+            kills: None,
+            secret: None,
+            items: None,
+            frags: None,
+            timepatch: None,
+            par: None,
+            sucks: None,
+            killers: None,
+            victims: None,
+            total: None,
+            star: None,
+            bstar: None,
+            p: [None; MAXPLAYERS],
+            bp: [None; MAXPLAYERS],
+            lnames: Vec::new(),
+            background: None,
             dm_state: 0,
             dm_frags: [[0; MAXPLAYERS]; MAXPLAYERS],
             dm_totals: [0; MAXPLAYERS],
@@ -738,13 +745,9 @@ fn play_sounds(sounds: &[Sfx]) {
 /// Called at the start of each draw function to paint the base image before
 /// overlaying animations, labels, and statistics.
 ///
-/// # Safety
-///
-/// Reads the `background` patch pointer and calls `V_DrawPatch`.
-/// Caller must ensure `WI_loadData` has cached the patch and the video
-/// backend is ready.
-unsafe fn WI_slamBackground(wi: &IntermissionState) {
-    V_DrawPatch(0, 0, wi.background);
+/// Panics if `WI_loadData` has not cached the patch.
+fn WI_slamBackground(wi: &IntermissionState) {
+    V_DrawPatch(0, 0, loaded(wi.background));
 }
 
 // ---------------------------------------------------------------------------
@@ -766,45 +769,30 @@ pub fn WI_Responder(_ev: *mut event_t) -> i32 {
 
 /// Draw the "Finished" overlay: level name and "Finished" text at the top of the screen.
 ///
-/// In commercial mode, does nothing for MAP33 and triggers an intentional patch
-/// bounds error for map numbers above `numcmaps` (preserving vanilla quirk - the
-/// out-of-range patch lookup is an upstream bug retained for demo compatibility).
+/// In commercial mode, does nothing for MAP33 and is a fatal error for map
+/// numbers above `numcmaps`: C drew a stack-built screen-sized patch header
+/// there to trigger `V_DrawPatch`'s `RANGECHECK` error ("Bad V_DrawPatch")
+/// deliberately, which this raises directly.
 ///
 /// # Safety
 ///
-/// Dereferences the `wbs` pointer plus the `lnames` array and the
-/// `finished` patch pointer. Caller must ensure `WI_Start`/`WI_loadData`
-/// have run so these are valid.
+/// Dereferences the `wbs` pointer. Caller must ensure `WI_Start` and
+/// `WI_loadData` have run (the patches panic otherwise).
 unsafe fn WI_drawLF(wi: &IntermissionState) {
     let wbs = wi.wbs;
-    let lnames = wi.lnames;
-    let finished = wi.finished;
     let numcmaps = wi.numcmaps;
     let mut y = WI_TITLEY;
 
     if gamemode() != doom::mode::commercial || (*wbs).last < numcmaps {
-        V_DrawPatch(
-            (SCREENWIDTH - (*(*lnames.offset((*wbs).last as isize))).width.get() as i32) / 2,
-            y,
-            *lnames.offset((*wbs).last as isize),
-        );
-        y += (5 * (*(*lnames.offset((*wbs).last as isize))).height.get() as i32) / 4;
-        V_DrawPatch(
-            (SCREENWIDTH - (*finished).width.get() as i32) / 2,
-            y,
-            finished,
-        );
+        let level_name = loaded(wi.lnames[(*wbs).last as usize]);
+        let finished = loaded(wi.finished);
+        V_DrawPatch((SCREENWIDTH - level_name.width()) / 2, y, level_name);
+        y += (5 * level_name.height()) / 4;
+        V_DrawPatch((SCREENWIDTH - finished.width()) / 2, y, finished);
     } else if (*wbs).last == numcmaps {
         // MAP33 - nothing is displayed!
     } else if (*wbs).last > numcmaps {
-        // Deliberately trigger a V_DrawPatch error
-        let tmp: patch_t = patch_t {
-            width: I16::new(SCREENWIDTH as i16),
-            height: I16::new(SCREENHEIGHT as i16),
-            leftoffset: I16::new(1),
-            topoffset: I16::new(1),
-        };
-        V_DrawPatch(0, y, &tmp as *const patch_t as *mut patch_t);
+        i_error!("Bad V_DrawPatch");
     }
 }
 
@@ -816,28 +804,19 @@ unsafe fn WI_drawLF(wi: &IntermissionState) {
 ///
 /// # Safety
 ///
-/// Dereferences the `wbs` pointer plus the `entering` patch and the
-/// `lnames` array. Caller must ensure `WI_Start`/`WI_loadData` have run so
-/// these are valid.
+/// Dereferences the `wbs` pointer. Caller must ensure `WI_Start` and
+/// `WI_loadData` have run (the patches panic otherwise).
 unsafe fn WI_drawEL(wi: &IntermissionState) {
     let wbs = wi.wbs;
-    let lnames = wi.lnames;
-    let entering = wi.entering;
+    let entering = loaded(wi.entering);
+    let level_name = loaded(wi.lnames[(*wbs).next as usize]);
     let mut y = WI_TITLEY;
 
-    V_DrawPatch(
-        (SCREENWIDTH - (*entering).width.get() as i32) / 2,
-        y,
-        entering,
-    );
+    V_DrawPatch((SCREENWIDTH - entering.width()) / 2, y, entering);
 
-    y += (5 * (*(*lnames.offset((*wbs).next as isize))).height.get() as i32) / 4;
+    y += (5 * level_name.height()) / 4;
 
-    V_DrawPatch(
-        (SCREENWIDTH - (*(*lnames.offset((*wbs).next as isize))).width.get() as i32) / 2,
-        y,
-        *lnames.offset((*wbs).next as isize),
-    );
+    V_DrawPatch((SCREENWIDTH - level_name.width()) / 2, y, level_name);
 }
 
 // ---------------------------------------------------------------------------
@@ -851,21 +830,20 @@ unsafe fn WI_drawEL(wi: &IntermissionState) {
 ///
 /// # Safety
 ///
-/// `c` must point to an array of at least two `*mut patch_t` slots; the
-/// function reads index 0 unconditionally and index 1 only if index 0 does
-/// not fit on screen. Each non-null slot must point to a valid `patch_t`.
+/// `c` must have at least two slots; the function reads index 0
+/// unconditionally (panicking if it is not loaded) and index 1 only if
+/// index 0 does not fit on screen, stopping at an empty slot.
 /// Dereferences `wbs` for the current episode and reads `LNODES`.
-unsafe fn WI_drawOnLnode(wbs: *mut wbstartstruct_t, n: i32, c: *const *mut patch_t) {
+unsafe fn WI_drawOnLnode(wbs: *mut wbstartstruct_t, n: i32, c: &[Option<Patch<'static>>]) {
     let mut i = 0;
     let mut fits = false;
 
     loop {
-        let left = LNODES[(*wbs).epsd as usize][n as usize].x
-            - (**c.offset(i as isize)).leftoffset.get() as i32;
-        let top = LNODES[(*wbs).epsd as usize][n as usize].y
-            - (**c.offset(i as isize)).topoffset.get() as i32;
-        let right = left + (**c.offset(i as isize)).width.get() as i32;
-        let bottom = top + (**c.offset(i as isize)).height.get() as i32;
+        let patch = loaded(c[i]);
+        let left = LNODES[(*wbs).epsd as usize][n as usize].x - patch.leftoffset();
+        let top = LNODES[(*wbs).epsd as usize][n as usize].y - patch.topoffset();
+        let right = left + patch.width();
+        let bottom = top + patch.height();
 
         if left >= 0 && right < SCREENWIDTH && top >= 0 && bottom < SCREENHEIGHT {
             fits = true;
@@ -873,7 +851,7 @@ unsafe fn WI_drawOnLnode(wbs: *mut wbstartstruct_t, n: i32, c: *const *mut patch
         }
 
         i += 1;
-        if i == 2 || (*c.offset(i as isize)).is_null() {
+        if i == 2 || c[i].is_none() {
             break;
         }
     }
@@ -882,7 +860,7 @@ unsafe fn WI_drawOnLnode(wbs: *mut wbstartstruct_t, n: i32, c: *const *mut patch
         V_DrawPatch(
             LNODES[(*wbs).epsd as usize][n as usize].x,
             LNODES[(*wbs).epsd as usize][n as usize].y,
-            *c.offset(i as isize),
+            loaded(c[i]),
         );
     } else {
         print!("Could not place patch on level {}", n + 1);
@@ -1014,7 +992,7 @@ unsafe fn WI_drawAnimatedBack(wi: &IntermissionState) {
         let cfg = anim_config(epsd, i);
         let st = wi.anim_state(epsd, i);
         if st.ctr >= 0 {
-            V_DrawPatch(cfg.loc.x, cfg.loc.y, st.p[st.ctr as usize]);
+            V_DrawPatch(cfg.loc.x, cfg.loc.y, loaded(st.p[st.ctr as usize]));
         }
     }
 }
@@ -1030,19 +1008,11 @@ unsafe fn WI_drawAnimatedBack(wi: &IntermissionState) {
 /// from `n`. The sentinel value 1994 suppresses drawing entirely (used when
 /// no ammo type applies). Negative values prepend a minus sign.
 ///
-/// # Safety
-///
-/// Reads the `num` digit patches and `wiminus` patch. Caller must ensure
-/// `WI_loadData` has cached these patches before invoking.
-unsafe fn WI_drawNum(
-    wi: &IntermissionState,
-    mut x: i32,
-    y: i32,
-    mut n: i32,
-    mut digits: i32,
-) -> i32 {
+/// Panics if `WI_loadData` has not cached the `num` digit and `wiminus`
+/// patches.
+fn WI_drawNum(wi: &IntermissionState, mut x: i32, y: i32, mut n: i32, mut digits: i32) -> i32 {
     let num = wi.num;
-    let fontwidth = (*num[0]).width.get() as i32;
+    let fontwidth = loaded(num[0]).width();
     let neg = n < 0;
     if neg {
         n = -n;
@@ -1069,13 +1039,13 @@ unsafe fn WI_drawNum(
     while digits > 0 {
         digits -= 1;
         x -= fontwidth;
-        V_DrawPatch(x, y, num[(n % 10) as usize]);
+        V_DrawPatch(x, y, loaded(num[(n % 10) as usize]));
         n /= 10;
     }
 
     if neg {
         x -= 8;
-        V_DrawPatch(x, y, wi.wiminus);
+        V_DrawPatch(x, y, loaded(wi.wiminus));
     }
 
     x
@@ -1085,15 +1055,12 @@ unsafe fn WI_drawNum(
 ///
 /// No-op if `pct` is negative (stat not yet tallied).
 ///
-/// # Safety
-///
-/// Reads the `percent` patch and delegates to `WI_drawNum`. Caller must
-/// ensure `WI_loadData` has cached the patches.
-unsafe fn WI_drawPercent(wi: &IntermissionState, x: i32, y: i32, pct: i32) {
+/// Panics if `WI_loadData` has not cached the patches.
+fn WI_drawPercent(wi: &IntermissionState, x: i32, y: i32, pct: i32) {
     if pct < 0 {
         return;
     }
-    V_DrawPatch(x, y, wi.percent);
+    V_DrawPatch(x, y, loaded(wi.percent));
     WI_drawNum(wi, x, y, pct, -1);
 }
 
@@ -1102,22 +1069,18 @@ unsafe fn WI_drawPercent(wi: &IntermissionState, x: i32, y: i32, pct: i32) {
 /// No-op if `t` is negative. If `t` exceeds the representable range (61 minutes 59 seconds),
 /// draws the "SUCKS" patch instead.
 ///
-/// # Safety
-///
-/// Reads the `colon` and `sucks` patches and delegates to `WI_drawNum`.
-/// Caller must ensure `WI_loadData` has cached the patches.
-unsafe fn WI_drawTime(wi: &IntermissionState, mut x: i32, y: i32, t: i32) {
+/// Panics if `WI_loadData` has not cached the patches.
+fn WI_drawTime(wi: &IntermissionState, mut x: i32, y: i32, t: i32) {
     if t < 0 {
         return;
     }
-    let colon = wi.colon;
-    let sucks = wi.sucks;
 
     if t <= 61 * 59 {
+        let colon = loaded(wi.colon);
         let mut div = 1;
         loop {
             let n = (t / div) % 60;
-            x = WI_drawNum(wi, x, y, n, 2) - (*colon).width.get() as i32;
+            x = WI_drawNum(wi, x, y, n, 2) - colon.width();
             div *= 60;
             if div == 60 || t / div != 0 {
                 V_DrawPatch(x, y, colon);
@@ -1127,7 +1090,8 @@ unsafe fn WI_drawTime(wi: &IntermissionState, mut x: i32, y: i32, t: i32) {
             }
         }
     } else {
-        V_DrawPatch(x - (*sucks).width.get() as i32, y, sucks);
+        let sucks = loaded(wi.sucks);
+        V_DrawPatch(x - sucks.width(), y, sucks);
     }
 }
 
@@ -1238,15 +1202,15 @@ unsafe fn WI_drawShowNextLoc(wi: &IntermissionState) {
         };
 
         for i in 0..=last {
-            WI_drawOnLnode(wbs, i, wi.splat.as_ptr());
+            WI_drawOnLnode(wbs, i, &wi.splat);
         }
 
         if (*wbs).didsecret != 0 {
-            WI_drawOnLnode(wbs, 8, wi.splat.as_ptr());
+            WI_drawOnLnode(wbs, 8, &wi.splat);
         }
 
         if wi.snl_pointeron {
-            WI_drawOnLnode(wbs, (*wbs).next, wi.yah.as_ptr());
+            WI_drawOnLnode(wbs, (*wbs).next, &wi.yah);
         }
     }
 
@@ -1421,14 +1385,20 @@ unsafe fn WI_updateDeathmatchStats() {
 /// been initialised.
 unsafe fn WI_drawDeathmatchStats(wi: &IntermissionState) {
     let (total, killers, victims, star, bstar, p, me) = (
-        wi.total, wi.killers, wi.victims, wi.star, wi.bstar, wi.p, wi.me,
+        loaded(wi.total),
+        loaded(wi.killers),
+        loaded(wi.victims),
+        loaded(wi.star),
+        loaded(wi.bstar),
+        wi.p,
+        wi.me,
     );
     WI_slamBackground(wi);
     WI_drawAnimatedBack(wi);
     WI_drawLF(wi);
 
     V_DrawPatch(
-        DM_TOTALSX - (*total).width.get() as i32 / 2,
+        DM_TOTALSX - total.width() / 2,
         DM_MATRIXY - WI_SPACINGY + 10,
         total,
     );
@@ -1440,19 +1410,13 @@ unsafe fn WI_drawDeathmatchStats(wi: &IntermissionState) {
 
     for i in 0..MAXPLAYERS {
         if playeringame(i) != 0 {
-            V_DrawPatch(
-                x - (*p[i]).width.get() as i32 / 2,
-                DM_MATRIXY - WI_SPACINGY,
-                p[i],
-            );
-            V_DrawPatch(DM_MATRIXX - (*p[i]).width.get() as i32 / 2, y, p[i]);
+            let player_patch = loaded(p[i]);
+            let half_width = player_patch.width() / 2;
+            V_DrawPatch(x - half_width, DM_MATRIXY - WI_SPACINGY, player_patch);
+            V_DrawPatch(DM_MATRIXX - half_width, y, player_patch);
             if i as i32 == me {
-                V_DrawPatch(
-                    x - (*p[i]).width.get() as i32 / 2,
-                    DM_MATRIXY - WI_SPACINGY,
-                    bstar,
-                );
-                V_DrawPatch(DM_MATRIXX - (*p[i]).width.get() as i32 / 2, y, star);
+                V_DrawPatch(x - half_width, DM_MATRIXY - WI_SPACINGY, bstar);
+                V_DrawPatch(DM_MATRIXX - half_width, y, star);
             }
         }
         x += DM_SPACINGX;
@@ -1460,7 +1424,7 @@ unsafe fn WI_drawDeathmatchStats(wi: &IntermissionState) {
     }
 
     let mut y = DM_MATRIXY + 10;
-    let w = (*wi.num[0]).width.get() as i32;
+    let w = loaded(wi.num[0]).width();
 
     for i in 0..MAXPLAYERS {
         let mut x = DM_MATRIXX + DM_SPACINGX;
@@ -1657,49 +1621,53 @@ unsafe fn WI_updateNetgameStats() {
 /// and the netgame stats phase has been initialised.
 unsafe fn WI_drawNetgameStats(wi: &IntermissionState) {
     let (kills, items, secret, frags, star, p, me, dofrags) = (
-        wi.kills, wi.items, wi.secret, wi.frags, wi.star, wi.p, wi.me, wi.dofrags,
+        loaded(wi.kills),
+        loaded(wi.items),
+        loaded(wi.secret),
+        loaded(wi.frags),
+        loaded(wi.star),
+        wi.p,
+        wi.me,
+        wi.dofrags,
     );
-    let pwidth = (*wi.percent).width.get() as i32;
+    let pwidth = loaded(wi.percent).width();
 
     WI_slamBackground(wi);
     WI_drawAnimatedBack(wi);
     WI_drawLF(wi);
 
-    let ng_statsx = 32 + (*star).width.get() as i32 / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
+    let ng_statsx = 32 + star.width() / 2 + 32 * if dofrags == 0 { 1 } else { 0 };
 
+    V_DrawPatch(ng_statsx + NG_SPACINGX - kills.width(), NG_STATSY, kills);
     V_DrawPatch(
-        ng_statsx + NG_SPACINGX - (*kills).width.get() as i32,
-        NG_STATSY,
-        kills,
-    );
-    V_DrawPatch(
-        ng_statsx + 2 * NG_SPACINGX - (*items).width.get() as i32,
+        ng_statsx + 2 * NG_SPACINGX - items.width(),
         NG_STATSY,
         items,
     );
     V_DrawPatch(
-        ng_statsx + 3 * NG_SPACINGX - (*secret).width.get() as i32,
+        ng_statsx + 3 * NG_SPACINGX - secret.width(),
         NG_STATSY,
         secret,
     );
     if dofrags != 0 {
         V_DrawPatch(
-            ng_statsx + 4 * NG_SPACINGX - (*frags).width.get() as i32,
+            ng_statsx + 4 * NG_SPACINGX - frags.width(),
             NG_STATSY,
             frags,
         );
     }
 
-    let mut y = NG_STATSY + (*kills).height.get() as i32;
+    let mut y = NG_STATSY + kills.height();
 
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
             continue;
         }
         let mut x = ng_statsx;
-        V_DrawPatch(x - (*p[i]).width.get() as i32, y, p[i]);
+        let player_patch = loaded(p[i]);
+        V_DrawPatch(x - player_patch.width(), y, player_patch);
         if i as i32 == me {
-            V_DrawPatch(x - (*p[i]).width.get() as i32, y, star);
+            V_DrawPatch(x - player_patch.width(), y, star);
         }
         x += NG_SPACINGX;
         WI_drawPercent(wi, x - pwidth, y + 10, wi.cnt_kills[i]);
@@ -1850,19 +1818,19 @@ unsafe fn WI_updateStats() {
 /// decide whether to draw the par-time row. Caller must ensure
 /// `WI_loadData` cached the patches and the stats phase has been initialised.
 unsafe fn WI_drawStats(wi: &IntermissionState) {
-    let lh = (3 * (*wi.num[0]).height.get() as i32) / 2;
+    let lh = (3 * loaded(wi.num[0]).height()) / 2;
 
     WI_slamBackground(wi);
     WI_drawAnimatedBack(wi);
     WI_drawLF(wi);
 
-    V_DrawPatch(SP_STATSX, SP_STATSY, wi.kills);
+    V_DrawPatch(SP_STATSX, SP_STATSY, loaded(wi.kills));
     WI_drawPercent(wi, SCREENWIDTH - SP_STATSX, SP_STATSY, wi.cnt_kills[0]);
 
-    V_DrawPatch(SP_STATSX, SP_STATSY + lh, wi.items);
+    V_DrawPatch(SP_STATSX, SP_STATSY + lh, loaded(wi.items));
     WI_drawPercent(wi, SCREENWIDTH - SP_STATSX, SP_STATSY + lh, wi.cnt_items[0]);
 
-    V_DrawPatch(SP_STATSX, SP_STATSY + 2 * lh, wi.sp_secret);
+    V_DrawPatch(SP_STATSX, SP_STATSY + 2 * lh, loaded(wi.sp_secret));
     WI_drawPercent(
         wi,
         SCREENWIDTH - SP_STATSX,
@@ -1870,11 +1838,11 @@ unsafe fn WI_drawStats(wi: &IntermissionState) {
         wi.cnt_secret[0],
     );
 
-    V_DrawPatch(SP_TIMEX, SP_TIMEY, wi.timepatch);
+    V_DrawPatch(SP_TIMEX, SP_TIMEY, loaded(wi.timepatch));
     WI_drawTime(wi, SCREENWIDTH / 2 - SP_TIMEX, SP_TIMEY, wi.cnt_time);
 
     if (*wi.wbs).epsd < 3 {
-        V_DrawPatch(SCREENWIDTH / 2 + SP_TIMEX, SP_TIMEY, wi.par);
+        V_DrawPatch(SCREENWIDTH / 2 + SP_TIMEX, SP_TIMEY, loaded(wi.par));
         WI_drawTime(wi, SCREENWIDTH - SP_TIMEX, SP_TIMEY, wi.cnt_par);
     }
 }
@@ -1982,8 +1950,14 @@ pub unsafe fn WI_Ticker() {
 
 /// Function pointer type for the load/unload callback used by `WI_loadUnloadData`.
 ///
-/// The callback receives the lump name and a pointer to the patch pointer slot.
-type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
+/// The callback receives the lump name and the patch slot.
+type LoadCallback = unsafe fn(&[u8], &mut Option<Patch<'static>>);
+
+/// The patch in `slot`. Panics if it is not loaded, where C would read
+/// through a null pointer.
+fn loaded(slot: Option<Patch<'static>>) -> Patch<'static> {
+    slot.expect("intermission patch used before WI_loadData")
+}
 
 /// Walk every intermission lump name and invoke `callback` for each.
 ///
@@ -1993,8 +1967,8 @@ type LoadCallback = unsafe fn(&[u8], *mut *mut patch_t);
 ///
 /// # Safety
 ///
-/// `callback` is invoked as an `unsafe` function and is given pointers
-/// into the patch fields (`lnames`, `yah`, `splat`, `num`, `percent`,
+/// `callback` is invoked as an `unsafe` function and is given slots of
+/// the patch fields (`lnames`, `yah`, `splat`, `num`, `percent`,
 /// `finished`, `entering`, etc.) and the per-episode animation state.
 /// Caller must pass a callback that only reads/writes the single slot
 /// supplied and does not touch the intermission state. Dereferences `wbs`
@@ -2003,17 +1977,16 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
     let mut name: [u8; 9] = [0; 9];
     let mut wi = INTERMISSION.borrow_mut();
     let wbs = wi.wbs;
-    let lnames = wi.lnames;
 
     if gamemode() == doom::mode::commercial {
         for i in 0..wi.numcmaps {
             DEH_snprintf!(name, "CWILV{:02}", i);
-            callback(&name, lnames.offset(i as isize));
+            callback(&name, &mut wi.lnames[i as usize]);
         }
     } else {
         for i in 0..NUMMAPS as i32 {
             c_write!(name, "WILV{}{}", (*wbs).epsd, i);
-            callback(&name, lnames.offset(i as isize));
+            callback(&name, &mut wi.lnames[i as usize]);
         }
 
         callback(DEH_String(b"WIURH0"), &mut wi.yah[0]);
@@ -2088,68 +2061,65 @@ unsafe fn WI_loadUnloadData(callback: LoadCallback) {
     callback(&name, &mut wi.background);
 }
 
-/// Load callback: cache the named lump at `PU_STATIC` priority and store the pointer.
+/// Load callback: cache the named lump at `PU_STATIC` priority and store
+/// its patch view.
 ///
 /// # Safety
 ///
-/// Caller must ensure `name` names a lump present in the WAD, and
-/// `variable` is a valid, non-null, properly aligned pointer to a
-/// `*mut patch_t` slot the function may overwrite.
-unsafe fn WI_loadCallback(name: &[u8], variable: *mut *mut patch_t) {
-    *variable = W_CacheLumpName(name, PU_STATIC) as *mut patch_t;
+/// Caller must ensure `name` names a patch lump present in the WAD. The
+/// view is `'static` because the lump stays at `PU_STATIC` until
+/// `WI_unloadCallback` releases it and clears the slot.
+unsafe fn WI_loadCallback(name: &[u8], variable: &mut Option<Patch<'static>>) {
+    *variable = Some(cache_patch_name(name, PU_STATIC));
 }
 
-/// Allocate the `lnames` pointer array and cache all intermission WAD patches.
+/// Allocate the `lnames` slots and cache all intermission WAD patches.
 ///
-/// Must be called before the first `WI_Drawer` call. `lnames` is allocated from
-/// the zone heap at `PU_STATIC` with a size matching either `numcmaps` (commercial)
-/// or `NUMMAPS` (episode).  Also loads the `star`/`bstar` patches directly.
+/// Must be called before the first `WI_Drawer` call. `lnames` gets one slot
+/// per level: `numcmaps` (commercial) or `NUMMAPS` (episode). C allocated
+/// the array from the zone heap at `PU_STATIC` and never freed it; here it
+/// is a `Vec` replaced on each load. Also loads the `star`/`bstar` patches
+/// directly.
 ///
 /// # Safety
 ///
-/// Allocates `lnames` via `Z_Malloc` and mutates every cached patch field
-/// (`star`, `bstar`, and everything touched by `WI_loadUnloadData`). Caller
-/// must ensure the WAD and zone-memory subsystems are initialised and that
-/// `wbs` is valid (via `WI_initVariables`).
+/// Mutates every cached patch field (`star`, `bstar`, and everything
+/// touched by `WI_loadUnloadData`). Caller must ensure the WAD and
+/// zone-memory subsystems are initialised and that `wbs` is valid (via
+/// `WI_initVariables`).
 pub unsafe fn WI_loadData() {
     {
         let mut wi = INTERMISSION.borrow_mut();
-        if gamemode() == doom::mode::commercial {
+        let level_count = if gamemode() == doom::mode::commercial {
             wi.numcmaps = 32;
-            wi.lnames = Z_Malloc(
-                (std::mem::size_of::<*mut patch_t>() * wi.numcmaps as usize) as i32,
-                PU_STATIC,
-                ptr::null_mut(),
-            ) as *mut *mut patch_t;
+            wi.numcmaps as usize
         } else {
-            wi.lnames = Z_Malloc(
-                (std::mem::size_of::<*mut patch_t>() * NUMMAPS) as i32,
-                PU_STATIC,
-                ptr::null_mut(),
-            ) as *mut *mut patch_t;
-        }
+            NUMMAPS
+        };
+        wi.lnames = vec![None; level_count];
     }
 
     WI_loadUnloadData(WI_loadCallback);
 
-    let star = W_CacheLumpName(DEH_String(b"STFST01"), PU_STATIC) as *mut patch_t;
-    let bstar = W_CacheLumpName(DEH_String(b"STFDEAD0"), PU_STATIC) as *mut patch_t;
+    // These two lumps are never released, as in C.
+    let star = cache_patch_name(DEH_String(b"STFST01"), PU_STATIC);
+    let bstar = cache_patch_name(DEH_String(b"STFDEAD0"), PU_STATIC);
     let mut wi = INTERMISSION.borrow_mut();
-    wi.star = star;
-    wi.bstar = bstar;
+    wi.star = Some(star);
+    wi.bstar = Some(bstar);
 }
 
-/// Unload callback: release the named lump from the WAD cache and null the pointer.
+/// Unload callback: release the named lump from the WAD cache and clear
+/// the slot.
 ///
 /// # Safety
 ///
-/// Caller must ensure `name` names a lump previously cached via
-/// `W_CacheLumpName`, and `variable` is a valid, non-null, properly
-/// aligned pointer to a `*mut patch_t` slot that this function may
-/// overwrite with null.
-unsafe fn WI_unloadCallback(name: &[u8], variable: *mut *mut patch_t) {
+/// Caller must ensure `name` names a lump previously cached by
+/// `WI_loadCallback`, and that no copy of the slot's patch is drawn after
+/// the release.
+unsafe fn WI_unloadCallback(name: &[u8], variable: &mut Option<Patch<'static>>) {
     W_ReleaseLumpName(name);
-    *variable = ptr::null_mut();
+    *variable = None;
 }
 
 /// Release all intermission WAD patches loaded by `WI_loadData`.
@@ -2158,7 +2128,7 @@ unsafe fn WI_unloadCallback(name: &[u8], variable: *mut *mut patch_t) {
 ///
 /// # Safety
 ///
-/// Nulls every cached patch pointer in the intermission state and
+/// Clears every cached patch slot in the intermission state and
 /// releases their WAD lumps. Caller must ensure no draw or update
 /// functions are still executing.
 pub unsafe fn WI_unloadData() {

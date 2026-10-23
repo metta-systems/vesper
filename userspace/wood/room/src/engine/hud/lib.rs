@@ -14,9 +14,16 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::wad::format::patch_t;
+use std::ptr;
+
+use crate::engine::wad::format::Patch;
 
 use crate::engine::interface::video::SCREENWIDTH;
+
+/// A patch font: the glyph patches for consecutive characters from a start
+/// character, C `patch_t**`. Fonts are loaded once at `PU_STATIC` and never
+/// released (see `HU_Init`), so they are `'static`.
+pub type Font = &'static [Patch<'static>];
 
 /// Maximum number of text lines in a scrolling text widget (`hu_stext_t`).
 /// Mirrors the C constant `HU_MAXLINES` from `hu_lib.h`.
@@ -34,18 +41,16 @@ const HU_MAXLINELENGTH: usize = 80;
 /// # Invariants
 /// * `l[len] == 0` at all times (NUL-terminated prefix).
 /// * `len <= HU_MAXLINELENGTH` (the array has `HU_MAXLINELENGTH + 1` elements).
-/// * `f` points into the `hu_font` array and must not be null when drawing.
+/// * `f` holds the glyphs for `[sc, '_']` when drawing.
 #[derive(Clone, Copy)]
 pub struct hu_textline_t {
     /// Left-justified screen X position of the text line.
     pub x: i32,
     /// Screen Y position of the text line.
     pub y: i32,
-    /// Pointer to the start of the font patch array; `f.add(c - sc)` yields a
-    /// pointer to the patch for character `c`. Mirrors `patch_t **f` in
-    /// `hu_textline_t`. Access requires pointer arithmetic - direct indexing is
-    /// unsafe.
-    pub f: *mut *mut patch_t,
+    /// The font; `f[c - sc]` is the patch for character `c`. Mirrors
+    /// `patch_t **f` in `hu_textline_t`.
+    pub f: Font,
     /// ASCII code of the first character in the font array (`l->sc` in C).
     /// Characters below this value are rendered as spaces.
     pub sc: i32,
@@ -57,6 +62,20 @@ pub struct hu_textline_t {
     /// Set to 4 on modification, decremented by `HUlib_eraseTextLine` each
     /// frame until it reaches 0.
     pub needsupdate: i32,
+}
+
+impl hu_textline_t {
+    /// An empty line at the origin with no font, before
+    /// [`HUlib_initTextLine`].
+    pub const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        f: &[],
+        sc: 0,
+        l: [0; HU_MAXLINELENGTH + 1],
+        len: 0,
+        needsupdate: 0,
+    };
 }
 
 /// A scrolling message widget backed by a ring of text lines.
@@ -84,6 +103,17 @@ pub struct hu_stext_t {
     pub laston: i32,
 }
 
+impl hu_stext_t {
+    /// A widget of empty lines, before [`HUlib_initSText`].
+    pub const EMPTY: Self = Self {
+        l: [hu_textline_t::EMPTY; HU_MAXLINES],
+        h: 0,
+        cl: 0,
+        on: ptr::null_mut(),
+        laston: 0,
+    };
+}
+
 /// A text-input widget with a protected prefix region.
 ///
 /// Corresponds to `hu_itext_t` in `hu_lib.h`. Used for chat entry and
@@ -106,6 +136,16 @@ pub struct hu_itext_t {
     pub on: *mut i32,
     /// Cached value of `*on` from the previous frame (see [`hu_stext_t::laston`]).
     pub laston: i32,
+}
+
+impl hu_itext_t {
+    /// An empty input widget, before [`HUlib_initIText`].
+    pub const EMPTY: Self = Self {
+        l: hu_textline_t::EMPTY,
+        lm: 0,
+        on: ptr::null_mut(),
+        laston: 0,
+    };
 }
 
 use crate::engine::{
@@ -141,15 +181,9 @@ pub unsafe fn HUlib_clearTextLine(t: *mut hu_textline_t) {
 ///
 /// # Safety
 /// * `t` must be a valid non-null pointer.
-/// * `f` must point to a valid array of at least `('_' - sc + 1)` patch
-///   pointers when drawing is later requested.
-pub unsafe fn HUlib_initTextLine(
-    t: *mut hu_textline_t,
-    x: i32,
-    y: i32,
-    f: *mut *mut patch_t,
-    sc: i32,
-) {
+/// * `f` must hold the glyphs for `[sc, '_']` when drawing is later
+///   requested (drawing panics otherwise).
+pub unsafe fn HUlib_initTextLine(t: *mut hu_textline_t, x: i32, y: i32, f: Font, sc: i32) {
     unsafe {
         (*t).x = x;
         (*t).y = y;
@@ -225,8 +259,8 @@ pub unsafe fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
         for i in 0..(*l).len as usize {
             let c = (*l).l[i].to_ascii_uppercase();
             if c != b' ' && c >= sc as u8 && c <= b'_' {
-                let patch = *f.add((c as i32 - sc) as usize);
-                let w = (*patch).width.get() as i32;
+                let patch = f[(c as i32 - sc) as usize];
+                let w = patch.width();
                 if x + w > SCREENWIDTH {
                     break;
                 }
@@ -241,8 +275,8 @@ pub unsafe fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
         }
 
         if drawcursor != 0 {
-            let cursor_patch = *f.add((b'_' as i32 - sc) as usize);
-            let cursor_w = (*cursor_patch).width.get() as i32;
+            let cursor_patch = f[(b'_' as i32 - sc) as usize];
+            let cursor_w = cursor_patch.width();
             if x + cursor_w <= SCREENWIDTH {
                 V_DrawPatchDirect(x, (*l).y, cursor_patch);
             }
@@ -276,7 +310,7 @@ pub unsafe fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
             )
         };
         if !automap_active() && viewwindowx != 0 && (*l).needsupdate != 0 {
-            let lh = (**(*l).f).height.get() as i32 + 1;
+            let lh = (*l).f[0].height() + 1;
             for y in (*l).y..(*l).y + lh {
                 let yoffset = y * SCREENWIDTH;
                 if y < viewwindowy || y >= viewwindowy + viewheight {
@@ -303,14 +337,15 @@ pub unsafe fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
 /// # Safety
 /// * `s` must be a valid non-null pointer.
 /// * `h <= HU_MAXLINES`.
-/// * `font` must point to valid patch data so the font height can be read.
 /// * `on` must be a valid non-null pointer for the widget's lifetime.
+///
+/// Panics if `font` is empty, as its height is read from the first glyph.
 pub unsafe fn HUlib_initSText(
     s: *mut hu_stext_t,
     x: i32,
     y: i32,
     h: i32,
-    font: *mut *mut patch_t,
+    font: Font,
     startchar: i32,
     on: *mut i32,
 ) {
@@ -319,7 +354,7 @@ pub unsafe fn HUlib_initSText(
         (*s).on = on;
         (*s).laston = 1;
         (*s).cl = 0;
-        let font_h = (**font).height.get() as i32 + 1;
+        let font_h = font[0].height() + 1;
         for i in 0..h as usize {
             HUlib_initTextLine(&mut (*s).l[i], x, y - (i as i32) * font_h, font, startchar);
         }
@@ -419,7 +454,7 @@ pub unsafe fn HUlib_initIText(
     it: *mut hu_itext_t,
     x: i32,
     y: i32,
-    font: *mut *mut patch_t,
+    font: Font,
     startchar: i32,
     on: *mut i32,
 ) {
@@ -557,18 +592,10 @@ pub unsafe fn HUlib_eraseIText(it: *mut hu_itext_t) {
 mod tests {
     use super::*;
 
-    /// Build a zero-initialised hu_textline_t without a valid font pointer.
-    /// Safe to use with clear/add/del because those don't dereference `f`.
+    /// Build an empty hu_textline_t without a font.
+    /// Safe to use with clear/add/del because those don't read `f`.
     fn make_textline() -> hu_textline_t {
-        hu_textline_t {
-            x: 0,
-            y: 0,
-            f: std::ptr::null_mut(),
-            sc: 0,
-            l: [0; HU_MAXLINELENGTH + 1],
-            len: 0,
-            needsupdate: 0,
-        }
+        hu_textline_t::EMPTY
     }
 
     #[test]

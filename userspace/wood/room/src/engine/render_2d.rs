@@ -1,6 +1,13 @@
 //! Rust port of vendor/doomgeneric/v_video.c.
 //!
 //! Screen buffer management, patch drawing, block copying, and screenshots.
+//!
+//! The patch drawers take a checked [`Patch`] view and write through the
+//! destination buffer as a slice of its recorded length. Each column is
+//! clipped to the buffer's width and each post to its rows, so a patch
+//! placed partly or wholly off the buffer draws only its visible part
+//! instead of writing out of bounds as C did (C's `RANGECHECK` made that an
+//! `I_Error`); patches that fit draw exactly as in C.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -19,28 +26,33 @@ use crate::{
         math::bbox::M_AddToBox,
         misc::{M_FileExists, M_WriteFile},
         wad::{
-            W_CacheLumpName,
-            format::{column_t, patch_t, pcx_t},
+            W_CacheLumpName, W_GetNumForName, cache_lump_bytes,
+            format::{Column, Patch, pcx_t},
         },
         zone::{PU_CACHE, PU_STATIC},
     },
     i_error,
 };
 
-pub type vpatchclipfunc_t = Option<fn(*mut patch_t, i32, i32) -> i32>;
+/// Clipping callback consulted before drawing a patch at the given
+/// top-left corner; returning 0 skips the patch.
+pub type vpatchclipfunc_t = Option<fn(Patch<'_>, i32, i32) -> i32>;
 
 /// 2D drawing state (C `v_video.c` globals).
 #[derive(Clone, Copy)]
 pub struct Render2dState {
     /// Translucency lookup table (`TINTTAB` lump), C `tinttable`.
-    tinttable: *mut u8,
+    tinttable: Option<&'static [u8]>,
     /// Alternate translucency table (`XLATAB` lump), C `xlatab`.
-    xlatab: *mut u8,
+    xlatab: Option<&'static [u8]>,
     /// Bounding box of the screen area drawn since the last update,
     /// C `dirtybox`.
     dirtybox: [i32; 4],
     /// Buffer the drawing functions write to, C `dest_screen`.
     dest_screen: *mut u8,
+    /// Length of `dest_screen` in bytes: whole `SCREENWIDTH` rows, as set
+    /// by `V_UseBuffer` / `V_RestoreBuffer`. The patch drawers clip to it.
+    dest_screen_length: usize,
     /// Clipping callback consulted before drawing a patch, C
     /// `patchclip_callback`.
     patchclip_callback: vpatchclipfunc_t,
@@ -50,10 +62,11 @@ impl Render2dState {
     /// No tables loaded, no destination buffer.
     pub const fn new() -> Self {
         Self {
-            tinttable: ptr::null_mut(),
-            xlatab: ptr::null_mut(),
+            tinttable: None,
+            xlatab: None,
             dirtybox: [0; 4],
             dest_screen: ptr::null_mut(),
+            dest_screen_length: 0,
             patchclip_callback: None,
         }
     }
@@ -109,314 +122,234 @@ pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
     RENDER_2D.borrow_mut().patchclip_callback = func;
 }
 
+/// The destination buffer as a slice of its recorded length.
+///
+/// Panics if no buffer is set (before `V_RestoreBuffer` first runs).
+///
 /// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        patchclip_callback,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
+/// No other reference into the destination buffer may be live while the
+/// slice is in use. The 2D drawers take it for the length of one draw and
+/// call nothing that touches the buffer meanwhile.
+unsafe fn destination_screen<'a>(render: &Render2dState) -> &'a mut [u8] {
+    assert!(
+        !render.dest_screen.is_null(),
+        "2D drawing before a destination buffer is set"
+    );
+    // SAFETY: `V_UseBuffer` / `V_RestoreBuffer` record a buffer writable
+    // for `dest_screen_length` bytes that outlives its use as destination;
+    // the caller rules out other references into it.
+    unsafe { std::slice::from_raw_parts_mut(render.dest_screen, render.dest_screen_length) }
+}
 
-        if let Some(cb) = patchclip_callback
-            && cb(patch, x, y) == 0
-        {
-            return;
+/// Write one post's `pixels` into column `screen_x` of `screen` (rows
+/// `SCREENWIDTH` wide), starting at row `top`, with `plot(destination,
+/// source)` per pixel. Rows outside the buffer are skipped.
+#[inline(always)]
+fn draw_post(
+    screen: &mut [u8],
+    screen_x: usize,
+    top: i32,
+    pixels: &[u8],
+    mut plot: impl FnMut(&mut u8, u8),
+) {
+    let rows = (screen.len() / SCREENWIDTH as usize) as i32;
+    let visible_top = top.max(0);
+    let visible_bottom = (top + pixels.len() as i32).min(rows);
+    if visible_bottom <= visible_top {
+        return;
+    }
+    let skipped = (visible_top - top) as usize;
+    let count = (visible_bottom - visible_top) as usize;
+    let start = visible_top as usize * SCREENWIDTH as usize + screen_x;
+    let destinations = screen[start..].iter_mut().step_by(SCREENWIDTH as usize);
+    for (destination, &source) in destinations.zip(&pixels[skipped..skipped + count]) {
+        plot(destination, source);
+    }
+}
+
+/// Draw every column of `patch` with its top-left corner at (`x`, `y`) of
+/// `screen`, mirrored left to right if `flipped`, with `plot(destination,
+/// source)` per pixel. Columns outside the screen width are skipped.
+#[inline(always)]
+fn draw_patch_columns(
+    screen: &mut [u8],
+    x: i32,
+    y: i32,
+    patch: Patch<'_>,
+    flipped: bool,
+    mut plot: impl FnMut(&mut u8, u8),
+) {
+    let width = patch.width();
+    for column_index in 0..width {
+        let screen_x = x + column_index;
+        if !(0..SCREENWIDTH).contains(&screen_x) {
+            continue;
         }
-
-        V_MarkRect(
-            x,
-            y,
-            (*patch).width.get() as i32,
-            (*patch).height.get() as i32,
-        );
-
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, col as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    *dest = *source;
-                    dest = dest.add(SCREENWIDTH as usize);
-                    source = source.add(1);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
+        let source_column = if flipped {
+            width - 1 - column_index
+        } else {
+            column_index
+        };
+        for post in patch.column(source_column as usize) {
+            draw_post(
+                screen,
+                screen_x as usize,
+                y + post.topdelta as i32,
+                post.pixels,
+                &mut plot,
+            );
         }
     }
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        patchclip_callback,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
+/// Draw `patch` at (`x`, `y`) less its offsets, mirrored if `flipped`:
+/// the shared body of `V_DrawPatch` and `V_DrawPatchFlipped`.
+fn draw_patch_opaque(x: i32, y: i32, patch: Patch<'_>, flipped: bool) {
+    let render = RENDER_2D.get();
+    let y = y - patch.topoffset();
+    let x = x - patch.leftoffset();
 
-        if let Some(cb) = patchclip_callback
-            && cb(patch, x, y) == 0
-        {
-            return;
-        }
+    if let Some(callback) = render.patchclip_callback
+        && callback(patch, x, y) == 0
+    {
+        return;
+    }
 
-        V_MarkRect(
-            x,
-            y,
-            (*patch).width.get() as i32,
-            (*patch).height.get() as i32,
+    V_MarkRect(x, y, patch.width(), patch.height());
+
+    // SAFETY: the slice lives for this draw only, which touches no other
+    // reference into the buffer.
+    let screen = unsafe { destination_screen(&render) };
+    draw_patch_columns(screen, x, y, patch, flipped, |destination, source| {
+        *destination = source;
+    });
+}
+
+/// Draw the posts of `column` into column `x` of the video buffer itself
+/// (not the `V_UseBuffer` destination), each post at its `topdelta` row,
+/// as C `F_DrawPatchCol` did. An `x` outside the screen draws nothing.
+pub fn draw_column_to_video_buffer(x: i32, column: Column<'_>) {
+    let video = video_buffer();
+    assert!(!video.is_null(), "drawing before I_InitGraphics");
+    if !(0..SCREENWIDTH).contains(&x) {
+        return;
+    }
+    // SAFETY: `I_InitGraphics` allocates the video buffer as one screen,
+    // and no other reference into it is live while this column is drawn.
+    let screen =
+        unsafe { std::slice::from_raw_parts_mut(video, (SCREENWIDTH * SCREENHEIGHT) as usize) };
+    for post in column {
+        draw_post(
+            screen,
+            x as usize,
+            post.topdelta as i32,
+            post.pixels,
+            |destination, source| *destination = source,
         );
-
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, (w - 1 - col) as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    *dest = *source;
-                    dest = dest.add(SCREENWIDTH as usize);
-                    source = source.add(1);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
-        }
     }
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
+/// Draw `patch` into the destination buffer with its origin at (`x`, `y`),
+/// clipped to the buffer.
+pub fn V_DrawPatch(x: i32, y: i32, patch: Patch<'_>) {
+    draw_patch_opaque(x, y, patch, false);
+}
+
+/// Draw `patch` mirrored left to right, as `V_DrawPatch` otherwise.
+pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: Patch<'_>) {
+    draw_patch_opaque(x, y, patch, true);
+}
+
+/// Draw `patch` as `V_DrawPatch` does.
+pub fn V_DrawPatchDirect(x: i32, y: i32, patch: Patch<'_>) {
     V_DrawPatch(x, y, patch);
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        tinttable,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
-
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, col as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    let idx = ((*dest as usize) << 8) + (*source as usize);
-                    *dest = *tinttable.add(idx);
-                    dest = dest.add(SCREENWIDTH as usize);
-                    source = source.add(1);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
-        }
-    }
+/// The translucency table loaded by `V_LoadTintTable`. Panics if it was
+/// not loaded, where C would read through a null pointer.
+fn loaded_tinttable(render: &Render2dState) -> &'static [u8] {
+    render
+        .tinttable
+        .expect("translucent patch drawn before V_LoadTintTable")
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        xlatab,
-        patchclip_callback,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
+/// Draw `patch` translucently: each pixel becomes
+/// `tinttable[destination << 8 | source]`.
+pub fn V_DrawTLPatch(x: i32, y: i32, patch: Patch<'_>) {
+    let render = RENDER_2D.get();
+    let tinttable = loaded_tinttable(&render);
+    let y = y - patch.topoffset();
+    let x = x - patch.leftoffset();
 
-        if let Some(cb) = patchclip_callback
-            && cb(patch, x, y) == 0
-        {
-            return;
-        }
-
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, col as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    let idx = (*dest as usize) + ((*source as usize) << 8);
-                    *dest = *xlatab.add(idx);
-                    source = source.add(1);
-                    dest = dest.add(SCREENWIDTH as usize);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
-        }
-    }
+    // SAFETY: the slice lives for this draw only, which touches no other
+    // reference into the buffer.
+    let screen = unsafe { destination_screen(&render) };
+    draw_patch_columns(screen, x, y, patch, false, |destination, source| {
+        *destination = tinttable[((*destination as usize) << 8) + source as usize];
+    });
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        tinttable,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
+/// Draw `patch` through the alternate translucency table: each pixel
+/// becomes `xlatab[source << 8 | destination]`.
+pub fn V_DrawXlaPatch(x: i32, y: i32, patch: Patch<'_>) {
+    let render = RENDER_2D.get();
+    let xlatab = render
+        .xlatab
+        .expect("translucent patch drawn before V_LoadXlaTable");
+    let y = y - patch.topoffset();
+    let x = x - patch.leftoffset();
 
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, col as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    let idx = ((*dest as usize) << 8) + (*source as usize);
-                    *dest = *tinttable.add(idx);
-                    dest = dest.add(SCREENWIDTH as usize);
-                    source = source.add(1);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
-        }
+    if let Some(callback) = render.patchclip_callback
+        && callback(patch, x, y) == 0
+    {
+        return;
     }
+
+    // SAFETY: the slice lives for this draw only, which touches no other
+    // reference into the buffer.
+    let screen = unsafe { destination_screen(&render) };
+    draw_patch_columns(screen, x, y, patch, false, |destination, source| {
+        *destination = xlatab[*destination as usize + ((source as usize) << 8)];
+    });
 }
 
-/// # Safety
-/// `patch` must point to a valid patch lump.
-pub unsafe fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
-    let Render2dState {
-        dest_screen,
-        tinttable,
-        ..
-    } = RENDER_2D.get();
-    unsafe {
-        let y = y - (*patch).topoffset.get() as i32;
-        let x = x - (*patch).leftoffset.get() as i32;
+/// Draw `patch` translucently, as `V_DrawTLPatch`.
+pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: Patch<'_>) {
+    V_DrawTLPatch(x, y, patch);
+}
 
-        let w = (*patch).width.get() as i32;
-        let mut desttop = dest_screen.add((y * SCREENWIDTH + x) as usize);
-        let mut desttop2 = dest_screen.add(((y + 2) * SCREENWIDTH + (x + 2)) as usize);
+/// Draw `patch` with a shadow: its shape darkened through `tinttable`
+/// two pixels right and down, then the patch itself.
+pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: Patch<'_>) {
+    let render = RENDER_2D.get();
+    let tinttable = loaded_tinttable(&render);
+    let y = y - patch.topoffset();
+    let x = x - patch.leftoffset();
 
-        let mut col = 0;
-        while col < w {
-            let ofs = patch_t::column_offset(patch, col as usize);
-            let column = (patch as *mut u8).add(ofs) as *mut column_t;
-
-            let mut col_ptr = column;
-            while (*col_ptr).topdelta != 0xff {
-                let mut source = (col_ptr as *mut u8).add(3);
-                let mut dest = desttop.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut dest2 = desttop2.add((*col_ptr).topdelta as usize * SCREENWIDTH as usize);
-                let mut count = (*col_ptr).length as i32;
-
-                while count > 0 {
-                    let idx = (*dest2 as usize) << 8;
-                    *dest2 = *tinttable.add(idx);
-                    dest2 = dest2.add(SCREENWIDTH as usize);
-                    *dest = *source;
-                    dest = dest.add(SCREENWIDTH as usize);
-                    source = source.add(1);
-                    count -= 1;
-                }
-
-                col_ptr = (col_ptr as *mut u8).add((*col_ptr).length as usize + 4) as *mut column_t;
-            }
-
-            col += 1;
-            desttop = desttop.add(1);
-            desttop2 = desttop2.add(1);
-        }
-    }
+    // SAFETY: the slice lives for this draw only, which touches no other
+    // reference into the buffer.
+    let screen = unsafe { destination_screen(&render) };
+    // C interleaves the shadow and the patch pixel by pixel. A column's
+    // shadow lands two columns right, which only that later column draws
+    // over, so all shadows first and then the patch gives the same image.
+    draw_patch_columns(screen, x + 2, y + 2, patch, false, |destination, _| {
+        *destination = tinttable[(*destination as usize) << 8];
+    });
+    draw_patch_columns(screen, x, y, patch, false, |destination, source| {
+        *destination = source;
+    });
 }
 
 pub fn V_LoadTintTable() {
-    let tinttable = W_CacheLumpName(b"TINTTAB", PU_STATIC) as *mut u8;
-    RENDER_2D.borrow_mut().tinttable = tinttable;
+    // SAFETY: the table is cached at PU_STATIC and never released.
+    let tinttable = unsafe { cache_lump_bytes(W_GetNumForName(b"TINTTAB"), PU_STATIC) };
+    RENDER_2D.borrow_mut().tinttable = Some(tinttable);
 }
 
 pub fn V_LoadXlaTable() {
-    let xlatab = W_CacheLumpName(b"XLATAB", PU_STATIC) as *mut u8;
-    RENDER_2D.borrow_mut().xlatab = xlatab;
+    // SAFETY: the table is cached at PU_STATIC and never released.
+    let xlatab = unsafe { cache_lump_bytes(W_GetNumForName(b"XLATAB"), PU_STATIC) };
+    RENDER_2D.borrow_mut().xlatab = Some(xlatab);
 }
 
 /// # Safety
@@ -508,19 +441,28 @@ pub fn V_Init() {
     // no-op
 }
 
-/// Redirect the drawing functions to `buffer` until `V_RestoreBuffer`.
+/// Redirect the drawing functions to `buffer`, `length` bytes of whole
+/// `SCREENWIDTH` rows, until `V_RestoreBuffer`.
 ///
 /// # Safety
-/// `buffer` must be writable for `SCREENWIDTH * SCREENHEIGHT` bytes and
-/// stay valid until `V_RestoreBuffer` is called: the drawing functions
-/// write through it.
-pub unsafe fn V_UseBuffer(buffer: *mut u8) {
-    RENDER_2D.borrow_mut().dest_screen = buffer;
+/// `buffer` must be writable for `length` bytes, overlap no lump the
+/// drawers read, and stay valid until `V_RestoreBuffer` is called: the
+/// drawing functions write through it.
+pub unsafe fn V_UseBuffer(buffer: *mut u8, length: usize) {
+    let mut render = RENDER_2D.borrow_mut();
+    render.dest_screen = buffer;
+    render.dest_screen_length = length;
 }
 
 pub fn V_RestoreBuffer() {
     let screen = video_buffer();
-    RENDER_2D.borrow_mut().dest_screen = screen;
+    let mut render = RENDER_2D.borrow_mut();
+    render.dest_screen = screen;
+    render.dest_screen_length = if screen.is_null() {
+        0
+    } else {
+        (SCREENWIDTH * SCREENHEIGHT) as usize
+    };
 }
 
 /// Write `width * height` pixels from `data` with the 768-byte `palette` as
@@ -682,7 +624,76 @@ pub fn V_DrawMouseSpeedBox(speed: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::engine::wad::format::tests::build_patch_lump};
+
+    const WIDTH: usize = SCREENWIDTH as usize;
+
+    /// Draw `lump` opaquely into a zeroed 4-row buffer at (`x`, `y`).
+    fn draw_into_rows(lump: &[u8], x: i32, y: i32, flipped: bool) -> Vec<u8> {
+        let mut screen = vec![0u8; WIDTH * 4];
+        let patch = Patch::from_bytes(lump).unwrap();
+        draw_patch_columns(&mut screen, x, y, patch, flipped, |destination, source| {
+            *destination = source;
+        });
+        screen
+    }
+
+    /// A patch that fits is copied post by post at its rows; flipping
+    /// mirrors the columns.
+    #[test]
+    fn patch_draws_posts_at_their_rows() {
+        let lump = build_patch_lump(4, 0, 0, &[&[(0, &[1, 2]), (3, &[3])], &[(1, &[4])]]);
+
+        let screen = draw_into_rows(&lump, 10, 0, false);
+        assert_eq!(
+            [0, 1, 2, 3].map(|row| screen[row * WIDTH + 10]),
+            [1, 2, 0, 3]
+        );
+        assert_eq!(
+            [0, 1, 2, 3].map(|row| screen[row * WIDTH + 11]),
+            [0, 4, 0, 0]
+        );
+        assert_eq!(screen.iter().filter(|&&pixel| pixel != 0).count(), 4);
+
+        let flipped = draw_into_rows(&lump, 10, 0, true);
+        assert_eq!(flipped[WIDTH + 10], 4);
+        assert_eq!(flipped[11], 1);
+        assert_eq!(flipped[3 * WIDTH + 11], 3);
+    }
+
+    /// Rows above and below the buffer and columns past either side are
+    /// clipped instead of written out of bounds or wrapped to another row.
+    #[test]
+    fn patch_clips_to_buffer() {
+        let lump = build_patch_lump(6, 0, 0, &[&[(0, &[1, 2, 3, 4, 5, 6])], &[(0, &[7])]]);
+
+        // Column 0 at the last screen column from row -1: rows 0-3 get
+        // pixels 2-5, pixel 6 falls below. Column 1 is off the right edge
+        // and must not wrap into column 0 of the next row.
+        let screen = draw_into_rows(&lump, WIDTH as i32 - 1, -1, false);
+        assert_eq!(
+            [0, 1, 2, 3].map(|row| screen[row * WIDTH + WIDTH - 1]),
+            [2, 3, 4, 5]
+        );
+        assert_eq!(screen.iter().filter(|&&pixel| pixel != 0).count(), 4);
+
+        // Column 0 off the left edge; column 1 lands in screen column 0.
+        let screen = draw_into_rows(&lump, -1, 0, false);
+        assert_eq!(screen[0], 7);
+        assert_eq!(screen.iter().filter(|&&pixel| pixel != 0).count(), 1);
+
+        // Wholly below or above the buffer: nothing drawn.
+        assert!(
+            draw_into_rows(&lump, 0, 4, false)
+                .iter()
+                .all(|&pixel| pixel == 0)
+        );
+        assert!(
+            draw_into_rows(&lump, 0, -6, false)
+                .iter()
+                .all(|&pixel| pixel == 0)
+        );
+    }
 
     #[test]
     fn screenshot_filename_zero_padded() {

@@ -21,8 +21,8 @@ use crate::engine::{
     interface::video::{SCREENHEIGHT, SCREENWIDTH, video_buffer},
     math::fixed::FRACBITS,
     render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
-    wad::{W_CacheLumpName, format::patch_t},
-    zone::{Z_Free, Z_Malloc},
+    wad::{W_CacheLumpName, cache_patch_name},
+    zone::{PU_CACHE, Z_Free, Z_Malloc},
 };
 
 // ---------------------------------------------------------------------------
@@ -136,8 +136,9 @@ pub struct ColumnParams {
     /// Texture mid-point fraction in 16.16 fixed-point, corresponding to the true center of
     /// the wall post; used together with `dc_iscale` to compute the starting texture row.
     pub dc_texturemid: i32,
-    /// First pixel in a column (possibly virtual).
-    pub dc_source: *mut u8,
+    /// First pixel in a column (possibly virtual). The column drawers only
+    /// read through it.
+    pub dc_source: *const u8,
     /// Pointer to the 256-byte color-translation table currently active for `R_DrawTranslatedColumn`.
     /// Used to remap the player-sprite green ramp to another color set.
     pub dc_translation: *mut u8,
@@ -158,7 +159,7 @@ impl ColumnParams {
             dc_yh: 0,
             dc_iscale: 0,
             dc_texturemid: 0,
-            dc_source: ptr::null_mut(),
+            dc_source: ptr::null(),
             dc_translation: ptr::null_mut(),
             centery,
             colormaps,
@@ -908,24 +909,29 @@ pub fn R_FillBackScreen() {
         }
 
         // Draw screen and bezel; this is done to a separate screen buffer.
-        V_UseBuffer(background_buffer);
+        V_UseBuffer(
+            background_buffer,
+            (SCREENWIDTH * (SCREENHEIGHT - SBARHEIGHT)) as usize,
+        );
 
-        let mut patch = W_CacheLumpName(DEH_String(b"brdr_t"), 8) as *mut patch_t;
+        // Each PU_CACHE border patch is drawn before the next one is cached,
+        // and drawing allocates nothing from the zone.
+        let mut patch = cache_patch_name(DEH_String(b"brdr_t"), PU_CACHE);
         for x in (0..scaledviewwidth).step_by(8) {
             V_DrawPatch(viewwindowx + x, viewwindowy - 8, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(b"brdr_b"), 8) as *mut patch_t;
+        patch = cache_patch_name(DEH_String(b"brdr_b"), PU_CACHE);
         for x in (0..scaledviewwidth).step_by(8) {
             V_DrawPatch(viewwindowx + x, viewwindowy + viewheight, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(b"brdr_l"), 8) as *mut patch_t;
+        patch = cache_patch_name(DEH_String(b"brdr_l"), PU_CACHE);
         for y in (0..viewheight).step_by(8) {
             V_DrawPatch(viewwindowx - 8, viewwindowy + y, patch);
         }
 
-        patch = W_CacheLumpName(DEH_String(b"brdr_r"), 8) as *mut patch_t;
+        patch = cache_patch_name(DEH_String(b"brdr_r"), PU_CACHE);
         for y in (0..viewheight).step_by(8) {
             V_DrawPatch(viewwindowx + scaledviewwidth, viewwindowy + y, patch);
         }
@@ -934,22 +940,22 @@ pub fn R_FillBackScreen() {
         V_DrawPatch(
             viewwindowx - 8,
             viewwindowy - 8,
-            W_CacheLumpName(DEH_String(b"brdr_tl"), 8) as *mut patch_t,
+            cache_patch_name(DEH_String(b"brdr_tl"), PU_CACHE),
         );
         V_DrawPatch(
             viewwindowx + scaledviewwidth,
             viewwindowy - 8,
-            W_CacheLumpName(DEH_String(b"brdr_tr"), 8) as *mut patch_t,
+            cache_patch_name(DEH_String(b"brdr_tr"), PU_CACHE),
         );
         V_DrawPatch(
             viewwindowx - 8,
             viewwindowy + viewheight,
-            W_CacheLumpName(DEH_String(b"brdr_bl"), 8) as *mut patch_t,
+            cache_patch_name(DEH_String(b"brdr_bl"), PU_CACHE),
         );
         V_DrawPatch(
             viewwindowx + scaledviewwidth,
             viewwindowy + viewheight,
-            W_CacheLumpName(DEH_String(b"brdr_br"), 8) as *mut patch_t,
+            cache_patch_name(DEH_String(b"brdr_br"), PU_CACHE),
         );
 
         V_RestoreBuffer();

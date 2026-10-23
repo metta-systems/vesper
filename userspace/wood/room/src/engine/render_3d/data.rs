@@ -126,8 +126,8 @@ use crate::engine::{
     render_3d::{sky::SKY, things::SPRITES},
     wad::{
         W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
-        W_LumpNameHash, W_ReleaseLumpName,
-        format::{column_t, mappatch_t, maptexture_t, patch_t},
+        W_LumpNameHash, W_ReleaseLumpName, cache_lump_bytes, cache_patch_num,
+        format::{Column, mappatch_t, maptexture_t},
         lump_name, lump_names_equal, lumpinfo,
     },
     zone::{Z_ChangeTag2, Z_Free, Z_Malloc},
@@ -312,36 +312,24 @@ pub static RENDER_DATA: Global<RenderDataState> = Global::new(RenderDataState::n
 
 /// Copy a single patch column into a pre-allocated composite texture buffer.
 ///
-/// Iterates over the post list in `patch` (terminated by `topdelta == 0xff`)
-/// and `memcpy`s each run of pixels into `cache` at the correct vertical
-/// offset.  Clips posts that extend above zero or below `cacheheight`.
+/// Copies each post of `column` into `cache` at the correct vertical
+/// offset, clipping posts that extend above zero or below the end of
+/// `cache`.
 ///
 /// # Parameters
 ///
-/// - `patch` - pointer to the first `column_t` (post) of the column.
-/// - `cache` - pointer to the start of the destination column inside the
-///   composite buffer (i.e., `block + colofs[x]`).
+/// - `column` - the posts of the patch column.
+/// - `cache` - the destination column inside the composite buffer (i.e.,
+///   `block[colofs[x]..]`), one byte per texture row.
 /// - `originy` - vertical origin of the owning patch within the texture.
-/// - `cacheheight` - height of the texture in pixels; used for clipping.
-///
-/// # Safety
-///
-/// - `patch` must point to a valid column terminated by a `0xff` topdelta.
-/// - `cache` must have at least `cacheheight` bytes of writable storage.
-/// - `originy + post.topdelta` must not underflow past `i32::MIN` (safe for
-///   all legal WAD data).
-unsafe fn R_DrawColumnInCache(
-    patch: *mut column_t,
-    cache: *mut u8,
-    originy: i32,
-    cacheheight: i32,
-) {
-    let mut patch = patch;
-    while (*patch).topdelta != 0xff {
-        let source = (patch as *mut u8).add(3);
-        let mut count = (*patch).length as i32;
-        let mut position = originy + (*patch).topdelta as i32;
+fn R_DrawColumnInCache(column: Column<'_>, cache: &mut [u8], originy: i32) {
+    let cacheheight = cache.len() as i32;
+    for post in column {
+        let mut count = post.pixels.len() as i32;
+        let mut position = originy + post.topdelta as i32;
 
+        // As in C, a post clipped at the top still copies from its first
+        // pixel rather than skipping the rows above the texture.
         if position < 0 {
             count += position;
             position = 0;
@@ -350,9 +338,10 @@ unsafe fn R_DrawColumnInCache(
             count = cacheheight - position;
         }
         if count > 0 {
-            std::ptr::copy_nonoverlapping(source, cache.add(position as usize), count as usize);
+            let position = position as usize;
+            let count = count as usize;
+            cache[position..position + count].copy_from_slice(&post.pixels[..count]);
         }
-        patch = (patch as *mut u8).add((*patch).length as usize + 4) as *mut column_t;
     }
 }
 
@@ -380,22 +369,28 @@ unsafe fn R_DrawColumnInCache(
 pub unsafe fn R_GenerateComposite(data: &RenderDataState, texnum: i32) {
     let texture = *data.textures.add(texnum as usize);
 
+    let compositesize = *data.texturecompositesize.add(texnum as usize);
     let block = Z_Malloc(
-        *data.texturecompositesize.add(texnum as usize),
+        compositesize,
         PU_STATIC,
         data.texturecomposite.add(texnum as usize) as *mut c_void,
     ) as *mut u8;
+    // The block is PU_STATIC until the end, so later allocations (the patch
+    // cache misses below) cannot purge it.
+    let composite = std::slice::from_raw_parts_mut(block, compositesize as usize);
 
     let collump = *data.texturecolumnlump.add(texnum as usize);
     let colofs = *data.texturecolumnofs.add(texnum as usize);
     let patchcount = (*texture).patchcount as i32;
     let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
+    let texture_height = (*texture).height as usize;
 
     for i in 0..patchcount {
         let patch = patches_base.add(i as usize);
-        let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
+        // Used before the next patch's cache miss can purge it.
+        let realpatch = cache_patch_num((*patch).patch, PU_CACHE);
         let x1 = (*patch).originx as i32;
-        let mut x2 = x1 + (*realpatch).width.get() as i32;
+        let mut x2 = x1 + realpatch.width();
 
         let mut x = if x1 < 0 { 0 } else { x1 };
         if x2 > (*texture).width as i32 {
@@ -407,14 +402,11 @@ pub unsafe fn R_GenerateComposite(data: &RenderDataState, texnum: i32) {
                 x += 1;
                 continue;
             }
-            let patchcol = (realpatch as *mut u8)
-                .add(patch_t::column_offset(realpatch, (x - x1) as usize))
-                as *mut column_t;
+            let column_start = *colofs.add(x as usize) as usize;
             R_DrawColumnInCache(
-                patchcol,
-                block.add(*colofs.add(x as usize) as usize),
+                realpatch.column((x - x1) as usize),
+                &mut composite[column_start..column_start + texture_height],
                 (*patch).originy as i32,
-                (*texture).height as i32,
             );
             x += 1;
         }
@@ -471,9 +463,10 @@ pub unsafe fn R_GenerateLookup(data: &RenderDataState, texnum: i32) {
     let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
     for i in 0..(*texture).patchcount as i32 {
         let patch = patches_base.add(i as usize);
-        let realpatch = W_CacheLumpNum((*patch).patch, PU_CACHE) as *mut patch_t;
+        // Used before the next patch's cache miss can purge it.
+        let realpatch = cache_patch_num((*patch).patch, PU_CACHE);
         let x1 = (*patch).originx as i32;
-        let mut x2 = x1 + (*realpatch).width.get() as i32;
+        let mut x2 = x1 + realpatch.width();
 
         let mut x = if x1 < 0 { 0 } else { x1 };
         if x2 > width {
@@ -483,8 +476,7 @@ pub unsafe fn R_GenerateLookup(data: &RenderDataState, texnum: i32) {
         while x < x2 {
             *patchcount.add(x as usize) += 1;
             *collump.add(x as usize) = (*patch).patch as i16;
-            *colofs.add(x as usize) =
-                (patch_t::column_offset(realpatch, (x - x1) as usize) + 3) as u16;
+            *colofs.add(x as usize) = (realpatch.column_offset((x - x1) as usize) + 3) as u16;
             x += 1;
         }
     }
@@ -551,6 +543,42 @@ pub unsafe fn R_GetColumn(data: &RenderDataState, tex: i32, col: i32) -> *mut u8
     }
 
     (*data.texturecomposite.add(tex as usize)).add(ofs as usize)
+}
+
+/// Return the posts of column `col` of masked texture `tex`, which C read
+/// as `R_GetColumn(tex, col) - 3`, a `column_t` post list.
+///
+/// A single-patch column is the post list of the patch column in the WAD
+/// cache. A composited column holds bare pixels without post headers, and
+/// C read those pixels as posts (the "Medusa" glitch of multi-patch masked
+/// textures); this reads them the same way, bounded by the composite
+/// buffer. Only the first composited column differs: C started 3 bytes
+/// before the buffer, inside the zone block header, and this starts at the
+/// buffer's first byte.
+///
+/// # Safety
+///
+/// As for [`R_GetColumn`]: the column is valid only until the zone
+/// allocator evicts the underlying lump or composite buffer, that is until
+/// the next zone allocation.
+pub unsafe fn R_GetMaskedColumn<'a>(data: &RenderDataState, tex: i32, col: i32) -> Column<'a> {
+    let col = col & *data.texturewidthmask.add(tex as usize);
+    let lump = *(*data.texturecolumnlump.add(tex as usize)).add(col as usize) as i32;
+    let ofs = *(*data.texturecolumnofs.add(tex as usize)).add(col as usize) as usize;
+
+    if lump > 0 {
+        return Column::at_offset(cache_lump_bytes(lump, PU_CACHE), ofs.saturating_sub(3));
+    }
+
+    if (*data.texturecomposite.add(tex as usize)).is_null() {
+        R_GenerateComposite(data, tex);
+    }
+
+    let composite = std::slice::from_raw_parts(
+        *data.texturecomposite.add(tex as usize),
+        *data.texturecompositesize.add(tex as usize) as usize,
+    );
+    Column::at_offset(composite, ofs.saturating_sub(3))
 }
 
 // ---------------------------------------------------------------------------
@@ -867,9 +895,9 @@ pub unsafe fn R_InitFlats() {
 /// - `spriteoffset[i]`    - left-offset in 16.16 fixed-point.
 /// - `spritetopoffset[i]` - top-offset in 16.16 fixed-point.
 ///
-/// Only the four-field patch header is read; the actual pixel columns are not
-/// loaded at this stage (they are cached on demand during rendering).  Prints
-/// a progress dot every 64 lumps.
+/// Only the patch header is used (the [`Patch`](crate::engine::wad::format::Patch)
+/// view checks that the column table fits the lump); the pixel columns are
+/// read on demand during rendering.  Prints a progress dot every 64 lumps.
 ///
 /// Called by `R_InitData`.
 ///
@@ -905,10 +933,11 @@ pub unsafe fn R_InitSpriteLumps() {
             print!(".");
         }
 
-        let patch = W_CacheLumpNum(data.firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
-        *data.spritewidth.add(i) = ((*patch).width.get() as i32) << FRACBITS;
-        *data.spriteoffset.add(i) = ((*patch).leftoffset.get() as i32) << FRACBITS;
-        *data.spritetopoffset.add(i) = ((*patch).topoffset.get() as i32) << FRACBITS;
+        // Read at once, before the next sprite's cache miss can purge it.
+        let patch = cache_patch_num(data.firstspritelump + i as i32, PU_CACHE);
+        *data.spritewidth.add(i) = patch.width() << FRACBITS;
+        *data.spriteoffset.add(i) = patch.leftoffset() << FRACBITS;
+        *data.spritetopoffset.add(i) = patch.topoffset() << FRACBITS;
     }
 }
 
@@ -1169,4 +1198,29 @@ pub unsafe fn R_PrecacheLevel() {
         }
     }
     Z_Free(spritepresent as *mut c_void);
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::engine::wad::format::{Patch, tests::build_patch_lump},
+    };
+
+    /// Posts land at `originy + topdelta` in the composite column and are
+    /// cut at its bottom; a post cut at the top still copies from its first
+    /// pixel, as in C.
+    #[test]
+    fn column_in_cache_clips_like_c() {
+        let lump = build_patch_lump(8, 0, 0, &[&[(0, &[1, 2, 3]), (4, &[4, 5, 6])]]);
+        let patch = Patch::from_bytes(&lump).unwrap();
+
+        let mut cache = [0u8; 6];
+        R_DrawColumnInCache(patch.column(0), &mut cache, 1);
+        assert_eq!(cache, [0, 1, 2, 3, 0, 4]);
+
+        let mut cache = [0u8; 6];
+        R_DrawColumnInCache(patch.column(0), &mut cache, -2);
+        assert_eq!(cache, [1, 0, 4, 5, 6, 0]);
+    }
 }
