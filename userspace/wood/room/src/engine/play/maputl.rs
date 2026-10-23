@@ -578,11 +578,12 @@ pub fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(*mut line_t) 
         let mut list = crate::engine::play::setup::blockmaplump.offset(offset);
         while *list != -1 {
             let ld = crate::engine::play::setup::lines.offset(*list as isize);
-            if (*ld).validcount == crate::engine::render_3d::main::validcount {
+            let validcount = crate::engine::render_3d::main::VALIDCOUNT.get();
+            if (*ld).validcount == validcount {
                 list = list.offset(1);
                 continue;
             }
-            (*ld).validcount = crate::engine::render_3d::main::validcount;
+            (*ld).validcount = validcount;
             if func.unwrap()(ld) == 0 {
                 return 0;
             }
@@ -980,8 +981,8 @@ pub fn P_PathTraverse(
 ) -> u32 {
     unsafe {
         earlyout = flags & PT_EARLYOUT;
-        crate::engine::render_3d::main::validcount =
-            crate::engine::render_3d::main::validcount.wrapping_add(1);
+        let validcount = &crate::engine::render_3d::main::VALIDCOUNT;
+        validcount.set(validcount.get().wrapping_add(1));
         intercept_p = std::ptr::addr_of_mut!(intercepts[0]);
         let mut x1 = x1;
         let mut y1 = y1;

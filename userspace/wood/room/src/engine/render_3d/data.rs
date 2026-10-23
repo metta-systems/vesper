@@ -22,12 +22,15 @@
 //! `R_GetColumn` is the hot path: it returns a pointer to the column data,
 //! triggering composite generation as needed.
 //!
-//! # Shared globals
+//! # Shared state
 //!
-//! Most statics in this module correspond to `extern` declarations in
-//! `r_state.h` and are read by several renderer and physics modules.
-//! Exceptions: `lastflat` and `numflats` were only declared locally in
-//! `p_spec.c`, not in `r_state.h`.
+//! The C globals live in [`RenderDataState`], held in [`RENDER_DATA`].  Most
+//! correspond to `extern` declarations in `r_state.h` and are read by several
+//! renderer and physics modules.  Exceptions: `lastflat` and `numflats` were
+//! only declared locally in `p_spec.c`, not in `r_state.h`.  The tables are
+//! zone allocations set up once by `R_InitData`; later writes (animated
+//! texture translation, the composite cache) go through the table pointers,
+//! so readers only need a shared borrow.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -36,6 +39,7 @@ use {crate::i_error, std::ffi::c_void};
 use {std::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
+    global::Global,
     math::fixed::FRACBITS,
     play::mobj::mobj_t,
     zone::{PU_CACHE, PU_STATIC},
@@ -119,10 +123,7 @@ use crate::engine::{
         setup::{numsectors, numsides, sectors, sides},
         tick::{thinkercap, ThinkerContainer, ThinkerKind},
     },
-    render_3d::{
-        sky::skytexture,
-        things::{numsprites, sprites},
-    },
+    render_3d::{sky::SKY, things::SPRITES},
     wad::{
         format::{column_t, mappatch_t, maptexture_t, patch_t},
         lump_name, lump_names_equal, lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName,
@@ -132,156 +133,177 @@ use crate::engine::{
 };
 
 // ---------------------------------------------------------------------------
-// Globals defined by this module
+// State defined by this module
 // ---------------------------------------------------------------------------
 
-/// WAD lump index of the first flat (the lump after `F_START`).
-///
-/// Exported as `extern int firstflat` in `r_state.h`.  Used by `r_plane.c`
-/// to compute lump numbers from flat indices: `lump = firstflat + flatnum`.
-pub static mut firstflat: i32 = 0;
+/// Renderer data state (C `r_data.c` globals).
+pub struct RenderDataState {
+    /// WAD lump index of the first flat (the lump after `F_START`).
+    ///
+    /// Exported as `extern int firstflat` in `r_state.h`.  Used by `r_plane.c`
+    /// to compute lump numbers from flat indices: `lump = firstflat + flatnum`.
+    pub firstflat: i32,
+    /// WAD lump index of the last flat (the lump before `F_END`).
+    ///
+    /// Not in `r_state.h`; declared locally in `p_spec.c`.  Together with
+    /// `firstflat` it defines the flat lump range in the WAD.
+    pub lastflat: i32,
+    /// Total number of flat lumps (`lastflat - firstflat + 1`).
+    ///
+    /// Declared locally in `p_spec.c` (not in `r_state.h`) as `extern int numflats`
+    /// for animation bounds checking.
+    pub numflats: i32,
+    /// WAD lump index of the first sprite lump (the lump after `S_START`).
+    ///
+    /// Exported via `r_state.h`.  Used by `r_things.c` and `f_finale.c` to
+    /// convert sprite-relative lump indices to absolute WAD lump numbers:
+    /// `lump = firstspritelump + relative`.
+    pub firstspritelump: i32,
+    /// WAD lump index of the last sprite lump (the lump before `S_END`).
+    ///
+    /// Exported via `r_state.h`.  Used by `r_things.c` when scanning the WAD for
+    /// sprite frames.
+    pub lastspritelump: i32,
+    /// Total number of sprite lumps (`lastspritelump - firstspritelump + 1`).
+    ///
+    /// Exported via `r_state.h`.  Bounds the `spritewidth`, `spriteoffset`, and
+    /// `spritetopoffset` arrays.
+    pub numspritelumps: i32,
+    /// Total number of wall textures loaded from TEXTURE1 and TEXTURE2.
+    ///
+    /// Bounds all per-texture arrays and the hash table.
+    pub numtextures: i32,
+    /// Array of pointers to runtime texture descriptors, length `numtextures`.
+    ///
+    /// Allocated from the zone heap during `R_InitTextures`.  Private; accessed
+    /// only within this module.
+    textures: *mut *mut texture_t,
+    /// Hash table of texture pointers for O(1) name lookup, length `numtextures`.
+    ///
+    /// Populated by `GenerateTextureHashTable`.  Each slot is the head of a
+    /// linked list chained through `texture_t::next`.  Private.
+    textures_hashtable: *mut *mut texture_t,
+    /// Per-texture column width mask (`width_rounded_up_to_power_of_two - 1`).
+    ///
+    /// Used by `R_GetColumn` to wrap column indices: `col & texturewidthmask[tex]`.
+    /// Private; not exported to C.
+    texturewidthmask: *mut i32,
+    /// Per-texture height in 16.16 fixed-point units, length `numtextures`.
+    ///
+    /// Exported via `r_state.h` as `fixed_t *textureheight`.  Used by `r_segs.c`
+    /// and `p_floor.c` for texture-pegging calculations.
+    pub textureheight: *mut i32,
+    /// Per-texture total byte size of the composite column buffer, length `numtextures`.
+    ///
+    /// A zero entry means the texture has no multi-patch columns and no composite
+    /// buffer is ever allocated.  Private.
+    texturecompositesize: *mut i32,
+    /// Per-texture array of column-lump indices, each array has `texture.width` entries.
+    ///
+    /// `texturecolumnlump[tex][col]` is the WAD lump number to use for column
+    /// `col` of texture `tex`, or `-1` if the column requires compositing.
+    /// Private.
+    texturecolumnlump: *mut *mut i16,
+    /// Per-texture array of column byte offsets, each array has `texture.width` entries.
+    ///
+    /// `texturecolumnofs[tex][col]` is the byte offset within the lump (or within
+    /// the composite buffer) for the start of column data.  Private.
+    texturecolumnofs: *mut *mut u16,
+    /// Per-texture pointer to the composited column buffer, length `numtextures`.
+    ///
+    /// Null until `R_GenerateComposite` is called for that texture.  Tagged
+    /// `PU_CACHE` so the zone allocator may evict it (clearing the slot through
+    /// its user pointer); `R_GetColumn` regenerates on the next access.
+    /// Private.
+    texturecomposite: *mut *mut u8,
+    /// Flat animation translation table, length `numflats + 1`.
+    ///
+    /// Exported via `r_state.h` as `int *flattranslation`.  `p_spec.c` updates
+    /// entries during animated flat processing; `r_plane.c` uses
+    /// `flattranslation[pl->picnum]` when fetching the actual lump to draw.
+    pub flattranslation: *mut i32,
+    /// Texture animation translation table, length `numtextures + 1`.
+    ///
+    /// Exported via `r_state.h` as `int *texturetranslation`.  `p_spec.c`
+    /// updates entries for animated textures; `r_segs.c` applies the translation
+    /// before calling `R_GetColumn`.
+    pub texturetranslation: *mut i32,
+    /// Per-sprite-lump width in 16.16 fixed-point units, length `numspritelumps`.
+    ///
+    /// Exported via `r_state.h` as `fixed_t *spritewidth`.  Used by `r_things.c`
+    /// to compute screen-space sprite extents.
+    pub spritewidth: *mut i32,
+    /// Per-sprite-lump horizontal draw offset in 16.16 fixed-point units, length `numspritelumps`.
+    ///
+    /// Exported via `r_state.h` as `fixed_t *spriteoffset`.  Used by `r_things.c`
+    /// to position sprites relative to the thing's world coordinates.
+    pub spriteoffset: *mut i32,
+    /// Per-sprite-lump vertical draw offset in 16.16 fixed-point units, length `numspritelumps`.
+    ///
+    /// Exported via `r_state.h` as `fixed_t *spritetopoffset`.  Used by
+    /// `r_things.c` to compute the top screen row of each sprite.
+    pub spritetopoffset: *mut i32,
+    /// Pointer to the COLORMAP lump data: 34 colormaps of 256 bytes each.
+    ///
+    /// Exported via `r_state.h` as `lighttable_t *colormaps`.  The renderer
+    /// indexes this as `colormaps + light_level * 256` to obtain a 256-entry
+    /// palette remapping table.  Used by `r_main.c`, `r_draw.c`, `r_plane.c`,
+    /// and `r_things.c`.
+    pub colormaps: *mut u8,
+    /// Total bytes of flat data touched during `R_PrecacheLevel`, for diagnostics.
+    ///
+    /// Corresponds to `flatmemory` in `r_data.c`.
+    pub flatmemory: i32,
+    /// Total bytes of texture patch data touched during `R_PrecacheLevel`, for diagnostics.
+    ///
+    /// Corresponds to `texturememory` in `r_data.c`.
+    pub texturememory: i32,
+    /// Total bytes of sprite lump data touched during `R_PrecacheLevel`, for diagnostics.
+    ///
+    /// Corresponds to `spritememory` in `r_data.c`.
+    pub spritememory: i32,
+}
 
-/// WAD lump index of the last flat (the lump before `F_END`).
-///
-/// Not in `r_state.h`; declared locally in `p_spec.c`.  Together with
-/// `firstflat` it defines the flat lump range in the WAD.
-pub static mut lastflat: i32 = 0;
+impl RenderDataState {
+    /// The state before `R_InitData`: no tables, all counts zero.
+    pub const fn new() -> Self {
+        Self {
+            firstflat: 0,
+            lastflat: 0,
+            numflats: 0,
+            firstspritelump: 0,
+            lastspritelump: 0,
+            numspritelumps: 0,
+            numtextures: 0,
+            textures: ptr::null_mut(),
+            textures_hashtable: ptr::null_mut(),
+            texturewidthmask: ptr::null_mut(),
+            textureheight: ptr::null_mut(),
+            texturecompositesize: ptr::null_mut(),
+            texturecolumnlump: ptr::null_mut(),
+            texturecolumnofs: ptr::null_mut(),
+            texturecomposite: ptr::null_mut(),
+            flattranslation: ptr::null_mut(),
+            texturetranslation: ptr::null_mut(),
+            spritewidth: ptr::null_mut(),
+            spriteoffset: ptr::null_mut(),
+            spritetopoffset: ptr::null_mut(),
+            colormaps: ptr::null_mut(),
+            flatmemory: 0,
+            texturememory: 0,
+            spritememory: 0,
+        }
+    }
+}
 
-/// Total number of flat lumps (`lastflat - firstflat + 1`).
-///
-/// Declared locally in `p_spec.c` (not in `r_state.h`) as `extern int numflats`
-/// for animation bounds checking.
-pub static mut numflats: i32 = 0;
+impl Default for RenderDataState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// WAD lump index of the first sprite lump (the lump after `S_START`).
-///
-/// Exported via `r_state.h`.  Used by `r_things.c` and `f_finale.c` to
-/// convert sprite-relative lump indices to absolute WAD lump numbers:
-/// `lump = firstspritelump + relative`.
-pub static mut firstspritelump: i32 = 0;
-
-/// WAD lump index of the last sprite lump (the lump before `S_END`).
-///
-/// Exported via `r_state.h`.  Used by `r_things.c` when scanning the WAD for
-/// sprite frames.
-pub static mut lastspritelump: i32 = 0;
-
-/// Total number of sprite lumps (`lastspritelump - firstspritelump + 1`).
-///
-/// Exported via `r_state.h`.  Bounds the `spritewidth`, `spriteoffset`, and
-/// `spritetopoffset` arrays.
-pub static mut numspritelumps: i32 = 0;
-
-/// Total number of wall textures loaded from TEXTURE1 and TEXTURE2.
-///
-///Bounds all per-texture arrays and the hash
-/// table.
-pub static mut numtextures: i32 = 0;
-
-/// Array of pointers to runtime texture descriptors, length `numtextures`.
-///
-/// Allocated from the zone heap during `R_InitTextures`.  Private; accessed
-/// only within this module.
-static mut textures: *mut *mut texture_t = ptr::null_mut();
-
-/// Hash table of texture pointers for O(1) name lookup, length `numtextures`.
-///
-/// Populated by `GenerateTextureHashTable`.  Each slot is the head of a
-/// linked list chained through `texture_t::next`.  Private.
-static mut textures_hashtable: *mut *mut texture_t = ptr::null_mut();
-
-/// Per-texture column width mask (`width_rounded_up_to_power_of_two - 1`).
-///
-/// Used by `R_GetColumn` to wrap column indices: `col & texturewidthmask[tex]`.
-/// Private; not exported to C.
-static mut texturewidthmask: *mut i32 = ptr::null_mut();
-
-/// Per-texture height in 16.16 fixed-point units, length `numtextures`.
-///
-/// Exported via `r_state.h` as `fixed_t *textureheight`.  Used by `r_segs.c`
-/// and `p_floor.c` for texture-pegging calculations.
-pub static mut textureheight: *mut i32 = ptr::null_mut();
-
-/// Per-texture total byte size of the composite column buffer, length `numtextures`.
-///
-/// A zero entry means the texture has no multi-patch columns and no composite
-/// buffer is ever allocated.  Private.
-static mut texturecompositesize: *mut i32 = ptr::null_mut();
-
-/// Per-texture array of column-lump indices, each array has `texture.width` entries.
-///
-/// `texturecolumnlump[tex][col]` is the WAD lump number to use for column
-/// `col` of texture `tex`, or `-1` if the column requires compositing.
-/// Private.
-static mut texturecolumnlump: *mut *mut i16 = ptr::null_mut();
-
-/// Per-texture array of column byte offsets, each array has `texture.width` entries.
-///
-/// `texturecolumnofs[tex][col]` is the byte offset within the lump (or within
-/// the composite buffer) for the start of column data.  Private.
-static mut texturecolumnofs: *mut *mut u16 = ptr::null_mut();
-
-/// Per-texture pointer to the composited column buffer, length `numtextures`.
-///
-/// Null until `R_GenerateComposite` is called for that texture.  Tagged
-/// `PU_CACHE` so the zone allocator may evict it; `R_GetColumn` regenerates
-/// on the next access.  Private.
-static mut texturecomposite: *mut *mut u8 = ptr::null_mut();
-
-/// Flat animation translation table, length `numflats + 1`.
-///
-/// Exported via `r_state.h` as `int *flattranslation`.  `p_spec.c` updates
-/// entries during animated flat processing; `r_plane.c` uses
-/// `flattranslation[pl->picnum]` when fetching the actual lump to draw.
-pub static mut flattranslation: *mut i32 = ptr::null_mut();
-
-/// Texture animation translation table, length `numtextures + 1`.
-///
-/// Exported via `r_state.h` as `int *texturetranslation`.  `p_spec.c`
-/// updates entries for animated textures; `r_segs.c` applies the translation
-/// before calling `R_GetColumn`.
-pub static mut texturetranslation: *mut i32 = ptr::null_mut();
-
-/// Per-sprite-lump width in 16.16 fixed-point units, length `numspritelumps`.
-///
-/// Exported via `r_state.h` as `fixed_t *spritewidth`.  Used by `r_things.c`
-/// to compute screen-space sprite extents.
-pub static mut spritewidth: *mut i32 = ptr::null_mut();
-
-/// Per-sprite-lump horizontal draw offset in 16.16 fixed-point units, length `numspritelumps`.
-///
-/// Exported via `r_state.h` as `fixed_t *spriteoffset`.  Used by `r_things.c`
-/// to position sprites relative to the thing's world coordinates.
-pub static mut spriteoffset: *mut i32 = ptr::null_mut();
-
-/// Per-sprite-lump vertical draw offset in 16.16 fixed-point units, length `numspritelumps`.
-///
-/// Exported via `r_state.h` as `fixed_t *spritetopoffset`.  Used by
-/// `r_things.c` to compute the top screen row of each sprite.
-pub static mut spritetopoffset: *mut i32 = ptr::null_mut();
-
-/// Pointer to the COLORMAP lump data: 34 colormaps of 256 bytes each.
-///
-/// Exported via `r_state.h` as `lighttable_t *colormaps`.  The renderer
-/// indexes this as `colormaps + light_level * 256` to obtain a 256-entry
-/// palette remapping table.  Used by `r_main.c`, `r_draw.c`, `r_plane.c`,
-/// and `r_things.c`.
-pub static mut colormaps: *mut u8 = ptr::null_mut();
-
-/// Total bytes of flat data touched during `R_PrecacheLevel`, for diagnostics.
-///
-///Corresponds to `flatmemory` in `r_data.c`.
-pub static mut flatmemory: i32 = 0;
-
-/// Total bytes of texture patch data touched during `R_PrecacheLevel`, for diagnostics.
-///
-///Corresponds to `texturememory` in `r_data.c`.
-pub static mut texturememory: i32 = 0;
-
-/// Total bytes of sprite lump data touched during `R_PrecacheLevel`, for diagnostics.
-///
-///Corresponds to `spritememory` in `r_data.c`.
-pub static mut spritememory: i32 = 0;
+/// The renderer data state.
+pub static RENDER_DATA: Global<RenderDataState> = Global::new(RenderDataState::new());
 
 // ---------------------------------------------------------------------------
 // R_DrawColumnInCache
@@ -354,17 +376,17 @@ unsafe fn R_DrawColumnInCache(
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called first.
 /// - `texturecompositesize[texnum]` must be non-zero (ensured by
 ///   `R_GenerateLookup` for textures with overlapping patches).
-pub unsafe fn R_GenerateComposite(texnum: i32) {
-    let texture = *textures.add(texnum as usize);
+pub unsafe fn R_GenerateComposite(data: &RenderDataState, texnum: i32) {
+    let texture = *data.textures.add(texnum as usize);
 
     let block = Z_Malloc(
-        *texturecompositesize.add(texnum as usize),
+        *data.texturecompositesize.add(texnum as usize),
         PU_STATIC,
-        texturecomposite.add(texnum as usize) as *mut c_void,
+        data.texturecomposite.add(texnum as usize) as *mut c_void,
     ) as *mut u8;
 
-    let collump = *texturecolumnlump.add(texnum as usize);
-    let colofs = *texturecolumnofs.add(texnum as usize);
+    let collump = *data.texturecolumnlump.add(texnum as usize);
+    let colofs = *data.texturecolumnofs.add(texnum as usize);
     let patchcount = (*texture).patchcount as i32;
     let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
 
@@ -423,14 +445,14 @@ pub unsafe fn R_GenerateComposite(texnum: i32) {
 /// - `texnum` must be in `0..numtextures`.
 /// - `texturecolumnlump[texnum]` and `texturecolumnofs[texnum]` must already
 ///   be allocated (done by `R_InitTextures` before this call).
-pub unsafe fn R_GenerateLookup(texnum: i32) {
-    let texture = *textures.add(texnum as usize);
+pub unsafe fn R_GenerateLookup(data: &RenderDataState, texnum: i32) {
+    let texture = *data.textures.add(texnum as usize);
     let width = (*texture).width as i32;
 
-    *texturecomposite.add(texnum as usize) = ptr::null_mut();
-    *texturecompositesize.add(texnum as usize) = 0;
-    let collump = *texturecolumnlump.add(texnum as usize);
-    let colofs = *texturecolumnofs.add(texnum as usize);
+    *data.texturecomposite.add(texnum as usize) = ptr::null_mut();
+    *data.texturecompositesize.add(texnum as usize) = 0;
+    let collump = *data.texturecolumnlump.add(texnum as usize);
+    let colofs = *data.texturecolumnofs.add(texnum as usize);
 
     let mut patchcount_ptr: *mut u8 = ptr::null_mut();
     let _patchcount_arr = Z_Malloc(
@@ -466,6 +488,7 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
         }
     }
 
+    let compositesize = data.texturecompositesize.add(texnum as usize);
     for x in 0..width {
         if *patchcount.add(x as usize) == 0 {
             println!(
@@ -477,12 +500,12 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
         }
         if *patchcount.add(x as usize) > 1 {
             *collump.add(x as usize) = -1;
-            *colofs.add(x as usize) = *texturecompositesize.add(texnum as usize) as u16;
+            *colofs.add(x as usize) = *compositesize as u16;
 
-            if *texturecompositesize.add(texnum as usize) > 0x10000 - (*texture).height as i32 {
+            if *compositesize > 0x10000 - (*texture).height as i32 {
                 i_error!("R_GenerateLookup: texture {} is >64k", texnum);
             }
-            *texturecompositesize.add(texnum as usize) += (*texture).height as i32;
+            *compositesize += (*texture).height as i32;
         }
     }
 
@@ -503,8 +526,9 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
 /// - Otherwise: calls `R_GenerateComposite` on the first access for that
 ///   texture, then returns into the composite buffer.
 ///
-/// This is the hot-path column-fetch function; called from `r_segs.c`,
-/// `r_plane.c`, and `r_things.c` on every rendered column.
+/// This is the hot-path column-fetch function; called from `r_segs.c` and
+/// `r_plane.c` on every rendered column, so the caller borrows `data` once
+/// for the whole wall or plane.
 ///
 /// # Safety
 ///
@@ -512,20 +536,20 @@ pub unsafe fn R_GenerateLookup(texnum: i32) {
 /// - `R_InitTextures` and `R_GenerateLookup` must have been called.
 /// - The returned pointer is valid until the zone allocator evicts the
 ///   underlying lump or composite buffer.
-pub unsafe fn R_GetColumn(tex: i32, col: i32) -> *mut u8 {
-    let col = col & *texturewidthmask.add(tex as usize);
-    let lump = *(*texturecolumnlump.add(tex as usize)).add(col as usize) as i32;
-    let ofs = *(*texturecolumnofs.add(tex as usize)).add(col as usize) as i32;
+pub unsafe fn R_GetColumn(data: &RenderDataState, tex: i32, col: i32) -> *mut u8 {
+    let col = col & *data.texturewidthmask.add(tex as usize);
+    let lump = *(*data.texturecolumnlump.add(tex as usize)).add(col as usize) as i32;
+    let ofs = *(*data.texturecolumnofs.add(tex as usize)).add(col as usize) as i32;
 
     if lump > 0 {
         return (W_CacheLumpNum(lump, PU_CACHE) as *mut u8).add(ofs as usize);
     }
 
-    if (*texturecomposite.add(tex as usize)).is_null() {
-        R_GenerateComposite(tex);
+    if (*data.texturecomposite.add(tex as usize)).is_null() {
+        R_GenerateComposite(data, tex);
     }
 
-    (*texturecomposite.add(tex as usize)).add(ofs as usize)
+    (*data.texturecomposite.add(tex as usize)).add(ofs as usize)
 }
 
 // ---------------------------------------------------------------------------
@@ -547,23 +571,24 @@ pub unsafe fn R_GetColumn(tex: i32, col: i32) -> *mut u8 {
 ///
 /// - `textures` must be fully populated (`numtextures` valid pointers).
 /// - Must not be called more than once per session (would leak the old table).
-unsafe fn GenerateTextureHashTable() {
-    textures_hashtable = Z_Malloc(
+unsafe fn GenerateTextureHashTable(data: &mut RenderDataState) {
+    let numtextures = data.numtextures;
+    data.textures_hashtable = Z_Malloc(
         ((std::mem::size_of::<*mut texture_t>() * numtextures as usize) as i32) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
 
     for i in 0..numtextures as usize {
-        *textures_hashtable.add(i) = ptr::null_mut();
+        *data.textures_hashtable.add(i) = ptr::null_mut();
     }
 
     for i in 0..numtextures as usize {
-        let tex = *textures.add(i);
+        let tex = *data.textures.add(i);
         (*tex).index = i as i32;
 
         let key = (W_LumpNameHash(&(*tex).name) % numtextures as u32) as usize;
-        let mut rover = textures_hashtable.add(key);
+        let mut rover = data.textures_hashtable.add(key);
 
         while !(*rover).is_null() {
             rover = std::ptr::addr_of_mut!((**rover).next);
@@ -601,6 +626,8 @@ unsafe fn GenerateTextureHashTable() {
 /// - WAD must be fully loaded (`W_Init` must have been called).
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitTextures() {
+    let mut data = RENDER_DATA.borrow_mut();
+
     let names = W_CacheLumpName(DEH_String(b"PNAMES"), PU_STATIC) as *mut i32;
     let nummappatches = LONG(*names);
     let name_p = names.add(1) as *mut u8;
@@ -633,39 +660,40 @@ pub unsafe fn R_InitTextures() {
         maxoff2 = W_LumpLength(W_GetNumForName(DEH_String(b"TEXTURE2")) as u32);
     }
 
-    numtextures = numtextures1 + numtextures2;
+    let numtextures = numtextures1 + numtextures2;
+    data.numtextures = numtextures;
 
-    textures = Z_Malloc(
+    data.textures = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<*mut texture_t>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
-    texturecolumnlump = Z_Malloc(
+    data.texturecolumnlump = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<*mut i16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut i16;
-    texturecolumnofs = Z_Malloc(
+    data.texturecolumnofs = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<*mut u16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut u16;
-    texturecomposite = Z_Malloc(
+    data.texturecomposite = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<*mut u8>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut u8;
-    texturecompositesize = Z_Malloc(
+    data.texturecompositesize = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
-    texturewidthmask = Z_Malloc(
+    data.texturewidthmask = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
-    textureheight = Z_Malloc(
+    data.textureheight = Z_Malloc(
         (numtextures as usize * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
@@ -729,7 +757,7 @@ pub unsafe fn R_InitTextures() {
         let texsize = std::mem::size_of::<texture_t>()
             + std::mem::size_of::<texpatch_t>() * (patchcount as usize - 1);
         let texture = Z_Malloc(texsize as i32, PU_STATIC, ptr::null_mut()) as *mut texture_t;
-        *textures.add(i) = texture;
+        *data.textures.add(i) = texture;
 
         (*texture).width = mtexture.width.get();
         (*texture).height = mtexture.height.get();
@@ -752,12 +780,12 @@ pub unsafe fn R_InitTextures() {
         }
 
         let twidth = (*texture).width as i32;
-        *texturecolumnlump.add(i) = Z_Malloc(
+        *data.texturecolumnlump.add(i) = Z_Malloc(
             (twidth as usize * std::mem::size_of::<i16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
         ) as *mut i16;
-        *texturecolumnofs.add(i) = Z_Malloc(
+        *data.texturecolumnofs.add(i) = Z_Malloc(
             (twidth as usize * std::mem::size_of::<u16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
@@ -767,8 +795,8 @@ pub unsafe fn R_InitTextures() {
         while j * 2 <= twidth {
             j <<= 1;
         }
-        *texturewidthmask.add(i) = j - 1;
-        *textureheight.add(i) = ((*texture).height as i32) << FRACBITS;
+        *data.texturewidthmask.add(i) = j - 1;
+        *data.textureheight.add(i) = ((*texture).height as i32) << FRACBITS;
     }
 
     Z_Free(patchlookup as *mut c_void);
@@ -778,19 +806,19 @@ pub unsafe fn R_InitTextures() {
     }
 
     for i in 0..numtextures as usize {
-        R_GenerateLookup(i as i32);
+        R_GenerateLookup(&data, i as i32);
     }
 
-    texturetranslation = Z_Malloc(
+    data.texturetranslation = Z_Malloc(
         ((numtextures as usize + 1) * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
     for i in 0..numtextures as usize {
-        *texturetranslation.add(i) = i as i32;
+        *data.texturetranslation.add(i) = i as i32;
     }
 
-    GenerateTextureHashTable();
+    GenerateTextureHashTable(&mut data);
 }
 
 // ---------------------------------------------------------------------------
@@ -810,18 +838,19 @@ pub unsafe fn R_InitTextures() {
 /// - WAD must be fully loaded; `F_START` and `F_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitFlats() {
-    firstflat = W_GetNumForName(DEH_String(b"F_START")) + 1;
-    lastflat = W_GetNumForName(DEH_String(b"F_END")) - 1;
-    numflats = lastflat - firstflat + 1;
+    let mut data = RENDER_DATA.borrow_mut();
+    data.firstflat = W_GetNumForName(DEH_String(b"F_START")) + 1;
+    data.lastflat = W_GetNumForName(DEH_String(b"F_END")) - 1;
+    data.numflats = data.lastflat - data.firstflat + 1;
 
-    flattranslation = Z_Malloc(
-        ((numflats as usize + 1) * std::mem::size_of::<i32>()) as i32,
+    data.flattranslation = Z_Malloc(
+        ((data.numflats as usize + 1) * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
 
-    for i in 0..numflats as usize {
-        *flattranslation.add(i) = i as i32;
+    for i in 0..data.numflats as usize {
+        *data.flattranslation.add(i) = i as i32;
     }
 }
 
@@ -848,35 +877,37 @@ pub unsafe fn R_InitFlats() {
 /// - WAD must be fully loaded; `S_START` and `S_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitSpriteLumps() {
-    firstspritelump = W_GetNumForName(DEH_String(b"S_START")) + 1;
-    lastspritelump = W_GetNumForName(DEH_String(b"S_END")) - 1;
-    numspritelumps = lastspritelump - firstspritelump + 1;
+    let mut data = RENDER_DATA.borrow_mut();
+    data.firstspritelump = W_GetNumForName(DEH_String(b"S_START")) + 1;
+    data.lastspritelump = W_GetNumForName(DEH_String(b"S_END")) - 1;
+    data.numspritelumps = data.lastspritelump - data.firstspritelump + 1;
 
-    spritewidth = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
+    let numspritelumps = data.numspritelumps as usize;
+    data.spritewidth = Z_Malloc(
+        (numspritelumps * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
-    spriteoffset = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
+    data.spriteoffset = Z_Malloc(
+        (numspritelumps * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
-    spritetopoffset = Z_Malloc(
-        (numspritelumps as usize * std::mem::size_of::<i32>()) as i32,
+    data.spritetopoffset = Z_Malloc(
+        (numspritelumps * std::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
 
-    for i in 0..numspritelumps as usize {
+    for i in 0..numspritelumps {
         if (i & 63) == 0 {
             print!(".");
         }
 
-        let patch = W_CacheLumpNum(firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
-        *spritewidth.add(i) = ((*patch).width.get() as i32) << FRACBITS;
-        *spriteoffset.add(i) = ((*patch).leftoffset.get() as i32) << FRACBITS;
-        *spritetopoffset.add(i) = ((*patch).topoffset.get() as i32) << FRACBITS;
+        let patch = W_CacheLumpNum(data.firstspritelump + i as i32, PU_CACHE) as *mut patch_t;
+        *data.spritewidth.add(i) = ((*patch).width.get() as i32) << FRACBITS;
+        *data.spriteoffset.add(i) = ((*patch).leftoffset.get() as i32) << FRACBITS;
+        *data.spritetopoffset.add(i) = ((*patch).topoffset.get() as i32) << FRACBITS;
     }
 }
 
@@ -899,7 +930,7 @@ pub unsafe fn R_InitSpriteLumps() {
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitColormaps() {
     let lump = W_GetNumForName(DEH_String(b"COLORMAP"));
-    colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
+    RENDER_DATA.borrow_mut().colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +987,7 @@ pub unsafe fn R_FlatNumForName(name: &[u8]) -> i32 {
             String::from_utf8_lossy(lump_name(name))
         );
     }
-    i - firstflat
+    i - RENDER_DATA.borrow().firstflat
 }
 
 // ---------------------------------------------------------------------------
@@ -980,8 +1011,9 @@ pub unsafe fn R_CheckTextureNumForName(name: &[u8]) -> i32 {
         return 0;
     }
 
-    let key = (W_LumpNameHash(name) % numtextures as u32) as usize;
-    let mut texture = *textures_hashtable.add(key);
+    let data = RENDER_DATA.borrow();
+    let key = (W_LumpNameHash(name) % data.numtextures as u32) as usize;
+    let mut texture = *data.textures_hashtable.add(key);
 
     while !texture.is_null() {
         if lump_names_equal(&(*texture).name, name) {
@@ -1045,6 +1077,10 @@ pub unsafe fn R_PrecacheLevel() {
         return;
     }
 
+    let mut data = RENDER_DATA.borrow_mut();
+    let numflats = data.numflats;
+    let numtextures = data.numtextures;
+
     // Precache flats
     let flatpresent = Z_Malloc(numflats, PU_STATIC, ptr::null_mut()) as *mut u8;
     for i in 0..numflats as usize {
@@ -1056,11 +1092,11 @@ pub unsafe fn R_PrecacheLevel() {
         *flatpresent.add((*sectors.add(i)).ceilingpic as usize) = 1;
     }
 
-    flatmemory = 0;
+    data.flatmemory = 0;
     for i in 0..numflats as usize {
         if *flatpresent.add(i) != 0 {
-            let lump = firstflat + i as i32;
-            flatmemory += (*lumpinfo().add(lump as usize)).size;
+            let lump = data.firstflat + i as i32;
+            data.flatmemory += (*lumpinfo().add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }
     }
@@ -1077,23 +1113,27 @@ pub unsafe fn R_PrecacheLevel() {
         *texturepresent.add((*sides.add(i)).midtexture as usize) = 1;
         *texturepresent.add((*sides.add(i)).bottomtexture as usize) = 1;
     }
-    *texturepresent.add(skytexture as usize) = 1;
+    *texturepresent.add(SKY.borrow().skytexture as usize) = 1;
 
-    texturememory = 0;
+    data.texturememory = 0;
     for i in 0..numtextures as usize {
         if *texturepresent.add(i) == 0 {
             continue;
         }
-        let texture = *textures.add(i);
+        let texture = *data.textures.add(i);
         for j in 0..(*texture).patchcount as usize {
             let lump = (*std::ptr::addr_of!((*texture).patches).add(j)).patch;
-            texturememory += (*lumpinfo().add(lump as usize)).size;
+            data.texturememory += (*lumpinfo().add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }
     }
     Z_Free(texturepresent as *mut c_void);
 
     // Precache sprites
+    let (numsprites, sprites) = {
+        let sprite_state = SPRITES.borrow();
+        (sprite_state.numsprites, sprite_state.sprites)
+    };
     let spritepresent = Z_Malloc(numsprites, PU_STATIC, ptr::null_mut()) as *mut u8;
     for i in 0..numsprites as usize {
         *spritepresent.add(i) = 0;
@@ -1108,7 +1148,7 @@ pub unsafe fn R_PrecacheLevel() {
         th = (*th).next;
     }
 
-    spritememory = 0;
+    data.spritememory = 0;
     for i in 0..numsprites as usize {
         if *spritepresent.add(i) == 0 {
             continue;
@@ -1117,8 +1157,8 @@ pub unsafe fn R_PrecacheLevel() {
         for j in 0..(*sprdef).numframes as usize {
             let sf = (*sprdef).spriteframes.add(j);
             for k in 0..8usize {
-                let lump = firstspritelump + (*sf).lump[k] as i32;
-                spritememory += (*lumpinfo().add(lump as usize)).size;
+                let lump = data.firstspritelump + (*sf).lump[k] as i32;
+                data.spritememory += (*lumpinfo().add(lump as usize)).size;
                 W_CacheLumpNum(lump, PU_CACHE);
             }
         }

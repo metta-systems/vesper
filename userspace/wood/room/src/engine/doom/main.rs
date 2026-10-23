@@ -344,14 +344,10 @@ use crate::engine::misc::menu::{menu_active, MENU};
 use crate::engine::sound::{info::Mus, S_Init, S_StartMusic, S_UpdateSounds, SoundState, SOUND};
 
 // r_main.rs
-use crate::engine::render_3d::main::{
-    setsizeneeded, R_ExecuteSetViewSize, R_Init, R_RenderPlayerView,
-};
+use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_Init, R_RenderPlayerView, VIEW};
 
 // r_draw.rs
-use crate::engine::render_3d::draw::{
-    scaledviewwidth, viewheight, viewwindowx, viewwindowy, R_DrawViewBorder, R_FillBackScreen,
-};
+use crate::engine::render_3d::draw::{R_DrawViewBorder, R_FillBackScreen, DRAW};
 
 // i_video.rs
 use crate::engine::interface::video::{screensaver_mode, VIDEO};
@@ -536,7 +532,7 @@ pub fn D_Display() {
         let mut redrawsbar = false;
 
         // Change the view size if needed
-        if setsizeneeded.is_truthy() {
+        if VIEW.borrow().setsizeneeded.is_truthy() {
             R_ExecuteSetViewSize();
             let mut main = DOOM_MAIN.borrow_mut();
             main.display_old_gamestate = -1; // force background redraw
@@ -561,6 +557,7 @@ pub fn D_Display() {
                     let main = DOOM_MAIN.borrow();
                     (main.display_fullscreen, main.display_inhelpscreens)
                 };
+                let viewheight = DRAW.borrow().viewheight;
                 if wipe || (viewheight != 200 && fullscreen != 0) {
                     redrawsbar = true;
                 }
@@ -603,7 +600,7 @@ pub fn D_Display() {
         }
 
         // See if the border needs to be updated
-        if gamestate == GS_LEVEL && !automap_active() && scaledviewwidth != 320 {
+        if gamestate == GS_LEVEL && !automap_active() && DRAW.borrow().scaledviewwidth != 320 {
             let border_needs_redraw = {
                 let mut main = DOOM_MAIN.borrow_mut();
                 if menu_active() || main.display_menuactive != 0 || main.display_viewactive == 0 {
@@ -638,6 +635,10 @@ pub fn D_Display() {
 
         // Draw pause pic
         if paused != 0 {
+            let (viewwindowx, viewwindowy, scaledviewwidth) = {
+                let draw = DRAW.borrow();
+                (draw.viewwindowx, draw.viewwindowy, draw.scaledviewwidth)
+            };
             let y = if automap_active() { 4 } else { viewwindowy + 4 };
             V_DrawPatchDirect(
                 viewwindowx + (scaledviewwidth - 68) / 2,

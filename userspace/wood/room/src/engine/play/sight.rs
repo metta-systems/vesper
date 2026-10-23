@@ -71,7 +71,7 @@ use crate::engine::{
         nodes as p_setup_nodes, numnodes, numsectors, numsubsectors, rejectmatrix,
         sectors as p_setup_sectors, segs as p_setup_segs, subsectors as p_setup_subsectors,
     },
-    render_3d::main::validcount,
+    render_3d::main::VALIDCOUNT,
 };
 
 /// Determine which half-space of a `divline_t` a point lies in.
@@ -179,6 +179,7 @@ fn P_CrossSubsector(num: i32) -> bool {
             let line = &mut *seg.linedef;
 
             // Already checked other side?
+            let validcount = VALIDCOUNT.get();
             if line.validcount == validcount {
                 continue;
             }
@@ -373,7 +374,7 @@ pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
         }
 
         sightcounts[1] += 1;
-        validcount += 1;
+        VALIDCOUNT.set(VALIDCOUNT.get() + 1);
 
         sightzstart = (*t1).z + (*t1).height - ((*t1).height >> 2);
         topslope = (*t2).z + (*t2).height - sightzstart;

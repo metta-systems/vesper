@@ -41,7 +41,7 @@ use crate::{
             setup::{bmaporgx, bmaporgy, lines},
             sight::{bottomslope, topslope, P_CheckSight},
         },
-        render_3d::main::{validcount, R_PointInSubsector, R_PointToAngle2},
+        render_3d::main::{R_PointInSubsector, R_PointToAngle2, VALIDCOUNT},
         wad::format::LinedefFlag,
     },
     i_error,
@@ -146,7 +146,7 @@ use crate::engine::{
         switch::P_UseSpecialLine,
         tick::leveltime,
     },
-    render_3d::sky::skyflatnum,
+    render_3d::sky::SKY,
     sound::{info::Sfx, S_StartSound},
 };
 
@@ -287,7 +287,7 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 
     tmdropoffz = tmfloorz;
     tmceilingz = (*sec).ceilingheight;
 
-    validcount = validcount.wrapping_add(1);
+    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
     numspechit = 0;
 
     let xl = (tmbbox[BBox::LEFT] - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
@@ -496,7 +496,7 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
     tmdropoffz = tmfloorz;
     tmceilingz = (*sec).ceilingheight;
 
-    validcount = validcount.wrapping_add(1);
+    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
     numspechit = 0;
 
     if tmflags & MF_NOCLIP != 0 {
@@ -1073,6 +1073,7 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
         + FixedMul(crate::engine::play::maputl::trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
     let front = (*li).frontsector;
+    let skyflatnum = SKY.borrow().skyflatnum;
     if (*front).ceilingpic as i32 == skyflatnum {
         if z > (*front).ceilingheight {
             return;

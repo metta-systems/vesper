@@ -5,39 +5,36 @@
 //! which does **not** happen in the unit-test binary.
 //!
 //! These tests therefore focus on:
-//!   * Symbol linkage (compile-time: the symbols must resolve at link time)
-//!   * Pre-init default values (all Rust globals default to zero)
+//!   * Pre-init default values (`RenderDataState` starts at zero)
 //!   * Constants that `r_data.rs` relies on, verifying they are stable
 
 #![allow(non_snake_case)]
 
 use room::engine::{
     math::fixed::{FRACBITS, FRACUNIT},
-    render_3d,
+    render_3d::data::RenderDataState,
 };
 
 // ---------------------------------------------------------------------------
-// Symbol linkage — these tests simply read the Rust globals.
-// A linker error would cause the binary to fail to build; a panic here
-// would indicate the symbol resolved to an unexpected non-zero value
-// before R_InitData has been called.
+// Pre-init state
 // ---------------------------------------------------------------------------
 
-/// Before the full game initializer runs, all Rust globals default to zero.
-/// Reading them must not panic or produce UB.
+/// Before `R_InitData` runs, the lump ranges and counts are all zero and the
+/// lookup tables are unallocated.
 #[test]
-fn r_data_globals_readable_before_init() {
-    unsafe {
-        // These are all initialised to 0 before R_InitData is called.
-        // We only verify that they can be read (linker check), not their values.
-        let _ff = render_3d::data::firstflat;
-        let _lf = render_3d::data::lastflat;
-        let _nf = render_3d::data::numflats;
-        let _fsl = render_3d::data::firstspritelump;
-        let _lsl = render_3d::data::lastspritelump;
-        let _nsl = render_3d::data::numspritelumps;
-        let _nt = render_3d::data::numtextures;
-    }
+fn r_data_state_zero_before_init() {
+    let data = RenderDataState::new();
+    assert_eq!((data.firstflat, data.lastflat, data.numflats), (0, 0, 0));
+    assert_eq!(
+        (
+            data.firstspritelump,
+            data.lastspritelump,
+            data.numspritelumps
+        ),
+        (0, 0, 0)
+    );
+    assert_eq!(data.numtextures, 0);
+    assert!(data.textureheight.is_null() && data.colormaps.is_null());
 }
 
 // ---------------------------------------------------------------------------

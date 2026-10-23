@@ -81,7 +81,7 @@ use crate::engine::{
         setup::{deathmatch_p, deathmatchstarts, playerstarts},
         tick::leveltime,
     },
-    render_3d::sky::skyflatnum,
+    render_3d::sky::SKY,
     status::stuff::ST_Start,
     zone::Z_Malloc,
 };
@@ -301,7 +301,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
                 if !cl.is_null() {
                     let line = cl;
                     if !(*line).backsector.is_null()
-                        && (*(*line).backsector).ceilingpic == skyflatnum as i16
+                        && (*(*line).backsector).ceilingpic == SKY.borrow().skyflatnum as i16
                     {
                         P_RemoveMobj(mo as *mut mobj_t);
                         return;

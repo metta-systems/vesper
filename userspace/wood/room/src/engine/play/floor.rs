@@ -19,7 +19,7 @@ use crate::engine::{
         },
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
     },
-    render_3d::data::textureheight,
+    render_3d::data::RENDER_DATA,
     sound::{info::Sfx, S_StartSectorSound},
     zone::{Z_Malloc, PU_LEVSPEC},
 };
@@ -430,6 +430,7 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
                 let mut minsize: i32 = INT_MAX;
+                let textureheight = RENDER_DATA.borrow().textureheight;
                 for i in 0..(*sec).linecount as usize {
                     if twoSided(secnum, i as i32) != 0 {
                         let side = getSide(secnum, i as i32, 0);

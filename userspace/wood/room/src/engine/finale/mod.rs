@@ -263,10 +263,10 @@ use crate::engine::doom::main::DOOM_MAIN;
 use crate::engine::interface::video::video_buffer;
 
 // r_things.rs
-use crate::engine::render_3d::things::sprites;
+use crate::engine::render_3d::things::SPRITES;
 
 // r_data.rs
-use crate::engine::render_3d::data::firstspritelump;
+use crate::engine::render_3d::data::RENDER_DATA;
 
 // w_wad.rs
 use crate::engine::wad::{W_CacheLumpName, W_CacheLumpNum};
@@ -1114,13 +1114,14 @@ pub fn F_CastDrawer() {
         };
         F_CastPrint(DEH_String(CASTORDER[castnum as usize].name));
 
-        let sprdef = &*sprites.add((*caststate).sprite as usize);
+        let sprdef = &*SPRITES.borrow().sprites.add((*caststate).sprite as usize);
         let sprframe = &*sprdef
             .spriteframes
             .add(((*caststate).frame & FF_FRAMEMASK) as usize);
         let lump = sprframe.lump[0] as i32;
         let flip = sprframe.flip[0] as i32;
 
+        let firstspritelump = RENDER_DATA.borrow().firstspritelump;
         let patch = W_CacheLumpNum(lump + firstspritelump, PU_CACHE) as *mut patch_t;
         if flip != 0 {
             V_DrawPatchFlipped(160, 170, patch);

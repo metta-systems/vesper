@@ -10,7 +10,11 @@
 //! full BSP walk, [`R_DrawPlanes`] iterates over every accumulated visplane
 //! and rasterizes it into horizontal spans via [`R_MakeSpans`] /
 //! [`R_MapPlane`].  Sky columns are treated as a special case: they are drawn
-//! with [`colfunc`] rather than [`spanfunc`].
+//! with `colfunc` rather than `spanfunc`.
+//!
+//! The C globals live in [`PlaneState`], held in [`PLANES`]; visplanes are
+//! addressed by index into its pool.  The `openings` scratch buffer is a
+//! separate static because the drawsegs keep raw pointers into it.
 //!
 //! # Coordinate system
 //!
@@ -24,11 +28,11 @@ use std::ptr;
 
 use crate::{
     engine::{
+        global::Global,
         math::{
             fixed::{fixed_t, FixedDiv, FixedMul},
             tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
         },
-        render_3d,
     },
     i_error,
 };
@@ -49,7 +53,7 @@ const SCREENHEIGHT: usize = crate::engine::interface::video::SCREENHEIGHT as usi
 /// aborts via [`i_error!`] when exceeded (see [`R_FindPlane`]).
 const MAXVISPLANES: usize = 128;
 
-/// Maximum number of `i16` slots in the [`openings`] array.
+/// Maximum number of `i16` slots in the [`OPENINGS`] array.
 ///
 /// Used as scratch space for sprite clipping arrays stored by
 /// [`R_StoreWallRange`] (in `r_segs`).  The C source comments this as `"?"`.
@@ -143,6 +147,21 @@ pub struct visplane_t {
     pub pad4: u8,
 }
 
+/// Compile-time zero initializer for the visplane pool entries.
+const ZERO_VISPLANE: visplane_t = visplane_t {
+    height: 0,
+    picnum: 0,
+    lightlevel: 0,
+    minx: 0,
+    maxx: 0,
+    pad1: 0,
+    top: [0; SCREENWIDTH],
+    pad2: 0,
+    pad3: 0,
+    bottom: [0; SCREENWIDTH],
+    pad4: 0,
+};
+
 /// Default initialization for visplane pool entries.
 impl Default for visplane_t {
     /// Returns a zeroed `visplane_t`, used to initialize the visplane pool.
@@ -164,156 +183,149 @@ impl Default for visplane_t {
 }
 
 // ---------------------------------------------------------------------------
-// Global mutable state
+// Plane state
 // ---------------------------------------------------------------------------
 
-/// Fixed-size pool of visplane accumulators for one frame.
-///
-///[`lastvisplane`] tracks how
-/// many are in use.  Initialized to all-zero at program start; each slot is
-/// reset via [`R_FindPlane`] before use.
-///
-/// # Note
-///
-/// The compile-time initializer leaves `top[]` as `0x00` instead of `0xFF`.
-/// [`R_ClearPlanes`] does not reset individual slots; only [`R_FindPlane`]
-/// writes the sentinel `0xFF` pattern when it claims a new slot.  This matches
-/// the C behavior where `lastvisplane` is rewound to `visplanes[0]` each frame
-/// and slots are re-initialized on demand.
-pub static mut visplanes: [visplane_t; MAXVISPLANES] = {
-    // Can't use Default::default() in const context, so we transmute
-    // from zeroed bytes. Each visplane_t is initialized at runtime.
-    const ZERO: visplane_t = visplane_t {
-        height: 0,
-        picnum: 0,
-        lightlevel: 0,
-        minx: 0,
-        maxx: 0,
-        pad1: 0,
-        top: [0; SCREENWIDTH],
-        pad2: 0,
-        pad3: 0,
-        bottom: [0; SCREENWIDTH],
-        pad4: 0,
-    };
-    let arr: [visplane_t; MAXVISPLANES] = [ZERO; MAXVISPLANES];
-    // Initialize top to 0xFF for each visplane at runtime via memset-like
-    // approach. For now leave as 0; R_ClearPlanes will reset them.
-    arr
-};
+/// Plane renderer state (C `r_plane.c` globals other than `openings`).
+pub struct PlaneState {
+    /// Fixed-size pool of visplane accumulators for one frame.
+    ///
+    /// `lastvisplane` tracks how many are in use.  Initialized to all-zero at
+    /// program start; each slot is reset via [`R_FindPlane`] before use.
+    ///
+    /// # Note
+    ///
+    /// The compile-time initializer leaves `top[]` as `0x00` instead of `0xFF`.
+    /// [`R_ClearPlanes`] does not reset individual slots; only [`R_FindPlane`]
+    /// writes the sentinel `0xFF` pattern when it claims a new slot.  This matches
+    /// the C behavior where `lastvisplane` is rewound to `visplanes[0]` each frame
+    /// and slots are re-initialized on demand.
+    pub visplanes: [visplane_t; MAXVISPLANES],
+    /// Index of the next free slot in `visplanes` (the C pointer `lastvisplane`).
+    ///
+    /// Reset to 0 by [`R_ClearPlanes`] at the start of each frame.
+    pub lastvisplane: usize,
+    /// Index of the current floor visplane being built for this BSP subtree,
+    /// or `None` when the floor is not visible (the C null `floorplane`).
+    ///
+    /// Updated by `R_StoreWallRange` (in `r_segs`) via [`R_CheckPlane`].
+    pub floorplane: Option<usize>,
+    /// Index of the current ceiling visplane being built for this BSP subtree,
+    /// or `None` when the ceiling is not visible (the C null `ceilingplane`).
+    ///
+    /// Updated by `R_StoreWallRange` (in `r_segs`) via [`R_CheckPlane`].
+    pub ceilingplane: Option<usize>,
+    /// Allocation watermark within [`OPENINGS`].
+    ///
+    /// Advanced by `R_StoreWallRange` each time it allocates a clipping
+    /// sub-array.  Reset to the start of [`OPENINGS`] by [`R_ClearPlanes`].
+    pub lastopening: *mut i16,
+    /// Per-column floor clip (highest opaque pixel so far, inclusive).
+    ///
+    /// `floorclip[x]` is the screen-y of the lowest pixel that is still open
+    /// for floor rendering in column `x`.  Initialized to `viewheight` (fully
+    /// open) by [`R_ClearPlanes`].
+    pub floorclip: [i16; SCREENWIDTH],
+    /// Per-column ceiling clip (lowest opaque pixel so far, inclusive).
+    ///
+    /// `ceilingclip[x]` is the screen-y of the highest pixel that is still
+    /// open for ceiling rendering in column `x`.  Initialized to `-1` (fully
+    /// open) by [`R_ClearPlanes`].
+    pub ceilingclip: [i16; SCREENWIDTH],
+    /// Per-row span start columns, indexed by screen-y.
+    ///
+    /// [`R_MakeSpans`] writes the left edge of a span in progress here;
+    /// [`R_MapPlane`] reads it to obtain `x1` when the span ends.
+    pub spanstart: [i32; SCREENHEIGHT],
+    /// Pointer into the distance-based light table for the current plane.
+    ///
+    /// Set by [`R_DrawPlanes`] from `zlight[light]` before iterating a
+    /// visplane's columns.
+    pub planezlight: *const *const lighttable_t,
+    /// Absolute height difference between the current flat and the viewpoint.
+    ///
+    /// Written by [`R_DrawPlanes`] before calling [`R_MakeSpans`]; read by
+    /// [`R_MapPlane`] to derive the per-row texture step.
+    pub planeheight: fixed_t,
+    /// Per-row slope factor used to convert plane distance to a screen-y fraction.
+    ///
+    /// Precomputed by `R_ExecuteSetViewSize` in `r_main` for each possible
+    /// screen row.
+    pub yslope: [fixed_t; SCREENHEIGHT],
+    /// Per-column angular distance scale from the screen center.
+    ///
+    /// Precomputed by `R_ExecuteSetViewSize` in `r_main`; used by
+    /// [`R_MapPlane`] to project a flat texel onto a column.
+    pub distscale: [fixed_t; SCREENWIDTH],
+    /// Base x-axis texture step per unit of distance, computed from `viewangle`.
+    ///
+    /// Recomputed each frame by [`R_ClearPlanes`].
+    pub basexscale: fixed_t,
+    /// Base y-axis texture step per unit of distance, computed from `viewangle`.
+    ///
+    /// Recomputed each frame by [`R_ClearPlanes`].
+    pub baseyscale: fixed_t,
+    /// Cache of the last `planeheight` value computed for each screen row.
+    ///
+    /// [`R_MapPlane`] avoids recomputing `distance`, `xstep`, and `ystep` when
+    /// the plane height has not changed since the previous span on the same row.
+    pub cachedheight: [fixed_t; SCREENHEIGHT],
+    /// Cache of the last computed world distance for each screen row.
+    ///
+    /// Paired with `cachedheight`.
+    pub cacheddistance: [fixed_t; SCREENHEIGHT],
+    /// Cache of the last computed flat x-step for each screen row.
+    ///
+    /// Paired with `cachedheight`.
+    pub cachedxstep: [fixed_t; SCREENHEIGHT],
+    /// Cache of the last computed flat y-step for each screen row.
+    ///
+    /// Paired with `cachedheight`.
+    pub cachedystep: [fixed_t; SCREENHEIGHT],
+}
 
-/// Pointer to the next free slot in [`visplanes`].
-///
-///Reset to `&visplanes[0]` by
-/// [`R_ClearPlanes`] at the start of each frame.
-pub static mut lastvisplane: *mut visplane_t = ptr::null_mut();
+impl PlaneState {
+    /// The state before the first frame: an empty pool, zeroed tables.
+    pub const fn new() -> Self {
+        Self {
+            visplanes: [ZERO_VISPLANE; MAXVISPLANES],
+            lastvisplane: 0,
+            floorplane: None,
+            ceilingplane: None,
+            lastopening: ptr::null_mut(),
+            floorclip: [0; SCREENWIDTH],
+            ceilingclip: [0; SCREENWIDTH],
+            spanstart: [0; SCREENHEIGHT],
+            planezlight: ptr::null(),
+            planeheight: 0,
+            yslope: [0; SCREENHEIGHT],
+            distscale: [0; SCREENWIDTH],
+            basexscale: 0,
+            baseyscale: 0,
+            cachedheight: [0; SCREENHEIGHT],
+            cacheddistance: [0; SCREENHEIGHT],
+            cachedxstep: [0; SCREENHEIGHT],
+            cachedystep: [0; SCREENHEIGHT],
+        }
+    }
+}
 
-/// The current floor visplane being built for this BSP subtree.
-///
-///Updated by
-/// `R_StoreWallRange` (in `r_segs`) via [`R_CheckPlane`].
-pub static mut floorplane: *mut visplane_t = ptr::null_mut();
+impl Default for PlaneState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// The current ceiling visplane being built for this BSP subtree.
-///
-///Updated by
-/// `R_StoreWallRange` (in `r_segs`) via [`R_CheckPlane`].
-pub static mut ceilingplane: *mut visplane_t = ptr::null_mut();
+/// The plane renderer state.
+pub static PLANES: Global<PlaneState> = Global::new(PlaneState::new());
 
 /// Scratch buffer for sprite clipping arrays.
 ///
-///Slices within this buffer are
-/// handed out by `R_StoreWallRange` (in `r_segs`) and later read by the
-/// sprite renderer.  [`lastopening`] tracks the allocation watermark.
-pub static mut openings: [i16; MAXOPENINGS] = [0; MAXOPENINGS];
-
-/// Allocation watermark within [`openings`].
-///
-///Advanced by
-/// `R_StoreWallRange` each time it allocates a clipping sub-array.
-/// Reset to `&openings[0]` by [`R_ClearPlanes`].
-pub static mut lastopening: *mut i16 = ptr::null_mut();
-
-/// Per-column floor clip (highest opaque pixel so far, inclusive).
-///
-///`floorclip[x]` is the
-/// screen-y of the lowest pixel that is still open for floor rendering in
-/// column `x`.  Initialized to `viewheight` (fully open) by
-/// [`R_ClearPlanes`].
-pub static mut floorclip: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
-
-/// Per-column ceiling clip (lowest opaque pixel so far, inclusive).
-///
-///`ceilingclip[x]` is the
-/// screen-y of the highest pixel that is still open for ceiling rendering in
-/// column `x`.  Initialized to `-1` (fully open) by [`R_ClearPlanes`].
-pub static mut ceilingclip: [i16; SCREENWIDTH] = [0; SCREENWIDTH];
-
-/// Per-row span start columns, indexed by screen-y.
-///
-///[`R_MakeSpans`] writes the
-/// left edge of a span in progress here; [`R_MapPlane`] reads it to obtain
-/// `x1` when the span ends.
-pub static mut spanstart: [i32; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Pointer into the distance-based light table for the current plane.
-///
-///Set by [`R_DrawPlanes`] from
-/// `zlight[light]` before iterating a visplane's columns.
-pub static mut planezlight: *const *const lighttable_t = ptr::null();
-
-/// Absolute height difference between the current flat and the viewpoint.
-///
-///Written by [`R_DrawPlanes`]
-/// before calling [`R_MakeSpans`]; read by [`R_MapPlane`] to derive the
-/// per-row texture step.
-pub static mut planeheight: fixed_t = 0;
-
-/// Per-row slope factor used to convert plane distance to a screen-y fraction.
-///
-///Precomputed by `R_ExecuteSetViewSize`
-/// in `r_main` for each possible screen row.
-pub static mut yslope: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Per-column angular distance scale from the screen center.
-///
-///Precomputed by `R_ExecuteSetViewSize`
-/// in `r_main`; used by [`R_MapPlane`] to project a flat texel onto a column.
-pub static mut distscale: [fixed_t; SCREENWIDTH] = [0; SCREENWIDTH];
-
-/// Base x-axis texture step per unit of distance, computed from `viewangle`.
-///
-///Recomputed each frame by
-/// [`R_ClearPlanes`].
-pub static mut basexscale: fixed_t = 0;
-
-/// Base y-axis texture step per unit of distance, computed from `viewangle`.
-///
-///Recomputed each frame by
-/// [`R_ClearPlanes`].
-pub static mut baseyscale: fixed_t = 0;
-
-/// Cache of the last `planeheight` value computed for each screen row.
-///
-///[`R_MapPlane`] avoids
-/// recomputing `distance`, `xstep`, and `ystep` when the plane height has not
-/// changed since the previous span on the same row.
-pub static mut cachedheight: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Cache of the last computed world distance for each screen row.
-///
-///Paired with [`cachedheight`].
-pub static mut cacheddistance: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Cache of the last computed flat x-step for each screen row.
-///
-///Paired with [`cachedheight`].
-pub static mut cachedxstep: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
-
-/// Cache of the last computed flat y-step for each screen row.
-///
-///Paired with [`cachedheight`].
-pub static mut cachedystep: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
+/// Slices within this buffer are handed out by `R_StoreWallRange` (in
+/// `r_segs`) through `lastopening` and later read by the sprite renderer
+/// through the drawsegs' pointers, so it is only addressed through
+/// [`Global::as_ptr`].
+static OPENINGS: Global<[i16; MAXOPENINGS]> = Global::new([0; MAXOPENINGS]);
 
 // ---------------------------------------------------------------------------
 // Imports from other modules
@@ -321,18 +333,11 @@ pub static mut cachedystep: [fixed_t; SCREENHEIGHT] = [0; SCREENHEIGHT];
 
 use crate::engine::{
     render_3d::{
-        data::{colormaps, firstflat, flattranslation, R_GetColumn},
-        draw::{
-            dc_colormap, dc_iscale, dc_source, dc_texturemid, dc_x, dc_yh, dc_yl, ds_colormap,
-            ds_source, ds_x1, ds_x2, ds_xfrac, ds_xstep, ds_y, ds_yfrac, ds_ystep, viewheight,
-            viewwidth,
-        },
-        main::{
-            centerxfrac, colfunc, detailshift, extralight, fixedcolormap, spanfunc, viewangle,
-            viewx, viewy, viewz, xtoviewangle, zlight,
-        },
-        sky::{skytexture, skytexturemid},
-        things::pspriteiscale,
+        data::{R_GetColumn, RENDER_DATA},
+        draw::{ColumnParams, DrawState, SpanParams, DRAW},
+        main::{zlight_row, ViewState, VIEW},
+        sky::SKY,
+        things::SPRITES,
     },
     wad::{W_CacheLumpNum, W_ReleaseLumpNum},
 };
@@ -357,24 +362,32 @@ pub fn R_InitPlanes() {
 /// Draws one horizontal span of a floor or ceiling flat.
 ///
 /// Called by [`R_MakeSpans`] with the screen row `y` and the inclusive column
-/// range `[x1, x2]`.  Sets up all `ds_*` globals required by [`spanfunc`]
-/// and then calls it.
+/// range `[x1, x2]`.  Sets up the `ds_*` fields of `span` required by
+/// `spanfunc` (all but `ds_source`, which the caller set for the plane) and
+/// then calls it.
 ///
-/// Uses globals: `planeheight`, `basexscale`, `baseyscale`, `viewx`, `viewy`,
-/// `viewangle`, `xtoviewangle`, `distscale`, `yslope`, `planezlight`,
-/// `fixedcolormap`, `spanfunc`.
+/// Uses `planeheight`, `basexscale`, `baseyscale`, `distscale`, `yslope` and
+/// `planezlight` from `planes` and `viewx`, `viewy`, `viewangle`,
+/// `xtoviewangle`, `fixedcolormap` and `spanfunc` from `view`.
 ///
 /// # Safety
 ///
-/// Reads and writes numerous `static mut` renderer globals.  All pointers
-/// (`planezlight`, `spanfunc`, `fixedcolormap`) must be valid when called.
-/// The range-check feature gate guards against out-of-bounds `x1`/`x2`/`y`
+/// `planezlight` and `fixedcolormap` must be valid when called.  The
+/// range-check feature gate guards against out-of-bounds `x1`/`x2`/`y`
 /// values; without it the caller is responsible for passing valid coordinates.
-pub fn R_MapPlane(y: i32, x1: i32, x2: i32) {
+pub fn R_MapPlane(
+    planes: &mut PlaneState,
+    view: &ViewState,
+    draw: &DrawState,
+    span: &mut SpanParams,
+    y: i32,
+    x1: i32,
+    x2: i32,
+) {
     unsafe {
         #[cfg(feature = "rangecheck")]
         {
-            if x2 < x1 || x1 < 0 || x2 >= viewwidth || y > viewheight {
+            if x2 < x1 || x1 < 0 || x2 >= draw.viewwidth || y > draw.viewheight {
                 // Would call I_Error — skip in Rust for now
                 return;
             }
@@ -382,45 +395,45 @@ pub fn R_MapPlane(y: i32, x1: i32, x2: i32) {
 
         let y_usize = y as usize;
 
-        let distance = if planeheight != cachedheight[y_usize] {
-            cachedheight[y_usize] = planeheight;
-            let d = FixedMul(planeheight, yslope[y_usize]);
-            cacheddistance[y_usize] = d;
-            cachedxstep[y_usize] = FixedMul(d, basexscale);
-            cachedystep[y_usize] = FixedMul(d, baseyscale);
+        let distance = if planes.planeheight != planes.cachedheight[y_usize] {
+            planes.cachedheight[y_usize] = planes.planeheight;
+            let d = FixedMul(planes.planeheight, planes.yslope[y_usize]);
+            planes.cacheddistance[y_usize] = d;
+            planes.cachedxstep[y_usize] = FixedMul(d, planes.basexscale);
+            planes.cachedystep[y_usize] = FixedMul(d, planes.baseyscale);
             d
         } else {
-            cacheddistance[y_usize]
+            planes.cacheddistance[y_usize]
         };
 
-        ds_xstep = cachedxstep[y_usize];
-        ds_ystep = cachedystep[y_usize];
+        span.ds_xstep = planes.cachedxstep[y_usize];
+        span.ds_ystep = planes.cachedystep[y_usize];
 
-        let length = FixedMul(distance, distscale[x1 as usize]);
-        let angle = viewangle.wrapping_add(xtoviewangle[x1 as usize]) >> ANGLETOFINESHIFT;
-        ds_xfrac = viewx.wrapping_add(FixedMul(finecosine(angle as usize), length));
-        ds_yfrac = (-viewy).wrapping_sub(FixedMul(
+        let length = FixedMul(distance, planes.distscale[x1 as usize]);
+        let angle = view.viewangle.wrapping_add(view.xtoviewangle[x1 as usize]) >> ANGLETOFINESHIFT;
+        span.ds_xfrac = view
+            .viewx
+            .wrapping_add(FixedMul(finecosine(angle as usize), length));
+        span.ds_yfrac = (-view.viewy).wrapping_sub(FixedMul(
             tables::finesine[angle as usize & FINEMASK as usize],
             length,
         ));
 
-        if !fixedcolormap.is_null() {
-            ds_colormap = fixedcolormap;
+        if !view.fixedcolormap.is_null() {
+            span.ds_colormap = view.fixedcolormap;
         } else {
             let mut index = (distance >> LIGHTZSHIFT) as usize;
             if index >= MAXLIGHTZ {
                 index = MAXLIGHTZ - 1;
             }
-            ds_colormap = *planezlight.add(index) as *mut u8;
+            span.ds_colormap = *planes.planezlight.add(index) as *mut u8;
         }
 
-        ds_y = y;
-        ds_x1 = x1;
-        ds_x2 = x2;
+        span.ds_y = y;
+        span.ds_x1 = x1;
+        span.ds_x2 = x2;
 
-        if let Some(func) = spanfunc {
-            func();
-        }
+        (view.spanfunc)(span, draw);
     }
 }
 
@@ -431,175 +444,173 @@ pub fn R_MapPlane(y: i32, x1: i32, x2: i32) {
 /// Resets all plane state at the start of each frame.
 ///
 /// Initialises clip arrays, rewinds the visplane and opening allocation
-/// pointers, clears the per-row height cache, and recomputes the base
+/// cursors, clears the per-row height cache, and recomputes the base
 /// texture-step scales from the current `viewangle`.
 ///
-/// # Safety
-///
-/// Writes to several `static mut` renderer globals and reads `viewwidth`,
-/// `viewheight`, and `viewangle`.  Must be called exactly once per frame
-/// before any BSP traversal begins.
+/// Must be called exactly once per frame before any BSP traversal begins.
 pub fn R_ClearPlanes() {
-    unsafe {
-        let vw = viewwidth as usize;
-        let vh = viewheight as i16;
+    let (viewwidth, viewheight) = {
+        let draw = DRAW.borrow();
+        (draw.viewwidth, draw.viewheight)
+    };
+    let (viewangle, centerxfrac) = {
+        let view = VIEW.borrow();
+        (view.viewangle, view.centerxfrac)
+    };
+    let mut planes = PLANES.borrow_mut();
 
-        for i in 0..vw {
-            floorclip[i] = vh;
-            ceilingclip[i] = -1;
-        }
+    let vw = viewwidth as usize;
+    let vh = viewheight as i16;
 
-        lastvisplane = std::ptr::addr_of_mut!(visplanes[0]);
-        lastopening = std::ptr::addr_of_mut!(openings[0]);
-
-        // Reset cache heights
-        for h in std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(cachedheight[0]), 200) {
-            *h = 0;
-        }
-
-        // Left to right mapping
-        let angle = (viewangle.wrapping_sub(ANG90)) >> ANGLETOFINESHIFT;
-        basexscale = FixedDiv(finecosine(angle as usize), centerxfrac);
-        baseyscale = 0i32.wrapping_sub(FixedDiv(
-            tables::finesine[angle as usize & FINEMASK as usize],
-            centerxfrac,
-        ));
+    for i in 0..vw {
+        planes.floorclip[i] = vh;
+        planes.ceilingclip[i] = -1;
     }
+
+    planes.lastvisplane = 0;
+    // Points into the static's storage: the drawsegs keep slices of it.
+    planes.lastopening = OPENINGS.as_ptr().cast();
+
+    // Reset cache heights
+    for h in &mut planes.cachedheight[..200] {
+        *h = 0;
+    }
+
+    // Left to right mapping
+    let angle = (viewangle.wrapping_sub(ANG90)) >> ANGLETOFINESHIFT;
+    planes.basexscale = FixedDiv(finecosine(angle as usize), centerxfrac);
+    planes.baseyscale = 0i32.wrapping_sub(FixedDiv(
+        tables::finesine[angle as usize & FINEMASK as usize],
+        centerxfrac,
+    ));
 }
 
 // ---------------------------------------------------------------------------
 // R_FindPlane — find or create a visplane matching the given parameters
 // ---------------------------------------------------------------------------
 
-/// Returns a visplane for the given `height`, `picnum`, and `lightlevel`.
+/// Returns the index of a visplane for the given `height`, `picnum`, and
+/// `lightlevel`.
 ///
 /// Searches the already-allocated visplanes for an exact match.  If none is
-/// found, claims the next free slot from [`visplanes`] and initialises it.
+/// found, claims the next free slot from `visplanes` and initialises it.
 /// All sky flats (`picnum == skyflatnum`) share a single visplane at height 0
 /// and light level 0.
 ///
 /// Aborts via [`crate::i_error!`] if the visplane pool (128 entries) is exhausted
 /// (matches the C source `I_Error` path).
 ///
-/// # Safety
-///
-/// Reads and writes the `static mut` globals [`visplanes`], [`lastvisplane`],
-/// and [`render_3d::sky::skyflatnum`].  The returned pointer is valid for the lifetime
-/// of the current frame (until the next [`R_ClearPlanes`] call).
-pub fn R_FindPlane(height: fixed_t, picnum: i32, lightlevel: i32) -> *mut visplane_t {
-    unsafe {
-        let mut h = height;
-        let mut ll = lightlevel;
+/// The returned index is valid for the current frame (until the next
+/// [`R_ClearPlanes`] call).
+pub fn R_FindPlane(height: fixed_t, picnum: i32, lightlevel: i32) -> usize {
+    let skyflatnum = SKY.borrow().skyflatnum;
+    let mut planes = PLANES.borrow_mut();
 
-        // All sky planes map together
-        if picnum == render_3d::sky::skyflatnum {
-            h = 0;
-            ll = 0;
-        }
+    let mut h = height;
+    let mut ll = lightlevel;
 
-        // Search existing visplanes
-        let mut check = std::ptr::addr_of_mut!(visplanes[0]);
-        let end = lastvisplane;
-
-        while check < end {
-            if h == (*check).height && picnum == (*check).picnum && ll == (*check).lightlevel {
-                return check;
-            }
-            check = check.add(1);
-        }
-
-        // Need a new visplane
-        if (lastvisplane as usize - std::ptr::addr_of!(visplanes[0]) as usize)
-            / std::mem::size_of::<visplane_t>()
-            >= MAXVISPLANES
-        {
-            // Match C doomgeneric: abort rather than hand callers a null
-            // visplane pointer (they dereference unconditionally).
-            i_error!("R_FindPlane: no more visplanes");
-        }
-
-        let new_vp = lastvisplane;
-        lastvisplane = lastvisplane.add(1);
-
-        (*new_vp).height = h;
-        (*new_vp).picnum = picnum;
-        (*new_vp).lightlevel = ll;
-        (*new_vp).minx = SCREENWIDTH as i32;
-        (*new_vp).maxx = -1;
-
-        // memset top to 0xFF
-        for t in (*new_vp).top.iter_mut() {
-            *t = 0xFF;
-        }
-
-        new_vp
+    // All sky planes map together
+    if picnum == skyflatnum {
+        h = 0;
+        ll = 0;
     }
+
+    // Search existing visplanes
+    for check in 0..planes.lastvisplane {
+        let plane = &planes.visplanes[check];
+        if h == plane.height && picnum == plane.picnum && ll == plane.lightlevel {
+            return check;
+        }
+    }
+
+    // Need a new visplane
+    if planes.lastvisplane >= MAXVISPLANES {
+        // Match C doomgeneric: abort rather than hand callers a null
+        // visplane pointer (they dereference unconditionally).
+        i_error!("R_FindPlane: no more visplanes");
+    }
+
+    let new_index = planes.lastvisplane;
+    planes.lastvisplane += 1;
+
+    let new_vp = &mut planes.visplanes[new_index];
+    new_vp.height = h;
+    new_vp.picnum = picnum;
+    new_vp.lightlevel = ll;
+    new_vp.minx = SCREENWIDTH as i32;
+    new_vp.maxx = -1;
+
+    // memset top to 0xFF
+    for t in new_vp.top.iter_mut() {
+        *t = 0xFF;
+    }
+
+    new_index
 }
 
 // ---------------------------------------------------------------------------
 // R_CheckPlane — check if a visplane can cover [start..stop] without overlap
 // ---------------------------------------------------------------------------
 
-/// Ensures the visplane `pl` can accommodate the column range `[start, stop]`.
+/// Ensures the visplane at index `pl` can accommodate the column range
+/// `[start, stop]`.
 ///
 /// If the range does not overlap any already-filled column in `pl`, the
 /// plane's `minx`/`maxx` bounds are extended to cover the union and `pl` is
 /// returned unchanged.  Otherwise a new visplane with the same flat/height/
-/// lightlevel is allocated for `[start, stop]` and returned.
+/// lightlevel is allocated for `[start, stop]` and its index returned.
 ///
-/// # Safety
-///
-/// Reads and writes the `static mut` globals [`lastvisplane`] and the
-/// [`visplane_t`] pointed to by `pl`.  `pl` must be a non-null pointer to a
-/// valid, frame-lived visplane obtained from [`R_FindPlane`].
-pub fn R_CheckPlane(pl: *mut visplane_t, start: i32, stop: i32) -> *mut visplane_t {
-    unsafe {
-        let intrl = if start < (*pl).minx {
-            (*pl).minx
-        } else {
-            start
-        };
-        let unionl = if start < (*pl).minx {
-            start
-        } else {
-            (*pl).minx
-        };
+/// `pl` must be an index obtained from [`R_FindPlane`] this frame.
+pub fn R_CheckPlane(planes: &mut PlaneState, pl: usize, start: i32, stop: i32) -> usize {
+    let plane = &mut planes.visplanes[pl];
+    let intrl = if start < plane.minx {
+        plane.minx
+    } else {
+        start
+    };
+    let unionl = if start < plane.minx {
+        start
+    } else {
+        plane.minx
+    };
 
-        let intrh = if stop > (*pl).maxx { (*pl).maxx } else { stop };
-        let unionh = if stop > (*pl).maxx { stop } else { (*pl).maxx };
+    let intrh = if stop > plane.maxx { plane.maxx } else { stop };
+    let unionh = if stop > plane.maxx { stop } else { plane.maxx };
 
-        // Check for overlap in the intersection range
-        let mut x = intrl;
-        while x <= intrh {
-            if (*pl).top[x as usize] != 0xFF {
-                break;
-            }
-            x += 1;
+    // Check for overlap in the intersection range
+    let mut x = intrl;
+    while x <= intrh {
+        if plane.top[x as usize] != 0xFF {
+            break;
         }
-
-        if x > intrh {
-            // No overlap — extend the visplane
-            (*pl).minx = unionl;
-            (*pl).maxx = unionh;
-            return pl;
-        }
-
-        // Make a new visplane
-        let new_vp = lastvisplane;
-        lastvisplane = lastvisplane.add(1);
-
-        (*new_vp).height = (*pl).height;
-        (*new_vp).picnum = (*pl).picnum;
-        (*new_vp).lightlevel = (*pl).lightlevel;
-        (*new_vp).minx = start;
-        (*new_vp).maxx = stop;
-
-        for t in (*new_vp).top.iter_mut() {
-            *t = 0xFF;
-        }
-
-        new_vp
+        x += 1;
     }
+
+    if x > intrh {
+        // No overlap — extend the visplane
+        plane.minx = unionl;
+        plane.maxx = unionh;
+        return pl;
+    }
+
+    let (height, picnum, lightlevel) = (plane.height, plane.picnum, plane.lightlevel);
+
+    // Make a new visplane
+    let new_index = planes.lastvisplane;
+    planes.lastvisplane += 1;
+
+    let new_vp = &mut planes.visplanes[new_index];
+    new_vp.height = height;
+    new_vp.picnum = picnum;
+    new_vp.lightlevel = lightlevel;
+    new_vp.minx = start;
+    new_vp.maxx = stop;
+
+    for t in new_vp.top.iter_mut() {
+        *t = 0xFF;
+    }
+
+    new_index
 }
 
 // ---------------------------------------------------------------------------
@@ -613,39 +624,46 @@ pub fn R_CheckPlane(pl: *mut visplane_t, start: i32, stop: i32) -> *mut visplane
 /// the current column.  Any row that was open in the previous column but
 /// closed in the current one is flushed to [`R_MapPlane`].  Any row that
 /// opens in the current column but was closed in the previous one has its
-/// start recorded in [`spanstart`].
+/// start recorded in `spanstart`.
 ///
-/// # Safety
-///
-/// Reads and writes the `static mut` globals [`spanstart`].  Calls
-/// [`R_MapPlane`], which itself writes additional globals.  All indices
-/// derived from `t1`/`b1`/`t2`/`b2` must be valid screen rows
+/// All indices derived from `t1`/`b1`/`t2`/`b2` must be valid screen rows
 /// (`0 <= row < SCREENHEIGHT`); the caller (the `R_DrawPlanes` loop) is
 /// responsible for keeping them in range.
-pub fn R_MakeSpans(x: i32, t1: i32, b1: i32, t2: i32, b2: i32) {
-    unsafe {
-        let mut t1 = t1;
-        let mut b1 = b1;
-        let mut t2 = t2;
-        let mut b2 = b2;
+#[allow(clippy::too_many_arguments)]
+pub fn R_MakeSpans(
+    planes: &mut PlaneState,
+    view: &ViewState,
+    draw: &DrawState,
+    span: &mut SpanParams,
+    x: i32,
+    t1: i32,
+    b1: i32,
+    t2: i32,
+    b2: i32,
+) {
+    let mut t1 = t1;
+    let mut b1 = b1;
+    let mut t2 = t2;
+    let mut b2 = b2;
 
-        while t1 < t2 && t1 <= b1 {
-            R_MapPlane(t1, spanstart[t1 as usize], x - 1);
-            t1 += 1;
-        }
-        while b1 > b2 && b1 >= t1 {
-            R_MapPlane(b1, spanstart[b1 as usize], x - 1);
-            b1 -= 1;
-        }
+    while t1 < t2 && t1 <= b1 {
+        let x1 = planes.spanstart[t1 as usize];
+        R_MapPlane(planes, view, draw, span, t1, x1, x - 1);
+        t1 += 1;
+    }
+    while b1 > b2 && b1 >= t1 {
+        let x1 = planes.spanstart[b1 as usize];
+        R_MapPlane(planes, view, draw, span, b1, x1, x - 1);
+        b1 -= 1;
+    }
 
-        while t2 < t1 && t2 <= b2 {
-            spanstart[t2 as usize] = x;
-            t2 += 1;
-        }
-        while b2 > b1 && b2 >= t2 {
-            spanstart[b2 as usize] = x;
-            b2 -= 1;
-        }
+    while t2 < t1 && t2 <= b2 {
+        planes.spanstart[t2 as usize] = x;
+        t2 += 1;
+    }
+    while b2 > b1 && b2 >= t2 {
+        planes.spanstart[b2 as usize] = x;
+        b2 -= 1;
     }
 }
 
@@ -658,63 +676,71 @@ use crate::engine::zone::PU_STATIC;
 /// Rasterizes all accumulated visplanes into horizontal pixel spans.
 ///
 /// Called once per frame after BSP traversal is complete.  Iterates over every
-/// visplane in the pool up to [`lastvisplane`].  Sky flats are drawn as
-/// vertical columns via [`colfunc`]; regular flats are drawn as horizontal
-/// spans via [`R_MakeSpans`] / [`R_MapPlane`] / [`spanfunc`].
+/// visplane in the pool up to `lastvisplane`.  Sky flats are drawn as
+/// vertical columns via `colfunc`; regular flats are drawn as horizontal
+/// spans via [`R_MakeSpans`] / [`R_MapPlane`] / `spanfunc`.  Borrows the
+/// renderer state once for the whole pass.
 ///
 /// # Safety
 ///
-/// Reads and writes numerous `static mut` renderer globals.  All function
-/// pointers (`colfunc`, `spanfunc`) and data pointers (`fixedcolormap`,
-/// `planezlight`, `zlight`) must be valid.  The `W_CacheLumpNum` /
-/// `W_ReleaseLumpNum` calls must have access to a properly initialised WAD
-/// lump directory.
+/// The `W_CacheLumpNum` / `W_ReleaseLumpNum` calls must have access to a
+/// properly initialised WAD lump directory.
 pub fn R_DrawPlanes() {
     unsafe {
-        let mut pl = std::ptr::addr_of_mut!(visplanes[0]);
-        let end = lastvisplane;
+        let (skyflatnum, skytexture, skytexturemid) = {
+            let sky = SKY.borrow();
+            (sky.skyflatnum, sky.skytexture, sky.skytexturemid)
+        };
+        let pspriteiscale = SPRITES.borrow().pspriteiscale;
+        let data = RENDER_DATA.borrow();
+        let view = VIEW.borrow();
+        let mut draw = DRAW.borrow_mut();
+        let mut planes = PLANES.borrow_mut();
+        let planes = &mut *planes;
 
-        while pl < end {
-            if (*pl).minx > (*pl).maxx {
-                pl = pl.add(1);
+        let mut column = ColumnParams::new(view.centery, data.colormaps);
+        let mut span = SpanParams::new();
+
+        for pl in 0..planes.lastvisplane {
+            if planes.visplanes[pl].minx > planes.visplanes[pl].maxx {
                 continue;
             }
 
             // Sky flat
-            if (*pl).picnum == render_3d::sky::skyflatnum {
-                dc_iscale = pspriteiscale >> detailshift;
+            if planes.visplanes[pl].picnum == skyflatnum {
+                let plane = &planes.visplanes[pl];
+                column.dc_iscale = pspriteiscale >> view.detailshift;
                 // Sky is always drawn full bright,
                 // i.e. colormaps[0] is used.
                 // Because of this hack, sky is not affected
                 // by INVUL inverse mapping.
-                dc_colormap = colormaps;
-                dc_texturemid = skytexturemid;
+                column.dc_colormap = data.colormaps;
+                column.dc_texturemid = skytexturemid;
 
-                for x in (*pl).minx..=(*pl).maxx {
-                    dc_yl = (*pl).top[x as usize] as i32;
-                    dc_yh = (*pl).bottom[x as usize] as i32;
+                for x in plane.minx..=plane.maxx {
+                    column.dc_yl = plane.top[x as usize] as i32;
+                    column.dc_yh = plane.bottom[x as usize] as i32;
 
-                    if dc_yl <= dc_yh {
-                        let angle =
-                            viewangle.wrapping_add(xtoviewangle[x as usize]) >> ANGLETOSKYSHIFT;
-                        dc_x = x;
-                        dc_source = R_GetColumn(skytexture, angle as i32);
-                        if let Some(func) = colfunc {
-                            func();
-                        }
+                    if column.dc_yl <= column.dc_yh {
+                        let angle = view.viewangle.wrapping_add(view.xtoviewangle[x as usize])
+                            >> ANGLETOSKYSHIFT;
+                        column.dc_x = x;
+                        column.dc_source = R_GetColumn(&data, skytexture, angle as i32);
+                        (view.colfunc)(&mut column, &mut draw);
                     }
                 }
-                pl = pl.add(1);
                 continue;
             }
 
             // Regular flat
-            let flat_idx = *flattranslation.offset((*pl).picnum as isize);
-            let lumpnum = firstflat + flat_idx;
-            ds_source = W_CacheLumpNum(lumpnum, PU_STATIC) as *mut u8;
+            let flat_idx = *data
+                .flattranslation
+                .offset(planes.visplanes[pl].picnum as isize);
+            let lumpnum = data.firstflat + flat_idx;
+            span.ds_source = W_CacheLumpNum(lumpnum, PU_STATIC) as *mut u8;
 
-            planeheight = ((*pl).height.wrapping_sub(viewz)).abs();
-            let mut light = ((*pl).lightlevel >> LIGHTSEGSHIFT) + extralight;
+            planes.planeheight = (planes.visplanes[pl].height.wrapping_sub(view.viewz)).abs();
+            let mut light = (planes.visplanes[pl].lightlevel >> LIGHTSEGSHIFT) + view.extralight;
 
             if light >= LIGHTLEVELS as i32 {
                 light = LIGHTLEVELS as i32 - 1;
@@ -727,47 +753,55 @@ pub fn R_DrawPlanes() {
             // a pointer into zlight[light]
             let light_usize = light as usize;
             if light_usize < LIGHTLEVELS {
-                planezlight = zlight[light_usize].as_ptr() as *const *const lighttable_t;
+                planes.planezlight = zlight_row(light_usize) as *const *const lighttable_t;
             }
 
             // Set sentinel values at the visplane boundaries. The C code does
             // pl->top[pl->maxx+1] = 0xff and pl->top[pl->minx-1] = 0xff, which
             // relies on padding bytes when at screen edges.
-            if (*pl).minx > 0 {
-                (*pl).top[((*pl).minx - 1) as usize] = 0xFF;
+            let plane = &mut planes.visplanes[pl];
+            if plane.minx > 0 {
+                plane.top[(plane.minx - 1) as usize] = 0xFF;
             } else {
-                (*pl).pad1 = 0xFF;
+                plane.pad1 = 0xFF;
             }
-            if (*pl).maxx < SCREENWIDTH as i32 - 1 {
-                (*pl).top[((*pl).maxx + 1) as usize] = 0xFF;
+            if plane.maxx < SCREENWIDTH as i32 - 1 {
+                plane.top[(plane.maxx + 1) as usize] = 0xFF;
             } else {
-                (*pl).pad2 = 0xFF;
+                plane.pad2 = 0xFF;
             }
 
-            let stop = (*pl).maxx + 1;
-            for x in (*pl).minx..=stop {
+            // R_MakeSpans needs the plane state mutably; work from a copy of
+            // the finished visplane.
+            let plane = planes.visplanes[pl];
+            let stop = plane.maxx + 1;
+            for x in plane.minx..=stop {
                 let prev_x = x - 1;
                 let t_top = if prev_x < 0 {
-                    (*pl).pad1
+                    plane.pad1
                 } else {
-                    (*pl).top[prev_x as usize]
+                    plane.top[prev_x as usize]
                 };
                 let t_bottom = if prev_x < 0 {
-                    (*pl).pad3
+                    plane.pad3
                 } else {
-                    (*pl).bottom[prev_x as usize]
+                    plane.bottom[prev_x as usize]
                 };
                 let b_top = if x == SCREENWIDTH as i32 {
-                    (*pl).pad2
+                    plane.pad2
                 } else {
-                    (*pl).top[x as usize]
+                    plane.top[x as usize]
                 };
                 let b_bottom = if x == SCREENWIDTH as i32 {
-                    (*pl).pad4
+                    plane.pad4
                 } else {
-                    (*pl).bottom[x as usize]
+                    plane.bottom[x as usize]
                 };
                 R_MakeSpans(
+                    planes,
+                    &view,
+                    &draw,
+                    &mut span,
                     x,
                     t_top as i32,
                     t_bottom as i32,
@@ -777,7 +811,46 @@ pub fn R_DrawPlanes() {
             }
 
             W_ReleaseLumpNum(lumpnum);
-            pl = pl.add(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The plane state starts with an empty pool and no current planes.
+    #[test]
+    fn state_starts_empty() {
+        let planes = PlaneState::new();
+        assert_eq!(planes.lastvisplane, 0);
+        assert_eq!((planes.floorplane, planes.ceilingplane), (None, None));
+        assert!(planes.lastopening.is_null());
+    }
+
+    /// `R_CheckPlane` extends a plane whose columns do not overlap the new
+    /// range and splits off a new plane when they do.
+    #[test]
+    fn check_plane_extends_or_splits() {
+        let mut planes = Box::new(PlaneState::new());
+        planes.lastvisplane = 1;
+        let first = &mut planes.visplanes[0];
+        first.top = [0xFF; SCREENWIDTH];
+        first.height = 7;
+        first.minx = 10;
+        first.maxx = 20;
+
+        assert_eq!(R_CheckPlane(&mut planes, 0, 21, 30), 0);
+        assert_eq!(
+            (planes.visplanes[0].minx, planes.visplanes[0].maxx),
+            (10, 30)
+        );
+
+        planes.visplanes[0].top[25] = 5;
+        assert_eq!(R_CheckPlane(&mut planes, 0, 25, 40), 1);
+        assert_eq!(planes.lastvisplane, 2);
+        let split = &planes.visplanes[1];
+        assert_eq!((split.height, split.minx, split.maxx), (7, 25, 40));
+        assert!(split.top.iter().all(|&top| top == 0xFF));
     }
 }

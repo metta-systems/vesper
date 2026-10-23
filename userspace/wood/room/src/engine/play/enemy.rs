@@ -75,7 +75,7 @@ use crate::{
             switch::P_UseSpecialLine,
             tick::{thinker_t, thinkercap, ThinkerContainer, ThinkerKind},
         },
-        render_3d::main::{validcount, R_PointToAngle2},
+        render_3d::main::{R_PointToAngle2, VALIDCOUNT},
         sound::S_StartSound,
         wad::format::LinedefFlag,
     },
@@ -188,6 +188,7 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
 
     let mut other: *mut sector_t;
 
+    let validcount = VALIDCOUNT.get();
     if (*sec).validcount == validcount && (*sec).soundtraversed <= soundblocks + 1 {
         return;
     }
@@ -229,7 +230,7 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
 /// must have a valid `subsector` with a valid `sector`.
 pub unsafe fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
     soundtarget = target;
-    validcount += 1;
+    VALIDCOUNT.set(VALIDCOUNT.get() + 1);
     P_RecursiveSound((*(*emmiter).subsector).sector, 0);
 }
 /// Returns `TRUE` when `actor`'s target is within melee striking range and line of sight.

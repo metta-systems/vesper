@@ -3,6 +3,12 @@
 //! The actual span/column drawing functions. All drawing to the view buffer
 //! is accomplished in this module; the other refresh files only know about
 //! coordinates, not the architecture of the frame buffer.
+//!
+//! The C `dc_*` and `ds_*` globals are parameter blocks here: the caller
+//! fills a [`ColumnParams`] or [`SpanParams`] and passes it by reference,
+//! together with the [`DrawState`] it borrowed once for the whole wall,
+//! sprite or plane, so the per-column and per-row drawers touch no
+//! [`Global`].
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -11,10 +17,10 @@ use std::{ffi::c_void, ptr};
 use crate::engine::{
     dehacked::DEH_String,
     doom::{mode::commercial, stat::gamemode},
+    global::Global,
     interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
     math::fixed::FRACBITS,
     render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
-    render_3d::{data::colormaps, main::centery},
     wad::{format::patch_t, W_CacheLumpName},
     zone::{Z_Free, Z_Malloc},
 };
@@ -37,77 +43,10 @@ pub const FUZZTABLE: usize = 50;
 /// Column offset used when rendering the fuzz/spectre effect (FUZZOFF = SCREENWIDTH).
 pub const FUZZOFF: i32 = SCREENWIDTH;
 
-// ---------------------------------------------------------------------------
-// View-buffer globals
-// ---------------------------------------------------------------------------
-
-/// Width of the current render viewport in pixels.
-pub static mut viewwidth: i32 = 0;
-
-/// Width of the viewport scaled for the current detail mode (equals `viewwidth` in high-detail).
-pub static mut scaledviewwidth: i32 = 0;
-
-/// Height of the current render viewport in pixels.
-pub static mut viewheight: i32 = 0;
-
-/// X pixel offset from the left edge of the framebuffer to the left edge of the viewport.
-pub static mut viewwindowx: i32 = 0;
-
-/// Y pixel offset from the top of the framebuffer to the top of the viewport.
-pub static mut viewwindowy: i32 = 0;
-
-/// Per-row pointer LUT: `ylookup[y]` points to the first byte of row `y` in the framebuffer.
-/// Avoids a multiply by `SCREENWIDTH` in the inner rendering loops.
-pub static mut ylookup: [*mut u8; MAXHEIGHT] = [ptr::null_mut(); MAXHEIGHT];
-
-/// Per-column byte offset LUT: `columnofs[x]` is the byte offset within a row for column `x`.
-/// Accounts for `viewwindowx` so that sub-window rendering works without extra arithmetic.
-pub static mut columnofs: [i32; MAXWIDTH] = [0; MAXWIDTH];
-
-// ---------------------------------------------------------------------------
-// Background buffer (module-local)
-// ---------------------------------------------------------------------------
-
-/// Backing buffer for the bezel drawn around the viewport when the window is smaller than
-/// the full screen. Allocated on demand; freed when switching to full-screen mode.
-static mut background_buffer: *mut u8 = ptr::null_mut();
-
-// ---------------------------------------------------------------------------
-// Column-drawing globals
-// ---------------------------------------------------------------------------
-
-/// Current colormap (light-level lookup table) used by the column renderer.
-/// Points into `colormaps`; index `colormap[p]` converts a palette index to a lit palette index.
-pub static mut dc_colormap: *mut u8 = ptr::null_mut();
-
-/// Screen-space X coordinate of the column being drawn (0 = left edge of viewport).
-pub static mut dc_x: i32 = 0;
-
-/// Topmost screen-space Y coordinate of the column segment to draw (inclusive).
-pub static mut dc_yl: i32 = 0;
-
-/// Bottommost screen-space Y coordinate of the column segment to draw (inclusive).
-pub static mut dc_yh: i32 = 0;
-
-/// Inverse texture scale in 16.16 fixed-point: the amount added to the texture fraction
-/// per screen row, equal to `textureheight / columnheight`.
-pub static mut dc_iscale: i32 = 0;
-
-/// Texture mid-point fraction in 16.16 fixed-point, corresponding to the true center of
-/// the wall post; used together with `dc_iscale` to compute the starting texture row.
-pub static mut dc_texturemid: i32 = 0;
-
-/// First pixel in a column (possibly virtual).
-pub static mut dc_source: *mut u8 = ptr::null_mut();
-
-// ---------------------------------------------------------------------------
-// Fuzz / spectre effect
-// ---------------------------------------------------------------------------
-
 /// Pre-computed table of per-pixel row offsets (in bytes) used by the fuzz/spectre effect.
 /// Each entry is either `+FUZZOFF` (one row down) or `-FUZZOFF` (one row up), giving the
 /// smeared, semi-transparent look of partial-invisibility.
-pub static mut fuzzoffset: [i32; FUZZTABLE] = [
+pub const fuzzoffset: [i32; FUZZTABLE] = [
     FUZZOFF, -FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF,
     FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, -FUZZOFF,
     -FUZZOFF, FUZZOFF, -FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF,
@@ -115,51 +54,172 @@ pub static mut fuzzoffset: [i32; FUZZTABLE] = [
     -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF,
 ];
 
-/// Current position within `fuzzoffset`; wraps back to 0 when it reaches `FUZZTABLE`.
-pub static mut fuzzpos: i32 = 0;
-
 // ---------------------------------------------------------------------------
-// Translation tables
+// View-buffer state
 // ---------------------------------------------------------------------------
 
-/// Pointer to the 256-byte color-translation table currently active for `R_DrawTranslatedColumn`.
-/// Used to remap the player-sprite green ramp to another color set.
-pub static mut dc_translation: *mut u8 = ptr::null_mut();
+/// View-buffer state (C `r_draw.c` globals other than the `dc_*`/`ds_*`
+/// drawer parameters).
+pub struct DrawState {
+    /// Width of the current render viewport in pixels.
+    pub viewwidth: i32,
+    /// Width of the viewport scaled for the current detail mode (equals `viewwidth` in high-detail).
+    pub scaledviewwidth: i32,
+    /// Height of the current render viewport in pixels.
+    pub viewheight: i32,
+    /// X pixel offset from the left edge of the framebuffer to the left edge of the viewport.
+    pub viewwindowx: i32,
+    /// Y pixel offset from the top of the framebuffer to the top of the viewport.
+    pub viewwindowy: i32,
+    /// Per-row pointer LUT: `ylookup[y]` points to the first byte of row `y` in the framebuffer.
+    /// Avoids a multiply by `SCREENWIDTH` in the inner rendering loops.
+    pub ylookup: [*mut u8; MAXHEIGHT],
+    /// Per-column byte offset LUT: `columnofs[x]` is the byte offset within a row for column `x`.
+    /// Accounts for `viewwindowx` so that sub-window rendering works without extra arithmetic.
+    pub columnofs: [i32; MAXWIDTH],
+    /// Backing buffer for the bezel drawn around the viewport when the window is smaller than
+    /// the full screen. Allocated on demand; freed when switching to full-screen mode.
+    background_buffer: *mut u8,
+    /// Current position within `fuzzoffset`; wraps back to 0 when it reaches `FUZZTABLE`.
+    pub fuzzpos: i32,
+    /// Heap-allocated block of 3 × 256 bytes holding the gray, brown, and red translation tables
+    /// built by `R_InitTranslationTables`.
+    pub translationtables: *mut u8,
+}
 
-/// Heap-allocated block of 3 × 256 bytes holding the gray, brown, and red translation tables
-/// built by `R_InitTranslationTables`.
-pub static mut translationtables: *mut u8 = ptr::null_mut();
+impl DrawState {
+    /// The state before `R_InitBuffer`: empty viewport, null lookup rows.
+    pub const fn new() -> Self {
+        Self {
+            viewwidth: 0,
+            scaledviewwidth: 0,
+            viewheight: 0,
+            viewwindowx: 0,
+            viewwindowy: 0,
+            ylookup: [ptr::null_mut(); MAXHEIGHT],
+            columnofs: [0; MAXWIDTH],
+            background_buffer: ptr::null_mut(),
+            fuzzpos: 0,
+            translationtables: ptr::null_mut(),
+        }
+    }
+}
+
+impl Default for DrawState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The view-buffer state.
+pub static DRAW: Global<DrawState> = Global::new(DrawState::new());
 
 // ---------------------------------------------------------------------------
-// Span-drawing globals
+// Column-drawing parameters
 // ---------------------------------------------------------------------------
 
-/// Screen-space Y row of the span being drawn.
-pub static mut ds_y: i32 = 0;
+/// Inputs of the column drawers: the C `dc_*` globals, plus the `centery`
+/// and `colormaps` globals they read, copied in by the caller.
+pub struct ColumnParams {
+    /// Current colormap (light-level lookup table) used by the column renderer.
+    /// Points into `colormaps`; index `colormap[p]` converts a palette index to a lit palette index.
+    pub dc_colormap: *mut u8,
+    /// Screen-space X coordinate of the column being drawn (0 = left edge of viewport).
+    pub dc_x: i32,
+    /// Topmost screen-space Y coordinate of the column segment to draw (inclusive).
+    pub dc_yl: i32,
+    /// Bottommost screen-space Y coordinate of the column segment to draw (inclusive).
+    pub dc_yh: i32,
+    /// Inverse texture scale in 16.16 fixed-point: the amount added to the texture fraction
+    /// per screen row, equal to `textureheight / columnheight`.
+    pub dc_iscale: i32,
+    /// Texture mid-point fraction in 16.16 fixed-point, corresponding to the true center of
+    /// the wall post; used together with `dc_iscale` to compute the starting texture row.
+    pub dc_texturemid: i32,
+    /// First pixel in a column (possibly virtual).
+    pub dc_source: *mut u8,
+    /// Pointer to the 256-byte color-translation table currently active for `R_DrawTranslatedColumn`.
+    /// Used to remap the player-sprite green ramp to another color set.
+    pub dc_translation: *mut u8,
+    /// Y coordinate of the viewport centre (the r_main `centery`).
+    pub centery: i32,
+    /// The COLORMAP lump (the r_data `colormaps`); the fuzz drawers darken through map 6.
+    pub colormaps: *mut u8,
+}
 
-/// Leftmost screen-space X coordinate of the span (inclusive).
-pub static mut ds_x1: i32 = 0;
+impl ColumnParams {
+    /// Parameters for drawing columns around `centery` with `colormaps`; the
+    /// caller fills the `dc_*` fields before each draw.
+    pub const fn new(centery: i32, colormaps: *mut u8) -> Self {
+        Self {
+            dc_colormap: ptr::null_mut(),
+            dc_x: 0,
+            dc_yl: 0,
+            dc_yh: 0,
+            dc_iscale: 0,
+            dc_texturemid: 0,
+            dc_source: ptr::null_mut(),
+            dc_translation: ptr::null_mut(),
+            centery,
+            colormaps,
+        }
+    }
+}
 
-/// Rightmost screen-space X coordinate of the span (inclusive).
-pub static mut ds_x2: i32 = 0;
+/// A column drawer (`colfunc` and its variants).
+pub type ColumnFunction = fn(&mut ColumnParams, &mut DrawState);
 
-/// Colormap used by the span renderer; points into `colormaps` for the appropriate light level.
-pub static mut ds_colormap: *mut u8 = ptr::null_mut();
+// ---------------------------------------------------------------------------
+// Span-drawing parameters
+// ---------------------------------------------------------------------------
 
-/// Starting texture U (X) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-pub static mut ds_xfrac: i32 = 0;
+/// Inputs of the span drawers: the C `ds_*` globals.
+pub struct SpanParams {
+    /// Screen-space Y row of the span being drawn.
+    pub ds_y: i32,
+    /// Leftmost screen-space X coordinate of the span (inclusive).
+    pub ds_x1: i32,
+    /// Rightmost screen-space X coordinate of the span (inclusive).
+    pub ds_x2: i32,
+    /// Colormap used by the span renderer; points into `colormaps` for the appropriate light level.
+    pub ds_colormap: *mut u8,
+    /// Starting texture U (X) fraction in 16.16 fixed-point for the leftmost pixel of the span.
+    pub ds_xfrac: i32,
+    /// Starting texture V (Y) fraction in 16.16 fixed-point for the leftmost pixel of the span.
+    pub ds_yfrac: i32,
+    /// Per-pixel increment of `ds_xfrac` in 16.16 fixed-point along the span.
+    pub ds_xstep: i32,
+    /// Per-pixel increment of `ds_yfrac` in 16.16 fixed-point along the span.
+    pub ds_ystep: i32,
+    /// Start of a 64×64 tile image.
+    pub ds_source: *mut u8,
+}
 
-/// Starting texture V (Y) fraction in 16.16 fixed-point for the leftmost pixel of the span.
-pub static mut ds_yfrac: i32 = 0;
+impl SpanParams {
+    /// Empty parameters; the caller fills every field before each draw.
+    pub const fn new() -> Self {
+        Self {
+            ds_y: 0,
+            ds_x1: 0,
+            ds_x2: 0,
+            ds_colormap: ptr::null_mut(),
+            ds_xfrac: 0,
+            ds_yfrac: 0,
+            ds_xstep: 0,
+            ds_ystep: 0,
+            ds_source: ptr::null_mut(),
+        }
+    }
+}
 
-/// Per-pixel increment of `ds_xfrac` in 16.16 fixed-point along the span.
-pub static mut ds_xstep: i32 = 0;
+impl Default for SpanParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Per-pixel increment of `ds_yfrac` in 16.16 fixed-point along the span.
-pub static mut ds_ystep: i32 = 0;
-
-/// Start of a 64×64 tile image.
-pub static mut ds_source: *mut u8 = ptr::null_mut();
+/// A span drawer (`spanfunc`).
+pub type SpanFunction = fn(&SpanParams, &DrawState);
 
 // ---------------------------------------------------------------------------
 // R_DrawColumn
@@ -167,13 +227,24 @@ pub static mut ds_source: *mut u8 = ptr::null_mut();
 
 /// Draws a single vertical column of opaque wall texture into the framebuffer.
 ///
-/// Reads the column context from the `dc_*` globals and writes `dc_yh - dc_yl + 1`
+/// Reads the column context from `params` and writes `dc_yh - dc_yl + 1`
 /// pixels into `screens[0]`, applying `dc_colormap` for lighting. The texture is
 /// sampled at a 128-texel-high virtual column; `dc_iscale` steps through it in
 /// 16.16 fixed-point per screen row.
 ///
 /// Does nothing if `dc_yh < dc_yl` (empty column segment).
-pub fn R_DrawColumn() {
+pub fn R_DrawColumn(params: &mut ColumnParams, draw: &mut DrawState) {
+    let ColumnParams {
+        dc_colormap,
+        dc_x,
+        dc_yl,
+        dc_yh,
+        dc_iscale,
+        dc_texturemid,
+        dc_source,
+        centery,
+        ..
+    } = *params;
     unsafe {
         let count = dc_yh - dc_yl;
 
@@ -185,13 +256,13 @@ pub fn R_DrawColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawColumn: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
-            { dc_x }
+            dc_yl,
+            dc_yh,
+            dc_x
         );
 
         // Framebuffer destination address.
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[dc_x as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[dc_x as usize] as usize);
 
         // Determine scaling, which is the only mapping to be done.
         let fracstep = dc_iscale;
@@ -219,10 +290,21 @@ pub fn R_DrawColumn() {
 /// screen columns, producing blocky 2x-wide columns for the low-resolution detail mode.
 ///
 /// Uses `dc_x * 2` and `dc_x * 2 + 1` as the destination columns. All other
-/// column-context globals (`dc_*`) have the same meaning as in `R_DrawColumn`.
+/// column-context parameters (`dc_*`) have the same meaning as in `R_DrawColumn`.
 ///
 /// Does nothing if `dc_yh < dc_yl`.
-pub fn R_DrawColumnLow() {
+pub fn R_DrawColumnLow(params: &mut ColumnParams, draw: &mut DrawState) {
+    let ColumnParams {
+        dc_colormap,
+        dc_x,
+        dc_yl,
+        dc_yh,
+        dc_iscale,
+        dc_texturemid,
+        dc_source,
+        centery,
+        ..
+    } = *params;
     unsafe {
         let count = dc_yh - dc_yl;
 
@@ -237,13 +319,13 @@ pub fn R_DrawColumnLow() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawColumnLow: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
-            { dc_x }
+            dc_yl,
+            dc_yh,
+            dc_x
         );
 
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[x as usize] as usize);
-        let mut dest2 = ylookup[dc_yl as usize].add(columnofs[(x + 1) as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[x as usize] as usize);
+        let mut dest2 = draw.ylookup[dc_yl as usize].add(draw.columnofs[(x + 1) as usize] as usize);
 
         let fracstep = dc_iscale;
         let mut frac = dc_texturemid + (dc_yl - centery) * fracstep;
@@ -279,17 +361,25 @@ pub fn R_DrawColumnLow() {
 /// lowered to `viewheight - 2` to avoid reading outside the viewport.
 ///
 /// Does nothing if the clamped range is empty (`dc_yh < dc_yl`).
-pub fn R_DrawFuzzColumn() {
+pub fn R_DrawFuzzColumn(params: &mut ColumnParams, draw: &mut DrawState) {
     unsafe {
         // Adjust borders. Low...
-        if dc_yl == 0 {
-            dc_yl = 1;
+        if params.dc_yl == 0 {
+            params.dc_yl = 1;
         }
 
         // .. and high.
-        if dc_yh == viewheight - 1 {
-            dc_yh = viewheight - 2;
+        if params.dc_yh == draw.viewheight - 1 {
+            params.dc_yh = draw.viewheight - 2;
         }
+
+        let ColumnParams {
+            dc_x,
+            dc_yl,
+            dc_yh,
+            colormaps,
+            ..
+        } = *params;
 
         let count = dc_yh - dc_yl;
 
@@ -301,12 +391,13 @@ pub fn R_DrawFuzzColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawFuzzColumn: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
-            { dc_x }
+            dc_yl,
+            dc_yh,
+            dc_x
         );
 
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[dc_x as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[dc_x as usize] as usize);
+        let mut fuzzpos = draw.fuzzpos;
 
         let mut count = count;
         loop {
@@ -329,6 +420,7 @@ pub fn R_DrawFuzzColumn() {
             }
             count -= 1;
         }
+        draw.fuzzpos = fuzzpos;
     }
 }
 
@@ -342,17 +434,25 @@ pub fn R_DrawFuzzColumn() {
 /// Both pixels receive the same fuzz-sampled value derived from column `dc_x * 2`'s
 /// neighbor; the fuzz table position advances once per row pair.
 /// Border clamping and early-exit behavior are identical to `R_DrawFuzzColumn`.
-pub fn R_DrawFuzzColumnLow() {
+pub fn R_DrawFuzzColumnLow(params: &mut ColumnParams, draw: &mut DrawState) {
     unsafe {
         // Adjust borders. Low...
-        if dc_yl == 0 {
-            dc_yl = 1;
+        if params.dc_yl == 0 {
+            params.dc_yl = 1;
         }
 
         // .. and high.
-        if dc_yh == viewheight - 1 {
-            dc_yh = viewheight - 2;
+        if params.dc_yh == draw.viewheight - 1 {
+            params.dc_yh = draw.viewheight - 2;
         }
+
+        let ColumnParams {
+            dc_x,
+            dc_yl,
+            dc_yh,
+            colormaps,
+            ..
+        } = *params;
 
         let count = dc_yh - dc_yl;
 
@@ -367,13 +467,14 @@ pub fn R_DrawFuzzColumnLow() {
         debug_assert!(
             (x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawFuzzColumnLow: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
-            { dc_x }
+            dc_yl,
+            dc_yh,
+            dc_x
         );
 
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[x as usize] as usize);
-        let mut dest2 = ylookup[dc_yl as usize].add(columnofs[(x + 1) as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[x as usize] as usize);
+        let mut dest2 = draw.ylookup[dc_yl as usize].add(draw.columnofs[(x + 1) as usize] as usize);
+        let mut fuzzpos = draw.fuzzpos;
 
         let mut count = count;
         loop {
@@ -396,6 +497,7 @@ pub fn R_DrawFuzzColumnLow() {
             }
             count -= 1;
         }
+        draw.fuzzpos = fuzzpos;
     }
 }
 
@@ -410,7 +512,19 @@ pub fn R_DrawFuzzColumnLow() {
 /// set of player sprites to appear in multiple colors (gray, brown, red).
 ///
 /// Does nothing if `dc_yh < dc_yl`.
-pub fn R_DrawTranslatedColumn() {
+pub fn R_DrawTranslatedColumn(params: &mut ColumnParams, draw: &mut DrawState) {
+    let ColumnParams {
+        dc_colormap,
+        dc_x,
+        dc_yl,
+        dc_yh,
+        dc_iscale,
+        dc_texturemid,
+        dc_source,
+        dc_translation,
+        centery,
+        ..
+    } = *params;
     unsafe {
         let count = dc_yh - dc_yl;
         if count < 0 {
@@ -420,12 +534,12 @@ pub fn R_DrawTranslatedColumn() {
         debug_assert!(
             (dc_x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawTranslatedColumn: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
-            { dc_x }
+            dc_yl,
+            dc_yh,
+            dc_x
         );
 
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[dc_x as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[dc_x as usize] as usize);
 
         let fracstep = dc_iscale;
         let mut frac = dc_texturemid + (dc_yl - centery) * fracstep;
@@ -454,7 +568,19 @@ pub fn R_DrawTranslatedColumn() {
 ///
 /// The pixel pipeline and border behavior are identical to `R_DrawTranslatedColumn`.
 /// Does nothing if `dc_yh < dc_yl`.
-pub fn R_DrawTranslatedColumnLow() {
+pub fn R_DrawTranslatedColumnLow(params: &mut ColumnParams, draw: &mut DrawState) {
+    let ColumnParams {
+        dc_colormap,
+        dc_x,
+        dc_yl,
+        dc_yh,
+        dc_iscale,
+        dc_texturemid,
+        dc_source,
+        dc_translation,
+        centery,
+        ..
+    } = *params;
     unsafe {
         let count = dc_yh - dc_yl;
         if count < 0 {
@@ -467,13 +593,13 @@ pub fn R_DrawTranslatedColumnLow() {
         debug_assert!(
             (x as u32) < (SCREENWIDTH as u32) && dc_yl >= 0 && dc_yh < SCREENHEIGHT,
             "R_DrawTranslatedColumnLow: {} to {} at {}",
-            { dc_yl },
-            { dc_yh },
+            dc_yl,
+            dc_yh,
             x
         );
 
-        let mut dest = ylookup[dc_yl as usize].add(columnofs[x as usize] as usize);
-        let mut dest2 = ylookup[dc_yl as usize].add(columnofs[(x + 1) as usize] as usize);
+        let mut dest = draw.ylookup[dc_yl as usize].add(draw.columnofs[x as usize] as usize);
+        let mut dest2 = draw.ylookup[dc_yl as usize].add(draw.columnofs[(x + 1) as usize] as usize);
 
         let fracstep = dc_iscale;
         let mut frac = dc_texturemid + (dc_yl - centery) * fracstep;
@@ -506,12 +632,12 @@ pub fn R_DrawTranslatedColumnLow() {
 /// The green palette ramp (`0x70`-`0x7f`) is remapped to the gray ramp (`0x60`),
 /// brown ramp (`0x40`), and red ramp (`0x20`). All other palette entries are identity-mapped.
 ///
-/// Sets the `translationtables` global to the allocated block.
+/// Sets `translationtables` to the allocated block.
 pub fn R_InitTranslationTables() {
     unsafe {
-        translationtables = Z_Malloc(256 * 3, 1, ptr::null_mut()) as *mut u8; // PU_STATIC = 1
+        let tt = Z_Malloc(256 * 3, 1, ptr::null_mut()) as *mut u8; // PU_STATIC = 1
+        DRAW.borrow_mut().translationtables = tt;
 
-        let tt = translationtables;
         for i in 0..256 {
             if (0x70..=0x7f).contains(&i) {
                 // map green ramp to gray, brown, red
@@ -541,7 +667,18 @@ pub fn R_InitTranslationTables() {
 ///
 /// Writes pixels to `screens[0]` from column `ds_x1` to `ds_x2` inclusive on row `ds_y`.
 /// Does not check for zero-length spans; the caller must ensure `ds_x2 >= ds_x1`.
-pub fn R_DrawSpan() {
+pub fn R_DrawSpan(params: &SpanParams, draw: &DrawState) {
+    let SpanParams {
+        ds_y,
+        ds_x1,
+        ds_x2,
+        ds_colormap,
+        ds_xfrac,
+        ds_yfrac,
+        ds_xstep,
+        ds_ystep,
+        ds_source,
+    } = *params;
     unsafe {
         let mut position: u32;
 
@@ -553,7 +690,7 @@ pub fn R_DrawSpan() {
         let step: u32 =
             ((ds_xstep << 10) as u32 & 0xffff0000) | ((ds_ystep >> 6) as u32 & 0x0000ffff);
 
-        let mut dest = ylookup[ds_y as usize].add(columnofs[ds_x1 as usize] as usize);
+        let mut dest = draw.ylookup[ds_y as usize].add(draw.columnofs[ds_x1 as usize] as usize);
 
         // We do not check for zero spans here?
         let mut count = ds_x2 - ds_x1;
@@ -564,9 +701,9 @@ pub fn R_DrawSpan() {
                 && ds_x2 < SCREENWIDTH
                 && (ds_y as u32) <= (SCREENHEIGHT as u32),
             "R_DrawSpan: {} to {} at {}",
-            { ds_x1 },
-            { ds_x2 },
-            { ds_y }
+            ds_x1,
+            ds_x2,
+            ds_y
         );
 
         loop {
@@ -601,10 +738,21 @@ pub fn R_DrawSpan() {
 /// # FIXME
 /// In the original C (`r_draw.c`) `ds_x1` and `ds_x2` are mutated in-place
 /// (`ds_x1 <<= 1; ds_x2 <<= 1`), leaving the globals modified after the call.
-/// This Rust port uses a local `ds_x1_low` and leaves the globals unchanged,
+/// This Rust port uses a local `ds_x1_low` and leaves the parameters unchanged,
 /// so callers that read `ds_x1`/`ds_x2` after `R_DrawSpanLow` see different
 /// values than they would after the C version.
-pub fn R_DrawSpanLow() {
+pub fn R_DrawSpanLow(params: &SpanParams, draw: &DrawState) {
+    let SpanParams {
+        ds_y,
+        ds_x1,
+        ds_x2,
+        ds_colormap,
+        ds_xfrac,
+        ds_yfrac,
+        ds_xstep,
+        ds_ystep,
+        ds_source,
+    } = *params;
     unsafe {
         let mut position: u32;
 
@@ -623,12 +771,12 @@ pub fn R_DrawSpanLow() {
                 && ds_x2 < SCREENWIDTH
                 && (ds_y as u32) <= (SCREENHEIGHT as u32),
             "R_DrawSpanLow: {} to {} at {}",
-            { ds_x1 },
-            { ds_x2 },
-            { ds_y }
+            ds_x1,
+            ds_x2,
+            ds_y
         );
 
-        let mut dest = ylookup[ds_y as usize].add(columnofs[ds_x1_low as usize] as usize);
+        let mut dest = draw.ylookup[ds_y as usize].add(draw.columnofs[ds_x1_low as usize] as usize);
 
         loop {
             let ytemp = ((position >> 4) & 0x0fc0) as usize;
@@ -666,27 +814,28 @@ pub fn R_DrawSpanLow() {
 /// Must be called whenever the viewport dimensions change (e.g. when the player resizes
 /// the view window).
 pub fn R_InitBuffer(width: i32, height: i32) {
-    unsafe {
-        // Handle resize, e.g. smaller view windows with border and/or status bar.
-        viewwindowx = (SCREENWIDTH - width) >> 1;
+    let screen = video_buffer();
+    let mut draw = DRAW.borrow_mut();
 
-        // Column offset. For windows.
-        for i in 0..width {
-            columnofs[i as usize] = viewwindowx + i;
-        }
+    // Handle resize, e.g. smaller view windows with border and/or status bar.
+    draw.viewwindowx = (SCREENWIDTH - width) >> 1;
 
-        // Same with base row offset.
-        if width == SCREENWIDTH {
-            viewwindowy = 0;
-        } else {
-            viewwindowy = (SCREENHEIGHT - SBARHEIGHT - height) >> 1;
-        }
+    // Column offset. For windows.
+    for i in 0..width {
+        draw.columnofs[i as usize] = draw.viewwindowx + i;
+    }
 
-        // Precalculate all row offsets.
-        let screen = video_buffer();
-        for i in 0..height {
-            ylookup[i as usize] = screen.add(((i + viewwindowy) * SCREENWIDTH) as usize);
-        }
+    // Same with base row offset.
+    if width == SCREENWIDTH {
+        draw.viewwindowy = 0;
+    } else {
+        draw.viewwindowy = (SCREENHEIGHT - SBARHEIGHT - height) >> 1;
+    }
+
+    // Precalculate all row offsets.
+    for i in 0..height {
+        draw.ylookup[i as usize] =
+            screen.wrapping_add(((i + draw.viewwindowy) * SCREENWIDTH) as usize);
     }
 }
 
@@ -705,24 +854,36 @@ pub fn R_InitBuffer(width: i32, height: i32) {
 /// buffer is freed and the function returns immediately.
 pub fn R_FillBackScreen() {
     unsafe {
-        // If we are running full screen, there is no need to do any of this,
-        // and the background buffer can be freed if it was previously in use.
-        if scaledviewwidth == SCREENWIDTH {
-            if !background_buffer.is_null() {
-                Z_Free(background_buffer as *mut c_void);
-                background_buffer = ptr::null_mut();
-            }
-            return;
-        }
+        let (background_buffer, scaledviewwidth, viewheight, viewwindowx, viewwindowy) = {
+            let mut draw = DRAW.borrow_mut();
 
-        // Allocate the background buffer if necessary
-        if background_buffer.is_null() {
-            background_buffer = Z_Malloc(
-                SCREENWIDTH * (SCREENHEIGHT - SBARHEIGHT),
-                1, // PU_STATIC
-                ptr::null_mut(),
-            ) as *mut u8;
-        }
+            // If we are running full screen, there is no need to do any of this,
+            // and the background buffer can be freed if it was previously in use.
+            if draw.scaledviewwidth == SCREENWIDTH {
+                if !draw.background_buffer.is_null() {
+                    Z_Free(draw.background_buffer as *mut c_void);
+                    draw.background_buffer = ptr::null_mut();
+                }
+                return;
+            }
+
+            // Allocate the background buffer if necessary
+            if draw.background_buffer.is_null() {
+                draw.background_buffer = Z_Malloc(
+                    SCREENWIDTH * (SCREENHEIGHT - SBARHEIGHT),
+                    1, // PU_STATIC
+                    ptr::null_mut(),
+                ) as *mut u8;
+            }
+
+            (
+                draw.background_buffer,
+                draw.scaledviewwidth,
+                draw.viewheight,
+                draw.viewwindowx,
+                draw.viewwindowy,
+            )
+        };
 
         let name: &[u8] = if gamemode() == commercial {
             DEH_String(b"GRNROCK")
@@ -804,6 +965,7 @@ pub fn R_FillBackScreen() {
 /// Used by `R_DrawViewBorder` to blit the pre-rendered bezel regions from `background_buffer`
 /// into `I_VideoBuffer`. Does nothing if `background_buffer` is null (full-screen mode).
 pub fn R_VideoErase(ofs: u32, count: i32) {
+    let background_buffer = DRAW.borrow().background_buffer;
     unsafe {
         if !background_buffer.is_null() {
             ptr::copy_nonoverlapping(
@@ -828,32 +990,34 @@ pub fn R_VideoErase(ofs: u32, count: i32) {
 /// Returns immediately without doing anything if `scaledviewwidth == SCREENWIDTH`
 /// (full-screen viewport, no border to draw).
 pub fn R_DrawViewBorder() {
-    unsafe {
-        if scaledviewwidth == SCREENWIDTH {
-            return;
-        }
-
-        let top = ((SCREENHEIGHT - SBARHEIGHT) - viewheight) / 2;
-        let side = (SCREENWIDTH - scaledviewwidth) / 2;
-
-        // copy top and one line of left side
-        R_VideoErase(0, top * SCREENWIDTH + side);
-
-        // copy one line of right side and bottom
-        let ofs = ((viewheight + top) * SCREENWIDTH - side) as u32;
-        R_VideoErase(ofs, top * SCREENWIDTH + side);
-
-        // copy sides using wraparound
-        let mut ofs = ((top * SCREENWIDTH) + SCREENWIDTH - side) as u32;
-        let side_doubled = side << 1;
-
-        for _ in 1..viewheight {
-            R_VideoErase(ofs, side_doubled);
-            ofs += SCREENWIDTH as u32;
-        }
-
-        V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT - SBARHEIGHT);
+    let (scaledviewwidth, viewheight) = {
+        let draw = DRAW.borrow();
+        (draw.scaledviewwidth, draw.viewheight)
+    };
+    if scaledviewwidth == SCREENWIDTH {
+        return;
     }
+
+    let top = ((SCREENHEIGHT - SBARHEIGHT) - viewheight) / 2;
+    let side = (SCREENWIDTH - scaledviewwidth) / 2;
+
+    // copy top and one line of left side
+    R_VideoErase(0, top * SCREENWIDTH + side);
+
+    // copy one line of right side and bottom
+    let ofs = ((viewheight + top) * SCREENWIDTH - side) as u32;
+    R_VideoErase(ofs, top * SCREENWIDTH + side);
+
+    // copy sides using wraparound
+    let mut ofs = ((top * SCREENWIDTH) + SCREENWIDTH - side) as u32;
+    let side_doubled = side << 1;
+
+    for _ in 1..viewheight {
+        R_VideoErase(ofs, side_doubled);
+        ofs += SCREENWIDTH as u32;
+    }
+
+    V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT - SBARHEIGHT);
 }
 
 // ---------------------------------------------------------------------------
@@ -864,8 +1028,24 @@ pub fn R_DrawViewBorder() {
 mod tests {
     use {super::*, crate::engine::interface::video::VIDEO, std::sync::Mutex};
 
-    /// Serialises all tests that touch the shared mutable renderer globals.
+    /// Serialises the tests that swap the video buffer or write [`DRAW`].
     static LOCK: Mutex<()> = Mutex::new(());
+
+    /// A draw state whose row and column tables address `framebuffer` as a
+    /// full-screen view, for calling the drawers directly.
+    fn full_screen_draw_state(framebuffer: &mut [u8]) -> Box<DrawState> {
+        let mut draw = Box::new(DrawState::new());
+        for i in 0..SCREENHEIGHT {
+            draw.ylookup[i as usize] = framebuffer
+                .as_mut_ptr()
+                .wrapping_add((i * SCREENWIDTH) as usize);
+        }
+        for i in 0..SCREENWIDTH {
+            draw.columnofs[i as usize] = i;
+        }
+        draw.viewheight = SCREENHEIGHT;
+        draw
+    }
 
     // -----------------------------------------------------------------------
     // R_InitBuffer
@@ -876,77 +1056,82 @@ mod tests {
     #[test]
     fn init_buffer_fullscreen() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            // Allocate a fake video buffer so ylookup doesn't deref null.
-            let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = video_buffer();
-            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
+        // Allocate a fake video buffer so ylookup doesn't deref null.
+        let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let orig_buf = video_buffer();
+        VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-            R_InitBuffer(SCREENWIDTH, 168);
+        R_InitBuffer(SCREENWIDTH, 168);
 
-            assert_eq!({ viewwindowx }, 0);
-            assert_eq!({ viewwindowy }, 0);
+        {
+            let draw = DRAW.borrow();
+            assert_eq!(draw.viewwindowx, 0);
+            assert_eq!(draw.viewwindowy, 0);
             for i in 0..SCREENWIDTH {
-                assert_eq!(columnofs[i as usize], i, "columnofs[{i}] mismatch");
+                assert_eq!(draw.columnofs[i as usize], i, "columnofs[{i}] mismatch");
             }
             for i in 0..168 {
                 assert_eq!(
-                    ylookup[i as usize],
-                    fake_buf.as_mut_ptr().add((i * SCREENWIDTH) as usize),
+                    draw.ylookup[i as usize],
+                    fake_buf
+                        .as_mut_ptr()
+                        .wrapping_add((i * SCREENWIDTH) as usize),
                     "ylookup[{i}] mismatch"
                 );
             }
-
-            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
+
+        VIDEO.borrow_mut().video_buffer = orig_buf;
     }
 
     /// Verifies centering offsets and `columnofs` values for a 256×168 windowed viewport.
     #[test]
     fn init_buffer_windowed_256x168() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = video_buffer();
-            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
+        let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let orig_buf = video_buffer();
+        VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-            R_InitBuffer(256, 168);
+        R_InitBuffer(256, 168);
 
-            assert_eq!({ viewwindowx }, (SCREENWIDTH - 256) >> 1); // 32
-            assert_eq!({ viewwindowy }, (SCREENHEIGHT - SBARHEIGHT - 168) >> 1); // 0
+        {
+            let draw = DRAW.borrow();
+            assert_eq!(draw.viewwindowx, (SCREENWIDTH - 256) >> 1); // 32
+            assert_eq!(draw.viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 168) >> 1); // 0
             for i in 0..256 {
-                assert_eq!(columnofs[i as usize], viewwindowx + i);
+                assert_eq!(draw.columnofs[i as usize], draw.viewwindowx + i);
             }
-
-            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
+
+        VIDEO.borrow_mut().video_buffer = orig_buf;
     }
 
     /// Verifies centering offsets, `columnofs`, and `ylookup` for a 200×100 windowed viewport.
     #[test]
     fn init_buffer_windowed_200x100() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_buf = video_buffer();
-            VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
+        let mut fake_buf = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let orig_buf = video_buffer();
+        VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-            R_InitBuffer(200, 100);
+        R_InitBuffer(200, 100);
 
-            assert_eq!({ viewwindowx }, (SCREENWIDTH - 200) >> 1); // 60
-            assert_eq!({ viewwindowy }, (SCREENHEIGHT - SBARHEIGHT - 100) >> 1); // 34
+        {
+            let draw = DRAW.borrow();
+            assert_eq!(draw.viewwindowx, (SCREENWIDTH - 200) >> 1); // 60
+            assert_eq!(draw.viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 100) >> 1); // 34
             for i in 0..200 {
-                assert_eq!(columnofs[i as usize], viewwindowx + i);
+                assert_eq!(draw.columnofs[i as usize], draw.viewwindowx + i);
             }
             for i in 0..100 {
                 let expected = fake_buf
                     .as_mut_ptr()
-                    .add(((i + viewwindowy) * SCREENWIDTH) as usize);
-                assert_eq!(ylookup[i as usize], expected, "ylookup[{i}] mismatch");
+                    .wrapping_add(((i + draw.viewwindowy) * SCREENWIDTH) as usize);
+                assert_eq!(draw.ylookup[i as usize], expected, "ylookup[{i}] mismatch");
             }
-
-            VIDEO.borrow_mut().video_buffer = orig_buf;
         }
+
+        VIDEO.borrow_mut().video_buffer = orig_buf;
     }
 
     // -----------------------------------------------------------------------
@@ -965,7 +1150,7 @@ mod tests {
 
             R_InitTranslationTables();
 
-            let tt = translationtables;
+            let tt = DRAW.borrow().translationtables;
             for i in 0..256usize {
                 if i >= 0x70 && i <= 0x7f {
                     assert_eq!(
@@ -991,8 +1176,8 @@ mod tests {
             }
 
             // Clean up
-            crate::engine::zone::Z_Free(translationtables as *mut c_void);
-            translationtables = ptr::null_mut();
+            crate::engine::zone::Z_Free(tt as *mut c_void);
+            DRAW.borrow_mut().translationtables = ptr::null_mut();
         }
     }
 
@@ -1004,72 +1189,53 @@ mod tests {
     /// for each row in a small column segment.
     #[test]
     fn draw_column_basic() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut source = vec![0u8; 128];
-            for i in 0..128 {
-                source[i] = i as u8;
-            }
-            let mut colormap = vec![0u8; 256];
-            for i in 0..256 {
-                colormap[i] = (i ^ 0x55) as u8;
-            }
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut source = vec![0u8; 128];
+        for i in 0..128 {
+            source[i] = i as u8;
+        }
+        let mut colormap = vec![0u8; 256];
+        for i in 0..256 {
+            colormap[i] = (i ^ 0x55) as u8;
+        }
 
-            // Set up ylookup and columnofs for a full-screen buffer
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut draw = full_screen_draw_state(&mut framebuffer);
+        let mut column = ColumnParams::new(0, ptr::null_mut());
+        column.dc_colormap = colormap.as_mut_ptr();
+        column.dc_source = source.as_mut_ptr();
+        column.dc_x = 10;
+        column.dc_yl = 20;
+        column.dc_yh = 30;
+        column.dc_iscale = 0x10000; // 1.0 in fixed point
+        column.dc_texturemid = 0;
 
-            dc_colormap = colormap.as_mut_ptr();
-            dc_source = source.as_mut_ptr();
-            dc_x = 10;
-            dc_yl = 20;
-            dc_yh = 30;
-            dc_iscale = 0x10000; // 1.0 in fixed point
-            dc_texturemid = 0;
-            centery = 0;
+        R_DrawColumn(&mut column, &mut draw);
 
-            R_DrawColumn();
-
-            // Verify each pixel
-            for row in 20..=30 {
-                let src_idx = row & 127;
-                let expected = colormap[source[src_idx as usize] as usize];
-                let actual = framebuffer[(row * SCREENWIDTH + 10) as usize];
-                assert_eq!(actual, expected, "pixel mismatch at row {row}");
-            }
+        // Verify each pixel
+        for row in 20..=30 {
+            let src_idx = row & 127;
+            let expected = colormap[source[src_idx as usize] as usize];
+            let actual = framebuffer[(row * SCREENWIDTH + 10) as usize];
+            assert_eq!(actual, expected, "pixel mismatch at row {row}");
         }
     }
 
     /// Verifies that `R_DrawColumn` leaves the framebuffer untouched when `dc_yh < dc_yl`.
     #[test]
     fn draw_column_negative_count_returns_early() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0xABu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut framebuffer = vec![0xABu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut draw = full_screen_draw_state(&mut framebuffer);
 
-            dc_x = 5;
-            dc_yl = 10;
-            dc_yh = 5; // count = -5
-            dc_colormap = ptr::null_mut();
-            dc_source = ptr::null_mut();
+        let mut column = ColumnParams::new(0, ptr::null_mut());
+        column.dc_x = 5;
+        column.dc_yl = 10;
+        column.dc_yh = 5; // count = -5
 
-            R_DrawColumn();
+        R_DrawColumn(&mut column, &mut draw);
 
-            // Framebuffer should be untouched
-            for i in 0..framebuffer.len() {
-                assert_eq!(framebuffer[i], 0xAB, "framebuffer[{i}] was modified");
-            }
+        // Framebuffer should be untouched
+        for i in 0..framebuffer.len() {
+            assert_eq!(framebuffer[i], 0xAB, "framebuffer[{i}] was modified");
         }
     }
 
@@ -1081,36 +1247,27 @@ mod tests {
     /// screen columns (`dc_x * 2` and `dc_x * 2 + 1`).
     #[test]
     fn draw_column_low_doubles() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut source = vec![0u8; 128];
-            source[0] = 42;
-            let mut colormap = vec![0u8; 256];
-            colormap[42] = 99;
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut source = vec![0u8; 128];
+        source[0] = 42;
+        let mut colormap = vec![0u8; 256];
+        colormap[42] = 99;
 
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut draw = full_screen_draw_state(&mut framebuffer);
+        let mut column = ColumnParams::new(0, ptr::null_mut());
+        column.dc_colormap = colormap.as_mut_ptr();
+        column.dc_source = source.as_mut_ptr();
+        column.dc_x = 5;
+        column.dc_yl = 10;
+        column.dc_yh = 10;
+        column.dc_iscale = 0;
+        column.dc_texturemid = 0;
 
-            dc_colormap = colormap.as_mut_ptr();
-            dc_source = source.as_mut_ptr();
-            dc_x = 5;
-            dc_yl = 10;
-            dc_yh = 10;
-            dc_iscale = 0;
-            dc_texturemid = 0;
-            centery = 0;
+        R_DrawColumnLow(&mut column, &mut draw);
 
-            R_DrawColumnLow();
-
-            let x = dc_x << 1;
-            assert_eq!(framebuffer[(10 * SCREENWIDTH + x) as usize], 99);
-            assert_eq!(framebuffer[(10 * SCREENWIDTH + x + 1) as usize], 99);
-        }
+        let x = column.dc_x << 1;
+        assert_eq!(framebuffer[(10 * SCREENWIDTH + x) as usize], 99);
+        assert_eq!(framebuffer[(10 * SCREENWIDTH + x + 1) as usize], 99);
     }
 
     // -----------------------------------------------------------------------
@@ -1121,50 +1278,43 @@ mod tests {
     /// across a short horizontal span.
     #[test]
     fn draw_span_basic() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut source = vec![0u8; 64 * 64];
-            for i in 0..(64 * 64) {
-                source[i] = (i % 256) as u8;
-            }
-            let mut colormap = vec![0u8; 256];
-            for i in 0..256 {
-                colormap[i] = (i ^ 0xAA) as u8;
-            }
-
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
-
-            ds_colormap = colormap.as_mut_ptr();
-            ds_source = source.as_mut_ptr();
-            ds_y = 50;
-            ds_x1 = 10;
-            ds_x2 = 14;
-            ds_xfrac = 0;
-            ds_yfrac = 0;
-            ds_xstep = 0x10000; // 1.0 in fixed point
-            ds_ystep = 0;
-
-            R_DrawSpan();
-
-            // With xfrac=0, yfrac=0, xstep=1.0 (0x10000), ystep=0:
-            // position = 0
-            // step = (0x10000 << 10) & 0xffff0000 = 0x0400_0000
-            // After each pixel, position increases by 0x0400_0000,
-            // so xtemp (position >> 26) increments by 1 each time.
-            // ds_x2 - ds_x1 = 4, so we draw 5 pixels (10..=14).
-            let base = (50 * SCREENWIDTH + 10) as usize;
-            assert_eq!(framebuffer[base], colormap[source[0] as usize]);
-            assert_eq!(framebuffer[base + 1], colormap[source[1] as usize]);
-            assert_eq!(framebuffer[base + 2], colormap[source[2] as usize]);
-            assert_eq!(framebuffer[base + 3], colormap[source[3] as usize]);
-            assert_eq!(framebuffer[base + 4], colormap[source[4] as usize]);
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut source = vec![0u8; 64 * 64];
+        for i in 0..(64 * 64) {
+            source[i] = (i % 256) as u8;
         }
+        let mut colormap = vec![0u8; 256];
+        for i in 0..256 {
+            colormap[i] = (i ^ 0xAA) as u8;
+        }
+
+        let draw = full_screen_draw_state(&mut framebuffer);
+        let span = SpanParams {
+            ds_colormap: colormap.as_mut_ptr(),
+            ds_source: source.as_mut_ptr(),
+            ds_y: 50,
+            ds_x1: 10,
+            ds_x2: 14,
+            ds_xfrac: 0,
+            ds_yfrac: 0,
+            ds_xstep: 0x10000, // 1.0 in fixed point
+            ds_ystep: 0,
+        };
+
+        R_DrawSpan(&span, &draw);
+
+        // With xfrac=0, yfrac=0, xstep=1.0 (0x10000), ystep=0:
+        // position = 0
+        // step = (0x10000 << 10) & 0xffff0000 = 0x0400_0000
+        // After each pixel, position increases by 0x0400_0000,
+        // so xtemp (position >> 26) increments by 1 each time.
+        // ds_x2 - ds_x1 = 4, so we draw 5 pixels (10..=14).
+        let base = (50 * SCREENWIDTH + 10) as usize;
+        assert_eq!(framebuffer[base], colormap[source[0] as usize]);
+        assert_eq!(framebuffer[base + 1], colormap[source[1] as usize]);
+        assert_eq!(framebuffer[base + 2], colormap[source[2] as usize]);
+        assert_eq!(framebuffer[base + 3], colormap[source[3] as usize]);
+        assert_eq!(framebuffer[base + 4], colormap[source[4] as usize]);
     }
 
     // -----------------------------------------------------------------------
@@ -1174,39 +1324,32 @@ mod tests {
     /// Verifies that `R_DrawSpanLow` writes the same texel to two consecutive framebuffer bytes.
     #[test]
     fn draw_span_low_doubles() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut source = vec![0u8; 64 * 64];
-            source[0] = 77;
-            let mut colormap = vec![0u8; 256];
-            colormap[77] = 88;
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut source = vec![0u8; 64 * 64];
+        source[0] = 77;
+        let mut colormap = vec![0u8; 256];
+        colormap[77] = 88;
 
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let draw = full_screen_draw_state(&mut framebuffer);
+        let span = SpanParams {
+            ds_colormap: colormap.as_mut_ptr(),
+            ds_source: source.as_mut_ptr(),
+            ds_y: 60,
+            ds_x1: 5,
+            ds_x2: 5,
+            ds_xfrac: 0,
+            ds_yfrac: 0,
+            ds_xstep: 0,
+            ds_ystep: 0,
+        };
 
-            ds_colormap = colormap.as_mut_ptr();
-            ds_source = source.as_mut_ptr();
-            ds_y = 60;
-            ds_x1 = 5;
-            ds_x2 = 5;
-            ds_xfrac = 0;
-            ds_yfrac = 0;
-            ds_xstep = 0;
-            ds_ystep = 0;
+        R_DrawSpanLow(&span, &draw);
 
-            R_DrawSpanLow();
-
-            // ds_x2 - ds_x1 = 0, so 1 iteration. Each iteration writes 2 pixels.
-            // ds_x1_low = 10
-            let base = (60 * SCREENWIDTH + 10) as usize;
-            assert_eq!(framebuffer[base], 88);
-            assert_eq!(framebuffer[base + 1], 88);
-        }
+        // ds_x2 - ds_x1 = 0, so 1 iteration. Each iteration writes 2 pixels.
+        // ds_x1_low = 10
+        let base = (60 * SCREENWIDTH + 10) as usize;
+        assert_eq!(framebuffer[base], 88);
+        assert_eq!(framebuffer[base + 1], 88);
     }
 
     // -----------------------------------------------------------------------
@@ -1218,49 +1361,45 @@ mod tests {
     #[test]
     fn video_erase_copies_from_background() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut video = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut bg = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            for i in 0..bg.len() {
-                bg[i] = (i % 256) as u8;
-            }
-
-            let orig_video = video_buffer();
-            VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
-            background_buffer = bg.as_mut_ptr();
-
-            R_VideoErase(100, 10);
-
-            for i in 100..110 {
-                assert_eq!(video[i as usize], bg[i as usize]);
-            }
-            // Ensure surrounding bytes are untouched
-            assert_eq!(video[99], 0);
-            assert_eq!(video[110], 0);
-
-            VIDEO.borrow_mut().video_buffer = orig_video;
-            background_buffer = ptr::null_mut();
+        let mut video = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut bg = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        for i in 0..bg.len() {
+            bg[i] = (i % 256) as u8;
         }
+
+        let orig_video = video_buffer();
+        VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
+        DRAW.borrow_mut().background_buffer = bg.as_mut_ptr();
+
+        R_VideoErase(100, 10);
+
+        for i in 100..110 {
+            assert_eq!(video[i as usize], bg[i as usize]);
+        }
+        // Ensure surrounding bytes are untouched
+        assert_eq!(video[99], 0);
+        assert_eq!(video[110], 0);
+
+        VIDEO.borrow_mut().video_buffer = orig_video;
+        DRAW.borrow_mut().background_buffer = ptr::null_mut();
     }
 
     /// Verifies that `R_VideoErase` is a no-op when `background_buffer` is null.
     #[test]
     fn video_erase_null_background_does_nothing() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut video = vec![0xCCu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let orig_video = video_buffer();
-            VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
-            background_buffer = ptr::null_mut();
+        let mut video = vec![0xCCu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let orig_video = video_buffer();
+        VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
+        DRAW.borrow_mut().background_buffer = ptr::null_mut();
 
-            R_VideoErase(0, 10);
+        R_VideoErase(0, 10);
 
-            for i in 0..10 {
-                assert_eq!(video[i], 0xCC);
-            }
-
-            VIDEO.borrow_mut().video_buffer = orig_video;
+        for i in 0..10 {
+            assert_eq!(video[i], 0xCC);
         }
+
+        VIDEO.borrow_mut().video_buffer = orig_video;
     }
 
     // -----------------------------------------------------------------------
@@ -1272,28 +1411,23 @@ mod tests {
     #[test]
     fn draw_view_border_fullscreen_returns_early() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            scaledviewwidth = SCREENWIDTH;
-            // Should return without doing anything (no panic)
-            R_DrawViewBorder();
-        }
+        DRAW.borrow_mut().scaledviewwidth = SCREENWIDTH;
+        // Should return without doing anything (no panic)
+        R_DrawViewBorder();
     }
 
     /// Verifies the `top` and `side` geometry values computed inside `R_DrawViewBorder`
     /// for a representative windowed viewport.
     #[test]
     fn draw_view_border_sets_correct_offsets() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            scaledviewwidth = 256;
-            viewheight = 168;
+        let scaledviewwidth = 256;
+        let viewheight = 168;
 
-            let top = ((SCREENHEIGHT - SBARHEIGHT) - viewheight) / 2;
-            let side = (SCREENWIDTH - scaledviewwidth) / 2;
+        let top = ((SCREENHEIGHT - SBARHEIGHT) - viewheight) / 2;
+        let side = (SCREENWIDTH - scaledviewwidth) / 2;
 
-            assert_eq!(top, 0);
-            assert_eq!(side, 32);
-        }
+        assert_eq!(top, 0);
+        assert_eq!(side, 32);
     }
 
     // -----------------------------------------------------------------------
@@ -1304,37 +1438,28 @@ mod tests {
     /// to produce the expected output pixel.
     #[test]
     fn draw_translated_column_maps_colors() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut source = vec![0u8; 256];
-            source[0] = 5; // source pixel at frac=0
-            let mut translation = vec![0u8; 256];
-            translation[5] = 7; // map color 5 → 7
-            let mut colormap = vec![0u8; 256];
-            colormap[7] = 99;
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut source = vec![0u8; 256];
+        source[0] = 5; // source pixel at frac=0
+        let mut translation = vec![0u8; 256];
+        translation[5] = 7; // map color 5 → 7
+        let mut colormap = vec![0u8; 256];
+        colormap[7] = 99;
 
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut draw = full_screen_draw_state(&mut framebuffer);
+        let mut column = ColumnParams::new(0, ptr::null_mut());
+        column.dc_colormap = colormap.as_mut_ptr();
+        column.dc_source = source.as_mut_ptr();
+        column.dc_translation = translation.as_mut_ptr();
+        column.dc_x = 15;
+        column.dc_yl = 25;
+        column.dc_yh = 25;
+        column.dc_iscale = 0;
+        column.dc_texturemid = 0;
 
-            dc_colormap = colormap.as_mut_ptr();
-            dc_source = source.as_mut_ptr();
-            dc_translation = translation.as_mut_ptr();
-            dc_x = 15;
-            dc_yl = 25;
-            dc_yh = 25;
-            dc_iscale = 0;
-            dc_texturemid = 0;
-            centery = 0;
+        R_DrawTranslatedColumn(&mut column, &mut draw);
 
-            R_DrawTranslatedColumn();
-
-            assert_eq!(framebuffer[(25 * SCREENWIDTH + 15) as usize], 99);
-        }
+        assert_eq!(framebuffer[(25 * SCREENWIDTH + 15) as usize], 99);
     }
 
     // -----------------------------------------------------------------------
@@ -1345,75 +1470,48 @@ mod tests {
     /// indexes it through colormap 6, and advances `fuzzpos`.
     #[test]
     fn draw_fuzz_column_reads_adjacent() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            // Pre-fill the framebuffer so the fuzz effect has something to read.
-            // fuzzoffset[0] = FUZZOFF = SCREENWIDTH, so it reads one row below.
-            framebuffer[((25 + 1) * SCREENWIDTH + 10) as usize] = 3;
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        // Pre-fill the framebuffer so the fuzz effect has something to read.
+        // fuzzoffset[0] = FUZZOFF = SCREENWIDTH, so it reads one row below.
+        framebuffer[((25 + 1) * SCREENWIDTH + 10) as usize] = 3;
 
-            // Set up colormaps: colormaps[6*256 + 3] = 77
-            let mut colormaps_buf = vec![0u8; 32 * 256];
-            colormaps_buf[6 * 256 + 3] = 77;
+        // Set up colormaps: colormaps[6*256 + 3] = 77
+        let mut colormaps_buf = vec![0u8; 32 * 256];
+        colormaps_buf[6 * 256 + 3] = 77;
 
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut draw = full_screen_draw_state(&mut framebuffer);
+        draw.fuzzpos = 0;
+        let mut column = ColumnParams::new(0, colormaps_buf.as_mut_ptr());
+        column.dc_x = 10;
+        column.dc_yl = 25;
+        column.dc_yh = 25;
 
-            colormaps = colormaps_buf.as_mut_ptr();
-            dc_x = 10;
-            dc_yl = 25;
-            dc_yh = 25;
-            dc_iscale = 0;
-            dc_texturemid = 0;
-            centery = 0;
-            fuzzpos = 0;
-            viewheight = SCREENHEIGHT;
+        R_DrawFuzzColumn(&mut column, &mut draw);
 
-            R_DrawFuzzColumn();
-
-            // fuzzpos should have advanced
-            assert_eq!({ fuzzpos }, 1);
-            // The pixel at (10, 25) should now be colormaps[6*256 + framebuffer[(10, 26)]]
-            assert_eq!(framebuffer[(25 * SCREENWIDTH + 10) as usize], 77);
-        }
+        // fuzzpos should have advanced
+        assert_eq!(draw.fuzzpos, 1);
+        // The pixel at (10, 25) should now be colormaps[6*256 + framebuffer[(10, 26)]]
+        assert_eq!(framebuffer[(25 * SCREENWIDTH + 10) as usize], 77);
     }
 
     /// Verifies that `R_DrawFuzzColumn` clamps `dc_yl` to 1 and `dc_yh` to `viewheight - 2`
     /// to avoid reading outside the viewport.
     #[test]
     fn draw_fuzz_column_clamps_borders() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
-            let mut colormaps_buf = vec![0u8; 32 * 256];
+        let mut framebuffer = vec![0u8; (SCREENWIDTH * SCREENHEIGHT) as usize];
+        let mut colormaps_buf = vec![0u8; 32 * 256];
 
-            for i in 0..SCREENHEIGHT {
-                ylookup[i as usize] = framebuffer.as_mut_ptr().add((i * SCREENWIDTH) as usize);
-            }
-            for i in 0..SCREENWIDTH {
-                columnofs[i as usize] = i;
-            }
+        let mut draw = full_screen_draw_state(&mut framebuffer);
+        let mut column = ColumnParams::new(0, colormaps_buf.as_mut_ptr());
+        column.dc_x = 0;
+        column.dc_yl = 0; // will be clamped to 1
+        column.dc_yh = SCREENHEIGHT - 1; // will be clamped to SCREENHEIGHT - 2
 
-            colormaps = colormaps_buf.as_mut_ptr();
-            dc_x = 0;
-            dc_yl = 0; // will be clamped to 1
-            dc_yh = SCREENHEIGHT - 1; // will be clamped to SCREENHEIGHT - 2
-            dc_iscale = 0;
-            dc_texturemid = 0;
-            centery = 0;
-            fuzzpos = 0;
-            viewheight = SCREENHEIGHT;
+        R_DrawFuzzColumn(&mut column, &mut draw);
 
-            R_DrawFuzzColumn();
-
-            // After clamping: dc_yl = 1, dc_yh = SCREENHEIGHT - 2
-            assert_eq!({ dc_yl }, 1);
-            assert_eq!({ dc_yh }, SCREENHEIGHT - 2);
-        }
+        // After clamping: dc_yl = 1, dc_yh = SCREENHEIGHT - 2
+        assert_eq!(column.dc_yl, 1);
+        assert_eq!(column.dc_yh, SCREENHEIGHT - 2);
     }
 
     // -----------------------------------------------------------------------
@@ -1431,35 +1529,35 @@ mod tests {
             FUZZOFF, -FUZZOFF, -FUZZOFF, -FUZZOFF, -FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF, FUZZOFF,
             -FUZZOFF, FUZZOFF, FUZZOFF, -FUZZOFF, FUZZOFF,
         ];
-        unsafe {
-            for (i, (&got, &want)) in (*&raw const fuzzoffset)
-                .iter()
-                .zip(expected.iter())
-                .enumerate()
-            {
-                assert_eq!(
-                    got, want,
-                    "fuzzoffset[{i}] mismatch: got {got}, want {want}"
-                );
-            }
+        for (i, (&got, &want)) in fuzzoffset.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(
+                got, want,
+                "fuzzoffset[{i}] mismatch: got {got}, want {want}"
+            );
         }
     }
 
     /// Checks that the `fuzzoffset` table contains exactly 29 positive and 21 negative entries.
     #[test]
     fn fuzzoffset_positive_count() {
-        unsafe {
-            let offsets = fuzzoffset;
-            let pos = offsets.iter().filter(|&&v| v > 0).count();
-            let neg = offsets.iter().filter(|&&v| v < 0).count();
-            assert_eq!(
-                pos, 29,
-                "expected 29 positive fuzzoffset entries, got {pos}"
-            );
-            assert_eq!(
-                neg, 21,
-                "expected 21 negative fuzzoffset entries, got {neg}"
-            );
-        }
+        let pos = fuzzoffset.iter().filter(|&&v| v > 0).count();
+        let neg = fuzzoffset.iter().filter(|&&v| v < 0).count();
+        assert_eq!(
+            pos, 29,
+            "expected 29 positive fuzzoffset entries, got {pos}"
+        );
+        assert_eq!(
+            neg, 21,
+            "expected 21 negative fuzzoffset entries, got {neg}"
+        );
+    }
+
+    /// The view-buffer state starts empty before `R_InitBuffer`.
+    #[test]
+    fn state_defaults_to_empty_view() {
+        let draw = DrawState::new();
+        assert_eq!((draw.viewwidth, draw.viewheight, draw.fuzzpos), (0, 0, 0));
+        assert!(draw.ylookup.iter().all(|row| row.is_null()));
+        assert!(draw.translationtables.is_null());
     }
 }

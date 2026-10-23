@@ -593,13 +593,13 @@ use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
 use crate::engine::play::map::P_CheckPosition;
 
 /// 3D view sizing helpers and point-to-subsector lookup from `r_main.c`.
-use crate::engine::render_3d::main::{setsizeneeded, R_ExecuteSetViewSize, R_PointInSubsector};
+use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_PointInSubsector, VIEW};
 
 /// Texture/flat name resolution from `r_data.c`.
 use crate::engine::render_3d::data::{R_FlatNumForName, R_TextureNumForName};
 
 /// Sky-flat index and active sky texture id from `r_sky.c`.
-use crate::engine::render_3d::sky::{skyflatnum, skytexture};
+use crate::engine::render_3d::sky::SKY;
 
 /// Status-bar back-screen painter from `r_draw.c`.
 use crate::engine::render_3d::draw::R_FillBackScreen;
@@ -1148,7 +1148,7 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
 /// Mutates many engine globals (`gamestate`, `wipegamestate`, `levelstarttic`,
 /// the input rings, the players array).
 pub unsafe fn G_DoLoadLevel() {
-    skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
+    SKY.borrow_mut().skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
 
     // Fix sky texture for Final Doom / Chex
     if gamemode() == commercial && (gameversion() == exe_final2 || gameversion() == exe_chex) {
@@ -1159,7 +1159,7 @@ pub unsafe fn G_DoLoadLevel() {
         } else {
             b"SKY3"
         };
-        skytexture = R_TextureNumForName(DEH_String(skytexturename));
+        SKY.borrow_mut().skytexture = R_TextureNumForName(DEH_String(skytexturename));
     }
 
     levelstarttic = gametic();
@@ -2085,7 +2085,7 @@ pub unsafe fn G_DoLoadGame() {
 
     save_stream = Cursor::default();
 
-    if setsizeneeded.is_truthy() {
+    if VIEW.borrow().setsizeneeded.is_truthy() {
         R_ExecuteSetViewSize();
     }
 
@@ -2329,7 +2329,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
         }
     };
 
-    skytexture = R_TextureNumForName(DEH_String(skytexturename));
+    SKY.borrow_mut().skytexture = R_TextureNumForName(DEH_String(skytexturename));
 
     G_DoLoadLevel();
 }

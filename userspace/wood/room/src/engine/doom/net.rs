@@ -207,7 +207,7 @@ use crate::engine::{
     },
     global::Global,
     misc::{argv::M_CheckParm, menu::M_Ticker},
-    render_3d::main::viewangleoffset,
+    render_3d::main::VIEW,
     wad::{checksum::W_Checksum, W_CheckNumForName},
 };
 
@@ -378,12 +378,12 @@ unsafe fn InitConnectData(connect_data: *mut NetConnectDataT) {
     (*connect_data).drone = 0;
 
     if M_CheckParm("-left") > 0 {
-        viewangleoffset = 0x40000000u32 as i32;
+        VIEW.borrow_mut().viewangleoffset = 0x40000000u32 as i32;
         (*connect_data).drone = 1;
     }
 
     if M_CheckParm("-right") > 0 {
-        viewangleoffset = 0xC0000000u32 as i32;
+        VIEW.borrow_mut().viewangleoffset = 0xC0000000u32 as i32;
         (*connect_data).drone = 1;
     }
 

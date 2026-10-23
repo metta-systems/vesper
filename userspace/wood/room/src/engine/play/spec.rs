@@ -43,8 +43,7 @@ use crate::{
             tick::{leveltime, P_AddThinker, ThinkerKind},
         },
         render_3d::data::{
-            flattranslation, numflats, texturetranslation, R_CheckTextureNumForName,
-            R_FlatNumForName, R_TextureNumForName,
+            R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
         },
         sound::S_StartSectorSound,
         wad::format::LinedefFlag,
@@ -1045,6 +1044,10 @@ pub unsafe fn P_UpdateSpecials() {
         }
     }
 
+    let (texturetranslation, flattranslation) = {
+        let data = RENDER_DATA.borrow();
+        (data.texturetranslation, data.flattranslation)
+    };
     let mut anim = std::ptr::addr_of_mut!(anims[0]);
     while anim < lastanim {
         let base = (*anim).basepic;
@@ -1146,10 +1149,11 @@ unsafe fn DonutOverrun(
             if let Some(value) = M_StrToInt(argument(p + 2)) {
                 tmp_s3_floorpic = value;
             }
+            let numflats = RENDER_DATA.borrow().numflats;
             if tmp_s3_floorpic >= numflats {
                 eprintln!(
                     "DonutOverrun: The second parameter for \"-donut\" switch should be greater than 0 and less than number of flats ({}). Using default value ({}) instead. ",
-                    { numflats }, 0x16
+                    numflats, 0x16
                 );
                 tmp_s3_floorpic = 0x16;
             }

@@ -111,7 +111,7 @@ pub struct hu_itext_t {
 use crate::engine::{
     automap::automap_active,
     render_2d::V_DrawPatchDirect,
-    render_3d::draw::{viewheight, viewwidth, viewwindowx, viewwindowy, R_VideoErase},
+    render_3d::draw::{R_VideoErase, DRAW},
 };
 
 /// Initialize the heads-up widget library (no-op in this port, matching C).
@@ -244,6 +244,15 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
 /// Called from `HU_Erase`, `HUlib_eraseSText`, and `HUlib_eraseIText`.
 pub fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
     unsafe {
+        let (viewwindowx, viewwindowy, viewwidth, viewheight) = {
+            let draw = DRAW.borrow();
+            (
+                draw.viewwindowx,
+                draw.viewwindowy,
+                draw.viewwidth,
+                draw.viewheight,
+            )
+        };
         if !automap_active() && viewwindowx != 0 && (*l).needsupdate != 0 {
             let lh = (**(*l).f).height.get() as i32 + 1;
             for y in (*l).y..(*l).y + lh {

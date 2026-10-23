@@ -71,40 +71,34 @@ const EXPECTED_FUZZ: [i32; 50] = [
 /// `fuzzoffset[]` must contain exactly `FUZZTABLE` (50) entries.
 #[test]
 fn fuzzoffset_length() {
-    unsafe {
-        assert_eq!((*&raw const draw::fuzzoffset).len(), draw::FUZZTABLE);
-    }
+    assert_eq!(draw::fuzzoffset.len(), draw::FUZZTABLE);
 }
 
 /// Every `fuzzoffset` entry is either +FUZZOFF or -FUZZOFF (one column to
 /// the right or left).
 #[test]
 fn fuzzoffset_all_values_are_plus_or_minus_fuzzoff() {
-    unsafe {
-        for (i, &v) in (*&raw const draw::fuzzoffset).iter().enumerate() {
-            assert!(
-                v == draw::FUZZOFF || v == -draw::FUZZOFF,
-                "fuzzoffset[{i}] = {v}; expected ±{foff}",
-                foff = draw::FUZZOFF,
-            );
-        }
+    for (i, &v) in draw::fuzzoffset.iter().enumerate() {
+        assert!(
+            v == draw::FUZZOFF || v == -draw::FUZZOFF,
+            "fuzzoffset[{i}] = {v}; expected ±{foff}",
+            foff = draw::FUZZOFF,
+        );
     }
 }
 
 /// Each `fuzzoffset` entry matches the verbatim value from r_draw.c, in order.
 #[test]
 fn fuzzoffset_exact_values() {
-    unsafe {
-        for (i, (&got, &want)) in (*&raw const draw::fuzzoffset)
-            .iter()
-            .zip(EXPECTED_FUZZ.iter())
-            .enumerate()
-        {
-            assert_eq!(
-                got, want,
-                "fuzzoffset[{i}] mismatch: got {got}, want {want}"
-            );
-        }
+    for (i, (&got, &want)) in draw::fuzzoffset
+        .iter()
+        .zip(EXPECTED_FUZZ.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            got, want,
+            "fuzzoffset[{i}] mismatch: got {got}, want {want}"
+        );
     }
 }
 
@@ -113,19 +107,17 @@ fn fuzzoffset_exact_values() {
 #[test]
 fn fuzzoffset_positive_count() {
     // There are exactly 29 positive (+320) entries and 21 negative (−320).
-    unsafe {
-        let offsets = draw::fuzzoffset;
-        let pos = offsets.iter().filter(|&&v| v > 0).count();
-        let neg = offsets.iter().filter(|&&v| v < 0).count();
-        assert_eq!(
-            pos, 29,
-            "expected 29 positive fuzzoffset entries, got {pos}"
-        );
-        assert_eq!(
-            neg, 21,
-            "expected 21 negative fuzzoffset entries, got {neg}"
-        );
-    }
+    let offsets = draw::fuzzoffset;
+    let pos = offsets.iter().filter(|&&v| v > 0).count();
+    let neg = offsets.iter().filter(|&&v| v < 0).count();
+    assert_eq!(
+        pos, 29,
+        "expected 29 positive fuzzoffset entries, got {pos}"
+    );
+    assert_eq!(
+        neg, 21,
+        "expected 21 negative fuzzoffset entries, got {neg}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -137,25 +129,28 @@ fn fuzzoffset_positive_count() {
 //   viewwindowy = (SCREENHEIGHT − SBARHEIGHT − height) >> 1   otherwise
 // ---------------------------------------------------------------------------
 
+/// The `(viewwindowx, viewwindowy)` offsets `R_InitBuffer` left in the draw state.
+fn view_window_offsets() -> (i32, i32) {
+    let draw_state = draw::DRAW.borrow();
+    (draw_state.viewwindowx, draw_state.viewwindowy)
+}
+
 /// When `R_InitBuffer` is called with a full-width view (width == SCREENWIDTH),
 /// both `viewwindowx` and `viewwindowy` must be 0.
 #[test]
 fn r_init_buffer_fullscreen_sets_zero_offsets() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Full-screen view: width == SCREENWIDTH → both offsets must be 0.
-    unsafe {
-        draw::R_InitBuffer(SCREENWIDTH, 168);
-        assert_eq!(
-            { draw::viewwindowx },
-            0,
-            "viewwindowx should be 0 for full-width view"
-        );
-        assert_eq!(
-            { draw::viewwindowy },
-            0,
-            "viewwindowy should be 0 for full-width view"
-        );
-    }
+    draw::R_InitBuffer(SCREENWIDTH, 168);
+    let (viewwindowx, viewwindowy) = view_window_offsets();
+    assert_eq!(
+        viewwindowx, 0,
+        "viewwindowx should be 0 for full-width view"
+    );
+    assert_eq!(
+        viewwindowy, 0,
+        "viewwindowy should be 0 for full-width view"
+    );
 }
 
 /// For a 256-pixel-wide window, `viewwindowx` must equal `(320-256) >> 1 = 32`.
@@ -163,14 +158,12 @@ fn r_init_buffer_fullscreen_sets_zero_offsets() {
 fn r_init_buffer_windowed_sets_correct_x_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Windowed view 256 wide: viewwindowx = (320 − 256) >> 1 = 32.
-    unsafe {
-        draw::R_InitBuffer(256, 168);
-        assert_eq!(
-            { draw::viewwindowx },
-            (SCREENWIDTH - 256) >> 1,
-            "viewwindowx mismatch for width=256"
-        );
-    }
+    draw::R_InitBuffer(256, 168);
+    assert_eq!(
+        view_window_offsets().0,
+        (SCREENWIDTH - 256) >> 1,
+        "viewwindowx mismatch for width=256"
+    );
 }
 
 /// For a 200x100 windowed view, `viewwindowy = (200 - 32 - 100) >> 1 = 34`.
@@ -178,15 +171,13 @@ fn r_init_buffer_windowed_sets_correct_x_offset() {
 fn r_init_buffer_windowed_height_sets_correct_y_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Small window (200×100): viewwindowy = (200 − 32 − 100) >> 1 = 34.
-    unsafe {
-        draw::R_InitBuffer(200, 100);
-        let want_y = (SCREENHEIGHT - draw::SBARHEIGHT - 100) >> 1;
-        assert_eq!(
-            { draw::viewwindowy },
-            want_y,
-            "viewwindowy mismatch for height=100"
-        );
-    }
+    draw::R_InitBuffer(200, 100);
+    let want_y = (SCREENHEIGHT - draw::SBARHEIGHT - 100) >> 1;
+    assert_eq!(
+        view_window_offsets().1,
+        want_y,
+        "viewwindowy mismatch for height=100"
+    );
 }
 
 /// Across a range of widths, `viewwindowx` follows `(SCREENWIDTH - w) >> 1`.
@@ -194,16 +185,13 @@ fn r_init_buffer_windowed_height_sets_correct_y_offset() {
 fn r_init_buffer_various_widths_x_formula() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     for &w in &[160_i32, 200, 256, 280, 304, 312] {
-        unsafe {
-            draw::R_InitBuffer(w, 100);
-            let want = (SCREENWIDTH - w) >> 1;
-            assert_eq!(
-                { draw::viewwindowx },
-                want,
-                "viewwindowx wrong for width={w}: got {}, want {want}",
-                { draw::viewwindowx }
-            );
-        }
+        draw::R_InitBuffer(w, 100);
+        let want = (SCREENWIDTH - w) >> 1;
+        let viewwindowx = view_window_offsets().0;
+        assert_eq!(
+            viewwindowx, want,
+            "viewwindowx wrong for width={w}: got {viewwindowx}, want {want}"
+        );
     }
 }
 
@@ -216,15 +204,12 @@ fn r_init_buffer_various_heights_y_formula() {
     let w = 256;
     let playfield = SCREENHEIGHT - draw::SBARHEIGHT; // 168
     for &h in &[50_i32, 80, 100, 120, 140, 160, 168] {
-        unsafe {
-            draw::R_InitBuffer(w, h);
-            let want = (playfield - h) >> 1;
-            assert_eq!(
-                { draw::viewwindowy },
-                want,
-                "viewwindowy wrong for height={h}: got {}, want {want}",
-                { draw::viewwindowy }
-            );
-        }
+        draw::R_InitBuffer(w, h);
+        let want = (playfield - h) >> 1;
+        let viewwindowy = view_window_offsets().1;
+        assert_eq!(
+            viewwindowy, want,
+            "viewwindowy wrong for height={h}: got {viewwindowy}, want {want}"
+        );
     }
 }
