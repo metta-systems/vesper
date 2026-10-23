@@ -43,9 +43,7 @@ fn raw_strlen(buf: &[u8]) -> usize {
 /// `int cht_CheckCheat(cheatseq_t *cht, char key)`
 ///
 /// Returns 1 (true) if the cheat was successfully entered, 0 otherwise.
-pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: u8) -> i32 {
-    let cht = unsafe { &mut *cht };
-
+pub fn cht_CheckCheat(cht: &mut cheatseq_t, key: u8) -> i32 {
     let seq_len = raw_strlen(&cht.sequence);
 
     // If we make a short sequence on a cheat with parameters, this
@@ -80,11 +78,11 @@ pub fn cht_CheckCheat(cht: *mut cheatseq_t, key: u8) -> i32 {
 }
 
 /// `void cht_GetParam(cheatseq_t *cht, char *buffer)`
-pub fn cht_GetParam(cht: *mut cheatseq_t, buffer: *mut u8) {
-    let cht = unsafe { &*cht };
-    let buf = unsafe { std::slice::from_raw_parts_mut(buffer, cht.parameter_chars as usize) };
+///
+/// `buffer` must hold at least `cht.parameter_chars` bytes.
+pub fn cht_GetParam(cht: &cheatseq_t, buffer: &mut [u8]) {
     let param_chars = cht.parameter_chars as usize;
-    buf[..param_chars].copy_from_slice(&cht.parameter_buf[..param_chars]);
+    buffer[..param_chars].copy_from_slice(&cht.parameter_buf[..param_chars]);
 }
 
 #[cfg(test)]
@@ -173,7 +171,7 @@ mod tests {
         cht_CheckCheat(&mut cheat, b'7'); // completes the cheat
 
         let mut param_buf = [0u8; MAX_CHEAT_PARAMS];
-        cht_GetParam(&mut cheat, param_buf.as_mut_ptr());
+        cht_GetParam(&cheat, &mut param_buf);
         assert_eq!(param_buf[0], b'7');
     }
 }

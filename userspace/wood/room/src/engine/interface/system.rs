@@ -155,7 +155,7 @@ pub fn I_Tactile(_on: i32, _off: i32, _total: i32) {}
 ///
 /// Mirrors `I_ZoneBase` from `i_system.c`. Called once at startup from
 /// `Z_Init` in `z_zone.c`.
-pub fn I_ZoneBase(size: *mut i32) -> *mut u8 {
+pub fn I_ZoneBase(size: &mut i32) -> *mut u8 {
     unsafe {
         let mut default_ram = DEFAULT_RAM;
         let mut min_ram = MIN_RAM;
@@ -238,12 +238,7 @@ pub fn I_Quit() {
 
 /// Probe whether the Zenity GUI dialog binary is available on this
 /// system by invoking `/usr/bin/zenity --help`.
-///
-/// # Safety
-///
-/// Marked `unsafe` only for symmetry with `ZenityErrorBox`; the body
-/// itself uses safe `std::process` APIs. Always safe to call.
-unsafe fn ZenityAvailable() -> bool {
+fn ZenityAvailable() -> bool {
     std::process::Command::new("/usr/bin/zenity")
         .arg("--help")
         .stdout(std::process::Stdio::null())
@@ -259,11 +254,7 @@ unsafe fn ZenityAvailable() -> bool {
 /// Unlike the C source's `EscapeShellString` + `system()` approach,
 /// this implementation passes the message as an argv element to
 /// `std::process::Command`, so no shell-escaping is required.
-///
-/// # Safety
-///
-/// `message` must point to a valid NUL-terminated C string.
-unsafe fn ZenityErrorBox(message: &str) -> i32 {
+fn ZenityErrorBox(message: &str) -> i32 {
     if !ZenityAvailable() {
         return 0;
     }

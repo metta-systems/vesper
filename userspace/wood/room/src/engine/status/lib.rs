@@ -167,10 +167,11 @@ pub fn STlib_init() {
 /// Stores the position, digit-patch array, value pointer, visibility flag,
 /// and field width into `*n`. Sets `oldnum` to 0.
 ///
-/// # Preconditions
+/// # Safety
+/// * `n` must be a valid non-null pointer.
 /// * `pl` must point to at least 10 valid patch pointers (digits 0-9).
 /// * `num` and `on` must be valid non-null pointers for the widget's lifetime.
-pub fn STlib_initNum(
+pub unsafe fn STlib_initNum(
     n: *mut st_number_t,
     x: i32,
     y: i32,
@@ -206,7 +207,11 @@ pub fn STlib_initNum(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`n->y - ST_Y < 0`).
-pub fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
+///
+/// # Safety
+/// `n` must be a valid non-null pointer to a widget set up by
+/// [`STlib_initNum`].
+pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
     unsafe {
         let mut numdigits = (*n).width;
         let num = *(*n).num;
@@ -276,7 +281,11 @@ pub fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
 /// Calls [`STlib_drawNum`] when `*n.on != 0`. In the C original this function
 /// also checked whether the value had changed before drawing; this port always
 /// redraws when visible (matching the `refresh` path).
-pub fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
+///
+/// # Safety
+/// `n` must be a valid non-null pointer to a widget set up by
+/// [`STlib_initNum`].
+pub unsafe fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
     unsafe {
         if *(*n).on != 0 {
             STlib_drawNum(n, refresh);
@@ -289,10 +298,11 @@ pub fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
 /// Calls [`STlib_initNum`] with `width = 3` for the embedded number, then
 /// stores the `%` sign patch in `p.p`.
 ///
-/// # Preconditions
+/// # Safety
+/// * `p` must be a valid non-null pointer.
 /// * `pl` must point to at least 10 valid digit patches.
 /// * `num`, `on`, and `percent` must be valid non-null pointers.
-pub fn STlib_initPercent(
+pub unsafe fn STlib_initPercent(
     p: *mut st_percent_t,
     x: i32,
     y: i32,
@@ -313,7 +323,11 @@ pub fn STlib_initPercent(
 ///
 /// When `refresh != 0` and the widget is visible, draws the `%` patch at the
 /// number's position before delegating to [`STlib_updateNum`].
-pub fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
+///
+/// # Safety
+/// `per` must be a valid non-null pointer to a widget set up by
+/// [`STlib_initPercent`].
+pub unsafe fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
     unsafe {
         if refresh != 0 && *(*per).n.on != 0 {
             V_DrawPatch((*per).n.x, (*per).n.y, (*per).p);
@@ -327,10 +341,10 @@ pub fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
 /// Sets position, patch array, current-index pointer, and visibility flag.
 /// `oldinum` is initialized to `-1` so the first draw is unconditional.
 ///
-/// # Preconditions
-/// * `inum` and `on` must be valid non-null pointers.
+/// # Safety
+/// * `i`, `inum` and `on` must be valid non-null pointers.
 /// * `il` must point to a valid patch array covering all expected index values.
-pub fn STlib_initMultIcon(
+pub unsafe fn STlib_initMultIcon(
     i: *mut st_multicon_t,
     x: i32,
     y: i32,
@@ -362,7 +376,11 @@ pub fn STlib_initMultIcon(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`) when erasing a previous icon.
-pub fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
+///
+/// # Safety
+/// `mi` must be a valid non-null pointer to a widget set up by
+/// [`STlib_initMultIcon`].
+pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
     unsafe {
         if *(*mi).on != 0 && ((*mi).oldinum != *(*mi).inum || refresh != 0) && *(*mi).inum != -1 {
             if (*mi).oldinum != -1 {
@@ -389,9 +407,9 @@ pub fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
 /// Sets position, icon patch, value pointer, and visibility flag. `oldval` is
 /// initialized to 0.
 ///
-/// # Preconditions
-/// * `i`, `val`, and `on` must be valid non-null pointers.
-pub fn STlib_initBinIcon(
+/// # Safety
+/// * `b`, `i`, `val`, and `on` must be valid non-null pointers.
+pub unsafe fn STlib_initBinIcon(
     b: *mut st_binicon_t,
     x: i32,
     y: i32,
@@ -421,7 +439,11 @@ pub fn STlib_initBinIcon(
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`).
-pub fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
+///
+/// # Safety
+/// `bi` must be a valid non-null pointer to a widget set up by
+/// [`STlib_initBinIcon`].
+pub unsafe fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
     unsafe {
         if *(*bi).on != 0 && ((*bi).oldval != *(*bi).val || refresh != 0) {
             let p = (*bi).p;

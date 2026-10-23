@@ -593,7 +593,11 @@ pub fn S_ResumeSound() {
 /// channels whose sound stopped playing or fell out of audible range.
 ///
 /// C origin: `S_UpdateSounds` in `s_sound.c`.
-pub fn S_UpdateSounds(listener: *mut mobj_t) {
+///
+/// # Safety
+/// `listener` must be a valid `mobj_t` pointer whenever a positional sound
+/// is playing.
+pub unsafe fn S_UpdateSounds(listener: *mut mobj_t) {
     unsafe {
         I_UpdateSound();
 

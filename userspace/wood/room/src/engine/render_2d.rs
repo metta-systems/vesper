@@ -79,7 +79,10 @@ pub fn V_MarkRect(x: i32, y: i32, width: i32, height: i32) {
     }
 }
 
-pub fn V_CopyRect(
+/// # Safety
+/// `source` must be a `SCREENWIDTH`-wide screen buffer that holds the
+/// source rectangle, and the destination rectangle must fit the screen.
+pub unsafe fn V_CopyRect(
     srcx: i32,
     srcy: i32,
     source: *mut u8,
@@ -109,7 +112,9 @@ pub fn V_SetPatchClipCallback(func: vpatchclipfunc_t) {
     RENDER_2D.borrow_mut().patchclip_callback = func;
 }
 
-pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         patchclip_callback,
@@ -162,7 +167,9 @@ pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         patchclip_callback,
@@ -215,11 +222,15 @@ pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawPatchDirect(x: i32, y: i32, patch: *mut patch_t) {
     V_DrawPatch(x, y, patch);
 }
 
-pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         tinttable,
@@ -260,7 +271,9 @@ pub fn V_DrawTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         xlatab,
@@ -308,7 +321,9 @@ pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         tinttable,
@@ -349,7 +364,9 @@ pub fn V_DrawAltTLPatch(x: i32, y: i32, patch: *mut patch_t) {
     }
 }
 
-pub fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
+/// # Safety
+/// `patch` must point to a valid patch lump.
+pub unsafe fn V_DrawShadowedPatch(x: i32, y: i32, patch: *mut patch_t) {
     let Render2dState {
         dest_screen,
         tinttable,
@@ -405,7 +422,10 @@ pub fn V_LoadXlaTable() {
     RENDER_2D.borrow_mut().xlatab = xlatab;
 }
 
-pub fn V_DrawBlock(x: i32, y: i32, width: i32, height: i32, src: *mut u8) {
+/// # Safety
+/// `src` must hold `width * height` readable bytes, and the rectangle must
+/// fit the screen.
+pub unsafe fn V_DrawBlock(x: i32, y: i32, width: i32, height: i32, src: *mut u8) {
     unsafe {
         V_MarkRect(x, y, width, height);
 
@@ -475,7 +495,9 @@ pub fn V_DrawBox(x: i32, y: i32, w: i32, h: i32, c: i32) {
     V_DrawVertLine(x + w - 1, y, h, c);
 }
 
-pub fn V_DrawRawScreen(raw: *mut u8) {
+/// # Safety
+/// `raw` must hold `SCREENWIDTH * SCREENHEIGHT` readable bytes.
+pub unsafe fn V_DrawRawScreen(raw: *mut u8) {
     unsafe {
         ptr::copy_nonoverlapping(
             raw,
@@ -498,7 +520,15 @@ pub fn V_RestoreBuffer() {
     RENDER_2D.borrow_mut().dest_screen = screen;
 }
 
-pub fn WritePCXfile(filename: &str, data: *mut u8, width: i32, height: i32, palette: *mut u8) {
+/// # Safety
+/// `data` must hold `width * height` readable bytes and `palette` 768.
+pub unsafe fn WritePCXfile(
+    filename: &str,
+    data: *mut u8,
+    width: i32,
+    height: i32,
+    palette: *mut u8,
+) {
     unsafe {
         let header = pcx_t {
             manufacturer: 0x0a,
@@ -558,95 +588,97 @@ pub fn V_ScreenShot() {
         i_error!("V_ScreenShot: Couldn't create a PCX");
     }
 
-    WritePCXfile(
-        &screenshot_filename(i),
-        video_buffer(),
-        SCREENWIDTH,
-        SCREENHEIGHT,
-        W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
-    );
+    // SAFETY: the video buffer is a full screen and PLAYPAL starts with a
+    // 768-byte palette.
+    unsafe {
+        WritePCXfile(
+            &screenshot_filename(i),
+            video_buffer(),
+            SCREENWIDTH,
+            SCREENHEIGHT,
+            W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
+        );
+    }
 }
 
 const MOUSE_SPEED_BOX_WIDTH: i32 = 120;
 const MOUSE_SPEED_BOX_HEIGHT: i32 = 9;
 
 pub fn V_DrawMouseSpeedBox(speed: i32) {
-    unsafe {
-        let bgcolor = I_GetPaletteIndex(0x77, 0x77, 0x77);
-        let bordercolor = I_GetPaletteIndex(0x55, 0x55, 0x55);
-        let red = I_GetPaletteIndex(0xff, 0x00, 0x00);
-        let black = I_GetPaletteIndex(0x00, 0x00, 0x00);
-        let yellow = I_GetPaletteIndex(0xff, 0xff, 0x00);
-        let white = I_GetPaletteIndex(0xff, 0xff, 0xff);
+    let bgcolor = I_GetPaletteIndex(0x77, 0x77, 0x77);
+    let bordercolor = I_GetPaletteIndex(0x55, 0x55, 0x55);
+    let red = I_GetPaletteIndex(0xff, 0x00, 0x00);
+    let black = I_GetPaletteIndex(0x00, 0x00, 0x00);
+    let yellow = I_GetPaletteIndex(0xff, 0xff, 0x00);
+    let white = I_GetPaletteIndex(0xff, 0xff, 0xff);
 
-        if usemouse == 0 || (mouse_acceleration - 1.0).abs() < 0.01 {
-            return;
-        }
+    if usemouse == 0 || (mouse_acceleration - 1.0).abs() < 0.01 {
+        return;
+    }
 
-        let box_x = SCREENWIDTH - MOUSE_SPEED_BOX_WIDTH - 10;
-        let box_y = 15;
+    let box_x = SCREENWIDTH - MOUSE_SPEED_BOX_WIDTH - 10;
+    let box_y = 15;
 
-        V_DrawFilledBox(
-            box_x,
-            box_y,
-            MOUSE_SPEED_BOX_WIDTH,
-            MOUSE_SPEED_BOX_HEIGHT,
-            bgcolor,
+    V_DrawFilledBox(
+        box_x,
+        box_y,
+        MOUSE_SPEED_BOX_WIDTH,
+        MOUSE_SPEED_BOX_HEIGHT,
+        bgcolor,
+    );
+    V_DrawBox(
+        box_x,
+        box_y,
+        MOUSE_SPEED_BOX_WIDTH,
+        MOUSE_SPEED_BOX_HEIGHT,
+        bordercolor,
+    );
+
+    let redline_x = MOUSE_SPEED_BOX_WIDTH / 3;
+
+    let original_speed = if speed < mouse_threshold {
+        speed
+    } else {
+        let mut s = speed - mouse_threshold;
+        s = (s as f32 / mouse_acceleration) as i32;
+        s + mouse_threshold
+    };
+
+    let mut linelen = (original_speed * redline_x) / mouse_threshold;
+    if linelen > MOUSE_SPEED_BOX_WIDTH - 1 {
+        linelen = MOUSE_SPEED_BOX_WIDTH - 1;
+    }
+
+    V_DrawHorizLine(box_x + 1, box_y + 4, MOUSE_SPEED_BOX_WIDTH - 2, black);
+
+    if linelen < redline_x {
+        V_DrawHorizLine(
+            box_x + 1,
+            box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
+            linelen,
+            white,
         );
-        V_DrawBox(
-            box_x,
-            box_y,
-            MOUSE_SPEED_BOX_WIDTH,
-            MOUSE_SPEED_BOX_HEIGHT,
-            bordercolor,
+    } else {
+        V_DrawHorizLine(
+            box_x + 1,
+            box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
+            redline_x,
+            white,
         );
-
-        let redline_x = MOUSE_SPEED_BOX_WIDTH / 3;
-
-        let original_speed = if speed < mouse_threshold {
-            speed
-        } else {
-            let mut s = speed - mouse_threshold;
-            s = (s as f32 / mouse_acceleration) as i32;
-            s + mouse_threshold
-        };
-
-        let mut linelen = (original_speed * redline_x) / mouse_threshold;
-        if linelen > MOUSE_SPEED_BOX_WIDTH - 1 {
-            linelen = MOUSE_SPEED_BOX_WIDTH - 1;
-        }
-
-        V_DrawHorizLine(box_x + 1, box_y + 4, MOUSE_SPEED_BOX_WIDTH - 2, black);
-
-        if linelen < redline_x {
-            V_DrawHorizLine(
-                box_x + 1,
-                box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
-                linelen,
-                white,
-            );
-        } else {
-            V_DrawHorizLine(
-                box_x + 1,
-                box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
-                redline_x,
-                white,
-            );
-            V_DrawHorizLine(
-                box_x + redline_x,
-                box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
-                linelen - redline_x,
-                yellow,
-            );
-        }
-
-        V_DrawVertLine(
+        V_DrawHorizLine(
             box_x + redline_x,
-            box_y + 1,
-            MOUSE_SPEED_BOX_HEIGHT - 2,
-            red,
+            box_y + MOUSE_SPEED_BOX_HEIGHT / 2,
+            linelen - redline_x,
+            yellow,
         );
     }
+
+    V_DrawVertLine(
+        box_x + redline_x,
+        box_y + 1,
+        MOUSE_SPEED_BOX_HEIGHT - 2,
+        red,
+    );
 }
 
 #[cfg(test)]

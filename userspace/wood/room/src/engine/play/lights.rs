@@ -141,7 +141,11 @@ pub unsafe fn T_FireFlicker(flick: *mut fireflicker_t) {
 ///
 /// Clears the sector special, finds the minimum surrounding light level
 /// (used as the lower flicker bound + 16), and registers the thinker.
-pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
+///
+/// # Safety
+///
+/// `sector` must be a valid, non-null pointer into the current map's sectors.
+pub unsafe fn P_SpawnFireFlicker(sector: *mut sector_t) {
     unsafe {
         (*sector).special = 0;
 
@@ -192,7 +196,11 @@ pub unsafe fn T_LightFlash(flash: *mut lightflash_t) {
 ///
 /// Sets `maxtime = 64` and `mintime = 7`, giving the flash a long bright phase
 /// and a short dark phase. The initial countdown is randomised.
-pub fn P_SpawnLightFlash(sector: *mut sector_t) {
+///
+/// # Safety
+///
+/// `sector` must be a valid, non-null pointer into the current map's sectors.
+pub unsafe fn P_SpawnLightFlash(sector: *mut sector_t) {
     unsafe {
         (*sector).special = 0;
 
@@ -247,7 +255,11 @@ pub unsafe fn T_StrobeFlash(flash: *mut strobe_t) {
 /// `fastOrSlow` sets `darktime` (use `FASTDARK` or `SLOWDARK`).
 /// `inSync = 1` starts the flash immediately; `inSync = 0` gives a random offset.
 /// If `minlight == maxlight`, `minlight` is forced to 0.
-pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
+///
+/// # Safety
+///
+/// `sector` must be a valid, non-null pointer into the current map's sectors.
+pub unsafe fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
     unsafe {
         let flash = Z_Malloc(
             std::mem::size_of::<strobe_t>() as i32,
@@ -282,7 +294,11 @@ pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
 ///
 /// Iterates over sectors whose tag matches `line`'s tag. Sectors that already
 /// have an active special effect are skipped.
-pub fn EV_StartLightStrobing(line: *mut line_t) {
+///
+/// # Safety
+///
+/// `line` must be a valid, non-null pointer.
+pub unsafe fn EV_StartLightStrobing(line: *mut line_t) {
     unsafe {
         let mut secnum: i32 = -1;
         loop {
@@ -303,7 +319,11 @@ pub fn EV_StartLightStrobing(line: *mut line_t) {
 ///
 /// For each sector whose tag matches `line`'s tag, scans adjacent sectors and
 /// sets the light level to the minimum found among all neighbors.
-pub fn EV_TurnTagLightsOff(line: *mut line_t) {
+///
+/// # Safety
+///
+/// `line` must be a valid, non-null pointer.
+pub unsafe fn EV_TurnTagLightsOff(line: *mut line_t) {
     let LevelState {
         numsectors,
         sectors,
@@ -337,7 +357,11 @@ pub fn EV_TurnTagLightsOff(line: *mut line_t) {
 ///
 /// If `bright == 0`, the function searches adjacent sectors and uses the
 /// highest light level found among them instead.
-pub fn EV_LightTurnOn(line: *mut line_t, bright: i32) {
+///
+/// # Safety
+///
+/// `line` must be a valid, non-null pointer.
+pub unsafe fn EV_LightTurnOn(line: *mut line_t, bright: i32) {
     let LevelState {
         numsectors,
         sectors,
@@ -405,7 +429,11 @@ pub unsafe fn T_Glow(g: *mut glow_t) {
 /// Sets `maxlight` to the sector's current light level and `minlight` to the
 /// lowest light level in adjacent sectors. The glow starts moving downward
 /// (`direction = -1`).
-pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
+///
+/// # Safety
+///
+/// `sector` must be a valid, non-null pointer into the current map's sectors.
+pub unsafe fn P_SpawnGlowingLight(sector: *mut sector_t) {
     unsafe {
         let g = Z_Malloc(
             std::mem::size_of::<glow_t>() as i32,

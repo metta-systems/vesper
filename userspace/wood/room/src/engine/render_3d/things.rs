@@ -309,11 +309,7 @@ static VISSPRITES: Global<VisSpriteState> = Global::new(VisSpriteState::new());
 /// matches the current sprite being processed. If `rotation == 0` the lump
 /// is installed for all eight rotations; otherwise it fills exactly one slot.
 /// Calls `i_error!` on duplicate or inconsistent assignments.
-///
-/// # Safety
-/// `lump`, `frame`, and `rotation` must be within the ranges enforced by
-/// the guards at the top of the function.
-unsafe fn R_InstallSpriteLump(
+fn R_InstallSpriteLump(
     sprite_state: &mut SpriteState,
     firstspritelump: i32,
     lump: i32,

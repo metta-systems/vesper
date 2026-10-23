@@ -190,11 +190,7 @@ unsafe fn wipe_do_color_xform(width: i32, height: i32, ticks: i32) -> i32 {
 /// Clean up after the colour cross-fade wipe; a no-op that always returns 0.
 ///
 /// C origin: `wipe_exitColorXForm` in f_wipe.c.
-///
-/// # Safety
-///
-/// No preconditions; `unsafe` only to match the other wipe callbacks.
-unsafe fn wipe_exit_color_xform(_width: i32, _height: i32, _ticks: i32) -> i32 {
+fn wipe_exit_color_xform(_width: i32, _height: i32, _ticks: i32) -> i32 {
     0
 }
 

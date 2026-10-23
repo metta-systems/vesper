@@ -49,7 +49,7 @@ const NF_SUBSECTOR: u32 = 0x8000;
 /// Returns the index of `line` within the level's `segs` array, or -1 if
 /// either pointer is null. Used only for diagnostic trace logging.
 #[inline]
-unsafe fn seg_index(line: *const seg_t) -> isize {
+fn seg_index(line: *const seg_t) -> isize {
     let segs = level().segs;
     if segs.is_null() || line.is_null() {
         -1
@@ -268,10 +268,7 @@ use crate::engine::{
 /// Resets the draw-seg write index to the beginning of `drawsegs`,
 /// discarding all draw-segs accumulated during the previous frame.
 /// Called once per frame by `R_RenderPlayerView` before BSP traversal begins.
-///
-/// # Safety
-/// Must be called from the render thread. Mutates `ds_p`.
-pub unsafe fn R_ClearDrawSegs() {
+pub fn R_ClearDrawSegs() {
     BSP.borrow_mut().ds_p = 0;
 }
 
@@ -284,11 +281,7 @@ pub unsafe fn R_ClearDrawSegs() {
 /// (`viewwidth..0x7fffffff`) regions. Also advances the per-frame diagnostic
 /// counter used by trace logging.
 /// Called once per frame by `R_RenderPlayerView` before BSP traversal begins.
-///
-/// # Safety
-/// Must be called from the render thread. Mutates `solidsegs`, `newend`,
-/// and `probe_frame`. Reads `viewwidth` and `viewangle`.
-pub unsafe fn R_ClearClipSegs() {
+pub fn R_ClearClipSegs() {
     let viewwidth = DRAW.borrow().viewwidth;
     {
         let mut clip = CLIP_SEGS.borrow_mut();

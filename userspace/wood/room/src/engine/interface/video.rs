@@ -361,30 +361,17 @@ pub unsafe fn I_ShutdownGraphics() {
 
 /// Per-frame "start" hook. No-op in this port (the C source also
 /// does nothing here for the generic backend).
-///
-/// # Safety
-///
-/// Trivially safe; declared `unsafe` to match the engine's expected
-/// signature.
-pub unsafe fn I_StartFrame() {}
+pub fn I_StartFrame() {}
 
 /// Per-tic "start" hook. Pumps one input event via `I_GetEvent`.
 /// Mirrors `I_StartTic` from `i_video.c`.
-///
-/// # Safety
-///
-/// Forwards to `I_GetEvent`, which dereferences input-queue globals.
-pub unsafe fn I_StartTic() {
+pub fn I_StartTic() {
     I_GetEvent();
 }
 
 /// Stub that originally allowed an SDL "no blit" intermediate stage.
 /// Always a no-op for the generic backend.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_UpdateNoBlit() {}
+pub fn I_UpdateNoBlit() {}
 
 /// Blit and present one frame.
 ///
@@ -494,11 +481,8 @@ pub unsafe fn I_SetPalette(palette: *mut u8) {
 /// (the C ABI accepts any `int`) cannot overflow even though all real
 /// callers pass values in `0..=255`.
 ///
-/// # Safety
-///
-/// The caller must have run `I_SetPalette` at least once for the
-/// result to mean anything.
-pub unsafe fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
+/// The result is only meaningful once `I_SetPalette` has run.
+pub fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
     let r = r as i64;
     let g = g as i64;
     let b = b as i64;
@@ -525,18 +509,10 @@ pub unsafe fn I_GetPaletteIndex(r: i32, g: i32, b: i32) -> i32 {
 
 /// SDL-era hook to signal the start of a disk read so a "loading"
 /// icon can be displayed. No-op in this port.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_BeginRead() {}
+pub fn I_BeginRead() {}
 
 /// SDL-era hook to signal the end of a disk read. No-op here.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_EndRead() {}
+pub fn I_EndRead() {}
 
 /// Set the host-window title via [`Platform::set_window_title`](crate::engine::platform::Platform::set_window_title).
 /// Mirrors `I_SetWindowTitle` from `i_video.c`.
@@ -547,50 +523,28 @@ pub fn I_SetWindowTitle(title: &str) {
 /// Parse video-related command-line switches. No-op in this port;
 /// the SDL backend in chocolate-doom handles things like `-window`
 /// here.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_GraphicsCheckCommandLine() {}
+pub fn I_GraphicsCheckCommandLine() {}
 
 /// Register a callback that returns whether the mouse should be
 /// grabbed by the window. No-op in this port (no mouse capture).
 ///
-/// # Safety
-///
-/// Trivially safe; the callback argument is stored nowhere.
-pub unsafe fn I_SetGrabMouseCallback(_func: fn() -> Boolean) {}
+/// The callback argument is stored nowhere.
+pub fn I_SetGrabMouseCallback(_func: fn() -> Boolean) {}
 
 /// Enable the disk-activity icon overlay. No-op in this port.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_EnableLoadingDisk() {}
+pub fn I_EnableLoadingDisk() {}
 
 /// Bind video-related `m_config` variables. No-op in this port;
 /// chocolate-doom binds things like `fullscreen`, `aspect_ratio_correct`,
 /// etc. here.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_BindVideoVariables() {}
+pub fn I_BindVideoVariables() {}
 
 /// Toggle the on-screen FPS dot indicator. No-op in this port.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_DisplayFPSDots(_dots_on: Boolean) {}
+pub fn I_DisplayFPSDots(_dots_on: Boolean) {}
 
 /// Detect whether the engine was launched as a screensaver. No-op
 /// in this port; `screensaver_mode` stays 0.
-///
-/// # Safety
-///
-/// Trivially safe.
-pub unsafe fn I_CheckIsScreensaver() {}
+pub fn I_CheckIsScreensaver() {}
 
 #[cfg(test)]
 mod tests {
@@ -650,31 +604,29 @@ mod tests {
         let palette: [(u8, u8, u8); 4] = [(0, 0, 0), (255, 0, 0), (0, 255, 0), (0, 0, 255)];
         set_test_palette(&palette);
 
-        unsafe {
-            assert_eq!(I_GetPaletteIndex(0, 0, 0), 0, "exact black");
-            assert_eq!(I_GetPaletteIndex(255, 0, 0), 1, "exact red");
-            assert_eq!(I_GetPaletteIndex(0, 255, 0), 2, "exact green");
-            assert_eq!(I_GetPaletteIndex(0, 0, 255), 3, "exact blue");
+        assert_eq!(I_GetPaletteIndex(0, 0, 0), 0, "exact black");
+        assert_eq!(I_GetPaletteIndex(255, 0, 0), 1, "exact red");
+        assert_eq!(I_GetPaletteIndex(0, 255, 0), 2, "exact green");
+        assert_eq!(I_GetPaletteIndex(0, 0, 255), 3, "exact blue");
 
-            assert_eq!(I_GetPaletteIndex(250, 5, 5), 1, "near red");
-            assert_eq!(I_GetPaletteIndex(5, 250, 5), 2, "near green");
-            assert_eq!(I_GetPaletteIndex(10, 10, 10), 0, "near black");
+        assert_eq!(I_GetPaletteIndex(250, 5, 5), 1, "near red");
+        assert_eq!(I_GetPaletteIndex(5, 250, 5), 2, "near green");
+        assert_eq!(I_GetPaletteIndex(10, 10, 10), 0, "near black");
 
-            assert_eq!(
-                I_GetPaletteIndex(128, 0, 0),
-                1,
-                "128 is one step closer to 255 (diff 127^2) than to 0 (diff 128^2)"
-            );
-            assert_eq!(
-                I_GetPaletteIndex(127, 0, 0),
-                0,
-                "127 is one step closer to 0 than to 255"
-            );
+        assert_eq!(
+            I_GetPaletteIndex(128, 0, 0),
+            1,
+            "128 is one step closer to 255 (diff 127^2) than to 0 (diff 128^2)"
+        );
+        assert_eq!(
+            I_GetPaletteIndex(127, 0, 0),
+            0,
+            "127 is one step closer to 0 than to 255"
+        );
 
-            // Out-of-range inputs must not overflow the diff accumulator.
-            assert_eq!(I_GetPaletteIndex(i32::MAX, 0, 0), 1, "saturate to red");
-            assert_eq!(I_GetPaletteIndex(i32::MIN, 0, 0), 0, "saturate to black");
-        }
+        // Out-of-range inputs must not overflow the diff accumulator.
+        assert_eq!(I_GetPaletteIndex(i32::MAX, 0, 0), 1, "saturate to red");
+        assert_eq!(I_GetPaletteIndex(i32::MIN, 0, 0), 0, "saturate to black");
     }
 
     #[test]
@@ -692,8 +644,6 @@ mod tests {
         palette[200] = (42, 0, 0);
         set_test_palette(&palette);
 
-        unsafe {
-            assert_eq!(I_GetPaletteIndex(42, 0, 0), 42);
-        }
+        assert_eq!(I_GetPaletteIndex(42, 0, 0), 42);
     }
 }

@@ -274,12 +274,7 @@ const STSTR_CLEV: &str = "Changing Level...";
 /// - `pack_chex` maps to `doom`.
 /// - `pack_hacx` maps to `doom2`.
 /// - All other values are returned as-is.
-///
-/// # Safety
-///
-/// Reads the global `gamemission` static. Caller must ensure `D_DoomMain` has
-/// initialised the game-mode globals before calling.
-unsafe fn logical_gamemission() -> i32 {
+fn logical_gamemission() -> i32 {
     let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
@@ -700,7 +695,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 let mut buf = [0u8; 3];
                 let musnum: i32;
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_MUS));
-                cht_GetParam(&mut STATUS.borrow_mut().cheat_mus, buf.as_mut_ptr());
+                cht_GetParam(&STATUS.borrow().cheat_mus, &mut buf);
 
                 if gamemode() == doom::mode::commercial || gameversion() < doom::mode::exe_ultimate
                 {
@@ -767,7 +762,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             let mut buf = [0u8; 3];
             let mut epsd: i32;
             let map: i32;
-            cht_GetParam(&mut STATUS.borrow_mut().cheat_clev, buf.as_mut_ptr());
+            cht_GetParam(&STATUS.borrow().cheat_clev, &mut buf);
 
             if gamemode() == doom::mode::commercial {
                 epsd = 1;

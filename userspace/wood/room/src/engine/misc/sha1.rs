@@ -52,7 +52,12 @@ pub struct SHA1Context {
 /// Must be called before the first `SHA1_Update`. The `buf` field is left
 /// untouched (its contents are only ever read up to `count` bytes, and
 /// `count` is reset to 0 here).
-pub fn SHA1_Init(hd: *mut SHA1Context) {
+///
+/// # Safety
+///
+/// `hd` must be a valid, properly aligned pointer to a (possibly
+/// uninitialised) `SHA1Context`, valid for writes.
+pub unsafe fn SHA1_Init(hd: *mut SHA1Context) {
     unsafe {
         let hd = &mut *hd;
         hd.h0 = 0x67452301;
@@ -481,7 +486,7 @@ mod tests {
     /// matters because `SHA1_Init` deliberately leaves it untouched.
     fn make_ctx() -> SHA1Context {
         let mut ctx: SHA1Context = unsafe { std::mem::zeroed() };
-        SHA1_Init(&mut ctx);
+        unsafe { SHA1_Init(&mut ctx) };
         ctx
     }
 

@@ -343,7 +343,7 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
+pub unsafe fn P_ActivateInStasisCeiling(line: *mut line_t) {
     let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
         for ceiling in activeceilings {
@@ -372,7 +372,7 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-pub fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
+pub unsafe fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
     let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
         let mut rtn: i32 = 0;

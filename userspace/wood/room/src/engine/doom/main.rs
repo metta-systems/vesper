@@ -893,7 +893,7 @@ pub fn D_PageTicker() {
 /// Draw the current demo page.
 pub fn D_PageDrawer() {
     let pagename = DOOM_MAIN.borrow().pagename;
-    V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t);
+    unsafe { V_DrawPatch(0, 0, W_CacheLumpName(pagename, PU_CACHE) as *mut patch_t) };
 }
 
 /// Called after each demo or intro demosequence finishes.
@@ -1022,7 +1022,7 @@ fn GetGameName(gamename: &'static str) -> String {
 
         // Has been replaced?
         if !std::ptr::eq(deh_sub, banner) {
-            let version = unsafe { G_VanillaVersionCode() };
+            let version = G_VanillaVersionCode();
             let expanded =
                 deh_sub.replacen("%i.%i", &format!("{}.{}", version / 100, version % 100), 1);
             return expanded.trim_ascii().to_owned();
@@ -1037,11 +1037,7 @@ fn GetGameName(gamename: &'static str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Set `gamemission` from the `-pack` argument string, or abort with an error if unrecognized.
-///
-/// # Safety
-///
-/// Writes the `gamemission` global.
-unsafe fn SetMissionForPackName(pack_name: &[u8]) {
+fn SetMissionForPackName(pack_name: &[u8]) {
     for pack in &PACKS {
         if pack_name.eq_ignore_ascii_case(pack.name.as_bytes()) {
             STAT.borrow_mut().gamemission = pack.mission;

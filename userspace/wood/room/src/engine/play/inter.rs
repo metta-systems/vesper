@@ -353,7 +353,7 @@ pub unsafe fn P_GiveAmmo(player: *mut PlayerT, ammo: i32, num: i32) -> i32 {
 /// Rust-side body of [`P_GiveAmmo`]. Takes `&mut PlayerT` so callers can
 /// pass an existing borrow without re-deriving a second `&mut` from the
 /// same raw pointer (which would violate aliasing rules).
-unsafe fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
+fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     if ammo == am_noammo {
         return 0;
     }
@@ -436,7 +436,7 @@ pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: i32, dropped: i32) -> i
 /// Rust-side body of [`P_GiveWeapon`]. Takes `&mut PlayerT` so callers can
 /// pass an existing borrow; avoids re-deriving a second `&mut` from the
 /// same raw pointer.
-unsafe fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
+fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
     if netgame() != 0 && deathmatch() != 2 && dropped == 0 {

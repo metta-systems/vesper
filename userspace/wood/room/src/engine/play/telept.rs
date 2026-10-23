@@ -57,7 +57,7 @@ use crate::engine::{
 /// `line` and `thing` must be valid, non-null pointers for the duration of
 /// the call.  The global arrays `sectors` and `thinkercap` must be initialised
 /// (i.e. a level must be loaded).
-pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
+pub unsafe fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
     unsafe {
         // Don't teleport missiles
         if (*thing).flags & MF_MISSILE != 0 {

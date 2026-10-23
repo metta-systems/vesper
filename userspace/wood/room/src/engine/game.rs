@@ -849,12 +849,8 @@ use crate::engine::dehacked::DEH_String;
 /// Collapses the TNT/Plutonia mission types onto plain `doom2`, since they
 /// share the Doom II ruleset; called by `weapon_selectable` to avoid
 /// branching on every Doom II variant individually.
-///
-/// # Safety
-/// Reads the `gamemission` global; safe as long as the caller respects the
-/// single-threaded engine convention.
 #[inline]
-unsafe fn logical_gamemission() -> i32 {
+fn logical_gamemission() -> i32 {
     use crate::engine::doom::mode::{doom2, pack_plut, pack_tnt};
     let gamemission = gamemission();
     if gamemission == pack_tnt || gamemission == pack_plut {
@@ -2023,10 +2019,7 @@ pub unsafe fn G_DoReborn(playernum: i32) {
 
 /// Defer a screenshot to the next `G_Ticker` pass via `gameaction =
 /// ga_screenshot`.
-///
-/// # Safety
-/// Writes the `gameaction` global.
-pub unsafe fn G_ScreenShot() {
+pub fn G_ScreenShot() {
     GAME.borrow_mut().gameaction = ga_screenshot;
 }
 
@@ -2036,10 +2029,7 @@ pub unsafe fn G_ScreenShot() {
 
 /// Request a normal end-of-level transition; clears `secretexit` so the
 /// next intermission picks the standard "next map" target.
-///
-/// # Safety
-/// Writes the `secretexit` and `gameaction` globals.
-pub unsafe fn G_ExitLevel() {
+pub fn G_ExitLevel() {
     let mut game = GAME.borrow_mut();
     game.secretexit = 0;
     game.gameaction = ga_completed;
@@ -2050,10 +2040,7 @@ pub unsafe fn G_ExitLevel() {
 /// On Doom II the secret exit only applies when MAP31 is actually present
 /// in the loaded WAD ("if no Wolf3D levels, no secret exit" - the German
 /// edition retail patch removed those maps).
-///
-/// # Safety
-/// Writes the `secretexit` and `gameaction` globals.
-pub unsafe fn G_SecretExitLevel() {
+pub fn G_SecretExitLevel() {
     let secretexit = if gamemode() == commercial && W_CheckNumForName(b"map31") < 0 {
         0
     } else {
@@ -2339,10 +2326,7 @@ pub unsafe fn G_DoLoadGame() {
 /// `ga_savegame` -> `G_DoSaveGame`.
 /// `description` is read up to its first NUL, so a fixed text buffer can
 /// be passed whole.
-///
-/// # Safety
-/// Mutates the pending save slot, description and `sendsave` latch.
-pub unsafe fn G_SaveGame(slot: i32, description: &[u8]) {
+pub fn G_SaveGame(slot: i32, description: &[u8]) {
     let mut input = GAME_INPUT.borrow_mut();
     input.savegameslot = slot;
     M_StringCopy(&mut input.savedescription, description);
@@ -2441,10 +2425,7 @@ pub unsafe fn G_DoSaveGame() {
 
 /// Defer a new-game start: latch `(skill, episode, map)` into `d_*` and
 /// queue `ga_newgame`. `G_Ticker` will then call `G_DoNewGame` -> `G_InitNew`.
-///
-/// # Safety
-/// Writes the `d_skill`, `d_episode`, `d_map` and `gameaction` globals.
-pub unsafe fn G_DeferedInitNew(skill: skill_t, episode: i32, map: i32) {
+pub fn G_DeferedInitNew(skill: skill_t, episode: i32, map: i32) {
     let mut game = GAME.borrow_mut();
     game.d_skill = skill;
     game.d_episode = episode;
@@ -2596,11 +2577,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
 /// Exists to keep the `G_InitNew` call sites readable; the state-tic and
 /// `mobjinfo.speed` patches themselves live in `G_SetFastMonsters` so the
 /// arithmetic appears once.
-///
-/// # Safety
-/// Calls into `G_SetFastMonsters`, which mutates the global `states` and
-/// `mobjinfo` tables.
-unsafe fn set_fast_monsters(fast: bool) {
+fn set_fast_monsters(fast: bool) {
     // S_SARG_RUN1 .. S_SARG_PAIN2 state range (states 134..160 in vanilla Doom)
     // mobjinfo adjustments for MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT
     // These are byte-offset operations into the info tables.
@@ -2627,10 +2604,7 @@ unsafe fn set_fast_monsters(fast: bool) {
 /// This change is global to the `states` and `mobjinfo` tables and persists
 /// across maps until inverted again - it is `G_InitNew`'s responsibility to
 /// only call this when the skill flips into or out of nightmare.
-///
-/// # Safety
-/// Mutates the shared `states` and `mobjinfo` arrays.
-pub unsafe fn G_SetFastMonsters(fast: i32) {
+pub fn G_SetFastMonsters(fast: i32) {
     use crate::engine::play::info::{
         MOBJINFO, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, S_SARG_PAIN2, S_SARG_RUN1, STATES,
     };
@@ -2832,10 +2806,7 @@ pub unsafe fn G_RecordDemo(name: &str) {
 /// [`gameversion`] (e.g. 109 for v1.9 and every later vanilla variant).
 ///
 /// Raises `I_Error` for v1.2, which never had a demo version code.
-///
-/// # Safety
-/// Reads the `gameversion` global.
-pub unsafe fn G_VanillaVersionCode() -> i32 {
+pub fn G_VanillaVersionCode() -> i32 {
     g_vanilla_version_code_for(gameversion())
 }
 
@@ -2910,10 +2881,7 @@ pub unsafe fn G_BeginRecording() {
 
 /// Defer demo playback for `name`: latch `defdemoname` and queue
 /// `ga_playdemo` for the next `G_Ticker` pass.
-///
-/// # Safety
-/// Mutates the `defdemoname` and `gameaction` globals.
-pub unsafe fn G_DeferedPlayDemo(name: &str) {
+pub fn G_DeferedPlayDemo(name: &str) {
     let mut game = GAME.borrow_mut();
     game.defdemoname = name.to_owned();
     game.gameaction = ga_playdemo;
@@ -3047,10 +3015,7 @@ pub unsafe fn G_DoPlayDemo() {
 /// runs every tic immediately (no `I_GetTime`-pacing), then defers playback
 /// the usual way through `ga_playdemo`. On demo end, `G_CheckDemoStatus`
 /// prints the result via `I_Error("timed ... fps")`.
-///
-/// # Safety
-/// Mutates `nodrawers`, `timingdemo`, `singletics`, `defdemoname`, `gameaction`.
-pub unsafe fn G_TimeDemo(name: &str) {
+pub fn G_TimeDemo(name: &str) {
     let nodrawers = M_CheckParm("-nodraw");
     {
         let mut game = GAME.borrow_mut();

@@ -156,7 +156,7 @@ use crate::engine::{
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-pub fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
+pub unsafe fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
     unsafe {
         let mo = (*player).mo;
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
@@ -177,7 +177,7 @@ pub fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-pub fn P_CalcHeight(player: *mut PlayerT) {
+pub unsafe fn P_CalcHeight(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo;
 
@@ -246,7 +246,7 @@ pub fn P_CalcHeight(player: *mut PlayerT) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-pub fn P_MovePlayer(player: *mut PlayerT) {
+pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo;
         let cmd = &(*player).cmd;
@@ -290,7 +290,7 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
 /// # Safety
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t`.
-pub fn P_DeathThink(player: *mut PlayerT) {
+pub unsafe fn P_DeathThink(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo;
         let angle: u32;
@@ -362,7 +362,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
 /// `player` must be a valid, non-null pointer to an initialised `PlayerT`
 /// whose `mo` field points to a valid `mobj_t` with a valid `subsector`
 /// chain.
-pub fn P_PlayerThink(player: *mut PlayerT) {
+pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
     unsafe {
         let mo = (*player).mo;
         let mut newweapon: i32;

@@ -73,9 +73,12 @@ pub fn W_OpenFile(path: &str) -> *mut wad_file_t {
     }
 }
 
-/// Close the WAD file and free the descriptor. The descriptor must have
-/// been returned by [`W_OpenFile`].
-pub fn W_CloseFile(wad: *mut wad_file_t) {
+/// Close the WAD file and free the descriptor.
+///
+/// # Safety
+/// `wad` must have been returned by [`W_OpenFile`] and not closed yet; it
+/// is dangling afterwards.
+pub unsafe fn W_CloseFile(wad: *mut wad_file_t) {
     unsafe {
         ptr::drop_in_place(wad);
         Z_Free(wad as *mut c_void);
@@ -87,9 +90,15 @@ pub fn W_CloseFile(wad: *mut wad_file_t) {
 /// transferred (which may be less than `buffer_len` at end of file or on
 /// error).
 ///
+/// # Safety
 /// `wad` must have been returned by [`W_OpenFile`]; `buffer` must point to
 /// writable memory of at least `buffer_len` bytes.
-pub fn W_Read(wad: *mut wad_file_t, offset: u32, buffer: *mut c_void, buffer_len: usize) -> usize {
+pub unsafe fn W_Read(
+    wad: *mut wad_file_t,
+    offset: u32,
+    buffer: *mut c_void,
+    buffer_len: usize,
+) -> usize {
     let file = unsafe { &mut (*wad).fstream };
     let buffer = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buffer_len) };
     if file.seek(SeekFrom::Start(offset.into())).is_err() {

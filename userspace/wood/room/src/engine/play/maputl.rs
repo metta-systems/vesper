@@ -256,7 +256,7 @@ pub fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
 /// # Safety
 /// `line` must be a valid, non-null pointer to an initialised `line_t` whose
 /// `v1` field points to a valid `vertex_t`.
-pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
+pub unsafe fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
     unsafe {
         let line = &*line;
         if line.dx == 0 {
@@ -290,36 +290,30 @@ pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
 /// (ray) rather than a full `line_t`.
 ///
 /// Matches `P_PointOnDivlineSide` in `p_maputl.c`.
-///
-/// # Safety
-/// `line` must be a valid, non-null pointer to an initialised `divline_t`.
-pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> i32 {
-    unsafe {
-        let line = &*line;
-        if line.dx == 0 {
-            if x <= line.x {
-                return if line.dy > 0 { 1 } else { 0 };
-            }
-            return if line.dy < 0 { 1 } else { 0 };
+pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: &divline_t) -> i32 {
+    if line.dx == 0 {
+        if x <= line.x {
+            return if line.dy > 0 { 1 } else { 0 };
         }
-        if line.dy == 0 {
-            if y <= line.y {
-                return if line.dx < 0 { 1 } else { 0 };
-            }
-            return if line.dx > 0 { 1 } else { 0 };
-        }
-        let dx = x - line.x;
-        let dy = y - line.y;
-        if ((line.dy ^ line.dx ^ dx ^ dy) & (0x80000000u32 as i32)) != 0 {
-            if ((line.dy ^ dx) & (0x80000000u32 as i32)) != 0 {
-                return 1;
-            }
-            return 0;
-        }
-        let left = FixedMul(line.dy >> 8, dx >> 8);
-        let right = FixedMul(dy >> 8, line.dx >> 8);
-        if right < left { 0 } else { 1 }
+        return if line.dy < 0 { 1 } else { 0 };
     }
+    if line.dy == 0 {
+        if y <= line.y {
+            return if line.dx < 0 { 1 } else { 0 };
+        }
+        return if line.dx > 0 { 1 } else { 0 };
+    }
+    let dx = x - line.x;
+    let dy = y - line.y;
+    if ((line.dy ^ line.dx ^ dx ^ dy) & (0x80000000u32 as i32)) != 0 {
+        if ((line.dy ^ dx) & (0x80000000u32 as i32)) != 0 {
+            return 1;
+        }
+        return 0;
+    }
+    let left = FixedMul(line.dy >> 8, dx >> 8);
+    let right = FixedMul(dy >> 8, line.dx >> 8);
+    if right < left { 0 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +332,7 @@ pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> i32
 /// `li` must be a valid, non-null pointer to an initialised `line_t` whose
 /// `v1` field points to a valid `vertex_t`. `dl` must be a valid, non-null,
 /// writable pointer to a `divline_t`.
-pub fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
+pub unsafe fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
     unsafe {
         let li = &*li;
         let dl = &mut *dl;
@@ -363,21 +357,13 @@ pub fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
 /// `v2` is the ray being measured; `v1` is the crossing line.
 ///
 /// Matches `P_InterceptVector` in `p_maputl.c`.
-///
-/// # Safety
-/// Both `v1` and `v2` must be valid, non-null pointers to initialised
-/// `divline_t` values.
-pub fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> fixed_t {
-    unsafe {
-        let v1 = &*v1;
-        let v2 = &*v2;
-        let den = FixedMul(v1.dy >> 8, v2.dx) - FixedMul(v1.dx >> 8, v2.dy);
-        if den == 0 {
-            return 0;
-        }
-        let num = FixedMul((v1.x - v2.x) >> 8, v1.dy) + FixedMul((v2.y - v1.y) >> 8, v1.dx);
-        FixedDiv(num, den)
+pub fn P_InterceptVector(v2: &divline_t, v1: &divline_t) -> fixed_t {
+    let den = FixedMul(v1.dy >> 8, v2.dx) - FixedMul(v1.dx >> 8, v2.dy);
+    if den == 0 {
+        return 0;
     }
+    let num = FixedMul((v1.x - v2.x) >> 8, v1.dy) + FixedMul((v2.y - v1.y) >> 8, v1.dx);
+    FixedDiv(num, den)
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +385,7 @@ pub fn P_InterceptVector(v2: *mut divline_t, v1: *mut divline_t) -> fixed_t {
 /// # Safety
 /// `tmbox` must point to at least 4 consecutive `i32` values. `ld` must be
 /// a valid, non-null pointer to an initialised `line_t` with valid `v1`.
-pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
+pub unsafe fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
     unsafe {
         let tmbox = std::slice::from_raw_parts_mut(tmbox, 4);
         let ld = &*ld;
@@ -455,7 +441,7 @@ pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
 /// `linedef` must be a valid, non-null pointer to an initialised `line_t`.
 /// If the line is two-sided, `frontsector` and `backsector` must also be
 /// valid non-null pointers to initialised `sector_t` values.
-pub fn P_LineOpening(linedef: *mut line_t) {
+pub unsafe fn P_LineOpening(linedef: *mut line_t) {
     unsafe {
         let linedef = &*linedef;
         let mut opening = MAPUTL.borrow_mut();
@@ -502,7 +488,7 @@ pub fn P_LineOpening(linedef: *mut line_t) {
 /// linked-list pointers (`snext`, `sprev`, `bnext`, `bprev`) must be either
 /// null or valid `mobj_t` pointers. The global blockmap arrays from
 /// `p_setup` must be initialised.
-pub fn P_UnsetThingPosition(thing: *mut mobj_t) {
+pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
         if (thing.flags & MF_NOSECTOR) == 0 {
@@ -563,7 +549,7 @@ pub fn P_UnsetThingPosition(thing: *mut mobj_t) {
 /// # Safety
 /// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
 /// global map data (sectors, blockmap) from `p_setup` must be loaded.
-pub fn P_SetThingPosition(thing: *mut mobj_t) {
+pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
         let ss = crate::engine::render_3d::main::R_PointInSubsector(thing.x, thing.y);
@@ -808,10 +794,10 @@ unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
 /// `ld` must be a valid, non-null pointer to an initialised `line_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
+pub unsafe fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
     unsafe {
         let ld = &*ld;
-        let (mut trace, earlyout) = {
+        let (trace, earlyout) = {
             let maputl = MAPUTL.borrow();
             (maputl.trace, maputl.earlyout)
         };
@@ -821,8 +807,8 @@ pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
             || trace.dy < -FRACUNIT * 16
         {
             (
-                P_PointOnDivlineSide((*ld.v1).x, (*ld.v1).y, &raw mut trace),
-                P_PointOnDivlineSide((*ld.v2).x, (*ld.v2).y, &raw mut trace),
+                P_PointOnDivlineSide((*ld.v1).x, (*ld.v1).y, &trace),
+                P_PointOnDivlineSide((*ld.v2).x, (*ld.v2).y, &trace),
             )
         } else {
             (
@@ -844,7 +830,7 @@ pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
             dy: 0,
         };
         P_MakeDivline(ld as *const _ as *mut _, &mut dl);
-        let frac = P_InterceptVector(&raw mut trace, &mut dl);
+        let frac = P_InterceptVector(&trace, &dl);
         if frac < 0 {
             return 1;
         }
@@ -884,10 +870,10 @@ pub fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
 /// `thing` must be a valid, non-null pointer to an initialised `mobj_t`. The
 /// global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
+pub unsafe fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
     unsafe {
         let thing = &*thing;
-        let mut trace = trace();
+        let trace = trace();
         // C: tracepositive = (trace.dx ^ trace.dy)>0;
         let tracepositive = (trace.dx ^ trace.dy) > 0;
         let (x1, y1, x2, y2) = if tracepositive {
@@ -905,18 +891,18 @@ pub fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
                 thing.y + thing.radius,
             )
         };
-        let s1 = P_PointOnDivlineSide(x1, y1, &raw mut trace);
-        let s2 = P_PointOnDivlineSide(x2, y2, &raw mut trace);
+        let s1 = P_PointOnDivlineSide(x1, y1, &trace);
+        let s2 = P_PointOnDivlineSide(x2, y2, &trace);
         if s1 == s2 {
             return 1;
         }
-        let mut dl = divline_t {
+        let dl = divline_t {
             x: x1,
             y: y1,
             dx: x2 - x1,
             dy: y2 - y1,
         };
-        let frac = P_InterceptVector(&raw mut trace, &mut dl);
+        let frac = P_InterceptVector(&trace, &dl);
         if frac < 0 {
             return 1;
         }

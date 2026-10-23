@@ -140,7 +140,7 @@ use crate::engine::{
 ///
 /// Sets `savegame_error = 1` on the first short read; subsequent calls still
 /// return `0` but do not double-set the flag. C origin: `saveg_read8`.
-unsafe fn saveg_read8() -> u8 {
+fn saveg_read8() -> u8 {
     let mut saveg = SAVEG.borrow_mut();
     let mut result = [0u8];
     let n = saveg.save_stream.read(&mut result).unwrap_or(0);
@@ -157,7 +157,7 @@ unsafe fn saveg_read8() -> u8 {
 /// Note: the C version does not increment `savegamelength` here; this port
 /// does so to avoid a separate accounting pass.
 /// C origin: `saveg_write8`.
-unsafe fn saveg_write8(value: u8) {
+fn saveg_write8(value: u8) {
     let mut saveg = SAVEG.borrow_mut();
     let n = saveg.save_stream.write(&[value]).unwrap_or(0);
     if n < 1 && saveg.savegame_error == 0 {
@@ -171,7 +171,7 @@ unsafe fn saveg_write8(value: u8) {
 /// Returns the reconstructed value; any read error is recorded in
 /// `savegame_error`. C origin: `saveg_read16` (which used `short`; here `u16`
 /// avoids sign-extension ambiguity).
-unsafe fn saveg_read16() -> u16 {
+fn saveg_read16() -> u16 {
     let a = saveg_read8() as u16;
     let b = saveg_read8() as u16;
     a | (b << 8)
@@ -180,7 +180,7 @@ unsafe fn saveg_read16() -> u16 {
 /// Writes a little-endian 16-bit unsigned integer to `save_stream`.
 ///
 /// C origin: `saveg_write16`.
-unsafe fn saveg_write16(value: u16) {
+fn saveg_write16(value: u16) {
     saveg_write8((value & 0xff) as u8);
     saveg_write8(((value >> 8) & 0xff) as u8);
 }
@@ -189,7 +189,7 @@ unsafe fn saveg_write16(value: u16) {
 ///
 /// C origin: `saveg_read32` (which returned `int`; here `u32` to make
 /// bit-pattern semantics explicit before callers cast to signed types).
-unsafe fn saveg_read32() -> u32 {
+fn saveg_read32() -> u32 {
     let a = saveg_read8() as u32;
     let b = saveg_read8() as u32;
     let c = saveg_read8() as u32;
@@ -200,7 +200,7 @@ unsafe fn saveg_read32() -> u32 {
 /// Writes a little-endian 32-bit unsigned integer to `save_stream`.
 ///
 /// C origin: `saveg_write32`.
-unsafe fn saveg_write32(value: u32) {
+fn saveg_write32(value: u32) {
     saveg_write8((value & 0xff) as u8);
     saveg_write8(((value >> 8) & 0xff) as u8);
     saveg_write8(((value >> 16) & 0xff) as u8);
@@ -213,7 +213,7 @@ unsafe fn saveg_write32(value: u32) {
 /// Padding is `(4 - (pos & 3)) & 3` bytes, where `pos` is the current stream
 /// position. A stream already aligned reads zero bytes. C origin:
 /// `saveg_read_pad`.
-unsafe fn saveg_read_pad() {
+fn saveg_read_pad() {
     let pos = SAVEG.borrow().save_stream.position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
@@ -225,7 +225,7 @@ unsafe fn saveg_read_pad() {
 ///
 /// See `saveg_read_pad` for the alignment formula. C origin:
 /// `saveg_write_pad`.
-unsafe fn saveg_write_pad() {
+fn saveg_write_pad() {
     let pos = SAVEG.borrow().save_stream.position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
@@ -237,14 +237,14 @@ unsafe fn saveg_write_pad() {
 ///
 /// Enum values are always stored as 32-bit little-endian integers.
 /// C origin: the `saveg_read_enum` macro (alias for `saveg_read32`).
-unsafe fn saveg_read_enum() -> u32 {
+fn saveg_read_enum() -> u32 {
     saveg_read32()
 }
 
 /// Writes a 32-bit enum value to the stream.
 ///
 /// C origin: the `saveg_write_enum` macro (alias for `saveg_write32`).
-unsafe fn saveg_write_enum(value: u32) {
+fn saveg_write_enum(value: u32) {
     saveg_write32(value);
 }
 
@@ -293,7 +293,7 @@ unsafe fn saveg_write_state_ptr(state: *const State) -> u32 {
 /// `states[0]` rather than accessing out-of-bounds memory. The C version
 /// performs no such guard (`&states[saveg_read32()]` would silently
 /// out-of-bounds).
-unsafe fn saveg_read_state_ptr(index: u32) -> *mut State {
+fn saveg_read_state_ptr(index: u32) -> *mut State {
     if index as usize >= NUMSTATES {
         SAVEG.borrow_mut().savegame_error = 1;
         return state_ptr(0);
@@ -1174,22 +1174,14 @@ const SAVEGAMENAME: &str = "doomsav";
 /// filename on success.
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`).
-///
-/// # Safety
-///
-/// Reads `savegamedir`.
-pub unsafe fn P_TempSaveGameFile() -> String {
+pub fn P_TempSaveGameFile() -> String {
     format!("{}temp.dsg", DOOM_MAIN.borrow().savegamedir)
 }
 
 /// Returns the path to the save-game file for the given `slot` (0-7).
 ///
 /// Called by `g_game.c` to open the final save file for reading or renaming.
-///
-/// # Safety
-///
-/// Reads `savegamedir`.
-pub unsafe fn P_SaveGameFile(slot: i32) -> String {
+pub fn P_SaveGameFile(slot: i32) -> String {
     save_filename(&DOOM_MAIN.borrow().savegamedir, slot)
 }
 
@@ -2071,29 +2063,27 @@ mod tests {
     #[test]
     fn save_stream_round_trip() {
         let _g = LOCK.lock().unwrap();
-        unsafe {
-            with_mem_stream(&mut [], || {
-                saveg_write8(0xAB);
-                saveg_write_pad();
-                saveg_write32(0x1234_5678);
-                {
-                    let saveg = SAVEG.borrow();
-                    assert_eq!(
-                        saveg.save_stream.get_ref(),
-                        &[0xAB, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]
-                    );
-                    assert_eq!(saveg.savegamelength, 8);
-                }
+        with_mem_stream(&mut [], || {
+            saveg_write8(0xAB);
+            saveg_write_pad();
+            saveg_write32(0x1234_5678);
+            {
+                let saveg = SAVEG.borrow();
+                assert_eq!(
+                    saveg.save_stream.get_ref(),
+                    &[0xAB, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]
+                );
+                assert_eq!(saveg.savegamelength, 8);
+            }
 
-                SAVEG.borrow_mut().save_stream.set_position(0);
-                assert_eq!(saveg_read8(), 0xAB);
-                saveg_read_pad();
-                assert_eq!(saveg_read32(), 0x1234_5678);
-                assert_eq!(SAVEG.borrow().savegame_error, 0);
-                assert_eq!(saveg_read8(), 0);
-                assert_eq!(SAVEG.borrow().savegame_error, 1);
-            });
-        }
+            SAVEG.borrow_mut().save_stream.set_position(0);
+            assert_eq!(saveg_read8(), 0xAB);
+            saveg_read_pad();
+            assert_eq!(saveg_read32(), 0x1234_5678);
+            assert_eq!(SAVEG.borrow().savegame_error, 0);
+            assert_eq!(saveg_read8(), 0);
+            assert_eq!(SAVEG.borrow().savegame_error, 1);
+        });
     }
 
     #[test]

@@ -286,7 +286,7 @@ pub fn P_InitThinkers() {
 /// [`ThinkerContainer`] that was allocated via `Z_Malloc` and will not be
 /// freed by the caller — ownership transfers to the thinker list, which frees
 /// it in [`P_RunThinkers`] once it is marked [`ThinkerKind::Removed`].
-pub fn P_AddThinker(thinker: *mut thinker_t) {
+pub unsafe fn P_AddThinker(thinker: *mut thinker_t) {
     let cap = thinkercap();
     unsafe {
         (*(*cap).prev).next = thinker;
@@ -307,7 +307,7 @@ pub fn P_AddThinker(thinker: *mut thinker_t) {
 ///
 /// `thinker` must be a valid, non-null pointer to a thinker that is currently
 /// linked into the global thinker list and whose kind has been set.
-pub fn P_RemoveThinker(thinker: *mut thinker_t) {
+pub unsafe fn P_RemoveThinker(thinker: *mut thinker_t) {
     unsafe {
         let Some(class) = (*thinker).kind.class() else {
             panic!("P_RemoveThinker: thinker has no kind");
@@ -443,10 +443,10 @@ mod tests {
             next: std::ptr::null_mut(),
             kind: ThinkerKind::CeilingInStasis,
         };
-        P_RemoveThinker(&raw mut thinker);
+        unsafe { P_RemoveThinker(&raw mut thinker) };
         assert_eq!(thinker.kind, ThinkerKind::Removed(ThinkerClass::Ceiling));
         assert!(thinker.kind.is_removed());
-        P_RemoveThinker(&raw mut thinker);
+        unsafe { P_RemoveThinker(&raw mut thinker) };
         assert_eq!(thinker.kind, ThinkerKind::Removed(ThinkerClass::Ceiling));
     }
 

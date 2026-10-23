@@ -357,7 +357,7 @@ fn d_disconnected() {
 /// When non-null, `ticcmds` must point to an array of at least
 /// `NET_MAXPLAYERS` `TiccmdT` elements, and `players_mask` must point to an
 /// array of at least `NET_MAXPLAYERS` `i32` values.
-pub fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut i32) {
+pub unsafe fn D_ReceiveTic(ticcmds: *mut TiccmdT, players_mask: *mut i32) {
     if ticcmds.is_null() && players_mask.is_null() {
         d_disconnected();
         return;
@@ -398,22 +398,17 @@ pub fn D_StartGameLoop() {
 ///
 /// The `callback` parameter (used in networked play to report lobby readiness)
 /// is ignored. Called from `d_net.c`.
-///
-/// # Safety
-/// `settings` must be a valid, non-null pointer to a `NetGameSettingsT`.
-pub fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *const ()) {
+pub fn D_StartNetGame(settings: &mut NetGameSettingsT, _callback: *const ()) {
     let mut main_loop = MAIN_LOOP.borrow_mut();
-    unsafe {
-        (*settings).consoleplayer = 0;
-        (*settings).num_players = 1;
-        (*settings).player_classes[0] = main_loop.player_class;
-        (*settings).new_sync = 0;
-        (*settings).extratics = 1;
-        (*settings).ticdup = 1;
+    settings.consoleplayer = 0;
+    settings.num_players = 1;
+    settings.player_classes[0] = main_loop.player_class;
+    settings.new_sync = 0;
+    settings.extratics = 1;
+    settings.ticdup = 1;
 
-        main_loop.ticdup = (*settings).ticdup;
-        main_loop.new_sync = (*settings).new_sync;
-    }
+    main_loop.ticdup = settings.ticdup;
+    main_loop.new_sync = settings.new_sync;
 }
 
 /// Initialises networking and registers [`D_QuitNetGame`] as an at-exit
@@ -425,12 +420,9 @@ pub fn D_StartNetGame(settings: *mut NetGameSettingsT, _callback: *const ()) {
 /// function only reads the player class from `connect_data` and registers the
 /// exit handler. Always returns `0` (false = not connected to a server).
 /// Called from `d_net.c`.
-///
-/// # Safety
-/// `connect_data` must be a valid, non-null pointer to a `NetConnectDataT`.
-pub fn D_InitNetGame(connect_data: *mut NetConnectDataT) -> i32 {
+pub fn D_InitNetGame(connect_data: &NetConnectDataT) -> i32 {
     I_AtExit(D_QuitNetGame, Boolean::TRUE);
-    MAIN_LOOP.borrow_mut().player_class = unsafe { (*connect_data).player_class };
+    MAIN_LOOP.borrow_mut().player_class = connect_data.player_class;
     0 // false
 }
 

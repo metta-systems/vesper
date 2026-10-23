@@ -654,7 +654,7 @@ fn load_slot_origin() -> (i32, i32) {
 fn M_ReadSaveStrings() {
     for i in 0..load_end {
         let mut slot = MENU.borrow().savegamestrings[i];
-        let status = match std::fs::File::open(unsafe { P_SaveGameFile(i as i32) }) {
+        let status = match std::fs::File::open(P_SaveGameFile(i as i32)) {
             Ok(mut file) => {
                 // Like the C `fread`, a short read is ignored.
                 let _ = file.read(&mut slot);
@@ -670,9 +670,16 @@ fn M_ReadSaveStrings() {
     }
 }
 
+/// Cache the patch lump `name` and draw it at (`x`, `y`).
+fn draw_patch_lump(x: i32, y: i32, name: &[u8]) {
+    let patch = W_CacheLumpName(name, 0) as *mut patch_t;
+    // SAFETY: the lump was just cached, and every menu graphic is a patch.
+    unsafe { V_DrawPatchDirect(x, y, patch) };
+}
+
 /// Draw the Load Game menu page: title patch plus one bordered slot row per save slot.
 fn M_DrawLoad() {
-    V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_LOADG", 0) as *mut patch_t);
+    draw_patch_lump(72, 28, b"M_LOADG");
 
     let (x, y) = load_slot_origin();
     let savegamestrings = MENU.borrow().savegamestrings;
@@ -684,26 +691,20 @@ fn M_DrawLoad() {
 
 /// Draw the left/center/right border patches around a save-game name text field at `(x, y)`.
 fn M_DrawSaveLoadBorder(x: i32, y: i32) {
-    V_DrawPatchDirect(
-        x - 8,
-        y + 7,
-        W_CacheLumpName(b"M_LSLEFT", 0) as *mut patch_t,
-    );
+    draw_patch_lump(x - 8, y + 7, b"M_LSLEFT");
 
     let mut xi = x;
     for _ in 0..24 {
-        V_DrawPatchDirect(xi, y + 7, W_CacheLumpName(b"M_LSCNTR", 0) as *mut patch_t);
+        draw_patch_lump(xi, y + 7, b"M_LSCNTR");
         xi += 8;
     }
 
-    V_DrawPatchDirect(xi, y + 7, W_CacheLumpName(b"M_LSRGHT", 0) as *mut patch_t);
+    draw_patch_lump(xi, y + 7, b"M_LSRGHT");
 }
 
 /// Load the game from save slot `choice` and close all menus.
 fn M_LoadSelect(choice: i32) {
-    unsafe {
-        G_LoadGame(&P_SaveGameFile(choice));
-    }
+    G_LoadGame(&P_SaveGameFile(choice));
     M_ClearMenus();
 }
 
@@ -719,7 +720,7 @@ fn M_LoadGame(_choice: i32) {
 
 /// Draw the Save Game menu page: title, bordered slot rows, and a blinking cursor when editing.
 fn M_DrawSave() {
-    V_DrawPatchDirect(72, 28, W_CacheLumpName(b"M_SAVEG", 0) as *mut patch_t);
+    draw_patch_lump(72, 28, b"M_SAVEG");
     let (x, y) = load_slot_origin();
     let (savegamestrings, save_string_enter, save_slot) = {
         let menu = MENU.borrow();
@@ -739,9 +740,7 @@ fn M_DrawSave() {
 /// Commit the save to `slot`, clear the menus, and record the slot as the quicksave target.
 fn M_DoSave(slot: i32) {
     let description = MENU.borrow().savegamestrings[slot as usize];
-    unsafe {
-        G_SaveGame(slot, &description);
-    }
+    G_SaveGame(slot, &description);
     M_ClearMenus();
     let mut menu = MENU.borrow_mut();
     if menu.quickSaveSlot == -2 {
@@ -904,7 +903,7 @@ fn M_DrawReadThis1() {
         }
     }
 
-    V_DrawPatchDirect(0, 0, W_CacheLumpName(lumpname, 0) as *mut patch_t);
+    draw_patch_lump(0, 0, lumpname);
     let mut pages = MENU_PAGES.borrow_mut();
     pages.ReadDef1.x = skullx;
     pages.ReadDef1.y = skully;
@@ -913,7 +912,7 @@ fn M_DrawReadThis1() {
 /// Draw the second "Read This" help screen (`HELP1` lump).
 fn M_DrawReadThis2() {
     MENU.borrow_mut().inhelpscreens = 1;
-    V_DrawPatchDirect(0, 0, W_CacheLumpName(b"HELP1", 0) as *mut patch_t);
+    draw_patch_lump(0, 0, b"HELP1");
 }
 
 /// Draw the Sound Volume menu page: title patch and two thermometer sliders.
@@ -928,7 +927,7 @@ fn M_DrawSound() {
         let pages = MENU_PAGES.borrow();
         (pages.SoundDef.x as i32, pages.SoundDef.y as i32)
     };
-    V_DrawPatchDirect(60, 38, W_CacheLumpName(b"M_SVOL", 0) as *mut patch_t);
+    draw_patch_lump(60, 38, b"M_SVOL");
 
     M_DrawThermo(x, y + LINEHEIGHT * (sfx_vol as i32 + 1), 16, sfxVolume);
 
@@ -978,13 +977,13 @@ fn M_MusicVol(choice: i32) {
 
 /// Draw the "DOOM" title graphic at the top of the main menu.
 fn M_DrawMainMenu() {
-    V_DrawPatchDirect(94, 2, W_CacheLumpName(b"M_DOOM", 0) as *mut patch_t);
+    draw_patch_lump(94, 2, b"M_DOOM");
 }
 
 /// Draw the "New Game" and "Skill Level" title patches above the skill menu.
 fn M_DrawNewGame() {
-    V_DrawPatchDirect(96, 14, W_CacheLumpName(b"M_NEWG", 0) as *mut patch_t);
-    V_DrawPatchDirect(54, 38, W_CacheLumpName(b"M_SKILL", 0) as *mut patch_t);
+    draw_patch_lump(96, 14, b"M_NEWG");
+    draw_patch_lump(54, 38, b"M_SKILL");
 }
 
 /// Handle "New Game" activation: navigate to the episode or skill menu as appropriate.
@@ -1005,7 +1004,7 @@ fn M_NewGame(_choice: i32) {
 
 /// Draw the "Which Episode?" title patch above the episode menu.
 fn M_DrawEpisode() {
-    V_DrawPatchDirect(54, 38, W_CacheLumpName(b"M_EPISOD", 0) as *mut patch_t);
+    draw_patch_lump(54, 38, b"M_EPISOD");
 }
 
 /// Confirmation callback for the Nightmare skill prompt; starts the game if `key` confirms.
@@ -1014,9 +1013,7 @@ fn M_VerifyNightmare(key: i32) {
         return;
     }
     let epi = MENU.borrow().epi;
-    unsafe {
-        G_DeferedInitNew(4, epi + 1, 1);
-    }
+    G_DeferedInitNew(4, epi + 1, 1);
     M_ClearMenus();
 }
 
@@ -1027,9 +1024,7 @@ fn M_ChooseSkill(choice: i32) {
         return;
     }
     let epi = MENU.borrow().epi;
-    unsafe {
-        G_DeferedInitNew(choice, epi + 1, 1);
-    }
+    G_DeferedInitNew(choice, epi + 1, 1);
     M_ClearMenus();
 }
 
@@ -1053,7 +1048,7 @@ fn M_Episode(choice: i32) {
 
 /// Draw the Options menu page: title patch, detail/message toggles, and thermometer sliders.
 fn M_DrawOptions() {
-    V_DrawPatchDirect(108, 15, W_CacheLumpName(b"M_OPTTTL", 0) as *mut patch_t);
+    draw_patch_lump(108, 15, b"M_OPTTTL");
 
     let detail_names: [&[u8]; 2] = [b"M_GDHIGH", b"M_GDLOW"];
     let msg_names: [&[u8]; 2] = [b"M_MSGOFF", b"M_MSGON"];
@@ -1072,16 +1067,16 @@ fn M_DrawOptions() {
         )
     };
 
-    V_DrawPatchDirect(
+    draw_patch_lump(
         x + 175,
         y + LINEHEIGHT * detail as i32,
-        W_CacheLumpName(detail_names[detail_level as usize], 0) as *mut patch_t,
+        detail_names[detail_level as usize],
     );
 
-    V_DrawPatchDirect(
+    draw_patch_lump(
         x + 120,
         y + LINEHEIGHT * messages as i32,
-        W_CacheLumpName(msg_names[show_messages as usize], 0) as *mut patch_t,
+        msg_names[show_messages as usize],
     );
 
     M_DrawThermo(
@@ -1268,9 +1263,7 @@ fn M_SizeDisplay(choice: i32) {
         }
         (menu.screenblocks, menu.detailLevel)
     };
-    unsafe {
-        R_SetViewSize(screenblocks, detail_level);
-    }
+    R_SetViewSize(screenblocks, detail_level);
 }
 
 /// Draw a thermometer slider at `(x, y)` with `thermWidth` cells and a filled dot at `thermDot`.
@@ -1278,19 +1271,15 @@ fn M_SizeDisplay(choice: i32) {
 /// Renders left cap, `thermWidth` middle pieces, right cap, then the movable dot.
 fn M_DrawThermo(x: i32, y: i32, thermWidth: i32, thermDot: i32) {
     let mut xx = x;
-    V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERML", 0) as *mut patch_t);
+    draw_patch_lump(xx, y, b"M_THERML");
     xx += 8;
     for _ in 0..thermWidth {
-        V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERMM", 0) as *mut patch_t);
+        draw_patch_lump(xx, y, b"M_THERMM");
         xx += 8;
     }
-    V_DrawPatchDirect(xx, y, W_CacheLumpName(b"M_THERMR", 0) as *mut patch_t);
+    draw_patch_lump(xx, y, b"M_THERMR");
 
-    V_DrawPatchDirect(
-        (x + 8) + thermDot * 8,
-        y,
-        W_CacheLumpName(b"M_THERMO", 0) as *mut patch_t,
-    );
+    draw_patch_lump((x + 8) + thermDot * 8, y, b"M_THERMO");
 }
 
 /// No-op: draw callback for an empty (non-selected) grid cell (unused in this port).
@@ -1397,7 +1386,10 @@ fn IsNullKey(key: i32) -> bool {
 ///
 /// Returns `Boolean::TRUE` if the event was consumed, `Boolean::FALSE` otherwise.
 /// Called by `G_Responder` in `g_game.c`.
-pub fn M_Responder(ev: *mut event_t) -> Boolean {
+///
+/// # Safety
+/// `ev` must be a valid, non-null pointer to an initialised `event_t`.
+pub unsafe fn M_Responder(ev: *mut event_t) -> Boolean {
     let ControlsState {
         joybmenu,
         key_menu_abort,

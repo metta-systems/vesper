@@ -27,17 +27,9 @@ use crate::engine::{
 /// absent, appends it and returns the new index. This makes the digest
 /// depend only on the relative order in which distinct WAD files are first
 /// encountered when iterating the lump directory, not on pointer values,
-/// which keeps the hash stable across runs.
-///
-/// # Safety
-///
-/// `open_wadfiles` must be a valid mutable reference. `handle` is only
-/// compared for equality and stored back into the vector, never
-/// dereferenced.
-unsafe fn get_file_number(
-    handle: *mut wad_file_t,
-    open_wadfiles: &mut Vec<*mut wad_file_t>,
-) -> i32 {
+/// which keeps the hash stable across runs. `handle` is only compared for
+/// equality and stored back into the vector, never dereferenced.
+fn get_file_number(handle: *mut wad_file_t, open_wadfiles: &mut Vec<*mut wad_file_t>) -> i32 {
     for (i, &wad) in open_wadfiles.iter().enumerate() {
         if wad == handle {
             return i as i32;

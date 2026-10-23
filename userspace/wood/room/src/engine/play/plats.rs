@@ -384,7 +384,7 @@ pub fn P_ActivateInStasis(tag: i32) {
 /// # Safety
 ///
 /// `line` must be a valid, non-null pointer.
-pub fn EV_StopPlat(line: *mut line_t) {
+pub unsafe fn EV_StopPlat(line: *mut line_t) {
     let activeplats = PLATS.borrow().activeplats;
     unsafe {
         for plat in activeplats {

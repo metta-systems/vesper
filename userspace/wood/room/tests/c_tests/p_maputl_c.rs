@@ -151,7 +151,10 @@ fn point_on_line_side_vertical_pos_dy_left() {
     // dx=0, dy>0, x < v1.x → back (1)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(-1, 0, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(-1, 0, &mut line) },
+        1
+    );
 }
 
 /// Vertical line pointing up, point to the right → front side (0).
@@ -160,7 +163,10 @@ fn point_on_line_side_vertical_pos_dy_right() {
     // dx=0, dy>0, x > v1.x → front (0)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(1, 0, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(1, 0, &mut line) },
+        0
+    );
 }
 
 /// Vertical line pointing up, point exactly on the line → back side (the
@@ -170,7 +176,10 @@ fn point_on_line_side_vertical_pos_dy_on_line() {
     // dx=0, dy>0, x == v1.x (takes x <= v1.x branch) → back (1)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, 0, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, 0, &mut line) },
+        1
+    );
 }
 
 /// Vertical line pointing down (`dy < 0`), point to the left → front side.
@@ -179,7 +188,10 @@ fn point_on_line_side_vertical_neg_dy_left() {
     // dx=0, dy<0, x <= v1.x → front (0)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, 0, -FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(-1, 0, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(-1, 0, &mut line) },
+        0
+    );
 }
 
 /// Vertical line pointing down, point to the right → back side.
@@ -188,7 +200,10 @@ fn point_on_line_side_vertical_neg_dy_right() {
     // dx=0, dy<0, x > v1.x → back (1)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, 0, -FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(1, 0, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(1, 0, &mut line) },
+        1
+    );
 }
 
 /// Horizontal line pointing right (`dx > 0`), point below → front side.
@@ -197,7 +212,10 @@ fn point_on_line_side_horizontal_pos_dx_below() {
     // dy=0, dx>0, y < v1.y → front (0)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, -1, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, -1, &mut line) },
+        0
+    );
 }
 
 /// Horizontal line pointing right, point above → back side.
@@ -206,7 +224,10 @@ fn point_on_line_side_horizontal_pos_dx_above() {
     // dy=0, dx>0, y > v1.y → back (1)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, 1, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, 1, &mut line) },
+        1
+    );
 }
 
 /// Horizontal line pointing right, point exactly on it → front side (the
@@ -216,7 +237,10 @@ fn point_on_line_side_horizontal_pos_dx_on_line() {
     // dy=0, dx>0, y == v1.y (takes y <= v1.y branch) → front (0)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, 0, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, 0, &mut line) },
+        0
+    );
 }
 
 /// Horizontal line pointing left (`dx < 0`), point below → back side.
@@ -225,7 +249,10 @@ fn point_on_line_side_horizontal_neg_dx_below() {
     // dy=0, dx<0, y <= v1.y → back (1)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, -FRACUNIT, 0);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, -1, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, -1, &mut line) },
+        1
+    );
 }
 
 /// Horizontal line pointing left, point above → front side.
@@ -234,7 +261,10 @@ fn point_on_line_side_horizontal_neg_dx_above() {
     // dy=0, dx<0, y > v1.y → front (0)
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, -FRACUNIT, 0);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, 1, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, 1, &mut line) },
+        0
+    );
 }
 
 /// Diagonal NE line, point above-left → back side via the cross-product branch.
@@ -244,7 +274,10 @@ fn point_on_line_side_diagonal_above_left() {
     // left=FixedMul(1,0)=0, right=FixedMul(FRACUNIT,1)=1, 1>=0 → 1
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(0, FRACUNIT, &mut line), 1);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(0, FRACUNIT, &mut line) },
+        1
+    );
 }
 
 /// Diagonal NE line, point below-right → front side via the cross-product branch.
@@ -254,7 +287,10 @@ fn point_on_line_side_diagonal_below_right() {
     // left=FixedMul(1,FRACUNIT)=1, right=FixedMul(0,1)=0, 0<1 → 0
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
-    assert_eq!(play::maputl::P_PointOnLineSide(FRACUNIT, 0, &mut line), 0);
+    assert_eq!(
+        unsafe { play::maputl::P_PointOnLineSide(FRACUNIT, 0, &mut line) },
+        0
+    );
 }
 
 /// Diagonal NE line, point exactly on it: `right == left` returns back side
@@ -266,7 +302,7 @@ fn point_on_line_side_diagonal_on_line_is_back() {
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
     assert_eq!(
-        play::maputl::P_PointOnLineSide(FRACUNIT, FRACUNIT, &mut line),
+        unsafe { play::maputl::P_PointOnLineSide(FRACUNIT, FRACUNIT, &mut line) },
         1
     );
 }
@@ -292,7 +328,7 @@ fn divline_side_horizontal_above() {
     let line = make_divline(0, 0, FRACUNIT, 0); // pointing right
     // Above the line → side 1 (back)
     assert_eq!(
-        play::maputl::P_PointOnDivlineSide(FRACUNIT, FRACUNIT, &line as *const _ as *mut _),
+        play::maputl::P_PointOnDivlineSide(FRACUNIT, FRACUNIT, &line),
         1
     );
 }
@@ -303,7 +339,7 @@ fn divline_side_horizontal_below() {
     let line = make_divline(0, 0, FRACUNIT, 0);
     // Below the line → side 0 (front)
     assert_eq!(
-        play::maputl::P_PointOnDivlineSide(FRACUNIT, -FRACUNIT, &line as *const _ as *mut _),
+        play::maputl::P_PointOnDivlineSide(FRACUNIT, -FRACUNIT, &line),
         0
     );
 }
@@ -313,10 +349,7 @@ fn divline_side_horizontal_below() {
 fn divline_side_horizontal_on_line() {
     let line = make_divline(0, 0, FRACUNIT, 0);
     // y <= line.y → side 0
-    assert_eq!(
-        play::maputl::P_PointOnDivlineSide(FRACUNIT, 0, &line as *const _ as *mut _),
-        0
-    );
+    assert_eq!(play::maputl::P_PointOnDivlineSide(FRACUNIT, 0, &line), 0);
 }
 
 /// Vertical divline (pointing up), point to the left → back side (1).
@@ -325,7 +358,7 @@ fn divline_side_vertical_left() {
     let line = make_divline(0, 0, 0, FRACUNIT); // pointing up
     // Left of the line (x <= 0) → side 1 (back)
     assert_eq!(
-        play::maputl::P_PointOnDivlineSide(-FRACUNIT, FRACUNIT, &line as *const _ as *mut _),
+        play::maputl::P_PointOnDivlineSide(-FRACUNIT, FRACUNIT, &line),
         1
     );
 }
@@ -336,7 +369,7 @@ fn divline_side_vertical_right() {
     let line = make_divline(0, 0, 0, FRACUNIT);
     // Right of the line (x > 0) → side 0 (front)
     assert_eq!(
-        play::maputl::P_PointOnDivlineSide(FRACUNIT, FRACUNIT, &line as *const _ as *mut _),
+        play::maputl::P_PointOnDivlineSide(FRACUNIT, FRACUNIT, &line),
         0
     );
 }
@@ -346,10 +379,7 @@ fn divline_side_vertical_right() {
 fn divline_side_vertical_on_line() {
     let line = make_divline(0, 0, 0, FRACUNIT);
     // x <= line.x → side 1
-    assert_eq!(
-        play::maputl::P_PointOnDivlineSide(0, FRACUNIT, &line as *const _ as *mut _),
-        1
-    );
+    assert_eq!(play::maputl::P_PointOnDivlineSide(0, FRACUNIT, &line), 1);
 }
 
 /// Diagonal divline (`y = x`): points are tested on either side using the
@@ -359,15 +389,9 @@ fn divline_side_diagonal() {
     // 45-degree line y = x
     let line = make_divline(0, 0, FRACUNIT, FRACUNIT);
     // point (0, FRACUNIT) is above the line → side 1
-    assert_eq!(
-        play::maputl::P_PointOnDivlineSide(0, FRACUNIT, &line as *const _ as *mut _),
-        1
-    );
+    assert_eq!(play::maputl::P_PointOnDivlineSide(0, FRACUNIT, &line), 1);
     // point (FRACUNIT, 0) is below the line → side 0
-    assert_eq!(
-        play::maputl::P_PointOnDivlineSide(FRACUNIT, 0, &line as *const _ as *mut _),
-        0
-    );
+    assert_eq!(play::maputl::P_PointOnDivlineSide(FRACUNIT, 0, &line), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,10 +407,7 @@ fn intercept_parallel_returns_zero() {
     let v1 = make_divline(0, 0, FRACUNIT, 0);
     let v2 = make_divline(0, FRACUNIT, FRACUNIT, 0);
     // Parallel horizontal lines → 0
-    assert_eq!(
-        play::maputl::P_InterceptVector(&v2 as *const _ as *mut _, &v1 as *const _ as *mut _),
-        0
-    );
+    assert_eq!(play::maputl::P_InterceptVector(&v2, &v1), 0);
 }
 
 /// Perpendicular divlines crossing at the origin → intercept fraction is 0
@@ -396,10 +417,7 @@ fn intercept_perpendicular_crossing_at_origin() {
     let v1 = make_divline(0, 0, FRACUNIT, 0); // x-axis
     let v2 = make_divline(0, 0, 0, FRACUNIT); // y-axis
     // They cross at origin → frac = 0 along v2
-    assert_eq!(
-        play::maputl::P_InterceptVector(&v2 as *const _ as *mut _, &v1 as *const _ as *mut _),
-        0
-    );
+    assert_eq!(play::maputl::P_InterceptVector(&v2, &v1), 0);
 }
 
 /// Horizontal `v1` crossed at the midpoint of vertical `v2` → intercept = 0.5.
@@ -411,10 +429,7 @@ fn intercept_crossing_at_half_along_v2() {
     let v2 = make_divline(FRACUNIT, -FRACUNIT, 0, 2 * FRACUNIT);
     // Intersection is at (1,0), which is halfway along v2
     // → frac = 0.5 = FRACUNIT/2
-    assert_eq!(
-        play::maputl::P_InterceptVector(&v2 as *const _ as *mut _, &v1 as *const _ as *mut _),
-        FRACUNIT / 2
-    );
+    assert_eq!(play::maputl::P_InterceptVector(&v2, &v1), FRACUNIT / 2);
 }
 
 /// Same midpoint crossing but with a longer `v1` — the intercept is
@@ -426,10 +441,7 @@ fn intercept_crossing_at_one_along_v2() {
     let v1 = make_divline(0, 0, 2 * FRACUNIT, 0);
     let v2 = make_divline(FRACUNIT, -FRACUNIT, 0, 2 * FRACUNIT);
     // Intersection at (1,0) is halfway along v2 → 0.5
-    assert_eq!(
-        play::maputl::P_InterceptVector(&v2 as *const _ as *mut _, &v1 as *const _ as *mut _),
-        FRACUNIT / 2
-    );
+    assert_eq!(play::maputl::P_InterceptVector(&v2, &v1), FRACUNIT / 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +478,7 @@ fn make_divline_copies_fields() {
         dx: 0,
         dy: 0,
     };
-    play::maputl::P_MakeDivline(&mut line, &mut dl);
+    unsafe { play::maputl::P_MakeDivline(&mut line, &mut dl) };
     assert_eq!(dl.x, 10 * FRACUNIT);
     assert_eq!(dl.y, 20 * FRACUNIT);
     assert_eq!(dl.dx, 5 * FRACUNIT);
@@ -502,7 +514,7 @@ fn box_on_line_horizontal_above() {
     tmbox[BBox::TOP] = FRACUNIT;
     tmbox[BBox::BOTTOM] = FRACUNIT / 2;
     assert_eq!(
-        play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line),
+        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
         1
     );
 }
@@ -532,7 +544,7 @@ fn box_on_line_horizontal_below() {
     tmbox[BBox::TOP] = -FRACUNIT / 2;
     tmbox[BBox::BOTTOM] = -FRACUNIT;
     assert_eq!(
-        play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line),
+        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
         0
     );
 }
@@ -562,7 +574,7 @@ fn box_on_line_vertical_right() {
     tmbox[BBox::RIGHT] = FRACUNIT;
     tmbox[BBox::LEFT] = FRACUNIT / 2;
     assert_eq!(
-        play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line),
+        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
         0
     );
 }
@@ -592,7 +604,7 @@ fn box_on_line_vertical_left() {
     tmbox[BBox::RIGHT] = -FRACUNIT / 2;
     tmbox[BBox::LEFT] = -FRACUNIT;
     assert_eq!(
-        play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line),
+        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
         1
     );
 }
@@ -623,7 +635,7 @@ fn box_crosses_line_returns_negative_one() {
     tmbox[BBox::TOP] = FRACUNIT;
     tmbox[BBox::BOTTOM] = -FRACUNIT;
     assert_eq!(
-        play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line),
+        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
         -1
     );
 }
@@ -679,7 +691,7 @@ fn line_opening_single_sided() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, -1], std::ptr::null_mut(), std::ptr::null_mut());
-    play::maputl::P_LineOpening(&mut line);
+    unsafe { play::maputl::P_LineOpening(&mut line) };
     assert_eq!(play::maputl::openrange(), 0);
 }
 
@@ -692,7 +704,7 @@ fn line_opening_two_sided_front_higher() {
     let mut back = make_sector(-16 * FRACUNIT, 64 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    play::maputl::P_LineOpening(&mut line);
+    unsafe { play::maputl::P_LineOpening(&mut line) };
     // opentop    = min(128, 64)  = 64
     // openbottom = max(0, -16)   = 0
     // lowfloor   = min(0, -16)   = -16
@@ -712,7 +724,7 @@ fn line_opening_two_sided_back_higher() {
     let mut back = make_sector(16 * FRACUNIT, 128 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    play::maputl::P_LineOpening(&mut line);
+    unsafe { play::maputl::P_LineOpening(&mut line) };
     // opentop    = min(64, 128)  = 64
     // openbottom = max(0, 16)    = 16
     // lowfloor   = min(0, 16)    = 0
@@ -732,7 +744,7 @@ fn line_opening_two_sided_equal() {
     let mut back = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    play::maputl::P_LineOpening(&mut line);
+    unsafe { play::maputl::P_LineOpening(&mut line) };
     assert_eq!(play::maputl::opentop(), 128 * FRACUNIT);
     assert_eq!(play::maputl::openbottom(), 32 * FRACUNIT);
     assert_eq!(play::maputl::lowfloor(), 32 * FRACUNIT);
@@ -749,7 +761,7 @@ fn line_opening_negative_range() {
     let mut back = make_sector(0, 64 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    play::maputl::P_LineOpening(&mut line);
+    unsafe { play::maputl::P_LineOpening(&mut line) };
     // opentop    = min(128, 64)   = 64
     // openbottom = max(100, 0)    = 100
     // lowfloor   = min(100, 0)    = 0

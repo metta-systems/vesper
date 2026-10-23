@@ -25,8 +25,6 @@
 //! - `unpredictable_function_pointer_comparisons` - Doom's thinker dispatch
 //!   identifies thinkers by comparing their action function pointers; this is
 //!   reliable within a single statically-linked binary.
-//! - `clippy::not_unsafe_ptr_arg_deref` - many ported functions keep the C
-//!   signatures, accepting raw pointers their callers validate.
 //! - `clippy::needless_range_loop`, `clippy::explicit_counter_loop` - direct
 //!   index loops are kept where the originals were so the diff with C stays
 //!   minimal.
@@ -44,9 +42,6 @@
 // Doom thinker dispatch compares function pointers for identity within a single
 // binary, which is a well-understood and reliable pattern in this context.
 #![allow(unpredictable_function_pointer_comparisons)]
-// This is a C-to-Rust port: ported functions routinely take raw pointer
-// arguments that are dereferenced in the body. The callers ensure validity.
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
 // C-style indexed loops are kept where the original had them.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
 // Edition 2024 warns on unsafe operations in `unsafe fn` bodies without their

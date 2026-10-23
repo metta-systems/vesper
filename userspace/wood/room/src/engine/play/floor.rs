@@ -137,7 +137,11 @@ impl floormove_t {
 /// - `result_ok` — moved without incident.
 /// - `result_crushed` — a thing was crushed; the plane may have been reversed.
 /// - `result_pastdest` — the plane reached `dest` this tic.
-pub fn T_MovePlane(
+///
+/// # Safety
+///
+/// `sector` must be a valid, non-null pointer into the current map's sectors.
+pub unsafe fn T_MovePlane(
     sector: *mut sector_t,
     speed: fixed_t,
     dest: fixed_t,

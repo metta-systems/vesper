@@ -343,15 +343,17 @@ pub fn W_LumpLength(lump: u32) -> i32 {
 
 /// Read `lump` into the caller-supplied buffer `dest`.
 ///
-/// The buffer must be at least `W_LumpLength(lump)` bytes. Wraps
-/// the read in `I_BeginRead` / `I_EndRead` so the platform can
+/// Wraps the read in `I_BeginRead` / `I_EndRead` so the platform can
 /// display a disk icon. If the underlying `W_Read` returns fewer
 /// bytes than requested, calls `I_Error`.
 ///
 /// Differs from the C source by also emitting a stderr diagnostic
 /// when the actual read exceeds `lump.size` (a "shouldn't happen"
 /// defensive log, not present in `w_wad.c`).
-pub fn W_ReadLump(lump: u32, dest: *mut c_void) {
+///
+/// # Safety
+/// `dest` must be writable for at least `W_LumpLength(lump)` bytes.
+pub unsafe fn W_ReadLump(lump: u32, dest: *mut c_void) {
     let WadState {
         lumpinfo, numlumps, ..
     } = WAD.get();

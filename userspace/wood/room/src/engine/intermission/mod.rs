@@ -17,7 +17,6 @@
     non_snake_case,
     non_camel_case_types,
     clippy::missing_safety_doc,
-    clippy::not_unsafe_ptr_arg_deref,
     clippy::needless_range_loop,
     clippy::ptr_offset_with_cast,
     clippy::manual_clamp,
@@ -756,11 +755,8 @@ unsafe fn WI_slamBackground(wi: &IntermissionState) {
 ///
 /// Called by `G_Responder` in `g_game.c`.
 ///
-/// # Safety
-///
-/// `_ev` is not dereferenced. Caller may pass any pointer (including null).
-/// The function is `unsafe` to match the other responders' signature only.
-pub unsafe fn WI_Responder(_ev: *mut event_t) -> i32 {
+/// `_ev` is not dereferenced, so any pointer (including null) is accepted.
+pub fn WI_Responder(_ev: *mut event_t) -> i32 {
     0
 }
 

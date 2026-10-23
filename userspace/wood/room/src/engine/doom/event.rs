@@ -110,16 +110,11 @@ pub static EVENT: Global<EventState> = Global::new(EventState::new());
 /// Corresponds to `D_PostEvent` in `d_event.c`.  Called by I/O functions
 /// (keyboard, mouse, joystick drivers) whenever input is detected.
 ///
-/// The event pointed to by `ev` is copied into the queue at `eventhead`;
-/// the head index then advances modulo `MAXEVENTS` (64).  If the queue is full,
-/// the oldest unread event is silently overwritten (same behaviour as C).
-///
-/// # Safety
-/// `ev` must be a valid, aligned, non-null pointer to an initialised
-/// `event_t` for the duration of this call; the pointer validity guarantee
-/// rests with the caller.
-pub fn D_PostEvent(ev: *const event_t) {
-    let event = unsafe { *ev };
+/// The event `ev` is copied into the queue at `eventhead`; the head index
+/// then advances modulo `MAXEVENTS` (64).  If the queue is full, the oldest
+/// unread event is silently overwritten (same behaviour as C).
+pub fn D_PostEvent(ev: &event_t) {
+    let event = *ev;
     let mut queue = EVENT.borrow_mut();
     let head = queue.eventhead;
     queue.events[head] = event;

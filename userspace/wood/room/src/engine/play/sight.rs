@@ -383,7 +383,7 @@ fn P_CrossBSPNode(sight: &mut SightState, level: &LevelState, bspnum: i32) -> bo
 /// Both `t1` and `t2` must be valid, non-null pointers to initialised
 /// `mobj_t` instances. Their `subsector` fields must point into the live
 /// subsector/sector arrays loaded by `p_setup`.
-pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
+pub unsafe fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
     let level = level();
     let mut sight = SIGHT.borrow_mut();
     unsafe {

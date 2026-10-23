@@ -538,10 +538,9 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
 ///
 /// Equivalent to `R_PointToAngle` in `r_main.c`.
 ///
-/// # Safety
-/// Reads `viewx` and `viewy` from [`VIEW`]; these must have been
-/// initialised by [`R_SetupFrame`] before this function is called.
-pub unsafe fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
+/// Reads `viewx` and `viewy` from [`VIEW`], so the result is only
+/// meaningful once [`R_SetupFrame`] has set them.
+pub fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
     let (viewx, viewy) = {
         let view = VIEW.borrow();
         (view.viewx, view.viewy)
@@ -562,10 +561,7 @@ pub unsafe fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
 ///
 /// Equivalent to `R_PointToAngle2` in `r_main.c`, with the global-aliasing
 /// trick removed.
-///
-/// # Safety
-/// Pure computation; takes no globals.
-pub unsafe fn R_PointToAngle2(x1: fixed_t, y1: fixed_t, x2: fixed_t, y2: fixed_t) -> angle_t {
+pub fn R_PointToAngle2(x1: fixed_t, y1: fixed_t, x2: fixed_t, y2: fixed_t) -> angle_t {
     point_to_angle_from_delta(x2 - x1, y2 - y1)
 }
 
@@ -581,10 +577,9 @@ pub unsafe fn R_PointToAngle2(x1: fixed_t, y1: fixed_t, x2: fixed_t, y2: fixed_t
 ///
 /// Equivalent to `R_PointToDist` in `r_main.c`.
 ///
-/// # Safety
-/// Reads `viewx` and `viewy` from [`VIEW`], which must have been set by
-/// [`R_SetupFrame`] before this is called in a rendering context.
-pub unsafe fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
+/// Reads `viewx` and `viewy` from [`VIEW`], so the result is only
+/// meaningful once [`R_SetupFrame`] has set them.
+pub fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
     let (viewx, viewy) = {
         let view = VIEW.borrow();
         (view.viewx, view.viewy)
@@ -634,14 +629,9 @@ pub fn R_InitPointToAngle() {
 ///
 /// Equivalent to `R_ScaleFromGlobalAngle` in `r_main.c`.
 ///
-/// # Safety
 /// Reads `viewangle`, `projection` and `detailshift` from `view` and the
-/// `r_segs` wall state; all must be initialised before calling.
-pub unsafe fn R_ScaleFromGlobalAngle(
-    view: &ViewState,
-    wall: &WallState,
-    visangle: angle_t,
-) -> fixed_t {
+/// `r_segs` wall state.
+pub fn R_ScaleFromGlobalAngle(view: &ViewState, wall: &WallState, visangle: angle_t) -> fixed_t {
     let anglea = ANG90.wrapping_add(visangle.wrapping_sub(view.viewangle));
     let angleb = ANG90.wrapping_add(visangle.wrapping_sub(wall.rw_normalangle));
 
@@ -801,11 +791,7 @@ pub unsafe fn R_InitLightTables() {
 /// frame. Safe to call mid-frame because the actual resize is deferred.
 ///
 /// Equivalent to `R_SetViewSize` in `r_main.c`.
-///
-/// # Safety
-/// Writes three fields of [`VIEW`]; must not be called while the view state
-/// is borrowed.
-pub unsafe fn R_SetViewSize(blocks: i32, detail: i32) {
+pub fn R_SetViewSize(blocks: i32, detail: i32) {
     let mut view = VIEW.borrow_mut();
     view.setsizeneeded = Boolean::TRUE;
     view.setblocks = blocks;
@@ -1186,46 +1172,42 @@ mod tests {
         let _g = RENDER_GLOBALS_LOCK.lock().unwrap();
         let _vp = ViewPosGuard::new();
         set_view_position(0, 0);
-        unsafe {
-            // Straight ahead: distance should be approximately FRACUNIT.
-            let dist_ahead = R_PointToDist(FRACUNIT, 0);
-            assert!(dist_ahead > 0, "distance straight ahead must be positive");
-            assert!(
-                (dist_ahead - FRACUNIT).abs() < FRACUNIT / 4,
-                "distance straight ahead should be near FRACUNIT, got {}",
-                dist_ahead
-            );
+        // Straight ahead: distance should be approximately FRACUNIT.
+        let dist_ahead = R_PointToDist(FRACUNIT, 0);
+        assert!(dist_ahead > 0, "distance straight ahead must be positive");
+        assert!(
+            (dist_ahead - FRACUNIT).abs() < FRACUNIT / 4,
+            "distance straight ahead should be near FRACUNIT, got {}",
+            dist_ahead
+        );
 
-            // 45-degree diagonal: distance should be larger than straight ahead.
-            let dist_diag = R_PointToDist(FRACUNIT, FRACUNIT);
-            assert!(
-                dist_diag > dist_ahead,
-                "diagonal distance ({}) must exceed straight-ahead distance ({})",
-                dist_diag,
-                dist_ahead
-            );
+        // 45-degree diagonal: distance should be larger than straight ahead.
+        let dist_diag = R_PointToDist(FRACUNIT, FRACUNIT);
+        assert!(
+            dist_diag > dist_ahead,
+            "diagonal distance ({}) must exceed straight-ahead distance ({})",
+            dist_diag,
+            dist_ahead
+        );
 
-            // Same point: distance must be exactly zero.
-            let dist_zero = R_PointToDist(0, 0);
-            assert_eq!(dist_zero, 0, "distance to view position must be zero");
-        }
+        // Same point: distance must be exactly zero.
+        let dist_zero = R_PointToDist(0, 0);
+        assert_eq!(dist_zero, 0, "distance to view position must be zero");
     }
 
     #[test]
     fn r_point_to_angle2_cardinals() {
-        unsafe {
-            // Due east is exact.
-            assert_eq!(R_PointToAngle2(0, 0, FRACUNIT, 0), 0);
+        // Due east is exact.
+        assert_eq!(R_PointToAngle2(0, 0, FRACUNIT, 0), 0);
 
-            // Due north quantizes to ANG90 - 1 in the fixed-point LUT.
-            assert_eq!(R_PointToAngle2(0, 0, 0, FRACUNIT), ANG90 - 1);
+        // Due north quantizes to ANG90 - 1 in the fixed-point LUT.
+        assert_eq!(R_PointToAngle2(0, 0, 0, FRACUNIT), ANG90 - 1);
 
-            // Due west quantizes to ANG180 - 1.
-            assert_eq!(R_PointToAngle2(0, 0, -FRACUNIT, 0), ANG180 - 1);
+        // Due west quantizes to ANG180 - 1.
+        assert_eq!(R_PointToAngle2(0, 0, -FRACUNIT, 0), ANG180 - 1);
 
-            // Due south is exact.
-            assert_eq!(R_PointToAngle2(0, 0, 0, -FRACUNIT), ANG270);
-        }
+        // Due south is exact.
+        assert_eq!(R_PointToAngle2(0, 0, 0, -FRACUNIT), ANG270);
     }
 
     /// R_PointToAngle2 used to set `viewx = x1; viewy = y1` and delegate to
@@ -1238,7 +1220,7 @@ mod tests {
         let _vp = ViewPosGuard::new();
         set_view_position(12345, -6789);
 
-        let _ = unsafe { R_PointToAngle2(1000, 2000, 3000, 4000) };
+        let _ = R_PointToAngle2(1000, 2000, 3000, 4000);
 
         let view = VIEW.borrow();
         assert_eq!(view.viewx, 12345, "R_PointToAngle2 must not modify viewx");
@@ -1269,15 +1251,13 @@ mod tests {
         ];
 
         for (dx, dy) in cases.iter().copied() {
-            let from_origin = unsafe { R_PointToAngle2(0, 0, dx, dy) };
-            let translated = unsafe {
-                R_PointToAngle2(
-                    100 * FRACUNIT,
-                    -50 * FRACUNIT,
-                    100 * FRACUNIT + dx,
-                    -50 * FRACUNIT + dy,
-                )
-            };
+            let from_origin = R_PointToAngle2(0, 0, dx, dy);
+            let translated = R_PointToAngle2(
+                100 * FRACUNIT,
+                -50 * FRACUNIT,
+                100 * FRACUNIT + dx,
+                -50 * FRACUNIT + dy,
+            );
             assert_eq!(
                 from_origin, translated,
                 "R_PointToAngle2 must be translation-invariant (dx={}, dy={})",
@@ -1299,16 +1279,14 @@ mod tests {
         wall.rw_normalangle = 0;
         wall.rw_distance = FRACUNIT;
 
-        unsafe {
-            // Angles near the u32 boundary must not panic.
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, u32::MAX);
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, 0);
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG90);
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG180);
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG270);
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, view.viewangle.wrapping_sub(1));
-            let _ = R_ScaleFromGlobalAngle(&view, &wall, view.viewangle.wrapping_add(1));
-        }
+        // Angles near the u32 boundary must not panic.
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, u32::MAX);
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, 0);
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG90);
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG180);
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, ANG270);
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, view.viewangle.wrapping_sub(1));
+        let _ = R_ScaleFromGlobalAngle(&view, &wall, view.viewangle.wrapping_add(1));
     }
 
     #[test]

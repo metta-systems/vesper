@@ -104,7 +104,7 @@ const QUEUESIZE: usize = 128;
 /// * `pack_chex` is treated as `doom`.
 /// * `pack_hacx` is treated as `doom2`.
 /// * All other missions are returned as-is.
-unsafe fn logical_gamemission() -> i32 {
+fn logical_gamemission() -> i32 {
     let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
@@ -755,7 +755,10 @@ pub fn HU_dequeueChatChar() -> u8 {
 ///   and sends the message; Escape cancels.
 ///
 /// Called from `G_Responder` in `g_game.c`.
-pub fn HU_Responder(ev: *mut event_t) -> i32 {
+///
+/// # Safety
+/// `ev` must be a valid, non-null pointer to an initialised `event_t`.
+pub unsafe fn HU_Responder(ev: *mut event_t) -> i32 {
     let hud_state = HUD.as_ptr();
     unsafe {
         let ev = &mut *ev;

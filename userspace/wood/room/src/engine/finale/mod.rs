@@ -286,7 +286,7 @@ use crate::engine::sound::{S_ChangeMusic, S_StartMusic, S_StartSound, info::Mus}
 ///
 /// Chex Quest maps to `doom`; HacX maps to `doom2`; all others are returned
 /// unchanged.  C origin: `logical_gamemission()` in f_finale.c.
-unsafe fn logical_gamemission() -> i32 {
+fn logical_gamemission() -> i32 {
     let gamemission = gamemission();
     if gamemission == doom::mode::pack_chex {
         doom::mode::doom
@@ -669,56 +669,53 @@ unsafe fn state_ptr(state: i32) -> *mut State {
 /// appropriate episode/map conditions are met.  C origin: `F_StartFinale` in
 /// f_finale.c.
 pub fn F_StartFinale() {
-    unsafe {
-        {
-            let mut game = GAME.borrow_mut();
-            game.gameaction = ga_nothing;
-            game.gamestate = GS_FINALE;
-            game.viewactive = 0;
-        }
-        AUTOMAP.borrow_mut().automapactive = 0;
-        let (gameepisode, gamemap) = (gameepisode(), gamemap());
-
-        if logical_gamemission() == doom::mode::doom {
-            S_ChangeMusic(Mus::Victor as i32, 1);
-        } else {
-            S_ChangeMusic(Mus::ReadM as i32, 1);
-        }
-
-        let mut finaletext = "";
-        let mut finaleflat: &[u8] = b"";
-
-        for screen in &TEXTSCREENS {
-            // Hack for Chex Quest
-            if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
-                // In C this mutates the static array; we emulate by checking level 5.
-                // Actually the C code DOES mutate textscreens[i].level.
-                // For simplicity we just check the hacked level inline.
-            }
-
-            let level =
-                if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
-                    5
-                } else {
-                    screen.level
-                };
-
-            if logical_gamemission() == screen.mission
-                && (logical_gamemission() != doom::mode::doom || gameepisode == screen.episode)
-                && gamemap == level
-            {
-                finaletext = screen.text;
-                finaleflat = screen.background;
-            }
-        }
-
-        let mut finale = FINALE.borrow_mut();
-        finale.finaletext = DEH_String(finaletext);
-        finale.finaleflat = DEH_String(finaleflat);
-
-        finale.stage = FinaleStage::Text;
-        finale.count = 0;
+    {
+        let mut game = GAME.borrow_mut();
+        game.gameaction = ga_nothing;
+        game.gamestate = GS_FINALE;
+        game.viewactive = 0;
     }
+    AUTOMAP.borrow_mut().automapactive = 0;
+    let (gameepisode, gamemap) = (gameepisode(), gamemap());
+
+    if logical_gamemission() == doom::mode::doom {
+        S_ChangeMusic(Mus::Victor as i32, 1);
+    } else {
+        S_ChangeMusic(Mus::ReadM as i32, 1);
+    }
+
+    let mut finaletext = "";
+    let mut finaleflat: &[u8] = b"";
+
+    for screen in &TEXTSCREENS {
+        // Hack for Chex Quest
+        if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
+            // In C this mutates the static array; we emulate by checking level 5.
+            // Actually the C code DOES mutate textscreens[i].level.
+            // For simplicity we just check the hacked level inline.
+        }
+
+        let level = if gameversion() == doom::mode::exe_chex && screen.mission == doom::mode::doom {
+            5
+        } else {
+            screen.level
+        };
+
+        if logical_gamemission() == screen.mission
+            && (logical_gamemission() != doom::mode::doom || gameepisode == screen.episode)
+            && gamemap == level
+        {
+            finaletext = screen.text;
+            finaleflat = screen.background;
+        }
+    }
+
+    let mut finale = FINALE.borrow_mut();
+    finale.finaletext = DEH_String(finaletext);
+    finale.finaleflat = DEH_String(finaleflat);
+
+    finale.stage = FinaleStage::Text;
+    finale.count = 0;
 }
 
 /// Forward input events to the cast responder while in the Cast stage.
@@ -727,7 +724,10 @@ pub fn F_StartFinale() {
 /// events are ignored at this level.
 ///
 /// Called from C code in `g_game.c`.  C origin: `F_Responder` in f_finale.c.
-pub fn F_Responder(event: *mut event_t) -> i32 {
+///
+/// # Safety
+/// `event` must be a valid, non-null pointer to an initialised `event_t`.
+pub unsafe fn F_Responder(event: *mut event_t) -> i32 {
     unsafe {
         let _ev = &*event;
         if let FinaleStage::Cast = FINALE.borrow().stage {
@@ -1026,7 +1026,10 @@ unsafe fn goto_stopattack(finale: &mut FinaleState) {
 ///
 /// Called by [`F_Responder`] while in the Cast stage.
 /// C origin: `F_CastResponder` in f_finale.c.
-pub fn F_CastResponder(ev: *mut event_t) -> i32 {
+///
+/// # Safety
+/// `ev` must be a valid, non-null pointer to an initialised `event_t`.
+pub unsafe fn F_CastResponder(ev: *mut event_t) -> i32 {
     unsafe {
         let event = &*ev;
         if event.kind != ev_keydown {
@@ -1140,7 +1143,11 @@ pub fn F_CastDrawer() {
 /// Used by [`F_BunnyScroll`] to implement the horizontal scroll effect.
 /// The patch column is read as a standard Doom post-format column (topdelta /
 /// length / pixel data).  C origin: `F_DrawPatchCol` in f_finale.c.
-pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
+///
+/// # Safety
+/// `patch` must point to a valid, cached patch with a column `col`, and `x`
+/// must be a column of the video buffer.
+pub unsafe fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
     unsafe {
         let patch_ptr = patch as *mut u8;
         let ofs = patch_t::column_offset(patch, col as usize);
@@ -1181,10 +1188,14 @@ pub fn F_BunnyScroll() {
     scrolled = scrolled.clamp(0, 320);
 
     for x in 0..SCREENWIDTH {
-        if x + scrolled < 320 {
-            F_DrawPatchCol(x, p1, x + scrolled);
-        } else {
-            F_DrawPatchCol(x, p2, x + scrolled - 320);
+        // SAFETY: both patches are cached 320-column lumps and `scrolled`
+        // keeps each column index inside them.
+        unsafe {
+            if x + scrolled < 320 {
+                F_DrawPatchCol(x, p1, x + scrolled);
+            } else {
+                F_DrawPatchCol(x, p2, x + scrolled - 320);
+            }
         }
     }
 
@@ -1192,11 +1203,13 @@ pub fn F_BunnyScroll() {
         return;
     }
     if finalecount < 1180 {
-        V_DrawPatch(
-            (SCREENWIDTH - 13 * 8) / 2,
-            (SCREENHEIGHT - 8 * 8) / 2,
-            W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
-        );
+        unsafe {
+            V_DrawPatch(
+                (SCREENWIDTH - 13 * 8) / 2,
+                (SCREENHEIGHT - 8 * 8) / 2,
+                W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
+            );
+        }
         FINALE.borrow_mut().last_stage = 0;
         return;
     }
@@ -1219,11 +1232,13 @@ pub fn F_BunnyScroll() {
 
     let mut namebuf: [u8; 10] = [0; 10];
     DEH_snprintf!(namebuf, "END{}", stage);
-    V_DrawPatch(
-        (SCREENWIDTH - 13 * 8) / 2,
-        (SCREENHEIGHT - 8 * 8) / 2,
-        W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
-    );
+    unsafe {
+        V_DrawPatch(
+            (SCREENWIDTH - 13 * 8) / 2,
+            (SCREENHEIGHT - 8 * 8) / 2,
+            W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
+        );
+    }
 }
 
 /// Draw the art-screen for the current episode (non-Cast, non-Text stage).
@@ -1253,11 +1268,13 @@ pub fn F_ArtScreenDrawer() {
         _ => return,
     };
 
-    V_DrawPatch(
-        0,
-        0,
-        W_CacheLumpName(DEH_String(lumpname), PU_CACHE) as *mut patch_t,
-    );
+    unsafe {
+        V_DrawPatch(
+            0,
+            0,
+            W_CacheLumpName(DEH_String(lumpname), PU_CACHE) as *mut patch_t,
+        );
+    }
 }
 
 /// Dispatch to the appropriate draw function based on the current finale stage.

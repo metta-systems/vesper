@@ -439,7 +439,7 @@ pub fn D_ConnectNetGame() {
     unsafe {
         let mut connect_data: NetConnectDataT = std::mem::zeroed();
         InitConnectData(&mut connect_data);
-        let netgame = D_InitNetGame(&mut connect_data);
+        let netgame = D_InitNetGame(&connect_data);
         GAME.borrow_mut().netgame = netgame;
 
         if M_CheckParm("-solo-net") > 0 {

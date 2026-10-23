@@ -1688,11 +1688,7 @@ pub unsafe fn A_Explode(thingy: *mut mobj_t) {
 /// - Ep 3 map 8: Spider Mastermind.
 /// - Ep 4 map 6: Cyberdemon; map 8: Spider Mastermind.
 /// - All other episodes: map 8 unconditionally.
-///
-/// # Safety
-///
-/// Reads `gameversion`, `gameepisode`, and `gamemap` globals which must be initialised.
-unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
+fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
     if (gameversion() as u32) < exe_ultimate as u32 {
         if gamemap() != 8 {
             return Boolean::FALSE;
@@ -1903,11 +1899,7 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
     S_StartSound(std::ptr::null_mut(), Sfx::Bossit as i32);
 }
 /// Icon of Sin pain reaction: plays `sfx_bospn` at full (global) volume.
-///
-/// # Safety
-///
-/// No pointer dereference; safe with any (even null) `_mo`.
-pub unsafe fn A_BrainPain(_mo: *mut mobj_t) {
+pub fn A_BrainPain(_mo: *mut mobj_t) {
     S_StartSound(std::ptr::null_mut(), Sfx::Bospn as i32);
 }
 /// Icon of Sin death scream: spawns a row of exploding rockets across the brain's width.
@@ -1967,11 +1959,7 @@ pub unsafe fn A_BrainExplode(mo: *mut mobj_t) {
     }
 }
 /// Icon of Sin death: ends the level via `G_ExitLevel`.
-///
-/// # Safety
-///
-/// No pointer dereference beyond the ignored `_mo`.
-pub unsafe fn A_BrainDie(_mo: *mut mobj_t) {
+pub fn A_BrainDie(_mo: *mut mobj_t) {
     G_ExitLevel();
 }
 /// Icon of Sin attack: launches a monster cube (`MT_SPAWNSHOT`) toward the next target spot.

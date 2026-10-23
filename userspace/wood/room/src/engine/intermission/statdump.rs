@@ -89,7 +89,11 @@ pub static STATDUMP: Global<StatdumpState> = Global::new(StatdumpState::new());
 ///
 /// Called from `WI_Drawer` / `WI_Ticker` (via the intermission code)
 /// at the end of every level.
-pub fn StatCopy(stats: *const wbstartstruct_t) {
+///
+/// # Safety
+/// `stats` must be a valid, non-null pointer to an initialised
+/// `wbstartstruct_t`.
+pub unsafe fn StatCopy(stats: *const wbstartstruct_t) {
     if !M_ParmExists("-statdump") {
         return;
     }
