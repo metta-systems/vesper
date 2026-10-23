@@ -7,7 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::ffi::c_void};
+use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     map::{line_t, sector_t},
@@ -16,7 +16,7 @@ use crate::engine::{
         floor::T_MovePlane,
         setup::sectors,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
-        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
+        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
     },
     sound::S_StartSectorSound,
     zone::{Z_Malloc, PU_LEVSPEC},
@@ -61,17 +61,14 @@ const silentCrushAndRaise: i32 = 5;
 
 /// Per-sector thinker for an active ceiling mover.
 ///
-/// Allocated via `Z_Malloc` and linked into the thinker list.  The `thinker`
-/// field must be at offset 0 (verified by the compile-time assertions in
-/// `layout_checks`) so that a `*mut ceiling_t` can be cast safely to
-/// `*mut thinker_t`.
+/// Allocated via `Z_Malloc` and linked into the thinker list through its
+/// embedded `thinker`.
 ///
-/// Layout matches the C `ceiling_t` struct.  Padding (`_pad0`, `_pad1`)
-/// preserves C alignment on 64-bit targets.
-#[repr(C)]
+/// Padding (`_pad0`, `_pad1`) keeps the struct, and so its zone allocation,
+/// the size of the C `ceiling_t` on 64-bit targets.
 #[derive(Clone, Copy)]
 pub struct ceiling_t {
-    /// Thinker header — must be at offset 0.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// Ceiling type (one of the `ceiling_e` integer constants).
     pub kind: i32,
@@ -93,22 +90,6 @@ pub struct ceiling_t {
     /// Saved direction used to resume a ceiling that was put into stasis.
     pub olddirection: i32,
     _pad1: [u8; 4],
-}
-
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<ceiling_t>() == 72);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, kind) == 24);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, sector) == 32);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, bottomheight) == 40);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, topheight) == 44);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, speed) == 48);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, crush) == 52);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, direction) == 56);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, tag) == 60);
-    const _: () = assert!(std::mem::offset_of!(ceiling_t, olddirection) == 64);
 }
 
 /// Table of all currently active ceiling thinkers.
@@ -254,12 +235,9 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut ceiling_t;
-        P_AddThinker(&mut (*ceiling).thinker);
-        (*sec).specialdata = ceiling as *mut c_void;
-        (*ceiling).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut ceiling_t),
-            unsafe fn(*mut c_void),
-        >(T_MoveCeiling));
+        P_AddThinker(&raw mut (*ceiling).thinker);
+        (*sec).specialdata = &raw mut (*ceiling).thinker;
+        (*ceiling).thinker.kind = ThinkerKind::Ceiling;
         (*ceiling).sector = sec;
         (*ceiling).crush = 0;
 
@@ -328,7 +306,7 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
         for i in 0..MAXCEILINGS {
             if activeceilings[i] == c {
                 (*activeceilings[i]).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
-                P_RemoveThinker(&mut (*activeceilings[i]).thinker);
+                P_RemoveThinker(&raw mut (*activeceilings[i]).thinker);
                 activeceilings[i] = std::ptr::null_mut();
                 break;
             }
@@ -339,8 +317,8 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
 /// Restart any in-stasis ceilings whose tag matches `line->tag`.
 ///
 /// A ceiling is in stasis when `direction == 0`.  This function restores
-/// `direction` from `olddirection` and reinstates `T_MoveCeiling` as the
-/// thinker callback.
+/// `direction` from `olddirection` and sets the thinker kind back to
+/// [`ThinkerKind::Ceiling`] so `T_MoveCeiling` runs again.
 ///
 /// Called by [`EV_DoCeiling`] for crusher types, and corresponds to
 /// `P_ActivateInStasisCeiling` in `p_ceilng.c`.
@@ -356,10 +334,7 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
                 && (*activeceilings[i]).direction == 0
             {
                 (*activeceilings[i]).direction = (*activeceilings[i]).olddirection;
-                (*activeceilings[i]).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe fn(*mut ceiling_t),
-                    unsafe fn(*mut c_void),
-                >(T_MoveCeiling));
+                (*activeceilings[i]).thinker.kind = ThinkerKind::Ceiling;
             }
         }
     }
@@ -368,8 +343,8 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
 /// Stop all active crusher ceilings whose tag matches `line->tag`.
 ///
 /// Each matching ceiling has its `direction` saved to `olddirection`, its
-/// `direction` set to `0` (stasis), and its thinker function set to `None` so
-/// the callback is skipped each tic.  The ceiling is not removed from
+/// `direction` set to `0` (stasis), and its thinker kind set to
+/// [`ThinkerKind::CeilingInStasis`] so `T_MoveCeiling` is skipped each tic.  The ceiling is not removed from
 /// [`activeceilings`]; it can be restarted by [`P_ActivateInStasisCeiling`].
 ///
 /// Returns `1` if at least one ceiling was stopped, `0` otherwise.
@@ -388,58 +363,11 @@ pub fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
                 && (*activeceilings[i]).direction != 0
             {
                 (*activeceilings[i]).olddirection = (*activeceilings[i]).direction;
-                (*activeceilings[i]).thinker.function.acv = None;
+                (*activeceilings[i]).thinker.kind = ThinkerKind::CeilingInStasis;
                 (*activeceilings[i]).direction = 0;
                 rtn = 1;
             }
         }
         rtn
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    const CEILING_T_SIZEOF: usize = 72;
-    const CEILING_T_THINKER: usize = 0;
-    const CEILING_T_TYPE: usize = 24;
-    const CEILING_T_SECTOR: usize = 32;
-    const CEILING_T_BOTTOMHEIGHT: usize = 40;
-    const CEILING_T_TOPHEIGHT: usize = 44;
-    const CEILING_T_SPEED: usize = 48;
-    const CEILING_T_CRUSH: usize = 52;
-    const CEILING_T_DIRECTION: usize = 56;
-    const CEILING_T_TAG: usize = 60;
-    const CEILING_T_OLDDIRECTION: usize = 64;
-
-    #[test]
-    fn ceiling_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<ceiling_t>(), CEILING_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(ceiling_t, thinker), CEILING_T_THINKER);
-        assert_eq!(std::mem::offset_of!(ceiling_t, kind), CEILING_T_TYPE);
-        assert_eq!(std::mem::offset_of!(ceiling_t, sector), CEILING_T_SECTOR);
-        assert_eq!(
-            std::mem::offset_of!(ceiling_t, bottomheight),
-            CEILING_T_BOTTOMHEIGHT
-        );
-        assert_eq!(
-            std::mem::offset_of!(ceiling_t, topheight),
-            CEILING_T_TOPHEIGHT
-        );
-        assert_eq!(std::mem::offset_of!(ceiling_t, speed), CEILING_T_SPEED);
-        assert_eq!(std::mem::offset_of!(ceiling_t, crush), CEILING_T_CRUSH);
-        assert_eq!(
-            std::mem::offset_of!(ceiling_t, direction),
-            CEILING_T_DIRECTION
-        );
-        assert_eq!(std::mem::offset_of!(ceiling_t, tag), CEILING_T_TAG);
-        assert_eq!(
-            std::mem::offset_of!(ceiling_t, olddirection),
-            CEILING_T_OLDDIRECTION
-        );
     }
 }

@@ -150,11 +150,16 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
         }
 
         // Call action routine.
-        if let Some(action) = (*state).action {
-            let action: unsafe fn(*mut PlayerT, *mut PspdefT) = std::mem::transmute(action);
-            action(player, psp);
-            if (*psp).state.is_null() {
-                break;
+        match (*state).action {
+            StateAction::None => {}
+            StateAction::Weapon(action) => {
+                action(player, psp);
+                if (*psp).state.is_null() {
+                    break;
+                }
+            }
+            StateAction::Mobj(_) => {
+                unreachable!("P_SetPsprite: state {stnum} has a map-object action")
             }
         }
 

@@ -10,7 +10,7 @@ use std::ffi::c_void;
 
 use crate::engine::{
     math::fixed::{angle_t, fixed_t},
-    play::mobj::mobj_t,
+    play::{mobj::mobj_t, tick::thinker_t},
 };
 
 /// A map vertex holding a 2-D fixed-point position (`vertex_t` in
@@ -67,9 +67,11 @@ pub struct sector_t {
     pub validcount: i32,
     /// Head of the linked list of things (mobjs) in this sector.
     pub thinglist: *mut mobj_t,
-    /// Active special thinker for this sector (e.g. a moving floor or
-    /// ceiling), or null if none is active.
-    pub specialdata: *mut c_void,
+    /// Thinker node of the active special for this sector (a door, a
+    /// moving floor, ceiling or platform), or null if none is active.
+    /// Its [`ThinkerKind`](crate::engine::play::tick::ThinkerKind) says
+    /// which struct embeds it.
+    pub specialdata: *mut thinker_t,
     /// Number of linedefs bounding this sector.
     pub linecount: i32,
     /// Pointer to the array of linedef pointers bounding this sector.

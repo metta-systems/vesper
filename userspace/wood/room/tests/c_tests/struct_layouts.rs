@@ -4,16 +4,13 @@
 //! offset does not match the C compiler output, the test fails,
 //! catching data-type-size and alignment mismatches immediately.
 //!
-//! Coverage: `divline_t`, `mobj_t`, `vissprite_t`.
+//! Coverage: `divline_t`, `vissprite_t`.
 
 #![allow(non_snake_case)]
 
 use std::mem::{offset_of, size_of};
 
-use room::engine::{
-    play::{maputl::divline_t, mobj::mobj_t},
-    render_3d::things::vissprite_t,
-};
+use room::engine::{play::maputl::divline_t, render_3d::things::vissprite_t};
 
 // ---------------------------------------------------------------------------
 // divline_t
@@ -32,36 +29,6 @@ fn divline_t_offsets() {
     assert_eq!(offset_of!(divline_t, y), 4);
     assert_eq!(offset_of!(divline_t, dx), 8);
     assert_eq!(offset_of!(divline_t, dy), 12);
-}
-
-// ---------------------------------------------------------------------------
-// mobj_t
-// ---------------------------------------------------------------------------
-
-/// `mobj_t` is 224 bytes on LP64 (24-byte thinker_t prefix plus the body).
-#[test]
-fn mobj_t_size() {
-    assert_eq!(size_of::<mobj_t>(), 224);
-}
-
-/// `mobj_t` field offsets — `x`/`y`/`z` start at 24 (after the thinker prefix);
-/// remaining offsets follow the d_player.h / p_mobj.h layout exactly.
-#[test]
-fn mobj_t_offsets() {
-    assert_eq!(offset_of!(mobj_t, thinker), 0);
-    assert_eq!(offset_of!(mobj_t, x), 24);
-    assert_eq!(offset_of!(mobj_t, y), 28);
-    assert_eq!(offset_of!(mobj_t, z), 32);
-    assert_eq!(offset_of!(mobj_t, angle), 56);
-    assert_eq!(offset_of!(mobj_t, radius), 104);
-    assert_eq!(offset_of!(mobj_t, height), 108);
-    assert_eq!(offset_of!(mobj_t, kind), 128);
-    assert_eq!(offset_of!(mobj_t, state), 152);
-    assert_eq!(offset_of!(mobj_t, flags), 160);
-    assert_eq!(offset_of!(mobj_t, health), 164);
-    assert_eq!(offset_of!(mobj_t, reactiontime), 184);
-    assert_eq!(offset_of!(mobj_t, player), 192);
-    assert_eq!(offset_of!(mobj_t, tracer), 216);
 }
 
 // ---------------------------------------------------------------------------

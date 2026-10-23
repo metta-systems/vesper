@@ -5,15 +5,13 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::engine::{
     map::{line_t, sector_t},
     misc::random::P_Random,
     play::{
         setup::{numsectors, sectors},
         spec::{getNextSector, P_FindMinSurroundingLight, P_FindSectorFromLineTag},
-        tick::{thinker_t, P_AddThinker},
+        tick::{thinker_t, P_AddThinker, ThinkerKind},
     },
     zone::{Z_Malloc, PU_LEVSPEC},
 };
@@ -34,10 +32,9 @@ pub const SLOWDARK: i32 = 35;
 ///
 /// The sector's light level randomly drops by a multiple of 16 every 4 tics,
 /// simulating a flickering fire (sector special 17 in Doom).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct fireflicker_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
@@ -47,17 +44,15 @@ pub struct fireflicker_t {
     pub maxlight: i32,
     /// Minimum light level the flicker will not go below.
     pub minlight: i32,
-    _pad: [u8; 4],
 }
 
 /// Thinker state for the random light-flash effect.
 ///
 /// The sector alternates between `maxlight` and `minlight` at random intervals
 /// bounded by `maxtime` and `mintime` (sector special 1 in Doom).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct lightflash_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
@@ -78,10 +73,9 @@ pub struct lightflash_t {
 /// The sector alternates between `maxlight` (bright) and `minlight` (dark)
 /// with fixed durations of `brighttime` and `darktime` tics respectively
 /// (sector specials 3 and 13 in Doom, among others).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct strobe_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
@@ -101,10 +95,9 @@ pub struct strobe_t {
 ///
 /// The sector's light level rises and falls continuously between `minlight`
 /// and `maxlight` by `GLOWSPEED` units per tic (sector special 8 in Doom).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct glow_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose light level is being animated.
     pub sector: *mut sector_t,
@@ -114,7 +107,6 @@ pub struct glow_t {
     pub maxlight: i32,
     /// Direction of travel: `1` = increasing, `-1` = decreasing.
     pub direction: i32,
-    _pad: [u8; 4],
 }
 
 /// Per-tic update for the fire-flicker effect.
@@ -159,12 +151,9 @@ pub fn P_SpawnFireFlicker(sector: *mut sector_t) {
             std::ptr::null_mut(),
         ) as *mut fireflicker_t;
 
-        P_AddThinker(&mut (*flick).thinker);
+        P_AddThinker(&raw mut (*flick).thinker);
 
-        (*flick).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut fireflicker_t),
-            unsafe fn(*mut c_void),
-        >(T_FireFlicker));
+        (*flick).thinker.kind = ThinkerKind::FireFlicker;
         (*flick).sector = sector;
         (*flick).maxlight = (*sector).lightlevel as i32;
         (*flick).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32) + 16;
@@ -213,12 +202,9 @@ pub fn P_SpawnLightFlash(sector: *mut sector_t) {
             std::ptr::null_mut(),
         ) as *mut lightflash_t;
 
-        P_AddThinker(&mut (*flash).thinker);
+        P_AddThinker(&raw mut (*flash).thinker);
 
-        (*flash).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut lightflash_t),
-            unsafe fn(*mut c_void),
-        >(T_LightFlash));
+        (*flash).thinker.kind = ThinkerKind::LightFlash;
         (*flash).sector = sector;
         (*flash).maxlight = (*sector).lightlevel as i32;
         (*flash).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
@@ -269,15 +255,12 @@ pub fn P_SpawnStrobeFlash(sector: *mut sector_t, fastOrSlow: i32, inSync: i32) {
             std::ptr::null_mut(),
         ) as *mut strobe_t;
 
-        P_AddThinker(&mut (*flash).thinker);
+        P_AddThinker(&raw mut (*flash).thinker);
 
         (*flash).sector = sector;
         (*flash).darktime = fastOrSlow;
         (*flash).brighttime = STROBEBRIGHT;
-        (*flash).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut strobe_t),
-            unsafe fn(*mut c_void),
-        >(T_StrobeFlash));
+        (*flash).thinker.kind = ThinkerKind::Strobe;
         (*flash).maxlight = (*sector).lightlevel as i32;
         (*flash).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
 
@@ -420,53 +403,14 @@ pub fn P_SpawnGlowingLight(sector: *mut sector_t) {
             std::ptr::null_mut(),
         ) as *mut glow_t;
 
-        P_AddThinker(&mut (*g).thinker);
+        P_AddThinker(&raw mut (*g).thinker);
 
         (*g).sector = sector;
         (*g).minlight = P_FindMinSurroundingLight(sector, (*sector).lightlevel as i32);
         (*g).maxlight = (*sector).lightlevel as i32;
-        (*g).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut glow_t),
-            unsafe fn(*mut c_void),
-        >(T_Glow));
+        (*g).thinker.kind = ThinkerKind::Glow;
         (*g).direction = -1;
 
         (*sector).special = 0;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    const FIREFLICKER_T_SIZEOF: usize = 48;
-    const LIGHTFLASH_T_SIZEOF: usize = 56;
-    const STROBE_T_SIZEOF: usize = 56;
-    const GLOW_T_SIZEOF: usize = 48;
-
-    #[test]
-    fn fireflicker_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<fireflicker_t>(), FIREFLICKER_T_SIZEOF,);
-    }
-
-    #[test]
-    fn lightflash_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<lightflash_t>(), LIGHTFLASH_T_SIZEOF,);
-    }
-
-    #[test]
-    fn strobe_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<strobe_t>(), STROBE_T_SIZEOF,);
-    }
-
-    #[test]
-    fn glow_t_size_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<glow_t>(), GLOW_T_SIZEOF,);
     }
 }

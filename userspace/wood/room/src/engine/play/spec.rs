@@ -18,10 +18,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::engine::sound::info::Sfx,
-    std::{ffi::c_void, ptr},
-};
+use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
     engine::{
@@ -43,7 +40,7 @@ use crate::{
             plats::MAXPLATS,
             setup::{lines, numlines, numsectors, sectors, sides},
             switch::{buttonlist, MAXBUTTONS},
-            tick::{leveltime, P_AddThinker},
+            tick::{leveltime, P_AddThinker, ThinkerKind},
         },
         render_3d::data::{
             flattranslation, numflats, texturetranslation, R_CheckTextureNumForName,
@@ -264,7 +261,7 @@ use crate::engine::{
     play::{
         ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
         doors::{EV_DoDoor, P_SpawnDoorCloseIn30, P_SpawnDoorRaiseIn5Mins},
-        floor::{EV_BuildStairs, EV_DoFloor, T_MoveFloor},
+        floor::{EV_BuildStairs, EV_DoFloor},
         inter::P_DamageMobj,
         lights::{
             EV_LightTurnOn, EV_StartLightStrobing, EV_TurnTagLightsOff, P_SpawnFireFlicker,
@@ -1185,9 +1182,8 @@ unsafe fn DonutOverrun(
 ///   called to supply substitute height and texture values, emulating the
 ///   vanilla memory overrun.
 ///
-/// Both thinkers use `T_MoveFloor` and are allocated with `Z_Malloc(PU_LEVSPEC)`.
-/// The transmute of `T_MoveFloor` is required because the thinker function
-/// pointer is typed as `unsafe fn(*mut c_void)` at the FFI boundary.
+/// Both thinkers are [`ThinkerKind::Floor`] (run by `T_MoveFloor`) and are
+/// allocated with `Z_Malloc(PU_LEVSPEC)`.
 ///
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
@@ -1237,12 +1233,9 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 PU_LEVSPEC,
                 ptr::null_mut(),
             ) as *mut floormove_t;
-            P_AddThinker(&mut (*floor).thinker);
-            (*s2).specialdata = floor as *mut c_void;
-            (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-                unsafe fn(*mut floormove_t),
-                unsafe fn(*mut c_void),
-            >(T_MoveFloor));
+            P_AddThinker(&raw mut (*floor).thinker);
+            (*s2).specialdata = &raw mut (*floor).thinker;
+            (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = donutRaise;
             (*floor).crush = 0;
             (*floor).direction = 1;
@@ -1258,12 +1251,9 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 PU_LEVSPEC,
                 ptr::null_mut(),
             ) as *mut floormove_t;
-            P_AddThinker(&mut (*floor).thinker);
-            (*s1).specialdata = floor as *mut c_void;
-            (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-                unsafe fn(*mut floormove_t),
-                unsafe fn(*mut c_void),
-            >(T_MoveFloor));
+            P_AddThinker(&raw mut (*floor).thinker);
+            (*s1).specialdata = &raw mut (*floor).thinker;
+            (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = lowerFloor;
             (*floor).crush = 0;
             (*floor).direction = -1;

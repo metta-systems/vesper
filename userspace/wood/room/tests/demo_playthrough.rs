@@ -14,7 +14,7 @@
 #[global_allocator]
 static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 
-use std::{cell::Cell, mem::offset_of, path::PathBuf};
+use std::{cell::Cell, path::PathBuf};
 
 // ---------------------------------------------------------------------------
 // Virtual clock and frame counter for the headless platform
@@ -68,32 +68,6 @@ use room::engine::{
     game::{gamestate, longtics},
     misc::random::prndindex,
 };
-
-// ---------------------------------------------------------------------------
-// MobjPrefix – repr-C mirror of the first fields of mobj_s
-// ---------------------------------------------------------------------------
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct MobjPrefix {
-    thinker_prev: *mut (),
-    thinker_next: *mut (),
-    thinker_fn: *mut (),
-    x: i32,
-    y: i32,
-    z: i32,
-    snext: *mut (),
-    sprev: *mut (),
-    angle: u32,
-}
-
-#[test]
-fn mobj_prefix_offsets() {
-    assert_eq!(offset_of!(MobjPrefix, x), 24, "thinker size mismatch");
-    assert_eq!(offset_of!(MobjPrefix, y), 28);
-    assert_eq!(offset_of!(MobjPrefix, z), 32);
-    assert_eq!(offset_of!(MobjPrefix, angle), 56, "angle offset mismatch");
-}
 
 // ---------------------------------------------------------------------------
 // Snapshot
@@ -675,11 +649,10 @@ fn capture_snapshot(tic: usize) -> Snapshot {
         0
     };
     let p = unsafe { &players[pidx] };
-    let mo_ptr = p.mo as *const MobjPrefix;
-    let (mo_x, mo_y, mo_z, mo_angle) = if mo_ptr.is_null() {
+    let (mo_x, mo_y, mo_z, mo_angle) = if p.mo.is_null() {
         (0, 0, 0, 0)
     } else {
-        let mo = unsafe { &*mo_ptr };
+        let mo = unsafe { &*p.mo };
         (mo.x, mo.y, mo.z, mo.angle)
     };
 

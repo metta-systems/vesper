@@ -6,8 +6,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::engine::{
     map::{line_t, sector_t},
     math::fixed::{fixed_t, FRACUNIT},
@@ -19,7 +17,7 @@ use crate::engine::{
             P_FindLowestCeilingSurrounding, P_FindLowestFloorSurrounding, P_FindNextHighestFloor,
             P_FindSectorFromLineTag,
         },
-        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
+        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
     },
     render_3d::data::textureheight,
     sound::{info::Sfx, S_StartSectorSound},
@@ -81,12 +79,9 @@ use crate::engine::wad::format::LinedefFlag;
 /// Each active `EV_DoFloor` or `EV_BuildStairs` call allocates one of these per
 /// affected sector. `T_MoveFloor` is called every tic until the floor reaches
 /// `floordestheight`.
-// Only .sector is accessed in EV_BuildStairs via pointer arithmetic.
-// Probe required for offset. On x86_64, sector is at offset 48.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct floormove_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// Floor movement type (`floor_*` constant).
     pub kind: i32,
@@ -100,27 +95,33 @@ pub struct floormove_t {
     pub newspecial: i32,
     /// Floor flat (texture) to apply when the floor finishes.
     pub texture: i16,
-    _pad: [u8; 2],
+    /// The two C padding bytes after `texture`. Only `EV_VerticalDoor`'s
+    /// door-direction pun touches them, through
+    /// [`texture_with_padding`](Self::texture_with_padding).
+    texture_padding: [u8; 2],
     /// Target floor height in fixed-point units.
     pub floordestheight: fixed_t,
     /// Movement speed in fixed-point units per tic.
     pub speed: fixed_t,
 }
 
-/// Compile-time layout checks for `floormove_t` on 64-bit targets.
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<floormove_t>() == 64);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, kind) == 24);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, crush) == 28);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, sector) == 32);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, direction) == 40);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, newspecial) == 44);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, texture) == 48);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, floordestheight) == 52);
-    const _: () = assert!(std::mem::offset_of!(floormove_t, speed) == 56);
+impl floormove_t {
+    /// The little-endian `int` made of `texture` and the padding after it:
+    /// what vanilla reads as `door->direction` when a sector's `specialdata`
+    /// is a floor (64-bit C layout).
+    pub fn texture_with_padding(&self) -> i32 {
+        let [texture_low, texture_high] = self.texture.to_le_bytes();
+        let [padding_low, padding_high] = self.texture_padding;
+        i32::from_le_bytes([texture_low, texture_high, padding_low, padding_high])
+    }
+
+    /// Store `value` where [`texture_with_padding`](Self::texture_with_padding)
+    /// reads it.
+    pub fn set_texture_with_padding(&mut self, value: i32) {
+        let [texture_low, texture_high, padding_low, padding_high] = value.to_le_bytes();
+        self.texture = i16::from_le_bytes([texture_low, texture_high]);
+        self.texture_padding = [padding_low, padding_high];
+    }
 }
 
 /// Move a plane (floor or ceiling) one step toward `dest` and check for crushing.
@@ -291,7 +292,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
             (*(*floor).sector).special = (*floor).newspecial as i16;
             (*(*floor).sector).floorpic = (*floor).texture;
         }
-        P_RemoveThinker(&mut (*floor).thinker as *mut thinker_t);
+        P_RemoveThinker(&raw mut (*floor).thinker);
 
         S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Pstop as i32);
     }
@@ -342,12 +343,9 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut floormove_t;
-        P_AddThinker(&mut (*floor).thinker);
-        (*sec).specialdata = floor as *mut c_void;
-        (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut floormove_t),
-            unsafe fn(*mut c_void),
-        >(T_MoveFloor));
+        P_AddThinker(&raw mut (*floor).thinker);
+        (*sec).specialdata = &raw mut (*floor).thinker;
+        (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).kind = floortype;
         (*floor).crush = 0;
 
@@ -520,12 +518,9 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut floormove_t;
-        P_AddThinker(&mut (*floor).thinker);
-        (*sec).specialdata = floor as *mut c_void;
-        (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut floormove_t),
-            unsafe fn(*mut c_void),
-        >(T_MoveFloor));
+        P_AddThinker(&raw mut (*floor).thinker);
+        (*sec).specialdata = &raw mut (*floor).thinker;
+        (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).direction = 1;
         (*floor).sector = sec;
 
@@ -578,13 +573,10 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
                     std::ptr::null_mut(),
                 ) as *mut floormove_t;
 
-                P_AddThinker(&mut (*floor).thinker);
+                P_AddThinker(&raw mut (*floor).thinker);
 
-                (*sec).specialdata = floor as *mut c_void;
-                (*floor).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe fn(*mut floormove_t),
-                    unsafe fn(*mut c_void),
-                >(T_MoveFloor));
+                (*sec).specialdata = &raw mut (*floor).thinker;
+                (*floor).thinker.kind = ThinkerKind::Floor;
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = speed;
@@ -606,42 +598,20 @@ mod tests {
 
     static LOCK: Mutex<()> = Mutex::new(());
 
-    const FLOORMOVE_T_SIZEOF: usize = 64;
-    const FLOORMOVE_T_THINKER: usize = 0;
-    const FLOORMOVE_T_SECTOR: usize = 32;
-    const FLOORMOVE_T_DIRECTION: usize = 40;
-    const FLOORMOVE_T_FLOORDESTHEIGHT: usize = 52;
-    const FLOORMOVE_T_SPEED: usize = 56;
-    const FLOORMOVE_T_TEXTURE: usize = 48;
-
     #[test]
-    fn floormove_t_layout_matches_c() {
+    fn texture_with_padding_is_the_c_door_direction_alias() {
         let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<floormove_t>(),
-            FLOORMOVE_T_SIZEOF,
-            "floormove_t size mismatch",
-        );
-        assert_eq!(
-            std::mem::offset_of!(floormove_t, thinker),
-            FLOORMOVE_T_THINKER
-        );
-        assert_eq!(
-            std::mem::offset_of!(floormove_t, sector),
-            FLOORMOVE_T_SECTOR
-        );
-        assert_eq!(
-            std::mem::offset_of!(floormove_t, direction),
-            FLOORMOVE_T_DIRECTION
-        );
-        assert_eq!(
-            std::mem::offset_of!(floormove_t, floordestheight),
-            FLOORMOVE_T_FLOORDESTHEIGHT
-        );
-        assert_eq!(std::mem::offset_of!(floormove_t, speed), FLOORMOVE_T_SPEED);
-        assert_eq!(
-            std::mem::offset_of!(floormove_t, texture),
-            FLOORMOVE_T_TEXTURE
-        );
+        let mut floor: floormove_t = unsafe { std::mem::zeroed() };
+        floor.texture = 0x1234;
+        assert_eq!(floor.texture_with_padding(), 0x1234);
+
+        // EV_VerticalDoor writing direction -1 into a floor clobbers the
+        // texture and its padding; writing 1 leaves texture 1, padding 0.
+        floor.set_texture_with_padding(-1);
+        assert_eq!(floor.texture, -1);
+        assert_eq!(floor.texture_with_padding(), -1);
+        floor.set_texture_with_padding(1);
+        assert_eq!(floor.texture, 1);
+        assert_eq!(floor.texture_with_padding(), 1);
     }
 }

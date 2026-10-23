@@ -5,7 +5,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::ffi::c_void};
+use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     dehacked::DEH_String,
@@ -14,12 +14,15 @@ use crate::engine::{
     map::{line_t, sector_t},
     math::fixed::{fixed_t, FRACUNIT},
     play::{
-        floor::T_MovePlane,
+        ceilng::ceiling_t,
+        floor::{floormove_t, T_MovePlane},
         mobj::mobj_t,
-        plats::{plat_t, T_PlatRaise},
+        plats::plat_t,
         setup::{sectors, sides},
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
-        tick::{thinker_t, P_AddThinker, P_RemoveThinker},
+        tick::{
+            thinker_t, P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind,
+        },
     },
     sound::{S_StartSectorSound, S_StartSound},
     zone::{Z_Malloc, PU_LEVSPEC},
@@ -112,10 +115,12 @@ fn locked_door_message(special: i32) -> PlayerMessage {
 /// - `-1` = moving down (closing)
 /// - `0` = waiting at the top
 /// - `2` = initial wait (used by `vld_raiseIn5Mins`)
-#[repr(C)]
+///
+/// `_pad0` keeps the struct, and so its zone allocation, the size of the C
+/// `vldoor_t` on 64-bit targets.
 #[derive(Clone, Copy)]
 pub struct vldoor_t {
-    /// Embedded thinker header; must be the first field.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
     pub kind: i32,
@@ -132,21 +137,6 @@ pub struct vldoor_t {
     pub topwait: i32,
     /// Countdown tics remaining in the current wait phase.
     pub topcountdown: i32,
-}
-
-/// Compile-time layout checks for `vldoor_t` against the C struct on 64-bit.
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<vldoor_t>() == 64);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, kind) == 24);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, sector) == 32);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, topheight) == 40);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, speed) == 44);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, direction) == 48);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, topwait) == 52);
-    const _: () = assert!(std::mem::offset_of!(vldoor_t, topcountdown) == 56);
 }
 
 /// Per-tic update for a vertical door.
@@ -342,13 +332,10 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut vldoor_t;
-        P_AddThinker(&mut (*door).thinker);
-        (*sec).specialdata = door as *mut c_void;
+        P_AddThinker(&raw mut (*door).thinker);
+        (*sec).specialdata = &raw mut (*door).thinker;
 
-        (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut vldoor_t),
-            unsafe fn(*mut c_void),
-        >(T_VerticalDoor));
+        (*door).thinker.kind = ThinkerKind::Door;
         (*door).sector = sec;
         (*door).kind = kind;
         (*door).topwait = VDOORWAIT;
@@ -394,6 +381,45 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
         }
     }
     rtn
+}
+
+/// The `door->direction` that vanilla `EV_VerticalDoor` reads through
+/// `sector->specialdata`, whatever special it actually points at ("When is a
+/// door not a door?" in `p_doors.c`).
+///
+/// This port follows the 64-bit C layout, where the `int` at
+/// `vldoor_t.direction`'s offset is `plat_t.count`, `ceiling_t.speed`, or
+/// `floormove_t.texture` with the two padding bytes after it.
+///
+/// # Safety
+///
+/// `special` must be the non-null `specialdata` of a sector: the thinker of a
+/// live door, platform, ceiling or floor.
+unsafe fn special_door_direction(special: *mut thinker_t) -> i32 {
+    match (*special).kind.class() {
+        Some(ThinkerClass::Door) => (*vldoor_t::from_thinker(special)).direction,
+        Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count,
+        Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed,
+        Some(ThinkerClass::Floor) => (*floormove_t::from_thinker(special)).texture_with_padding(),
+        other => unreachable!("sector special data is a {other:?} thinker"),
+    }
+}
+
+/// Write `direction` where [`special_door_direction`] reads it.
+///
+/// # Safety
+///
+/// Same as [`special_door_direction`].
+unsafe fn set_special_door_direction(special: *mut thinker_t, direction: i32) {
+    match (*special).kind.class() {
+        Some(ThinkerClass::Door) => (*vldoor_t::from_thinker(special)).direction = direction,
+        Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count = direction,
+        Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed = direction,
+        Some(ThinkerClass::Floor) => {
+            (*floormove_t::from_thinker(special)).set_texture_with_padding(direction)
+        }
+        other => unreachable!("sector special data is a {other:?} thinker"),
+    }
 }
 
 /// Linedef use-action: manually open or toggle the door behind `line`.
@@ -452,32 +478,23 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
 
     let sec = (*sides.offset((*line).sidenum[(side ^ 1) as usize] as isize)).sector;
 
-    if !(*sec).specialdata.is_null() {
-        let door = (*sec).specialdata as *mut vldoor_t;
+    let special = (*sec).specialdata;
+    if !special.is_null() {
         match (*line).special as i32 {
             1 | 26 | 27 | 28 | 117 => {
-                if (*door).direction == -1 {
-                    (*door).direction = 1;
+                if special_door_direction(special) == -1 {
+                    set_special_door_direction(special, 1);
                 } else {
                     if (*thing).player.is_null() {
                         return;
                     }
-                    let t_vdoor = Some(core::mem::transmute::<
-                        unsafe fn(*mut vldoor_t),
-                        unsafe fn(*mut c_void),
-                    >(T_VerticalDoor));
-                    let t_plat = Some(core::mem::transmute::<
-                        unsafe fn(*mut plat_t),
-                        unsafe fn(*mut c_void),
-                    >(T_PlatRaise));
-                    if (*door).thinker.function.acp1 == t_vdoor {
-                        (*door).direction = -1;
-                    } else if (*door).thinker.function.acp1 == t_plat {
-                        let plat = door as *mut plat_t;
-                        (*plat).wait = -1;
+                    if (*special).kind == ThinkerKind::Door {
+                        set_special_door_direction(special, -1);
+                    } else if (*special).kind == ThinkerKind::Plat {
+                        (*plat_t::from_thinker(special)).wait = -1;
                     } else {
                         eprintln!("EV_VerticalDoor: Tried to close something that wasn't a door.");
-                        (*door).direction = -1;
+                        set_special_door_direction(special, -1);
                     }
                 }
                 return;
@@ -505,12 +522,9 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
         PU_LEVSPEC,
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
-    P_AddThinker(&mut (*door).thinker);
-    (*sec).specialdata = door as *mut c_void;
-    (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe fn(*mut vldoor_t),
-        unsafe fn(*mut c_void),
-    >(T_VerticalDoor));
+    P_AddThinker(&raw mut (*door).thinker);
+    (*sec).specialdata = &raw mut (*door).thinker;
+    (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 1;
     (*door).speed = VDOORSPEED;
@@ -556,15 +570,12 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
 
-    P_AddThinker(&mut (*door).thinker);
+    P_AddThinker(&raw mut (*door).thinker);
 
-    (*sec).specialdata = door as *mut c_void;
+    (*sec).specialdata = &raw mut (*door).thinker;
     (*sec).special = 0;
 
-    (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe fn(*mut vldoor_t),
-        unsafe fn(*mut c_void),
-    >(T_VerticalDoor));
+    (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 0;
     (*door).kind = vld_normal;
@@ -589,15 +600,12 @@ pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: i32) {
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
 
-    P_AddThinker(&mut (*door).thinker);
+    P_AddThinker(&raw mut (*door).thinker);
 
-    (*sec).specialdata = door as *mut c_void;
+    (*sec).specialdata = &raw mut (*door).thinker;
     (*sec).special = 0;
 
-    (*door).thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe fn(*mut vldoor_t),
-        unsafe fn(*mut c_void),
-    >(T_VerticalDoor));
+    (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 2;
     (*door).kind = vld_raiseIn5Mins;
@@ -613,45 +621,6 @@ mod tests {
     use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
-
-    const VLDOOR_T_SIZEOF: usize = 64;
-    const VLDOOR_T_THINKER: usize = 0;
-    const VLDOOR_T_TYPE: usize = 24;
-    const VLDOOR_T_SECTOR: usize = 32;
-    const VLDOOR_T_TOPHEIGHT: usize = 40;
-    const VLDOOR_T_SPEED: usize = 44;
-    const VLDOOR_T_DIRECTION: usize = 48;
-    const VLDOOR_T_TOPWAIT: usize = 52;
-    const VLDOOR_T_TOPCOUNTDOWN: usize = 56;
-
-    #[test]
-    fn vldoor_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(
-            std::mem::size_of::<vldoor_t>(),
-            VLDOOR_T_SIZEOF,
-            "vldoor_t size mismatch: Rust={}, expected={}",
-            std::mem::size_of::<vldoor_t>(),
-            VLDOOR_T_SIZEOF,
-        );
-        assert_eq!(std::mem::offset_of!(vldoor_t, thinker), VLDOOR_T_THINKER);
-        assert_eq!(std::mem::offset_of!(vldoor_t, kind), VLDOOR_T_TYPE);
-        assert_eq!(std::mem::offset_of!(vldoor_t, sector), VLDOOR_T_SECTOR);
-        assert_eq!(
-            std::mem::offset_of!(vldoor_t, topheight),
-            VLDOOR_T_TOPHEIGHT
-        );
-        assert_eq!(std::mem::offset_of!(vldoor_t, speed), VLDOOR_T_SPEED);
-        assert_eq!(
-            std::mem::offset_of!(vldoor_t, direction),
-            VLDOOR_T_DIRECTION
-        );
-        assert_eq!(std::mem::offset_of!(vldoor_t, topwait), VLDOOR_T_TOPWAIT);
-        assert_eq!(
-            std::mem::offset_of!(vldoor_t, topcountdown),
-            VLDOOR_T_TOPCOUNTDOWN
-        );
-    }
 
     #[test]
     fn locked_object_specials_map_to_dehacked_messages() {

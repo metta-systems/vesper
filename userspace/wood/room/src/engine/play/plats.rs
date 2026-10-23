@@ -7,7 +7,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::ffi::c_void};
+use crate::engine::sound::info::Sfx;
 
 use crate::{
     engine::{
@@ -22,7 +22,7 @@ use crate::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
             },
-            tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker},
+            tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
         },
         sound::S_StartSectorSound,
         zone::{Z_Malloc, PU_LEVSPEC},
@@ -81,17 +81,11 @@ const blazeDWUS: i32 = 4;
 
 /// Per-sector thinker for an active platform mover.
 ///
-/// Allocated via `Z_Malloc` and linked into the thinker list.  The `thinker`
-/// field must be at offset 0 (verified by the compile-time assertions in
-/// `layout_checks`) so that a `*mut plat_t` can be cast safely to
-/// `*mut thinker_t`.
-///
-/// Layout matches the C `plat_t` struct.  The overall size is 72 bytes on
-/// 64-bit targets.
-#[repr(C)]
+/// Allocated via `Z_Malloc` and linked into the thinker list through its
+/// embedded `thinker`.  The fields are those of the C `plat_t` struct.
 #[derive(Clone, Copy)]
 pub struct plat_t {
-    /// Thinker header — must be at offset 0.
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose floor this thinker is moving.
     pub sector: *mut sector_t,
@@ -115,24 +109,6 @@ pub struct plat_t {
     pub tag: i32,
     /// Platform behaviour type (one of the `plattype_e` integer constants).
     pub kind: i32,
-}
-
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<plat_t>() == 72);
-    const _: () = assert!(std::mem::offset_of!(plat_t, thinker) == 0);
-    const _: () = assert!(std::mem::offset_of!(plat_t, sector) == 24);
-    const _: () = assert!(std::mem::offset_of!(plat_t, speed) == 32);
-    const _: () = assert!(std::mem::offset_of!(plat_t, low) == 36);
-    const _: () = assert!(std::mem::offset_of!(plat_t, high) == 40);
-    const _: () = assert!(std::mem::offset_of!(plat_t, wait) == 44);
-    const _: () = assert!(std::mem::offset_of!(plat_t, count) == 48);
-    const _: () = assert!(std::mem::offset_of!(plat_t, status) == 52);
-    const _: () = assert!(std::mem::offset_of!(plat_t, oldstatus) == 56);
-    const _: () = assert!(std::mem::offset_of!(plat_t, crush) == 60);
-    const _: () = assert!(std::mem::offset_of!(plat_t, tag) == 64);
-    const _: () = assert!(std::mem::offset_of!(plat_t, kind) == 68);
 }
 
 /// Table of all currently active platform thinkers.
@@ -283,15 +259,12 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
             PU_LEVSPEC,
             std::ptr::null_mut(),
         ) as *mut plat_t;
-        P_AddThinker(&mut (*plat).thinker);
+        P_AddThinker(&raw mut (*plat).thinker);
 
         (*plat).kind = plattype;
         (*plat).sector = sec;
-        (*plat).sector.as_mut().unwrap().specialdata = plat as *mut c_void;
-        (*plat).thinker.function.acp1 = Some(core::mem::transmute::<
-            unsafe fn(*mut plat_t),
-            unsafe fn(*mut c_void),
-        >(T_PlatRaise));
+        (*plat).sector.as_mut().unwrap().specialdata = &raw mut (*plat).thinker;
+        (*plat).thinker.kind = ThinkerKind::Plat;
         (*plat).crush = 0;
         (*plat).tag = (*line).tag as i32;
 
@@ -360,8 +333,9 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
 
 /// Restart all in-stasis platforms whose tag equals `tag`.
 ///
-/// Restores `status` from `oldstatus` and reinstates `T_PlatRaise` as the
-/// thinker callback.  Called by [`EV_DoPlat`] for the `perpetualRaise` type.
+/// Restores `status` from `oldstatus` and sets the thinker kind back to
+/// [`ThinkerKind::Plat`] so `T_PlatRaise` runs again.  Called by
+/// [`EV_DoPlat`] for the `perpetualRaise` type.
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
 pub fn P_ActivateInStasis(tag: i32) {
@@ -372,10 +346,7 @@ pub fn P_ActivateInStasis(tag: i32) {
                 && (*activeplats[i]).status == in_stasis
             {
                 (*activeplats[i]).status = (*activeplats[i]).oldstatus;
-                (*activeplats[i]).thinker.function.acp1 = Some(core::mem::transmute::<
-                    unsafe fn(*mut plat_t),
-                    unsafe fn(*mut c_void),
-                >(T_PlatRaise));
+                (*activeplats[i]).thinker.kind = ThinkerKind::Plat;
             }
         }
     }
@@ -384,7 +355,7 @@ pub fn P_ActivateInStasis(tag: i32) {
 /// Suspend all active platforms whose tag matches `line->tag`.
 ///
 /// Saves `status` to `oldstatus`, sets `status` to `in_stasis`, and sets the
-/// thinker function to `None` so the callback is skipped.  The platform
+/// thinker kind to [`ThinkerKind::PlatInStasis`] so `T_PlatRaise` is skipped.  The platform
 /// remains in [`activeplats`] and can be resumed by [`P_ActivateInStasis`].
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
@@ -401,7 +372,7 @@ pub fn EV_StopPlat(line: *mut line_t) {
             {
                 (*activeplats[j]).oldstatus = (*activeplats[j]).status;
                 (*activeplats[j]).status = in_stasis;
-                (*activeplats[j]).thinker.function.acv = None;
+                (*activeplats[j]).thinker.kind = ThinkerKind::PlatInStasis;
             }
         }
     }
@@ -437,50 +408,11 @@ pub fn P_RemoveActivePlat(plat: *mut plat_t) {
         for i in 0..MAXPLATS {
             if plat == activeplats[i] {
                 (*activeplats[i]).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
-                P_RemoveThinker(&mut (*activeplats[i]).thinker);
+                P_RemoveThinker(&raw mut (*activeplats[i]).thinker);
                 activeplats[i] = std::ptr::null_mut();
                 return;
             }
         }
         i_error!("P_RemoveActivePlat: can't find plat!");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    const PLAT_T_SIZEOF: usize = 72;
-    const PLAT_T_THINKER: usize = 0;
-    const PLAT_T_SECTOR: usize = 24;
-    const PLAT_T_SPEED: usize = 32;
-    const PLAT_T_LOW: usize = 36;
-    const PLAT_T_HIGH: usize = 40;
-    const PLAT_T_WAIT: usize = 44;
-    const PLAT_T_COUNT: usize = 48;
-    const PLAT_T_STATUS: usize = 52;
-    const PLAT_T_OLDSTATUS: usize = 56;
-    const PLAT_T_CRUSH: usize = 60;
-    const PLAT_T_TAG: usize = 64;
-    const PLAT_T_TYPE: usize = 68;
-
-    #[test]
-    fn plat_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<plat_t>(), PLAT_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(plat_t, thinker), PLAT_T_THINKER);
-        assert_eq!(std::mem::offset_of!(plat_t, sector), PLAT_T_SECTOR);
-        assert_eq!(std::mem::offset_of!(plat_t, speed), PLAT_T_SPEED);
-        assert_eq!(std::mem::offset_of!(plat_t, low), PLAT_T_LOW);
-        assert_eq!(std::mem::offset_of!(plat_t, high), PLAT_T_HIGH);
-        assert_eq!(std::mem::offset_of!(plat_t, wait), PLAT_T_WAIT);
-        assert_eq!(std::mem::offset_of!(plat_t, count), PLAT_T_COUNT);
-        assert_eq!(std::mem::offset_of!(plat_t, status), PLAT_T_STATUS);
-        assert_eq!(std::mem::offset_of!(plat_t, oldstatus), PLAT_T_OLDSTATUS);
-        assert_eq!(std::mem::offset_of!(plat_t, crush), PLAT_T_CRUSH);
-        assert_eq!(std::mem::offset_of!(plat_t, tag), PLAT_T_TAG);
-        assert_eq!(std::mem::offset_of!(plat_t, kind), PLAT_T_TYPE);
     }
 }

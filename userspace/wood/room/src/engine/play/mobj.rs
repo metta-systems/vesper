@@ -7,7 +7,7 @@
 
 use {
     crate::{engine::sound::info::Sfx, i_error},
-    std::{ffi::c_void, ptr},
+    std::ptr,
 };
 
 use crate::engine::{
@@ -24,7 +24,7 @@ use crate::engine::{
         info::{self, *},
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
-        tick::{actionf_t, thinker_t, P_AddThinker, P_RemoveThinker},
+        tick::{thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{S_StartSound, S_StopSound},
@@ -89,15 +89,15 @@ use crate::engine::{
 /// A map object (thing) that lives in the world and can think each tic
 /// (`mobj_t` in `p_mobj.h`).
 ///
-/// `repr(C)` because the `thinker` field must be at offset 0 so that a
-/// `*mut mobj_t` can be cast to `*mut thinker_t` and back.
+/// The embedded `thinker` is mapped back to its `mobj_t` through
+/// [`ThinkerContainer::from_thinker`](crate::engine::play::tick::ThinkerContainer).
 ///
-/// Padding bytes (`_pad0`–`_pad4`) fill gaps that C compilers insert for
-/// alignment; they have no semantic meaning in this port.
-#[repr(C)]
+/// Padding bytes (`_pad0`–`_pad4`) are the gaps C compilers insert for
+/// alignment; they keep `size_of::<mobj_t>()`, and so every zone allocation,
+/// the size of the C struct, and have no other meaning in this port.
 #[derive(Clone, Copy)]
 pub struct mobj_t {
-    /// Thinker header — must be the very first field (offset 0).
+    /// Thinker list node.
     pub thinker: thinker_t,
     /// Map X position in fixed-point units.
     pub x: i32,
@@ -192,18 +192,6 @@ pub static mut iquehead: i32 = 0;
 /// Read index (tail) of the item-respawn circular queue.
 pub static mut iquetail: i32 = 0;
 
-/// Construct the sentinel `actionf_t` value used to detect that a thinker has
-/// been removed mid-tick (all-ones function pointer).
-fn sentinel_ac() -> Option<unsafe fn()> {
-    Some(unsafe { core::mem::transmute::<usize, unsafe fn()>(usize::MAX) })
-}
-
-/// Return `true` if `f` is the removal-sentinel value, meaning the mobj was
-/// freed during the current tick.
-fn is_sentinel(f: actionf_t) -> bool {
-    unsafe { f.acv == sentinel_ac() }
-}
-
 /// Transition `mobj` to state `state`, running zero-tic chain states
 /// immediately.  Returns `1` if the mobj is still alive after the transition,
 /// `0` if it removed itself (`S_NULL`).
@@ -228,9 +216,12 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
         mobj.tics = (*st).tics;
         mobj.sprite = (*st).sprite;
         mobj.frame = (*st).frame;
-        if let Some(action) = (*st).action {
-            let action: unsafe fn(*mut c_void) = core::mem::transmute(action);
-            action(mobj as *mut mobj_t as *mut c_void);
+        match (*st).action {
+            StateAction::None => {}
+            StateAction::Mobj(action) => action(mobj as *mut mobj_t),
+            StateAction::Weapon(_) => {
+                unreachable!("P_SetMobjState: state {state} has a weapon action")
+            }
         }
         state = (*st).nextstate;
         if mobj.tics != 0 {
@@ -517,7 +508,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
 ///
 /// Runs XY and Z movement, advances the state machine, and initiates
 /// Nightmare-mode respawn for eligible dead monsters.  Detects mid-tick
-/// removal via the sentinel function pointer.
+/// removal via [`ThinkerKind::Removed`].
 ///
 /// # Safety
 ///
@@ -527,13 +518,13 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
     let mobj = &mut *mobj;
     if mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0 {
         P_XYMovement(mobj as *mut mobj_t);
-        if is_sentinel(mobj.thinker.function) {
+        if mobj.thinker.kind.is_removed() {
             return;
         }
     }
     if mobj.z != mobj.floorz || mobj.momz != 0 {
         P_ZMovement(mobj as *mut mobj_t);
-        if is_sentinel(mobj.thinker.function) {
+        if mobj.thinker.kind.is_removed() {
             return;
         }
     }
@@ -622,12 +613,9 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
         mobj_ref.z = z;
     }
 
-    mobj_ref.thinker.function.acp1 = Some(core::mem::transmute::<
-        unsafe fn(*mut mobj_t),
-        unsafe fn(*mut c_void),
-    >(P_MobjThinker));
+    mobj_ref.thinker.kind = ThinkerKind::Mobj;
 
-    P_AddThinker(&mut mobj_ref.thinker as *mut thinker_t);
+    P_AddThinker(&raw mut mobj_ref.thinker);
 
     mobj
 }
@@ -660,7 +648,7 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
 
     P_UnsetThingPosition(mobj as *mut mobj_t);
     S_StopSound(mobj as *mut mobj_t);
-    P_RemoveThinker(&mut mobj.thinker as *mut thinker_t);
+    P_RemoveThinker(&raw mut mobj.thinker);
 }
 
 /// Respawn the oldest queued special item if deathmatch mode 2 is active and

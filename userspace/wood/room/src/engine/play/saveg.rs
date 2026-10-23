@@ -9,9 +9,9 @@
 //! The on-disk format is a flat byte stream. Multi-byte integers are always
 //! little-endian regardless of host byte order. Sector and state pointers are
 //! serialized as array indices; player pointers use a 1-based index (0 means
-//! NULL). Thinker function pointers stored in saves are raw addresses that
-//! must be re-established on load - this port guards against transmuting zero
-//! to a function pointer (which is UB) by mapping `0` to `None`.
+//! NULL). Thinker function slots stored in saves are raw addresses that are
+//! only tested against null on load; the thinker kind is re-established from
+//! the record's class (see [`saved_function_word`]).
 //!
 //! Notable differences from the C source:
 //! - `saveg_write8` increments `savegamelength`; the C version does not.
@@ -44,10 +44,15 @@ use crate::engine::{
         doors::{vldoor_t, T_VerticalDoor},
         floor::{floormove_t, T_MoveFloor},
         info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
-        lights::{glow_t, lightflash_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash},
+        lights::{
+            glow_t, lightflash_t, strobe_t, T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash,
+        },
         mobj::mobj_t,
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
-        tick::{actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers},
+        tick::{
+            leveltime, thinker_allocation, thinker_t, thinkercap, P_AddThinker, P_InitThinkers,
+            ThinkerContainer, ThinkerKind,
+        },
     },
     wad::format::mapthing_t,
     zone::{Z_Free, Z_Malloc, PU_LEVEL, PU_LEVSPEC},
@@ -304,45 +309,32 @@ unsafe fn saveg_read_player_ptr(value: u32) -> *mut PlayerT {
 }
 
 // ---------------------------------------------------------------------------
-// Thinker function pointer reassignment helpers
+// Thinker function slot
 // ---------------------------------------------------------------------------
 
-/// Generates a helper function that constructs an `actionf_t` holding a
-/// type-erased pointer to a specific thinker function.
+/// The 32-bit value written into a saved thinker's `function` slot.
 ///
-/// Each generated function (e.g. `actionf_p1_move_ceiling`) transmutes the
-/// concrete thinker function pointer (`T_MoveCeiling`, etc.) to the generic
-/// `unsafe fn(*mut c_void)` required by `actionf_t::acp1`. This
-/// is the Rust equivalent of the C cast
-/// `(actionf_p1)T_MoveCeiling`.
-macro_rules! make_actionf_p1 {
-    ($fn_name:ident, $arg_ty:ty, $c_fn:expr) => {
-        fn $fn_name() -> actionf_t {
-            actionf_t {
-                acp1: Some(unsafe {
-                    core::mem::transmute::<unsafe fn(*mut $arg_ty), unsafe fn(*mut c_void)>($c_fn)
-                }),
-            }
-        }
+/// C writes the think-function pointer truncated to 32 bits; the loader only
+/// tests it against null (to tell an active ceiling or platform from one in
+/// stasis). This port writes the same thing: the address of the function
+/// `kind` dispatches to, truncated to 32 bits; `0` for a kind with no think
+/// function (C's null); and the truncated `-1` sentinel for a removed thinker.
+fn saved_function_word(kind: ThinkerKind) -> u32 {
+    let function: *const () = match kind {
+        ThinkerKind::None | ThinkerKind::CeilingInStasis | ThinkerKind::PlatInStasis => ptr::null(),
+        ThinkerKind::Mobj => P_MobjThinker as *const (),
+        ThinkerKind::Ceiling => T_MoveCeiling as *const (),
+        ThinkerKind::Door => T_VerticalDoor as *const (),
+        ThinkerKind::Floor => T_MoveFloor as *const (),
+        ThinkerKind::Plat => T_PlatRaise as *const (),
+        ThinkerKind::LightFlash => T_LightFlash as *const (),
+        ThinkerKind::Strobe => T_StrobeFlash as *const (),
+        ThinkerKind::Glow => T_Glow as *const (),
+        ThinkerKind::FireFlicker => T_FireFlicker as *const (),
+        ThinkerKind::Removed(_) => return u32::MAX,
     };
+    function as usize as u32
 }
-
-// Returns an `actionf_t` for `P_MobjThinker` (map object thinker).
-make_actionf_p1!(actionf_p1_mobj_thinker, mobj_t, P_MobjThinker);
-// Returns an `actionf_t` for `T_MoveCeiling` (ceiling special thinker).
-make_actionf_p1!(actionf_p1_move_ceiling, ceiling_t, T_MoveCeiling);
-// Returns an `actionf_t` for `T_VerticalDoor` (door special thinker).
-make_actionf_p1!(actionf_p1_vertical_door, vldoor_t, T_VerticalDoor);
-// Returns an `actionf_t` for `T_MoveFloor` (floor special thinker).
-make_actionf_p1!(actionf_p1_move_floor, floormove_t, T_MoveFloor);
-// Returns an `actionf_t` for `T_PlatRaise` (platform special thinker).
-make_actionf_p1!(actionf_p1_plat_raise, plat_t, T_PlatRaise);
-// Returns an `actionf_t` for `T_LightFlash` (random light-flash thinker).
-make_actionf_p1!(actionf_p1_light_flash, lightflash_t, T_LightFlash);
-// Returns an `actionf_t` for `T_StrobeFlash` (strobe light thinker).
-make_actionf_p1!(actionf_p1_strobe_flash, strobe_t, T_StrobeFlash);
-// Returns an `actionf_t` for `T_Glow` (glow light thinker).
-make_actionf_p1!(actionf_p1_glow, glow_t, T_Glow);
 
 // ---------------------------------------------------------------------------
 // Struct serialization
@@ -386,33 +378,32 @@ unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
 ///
 /// The `prev` and `next` pointer values stored in the stream are raw addresses
 /// from the saving session and are not meaningful in the loading session; they
-/// will be overwritten when the thinker is re-linked. A stream value of `0`
-/// for the function pointer becomes `None` rather than `Some(NULL)` to avoid
-/// calling a null function pointer (which would be UB).
+/// will be overwritten when the thinker is re-linked. The saved function slot
+/// is only tested against null, as in C: `0` reads as [`ThinkerKind::None`],
+/// anything else as `kind_if_function_set`. The `P_UnArchive*` callers then
+/// settle the kind (C overwrites the function the same way).
 /// C origin: `saveg_read_thinker_t`.
-unsafe fn saveg_read_thinker_t(th: *mut thinker_t) {
+unsafe fn saveg_read_thinker_t(th: *mut thinker_t, kind_if_function_set: ThinkerKind) {
     let s = &mut *th;
     // Read prev/next as raw pointer indices (will be rebuilt)
     s.prev = saveg_read32() as usize as *mut thinker_t;
     s.next = saveg_read32() as usize as *mut thinker_t;
-    // 0 in the save stream means no function; transmuting 0 to fn is UB.
-    let raw = saveg_read32() as usize;
-    s.function.acp1 = if raw == 0 {
-        None
+    s.kind = if saveg_read32() == 0 {
+        ThinkerKind::None
     } else {
-        Some(core::mem::transmute::<usize, unsafe fn(*mut c_void)>(raw))
+        kind_if_function_set
     };
 }
 
 /// Writes a `thinker_t` header (prev, next, function) to the save stream.
 ///
-/// Pointer fields are written as raw 32-bit addresses; the function pointer is
-/// written as `0` when absent (`None`). C origin: `saveg_write_thinker_t`.
+/// Pointer fields are written as raw 32-bit addresses; the function slot is
+/// written by [`saved_function_word`]. C origin: `saveg_write_thinker_t`.
 unsafe fn saveg_write_thinker_t(th: *const thinker_t) {
     let s = &*th;
     saveg_write32(s.prev as u32);
     saveg_write32(s.next as u32);
-    saveg_write32(s.function.acp1.map(|f| f as usize as u32).unwrap_or(0));
+    saveg_write32(saved_function_word(s.kind));
 }
 
 //
@@ -437,17 +428,7 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     let mo = mobj as *mut mobj_t;
 
     // thinker_t
-    {
-        let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker);
-        (*thinker_ptr).prev = saveg_read32() as usize as *mut thinker_t;
-        (*thinker_ptr).next = saveg_read32() as usize as *mut thinker_t;
-        let raw = saveg_read32() as usize;
-        (*thinker_ptr).function.acp1 = if raw == 0 {
-            None
-        } else {
-            Some(core::mem::transmute::<usize, unsafe fn(*mut c_void)>(raw))
-        };
-    }
+    saveg_read_thinker_t(&raw mut (*mo).thinker, ThinkerKind::Mobj);
 
     // x, y, z
     (*mo).x = saveg_read32() as i32;
@@ -547,18 +528,7 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     let mo = mobj as *const mobj_t;
 
     // thinker_t
-    {
-        let thinker_ptr = std::ptr::addr_of!((*mo).thinker);
-        saveg_write32((*thinker_ptr).prev as u32);
-        saveg_write32((*thinker_ptr).next as u32);
-        saveg_write32(
-            (*thinker_ptr)
-                .function
-                .acp1
-                .map(|f| f as usize as u32)
-                .unwrap_or(0),
-        );
-    }
+    saveg_write_thinker_t(&raw const (*mo).thinker);
 
     // x, y, z
     saveg_write32((*mo).x as u32);
@@ -911,7 +881,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
 /// C origin: `saveg_read_ceiling_t`.
 unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
     let s = &mut *ceil;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Ceiling);
     s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -953,7 +923,7 @@ unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
 /// top-countdown. C origin: `saveg_read_vldoor_t`.
 unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
     let s = &mut *door;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Door);
     s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -990,7 +960,7 @@ unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
 /// (16.16), and speed (16.16). C origin: `saveg_read_floormove_t`.
 unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
     let s = &mut *floor;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Floor);
     s.kind = saveg_read_enum() as i32;
     s.crush = saveg_read32() as i32;
     let sector_idx = saveg_read32();
@@ -1029,7 +999,7 @@ unsafe fn saveg_write_floormove_t(floor: *const floormove_t) {
 /// and platform type enum. C origin: `saveg_read_plat_t`.
 unsafe fn saveg_read_plat_t(plat: *mut plat_t) {
     let s = &mut *plat;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Plat);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.speed = saveg_read32() as i32;
@@ -1073,7 +1043,7 @@ unsafe fn saveg_write_plat_t(plat: *const plat_t) {
 /// time, min time. C origin: `saveg_read_lightflash_t`.
 unsafe fn saveg_read_lightflash_t(flash: *mut lightflash_t) {
     let s = &mut *flash;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::LightFlash);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.count = saveg_read32() as i32;
@@ -1107,7 +1077,7 @@ unsafe fn saveg_write_lightflash_t(flash: *const lightflash_t) {
 /// time (tics), bright time (tics). C origin: `saveg_read_strobe_t`.
 unsafe fn saveg_read_strobe_t(strobe: *mut strobe_t) {
     let s = &mut *strobe;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Strobe);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.count = saveg_read32() as i32;
@@ -1141,7 +1111,7 @@ unsafe fn saveg_write_strobe_t(strobe: *const strobe_t) {
 /// (+1 or -1). C origin: `saveg_read_glow_t`.
 unsafe fn saveg_read_glow_t(glow: *mut glow_t) {
     let s = &mut *glow;
-    saveg_read_thinker_t(&mut s.thinker);
+    saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Glow);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
     s.minlight = saveg_read32() as i32;
@@ -1559,8 +1529,8 @@ const tc_mobj: u8 = 1;
 
 /// Serializes all `mobj_t` thinkers from the active thinker chain.
 ///
-/// Walks `thinkercap.next ... thinkercap`; for each thinker whose function
-/// equals `P_MobjThinker`, writes a `tc_mobj` byte, 4-byte alignment padding,
+/// Walks `thinkercap.next ... thinkercap`; for each thinker of kind
+/// [`ThinkerKind::Mobj`], writes a `tc_mobj` byte, 4-byte alignment padding,
 /// then the full `mobj_t` record. Non-mobj thinkers are silently skipped
 /// (the C version also skips them without error). Terminates the list with a
 /// `tc_end` byte.
@@ -1571,23 +1541,17 @@ const tc_mobj: u8 = 1;
 ///
 /// `save_stream` must be the stream being written.
 /// The thinker chain rooted at `thinkercap` must be fully initialized and form
-/// a valid doubly-linked circular list. Every thinker in the chain whose
-/// function equals `P_MobjThinker` must point to a valid `mobj_t`.
+/// a valid doubly-linked circular list. Every thinker in the chain of kind
+/// [`ThinkerKind::Mobj`] must be embedded in a valid `mobj_t`.
 pub unsafe fn P_ArchiveThinkers() {
     let cap = &raw mut thinkercap;
     let mut th = (*cap).next;
 
     while th != cap {
-        // Check if function is P_MobjThinker by comparing pointers
-        let func = (*th).function.acp1;
-        if let Some(fn_ptr) = func {
-            if fn_ptr as usize == P_MobjThinker as *const () as usize {
-                saveg_write8(tc_mobj);
-                saveg_write_pad();
-                saveg_write_mobj_t(th as *const c_void);
-                th = (*th).next;
-                continue;
-            }
+        if (*th).kind == ThinkerKind::Mobj {
+            saveg_write8(tc_mobj);
+            saveg_write_pad();
+            saveg_write_mobj_t(mobj_t::from_thinker(th) as *const c_void);
         }
         th = (*th).next;
     }
@@ -1600,7 +1564,8 @@ pub unsafe fn P_ArchiveThinkers() {
 /// `save_stream`.
 ///
 /// First pass: walks the existing thinker chain; mobj thinkers are removed
-/// via `P_RemoveMobj`, all others are freed via `Z_Free`. Then
+/// via `P_RemoveMobj`, all others (removed mobjs included) have their owning
+/// struct freed via `Z_Free`. Then
 /// `P_InitThinkers` resets the chain to empty.
 ///
 /// Second pass: reads thinker-class bytes from the stream in a loop.
@@ -1608,8 +1573,8 @@ pub unsafe fn P_ArchiveThinkers() {
 /// - `tc_mobj`: allocates a `mobj_t` with `Z_Malloc(PU_LEVEL)`, reads its
 ///   fields, nulls out `target` and `tracer`, calls `P_SetThingPosition`,
 ///   rebuilds `info` from `mobjinfo[type]`, recomputes `floorz`/`ceilingz`
-///   from the subsector's sector, assigns `P_MobjThinker` as the function,
-///   and registers it with `P_AddThinker`.
+///   from the subsector's sector, sets the thinker kind to
+///   [`ThinkerKind::Mobj`], and registers it with `P_AddThinker`.
 /// - Any other byte: calls `i_error!` (fatal).
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
@@ -1630,15 +1595,14 @@ pub unsafe fn P_UnArchiveThinkers() {
     while currentthinker != cap {
         let next = (*currentthinker).next;
 
-        let func = (*currentthinker).function.acp1;
-        if let Some(fn_ptr) = func {
-            if fn_ptr as usize == P_MobjThinker as *const () as usize {
-                P_RemoveMobj(currentthinker.cast());
-            } else {
-                Z_Free(currentthinker as *mut c_void);
-            }
+        let kind = (*currentthinker).kind;
+        if kind == ThinkerKind::Mobj {
+            P_RemoveMobj(mobj_t::from_thinker(currentthinker));
         } else {
-            Z_Free(currentthinker as *mut c_void);
+            let Some(class) = kind.class() else {
+                i_error!("P_UnArchiveThinkers: thinker has no kind");
+            };
+            Z_Free(thinker_allocation(currentthinker, class));
         }
 
         currentthinker = next;
@@ -1681,11 +1645,10 @@ pub unsafe fn P_UnArchiveThinkers() {
                     }
                 }
 
-                // set thinker function
-                let thinker_ptr = std::ptr::addr_of_mut!((*mo).thinker);
-                (*thinker_ptr).function = actionf_p1_mobj_thinker();
+                // set thinker kind
+                (*mo).thinker.kind = ThinkerKind::Mobj;
 
-                P_AddThinker(&mut (*thinker_ptr));
+                P_AddThinker(&raw mut (*mo).thinker);
             }
             _ => {
                 i_error!("Unknown tclass {} in savegame", tclass as i32);
@@ -1722,16 +1685,17 @@ const tc_endspecials: u8 = 7;
 
 /// Serializes all sector-special thinkers from the active thinker chain.
 ///
-/// Walks the thinker chain and identifies specials by their function pointer:
-/// - Thinkers with `acv == NULL` that appear in the `activeceilings` list are
-///   written as `tc_ceiling` records (these are ceilings paused mid-crush).
-/// - `T_MoveCeiling` → `tc_ceiling`
-/// - `T_VerticalDoor` → `tc_door`
-/// - `T_MoveFloor` → `tc_floor`
-/// - `T_PlatRaise` → `tc_plat`
-/// - `T_LightFlash` → `tc_flash`
-/// - `T_StrobeFlash` → `tc_strobe`
-/// - `T_Glow` → `tc_glow`
+/// Walks the thinker chain and identifies specials by their thinker kind:
+/// - Thinkers without a think function (C's `NULL`) that appear in the
+///   `activeceilings` list are written as `tc_ceiling` records (these are
+///   ceilings paused mid-crush).
+/// - `Ceiling` → `tc_ceiling`
+/// - `Door` → `tc_door`
+/// - `Floor` → `tc_floor`
+/// - `Plat` → `tc_plat`
+/// - `LightFlash` → `tc_flash`
+/// - `Strobe` → `tc_strobe`
+/// - `Glow` → `tc_glow`
 ///
 /// Each matching thinker is preceded by its class tag byte and 4-byte
 /// alignment padding. Unrecognized thinkers are silently skipped. The list is
@@ -1744,91 +1708,72 @@ const tc_endspecials: u8 = 7;
 /// `save_stream` must be the stream being written.
 /// The thinker chain rooted at `thinkercap` must be fully initialized and form
 /// a valid doubly-linked circular list. The `activeceilings` array must be
-/// initialized. Every thinker that matches a known special function pointer
-/// must point to a fully initialized special struct (`ceiling_t`, `vldoor_t`,
-/// etc.).
+/// initialized. Every thinker of a special kind must be embedded in a fully
+/// initialized special struct (`ceiling_t`, `vldoor_t`, etc.).
 pub unsafe fn P_ArchiveSpecials() {
     let cap = &raw mut thinkercap;
     let mut th = (*cap).next;
 
     while th != cap {
-        let func = (*th).function;
-
-        // Check for ceiling (acv == NULL means in activeceilings list)
-        if func.acv.is_none() {
-            // Check if it's in activeceilings
-            let activeceilings_ptr =
-                std::ptr::addr_of!(crate::engine::play::ceilng::activeceilings[0]);
-            let mut found = false;
-            for i in 0..MAXCEILINGS {
-                if *activeceilings_ptr.add(i) == th as *mut ceiling_t {
-                    found = true;
-                    break;
+        match (*th).kind {
+            // C's null function: a ceiling in stasis is still saved when it
+            // is in `activeceilings`. A platform in stasis is not saved at
+            // all (vanilla behaviour).
+            ThinkerKind::None | ThinkerKind::CeilingInStasis | ThinkerKind::PlatInStasis => {
+                let activeceilings_ptr =
+                    std::ptr::addr_of!(crate::engine::play::ceilng::activeceilings[0]);
+                let mut found = false;
+                for i in 0..MAXCEILINGS {
+                    let ceiling = *activeceilings_ptr.add(i);
+                    if !ceiling.is_null() && &raw mut (*ceiling).thinker == th {
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    saveg_write8(tc_ceiling);
+                    saveg_write_pad();
+                    saveg_write_ceiling_t(ceiling_t::from_thinker(th));
                 }
             }
-            if found {
+            ThinkerKind::Ceiling => {
                 saveg_write8(tc_ceiling);
                 saveg_write_pad();
-                saveg_write_ceiling_t(th as *const ceiling_t);
-                th = (*th).next;
-                continue;
+                saveg_write_ceiling_t(ceiling_t::from_thinker(th));
             }
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_MoveCeiling as *const () as usize) {
-            saveg_write8(tc_ceiling);
-            saveg_write_pad();
-            saveg_write_ceiling_t(th as *const ceiling_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_VerticalDoor as *const () as usize) {
-            saveg_write8(tc_door);
-            saveg_write_pad();
-            saveg_write_vldoor_t(th as *const vldoor_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_MoveFloor as *const () as usize) {
-            saveg_write8(tc_floor);
-            saveg_write_pad();
-            saveg_write_floormove_t(th as *const floormove_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_PlatRaise as *const () as usize) {
-            saveg_write8(tc_plat);
-            saveg_write_pad();
-            saveg_write_plat_t(th as *const plat_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_LightFlash as *const () as usize) {
-            saveg_write8(tc_flash);
-            saveg_write_pad();
-            saveg_write_lightflash_t(th as *const lightflash_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_StrobeFlash as *const () as usize) {
-            saveg_write8(tc_strobe);
-            saveg_write_pad();
-            saveg_write_strobe_t(th as *const strobe_t);
-            th = (*th).next;
-            continue;
-        }
-
-        if func.acp1.map(|f| f as usize) == Some(T_Glow as *const () as usize) {
-            saveg_write8(tc_glow);
-            saveg_write_pad();
-            saveg_write_glow_t(th as *const glow_t);
-            th = (*th).next;
-            continue;
+            ThinkerKind::Door => {
+                saveg_write8(tc_door);
+                saveg_write_pad();
+                saveg_write_vldoor_t(vldoor_t::from_thinker(th));
+            }
+            ThinkerKind::Floor => {
+                saveg_write8(tc_floor);
+                saveg_write_pad();
+                saveg_write_floormove_t(floormove_t::from_thinker(th));
+            }
+            ThinkerKind::Plat => {
+                saveg_write8(tc_plat);
+                saveg_write_pad();
+                saveg_write_plat_t(plat_t::from_thinker(th));
+            }
+            ThinkerKind::LightFlash => {
+                saveg_write8(tc_flash);
+                saveg_write_pad();
+                saveg_write_lightflash_t(lightflash_t::from_thinker(th));
+            }
+            ThinkerKind::Strobe => {
+                saveg_write8(tc_strobe);
+                saveg_write_pad();
+                saveg_write_strobe_t(strobe_t::from_thinker(th));
+            }
+            ThinkerKind::Glow => {
+                saveg_write8(tc_glow);
+                saveg_write_pad();
+                saveg_write_glow_t(glow_t::from_thinker(th));
+            }
+            // Map objects are saved by `P_ArchiveThinkers`; fire flickers are
+            // not saved (vanilla behaviour); removed thinkers are skipped.
+            ThinkerKind::Mobj | ThinkerKind::FireFlicker | ThinkerKind::Removed(_) => {}
         }
 
         th = (*th).next;
@@ -1890,13 +1835,15 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut ceiling_t;
                 saveg_read_ceiling_t(ceiling);
-                (*ceiling).sector.as_mut().unwrap().specialdata = ceiling as *mut c_void;
+                (*ceiling).sector.as_mut().unwrap().specialdata = &raw mut (*ceiling).thinker;
 
-                if ceiling.as_ref().unwrap().thinker.function.acp1.is_some() {
-                    ceiling.as_mut().unwrap().thinker.function = actionf_p1_move_ceiling();
+                // A set function slot read as `Ceiling`; a null one (C keeps
+                // the function null) is a ceiling in stasis.
+                if (*ceiling).thinker.kind == ThinkerKind::None {
+                    (*ceiling).thinker.kind = ThinkerKind::CeilingInStasis;
                 }
 
-                P_AddThinker(&mut (*ceiling).thinker);
+                P_AddThinker(&raw mut (*ceiling).thinker);
                 P_AddActiveCeiling(ceiling);
             }
             x if x == tc_door => {
@@ -1907,9 +1854,9 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut vldoor_t;
                 saveg_read_vldoor_t(door);
-                (*door).sector.as_mut().unwrap().specialdata = door as *mut c_void;
-                door.as_mut().unwrap().thinker.function = actionf_p1_vertical_door();
-                P_AddThinker(&mut (*door).thinker);
+                (*door).sector.as_mut().unwrap().specialdata = &raw mut (*door).thinker;
+                (*door).thinker.kind = ThinkerKind::Door;
+                P_AddThinker(&raw mut (*door).thinker);
             }
             x if x == tc_floor => {
                 saveg_read_pad();
@@ -1919,9 +1866,9 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut floormove_t;
                 saveg_read_floormove_t(floor);
-                (*floor).sector.as_mut().unwrap().specialdata = floor as *mut c_void;
-                floor.as_mut().unwrap().thinker.function = actionf_p1_move_floor();
-                P_AddThinker(&mut (*floor).thinker);
+                (*floor).sector.as_mut().unwrap().specialdata = &raw mut (*floor).thinker;
+                (*floor).thinker.kind = ThinkerKind::Floor;
+                P_AddThinker(&raw mut (*floor).thinker);
             }
             x if x == tc_plat => {
                 saveg_read_pad();
@@ -1931,13 +1878,15 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut plat_t;
                 saveg_read_plat_t(plat);
-                (*plat).sector.as_mut().unwrap().specialdata = plat as *mut c_void;
+                (*plat).sector.as_mut().unwrap().specialdata = &raw mut (*plat).thinker;
 
-                if plat.as_ref().unwrap().thinker.function.acp1.is_some() {
-                    plat.as_mut().unwrap().thinker.function = actionf_p1_plat_raise();
+                // A set function slot read as `Plat`; a null one (C keeps the
+                // function null) is a platform in stasis.
+                if (*plat).thinker.kind == ThinkerKind::None {
+                    (*plat).thinker.kind = ThinkerKind::PlatInStasis;
                 }
 
-                P_AddThinker(&mut (*plat).thinker);
+                P_AddThinker(&raw mut (*plat).thinker);
                 P_AddActivePlat(plat);
             }
             x if x == tc_flash => {
@@ -1948,8 +1897,8 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut lightflash_t;
                 saveg_read_lightflash_t(flash);
-                flash.as_mut().unwrap().thinker.function = actionf_p1_light_flash();
-                P_AddThinker(&mut (*flash).thinker);
+                (*flash).thinker.kind = ThinkerKind::LightFlash;
+                P_AddThinker(&raw mut (*flash).thinker);
             }
             x if x == tc_strobe => {
                 saveg_read_pad();
@@ -1959,8 +1908,8 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut strobe_t;
                 saveg_read_strobe_t(strobe);
-                strobe.as_mut().unwrap().thinker.function = actionf_p1_strobe_flash();
-                P_AddThinker(&mut (*strobe).thinker);
+                (*strobe).thinker.kind = ThinkerKind::Strobe;
+                P_AddThinker(&raw mut (*strobe).thinker);
             }
             x if x == tc_glow => {
                 saveg_read_pad();
@@ -1970,8 +1919,8 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut glow_t;
                 saveg_read_glow_t(glow);
-                glow.as_mut().unwrap().thinker.function = actionf_p1_glow();
-                P_AddThinker(&mut (*glow).thinker);
+                (*glow).thinker.kind = ThinkerKind::Glow;
+                P_AddThinker(&raw mut (*glow).thinker);
             }
             _ => {
                 i_error!(
@@ -2105,28 +2054,47 @@ mod tests {
     }
 
     #[test]
-    fn saveg_read_thinker_t_zero_fn_ptr_becomes_none() {
+    fn saveg_read_thinker_t_tests_function_slot_against_null() {
         let _g = LOCK.lock().unwrap();
-        // 12 bytes: prev(4) + next(4) + fn_ptr(4), all zero
-        let mut data = [0u8; 12];
+        // 12 bytes: prev(4) + next(4) + function(4)
+        let mut null_function = [0u8; 12];
+        let mut set_function = [0u8; 12];
+        set_function[8] = 0x40;
         unsafe {
             let mut th = thinker_t {
                 prev: ptr::null_mut(),
                 next: ptr::null_mut(),
-                function: actionf_t { acp1: None },
+                kind: ThinkerKind::Glow,
             };
-            with_mem_stream(&mut data, || {
-                saveg_read_thinker_t(&raw mut th as *mut thinker_t);
+            with_mem_stream(&mut null_function, || {
+                saveg_read_thinker_t(&raw mut th, ThinkerKind::Ceiling);
             });
-            assert!(
-                th.function.acp1.is_none(),
-                "zero function pointer must deserialize as None, not Some(NULL)"
-            );
+            assert_eq!(th.kind, ThinkerKind::None);
+            with_mem_stream(&mut set_function, || {
+                saveg_read_thinker_t(&raw mut th, ThinkerKind::Ceiling);
+            });
+            assert_eq!(th.kind, ThinkerKind::Ceiling);
         }
     }
 
     #[test]
-    fn saveg_read_mobj_t_zero_fn_ptr_becomes_none() {
+    fn saved_function_word_is_null_only_without_a_think_function() {
+        assert_eq!(saved_function_word(ThinkerKind::None), 0);
+        assert_eq!(saved_function_word(ThinkerKind::CeilingInStasis), 0);
+        assert_eq!(saved_function_word(ThinkerKind::PlatInStasis), 0);
+        assert_eq!(
+            saved_function_word(ThinkerKind::Ceiling),
+            T_MoveCeiling as *const () as usize as u32
+        );
+        assert_eq!(
+            saved_function_word(ThinkerKind::Mobj),
+            P_MobjThinker as *const () as usize as u32
+        );
+        assert_ne!(saved_function_word(ThinkerKind::Plat), 0);
+    }
+
+    #[test]
+    fn saveg_read_mobj_t_zero_function_slot_reads_as_no_kind() {
         let _g = LOCK.lock().unwrap();
         // mobj_t is large; we need enough bytes for the full struct read.
         // The thinker (prev+next+fn) is the first 12 bytes.
@@ -2134,14 +2102,11 @@ mod tests {
         let mut data = [0u8; 256];
         unsafe {
             let mut mo = std::mem::MaybeUninit::<mobj_t>::zeroed().assume_init();
+            mo.thinker.kind = ThinkerKind::Mobj;
             with_mem_stream(&mut data, || {
-                saveg_read_mobj_t(&raw mut mo as *mut mobj_t as *mut c_void);
+                saveg_read_mobj_t(&raw mut mo as *mut c_void);
             });
-            let thinker_ptr = std::ptr::addr_of!(mo.thinker);
-            assert!(
-                (*thinker_ptr).function.acp1.is_none(),
-                "zero function pointer in mobj thinker must deserialize as None, not Some(NULL)"
-            );
+            assert_eq!(mo.thinker.kind, ThinkerKind::None);
         }
     }
 

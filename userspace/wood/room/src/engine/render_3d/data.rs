@@ -109,9 +109,8 @@ use crate::engine::{
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::{
-        mobj::P_MobjThinker,
         setup::{numsectors, numsides, sectors, sides},
-        tick::thinkercap,
+        tick::{thinkercap, ThinkerContainer, ThinkerKind},
     },
     render_3d::{
         sky::skytexture,
@@ -1095,8 +1094,8 @@ pub unsafe fn R_PrecacheLevel() {
 
     let mut th = thinkercap.next;
     while !std::ptr::eq(th, std::ptr::addr_of!(thinkercap)) {
-        if (*th).function.acp1.map(|f| f as usize) == Some(P_MobjThinker as *const () as usize) {
-            let mobj = th as *mut mobj_t;
+        if (*th).kind == ThinkerKind::Mobj {
+            let mobj = mobj_t::from_thinker(th);
             *spritepresent.add((*mobj).sprite as usize) = 1;
         }
         th = (*th).next;

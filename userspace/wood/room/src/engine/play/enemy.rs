@@ -67,13 +67,13 @@ use crate::{
                 P_SetThingPosition, P_UnsetThingPosition, MAPBLOCKSHIFT,
             },
             mobj::{
-                mobj_t, P_MobjThinker, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj,
-                P_SpawnPuff, P_SubstNullMobj,
+                mobj_t, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
+                P_SubstNullMobj,
             },
             setup::{bmaporgx, bmaporgy, sides},
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
-            tick::{thinker_t, thinkercap},
+            tick::{thinker_t, thinkercap, ThinkerContainer, ThinkerKind},
         },
         render_3d::main::{validcount, R_PointToAngle2},
         sound::S_StartSound,
@@ -613,13 +613,8 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
     A_Fall(mo);
     th = thinkercap.next;
     while !std::ptr::eq(th, &raw const thinkercap) {
-        if (*th).function.acp1
-            == core::mem::transmute::<
-                Option<unsafe fn(*mut mobj_t) -> ()>,
-                Option<unsafe fn(*mut c_void) -> ()>,
-            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-        {
-            mo2 = th as *mut mobj_t;
+        if (*th).kind == ThinkerKind::Mobj {
+            mo2 = mobj_t::from_thinker(th);
             if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
                 return;
             }
@@ -1518,12 +1513,8 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
     count = 0;
     currentthinker = thinkercap.next;
     while !std::ptr::eq(currentthinker, &raw const thinkercap) {
-        if (*currentthinker).function.acp1
-            == core::mem::transmute::<
-                Option<unsafe fn(*mut mobj_t) -> ()>,
-                Option<unsafe fn(*mut c_void) -> ()>,
-            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-            && (*(currentthinker as *mut mobj_t)).kind as u32 == MT_SKULL as u32
+        if (*currentthinker).kind == ThinkerKind::Mobj
+            && (*mobj_t::from_thinker(currentthinker)).kind as u32 == MT_SKULL as u32
         {
             count += 1;
         }
@@ -1723,13 +1714,8 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     }
     th = thinkercap.next;
     while !std::ptr::eq(th, &raw const thinkercap) {
-        if (*th).function.acp1
-            == core::mem::transmute::<
-                Option<unsafe fn(*mut mobj_t) -> ()>,
-                Option<unsafe fn(*mut c_void) -> ()>,
-            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-        {
-            mo2 = th as *mut mobj_t;
+        if (*th).kind == ThinkerKind::Mobj {
+            mo2 = mobj_t::from_thinker(th);
             if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
                 return;
             }
@@ -1851,13 +1837,8 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
     braintargeton = 0;
     thinker = thinkercap.next;
     while !std::ptr::eq(thinker, &raw const thinkercap) {
-        if (*thinker).function.acp1
-            == core::mem::transmute::<
-                Option<unsafe fn(*mut mobj_t) -> ()>,
-                Option<unsafe fn(*mut c_void) -> ()>,
-            >(Some(P_MobjThinker as unsafe fn(*mut mobj_t) -> ()))
-        {
-            m = thinker as *mut mobj_t;
+        if (*thinker).kind == ThinkerKind::Mobj {
+            m = mobj_t::from_thinker(thinker);
             if (*m).kind as u32 == MT_BOSSTARGET as u32 {
                 braintargets[numbraintargets as usize] = m;
                 numbraintargets += 1;

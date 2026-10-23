@@ -7,8 +7,6 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::engine::{
     map::line_t,
     math::tables::ANGLETOFINESHIFT,
@@ -26,9 +24,9 @@ use crate::engine::{
     math::tables::{finecosine, finesine},
     play::{
         map::P_TeleportMove,
-        mobj::{P_MobjThinker, P_SpawnMobj},
+        mobj::P_SpawnMobj,
         setup::{numsectors, sectors},
-        tick::thinkercap,
+        tick::{thinkercap, ThinkerContainer, ThinkerKind},
     },
     sound::{info::Sfx, S_StartSound},
 };
@@ -81,17 +79,12 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
             let mut thinker = thinkercap.next;
             while !std::ptr::eq(thinker, &raw const thinkercap) {
                 // Not a mobj
-                if (*thinker).function.acp1
-                    != Some(core::mem::transmute::<
-                        unsafe fn(*mut mobj_t),
-                        unsafe fn(*mut c_void),
-                    >(P_MobjThinker))
-                {
+                if (*thinker).kind != ThinkerKind::Mobj {
                     thinker = (*thinker).next;
                     continue;
                 }
 
-                let m = thinker as *mut mobj_t;
+                let m = mobj_t::from_thinker(thinker);
 
                 // Not a teleportman
                 if (*m).kind != MT_TELEPORTMAN {
