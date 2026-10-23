@@ -140,8 +140,8 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
             break;
         }
 
-        let state = &mut info::states[stnum as usize] as *mut State;
-        (*psp).state = state as *mut state_t;
+        let state = &raw mut info::states[stnum as usize];
+        (*psp).state = state;
         (*psp).tics = (*state).tics;
 
         if (*state).misc1 != 0 {
@@ -159,7 +159,7 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
         }
 
         // Read nextstate from psp->state (action may have changed it).
-        stnum = ((*psp).state as *mut State).read().nextstate;
+        stnum = (*(*psp).state).nextstate;
 
         if (*psp).tics != 0 {
             break;
@@ -325,7 +325,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo;
 
     // Get out of attack state.
-    let state_ptr = (*mo).state as *mut State;
+    let state_ptr = (*mo).state;
     if std::ptr::eq(state_ptr, &info::states[S_PLAY_ATK1 as usize])
         || std::ptr::eq(state_ptr, &info::states[S_PLAY_ATK2 as usize])
     {
@@ -333,7 +333,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     }
 
     if (*player).readyweapon == wp_chainsaw
-        && std::ptr::eq((*psp).state as *mut State, &info::states[S_SAW as usize])
+        && std::ptr::eq((*psp).state, &info::states[S_SAW as usize])
     {
         S_StartSound(mo as *mut c_void, Sfx::Sawidl as i32);
     }
@@ -868,7 +868,7 @@ pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
     let mut psp = (*player).psprites.as_mut_ptr();
 
     for i in 0..NUMPSPRITES {
-        let state = (*psp).state as *mut State;
+        let state = (*psp).state;
         if !state.is_null() {
             // Drop tic count and possibly change state.
             // A -1 tic count never changes.

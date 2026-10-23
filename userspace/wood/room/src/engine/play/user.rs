@@ -251,8 +251,8 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
         }
 
         // C: player->mo->state == &states[S_PLAY]
-        let p_play = std::ptr::addr_of!(states[S_PLAY as usize]) as *const u8;
-        if (cmd.forwardmove != 0 || cmd.sidemove != 0) && (*mo).state as *const u8 == p_play {
+        let p_play = &raw const states[S_PLAY as usize];
+        if (cmd.forwardmove != 0 || cmd.sidemove != 0) && std::ptr::eq((*mo).state, p_play) {
             P_SetMobjState(mo, S_PLAY_RUN1);
         }
     }

@@ -10,7 +10,6 @@
 use std::ffi::c_void;
 
 use crate::engine::{
-    doom::player::PlayerT,
     map::line_t,
     math::tables::ANGLETOFINESHIFT,
     play::{info::*, mobj::mobj_t},
@@ -121,7 +120,7 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
                 }
 
                 if !(*thing).player.is_null() {
-                    let player = (*thing).player as *mut PlayerT;
+                    let player = (*thing).player;
                     (*player).viewz = (*thing).z + (*player).viewheight;
                 }
 

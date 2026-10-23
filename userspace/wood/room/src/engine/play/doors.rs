@@ -9,7 +9,7 @@ use {crate::engine::sound::info::Sfx, std::ffi::c_void};
 
 use crate::engine::{
     dehacked::DEH_String,
-    doom::player::{PlayerMessage, PlayerT},
+    doom::player::PlayerMessage,
     interface::timer::TICRATE,
     map::{line_t, sector_t},
     math::fixed::{fixed_t, FRACUNIT},
@@ -296,7 +296,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
 pub unsafe fn EV_DoLockedDoor(line: *mut line_t, kind: i32, thing: *mut mobj_t) -> i32 {
-    let Some(p) = ((*thing).player as *mut PlayerT).as_mut() else {
+    let Some(p) = (*thing).player.as_mut() else {
         return 0;
     };
 
@@ -447,7 +447,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     let side = 0;
 
     // Check for locks
-    let player = (*thing).player as *mut PlayerT;
+    let player = (*thing).player;
 
     match (*line).special as i32 {
         26 | 32 => {

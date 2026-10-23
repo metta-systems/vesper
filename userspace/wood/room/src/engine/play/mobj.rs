@@ -86,10 +86,6 @@ use crate::engine::{
     zone::Z_Malloc,
 };
 
-/// Opaque stand-in for the C `player_s` struct; only used via raw pointer
-/// and cast to [`PlayerT`] where the fields are needed.
-pub enum player_s {}
-
 /// A map object (thing) that lives in the world and can think each tic
 /// (`mobj_t` in `p_mobj.h`).
 ///
@@ -147,12 +143,12 @@ pub struct mobj_t {
     pub kind: i32,
     _pad2: [u8; 4],
     /// Pointer to the thing's type info record.
-    pub info: *mut mobjinfo_t,
+    pub info: *mut MobjInfo,
     /// Remaining tics in the current animation frame.
     pub tics: i32,
     _pad3: [u8; 4],
     /// Pointer to the current animation frame state.
-    pub state: *mut state_t,
+    pub state: *mut State,
     /// Bit-field of `MF_*` flags controlling collision, rendering, AI, etc.
     pub flags: i32,
     /// Current hit points.
@@ -168,7 +164,7 @@ pub struct mobj_t {
     /// Decremented each tic while pursuing a target; reset on target change.
     pub threshold: i32,
     /// Non-null if this thing is a player; points to the `PlayerT` record.
-    pub player: *mut player_s,
+    pub player: *mut PlayerT,
     /// Index used to cycle through potential targets during `P_LookForPlayers`.
     pub lastlook: i32,
     /// The WAD spawn point from which this thing was created.
@@ -223,12 +219,12 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
     let mut state = state;
     loop {
         if state == S_NULL {
-            mobj.state = S_NULL as *mut State as *mut state_t;
+            mobj.state = ptr::null_mut();
             P_RemoveMobj(mobj as *mut mobj_t);
             return 0;
         }
-        let st = &mut info::states[state as usize] as *mut State;
-        mobj.state = st as *mut state_t;
+        let st = &raw mut info::states[state as usize];
+        mobj.state = st;
         mobj.tics = (*st).tics;
         mobj.sprite = (*st).sprite;
         mobj.frame = (*st).frame;
@@ -253,7 +249,7 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
 /// `mo` must be a valid, non-null pointer to an `mobj_t` with `MF_MISSILE` set.
 pub unsafe fn P_ExplodeMissile(mo: *mut mobj_t) {
     let mo = &mut *mo;
-    let info = mo.info as *mut MobjInfo;
+    let info = mo.info;
     mo.momx = 0;
     mo.momy = 0;
     mo.momz = 0;
@@ -280,13 +276,13 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
     let mo = &mut *mo;
     let mut ptryx: i32;
     let mut ptryy: i32;
-    let player = mo.player as *mut PlayerT;
+    let player = mo.player;
     let mut xmove: i32;
     let mut ymove: i32;
 
     if mo.momx == 0 && mo.momy == 0 {
         if mo.flags & MF_SKULLFLY != 0 {
-            let info = mo.info as *mut MobjInfo;
+            let info = mo.info;
             mo.flags &= !MF_SKULLFLY;
             mo.momx = 0;
             mo.momy = 0;
@@ -371,7 +367,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
         && (player.is_null() || ((*player).cmd.forwardmove == 0 && (*player).cmd.sidemove == 0))
     {
         if !player.is_null() {
-            let state_ptr = mo.state as *mut State;
+            let state_ptr = mo.state;
             let states_ptr = std::ptr::addr_of!(info::states) as *const State;
             let state_idx =
                 (state_ptr as usize - states_ptr as usize) / std::mem::size_of::<State>();
@@ -404,7 +400,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
     let delta: i32;
 
     if !mo.player.is_null() && mo.z < mo.floorz {
-        let player = mo.player as *mut PlayerT;
+        let player = mo.player;
         (*player).viewheight -= mo.floorz - mo.z;
         (*player).deltaviewheight = (VIEWHEIGHT - (*player).viewheight) >> 3;
     }
@@ -433,7 +429,7 @@ pub unsafe fn P_ZMovement(mo: *mut mobj_t) {
         }
         if mo.momz < 0 {
             if !mo.player.is_null() && mo.momz < -GRAVITY * 8 {
-                let player = mo.player as *mut PlayerT;
+                let player = mo.player;
                 (*player).deltaviewheight = mo.momz >> 3;
                 S_StartSound(mo as *mut mobj_t as *mut c_void, Sfx::Oof as i32);
             }
@@ -500,7 +496,7 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
     S_StartSound(mo as *mut c_void, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
-    let info = mobj.info as *mut MobjInfo;
+    let info = mobj.info;
     let z = if (*info).flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
     } else {
@@ -545,8 +541,7 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
     if mobj.tics != -1 {
         mobj.tics -= 1;
         if mobj.tics == 0 {
-            let state_ptr = mobj.state as *mut State;
-            P_SetMobjState(mobj as *mut mobj_t, (*state_ptr).nextstate);
+            P_SetMobjState(mobj as *mut mobj_t, (*mobj.state).nextstate);
         }
     } else {
         if mobj.flags & MF_COUNTKILL == 0 {
@@ -590,10 +585,10 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
     ) as *mut mobj_t;
     // Z_Malloc already zeroes the allocation internally.
     let mobj_ref = &mut *mobj;
-    let info = &mut info::mobjinfo[kind as usize] as *mut MobjInfo;
+    let info = &raw mut info::mobjinfo[kind as usize];
 
     mobj_ref.kind = kind;
-    mobj_ref.info = info as *mut mobjinfo_t;
+    mobj_ref.info = info;
     mobj_ref.x = x;
     mobj_ref.y = y;
     mobj_ref.radius = (*info).radius;
@@ -608,8 +603,8 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
 
     mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
 
-    let st = &mut info::states[(*info).spawnstate as usize] as *mut State;
-    mobj_ref.state = st as *mut state_t;
+    let st = &raw mut info::states[(*info).spawnstate as usize];
+    mobj_ref.state = st;
     mobj_ref.tics = (*st).tics;
     mobj_ref.sprite = (*st).sprite;
     mobj_ref.frame = (*st).frame;
@@ -753,7 +748,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     }
 
     (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    (*mobj).player = p as *mut player_s;
+    (*mobj).player = p;
     (*mobj).health = (*p).health;
 
     (*p).mo = mobj;
@@ -995,7 +990,7 @@ pub unsafe fn P_SpawnMissile(source: *mut mobj_t, dest: *mut mobj_t, kind: i32) 
     let source = &*source;
     let dest = &*dest;
     let th = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
-    let info = (*th).info as *mut MobjInfo;
+    let info = (*th).info;
     if (*info).seesound != Sfx::None {
         S_StartSound(th as *mut c_void, (*info).seesound as i32);
     }
@@ -1050,7 +1045,7 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
     let z = source.z + 4 * 8 * FRACUNIT;
 
     let th = P_SpawnMobj(x, y, z, kind);
-    let info = (*th).info as *mut MobjInfo;
+    let info = (*th).info;
     if (*info).seesound != Sfx::None {
         S_StartSound(th as *mut c_void, (*info).seesound as i32);
     }

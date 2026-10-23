@@ -13,13 +13,10 @@
 //!   (`unsigned int`).
 //! - `TiccmdT` adds an explicit `_pad: [u8; 2]` after `arti` to match the
 //!   C compiler's padding and reach the expected struct size.
-//! - `PspdefT::state` points through the opaque `state_t` from
-//!   `play::info`, an empty enum: the idiomatic Rust way to express
-//!   "pointer-only, never constructed" foreign types.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::play::{info::state_t, mobj::mobj_t};
+use crate::engine::play::{info::State, mobj::mobj_t};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -105,7 +102,7 @@ pub struct TiccmdT {
 #[derive(Clone, Copy, Debug)]
 pub struct PspdefT {
     /// Pointer to the current animation state for this sprite overlay.
-    pub state: *mut state_t,
+    pub state: *mut State,
     /// Remaining tics in the current animation state; 0 means advance to next.
     pub tics: i32,
     /// Screen-space X position of the sprite, in fixed-point pixels.

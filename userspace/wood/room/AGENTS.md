@@ -10,7 +10,6 @@
 - **Struct padding fields and zero-initialization**: When porting C structs that contain private `_pad` fields, you cannot use struct literal syntax. Use `std::mem::zeroed()` or `MaybeUninit::zeroed().assume_init()` instead.
 - **Moving globals between ported modules**: When a global was previously accessed via `extern "C"` in one Rust module and the C source gets ported, move the `#[no_mangle] pub static mut` definition to the new module and update the consumer to access it directly (e.g., `crate::engine::render_3d::things::spryscale`).
 - **Unsigned angle arithmetic wrapping**: C `angle_t` is `u32`, and subtraction/addition can wrap around zero. Rust's default `-` and `+` on `u32` panic in debug mode. Always use `wrapping_sub`, `wrapping_add`, `wrapping_neg` for angle arithmetic.
-- **Opaque `state_t` vs concrete `State` struct**: `play/info.rs` declares `state_t` as an empty enum for FFI next to the real `State` struct. When accessing state fields from ported code, cast the pointer to `*mut State`.
 
 ## AddressSanitizer
 

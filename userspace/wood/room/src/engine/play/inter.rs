@@ -664,7 +664,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
     }
 
     let mut sound: i32 = Sfx::Itemup as i32;
-    let player_ptr = (*toucher).player as *mut PlayerT;
+    let player_ptr = (*toucher).player;
     let sprite = (*special).sprite;
     let special_flags = (*special).flags;
     // Snapshot the DEH-tunable `static mut` values into locals so each
@@ -1039,7 +1039,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
 /// `source` may be null (environmental kill).  All global game-state
 /// statics must only be accessed from the game-logic thread.
 pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
-    let info = (*target).info as *mut MobjInfo;
+    let info = (*target).info;
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
     if (*target).kind != MT_SKULL {
         (*target).flags &= !MF_NOGRAVITY;
@@ -1048,12 +1048,12 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     (*target).height >>= 2;
 
     if !source.is_null() && !(*source).player.is_null() {
-        let source_player = (*source).player as *mut PlayerT;
+        let source_player = (*source).player;
         if (*target).flags & MF_COUNTKILL != 0 {
             (*source_player).killcount += 1;
         }
         if !(*target).player.is_null() {
-            let target_player = (*target).player as *mut PlayerT;
+            let target_player = (*target).player;
             let idx = target_player.offset_from(std::ptr::addr_of_mut!(players[0])) as usize;
             (*source_player).frags[idx] += 1;
         }
@@ -1062,7 +1062,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
     }
 
     if !(*target).player.is_null() {
-        let target_player = (*target).player as *mut PlayerT;
+        let target_player = (*target).player;
         if source.is_null() {
             let idx = target_player.offset_from(std::ptr::addr_of_mut!(players[0])) as usize;
             (*target_player).frags[idx] += 1;
@@ -1155,7 +1155,7 @@ pub unsafe fn P_DamageMobj(
         (*target).momz = 0;
     }
 
-    let player = (*target).player as *mut PlayerT;
+    let player = (*target).player;
     if !player.is_null() && gameskill == sk_baby {
         damage >>= 1;
     }
@@ -1164,10 +1164,10 @@ pub unsafe fn P_DamageMobj(
         && ((*target).flags & MF_NOCLIP) == 0
         && (source.is_null()
             || (*source).player.is_null()
-            || (*((*source).player as *mut PlayerT)).readyweapon != wp_chainsaw)
+            || (*(*source).player).readyweapon != wp_chainsaw)
     {
         let mut ang = R_PointToAngle2((*inflictor).x, (*inflictor).y, (*target).x, (*target).y);
-        let info = (*target).info as *mut MobjInfo;
+        let info = (*target).info;
         let mut thrust = damage * (FRACUNIT >> 3) * 100 / (*info).mass;
 
         if damage < 40
@@ -1234,7 +1234,7 @@ pub unsafe fn P_DamageMobj(
         return;
     }
 
-    let info = (*target).info as *mut MobjInfo;
+    let info = (*target).info;
     if P_Random() < (*info).painchance && ((*target).flags & MF_SKULLFLY) == 0 {
         (*target).flags |= MF_JUSTHIT;
         P_SetMobjState(target, (*info).painstate);
@@ -1249,7 +1249,7 @@ pub unsafe fn P_DamageMobj(
     {
         (*target).target = source;
         (*target).threshold = BASETHRESHOLD;
-        let state_ptr = (*target).state as *mut State;
+        let state_ptr = (*target).state;
         let spawnstate_ptr = &info::states[(*info).spawnstate as usize] as *const State;
         if std::ptr::eq(state_ptr, spawnstate_ptr) && (*info).seestate != S_NULL {
             P_SetMobjState(target, (*info).seestate);

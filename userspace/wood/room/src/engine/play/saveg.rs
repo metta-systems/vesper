@@ -43,9 +43,9 @@ use crate::engine::{
         ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
         doors::{vldoor_t, T_VerticalDoor},
         floor::{floormove_t, T_MoveFloor},
-        info::{mobjinfo, mobjinfo_t, state_t, states, MobjInfo, State, NUMSTATES},
+        info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
         lights::{glow_t, lightflash_t, strobe_t, T_Glow, T_LightFlash, T_StrobeFlash},
-        mobj::{mobj_t, player_s},
+        mobj::mobj_t,
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
         tick::{actionf_t, leveltime, thinker_t, thinkercap, P_AddThinker, P_InitThinkers},
     },
@@ -488,14 +488,14 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).kind = saveg_read_enum() as i32;
 
     // info (raw pointer)
-    (*mo).info = saveg_read32() as *mut mobjinfo_t;
+    (*mo).info = saveg_read32() as *mut MobjInfo;
 
     // tics
     (*mo).tics = saveg_read32() as i32;
 
     // state (index into states array)
     let state_idx = saveg_read32();
-    (*mo).state = saveg_read_state_ptr(state_idx) as *mut state_t;
+    (*mo).state = saveg_read_state_ptr(state_idx);
 
     // flags
     (*mo).flags = saveg_read32() as i32;
@@ -517,8 +517,8 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     // player (index + 1)
     let pl = saveg_read32();
     if pl > 0 {
-        (*mo).player = saveg_read_player_ptr(pl) as *mut player_s;
-        let player = (*mo).player as *mut PlayerT;
+        (*mo).player = saveg_read_player_ptr(pl);
+        let player = (*mo).player;
         if !player.is_null() {
             (*player).mo = mo;
         }
@@ -605,7 +605,7 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).tics as u32);
 
     // state (index)
-    let state = (*mo).state as *const State;
+    let state = (*mo).state;
     if state.is_null() {
         saveg_write32(0);
     } else {
@@ -630,7 +630,7 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).threshold as u32);
 
     // player
-    let player = (*mo).player as *const PlayerT;
+    let player = (*mo).player;
     if player.is_null() {
         saveg_write32(0);
     } else {
@@ -700,7 +700,7 @@ unsafe fn saveg_read_pspdef_t(psp: *mut PspdefT) {
     s.state = if state_idx == 0 {
         std::ptr::null_mut()
     } else {
-        saveg_read_state_ptr(state_idx) as *mut state_t
+        saveg_read_state_ptr(state_idx)
     };
     s.tics = saveg_read32() as i32;
     s.sx = saveg_read32() as i32;
@@ -717,7 +717,7 @@ unsafe fn saveg_write_pspdef_t(psp: *const PspdefT) {
     if s.state.is_null() {
         saveg_write32(0);
     } else {
-        saveg_write32(saveg_write_state_ptr(s.state as *const State));
+        saveg_write32(saveg_write_state_ptr(s.state));
     }
     saveg_write32(s.tics as u32);
     saveg_write32(s.sx as u32);
@@ -1669,7 +1669,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_SetThingPosition(mobj.cast());
 
                 // rebuild info from mobjinfo
-                (*mo).info = &mut mobjinfo[(*mo).kind as usize] as *mut MobjInfo as *mut mobjinfo_t;
+                (*mo).info = &raw mut mobjinfo[(*mo).kind as usize];
 
                 // rebuild floorz/ceilingz from subsector
                 let subsec = (*mo).subsector;

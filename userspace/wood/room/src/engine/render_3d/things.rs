@@ -836,7 +836,7 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT) {
         return;
     }
 
-    let state = psp.state as *mut State;
+    let state = psp.state;
 
     #[cfg(feature = "rangecheck")]
     {

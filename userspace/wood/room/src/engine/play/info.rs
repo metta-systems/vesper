@@ -35,7 +35,7 @@
 //!
 //! # The state cycle
 //!
-//! Every actor (`mobj_t`) holds a `state_t*` that the thinker decrements by
+//! Every actor (`mobj_t`) holds a `*mut State` that the thinker decrements by
 //! one tic each frame. When `tics` reaches zero, `P_SetMobjState` advances
 //! the actor to `state->nextstate`, runs `state->action` if non-null, and
 //! resets the tic counter from the new state. A self-referencing
@@ -51,7 +51,7 @@
 //!
 //! # The action-pointer table
 //!
-//! `state_t::action` is a function pointer that the simulation invokes
+//! `State::action` is a function pointer that the simulation invokes
 //! when the actor enters that state. In C it is the `actionf_t` union of
 //! `void (*)()`, `void (*)(void*)`, and `void (*)(void*, void*)`; in this
 //! Rust port we use `Option<unsafe fn()>`. The table stores each action
@@ -59,7 +59,7 @@
 //! back to the action's real signature before calling it.
 //!
 //! The action functions themselves live in `p_enemy` and `p_pspr`, and are
-//! only ever invoked indirectly, through `state_t::action`, by the
+//! only ever invoked indirectly, through `State::action`, by the
 //! simulation.
 //!
 //! # Index identifiers
@@ -112,7 +112,7 @@ use crate::engine::math::fixed::FRACUNIT;
 //
 // One `SPR_*` constant per entry in `sprnames`. The values are the C enum
 // `spritenum_t` from `info.h`; they must stay in lockstep with the
-// `sprnames` array, the `state_t::sprite` field of every `states[]` entry,
+// `sprnames` array, the `State::sprite` field of every `states[]` entry,
 // and the renderer's sprite-lump scan.
 
 /// Sprite tag `TROO` (trooper / imp).
@@ -872,21 +872,10 @@ pub struct MobjInfo {
     pub raisestate: i32,
 }
 
-/// Opaque animation-state record (`state_t` in `info.h`).
-///
-/// `mobj_t::state` and `PspdefT::state` point at entries of [`states`]
-/// through this pointer-only type; cast to `*mut State` to read the fields.
-pub enum state_t {}
-/// Opaque map-object class descriptor (`mobjinfo_t` in `info.h`).
-///
-/// `mobj_t::info` points at an entry of [`mobjinfo`] through this
-/// pointer-only type; cast to `*mut MobjInfo` to read the fields.
-pub enum mobjinfo_t {}
-
 // Every action function referenced from [`states`]. The bodies live in
 // `p_pspr` (player weapon actions, called as `fn(*mut PlayerT, *mut
 // PspdefT)`) and `p_enemy` (map object actions, called as `fn(*mut
-// mobj_t)`). `state_t::action` holds them type-erased; the thinker
+// mobj_t)`). `State::action` holds them type-erased; the thinker
 // loop (`P_SetMobjState`, `P_SetPsprite`) transmutes the pointer back to
 // the signature it calls.
 use crate::engine::play::{

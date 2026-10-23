@@ -31,7 +31,6 @@ use crate::{
         },
         misc::random::P_Random,
         play::{
-            info::MobjInfo,
             maputl::{
                 intercept_t, lowfloor, openbottom, openrange, opentop, P_AproxDistance,
                 P_BlockLinesIterator, P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening,
@@ -407,13 +406,13 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
 
     // check for skulls slamming into things
     if (*tmthing).flags & MF_SKULLFLY != 0 {
-        let damage = ((P_Random() % 8) + 1) * (*((*tmthing).info as *mut MobjInfo)).damage;
+        let damage = ((P_Random() % 8) + 1) * (*(*tmthing).info).damage;
         P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, tmthing, damage);
         (*tmthing).flags &= !MF_SKULLFLY;
         (*tmthing).momx = 0;
         (*tmthing).momy = 0;
         (*tmthing).momz = 0;
-        P_SetMobjState(tmthing, (*((*tmthing).info as *mut MobjInfo)).spawnstate);
+        P_SetMobjState(tmthing, (*(*tmthing).info).spawnstate);
         return 0;
     }
 
@@ -444,7 +443,7 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
         if thing.flags & MF_SHOOTABLE == 0 {
             return (thing.flags & MF_SOLID == 0) as u32;
         }
-        let damage = ((P_Random() % 8) + 1) * (*((*tmthing).info as *mut MobjInfo)).damage;
+        let damage = ((P_Random() % 8) + 1) * (*(*tmthing).info).damage;
         let target = (*tmthing).target;
         P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, target, damage);
         return 0;
