@@ -1143,6 +1143,7 @@ mod tests {
     #[test]
     fn init_translation_tables() {
         let _g = LOCK.lock().unwrap();
+        let _zone = crate::engine::zone::ZONE_TEST_LOCK.lock().unwrap();
         unsafe {
             // Initialize the zone allocator so Z_Malloc works.
             // It's fine to re-initialize in a unit test.

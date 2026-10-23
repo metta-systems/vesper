@@ -131,6 +131,10 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
     (*block).size = (*zone).size - std::mem::size_of::<memzone_t>() as i32;
 }
 
+/// Serializes the unit tests that re-initialise the zone with [`Z_Init`].
+#[cfg(test)]
+pub(crate) static ZONE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// `void Z_Init(void)` — request the platform Zone buffer from
 /// `I_ZoneBase`, install it as `mainzone`, and clear it to one free
 /// block. Called once early in `D_DoomMain`.

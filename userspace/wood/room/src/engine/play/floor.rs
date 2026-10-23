@@ -514,9 +514,9 @@ pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
 /// skipped but the height counter still increments so the step sequence is
 /// preserved.
 ///
-/// Unlike C, `secnum` is not advanced to each new step's sector: the next
-/// step is looked for behind lines whose front is the tagged sector, and the
-/// tag search continues after the tagged sector.
+/// As in C, `secnum` advances to each new step's sector, so the next step is
+/// found behind lines whose front is the current step, and the tag search
+/// resumes after the last step's sector number.
 ///
 /// Returns `1` if at least one stair was started, `0` otherwise.
 ///
@@ -597,6 +597,7 @@ pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
                 };
 
                 sec = tsec;
+                secnum = tsec.index() as i32;
                 floor = Z_Malloc(
                     std::mem::size_of::<floormove_t>() as i32,
                     PU_LEVSPEC,
@@ -624,7 +625,19 @@ pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
+    use {
+        super::*,
+        crate::engine::{
+            map::{LineId, VertexId, sector_t, slopetype_t},
+            play::{
+                setup::{LEVEL_TEST_LOCK, LevelState},
+                tick::{P_InitThinkers, ThinkerContainer},
+            },
+            wad::format::LinedefFlag,
+            zone::{Z_Init, ZONE_TEST_LOCK},
+        },
+        std::sync::Mutex,
+    };
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -648,5 +661,82 @@ mod tests {
         let mut loaded: floormove_t = unsafe { std::mem::zeroed() };
         loaded.texture = saved_texture;
         assert_eq!(loaded.door_direction_alias(), 0xFFFF);
+    }
+
+    /// A two-sided line from `front` to `back`.
+    fn step_line(front: usize, back: usize) -> line_t {
+        line_t {
+            v1: VertexId::new(0),
+            v2: VertexId::new(0),
+            dx: 0,
+            dy: 0,
+            flags: LinedefFlag::TWOSIDED as i16,
+            special: 0,
+            tag: 0,
+            sidenum: [0, 1],
+            bbox: [0; 4],
+            slopetype: slopetype_t::ST_HORIZONTAL,
+            frontsector: Some(SectorId::new(front)),
+            backsector: Some(SectorId::new(back)),
+            validcount: 0,
+            specialdata: std::ptr::null_mut(),
+        }
+    }
+
+    /// Three sectors in a row with the same floor flat, the first tagged:
+    /// each step raises one `stairsize` above the previous, so the walk
+    /// must move on from each new step, not only from the tagged sector.
+    #[test]
+    fn build_stairs_raises_every_step() {
+        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
+        let _zone_guard = ZONE_TEST_LOCK.lock().unwrap();
+        let step_sector = |tag: i16, lines: usize, linecount: i32| {
+            // SAFETY: an all-zero `sector_t` is a valid empty sector.
+            let mut sector: sector_t = unsafe { std::mem::zeroed() };
+            sector.tag = tag;
+            sector.floorpic = 7;
+            sector.lines = lines;
+            sector.linecount = linecount;
+            sector
+        };
+        let level = LevelState {
+            numsectors: 3,
+            sectors: vec![
+                step_sector(1, 0, 1),
+                step_sector(0, 1, 2),
+                step_sector(0, 3, 1),
+            ],
+            lines: vec![step_line(0, 1), step_line(1, 2)],
+            linebuffer: vec![
+                LineId::new(0),
+                LineId::new(0),
+                LineId::new(1),
+                LineId::new(1),
+            ],
+            ..LevelState::new()
+        };
+        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
+        let mut trigger = step_line(0, 1);
+        trigger.tag = 1;
+
+        // SAFETY: the zone and thinker list are set up just before the call.
+        let destinations: Vec<fixed_t> = unsafe {
+            Z_Init();
+            P_InitThinkers();
+            assert_eq!(EV_BuildStairs(&trigger, stair_build8), 1);
+            LEVEL
+                .borrow()
+                .sectors
+                .iter()
+                .map(|sector| {
+                    assert!(!sector.specialdata.is_null(), "every step gets a mover");
+                    (*floormove_t::from_thinker(sector.specialdata)).floordestheight
+                })
+                .collect()
+        };
+        assert_eq!(destinations, [8 * FRACUNIT, 16 * FRACUNIT, 24 * FRACUNIT]);
+
+        P_InitThinkers();
+        *LEVEL.borrow_mut() = saved;
     }
 }
