@@ -11,10 +11,10 @@
 //!
 //! Notable Rust-vs-C differences:
 //! - C passes sound origins as `void *` and reads them as `mobj_t`. Here an
-//!   origin is a typed [`SoundOrigin`]: a map object or a sector's
-//!   `degenmobj_t`. Map-object sounds go through `S_StartSound`, sector sounds
-//!   through `S_StartSectorSound`, and sounds C starts with a null origin
-//!   through `S_StartNonPositionalSound`.
+//!   origin is a typed [`SoundOrigin`]: a map object or a sector, sounding
+//!   from its `degenmobj_t` sound origin. Map-object sounds go through
+//!   `S_StartSound`, sector sounds through `S_StartSectorSound`, and sounds C
+//!   starts with a null origin through `S_StartNonPositionalSound`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -28,12 +28,12 @@ use crate::types::Boolean;
 use crate::engine::{
     doom,
     global::Global,
-    map::degenmobj_t,
+    map::SectorId,
     math::{
         fixed::{FRACBITS, FRACUNIT, fixed_t},
         tables::{ANGLETOFINESHIFT, finesine},
     },
-    play::mobj::mobj_t,
+    play::{mobj::mobj_t, setup::LEVEL},
     sound::info::{
         Mus, MusicInfo, NUMMUSIC, NUMSFX, S_InitSfxLinks, SfxInfo, music_table, sfx_table,
     },
@@ -84,15 +84,16 @@ pub struct channel_t {
 
 /// Where a positional sound comes from. C passes either kind as `void *`.
 ///
-/// Equality is pointer identity, which is how a new sound replaces the one
-/// already playing from the same origin.
+/// Equality is identity (the same map object or sector), which is how a new
+/// sound replaces the one already playing from the same origin.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SoundOrigin {
     /// A map object; the sound follows it as it moves.
     Mobj(*mut mobj_t),
-    /// A sector's sound origin (`sector_t::soundorg`), used by moving
-    /// floors, ceilings, doors, platforms and switches.
-    Sector(*mut degenmobj_t),
+    /// A sector of the loaded level, sounding from its sound origin
+    /// (`sector_t::soundorg`); used by moving floors, ceilings, doors,
+    /// platforms and switches.
+    Sector(SectorId),
 }
 
 impl SoundOrigin {
@@ -101,19 +102,18 @@ impl SoundOrigin {
         (!mobj.is_null()).then_some(Self::Mobj(mobj))
     }
 
-    /// Wrap a sector sound origin pointer; null means a non-positional sound.
-    fn from_sector(sector_origin: *mut degenmobj_t) -> Option<Self> {
-        (!sector_origin.is_null()).then_some(Self::Sector(sector_origin))
-    }
-
     /// Current map position of the origin.
     ///
     /// # Safety
-    /// The wrapped pointer must point at a live object.
+    /// A wrapped map object must be live; a wrapped sector must belong to the
+    /// loaded level, which must not be mutably borrowed.
     unsafe fn position(self) -> (fixed_t, fixed_t) {
         match self {
             Self::Mobj(mobj) => ((*mobj).x, (*mobj).y),
-            Self::Sector(sector_origin) => ((*sector_origin).x, (*sector_origin).y),
+            Self::Sector(sector) => {
+                let soundorg = LEVEL.borrow().sectors[sector].soundorg;
+                (soundorg.x, soundorg.y)
+            }
         }
     }
 }
@@ -507,18 +507,17 @@ pub fn S_StartNonPositionalSound(sfx_id: i32) {
     unsafe { S_StartOriginSound(None, sfx_id) }
 }
 
-/// Start an SFX from a sector's sound origin (`sector_t::soundorg`; may be
-/// null for a non-positional sound) with id `sfx_id`. C calls `S_StartSound`
-/// with the `degenmobj_t` address for these.
+/// Start an SFX from `sector`'s sound origin (`sector_t::soundorg`) with id
+/// `sfx_id`. C calls `S_StartSound` with the `degenmobj_t` address for these.
 ///
-/// # Safety
-/// `origin` must be null or point to a live `degenmobj_t` that stays live
-/// until its sound stops: the channel keeps the pointer and `S_UpdateSounds`
-/// reads its position every tic. Sector origins live in the level's sector
-/// array, so the level must stay loaded while the sound plays (`S_Start`
-/// stops every channel when the next level starts).
-pub unsafe fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
-    S_StartOriginSound(SoundOrigin::from_sector(origin), sfx_id);
+/// The channel keeps the sector and `S_UpdateSounds` reads its position
+/// every tic; `S_Start` stops every channel when the next level starts, so
+/// the sector always belongs to the loaded level. The level must not be
+/// mutably borrowed during the call.
+pub fn S_StartSectorSound(sector: SectorId, sfx_id: i32) {
+    // SAFETY: a sector origin stays valid for as long as its level is
+    // loaded, and its sound is stopped before the next level loads.
+    unsafe { S_StartOriginSound(Some(SoundOrigin::Sector(sector)), sfx_id) }
 }
 
 /// Start an SFX from `origin` (`None` for a non-positional sound).
@@ -781,7 +780,7 @@ pub fn S_StopMusic() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::engine::map::sector_t};
 
     /// Null origins are non-positional; map objects and sector origins
     /// report their own position and compare by identity.
@@ -790,23 +789,25 @@ mod tests {
         let mut mobj: mobj_t = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
         mobj.x = 10 * FRACUNIT;
         mobj.y = -3 * FRACUNIT;
-        let mut sector_origin: degenmobj_t =
-            unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
-        sector_origin.x = 7 * FRACUNIT;
-        sector_origin.y = 8 * FRACUNIT;
+        let mut sector: sector_t = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        sector.soundorg.x = 7 * FRACUNIT;
+        sector.soundorg.y = 8 * FRACUNIT;
 
         assert_eq!(SoundOrigin::from_mobj(std::ptr::null_mut()), None);
-        assert_eq!(SoundOrigin::from_sector(std::ptr::null_mut()), None);
 
         let mobj_origin = SoundOrigin::from_mobj(&raw mut mobj).unwrap();
-        let sector_sound_origin = SoundOrigin::from_sector(&raw mut sector_origin).unwrap();
+        let sector_sound_origin = SoundOrigin::Sector(SectorId::new(1));
+        let _level_lock = crate::engine::play::setup::LEVEL_TEST_LOCK.lock().unwrap();
+        let saved_sectors = std::mem::replace(&mut LEVEL.borrow_mut().sectors, vec![sector; 2]);
         unsafe {
             assert_eq!(mobj_origin.position(), (10 * FRACUNIT, -3 * FRACUNIT));
             assert_eq!(sector_sound_origin.position(), (7 * FRACUNIT, 8 * FRACUNIT));
         }
+        LEVEL.borrow_mut().sectors = saved_sectors;
 
         assert_eq!(mobj_origin, SoundOrigin::Mobj(&raw mut mobj));
         assert_ne!(mobj_origin, sector_sound_origin);
+        assert_ne!(sector_sound_origin, SoundOrigin::Sector(SectorId::new(0)));
     }
 
     fn sfx_with_priority(priority: i32) -> SfxInfo {

@@ -21,7 +21,7 @@ use std::{ffi::c_void, ptr};
 use crate::{
     engine::{
         map::{
-            line_t, sector_t,
+            LineId, SectorId,
             slopetype_t::{ST_HORIZONTAL, ST_VERTICAL},
         },
         math::{
@@ -38,7 +38,7 @@ use crate::{
                 lowfloor, openbottom, openrange, opentop, trace,
             },
             mobj::mobj_t,
-            setup::{LevelState, level},
+            setup::{LEVEL, blockmap_origin},
             sight::{P_CheckSight, SIGHT},
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2, VALIDCOUNT},
@@ -208,18 +208,20 @@ pub struct MapState {
     /// Monsters will not move to a position where `tmfloorz - tmdropoffz`
     /// exceeds 24 map units unless they have `MF_DROPOFF` or `MF_FLOAT`.
     pub tmdropoffz: fixed_t,
-    /// The linedef that produced the current value of `tmceilingz`.
+    /// The linedef that produced the current value of `tmceilingz`, or
+    /// `None` when the ceiling came from the sector at the tested spot.
     ///
     /// Missiles use this to avoid exploding against "sky hack" walls: if the
     /// ceiling line's front sector has the sky flat, the missile silently
     /// disappears instead of spawning a puff.
-    pub ceilingline: *mut line_t,
-    /// Array of special linedefs crossed during the current move attempt.
+    pub ceilingline: Option<LineId>,
+    /// Array of special linedefs crossed during the current move attempt;
+    /// the first `numspechit` entries are valid.
     ///
     /// Filled by [`PIT_CheckLine`]; processed by [`P_TryMove`] once the move
     /// is confirmed valid. Kept separate so specials are not triggered for
     /// moves that ultimately fail.
-    pub spechit: [*mut line_t; MAXSPECIALCROSS],
+    pub spechit: [LineId; MAXSPECIALCROSS],
     /// Number of valid entries currently in `spechit`.
     pub numspechit: i32,
 
@@ -237,10 +239,11 @@ pub struct MapState {
     /// The linedef closest to the sliding object along its current path.
     ///
     /// Set by [`PTR_SlideTraverse`]; used by [`P_SlideMove`] to project the
-    /// remaining momentum along the wall via [`P_HitSlideLine`].
-    pub bestslideline: *mut line_t,
+    /// remaining momentum along the wall via [`P_HitSlideLine`]. `None` until
+    /// the first slide hits a wall.
+    pub bestslideline: Option<LineId>,
     /// Backup linedef for the second-closest blocking wall found during sliding.
-    pub secondslideline: *mut line_t,
+    pub secondslideline: Option<LineId>,
     /// The map object currently performing a slide move.
     ///
     /// Set by [`P_SlideMove`] and read by [`PTR_SlideTraverse`] and
@@ -338,13 +341,13 @@ impl MapState {
             tmfloorz: 0,
             tmceilingz: 0,
             tmdropoffz: 0,
-            ceilingline: ptr::null_mut(),
-            spechit: [ptr::null_mut(); MAXSPECIALCROSS],
+            ceilingline: None,
+            spechit: [LineId::new(0); MAXSPECIALCROSS],
             numspechit: 0,
             bestslidefrac: 0,
             secondslidefrac: 0,
-            bestslideline: ptr::null_mut(),
-            secondslideline: ptr::null_mut(),
+            bestslideline: None,
+            secondslideline: None,
             slidemo: ptr::null_mut(),
             tmxmove: 0,
             tmymove: 0,
@@ -390,7 +393,7 @@ pub fn tmfloorz() -> fixed_t {
 }
 
 /// The line that set the last checked position's ceiling (C `ceilingline`).
-pub fn ceilingline() -> *mut line_t {
+pub fn ceilingline() -> Option<LineId> {
     MAP.borrow().ceilingline
 }
 
@@ -428,12 +431,16 @@ unsafe fn start_position_check(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> [f
     }
 
     let newsubsec = R_PointInSubsector(x, y);
-    let sec = (*newsubsec).sector;
+    let (floorheight, ceilingheight) = {
+        let level = LEVEL.borrow();
+        let sec = &level.sectors[level.subsectors[newsubsec].sector];
+        (sec.floorheight, sec.ceilingheight)
+    };
     let mut map = MAP.borrow_mut();
-    map.ceilingline = ptr::null_mut();
-    map.tmfloorz = (*sec).floorheight;
+    map.ceilingline = None;
+    map.tmfloorz = floorheight;
     map.tmdropoffz = map.tmfloorz;
-    map.tmceilingz = (*sec).ceilingheight;
+    map.tmceilingz = ceilingheight;
 
     VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
     map.numspechit = 0;
@@ -493,9 +500,7 @@ pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
 /// sector structures must be fully initialised.
 pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
     let tmbbox = start_position_check(thing, x, y);
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    let (bmaporgx, bmaporgy) = blockmap_origin();
 
     let xl = (tmbbox[BBox::LEFT] - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
@@ -538,45 +543,45 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 
 ///
 /// # Safety
 ///
-/// `ld` must be a valid, non-null pointer to an initialised [`line_t`].
-/// `tmthing`, `tmbbox`, `tmfloorz`, `tmceilingz`, and
-/// `tmdropoffz` must have been initialised by [`P_CheckPosition`] before
-/// this callback is invoked.
-pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
-    let ld = &*ld;
-    let (mut tmbbox, tmthing) = {
+/// `ld` must be a linedef of the loaded level. `tmthing`, `tmbbox`,
+/// `tmfloorz`, `tmceilingz`, and `tmdropoffz` must have been initialised by
+/// [`P_CheckPosition`] before this callback is invoked.
+pub unsafe fn PIT_CheckLine(ld: LineId) -> u32 {
+    let (tmbbox, tmthing) = {
         let map = MAP.borrow();
         (map.tmbbox, map.tmthing)
     };
-    if tmbbox[BBox::RIGHT] <= ld.bbox[BBox::LEFT]
-        || tmbbox[BBox::LEFT] >= ld.bbox[BBox::RIGHT]
-        || tmbbox[BBox::TOP] <= ld.bbox[BBox::BOTTOM]
-        || tmbbox[BBox::BOTTOM] >= ld.bbox[BBox::TOP]
+    let level = LEVEL.borrow();
+    let line = &level.lines[ld];
+    if tmbbox[BBox::RIGHT] <= line.bbox[BBox::LEFT]
+        || tmbbox[BBox::LEFT] >= line.bbox[BBox::RIGHT]
+        || tmbbox[BBox::TOP] <= line.bbox[BBox::BOTTOM]
+        || tmbbox[BBox::BOTTOM] >= line.bbox[BBox::TOP]
     {
         return 1;
     }
-    if P_BoxOnLineSide(tmbbox.as_mut_ptr(), ld as *const _ as *mut _) != -1 {
+    if P_BoxOnLineSide(&level, &tmbbox, ld) != -1 {
         return 1;
     }
-    if ld.backsector.is_null() {
+    if line.backsector.is_none() {
         return 0;
     }
     if (*tmthing).flags & MF_MISSILE == 0 {
-        if (ld.flags as i32) & (LinedefFlag::BLOCKING as i32) != 0 {
+        if (line.flags as i32) & (LinedefFlag::BLOCKING as i32) != 0 {
             return 0;
         }
         if (*tmthing).player.is_null()
-            && (ld.flags as i32) & (LinedefFlag::BLOCKMONSTERS as i32) != 0
+            && (line.flags as i32) & (LinedefFlag::BLOCKMONSTERS as i32) != 0
         {
             return 0;
         }
     }
-    P_LineOpening(ld as *const _ as *mut _);
+    P_LineOpening(&level, ld);
     let (opentop, openbottom, lowfloor) = (opentop(), openbottom(), lowfloor());
     let mut map = MAP.borrow_mut();
     if opentop < map.tmceilingz {
         map.tmceilingz = opentop;
-        map.ceilingline = ld as *const _ as *mut _;
+        map.ceilingline = Some(ld);
     }
     if openbottom > map.tmfloorz {
         map.tmfloorz = openbottom;
@@ -584,12 +589,12 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
     if lowfloor < map.tmdropoffz {
         map.tmdropoffz = lowfloor;
     }
-    if ld.special != 0 {
+    if line.special != 0 {
         let index = map.numspechit as usize;
-        map.spechit[index] = ld as *const _ as *mut _;
+        map.spechit[index] = ld;
         map.numspechit += 1;
         if map.numspechit > MAXSPECIALCROSS_ORIGINAL {
-            SpechitOverrun(&mut map, ld as *const _ as *mut _);
+            SpechitOverrun(&mut map, ld);
         }
     }
     1
@@ -709,9 +714,7 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
         return 1;
     }
 
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    let (bmaporgx, bmaporgy) = blockmap_origin();
     let xl = (tmbbox[BBox::LEFT] - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
     let yl = (tmbbox[BBox::BOTTOM] - bmaporgy - MAXRADIUS) >> MAPBLOCKSHIFT;
@@ -728,9 +731,7 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
     // A touched thing's actions may have checked another position; like C,
     // the line pass uses the box (and blockmap origin) as it is now.
     let tmbbox = MAP.borrow().tmbbox;
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    let (bmaporgx, bmaporgy) = blockmap_origin();
     let xl = (tmbbox[BBox::LEFT] - bmaporgx) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx) >> MAPBLOCKSHIFT;
     let yl = (tmbbox[BBox::BOTTOM] - bmaporgy) >> MAPBLOCKSHIFT;
@@ -809,11 +810,16 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
                 map.numspechit -= 1;
                 map.spechit[map.numspechit as usize]
             };
-            let side = P_PointOnLineSide((*thing).x, (*thing).y, ld);
-            let oldside = P_PointOnLineSide(oldx, oldy, ld);
-            if side != oldside && (*ld).special != 0 {
-                let linenum = ld.offset_from(level().lines);
-                P_CrossSpecialLine(linenum as i32, oldside, thing);
+            let (side, oldside, special) = {
+                let level = LEVEL.borrow();
+                (
+                    P_PointOnLineSide(&level, (*thing).x, (*thing).y, ld),
+                    P_PointOnLineSide(&level, oldx, oldy, ld),
+                    level.lines[ld].special,
+                )
+            };
+            if side != oldside && special != 0 {
+                P_CrossSpecialLine(ld, oldside, thing);
             }
         }
     }
@@ -865,16 +871,17 @@ pub unsafe fn P_ThingHeightClip(thing: *mut mobj_t) -> u32 {
 ///
 /// # Safety
 ///
-/// `ld` must be a valid, non-null pointer to an initialised [`line_t`].
-/// `slidemo`, `tmxmove`, and `tmymove` must be set by the caller
-/// ([`P_SlideMove`]) before this function is called.
-pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
-    let ld = &*ld;
-    if ld.slopetype == ST_HORIZONTAL {
+/// `ld` must be a linedef of the loaded level. `slidemo`, `tmxmove`, and
+/// `tmymove` must be set by the caller ([`P_SlideMove`]) before this
+/// function is called.
+pub unsafe fn P_HitSlideLine(ld: LineId) {
+    let level = LEVEL.borrow();
+    let line = &level.lines[ld];
+    if line.slopetype == ST_HORIZONTAL {
         MAP.borrow_mut().tmymove = 0;
         return;
     }
-    if ld.slopetype == ST_VERTICAL {
+    if line.slopetype == ST_VERTICAL {
         MAP.borrow_mut().tmxmove = 0;
         return;
     }
@@ -882,8 +889,8 @@ pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
         let map = MAP.borrow();
         (map.slidemo, map.tmxmove, map.tmymove)
     };
-    let side = P_PointOnLineSide((*slidemo).x, (*slidemo).y, ld as *const _ as *mut _);
-    let mut lineangle = R_PointToAngle2(0, 0, ld.dx, ld.dy);
+    let side = P_PointOnLineSide(&level, (*slidemo).x, (*slidemo).y, ld);
+    let mut lineangle = R_PointToAngle2(0, 0, line.dx, line.dy);
     if side == 1 {
         lineangle = lineangle.wrapping_add(ANG180);
     }
@@ -921,17 +928,20 @@ pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
     }
     let slidemo = MAP.borrow().slidemo;
     let li = in_.d.line;
-    if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
-        if P_PointOnLineSide((*slidemo).x, (*slidemo).y, li) != 0 {
-            return 1;
-        }
-    } else {
-        P_LineOpening(li);
-        if openrange() >= (*slidemo).height
-            && opentop() - (*slidemo).z >= (*slidemo).height
-            && openbottom() - (*slidemo).z <= 24 * FRACUNIT
-        {
-            return 1;
+    {
+        let level = LEVEL.borrow();
+        if level.lines[li].flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
+            if P_PointOnLineSide(&level, (*slidemo).x, (*slidemo).y, li) != 0 {
+                return 1;
+            }
+        } else {
+            P_LineOpening(&level, li);
+            if openrange() >= (*slidemo).height
+                && opentop() - (*slidemo).z >= (*slidemo).height
+                && openbottom() - (*slidemo).z <= 24 * FRACUNIT
+            {
+                return 1;
+            }
         }
     }
     let mut map = MAP.borrow_mut();
@@ -939,7 +949,7 @@ pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
         map.secondslidefrac = map.bestslidefrac;
         map.secondslideline = map.bestslideline;
         map.bestslidefrac = in_.frac;
-        map.bestslideline = li;
+        map.bestslideline = Some(li);
     }
     0
 }
@@ -1046,7 +1056,9 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
             map.tmxmove = FixedMul((*mo).momx, bestslidefrac);
             map.tmymove = FixedMul((*mo).momy, bestslidefrac);
         }
-        P_HitSlideLine(bestslideline);
+        // A traversal that brought `bestslidefrac` below `FRACUNIT + 1` set
+        // the line with it.
+        P_HitSlideLine(bestslideline.expect("slide hit without a line"));
         let (tmxmove, tmymove) = {
             let map = MAP.borrow();
             (map.tmxmove, map.tmymove)
@@ -1087,25 +1099,29 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
     };
     if in_.isaline != 0 {
         let li = in_.d.line;
-        if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
+        let level = LEVEL.borrow();
+        let line = &level.lines[li];
+        if line.flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
             return 0;
         }
-        P_LineOpening(li);
+        P_LineOpening(&level, li);
         let (opentop, openbottom) = (opentop(), openbottom());
         if openbottom >= opentop {
             return 0;
         }
         let dist = FixedMul(attackrange, in_.frac);
-        let front = (*li).frontsector;
-        let back = (*li).backsector;
+        let front = &level.sectors[line
+            .frontsector
+            .expect("two-sided line without front sector")];
+        let back = line.backsector.map(|back| &level.sectors[back]);
         let mut sight = SIGHT.borrow_mut();
-        if back.is_null() || (*front).floorheight != (*back).floorheight {
+        if back.is_none_or(|back| front.floorheight != back.floorheight) {
             let slope = FixedDiv(openbottom - shootz, dist);
             if slope > sight.bottomslope {
                 sight.bottomslope = slope;
             }
         }
-        if back.is_null() || (*front).ceilingheight != (*back).ceilingheight {
+        if back.is_none_or(|back| front.ceilingheight != back.ceilingheight) {
             let slope = FixedDiv(opentop - shootz, dist);
             if slope < sight.topslope {
                 sight.topslope = slope;
@@ -1170,44 +1186,55 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline != 0 {
         let li = in_.d.line;
-        if (*li).special != 0 {
+        if LEVEL.borrow().lines[li].special != 0 {
             let shootthing = MAP.borrow().shootthing;
             P_ShootSpecialLine(shootthing, li);
         }
-        if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
-            P_LineOpening(li);
+        // The special can change the line (a switch clears it) and move
+        // sectors, so the line is read afresh, as C does.
+        let line = LEVEL.borrow().lines[li];
+        if line.flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
+            P_LineOpening(&LEVEL.borrow(), li);
             let (opentop, openbottom) = (opentop(), openbottom());
             let (shootz, attackrange, aimslope) = {
                 let map = MAP.borrow();
                 (map.shootz, map.attackrange, map.aimslope)
             };
             let dist = FixedMul(attackrange, in_.frac);
-            let back = (*li).backsector;
-            if back.is_null() {
-                let slope = FixedDiv(openbottom - shootz, dist);
-                if slope > aimslope {
-                    goto_hitline(li, in_);
-                    return 0;
-                }
-                let slope = FixedDiv(opentop - shootz, dist);
-                if slope < aimslope {
-                    goto_hitline(li, in_);
-                    return 0;
-                }
-            } else {
-                let front = (*li).frontsector;
-                if (*front).floorheight != (*back).floorheight {
+            match line.backsector {
+                None => {
                     let slope = FixedDiv(openbottom - shootz, dist);
                     if slope > aimslope {
                         goto_hitline(li, in_);
                         return 0;
                     }
-                }
-                if (*front).ceilingheight != (*back).ceilingheight {
                     let slope = FixedDiv(opentop - shootz, dist);
                     if slope < aimslope {
                         goto_hitline(li, in_);
                         return 0;
+                    }
+                }
+                Some(back) => {
+                    let (front, back) = {
+                        let level = LEVEL.borrow();
+                        let front = line
+                            .frontsector
+                            .expect("two-sided line without front sector");
+                        (level.sectors[front], level.sectors[back])
+                    };
+                    if front.floorheight != back.floorheight {
+                        let slope = FixedDiv(openbottom - shootz, dist);
+                        if slope > aimslope {
+                            goto_hitline(li, in_);
+                            return 0;
+                        }
+                    }
+                    if front.ceilingheight != back.ceilingheight {
+                        let slope = FixedDiv(opentop - shootz, dist);
+                        if slope < aimslope {
+                            goto_hitline(li, in_);
+                            return 0;
+                        }
                     }
                 }
             }
@@ -1273,10 +1300,10 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
 ///
 /// # Safety
 ///
-/// `li` must be a valid, non-null pointer to an initialised [`line_t`].
-/// `in_` must refer to the intercept that triggered this call.
-/// `shootz`, `aimslope`, and `attackrange` must be current.
-unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
+/// `li` must be a linedef of the loaded level. `in_` must refer to the
+/// intercept that triggered this call. `shootz`, `aimslope`, and
+/// `attackrange` must be current.
+unsafe fn goto_hitline(li: LineId, in_: &intercept_t) {
     let (shootz, attackrange, aimslope) = {
         let map = MAP.borrow();
         (map.shootz, map.attackrange, map.aimslope)
@@ -1286,15 +1313,21 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
     let x = trace.x + FixedMul(trace.dx, frac);
     let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
-    let front = (*li).frontsector;
     let skyflatnum = SKY.borrow().skyflatnum;
-    if (*front).ceilingpic as i32 == skyflatnum {
-        if z > (*front).ceilingheight {
-            return;
-        }
-        let back = (*li).backsector;
-        if !back.is_null() && (*back).ceilingpic as i32 == skyflatnum {
-            return;
+    {
+        let level = LEVEL.borrow();
+        let line = &level.lines[li];
+        let front = &level.sectors[line.frontsector.expect("hit line without front sector")];
+        if front.ceilingpic as i32 == skyflatnum {
+            if z > front.ceilingheight {
+                return;
+            }
+            if line
+                .backsector
+                .is_some_and(|back| level.sectors[back].ceilingpic as i32 == skyflatnum)
+            {
+                return;
+            }
         }
     }
     P_SpawnPuff(x, y, z);
@@ -1402,19 +1435,25 @@ pub unsafe fn P_LineAttack(
 pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     let usething = MAP.borrow().usething;
-    if (*in_.d.line).special == 0 {
-        P_LineOpening(in_.d.line);
-        if openrange() <= 0 {
-            S_StartSound(usething, Sfx::Noway as i32);
-            return 0;
+    let line = in_.d.line;
+    let side = {
+        let level = LEVEL.borrow();
+        if level.lines[line].special == 0 {
+            P_LineOpening(&level, line);
+            drop(level);
+            if openrange() <= 0 {
+                S_StartSound(usething, Sfx::Noway as i32);
+                return 0;
+            }
+            return 1;
         }
-        return 1;
-    }
-    let mut side = 0;
-    if P_PointOnLineSide((*usething).x, (*usething).y, in_.d.line) == 1 {
-        side = 1;
-    }
-    P_UseSpecialLine(usething as *mut c_void, in_.d.line, side);
+        let mut side = 0;
+        if P_PointOnLineSide(&level, (*usething).x, (*usething).y, line) == 1 {
+            side = 1;
+        }
+        side
+    };
+    P_UseSpecialLine(usething as *mut c_void, line, side);
     0
 }
 
@@ -1508,9 +1547,7 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
 /// `spot` and `source` must be valid, non-null pointers to live [`mobj_t`]s.
 /// Map and blockmap data must be fully initialised.
 pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: i32) {
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    let (bmaporgx, bmaporgy) = blockmap_origin();
     let dist = (damage + MAXRADIUS) << FRACBITS;
     let yh = ((*spot).y + dist - bmaporgy) >> MAPBLOCKSHIFT;
     let yl = ((*spot).y - dist - bmaporgy) >> MAPBLOCKSHIFT;
@@ -1594,17 +1631,17 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
 ///
 /// # Safety
 ///
-/// `sector` must be a valid, non-null pointer to an initialised [`sector_t`]
-/// whose `blockbox` indices are within the blockmap bounds.
-pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
+/// `sector` must be a sector of the loaded level, and every thing linked
+/// into the blockmap must be live.
+pub unsafe fn P_ChangeSector(sector: SectorId, crunch: i32) -> i32 {
     {
         let mut map = MAP.borrow_mut();
         map.nofit = 0;
         map.crushchange = crunch;
     }
-    let sec = &*sector;
-    for x in sec.blockbox[BBox::LEFT]..=sec.blockbox[BBox::RIGHT] {
-        for y in sec.blockbox[BBox::BOTTOM]..=sec.blockbox[BBox::TOP] {
+    let blockbox = LEVEL.borrow().sectors[sector].blockbox;
+    for x in blockbox[BBox::LEFT]..=blockbox[BBox::RIGHT] {
+        for y in blockbox[BBox::BOTTOM]..=blockbox[BBox::TOP] {
             P_BlockThingsIterator(x, y, Some(PIT_ChangeSector));
         }
     }
@@ -1628,10 +1665,10 @@ pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
 /// compatible) but can be overridden with the `-spechit <n>` command-line
 /// argument.
 ///
-/// `ld` is only used for its index in the level's `lines` array, computed
-/// from addresses. Called from [`PIT_CheckLine`] after `numspechit` has been
-/// incremented beyond [`MAXSPECIALCROSS_ORIGINAL`].
-fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
+/// `ld` is only used for its index in the level's `lines` array. Called from
+/// [`PIT_CheckLine`] after `numspechit` has been incremented beyond
+/// [`MAXSPECIALCROSS_ORIGINAL`].
+fn SpechitOverrun(map: &mut MapState, ld: LineId) {
     if map.spechit_baseaddr == 0 {
         let p = M_CheckParmWithArgs("-spechit", 1);
         if p > 0 {
@@ -1642,8 +1679,7 @@ fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
             map.spechit_baseaddr = DEFAULT_SPECHIT_MAGIC;
         }
     }
-    let line_index =
-        (ld.addr() as isize - level().lines.addr() as isize) / size_of::<line_t>() as isize;
+    let line_index = ld.index() as isize;
     let addr = map.spechit_baseaddr as i32 + (line_index * 0x3e) as i32;
     match map.numspechit {
         9..=12 => {

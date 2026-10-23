@@ -120,7 +120,7 @@ use crate::engine::{
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::{
-        setup::{LevelState, level},
+        setup::LEVEL,
         tick::{ThinkerContainer, ThinkerKind, thinkercap},
     },
     render_3d::{sky::SKY, things::SPRITES},
@@ -1078,13 +1078,9 @@ pub unsafe fn R_PrecacheLevel() {
         return;
     }
 
-    let LevelState {
-        numsectors,
-        sectors,
-        numsides,
-        sides,
-        ..
-    } = level();
+    let level = LEVEL.borrow();
+    let sectors = &level.sectors[..level.numsectors as usize];
+    let sides = &level.sides[..];
     let mut data = RENDER_DATA.borrow_mut();
     let numflats = data.numflats;
     let numtextures = data.numtextures;
@@ -1095,9 +1091,9 @@ pub unsafe fn R_PrecacheLevel() {
         *flatpresent.add(i) = 0;
     }
 
-    for i in 0..numsectors as usize {
-        *flatpresent.add((*sectors.add(i)).floorpic as usize) = 1;
-        *flatpresent.add((*sectors.add(i)).ceilingpic as usize) = 1;
+    for sector in sectors {
+        *flatpresent.add(sector.floorpic as usize) = 1;
+        *flatpresent.add(sector.ceilingpic as usize) = 1;
     }
 
     data.flatmemory = 0;
@@ -1116,10 +1112,10 @@ pub unsafe fn R_PrecacheLevel() {
         *texturepresent.add(i) = 0;
     }
 
-    for i in 0..numsides as usize {
-        *texturepresent.add((*sides.add(i)).toptexture as usize) = 1;
-        *texturepresent.add((*sides.add(i)).midtexture as usize) = 1;
-        *texturepresent.add((*sides.add(i)).bottomtexture as usize) = 1;
+    for side in sides {
+        *texturepresent.add(side.toptexture as usize) = 1;
+        *texturepresent.add(side.midtexture as usize) = 1;
+        *texturepresent.add(side.bottomtexture as usize) = 1;
     }
     *texturepresent.add(SKY.borrow().skytexture as usize) = 1;
 

@@ -12,14 +12,15 @@ use std::{ffi::c_void, ptr};
 
 use crate::engine::{
     global::Global,
-    map::{line_t, slopetype_t},
+    map::{LineId, slopetype_t},
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
     play::{
         info::*,
         mobj::mobj_t,
         pspr::PSPR,
-        setup::{LEVEL, LevelState, SPAWN_SPOTS, level},
+        setup::{LEVEL, LevelState, SPAWN_SPOTS, blockmap_origin},
     },
+    render_3d::main::{R_PointInSubsector, VALIDCOUNT},
 };
 
 /// Width/height of one blockmap cell in map units (`MAPBLOCKUNITS` in
@@ -59,7 +60,7 @@ pub struct intercept_t {
 #[derive(Clone, Copy)]
 pub union intercept_t_d {
     pub thing: *mut c_void,
-    pub line: *mut line_t,
+    pub line: LineId,
 }
 
 /// Parametric dividing line (`divline_t` in `p_local.h`).
@@ -245,38 +246,33 @@ pub fn P_AproxDistance(dx: fixed_t, dy: fixed_t) -> fixed_t {
 // P_PointOnLineSide
 // ---------------------------------------------------------------------------
 
-/// Return which side of a `line_t` a point lies on.
+/// Return which side of linedef `line` of `level` a point lies on.
 ///
 /// Returns 0 if the point is on the front (right-hand) side of the line, or
 /// 1 if it is on the back side. Uses the precomputed `line.dx` / `line.dy`
 /// and cross-product sign.
 ///
 /// Matches `P_PointOnLineSide` in `p_maputl.c`.
-///
-/// # Safety
-/// `line` must be a valid, non-null pointer to an initialised `line_t` whose
-/// `v1` field points to a valid `vertex_t`.
-pub unsafe fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
-    unsafe {
-        let line = &*line;
-        if line.dx == 0 {
-            if x <= (*line.v1).x {
-                return if line.dy > 0 { 1 } else { 0 };
-            }
-            return if line.dy < 0 { 1 } else { 0 };
+pub fn P_PointOnLineSide(level: &LevelState, x: fixed_t, y: fixed_t, line: LineId) -> i32 {
+    let line = &level.lines[line];
+    let v1 = level.vertexes[line.v1];
+    if line.dx == 0 {
+        if x <= v1.x {
+            return if line.dy > 0 { 1 } else { 0 };
         }
-        if line.dy == 0 {
-            if y <= (*line.v1).y {
-                return if line.dx < 0 { 1 } else { 0 };
-            }
-            return if line.dx > 0 { 1 } else { 0 };
-        }
-        let dx = x - (*line.v1).x;
-        let dy = y - (*line.v1).y;
-        let left = FixedMul(line.dy >> FRACBITS, dx);
-        let right = FixedMul(dy, line.dx >> FRACBITS);
-        if right < left { 0 } else { 1 }
+        return if line.dy < 0 { 1 } else { 0 };
     }
+    if line.dy == 0 {
+        if y <= v1.y {
+            return if line.dx < 0 { 1 } else { 0 };
+        }
+        return if line.dx > 0 { 1 } else { 0 };
+    }
+    let dx = x - v1.x;
+    let dy = y - v1.y;
+    let left = FixedMul(line.dy >> FRACBITS, dx);
+    let right = FixedMul(dy, line.dx >> FRACBITS);
+    if right < left { 0 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,27 +316,20 @@ pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: &divline_t) -> i32 {
 // P_MakeDivline
 // ---------------------------------------------------------------------------
 
-/// Populate a `divline_t` from the geometry of a `line_t`.
+/// Populate a `divline_t` from the geometry of linedef `li` of `level`.
 ///
 /// Sets `dl.x` / `dl.y` to `line.v1`, and `dl.dx` / `dl.dy` to
 /// `line.dx` / `line.dy`. Used to convert a map linedef into a ray for
 /// intercept testing.
 ///
 /// Matches `P_MakeDivline` in `p_maputl.c`.
-///
-/// # Safety
-/// `li` must be a valid, non-null pointer to an initialised `line_t` whose
-/// `v1` field points to a valid `vertex_t`. `dl` must be a valid, non-null,
-/// writable pointer to a `divline_t`.
-pub unsafe fn P_MakeDivline(li: *mut line_t, dl: *mut divline_t) {
-    unsafe {
-        let li = &*li;
-        let dl = &mut *dl;
-        dl.x = (*li.v1).x;
-        dl.y = (*li.v1).y;
-        dl.dx = li.dx;
-        dl.dy = li.dy;
-    }
+pub fn P_MakeDivline(level: &LevelState, li: LineId, dl: &mut divline_t) {
+    let li = &level.lines[li];
+    let v1 = level.vertexes[li.v1];
+    dl.x = v1.x;
+    dl.y = v1.y;
+    dl.dx = li.dx;
+    dl.dy = li.dy;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +359,8 @@ pub fn P_InterceptVector(v2: &divline_t, v1: &divline_t) -> fixed_t {
 // P_BoxOnLineSide
 // ---------------------------------------------------------------------------
 
-/// Determine which side(s) of a linedef an axis-aligned bounding box spans.
+/// Determine which side(s) of linedef `ld` of `level` an axis-aligned
+/// bounding box spans.
 ///
 /// `tmbox` is a 4-element array `[top, bottom, left, right]` in fixed-point
 /// map units. Returns 0 if the entire box is on the front side, 1 if entirely
@@ -381,51 +371,46 @@ pub fn P_InterceptVector(v2: &divline_t, v1: &divline_t) -> fixed_t {
 /// `ST_VERTICAL`, `ST_POSITIVE`, or `ST_NEGATIVE`).
 ///
 /// Matches `P_BoxOnLineSide` in `p_maputl.c`.
-///
-/// # Safety
-/// `tmbox` must point to at least 4 consecutive `i32` values. `ld` must be
-/// a valid, non-null pointer to an initialised `line_t` with valid `v1`.
-pub unsafe fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
-    unsafe {
-        let tmbox = std::slice::from_raw_parts_mut(tmbox, 4);
-        let ld = &*ld;
-        let mut p1: i32;
-        let mut p2: i32;
-        match ld.slopetype {
-            slopetype_t::ST_HORIZONTAL => {
-                p1 = (tmbox[0] > (*ld.v1).y) as i32;
-                p2 = (tmbox[1] > (*ld.v1).y) as i32;
-                if ld.dx < 0 {
-                    p1 ^= 1;
-                    p2 ^= 1;
-                }
-            }
-            slopetype_t::ST_VERTICAL => {
-                p1 = (tmbox[3] < (*ld.v1).x) as i32;
-                p2 = (tmbox[2] < (*ld.v1).x) as i32;
-                if ld.dy < 0 {
-                    p1 ^= 1;
-                    p2 ^= 1;
-                }
-            }
-            slopetype_t::ST_POSITIVE => {
-                p1 = P_PointOnLineSide(tmbox[2], tmbox[0], ld as *const _ as *mut _);
-                p2 = P_PointOnLineSide(tmbox[3], tmbox[1], ld as *const _ as *mut _);
-            }
-            slopetype_t::ST_NEGATIVE => {
-                p1 = P_PointOnLineSide(tmbox[3], tmbox[0], ld as *const _ as *mut _);
-                p2 = P_PointOnLineSide(tmbox[2], tmbox[1], ld as *const _ as *mut _);
+pub fn P_BoxOnLineSide(level: &LevelState, tmbox: &[fixed_t; 4], ld: LineId) -> i32 {
+    let line = &level.lines[ld];
+    let v1 = level.vertexes[line.v1];
+    let mut p1: i32;
+    let mut p2: i32;
+    match line.slopetype {
+        slopetype_t::ST_HORIZONTAL => {
+            p1 = (tmbox[0] > v1.y) as i32;
+            p2 = (tmbox[1] > v1.y) as i32;
+            if line.dx < 0 {
+                p1 ^= 1;
+                p2 ^= 1;
             }
         }
-        if p1 == p2 { p1 } else { -1 }
+        slopetype_t::ST_VERTICAL => {
+            p1 = (tmbox[3] < v1.x) as i32;
+            p2 = (tmbox[2] < v1.x) as i32;
+            if line.dy < 0 {
+                p1 ^= 1;
+                p2 ^= 1;
+            }
+        }
+        slopetype_t::ST_POSITIVE => {
+            p1 = P_PointOnLineSide(level, tmbox[2], tmbox[0], ld);
+            p2 = P_PointOnLineSide(level, tmbox[3], tmbox[1], ld);
+        }
+        slopetype_t::ST_NEGATIVE => {
+            p1 = P_PointOnLineSide(level, tmbox[3], tmbox[0], ld);
+            p2 = P_PointOnLineSide(level, tmbox[2], tmbox[1], ld);
+        }
     }
+    if p1 == p2 { p1 } else { -1 }
 }
 
 // ---------------------------------------------------------------------------
 // P_LineOpening
 // ---------------------------------------------------------------------------
 
-/// Compute the open vertical portal range for a two-sided linedef.
+/// Compute the open vertical portal range for two-sided linedef `linedef`
+/// of `level`.
 ///
 /// Sets the module globals `opentop`, `openbottom`, `openrange`, and
 /// `lowfloor` based on the floor/ceiling heights of the front and back sectors.
@@ -437,34 +422,35 @@ pub unsafe fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
 ///
 /// Matches `P_LineOpening` in `p_maputl.c`.
 ///
-/// # Safety
-/// `linedef` must be a valid, non-null pointer to an initialised `line_t`.
-/// If the line is two-sided, `frontsector` and `backsector` must also be
-/// valid non-null pointers to initialised `sector_t` values.
-pub unsafe fn P_LineOpening(linedef: *mut line_t) {
-    unsafe {
-        let linedef = &*linedef;
-        let mut opening = MAPUTL.borrow_mut();
-        if linedef.sidenum[1] == -1 {
-            opening.openrange = 0;
-            return;
-        }
-        let front = linedef.frontsector;
-        let back = linedef.backsector;
-        if (*front).ceilingheight < (*back).ceilingheight {
-            opening.opentop = (*front).ceilingheight;
-        } else {
-            opening.opentop = (*back).ceilingheight;
-        }
-        if (*front).floorheight > (*back).floorheight {
-            opening.openbottom = (*front).floorheight;
-            opening.lowfloor = (*back).floorheight;
-        } else {
-            opening.openbottom = (*back).floorheight;
-            opening.lowfloor = (*front).floorheight;
-        }
-        opening.openrange = opening.opentop - opening.openbottom;
+/// # Panics
+/// If the line has a back side but lacks a front or back sector (C
+/// dereferences the null sector).
+pub fn P_LineOpening(level: &LevelState, linedef: LineId) {
+    let linedef = &level.lines[linedef];
+    let mut opening = MAPUTL.borrow_mut();
+    if linedef.sidenum[1] == -1 {
+        opening.openrange = 0;
+        return;
     }
+    let front = &level.sectors[linedef
+        .frontsector
+        .expect("two-sided line without front sector")];
+    let back = &level.sectors[linedef
+        .backsector
+        .expect("two-sided line without back sector")];
+    if front.ceilingheight < back.ceilingheight {
+        opening.opentop = front.ceilingheight;
+    } else {
+        opening.opentop = back.ceilingheight;
+    }
+    if front.floorheight > back.floorheight {
+        opening.openbottom = front.floorheight;
+        opening.lowfloor = back.floorheight;
+    } else {
+        opening.openbottom = back.floorheight;
+        opening.lowfloor = front.floorheight;
+    }
+    opening.openrange = opening.opentop - opening.openbottom;
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +477,7 @@ pub unsafe fn P_LineOpening(linedef: *mut line_t) {
 pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
+        let mut level = LEVEL.borrow_mut();
         if (thing.flags & MF_NOSECTOR) == 0 {
             if !thing.snext.is_null() {
                 let snext = thing.snext;
@@ -500,9 +487,8 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
                 let sprev = thing.sprev;
                 (*sprev).snext = thing.snext;
             } else {
-                let subsector = thing.subsector;
-                let sector = (*subsector).sector;
-                (*sector).thinglist = thing.snext;
+                let sector = level.subsectors[thing.subsector].sector;
+                level.sectors[sector].thinglist = thing.snext;
             }
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
@@ -514,7 +500,6 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
                 let bprev = thing.bprev;
                 (*bprev).bnext = thing.bnext;
             } else {
-                let level = level();
                 let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
                 let blocky = (thing.y - level.bmaporgy) >> MAPBLOCKSHIFT;
                 if blockx >= 0
@@ -522,8 +507,8 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
                     && blocky >= 0
                     && blocky < level.bmapheight
                 {
-                    let idx = (blocky * level.bmapwidth + blockx) as isize;
-                    *level.blocklinks.offset(idx) = thing.bnext;
+                    let index = (blocky * level.bmapwidth + blockx) as usize;
+                    level.blocklinks[index] = thing.bnext;
                 }
             }
         }
@@ -542,7 +527,7 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
 /// - the blockmap cell's singly-linked thing-list (unless `MF_NOBLOCKMAP` is
 ///   set or the thing is outside the map bounds).
 ///
-/// Also sets `thing->subsector` to the computed subsector pointer.
+/// Also sets `thing->subsector` to the computed subsector.
 ///
 /// Matches `P_SetThingPosition` in `p_maputl.c`.
 ///
@@ -552,30 +537,30 @@ pub unsafe fn P_UnsetThingPosition(thing: *mut mobj_t) {
 pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
     unsafe {
         let thing = &mut *thing;
-        let ss = crate::engine::render_3d::main::R_PointInSubsector(thing.x, thing.y);
+        let ss = R_PointInSubsector(thing.x, thing.y);
         thing.subsector = ss;
+        let mut level = LEVEL.borrow_mut();
         if (thing.flags & MF_NOSECTOR) == 0 {
-            let sec = (*ss).sector;
+            let sector = level.subsectors[ss].sector;
+            let sec = &mut level.sectors[sector];
             thing.sprev = ptr::null_mut();
-            thing.snext = (*sec).thinglist;
-            if !(*sec).thinglist.is_null() {
-                let thinglist = (*sec).thinglist;
+            thing.snext = sec.thinglist;
+            if !sec.thinglist.is_null() {
+                let thinglist = sec.thinglist;
                 (*thinglist).sprev = thing as *mut mobj_t;
             }
-            (*sec).thinglist = thing as *mut mobj_t;
+            sec.thinglist = thing as *mut mobj_t;
         }
         if (thing.flags & MF_NOBLOCKMAP) == 0 {
-            let level = level();
             let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
             let blocky = (thing.y - level.bmaporgy) >> MAPBLOCKSHIFT;
             if blockx >= 0 && blockx < level.bmapwidth && blocky >= 0 && blocky < level.bmapheight {
-                let idx = (blocky * level.bmapwidth + blockx) as isize;
-                let link = level.blocklinks.offset(idx);
+                let index = (blocky * level.bmapwidth + blockx) as usize;
+                let link = &mut level.blocklinks[index];
                 thing.bprev = ptr::null_mut();
                 thing.bnext = *link;
-                if !(*link).is_null() {
-                    let l = *link;
-                    (*l).bprev = thing as *mut mobj_t;
+                if !link.is_null() {
+                    (**link).bprev = thing as *mut mobj_t;
                 }
                 *link = thing as *mut mobj_t;
             } else {
@@ -606,36 +591,37 @@ pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
 /// `func` must be `Some`, and calling it with any line of the loaded level
 /// must be sound in the caller's current state: it is an `unsafe fn` and
 /// this function discharges its contract on the caller's behalf.
-pub unsafe fn P_BlockLinesIterator(
-    x: i32,
-    y: i32,
-    func: Option<unsafe fn(*mut line_t) -> u32>,
-) -> u32 {
+pub unsafe fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(LineId) -> u32>) -> u32 {
     // The callback can start a nested traversal whose intercept overrun
     // rewrites the blockmap dimensions; like C, this cell's list was located
-    // before any callback ran.
-    let level = level();
-    unsafe {
+    // before any callback ran. The callback may also borrow the level, so
+    // each line is marked under a borrow that ends before the call.
+    let mut list = {
+        let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
             return 1;
         }
-        let offset = (y * level.bmapwidth + x) as isize;
-        let offset = *level.blockmap.offset(offset) as isize;
-        let mut list = level.blockmaplump.offset(offset);
-        while *list != -1 {
-            let ld = level.lines.offset(*list as isize);
-            let validcount = crate::engine::render_3d::main::VALIDCOUNT.get();
-            if (*ld).validcount == validcount {
-                list = list.offset(1);
+        level.blockmaplump[4 + (y * level.bmapwidth + x) as usize] as usize
+    };
+    loop {
+        let ld = {
+            let mut level = LEVEL.borrow_mut();
+            let linenum = level.blockmaplump[list];
+            if linenum == -1 {
+                return 1;
+            }
+            list += 1;
+            let validcount = VALIDCOUNT.get();
+            let line = &mut level.lines[linenum as usize];
+            if line.validcount == validcount {
                 continue;
             }
-            (*ld).validcount = validcount;
-            if func.unwrap()(ld) == 0 {
-                return 0;
-            }
-            list = list.offset(1);
+            line.validcount = validcount;
+            LineId::new(linenum as usize)
+        };
+        if unsafe { func.unwrap()(ld) } == 0 {
+            return 0;
         }
-        1
     }
 }
 
@@ -662,13 +648,14 @@ pub unsafe fn P_BlockThingsIterator(
     y: i32,
     func: Option<unsafe fn(*mut mobj_t) -> u32>,
 ) -> u32 {
-    let level = level();
-    unsafe {
+    let mut mobj = {
+        let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
             return 1;
         }
-        let idx = (y * level.bmapwidth + x) as isize;
-        let mut mobj = *level.blocklinks.offset(idx);
+        level.blocklinks[(y * level.bmapwidth + x) as usize]
+    };
+    unsafe {
         while !mobj.is_null() {
             if func.unwrap()(mobj) == 0 {
                 return 0;
@@ -767,19 +754,28 @@ unsafe fn InterceptsMemoryOverrun(location: i32, value: i32) {
 /// When `num_intercepts` exceeds `MAXINTERCEPTS_ORIGINAL` (128), the original
 /// engine would write past the array into adjacent globals. This function
 /// calls `InterceptsMemoryOverrun` three times (for `frac`, `isaline`, and
-/// `d.thing`) to reproduce those writes.
+/// `d`) to reproduce those writes. `d` is the address C stores: the thing's,
+/// or for a line the address of its record in the level's `lines`.
 ///
 /// # Safety
 /// `intercept` must be a valid, non-null pointer to an initialised
-/// `intercept_t`.
+/// `intercept_t`. No guard on the level may be live (the overrun writes the
+/// blockmap dimensions).
 unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
     if num_intercepts <= MAXINTERCEPTS_ORIGINAL as i32 {
         return;
     }
     let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL as i32 - 1) * 12;
-    InterceptsMemoryOverrun(location, (*intercept).frac);
-    InterceptsMemoryOverrun(location + 4, (*intercept).isaline);
-    InterceptsMemoryOverrun(location + 8, (*intercept).d.thing as usize as i32);
+    let intercept = *intercept;
+    let address = if intercept.isaline != 0 {
+        let line = intercept.d.line;
+        (&raw const LEVEL.borrow().lines[line]).addr()
+    } else {
+        intercept.d.thing.addr()
+    };
+    InterceptsMemoryOverrun(location, intercept.frac);
+    InterceptsMemoryOverrun(location + 4, intercept.isaline);
+    InterceptsMemoryOverrun(location + 8, address as i32);
 }
 
 // ---------------------------------------------------------------------------
@@ -802,56 +798,55 @@ unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
 /// Matches `PIT_AddLineIntercepts` in `p_maputl.c`.
 ///
 /// # Safety
-/// `ld` must be a valid, non-null pointer to an initialised `line_t`. The
-/// global `trace`, `intercepts`, and `intercept_p` must be set up by a
+/// The global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub unsafe fn PIT_AddLineIntercepts(ld: *mut line_t) -> u32 {
+pub unsafe fn PIT_AddLineIntercepts(ld: LineId) -> u32 {
     unsafe {
-        let ld = &*ld;
         let (trace, earlyout) = {
             let maputl = MAPUTL.borrow();
             (maputl.trace, maputl.earlyout)
         };
-        let (s1, s2) = if trace.dx > FRACUNIT * 16
-            || trace.dy > FRACUNIT * 16
-            || trace.dx < -FRACUNIT * 16
-            || trace.dy < -FRACUNIT * 16
-        {
-            (
-                P_PointOnDivlineSide((*ld.v1).x, (*ld.v1).y, &trace),
-                P_PointOnDivlineSide((*ld.v2).x, (*ld.v2).y, &trace),
-            )
-        } else {
-            (
-                P_PointOnLineSide(trace.x, trace.y, ld as *const _ as *mut _),
-                P_PointOnLineSide(
-                    trace.x + trace.dx,
-                    trace.y + trace.dy,
-                    ld as *const _ as *mut _,
-                ),
-            )
+        let (frac, backsector) = {
+            let level = LEVEL.borrow();
+            let line = &level.lines[ld];
+            let (s1, s2) = if trace.dx > FRACUNIT * 16
+                || trace.dy > FRACUNIT * 16
+                || trace.dx < -FRACUNIT * 16
+                || trace.dy < -FRACUNIT * 16
+            {
+                let (v1, v2) = (level.vertexes[line.v1], level.vertexes[line.v2]);
+                (
+                    P_PointOnDivlineSide(v1.x, v1.y, &trace),
+                    P_PointOnDivlineSide(v2.x, v2.y, &trace),
+                )
+            } else {
+                (
+                    P_PointOnLineSide(&level, trace.x, trace.y, ld),
+                    P_PointOnLineSide(&level, trace.x + trace.dx, trace.y + trace.dy, ld),
+                )
+            };
+            if s1 == s2 {
+                return 1;
+            }
+            let mut dl = divline_t {
+                x: 0,
+                y: 0,
+                dx: 0,
+                dy: 0,
+            };
+            P_MakeDivline(&level, ld, &mut dl);
+            (P_InterceptVector(&trace, &dl), line.backsector)
         };
-        if s1 == s2 {
-            return 1;
-        }
-        let mut dl = divline_t {
-            x: 0,
-            y: 0,
-            dx: 0,
-            dy: 0,
-        };
-        P_MakeDivline(ld as *const _ as *mut _, &mut dl);
-        let frac = P_InterceptVector(&trace, &dl);
         if frac < 0 {
             return 1;
         }
-        if earlyout != 0 && frac < FRACUNIT && ld.backsector.is_null() {
+        if earlyout != 0 && frac < FRACUNIT && backsector.is_none() {
             return 0;
         }
         let intercept_p = MAPUTL.borrow().intercept_p;
         (*intercept_p).frac = frac;
         (*intercept_p).isaline = 1;
-        (*intercept_p).d.line = ld as *const line_t as *mut line_t;
+        (*intercept_p).d.line = ld;
         InterceptsOverrun(
             intercept_p.offset_from(intercepts_base()) as i32,
             intercept_p,
@@ -1022,11 +1017,8 @@ pub unsafe fn P_PathTraverse(
     flags: i32,
     trav: Option<unsafe fn(*mut intercept_t) -> u32>,
 ) -> u32 {
-    let validcount = &crate::engine::render_3d::main::VALIDCOUNT;
-    validcount.set(validcount.get().wrapping_add(1));
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
+    let (bmaporgx, bmaporgy) = blockmap_origin();
     let mut x1 = x1;
     let mut y1 = y1;
     if ((x1 - bmaporgx) & (MAPBLOCKSIZE - 1)) == 0 {
@@ -1093,7 +1085,7 @@ pub unsafe fn P_PathTraverse(
             && P_BlockLinesIterator(
                 mapx,
                 mapy,
-                Some(PIT_AddLineIntercepts as unsafe fn(*mut line_t) -> u32),
+                Some(PIT_AddLineIntercepts as unsafe fn(LineId) -> u32),
             ) == 0
         {
             return 0;
@@ -1119,4 +1111,83 @@ pub unsafe fn P_PathTraverse(
         }
     }
     P_TraverseIntercepts(trav, FRACUNIT)
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::engine::{
+            map::{VertexId, line_t},
+            play::setup::LEVEL_TEST_LOCK,
+        },
+        std::sync::Mutex,
+    };
+
+    /// The lines handed to [`record_line`], in call order.
+    static VISITED: Mutex<Vec<LineId>> = Mutex::new(Vec::new());
+
+    /// Blockmap callback that records `line` and continues.
+    unsafe fn record_line(line: LineId) -> u32 {
+        VISITED.lock().unwrap().push(line);
+        1
+    }
+
+    /// A one-sided line record; the iterator reads only its `validcount`.
+    fn line_record() -> line_t {
+        line_t {
+            v1: VertexId::new(0),
+            v2: VertexId::new(0),
+            dx: 0,
+            dy: 0,
+            flags: 0,
+            special: 0,
+            tag: 0,
+            sidenum: [0, -1],
+            bbox: [0; 4],
+            slopetype: slopetype_t::ST_HORIZONTAL,
+            frontsector: None,
+            backsector: None,
+            validcount: 0,
+            specialdata: ptr::null_mut(),
+        }
+    }
+
+    /// A line listed in two blockmap cells reaches the callback once per
+    /// `validcount`, which it is marked with; cells outside the grid visit
+    /// nothing.
+    #[test]
+    fn block_lines_iterator_visits_each_line_once_per_validcount() {
+        let _guard = LEVEL_TEST_LOCK.lock().unwrap();
+        // 2x1 grid: header [orgx, orgy, width, height], the two cells' list
+        // offsets, then cell 0 = [line 0, line 1] and cell 1 = [line 1].
+        let level = LevelState {
+            bmapwidth: 2,
+            bmapheight: 1,
+            blockmaplump: vec![0, 0, 2, 1, 6, 9, 0, 1, -1, 1, -1],
+            lines: vec![line_record(); 2],
+            ..LevelState::new()
+        };
+        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
+        VISITED.lock().unwrap().clear();
+        VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
+
+        // SAFETY: the callback only records the line it is given.
+        unsafe {
+            assert_eq!(P_BlockLinesIterator(0, 0, Some(record_line)), 1);
+            assert_eq!(P_BlockLinesIterator(1, 0, Some(record_line)), 1);
+            assert_eq!(P_BlockLinesIterator(2, 0, Some(record_line)), 1);
+        }
+
+        assert_eq!(*VISITED.lock().unwrap(), [LineId::new(0), LineId::new(1)]);
+        let validcount = VALIDCOUNT.get();
+        assert!(
+            LEVEL
+                .borrow()
+                .lines
+                .iter()
+                .all(|line| line.validcount == validcount)
+        );
+        *LEVEL.borrow_mut() = saved;
+    }
 }

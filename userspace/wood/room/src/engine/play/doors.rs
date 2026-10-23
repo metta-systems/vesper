@@ -11,14 +11,14 @@ use crate::engine::{
     dehacked::DEH_String,
     doom::player::PlayerMessage,
     interface::timer::TICRATE,
-    map::{line_t, sector_t},
+    map::{LineId, SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
     play::{
         ceilng::ceiling_t,
         floor::{T_MovePlane, floormove_t},
         mobj::mobj_t,
         plats::plat_t,
-        setup::level,
+        setup::LEVEL,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
             P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind, thinker_t,
@@ -122,7 +122,7 @@ pub struct vldoor_t {
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
     pub kind: i32,
     /// The sector this door controls (its ceiling is the moving plane).
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
     /// Target height of the open position (lowest surrounding ceiling - 4 units).
     pub topheight: fixed_t,
     /// Movement speed in fixed-point units per tic.
@@ -147,10 +147,12 @@ pub struct vldoor_t {
 /// # Safety
 ///
 /// `door` must be a valid, aligned, non-null pointer to a `vldoor_t` whose
-/// `sector` pointer is also valid for the current map. Called exclusively by
-/// the thinker dispatcher from `P_RunThinkers`.
+/// `sector` belongs to the current map. Called exclusively by the thinker
+/// dispatcher from `P_RunThinkers`.
 pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
     let res: i32;
+    let clear_specialdata =
+        |sector: SectorId| LEVEL.borrow_mut().sectors[sector].specialdata = std::ptr::null_mut();
 
     match (*door).direction {
         0 => {
@@ -160,15 +162,15 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                 match (*door).kind {
                     x if x == vld_blazeRaise => {
                         (*door).direction = -1;
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal => {
                         (*door).direction = -1;
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
                     }
                     x if x == vld_close30ThenOpen => {
                         (*door).direction = 1;
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -182,7 +184,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     x if x == vld_raiseIn5Mins => {
                         (*door).direction = 1;
                         (*door).kind = vld_normal;
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -190,23 +192,17 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
         }
         -1 => {
             // DOWN
-            res = T_MovePlane(
-                (*door).sector,
-                (*door).speed,
-                (*(*door).sector).floorheight,
-                0,
-                1,
-                -1,
-            );
+            let floorheight = LEVEL.borrow().sectors[(*door).sector].floorheight;
+            res = T_MovePlane((*door).sector, (*door).speed, floorheight, 0, 1, -1);
             if res == result_pastdest {
                 match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
-                        (*(*door).sector).specialdata = std::ptr::null_mut();
+                        clear_specialdata((*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal || x == vld_close => {
-                        (*(*door).sector).specialdata = std::ptr::null_mut();
+                        clear_specialdata((*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
                     }
                     x if x == vld_close30ThenOpen => {
@@ -222,7 +218,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                     }
                     _ => {
                         (*door).direction = 1;
-                        S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
+                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
                     }
                 }
             }
@@ -237,7 +233,7 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
                         (*door).topcountdown = (*door).topwait;
                     }
                     x if x == vld_close30ThenOpen || x == vld_blazeOpen || x == vld_open => {
-                        (*(*door).sector).specialdata = std::ptr::null_mut();
+                        clear_specialdata((*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
                     }
                     _ => {}
@@ -259,33 +255,34 @@ pub unsafe fn T_VerticalDoor(door: *mut vldoor_t) {
 ///
 /// # Safety
 ///
-/// `line`, `thing` must be valid non-null pointers for the current map.
+/// `thing` must be a valid non-null pointer; the zone and thinker list must
+/// be initialised and a level loaded.
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(line: *mut line_t, kind: i32, thing: *mut mobj_t) -> i32 {
+pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: *mut mobj_t) -> i32 {
     let Some(p) = (*thing).player.as_mut() else {
         return 0;
     };
 
-    match (*line).special as i32 {
+    match line.special as i32 {
         99 | 133 => {
             if p.cards[it_bluecard] == 0 && p.cards[it_blueskull] == 0 {
-                p.message = locked_object_message((*line).special as i32);
+                p.message = locked_object_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
         }
         134 | 135 => {
             if p.cards[it_redcard] == 0 && p.cards[it_redskull] == 0 {
-                p.message = locked_object_message((*line).special as i32);
+                p.message = locked_object_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
         }
         136 | 137 => {
             if p.cards[it_yellowcard] == 0 && p.cards[it_yellowskull] == 0 {
-                p.message = locked_object_message((*line).special as i32);
+                p.message = locked_object_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
@@ -306,19 +303,18 @@ pub unsafe fn EV_DoLockedDoor(line: *mut line_t, kind: i32, thing: *mut mobj_t) 
 ///
 /// # Safety
 ///
-/// `line` must be a valid non-null pointer for the current map; the global
-/// `sectors` array must be initialised.
-pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
+/// The zone and thinker list must be initialised and a level loaded.
+pub unsafe fn EV_DoDoor(line: &line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let sec = level().sectors.add(secnum as usize);
-        if !(*sec).specialdata.is_null() {
+        let sec = SectorId::new(secnum as usize);
+        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
             continue;
         }
 
@@ -329,7 +325,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
             std::ptr::null_mut(),
         ) as *mut vldoor_t;
         P_AddThinker(&raw mut (*door).thinker);
-        (*sec).specialdata = &raw mut (*door).thinker;
+        LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*door).thinker;
 
         (*door).thinker.kind = ThinkerKind::Door;
         (*door).sector = sec;
@@ -337,40 +333,47 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
         (*door).topwait = VDOORWAIT;
         (*door).speed = VDOORSPEED;
 
+        let (lowest_ceiling, ceilingheight) = {
+            let level = LEVEL.borrow();
+            (
+                P_FindLowestCeilingSurrounding(&level, sec),
+                level.sectors[sec].ceilingheight,
+            )
+        };
         match kind {
             x if x == vld_blazeClose => {
-                (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+                (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
                 (*door).speed = VDOORSPEED * 4;
-                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdcls as i32);
+                S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
             }
             x if x == vld_close => {
-                (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+                (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
-                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
+                S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
             }
             x if x == vld_close30ThenOpen => {
-                (*door).topheight = (*sec).ceilingheight;
+                (*door).topheight = ceilingheight;
                 (*door).direction = -1;
-                S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Dorcls as i32);
+                S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
             }
             x if x == vld_blazeRaise || x == vld_blazeOpen => {
                 (*door).direction = 1;
-                (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+                (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).speed = VDOORSPEED * 4;
-                if (*door).topheight != (*sec).ceilingheight {
-                    S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Bdopn as i32);
+                if (*door).topheight != ceilingheight {
+                    S_StartSectorSound((*door).sector, Sfx::Bdopn as i32);
                 }
             }
             x if x == vld_normal || x == vld_open => {
                 (*door).direction = 1;
-                (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+                (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
-                if (*door).topheight != (*sec).ceilingheight {
-                    S_StartSectorSound(&raw mut (*(*door).sector).soundorg, Sfx::Doropn as i32);
+                if (*door).topheight != ceilingheight {
+                    S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
                 }
             }
             _ => {}
@@ -428,24 +431,28 @@ unsafe fn set_special_door_direction(special: *mut thinker_t, direction: i32) {
 ///
 /// # Safety
 ///
-/// `line` and `thing` must be valid non-null pointers for the current map; the
-/// global `sides` array must be initialised.
+/// `thing` must be a valid non-null pointer and `line_id` a linedef of the
+/// current map; the zone and thinker list must be initialised.
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
+pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: *mut mobj_t) {
     let side = 0;
+    // The line's record as the use found it; clearing its special below
+    // writes the level's line.
+    let line_record = LEVEL.borrow().lines[line_id];
+    let line = &line_record;
 
     // Check for locks
     let player = (*thing).player;
 
-    match (*line).special as i32 {
+    match line.special as i32 {
         26 | 32 => {
             let Some(player) = player.as_mut() else {
                 return;
             };
             if player.cards[it_bluecard] == 0 && player.cards[it_blueskull] == 0 {
-                player.message = locked_door_message((*line).special as i32);
+                player.message = locked_door_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
@@ -455,7 +462,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
                 return;
             };
             if player.cards[it_yellowcard] == 0 && player.cards[it_yellowskull] == 0 {
-                player.message = locked_door_message((*line).special as i32);
+                player.message = locked_door_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
@@ -465,7 +472,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
                 return;
             };
             if player.cards[it_redcard] == 0 && player.cards[it_redskull] == 0 {
-                player.message = locked_door_message((*line).special as i32);
+                player.message = locked_door_message(line.special as i32);
                 S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
@@ -473,14 +480,14 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
         _ => {}
     }
 
-    let sec = (*level()
-        .sides
-        .offset((*line).sidenum[(side ^ 1) as usize] as isize))
-    .sector;
+    let (sec, special) = {
+        let level = LEVEL.borrow();
+        let sec = level.sides[line.sidenum[(side ^ 1) as usize] as usize].sector;
+        (sec, level.sectors[sec].specialdata)
+    };
 
-    let special = (*sec).specialdata;
     if !special.is_null() {
-        match (*line).special as i32 {
+        match line.special as i32 {
             1 | 26 | 27 | 28 | 117 => {
                 if special_door_direction(special) == -1 {
                     set_special_door_direction(special, 1);
@@ -504,15 +511,15 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
     }
 
     // for proper sound
-    match (*line).special as i32 {
+    match line.special as i32 {
         117 | 118 => {
-            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Bdopn as i32);
+            S_StartSectorSound(sec, Sfx::Bdopn as i32);
         }
         1 | 31 => {
-            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Doropn as i32);
+            S_StartSectorSound(sec, Sfx::Doropn as i32);
         }
         _ => {
-            S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Doropn as i32);
+            S_StartSectorSound(sec, Sfx::Doropn as i32);
         }
     }
 
@@ -523,20 +530,21 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
         std::ptr::null_mut(),
     ) as *mut vldoor_t;
     P_AddThinker(&raw mut (*door).thinker);
-    (*sec).specialdata = &raw mut (*door).thinker;
+    let mut level = LEVEL.borrow_mut();
+    level.sectors[sec].specialdata = &raw mut (*door).thinker;
     (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 1;
     (*door).speed = VDOORSPEED;
     (*door).topwait = VDOORWAIT;
 
-    match (*line).special as i32 {
+    match line.special as i32 {
         1 | 26 | 27 | 28 => {
             (*door).kind = vld_normal;
         }
         31..=34 => {
             (*door).kind = vld_open;
-            (*line).special = 0;
+            level.lines[line_id].special = 0;
         }
         117 => {
             (*door).kind = vld_blazeRaise;
@@ -544,14 +552,14 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
         }
         118 => {
             (*door).kind = vld_blazeOpen;
-            (*line).special = 0;
+            level.lines[line_id].special = 0;
             (*door).speed = VDOORSPEED * 4;
         }
         _ => {}
     }
 
     // find the top and bottom of the movement range
-    (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+    (*door).topheight = P_FindLowestCeilingSurrounding(&level, sec);
     (*door).topheight -= 4 * FRACUNIT;
 }
 
@@ -562,8 +570,9 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
 ///
 /// # Safety
 ///
-/// `sec` must be a valid non-null pointer to a sector for the current map.
-pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
+/// `sec` must be a sector of the current map; the zone and thinker list
+/// must be initialised.
+pub unsafe fn P_SpawnDoorCloseIn30(sec: SectorId) {
     let door = Z_Malloc(
         std::mem::size_of::<vldoor_t>() as i32,
         PU_LEVSPEC,
@@ -572,8 +581,11 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
 
     P_AddThinker(&raw mut (*door).thinker);
 
-    (*sec).specialdata = &raw mut (*door).thinker;
-    (*sec).special = 0;
+    {
+        let mut level = LEVEL.borrow_mut();
+        level.sectors[sec].specialdata = &raw mut (*door).thinker;
+        level.sectors[sec].special = 0;
+    }
 
     (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
@@ -591,9 +603,9 @@ pub unsafe fn P_SpawnDoorCloseIn30(sec: *mut sector_t) {
 ///
 /// # Safety
 ///
-/// `sec` must be a valid non-null pointer to a sector for the current map; the
-/// global `sectors` array must be initialised.
-pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: i32) {
+/// `sec` must be a sector of the current map; the zone and thinker list
+/// must be initialised.
+pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: SectorId, _secnum: i32) {
     let door = Z_Malloc(
         std::mem::size_of::<vldoor_t>() as i32,
         PU_LEVSPEC,
@@ -602,15 +614,16 @@ pub unsafe fn P_SpawnDoorRaiseIn5Mins(sec: *mut sector_t, _secnum: i32) {
 
     P_AddThinker(&raw mut (*door).thinker);
 
-    (*sec).specialdata = &raw mut (*door).thinker;
-    (*sec).special = 0;
+    let mut level = LEVEL.borrow_mut();
+    level.sectors[sec].specialdata = &raw mut (*door).thinker;
+    level.sectors[sec].special = 0;
 
     (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
     (*door).direction = 2;
     (*door).kind = vld_raiseIn5Mins;
     (*door).speed = VDOORSPEED;
-    (*door).topheight = P_FindLowestCeilingSurrounding(sec);
+    (*door).topheight = P_FindLowestCeilingSurrounding(&level, sec);
     (*door).topheight -= 4 * FRACUNIT;
     (*door).topwait = VDOORWAIT;
     (*door).topcountdown = 5 * 60 * TICRATE;

@@ -62,7 +62,7 @@ use crate::engine::{
     play::{
         inter::maxammo,
         mobj::mobj_t,
-        setup::{deathmatch_p, deathmatchstart, playerstart},
+        setup::{LEVEL, deathmatch_p, deathmatchstart, playerstart},
     },
     wad::format::mapthing_t,
 };
@@ -1925,7 +1925,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
         }
     }
 
-    let floorheight = (*(*ss).sector).floorheight;
+    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
     let mo = P_SpawnMobj(x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
     if (*console_player()).viewz != 1 {

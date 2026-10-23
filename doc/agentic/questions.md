@@ -3,6 +3,10 @@ Next is the read-only filesystem over `block_v1`: should it be exFAT or ext4?
 
 ---
 
+`Mobj -> MapObject` in Room
+
+---
+
 Room's config file is never loaded or saved
 - m_config is Doom's settings system. Each setting, such as a key binding, a chat macro or the music command, is linked by name to a variable in the game.
 - In this port the code that reads and writes the .cfg file was left out (the upstream C code switches it off too). M_LoadDefaults only works out the filenames and prints them.

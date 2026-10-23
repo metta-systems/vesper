@@ -25,7 +25,7 @@ use crate::engine::{
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        setup::{LevelState, level},
+        setup::LEVEL,
         tick::{ThinkerContainer, ThinkerKind, thinkercap},
     },
     sound::{S_StartSound, info::Sfx},
@@ -54,10 +54,10 @@ use crate::engine::{
 ///
 /// # Safety
 ///
-/// `line` and `thing` must be valid, non-null pointers for the duration of
-/// the call.  The global arrays `sectors` and `thinkercap` must be initialised
-/// (i.e. a level must be loaded).
-pub unsafe fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
+/// `thing` must be a valid, non-null pointer for the duration of the call.
+/// The level and `thinkercap` must be initialised (i.e. a level must be
+/// loaded).
+pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing: *mut mobj_t) -> i32 {
     unsafe {
         // Don't teleport missiles
         if (*thing).flags & MF_MISSILE != 0 {
@@ -69,16 +69,12 @@ pub unsafe fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i
             return 0;
         }
 
-        let tag = (*line).tag;
-        let LevelState {
-            numsectors,
-            sectors,
-            ..
-        } = level();
+        let tag = line.tag;
+        let numsectors = LEVEL.borrow().numsectors;
         let cap = thinkercap();
 
         for i in 0..numsectors as usize {
-            if (*sectors.add(i)).tag != tag {
+            if LEVEL.borrow().sectors[i].tag != tag {
                 continue;
             }
 
@@ -98,9 +94,9 @@ pub unsafe fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i
                     continue;
                 }
 
-                let sector = (*(*m).subsector).sector;
+                let sector = LEVEL.borrow().subsectors[(*m).subsector].sector;
                 // Wrong sector
-                if sector.offset_from(sectors) != i as isize {
+                if sector.index() != i {
                     thinker = (*thinker).next;
                     continue;
                 }

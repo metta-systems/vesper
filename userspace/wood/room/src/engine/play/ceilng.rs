@@ -11,11 +11,11 @@ use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     global::Global,
-    map::{line_t, sector_t},
+    map::{SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
     play::{
         floor::T_MovePlane,
-        setup::level,
+        setup::LEVEL,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, leveltime, thinker_t},
     },
@@ -71,7 +71,7 @@ pub struct ceiling_t {
     /// Ceiling type (one of the `ceiling_e` integer constants).
     pub kind: i32,
     /// The sector whose ceiling this thinker is moving.
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
     /// Target height when the ceiling is moving downward.
     pub bottomheight: fixed_t,
     /// Target height when the ceiling is moving upward.
@@ -155,7 +155,8 @@ pub static CEILINGS: Global<CeilingState> = Global::new(CeilingState::new());
 /// # Safety
 ///
 /// `ceiling` must be a valid, non-null pointer to a `ceiling_t` that is
-/// currently linked in the thinker list and whose `sector` pointer is valid.
+/// currently linked in the thinker list and whose `sector` belongs to the
+/// current map.
 pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
     let res = T_MovePlane(
         (*ceiling).sector,
@@ -174,7 +175,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
         match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
-                S_StartSectorSound(&raw mut (*(*ceiling).sector).soundorg, Sfx::Stnmov as i32);
+                S_StartSectorSound((*ceiling).sector, Sfx::Stnmov as i32);
             }
         }
     }
@@ -185,7 +186,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
                 P_RemoveActiveCeiling(ceiling);
             }
             x if x == silentCrushAndRaise => {
-                S_StartSectorSound(&raw mut (*(*ceiling).sector).soundorg, Sfx::Pstop as i32);
+                S_StartSectorSound((*ceiling).sector, Sfx::Pstop as i32);
             }
             x if x == fastCrushAndRaise || x == crushAndRaise => {
                 (*ceiling).direction = -1;
@@ -222,9 +223,8 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
 ///
 /// # Safety
 ///
-/// `line` must be a valid, non-null pointer.  The global `sectors` array must
-/// be initialised for the current level.
-pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
+/// The zone and thinker list must be initialised and a level loaded.
+pub unsafe fn EV_DoCeiling(line: &line_t, ceilingtype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -237,12 +237,12 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let sec = level().sectors.add(secnum as usize);
-        if !(*sec).specialdata.is_null() {
+        let sec = SectorId::new(secnum as usize);
+        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
             continue;
         }
 
@@ -253,40 +253,48 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
             std::ptr::null_mut(),
         ) as *mut ceiling_t;
         P_AddThinker(&raw mut (*ceiling).thinker);
-        (*sec).specialdata = &raw mut (*ceiling).thinker;
-        (*ceiling).thinker.kind = ThinkerKind::Ceiling;
-        (*ceiling).sector = sec;
-        (*ceiling).crush = 0;
+        {
+            // Setting up the ceiling runs no play code, so one borrow serves it.
+            let mut level = LEVEL.borrow_mut();
+            level.sectors[sec].specialdata = &raw mut (*ceiling).thinker;
+            (*ceiling).thinker.kind = ThinkerKind::Ceiling;
+            (*ceiling).sector = sec;
+            (*ceiling).crush = 0;
 
-        match ceilingtype {
-            x if x == fastCrushAndRaise => {
-                (*ceiling).crush = 1;
-                (*ceiling).topheight = (*sec).ceilingheight;
-                (*ceiling).bottomheight = (*sec).floorheight + (8 * FRACUNIT);
-                (*ceiling).direction = -1;
-                (*ceiling).speed = CEILSPEED * 2;
-            }
-            x if x == silentCrushAndRaise || x == crushAndRaise => {
-                (*ceiling).crush = 1;
-                (*ceiling).topheight = (*sec).ceilingheight;
-            }
-            x if x == lowerAndCrush || x == lowerToFloor => {
-                (*ceiling).bottomheight = (*sec).floorheight;
-                if ceilingtype != lowerToFloor {
-                    (*ceiling).bottomheight += 8 * FRACUNIT;
+            let (ceilingheight, floorheight) = (
+                level.sectors[sec].ceilingheight,
+                level.sectors[sec].floorheight,
+            );
+            match ceilingtype {
+                x if x == fastCrushAndRaise => {
+                    (*ceiling).crush = 1;
+                    (*ceiling).topheight = ceilingheight;
+                    (*ceiling).bottomheight = floorheight + (8 * FRACUNIT);
+                    (*ceiling).direction = -1;
+                    (*ceiling).speed = CEILSPEED * 2;
                 }
-                (*ceiling).direction = -1;
-                (*ceiling).speed = CEILSPEED;
+                x if x == silentCrushAndRaise || x == crushAndRaise => {
+                    (*ceiling).crush = 1;
+                    (*ceiling).topheight = ceilingheight;
+                }
+                x if x == lowerAndCrush || x == lowerToFloor => {
+                    (*ceiling).bottomheight = floorheight;
+                    if ceilingtype != lowerToFloor {
+                        (*ceiling).bottomheight += 8 * FRACUNIT;
+                    }
+                    (*ceiling).direction = -1;
+                    (*ceiling).speed = CEILSPEED;
+                }
+                x if x == raiseToHighest => {
+                    (*ceiling).topheight = P_FindHighestCeilingSurrounding(&level, sec);
+                    (*ceiling).direction = 1;
+                    (*ceiling).speed = CEILSPEED;
+                }
+                _ => {}
             }
-            x if x == raiseToHighest => {
-                (*ceiling).topheight = P_FindHighestCeilingSurrounding(sec);
-                (*ceiling).direction = 1;
-                (*ceiling).speed = CEILSPEED;
-            }
-            _ => {}
-        }
 
-        (*ceiling).tag = (*sec).tag as i32;
+            (*ceiling).tag = level.sectors[sec].tag as i32;
+        }
         (*ceiling).kind = ceilingtype;
         P_AddActiveCeiling(ceiling);
     }
@@ -302,7 +310,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
 ///
 /// # Safety
-/// `c` must point to a live ceiling thinker whose `sector` points into the
+/// `c` must point to a live ceiling thinker whose `sector` belongs to the
 /// loaded level. It stays registered until `P_RemoveActiveCeiling` or the
 /// next level load clears the table, and later safe calls dereference it.
 pub unsafe fn P_AddActiveCeiling(c: *mut ceiling_t) {
@@ -327,7 +335,7 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
     unsafe {
         for slot in ceilings.activeceilings.iter_mut() {
             if *slot == c {
-                (**slot).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
+                LEVEL.borrow_mut().sectors[(**slot).sector].specialdata = std::ptr::null_mut();
                 P_RemoveThinker(&raw mut (**slot).thinker);
                 *slot = std::ptr::null_mut();
                 break;
@@ -347,14 +355,12 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
 ///
 /// # Safety
 ///
-/// `line` must be a valid, non-null pointer.
-pub unsafe fn P_ActivateInStasisCeiling(line: *mut line_t) {
+/// Every registered ceiling must be live (see [`P_AddActiveCeiling`]).
+pub unsafe fn P_ActivateInStasisCeiling(line: &line_t) {
     let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
         for ceiling in activeceilings {
-            if !ceiling.is_null()
-                && (*ceiling).tag == (*line).tag as i32
-                && (*ceiling).direction == 0
+            if !ceiling.is_null() && (*ceiling).tag == line.tag as i32 && (*ceiling).direction == 0
             {
                 (*ceiling).direction = (*ceiling).olddirection;
                 (*ceiling).thinker.kind = ThinkerKind::Ceiling;
@@ -376,15 +382,13 @@ pub unsafe fn P_ActivateInStasisCeiling(line: *mut line_t) {
 ///
 /// # Safety
 ///
-/// `line` must be a valid, non-null pointer.
-pub unsafe fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
+/// Every registered ceiling must be live (see [`P_AddActiveCeiling`]).
+pub unsafe fn EV_CeilingCrushStop(line: &line_t) -> i32 {
     let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
         let mut rtn: i32 = 0;
         for ceiling in activeceilings {
-            if !ceiling.is_null()
-                && (*ceiling).tag == (*line).tag as i32
-                && (*ceiling).direction != 0
+            if !ceiling.is_null() && (*ceiling).tag == line.tag as i32 && (*ceiling).direction != 0
             {
                 (*ceiling).olddirection = (*ceiling).direction;
                 (*ceiling).thinker.kind = ThinkerKind::CeilingInStasis;

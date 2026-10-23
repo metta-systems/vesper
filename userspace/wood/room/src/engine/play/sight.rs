@@ -13,7 +13,7 @@ use crate::engine::math::fixed::{FixedDiv, FixedMul};
 use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::{
-    map::node_t,
+    map::{NodeId, node_t},
     play::{maputl::divline_t, mobj::mobj_t},
     wad::format::LinedefFlag,
 };
@@ -94,7 +94,7 @@ pub static SIGHT: Global<SightState> = Global::new(SightState::new());
 
 use crate::engine::{
     global::Global,
-    play::setup::{LevelState, level},
+    play::setup::{LEVEL, LevelState},
     render_3d::main::VALIDCOUNT,
 };
 
@@ -178,40 +178,34 @@ fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> i32 {
 /// Returns `true` if the ray is unobstructed through this subsector.
 ///
 /// Matches `P_CrossSubsector` in `p_sight.c`.
-fn P_CrossSubsector(sight: &mut SightState, level: &LevelState, num: i32) -> bool {
-    unsafe {
+fn P_CrossSubsector(sight: &mut SightState, level: &mut LevelState, num: i32) -> bool {
+    {
         let strace_copy = sight.strace;
         let (t2x, t2y) = (sight.t2x, sight.t2y);
-        if num >= level.numsubsectors {
+        if num as usize >= level.subsectors.len() {
             i_error!(
                 "P_CrossSubsector: ss {} with numss = {}",
                 num,
-                level.numsubsectors
+                level.subsectors.len()
             );
         }
 
-        let sub = &*level.subsectors.add(num as usize);
+        let sub = level.subsectors[num as usize];
+        let firstline = sub.firstline as usize;
+        let validcount = VALIDCOUNT.get();
 
-        let mut count = sub.numlines as i32;
-        let mut seg_ptr = level.segs.add(sub.firstline as usize);
-
-        while count > 0 {
-            let seg = &*seg_ptr;
-            seg_ptr = seg_ptr.add(1);
-            count -= 1;
-
-            let line = &mut *seg.linedef;
+        for seg in &level.segs[firstline..firstline + sub.numlines.max(0) as usize] {
+            let line = &mut level.lines[seg.linedef];
 
             // Already checked other side?
-            let validcount = VALIDCOUNT.get();
             if line.validcount == validcount {
                 continue;
             }
 
             line.validcount = validcount;
 
-            let v1 = &*line.v1;
-            let v2 = &*line.v2;
+            let v1 = &level.vertexes[line.v1];
+            let v2 = &level.vertexes[line.v2];
 
             let s1 = P_DivlineSide(v1.x, v1.y, &strace_copy);
             let s2 = P_DivlineSide(v2.x, v2.y, &strace_copy);
@@ -239,7 +233,7 @@ fn P_CrossSubsector(sight: &mut SightState, level: &LevelState, num: i32) -> boo
             // Backsector may be NULL if this is an "impassible glass" hack line.
             // IMPORTANT: C uses line->backsector (the original linedef side), NOT
             // seg->backsector (which is the BSP-split sub-side and may differ).
-            if line.backsector.is_null() {
+            if line.backsector.is_none() {
                 return false;
             }
 
@@ -249,13 +243,13 @@ fn P_CrossSubsector(sight: &mut SightState, level: &LevelState, num: i32) -> boo
                 return false;
             }
 
-            let front = seg.frontsector;
-            let back = seg.backsector;
+            let front = &level.sectors[seg.frontsector];
+            let back = &level.sectors[seg.backsector.expect("two-sided seg without back sector")];
 
-            let front_floor = (*front).floorheight;
-            let front_ceil = (*front).ceilingheight;
-            let back_floor = (*back).floorheight;
-            let back_ceil = (*back).ceilingheight;
+            let front_floor = front.floorheight;
+            let front_ceil = front.ceilingheight;
+            let back_floor = back.floorheight;
+            let back_ceil = back.ceilingheight;
 
             // No wall to block sight with?
             if front_floor == back_floor && front_ceil == back_ceil {
@@ -328,8 +322,8 @@ fn node_as_divline(node: &node_t) -> divline_t {
 /// Returns `true` if the sight ray is unobstructed through `bspnum`.
 ///
 /// Matches `P_CrossBSPNode` in `p_sight.c`.
-fn P_CrossBSPNode(sight: &mut SightState, level: &LevelState, bspnum: i32) -> bool {
-    unsafe {
+fn P_CrossBSPNode(sight: &mut SightState, level: &mut LevelState, bspnum: i32) -> bool {
+    {
         let strace_copy = sight.strace;
         if bspnum & NF_SUBSECTOR as i32 != 0 {
             if bspnum == -1 {
@@ -339,7 +333,8 @@ fn P_CrossBSPNode(sight: &mut SightState, level: &LevelState, bspnum: i32) -> bo
             }
         }
 
-        let bsp = &*level.nodes.add(bspnum as usize);
+        let bsp = level.nodes[NodeId::new(bspnum as usize)];
+        let bsp = &bsp;
         let bsp_div = node_as_divline(bsp);
 
         let side = P_DivlineSide(strace_copy.x, strace_copy.y, &bsp_div);
@@ -379,22 +374,24 @@ fn P_CrossBSPNode(sight: &mut SightState, level: &LevelState, bspnum: i32) -> bo
 ///
 /// Matches `P_CheckSight` in `p_sight.c`.
 ///
+/// The check marks the linedefs it crosses, so it borrows the level mutably
+/// for its whole run; it calls no other play code.
+///
 /// # Safety
 /// Both `t1` and `t2` must be valid, non-null pointers to initialised
-/// `mobj_t` instances. Their `subsector` fields must point into the live
-/// subsector/sector arrays loaded by `p_setup`.
+/// `mobj_t` instances whose `subsector` belongs to the loaded level.
 pub unsafe fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
-    let level = level();
+    let mut level = LEVEL.borrow_mut();
     let mut sight = SIGHT.borrow_mut();
     unsafe {
-        let s1 = (*(*t1).subsector).sector.offset_from(level.sectors) as i32;
-        let s2 = (*(*t2).subsector).sector.offset_from(level.sectors) as i32;
+        let s1 = level.subsectors[(*t1).subsector].sector.index() as i32;
+        let s2 = level.subsectors[(*t2).subsector].sector.index() as i32;
         let pnum = s1 * level.numsectors + s2;
         let bytenum = pnum >> 3;
         let bitnum = 1 << (pnum & 7);
 
         // Check in REJECT table.
-        if *level.rejectmatrix.add(bytenum as usize) & bitnum != 0 {
+        if level.rejectmatrix[bytenum as usize] & bitnum != 0 {
             sight.sightcounts[0] += 1;
             return 0;
         }
@@ -413,6 +410,7 @@ pub unsafe fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
         sight.strace.dx = (*t2).x - (*t1).x;
         sight.strace.dy = (*t2).y - (*t1).y;
 
-        P_CrossBSPNode(&mut sight, &level, level.numnodes - 1) as i32
+        let root_node = level.nodes.len() as i32 - 1;
+        P_CrossBSPNode(&mut sight, &mut level, root_node) as i32
     }
 }

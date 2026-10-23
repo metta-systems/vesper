@@ -3,15 +3,111 @@
 //! The level loader (`play::setup`) fills arrays of these records from the
 //! WAD lumps; the play simulation and the 3D renderer both walk them. Each
 //! type has exactly one definition here.
+//!
+//! The arrays are owned by the level state (`play::setup::LevelState`).
+//! Records refer to each other by typed index ([`SectorId`], [`LineId`],
+//! [`SideId`], [`VertexId`], [`SegId`], [`SubsectorId`], [`NodeId`]) where C
+//! keeps pointers into those arrays; a nullable C pointer is an `Option` of
+//! the id. A level array (a `Vec` or a slice of it) is indexed directly by
+//! its id type.
 
 #![allow(non_camel_case_types)]
 
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    ops::{Index, IndexMut},
+};
 
 use crate::engine::{
     math::fixed::{angle_t, fixed_t},
     play::{mobj::mobj_t, tick::thinker_t},
 };
+
+/// Define a typed index into one of the level's geometry arrays, and let
+/// that array (a slice of `$element`) be indexed by it.
+macro_rules! map_id {
+    ($(#[$doc:meta])* $name:ident => $element:ty) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+        pub struct $name(u32);
+
+        impl $name {
+            /// The id of the element at `index` in its level array.
+            #[inline]
+            pub const fn new(index: usize) -> Self {
+                debug_assert!(index <= u32::MAX as usize);
+                Self(index as u32)
+            }
+
+            /// Position of the element in its level array.
+            #[inline]
+            pub const fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        impl Index<$name> for [$element] {
+            type Output = $element;
+
+            #[inline]
+            fn index(&self, id: $name) -> &$element {
+                &self[id.index()]
+            }
+        }
+
+        impl IndexMut<$name> for [$element] {
+            #[inline]
+            fn index_mut(&mut self, id: $name) -> &mut $element {
+                &mut self[id.index()]
+            }
+        }
+
+        impl Index<$name> for Vec<$element> {
+            type Output = $element;
+
+            #[inline]
+            fn index(&self, id: $name) -> &$element {
+                &self[id.index()]
+            }
+        }
+
+        impl IndexMut<$name> for Vec<$element> {
+            #[inline]
+            fn index_mut(&mut self, id: $name) -> &mut $element {
+                &mut self[id.index()]
+            }
+        }
+    };
+}
+
+map_id! {
+    /// Index of a [`vertex_t`] in the level's `vertexes`.
+    VertexId => vertex_t
+}
+map_id! {
+    /// Index of a [`sector_t`] in the level's `sectors`.
+    SectorId => sector_t
+}
+map_id! {
+    /// Index of a [`side_t`] in the level's `sides`.
+    SideId => side_t
+}
+map_id! {
+    /// Index of a [`line_t`] in the level's `lines`.
+    LineId => line_t
+}
+map_id! {
+    /// Index of a [`subsector_t`] in the level's `subsectors`.
+    SubsectorId => subsector_t
+}
+map_id! {
+    /// Index of a [`seg_t`] in the level's `segs`.
+    SegId => seg_t
+}
+map_id! {
+    /// Index of a [`node_t`] in the level's `nodes`.
+    NodeId => node_t
+}
 
 /// A map vertex holding a 2-D fixed-point position (`vertex_t` in
 /// `r_defs.h`).
@@ -74,8 +170,18 @@ pub struct sector_t {
     pub specialdata: *mut thinker_t,
     /// Number of linedefs bounding this sector.
     pub linecount: i32,
-    /// Pointer to the array of linedef pointers bounding this sector.
-    pub lines: *mut *mut line_t,
+    /// Start of this sector's linedefs in the level's `linebuffer` (C keeps
+    /// a pointer into that buffer); [`lines_in`](Self::lines_in) gives the
+    /// `linecount` entries from there.
+    pub lines: usize,
+}
+
+impl sector_t {
+    /// This sector's linedefs within the level's `linebuffer`.
+    #[inline]
+    pub fn lines_in<'a>(&self, linebuffer: &'a [LineId]) -> &'a [LineId] {
+        &linebuffer[self.lines..self.lines + self.linecount as usize]
+    }
 }
 
 /// One side of a linedef, carrying texture and sector references
@@ -93,7 +199,7 @@ pub struct side_t {
     /// Middle texture number; 0 = none.
     pub midtexture: i16,
     /// The sector this sidedef faces.
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
 }
 
 /// Line slope type, used to select the correct axis-aligned bounding-box
@@ -115,9 +221,9 @@ pub enum slopetype_t {
 #[derive(Clone, Copy)]
 pub struct line_t {
     /// First vertex (start of the line).
-    pub v1: *mut vertex_t,
+    pub v1: VertexId,
     /// Second vertex (end of the line).
-    pub v2: *mut vertex_t,
+    pub v2: VertexId,
     /// Horizontal delta `v2.x - v1.x` in fixed-point units.
     pub dx: fixed_t,
     /// Vertical delta `v2.y - v1.y` in fixed-point units.
@@ -134,10 +240,11 @@ pub struct line_t {
     pub bbox: [fixed_t; 4],
     /// Pre-computed slope type for fast bbox intersection.
     pub slopetype: slopetype_t,
-    /// Sector on the front (right) side of the linedef.
-    pub frontsector: *mut sector_t,
-    /// Sector on the back (left) side; null for single-sided lines.
-    pub backsector: *mut sector_t,
+    /// Sector on the front (right) side of the linedef; `None` when the
+    /// line has no front side (`sidenum[0] == -1`).
+    pub frontsector: Option<SectorId>,
+    /// Sector on the back (left) side; `None` for single-sided lines.
+    pub backsector: Option<SectorId>,
     /// Validity counter to avoid processing the same linedef twice per query.
     pub validcount: i32,
     /// Active special thinker attached to this line (e.g. a triggered door),
@@ -150,7 +257,7 @@ pub struct line_t {
 #[derive(Clone, Copy)]
 pub struct subsector_t {
     /// The sector this subsector belongs to.
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
     /// Number of segs in this subsector.
     pub numlines: i16,
     /// Index of the first seg in the global `segs` array.
@@ -162,21 +269,22 @@ pub struct subsector_t {
 #[derive(Clone, Copy)]
 pub struct seg_t {
     /// Start vertex of this seg.
-    pub v1: *mut vertex_t,
+    pub v1: VertexId,
     /// End vertex of this seg.
-    pub v2: *mut vertex_t,
+    pub v2: VertexId,
     /// Distance along the linedef to `v1`, in fixed-point units.
     pub offset: fixed_t,
     /// Absolute BAM angle of this seg (v1 to v2).
     pub angle: angle_t,
     /// The sidedef that provides texture information for this seg.
-    pub sidedef: *mut side_t,
+    pub sidedef: SideId,
     /// The linedef this seg belongs to.
-    pub linedef: *mut line_t,
-    /// The sector on the front side of this seg; never null.
-    pub frontsector: *mut sector_t,
-    /// The sector on the back side of this seg; null for single-sided lines.
-    pub backsector: *mut sector_t,
+    pub linedef: LineId,
+    /// The sector on the front side of this seg.
+    pub frontsector: SectorId,
+    /// The sector on the back side of this seg; `None` for single-sided
+    /// lines.
+    pub backsector: Option<SectorId>,
 }
 
 /// An interior BSP tree node with a splitting line and two child references
@@ -202,4 +310,31 @@ pub struct node_t {
     /// If `NF_SUBSECTOR` is set in the value, the lower bits are a subsector
     /// index; otherwise the value is a node index.
     pub children: [u16; 2],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_round_trip_and_index_their_arrays() {
+        let vertexes = Vec::from([vertex_t { x: 1, y: 2 }, vertex_t { x: 3, y: 4 }]);
+        let id = VertexId::new(1);
+        assert_eq!(id.index(), 1);
+        assert_eq!(vertexes[id].x, 3);
+        assert_eq!(vertexes[..][id].y, 4);
+        assert_ne!(VertexId::new(0), id);
+    }
+
+    #[test]
+    fn sector_lines_are_a_window_of_the_line_buffer() {
+        let linebuffer: Vec<LineId> = (0..6).map(LineId::new).collect();
+        let mut sector: sector_t = unsafe { std::mem::zeroed() };
+        sector.lines = 2;
+        sector.linecount = 3;
+        assert_eq!(
+            sector.lines_in(&linebuffer),
+            &[LineId::new(2), LineId::new(3), LineId::new(4)]
+        );
+    }
 }

@@ -7,8 +7,11 @@
 //!
 //! The C globals live in [`BspState`] ([`BSP`]) and, for the occlusion list
 //! that the clippers hold across their `R_StoreWallRange` calls,
-//! [`ClipSegsState`] ([`CLIP_SEGS`]). The recursion never holds a borrow
-//! across a call into the wall, plane or sprite renderers.
+//! [`ClipSegsState`] ([`CLIP_SEGS`]). The recursion never holds a borrow of
+//! those across a call into the wall, plane or sprite renderers. The level
+//! geometry is borrowed once for the whole traversal (the walls mark their
+//! linedefs as seen and the sprite pass marks sectors as visited) and passed
+//! down as `&mut LevelState`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -16,7 +19,7 @@ use std::ptr;
 
 use crate::engine::{
     global::Global,
-    map::{line_t, node_t, sector_t, seg_t, side_t},
+    map::{LineId, NodeId, SectorId, SegId, SideId, SubsectorId},
     math::{
         bbox::BBox,
         fixed::fixed_t,
@@ -46,18 +49,6 @@ const NF_SUBSECTOR: u32 = 0x8000;
 // the existing debug log stays usable; terminate the app the moment the
 // glitch appears and we inspect the tail of the trace.
 
-/// Returns the index of `line` within the level's `segs` array, or -1 if
-/// either pointer is null. Used only for diagnostic trace logging.
-#[inline]
-fn seg_index(line: *const seg_t) -> isize {
-    let segs = level().segs;
-    if segs.is_null() || line.is_null() {
-        -1
-    } else {
-        (line as isize - segs as isize) / std::mem::size_of::<seg_t>() as isize
-    }
-}
-
 // ---------------------------------------------------------------------------
 // drawseg_t
 // ---------------------------------------------------------------------------
@@ -69,7 +60,7 @@ fn seg_index(line: *const seg_t) -> isize {
 #[derive(Clone, Copy)]
 pub struct drawseg_t {
     /// The seg that generated this draw-seg.
-    pub curline: *mut seg_t,
+    pub curline: SegId,
     /// Leftmost screen column of this draw-seg (inclusive).
     pub x1: i32,
     /// Rightmost screen column of this draw-seg (inclusive).
@@ -95,9 +86,10 @@ pub struct drawseg_t {
 }
 
 /// Compile-time zero initializer for [`drawseg_t`], used to fill the
-/// `drawsegs` array before any rendering occurs.
+/// `drawsegs` array before any rendering occurs. Only the slots below
+/// `ds_p`, which `R_StoreWallRange` filled this frame, are ever read.
 const ZERO_DRAWSEG: drawseg_t = drawseg_t {
-    curline: ptr::null_mut(),
+    curline: SegId::new(0),
     x1: 0,
     x2: 0,
     scale1: 0,
@@ -132,22 +124,25 @@ struct cliprange_t {
 // ---------------------------------------------------------------------------
 
 /// BSP traversal state (C `r_bsp.c` globals other than the clip list).
+///
+/// Before the first frame the geometry ids are 0; each is set by the
+/// traversal before it is read.
 pub struct BspState {
     /// The seg currently being processed by `R_AddLine` and passed down to
     /// [`R_StoreWallRange`].
-    pub curline: *mut seg_t,
+    pub curline: SegId,
     /// The sidedef of the current seg (`curline->sidedef`). Set by `R_StoreWallRange`
     /// in `r_segs.c`.
-    pub sidedef: *mut side_t,
+    pub sidedef: SideId,
     /// The linedef of the current seg (`curline->linedef`). Set by `R_StoreWallRange`
     /// in `r_segs.c`.
-    pub linedef: *mut line_t,
+    pub linedef: LineId,
     /// The sector on the front side of the current seg. Set by [`R_Subsector`]
     /// and read by `r_segs.c`.
-    pub frontsector: *mut sector_t,
-    /// The sector on the back side of the current seg, or null for single-sided
-    /// lines. Set by `R_AddLine` and read by `r_segs.c`.
-    pub backsector: *mut sector_t,
+    pub frontsector: SectorId,
+    /// The sector on the back side of the current seg, or `None` for
+    /// single-sided lines. Set by `R_AddLine` and read by `r_segs.c`.
+    pub backsector: Option<SectorId>,
     /// Fixed-size array of prepared draw-segs for the current frame. Filled
     /// sequentially through `ds_p` (read during sprite clipping in `r_things.c`).
     pub drawsegs: [drawseg_t; MAXDRAWSEGS],
@@ -163,11 +158,11 @@ impl BspState {
     /// The state before the first frame: no current seg, no draw-segs.
     pub const fn new() -> Self {
         Self {
-            curline: ptr::null_mut(),
-            sidedef: ptr::null_mut(),
-            linedef: ptr::null_mut(),
-            frontsector: ptr::null_mut(),
-            backsector: ptr::null_mut(),
+            curline: SegId::new(0),
+            sidedef: SideId::new(0),
+            linedef: LineId::new(0),
+            frontsector: SectorId::new(0),
+            backsector: None,
             drawsegs: [ZERO_DRAWSEG; MAXDRAWSEGS],
             ds_p: 0,
             probe_frame: 0,
@@ -250,7 +245,7 @@ static CHECKCOORD: [[i32; 4]; 12] = [
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    play::setup::{LevelState, level},
+    play::setup::LevelState,
     render_3d::{
         draw::DRAW,
         main::{R_PointOnSide, R_PointToAngle, VIEW},
@@ -329,8 +324,9 @@ pub fn R_ClearClipSegs() {
 /// Caller must ensure `solidsegs` and `newend` have been initialized by
 /// [`R_ClearClipSegs`] before this frame. `first` must be <= `last` for a
 /// valid seg (a debug log is emitted if violated, but the function still runs
-/// to match C behavior). Mutates the clip list.
-pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
+/// to match C behavior). Mutates the clip list. `level` is the traversal's
+/// borrow of the level, handed on to `R_StoreWallRange`.
+pub unsafe fn R_ClipSolidWallSegment(level: &mut LevelState, first: i32, last: i32) {
     if first > last {
         log::debug!(
             "R_ClipSolidWallSegment INVALID: first={} > last={}",
@@ -351,7 +347,7 @@ pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
 
     if first < solidsegs[start].first {
         if last < solidsegs[start].first - 1 {
-            R_StoreWallRange(first, last);
+            R_StoreWallRange(level, first, last);
             let mut next = clip.newend;
             clip.newend = next + 1;
 
@@ -364,7 +360,7 @@ pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
             return;
         }
 
-        R_StoreWallRange(first, solidsegs[start].first - 1);
+        R_StoreWallRange(level, first, solidsegs[start].first - 1);
         solidsegs[start].first = first;
     }
 
@@ -379,7 +375,11 @@ pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
             break;
         }
 
-        R_StoreWallRange(solidsegs[next].last + 1, solidsegs[next_plus_1].first - 1);
+        R_StoreWallRange(
+            level,
+            solidsegs[next].last + 1,
+            solidsegs[next_plus_1].first - 1,
+        );
         next += 1;
 
         if last <= solidsegs[next].last {
@@ -403,7 +403,7 @@ pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
         }
     }
 
-    R_StoreWallRange(solidsegs[next].last + 1, last);
+    R_StoreWallRange(level, solidsegs[next].last + 1, last);
     solidsegs[start].last = last;
 
     // crunch:
@@ -441,8 +441,9 @@ pub unsafe fn R_ClipSolidWallSegment(first: i32, last: i32) {
 /// Caller must ensure `solidsegs` and `newend` have been initialized by
 /// [`R_ClearClipSegs`] before this frame. `first` must be <= `last` for a
 /// valid seg (a debug log is emitted if violated, but the function still runs
-/// to match C behavior). Reads the clip list without modifying it.
-pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
+/// to match C behavior). Reads the clip list without modifying it. `level`
+/// is the traversal's borrow of the level, handed on to `R_StoreWallRange`.
+pub unsafe fn R_ClipPassWallSegment(level: &mut LevelState, first: i32, last: i32) {
     if first > last {
         log::debug!(
             "R_ClipPassWallSegment INVALID: first={} > last={}",
@@ -462,11 +463,11 @@ pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
 
     if first < solidsegs[start].first {
         if last < solidsegs[start].first - 1 {
-            R_StoreWallRange(first, last);
+            R_StoreWallRange(level, first, last);
             return;
         }
 
-        R_StoreWallRange(first, solidsegs[start].first - 1);
+        R_StoreWallRange(level, first, solidsegs[start].first - 1);
     }
 
     if last <= solidsegs[start].last {
@@ -479,7 +480,11 @@ pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
             break;
         }
 
-        R_StoreWallRange(solidsegs[start].last + 1, solidsegs[start_plus_1].first - 1);
+        R_StoreWallRange(
+            level,
+            solidsegs[start].last + 1,
+            solidsegs[start_plus_1].first - 1,
+        );
         start += 1;
 
         if last <= solidsegs[start].last {
@@ -487,7 +492,7 @@ pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
         }
     }
 
-    R_StoreWallRange(solidsegs[start].last + 1, last);
+    R_StoreWallRange(level, solidsegs[start].last + 1, last);
 }
 
 // ---------------------------------------------------------------------------
@@ -505,28 +510,27 @@ pub unsafe fn R_ClipPassWallSegment(first: i32, last: i32) {
 ///    pass-through (window, height delta, or mid-texture), and dispatches
 ///    to [`R_ClipSolidWallSegment`] or [`R_ClipPassWallSegment`] accordingly.
 ///
-/// Sets `curline` to `line` and `backsector` to the back sector pointer
+/// Sets `curline` to `line` and `backsector` to the seg's back sector
 /// before calling the clip functions.
 ///
 /// Corresponds to `R_AddLine` in `r_bsp.c`.
 ///
 /// # Safety
-/// `line` must point to a valid, initialized [`seg_t`] whose `v1`, `v2`,
-/// `sidedef`, `linedef`, `frontsector`, and (if non-null) `backsector`
-/// pointers are all valid. The view state (`viewangle`, `clipangle`,
-/// `viewangletox`) and `frontsector` must have been initialized before the
-/// current frame. Must be called only during BSP traversal (i.e. within
-/// [`R_Subsector`]).
-unsafe fn R_AddLine(line: *mut seg_t) {
-    let (probe_frame, frontsector) = {
+/// `line` must be a seg of `level`. The view state (`viewangle`,
+/// `clipangle`, `viewangletox`) and `frontsector` must have been
+/// initialized before the current frame. Must be called only during BSP
+/// traversal (i.e. within [`R_Subsector`]).
+unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
+    let (probe_frame, frontsector_id) = {
         let mut bsp = BSP.borrow_mut();
         bsp.curline = line;
         (bsp.probe_frame, bsp.frontsector)
     };
-    let curline = line;
+    let seg = level.segs[line];
 
-    let orig_angle1 = R_PointToAngle((*(*line).v1).x, (*(*line).v1).y);
-    let orig_angle2 = R_PointToAngle((*(*line).v2).x, (*(*line).v2).y);
+    let (v1, v2) = (level.vertexes[seg.v1], level.vertexes[seg.v2]);
+    let orig_angle1 = R_PointToAngle(v1.x, v1.y);
+    let orig_angle2 = R_PointToAngle(v2.x, v2.y);
 
     let (viewangle, clipangle) = {
         let view = VIEW.borrow();
@@ -617,7 +621,7 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     log::trace!(
         "R_AddLine projected: frame={} seg={} x1={} x2={} a1={:#x} a2={:#x}",
         probe_frame,
-        seg_index(line),
+        line.index(),
         x1,
         x2,
         angle1,
@@ -635,88 +639,94 @@ unsafe fn R_AddLine(line: *mut seg_t) {
         return;
     }
 
-    let backsector = (*line).backsector;
-    BSP.borrow_mut().backsector = backsector;
+    BSP.borrow_mut().backsector = seg.backsector;
 
     // Single sided line?
-    if backsector.is_null() {
+    let Some(backsector_id) = seg.backsector else {
         log::trace!(
-            "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(1-sided) back=null front={:p}",
+            "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(1-sided) back=None front={:?}",
             probe_frame,
-            seg_index(line),
+            line.index(),
             x1,
             x2,
-            frontsector as *const _
+            frontsector_id
         );
-        R_ClipSolidWallSegment(x1, x2 - 1);
+        R_ClipSolidWallSegment(level, x1, x2 - 1);
         return;
-    }
+    };
 
-    // Closed door
-    if (*backsector).ceilingheight <= (*frontsector).floorheight
-        || (*backsector).floorheight >= (*frontsector).ceilingheight
-    {
-        log::trace!(
-            "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(closed-door) back={:p} f.ch={} f.fh={} b.ch={} b.fh={}",
-            probe_frame,
-            seg_index(line),
-            x1,
-            x2,
-            backsector as *const _,
-            (*frontsector).ceilingheight,
-            (*frontsector).floorheight,
-            (*backsector).ceilingheight,
-            (*backsector).floorheight
-        );
-        R_ClipSolidWallSegment(x1, x2 - 1);
-        return;
-    }
+    let solid = {
+        let frontsector = &level.sectors[frontsector_id];
+        let backsector = &level.sectors[backsector_id];
 
-    // Window
-    if (*backsector).ceilingheight != (*frontsector).ceilingheight
-        || (*backsector).floorheight != (*frontsector).floorheight
-    {
-        log::trace!(
-            "R_AddLine classify: frame={} seg={} x1={} x2={} decision=PASS(window) back={:p} f.ch={} f.fh={} b.ch={} b.fh={}",
-            probe_frame,
-            seg_index(line),
-            x1,
-            x2,
-            backsector as *const _,
-            (*frontsector).ceilingheight,
-            (*frontsector).floorheight,
-            (*backsector).ceilingheight,
-            (*backsector).floorheight
-        );
-        R_ClipPassWallSegment(x1, x2 - 1);
-        return;
-    }
+        // Closed door
+        if backsector.ceilingheight <= frontsector.floorheight
+            || backsector.floorheight >= frontsector.ceilingheight
+        {
+            log::trace!(
+                "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(closed-door) back={:?} f.ch={} f.fh={} b.ch={} b.fh={}",
+                probe_frame,
+                line.index(),
+                x1,
+                x2,
+                backsector_id,
+                frontsector.ceilingheight,
+                frontsector.floorheight,
+                backsector.ceilingheight,
+                backsector.floorheight
+            );
+            true
+        }
+        // Window
+        else if backsector.ceilingheight != frontsector.ceilingheight
+            || backsector.floorheight != frontsector.floorheight
+        {
+            log::trace!(
+                "R_AddLine classify: frame={} seg={} x1={} x2={} decision=PASS(window) back={:?} f.ch={} f.fh={} b.ch={} b.fh={}",
+                probe_frame,
+                line.index(),
+                x1,
+                x2,
+                backsector_id,
+                frontsector.ceilingheight,
+                frontsector.floorheight,
+                backsector.ceilingheight,
+                backsector.floorheight
+            );
+            false
+        }
+        // Reject empty lines
+        else if backsector.ceilingpic == frontsector.ceilingpic
+            && backsector.floorpic == frontsector.floorpic
+            && backsector.lightlevel == frontsector.lightlevel
+            && level.sides[seg.sidedef].midtexture == 0
+        {
+            log::trace!(
+                "R_AddLine classify: frame={} seg={} x1={} x2={} decision=REJECT(empty)",
+                probe_frame,
+                line.index(),
+                x1,
+                x2
+            );
+            return;
+        } else {
+            log::trace!(
+                "R_AddLine classify: frame={} seg={} x1={} x2={} decision=PASS(midtex/lighting) midtex={}",
+                probe_frame,
+                line.index(),
+                x1,
+                x2,
+                level.sides[seg.sidedef].midtexture
+            );
+            false
+        }
+    };
 
-    // Reject empty lines
-    if (*backsector).ceilingpic == (*frontsector).ceilingpic
-        && (*backsector).floorpic == (*frontsector).floorpic
-        && (*backsector).lightlevel == (*frontsector).lightlevel
-        && (*(*curline).sidedef).midtexture == 0
-    {
-        log::trace!(
-            "R_AddLine classify: frame={} seg={} x1={} x2={} decision=REJECT(empty)",
-            probe_frame,
-            seg_index(line),
-            x1,
-            x2
-        );
-        return;
+    if solid {
+        R_ClipSolidWallSegment(level, x1, x2 - 1);
+    } else {
+        R_ClipPassWallSegment(level, x1, x2 - 1);
     }
-
-    log::trace!(
-        "R_AddLine classify: frame={} seg={} x1={} x2={} decision=PASS(midtex/lighting) midtex={}",
-        probe_frame,
-        seg_index(line),
-        x1,
-        x2,
-        (*(*curline).sidedef).midtexture
-    );
-    R_ClipPassWallSegment(x1, x2 - 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -749,28 +759,26 @@ unsafe fn R_AddLine(line: *mut seg_t) {
 ///
 /// Corresponds to `R_CheckBBox` in `r_bsp.c`.
 ///
-/// # Safety
-/// `bspcoord` must point to a valid 4-element `fixed_t` array laid out as
-/// `[TOP, BOTTOM, LEFT, RIGHT]` (matching `BBox::TOP` etc. from `m_bbox.rs`).
-/// The view state (`viewx`, `viewy`, `viewangle`, `clipangle`,
-/// `viewangletox`) and `solidsegs` must have been initialized for the
-/// current frame.
-pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> i32 {
+/// `bspcoord` is laid out as `[TOP, BOTTOM, LEFT, RIGHT]` (matching
+/// `BBox::TOP` etc. from `m_bbox.rs`). The view state (`viewx`, `viewy`,
+/// `viewangle`, `clipangle`, `viewangletox`) and `solidsegs` must have been
+/// initialized for the current frame.
+pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
     let view = VIEW.borrow();
     let (viewx, viewy, viewangle, clipangle) =
         (view.viewx, view.viewy, view.viewangle, view.clipangle);
 
-    let boxx = if viewx <= *bspcoord.add(BBox::LEFT) {
+    let boxx = if viewx <= bspcoord[BBox::LEFT] {
         0
-    } else if viewx < *bspcoord.add(BBox::RIGHT) {
+    } else if viewx < bspcoord[BBox::RIGHT] {
         1
     } else {
         2
     };
 
-    let boxy = if viewy >= *bspcoord.add(BBox::TOP) {
+    let boxy = if viewy >= bspcoord[BBox::TOP] {
         0
-    } else if viewy > *bspcoord.add(BBox::BOTTOM) {
+    } else if viewy > bspcoord[BBox::BOTTOM] {
         1
     } else {
         2
@@ -782,10 +790,10 @@ pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> i32 {
     }
 
     let cc = CHECKCOORD[boxpos as usize];
-    let x1 = *bspcoord.add(cc[0] as usize);
-    let y1 = *bspcoord.add(cc[1] as usize);
-    let x2 = *bspcoord.add(cc[2] as usize);
-    let y2 = *bspcoord.add(cc[3] as usize);
+    let x1 = bspcoord[cc[0] as usize];
+    let y1 = bspcoord[cc[1] as usize];
+    let x2 = bspcoord[cc[2] as usize];
+    let y2 = bspcoord[cc[3] as usize];
 
     let mut angle1 = R_PointToAngle(x1, y1).wrapping_sub(viewangle);
     let mut angle2 = R_PointToAngle(x2, y2).wrapping_sub(viewangle);
@@ -844,7 +852,7 @@ pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> i32 {
 /// Renders one BSP leaf subsector.
 ///
 /// 1. Increments the subsector counter `sscount`.
-/// 2. Sets `frontsector` from the subsector's sector pointer.
+/// 2. Sets `frontsector` from the subsector's sector.
 /// 3. Registers floor and ceiling visplanes with [`R_FindPlane`] if the
 ///    viewer can see them (floor below eye, ceiling above eye or sky flat).
 /// 4. Adds sprites for all things in the sector via [`R_AddSprites`].
@@ -854,32 +862,26 @@ pub unsafe fn R_CheckBBox(bspcoord: *mut fixed_t) -> i32 {
 /// Corresponds to `R_Subsector` in `r_bsp.c`.
 ///
 /// # Safety
-/// `num` must be a valid index into the global `subsectors` array (bounds are
-/// not checked at runtime to match C behavior). The subsector's `sector`
-/// pointer and all `segs` it references must be valid.
-pub unsafe fn R_Subsector(num: i32) {
-    let num_usize = num as usize;
-
+/// `num` must be a subsector of `level` (the index is bounds-checked). The
+/// view state and the plane, opening and sprite buffers must be set up for
+/// the current frame.
+pub unsafe fn R_Subsector(level: &mut LevelState, num: SubsectorId) {
     let viewz = {
         let mut view = VIEW.borrow_mut();
         view.sscount += 1;
         view.viewz
     };
 
-    let LevelState {
-        subsectors, segs, ..
-    } = level();
-    let sub = &*subsectors.add(num_usize);
-    let frontsector = sub.sector;
-    BSP.borrow_mut().frontsector = frontsector;
-    let mut count = sub.numlines as i32;
-    let mut line = segs.add(sub.firstline as usize);
+    let sub = level.subsectors[num];
+    let frontsector_id = sub.sector;
+    BSP.borrow_mut().frontsector = frontsector_id;
+    let frontsector = &level.sectors[frontsector_id];
 
-    let floorplane = if (*frontsector).floorheight < viewz {
+    let floorplane = if frontsector.floorheight < viewz {
         Some(R_FindPlane(
-            (*frontsector).floorheight,
-            (*frontsector).floorpic as i32,
-            (*frontsector).lightlevel as i32,
+            frontsector.floorheight,
+            frontsector.floorpic as i32,
+            frontsector.lightlevel as i32,
         ))
     } else {
         None
@@ -888,23 +890,22 @@ pub unsafe fn R_Subsector(num: i32) {
 
     let skyflatnum = SKY.borrow().skyflatnum;
     let ceilingplane =
-        if (*frontsector).ceilingheight > viewz || (*frontsector).ceilingpic as i32 == skyflatnum {
+        if frontsector.ceilingheight > viewz || frontsector.ceilingpic as i32 == skyflatnum {
             Some(R_FindPlane(
-                (*frontsector).ceilingheight,
-                (*frontsector).ceilingpic as i32,
-                (*frontsector).lightlevel as i32,
+                frontsector.ceilingheight,
+                frontsector.ceilingpic as i32,
+                frontsector.lightlevel as i32,
             ))
         } else {
             None
         };
     PLANES.borrow_mut().ceilingplane = ceilingplane;
 
-    R_AddSprites(frontsector);
+    R_AddSprites(level, frontsector_id);
 
-    while count > 0 {
-        R_AddLine(line);
-        line = line.add(1);
-        count -= 1;
+    let firstline = sub.firstline as usize;
+    for line in firstline..firstline + sub.numlines.max(0) as usize {
+        R_AddLine(level, SegId::new(line));
     }
 }
 
@@ -928,19 +929,21 @@ pub unsafe fn R_Subsector(num: i32) {
 ///
 /// Corresponds to `R_RenderBSPNode` in `r_bsp.c`.
 ///
+/// The caller borrows the level for the whole traversal and passes it as
+/// `level`.
+///
 /// # Safety
-/// `bspnum` must be either a valid node index into the global `nodes` array
-/// or a value with the `NF_SUBSECTOR` flag set whose lower bits are a valid
-/// subsector index. All node and subsector data must have been loaded by
-/// `P_SetupLevel`. The view position and the occlusion list must be
-/// initialized for the current frame.
-pub unsafe fn R_RenderBSPNode(bspnum: i32) {
+/// `bspnum` must be either a node index into `level.nodes` or a value with
+/// the `NF_SUBSECTOR` flag set whose lower bits are a subsector index of
+/// `level`. The view position, the occlusion list and the plane, opening
+/// and sprite buffers must be initialized for the current frame.
+pub unsafe fn R_RenderBSPNode(level: &mut LevelState, bspnum: i32) {
     // Found a subsector?
     if (bspnum as u32) & NF_SUBSECTOR != 0 {
         let sub_num = if bspnum == -1 {
             0
         } else {
-            (bspnum as u32 & !NF_SUBSECTOR) as i32
+            (bspnum as u32 & !NF_SUBSECTOR) as usize
         };
         log::trace!(
             "R_RenderBSPNode: frame={} leaf subsector={} (bspnum={:#x})",
@@ -948,17 +951,17 @@ pub unsafe fn R_RenderBSPNode(bspnum: i32) {
             sub_num,
             bspnum as u32
         );
-        R_Subsector(sub_num);
+        R_Subsector(level, SubsectorId::new(sub_num));
         return;
     }
 
-    let bsp = &*(level().nodes.add(bspnum as usize) as *const node_t);
+    let bsp = level.nodes[NodeId::new(bspnum as usize)];
 
     let (viewx, viewy) = {
         let view = VIEW.borrow();
         (view.viewx, view.viewy)
     };
-    let side = R_PointOnSide(viewx, viewy, bsp);
+    let side = R_PointOnSide(viewx, viewy, &bsp);
 
     log::trace!(
         "R_RenderBSPNode: frame={} node={} side={} front_child={:#x} back_child={:#x}",
@@ -969,9 +972,9 @@ pub unsafe fn R_RenderBSPNode(bspnum: i32) {
         bsp.children[(side ^ 1) as usize] as u32,
     );
 
-    R_RenderBSPNode(bsp.children[side as usize] as i32);
+    R_RenderBSPNode(level, bsp.children[side as usize] as i32);
 
-    let back_visible = R_CheckBBox(bsp.bbox[(side ^ 1) as usize].as_ptr() as *mut fixed_t) != 0;
+    let back_visible = R_CheckBBox(&bsp.bbox[(side ^ 1) as usize]) != 0;
     let back_box = bsp.bbox[(side ^ 1) as usize];
     log::trace!(
         "R_RenderBSPNode: frame={} node={} back_visible={} back_bbox=[L={} R={} T={} B={}]",
@@ -984,7 +987,7 @@ pub unsafe fn R_RenderBSPNode(bspnum: i32) {
         back_box[BBox::BOTTOM],
     );
     if back_visible {
-        R_RenderBSPNode(bsp.children[(side ^ 1) as usize] as i32);
+        R_RenderBSPNode(level, bsp.children[(side ^ 1) as usize] as i32);
     }
 }
 
@@ -996,7 +999,7 @@ mod tests {
     #[test]
     fn state_starts_empty() {
         let bsp = BspState::new();
-        assert!(bsp.curline.is_null() && bsp.frontsector.is_null());
+        assert!(bsp.curline == SegId::new(0) && bsp.backsector.is_none());
         assert_eq!(bsp.ds_p, 0);
         assert_eq!(ClipSegsState::new().newend, 0);
     }

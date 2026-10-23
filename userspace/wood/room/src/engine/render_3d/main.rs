@@ -14,7 +14,7 @@ use crate::{
         doom::player::PlayerT,
         global::Global,
         interface::video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
-        map::{node_t, seg_t, subsector_t},
+        map::{SegId, SubsectorId, node_t},
         math::{
             self,
             bbox::BBox,
@@ -328,7 +328,7 @@ pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
 use crate::engine::{
     doom::main_loop::NetUpdate,
     misc::menu::MENU,
-    play::setup::{LevelState, level},
+    play::setup::{LEVEL, LevelState},
     render_3d::{
         bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
         data::{R_InitData, RENDER_DATA},
@@ -382,36 +382,33 @@ pub unsafe fn R_AddPointToBox(x: i32, y: i32, box_: *mut fixed_t) {
 /// back to a full cross-product test.
 ///
 /// Equivalent to `R_PointOnSide` in `r_main.c`.
-///
-/// # Safety
-/// `node` must be a valid, non-null pointer to a [`node_t`].
-pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> i32 {
-    if (*node).dx == 0 {
-        if x <= (*node).x {
-            return ((*node).dy > 0) as i32;
+pub fn R_PointOnSide(x: fixed_t, y: fixed_t, node: &node_t) -> i32 {
+    if node.dx == 0 {
+        if x <= node.x {
+            return (node.dy > 0) as i32;
         }
-        return ((*node).dy < 0) as i32;
+        return (node.dy < 0) as i32;
     }
-    if (*node).dy == 0 {
-        if y <= (*node).y {
-            return ((*node).dx < 0) as i32;
+    if node.dy == 0 {
+        if y <= node.y {
+            return (node.dx < 0) as i32;
         }
-        return ((*node).dx > 0) as i32;
+        return (node.dx > 0) as i32;
     }
 
-    let dx = x - (*node).x;
-    let dy = y - (*node).y;
+    let dx = x - node.x;
+    let dy = y - node.y;
 
     // Try to quickly decide by looking at sign bits.
-    if (((*node).dy ^ (*node).dx ^ dx ^ dy) as u32) & 0x80000000 != 0 {
-        if (((*node).dy ^ dx) as u32) & 0x80000000 != 0 {
+    if ((node.dy ^ node.dx ^ dx ^ dy) as u32) & 0x80000000 != 0 {
+        if ((node.dy ^ dx) as u32) & 0x80000000 != 0 {
             return 1;
         }
         return 0;
     }
 
-    let left = FixedMul((*node).dy >> FRACBITS, dx);
-    let right = FixedMul(dy, (*node).dx >> FRACBITS);
+    let left = FixedMul(node.dy >> FRACBITS, dx);
+    let right = FixedMul(dy, node.dx >> FRACBITS);
 
     if right < left { 0 } else { 1 }
 }
@@ -426,16 +423,14 @@ pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> i32 
 /// sign-bit shortcut as [`R_PointOnSide`].
 ///
 /// Equivalent to `R_PointOnSegSide` in `r_main.c`.
-///
-/// # Safety
-/// `line` must be a valid, non-null pointer to a [`seg_t`] whose `v1` and
-/// `v2` vertex pointers are also valid.
-pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> i32 {
-    let lx = (*(*line).v1).x;
-    let ly = (*(*line).v1).y;
+pub fn R_PointOnSegSide(level: &LevelState, x: fixed_t, y: fixed_t, line: SegId) -> i32 {
+    let line = &level.segs[line];
+    let (v1, v2) = (level.vertexes[line.v1], level.vertexes[line.v2]);
+    let lx = v1.x;
+    let ly = v1.y;
 
-    let ldx = (*(*line).v2).x - lx;
-    let ldy = (*(*line).v2).y - ly;
+    let ldx = v2.x - lx;
+    let ldy = v2.y - ly;
 
     if ldx == 0 {
         if x <= lx {
@@ -968,38 +963,32 @@ const NF_SUBSECTOR: u32 = 0x8000;
 
 /// Walk the BSP tree to find the subsector that contains the given map point.
 ///
-/// Starts at the root node (`numnodes - 1`) and descends by calling
+/// Starts at the root node (the last one) and descends by calling
 /// [`R_PointOnSide`] at each node until reaching a leaf (subsector) indicated
 /// by the `NF_SUBSECTOR` flag. Handles the degenerate case of a single
 /// subsector (no nodes).
 ///
 /// Equivalent to `R_PointInSubsector` in `r_main.c`.
 ///
-/// # Safety
-/// Reads the `nodes` and `subsectors` arrays from `p_setup`; both must be
-/// fully populated (i.e. the map must have been loaded) before this function
-/// is called.
-pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
-    let LevelState {
-        numnodes,
-        nodes,
-        subsectors,
-        ..
-    } = level();
+/// Reads the level's `nodes` (a level must be loaded), borrowing the level
+/// for the walk.
+pub fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> SubsectorId {
+    let level = LEVEL.borrow();
+    let nodes = &level.nodes[..];
     // single subsector is a special case
-    if numnodes == 0 {
-        return subsectors;
+    if nodes.is_empty() {
+        return SubsectorId::new(0);
     }
 
-    let mut nodenum = numnodes - 1;
+    let mut nodenum = nodes.len() as i32 - 1;
 
     while (nodenum as u32) & NF_SUBSECTOR == 0 {
-        let node = nodes.add(nodenum as usize) as *const node_t;
+        let node = &nodes[nodenum as usize];
         let side = R_PointOnSide(x, y, node);
-        nodenum = (*node).children[side as usize] as i32;
+        nodenum = node.children[side as usize] as i32;
     }
 
-    subsectors.add((nodenum as u32 & !NF_SUBSECTOR) as usize)
+    SubsectorId::new((nodenum as u32 & !NF_SUBSECTOR) as usize)
 }
 
 // ---------------------------------------------------------------------------
@@ -1087,7 +1076,12 @@ pub unsafe fn R_RenderPlayerView(player: *mut PlayerT) {
     R_ClearSprites();
 
     NetUpdate();
-    R_RenderBSPNode(level().numnodes - 1);
+    {
+        // The traversal borrows the level once and hands it down.
+        let mut level = LEVEL.borrow_mut();
+        let root_node = level.nodes.len() as i32 - 1;
+        R_RenderBSPNode(&mut level, root_node);
+    }
     NetUpdate();
     R_DrawPlanes();
     NetUpdate();
@@ -1290,23 +1284,44 @@ mod tests {
     }
 
     #[test]
+    fn r_point_in_subsector_walks_the_nodes_to_a_leaf() {
+        let _guard = crate::engine::play::setup::LEVEL_TEST_LOCK.lock().unwrap();
+        // One node on the vertical line x = 0 pointing north: the right
+        // (front) child is subsector 1, the left (back) child subsector 0.
+        let node = node_t {
+            x: 0,
+            y: 0,
+            dx: 0,
+            dy: FRACUNIT,
+            bbox: [[0; 4]; 2],
+            children: [NF_SUBSECTOR as u16 | 1, NF_SUBSECTOR as u16],
+        };
+        let saved_nodes = std::mem::take(&mut LEVEL.borrow_mut().nodes);
+        // Without nodes the level is a single subsector.
+        assert_eq!(R_PointInSubsector(5 * FRACUNIT, 0), SubsectorId::new(0));
+
+        LEVEL.borrow_mut().nodes = vec![node];
+        assert_eq!(R_PointInSubsector(5 * FRACUNIT, 0), SubsectorId::new(1));
+        assert_eq!(R_PointInSubsector(-5 * FRACUNIT, 0), SubsectorId::new(0));
+        LEVEL.borrow_mut().nodes = saved_nodes;
+    }
+
+    #[test]
     fn r_point_on_side_vertical_line() {
-        unsafe {
-            // Node with dx == 0, dy > 0 (vertical line, northward).
-            let node = node_t {
-                x: 0,
-                y: 0,
-                dx: 0,
-                dy: FRACUNIT,
-                bbox: [[0; 4]; 2],
-                children: [0; 2],
-            };
-            // Point to the left of the line -> side 1 (from C logic).
-            assert_eq!(R_PointOnSide(-FRACUNIT, 0, &node), 1);
-            // Point to the right of the line -> side 0.
-            assert_eq!(R_PointOnSide(FRACUNIT, 0, &node), 0);
-            // Point exactly on the line -> x <= node.x, side depends on dy > 0 -> 1.
-            assert_eq!(R_PointOnSide(0, 0, &node), 1);
-        }
+        // Node with dx == 0, dy > 0 (vertical line, northward).
+        let node = node_t {
+            x: 0,
+            y: 0,
+            dx: 0,
+            dy: FRACUNIT,
+            bbox: [[0; 4]; 2],
+            children: [0; 2],
+        };
+        // Point to the left of the line -> side 1 (from C logic).
+        assert_eq!(R_PointOnSide(-FRACUNIT, 0, &node), 1);
+        // Point to the right of the line -> side 0.
+        assert_eq!(R_PointOnSide(FRACUNIT, 0, &node), 0);
+        // Point exactly on the line -> x <= node.x, side depends on dy > 0 -> 1.
+        assert_eq!(R_PointOnSide(0, 0, &node), 1);
     }
 }

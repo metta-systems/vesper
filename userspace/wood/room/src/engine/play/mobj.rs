@@ -14,7 +14,7 @@ use crate::engine::{
     doom::player::{CF_NOMOMENTUM, MAXPLAYERS, PlayerMessage, PlayerT},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
-    map::subsector_t,
+    map::SubsectorId,
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedMul},
         tables::{ANG45, ANGLETOFINESHIFT, finecosine, finesine},
@@ -24,6 +24,7 @@ use crate::engine::{
         info::*,
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
+        setup::LEVEL,
         tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, thinker_t},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
@@ -117,7 +118,7 @@ pub struct mobj_t {
     /// Previous thing in the blockmap block's linked list.
     pub bprev: *mut mobj_t,
     /// The sub-sector this thing currently occupies.
-    pub subsector: *mut subsector_t,
+    pub subsector: SubsectorId,
     /// Floor height at the thing's current position.
     pub floorz: i32,
     /// Ceiling height at the thing's current position.
@@ -324,12 +325,15 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             if !mo.player.is_null() {
                 P_SlideMove(mo as *mut mobj_t);
             } else if mo.flags & MF_MISSILE != 0 {
-                let cl = ceilingline();
-                if !cl.is_null() {
-                    let line = cl;
-                    if !(*line).backsector.is_null()
-                        && (*(*line).backsector).ceilingpic == SKY.borrow().skyflatnum as i16
-                    {
+                if let Some(line) = ceilingline() {
+                    let skyflatnum = SKY.borrow().skyflatnum as i16;
+                    let hits_sky = {
+                        let level = LEVEL.borrow();
+                        level.lines[line]
+                            .backsector
+                            .is_some_and(|back| level.sectors[back].ceilingpic == skyflatnum)
+                    };
+                    if hits_sky {
                         P_RemoveMobj(mo as *mut mobj_t);
                         return;
                     }
@@ -364,7 +368,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             || mo.momx < -FRACUNIT / 4
             || mo.momy > FRACUNIT / 4
             || mo.momy < -FRACUNIT / 4)
-        && mo.floorz != (*(*mo.subsector).sector).floorheight
+        && mo.floorz != LEVEL.borrow().subsector_sector(mo.subsector).floorheight
     {
         return;
     }
@@ -492,16 +496,13 @@ pub unsafe fn P_NightmareRespawn(mobj: *mut mobj_t) {
         return;
     }
 
-    let mut mo = P_SpawnMobj(
-        mobj.x,
-        mobj.y,
-        (*(*mobj.subsector).sector).floorheight,
-        MT_TFOG,
-    );
+    let floorheight = LEVEL.borrow().subsector_sector(mobj.subsector).floorheight;
+    let mut mo = P_SpawnMobj(mobj.x, mobj.y, floorheight, MT_TFOG);
     S_StartSound(mo, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y);
-    mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_TFOG);
+    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
+    mo = P_SpawnMobj(x, y, floorheight, MT_TFOG);
     S_StartSound(mo, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
@@ -620,8 +621,12 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
 
     P_SetThingPosition(mobj);
 
-    mobj_ref.floorz = (*(*mobj_ref.subsector).sector).floorheight;
-    mobj_ref.ceilingz = (*(*mobj_ref.subsector).sector).ceilingheight;
+    {
+        let level = LEVEL.borrow();
+        let sector = level.subsector_sector(mobj_ref.subsector);
+        mobj_ref.floorz = sector.floorheight;
+        mobj_ref.ceilingz = sector.ceilingheight;
+    }
 
     if z == ONFLOORZ {
         mobj_ref.z = mobj_ref.floorz;
@@ -701,7 +706,8 @@ pub unsafe fn P_RespawnSpecials() {
     let y = (mthing.y.get() as i32) << FRACBITS;
 
     let ss = R_PointInSubsector(x, y);
-    let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
+    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
+    let mut mo = P_SpawnMobj(x, y, floorheight, MT_IFOG);
     S_StartSound(mo, Sfx::Itmbk as i32);
 
     let (z, i) = {

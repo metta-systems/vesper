@@ -41,7 +41,7 @@ use crate::engine::{
     },
     game::player as game_player,
     global::Global,
-    map::{line_t, sector_t, side_t, subsector_t},
+    map::{SectorId, SubsectorId},
     play::{
         ceilng::{CEILINGS, MAXCEILINGS, P_AddActiveCeiling, T_MoveCeiling, ceiling_t},
         doors::{T_VerticalDoor, vldoor_t},
@@ -128,7 +128,7 @@ use crate::engine::{
     play::{
         maputl::P_SetThingPosition,
         mobj::{P_MobjThinker, P_RemoveMobj},
-        setup::{LevelState, level},
+        setup::LEVEL,
     },
 };
 
@@ -252,27 +252,18 @@ fn saveg_write_enum(value: u32) {
 // Struct serialization helpers
 // ---------------------------------------------------------------------------
 
-/// Serializes a `sector_t` pointer as a zero-based index into the level's
-/// `sectors` array.
-///
-/// Returns `0` for a null pointer. The C equivalent uses pointer subtraction
-/// (`sector - sectors`); this compares addresses, so a `sector` outside
-/// `sectors` yields a meaningless index rather than undefined behaviour.
-fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
-    if sector.is_null() {
-        0
-    } else {
-        ((sector.addr() - level().sectors.addr()) / size_of::<sector_t>()) as u32
-    }
+/// Serializes a sector as its zero-based index into the level's `sectors`
+/// array (C: `sector - sectors`).
+fn saveg_write_sector_ptr(sector: SectorId) -> u32 {
+    sector.index() as u32
 }
 
-/// Deserializes a sector index from the save stream into a `*mut sector_t`.
+/// Deserializes a sector index from the save stream.
 ///
-/// `index` is an offset into the level's `sectors` array. No bounds check is
-/// performed; callers must trust that the index was written by a valid
-/// `saveg_write_sector_ptr` call.
-unsafe fn saveg_read_sector_ptr(index: u32) -> *mut sector_t {
-    level().sectors.add(index as usize)
+/// `index` is an offset into the level's `sectors` array, as written by
+/// `saveg_write_sector_ptr`; it is checked when the sector is used.
+fn saveg_read_sector_ptr(index: u32) -> SectorId {
+    SectorId::new(index as usize)
 }
 
 /// Serializes a `State` pointer as a zero-based index into the `states`
@@ -435,8 +426,10 @@ unsafe fn saveg_write_thinker_t(th: *const thinker_t) {
 /// After reading:
 /// - `prev`/`next` in the embedded thinker are raw addresses (stale from the
 ///   saving session) and will be rebuilt by `P_AddThinker`.
-/// - `snext`, `sprev`, `bnext`, `bprev`, `subsector`, `target`, `tracer` are
-///   raw saved addresses that callers must NULL out or re-resolve.
+/// - `snext`, `sprev`, `bnext`, `bprev`, `target`, `tracer` are raw saved
+///   addresses that callers must NULL out or re-resolve.
+/// - `subsector` is saved as an address too; it is skipped and left as
+///   subsector 0 until `P_SetThingPosition` finds the real one.
 /// - `state` is resolved from a stream index via `saveg_read_state_ptr`.
 /// - `player` is a 1-based index; re-resolved and the back-pointer
 ///   `player->mo` is updated in place.
@@ -467,8 +460,9 @@ unsafe fn saveg_read_mobj_t(mobj: *mut c_void) {
     (*mo).bnext = saveg_read32() as *mut mobj_t;
     (*mo).bprev = saveg_read32() as *mut mobj_t;
 
-    // subsector
-    (*mo).subsector = saveg_read32() as *mut subsector_t;
+    // subsector (a saved address, rebuilt by `P_SetThingPosition`)
+    saveg_read32();
+    (*mo).subsector = SubsectorId::new(0);
 
     // floorz, ceilingz, radius, height
     (*mo).floorz = saveg_read32() as i32;
@@ -567,8 +561,9 @@ unsafe fn saveg_write_mobj_t(mobj: *const c_void) {
     saveg_write32((*mo).bnext as u32);
     saveg_write32((*mo).bprev as u32);
 
-    // subsector
-    saveg_write32((*mo).subsector as u32);
+    // subsector (C writes the pointer: the subsector record's address)
+    let subsector_address = (&raw const LEVEL.borrow().subsectors[(*mo).subsector]).addr();
+    saveg_write32(subsector_address as u32);
 
     // floorz, ceilingz, radius, height
     saveg_write32((*mo).floorz as u32);
@@ -896,7 +891,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
 ///
 /// The embedded `thinker_t` header is read first, followed by type, sector
 /// index, height fields, speed, crush flag, direction, tag, and old direction.
-/// The sector index is resolved to a pointer via `saveg_read_sector_ptr`.
+/// The sector index becomes a sector id via `saveg_read_sector_ptr`.
 /// C origin: `saveg_read_ceiling_t`.
 unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
     let s = &mut *ceil;
@@ -915,7 +910,7 @@ unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
 
 /// Writes a `ceiling_t` special thinker to the save stream from `*ceil`.
 ///
-/// The sector pointer is serialized as an index via `saveg_write_sector_ptr`.
+/// The sector is serialized as an index via `saveg_write_sector_ptr`.
 /// C origin: `saveg_write_ceiling_t`.
 unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
     let s = &*ceil;
@@ -1421,56 +1416,37 @@ pub unsafe fn P_UnArchivePlayers() {
 /// offsets (divided by 65536, stored as 16-bit), and top/bottom/mid texture
 /// indices.
 ///
-/// Called by `g_game.c` (`G_DoSaveGame`).
-///
-/// # Safety
-///
-/// `save_stream` must be the stream being written.
-/// The global `sectors` array (length `numsectors`), `lines` array (length
-/// `numlines`), and `sides` array must all be fully initialized. Every
-/// `line_t.sidenum[j]` that is not `-1` must be a valid index into `sides`.
-pub unsafe fn P_ArchiveWorld() {
-    let LevelState {
-        numsectors,
-        sectors,
-        numlines,
-        lines,
-        sides,
-        ..
-    } = level();
-    let num_sec = numsectors as usize;
-    let num_li = numlines as usize;
+/// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
+/// stream written and a level loaded.
+pub fn P_ArchiveWorld() {
+    let level = LEVEL.borrow();
 
     // do sectors
-    for i in 0..num_sec {
-        let sec = sectors.cast::<sector_t>().add(i);
-        saveg_write16(((*sec).floorheight >> 16) as u16);
-        saveg_write16(((*sec).ceilingheight >> 16) as u16);
-        saveg_write16((*sec).floorpic as u16);
-        saveg_write16((*sec).ceilingpic as u16);
-        saveg_write16((*sec).lightlevel as u16);
-        saveg_write16((*sec).special as u16);
-        saveg_write16((*sec).tag as u16);
+    for sec in &level.sectors[..level.numsectors as usize] {
+        saveg_write16((sec.floorheight >> 16) as u16);
+        saveg_write16((sec.ceilingheight >> 16) as u16);
+        saveg_write16(sec.floorpic as u16);
+        saveg_write16(sec.ceilingpic as u16);
+        saveg_write16(sec.lightlevel as u16);
+        saveg_write16(sec.special as u16);
+        saveg_write16(sec.tag as u16);
     }
 
     // do lines
-    for i in 0..num_li {
-        let li = lines.cast::<line_t>().add(i);
-        saveg_write16((*li).flags as u16);
-        saveg_write16((*li).special as u16);
-        saveg_write16((*li).tag as u16);
+    for li in &level.lines {
+        saveg_write16(li.flags as u16);
+        saveg_write16(li.special as u16);
+        saveg_write16(li.tag as u16);
         for j in 0..2 {
-            if (*li).sidenum[j as usize] == -1 {
+            if li.sidenum[j] == -1 {
                 continue;
             }
-            let si = sides
-                .cast::<side_t>()
-                .add((*li).sidenum[j as usize] as usize);
-            saveg_write16(((*si).textureoffset >> 16) as u16);
-            saveg_write16(((*si).rowoffset >> 16) as u16);
-            saveg_write16((*si).toptexture as u16);
-            saveg_write16((*si).bottomtexture as u16);
-            saveg_write16((*si).midtexture as u16);
+            let si = &level.sides[li.sidenum[j] as usize];
+            saveg_write16((si.textureoffset >> 16) as u16);
+            saveg_write16((si.rowoffset >> 16) as u16);
+            saveg_write16(si.toptexture as u16);
+            saveg_write16(si.bottomtexture as u16);
+            saveg_write16(si.midtexture as u16);
         }
     }
 }
@@ -1485,60 +1461,41 @@ pub unsafe fn P_ArchiveWorld() {
 /// For each linedef: reads flags, special, tag, then each present sidedef's
 /// texture offsets (shifted left 16 to restore 16.16) and texture indices.
 ///
-/// Called by `g_game.c` (`G_DoLoadGame`).
-///
-/// # Safety
-///
-/// `save_stream` must be positioned at the byte
-/// sequence written by `P_ArchiveWorld`. The `sectors` array (length
-/// `numsectors`), `lines` array (length `numlines`), and `sides` array must
-/// all be allocated and at least partially initialized (map load must have
-/// completed). Every `line_t.sidenum[j]` that is not `-1` must be a valid
-/// index into `sides`.
-pub unsafe fn P_UnArchiveWorld() {
-    let LevelState {
-        numsectors,
-        sectors,
-        numlines,
-        lines,
-        sides,
-        ..
-    } = level();
-    let num_sec = numsectors as usize;
-    let num_li = numlines as usize;
+/// Called by `g_game.c` (`G_DoLoadGame`), with `save_stream` positioned at
+/// the byte sequence written by `P_ArchiveWorld` and the saved level loaded.
+pub fn P_UnArchiveWorld() {
+    let mut level = LEVEL.borrow_mut();
+    let level = &mut *level;
+    let numsectors = level.numsectors as usize;
 
     // do sectors
-    for i in 0..num_sec {
-        let sec = sectors.cast::<sector_t>().add(i);
-        (*sec).floorheight = (saveg_read16() as i16 as i32) << 16;
-        (*sec).ceilingheight = (saveg_read16() as i16 as i32) << 16;
-        (*sec).floorpic = saveg_read16() as i16;
-        (*sec).ceilingpic = saveg_read16() as i16;
-        (*sec).lightlevel = saveg_read16() as i16;
-        (*sec).special = saveg_read16() as i16;
-        (*sec).tag = saveg_read16() as i16;
-        (*sec).specialdata = std::ptr::null_mut();
-        (*sec).soundtarget = std::ptr::null_mut();
+    for sec in &mut level.sectors[..numsectors] {
+        sec.floorheight = (saveg_read16() as i16 as i32) << 16;
+        sec.ceilingheight = (saveg_read16() as i16 as i32) << 16;
+        sec.floorpic = saveg_read16() as i16;
+        sec.ceilingpic = saveg_read16() as i16;
+        sec.lightlevel = saveg_read16() as i16;
+        sec.special = saveg_read16() as i16;
+        sec.tag = saveg_read16() as i16;
+        sec.specialdata = std::ptr::null_mut();
+        sec.soundtarget = std::ptr::null_mut();
     }
 
     // do lines
-    for i in 0..num_li {
-        let li = lines.cast::<line_t>().add(i);
-        (*li).flags = saveg_read16() as i16;
-        (*li).special = saveg_read16() as i16;
-        (*li).tag = saveg_read16() as i16;
+    for li in &mut level.lines {
+        li.flags = saveg_read16() as i16;
+        li.special = saveg_read16() as i16;
+        li.tag = saveg_read16() as i16;
         for j in 0..2 {
-            if (*li).sidenum[j as usize] == -1 {
+            if li.sidenum[j] == -1 {
                 continue;
             }
-            let si = sides
-                .cast::<side_t>()
-                .add((*li).sidenum[j as usize] as usize);
-            (*si).textureoffset = (saveg_read16() as i16 as i32) << 16;
-            (*si).rowoffset = (saveg_read16() as i16 as i32) << 16;
-            (*si).toptexture = saveg_read16() as i16;
-            (*si).bottomtexture = saveg_read16() as i16;
-            (*si).midtexture = saveg_read16() as i16;
+            let si = &mut level.sides[li.sidenum[j] as usize];
+            si.textureoffset = (saveg_read16() as i16 as i32) << 16;
+            si.rowoffset = (saveg_read16() as i16 as i32) << 16;
+            si.toptexture = saveg_read16() as i16;
+            si.bottomtexture = saveg_read16() as i16;
+            si.midtexture = saveg_read16() as i16;
         }
     }
 }
@@ -1668,13 +1625,11 @@ pub unsafe fn P_UnArchiveThinkers() {
                 (*mo).info = mobjinfo_ptr((*mo).kind as usize);
 
                 // rebuild floorz/ceilingz from subsector
-                let subsec = (*mo).subsector;
-                if !subsec.is_null() {
-                    let sector = (*subsec).sector;
-                    if !sector.is_null() {
-                        (*mo).floorz = (*sector).floorheight;
-                        (*mo).ceilingz = (*sector).ceilingheight;
-                    }
+                {
+                    let level = LEVEL.borrow();
+                    let sector = level.subsector_sector((*mo).subsector);
+                    (*mo).floorz = sector.floorheight;
+                    (*mo).ceilingz = sector.ceilingheight;
                 }
 
                 // set thinker kind
@@ -1865,7 +1820,8 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut ceiling_t;
                 saveg_read_ceiling_t(ceiling);
-                (*ceiling).sector.as_mut().unwrap().specialdata = &raw mut (*ceiling).thinker;
+                LEVEL.borrow_mut().sectors[(*ceiling).sector].specialdata =
+                    &raw mut (*ceiling).thinker;
 
                 // A set function slot read as `Ceiling`; a null one (C keeps
                 // the function null) is a ceiling in stasis.
@@ -1884,7 +1840,7 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut vldoor_t;
                 saveg_read_vldoor_t(door);
-                (*door).sector.as_mut().unwrap().specialdata = &raw mut (*door).thinker;
+                LEVEL.borrow_mut().sectors[(*door).sector].specialdata = &raw mut (*door).thinker;
                 (*door).thinker.kind = ThinkerKind::Door;
                 P_AddThinker(&raw mut (*door).thinker);
             }
@@ -1896,7 +1852,7 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut floormove_t;
                 saveg_read_floormove_t(floor);
-                (*floor).sector.as_mut().unwrap().specialdata = &raw mut (*floor).thinker;
+                LEVEL.borrow_mut().sectors[(*floor).sector].specialdata = &raw mut (*floor).thinker;
                 (*floor).thinker.kind = ThinkerKind::Floor;
                 P_AddThinker(&raw mut (*floor).thinker);
             }
@@ -1908,7 +1864,7 @@ pub unsafe fn P_UnArchiveSpecials() {
                     std::ptr::null_mut(),
                 ) as *mut plat_t;
                 saveg_read_plat_t(plat);
-                (*plat).sector.as_mut().unwrap().specialdata = &raw mut (*plat).thinker;
+                LEVEL.borrow_mut().sectors[(*plat).sector].specialdata = &raw mut (*plat).thinker;
 
                 // A set function slot read as `Plat`; a null one (C keeps the
                 // function null) is a platform in stasis.
@@ -2157,7 +2113,9 @@ mod tests {
         assert_eq!(saveg_write_player_ptr(game_player(2)), 3);
         assert_eq!(unsafe { saveg_read_player_ptr(3) }, game_player(2));
 
-        assert_eq!(saveg_write_sector_ptr(std::ptr::null()), 0);
+        assert_eq!(saveg_write_sector_ptr(SectorId::new(0)), 0);
+        assert_eq!(saveg_write_sector_ptr(SectorId::new(17)), 17);
+        assert_eq!(saveg_read_sector_ptr(17), SectorId::new(17));
     }
 
     #[test]

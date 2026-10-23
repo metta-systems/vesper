@@ -7,11 +7,11 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use crate::engine::{
-    map::{line_t, sector_t},
+    map::{SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
     play::{
         map::P_ChangeSector,
-        setup::level,
+        setup::LEVEL,
         spec::{
             P_FindHighestFloorSurrounding, P_FindLowestCeilingSurrounding,
             P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
@@ -88,7 +88,7 @@ pub struct floormove_t {
     /// Non-zero if this floor should crush things it encounters.
     pub crush: i32,
     /// The sector whose floor is being moved.
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
     /// Direction of movement: `1` = up, `-1` = down.
     pub direction: i32,
     /// Sector special to apply when the floor finishes (`floor_lowerAndChange` / `floor_donutRaise`).
@@ -125,6 +125,28 @@ impl floormove_t {
     }
 }
 
+/// Height of `sector`'s floor (`floorOrCeiling == 0`) or ceiling.
+fn plane_height(sector: SectorId, floorOrCeiling: i32) -> fixed_t {
+    let level = LEVEL.borrow();
+    let sec = &level.sectors[sector];
+    if floorOrCeiling == 0 {
+        sec.floorheight
+    } else {
+        sec.ceilingheight
+    }
+}
+
+/// Set the height of `sector`'s floor (`floorOrCeiling == 0`) or ceiling.
+fn set_plane_height(sector: SectorId, floorOrCeiling: i32, height: fixed_t) {
+    let mut level = LEVEL.borrow_mut();
+    let sec = &mut level.sectors[sector];
+    if floorOrCeiling == 0 {
+        sec.floorheight = height;
+    } else {
+        sec.ceilingheight = height;
+    }
+}
+
 /// Move a plane (floor or ceiling) one step toward `dest` and check for crushing.
 ///
 /// Shared by the floor, ceiling, platform, and door subsystems.
@@ -133,6 +155,10 @@ impl floormove_t {
 /// `direction`: `1` = up, `-1` = down.
 /// `crush`: non-zero enables crushing things caught by the moving plane.
 ///
+/// Each height change is written to the level before `P_ChangeSector`
+/// re-checks the things it moves (which can run any play code), so no
+/// borrow of the level spans that call.
+///
 /// Returns one of:
 /// - `result_ok` — moved without incident.
 /// - `result_crushed` — a thing was crushed; the plane may have been reversed.
@@ -140,9 +166,10 @@ impl floormove_t {
 ///
 /// # Safety
 ///
-/// `sector` must be a valid, non-null pointer into the current map's sectors.
+/// `sector` must belong to the current map, and every thing linked into the
+/// blockmap must be live (see `P_ChangeSector`).
 pub unsafe fn T_MovePlane(
-    sector: *mut sector_t,
+    sector: SectorId,
     speed: fixed_t,
     dest: fixed_t,
     crush: i32,
@@ -150,28 +177,26 @@ pub unsafe fn T_MovePlane(
     direction: i32,
 ) -> i32 {
     unsafe {
-        let sec = &mut *sector;
         match floorOrCeiling {
             0 => {
                 // FLOOR
                 match direction {
                     -1 => {
                         // DOWN
-                        if sec.floorheight - speed < dest {
-                            let lastpos = sec.floorheight;
-                            sec.floorheight = dest;
+                        let lastpos = plane_height(sector, 0);
+                        if lastpos - speed < dest {
+                            set_plane_height(sector, 0, dest);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
-                                sec.floorheight = lastpos;
+                                set_plane_height(sector, 0, lastpos);
                                 P_ChangeSector(sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            let lastpos = sec.floorheight;
-                            sec.floorheight -= speed;
+                            set_plane_height(sector, 0, lastpos - speed);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
-                                sec.floorheight = lastpos;
+                                set_plane_height(sector, 0, lastpos);
                                 P_ChangeSector(sector, crush);
                                 return result_crushed;
                             }
@@ -179,24 +204,23 @@ pub unsafe fn T_MovePlane(
                     }
                     1 => {
                         // UP
-                        if sec.floorheight + speed > dest {
-                            let lastpos = sec.floorheight;
-                            sec.floorheight = dest;
+                        let lastpos = plane_height(sector, 0);
+                        if lastpos + speed > dest {
+                            set_plane_height(sector, 0, dest);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
-                                sec.floorheight = lastpos;
+                                set_plane_height(sector, 0, lastpos);
                                 P_ChangeSector(sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            let lastpos = sec.floorheight;
-                            sec.floorheight += speed;
+                            set_plane_height(sector, 0, lastpos + speed);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
-                                sec.floorheight = lastpos;
+                                set_plane_height(sector, 0, lastpos);
                                 P_ChangeSector(sector, crush);
                                 return result_crushed;
                             }
@@ -210,24 +234,23 @@ pub unsafe fn T_MovePlane(
                 match direction {
                     -1 => {
                         // DOWN
-                        if sec.ceilingheight - speed < dest {
-                            let lastpos = sec.ceilingheight;
-                            sec.ceilingheight = dest;
+                        let lastpos = plane_height(sector, 1);
+                        if lastpos - speed < dest {
+                            set_plane_height(sector, 1, dest);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
-                                sec.ceilingheight = lastpos;
+                                set_plane_height(sector, 1, lastpos);
                                 P_ChangeSector(sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            let lastpos = sec.ceilingheight;
-                            sec.ceilingheight -= speed;
+                            set_plane_height(sector, 1, lastpos - speed);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
-                                sec.ceilingheight = lastpos;
+                                set_plane_height(sector, 1, lastpos);
                                 P_ChangeSector(sector, crush);
                                 return result_crushed;
                             }
@@ -235,18 +258,17 @@ pub unsafe fn T_MovePlane(
                     }
                     1 => {
                         // UP
-                        if sec.ceilingheight + speed > dest {
-                            let lastpos = sec.ceilingheight;
-                            sec.ceilingheight = dest;
+                        let lastpos = plane_height(sector, 1);
+                        if lastpos + speed > dest {
+                            set_plane_height(sector, 1, dest);
                             let flag = P_ChangeSector(sector, crush);
                             if flag != 0 {
-                                sec.ceilingheight = lastpos;
+                                set_plane_height(sector, 1, lastpos);
                                 P_ChangeSector(sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            let _lastpos = sec.ceilingheight;
-                            sec.ceilingheight += speed;
+                            set_plane_height(sector, 1, lastpos + speed);
                             let _flag = P_ChangeSector(sector, crush);
                             // The original C code has #if 0 here, so no crush check.
                         }
@@ -269,8 +291,8 @@ pub unsafe fn T_MovePlane(
 /// # Safety
 ///
 /// `floor` must be a valid, aligned, non-null pointer to a `floormove_t`
-/// whose embedded `sector` pointer is also valid for the current map.
-/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+/// whose `sector` belongs to the current map. Called exclusively by the
+/// thinker dispatcher from `P_RunThinkers`.
 pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
     let res = T_MovePlane(
         (*floor).sector,
@@ -282,24 +304,28 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
     );
 
     if (leveltime() & 7) == 0 {
-        S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Stnmov as i32);
+        S_StartSectorSound((*floor).sector, Sfx::Stnmov as i32);
     }
 
     if res == result_pastdest {
-        (*(*floor).sector).specialdata = std::ptr::null_mut();
+        {
+            let mut level = LEVEL.borrow_mut();
+            let sec = &mut level.sectors[(*floor).sector];
+            sec.specialdata = std::ptr::null_mut();
 
-        if (*floor).direction == 1 {
-            if (*floor).kind == floor_donutRaise {
-                (*(*floor).sector).special = (*floor).newspecial as i16;
-                (*(*floor).sector).floorpic = (*floor).texture;
+            if (*floor).direction == 1 {
+                if (*floor).kind == floor_donutRaise {
+                    sec.special = (*floor).newspecial as i16;
+                    sec.floorpic = (*floor).texture;
+                }
+            } else if (*floor).direction == -1 && (*floor).kind == floor_lowerAndChange {
+                sec.special = (*floor).newspecial as i16;
+                sec.floorpic = (*floor).texture;
             }
-        } else if (*floor).direction == -1 && (*floor).kind == floor_lowerAndChange {
-            (*(*floor).sector).special = (*floor).newspecial as i16;
-            (*(*floor).sector).floorpic = (*floor).texture;
         }
         P_RemoveThinker(&raw mut (*floor).thinker);
 
-        S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Pstop as i32);
+        S_StartSectorSound((*floor).sector, Sfx::Pstop as i32);
     }
 }
 
@@ -308,38 +334,28 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
 /// For each sector whose tag matches `line`'s tag and that has no active
 /// special, allocates a `floormove_t` thinker and configures it according to
 /// `floortype`. Returns `1` if at least one floor was started, `0` otherwise.
+/// `line` is the activating line's record (or the synthetic tag-666 line
+/// of a boss death).
+///
+/// `floor_raiseFloorCrush` falls through into `floor_raiseFloor` as in C:
+/// it sets `crush` and then moves like a raising floor that stops 8 units
+/// lower.
 ///
 /// # Safety
 ///
-/// `line` must be a valid non-null pointer for the current map; the global
-/// `sectors` array must be initialised.
-///
-/// # FIXME
-/// The `floor_raiseFloorCrush` arm only sets `crush = 1` and leaves direction,
-/// sector, speed, and `floordestheight` uninitialised. In C, the switch falls
-/// through into `raiseFloor`, which sets those fields. The Rust port handles
-/// `raiseFloor` and `raiseFloorCrush` as separate arms; only the `raiseFloor`
-/// arm sets direction/speed/dest, so `raiseFloorCrush` sectors never actually
-/// move. This is a behavioural divergence from the C original.
-///
-/// # FIXME
-/// In the `floor_raiseFloor24` arm, the line
-/// `(*floor).floordestheight = (*floor).sector.offset_from(sec) as fixed_t`
-/// is a leftover dead assignment that is immediately overwritten. It is harmless
-/// (the correct value is set on the next line) but should be removed.
-pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
+/// The zone and thinker list must be initialised and a level loaded.
+pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let sectors = level().sectors;
-        let sec = sectors.add(secnum as usize);
+        let sec = SectorId::new(secnum as usize);
 
-        if !(*sec).specialdata.is_null() {
+        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
             continue;
         }
 
@@ -350,7 +366,11 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
             std::ptr::null_mut(),
         ) as *mut floormove_t;
         P_AddThinker(&raw mut (*floor).thinker);
-        (*sec).specialdata = &raw mut (*floor).thinker;
+
+        // Setting up the floor runs no play code, so one borrow serves it.
+        let mut level = LEVEL.borrow_mut();
+        let level = &mut *level;
+        level.sectors[sec].specialdata = &raw mut (*floor).thinker;
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).kind = floortype;
         (*floor).crush = 0;
@@ -360,37 +380,33 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
                 (*floor).direction = -1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindHighestFloorSurrounding(sec);
+                (*floor).floordestheight = P_FindHighestFloorSurrounding(level, sec);
             }
             floor_lowerFloorToLowest => {
                 (*floor).direction = -1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestFloorSurrounding(sec);
+                (*floor).floordestheight = P_FindLowestFloorSurrounding(level, sec);
             }
             floor_turboLower => {
                 (*floor).direction = -1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED * 4;
-                (*floor).floordestheight = P_FindHighestFloorSurrounding(sec);
-                if (*floor).floordestheight != (*sec).floorheight {
+                (*floor).floordestheight = P_FindHighestFloorSurrounding(level, sec);
+                if (*floor).floordestheight != level.sectors[sec].floorheight {
                     (*floor).floordestheight += 8 * FRACUNIT;
                 }
             }
-            floor_raiseFloorCrush => {
-                // FIXME: In C, `raiseFloorCrush` falls through into `raiseFloor`,
-                // so it sets crush = true AND then configures direction/speed/dest.
-                // Here the arms are separate: only crush is set; the floor never
-                // actually moves. This diverges from the C original.
-                (*floor).crush = 1;
-            }
-            floor_raiseFloor => {
+            floor_raiseFloorCrush | floor_raiseFloor => {
+                if floortype == floor_raiseFloorCrush {
+                    (*floor).crush = 1;
+                }
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestCeilingSurrounding(sec);
-                if (*floor).floordestheight > (*sec).ceilingheight {
-                    (*floor).floordestheight = (*sec).ceilingheight;
+                (*floor).floordestheight = P_FindLowestCeilingSurrounding(level, sec);
+                if (*floor).floordestheight > level.sectors[sec].ceilingheight {
+                    (*floor).floordestheight = level.sectors[sec].ceilingheight;
                 }
                 (*floor).floordestheight -=
                     (8 * FRACUNIT) * ((floortype == floor_raiseFloorCrush) as i32);
@@ -399,36 +415,38 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED * 4;
-                (*floor).floordestheight = P_FindNextHighestFloor(sec, (*sec).floorheight);
+                (*floor).floordestheight =
+                    P_FindNextHighestFloor(level, sec, level.sectors[sec].floorheight);
             }
             floor_raiseFloorToNearest => {
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindNextHighestFloor(sec, (*sec).floorheight);
+                (*floor).floordestheight =
+                    P_FindNextHighestFloor(level, sec, level.sectors[sec].floorheight);
             }
             floor_raiseFloor24 => {
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                // FIXME: the next line is a dead assignment (offset_from produces the wrong type
-                // and the value is immediately overwritten); it should be removed.
-                (*floor).floordestheight = (*floor).sector.offset_from(sec) as fixed_t;
-                (*floor).floordestheight = (*sec).floorheight + 24 * FRACUNIT;
+                (*floor).floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
             }
             floor_raiseFloor512 => {
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = (*sec).floorheight + 512 * FRACUNIT;
+                (*floor).floordestheight = level.sectors[sec].floorheight + 512 * FRACUNIT;
             }
             floor_raiseFloor24AndChange => {
                 (*floor).direction = 1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = (*sec).floorheight + 24 * FRACUNIT;
-                (*sec).floorpic = (*(*line).frontsector).floorpic;
-                (*sec).special = (*(*line).frontsector).special;
+                (*floor).floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
+                let frontsector = level.sectors[line
+                    .frontsector
+                    .expect("activating line without front sector")];
+                level.sectors[sec].floorpic = frontsector.floorpic;
+                level.sectors[sec].special = frontsector.special;
             }
             floor_raiseToTexture => {
                 (*floor).direction = 1;
@@ -436,50 +454,48 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
                 (*floor).speed = FLOORSPEED;
                 let mut minsize: i32 = INT_MAX;
                 let textureheight = RENDER_DATA.borrow().textureheight;
-                for i in 0..(*sec).linecount as usize {
-                    if twoSided(secnum, i as i32) != 0 {
-                        let side = getSide(secnum, i as i32, 0);
-                        if (*side).bottomtexture >= 0 {
-                            let th = *textureheight.offset((*side).bottomtexture as isize);
+                for i in 0..level.sectors[sec].linecount {
+                    if twoSided(level, secnum, i) != 0 {
+                        let side = getSide(level, secnum, i, 0);
+                        if level.sides[side].bottomtexture >= 0 {
+                            let th =
+                                *textureheight.offset(level.sides[side].bottomtexture as isize);
                             if th < minsize {
                                 minsize = th;
                             }
                         }
-                        let side = getSide(secnum, i as i32, 1);
-                        if (*side).bottomtexture >= 0 {
-                            let th = *textureheight.offset((*side).bottomtexture as isize);
+                        let side = getSide(level, secnum, i, 1);
+                        if level.sides[side].bottomtexture >= 0 {
+                            let th =
+                                *textureheight.offset(level.sides[side].bottomtexture as isize);
                             if th < minsize {
                                 minsize = th;
                             }
                         }
                     }
                 }
-                (*floor).floordestheight = (*sec).floorheight + minsize;
+                (*floor).floordestheight = level.sectors[sec].floorheight + minsize;
             }
             floor_lowerAndChange => {
                 (*floor).direction = -1;
                 (*floor).sector = sec;
                 (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestFloorSurrounding(sec);
-                (*floor).texture = (*sec).floorpic;
+                (*floor).floordestheight = P_FindLowestFloorSurrounding(level, sec);
+                (*floor).texture = level.sectors[sec].floorpic;
 
-                for i in 0..(*sec).linecount {
-                    if twoSided(secnum, i) != 0 {
-                        let side0 = getSide(secnum, i, 0);
-                        if (*side0).sector.offset_from(sectors) as i32 == secnum {
-                            let check_sec = getSector(secnum, i, 1);
-                            if (*check_sec).floorheight == (*floor).floordestheight {
-                                (*floor).texture = (*check_sec).floorpic;
-                                (*floor).newspecial = (*check_sec).special as i32;
-                                break;
-                            }
+                for i in 0..level.sectors[sec].linecount {
+                    if twoSided(level, secnum, i) != 0 {
+                        let side0 = getSide(level, secnum, i, 0);
+                        let check_sec = if level.sides[side0].sector == sec {
+                            getSector(level, secnum, i, 1)
                         } else {
-                            let check_sec = getSector(secnum, i, 0);
-                            if (*check_sec).floorheight == (*floor).floordestheight {
-                                (*floor).texture = (*check_sec).floorpic;
-                                (*floor).newspecial = (*check_sec).special as i32;
-                                break;
-                            }
+                            getSector(level, secnum, i, 0)
+                        };
+                        let check_sec = &level.sectors[check_sec];
+                        if check_sec.floorheight == (*floor).floordestheight {
+                            (*floor).texture = check_sec.floorpic;
+                            (*floor).newspecial = check_sec.special as i32;
+                            break;
                         }
                     }
                 }
@@ -498,25 +514,27 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
 /// skipped but the height counter still increments so the step sequence is
 /// preserved.
 ///
+/// Unlike C, `secnum` is not advanced to each new step's sector: the next
+/// step is looked for behind lines whose front is the tagged sector, and the
+/// tag search continues after the tagged sector.
+///
 /// Returns `1` if at least one stair was started, `0` otherwise.
 ///
 /// # Safety
 ///
-/// `line` must be a valid non-null pointer for the current map; the global
-/// `sectors` array must be initialised.
-pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
+/// The zone and thinker list must be initialised and a level loaded.
+pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let sectors = level().sectors;
-        let mut sec = sectors.add(secnum as usize);
+        let mut sec = SectorId::new(secnum as usize);
 
-        if !(*sec).specialdata.is_null() {
+        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
             continue;
         }
 
@@ -527,7 +545,7 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
             std::ptr::null_mut(),
         ) as *mut floormove_t;
         P_AddThinker(&raw mut (*floor).thinker);
-        (*sec).specialdata = &raw mut (*floor).thinker;
+        LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*floor).thinker;
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).direction = 1;
         (*floor).sector = sec;
@@ -539,42 +557,46 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
         };
 
         (*floor).speed = speed;
-        let mut height: fixed_t = (*sec).floorheight + stairsize;
+        let (floorheight, texture) = {
+            let level = LEVEL.borrow();
+            (level.sectors[sec].floorheight, level.sectors[sec].floorpic)
+        };
+        let mut height: fixed_t = floorheight + stairsize;
         (*floor).floordestheight = height;
-
-        let texture = (*sec).floorpic;
 
         // Find next sector to raise
         loop {
             let mut ok: i32 = 0;
-            for i in 0..(*sec).linecount {
-                let l = *(*sec).lines.offset(i as isize);
-                if (*l).flags & LinedefFlag::TWOSIDED as i16 == 0 {
-                    continue;
-                }
+            let linecount = LEVEL.borrow().sectors[sec].linecount;
+            for i in 0..linecount as usize {
+                let tsec = {
+                    let level = LEVEL.borrow();
+                    let l = &level.lines[level.sector_lines(sec)[i]];
+                    if l.flags & LinedefFlag::TWOSIDED as i16 == 0 {
+                        continue;
+                    }
 
-                let mut tsec = (*l).frontsector;
-                let newsecnum = tsec.offset_from(sectors) as i32;
+                    let newsecnum = l.frontsector.map(|tsec| tsec.index() as i32);
 
-                if secnum != newsecnum {
-                    continue;
-                }
+                    if Some(secnum) != newsecnum {
+                        continue;
+                    }
 
-                tsec = (*l).backsector;
-                let newsecnum = tsec.offset_from(sectors) as i32;
+                    let tsec = l.backsector.expect("two-sided line without back sector");
 
-                if (*tsec).floorpic != texture {
-                    continue;
-                }
+                    if level.sectors[tsec].floorpic != texture {
+                        continue;
+                    }
 
-                height += stairsize;
+                    height += stairsize;
 
-                if !(*tsec).specialdata.is_null() {
-                    continue;
-                }
+                    if !level.sectors[tsec].specialdata.is_null() {
+                        continue;
+                    }
+                    tsec
+                };
 
                 sec = tsec;
-                let _secnum_new = newsecnum;
                 floor = Z_Malloc(
                     std::mem::size_of::<floormove_t>() as i32,
                     PU_LEVSPEC,
@@ -583,7 +605,7 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
 
                 P_AddThinker(&raw mut (*floor).thinker);
 
-                (*sec).specialdata = &raw mut (*floor).thinker;
+                LEVEL.borrow_mut().sectors[sec].specialdata = &raw mut (*floor).thinker;
                 (*floor).thinker.kind = ThinkerKind::Floor;
                 (*floor).direction = 1;
                 (*floor).sector = sec;

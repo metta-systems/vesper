@@ -38,7 +38,7 @@ use crate::{
             player::{MAXPLAYERS, PlayerT, PspdefT, player as game_player},
             stat::{gamemode, gameversion},
         },
-        map::{line_t, sector_t, slopetype_t, vertex_t},
+        map::{LineId, SectorId, VertexId, line_t, slopetype_t},
         math::{
             fixed::{FRACUNIT, FixedMul, fixed_t},
             tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, finecosine, finesine},
@@ -67,7 +67,7 @@ use crate::{
                 P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
                 P_SubstNullMobj, mobj_t,
             },
-            setup::{LevelState, level},
+            setup::{LEVEL, LevelState, blockmap_origin},
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
             tick::{ThinkerContainer, ThinkerKind, thinker_t, thinkercap},
@@ -219,45 +219,37 @@ pub static ENEMY: Global<EnemyState> = Global::new(EnemyState::new());
 /// crossing (incrementing `soundblocks` from 0 to 1) but never two, so sound
 /// cannot pass through two consecutive blocking walls.
 ///
-/// Called by `P_NoiseAlert` and recursively by itself.
-///
-/// # Safety
-///
-/// `sec` must point to a valid, live `sector_t`. All sector/sidedef/linedef
-/// pointers reachable from `sec` must also be valid. `soundtarget` must be null
-/// or point to a valid `mobj_t`.
-pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
-    let mut i: i32;
-
-    let mut check: *mut line_t;
-
-    let mut other: *mut sector_t;
-
+/// Called by `P_NoiseAlert`, which borrows the level for the whole flood,
+/// and recursively by itself.
+pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32) {
     let validcount = VALIDCOUNT.get();
-    if (*sec).validcount == validcount && (*sec).soundtraversed <= soundblocks + 1 {
-        return;
+    {
+        let sector = &mut level.sectors[sec];
+        if sector.validcount == validcount && sector.soundtraversed <= soundblocks + 1 {
+            return;
+        }
+        sector.validcount = validcount;
+        sector.soundtraversed = soundblocks + 1;
+        sector.soundtarget = ENEMY.borrow().soundtarget;
     }
-    (*sec).validcount = validcount;
-    (*sec).soundtraversed = soundblocks + 1;
-    (*sec).soundtarget = ENEMY.borrow().soundtarget;
-    let sides = level().sides;
-    i = 0;
-    while i < (*sec).linecount {
-        check = *(*sec).lines.offset(i as isize);
-        if (*check).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
-            P_LineOpening(check);
+    let mut i = 0;
+    while i < level.sectors[sec].linecount {
+        let check = level.sector_lines(sec)[i as usize];
+        let line = level.lines[check];
+        if line.flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
+            P_LineOpening(level, check);
             if openrange() > 0 {
-                if std::ptr::eq((*sides.offset((*check).sidenum[0] as isize)).sector, sec) {
-                    other = (*sides.offset((*check).sidenum[1] as isize)).sector;
+                let other = if level.sides[line.sidenum[0] as usize].sector == sec {
+                    level.sides[line.sidenum[1] as usize].sector
                 } else {
-                    other = (*sides.offset((*check).sidenum[0] as isize)).sector;
-                }
-                if (*check).flags as i32 & LinedefFlag::SOUNDBLOCK as i32 != 0 {
+                    level.sides[line.sidenum[0] as usize].sector
+                };
+                if line.flags as i32 & LinedefFlag::SOUNDBLOCK as i32 != 0 {
                     if soundblocks == 0 {
-                        P_RecursiveSound(other, 1);
+                        P_RecursiveSound(level, other, 1);
                     }
                 } else {
-                    P_RecursiveSound(other, soundblocks);
+                    P_RecursiveSound(level, other, soundblocks);
                 }
             }
         }
@@ -277,7 +269,9 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
 pub unsafe fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
     ENEMY.borrow_mut().soundtarget = target;
     VALIDCOUNT.set(VALIDCOUNT.get() + 1);
-    P_RecursiveSound((*(*emmiter).subsector).sector, 0);
+    let mut level = LEVEL.borrow_mut();
+    let sector = level.subsectors[(*emmiter).subsector].sector;
+    P_RecursiveSound(&mut level, sector, 0);
 }
 /// Returns `TRUE` when `actor`'s target is within melee striking range and line of sight.
 ///
@@ -388,7 +382,7 @@ pub static yspeed: [fixed_t; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUN
 /// `floatok`, `tmfloorz`, `numspechit`, and `spechit` must be consistent with the
 /// most recent `P_TryMove` call.
 pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
-    let mut ld: *mut line_t;
+    let mut ld: LineId;
 
     let mut good: Boolean;
 
@@ -630,6 +624,25 @@ pub unsafe fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean) -> Boolea
         (*actor).lastlook = ((*actor).lastlook + 1) & 3;
     }
 }
+/// The synthetic line record the boss deaths pass to the tag-based
+/// specials, which read only its `tag` (C's zeroed `line_t junk`). It is not
+/// part of the level, so its ids are never followed.
+const JUNK_LINE: line_t = line_t {
+    v1: VertexId::new(0),
+    v2: VertexId::new(0),
+    dx: 0,
+    dy: 0,
+    flags: 0,
+    special: 0,
+    tag: 0,
+    sidenum: [0; 2],
+    bbox: [0; 4],
+    slopetype: slopetype_t::ST_HORIZONTAL,
+    frontsector: None,
+    backsector: None,
+    validcount: 0,
+    specialdata: std::ptr::null_mut::<c_void>(),
+};
 /// Action function for Commander Keen's death (Doom II map 32 special).
 ///
 /// Calls `A_Fall` to make the corpse non-solid, then scans all thinkers; if any other
@@ -646,22 +659,7 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
 
     let mut mo2: *mut mobj_t;
 
-    let mut junk: line_t = line_t {
-        v1: std::ptr::null_mut::<vertex_t>(),
-        v2: std::ptr::null_mut::<vertex_t>(),
-        dx: 0,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [0; 2],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut::<sector_t>(),
-        backsector: std::ptr::null_mut::<sector_t>(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut::<c_void>(),
-    };
+    let mut junk: line_t = JUNK_LINE;
     A_Fall(mo);
     let cap = thinkercap();
     th = (*cap).next;
@@ -675,7 +673,7 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
         th = (*th).next;
     }
     junk.tag = 666;
-    EV_DoDoor(&mut junk, vld_open);
+    EV_DoDoor(&junk, vld_open);
 }
 /// State-machine action: monster idle look, waiting to spot a player.
 ///
@@ -691,7 +689,10 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
 /// `flags`. Called through the state-machine action pointer.
 pub unsafe fn A_Look(actor: *mut mobj_t) {
     (*actor).threshold = 0;
-    let targ: *mut mobj_t = (*(*(*actor).subsector).sector).soundtarget;
+    let targ: *mut mobj_t = LEVEL
+        .borrow()
+        .subsector_sector((*actor).subsector)
+        .soundtarget;
     '_seeyou: {
         if !targ.is_null() && (*targ).flags & MF_SHOOTABLE != 0 {
             (*actor).target = targ;
@@ -1273,9 +1274,7 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
             (*actor).x + (*(*actor).info).speed as fixed_t * xspeed[(*actor).movedir as usize];
         let viletryy =
             (*actor).y + (*(*actor).info).speed as fixed_t * yspeed[(*actor).movedir as usize];
-        let LevelState {
-            bmaporgx, bmaporgy, ..
-        } = level();
+        let (bmaporgx, bmaporgy) = blockmap_origin();
         xl = (viletryx - bmaporgx - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         xh = (viletryx - bmaporgx + 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         yl = (viletryy - bmaporgy - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
@@ -1727,22 +1726,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
 
     let mut mo2: *mut mobj_t;
 
-    let mut junk: line_t = line_t {
-        v1: std::ptr::null_mut::<vertex_t>(),
-        v2: std::ptr::null_mut::<vertex_t>(),
-        dx: 0,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [0; 2],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut::<sector_t>(),
-        backsector: std::ptr::null_mut::<sector_t>(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut::<c_void>(),
-    };
+    let mut junk: line_t = JUNK_LINE;
     let _i: i32 = 0;
     if gamemode() as u32 == commercial as u32 {
         if gamemap() != 7 {
@@ -1778,12 +1762,12 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         if gamemap() == 7 {
             if (*mo).kind as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
-                EV_DoFloor(&mut junk, lowerFloorToLowest);
+                EV_DoFloor(&junk, lowerFloorToLowest);
                 return;
             }
             if (*mo).kind as u32 == MT_BABY as u32 {
                 junk.tag = 667;
-                EV_DoFloor(&mut junk, raiseToTexture);
+                EV_DoFloor(&junk, raiseToTexture);
                 return;
             }
         }
@@ -1791,18 +1775,18 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         match gameepisode() {
             1 => {
                 junk.tag = 666;
-                EV_DoFloor(&mut junk, lowerFloorToLowest);
+                EV_DoFloor(&junk, lowerFloorToLowest);
                 return;
             }
             4 => match gamemap() {
                 6 => {
                     junk.tag = 666;
-                    EV_DoDoor(&mut junk, vld_blazeOpen);
+                    EV_DoDoor(&junk, vld_blazeOpen);
                     return;
                 }
                 8 => {
                     junk.tag = 666;
-                    EV_DoFloor(&mut junk, lowerFloorToLowest);
+                    EV_DoFloor(&junk, lowerFloorToLowest);
                     return;
                 }
                 _ => {}

@@ -1,7 +1,8 @@
 //! Tests for `p_maputl.c` pure math functions.
 //!
-//! These functions have no dependency on level data being loaded,
-//! so they can be called directly against the C implementation.
+//! These functions need no loaded level: the geometry tests build a small
+//! level of their own and pass it in, so they can be called directly
+//! against the C implementation.
 
 #![allow(non_snake_case)]
 
@@ -10,9 +11,9 @@ use std::sync::Mutex;
 use {
     crate::harness::C_GLOBAL_LOCK,
     room::engine::{
-        map::{line_t, sector_t, slopetype_t, vertex_t},
+        map::{LineId, SectorId, VertexId, line_t, sector_t, slopetype_t, vertex_t},
         math::{bbox::BBox, fixed::FRACUNIT},
-        play::{self, maputl::divline_t},
+        play::{self, maputl::divline_t, setup::LevelState},
     },
 };
 
@@ -135,38 +136,71 @@ fn aproxdist_mixed_sign() {
 //             right < left → 0,  else → 1
 // ---------------------------------------------------------------------------
 
-/// Construct a minimal `line_t` for `P_PointOnLineSide` tests: only `v1`,
-/// `dx`, `dy` are meaningful; the remaining fields are zeroed.
-fn make_pols_line(v1: *mut vertex_t, dx: i32, dy: i32) -> line_t {
-    let mut line: line_t = unsafe { std::mem::zeroed() };
-    line.v1 = v1;
-    line.dx = dx;
-    line.dy = dy;
-    line
+/// The id of the only line in the levels these tests build.
+const LINE: LineId = LineId::new(0);
+
+/// A minimal `line_t` from vertex 0: only `v1`, `dx`, `dy`, `sidenum`,
+/// `slopetype` and the two sectors are meaningful; the remaining fields are
+/// zeroed.
+fn make_line_record(
+    dx: i32,
+    dy: i32,
+    sidenum: [i16; 2],
+    slopetype: slopetype_t,
+    frontsector: Option<SectorId>,
+    backsector: Option<SectorId>,
+) -> line_t {
+    line_t {
+        v1: VertexId::new(0),
+        v2: VertexId::new(0),
+        dx,
+        dy,
+        flags: 0,
+        special: 0,
+        tag: 0,
+        sidenum,
+        bbox: [0; 4],
+        slopetype,
+        frontsector,
+        backsector,
+        validcount: 0,
+        specialdata: std::ptr::null_mut(),
+    }
+}
+
+/// A level holding the single linedef `line` (id [`LINE`]), its first vertex
+/// `v1` (vertex 0) and `sectors`.
+fn one_line_level(v1: vertex_t, line: line_t, sectors: Vec<sector_t>) -> LevelState {
+    LevelState {
+        vertexes: vec![v1],
+        lines: vec![line],
+        numsectors: sectors.len() as i32,
+        sectors,
+        ..LevelState::new()
+    }
+}
+
+/// A level for `P_PointOnLineSide` tests: one line from `v1` along
+/// `(dx, dy)`.
+fn make_pols_level(v1: vertex_t, dx: i32, dy: i32) -> LevelState {
+    let line = make_line_record(dx, dy, [-1, -1], slopetype_t::ST_HORIZONTAL, None, None);
+    one_line_level(v1, line, Vec::new())
 }
 
 /// Vertical line pointing up (`dy > 0`), point to the left → back side (1).
 #[test]
 fn point_on_line_side_vertical_pos_dy_left() {
     // dx=0, dy>0, x < v1.x → back (1)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(-1, 0, &mut line) },
-        1
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, 0, FRACUNIT);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, -1, 0, LINE), 1);
 }
 
 /// Vertical line pointing up, point to the right → front side (0).
 #[test]
 fn point_on_line_side_vertical_pos_dy_right() {
     // dx=0, dy>0, x > v1.x → front (0)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(1, 0, &mut line) },
-        0
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, 0, FRACUNIT);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 1, 0, LINE), 0);
 }
 
 /// Vertical line pointing up, point exactly on the line → back side (the
@@ -174,60 +208,40 @@ fn point_on_line_side_vertical_pos_dy_right() {
 #[test]
 fn point_on_line_side_vertical_pos_dy_on_line() {
     // dx=0, dy>0, x == v1.x (takes x <= v1.x branch) → back (1)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, 0, FRACUNIT);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, 0, &mut line) },
-        1
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, 0, FRACUNIT);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, 0, LINE), 1);
 }
 
 /// Vertical line pointing down (`dy < 0`), point to the left → front side.
 #[test]
 fn point_on_line_side_vertical_neg_dy_left() {
     // dx=0, dy<0, x <= v1.x → front (0)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, 0, -FRACUNIT);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(-1, 0, &mut line) },
-        0
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, 0, -FRACUNIT);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, -1, 0, LINE), 0);
 }
 
 /// Vertical line pointing down, point to the right → back side.
 #[test]
 fn point_on_line_side_vertical_neg_dy_right() {
     // dx=0, dy<0, x > v1.x → back (1)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, 0, -FRACUNIT);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(1, 0, &mut line) },
-        1
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, 0, -FRACUNIT);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 1, 0, LINE), 1);
 }
 
 /// Horizontal line pointing right (`dx > 0`), point below → front side.
 #[test]
 fn point_on_line_side_horizontal_pos_dx_below() {
     // dy=0, dx>0, y < v1.y → front (0)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, -1, &mut line) },
-        0
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, 0);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, -1, LINE), 0);
 }
 
 /// Horizontal line pointing right, point above → back side.
 #[test]
 fn point_on_line_side_horizontal_pos_dx_above() {
     // dy=0, dx>0, y > v1.y → back (1)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, 1, &mut line) },
-        1
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, 0);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, 1, LINE), 1);
 }
 
 /// Horizontal line pointing right, point exactly on it → front side (the
@@ -235,36 +249,24 @@ fn point_on_line_side_horizontal_pos_dx_above() {
 #[test]
 fn point_on_line_side_horizontal_pos_dx_on_line() {
     // dy=0, dx>0, y == v1.y (takes y <= v1.y branch) → front (0)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, 0);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, 0, &mut line) },
-        0
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, 0);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, 0, LINE), 0);
 }
 
 /// Horizontal line pointing left (`dx < 0`), point below → back side.
 #[test]
 fn point_on_line_side_horizontal_neg_dx_below() {
     // dy=0, dx<0, y <= v1.y → back (1)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, -FRACUNIT, 0);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, -1, &mut line) },
-        1
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, -FRACUNIT, 0);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, -1, LINE), 1);
 }
 
 /// Horizontal line pointing left, point above → front side.
 #[test]
 fn point_on_line_side_horizontal_neg_dx_above() {
     // dy=0, dx<0, y > v1.y → front (0)
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, -FRACUNIT, 0);
-    assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, 1, &mut line) },
-        0
-    );
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, -FRACUNIT, 0);
+    assert_eq!(play::maputl::P_PointOnLineSide(&level, 0, 1, LINE), 0);
 }
 
 /// Diagonal NE line, point above-left → back side via the cross-product branch.
@@ -272,10 +274,9 @@ fn point_on_line_side_horizontal_neg_dx_above() {
 fn point_on_line_side_diagonal_above_left() {
     // NE diagonal (dx=dy=FRACUNIT), point at (0, FRACUNIT) — above-left → back (1)
     // left=FixedMul(1,0)=0, right=FixedMul(FRACUNIT,1)=1, 1>=0 → 1
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, FRACUNIT);
     assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(0, FRACUNIT, &mut line) },
+        play::maputl::P_PointOnLineSide(&level, 0, FRACUNIT, LINE),
         1
     );
 }
@@ -285,10 +286,9 @@ fn point_on_line_side_diagonal_above_left() {
 fn point_on_line_side_diagonal_below_right() {
     // NE diagonal (dx=dy=FRACUNIT), point at (FRACUNIT, 0) — below-right → front (0)
     // left=FixedMul(1,FRACUNIT)=1, right=FixedMul(0,1)=0, 0<1 → 0
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, FRACUNIT);
     assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(FRACUNIT, 0, &mut line) },
+        play::maputl::P_PointOnLineSide(&level, FRACUNIT, 0, LINE),
         0
     );
 }
@@ -299,10 +299,9 @@ fn point_on_line_side_diagonal_below_right() {
 fn point_on_line_side_diagonal_on_line_is_back() {
     // Point exactly on NE diagonal: right==left → back (1)
     // left=FixedMul(1,FRACUNIT)=1, right=FixedMul(FRACUNIT,1)=1, 1>=1 → 1
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_pols_line(&mut v1, FRACUNIT, FRACUNIT);
+    let level = make_pols_level(vertex_t { x: 0, y: 0 }, FRACUNIT, FRACUNIT);
     assert_eq!(
-        unsafe { play::maputl::P_PointOnLineSide(FRACUNIT, FRACUNIT, &mut line) },
+        play::maputl::P_PointOnLineSide(&level, FRACUNIT, FRACUNIT, LINE),
         1
     );
 }
@@ -456,29 +455,22 @@ fn make_divline_copies_fields() {
         x: 10 * FRACUNIT,
         y: 20 * FRACUNIT,
     };
-    let mut line = line_t {
-        v1: &v as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: 5 * FRACUNIT,
-        dy: 7 * FRACUNIT,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(
+        5 * FRACUNIT,
+        7 * FRACUNIT,
+        [-1, -1],
+        slopetype_t::ST_HORIZONTAL,
+        None,
+        None,
+    );
+    let level = one_line_level(v, line, Vec::new());
     let mut dl = divline_t {
         x: 0,
         y: 0,
         dx: 0,
         dy: 0,
     };
-    unsafe { play::maputl::P_MakeDivline(&mut line, &mut dl) };
+    play::maputl::P_MakeDivline(&level, LINE, &mut dl);
     assert_eq!(dl.x, 10 * FRACUNIT);
     assert_eq!(dl.y, 20 * FRACUNIT);
     assert_eq!(dl.dx, 5 * FRACUNIT);
@@ -492,152 +484,83 @@ fn make_divline_copies_fields() {
 /// Horizontal `ST_HORIZONTAL` line, bounding box entirely above → back side.
 #[test]
 fn box_on_line_horizontal_above() {
-    let v1 = vertex_t { x: 0, y: 0 };
-    let mut line = line_t {
-        v1: &v1 as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: FRACUNIT,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(
+        FRACUNIT,
+        0,
+        [-1, -1],
+        slopetype_t::ST_HORIZONTAL,
+        None,
+        None,
+    );
+    let level = one_line_level(vertex_t { x: 0, y: 0 }, line, Vec::new());
     let mut tmbox = [0i32; 4];
     // Box entirely above the line → back side = 1
     tmbox[BBox::TOP] = FRACUNIT;
     tmbox[BBox::BOTTOM] = FRACUNIT / 2;
-    assert_eq!(
-        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
-        1
-    );
+    assert_eq!(play::maputl::P_BoxOnLineSide(&level, &tmbox, LINE), 1);
 }
 
 /// Horizontal `ST_HORIZONTAL` line, bounding box entirely below → front side.
 #[test]
 fn box_on_line_horizontal_below() {
-    let v1 = vertex_t { x: 0, y: 0 };
-    let mut line = line_t {
-        v1: &v1 as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: FRACUNIT,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(
+        FRACUNIT,
+        0,
+        [-1, -1],
+        slopetype_t::ST_HORIZONTAL,
+        None,
+        None,
+    );
+    let level = one_line_level(vertex_t { x: 0, y: 0 }, line, Vec::new());
     let mut tmbox = [0i32; 4];
     // Box entirely below the line → front side = 0
     tmbox[BBox::TOP] = -FRACUNIT / 2;
     tmbox[BBox::BOTTOM] = -FRACUNIT;
-    assert_eq!(
-        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
-        0
-    );
+    assert_eq!(play::maputl::P_BoxOnLineSide(&level, &tmbox, LINE), 0);
 }
 
 /// Vertical `ST_VERTICAL` line, bounding box entirely to the right → front side.
 #[test]
 fn box_on_line_vertical_right() {
-    let v1 = vertex_t { x: 0, y: 0 };
-    let mut line = line_t {
-        v1: &v1 as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: 0,
-        dy: FRACUNIT,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_VERTICAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(0, FRACUNIT, [-1, -1], slopetype_t::ST_VERTICAL, None, None);
+    let level = one_line_level(vertex_t { x: 0, y: 0 }, line, Vec::new());
     let mut tmbox = [0i32; 4];
     // Box entirely to the right (x > 0) → front side = 0
     tmbox[BBox::RIGHT] = FRACUNIT;
     tmbox[BBox::LEFT] = FRACUNIT / 2;
-    assert_eq!(
-        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
-        0
-    );
+    assert_eq!(play::maputl::P_BoxOnLineSide(&level, &tmbox, LINE), 0);
 }
 
 /// Vertical `ST_VERTICAL` line, bounding box entirely to the left → back side.
 #[test]
 fn box_on_line_vertical_left() {
-    let v1 = vertex_t { x: 0, y: 0 };
-    let mut line = line_t {
-        v1: &v1 as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: 0,
-        dy: FRACUNIT,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_VERTICAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(0, FRACUNIT, [-1, -1], slopetype_t::ST_VERTICAL, None, None);
+    let level = one_line_level(vertex_t { x: 0, y: 0 }, line, Vec::new());
     let mut tmbox = [0i32; 4];
     // Box entirely to the left (x <= 0) → back side = 1
     tmbox[BBox::RIGHT] = -FRACUNIT / 2;
     tmbox[BBox::LEFT] = -FRACUNIT;
-    assert_eq!(
-        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
-        1
-    );
+    assert_eq!(play::maputl::P_BoxOnLineSide(&level, &tmbox, LINE), 1);
 }
 
 /// When the bounding box straddles the line, `P_BoxOnLineSide` returns -1
 /// (the box is on **both** sides — neither front nor back).
 #[test]
 fn box_crosses_line_returns_negative_one() {
-    let v1 = vertex_t { x: 0, y: 0 };
-    let mut line = line_t {
-        v1: &v1 as *const _ as *mut _,
-        v2: std::ptr::null_mut(),
-        dx: FRACUNIT,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
-        sidenum: [-1, -1],
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector: std::ptr::null_mut(),
-        backsector: std::ptr::null_mut(),
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    };
+    let line = make_line_record(
+        FRACUNIT,
+        0,
+        [-1, -1],
+        slopetype_t::ST_HORIZONTAL,
+        None,
+        None,
+    );
+    let level = one_line_level(vertex_t { x: 0, y: 0 }, line, Vec::new());
     let mut tmbox = [0i32; 4];
     // Box straddles the line (top above, bottom below)
     tmbox[BBox::TOP] = FRACUNIT;
     tmbox[BBox::BOTTOM] = -FRACUNIT;
-    assert_eq!(
-        unsafe { play::maputl::P_BoxOnLineSide(tmbox.as_mut_ptr(), &mut line) },
-        -1
-    );
+    assert_eq!(play::maputl::P_BoxOnLineSide(&level, &tmbox, LINE), -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -653,31 +576,21 @@ fn make_sector(floorheight: i32, ceilingheight: i32) -> sector_t {
     s
 }
 
-/// Build a horizontal `line_t` with the supplied sides/sectors for
-/// `P_LineOpening` tests.  `v2`, special, tag, bbox, and validcount are
-/// not exercised by the function under test.
-fn make_line(
-    v1: *mut vertex_t,
-    sidenum: [i16; 2],
-    frontsector: *mut sector_t,
-    backsector: *mut sector_t,
-) -> line_t {
-    line_t {
-        v1,
-        v2: std::ptr::null_mut(),
-        dx: FRACUNIT,
-        dy: 0,
-        flags: 0,
-        special: 0,
-        tag: 0,
+/// Build a level with one horizontal line with the supplied sides for
+/// `P_LineOpening` tests: its front sector is `sectors[0]` and its back
+/// sector `sectors[1]`, where present.  `v2`, special, tag, bbox, and
+/// validcount are not exercised by the function under test.
+fn make_opening_level(sidenum: [i16; 2], sectors: Vec<sector_t>) -> LevelState {
+    let sector = |index: usize| (index < sectors.len()).then(|| SectorId::new(index));
+    let line = make_line_record(
+        FRACUNIT,
+        0,
         sidenum,
-        bbox: [0; 4],
-        slopetype: slopetype_t::ST_HORIZONTAL,
-        frontsector,
-        backsector,
-        validcount: 0,
-        specialdata: std::ptr::null_mut(),
-    }
+        slopetype_t::ST_HORIZONTAL,
+        sector(0),
+        sector(1),
+    );
+    one_line_level(vertex_t { x: 0, y: 0 }, line, sectors)
 }
 
 // ---------------------------------------------------------------------------
@@ -689,9 +602,8 @@ fn make_line(
 #[test]
 fn line_opening_single_sided() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_line(&mut v1, [0, -1], std::ptr::null_mut(), std::ptr::null_mut());
-    unsafe { play::maputl::P_LineOpening(&mut line) };
+    let level = make_opening_level([0, -1], Vec::new());
+    play::maputl::P_LineOpening(&level, LINE);
     assert_eq!(play::maputl::openrange(), 0);
 }
 
@@ -700,11 +612,10 @@ fn line_opening_single_sided() {
 #[test]
 fn line_opening_two_sided_front_higher() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    let mut front = make_sector(0, 128 * FRACUNIT);
-    let mut back = make_sector(-16 * FRACUNIT, 64 * FRACUNIT);
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe { play::maputl::P_LineOpening(&mut line) };
+    let front = make_sector(0, 128 * FRACUNIT);
+    let back = make_sector(-16 * FRACUNIT, 64 * FRACUNIT);
+    let level = make_opening_level([0, 1], vec![front, back]);
+    play::maputl::P_LineOpening(&level, LINE);
     // opentop    = min(128, 64)  = 64
     // openbottom = max(0, -16)   = 0
     // lowfloor   = min(0, -16)   = -16
@@ -720,11 +631,10 @@ fn line_opening_two_sided_front_higher() {
 #[test]
 fn line_opening_two_sided_back_higher() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    let mut front = make_sector(0, 64 * FRACUNIT);
-    let mut back = make_sector(16 * FRACUNIT, 128 * FRACUNIT);
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe { play::maputl::P_LineOpening(&mut line) };
+    let front = make_sector(0, 64 * FRACUNIT);
+    let back = make_sector(16 * FRACUNIT, 128 * FRACUNIT);
+    let level = make_opening_level([0, 1], vec![front, back]);
+    play::maputl::P_LineOpening(&level, LINE);
     // opentop    = min(64, 128)  = 64
     // openbottom = max(0, 16)    = 16
     // lowfloor   = min(0, 16)    = 0
@@ -740,11 +650,10 @@ fn line_opening_two_sided_back_higher() {
 #[test]
 fn line_opening_two_sided_equal() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    let mut front = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
-    let mut back = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe { play::maputl::P_LineOpening(&mut line) };
+    let front = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
+    let back = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
+    let level = make_opening_level([0, 1], vec![front, back]);
+    play::maputl::P_LineOpening(&level, LINE);
     assert_eq!(play::maputl::opentop(), 128 * FRACUNIT);
     assert_eq!(play::maputl::openbottom(), 32 * FRACUNIT);
     assert_eq!(play::maputl::lowfloor(), 32 * FRACUNIT);
@@ -757,11 +666,10 @@ fn line_opening_two_sided_equal() {
 fn line_opening_negative_range() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // front floor above back ceiling → negative openrange
-    let mut front = make_sector(100 * FRACUNIT, 128 * FRACUNIT);
-    let mut back = make_sector(0, 64 * FRACUNIT);
-    let mut v1 = vertex_t { x: 0, y: 0 };
-    let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe { play::maputl::P_LineOpening(&mut line) };
+    let front = make_sector(100 * FRACUNIT, 128 * FRACUNIT);
+    let back = make_sector(0, 64 * FRACUNIT);
+    let level = make_opening_level([0, 1], vec![front, back]);
+    play::maputl::P_LineOpening(&level, LINE);
     // opentop    = min(128, 64)   = 64
     // openbottom = max(100, 0)    = 100
     // lowfloor   = min(100, 0)    = 0

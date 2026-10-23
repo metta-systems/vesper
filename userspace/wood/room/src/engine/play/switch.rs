@@ -16,7 +16,7 @@ use crate::{
     engine::{
         doom,
         global::Global,
-        map::{degenmobj_t, line_t},
+        map::{LineId, SectorId},
         play::{
             ceilng::EV_DoCeiling,
             floor::{EV_BuildStairs, EV_DoFloor},
@@ -140,16 +140,39 @@ const stair_turbo16: i32 = 1;
 /// remain before the button resets.
 #[derive(Clone, Copy)]
 pub struct button_t {
-    /// Pointer to the linedef whose switch texture was activated.
-    pub line: *mut line_t,
+    /// The linedef whose switch texture was activated; `None` in a slot
+    /// that was never used.
+    pub line: Option<LineId>,
     /// Which sidedef texture slot the button lives in (`top`, `middle`, or `bottom`).
     pub where_: i32,
     /// Texture number to restore when `btimer` expires.
     pub btexture: i32,
     /// Remaining tics before the button resets; `0` means this slot is free.
     pub btimer: i32,
-    /// Pointer to the front-sector sound origin used when the button fires.
-    pub soundorg: *mut degenmobj_t,
+    /// The front sector whose sound origin is used when the button fires
+    /// (C keeps a pointer to its `soundorg`); `None` (C: null) plays the
+    /// sound non-positionally.
+    pub soundorg: Option<SectorId>,
+}
+
+impl button_t {
+    /// A free, never-used slot (C's zeroed `button_t`).
+    pub const EMPTY: Self = Self {
+        line: None,
+        where_: 0,
+        btexture: 0,
+        btimer: 0,
+        soundorg: None,
+    };
+}
+
+/// Play `sound` from a button's sound origin: from that sector, or
+/// non-positionally where C passes a null origin.
+pub fn start_button_sound(soundorg: Option<SectorId>, sound: i32) {
+    match soundorg {
+        Some(sector) => S_StartSectorSound(sector, sound),
+        None => S_StartNonPositionalSound(sound),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -414,13 +437,7 @@ impl SwitchState {
         Self {
             switchlist: [0; MAXSWITCHES * 2],
             numswitches: 0,
-            buttonlist: [button_t {
-                line: std::ptr::null_mut(),
-                where_: 0,
-                btexture: 0,
-                btimer: 0,
-                soundorg: std::ptr::null_mut(),
-            }; MAXBUTTONS],
+            buttonlist: [button_t::EMPTY; MAXBUTTONS],
         }
     }
 }
@@ -443,11 +460,11 @@ use crate::engine::{
     game::{G_ExitLevel, G_SecretExitLevel},
     play::{
         doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor},
-        setup::level,
+        setup::LEVEL,
         spec::EV_DoDonut,
     },
     render_3d::data::R_TextureNumForName,
-    sound::S_StartSectorSound,
+    sound::{S_StartNonPositionalSound, S_StartSectorSound},
 };
 
 // ---------------------------------------------------------------------------
@@ -513,29 +530,26 @@ pub fn P_InitSwitchList() {
 /// - `texture` — original texture number to restore on expiry.
 /// - `time` — countdown in tics; typically `BUTTONTIME` (35).
 ///
-/// # Safety
-///
-/// `line` must be a valid, non-null pointer to a live `line_t`.
-/// `buttonlist` must only be accessed from the game-logic thread.
-pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) {
+/// `line` must be a linedef of the loaded level.
+pub fn P_StartButton(line: LineId, w: i32, texture: i32, time: i32) {
     {
         let mut switches = SWITCHES.borrow_mut();
         let buttonlist = &mut switches.buttonlist;
 
         // See if button is already pressed
         for button in buttonlist.iter() {
-            if button.btimer != 0 && button.line == line {
+            if button.btimer != 0 && button.line == Some(line) {
                 return;
             }
         }
 
         for button in buttonlist.iter_mut() {
             if button.btimer == 0 {
-                button.line = line;
+                button.line = Some(line);
                 button.where_ = w;
                 button.btexture = texture;
                 button.btimer = time;
-                button.soundorg = &raw mut (*(*line).frontsector).soundorg;
+                button.soundorg = LEVEL.borrow().lines[line].frontsector;
                 return;
             }
         }
@@ -560,17 +574,17 @@ pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) 
 /// one-shot.  Exit switches (special 11) play `sfx_swtchx` instead of the
 /// normal `sfx_swtchn`.
 ///
-/// # Safety
-///
-/// `line` must be a valid, non-null pointer to a live `line_t`.  The global
-/// `switchlist`, `numswitches`, `buttonlist`, and `sides` arrays must only
-/// be accessed from the game-logic thread.
-pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
-    if useAgain == 0 {
-        (*line).special = 0;
-    }
-
-    let sides = level().sides;
+/// `line` must be a linedef of the loaded level, which must not be borrowed.
+pub fn P_ChangeSwitchTexture(line: LineId, useAgain: i32) {
+    let (sidenum, special, side) = {
+        let mut level = LEVEL.borrow_mut();
+        let linedef = &mut level.lines[line];
+        if useAgain == 0 {
+            linedef.special = 0;
+        }
+        let (sidenum, special) = (linedef.sidenum[0] as usize, linedef.special);
+        (sidenum, special, level.sides[sidenum])
+    };
     let (switchlist, numswitches, button_soundorg) = {
         let switches = SWITCHES.borrow();
         (
@@ -579,36 +593,35 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
             switches.buttonlist[0].soundorg,
         )
     };
-    let sidenum = (*line).sidenum[0] as isize;
-    let texTop = (*sides.offset(sidenum)).toptexture;
-    let texMid = (*sides.offset(sidenum)).midtexture;
-    let texBot = (*sides.offset(sidenum)).bottomtexture;
+    let texTop = side.toptexture;
+    let texMid = side.midtexture;
+    let texBot = side.bottomtexture;
 
     let mut sound = Sfx::Swtchn as i32;
 
     // EXIT SWITCH?
-    if (*line).special == 11 {
+    if special == 11 {
         sound = Sfx::Swtchx as i32;
     }
 
     for i in 0..(numswitches * 2) as usize {
         if switchlist[i] == texTop as i32 {
-            S_StartSectorSound(button_soundorg, sound);
-            (*sides.offset(sidenum)).toptexture = switchlist[i ^ 1] as i16;
+            start_button_sound(button_soundorg, sound);
+            LEVEL.borrow_mut().sides[sidenum].toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, top, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texMid as i32 {
-            S_StartSectorSound(button_soundorg, sound);
-            (*sides.offset(sidenum)).midtexture = switchlist[i ^ 1] as i16;
+            start_button_sound(button_soundorg, sound);
+            LEVEL.borrow_mut().sides[sidenum].midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, middle, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texBot as i32 {
-            S_StartSectorSound(button_soundorg, sound);
-            (*sides.offset(sidenum)).bottomtexture = switchlist[i ^ 1] as i16;
+            start_button_sound(button_soundorg, sound);
+            LEVEL.borrow_mut().sides[sidenum].bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, bottom, switchlist[i], BUTTONTIME);
             }
@@ -623,10 +636,10 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
 
 /// Dispatch a player or monster Use action on a special linedef.
 ///
-/// Called by `P_UseLines` when `thing` presses Use against `line`.  `side`
-/// is `0` for the front face (the normal case) or `1` for the back face.
-/// Using the back side is only allowed for special 124 (unused sliding
-/// door).
+/// Called by `P_UseLines` when `thing` presses Use against `line_id`.
+/// `side` is `0` for the front face (the normal case) or `1` for the back
+/// face. Using the back side is only allowed for special 124 (unused
+/// sliding door).
 ///
 /// Non-player actors can only activate lines that are not secret and have
 /// one of the four manual-door specials (1, 32, 33, 34).
@@ -635,23 +648,28 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
 /// - Manual doors (specials 1, 26-28, 31-34, 117-118): calls
 ///   `EV_VerticalDoor` directly with no texture change.
 /// - One-shot switches (specials 7-140): perform the action, then call
-///   `P_ChangeSwitchTexture(line, 0)` to flip the texture permanently.
+///   `P_ChangeSwitchTexture(line_id, 0)` to flip the texture permanently.
 /// - Repeatable buttons (specials 42-139): perform the action, then call
-///   `P_ChangeSwitchTexture(line, 1)` to flip and queue a reset timer.
+///   `P_ChangeSwitchTexture(line_id, 1)` to flip and queue a reset timer.
 ///
 /// Returns `1` (true) after handling any special; unrecognised specials
 /// fall through silently and also return `1`.
 ///
 /// # Safety
 ///
-/// `thing` must be a valid, non-null pointer to a `mobj_t`.  `line` must
-/// be a valid, non-null pointer to a live `line_t`.  All global game-state
-/// statics must only be accessed from the game-logic thread.
-pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32) -> i32 {
+/// `thing` must be a valid, non-null pointer to a `mobj_t`.  `line_id`
+/// must be a linedef of the loaded level.  All global game-state statics
+/// must only be accessed from the game-logic thread.
+pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line_id: LineId, side: i32) -> i32 {
+    // The line's record as the use found it; the actions read its tag and
+    // sectors, and every write goes to the level through `line_id`.
+    let line_record = LEVEL.borrow().lines[line_id];
+    let line = &line_record;
+
     // Err...
     // Use the back sides of VERY SPECIAL lines...
     if side != 0 {
-        match (*line).special {
+        match line.special {
             124 => {
                 // Sliding door open&close
                 // UNUSED?
@@ -664,175 +682,175 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
     let mobj = thing as *mut mobj_t;
     if (*mobj).player.is_null() {
         // never open secret doors
-        if (*line).flags & LinedefFlag::SECRET as i16 != 0 {
+        if line.flags & LinedefFlag::SECRET as i16 != 0 {
             return 0;
         }
-        match (*line).special {
+        match line.special {
             1 | 32 | 33 | 34 => {}
             _ => return 0,
         }
     }
 
     // do something
-    match (*line).special {
+    match line.special {
         // MANUALS
         1 | 26 | 27 | 28 | 31 | 32 | 33 | 34 | 117 | 118 => {
-            EV_VerticalDoor(line, thing as *mut mobj_t);
+            EV_VerticalDoor(line_id, thing as *mut mobj_t);
         }
 
         // SWITCHES
         7 if EV_BuildStairs(line, stair_build8) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         9 if EV_DoDonut(line) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         11 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
             G_ExitLevel();
         }
         14 if EV_DoPlat(line, plat_raiseAndChange, 32) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         15 if EV_DoPlat(line, plat_raiseAndChange, 24) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         18 if EV_DoFloor(line, floor_raiseFloorToNearest) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         20 if EV_DoPlat(line, plat_raiseToNearestAndChange, 0) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         21 if EV_DoPlat(line, plat_downWaitUpStay, 0) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         23 if EV_DoFloor(line, floor_lowerFloorToLowest) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         29 if EV_DoDoor(line, vld_normal) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         41 if EV_DoCeiling(line, ceiling_lowerToFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         71 if EV_DoFloor(line, floor_turboLower) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         49 if EV_DoCeiling(line, ceiling_crushAndRaise) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         50 if EV_DoDoor(line, vld_close) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         51 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
             G_SecretExitLevel();
         }
         55 if EV_DoFloor(line, floor_raiseFloorCrush) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         101 if EV_DoFloor(line, floor_raiseFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         102 if EV_DoFloor(line, floor_lowerFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         103 if EV_DoDoor(line, vld_open) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         111 if EV_DoDoor(line, vld_blazeRaise) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         112 if EV_DoDoor(line, vld_blazeOpen) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         113 if EV_DoDoor(line, vld_blazeClose) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         122 if EV_DoPlat(line, plat_blazeDWUS, 0) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         127 if EV_BuildStairs(line, stair_turbo16) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         131 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         133 | 135 | 137 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         140 if EV_DoFloor(line, floor_raiseFloor512) != 0 => {
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
 
         // BUTTONS
         42 if EV_DoDoor(line, vld_close) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         43 if EV_DoCeiling(line, ceiling_lowerToFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         45 if EV_DoFloor(line, floor_lowerFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         60 if EV_DoFloor(line, floor_lowerFloorToLowest) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         61 if EV_DoDoor(line, vld_open) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         62 if EV_DoPlat(line, plat_downWaitUpStay, 1) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         63 if EV_DoDoor(line, vld_normal) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         64 if EV_DoFloor(line, floor_raiseFloor) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         66 if EV_DoPlat(line, plat_raiseAndChange, 24) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         67 if EV_DoPlat(line, plat_raiseAndChange, 32) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         65 if EV_DoFloor(line, floor_raiseFloorCrush) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         68 if EV_DoPlat(line, plat_raiseToNearestAndChange, 0) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         69 if EV_DoFloor(line, floor_raiseFloorToNearest) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         70 if EV_DoFloor(line, floor_turboLower) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         114 if EV_DoDoor(line, vld_blazeRaise) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         115 if EV_DoDoor(line, vld_blazeOpen) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         116 if EV_DoDoor(line, vld_blazeClose) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         123 if EV_DoPlat(line, plat_blazeDWUS, 0) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         132 if EV_DoFloor(line, floor_raiseFloorTurbo) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         99 | 134 | 136 if EV_DoLockedDoor(line, vld_blazeOpen, thing as *mut mobj_t) != 0 => {
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         138 => {
             EV_LightTurnOn(line, 255);
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         139 => {
             EV_LightTurnOn(line, 35);
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
 
         _ => {}
@@ -867,7 +885,7 @@ mod tests {
             assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
         }
         for (i, b) in switches.buttonlist.iter().enumerate() {
-            assert!(b.line.is_null(), "buttonlist[{i}].line should be null");
+            assert!(b.line.is_none(), "buttonlist[{i}].line should be null");
             assert_eq!(b.btimer, 0, "buttonlist[{i}].btimer should be 0");
         }
     }

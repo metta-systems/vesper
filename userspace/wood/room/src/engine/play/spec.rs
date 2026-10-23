@@ -24,7 +24,7 @@ use crate::{
     engine::{
         doom::player::{CF_GODMODE, PlayerT},
         interface::timer::TICRATE,
-        map::{line_t, sector_t, side_t},
+        map::{LineId, SectorId, SideId, line_t, sector_t},
         math::fixed::FRACUNIT,
         misc::{
             M_StrToInt,
@@ -38,14 +38,13 @@ use crate::{
             lights::{FASTDARK, SLOWDARK},
             mobj::mobj_t,
             plats::{MAXPLATS, PLATS},
-            setup::{LevelState, level},
-            switch::{MAXBUTTONS, SWITCHES},
+            setup::{LEVEL, LevelState},
+            switch::{MAXBUTTONS, SWITCHES, button_t, start_button_sound},
             tick::{P_AddThinker, ThinkerKind, leveltime},
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
         },
-        sound::S_StartSectorSound,
         wad::format::LinedefFlag,
         zone::PU_LEVSPEC,
     },
@@ -224,12 +223,13 @@ pub struct SpecState {
     /// Counts lines with special 48 (first-column texture scroll).  Reset to zero
     /// by `P_SpawnSpecials` at map start; read by `P_UpdateSpecials`.
     pub numlinespecials: i16,
-    /// List of pointers to linedefs that carry the scrolling-wall special (48).
+    /// The linedefs that carry the scrolling-wall special (48); the first
+    /// `numlinespecials` entries are valid.
     ///
     /// Populated by `P_SpawnSpecials`; iterated by `P_UpdateSpecials` each tic to
     /// advance `textureoffset` by one `FRACUNIT`.  Capped at `MAXLINEANIMS` (64)
     /// entries.
-    pub linespeciallist: [*mut line_t; MAXLINEANIMS],
+    pub linespeciallist: [LineId; MAXLINEANIMS],
     /// Non-zero when a deathmatch level timer is active.
     ///
     /// Set to 1 by `P_SpawnSpecials` when `timelimit > 0` and `deathmatch != 0`.
@@ -264,7 +264,7 @@ impl SpecState {
             }; MAXANIMS],
             lastanim: ptr::null_mut(),
             numlinespecials: 0,
-            linespeciallist: [ptr::null_mut(); MAXLINEANIMS],
+            linespeciallist: [LineId::new(0); MAXLINEANIMS],
             levelTimer: 0,
             levelTimeCount: 0,
             donut_initialized: false,
@@ -377,71 +377,75 @@ pub unsafe fn P_InitPicAnims() {
 // Utilities
 // ---------------------------------------------------------------------------
 
-/// Returns a pointer to the `side_t` on a given side of a line bounding a sector.
-///
-/// - `currentSector`: index into the global `sectors` array.
-/// - `line`: index into `sector.lines[]` (the sector's own line list, not the
-///   global `lines` array).
-/// - `side`: 0 for front, 1 for back.
-///
-/// Returns a pointer into the global `sides` array.  The pointer is valid as
-/// long as the map data is loaded.  Called from p_spec.c and the floor/ceiling
-/// modules.
-pub unsafe fn getSide(currentSector: i32, line: i32, side: i32) -> *mut side_t {
-    let LevelState { sectors, sides, .. } = level();
-    let line_ptr = *(*sectors.offset(currentSector as isize))
-        .lines
-        .offset(line as isize);
-    let side_idx = (*line_ptr).sidenum[side as usize];
-    sides.offset(side_idx as isize)
+/// The sector `currentSector` of `level` and its `line`-th bounding linedef.
+fn sector_line(level: &LevelState, currentSector: i32, line: i32) -> &line_t {
+    let sector = SectorId::new(currentSector as usize);
+    &level.lines[level.sector_lines(sector)[line as usize]]
 }
 
-/// Returns a pointer to the `sector_t` on a given side of a line bounding a sector.
+/// Returns the `side_t` on a given side of a line bounding a sector.
 ///
-/// - `currentSector`: index into the global `sectors` array.
-/// - `line`: index into `sector.lines[]`.
+/// - `currentSector`: index into the level's `sectors` array.
+/// - `line`: index into the sector's own line list, not the level's `lines`
+///   array.
+/// - `side`: 0 for front, 1 for back.
+///
+/// Returns the side's id in the level's `sides` array.  Called from p_spec.c
+/// and the floor/ceiling modules.
+pub fn getSide(level: &LevelState, currentSector: i32, line: i32, side: i32) -> SideId {
+    let side_idx = sector_line(level, currentSector, line).sidenum[side as usize];
+    SideId::new(side_idx as usize)
+}
+
+/// Returns the sector on a given side of a line bounding a sector.
+///
+/// - `currentSector`: index into the level's `sectors` array.
+/// - `line`: index into the sector's own line list.
 /// - `side`: 0 for front sector, 1 for back sector.
 ///
-/// Returns a pointer to the sector.  Callers must guard against the back sector
-/// being null (one-sided line) before dereferencing the result.  Called from
+/// Callers must check that the line is two-sided before asking for its back
+/// sector (C indexes `sides[-1]` otherwise; this panics).  Called from
 /// p_spec.c and various map-action modules.
-pub unsafe fn getSector(currentSector: i32, line: i32, side: i32) -> *mut sector_t {
-    let LevelState { sectors, sides, .. } = level();
-    let line_ptr = *(*sectors.offset(currentSector as isize))
-        .lines
-        .offset(line as isize);
-    let side_idx = (*line_ptr).sidenum[side as usize];
-    (*sides.offset(side_idx as isize)).sector
+pub fn getSector(level: &LevelState, currentSector: i32, line: i32, side: i32) -> SectorId {
+    level.sides[getSide(level, currentSector, line, side)].sector
 }
 
 /// Returns non-zero if the given line on a sector's boundary is two-sided.
 ///
-/// - `sector`: index into the global `sectors` array.
-/// - `line`: index into `sector.lines[]`.
+/// - `sector`: index into the level's `sectors` array.
+/// - `line`: index into the sector's own line list.
 ///
 /// Returns the `ML_TWOSIDED` flag value (non-zero) if the line has a back
 /// sector, or zero for one-sided lines.  Called from p_spec.c and the
 /// floor/ceiling/platform modules.
-pub unsafe fn twoSided(sector: i32, line: i32) -> i32 {
-    let line_ptr = *(*level().sectors.offset(sector as isize))
-        .lines
-        .offset(line as isize);
-    ((*line_ptr).flags as i32) & (LinedefFlag::TWOSIDED as i32)
+pub fn twoSided(level: &LevelState, sector: i32, line: i32) -> i32 {
+    (sector_line(level, sector, line).flags as i32) & (LinedefFlag::TWOSIDED as i32)
 }
 
-/// Returns the sector on the opposite side of `line` from `sec`, or null.
+/// Returns the sector on the opposite side of `line` from `sec`, or `None`.
 ///
-/// If `line` is one-sided (no `ML_TWOSIDED` flag), returns null.  Otherwise
-/// returns whichever of the front/back sectors is not `sec`.  Called
-/// extensively by the `P_Find*Surrounding` family of functions.
-pub unsafe fn getNextSector(line: *mut line_t, sec: *mut sector_t) -> *mut sector_t {
-    if ((*line).flags as i32) & (LinedefFlag::TWOSIDED as i32) == 0 {
-        return ptr::null_mut();
+/// If `line` is one-sided (no `ML_TWOSIDED` flag), returns `None`.
+/// Otherwise returns whichever of the front/back sectors is not `sec`.
+/// Called extensively by the `P_Find*Surrounding` family of functions.
+pub fn getNextSector(level: &LevelState, line: LineId, sec: SectorId) -> Option<SectorId> {
+    let line = &level.lines[line];
+    if (line.flags as i32) & (LinedefFlag::TWOSIDED as i32) == 0 {
+        return None;
     }
-    if (*line).frontsector == sec {
-        return (*line).backsector;
+    if line.frontsector == Some(sec) {
+        return line.backsector;
     }
-    (*line).frontsector
+    line.frontsector
+}
+
+/// The sectors on the other side of `sec`'s two-sided bounding lines, in
+/// line order (the `getNextSector` walk of the `P_Find*` functions).
+fn neighbouring_sectors(level: &LevelState, sec: SectorId) -> impl Iterator<Item = &sector_t> + '_ {
+    level
+        .sector_lines(sec)
+        .iter()
+        .filter_map(move |&check| getNextSector(level, check, sec))
+        .map(|other| &level.sectors[other])
 }
 
 /// Returns the lowest floor height among all sectors neighbouring `sec`.
@@ -452,16 +456,11 @@ pub unsafe fn getNextSector(line: *mut line_t, sec: *mut sector_t) -> *mut secto
 ///
 /// Heights are in fixed-point 16.16 (`fixed_t` / `i32`).  Called from
 /// p_floor and p_spec.
-pub unsafe fn P_FindLowestFloorSurrounding(sec: *mut sector_t) -> i32 {
-    let mut floor = (*sec).floorheight;
-    for i in 0..(*sec).linecount {
-        let check = *(*sec).lines.offset(i as isize);
-        let other = getNextSector(check, sec);
-        if other.is_null() {
-            continue;
-        }
-        if (*other).floorheight < floor {
-            floor = (*other).floorheight;
+pub fn P_FindLowestFloorSurrounding(level: &LevelState, sec: SectorId) -> i32 {
+    let mut floor = level.sectors[sec].floorheight;
+    for other in neighbouring_sectors(level, sec) {
+        if other.floorheight < floor {
+            floor = other.floorheight;
         }
     }
     floor
@@ -475,16 +474,11 @@ pub unsafe fn P_FindLowestFloorSurrounding(sec: *mut sector_t) -> i32 {
 /// infinity for practical map heights.
 ///
 /// Heights are fixed-point 16.16.  Called from p_floor.c and p_spec.c.
-pub unsafe fn P_FindHighestFloorSurrounding(sec: *mut sector_t) -> i32 {
+pub fn P_FindHighestFloorSurrounding(level: &LevelState, sec: SectorId) -> i32 {
     let mut floor = -500 * FRACUNIT;
-    for i in 0..(*sec).linecount {
-        let check = *(*sec).lines.offset(i as isize);
-        let other = getNextSector(check, sec);
-        if other.is_null() {
-            continue;
-        }
-        if (*other).floorheight > floor {
-            floor = (*other).floorheight;
+    for other in neighbouring_sectors(level, sec) {
+        if other.floorheight > floor {
+            floor = other.floorheight;
         }
     }
     floor
@@ -507,24 +501,19 @@ pub unsafe fn P_FindHighestFloorSurrounding(sec: *mut sector_t) -> i32 {
 ///
 /// Returns `currentheight` if no higher neighbour exists.  Heights are
 /// fixed-point 16.16.  Called from p_floor.c.
-pub unsafe fn P_FindNextHighestFloor(sec: *mut sector_t, currentheight: i32) -> i32 {
+pub fn P_FindNextHighestFloor(level: &LevelState, sec: SectorId, currentheight: i32) -> i32 {
     let mut height = currentheight;
     let mut heightlist: [i32; MAX_ADJOINING_SECTORS + 2] = [0; MAX_ADJOINING_SECTORS + 2];
     let mut h = 0;
 
-    for i in 0..(*sec).linecount {
-        let check = *(*sec).lines.offset(i as isize);
-        let other = getNextSector(check, sec);
-        if other.is_null() {
-            continue;
-        }
-        if (*other).floorheight > height {
+    for other in neighbouring_sectors(level, sec) {
+        if other.floorheight > height {
             if h == MAX_ADJOINING_SECTORS + 1 {
-                height = (*other).floorheight;
+                height = other.floorheight;
             } else if h == MAX_ADJOINING_SECTORS + 2 {
                 i_error!("Sector with more than 22 adjoining sectors. Vanilla will crash here");
             }
-            heightlist[h] = (*other).floorheight;
+            heightlist[h] = other.floorheight;
             h += 1;
         }
     }
@@ -549,16 +538,11 @@ pub unsafe fn P_FindNextHighestFloor(sec: *mut sector_t, currentheight: i32) -> 
 /// neighbours exist returns `INT_MAX`.
 ///
 /// Heights are fixed-point 16.16.  Called from p_ceilng.c and p_spec.c.
-pub unsafe fn P_FindLowestCeilingSurrounding(sec: *mut sector_t) -> i32 {
+pub fn P_FindLowestCeilingSurrounding(level: &LevelState, sec: SectorId) -> i32 {
     let mut height = i32::MAX;
-    for i in 0..(*sec).linecount {
-        let check = *(*sec).lines.offset(i as isize);
-        let other = getNextSector(check, sec);
-        if other.is_null() {
-            continue;
-        }
-        if (*other).ceilingheight < height {
-            height = (*other).ceilingheight;
+    for other in neighbouring_sectors(level, sec) {
+        if other.ceilingheight < height {
+            height = other.ceilingheight;
         }
     }
     height
@@ -570,16 +554,11 @@ pub unsafe fn P_FindLowestCeilingSurrounding(sec: *mut sector_t) -> i32 {
 /// neighbouring ceiling height.  If no two-sided neighbours exist returns 0.
 ///
 /// Heights are fixed-point 16.16.  Called from p_ceilng.c and p_spec.c.
-pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> i32 {
+pub fn P_FindHighestCeilingSurrounding(level: &LevelState, sec: SectorId) -> i32 {
     let mut height = 0;
-    for i in 0..(*sec).linecount {
-        let check = *(*sec).lines.offset(i as isize);
-        let other = getNextSector(check, sec);
-        if other.is_null() {
-            continue;
-        }
-        if (*other).ceilingheight > height {
-            height = (*other).ceilingheight;
+    for other in neighbouring_sectors(level, sec) {
+        if other.ceilingheight > height {
+            height = other.ceilingheight;
         }
     }
     height
@@ -587,20 +566,16 @@ pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> i32 {
 
 /// Finds the next sector whose tag matches `line->tag`, searching from `start + 1`.
 ///
-/// Iterates the global `sectors` array from index `start + 1` onwards and
-/// returns the index of the first sector whose `tag` equals `line->tag`.
-/// Returns -1 if no matching sector is found.
+/// Iterates the level's sectors from index `start + 1` onwards and returns
+/// the index of the first sector whose `tag` equals `line->tag`. Returns -1
+/// if no matching sector is found. `line` is the record of the activating
+/// line (or a synthetic one, as the boss deaths build).
 ///
 /// Used as the iterator in all tag-based action loops (donut, door, floor,
 /// ceiling, etc.).  Called from many action functions including `EV_DoDonut`.
-pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: i32) -> i32 {
-    let LevelState {
-        numsectors,
-        sectors,
-        ..
-    } = level();
-    for i in (start + 1)..numsectors {
-        if (*sectors.offset(i as isize)).tag == (*line).tag {
+pub fn P_FindSectorFromLineTag(level: &LevelState, line: &line_t, start: i32) -> i32 {
+    for i in (start + 1)..level.numsectors {
+        if level.sectors[i as usize].tag == line.tag {
             return i;
         }
     }
@@ -616,16 +591,11 @@ pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: i32) -> i32 {
 ///
 /// Light levels are raw `i16` values cast to `i32`; the valid Doom range
 /// is 0-255.  Called from p_lights.c to calculate strobe and flash targets.
-pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: i32) -> i32 {
+pub fn P_FindMinSurroundingLight(level: &LevelState, sector: SectorId, max: i32) -> i32 {
     let mut min = max;
-    for i in 0..(*sector).linecount {
-        let line = *(*sector).lines.offset(i as isize);
-        let check = getNextSector(line, sector);
-        if check.is_null() {
-            continue;
-        }
-        if ((*check).lightlevel as i32) < min {
-            min = (*check).lightlevel as i32;
+    for check in neighbouring_sectors(level, sector) {
+        if (check.lightlevel as i32) < min {
+            min = check.lightlevel as i32;
         }
     }
     min
@@ -653,13 +623,17 @@ pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: i32) -> i32 
 /// - Special 126 is a re-triggerable monster-only teleport (same player guard,
 ///   but does not clear `line->special`).
 ///
-/// - `linenum`: index into the global `lines` array.
+/// - `linenum`: the crossed linedef of the loaded level.
 /// - `side`: side of the line the thing is approaching from (0 = front).
 /// - `thing`: the map object that crossed the line.
 ///
 /// Called from `p_map.c` via C FFI.
-pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
-    let line = level().lines.offset(linenum as isize);
+pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: *mut mobj_t) {
+    // The line's record as the crossing found it; the actions read its tag
+    // and sectors, and clearing the special writes the level's line.
+    let line_record = LEVEL.borrow().lines[linenum];
+    let line = &line_record;
+    let clear_special = || LEVEL.borrow_mut().lines[linenum].special = 0;
 
     if (*thing).player.is_null() {
         match (*thing).kind {
@@ -670,7 +644,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
         }
 
         let mut ok = 0;
-        match (*line).special as i32 {
+        match line.special as i32 {
             39 | 97 | 125 | 126 | 4 | 10 | 88 => ok = 1,
             _ => {}
         }
@@ -679,165 +653,165 @@ pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
         }
     }
 
-    match (*line).special as i32 {
+    match line.special as i32 {
         2 => {
             EV_DoDoor(line, vld_open);
-            (*line).special = 0;
+            clear_special();
         }
         3 => {
             EV_DoDoor(line, vld_close);
-            (*line).special = 0;
+            clear_special();
         }
         4 => {
             EV_DoDoor(line, vld_normal);
-            (*line).special = 0;
+            clear_special();
         }
         5 => {
             EV_DoFloor(line, raiseFloor);
-            (*line).special = 0;
+            clear_special();
         }
         6 => {
             EV_DoCeiling(line, fastCrushAndRaise);
-            (*line).special = 0;
+            clear_special();
         }
         8 => {
             EV_BuildStairs(line, build8);
-            (*line).special = 0;
+            clear_special();
         }
         10 => {
             EV_DoPlat(line, downWaitUpStay, 0);
-            (*line).special = 0;
+            clear_special();
         }
         12 => {
             EV_LightTurnOn(line, 0);
-            (*line).special = 0;
+            clear_special();
         }
         13 => {
             EV_LightTurnOn(line, 255);
-            (*line).special = 0;
+            clear_special();
         }
         16 => {
             EV_DoDoor(line, vld_close30ThenOpen);
-            (*line).special = 0;
+            clear_special();
         }
         17 => {
             EV_StartLightStrobing(line);
-            (*line).special = 0;
+            clear_special();
         }
         19 => {
             EV_DoFloor(line, lowerFloor);
-            (*line).special = 0;
+            clear_special();
         }
         22 => {
             EV_DoPlat(line, raiseToNearestAndChange, 0);
-            (*line).special = 0;
+            clear_special();
         }
         25 => {
             EV_DoCeiling(line, crushAndRaise);
-            (*line).special = 0;
+            clear_special();
         }
         30 => {
             EV_DoFloor(line, raiseToTexture);
-            (*line).special = 0;
+            clear_special();
         }
         35 => {
             EV_LightTurnOn(line, 35);
-            (*line).special = 0;
+            clear_special();
         }
         36 => {
             EV_DoFloor(line, turboLower);
-            (*line).special = 0;
+            clear_special();
         }
         37 => {
             EV_DoFloor(line, lowerAndChange);
-            (*line).special = 0;
+            clear_special();
         }
         38 => {
             EV_DoFloor(line, lowerFloorToLowest);
-            (*line).special = 0;
+            clear_special();
         }
         39 => {
             EV_Teleport(line, side, thing);
-            (*line).special = 0;
+            clear_special();
         }
         40 => {
             EV_DoCeiling(line, raiseToHighest);
             EV_DoFloor(line, lowerFloorToLowest);
-            (*line).special = 0;
+            clear_special();
         }
         44 => {
             EV_DoCeiling(line, lowerAndCrush);
-            (*line).special = 0;
+            clear_special();
         }
         52 => {
             G_ExitLevel();
         }
         53 => {
             EV_DoPlat(line, perpetualRaise, 0);
-            (*line).special = 0;
+            clear_special();
         }
         54 => {
             EV_StopPlat(line);
-            (*line).special = 0;
+            clear_special();
         }
         56 => {
             EV_DoFloor(line, raiseFloorCrush);
-            (*line).special = 0;
+            clear_special();
         }
         57 => {
             EV_CeilingCrushStop(line);
-            (*line).special = 0;
+            clear_special();
         }
         58 => {
             EV_DoFloor(line, raiseFloor24);
-            (*line).special = 0;
+            clear_special();
         }
         59 => {
             EV_DoFloor(line, raiseFloor24AndChange);
-            (*line).special = 0;
+            clear_special();
         }
         104 => {
             EV_TurnTagLightsOff(line);
-            (*line).special = 0;
+            clear_special();
         }
         108 => {
             EV_DoDoor(line, vld_blazeRaise);
-            (*line).special = 0;
+            clear_special();
         }
         109 => {
             EV_DoDoor(line, vld_blazeOpen);
-            (*line).special = 0;
+            clear_special();
         }
         100 => {
             EV_BuildStairs(line, turbo16);
-            (*line).special = 0;
+            clear_special();
         }
         110 => {
             EV_DoDoor(line, vld_blazeClose);
-            (*line).special = 0;
+            clear_special();
         }
         119 => {
             EV_DoFloor(line, raiseFloorToNearest);
-            (*line).special = 0;
+            clear_special();
         }
         121 => {
             EV_DoPlat(line, blazeDWUS, 0);
-            (*line).special = 0;
+            clear_special();
         }
         124 => {
             G_SecretExitLevel();
         }
         125 if (*thing).player.is_null() => {
             EV_Teleport(line, side, thing);
-            (*line).special = 0;
+            clear_special();
         }
         130 => {
             EV_DoFloor(line, raiseFloorTurbo);
-            (*line).special = 0;
+            clear_special();
         }
         141 => {
             EV_DoCeiling(line, silentCrushAndRaise);
-            (*line).special = 0;
+            clear_special();
         }
         // RETRIGGERS
         72 => {
@@ -956,14 +930,16 @@ pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
 /// a player-controlled attack.
 ///
 /// - `thing`: the map object whose attack hit the line.
-/// - `line`: pointer to the linedef that was hit.
+/// - `line_id`: the linedef that was hit.
 ///
 /// Called from p_map.c (`PTR_ShootTraverse`) when a bullet or projectile
 /// hits a special linedef.
-pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line: *mut line_t) {
+pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line_id: LineId) {
+    let line_record = LEVEL.borrow().lines[line_id];
+    let line = &line_record;
     if (*thing).player.is_null() {
         let mut ok = 0;
-        if (*line).special as i32 == 46 {
+        if line.special as i32 == 46 {
             ok = 1
         }
         if ok == 0 {
@@ -971,18 +947,18 @@ pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line: *mut line_t) {
         }
     }
 
-    match (*line).special as i32 {
+    match line.special as i32 {
         24 => {
             EV_DoFloor(line, raiseFloor);
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         46 => {
             EV_DoDoor(line, vld_open);
-            P_ChangeSwitchTexture(line, 1);
+            P_ChangeSwitchTexture(line_id, 1);
         }
         47 => {
             EV_DoPlat(line, raiseToNearestAndChange, 0);
-            P_ChangeSwitchTexture(line, 0);
+            P_ChangeSwitchTexture(line_id, 0);
         }
         _ => {}
     }
@@ -1015,14 +991,21 @@ pub unsafe fn P_ShootSpecialLine(thing: *mut mobj_t, line: *mut line_t) {
 /// Called from g_game.c / p_tick.c each game tic for every active player.
 pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
     let mo = (*player).mo;
-    let sub = (*mo).subsector;
-    let sector = (*sub).sector;
+    let (sector, floorheight, special) = {
+        let level = LEVEL.borrow();
+        let sector = level.subsectors[(*mo).subsector].sector;
+        (
+            sector,
+            level.sectors[sector].floorheight,
+            level.sectors[sector].special,
+        )
+    };
 
-    if (*mo).z != (*sector).floorheight {
+    if (*mo).z != floorheight {
         return;
     }
 
-    match (*sector).special as i32 {
+    match special as i32 {
         5 => {
             if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
                 P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 10);
@@ -1040,7 +1023,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
         }
         9 => {
             (*player).secretcount += 1;
-            (*sector).special = 0;
+            LEVEL.borrow_mut().sectors[sector].special = 0;
         }
         11 => {
             (*player).cheats &= !CF_GODMODE;
@@ -1052,10 +1035,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
             }
         }
         _ => {
-            i_error!(
-                "P_PlayerInSpecialSector: unknown special {}",
-                (*sector).special
-            );
+            i_error!("P_PlayerInSpecialSector: unknown special {}", special);
         }
     }
 }
@@ -1105,9 +1085,9 @@ pub unsafe fn P_UpdateSpecials() {
         (data.texturetranslation, data.flattranslation)
     };
     let leveltime = leveltime();
-    let sides = level().sides;
     {
         let spec = SPEC.borrow();
+        let mut level = LEVEL.borrow_mut();
         let numanims = if spec.lastanim.is_null() {
             0
         } else {
@@ -1131,9 +1111,9 @@ pub unsafe fn P_UpdateSpecials() {
             .iter()
             .take(spec.numlinespecials as usize)
         {
-            if (*line).special as i32 == 48 {
-                let sidenum = (*line).sidenum[0] as isize;
-                (*sides.offset(sidenum)).textureoffset += FRACUNIT;
+            let (special, sidenum) = (level.lines[line].special, level.lines[line].sidenum[0]);
+            if special as i32 == 48 {
+                level.sides[sidenum as usize].textureoffset += FRACUNIT;
             }
         }
     }
@@ -1150,24 +1130,29 @@ pub unsafe fn P_UpdateSpecials() {
             }
         };
         if let Some(button) = expired {
-            let sidenum = (*button.line).sidenum[0] as isize;
-            match button.where_ {
-                0 => {
-                    (*sides.offset(sidenum)).toptexture = button.btexture as i16;
+            {
+                let mut level = LEVEL.borrow_mut();
+                let line = button.line.expect("pressed button without a line");
+                let sidenum = level.lines[line].sidenum[0] as usize;
+                let side = &mut level.sides[sidenum];
+                match button.where_ {
+                    0 => {
+                        side.toptexture = button.btexture as i16;
+                    }
+                    1 => {
+                        side.midtexture = button.btexture as i16;
+                    }
+                    2 => {
+                        side.bottomtexture = button.btexture as i16;
+                    }
+                    _ => {}
                 }
-                1 => {
-                    (*sides.offset(sidenum)).midtexture = button.btexture as i16;
-                }
-                2 => {
-                    (*sides.offset(sidenum)).bottomtexture = button.btexture as i16;
-                }
-                _ => {}
             }
             // Vanilla Doom passes `&buttonlist[i].soundorg`, the address
             // of the field, which plays the click from around map point
             // (0, 0). Play it from the switch's sector as intended.
-            S_StartSectorSound(button.soundorg, Sfx::Swtchn as i32);
-            SWITCHES.borrow_mut().buttonlist[i] = std::mem::zeroed();
+            start_button_sound(button.soundorg, Sfx::Swtchn as i32);
+            SWITCHES.borrow_mut().buttonlist[i] = button_t::EMPTY;
         }
     }
 }
@@ -1196,15 +1181,12 @@ pub unsafe fn P_UpdateSpecials() {
 /// - `_pillar_sector`: the inner donut sector (used only for diagnostics in C;
 ///   unused in this Rust port).
 ///
-/// # Safety
-///
-/// `s3_floorheight` and `s3_floorpic` must be valid, non-null, writable
-/// pointers. They are written unconditionally on every call.
-unsafe fn DonutOverrun(
-    s3_floorheight: *mut i32,
-    s3_floorpic: *mut i16,
-    _line: *mut line_t,
-    _pillar_sector: *mut sector_t,
+/// Both outputs are written unconditionally on every call.
+fn DonutOverrun(
+    s3_floorheight: &mut i32,
+    s3_floorpic: &mut i16,
+    _line: &line_t,
+    _pillar_sector: SectorId,
 ) {
     let mut spec = SPEC.borrow_mut();
     if !spec.donut_initialized {
@@ -1263,47 +1245,60 @@ unsafe fn DonutOverrun(
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
 /// Called from p_spec.c via C when a donut-tagged line is activated.
-pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
+pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
     let mut secnum = -1;
     let mut rtn = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let s1 = level().sectors.offset(secnum as isize);
-        if !(*s1).specialdata.is_null() {
-            continue;
-        }
+        let s1 = SectorId::new(secnum as usize);
+        let s2 = {
+            let level = LEVEL.borrow();
+            if !level.sectors[s1].specialdata.is_null() {
+                continue;
+            }
 
-        rtn = 1;
-        let s2 = getNextSector(*(*s1).lines.offset(0), s1);
+            rtn = 1;
+            // C reads `s1->lines[0]` even when the list is empty.
+            let first_line = level.linebuffer[level.sectors[s1].lines];
+            getNextSector(&level, first_line, s1)
+        };
 
-        if s2.is_null() {
+        let Some(s2) = s2 else {
             eprintln!(
                 "EV_DoDonut: linedef had no second sidedef! Unexpected behavior may occur in Vanilla Doom. "
             );
             break;
-        }
+        };
 
-        for i in 0..(*s2).linecount {
-            let s3 = (**(*s2).lines.offset(i as isize)).backsector;
+        let s2_linecount = LEVEL.borrow().sectors[s2].linecount;
+        for i in 0..s2_linecount as usize {
+            let s3 = {
+                let level = LEVEL.borrow();
+                level.lines[level.sector_lines(s2)[i]].backsector
+            };
 
-            if s3 == s1 {
+            if s3 == Some(s1) {
                 continue;
             }
 
-            let (s3_floorheight, s3_floorpic) = if s3.is_null() {
-                eprintln!(
-                    "EV_DoDonut: WARNING: emulating buffer overrun due to NULL back sector. Unexpected behavior may occur in Vanilla Doom."
-                );
-                let mut fh = 0;
-                let mut fp = 0i16;
-                DonutOverrun(&mut fh, &mut fp, line, s1);
-                (fh, fp)
-            } else {
-                ((*s3).floorheight, (*s3).floorpic)
+            let (s3_floorheight, s3_floorpic) = match s3 {
+                None => {
+                    eprintln!(
+                        "EV_DoDonut: WARNING: emulating buffer overrun due to NULL back sector. Unexpected behavior may occur in Vanilla Doom."
+                    );
+                    let mut fh = 0;
+                    let mut fp = 0i16;
+                    DonutOverrun(&mut fh, &mut fp, line, s1);
+                    (fh, fp)
+                }
+                Some(s3) => {
+                    let level = LEVEL.borrow();
+                    (level.sectors[s3].floorheight, level.sectors[s3].floorpic)
+                }
             };
 
             // Spawn rising slime
@@ -1313,12 +1308,12 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 ptr::null_mut(),
             ) as *mut floormove_t;
             P_AddThinker(&raw mut (*floor).thinker);
-            (*s2).specialdata = &raw mut (*floor).thinker;
+            LEVEL.borrow_mut().sectors[s2].specialdata = &raw mut (*floor).thinker;
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = donutRaise;
             (*floor).crush = 0;
             (*floor).direction = 1;
-            (*floor).sector = s2 as *mut _;
+            (*floor).sector = s2;
             (*floor).speed = FLOORSPEED / 2;
             (*floor).texture = s3_floorpic;
             (*floor).newspecial = 0;
@@ -1331,12 +1326,12 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
                 ptr::null_mut(),
             ) as *mut floormove_t;
             P_AddThinker(&raw mut (*floor).thinker);
-            (*s1).specialdata = &raw mut (*floor).thinker;
+            LEVEL.borrow_mut().sectors[s1].specialdata = &raw mut (*floor).thinker;
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = lowerFloor;
             (*floor).crush = 0;
             (*floor).direction = -1;
-            (*floor).sector = s1 as *mut _;
+            (*floor).sector = s1;
             (*floor).speed = FLOORSPEED / 2;
             (*floor).floordestheight = s3_floorheight;
 
@@ -1388,25 +1383,20 @@ pub unsafe fn P_SpawnSpecials() {
         SPEC.borrow_mut().levelTimer = 0;
     }
 
-    let LevelState {
-        numsectors,
-        sectors,
-        numlines,
-        lines,
-        ..
-    } = level();
+    let numsectors = LEVEL.borrow().numsectors;
     for i in 0..numsectors {
-        let sector = sectors.offset(i as isize);
-        if (*sector).special == 0 {
+        let sector = SectorId::new(i as usize);
+        let special = LEVEL.borrow().sectors[sector].special;
+        if special == 0 {
             continue;
         }
-        match (*sector).special as i32 {
+        match special as i32 {
             1 => P_SpawnLightFlash(sector),
             2 => P_SpawnStrobeFlash(sector, FASTDARK, 0),
             3 => P_SpawnStrobeFlash(sector, SLOWDARK, 0),
             4 => {
                 P_SpawnStrobeFlash(sector, FASTDARK, 0);
-                (*sector).special = 4;
+                LEVEL.borrow_mut().sectors[sector].special = 4;
             }
             8 => P_SpawnGlowingLight(sector),
             9 => {
@@ -1423,14 +1413,15 @@ pub unsafe fn P_SpawnSpecials() {
 
     {
         let mut spec = SPEC.borrow_mut();
+        let level = LEVEL.borrow();
         spec.numlinespecials = 0;
-        for i in 0..numlines {
-            if (*lines.offset(i as isize)).special as i32 == 48 {
+        for (i, line) in level.lines.iter().enumerate() {
+            if line.special as i32 == 48 {
                 if spec.numlinespecials as i32 >= MAXLINEANIMS as i32 {
                     i_error!("Too many scrolling wall linedefs! (Vanilla limit is 64)");
                 }
                 let index = spec.numlinespecials as usize;
-                spec.linespeciallist[index] = lines.offset(i as isize);
+                spec.linespeciallist[index] = LineId::new(i);
                 spec.numlinespecials += 1;
             }
         }
@@ -1438,7 +1429,7 @@ pub unsafe fn P_SpawnSpecials() {
 
     CEILINGS.borrow_mut().activeceilings = [ptr::null_mut(); MAXCEILINGS];
     PLATS.borrow_mut().activeplats = [ptr::null_mut(); MAXPLATS];
-    SWITCHES.borrow_mut().buttonlist = [std::mem::zeroed(); MAXBUTTONS];
+    SWITCHES.borrow_mut().buttonlist = [button_t::EMPTY; MAXBUTTONS];
 }
 
 // ---------------------------------------------------------------------------
@@ -1457,7 +1448,7 @@ mod tests {
         assert_eq!(spec.numlinespecials, 0);
         assert!(spec.lastanim.is_null());
         for (i, &v) in spec.linespeciallist.iter().enumerate() {
-            assert!(v.is_null(), "linespeciallist[{i}] should be null");
+            assert_eq!(v, LineId::new(0), "linespeciallist[{i}] should be line 0");
         }
         for (i, a) in spec.anims.iter().enumerate() {
             assert_eq!(a.istexture, 0, "anims[{i}].istexture should be 0");

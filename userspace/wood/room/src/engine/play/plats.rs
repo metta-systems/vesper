@@ -13,12 +13,12 @@ use crate::{
     engine::{
         global::Global,
         interface::timer::TICRATE,
-        map::{line_t, sector_t},
+        map::{SectorId, line_t},
         math::fixed::{FRACUNIT, fixed_t},
         misc::random::P_Random,
         play::{
             floor::T_MovePlane,
-            setup::{LevelState, level},
+            setup::LEVEL,
             spec::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
@@ -89,7 +89,7 @@ pub struct plat_t {
     /// Thinker list node.
     pub thinker: thinker_t,
     /// The sector whose floor this thinker is moving.
-    pub sector: *mut sector_t,
+    pub sector: SectorId,
     /// Current movement speed in fixed-point units per tic.
     pub speed: fixed_t,
     /// Lower target height (destination when moving down).
@@ -166,7 +166,7 @@ pub static PLATS: Global<PlatState> = Global::new(PlatState::new());
 /// # Safety
 ///
 /// `plat` must be a valid, non-null pointer to a `plat_t` that is currently
-/// linked in the thinker list and whose `sector` pointer is valid.
+/// linked in the thinker list and whose `sector` belongs to the current map.
 pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
     match (*plat).status {
         x if x == up => {
@@ -182,17 +182,17 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
                 && (leveltime() & 7) == 0
             {
-                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Stnmov as i32);
+                S_StartSectorSound((*plat).sector, Sfx::Stnmov as i32);
             }
 
             if res == result_crushed && (*plat).crush == 0 {
                 (*plat).count = (*plat).wait;
                 (*plat).status = down;
-                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstart as i32);
+                S_StartSectorSound((*plat).sector, Sfx::Pstart as i32);
             } else if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstop as i32);
+                S_StartSectorSound((*plat).sector, Sfx::Pstop as i32);
 
                 match (*plat).kind {
                     x if x == blazeDWUS
@@ -212,18 +212,18 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstop as i32);
+                S_StartSectorSound((*plat).sector, Sfx::Pstop as i32);
             }
         }
         x if x == waiting => {
             (*plat).count -= 1;
             if (*plat).count == 0 {
-                if (*(*plat).sector).floorheight == (*plat).low {
+                if LEVEL.borrow().sectors[(*plat).sector].floorheight == (*plat).low {
                     (*plat).status = up;
                 } else {
                     (*plat).status = down;
                 }
-                S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Pstart as i32);
+                S_StartSectorSound((*plat).sector, Sfx::Pstart as i32);
             }
         }
         x if x == in_stasis => {}
@@ -251,28 +251,26 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
 ///
 /// # Safety
 ///
-/// `line` must be a valid, non-null pointer.  The global `sectors` and `sides`
-/// arrays must be initialised for the current level.
-pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
+/// The zone and thinker list must be initialised and a level loaded.
+pub unsafe fn EV_DoPlat(line: &line_t, plattype: i32, amount: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     match plattype {
         x if x == perpetualRaise => {
-            P_ActivateInStasis((*line).tag as i32);
+            P_ActivateInStasis(line.tag as i32);
         }
         _ => {}
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(line, secnum);
+        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
         secnum
     } >= 0
     {
-        let LevelState { sectors, sides, .. } = level();
-        let sec = sectors.add(secnum as usize);
+        let sec = SectorId::new(secnum as usize);
 
-        if !(*sec).specialdata.is_null() {
+        if !LEVEL.borrow().sectors[sec].specialdata.is_null() {
             continue;
         }
 
@@ -284,70 +282,82 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
         ) as *mut plat_t;
         P_AddThinker(&raw mut (*plat).thinker);
 
-        (*plat).kind = plattype;
-        (*plat).sector = sec;
-        (*plat).sector.as_mut().unwrap().specialdata = &raw mut (*plat).thinker;
-        (*plat).thinker.kind = ThinkerKind::Plat;
-        (*plat).crush = 0;
-        (*plat).tag = (*line).tag as i32;
+        // Setting up the platform runs no play code, so one borrow serves it;
+        // its sound starts once the borrow has ended.
+        let sound = {
+            let mut level = LEVEL.borrow_mut();
+            let level = &mut *level;
+            (*plat).kind = plattype;
+            (*plat).sector = sec;
+            level.sectors[sec].specialdata = &raw mut (*plat).thinker;
+            (*plat).thinker.kind = ThinkerKind::Plat;
+            (*plat).crush = 0;
+            (*plat).tag = line.tag as i32;
+            let floorheight = level.sectors[sec].floorheight;
 
-        match plattype {
-            x if x == raiseToNearestAndChange => {
-                (*plat).speed = PLATSPEED / 2;
-                let sidenum = (*line).sidenum[0] as isize;
-                (*sec).floorpic = (*sides.offset(sidenum)).sector.as_mut().unwrap().floorpic;
-                (*plat).high = P_FindNextHighestFloor(sec, (*sec).floorheight);
-                (*plat).wait = 0;
-                (*plat).status = up;
-                (*sec).special = 0;
-                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Stnmov as i32);
-            }
-            x if x == raiseAndChange => {
-                (*plat).speed = PLATSPEED / 2;
-                let sidenum = (*line).sidenum[0] as isize;
-                (*sec).floorpic = (*sides.offset(sidenum)).sector.as_mut().unwrap().floorpic;
-                (*plat).high = (*sec).floorheight + amount * FRACUNIT;
-                (*plat).wait = 0;
-                (*plat).status = up;
-                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Stnmov as i32);
-            }
-            x if x == downWaitUpStay => {
-                (*plat).speed = PLATSPEED * 4;
-                (*plat).low = P_FindLowestFloorSurrounding(sec);
-                if (*plat).low > (*sec).floorheight {
-                    (*plat).low = (*sec).floorheight;
+            match plattype {
+                x if x == raiseToNearestAndChange => {
+                    (*plat).speed = PLATSPEED / 2;
+                    let sidenum = line.sidenum[0] as usize;
+                    level.sectors[sec].floorpic =
+                        level.sectors[level.sides[sidenum].sector].floorpic;
+                    (*plat).high = P_FindNextHighestFloor(level, sec, floorheight);
+                    (*plat).wait = 0;
+                    (*plat).status = up;
+                    level.sectors[sec].special = 0;
+                    Some(Sfx::Stnmov)
                 }
-                (*plat).high = (*sec).floorheight;
-                (*plat).wait = TICRATE * PLATWAIT;
-                (*plat).status = down;
-                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
-            }
-            x if x == blazeDWUS => {
-                (*plat).speed = PLATSPEED * 8;
-                (*plat).low = P_FindLowestFloorSurrounding(sec);
-                if (*plat).low > (*sec).floorheight {
-                    (*plat).low = (*sec).floorheight;
+                x if x == raiseAndChange => {
+                    (*plat).speed = PLATSPEED / 2;
+                    let sidenum = line.sidenum[0] as usize;
+                    level.sectors[sec].floorpic =
+                        level.sectors[level.sides[sidenum].sector].floorpic;
+                    (*plat).high = floorheight + amount * FRACUNIT;
+                    (*plat).wait = 0;
+                    (*plat).status = up;
+                    Some(Sfx::Stnmov)
                 }
-                (*plat).high = (*sec).floorheight;
-                (*plat).wait = TICRATE * PLATWAIT;
-                (*plat).status = down;
-                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
-            }
-            x if x == perpetualRaise => {
-                (*plat).speed = PLATSPEED;
-                (*plat).low = P_FindLowestFloorSurrounding(sec);
-                if (*plat).low > (*sec).floorheight {
-                    (*plat).low = (*sec).floorheight;
+                x if x == downWaitUpStay => {
+                    (*plat).speed = PLATSPEED * 4;
+                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
+                    if (*plat).low > floorheight {
+                        (*plat).low = floorheight;
+                    }
+                    (*plat).high = floorheight;
+                    (*plat).wait = TICRATE * PLATWAIT;
+                    (*plat).status = down;
+                    Some(Sfx::Pstart)
                 }
-                (*plat).high = P_FindHighestFloorSurrounding(sec);
-                if (*plat).high < (*sec).floorheight {
-                    (*plat).high = (*sec).floorheight;
+                x if x == blazeDWUS => {
+                    (*plat).speed = PLATSPEED * 8;
+                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
+                    if (*plat).low > floorheight {
+                        (*plat).low = floorheight;
+                    }
+                    (*plat).high = floorheight;
+                    (*plat).wait = TICRATE * PLATWAIT;
+                    (*plat).status = down;
+                    Some(Sfx::Pstart)
                 }
-                (*plat).wait = TICRATE * PLATWAIT;
-                (*plat).status = P_Random() & 1;
-                S_StartSectorSound(&raw mut (*sec).soundorg, Sfx::Pstart as i32);
+                x if x == perpetualRaise => {
+                    (*plat).speed = PLATSPEED;
+                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
+                    if (*plat).low > floorheight {
+                        (*plat).low = floorheight;
+                    }
+                    (*plat).high = P_FindHighestFloorSurrounding(level, sec);
+                    if (*plat).high < floorheight {
+                        (*plat).high = floorheight;
+                    }
+                    (*plat).wait = TICRATE * PLATWAIT;
+                    (*plat).status = P_Random() & 1;
+                    Some(Sfx::Pstart)
+                }
+                _ => None,
             }
-            _ => {}
+        };
+        if let Some(sound) = sound {
+            S_StartSectorSound(sec, sound as i32);
         }
         P_AddActivePlat(plat);
     }
@@ -383,12 +393,12 @@ pub fn P_ActivateInStasis(tag: i32) {
 ///
 /// # Safety
 ///
-/// `line` must be a valid, non-null pointer.
-pub unsafe fn EV_StopPlat(line: *mut line_t) {
+/// Every registered platform must be live (see [`P_AddActivePlat`]).
+pub unsafe fn EV_StopPlat(line: &line_t) {
     let activeplats = PLATS.borrow().activeplats;
     unsafe {
         for plat in activeplats {
-            if !plat.is_null() && (*plat).status != in_stasis && (*plat).tag == (*line).tag as i32 {
+            if !plat.is_null() && (*plat).status != in_stasis && (*plat).tag == line.tag as i32 {
                 (*plat).oldstatus = (*plat).status;
                 (*plat).status = in_stasis;
                 (*plat).thinker.kind = ThinkerKind::PlatInStasis;
@@ -405,7 +415,7 @@ pub unsafe fn EV_StopPlat(line: *mut line_t) {
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
 ///
 /// # Safety
-/// `plat` must point to a live platform thinker whose `sector` points into
+/// `plat` must point to a live platform thinker whose `sector` belongs to
 /// the loaded level. It stays registered until `P_RemoveActivePlat` or the
 /// next level load clears the table, and later safe calls dereference it.
 pub unsafe fn P_AddActivePlat(plat: *mut plat_t) {
@@ -434,7 +444,7 @@ pub fn P_RemoveActivePlat(plat: *mut plat_t) {
         for slot in plats.activeplats.iter_mut() {
             if plat == *slot {
                 unsafe {
-                    (**slot).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
+                    LEVEL.borrow_mut().sectors[(**slot).sector].specialdata = std::ptr::null_mut();
                     P_RemoveThinker(&raw mut (**slot).thinker);
                 }
                 *slot = std::ptr::null_mut();

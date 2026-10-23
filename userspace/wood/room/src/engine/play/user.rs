@@ -17,7 +17,7 @@ use crate::engine::{
         fixed::{FRACUNIT, FixedMul, fixed_t},
         tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
     },
-    play::{info::*, tick::leveltime},
+    play::{info::*, setup::LEVEL, tick::leveltime},
 };
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
@@ -397,7 +397,7 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         }
 
         P_CalcHeight(player);
-        if (*(*(*mo).subsector).sector).special != 0 {
+        if LEVEL.borrow().subsector_sector((*mo).subsector).special != 0 {
             P_PlayerInSpecialSector(player);
         }
         // Check for weapon change.

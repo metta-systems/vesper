@@ -46,7 +46,7 @@ use crate::{
         },
         play::{
             maputl::MAPBLOCKUNITS,
-            setup::{LevelState, level},
+            setup::{LEVEL, blockmap_origin},
         },
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
@@ -968,24 +968,16 @@ fn AM_addMark(automap: &mut AutomapState) {
 /// `min_scale_mtof` is the smaller of the x- and y-axis "fit whole level"
 /// scales.  `max_scale_mtof` fits `2 * PLAYERRADIUS` within the frame height.
 ///
+/// Reads the loaded level's `vertexes` (from `P_LoadVertexes`).
+///
 /// C origin: `AM_findMinMaxBoundaries` in am_map.c.
-///
-/// # Safety
-///
-/// `vertexes` and `numvertexes` must be valid (populated by `P_LoadVertexes`).
-unsafe fn AM_findMinMaxBoundaries(automap: &mut AutomapState) {
+fn AM_findMinMaxBoundaries(automap: &mut AutomapState) {
     automap.min_x = i32::MAX;
     automap.min_y = i32::MAX;
     automap.max_x = -i32::MAX;
     automap.max_y = -i32::MAX;
 
-    let LevelState {
-        numvertexes,
-        vertexes,
-        ..
-    } = level();
-    for i in 0..numvertexes {
-        let v = &*vertexes.add(i as usize);
+    for v in LEVEL.borrow().vertexes.iter() {
         if v.x < automap.min_x {
             automap.min_x = v.x;
         } else if v.x > automap.max_x {
@@ -1146,12 +1138,10 @@ fn AM_clearMarks(automap: &mut AutomapState) {
 /// factor to show approximately 70 % of the minimum fit (clamped to the
 /// maximum fit if that produces a smaller value).
 ///
+/// Reads the loaded level's vertexes.
+///
 /// C origin: `AM_LevelInit` in am_map.c.
-///
-/// # Safety
-///
-/// `vertexes` / `numvertexes` must be valid (level must be loaded).
-unsafe fn AM_LevelInit(automap: &mut AutomapState) {
+fn AM_LevelInit(automap: &mut AutomapState) {
     automap.leveljuststarted = 0;
 
     automap.f_x = 0;
@@ -1773,8 +1763,7 @@ unsafe fn AM_drawMline(automap: &mut AutomapState, ml: *mut mline_t, color: i32)
 ///
 /// # Safety
 ///
-/// Reads `bmaporgx` / `bmaporgy` mutable statics; `lines` / `numlines` must
-/// be valid.
+/// The automap framebuffer must be valid. Reads the level's blockmap origin.
 unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
     let (m_x, m_y, m_w, m_h) = (automap.m_x, automap.m_y, automap.m_w, automap.m_h);
     let mut start: fixed_t;
@@ -1784,9 +1773,7 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
-    let LevelState {
-        bmaporgx, bmaporgy, ..
-    } = level();
+    let (bmaporgx, bmaporgy) = blockmap_origin();
 
     // Vertical gridlines.
     start = m_x;
@@ -1842,7 +1829,7 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
 ///
 /// # Safety
 ///
-/// `lines`, `numlines`, `sectors`, and `plr` must be valid.
+/// `plr` must be valid, and the level loaded.
 unsafe fn AM_drawWalls(automap: &mut AutomapState) {
     let (cheating, lightlev, plr) = (automap.cheating, automap.lightlev, automap.plr);
     // Scratch line; every iteration sets all of it.
@@ -1851,15 +1838,13 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
-    let LevelState {
-        numlines, lines, ..
-    } = level();
-    for i in 0..numlines {
-        let li = &*lines.add(i as usize);
-        l.a.x = (*li.v1).x;
-        l.a.y = (*li.v1).y;
-        l.b.x = (*li.v2).x;
-        l.b.y = (*li.v2).y;
+    let level = LEVEL.borrow();
+    for li in &level.lines {
+        let (v1, v2) = (level.vertexes[li.v1], level.vertexes[li.v2]);
+        l.a.x = v1.x;
+        l.a.y = v1.y;
+        l.b.x = v2.x;
+        l.b.y = v2.y;
 
         let flags = li.flags as i32;
 
@@ -1867,11 +1852,10 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState) {
             if (flags & LinedefFlag::DONTDRAW as i32) != 0 && cheating == 0 {
                 continue;
             }
-            if li.backsector.is_null() {
-                AM_drawMline(automap, &mut l, WALLCOLORS + lightlev);
-            } else {
-                let back = li.backsector;
-                let front = li.frontsector;
+            if let Some(back) = li.backsector {
+                let back = &level.sectors[back];
+                let front =
+                    &level.sectors[li.frontsector.expect("two-sided line without front sector")];
                 if li.special == 39 {
                     // teleporters
                     AM_drawMline(automap, &mut l, WALLCOLORS + WALLRANGE / 2);
@@ -1881,13 +1865,15 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState) {
                     } else {
                         AM_drawMline(automap, &mut l, WALLCOLORS + lightlev);
                     }
-                } else if (*back).floorheight != (*front).floorheight {
+                } else if back.floorheight != front.floorheight {
                     AM_drawMline(automap, &mut l, FDWALLCOLORS + lightlev);
-                } else if (*back).ceilingheight != (*front).ceilingheight {
+                } else if back.ceilingheight != front.ceilingheight {
                     AM_drawMline(automap, &mut l, CDWALLCOLORS + lightlev);
                 } else if cheating != 0 {
                     AM_drawMline(automap, &mut l, TSWALLCOLORS + lightlev);
                 }
+            } else {
+                AM_drawMline(automap, &mut l, WALLCOLORS + lightlev);
             }
         } else if (*plr).powers[4] != 0 {
             // pw_allmap
@@ -2067,16 +2053,12 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
 ///
 /// # Safety
 ///
-/// `sectors` / `numsectors` must be valid; thing linked lists must be
-/// properly terminated.
+/// The level must be loaded; thing linked lists must be properly
+/// terminated.
 unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i32) {
-    let LevelState {
-        numsectors,
-        sectors,
-        ..
-    } = level();
-    for i in 0..numsectors {
-        let mut t = (*sectors.add(i as usize)).thinglist;
+    let level = LEVEL.borrow();
+    for sector in &level.sectors[..level.numsectors as usize] {
+        let mut t = sector.thinglist;
         while !t.is_null() {
             let lightlev = automap.lightlev;
             AM_drawLineCharacter(

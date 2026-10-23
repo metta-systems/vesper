@@ -306,7 +306,10 @@ use crate::engine::{
     automap::{AM_Stop, automap_active},
     game::{deathmatch, gameskill, netgame},
     interface::system::I_Tactile,
-    play::mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
+    play::{
+        mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
+        setup::LEVEL,
+    },
     render_3d::main::R_PointToAngle2,
     sound::S_StartNonPositionalSound,
 };
@@ -1174,7 +1177,8 @@ pub unsafe fn P_DamageMobj(
 
     if !player.is_null() {
         // end of game hell hack
-        if (*(*(*target).subsector).sector).special == 11 && damage >= (*target).health {
+        let special = LEVEL.borrow().subsector_sector((*target).subsector).special;
+        if special == 11 && damage >= (*target).health {
             damage = (*target).health - 1;
         }
 

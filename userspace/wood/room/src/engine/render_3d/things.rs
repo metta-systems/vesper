@@ -20,12 +20,16 @@ use {
 use crate::engine::{
     doom::player::{NUMPSPRITES, PspdefT},
     global::Global,
-    map::sector_t,
+    map::SectorId,
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
         tables::ANG45,
     },
-    play::{info::*, mobj::mobj_t},
+    play::{
+        info::*,
+        mobj::mobj_t,
+        setup::{LEVEL, LevelState},
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -890,13 +894,16 @@ fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
 /// Uses `sec.validcount` to skip sectors that were already processed this
 /// frame (a sector can appear in multiple subsectors). Sets `spritelights`
 /// from the sector's light level, then calls `R_ProjectSprite` for every
-/// thing in the sector's thing list.
+/// thing in the sector's thing list. `level` is the BSP traversal's borrow
+/// of the level.
+///
 /// # Safety
-/// - `sec` must be a valid, non-null `sector_t` pointer.
+/// - `sec` must be a sector of `level` whose thing list links live map
+///   objects.
 /// - `VALIDCOUNT`, `scalelight`, `extralight` must be initialised for the
 ///   current frame before this function is called.
-pub unsafe fn R_AddSprites(sec: *mut sector_t) {
-    let sec = &*sec;
+pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
+    let sec = &mut level.sectors[sec];
     let validcount = VALIDCOUNT.get();
 
     // BSP is traversed by subsector.
@@ -907,7 +914,7 @@ pub unsafe fn R_AddSprites(sec: *mut sector_t) {
     }
 
     // Well, now it will be done.
-    (*(sec as *const sector_t as *mut sector_t)).validcount = validcount;
+    sec.validcount = validcount;
 
     let extralight = VIEW.borrow().extralight;
     SPRITES.borrow_mut().spritelights = sprite_light_row(sec.lightlevel, extralight);
@@ -1091,9 +1098,11 @@ pub unsafe fn R_DrawPlayerSprites() {
         (view.viewplayer, view.extralight)
     };
     let mo = (*viewplayer).mo;
-    let sub = (*mo).subsector;
-    let sec = (*sub).sector;
-    SPRITES.borrow_mut().spritelights = sprite_light_row((*sec).lightlevel, extralight);
+    let lightlevel = {
+        let level = LEVEL.borrow();
+        level.sectors[level.subsectors[(*mo).subsector].sector].lightlevel
+    };
+    SPRITES.borrow_mut().spritelights = sprite_light_row(lightlevel, extralight);
 
     // Clip to screen bounds.
     let mut masked = MaskedColumnParams {
@@ -1212,6 +1221,7 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
     let spr = *spr;
     let viewheight = DRAW.borrow().viewheight;
     let ds_p = BSP.borrow().ds_p;
+    let level = LEVEL.borrow();
 
     {
         let mut pool = VISSPRITES.borrow_mut();
@@ -1249,7 +1259,8 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
             }
 
             if scale < spr.scale
-                || (lowscale < spr.scale && R_PointOnSegSide(spr.gx, spr.gy, ds.curline) == 0)
+                || (lowscale < spr.scale
+                    && R_PointOnSegSide(&level, spr.gx, spr.gy, ds.curline) == 0)
             {
                 // Masked mid texture?
                 if !ds.maskedtexturecol.is_null() {
