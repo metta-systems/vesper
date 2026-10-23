@@ -109,7 +109,7 @@ pub struct hu_itext_t {
 }
 
 use crate::engine::{
-    automap::automapactive,
+    automap::automap_active,
     render_2d::V_DrawPatchDirect,
     render_3d::draw::{viewheight, viewwidth, viewwindowx, viewwindowy, R_VideoErase},
 };
@@ -244,7 +244,7 @@ pub fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
 /// Called from `HU_Erase`, `HUlib_eraseSText`, and `HUlib_eraseIText`.
 pub fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
     unsafe {
-        if automapactive == 0 && viewwindowx != 0 && (*l).needsupdate != 0 {
+        if !automap_active() && viewwindowx != 0 && (*l).needsupdate != 0 {
             let lh = (**(*l).f).height.get() as i32 + 1;
             for y in (*l).y..(*l).y + lh {
                 let yoffset = y * SCREENWIDTH;
@@ -489,9 +489,7 @@ pub fn HUlib_eraseIText(it: *mut hu_itext_t) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     /// Build a zero-initialised hu_textline_t without a valid font pointer.
     /// Safe to use with clear/add/del because those don't dereference `f`.
@@ -509,7 +507,6 @@ mod tests {
 
     #[test]
     fn clear_text_line_resets_fields() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         tl.len = 5;
         tl.needsupdate = 0;
@@ -524,7 +521,6 @@ mod tests {
 
     #[test]
     fn add_char_increments_len_and_nul_terminates() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
 
@@ -539,7 +535,6 @@ mod tests {
 
     #[test]
     fn add_multiple_chars_builds_string() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
 
@@ -554,7 +549,6 @@ mod tests {
 
     #[test]
     fn add_char_at_max_capacity_returns_zero() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
 
@@ -572,7 +566,6 @@ mod tests {
 
     #[test]
     fn del_char_decrements_len_and_nul_terminates() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
         HUlib_addCharToTextLine(&mut tl, b'A');
@@ -588,7 +581,6 @@ mod tests {
 
     #[test]
     fn del_char_on_empty_line_returns_zero() {
-        let _g = LOCK.lock().unwrap();
         let mut tl = make_textline();
         HUlib_clearTextLine(&mut tl);
 
@@ -600,7 +592,6 @@ mod tests {
     /// HUlib_keyInIText with a printable character in [' ', '_'] must add it.
     #[test]
     fn key_in_itext_printable_adds_char() {
-        let _g = LOCK.lock().unwrap();
         let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
@@ -620,7 +611,6 @@ mod tests {
     #[test]
     fn key_in_itext_backspace_removes_char() {
         use crate::engine::interface::keys::KEY_BACKSPACE;
-        let _g = LOCK.lock().unwrap();
         let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
@@ -640,7 +630,6 @@ mod tests {
     /// Characters outside [' ', '_'] (except Enter/Backspace) return 0.
     #[test]
     fn key_in_itext_unknown_key_returns_zero() {
-        let _g = LOCK.lock().unwrap();
         let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),

@@ -291,7 +291,7 @@ use crate::engine::game::{
 };
 
 // am_map.rs
-use crate::engine::automap::{automapactive, AM_Drawer};
+use crate::engine::automap::{automap_active, AM_Drawer};
 
 // deh_str.rs
 use crate::engine::dehacked::DEH_String;
@@ -326,7 +326,7 @@ use crate::engine::wad::{
 };
 
 // hu_stuff.rs
-use crate::engine::hud::stuff::{chat_macros, HU_Drawer, HU_Init};
+use crate::engine::hud::stuff::{HU_Drawer, HU_Init, HUD};
 
 // m_controls.rs
 use crate::engine::misc::controls::key_multi_msgplayer;
@@ -516,7 +516,7 @@ pub fn D_Display() {
             if gametic == 0 {
                 // Skip level rendering
             } else {
-                if automapactive != 0 {
+                if automap_active() {
                     AM_Drawer();
                 }
                 if wipe || (viewheight != 200 && D_DISP_FULLSCREEN != 0) {
@@ -540,7 +540,7 @@ pub fn D_Display() {
         I_UpdateNoBlit();
 
         // Draw the view directly
-        if gamestate == GS_LEVEL && automapactive == 0 && gametic != 0 {
+        if gamestate == GS_LEVEL && !automap_active() && gametic != 0 {
             let dp = displayplayer as usize;
             if dp < MAXPLAYERS {
                 R_RenderPlayerView(std::ptr::addr_of_mut!(players[dp]));
@@ -560,7 +560,7 @@ pub fn D_Display() {
         }
 
         // See if the border needs to be updated
-        if gamestate == GS_LEVEL && automapactive == 0 && scaledviewwidth != 320 {
+        if gamestate == GS_LEVEL && !automap_active() && scaledviewwidth != 320 {
             if menuactive != 0 || D_DISP_MENUACTIVE != 0 || D_DISP_VIEWACTIVE == 0 {
                 D_DISP_BORDERDRAWCOUNT = 3;
             }
@@ -584,11 +584,7 @@ pub fn D_Display() {
 
         // Draw pause pic
         if paused != 0 {
-            let y = if automapactive != 0 {
-                4
-            } else {
-                viewwindowy + 4
-            };
+            let y = if automap_active() { 4 } else { viewwindowy + 4 };
             V_DrawPatchDirect(
                 viewwindowx + (scaledviewwidth - 68) / 2,
                 y,
@@ -690,7 +686,11 @@ pub fn D_BindVariables() {
 
         // Multiplayer chat macros
         for i in 0..10 {
-            M_BindVariable(&format!("chatmacro{i}"), (&raw mut chat_macros[i]).cast());
+            // The config table keeps this pointer, so it takes the stable address.
+            M_BindVariable(
+                &format!("chatmacro{i}"),
+                (&raw mut (*HUD.as_ptr()).chat_macros[i]).cast(),
+            );
         }
     }
 }

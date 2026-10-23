@@ -207,7 +207,7 @@ fn clamp_to_buffer(mut text: String, size: usize) -> String {
 }
 
 use crate::engine::{
-    automap::automapactive,
+    automap::automap_active,
     doom::{
         main::devparm,
         main_loop::gametic,
@@ -217,7 +217,7 @@ use crate::engine::{
         demoplayback, gamestate, netgame, testcontrols, usergame, G_DeferedInitNew, G_LoadGame,
         G_SaveGame, G_ScreenShot,
     },
-    hud::stuff::{chat_on, hu_font, message_dontfuckwithme},
+    hud::stuff::HUD,
     interface::{
         input::vanilla_keyboard_mapping,
         system::I_Quit,
@@ -1045,7 +1045,7 @@ fn M_ChangeMessages(_choice: i32) {
         } else {
             M_Menu_SetPlayerMessage(MSGON);
         }
-        message_dontfuckwithme = 1;
+        HUD.borrow_mut().message_dontfuckwithme = 1;
     }
 }
 
@@ -1264,7 +1264,7 @@ fn M_StringWidth(text: &[u8]) -> i32 {
             if c < 0 || c as usize >= HU_FONTSIZE {
                 w += 4;
             } else {
-                w += (*hu_font[c as usize]).width.get() as i32;
+                w += (*HUD.borrow().hu_font[c as usize]).width.get() as i32;
             }
         }
         w
@@ -1274,7 +1274,7 @@ fn M_StringWidth(text: &[u8]) -> i32 {
 /// Return the pixel height of `text` rendered in the HUD font, accounting for newlines.
 fn M_StringHeight(text: &[u8]) -> i32 {
     unsafe {
-        let height = (*hu_font[0]).height.get() as i32;
+        let height = (*HUD.borrow().hu_font[0]).height.get() as i32;
         let newlines = text.iter().filter(|&&byte| byte == b'\n').count() as i32;
         height + newlines * height
     }
@@ -1303,11 +1303,12 @@ fn M_WriteText(x: i32, y: i32, text: &[u8]) {
                 continue;
             }
 
-            let w = (*hu_font[c as usize]).width.get() as i32;
+            let patch = HUD.borrow().hu_font[c as usize];
+            let w = (*patch).width.get() as i32;
             if cx + w > SCREENWIDTH {
                 break;
             }
-            V_DrawPatchDirect(cx, cy, hu_font[c as usize]);
+            V_DrawPatchDirect(cx, cy, patch);
             cx += w;
         }
     }
@@ -1531,14 +1532,14 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         // F-Keys (when menu not active)
         if menuactive == 0 {
             if key == key_menu_decscreen {
-                if automapactive != 0 || chat_on != 0 {
+                if automap_active() || HUD.borrow().chat_on != 0 {
                     return Boolean::FALSE;
                 }
                 M_SizeDisplay(0);
                 S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
                 return Boolean::TRUE;
             } else if key == key_menu_incscreen {
-                if automapactive != 0 || chat_on != 0 {
+                if automap_active() || HUD.borrow().chat_on != 0 {
                     return Boolean::FALSE;
                 }
                 M_SizeDisplay(1);
@@ -1762,7 +1763,7 @@ pub fn M_Drawer() {
 
                 messx = SCREENWIDTH / 2 - M_StringWidth(line) / 2;
                 M_WriteText(messx, messy, line);
-                messy += (*hu_font[0]).height.get() as i32;
+                messy += (*HUD.borrow().hu_font[0]).height.get() as i32;
             }
             return;
         }

@@ -1,8 +1,8 @@
 //! Tests for `am_map.rs` — automap globals and constants.
 //!
 //! `am_map.rs` implements the full-screen automap: player position, line
-//! drawing, zoom/pan, and mark points.  Most of its state is in `static`
-//! locals, but `automapactive` is a public global that the HUD checks.
+//! drawing, zoom/pan, and mark points.  Its state is in `AutomapState`, whose
+//! public `automapactive` field the HUD checks through `automap_active`.
 //! The color index constants must match the vanilla palette layout or the map
 //! will render with wrong colors.  The scale constants determine the initial
 //! zoom level and zoom rate.
@@ -25,13 +25,11 @@ use room::engine::{automap, math::fixed::FRACUNIT};
 /// presses the automap key.
 #[test]
 fn automapactive_default_false() {
-    unsafe {
-        assert_eq!(
-            { automap::automapactive },
-            0,
-            "automapactive should be false at startup"
-        );
-    }
+    assert_eq!(
+        automap::AutomapState::new().automapactive,
+        0,
+        "automapactive should be false at startup"
+    );
 }
 
 // ---------------------------------------------------------------------------

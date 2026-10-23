@@ -8,9 +8,10 @@
 //! * `w_title` ([`hu_textline_t`]) - current map name shown on the automap.
 //! * `w_chat` ([`hu_itext_t`]) - live chat input line in multiplayer games.
 //!
-//! Exported items (`chat_macros`, `player_names`, `hu_font`, `mapnames`,
-//! `mapnames_commercial`, `chat_on`, `message_dontfuckwithme`)
-//! match the C `extern` declarations in `hu_stuff.h`.
+//! Exported items (`player_names`, `mapnames`, `mapnames_commercial`, and
+//! the [`HudState`] fields `chat_macros`, `hu_font`, `chat_on`,
+//! `message_dontfuckwithme`) match the C `extern` declarations in
+//! `hu_stuff.h`.
 //!
 //! Notable Rust-vs-C differences:
 //! * C `boolean` maps to `i32`; the `always_off` local uses `i32` rather
@@ -32,6 +33,7 @@ use crate::engine::{
         player::{PlayerMessage, PlayerT, MAXPLAYERS},
         stat::{gamemission, gameversion},
     },
+    global::Global,
     hud::lib::{
         hu_itext_t, hu_stext_t, hu_textline_t, HUlib_addCharToTextLine, HUlib_addMessageToSText,
         HUlib_drawIText, HUlib_drawSText, HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText,
@@ -131,54 +133,14 @@ const HUSTR_TALKTOSELF4: &str = "You start to rave";
 const HUSTR_TALKTOSELF5: &str = "You've lost it...";
 
 // ---------------------------------------------------------------------------
-// Exported globals
+// Exported tables
 // ---------------------------------------------------------------------------
-
-/// Default chat macro strings bound to Alt+0 through Alt+9.
-///
-/// Corresponds to `chat_macros[]` in `hu_stuff.c`. Read by `HU_Responder`
-/// when Alt is held and a digit key is pressed during chat mode. Bound as
-/// `chatmacro0`..`chatmacro9` so `m_config` can replace them.
-pub static mut chat_macros: [Cow<'static, str>; 10] = [
-    Cow::Borrowed("No"),
-    Cow::Borrowed("I'm ready to kick butt!"),
-    Cow::Borrowed("I'm OK."),
-    Cow::Borrowed("I'm not looking too good!"),
-    Cow::Borrowed("Help!"),
-    Cow::Borrowed("You suck!"),
-    Cow::Borrowed("Next time, scumbag..."),
-    Cow::Borrowed("Come here!"),
-    Cow::Borrowed("I'll take care of it."),
-    Cow::Borrowed("Yes"),
-];
 
 /// Display names for each of the four multiplayer player colors.
 ///
 /// Corresponds to `player_names[]` in `hu_stuff.c`. Prepended to incoming
 /// chat messages so the recipient can identify the sender.
 pub const player_names: [&str; 4] = ["Green: ", "Indigo: ", "Brown: ", "Red: "];
-
-/// Loaded HUD font patches, one per glyph from `'!'` to `'_'`.
-///
-/// Populated by [`HU_Init`] from the `STCFNxxx` WAD lumps. Index `i`
-/// corresponds to ASCII code `HU_FONTSTART + i`. Exported for use by
-/// `st_stuff.c` and other C modules that reference the font.
-pub static mut hu_font: [*mut patch_t; HU_FONTSIZE] = [ptr::null_mut(); HU_FONTSIZE];
-
-/// Non-zero while the chat input widget is active.
-///
-/// Used as the `on` pointer for `w_chat`; also read by `g_game.c` to decide
-/// whether typing should be consumed by the chat system. Corresponds to
-/// `chat_on` in `hu_stuff.c`.
-pub static mut chat_on: i32 = 0;
-
-/// When non-zero, the next player message is treated as critical and will not
-/// be suppressed even if `showMessages` is off.
-///
-/// Set by the game logic (e.g., picked-up key messages) and cleared after
-/// the message is displayed. Corresponds to `message_dontfuckwithme` in
-/// `hu_stuff.c`. Also exported so `p_inter.c` can set it from the C side.
-pub static mut message_dontfuckwithme: i32 = 0;
 
 /// Display names for Doom 1 / Ultimate Doom maps (E1M1-E4M9 plus stubs).
 ///
@@ -343,47 +305,136 @@ pub const mapnames_commercial: [&str; 96] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Local statics
+// State
 // ---------------------------------------------------------------------------
 
-/// Pointer to the console player's `PlayerT` struct, set by [`HU_Start`].
-static mut plr: *mut PlayerT = ptr::null_mut();
-/// Map-title text line widget rendered on the automap overlay.
-static mut w_title: hu_textline_t = unsafe { std::mem::zeroed() };
-/// Chat input widget; visible only when [`chat_on`] is non-zero.
-static mut w_chat: hu_itext_t = unsafe { std::mem::zeroed() };
-/// Permanent zero used as the `on` pointer for [`w_inputbuffer`] widgets so
-/// they are never rendered to the screen.
-static mut always_off: i32 = 0;
-/// Per-player chat destination byte: 1-4 target that player, 5 = broadcast.
-static mut chat_dest: [u8; MAXPLAYERS] = [0; MAXPLAYERS];
-/// Hidden input buffer widgets that accumulate incoming chat keystrokes for
-/// each remote player before the message is confirmed with Enter.
-static mut w_inputbuffer: [hu_itext_t; MAXPLAYERS] = unsafe { std::mem::zeroed() };
-/// Non-zero while a player message is being displayed.
-/// Used as the `on` pointer for [`w_message`].
-static mut message_on: i32 = 0;
-/// Non-zero when the current message must not be overridden by a non-critical
-/// new message. Set when a `message_dontfuckwithme` message is displayed.
-static mut message_nottobefuckedwith: i32 = 0;
-/// Scrolling player-message widget displayed at the top of the screen.
-static mut w_message: hu_stext_t = unsafe { std::mem::zeroed() };
-/// Countdown timer (in tics) until the current message is hidden.
-/// Reset to `HU_MSGTIMEOUT` each time a new message is posted.
-static mut message_counter: i32 = 0;
-/// True after a successful [`HU_Start`]; used by [`HU_Start`] to call
-/// [`HU_Stop`] before re-initializing all widgets.
-static mut headsupactive: bool = false;
+/// Heads-up display state (C `hu_stuff.c` globals).
+///
+/// The widgets keep raw pointers to `hu_font` and to their `on` flags, and
+/// the `HUlib_*` calls take the widgets by pointer, so those go through
+/// [`Global::as_ptr`] rather than a guard.
+pub struct HudState {
+    /// Default chat macro strings bound to Alt+0 through Alt+9.
+    ///
+    /// Corresponds to `chat_macros[]` in `hu_stuff.c`. Read by
+    /// `HU_Responder` when Alt is held and a digit key is pressed during
+    /// chat mode. Bound as `chatmacro0`..`chatmacro9` so `m_config` can
+    /// replace them.
+    pub chat_macros: [Cow<'static, str>; 10],
+    /// Loaded HUD font patches, one per glyph from `'!'` to `'_'`.
+    ///
+    /// Populated by [`HU_Init`] from the `STCFNxxx` WAD lumps. Index `i`
+    /// corresponds to ASCII code `HU_FONTSTART + i`. Also read by the menu
+    /// and the finale text screens.
+    pub hu_font: [*mut patch_t; HU_FONTSIZE],
+    /// Non-zero while the chat input widget is active.
+    ///
+    /// Used as the `on` pointer for `w_chat`; also read by the menu to
+    /// decide whether the automap or chat owns the keyboard. Corresponds to
+    /// `chat_on` in `hu_stuff.c`.
+    pub chat_on: i32,
+    /// When non-zero, the next player message is treated as critical and
+    /// will not be suppressed even if `showMessages` is off.
+    ///
+    /// Set by the menu when it toggles messages and cleared after the
+    /// message is displayed. Corresponds to `message_dontfuckwithme` in
+    /// `hu_stuff.c`.
+    pub message_dontfuckwithme: i32,
+    /// Pointer to the console player's `PlayerT` struct, set by [`HU_Start`].
+    plr: *mut PlayerT,
+    /// Map-title text line widget rendered on the automap overlay.
+    w_title: hu_textline_t,
+    /// Chat input widget; visible only when `chat_on` is non-zero.
+    w_chat: hu_itext_t,
+    /// Permanent zero used as the `on` pointer for `w_inputbuffer` widgets
+    /// so they are never rendered to the screen.
+    always_off: i32,
+    /// Per-player chat destination byte: 1-4 target that player, 5 =
+    /// broadcast.
+    chat_dest: [u8; MAXPLAYERS],
+    /// Hidden input buffer widgets that accumulate incoming chat keystrokes
+    /// for each remote player before the message is confirmed with Enter.
+    w_inputbuffer: [hu_itext_t; MAXPLAYERS],
+    /// Non-zero while a player message is being displayed.
+    /// Used as the `on` pointer for `w_message`.
+    message_on: i32,
+    /// Non-zero when the current message must not be overridden by a
+    /// non-critical new message. Set when a `message_dontfuckwithme` message
+    /// is displayed.
+    message_nottobefuckedwith: i32,
+    /// Scrolling player-message widget displayed at the top of the screen.
+    w_message: hu_stext_t,
+    /// Countdown timer (in tics) until the current message is hidden.
+    /// Reset to `HU_MSGTIMEOUT` each time a new message is posted.
+    message_counter: i32,
+    /// True after a successful [`HU_Start`]; used by [`HU_Start`] to call
+    /// [`HU_Stop`] before re-initializing all widgets.
+    headsupactive: bool,
+    /// Circular buffer of outgoing chat characters, shared with the network
+    /// layer.
+    chatchars: [u8; QUEUESIZE],
+    /// Write index into `chatchars`; advanced by [`HU_queueChatChar`].
+    head: usize,
+    /// Read index into `chatchars`; advanced by [`HU_dequeueChatChar`].
+    tail: usize,
+    /// Whether an Alt key is held, so a digit sends a chat macro
+    /// (static local in C `HU_Responder`).
+    altdown: bool,
+    /// How many times the player tried to chat with themselves (static
+    /// local in C `HU_Responder`).
+    num_nobrainers: i32,
+}
 
-/// Circular buffer of outgoing chat characters, shared with the network layer.
-static mut chatchars: [u8; QUEUESIZE] = [0; QUEUESIZE];
-/// Write index into [`chatchars`]; advanced by [`HU_queueChatChar`].
-static mut head: usize = 0;
-/// Read index into [`chatchars`]; advanced by [`HU_dequeueChatChar`].
-static mut tail: usize = 0;
+impl HudState {
+    /// The state at program start: no font, default chat macros, HUD off.
+    pub const fn new() -> Self {
+        Self {
+            chat_macros: [
+                Cow::Borrowed("No"),
+                Cow::Borrowed("I'm ready to kick butt!"),
+                Cow::Borrowed("I'm OK."),
+                Cow::Borrowed("I'm not looking too good!"),
+                Cow::Borrowed("Help!"),
+                Cow::Borrowed("You suck!"),
+                Cow::Borrowed("Next time, scumbag..."),
+                Cow::Borrowed("Come here!"),
+                Cow::Borrowed("I'll take care of it."),
+                Cow::Borrowed("Yes"),
+            ],
+            hu_font: [ptr::null_mut(); HU_FONTSIZE],
+            chat_on: 0,
+            message_dontfuckwithme: 0,
+            plr: ptr::null_mut(),
+            w_title: unsafe { std::mem::zeroed() },
+            w_chat: unsafe { std::mem::zeroed() },
+            always_off: 0,
+            chat_dest: [0; MAXPLAYERS],
+            w_inputbuffer: unsafe { std::mem::zeroed() },
+            message_on: 0,
+            message_nottobefuckedwith: 0,
+            w_message: unsafe { std::mem::zeroed() },
+            message_counter: 0,
+            headsupactive: false,
+            chatchars: [0; QUEUESIZE],
+            head: 0,
+            tail: 0,
+            altdown: false,
+            num_nobrainers: 0,
+        }
+    }
+}
+
+impl Default for HudState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The heads-up display state.
+pub static HUD: Global<HudState> = Global::new(HudState::new());
 
 use crate::engine::{
-    automap::automapactive,
+    automap::automap_active,
     doom::stat::gamemode,
     game::{consoleplayer, gameepisode, gamemap, netgame, playeringame},
     misc::menu::showMessages,
@@ -395,20 +446,19 @@ use crate::engine::{
 // Functions
 // ---------------------------------------------------------------------------
 
-/// Load the HUD font patches from the WAD and populate [`hu_font`].
+/// Load the HUD font patches from the WAD and populate `hu_font`.
 ///
 /// Must be called once at startup before any other `HU_*` function. Iterates
 /// over `HU_FONTSIZE` slots, caching the `STCFNxxx` lump for each character
 /// from `HU_FONTSTART` to `HU_FONTEND` as `PU_STATIC`.
 /// Called from `D_DoomMain` in `d_main.c`.
 pub fn HU_Init() {
-    unsafe {
-        let mut j = HU_FONTSTART as i32;
-        for i in 0..HU_FONTSIZE {
-            let name = format!("STCFN{:03}", j);
-            hu_font[i] = W_CacheLumpName(name.as_bytes(), PU_STATIC) as *mut patch_t;
-            j += 1;
-        }
+    let mut j = HU_FONTSTART as i32;
+    for i in 0..HU_FONTSIZE {
+        let name = format!("STCFN{:03}", j);
+        let patch = W_CacheLumpName(name.as_bytes(), PU_STATIC) as *mut patch_t;
+        HUD.borrow_mut().hu_font[i] = patch;
+        j += 1;
     }
 }
 
@@ -418,9 +468,7 @@ pub fn HU_Init() {
 /// re-initializing widgets, and may also be called directly when the HUD
 /// should be torn down (e.g., during intermission).
 pub fn HU_Stop() {
-    unsafe {
-        headsupactive = false;
-    }
+    HUD.borrow_mut().headsupactive = false;
 }
 
 /// Initialize all HUD widgets for the current level.
@@ -434,42 +482,50 @@ pub fn HU_Stop() {
 /// Called from `G_DoLoadLevel` in `g_game.c` at the start of every level.
 pub fn HU_Start() {
     unsafe {
-        if headsupactive {
+        if HUD.borrow().headsupactive {
             HU_Stop();
         }
 
-        plr = std::ptr::addr_of_mut!(crate::engine::doom::player::players[0])
-            .offset(consoleplayer as isize);
-        message_on = 0;
-        message_dontfuckwithme = 0;
-        message_nottobefuckedwith = 0;
-        chat_on = 0;
+        let font_h = {
+            let mut hud = HUD.borrow_mut();
+            hud.plr = std::ptr::addr_of_mut!(crate::engine::doom::player::players[0])
+                .offset(consoleplayer as isize);
+            hud.message_on = 0;
+            hud.message_dontfuckwithme = 0;
+            hud.message_nottobefuckedwith = 0;
+            hud.chat_on = 0;
+
+            // compute font height for title/input placement
+            if !hud.hu_font[0].is_null() {
+                (*hud.hu_font[0]).height.get() as i32
+            } else {
+                0
+            }
+        };
+
+        // The widgets keep pointers to the font and to their `on` flags, so
+        // they all point into the stable address of `HUD`.
+        let hud_state = HUD.as_ptr();
 
         // create the message widget
         HUlib_initSText(
-            &raw mut w_message,
+            &raw mut (*hud_state).w_message,
             HU_MSGX,
             HU_MSGY,
             HU_MSGHEIGHT,
-            std::ptr::addr_of_mut!(hu_font[0]),
+            &raw mut (*hud_state).hu_font[0],
             HU_FONTSTART as i32,
-            &raw mut message_on,
+            &raw mut (*hud_state).message_on,
         );
 
-        // compute font height for title/input placement
-        let font_h = if !hu_font[0].is_null() {
-            (*hu_font[0]).height.get() as i32
-        } else {
-            0
-        };
         let title_y = 167 - font_h;
 
         // create the map title widget
         HUlib_initTextLine(
-            &raw mut w_title,
+            &raw mut (*hud_state).w_title,
             0,
             title_y,
-            std::ptr::addr_of_mut!(hu_font[0]),
+            &raw mut (*hud_state).hu_font[0],
             HU_FONTSTART as i32,
         );
 
@@ -486,33 +542,33 @@ pub fn HU_Start() {
         }
 
         for &byte in DEH_String(title).as_bytes() {
-            HUlib_addCharToTextLine(&raw mut w_title, byte);
+            HUlib_addCharToTextLine(&raw mut (*hud_state).w_title, byte);
         }
 
         // create the chat widget
         let input_y = HU_MSGY + HU_MSGHEIGHT * (font_h + 1);
         HUlib_initIText(
-            &raw mut w_chat,
+            &raw mut (*hud_state).w_chat,
             HU_MSGX,
             input_y,
-            std::ptr::addr_of_mut!(hu_font[0]),
+            &raw mut (*hud_state).hu_font[0],
             HU_FONTSTART as i32,
-            &raw mut chat_on,
+            &raw mut (*hud_state).chat_on,
         );
 
         // create the inputbuffer widgets
         for i in 0..MAXPLAYERS {
             HUlib_initIText(
-                &mut w_inputbuffer[i],
+                &raw mut (*hud_state).w_inputbuffer[i],
                 0,
                 0,
                 ptr::null_mut(),
                 0,
-                &raw mut always_off,
+                &raw mut (*hud_state).always_off,
             );
         }
 
-        headsupactive = true;
+        HUD.borrow_mut().headsupactive = true;
     }
 }
 
@@ -522,11 +578,12 @@ pub fn HU_Start() {
 /// automap is active) the map title line. Called once per frame from the
 /// renderer after the view has been rendered.
 pub fn HU_Drawer() {
+    let hud_state = HUD.as_ptr();
     unsafe {
-        HUlib_drawSText(&raw mut w_message);
-        HUlib_drawIText(&raw mut w_chat);
-        if automapactive != 0 {
-            HUlib_drawTextLine(&raw mut w_title, 0);
+        HUlib_drawSText(&raw mut (*hud_state).w_message);
+        HUlib_drawIText(&raw mut (*hud_state).w_chat);
+        if automap_active() {
+            HUlib_drawTextLine(&raw mut (*hud_state).w_title, 0);
         }
     }
 }
@@ -537,9 +594,12 @@ pub fn HU_Drawer() {
 /// Called once per frame just before the view is rendered, so that old HUD
 /// graphics are removed before the new frame is drawn.
 pub fn HU_Erase() {
-    HUlib_eraseSText(&raw mut w_message);
-    HUlib_eraseIText(&raw mut w_chat);
-    HUlib_eraseTextLine(&raw mut w_title);
+    let hud_state = HUD.as_ptr();
+    unsafe {
+        HUlib_eraseSText(&raw mut (*hud_state).w_message);
+        HUlib_eraseIText(&raw mut (*hud_state).w_chat);
+        HUlib_eraseTextLine(&raw mut (*hud_state).w_title);
+    }
 }
 
 /// Advance the HUD state by one game tic.
@@ -556,27 +616,37 @@ pub fn HU_Erase() {
 ///
 /// Called from `G_Ticker` in `g_game.c` once per game tic.
 pub fn HU_Ticker() {
+    let hud_state = HUD.as_ptr();
     unsafe {
-        // tick down message counter if message is up
-        if message_counter != 0 {
-            message_counter -= 1;
-            if message_counter == 0 {
-                message_on = 0;
-                message_nottobefuckedwith = 0;
+        let (plr, message_dontfuckwithme, message_nottobefuckedwith) = {
+            let mut hud = HUD.borrow_mut();
+            // tick down message counter if message is up
+            if hud.message_counter != 0 {
+                hud.message_counter -= 1;
+                if hud.message_counter == 0 {
+                    hud.message_on = 0;
+                    hud.message_nottobefuckedwith = 0;
+                }
             }
-        }
+            (
+                hud.plr,
+                hud.message_dontfuckwithme,
+                hud.message_nottobefuckedwith,
+            )
+        };
 
         if showMessages != 0 || message_dontfuckwithme != 0 {
             // display message if necessary
             let message = (*plr).message;
             if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
             {
-                HUlib_addMessageToSText(&raw mut w_message, None, message.as_bytes());
+                HUlib_addMessageToSText(&raw mut (*hud_state).w_message, None, message.as_bytes());
                 (*plr).message = PlayerMessage::NONE;
-                message_on = 1;
-                message_counter = HU_MSGTIMEOUT;
-                message_nottobefuckedwith = message_dontfuckwithme;
-                message_dontfuckwithme = 0;
+                let mut hud = HUD.borrow_mut();
+                hud.message_on = 1;
+                hud.message_counter = HU_MSGTIMEOUT;
+                hud.message_nottobefuckedwith = hud.message_dontfuckwithme;
+                hud.message_dontfuckwithme = 0;
             }
         }
 
@@ -590,29 +660,42 @@ pub fn HU_Ticker() {
                     let c = (*plr.add(i)).cmd.chatchar;
                     if c != 0 {
                         if c <= HU_BROADCAST as u8 {
-                            chat_dest[i] = c;
+                            HUD.borrow_mut().chat_dest[i] = c;
                         } else {
-                            let rc = HUlib_keyInIText(&mut w_inputbuffer[i], c);
+                            let input = &raw mut (*hud_state).w_inputbuffer[i];
+                            let rc = HUlib_keyInIText(input, c);
                             if rc != 0 && c == KEY_ENTER {
-                                if w_inputbuffer[i].l.len != 0
-                                    && (chat_dest[i] == (consoleplayer + 1) as u8
-                                        || chat_dest[i] == HU_BROADCAST as u8)
+                                let (chat_dest, line_len, line) = {
+                                    let hud = HUD.borrow();
+                                    let input_line = &hud.w_inputbuffer[i].l;
+                                    (
+                                        hud.chat_dest[i],
+                                        input_line.len,
+                                        until_nul(&input_line.l).to_vec(),
+                                    )
+                                };
+                                if line_len != 0
+                                    && (chat_dest == (consoleplayer + 1) as u8
+                                        || chat_dest == HU_BROADCAST as u8)
                                 {
                                     HUlib_addMessageToSText(
-                                        &raw mut w_message,
+                                        &raw mut (*hud_state).w_message,
                                         Some(DEH_String(player_names[i]).as_bytes()),
-                                        until_nul(&w_inputbuffer[i].l.l),
+                                        &line,
                                     );
-                                    message_nottobefuckedwith = 1;
-                                    message_on = 1;
-                                    message_counter = HU_MSGTIMEOUT;
+                                    {
+                                        let mut hud = HUD.borrow_mut();
+                                        hud.message_nottobefuckedwith = 1;
+                                        hud.message_on = 1;
+                                        hud.message_counter = HU_MSGTIMEOUT;
+                                    }
                                     if gamemode == doom::mode::commercial {
                                         S_StartSound(ptr::null_mut(), Sfx::Radio as i32);
                                     } else {
                                         S_StartSound(ptr::null_mut(), Sfx::Tink as i32);
                                     }
                                 }
-                                HUlib_resetIText(&mut w_inputbuffer[i]);
+                                HUlib_resetIText(input);
                             }
                         }
                         (*plr.add(i)).cmd.chatchar = 0;
@@ -630,13 +713,13 @@ pub fn HU_Ticker() {
 /// The head index advances modulo `QUEUESIZE` (128; power-of-two bitmask).
 /// Called from `HU_Responder` and the macro-expansion path.
 pub fn HU_queueChatChar(c: u8) {
-    unsafe {
-        if ((head + 1) & (QUEUESIZE - 1)) == tail {
-            (*plr).message = PlayerMessage::new(DEH_String(HUSTR_MSGU));
-        } else {
-            chatchars[head] = c;
-            head = (head + 1) & (QUEUESIZE - 1);
-        }
+    let mut hud = HUD.borrow_mut();
+    if ((hud.head + 1) & (QUEUESIZE - 1)) == hud.tail {
+        unsafe { (*hud.plr).message = PlayerMessage::new(DEH_String(HUSTR_MSGU)) };
+    } else {
+        let head = hud.head;
+        hud.chatchars[head] = c;
+        hud.head = (head + 1) & (QUEUESIZE - 1);
     }
 }
 
@@ -646,14 +729,14 @@ pub fn HU_queueChatChar(c: u8) {
 /// Returns `0` (NUL) if the buffer is empty (`head == tail`).
 /// Called by the network layer (`d_net.c`) to read queued chat characters.
 pub fn HU_dequeueChatChar() -> u8 {
-    unsafe {
-        if head != tail {
-            let c = chatchars[tail];
-            tail = (tail + 1) & (QUEUESIZE - 1);
-            c
-        } else {
-            0
-        }
+    let mut hud = HUD.borrow_mut();
+    if hud.head != hud.tail {
+        let tail = hud.tail;
+        let c = hud.chatchars[tail];
+        hud.tail = (tail + 1) & (QUEUESIZE - 1);
+        c
+    } else {
+        0
     }
 }
 
@@ -671,10 +754,8 @@ pub fn HU_dequeueChatChar() -> u8 {
 ///
 /// Called from `G_Responder` in `g_game.c`.
 pub fn HU_Responder(ev: *mut event_t) -> i32 {
+    let hud_state = HUD.as_ptr();
     unsafe {
-        static mut altdown: bool = false;
-        static mut num_nobrainers: i32 = 0;
-
         let ev = &mut *ev;
 
         let mut numplayers = 0;
@@ -687,7 +768,7 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
         if ev.data1 == KEY_RSHIFT as i32 {
             return 0;
         } else if ev.data1 == KEY_RALT as i32 || ev.data1 == KEY_LALT as i32 {
-            altdown = ev.kind == 0; // ev_keydown
+            HUD.borrow_mut().altdown = ev.kind == 0; // ev_keydown
             return 0;
         }
 
@@ -697,28 +778,37 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
         }
 
         let mut eatkey = false;
+        let (chat_on, altdown, plr) = {
+            let hud = HUD.borrow();
+            (hud.chat_on, hud.altdown, hud.plr)
+        };
 
         if chat_on == 0 {
             if ev.data1 == key_message_refresh {
-                message_on = 1;
-                message_counter = HU_MSGTIMEOUT;
+                let mut hud = HUD.borrow_mut();
+                hud.message_on = 1;
+                hud.message_counter = HU_MSGTIMEOUT;
                 eatkey = true;
             } else if netgame != 0 && ev.data2 == key_multi_msg {
                 eatkey = true;
-                chat_on = 1;
-                HUlib_resetIText(&raw mut w_chat);
+                HUD.borrow_mut().chat_on = 1;
+                HUlib_resetIText(&raw mut (*hud_state).w_chat);
                 HU_queueChatChar(HU_BROADCAST as u8);
             } else if netgame != 0 && numplayers > 2 {
                 for i in 0..MAXPLAYERS {
                     if ev.data2 == key_multi_msgplayer[i] {
                         if playeringame[i] != 0 && i != consoleplayer as usize {
                             eatkey = true;
-                            chat_on = 1;
-                            HUlib_resetIText(&raw mut w_chat);
+                            HUD.borrow_mut().chat_on = 1;
+                            HUlib_resetIText(&raw mut (*hud_state).w_chat);
                             HU_queueChatChar((i + 1) as u8);
                             break;
                         } else if i == consoleplayer as usize {
-                            num_nobrainers += 1;
+                            let num_nobrainers = {
+                                let mut hud = HUD.borrow_mut();
+                                hud.num_nobrainers += 1;
+                                hud.num_nobrainers
+                            };
                             (*plr).message = PlayerMessage::new(DEH_String(match num_nobrainers {
                                 1..=2 => HUSTR_TALKTOSELF1,
                                 3..=5 => HUSTR_TALKTOSELF2,
@@ -737,29 +827,30 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
                 if c > 9 {
                     return 0;
                 }
-                let macromessage = (*std::ptr::addr_of!(chat_macros[c as usize])).as_bytes();
+                let macromessage = HUD.borrow().chat_macros[c as usize].clone();
+                let macromessage = macromessage.as_bytes();
                 HU_queueChatChar(KEY_ENTER);
                 for &byte in macromessage {
                     HU_queueChatChar(byte);
                 }
                 HU_queueChatChar(KEY_ENTER);
-                chat_on = 0;
+                HUD.borrow_mut().chat_on = 0;
                 (*plr).message = PlayerMessage::new(macromessage);
                 eatkey = true;
             } else {
                 let c = ev.data2 as u8;
-                eatkey = HUlib_keyInIText(&raw mut w_chat, c) != 0;
+                eatkey = HUlib_keyInIText(&raw mut (*hud_state).w_chat, c) != 0;
                 if eatkey {
                     HU_queueChatChar(c);
                 }
                 if c == KEY_ENTER {
-                    chat_on = 0;
-                    if w_chat.l.len != 0 {
-                        (*plr).message =
-                            PlayerMessage::new(until_nul(&*std::ptr::addr_of!(w_chat.l.l)));
+                    let mut hud = HUD.borrow_mut();
+                    hud.chat_on = 0;
+                    if hud.w_chat.l.len != 0 {
+                        (*plr).message = PlayerMessage::new(until_nul(&hud.w_chat.l.l));
                     }
                 } else if c == KEY_ESCAPE {
-                    chat_on = 0;
+                    HUD.borrow_mut().chat_on = 0;
                 }
             }
         }

@@ -561,7 +561,7 @@ use crate::engine::doom::main::{
 };
 
 /// Automap toggle, responder, stop hook and ticker from `am_map.c`.
-use crate::engine::automap::{automapactive, AM_Responder, AM_Stop, AM_Ticker};
+use crate::engine::automap::{automap_active, AM_Responder, AM_Stop, AM_Ticker, AUTOMAP};
 
 /// Per-player command buffer ring from `d_net.c`.
 use crate::engine::doom::net::netcmds;
@@ -1820,7 +1820,7 @@ pub unsafe fn G_DoCompleted() {
         }
     }
 
-    if automapactive != 0 {
+    if automap_active() {
         AM_Stop();
     }
 
@@ -1915,7 +1915,7 @@ pub unsafe fn G_DoCompleted() {
 
     gamestate = GS_INTERMISSION;
     viewactive = 0;
-    automapactive = 0;
+    AUTOMAP.borrow_mut().automapactive = 0;
 
     StatCopy(&raw const wminfo);
     WI_Start(&raw mut wminfo);
@@ -2244,7 +2244,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
     usergame = 1;
     paused = 0;
     demoplayback = 0;
-    automapactive = 0;
+    AUTOMAP.borrow_mut().automapactive = 0;
     viewactive = 1;
     gameepisode = episode;
     gamemap = map;

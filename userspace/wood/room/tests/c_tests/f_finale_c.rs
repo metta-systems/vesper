@@ -1,7 +1,7 @@
 //! Tests for `f_finale.c` — end-of-episode cast-roll globals and constants.
 //!
 //! `f_finale.c` handles the text crawl shown at the end of each episode and
-//! the cast-of-characters roll that follows.  The cast globals (`castnum`,
+//! the cast-of-characters roll that follows.  The cast fields (`castnum`,
 //! `casttics`, etc.) are only meaningful after `F_StartCast` is called; before
 //! that they are all zero.  The timing constants (`TEXTSPEED`, `TEXTWAIT`)
 //! must be preserved exactly, or the text animation will advance at the wrong
@@ -9,12 +9,12 @@
 //!
 //! These tests verify:
 //!   * `TEXTSPEED` and `TEXTWAIT` constant values
-//!   * All cast globals start at zero before `F_StartCast`
-//!   * `finaletext` and `finaleflat` pointers are NULL before `F_StartFinale`
+//!   * All cast fields of the initial `FinaleState` are zero
+//!   * `finaletext` and `finaleflat` of the initial `FinaleState` are empty
 
 #![allow(non_snake_case)]
 
-use room::engine::finale;
+use room::engine::finale::{self, FinaleState};
 
 // ---------------------------------------------------------------------------
 // Text-crawl timing constants
@@ -46,94 +46,91 @@ fn textwait_longer_than_textspeed() {
 /// Before `F_StartFinale` is called, `finaletext` is empty.
 #[test]
 fn finaletext_initially_empty() {
-    unsafe {
-        assert!(
-            finale::finaletext.is_empty(),
-            "finaletext should be empty before F_StartFinale"
-        );
-    }
+    assert!(
+        FinaleState::new().finaletext.is_empty(),
+        "finaletext should be empty before F_StartFinale"
+    );
 }
 
 /// Before `F_StartFinale` is called, `finaleflat` is empty.
 #[test]
 fn finaleflat_initially_empty() {
-    unsafe {
-        assert!(
-            finale::finaleflat.is_empty(),
-            "finaleflat should be empty before F_StartFinale"
-        );
-    }
+    assert!(
+        FinaleState::new().finaleflat.is_empty(),
+        "finaleflat should be empty before F_StartFinale"
+    );
 }
 
 // ---------------------------------------------------------------------------
-// Cast globals — default zero before F_StartCast
+// Cast fields — default zero before F_StartCast
 // ---------------------------------------------------------------------------
 
 /// `castnum` is the index of the current monster in the cast roll; starts at 0.
 #[test]
 fn castnum_default_zero() {
-    unsafe {
-        assert_eq!(finale::castnum, 0, "castnum should be 0 before F_StartCast");
-    }
+    assert_eq!(
+        FinaleState::new().castnum,
+        0,
+        "castnum should be 0 before F_StartCast"
+    );
 }
 
 /// `casttics` counts down tics remaining in the current cast frame; starts 0.
 #[test]
 fn casttics_default_zero() {
-    unsafe {
-        assert_eq!(
-            finale::casttics,
-            0,
-            "casttics should be 0 before F_StartCast"
-        );
-    }
+    assert_eq!(
+        FinaleState::new().casttics,
+        0,
+        "casttics should be 0 before F_StartCast"
+    );
 }
 
 /// `castdeath` is true when the cast monster is dying; false (0) at program start.
 #[test]
 fn castdeath_default_zero() {
-    unsafe {
-        assert_eq!(
-            finale::castdeath,
-            0,
-            "castdeath should be false before F_StartCast"
-        );
-    }
+    assert_eq!(
+        FinaleState::new().castdeath,
+        0,
+        "castdeath should be false before F_StartCast"
+    );
 }
 
 /// `castframes` counts animation frames played; zero before the cast starts.
 #[test]
 fn castframes_default_zero() {
-    unsafe {
-        assert_eq!(
-            finale::castframes,
-            0,
-            "castframes should be 0 before F_StartCast"
-        );
-    }
+    assert_eq!(
+        FinaleState::new().castframes,
+        0,
+        "castframes should be 0 before F_StartCast"
+    );
 }
 
 /// `castonmelee` is true when the cast monster is using a melee attack;
 /// false (0) at program start.
 #[test]
 fn castonmelee_default_zero() {
-    unsafe {
-        assert_eq!(
-            finale::castonmelee,
-            0,
-            "castonmelee should be false before F_StartCast"
-        );
-    }
+    assert_eq!(
+        FinaleState::new().castonmelee,
+        0,
+        "castonmelee should be false before F_StartCast"
+    );
 }
 
 /// `castattacking` is true during an attack animation; false (0) at start.
 #[test]
 fn castattacking_default_zero() {
-    unsafe {
-        assert_eq!(
-            finale::castattacking,
-            0,
-            "castattacking should be false before F_StartCast"
-        );
-    }
+    assert_eq!(
+        FinaleState::new().castattacking,
+        0,
+        "castattacking should be false before F_StartCast"
+    );
+}
+
+/// `caststate` points at no state until the cast roll starts.
+#[test]
+fn caststate_default_null() {
+    assert!(
+        FinaleState::new().caststate.is_null(),
+        "caststate should be null before F_StartCast"
+    );
 }

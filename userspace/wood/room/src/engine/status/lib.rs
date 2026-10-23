@@ -138,31 +138,28 @@ pub struct st_binicon_t {
     pub data: i32,
 }
 
-/// The minus-sign patch (`STTMINUS`) used when rendering negative numbers.
-///
-/// Loaded by [`STlib_init`] from the WAD and drawn to the left of the
-/// most-significant digit when a number widget displays a negative value.
-/// Corresponds to `sttminus` in `st_lib.c`; exported so `st_stuff.c` can
-/// reference it directly.
-pub static mut sttminus: *mut patch_t = std::ptr::null_mut();
-
 use crate::engine::{
     render_2d::{V_CopyRect, V_DrawPatch},
-    status::stuff::st_backing_screen,
+    status::stuff::STATUS,
     wad::W_CacheLumpName,
 };
 
+/// The status bar backing buffer the widgets erase from.
+fn backing_screen() -> *mut u8 {
+    STATUS.borrow().st_backing_screen
+}
+
 /// Initialize the status bar widget library.
 ///
-/// Loads the `STTMINUS` WAD lump as `PU_STATIC` and stores it in
-/// [`sttminus`]. All other widget state is initialized via the individual
-/// `STlib_init*` functions. Called once at startup from `ST_Init` in
-/// `st_stuff.c`.
+/// Loads the `STTMINUS` WAD lump as `PU_STATIC` and stores it in the status
+/// state's `sttminus`, the minus sign drawn to the left of the
+/// most-significant digit when a number widget displays a negative value.
+/// All other widget state is initialized via the individual `STlib_init*`
+/// functions. Called from `ST_initData` in `st_stuff.c`.
 pub fn STlib_init() {
-    unsafe {
-        // DEH_String("STTMINUS") is identity — just pass the string.
-        sttminus = W_CacheLumpName(b"STTMINUS", PU_STATIC) as *mut patch_t;
-    }
+    // DEH_String("STTMINUS") is identity — just pass the string.
+    let sttminus = W_CacheLumpName(b"STTMINUS", PU_STATIC) as *mut patch_t;
+    STATUS.borrow_mut().sttminus = sttminus;
 }
 
 /// Initialize a number widget.
@@ -201,7 +198,7 @@ pub fn STlib_initNum(
 /// 2. Erase the current field by blitting from `st_backing_screen`.
 /// 3. If the value equals `1994`, skip rendering (magic "inactive" sentinel).
 /// 4. Draw digits right-to-left using `p[digit]` patches.
-/// 5. If negative, draw the [`sttminus`] patch 8 pixels left of the field.
+/// 5. If negative, draw the `sttminus` patch 8 pixels left of the field.
 ///
 /// The `_refresh` parameter is accepted for ABI compatibility but is currently
 /// unused; erasing and redrawing always happen unconditionally.
@@ -240,7 +237,7 @@ pub fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
         V_CopyRect(
             x,
             (*n).y - ST_Y,
-            st_backing_screen,
+            backing_screen(),
             w * numdigits,
             h,
             x,
@@ -269,7 +266,7 @@ pub fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
 
         // draw a minus sign if necessary
         if neg {
-            V_DrawPatch(x - 8, (*n).y, sttminus);
+            V_DrawPatch(x - 8, (*n).y, STATUS.borrow().sttminus);
         }
     }
 }
@@ -379,7 +376,7 @@ pub fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
                     i_error!("updateMultIcon: y - ST_Y < 0");
                 }
 
-                V_CopyRect(x, y - ST_Y, st_backing_screen, w, h, x, y);
+                V_CopyRect(x, y - ST_Y, backing_screen(), w, h, x, y);
             }
             V_DrawPatch((*mi).x, (*mi).y, *(*mi).p.offset(*(*mi).inum as isize));
             (*mi).oldinum = *(*mi).inum;
@@ -440,7 +437,7 @@ pub fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
             if *(*bi).val != 0 {
                 V_DrawPatch((*bi).x, (*bi).y, p);
             } else {
-                V_CopyRect(x, y - ST_Y, st_backing_screen, w, h, x, y);
+                V_CopyRect(x, y - ST_Y, backing_screen(), w, h, x, y);
             }
 
             (*bi).oldval = *(*bi).val;

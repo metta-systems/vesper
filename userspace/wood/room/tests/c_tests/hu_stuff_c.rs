@@ -14,7 +14,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::hud;
+use room::engine::hud::{self, stuff::HudState};
 
 // ---------------------------------------------------------------------------
 // HUD font constants
@@ -85,9 +85,7 @@ fn hu_msgheight_is_1() {
 /// The `chat_macros` array has exactly 10 elements (Ctrl+0 … Ctrl+9).
 #[test]
 fn chat_macros_count_is_10() {
-    unsafe {
-        assert_eq!((*&raw const hud::stuff::chat_macros).len(), 10);
-    }
+    assert_eq!(HudState::new().chat_macros.len(), 10);
 }
 
 /// The default chat macros match the verbatim strings from `d_englsh.h`.
@@ -108,14 +106,13 @@ fn chat_macros_default_strings() {
         "I'll take care of it.",
         "Yes",
     ];
-    unsafe {
-        for (i, (got, &want)) in (*&raw const hud::stuff::chat_macros)
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-        {
-            assert_eq!(got, want, "chat_macros[{i}] mismatch");
-        }
+    for (i, (got, &want)) in HudState::new()
+        .chat_macros
+        .iter()
+        .zip(expected.iter())
+        .enumerate()
+    {
+        assert_eq!(got, want, "chat_macros[{i}] mismatch");
     }
 }
 
@@ -207,25 +204,21 @@ fn mapnames_commercial_plutonia_starts_at_index_32() {
 /// player presses the chat key.
 #[test]
 fn chat_on_default_false() {
-    unsafe {
-        assert_eq!(
-            { hud::stuff::chat_on },
-            0,
-            "chat_on should be false by default"
-        );
-    }
+    assert_eq!(
+        HudState::new().chat_on,
+        0,
+        "chat_on should be false by default"
+    );
 }
 
 /// `message_dontfuckwithme` must be false by default; it is set true by
-/// `P_TouchSpecialThing` for certain pickups that must override the player's
-/// "no messages" preference.
+/// `M_ChangeMessages` so the "messages on/off" notice shows even when the
+/// player has just turned messages off.
 #[test]
 fn message_dontfuckwithme_default_false() {
-    unsafe {
-        assert_eq!(
-            { hud::stuff::message_dontfuckwithme },
-            0,
-            "message_dontfuckwithme should be false by default"
-        );
-    }
+    assert_eq!(
+        HudState::new().message_dontfuckwithme,
+        0,
+        "message_dontfuckwithme should be false by default"
+    );
 }

@@ -10,19 +10,19 @@
 //! indexed as `wipeno * 3 + {0,1,2}`.
 //!
 //! Notable Rust-vs-C differences:
-//! - Global statics use `static mut` with `unsafe` accessors rather than bare
-//!   C globals.
+//! - The C file statics live in [`WipeState`], held in the [`WIPE`] global.
 //! - `wipe_shittyColMajorXform` is renamed to `wipe_shitty_col_major_xform`
 //!   to follow Rust naming conventions while matching the comment in the C
 //!   source.
 
-#![allow(non_upper_case_globals, non_snake_case)]
+#![allow(non_snake_case)]
 
 use std::ffi::c_void;
 
 use crate::engine::misc::random::M_Random;
 
 use crate::engine::{
+    global::Global,
     interface::video::{SCREENHEIGHT, SCREENWIDTH},
     zone::PU_STATIC,
 };
@@ -33,36 +33,58 @@ use crate::engine::{
     zone::{Z_Free, Z_Malloc},
 };
 
-/// Whether the current wipe is active (`1`) or idle (`0`).
-///
-/// Set to 1 by [`wipe_ScreenWipe`] on the first call and cleared when the
-/// wipe algorithm signals completion.  C origin: `static int go` in f_wipe.c.
-static mut GO: i32 = 0;
+/// Screen wipe state (C `f_wipe.c` file statics).
+pub struct WipeState {
+    /// Whether the current wipe is active (`1`) or idle (`0`).
+    ///
+    /// Set to 1 by [`wipe_ScreenWipe`] on the first call and cleared when
+    /// the wipe algorithm signals completion.  C origin: `static int go`.
+    go: i32,
+    /// Snapshot of the screen taken at wipe-start (the "old" frame).
+    ///
+    /// Allocated in [`wipe_StartScreen`] and freed by `wipe_exit_melt`.
+    /// C origin: `wipe_scr_start`.
+    scr_start: *mut u8,
+    /// Snapshot of the screen taken at wipe-end (the "new" frame).
+    ///
+    /// Allocated in [`wipe_EndScreen`] and freed by `wipe_exit_melt`.
+    /// C origin: `wipe_scr_end`.
+    scr_end: *mut u8,
+    /// Working buffer used during the wipe; points into the live video
+    /// buffer.
+    ///
+    /// Set to [`I_VideoBuffer`] at the start of each wipe pass.
+    /// C origin: `wipe_scr`.
+    scr: *mut u8,
+    /// Per-column Y position array used by the melt algorithm.
+    ///
+    /// One `i32` per screen column; negative values mean the column has not
+    /// yet started falling.  Allocated by `wipe_init_melt` and freed by
+    /// `wipe_exit_melt`.  C origin: `y` (static).
+    column_y: *mut i32,
+}
 
-/// Snapshot of the screen taken at wipe-start (the "old" frame).
-///
-/// Allocated in [`wipe_StartScreen`] and freed by `wipe_exit_melt`.
-/// C origin: `wipe_scr_start` in f_wipe.c.
-static mut WIPE_SCR_START: *mut u8 = std::ptr::null_mut();
+impl WipeState {
+    /// The state at program start: no wipe running, no buffers.
+    pub const fn new() -> Self {
+        Self {
+            go: 0,
+            scr_start: std::ptr::null_mut(),
+            scr_end: std::ptr::null_mut(),
+            scr: std::ptr::null_mut(),
+            column_y: std::ptr::null_mut(),
+        }
+    }
+}
 
-/// Snapshot of the screen taken at wipe-end (the "new" frame).
-///
-/// Allocated in [`wipe_EndScreen`] and freed by `wipe_exit_melt`.
-/// C origin: `wipe_scr_end` in f_wipe.c.
-static mut WIPE_SCR_END: *mut u8 = std::ptr::null_mut();
+impl Default for WipeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Working buffer used during the wipe; points into the live video buffer.
-///
-/// Set to [`I_VideoBuffer`] at the start of each wipe pass.
-/// C origin: `wipe_scr` in f_wipe.c.
-static mut WIPE_SCR: *mut u8 = std::ptr::null_mut();
-
-/// Per-column Y position array used by the melt algorithm.
-///
-/// One `i32` per screen column; negative values mean the column has not yet
-/// started falling.  Allocated by `wipe_init_melt` and freed by
-/// `wipe_exit_melt`.  C origin: `y` (static) in f_wipe.c.
-static mut Y: *mut i32 = std::ptr::null_mut();
+/// The screen wipe state.
+pub static WIPE: Global<WipeState> = Global::new(WipeState::new());
 
 /// Transpose a `width x height` array of `i16` from row-major to column-major
 /// in-place.
@@ -103,11 +125,15 @@ unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: i32, height: i32) 
 ///
 /// # Safety
 ///
-/// `WIPE_SCR_START` and `WIPE_SCR` must both be valid pointers to at least
+/// `scr_start` and `scr` must both be valid pointers to at least
 /// `width * height` bytes.
 unsafe fn wipe_init_color_xform(width: i32, height: i32, _ticks: i32) -> i32 {
     let len = (width * height) as usize;
-    std::ptr::copy(WIPE_SCR_START, WIPE_SCR, len);
+    let (scr_start, scr) = {
+        let wipe = WIPE.borrow();
+        (wipe.scr_start, wipe.scr)
+    };
+    std::ptr::copy(scr_start, scr, len);
     0
 }
 
@@ -122,32 +148,36 @@ unsafe fn wipe_init_color_xform(width: i32, height: i32, _ticks: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `WIPE_SCR`, `WIPE_SCR_END` must both be valid pointers to at least
+/// `scr` and `scr_end` must both be valid pointers to at least
 /// `width * height` bytes.
 unsafe fn wipe_do_color_xform(width: i32, height: i32, ticks: i32) -> i32 {
     let len = (width * height) as usize;
     let mut changed = false;
+    let (scr, scr_end) = {
+        let wipe = WIPE.borrow();
+        (wipe.scr, wipe.scr_end)
+    };
 
     for i in 0..len {
-        let w = *WIPE_SCR.add(i);
-        let e = *WIPE_SCR_END.add(i);
+        let w = *scr.add(i);
+        let e = *scr_end.add(i);
 
         if w != e {
             let newval: i32;
             if w > e {
                 newval = (w as i32) - ticks;
                 if newval < e as i32 {
-                    *WIPE_SCR.add(i) = e;
+                    *scr.add(i) = e;
                 } else {
-                    *WIPE_SCR.add(i) = newval as u8;
+                    *scr.add(i) = newval as u8;
                 }
                 changed = true;
             } else {
                 newval = (w as i32) + ticks;
                 if newval > e as i32 {
-                    *WIPE_SCR.add(i) = e;
+                    *scr.add(i) = e;
                 } else {
-                    *WIPE_SCR.add(i) = newval as u8;
+                    *scr.add(i) = newval as u8;
                 }
                 changed = true;
             }
@@ -183,29 +213,34 @@ unsafe fn wipe_exit_color_xform(_width: i32, _height: i32, _ticks: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `WIPE_SCR_START`, `WIPE_SCR_END`, and `WIPE_SCR` must be valid pointers to
-/// at least `width * height` bytes.  `M_Random` must be safe to call.
+/// `scr_start`, `scr_end`, and `scr` must be valid pointers to at least
+/// `width * height` bytes.  `M_Random` must be safe to call.
 unsafe fn wipe_init_melt(width: i32, height: i32, _ticks: i32) -> i32 {
     let len = (width * height) as usize;
-    std::ptr::copy(WIPE_SCR_START, WIPE_SCR, len);
+    let (scr_start, scr_end, scr) = {
+        let wipe = WIPE.borrow();
+        (wipe.scr_start, wipe.scr_end, wipe.scr)
+    };
+    std::ptr::copy(scr_start, scr, len);
 
-    wipe_shitty_col_major_xform(WIPE_SCR_START as *mut i16, width / 2, height);
-    wipe_shitty_col_major_xform(WIPE_SCR_END as *mut i16, width / 2, height);
+    wipe_shitty_col_major_xform(scr_start as *mut i16, width / 2, height);
+    wipe_shitty_col_major_xform(scr_end as *mut i16, width / 2, height);
 
-    Y = Z_Malloc(
+    let column_y = Z_Malloc(
         width * std::mem::size_of::<i32>() as i32,
         PU_STATIC,
         std::ptr::null_mut(),
     ) as *mut i32;
+    WIPE.borrow_mut().column_y = column_y;
 
-    *Y.add(0) = -(M_Random() % 16);
+    *column_y.add(0) = -(M_Random() % 16);
     for i in 1..width as usize {
         let r = M_Random() % 3 - 1;
-        *Y.add(i) = *Y.add(i - 1) + r;
-        if *Y.add(i) > 0 {
-            *Y.add(i) = 0;
-        } else if *Y.add(i) == -16 {
-            *Y.add(i) = -15;
+        *column_y.add(i) = *column_y.add(i - 1) + r;
+        if *column_y.add(i) > 0 {
+            *column_y.add(i) = 0;
+        } else if *column_y.add(i) == -16 {
+            *column_y.add(i) = -15;
         }
     }
 
@@ -229,42 +264,46 @@ unsafe fn wipe_init_melt(width: i32, height: i32, _ticks: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `Y`, `WIPE_SCR_START`, `WIPE_SCR_END`, and `WIPE_SCR` must be valid
-/// pointers initialised by `wipe_init_melt`.
+/// `column_y`, `scr_start`, `scr_end`, and `scr` must be valid pointers
+/// initialised by `wipe_init_melt`.
 unsafe fn wipe_do_melt(width: i32, height: i32, ticks: i32) -> i32 {
     let width = width / 2;
     let mut done = true;
     let mut ticks = ticks;
+    let (column_y, scr_start, scr_end, scr) = {
+        let wipe = WIPE.borrow();
+        (wipe.column_y, wipe.scr_start, wipe.scr_end, wipe.scr)
+    };
 
     while ticks > 0 {
         ticks -= 1;
         for i in 0..width as usize {
-            if *Y.add(i) < 0 {
-                *Y.add(i) += 1;
+            if *column_y.add(i) < 0 {
+                *column_y.add(i) += 1;
                 done = false;
-            } else if *Y.add(i) < height {
+            } else if *column_y.add(i) < height {
                 let mut dy: i32;
-                if *Y.add(i) < 16 {
-                    dy = *Y.add(i) + 1;
+                if *column_y.add(i) < 16 {
+                    dy = *column_y.add(i) + 1;
                 } else {
                     dy = 8;
                 }
-                if *Y.add(i) + dy >= height {
-                    dy = height - *Y.add(i);
+                if *column_y.add(i) + dy >= height {
+                    dy = height - *column_y.add(i);
                 }
 
-                let yi = *Y.add(i) as usize;
-                let src = (WIPE_SCR_END as *mut i16).add(i * height as usize + yi);
-                let dst = (WIPE_SCR as *mut i16).add(yi * width as usize + i);
+                let yi = *column_y.add(i) as usize;
+                let src = (scr_end as *mut i16).add(i * height as usize + yi);
+                let dst = (scr as *mut i16).add(yi * width as usize + i);
                 for j in 0..dy as usize {
                     *dst.add(j * width as usize) = *src.add(j);
                 }
 
-                *Y.add(i) += dy;
+                *column_y.add(i) += dy;
 
-                let src = (WIPE_SCR_START as *mut i16).add(i * height as usize);
-                let dst = (WIPE_SCR as *mut i16).add((*Y.add(i) as usize) * width as usize + i);
-                for j in 0..(height as usize - *Y.add(i) as usize) {
+                let src = (scr_start as *mut i16).add(i * height as usize);
+                let dst = (scr as *mut i16).add((*column_y.add(i) as usize) * width as usize + i);
+                for j in 0..(height as usize - *column_y.add(i) as usize) {
                     *dst.add(j * width as usize) = *src.add(j);
                 }
 
@@ -287,15 +326,20 @@ unsafe fn wipe_do_melt(width: i32, height: i32, ticks: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `Y`, `WIPE_SCR_START`, and `WIPE_SCR_END` must have been allocated by
+/// `column_y`, `scr_start`, and `scr_end` must have been allocated by
 /// `wipe_init_melt` / `wipe_StartScreen` / `wipe_EndScreen`.
 unsafe fn wipe_exit_melt(_width: i32, _height: i32, _ticks: i32) -> i32 {
-    Z_Free(Y as *mut c_void);
-    Z_Free(WIPE_SCR_START as *mut c_void);
-    Z_Free(WIPE_SCR_END as *mut c_void);
-    Y = std::ptr::null_mut();
-    WIPE_SCR_START = std::ptr::null_mut();
-    WIPE_SCR_END = std::ptr::null_mut();
+    let (column_y, scr_start, scr_end) = {
+        let mut wipe = WIPE.borrow_mut();
+        let buffers = (wipe.column_y, wipe.scr_start, wipe.scr_end);
+        wipe.column_y = std::ptr::null_mut();
+        wipe.scr_start = std::ptr::null_mut();
+        wipe.scr_end = std::ptr::null_mut();
+        buffers
+    };
+    Z_Free(column_y as *mut c_void);
+    Z_Free(scr_start as *mut c_void);
+    Z_Free(scr_end as *mut c_void);
     0
 }
 
@@ -330,11 +374,10 @@ const WIPES: [WipeFn; 6] = [
 /// Called by C code in `d_main.c` before the scene transition.
 /// C origin: `wipe_StartScreen` in f_wipe.c.
 pub fn wipe_StartScreen(_x: i32, _y: i32, _width: i32, _height: i32) -> i32 {
-    unsafe {
-        WIPE_SCR_START =
-            Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8;
-        I_ReadScreen(WIPE_SCR_START);
-    }
+    let scr_start =
+        unsafe { Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8 };
+    WIPE.borrow_mut().scr_start = scr_start;
+    unsafe { I_ReadScreen(scr_start) };
     0
 }
 
@@ -350,11 +393,16 @@ pub fn wipe_StartScreen(_x: i32, _y: i32, _width: i32, _height: i32) -> i32 {
 /// Called by C code in `d_main.c` after drawing the new scene.
 /// C origin: `wipe_EndScreen` in f_wipe.c.
 pub fn wipe_EndScreen(x: i32, y: i32, width: i32, height: i32) -> i32 {
+    let scr_end =
+        unsafe { Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8 };
+    let scr_start = {
+        let mut wipe = WIPE.borrow_mut();
+        wipe.scr_end = scr_end;
+        wipe.scr_start
+    };
     unsafe {
-        WIPE_SCR_END =
-            Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8;
-        I_ReadScreen(WIPE_SCR_END);
-        V_DrawBlock(x, y, width, height, WIPE_SCR_START);
+        I_ReadScreen(scr_end);
+        V_DrawBlock(x, y, width, height, scr_start);
     }
     0
 }
@@ -362,10 +410,10 @@ pub fn wipe_EndScreen(x: i32, y: i32, width: i32, height: i32) -> i32 {
 /// Drive the screen wipe one frame forward and return whether the wipe is
 /// complete.
 ///
-/// On the first call (`GO == 0`), initialises the chosen algorithm, sets
-/// `WIPE_SCR` to the live video buffer, and calls the init function.
+/// On the first call (`go == 0`), initialises the chosen algorithm, sets
+/// `scr` to the live video buffer, and calls the init function.
 /// Subsequently calls the step function; if it signals completion, calls the
-/// exit function and resets `GO`.  Marks the updated rectangle as dirty via
+/// exit function and resets `go`.  Marks the updated rectangle as dirty via
 /// `V_MarkRect` each call.
 ///
 /// Returns 1 when the wipe is finished, 0 while it is still running.
@@ -377,9 +425,16 @@ pub fn wipe_EndScreen(x: i32, y: i32, width: i32, height: i32) -> i32 {
 /// C origin: `wipe_ScreenWipe` in f_wipe.c.
 pub fn wipe_ScreenWipe(wipeno: i32, _x: i32, _y: i32, width: i32, height: i32, ticks: i32) -> i32 {
     unsafe {
-        if GO == 0 {
-            GO = 1;
-            WIPE_SCR = I_VideoBuffer;
+        let starting = {
+            let mut wipe = WIPE.borrow_mut();
+            let starting = wipe.go == 0;
+            if starting {
+                wipe.go = 1;
+                wipe.scr = I_VideoBuffer;
+            }
+            starting
+        };
+        if starting {
             WIPES[(wipeno * 3) as usize](width, height, ticks);
         }
 
@@ -387,11 +442,11 @@ pub fn wipe_ScreenWipe(wipeno: i32, _x: i32, _y: i32, width: i32, height: i32, t
         let rc = WIPES[(wipeno * 3 + 1) as usize](width, height, ticks);
 
         if rc != 0 {
-            GO = 0;
+            WIPE.borrow_mut().go = 0;
             WIPES[(wipeno * 3 + 2) as usize](width, height, ticks);
         }
 
-        if GO == 0 {
+        if WIPE.borrow().go == 0 {
             1
         } else {
             0

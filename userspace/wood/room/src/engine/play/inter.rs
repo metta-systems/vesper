@@ -305,7 +305,7 @@ const GOTSHOTGUN2: &str = "You got the super shotgun!";
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    automap::{automapactive, AM_Stop},
+    automap::{automap_active, AM_Stop},
     game::{deathmatch, gameskill, netgame},
     interface::system::I_Tactile,
     play::mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
@@ -1073,7 +1073,7 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         if std::ptr::eq(
             target_player,
             std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
-        ) && automapactive != 0
+        ) && automap_active()
         {
             AM_Stop();
         }

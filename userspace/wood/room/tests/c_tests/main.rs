@@ -12,6 +12,7 @@
 mod am_map_c;
 mod d_loop_c;
 mod d_main_c;
+mod f_finale_c;
 mod g_game_c;
 mod harness;
 mod hu_stuff_c;

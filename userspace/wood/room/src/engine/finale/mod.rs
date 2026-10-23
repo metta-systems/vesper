@@ -32,7 +32,8 @@ use crate::{
             event::event_t,
             stat::{gamemission, gameversion},
         },
-        hud::stuff::{hu_font, HU_FONTSIZE, HU_FONTSTART},
+        global::Global,
+        hud::stuff::{HUD, HU_FONTSIZE, HU_FONTSTART},
         play::info::*,
         wad::format::{column_t, patch_t},
     },
@@ -250,7 +251,7 @@ use crate::engine::{
 };
 
 // am_map.rs
-use crate::engine::automap::automapactive;
+use crate::engine::automap::AUTOMAP;
 
 // doomstat.rs
 use crate::engine::doom::stat::gamemode;
@@ -539,67 +540,115 @@ const CASTORDER: [CastInfo; 18] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Exported globals
+// State
 // ---------------------------------------------------------------------------
 
-/// The text being displayed in the Text stage.
-///
-/// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; empty when
-/// no text-screen applies.  C origin: `finaletext` in f_finale.c.
-pub static mut finaletext: &str = "";
+/// Finale state (C `f_finale.c` globals).
+pub struct FinaleState {
+    /// The text being displayed in the Text stage.
+    ///
+    /// Set by [`F_StartFinale`] to the matching `TEXTSCREENS` entry; empty
+    /// when no text-screen applies.  C origin: `finaletext`.
+    pub finaletext: &'static str,
+    /// Name of the WAD flat lump used as the tiling background in the Text
+    /// stage.
+    ///
+    /// Set by [`F_StartFinale`].  Empty when no text-screen applies.
+    /// C origin: `finaleflat`.
+    pub finaleflat: &'static [u8],
+    /// Index into `CASTORDER` for the enemy currently shown in the cast roll.
+    ///
+    /// Incremented by [`F_CastTicker`] when the current enemy finishes its
+    /// death animation.  C origin: `castnum`.
+    pub castnum: i32,
+    /// Remaining ticks before the cast animation advances to the next state.
+    ///
+    /// Decremented each game tick by [`F_CastTicker`].  C origin: `casttics`.
+    pub casttics: i32,
+    /// Non-zero while the current cast enemy is playing its death animation.
+    ///
+    /// Set by [`F_CastResponder`] when the player presses a key; cleared
+    /// when the next enemy begins.  C origin: `castdeath`.
+    pub castdeath: i32,
+    /// Number of animation frames the current cast enemy has displayed so
+    /// far.
+    ///
+    /// Used to decide when to trigger an attack sequence (at frame 12) and
+    /// when to stop one (at frame 24).  C origin: `castframes`.
+    pub castframes: i32,
+    /// Alternates between 0 and 1 to select melee vs. ranged attack during
+    /// the cast roll.  C origin: `castonmelee`.
+    pub castonmelee: i32,
+    /// Non-zero while a cast enemy is in an attack animation.
+    /// C origin: `castattacking`.
+    pub castattacking: i32,
+    /// Pointer to the current animation state for the cast-roll entity.
+    /// C origin: `caststate`.
+    pub caststate: *mut State,
+    /// Current stage of the finale sequence.
+    ///
+    /// Drives the dispatch in [`F_Ticker`] and [`F_Drawer`].
+    /// C origin: `int finalestage`.
+    stage: FinaleStage,
+    /// Tick counter incremented each game tick while the finale is active.
+    ///
+    /// Controls text reveal speed, art-screen timing, and bunny-scroll
+    /// position.  C origin: `int finalecount`.
+    count: u32,
+    /// The last `END*` animation frame shown during the bunny scroll.
+    ///
+    /// Prevents a pistol sound from firing on every redraw of the same
+    /// frame.  C origin: `laststage` (static local) in `F_BunnyScroll`.
+    last_stage: i32,
+}
 
-/// Name of the WAD flat lump used as the tiling background in the Text stage.
-///
-/// Set by [`F_StartFinale`].  Empty when no text-screen applies.
-/// C origin: `finaleflat` in f_finale.c.
-pub static mut finaleflat: &[u8] = b"";
+impl FinaleState {
+    /// The state at program start: no text, cast roll not started.
+    pub const fn new() -> Self {
+        Self {
+            finaletext: "",
+            finaleflat: b"",
+            castnum: 0,
+            casttics: 0,
+            castdeath: 0,
+            castframes: 0,
+            castonmelee: 0,
+            castattacking: 0,
+            caststate: ptr::null_mut(),
+            stage: FinaleStage::Text,
+            count: 0,
+            last_stage: 0,
+        }
+    }
+}
 
-/// Index into `CASTORDER` for the enemy currently shown in the cast roll.
-///
-/// Incremented by [`F_CastTicker`] when the current enemy finishes its death
-/// animation.  C origin: `castnum` in f_finale.c.
-pub static mut castnum: i32 = 0;
+impl Default for FinaleState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Remaining ticks before the cast animation advances to the next state.
-///
-/// Decremented each game tick by [`F_CastTicker`].
-/// C origin: `casttics` in f_finale.c.
-pub static mut casttics: i32 = 0;
+/// The finale state.
+pub static FINALE: Global<FinaleState> = Global::new(FinaleState::new());
 
-/// Non-zero while the current cast enemy is playing its death animation.
+/// The `mobjinfo` entry of the cast-roll enemy at `castnum`.
 ///
-/// Set by [`F_CastResponder`] when the player presses a key; cleared when the
-/// next enemy begins.  C origin: `castdeath` in f_finale.c.
-pub static mut castdeath: i32 = 0;
+/// # Safety
+///
+/// `castnum` must index `CASTORDER`.
+unsafe fn cast_info(castnum: i32) -> &'static MobjInfo {
+    &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
+        .add(CASTORDER[castnum as usize].kind as usize)
+}
 
-/// Number of animation frames the current cast enemy has displayed so far.
+/// The `states` entry `state`.
 ///
-/// Used to decide when to trigger an attack sequence (at frame 12) and when to
-/// stop one (at frame 24).  C origin: `castframes` in f_finale.c.
-pub static mut castframes: i32 = 0;
-
-/// Alternates between 0 and 1 to select melee vs. ranged attack during the
-/// cast roll.
+/// # Safety
 ///
-/// C origin: `castonmelee` in f_finale.c.
-pub static mut castonmelee: i32 = 0;
-
-/// Non-zero while a cast enemy is in an attack animation.
-///
-/// C origin: `castattacking` in f_finale.c.
-pub static mut castattacking: i32 = 0;
-
-/// Current stage of the finale sequence.
-///
-/// Drives the dispatch in [`F_Ticker`] and [`F_Drawer`].
-/// C origin: `int finalestage` in f_finale.c.
-static mut FINALE_STAGE: FinaleStage = FinaleStage::Text;
-
-/// Tick counter incremented each game tick while the finale is active.
-///
-/// Controls text reveal speed, art-screen timing, and bunny-scroll position.
-/// C origin: `int finalecount` in f_finale.c.
-static mut FINALE_COUNT: u32 = 0;
+/// `state` must index `states`.
+unsafe fn state_ptr(state: i32) -> *mut State {
+    &raw mut crate::engine::play::info::states[state as usize]
+}
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -612,7 +661,7 @@ static mut FINALE_COUNT: u32 = 0;
 /// `TEXTSCREENS` to find the matching text string and background flat, and
 /// initialises the internal stage to `Text`.
 ///
-/// Postcondition: `FINALE_STAGE` is `Text`, `FINALE_COUNT` is 0, and
+/// Postcondition: the stage is `Text`, the tick count is 0, and
 /// `finaletext`/`finaleflat` hold the selected screen data (or are empty if
 /// none matched).
 ///
@@ -624,7 +673,7 @@ pub fn F_StartFinale() {
         gameaction = ga_nothing;
         gamestate = GS_FINALE;
         viewactive = 0;
-        automapactive = 0;
+        AUTOMAP.borrow_mut().automapactive = 0;
 
         if logical_gamemission() == doom::mode::doom {
             S_ChangeMusic(Mus::Victor as i32, 1);
@@ -632,8 +681,8 @@ pub fn F_StartFinale() {
             S_ChangeMusic(Mus::ReadM as i32, 1);
         }
 
-        finaletext = "";
-        finaleflat = b"";
+        let mut finaletext = "";
+        let mut finaleflat: &[u8] = b"";
 
         for screen in &TEXTSCREENS {
             // Hack for Chex Quest
@@ -659,11 +708,12 @@ pub fn F_StartFinale() {
             }
         }
 
-        finaletext = DEH_String(finaletext);
-        finaleflat = DEH_String(finaleflat);
+        let mut finale = FINALE.borrow_mut();
+        finale.finaletext = DEH_String(finaletext);
+        finale.finaleflat = DEH_String(finaleflat);
 
-        FINALE_STAGE = FinaleStage::Text;
-        FINALE_COUNT = 0;
+        finale.stage = FinaleStage::Text;
+        finale.count = 0;
     }
 }
 
@@ -676,7 +726,7 @@ pub fn F_StartFinale() {
 pub fn F_Responder(event: *mut event_t) -> i32 {
     unsafe {
         let _ev = &*event;
-        if let FinaleStage::Cast = FINALE_STAGE {
+        if let FinaleStage::Cast = FINALE.borrow().stage {
             return F_CastResponder(event);
         }
         0
@@ -687,7 +737,7 @@ pub fn F_Responder(event: *mut event_t) -> i32 {
 ///
 /// In commercial mode (`gamemode == commercial`), checks whether any player
 /// has pressed a button to skip; on map 30 this starts the cast roll, otherwise
-/// it triggers `ga_worlddone`.  Increments `FINALE_COUNT`; delegates to
+/// it triggers `ga_worlddone`.  Increments the tick count; delegates to
 /// [`F_CastTicker`] during the Cast stage.  In non-commercial mode, advances
 /// from Text to ArtScreen when the text has been fully displayed and the wait
 /// period has expired (triggering a wipe and, for episode 3, the bunny music).
@@ -697,7 +747,7 @@ pub fn F_Responder(event: *mut event_t) -> i32 {
 pub fn F_Ticker() {
     unsafe {
         // check for skipping
-        if gamemode == doom::mode::commercial && FINALE_COUNT > 50 {
+        if gamemode == doom::mode::commercial && FINALE.borrow().count > 50 {
             for i in 0..MAXPLAYERS {
                 if players[i].cmd.buttons != 0 {
                     if gamemap == 30 {
@@ -710,9 +760,13 @@ pub fn F_Ticker() {
             }
         }
 
-        FINALE_COUNT += 1;
+        let stage = {
+            let mut finale = FINALE.borrow_mut();
+            finale.count += 1;
+            finale.stage
+        };
 
-        if let FinaleStage::Cast = FINALE_STAGE {
+        if let FinaleStage::Cast = stage {
             F_CastTicker();
             return;
         }
@@ -721,11 +775,19 @@ pub fn F_Ticker() {
             return;
         }
 
-        if let FinaleStage::Text = FINALE_STAGE {
-            let len = { finaletext }.len();
-            if FINALE_COUNT > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32) {
-                FINALE_COUNT = 0;
-                FINALE_STAGE = FinaleStage::ArtScreen;
+        if let FinaleStage::Text = stage {
+            let text_done = {
+                let mut finale = FINALE.borrow_mut();
+                let len = finale.finaletext.len();
+                let text_done =
+                    finale.count > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32);
+                if text_done {
+                    finale.count = 0;
+                    finale.stage = FinaleStage::ArtScreen;
+                }
+                text_done
+            };
+            if text_done {
                 wipegamestate = -1;
                 if gameepisode == 3 {
                     S_StartMusic(Mus::Bunny as i32);
@@ -736,7 +798,7 @@ pub fn F_Ticker() {
 }
 
 /// Tile the background flat across the screen and draw the finale text,
-/// revealing characters one at a time based on `FINALE_COUNT`.
+/// revealing characters one at a time based on the finale tick count.
 ///
 /// The flat is tiled as 64x64 blocks; text is rendered using the HUD font
 /// starting at pixel `(10, 10)` with a line height of 11.  Characters are
@@ -745,6 +807,10 @@ pub fn F_Ticker() {
 ///
 /// Called from [`F_Drawer`].  C origin: `F_TextWrite` in f_finale.c.
 pub fn F_TextWrite() {
+    let (finaletext, finaleflat, finalecount) = {
+        let finale = FINALE.borrow();
+        (finale.finaletext, finale.finaleflat, finale.count)
+    };
     unsafe {
         let src = W_CacheLumpName(finaleflat, PU_CACHE) as *mut u8;
         let mut dest = I_VideoBuffer;
@@ -766,9 +832,9 @@ pub fn F_TextWrite() {
 
         let mut cx = 10;
         let mut cy = 10;
-        let count = ((FINALE_COUNT as i32 - 10) / TEXTSPEED).max(0) as usize;
+        let count = ((finalecount as i32 - 10) / TEXTSPEED).max(0) as usize;
 
-        for &c in { finaletext }.as_bytes().iter().take(count) {
+        for &c in finaletext.as_bytes().iter().take(count) {
             if c == b'\n' {
                 cx = 10;
                 cy += 11;
@@ -800,25 +866,20 @@ pub fn F_TextWrite() {
 pub fn F_StartCast() {
     unsafe {
         wipegamestate = -1;
-        castnum = 0;
-        let st = &(*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-            .add(CASTORDER[0].kind as usize))
-        .seestate;
-        caststate = &mut crate::engine::play::info::states[*st as usize];
-        casttics = (*caststate).tics;
-        castdeath = 0;
-        FINALE_STAGE = FinaleStage::Cast;
-        castframes = 0;
-        castonmelee = 0;
-        castattacking = 0;
+        {
+            let mut finale = FINALE.borrow_mut();
+            finale.castnum = 0;
+            finale.caststate = state_ptr(cast_info(0).seestate);
+            finale.casttics = (*finale.caststate).tics;
+            finale.castdeath = 0;
+            finale.stage = FinaleStage::Cast;
+            finale.castframes = 0;
+            finale.castonmelee = 0;
+            finale.castattacking = 0;
+        }
         S_ChangeMusic(Mus::Evil as i32, 1);
     }
 }
-
-/// Pointer to the current animation state for the cast-roll entity.
-///
-/// C origin: `caststate` in f_finale.c.
-pub static mut caststate: *mut State = ptr::null_mut();
 
 /// Advance the cast-roll animation by one game tick.
 ///
@@ -834,36 +895,37 @@ pub static mut caststate: *mut State = ptr::null_mut();
 /// C origin: `F_CastTicker` in f_finale.c.
 pub fn F_CastTicker() {
     unsafe {
-        casttics -= 1;
-        if casttics > 0 {
+        let mut finale = FINALE.borrow_mut();
+        finale.casttics -= 1;
+        if finale.casttics > 0 {
             return;
         }
 
-        if (*caststate).tics == -1 || (*caststate).nextstate == S_NULL {
+        if (*finale.caststate).tics == -1 || (*finale.caststate).nextstate == S_NULL {
             // switch from deathstate to next monster
-            castnum += 1;
-            castdeath = 0;
-            if CASTORDER[castnum as usize].name.is_empty() {
-                castnum = 0;
+            finale.castnum += 1;
+            finale.castdeath = 0;
+            if CASTORDER[finale.castnum as usize].name.is_empty() {
+                finale.castnum = 0;
             }
-            let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].kind as usize);
+            let info = cast_info(finale.castnum);
             if info.seesound != Sfx::None {
+                drop(finale);
                 S_StartSound(ptr::null_mut(), info.seesound as i32);
+                finale = FINALE.borrow_mut();
             }
-            let st = info.seestate;
-            caststate = &mut crate::engine::play::info::states[st as usize];
-            castframes = 0;
+            finale.caststate = state_ptr(info.seestate);
+            finale.castframes = 0;
         } else {
             // just advance to next state in animation
-            if caststate == &mut crate::engine::play::info::states[S_PLAY_ATK1 as usize] {
+            if finale.caststate == state_ptr(S_PLAY_ATK1) {
                 // Oh, gross hack! Jump to stopattack logic below
-                goto_stopattack();
+                goto_stopattack(&mut finale);
                 return;
             }
-            let st = (*caststate).nextstate;
-            caststate = &mut crate::engine::play::info::states[st as usize];
-            castframes += 1;
+            let st = (*finale.caststate).nextstate;
+            finale.caststate = state_ptr(st);
+            finale.castframes += 1;
 
             let sfx = match st {
                 S_PLAY_ATK1 => Sfx::Dshtgn as i32,
@@ -887,52 +949,44 @@ pub fn F_CastTicker() {
             };
 
             if sfx != 0 {
+                drop(finale);
                 S_StartSound(ptr::null_mut(), sfx);
+                finale = FINALE.borrow_mut();
             }
         }
 
-        if castframes == 12 {
-            castattacking = 1;
-            let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].kind as usize);
-            let st = if castonmelee != 0 {
+        if finale.castframes == 12 {
+            finale.castattacking = 1;
+            let info = cast_info(finale.castnum);
+            let st = if finale.castonmelee != 0 {
                 info.meleestate
             } else {
                 info.missilestate
             };
-            castonmelee ^= 1;
-            caststate = &mut crate::engine::play::info::states[st as usize];
-            if caststate == &mut crate::engine::play::info::states[S_NULL as usize] {
-                let st2 = if castonmelee != 0 {
+            finale.castonmelee ^= 1;
+            finale.caststate = state_ptr(st);
+            if finale.caststate == state_ptr(S_NULL) {
+                let st2 = if finale.castonmelee != 0 {
                     info.meleestate
                 } else {
                     info.missilestate
                 };
-                caststate = &mut crate::engine::play::info::states[st2 as usize];
+                finale.caststate = state_ptr(st2);
             }
         }
 
-        if castattacking != 0
-            && (castframes == 24
-                || caststate
-                    == &mut crate::engine::play::info::states[(*std::ptr::addr_of!(
-                        crate::engine::play::info::mobjinfo[0]
-                    )
-                    .add(CASTORDER[castnum as usize].kind as usize))
-                    .seestate
-                        as usize])
+        if finale.castattacking != 0
+            && (finale.castframes == 24
+                || finale.caststate == state_ptr(cast_info(finale.castnum).seestate))
         {
-            castattacking = 0;
-            castframes = 0;
-            let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-                .add(CASTORDER[castnum as usize].kind as usize))
-            .seestate;
-            caststate = &mut crate::engine::play::info::states[st as usize];
+            finale.castattacking = 0;
+            finale.castframes = 0;
+            finale.caststate = state_ptr(cast_info(finale.castnum).seestate);
         }
 
-        casttics = (*caststate).tics;
-        if casttics == -1 {
-            casttics = 15;
+        finale.casttics = (*finale.caststate).tics;
+        if finale.casttics == -1 {
+            finale.casttics = 15;
         }
     }
 }
@@ -948,18 +1002,15 @@ pub fn F_CastTicker() {
 ///
 /// # Safety
 ///
-/// All cast globals (`caststate`, `castnum`, etc.) must be in a consistent
+/// The cast fields (`caststate`, `castnum`, etc.) must be in a consistent
 /// state, as established by [`F_StartCast`].
-unsafe fn goto_stopattack() {
-    castattacking = 0;
-    castframes = 0;
-    let st = (*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-        .add(CASTORDER[castnum as usize].kind as usize))
-    .seestate;
-    caststate = &mut crate::engine::play::info::states[st as usize];
-    casttics = (*caststate).tics;
-    if casttics == -1 {
-        casttics = 15;
+unsafe fn goto_stopattack(finale: &mut FinaleState) {
+    finale.castattacking = 0;
+    finale.castframes = 0;
+    finale.caststate = state_ptr(cast_info(finale.castnum).seestate);
+    finale.casttics = (*finale.caststate).tics;
+    if finale.casttics == -1 {
+        finale.casttics = 15;
     }
 }
 
@@ -977,16 +1028,19 @@ pub fn F_CastResponder(ev: *mut event_t) -> i32 {
         if event.kind != ev_keydown {
             return 0;
         }
-        if castdeath != 0 {
-            return 1;
-        }
-        castdeath = 1;
-        let info = &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-            .add(CASTORDER[castnum as usize].kind as usize);
-        caststate = &mut crate::engine::play::info::states[info.deathstate as usize];
-        casttics = (*caststate).tics;
-        castframes = 0;
-        castattacking = 0;
+        let info = {
+            let mut finale = FINALE.borrow_mut();
+            if finale.castdeath != 0 {
+                return 1;
+            }
+            finale.castdeath = 1;
+            let info = cast_info(finale.castnum);
+            finale.caststate = state_ptr(info.deathstate);
+            finale.casttics = (*finale.caststate).tics;
+            finale.castframes = 0;
+            finale.castattacking = 0;
+            info
+        };
         if info.deathsound != Sfx::None {
             S_StartSound(ptr::null_mut(), info.deathsound as i32);
         }
@@ -1033,7 +1087,7 @@ unsafe fn font_patch(c: u8) -> Option<*mut patch_t> {
     if index >= HU_FONTSIZE {
         return None;
     }
-    let font = hu_font[index];
+    let font = HUD.borrow().hu_font[index];
     (!font.is_null()).then_some(font)
 }
 
@@ -1053,6 +1107,10 @@ pub fn F_CastDrawer() {
             0,
             W_CacheLumpName(DEH_String(b"BOSSBACK"), PU_CACHE) as *mut patch_t,
         );
+        let (castnum, caststate) = {
+            let finale = FINALE.borrow();
+            (finale.castnum, finale.caststate)
+        };
         F_CastPrint(DEH_String(CASTORDER[castnum as usize].name));
 
         let sprdef = &*sprites.add((*caststate).sprite as usize);
@@ -1108,60 +1166,60 @@ pub fn F_DrawPatchCol(x: i32, patch: *mut patch_t, col: i32) {
 ///
 /// Called by [`F_ArtScreenDrawer`].  C origin: `F_BunnyScroll` in f_finale.c.
 pub fn F_BunnyScroll() {
-    unsafe {
-        let p1 = W_CacheLumpName(DEH_String(b"PFUB2"), PU_LEVEL) as *mut patch_t;
-        let p2 = W_CacheLumpName(DEH_String(b"PFUB1"), PU_LEVEL) as *mut patch_t;
+    let p1 = W_CacheLumpName(DEH_String(b"PFUB2"), PU_LEVEL) as *mut patch_t;
+    let p2 = W_CacheLumpName(DEH_String(b"PFUB1"), PU_LEVEL) as *mut patch_t;
 
-        V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
+    V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
-        let mut scrolled = 320 - ((FINALE_COUNT as i32 - 230) / 2);
-        scrolled = scrolled.clamp(0, 320);
+    let finalecount = FINALE.borrow().count;
+    let mut scrolled = 320 - ((finalecount as i32 - 230) / 2);
+    scrolled = scrolled.clamp(0, 320);
 
-        for x in 0..SCREENWIDTH {
-            if x + scrolled < 320 {
-                F_DrawPatchCol(x, p1, x + scrolled);
-            } else {
-                F_DrawPatchCol(x, p2, x + scrolled - 320);
-            }
+    for x in 0..SCREENWIDTH {
+        if x + scrolled < 320 {
+            F_DrawPatchCol(x, p1, x + scrolled);
+        } else {
+            F_DrawPatchCol(x, p2, x + scrolled - 320);
         }
+    }
 
-        if FINALE_COUNT < 1130 {
-            return;
-        }
-        if FINALE_COUNT < 1180 {
-            V_DrawPatch(
-                (SCREENWIDTH - 13 * 8) / 2,
-                (SCREENHEIGHT - 8 * 8) / 2,
-                W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
-            );
-            LAST_STAGE = 0;
-            return;
-        }
-
-        let mut stage = ((FINALE_COUNT as i32) - 1180) / 5;
-        if stage > 6 {
-            stage = 6;
-        }
-        if stage > LAST_STAGE {
-            S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
-            LAST_STAGE = stage;
-        }
-
-        let mut namebuf: [u8; 10] = [0; 10];
-        DEH_snprintf!(namebuf, "END{}", stage);
+    if finalecount < 1130 {
+        return;
+    }
+    if finalecount < 1180 {
         V_DrawPatch(
             (SCREENWIDTH - 13 * 8) / 2,
             (SCREENHEIGHT - 8 * 8) / 2,
-            W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
+            W_CacheLumpName(DEH_String(b"END0"), PU_CACHE) as *mut patch_t,
         );
+        FINALE.borrow_mut().last_stage = 0;
+        return;
     }
-}
 
-/// The last `END*` animation frame shown during the bunny scroll.
-///
-/// Prevents a pistol sound from firing on every redraw of the same frame.
-/// C origin: `laststage` (static local) in `F_BunnyScroll` in f_finale.c.
-static mut LAST_STAGE: i32 = 0;
+    let mut stage = ((finalecount as i32) - 1180) / 5;
+    if stage > 6 {
+        stage = 6;
+    }
+    let new_stage = {
+        let mut finale = FINALE.borrow_mut();
+        let new_stage = stage > finale.last_stage;
+        if new_stage {
+            finale.last_stage = stage;
+        }
+        new_stage
+    };
+    if new_stage {
+        S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
+    }
+
+    let mut namebuf: [u8; 10] = [0; 10];
+    DEH_snprintf!(namebuf, "END{}", stage);
+    V_DrawPatch(
+        (SCREENWIDTH - 13 * 8) / 2,
+        (SCREENHEIGHT - 8 * 8) / 2,
+        W_CacheLumpName(&namebuf, PU_CACHE) as *mut patch_t,
+    );
+}
 
 /// Draw the art-screen for the current episode (non-Cast, non-Text stage).
 ///
@@ -1203,12 +1261,11 @@ pub fn F_ArtScreenDrawer() {
 /// Called from C code in `g_game.c` every frame while `gamestate == GS_FINALE`.
 /// C origin: `F_Drawer` in f_finale.c.
 pub fn F_Drawer() {
-    unsafe {
-        match FINALE_STAGE {
-            FinaleStage::Cast => F_CastDrawer(),
-            FinaleStage::Text => F_TextWrite(),
-            FinaleStage::ArtScreen => F_ArtScreenDrawer(),
-        }
+    let stage = FINALE.borrow().stage;
+    match stage {
+        FinaleStage::Cast => F_CastDrawer(),
+        FinaleStage::Text => F_TextWrite(),
+        FinaleStage::ArtScreen => F_ArtScreenDrawer(),
     }
 }
 
@@ -1219,9 +1276,7 @@ pub fn F_Drawer() {
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)] // pins constant values
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn textspeed_is_3() {
@@ -1240,18 +1295,12 @@ mod tests {
 
     #[test]
     fn finaletext_initially_empty() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert!({ finaletext }.is_empty());
-        }
+        assert!(FinaleState::new().finaletext.is_empty());
     }
 
     #[test]
     fn finaleflat_initially_empty() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert!({ finaleflat }.is_empty());
-        }
+        assert!(FinaleState::new().finaleflat.is_empty());
     }
 
     /// Every text screen names a background flat and has text; the cast
@@ -1268,32 +1317,32 @@ mod tests {
 
     #[test]
     fn cast_globals_default_zero() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ castnum }, 0);
-            assert_eq!({ casttics }, 0);
-            assert_eq!({ castdeath }, 0);
-            assert_eq!({ castframes }, 0);
-            assert_eq!({ castonmelee }, 0);
-            assert_eq!({ castattacking }, 0);
-        }
+        let finale = FinaleState::new();
+        assert_eq!(finale.castnum, 0);
+        assert_eq!(finale.casttics, 0);
+        assert_eq!(finale.castdeath, 0);
+        assert_eq!(finale.castframes, 0);
+        assert_eq!(finale.castonmelee, 0);
+        assert_eq!(finale.castattacking, 0);
+        assert!(finale.caststate.is_null());
     }
 
     #[test]
     fn cast_globals_are_i32() {
-        unsafe {
-            let _: i32 = castnum;
-            let _: i32 = casttics;
-            let _: i32 = castdeath;
-            let _: i32 = castframes;
-            let _: i32 = castonmelee;
-            let _: i32 = castattacking;
-        }
+        let finale = FinaleState::new();
+        let _: i32 = finale.castnum;
+        let _: i32 = finale.casttics;
+        let _: i32 = finale.castdeath;
+        let _: i32 = finale.castframes;
+        let _: i32 = finale.castonmelee;
+        let _: i32 = finale.castattacking;
     }
 
     #[test]
     fn finalestage_default_text() {
-        // Not directly testable (private), but the constants verify behavior.
-        assert!(matches!(FinaleStage::Text, FinaleStage::Text));
+        let finale = FinaleState::new();
+        assert!(matches!(finale.stage, FinaleStage::Text));
+        assert_eq!(finale.count, 0);
+        assert_eq!(finale.last_stage, 0);
     }
 }
