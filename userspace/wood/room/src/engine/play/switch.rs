@@ -137,10 +137,6 @@ const stair_turbo16: i32 = 1;
 /// A timed button entry: records which linedef was pressed, which texture
 /// slot it occupies, the original texture to restore, and how many tics
 /// remain before the button resets.
-///
-/// The layout is verified at compile time to match the C `button_t` struct
-/// (32 bytes on 64-bit targets).
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct button_t {
     /// Pointer to the linedef whose switch texture was activated.
@@ -151,25 +147,8 @@ pub struct button_t {
     pub btexture: i32,
     /// Remaining tics before the button resets; `0` means this slot is free.
     pub btimer: i32,
-    _pad: [u8; 4],
     /// Pointer to the front-sector sound origin used when the button fires.
     pub soundorg: *mut degenmobj_t,
-}
-
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    use super::*;
-    // `P_UpdateSpecials` passes the address of `soundorg` itself as the sound
-    // origin, so the sound code reads `degenmobj_t::x`/`y` from the bytes
-    // that follow it: the next slot's `btimer` and padding.
-    const _: () = assert!(std::mem::offset_of!(degenmobj_t, x) == 24);
-    const _: () = assert!(std::mem::offset_of!(degenmobj_t, y) == 28);
-    const _: () = assert!(std::mem::size_of::<button_t>() == 32);
-    const _: () = assert!(std::mem::offset_of!(button_t, line) == 0);
-    const _: () = assert!(std::mem::offset_of!(button_t, where_) == 8);
-    const _: () = assert!(std::mem::offset_of!(button_t, btexture) == 12);
-    const _: () = assert!(std::mem::offset_of!(button_t, btimer) == 16);
-    const _: () = assert!(std::mem::offset_of!(button_t, soundorg) == 24);
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +408,6 @@ pub static mut buttonlist: [button_t; MAXBUTTONS] = [button_t {
     where_: 0,
     btexture: 0,
     btimer: 0,
-    _pad: [0; 4],
     soundorg: std::ptr::null_mut(),
 }; MAXBUTTONS];
 
@@ -834,24 +812,6 @@ mod tests {
     use {super::*, std::sync::Mutex};
 
     static LOCK: Mutex<()> = Mutex::new(());
-
-    const BUTTON_T_SIZEOF: usize = 32;
-    const BUTTON_T_LINE: usize = 0;
-    const BUTTON_T_WHERE: usize = 8;
-    const BUTTON_T_BTEXTURE: usize = 12;
-    const BUTTON_T_BTIMER: usize = 16;
-    const BUTTON_T_SOUNDORG: usize = 24;
-
-    #[test]
-    fn button_t_layout_matches_c() {
-        let _g = LOCK.lock().unwrap();
-        assert_eq!(std::mem::size_of::<button_t>(), BUTTON_T_SIZEOF);
-        assert_eq!(std::mem::offset_of!(button_t, line), BUTTON_T_LINE);
-        assert_eq!(std::mem::offset_of!(button_t, where_), BUTTON_T_WHERE);
-        assert_eq!(std::mem::offset_of!(button_t, btexture), BUTTON_T_BTEXTURE);
-        assert_eq!(std::mem::offset_of!(button_t, btimer), BUTTON_T_BTIMER);
-        assert_eq!(std::mem::offset_of!(button_t, soundorg), BUTTON_T_SOUNDORG);
-    }
 
     #[test]
     fn constants_match_c() {

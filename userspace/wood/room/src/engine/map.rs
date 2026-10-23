@@ -10,7 +10,7 @@ use std::ffi::c_void;
 
 use crate::engine::{
     math::fixed::{angle_t, fixed_t},
-    play::{mobj::mobj_t, tick::thinker_t},
+    play::mobj::mobj_t,
 };
 
 /// A map vertex holding a 2-D fixed-point position (`vertex_t` in
@@ -24,17 +24,11 @@ pub struct vertex_t {
 }
 
 /// A degenerate map object used as a sound origin embedded inside
-/// [`sector_t`] (`degenmobj_t` in `r_defs.h`).
-///
-/// `repr(C)` only because of the switch-button sound quirk in
-/// `P_UpdateSpecials`, which reads a `degenmobj_t` over the bytes of a
-/// `button_t` (see the layout checks in `play::switch`).
-#[repr(C)]
+/// [`sector_t`] (`degenmobj_t` in `r_defs.h`). C gives it a thinker
+/// header so it can pass for a `mobj_t`; sound origins are typed here, so
+/// only the position is kept.
 #[derive(Clone, Copy)]
 pub struct degenmobj_t {
-    /// Thinker header; unused, present so `x`/`y` sit where the
-    /// switch-button sound quirk reads them.
-    pub thinker: thinker_t,
     /// X position of the sound origin in map units.
     pub x: fixed_t,
     /// Y position of the sound origin in map units.

@@ -27,7 +27,7 @@ use crate::{
     engine::{
         doom::player::{PlayerT, CF_GODMODE},
         interface::timer::TICRATE,
-        map::{degenmobj_t, line_t, sector_t, side_t},
+        map::{line_t, sector_t, side_t},
         math::fixed::FRACUNIT,
         misc::{
             argv::{argument, M_CheckParmWithArgs},
@@ -1088,14 +1088,10 @@ pub unsafe fn P_UpdateSpecials() {
                     }
                     _ => {}
                 }
-                // Vanilla bug kept by Chocolate Doom: this passes the address
-                // of the `soundorg` field, not the origin it points to, so
-                // the sound is positioned from whatever bytes follow the
-                // field (see `button_t`'s layout checks).
-                S_StartSectorSound(
-                    &raw mut buttonlist[i].soundorg as *mut degenmobj_t,
-                    Sfx::Swtchn as i32,
-                );
+                // Vanilla Doom passes `&buttonlist[i].soundorg`, the address
+                // of the field, which plays the click from around map point
+                // (0, 0). Play it from the switch's sector as intended.
+                S_StartSectorSound(buttonlist[i].soundorg, Sfx::Swtchn as i32);
                 buttonlist[i] = std::mem::zeroed();
             }
         }

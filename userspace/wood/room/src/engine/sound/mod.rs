@@ -334,7 +334,8 @@ fn S_StopOriginSound(origin: Option<SoundOrigin>) {
 /// `sfxinfo` must point to a valid `SfxInfo`; `origin` may be `None`.
 /// `channels` must already be allocated (call `S_Init` first).
 unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i32 {
-    let mut cnum: i32 = 0;
+    // `snd_channels` means "none found yet", as the C loop leaves `cnum`.
+    let mut cnum: i32 = snd_channels;
 
     for cnum_search in 0..snd_channels {
         let ch = *channels.offset(cnum_search as isize);
@@ -712,5 +713,56 @@ mod tests {
 
         assert_eq!(mobj_origin, SoundOrigin::Mobj(&raw mut mobj));
         assert_ne!(mobj_origin, sector_sound_origin);
+    }
+
+    fn sfx_with_priority(priority: i32) -> SfxInfo {
+        SfxInfo {
+            name: [0; 9],
+            priority,
+            link: std::ptr::null_mut(),
+            pitch: -1,
+            volume: -1,
+            usefulness: 1,
+            lumpnum: -1,
+            numchannels: -1,
+            driver_data: std::ptr::null_mut(),
+        }
+    }
+
+    /// With every channel busy, `S_GetChannel` evicts the first equally or
+    /// less important sound (higher `priority` number), and drops the new
+    /// sound when every playing one is more important.
+    #[test]
+    fn get_channel_evicts_by_priority_when_all_busy() {
+        let mut important = sfx_with_priority(10);
+        let mut unimportant = sfx_with_priority(100);
+        let mut incoming = sfx_with_priority(50);
+        // Handle -1 keeps `S_StopChannel` away from the platform.
+        let busy = |sfxinfo: *mut SfxInfo| channel_t {
+            sfxinfo,
+            origin: None,
+            handle: -1,
+        };
+        let mut test_channels = [busy(&raw mut important), busy(&raw mut unimportant)];
+
+        unsafe {
+            let saved_channels = channels;
+            let saved_count = snd_channels;
+            channels = test_channels.as_mut_ptr();
+            snd_channels = test_channels.len() as i32;
+
+            assert_eq!(S_GetChannel(None, &raw mut incoming), 1);
+            assert_eq!(test_channels[0].sfxinfo, &raw mut important);
+            assert_eq!(test_channels[1].sfxinfo, &raw mut incoming);
+            assert_eq!(unimportant.usefulness, 0);
+
+            test_channels[1] = busy(&raw mut important);
+            assert_eq!(S_GetChannel(None, &raw mut incoming), -1);
+            assert_eq!(test_channels[0].sfxinfo, &raw mut important);
+            assert_eq!(test_channels[1].sfxinfo, &raw mut important);
+
+            channels = saved_channels;
+            snd_channels = saved_count;
+        }
     }
 }
