@@ -16,6 +16,7 @@ pub mod dehacked;
 pub mod doom;
 pub mod finale;
 pub mod game;
+pub mod global;
 pub mod hud;
 pub mod interface;
 pub mod intermission;
