@@ -437,7 +437,7 @@ pub static HUD: Global<HudState> = Global::new(HudState::new());
 use crate::engine::{
     automap::automap_active,
     doom::stat::gamemode,
-    game::{consoleplayer, gameepisode, gamemap, netgame, playeringame},
+    game::{console_player, consoleplayer, gameepisode, gamemap, netgame, playeringame},
     misc::menu::MENU,
     sound::S_StartSound,
     wad::W_CacheLumpName,
@@ -489,8 +489,7 @@ pub fn HU_Start() {
 
         let font_h = {
             let mut hud = HUD.borrow_mut();
-            hud.plr = std::ptr::addr_of_mut!(crate::engine::doom::player::players[0])
-                .offset(consoleplayer as isize);
+            hud.plr = console_player();
             hud.message_on = 0;
             hud.message_dontfuckwithme = 0;
             hud.message_nottobefuckedwith = 0;
@@ -530,6 +529,7 @@ pub fn HU_Start() {
             HU_FONTSTART as i32,
         );
 
+        let (gameepisode, gamemap) = (gameepisode(), gamemap());
         let mut title = match logical_gamemission() {
             doom::mode::doom => mapnames[((gameepisode - 1) * 9 + gamemap - 1) as usize],
             doom::mode::doom2 => mapnames_commercial[(gamemap - 1) as usize],
@@ -652,9 +652,10 @@ pub fn HU_Ticker() {
         }
 
         // check for incoming chat characters
-        if netgame != 0 {
+        if netgame() != 0 {
+            let consoleplayer = consoleplayer();
             for i in 0..MAXPLAYERS {
-                if playeringame[i] == 0 {
+                if playeringame(i) == 0 {
                     continue;
                 }
                 if i != consoleplayer as usize {
@@ -761,10 +762,11 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
 
         let mut numplayers = 0;
         for i in 0..MAXPLAYERS {
-            if playeringame[i] != 0 {
+            if playeringame(i) != 0 {
                 numplayers += 1;
             }
         }
+        let (netgame, consoleplayer) = (netgame(), consoleplayer());
 
         if ev.data1 == KEY_RSHIFT as i32 {
             return 0;
@@ -804,7 +806,7 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
             } else if netgame != 0 && numplayers > 2 {
                 for i in 0..MAXPLAYERS {
                     if ev.data2 == key_multi_msgplayer[i] {
-                        if playeringame[i] != 0 && i != consoleplayer as usize {
+                        if playeringame(i) != 0 && i != consoleplayer as usize {
                             eatkey = true;
                             HUD.borrow_mut().chat_on = 1;
                             HUlib_resetIText(&raw mut (*hud_state).w_chat);

@@ -18,14 +18,14 @@
 //!   scans the WAD directory for lump names whose first four characters
 //!   match these tags (e.g. `TROO` matches
 //!   `TROOA1`..`TROOR0`) to discover all rotation/frame lumps.
-//! * [`states`] - one [`State`] per entry in the `statenum_t` enum
+//! * [`STATES`] - one [`State`] per entry in the `statenum_t` enum
 //!   (the `S_*` constants at the end of this module). Each state describes one
 //!   animation frame: which sprite to draw, which rotation/frame index,
 //!   how many tics to remain, which engine action to run on entry, and
 //!   which state to advance to next. States chain via `nextstate` to form
 //!   the animation graphs - idle, walk, attack, pain, death, raise - of
 //!   every actor in the game.
-//! * [`mobjinfo`] - one [`MobjInfo`] per entry in `mobjtype_t`
+//! * [`MOBJINFO`] - one [`MobjInfo`] per entry in `mobjtype_t`
 //!   (`MT_PLAYER` .. `MT_MISC86`). Each entry is a per-thing prototype:
 //!   the editor number used in WAD level files, health, radius, height,
 //!   mass, damage, speed, the sound effect IDs played in various
@@ -80,35 +80,31 @@
 //!
 //! # Sharing conventions
 //!
-//! Both [`states`] and [`mobjinfo`] are `pub static mut`. The engine
-//! mutates them at runtime in two ways:
-//!
-//! 1. Dehacked patches (`deh_*.c`) rewrite individual `mobjinfo[]` fields
-//!    to alter monster stats.
-//! 2. `P_SpawnMobj` initialises new actors by copying from `mobjinfo[]`,
-//!    and `P_SetMobjState` reads `states[]` every tic.
-//!
-//! Concurrent access is therefore the same as in the C codebase: the
-//! game thread owns these arrays.
+//! [`STATES`] and [`MOBJINFO`] are [`Global`]s. `G_InitNew` rewrites
+//! state durations and projectile speeds for `-fast` / nightmare through
+//! `borrow_mut` (Dehacked patches, `deh_*.c`, also rewrite fields in C);
+//! table lookups go through `borrow`. Map objects and psprites keep raw
+//! pointers into the tables (`mobj_t.state`, `mobj_t.info`,
+//! `pspdef_t.state`), taken from [`state_ptr`] and [`mobjinfo_ptr`].
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Number of entries in [`states`] and in the `statenum_t` enum.
+/// Number of entries in [`STATES`] and in the `statenum_t` enum.
 ///
 /// Must equal the value of `NUMSTATES` (the trailing sentinel of
 /// `statenum_t` in `vendor/doomgeneric/info.h`). A mismatch silently
 /// truncates or extends every animation graph.
 pub const NUMSTATES: usize = 967;
 
-/// Number of entries in [`mobjinfo`] and in the `mobjtype_t` enum.
+/// Number of entries in [`MOBJINFO`] and in the `mobjtype_t` enum.
 ///
 /// Must equal `NUMMOBJTYPES` from `vendor/doomgeneric/info.h`. The test
 /// `mt_enum_matches_c_header` enforces this against the C source.
 pub const NUMMOBJTYPES: usize = 137;
 
-use crate::engine::math::fixed::FRACUNIT;
+use crate::engine::{global::Global, math::fixed::FRACUNIT};
 
 // Sprite name indices
 //
@@ -766,7 +762,7 @@ pub const MT_MISC86: i32 = 136;
 /// `state_t` from `info.h`.
 ///
 /// Every actor (`mobj_t`) and every player-weapon (`pspdef_t`) holds a
-/// pointer into the [`states`] table. The thinker decrements `tics` each
+/// pointer into the [`STATES`] table. The thinker decrements `tics` each
 /// game frame; when it reaches zero, the simulation advances the actor
 /// to `nextstate`, invokes `action` (if `Some`), and reloads the tic
 /// counter from the new state. A self-looping entry with `tics == -1`
@@ -803,7 +799,7 @@ pub struct State {
 /// in `P_DamageMobj`, `reactiontime` in `A_Look`).
 ///
 /// All state fields (`spawnstate`, `seestate`, `painstate`, ...) are
-/// `S_*` indices into [`states`]; sound fields hold [`Sfx`] enum
+/// `S_*` indices into [`STATES`]; sound fields hold [`Sfx`] enum
 /// variants; `flags` is a bitmask of [`MF_*`](MF_SPECIAL) values; the
 /// `speed`, `radius`, `height` are in Doom fixed-point units (see
 /// [`FRACUNIT`]).
@@ -886,7 +882,7 @@ pub enum StateAction {
     Weapon(unsafe fn(*mut PlayerT, *mut PspdefT)),
 }
 
-// Every action function referenced from [`states`]. The bodies live in
+// Every action function referenced from [`STATES`]. The bodies live in
 // `p_pspr` (mostly player weapon actions, `fn(*mut PlayerT, *mut
 // PspdefT)`) and `p_enemy` (mostly map object actions, `fn(*mut
 // mobj_t)`); `action!` wraps each in its [`StateAction`] variant.
@@ -1043,8 +1039,11 @@ pub const sprnames: [&str; 138] = [
 ///
 /// # Mutability
 ///
-/// Mutability is required because Dehacked patches (`deh_state.c`) overwrite individual entries at
-/// startup. There is no synchronisation: the engine is single-threaded.
+/// Mutability is required because `G_InitNew` rescales monster state
+/// durations for `-fast` / nightmare (and Dehacked patches, `deh_state.c`,
+/// overwrite individual entries in C). Map objects and psprites hold
+/// `*mut State` pointers into the table, so those are taken from
+/// [`state_ptr`] (a stable [`Global::as_ptr`] address).
 ///
 /// # Per-entry comments
 ///
@@ -1052,7 +1051,7 @@ pub const sprnames: [&str; 138] = [
 /// corresponding `S_*` constant, exactly matching the original C
 /// source. Those are line comments rather than `///` doc comments
 /// because array element expressions cannot carry rustdoc attributes.
-pub static mut states: [State; NUMSTATES] = [
+pub static STATES: Global<[State; NUMSTATES]> = Global::new([
     State {
         sprite: SPR_TROO,
         frame: 0,
@@ -9756,7 +9755,23 @@ pub static mut states: [State; NUMSTATES] = [
         misc1: 0,
         misc2: 0,
     }, // S_TECH2LAMP4
-];
+]);
+
+/// Stable pointer to `states[index]` (C `&states[index]`), as stored in
+/// `mobj_t.state` and `pspdef_t.state`.
+pub fn state_ptr(index: usize) -> *mut State {
+    debug_assert!(index < NUMSTATES);
+    // SAFETY: in-bounds projection on the stable table pointer.
+    unsafe { STATES.as_ptr().cast::<State>().add(index) }
+}
+
+/// Stable pointer to `mobjinfo[kind]` (C `&mobjinfo[kind]`), as stored in
+/// `mobj_t.info`.
+pub fn mobjinfo_ptr(kind: usize) -> *mut MobjInfo {
+    debug_assert!(kind < NUMMOBJTYPES);
+    // SAFETY: in-bounds projection on the stable table pointer.
+    unsafe { MOBJINFO.as_ptr().cast::<MobjInfo>().add(kind) }
+}
 
 /// The full per-thing prototype table: one [`MobjInfo`] per `MT_*`
 /// index, in declaration order.
@@ -9775,7 +9790,7 @@ pub static mut states: [State; NUMSTATES] = [
 ///   thing record (`-1` means the type is never placed in a map).
 /// * `spawnstate`, `seestate`, `painstate`, `meleestate`,
 ///   `missilestate`, `deathstate`, `xdeathstate`, `raisestate` are
-///   `S_*` indices into [`states`].
+///   `S_*` indices into [`STATES`].
 /// * `seesound`, `attacksound`, `painsound`, `deathsound`,
 ///   `activesound` are [`Sfx`] enum variants resolved by the sound
 ///   subsystem.
@@ -9784,8 +9799,11 @@ pub static mut states: [State; NUMSTATES] = [
 ///
 /// # Mutability
 ///
-/// Mutability is required because Dehacked patches (`deh_mobj.c`) overwrite individual entries at
-/// startup. There is no synchronisation: the engine is single-threaded.
+/// Mutability is required because `G_InitNew` changes projectile speeds
+/// for `-fast` / nightmare (and Dehacked patches, `deh_mobj.c`, overwrite
+/// individual entries in C). Map objects hold `*mut MobjInfo` pointers into
+/// the table, so those are taken from [`mobjinfo_ptr`] (a stable
+/// [`Global::as_ptr`] address).
 ///
 /// # Per-entry comments
 ///
@@ -9794,7 +9812,7 @@ pub static mut states: [State; NUMSTATES] = [
 /// expressions. The `mt_enum_matches_c_header` test below guarantees
 /// that the implicit index of each entry equals the corresponding
 /// `MT_*` constant.
-pub static mut mobjinfo: [MobjInfo; NUMMOBJTYPES] = [
+pub static MOBJINFO: Global<[MobjInfo; NUMMOBJTYPES]> = Global::new([
     MobjInfo {
         doomednum: -1,
         spawnstate: S_PLAY,
@@ -13220,7 +13238,7 @@ pub static mut mobjinfo: [MobjInfo; NUMMOBJTYPES] = [
         flags: MF_NOBLOCKMAP,
         raisestate: S_NULL,
     },
-];
+]);
 
 // ---------------------------------------------------------------------------
 // statenum_t
@@ -15175,8 +15193,8 @@ pub const S_TECH2LAMP3: i32 = 965;
 /// `S_TECH2LAMP4` thinker state (index 966).
 pub const S_TECH2LAMP4: i32 = 966;
 
-/// Unit tests of this module's tables. Every entry in [`states`] and
-/// [`mobjinfo`] is keyed by integer index, so any drift in the `SPR_*`,
+/// Unit tests of this module's tables. Every entry in [`STATES`] and
+/// [`MOBJINFO`] is keyed by integer index, so any drift in the `SPR_*`,
 /// `MT_*`, or `MF_*` numbering silently retargets every cross-table
 /// reference.
 #[cfg(test)]
@@ -15190,7 +15208,9 @@ mod tests {
     /// the MT enum or states table was edited incorrectly).
     #[test]
     fn mobjinfo_spawnstate_sprite_cross_reference() {
-        unsafe {
+        {
+            let mobjinfo = MOBJINFO.borrow();
+            let states = STATES.borrow();
             let cases: [(i32, i32, i32, &str); 7] = [
                 (MT_PUFF, S_PUFF1, SPR_PUFF, "MT_PUFF → S_PUFF1 → SPR_PUFF"),
                 (
@@ -15234,7 +15254,8 @@ mod tests {
     /// in P_RemoveMobj.
     #[test]
     fn mobjinfo_respawn_flags_consistent() {
-        unsafe {
+        {
+            let mobjinfo = MOBJINFO.borrow();
             // Power-ups have MF_SPECIAL despite being excluded from respawn
             assert!(
                 mobjinfo[MT_INV as usize].flags & MF_SPECIAL != 0,
@@ -15288,13 +15309,14 @@ mod tests {
                 continue;
             }
             weapon_state[state as usize] = true;
-            pending.push(unsafe { states[state as usize].nextstate });
+            pending.push(STATES.borrow()[state as usize].nextstate);
         }
 
         let mut mobj_actions = 0;
         let mut weapon_actions = 0;
         for (index, is_weapon_state) in weapon_state.iter().enumerate() {
-            match unsafe { states[index].action } {
+            let action = STATES.borrow()[index].action;
+            match action {
                 StateAction::None => {}
                 StateAction::Mobj(_) => {
                     mobj_actions += 1;

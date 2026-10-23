@@ -28,13 +28,11 @@ use room::engine::{
 /// level has been loaded.
 #[test]
 fn leveltime_default_zero() {
-    unsafe {
-        assert_eq!(
-            { tick::leveltime },
-            0,
-            "leveltime should be 0 before level load"
-        );
-    }
+    assert_eq!(
+        tick::TickState::new().leveltime,
+        0,
+        "leveltime should be 0 before level load"
+    );
 }
 
 // ---------------------------------------------------------------------------

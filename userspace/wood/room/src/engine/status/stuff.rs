@@ -29,7 +29,7 @@ use crate::{
             player::{PlayerMessage, PlayerT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS},
             stat::{gamemission, gamemode, gameversion},
         },
-        game::{consoleplayer, deathmatch, gameskill, netgame, players, G_DeferedInitNew},
+        game::{console_player, consoleplayer, deathmatch, gameskill, netgame, G_DeferedInitNew},
         global::Global,
         interface::{timer::TICRATE, video::I_SetPalette},
         math::tables::{ANG180, ANG45},
@@ -613,7 +613,7 @@ pub unsafe fn ST_refreshBackground() {
     if statusbaron != 0 {
         V_UseBuffer(backing_screen);
         V_DrawPatch(ST_X, 0, sbar);
-        if netgame != 0 {
+        if netgame() != 0 {
             V_DrawPatch(ST_FX, 0, faceback);
         }
         V_RestoreBuffer();
@@ -660,7 +660,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
         // ev_keydown
         let key = ev.data2 as u8;
         let plyr = STATUS.borrow().plyr;
-        if netgame == 0 && gameskill != 4 {
+        if netgame() == 0 && gameskill() != 4 {
             // sk_nightmare = 4
             if check_cheat(|status| &mut status.cheat_god, key) {
                 (*plyr).cheats ^= 2; // CF_GODMODE
@@ -753,7 +753,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).powers[0] = 1; // pw_invulnerability
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
-                let mo = players[consoleplayer as usize].mo;
+                let mo = (*console_player()).mo;
                 (*plyr).message = PlayerMessage::new(format!(
                     "ang=0x{:x};x,y=(0x{:x},0x{:x})",
                     (*mo).angle,
@@ -763,7 +763,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             }
         }
 
-        if netgame == 0 && check_cheat(|status| &mut status.cheat_clev, key) {
+        if netgame() == 0 && check_cheat(|status| &mut status.cheat_clev, key) {
             let mut buf = [0u8; 3];
             let mut epsd: i32;
             let map: i32;
@@ -801,7 +801,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             }
 
             (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CLEV));
-            G_DeferedInitNew(gameskill, epsd, map);
+            G_DeferedInitNew(gameskill(), epsd, map);
         }
     }
 
@@ -1007,21 +1007,22 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
 
     ST_updateFaceWidget(status);
 
-    status.st_notdeathmatch = if deathmatch == 0 { 1 } else { 0 };
-    status.st_armson = if status.st_statusbaron != 0 && deathmatch == 0 {
+    status.st_notdeathmatch = if deathmatch() == 0 { 1 } else { 0 };
+    status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
         1
     } else {
         0
     };
-    status.st_fragson = if deathmatch != 0 && status.st_statusbaron != 0 {
+    status.st_fragson = if deathmatch() != 0 && status.st_statusbaron != 0 {
         1
     } else {
         0
     };
     status.st_fragscount = 0;
 
+    let consoleplayer = consoleplayer() as usize;
     for i in 0..MAXPLAYERS {
-        if i != consoleplayer as usize {
+        if i != consoleplayer {
             status.st_fragscount += (*plyr).frags[i];
         } else {
             status.st_fragscount -= (*plyr).frags[i];
@@ -1149,12 +1150,12 @@ pub unsafe fn ST_doPaletteStuff() {
 pub unsafe fn ST_drawWidgets(refresh: i32) {
     {
         let mut status = STATUS.borrow_mut();
-        status.st_armson = if status.st_statusbaron != 0 && deathmatch == 0 {
+        status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
             1
         } else {
             0
         };
-        status.st_fragson = if deathmatch != 0 && status.st_statusbaron != 0 {
+        status.st_fragson = if deathmatch() != 0 && status.st_statusbaron != 0 {
             1
         } else {
             0
@@ -1296,7 +1297,7 @@ unsafe fn ST_loadUnloadGraphics(callback: LoadCallback) {
         status.arms[i as usize][1] = status.shortnum[(i + 2) as usize];
     }
 
-    c_write!(namebuf, "STFB{}", { consoleplayer });
+    c_write!(namebuf, "STFB{}", consoleplayer());
     callback(&namebuf, &mut status.faceback);
 
     callback(b"STBAR", &mut status.sbar);
@@ -1420,7 +1421,7 @@ pub unsafe fn ST_initData() {
     {
         let mut status = STATUS.borrow_mut();
         status.st_firsttime = 1;
-        status.plyr = std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize);
+        status.plyr = console_player();
         status.st_clock = 0;
         status.st_chatstate = 0; // StartChatState
         status.st_gamestate = 1; // FirstPersonState

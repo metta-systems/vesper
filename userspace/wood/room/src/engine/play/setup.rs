@@ -17,18 +17,17 @@
 //!   so that a `break` on a non-commercial monster does not advance past it.
 //! - `P_SetupLevel` uses `format!` for lump-name construction instead of
 //!   `DEH_snprintf`, so DeHackEd lump-name patches are not applied.
-//! - Global map tables (`vertexes`, `lines`, etc.) are `pub static mut`
-//!   values, as the C globals were.
+//! - The C map-table globals (`vertexes`, `lines`, etc.) live in the `Copy`
+//!   [`LevelState`] held in [`LEVEL`]; readers copy it out with [`level`].
+//!   The start spots live in [`SPAWN_SPOTS`] and are reached by pointer.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use std::{ffi::c_void, ptr};
 
 use crate::engine::{
-    doom::{
-        self,
-        player::{consoleplayer, players, MAXPLAYERS},
-    },
+    doom::{self, player::MAXPLAYERS},
+    global::Global,
     map::{
         line_t, node_t, sector_t, seg_t, side_t,
         slopetype_t::{ST_HORIZONTAL, ST_NEGATIVE, ST_POSITIVE, ST_VERTICAL},
@@ -42,7 +41,7 @@ use crate::engine::{
         info::sprnames,
         maputl::MAPBLOCKSHIFT,
         mobj::mobj_t,
-        tick::{leveltime, P_InitThinkers},
+        tick::{P_InitThinkers, TICK},
     },
     wad::format::{LinedefFlag, MapLump},
     zone::PU_LEVEL,
@@ -84,135 +83,214 @@ pub const MAX_DEATHMATCH_STARTS: usize = 10;
 // MAP-related lookup tables
 // ---------------------------------------------------------------------------
 
-/// Total number of vertexes loaded from the current map's VERTEXES lump.
-/// Referenced by `r_bsp.c` and other renderer modules.
-pub static mut numvertexes: i32 = 0;
-/// Pointer to the runtime vertex array, allocated from zone memory at
-/// `PU_LEVEL`. Each entry holds fixed-point (16.16) x/y coordinates.
-/// Referenced by `p_map.c`, `r_bsp.c`, and many others.
-pub static mut vertexes: *mut vertex_t = ptr::null_mut();
+/// The loaded level's geometry: the zone-allocated map tables with their
+/// counts, the blockmap and the reject table (`p_setup.c` globals).
+///
+/// Everything here is a pointer or a count, so the whole set is `Copy`: hot
+/// paths (renderer, blockmap iterators, sight checks) copy it out once per
+/// call with [`level`] instead of borrowing per element.
+#[derive(Clone, Copy)]
+pub struct LevelState {
+    /// Total number of vertexes loaded from the current map's VERTEXES lump.
+    pub numvertexes: i32,
+    /// Pointer to the runtime vertex array, allocated from zone memory at
+    /// `PU_LEVEL`. Each entry holds fixed-point (16.16) x/y coordinates.
+    pub vertexes: *mut vertex_t,
 
-/// Total number of segs loaded from the current map's SEGS lump.
-/// Referenced by `r_bsp.c`.
-pub static mut numsegs: i32 = 0;
-/// Pointer to the runtime seg array, allocated from zone memory at `PU_LEVEL`.
-/// Referenced by `r_bsp.c` and `p_sight.c`.
-pub static mut segs: *mut seg_t = ptr::null_mut();
+    /// Total number of segs loaded from the current map's SEGS lump.
+    pub numsegs: i32,
+    /// Pointer to the runtime seg array, allocated from zone memory at `PU_LEVEL`.
+    /// Referenced by `r_bsp.c` and `p_sight.c`.
+    pub segs: *mut seg_t,
 
-/// Total number of sectors loaded from the current map's SECTORS lump.
-/// Referenced throughout the game and renderer.
-pub static mut numsectors: i32 = 0;
-/// Pointer to the runtime sector array, allocated from zone memory at
-/// `PU_LEVEL`. Sectors own the lighting, floor/ceiling heights, and thing
-/// lists used by most game logic.
-/// Referenced throughout the game and renderer.
-pub static mut sectors: *mut sector_t = ptr::null_mut();
+    /// Total number of sectors loaded from the current map's SECTORS lump.
+    pub numsectors: i32,
+    /// Pointer to the runtime sector array, allocated from zone memory at
+    /// `PU_LEVEL`. Sectors own the lighting, floor/ceiling heights, and thing
+    /// lists used by most game logic.
+    pub sectors: *mut sector_t,
 
-/// Total number of subsectors loaded from the current map's SSECTORS lump.
-/// Referenced by `r_bsp.c` and `p_sight.c`.
-pub static mut numsubsectors: i32 = 0;
-/// Pointer to the runtime subsector array, allocated from zone memory at
-/// `PU_LEVEL`. Each subsector is a convex polygon leaf of the BSP tree.
-/// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
-pub static mut subsectors: *mut subsector_t = ptr::null_mut();
+    /// Total number of subsectors loaded from the current map's SSECTORS lump.
+    pub numsubsectors: i32,
+    /// Pointer to the runtime subsector array, allocated from zone memory at
+    /// `PU_LEVEL`. Each subsector is a convex polygon leaf of the BSP tree.
+    pub subsectors: *mut subsector_t,
 
-/// Total number of BSP nodes loaded from the current map's NODES lump.
-/// Referenced by `r_bsp.c` and `p_sight.c`.
-pub static mut numnodes: i32 = 0;
-/// Pointer to the runtime BSP node array, allocated from zone memory at
-/// `PU_LEVEL`. The root node is `nodes[numnodes - 1]`.
-/// Referenced by `r_bsp.c`, `p_map.c`, and `p_sight.c`.
-pub static mut nodes: *mut node_t = ptr::null_mut();
+    /// Total number of BSP nodes loaded from the current map's NODES lump.
+    pub numnodes: i32,
+    /// Pointer to the runtime BSP node array, allocated from zone memory at
+    /// `PU_LEVEL`. The root node is `nodes[numnodes - 1]`.
+    pub nodes: *mut node_t,
 
-/// Total number of linedefs loaded from the current map's LINEDEFS lump.
-/// Referenced by `p_map.c`, `p_maputl.c`, and others.
-pub static mut numlines: i32 = 0;
-/// Pointer to the runtime linedef array, allocated from zone memory at
-/// `PU_LEVEL`. Each linedef connects two vertexes and references up to two
-/// sidedefs.
-/// Referenced throughout the game.
-pub static mut lines: *mut line_t = ptr::null_mut();
+    /// Total number of linedefs loaded from the current map's LINEDEFS lump.
+    pub numlines: i32,
+    /// Pointer to the runtime linedef array, allocated from zone memory at
+    /// `PU_LEVEL`. Each linedef connects two vertexes and references up to two
+    /// sidedefs.
+    pub lines: *mut line_t,
 
-/// Total number of sidedefs loaded from the current map's SIDEDEFS lump.
-/// Referenced by `r_segs.c` and others.
-pub static mut numsides: i32 = 0;
-/// Pointer to the runtime sidedef array, allocated from zone memory at
-/// `PU_LEVEL`. Sidedefs hold texture indices and offsets; each linedef
-/// references one or two.
-/// Referenced by `r_segs.c`, `p_spec.c`, and others.
-pub static mut sides: *mut side_t = ptr::null_mut();
+    /// Total number of sidedefs loaded from the current map's SIDEDEFS lump.
+    pub numsides: i32,
+    /// Pointer to the runtime sidedef array, allocated from zone memory at
+    /// `PU_LEVEL`. Sidedefs hold texture indices and offsets; each linedef
+    /// references one or two.
+    pub sides: *mut side_t,
 
-/// Running total of front+back linedef-sector references, used to size the
-/// per-sector line-pointer buffer in `P_GroupLines`. Module-private; not
-/// exported to C.
-static mut totallines: i32 = 0;
+    /// Width of the blockmap grid in 128-unit cells.
+    pub bmapwidth: i32,
+    /// Height of the blockmap grid in 128-unit cells.
+    pub bmapheight: i32,
+    /// Pointer into `blockmaplump` offset by 4 shorts (past the header).
+    /// Each entry is an offset from `blockmaplump` to the list of linedefs in that
+    /// cell, terminated by -1.
+    pub blockmap: *mut i16,
+    /// Base pointer to the raw blockmap lump data (including the 4-short header).
+    /// Header layout: `[orgx, orgy, width, height]` in map units (not fixed-point
+    /// before shifting). Allocated from zone memory at `PU_LEVEL`.
+    pub blockmaplump: *mut i16,
+    /// X origin of the blockmap in fixed-point (16.16) map coordinates.
+    /// Subtract from a thing's x to get the blockmap column.
+    pub bmaporgx: i32,
+    /// Y origin of the blockmap in fixed-point (16.16) map coordinates.
+    /// Subtract from a thing's y to get the blockmap row.
+    pub bmaporgy: i32,
+    /// Pointer to the blockmap thing-chain heads, one per cell (`bmapwidth *
+    /// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
+    /// that cell's chain, or null. Zeroed at level load.
+    pub blocklinks: *mut *mut mobj_t,
 
-// ---------------------------------------------------------------------------
-// BLOCKMAP
-// ---------------------------------------------------------------------------
+    /// Pointer to the precomputed LOS (line-of-sight) reject table.
+    /// A 2-D bit array indexed by `[sector1 * numsectors + sector2]`; a set bit
+    /// means the two sectors cannot see each other, so detailed LOS checks are
+    /// skipped. Allocated from zone memory at `PU_LEVEL`; the zone clears it
+    /// through its user back-pointer when the level is freed.
+    pub rejectmatrix: *mut u8,
+}
 
-/// Width of the blockmap grid in 128-unit cells.
-/// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
-pub static mut bmapwidth: i32 = 0;
-/// Height of the blockmap grid in 128-unit cells.
-/// Referenced by `p_map.c` and `p_maputl.c` for collision queries.
-pub static mut bmapheight: i32 = 0;
-/// Pointer into `blockmaplump` offset by 4 shorts (past the header).
-/// Each entry is an offset from `blockmaplump` to the list of linedefs in that
-/// cell, terminated by -1.
-/// Referenced by `p_maputl.c`.
-pub static mut blockmap: *mut i16 = ptr::null_mut();
-/// Base pointer to the raw blockmap lump data (including the 4-short header).
-/// Header layout: `[orgx, orgy, width, height]` in map units (not fixed-point
-/// before shifting). Allocated from zone memory at `PU_LEVEL`.
-/// Referenced by `p_maputl.c`.
-pub static mut blockmaplump: *mut i16 = ptr::null_mut();
-/// X origin of the blockmap in fixed-point (16.16) map coordinates.
-/// Subtract from a thing's x to get the blockmap column.
-/// Referenced by `p_maputl.c`.
-pub static mut bmaporgx: i32 = 0;
-/// Y origin of the blockmap in fixed-point (16.16) map coordinates.
-/// Subtract from a thing's y to get the blockmap row.
-/// Referenced by `p_maputl.c`.
-pub static mut bmaporgy: i32 = 0;
-/// Pointer to the blockmap thing-chain heads, one per cell (`bmapwidth *
-/// bmapheight` entries). Each entry is a pointer to the first `mobj_t` in
-/// that cell's chain, or null. Zeroed at level load.
-/// Referenced by `p_maputl.c` and `p_map.c`.
-pub static mut blocklinks: *mut *mut mobj_t = ptr::null_mut();
+impl LevelState {
+    /// No level loaded: every table empty.
+    pub const fn new() -> Self {
+        Self {
+            numvertexes: 0,
+            vertexes: ptr::null_mut(),
+            numsegs: 0,
+            segs: ptr::null_mut(),
+            numsectors: 0,
+            sectors: ptr::null_mut(),
+            numsubsectors: 0,
+            subsectors: ptr::null_mut(),
+            numnodes: 0,
+            nodes: ptr::null_mut(),
+            numlines: 0,
+            lines: ptr::null_mut(),
+            numsides: 0,
+            sides: ptr::null_mut(),
+            bmapwidth: 0,
+            bmapheight: 0,
+            blockmap: ptr::null_mut(),
+            blockmaplump: ptr::null_mut(),
+            bmaporgx: 0,
+            bmaporgy: 0,
+            blocklinks: ptr::null_mut(),
+            rejectmatrix: ptr::null_mut(),
+        }
+    }
+}
 
-// ---------------------------------------------------------------------------
-// REJECT
-// ---------------------------------------------------------------------------
+impl Default for LevelState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Pointer to the precomputed LOS (line-of-sight) reject table.
-/// A 2-D bit array indexed by `[sector1 * numsectors + sector2]`; a set bit
-/// means the two sectors cannot see each other, so detailed LOS checks are
-/// skipped. Allocated from zone memory at `PU_LEVEL`.
-/// Referenced by `p_sight.c`.
-pub static mut rejectmatrix: *mut u8 = ptr::null_mut();
+/// The loaded level's geometry tables.
+pub static LEVEL: Global<LevelState> = Global::new(LevelState::new());
+
+/// Copy of the level geometry table pointers and counts.
+pub fn level() -> LevelState {
+    LEVEL.get()
+}
+
+/// Map-loading scratch state private to this module.
+struct SetupState {
+    /// Running total of front+back linedef-sector references, used to size the
+    /// per-sector line-pointer buffer in `P_GroupLines`.
+    totallines: i32,
+    /// Whether [`GetSectorAtNullAddress`] has filled in `null_sector`.
+    null_sector_is_initialized: bool,
+    /// The synthetic "sector at address 0" handed out by
+    /// [`GetSectorAtNullAddress`]; segs keep pointers to it.
+    null_sector: sector_t,
+}
+
+/// Map-loading scratch state.
+static SETUP: Global<SetupState> = Global::new(SetupState {
+    totallines: 0,
+    null_sector_is_initialized: false,
+    // SAFETY: an all-zero `sector_t` is a valid empty sector.
+    null_sector: unsafe { std::mem::zeroed() },
+});
 
 // ---------------------------------------------------------------------------
 // Starting spots
 // ---------------------------------------------------------------------------
 
-/// Array of deathmatch start positions collected from the THINGS lump.
-/// Holds up to `MAX_DEATHMATCH_STARTS` entries; the active count is tracked
-/// by `deathmatch_p - deathmatchstarts`.
-/// Referenced by `g_game.c`.
-pub static mut deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS] =
-    [mapthing_t::ZERO; MAX_DEATHMATCH_STARTS];
+/// Player and deathmatch start spots collected from the THINGS lump.
+///
+/// Spawning code keeps pointers into both arrays (`P_SpawnPlayer` takes a
+/// start spot, `deathmatch_p` is a cursor into `deathmatchstarts`), so the
+/// spots are reached through [`SPAWN_SPOTS`]'s stable [`Global::as_ptr`]
+/// address via [`playerstart`], [`deathmatchstart`] and [`deathmatch_p`].
+pub struct SpawnSpots {
+    /// Array of deathmatch start positions collected from the THINGS lump.
+    /// Holds up to `MAX_DEATHMATCH_STARTS` entries; the active count is tracked
+    /// by `deathmatch_p - deathmatchstarts`.
+    /// Referenced by `g_game.c`.
+    pub deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS],
+    /// Write cursor into `deathmatchstarts`; points to the next free slot.
+    /// Reset to `&deathmatchstarts[0]` at the start of each `P_SetupLevel`.
+    /// Advanced by `P_SpawnMapThing` when spawning deathmatch starts.
+    pub deathmatch_p: *mut mapthing_t,
+    /// Per-player single-player start positions, indexed by player number.
+    /// Holds `MAXPLAYERS` entries; populated by `P_SpawnMapThing` from THINGS
+    /// with type 1-4 (player starts).
+    /// Referenced by `g_game.c` for respawning.
+    pub playerstarts: [mapthing_t; MAXPLAYERS],
+}
 
-/// Write cursor into `deathmatchstarts`; points to the next free slot.
-/// Reset to `&deathmatchstarts[0]` at the start of each `P_SetupLevel`.
-/// Advanced by `P_SpawnMapThing` when spawning deathmatch starts.
-pub static mut deathmatch_p: *mut mapthing_t = ptr::null_mut();
+/// Player and deathmatch start spots.
+pub static SPAWN_SPOTS: Global<SpawnSpots> = Global::new(SpawnSpots {
+    deathmatchstarts: [mapthing_t::ZERO; MAX_DEATHMATCH_STARTS],
+    deathmatch_p: ptr::null_mut(),
+    playerstarts: [mapthing_t::ZERO; MAXPLAYERS],
+});
 
-/// Per-player single-player start positions, indexed by player number.
-/// Holds `MAXPLAYERS` entries; populated by `P_SpawnMapThing` from THINGS
-/// with type 1-4 (player starts).
-/// Referenced by `g_game.c` for respawning.
-pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t::ZERO; MAXPLAYERS];
+/// Stable pointer to `playerstarts[player]` (C `&playerstarts[player]`).
+pub fn playerstart(player: usize) -> *mut mapthing_t {
+    debug_assert!(player < MAXPLAYERS);
+    // SAFETY: in-bounds projection on the stable state pointer.
+    unsafe {
+        (&raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts)
+            .cast::<mapthing_t>()
+            .add(player)
+    }
+}
+
+/// Stable pointer to `deathmatchstarts[index]` (C `&deathmatchstarts[index]`).
+pub fn deathmatchstart(index: usize) -> *mut mapthing_t {
+    // SAFETY: projection on the stable state pointer; one past the end is
+    // allowed, as the C cursor reaches it.
+    unsafe {
+        (&raw mut (*SPAWN_SPOTS.as_ptr()).deathmatchstarts)
+            .cast::<mapthing_t>()
+            .add(index)
+    }
+}
+
+/// The deathmatch start cursor (C `deathmatch_p`).
+pub fn deathmatch_p() -> *mut mapthing_t {
+    SPAWN_SPOTS.borrow().deathmatch_p
+}
 
 // ---------------------------------------------------------------------------
 // Extern declarations for still-unported C modules
@@ -220,15 +298,12 @@ pub static mut playerstarts: [mapthing_t; MAXPLAYERS] = [mapthing_t::ZERO; MAXPL
 
 use crate::engine::{
     doom::stat::gamemode,
-    game::{
-        bodyqueslot, deathmatch, playeringame, precache, totalitems, totalkills, totalsecret,
-        wminfo, G_DeathMatchSpawnPlayer,
-    },
+    game::{console_player, deathmatch, player, playeringame, G_DeathMatchSpawnPlayer, GAME},
     interface::system::I_GetMemoryValue,
     math::fixed::FixedDiv,
     misc::argv::M_CheckParm,
     play::{
-        mobj::{iquehead, iquetail, P_SpawnMapThing},
+        mobj::{P_SpawnMapThing, MOBJ},
         spec::{P_InitPicAnims, P_SpawnSpecials},
         switch::P_InitSwitchList,
     },
@@ -263,18 +338,18 @@ use crate::engine::{
 /// C callers: `P_LoadSegs` (this file). Also called via C FFI from legacy
 /// unported code that encounters two-sided linedefs with an invalid back sidenum.
 pub fn GetSectorAtNullAddress() -> *mut sector_t {
-    static mut NULL_SECTOR_IS_INITIALIZED: bool = false;
-    static mut NULL_SECTOR: sector_t = unsafe { std::mem::zeroed() };
-
-    unsafe {
-        if !NULL_SECTOR_IS_INITIALIZED {
-            NULL_SECTOR = std::mem::zeroed();
-            I_GetMemoryValue(0, &raw mut NULL_SECTOR.floorheight as *mut c_void, 4);
-            I_GetMemoryValue(4, &raw mut NULL_SECTOR.ceilingheight as *mut c_void, 4);
-            NULL_SECTOR_IS_INITIALIZED = true;
+    // Segs keep the returned pointer, so it is taken from the stable state
+    // address.
+    let null_sector = unsafe { &raw mut (*SETUP.as_ptr()).null_sector };
+    if !SETUP.borrow().null_sector_is_initialized {
+        unsafe {
+            *null_sector = std::mem::zeroed();
+            I_GetMemoryValue(0, &raw mut (*null_sector).floorheight as *mut c_void, 4);
+            I_GetMemoryValue(4, &raw mut (*null_sector).ceilingheight as *mut c_void, 4);
         }
-        &raw mut NULL_SECTOR
+        SETUP.borrow_mut().null_sector_is_initialized = true;
     }
+    null_sector
 }
 
 // ---------------------------------------------------------------------------
@@ -294,12 +369,17 @@ pub fn GetSectorAtNullAddress() -> *mut sector_t {
 pub fn P_LoadVertexes(lump: i32) {
     unsafe {
         let map_vertexes = cache_lump_records::<mapvertex_t>(lump);
-        numvertexes = map_vertexes.len() as i32;
-        vertexes = Z_Malloc(
+        let numvertexes = map_vertexes.len() as i32;
+        let vertexes = Z_Malloc(
             numvertexes * std::mem::size_of::<vertex_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut vertex_t;
+        {
+            let mut level = LEVEL.borrow_mut();
+            level.numvertexes = numvertexes;
+            level.vertexes = vertexes;
+        }
 
         let mut li = vertexes;
 
@@ -338,13 +418,21 @@ pub fn P_LoadVertexes(lump: i32) {
 pub fn P_LoadSegs(lump: i32) {
     unsafe {
         let map_segs = cache_lump_records::<mapseg_t>(lump);
-        numsegs = map_segs.len() as i32;
-        segs = Z_Malloc(
+        let numsegs = map_segs.len() as i32;
+        let segs = Z_Malloc(
             numsegs * std::mem::size_of::<seg_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut seg_t;
         // Zeroed by Z_Malloc internally
+        let level = {
+            let mut level = LEVEL.borrow_mut();
+            level.numsegs = numsegs;
+            level.segs = segs;
+            *level
+        };
+        let (vertexes, lines, sides, numsides) =
+            (level.vertexes, level.lines, level.sides, level.numsides);
 
         let mut li = segs;
 
@@ -395,13 +483,18 @@ pub fn P_LoadSegs(lump: i32) {
 pub fn P_LoadSubsectors(lump: i32) {
     unsafe {
         let map_subsectors = cache_lump_records::<mapsubsector_t>(lump);
-        numsubsectors = map_subsectors.len() as i32;
-        subsectors = Z_Malloc(
+        let numsubsectors = map_subsectors.len() as i32;
+        let subsectors = Z_Malloc(
             numsubsectors * std::mem::size_of::<subsector_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut subsector_t;
         // Zeroed by Z_Malloc internally
+        {
+            let mut level = LEVEL.borrow_mut();
+            level.numsubsectors = numsubsectors;
+            level.subsectors = subsectors;
+        }
 
         let mut ss = subsectors;
 
@@ -432,13 +525,18 @@ pub fn P_LoadSubsectors(lump: i32) {
 pub fn P_LoadSectors(lump: i32) {
     unsafe {
         let map_sectors = cache_lump_records::<mapsector_t>(lump);
-        numsectors = map_sectors.len() as i32;
-        sectors = Z_Malloc(
+        let numsectors = map_sectors.len() as i32;
+        let sectors = Z_Malloc(
             numsectors * std::mem::size_of::<sector_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut sector_t;
         // Zeroed by Z_Malloc internally
+        {
+            let mut level = LEVEL.borrow_mut();
+            level.numsectors = numsectors;
+            level.sectors = sectors;
+        }
 
         let mut ss = sectors;
 
@@ -476,12 +574,17 @@ pub fn P_LoadSectors(lump: i32) {
 pub fn P_LoadNodes(lump: i32) {
     unsafe {
         let map_nodes = cache_lump_records::<mapnode_t>(lump);
-        numnodes = map_nodes.len() as i32;
-        nodes = Z_Malloc(
+        let numnodes = map_nodes.len() as i32;
+        let nodes = Z_Malloc(
             numnodes * std::mem::size_of::<node_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut node_t;
+        {
+            let mut level = LEVEL.borrow_mut();
+            level.numnodes = numnodes;
+            level.nodes = nodes;
+        }
 
         let mut no = nodes;
 
@@ -579,13 +682,20 @@ pub fn P_LoadThings(lump: i32) {
 pub fn P_LoadLineDefs(lump: i32) {
     unsafe {
         let map_linedefs = cache_lump_records::<maplinedef_t>(lump);
-        numlines = map_linedefs.len() as i32;
-        lines = Z_Malloc(
+        let numlines = map_linedefs.len() as i32;
+        let lines = Z_Malloc(
             numlines * std::mem::size_of::<line_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut line_t;
         // Zeroed by Z_Malloc internally
+        let level = {
+            let mut level = LEVEL.borrow_mut();
+            level.numlines = numlines;
+            level.lines = lines;
+            *level
+        };
+        let (vertexes, sides) = (level.vertexes, level.sides);
 
         let mut ld = lines;
 
@@ -677,13 +787,19 @@ pub fn P_LoadLineDefs(lump: i32) {
 pub fn P_LoadSideDefs(lump: i32) {
     unsafe {
         let map_sidedefs = cache_lump_records::<mapsidedef_t>(lump);
-        numsides = map_sidedefs.len() as i32;
-        sides = Z_Malloc(
+        let numsides = map_sidedefs.len() as i32;
+        let sides = Z_Malloc(
             numsides * std::mem::size_of::<side_t>() as i32,
             PU_LEVEL,
             ptr::null_mut(),
         ) as *mut side_t;
         // Zeroed by Z_Malloc internally
+        let sectors = {
+            let mut level = LEVEL.borrow_mut();
+            level.numsides = numsides;
+            level.sides = sides;
+            level.sectors
+        };
 
         let mut sd = sides;
 
@@ -727,23 +843,29 @@ pub fn P_LoadBlockMap(lump: i32) {
         let lumplen = W_LumpLength(lump as u32);
         let count = lumplen / 2;
 
-        blockmaplump = Z_Malloc(lumplen, PU_LEVEL, ptr::null_mut()) as *mut i16;
+        let blockmaplump = Z_Malloc(lumplen, PU_LEVEL, ptr::null_mut()) as *mut i16;
         W_ReadLump(lump as u32, blockmaplump as *mut c_void);
-        blockmap = blockmaplump.add(4);
 
         // Swap all short integers to native byte ordering.
         for i in 0..count {
             *blockmaplump.add(i as usize) = SHORT(*blockmaplump.add(i as usize));
         }
 
-        bmaporgx = (*blockmaplump.add(0) as i32) << FRACBITS;
-        bmaporgy = (*blockmaplump.add(1) as i32) << FRACBITS;
-        bmapwidth = *blockmaplump.add(2) as i32;
-        bmapheight = *blockmaplump.add(3) as i32;
+        let bmapwidth = *blockmaplump.add(2) as i32;
+        let bmapheight = *blockmaplump.add(3) as i32;
 
         let bcount = std::mem::size_of::<*mut mobj_t>() * bmapwidth as usize * bmapheight as usize;
-        blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut mobj_t;
+        let blocklinks = Z_Malloc(bcount as i32, PU_LEVEL, ptr::null_mut()) as *mut *mut mobj_t;
         ptr::write_bytes(blocklinks.cast::<u8>(), 0, bcount);
+
+        let mut level = LEVEL.borrow_mut();
+        level.blockmaplump = blockmaplump;
+        level.blockmap = blockmaplump.add(4);
+        level.bmaporgx = (*blockmaplump.add(0) as i32) << FRACBITS;
+        level.bmaporgy = (*blockmaplump.add(1) as i32) << FRACBITS;
+        level.bmapwidth = bmapwidth;
+        level.bmapheight = bmapheight;
+        level.blocklinks = blocklinks;
     }
 }
 
@@ -781,6 +903,20 @@ pub fn P_LoadBlockMap(lump: i32) {
 /// Preconditions: all lump-load functions must have been called first.
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_GroupLines() {
+    let LevelState {
+        numsubsectors,
+        subsectors,
+        segs,
+        numlines,
+        lines,
+        numsectors,
+        sectors,
+        bmaporgx,
+        bmaporgy,
+        bmapwidth,
+        bmapheight,
+        ..
+    } = level();
     unsafe {
         // Look up sector number for each subsector.
         let mut ss = subsectors;
@@ -795,7 +931,7 @@ pub fn P_GroupLines() {
 
         // Count number of lines in each sector.
         let mut li = lines;
-        totallines = 0;
+        let mut totallines = 0;
         for _ in 0..numlines {
             totallines += 1;
             let frontsec = (*li).frontsector;
@@ -809,6 +945,7 @@ pub fn P_GroupLines() {
             }
             li = li.add(1);
         }
+        SETUP.borrow_mut().totallines = totallines;
 
         // Build line tables for each sector.
         let linebuffer = Z_Malloc(
@@ -923,6 +1060,7 @@ pub fn P_GroupLines() {
 /// (`P_LoadReject`) ensures this by passing `rejectmatrix + lumplen` with
 /// `len = minlength - lumplen`.
 unsafe fn PadRejectArray(array: *mut u8, len: usize) {
+    let totallines = SETUP.borrow().totallines;
     let rejectpad: [u32; 4] = [((totallines * 4 + 3) & !3) as u32 + 24, 0, 50, 0x1d4a11];
 
     let mut dest = array;
@@ -972,17 +1110,20 @@ unsafe fn PadRejectArray(array: *mut u8, len: usize) {
 ///
 /// # Safety
 ///
-/// Writes to the global `rejectmatrix`. Must be called after `P_GroupLines`
+/// Writes to the level's `rejectmatrix`. Must be called after `P_GroupLines`
 /// so that `totallines` is valid (needed by `PadRejectArray`).
 unsafe fn P_LoadReject(lumpnum: i32) {
+    let numsectors = level().numsectors;
     let minlength = (numsectors * numsectors + 7) / 8;
     let lumplen = W_LumpLength(lumpnum as u32);
 
     if lumplen >= minlength {
-        rejectmatrix = W_CacheLumpNum(lumpnum, PU_LEVEL) as *mut u8;
+        LEVEL.borrow_mut().rejectmatrix = W_CacheLumpNum(lumpnum, PU_LEVEL) as *mut u8;
     } else {
-        rejectmatrix =
-            Z_Malloc(minlength, PU_LEVEL, &raw mut rejectmatrix as *mut c_void) as *mut u8;
+        // The zone clears the matrix pointer through this back-pointer when
+        // the level is freed, so it needs the field's stable address.
+        let user = &raw mut (*LEVEL.as_ptr()).rejectmatrix;
+        let rejectmatrix = Z_Malloc(minlength, PU_LEVEL, user as *mut c_void) as *mut u8;
         W_ReadLump(lumpnum as u32, rejectmatrix as *mut c_void);
         PadRejectArray(
             rejectmatrix.add(lumplen as usize),
@@ -1026,19 +1167,23 @@ unsafe fn P_LoadReject(lumpnum: i32) {
 // DEH patches to the lump name, which may break modded WADs that rely on this.
 pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
     unsafe {
-        totalkills = 0;
-        totalitems = 0;
-        totalsecret = 0;
-        wminfo.maxfrags = 0;
-        wminfo.partime = 180;
-
-        for i in 0..MAXPLAYERS {
-            players[i].killcount = 0;
-            players[i].secretcount = 0;
-            players[i].itemcount = 0;
+        {
+            let mut game = GAME.borrow_mut();
+            game.totalkills = 0;
+            game.totalitems = 0;
+            game.totalsecret = 0;
+            game.wminfo.maxfrags = 0;
+            game.wminfo.partime = 180;
         }
 
-        players[consoleplayer as usize].viewz = 1;
+        for i in 0..MAXPLAYERS {
+            let player = &mut *player(i);
+            player.killcount = 0;
+            player.secretcount = 0;
+            player.itemcount = 0;
+        }
+
+        (*console_player()).viewz = 1;
 
         S_Start();
         Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -1065,7 +1210,7 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
 
         let lumpnum = W_GetNumForName(&lumpname);
 
-        leveltime = 0;
+        TICK.borrow_mut().leveltime = 0;
 
         // Note: most of this ordering is important.
         P_LoadBlockMap(lumpnum + MapLump::BLOCKMAP);
@@ -1081,25 +1226,28 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
         P_GroupLines();
         P_LoadReject(lumpnum + MapLump::REJECT);
 
-        bodyqueslot = 0;
-        deathmatch_p = std::ptr::addr_of_mut!(deathmatchstarts[0]);
+        GAME.borrow_mut().bodyqueslot = 0;
+        SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatchstart(0);
         P_LoadThings(lumpnum + MapLump::THINGS);
 
-        if deathmatch != 0 {
+        if deathmatch() != 0 {
             for i in 0..MAXPLAYERS {
-                if playeringame[i] != 0 {
-                    players[i].mo = ptr::null_mut();
+                if playeringame(i) != 0 {
+                    (*player(i)).mo = ptr::null_mut();
                     G_DeathMatchSpawnPlayer(i as i32);
                 }
             }
         }
 
-        iquehead = 0;
-        iquetail = 0;
+        {
+            let mut mobj = MOBJ.borrow_mut();
+            mobj.iquehead = 0;
+            mobj.iquetail = 0;
+        }
 
         P_SpawnSpecials();
 
-        if precache != 0 {
+        if GAME.borrow().precache != 0 {
             R_PrecacheLevel();
         }
     }
@@ -1134,9 +1282,7 @@ pub fn P_Init() {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     // =========================================================================
     // Existing structural tests
@@ -1144,43 +1290,55 @@ mod tests {
 
     #[test]
     fn max_deathmatch_starts_is_10() {
-        let _g = LOCK.lock().unwrap();
         assert_eq!(MAX_DEATHMATCH_STARTS, 10);
     }
 
     #[test]
     fn setup_globals_default_zero() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ numvertexes }, 0);
-            assert_eq!({ numsegs }, 0);
-            assert_eq!({ numsectors }, 0);
-            assert_eq!({ numsubsectors }, 0);
-            assert_eq!({ numnodes }, 0);
-            assert_eq!({ numlines }, 0);
-            assert_eq!({ numsides }, 0);
-            assert_eq!({ bmapwidth }, 0);
-            assert_eq!({ bmapheight }, 0);
-            assert_eq!({ bmaporgx }, 0);
-            assert_eq!({ bmaporgy }, 0);
-        }
+        let level = LevelState::new();
+        assert_eq!(level.numvertexes, 0);
+        assert_eq!(level.numsegs, 0);
+        assert_eq!(level.numsectors, 0);
+        assert_eq!(level.numsubsectors, 0);
+        assert_eq!(level.numnodes, 0);
+        assert_eq!(level.numlines, 0);
+        assert_eq!(level.numsides, 0);
+        assert_eq!(level.bmapwidth, 0);
+        assert_eq!(level.bmapheight, 0);
+        assert_eq!(level.bmaporgx, 0);
+        assert_eq!(level.bmaporgy, 0);
+        assert!(level.sectors.is_null() && level.rejectmatrix.is_null());
     }
 
     #[test]
     fn setup_globals_are_i32() {
-        unsafe {
-            let _: i32 = numvertexes;
-            let _: i32 = numsegs;
-            let _: i32 = numsectors;
-            let _: i32 = numsubsectors;
-            let _: i32 = numnodes;
-            let _: i32 = numlines;
-            let _: i32 = numsides;
-            let _: i32 = bmapwidth;
-            let _: i32 = bmapheight;
-            let _: i32 = bmaporgx;
-            let _: i32 = bmaporgy;
-        }
+        let level = LevelState::new();
+        let _: i32 = level.numvertexes;
+        let _: i32 = level.numsegs;
+        let _: i32 = level.numsectors;
+        let _: i32 = level.numsubsectors;
+        let _: i32 = level.numnodes;
+        let _: i32 = level.numlines;
+        let _: i32 = level.numsides;
+        let _: i32 = level.bmapwidth;
+        let _: i32 = level.bmapheight;
+        let _: i32 = level.bmaporgx;
+        let _: i32 = level.bmaporgy;
+    }
+
+    #[test]
+    fn spawn_spot_pointers_index_the_arrays() {
+        let base = unsafe { &raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts };
+        assert_eq!(playerstart(0), base.cast::<mapthing_t>());
+        assert_eq!(
+            unsafe { playerstart(3).offset_from(playerstart(0)) },
+            3,
+            "playerstart(i) must step one mapthing_t per player"
+        );
+        assert_eq!(
+            unsafe { deathmatchstart(MAX_DEATHMATCH_STARTS).offset_from(deathmatchstart(0)) },
+            MAX_DEATHMATCH_STARTS as isize
+        );
     }
 
     // =========================================================================

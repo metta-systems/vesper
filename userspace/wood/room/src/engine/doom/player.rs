@@ -185,9 +185,10 @@ pub struct PlayerT {
     pub didsecret: i32,
 }
 
-/// The player state array (`players`) and the index of the player whose view
-/// is shown locally (`consoleplayer`), defined in `g_game`.
-pub use crate::engine::game::{consoleplayer, players};
+/// The player slot accessors (`&players[i]`, `&players[consoleplayer]`) and
+/// the index of the player whose view is shown locally (`consoleplayer`),
+/// defined in `g_game`.
+pub use crate::engine::game::{console_player, consoleplayer, player};
 
 /// Set the HUD hint message for the console player.
 ///
@@ -202,8 +203,7 @@ pub use crate::engine::game::{consoleplayer, players};
 /// `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
 /// function is called (guaranteed by the engine's startup sequence).
 pub unsafe fn M_Menu_SetPlayerMessage(msg: &str) {
-    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
-        PlayerMessage::new(msg);
+    (*console_player()).message = PlayerMessage::new(msg);
 }
 
 /// A HUD hint message, stored inline so [`PlayerT`] stays `Copy` and a

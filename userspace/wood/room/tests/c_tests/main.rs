@@ -7,7 +7,7 @@
 
 // These tests pin constant values, so asserting on constants is the point.
 #![allow(clippy::assertions_on_constants)]
-#![allow(non_snake_case, non_upper_case_globals, static_mut_refs)]
+#![allow(non_snake_case, non_upper_case_globals)]
 
 mod am_map_c;
 mod d_loop_c;

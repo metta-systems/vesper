@@ -120,7 +120,7 @@ use crate::engine::{
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::{
-        setup::{numsectors, numsides, sectors, sides},
+        setup::{level, LevelState},
         tick::{thinkercap, ThinkerContainer, ThinkerKind},
     },
     render_3d::{sky::SKY, things::SPRITES},
@@ -1073,10 +1073,17 @@ pub unsafe fn R_TextureNumForName(name: &[u8]) -> i32 {
 /// - All init functions (`R_InitData`, `p_setup` globals) must have run.
 /// - Must be called from the game-loop thread; touches global mutable state.
 pub unsafe fn R_PrecacheLevel() {
-    if demoplayback != 0 {
+    if demoplayback() != 0 {
         return;
     }
 
+    let LevelState {
+        numsectors,
+        sectors,
+        numsides,
+        sides,
+        ..
+    } = level();
     let mut data = RENDER_DATA.borrow_mut();
     let numflats = data.numflats;
     let numtextures = data.numtextures;
@@ -1139,8 +1146,9 @@ pub unsafe fn R_PrecacheLevel() {
         *spritepresent.add(i) = 0;
     }
 
-    let mut th = thinkercap.next;
-    while !std::ptr::eq(th, std::ptr::addr_of!(thinkercap)) {
+    let cap = thinkercap();
+    let mut th = (*cap).next;
+    while !std::ptr::eq(th, cap) {
         if (*th).kind == ThinkerKind::Mobj {
             let mobj = mobj_t::from_thinker(th);
             *spritepresent.add((*mobj).sprite as usize) = 1;

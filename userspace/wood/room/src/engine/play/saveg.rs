@@ -4,7 +4,8 @@
 //! game state. All active map objects (mobjs), player state, world geometry
 //! deltas, thinker chains, and sector specials (ceilings, doors, floors,
 //! platforms, lights) are written to or read from the in-memory
-//! [`save_stream`], which `g_game` loads from or writes to the save file.
+//! [`SaveGameState::save_stream`], which `g_game` loads from or writes to
+//! the save file.
 //!
 //! The on-disk format is a flat byte stream. Multi-byte integers are always
 //! little-endian regardless of host byte order. Sector and state pointers are
@@ -35,15 +36,17 @@ use {
 
 use crate::engine::{
     doom::player::{
-        players, PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS,
-        NUMPOWERS, NUMPSPRITES, NUMWEAPONS,
+        PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS,
+        NUMPSPRITES, NUMWEAPONS,
     },
+    game::player as game_player,
+    global::Global,
     map::{line_t, sector_t, side_t, subsector_t},
     play::{
-        ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, MAXCEILINGS},
+        ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, CEILINGS, MAXCEILINGS},
         doors::{vldoor_t, T_VerticalDoor},
         floor::{floormove_t, T_MoveFloor},
-        info::{mobjinfo, states, MobjInfo, State, NUMSTATES},
+        info::{mobjinfo_ptr, state_ptr, MobjInfo, State, NUMSTATES},
         lights::{
             glow_t, lightflash_t, strobe_t, T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash,
         },
@@ -51,7 +54,7 @@ use crate::engine::{
         plats::{plat_t, P_AddActivePlat, T_PlatRaise},
         tick::{
             leveltime, thinker_allocation, thinker_t, thinkercap, P_AddThinker, P_InitThinkers,
-            ThinkerContainer, ThinkerKind,
+            ThinkerContainer, ThinkerKind, TICK,
         },
     },
     wad::format::mapthing_t,
@@ -78,32 +81,45 @@ pub const VERSIONSIZE: usize = 16;
 // Globals
 // ---------------------------------------------------------------------------
 
-/// The save game being read or written, held in memory.
-///
-/// `G_DoLoadGame` fills it with the save file's bytes before unarchiving;
-/// `G_DoSaveGame` archives into it and then writes its bytes to the file it
-/// opened. Positions in it are file offsets, so padding is computed from
-/// [`Cursor::position`] as the C code did with `ftell`.
-pub static mut save_stream: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-
-/// The active [`save_stream`].
-///
-/// # Safety
-/// No other reference to `save_stream` may be live.
-unsafe fn stream() -> &'static mut Cursor<Vec<u8>> {
-    &mut *ptr::addr_of_mut!(save_stream)
+/// The save stream and its bookkeeping (`p_saveg.c` globals).
+pub struct SaveGameState {
+    /// The save game being read or written, held in memory.
+    ///
+    /// `G_DoLoadGame` fills it with the save file's bytes before unarchiving;
+    /// `G_DoSaveGame` archives into it and then writes its bytes to the file it
+    /// opened. Positions in it are file offsets, so padding is computed from
+    /// [`Cursor::position`] as the C code did with `ftell`.
+    pub save_stream: Cursor<Vec<u8>>,
+    /// Running byte count of data written to the current save stream.
+    /// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
+    /// C origin: `savegamelength` in `p_saveg.c`.
+    pub savegamelength: i32,
+    /// Non-zero when a read or write error has occurred on `save_stream`.
+    /// Set to `1` on the first I/O failure; callers check this after
+    /// archiving/unarchiving to decide whether to accept the save.
+    /// C origin: `savegame_error` in `p_saveg.c`.
+    pub savegame_error: i32,
 }
 
-/// Running byte count of data written to the current save stream.
-/// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
-/// C origin: `savegamelength` in `p_saveg.c`.
-pub static mut savegamelength: i32 = 0;
+impl SaveGameState {
+    /// No save in progress: an empty stream, no bytes written, no error.
+    pub const fn new() -> Self {
+        Self {
+            save_stream: Cursor::new(Vec::new()),
+            savegamelength: 0,
+            savegame_error: 0,
+        }
+    }
+}
 
-/// Non-zero when a read or write error has occurred on `save_stream`.
-/// Set to `1` on the first I/O failure; callers check this after
-/// archiving/unarchiving to decide whether to accept the save.
-/// C origin: `savegame_error` in `p_saveg.c`.
-pub static mut savegame_error: i32 = 0;
+impl Default for SaveGameState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The save stream and its bookkeeping.
+pub static SAVEG: Global<SaveGameState> = Global::new(SaveGameState::new());
 
 use crate::engine::{
     doom::main::DOOM_MAIN,
@@ -112,7 +128,7 @@ use crate::engine::{
     play::{
         maputl::P_SetThingPosition,
         mobj::{P_MobjThinker, P_RemoveMobj},
-        setup::{lines, numlines, numsectors, sectors, sides},
+        setup::{level, LevelState},
     },
 };
 
@@ -125,10 +141,11 @@ use crate::engine::{
 /// Sets `savegame_error = 1` on the first short read; subsequent calls still
 /// return `0` but do not double-set the flag. C origin: `saveg_read8`.
 unsafe fn saveg_read8() -> u8 {
+    let mut saveg = SAVEG.borrow_mut();
     let mut result = [0u8];
-    let n = stream().read(&mut result).unwrap_or(0);
-    if n < 1 && savegame_error == 0 {
-        savegame_error = 1;
+    let n = saveg.save_stream.read(&mut result).unwrap_or(0);
+    if n < 1 && saveg.savegame_error == 0 {
+        saveg.savegame_error = 1;
     }
     result[0]
 }
@@ -141,11 +158,12 @@ unsafe fn saveg_read8() -> u8 {
 /// does so to avoid a separate accounting pass.
 /// C origin: `saveg_write8`.
 unsafe fn saveg_write8(value: u8) {
-    let n = stream().write(&[value]).unwrap_or(0);
-    if n < 1 && savegame_error == 0 {
-        savegame_error = 1;
+    let mut saveg = SAVEG.borrow_mut();
+    let n = saveg.save_stream.write(&[value]).unwrap_or(0);
+    if n < 1 && saveg.savegame_error == 0 {
+        saveg.savegame_error = 1;
     }
-    savegamelength += 1;
+    saveg.savegamelength += 1;
 }
 
 /// Reads a little-endian 16-bit unsigned integer from `save_stream`.
@@ -196,7 +214,7 @@ unsafe fn saveg_write32(value: u32) {
 /// position. A stream already aligned reads zero bytes. C origin:
 /// `saveg_read_pad`.
 unsafe fn saveg_read_pad() {
-    let pos = stream().position();
+    let pos = SAVEG.borrow().save_stream.position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_read8();
@@ -208,7 +226,7 @@ unsafe fn saveg_read_pad() {
 /// See `saveg_read_pad` for the alignment formula. C origin:
 /// `saveg_write_pad`.
 unsafe fn saveg_write_pad() {
-    let pos = stream().position();
+    let pos = SAVEG.borrow().save_stream.position();
     let padding = (4 - (pos & 3)) & 3;
     for _ in 0..padding {
         saveg_write8(0);
@@ -234,7 +252,7 @@ unsafe fn saveg_write_enum(value: u32) {
 // Struct serialization helpers
 // ---------------------------------------------------------------------------
 
-/// Serializes a `sector_t` pointer as a zero-based index into the global
+/// Serializes a `sector_t` pointer as a zero-based index into the level's
 /// `sectors` array.
 ///
 /// Returns `0` for a null pointer. The C equivalent uses pointer subtraction
@@ -244,28 +262,28 @@ unsafe fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
     if sector.is_null() {
         0
     } else {
-        sector.offset_from(sectors.cast::<sector_t>()) as u32
+        sector.offset_from(level().sectors) as u32
     }
 }
 
 /// Deserializes a sector index from the save stream into a `*mut sector_t`.
 ///
-/// `index` is an offset into the global `sectors` array. No bounds check is
+/// `index` is an offset into the level's `sectors` array. No bounds check is
 /// performed; callers must trust that the index was written by a valid
 /// `saveg_write_sector_ptr` call.
 unsafe fn saveg_read_sector_ptr(index: u32) -> *mut sector_t {
-    sectors.cast::<sector_t>().add(index as usize)
+    level().sectors.add(index as usize)
 }
 
-/// Serializes a `State` pointer as a zero-based index into the global `states`
-/// array.
+/// Serializes a `State` pointer as a zero-based index into the `states`
+/// table.
 ///
 /// Returns `0` for a null pointer. The C equivalent computes `state - states`.
 unsafe fn saveg_write_state_ptr(state: *const State) -> u32 {
     if state.is_null() {
         0
     } else {
-        state.offset_from(std::ptr::addr_of!(states[0])) as u32
+        state.offset_from(state_ptr(0)) as u32
     }
 }
 
@@ -277,10 +295,10 @@ unsafe fn saveg_write_state_ptr(state: *const State) -> u32 {
 /// out-of-bounds).
 unsafe fn saveg_read_state_ptr(index: u32) -> *mut State {
     if index as usize >= NUMSTATES {
-        savegame_error = 1;
-        return std::ptr::addr_of_mut!(states[0]);
+        SAVEG.borrow_mut().savegame_error = 1;
+        return state_ptr(0);
     }
-    std::ptr::addr_of_mut!(states[0]).add(index as usize)
+    state_ptr(index as usize)
 }
 
 /// Serializes a `PlayerT` pointer as a 1-based player index.
@@ -292,7 +310,7 @@ unsafe fn saveg_write_player_ptr(player: *const PlayerT) -> u32 {
     if player.is_null() {
         0
     } else {
-        (player.offset_from(std::ptr::addr_of!(players[0])) as u32) + 1
+        (player.offset_from(game_player(0)) as u32) + 1
     }
 }
 
@@ -304,7 +322,7 @@ unsafe fn saveg_read_player_ptr(value: u32) -> *mut PlayerT {
     if value == 0 {
         std::ptr::null_mut()
     } else {
-        std::ptr::addr_of_mut!(players[0]).add((value - 1) as usize)
+        game_player(0).add((value - 1) as usize)
     }
 }
 
@@ -1220,17 +1238,17 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
     }
 
     // Write skill, episode, map
-    saveg_write8(gameskill as u8);
-    saveg_write8(gameepisode as u8);
-    saveg_write8(gamemap as u8);
+    saveg_write8(gameskill() as u8);
+    saveg_write8(gameepisode() as u8);
+    saveg_write8(gamemap() as u8);
 
     // Write playeringame
     for i in 0..MAXPLAYERS {
-        saveg_write8(playeringame[i] as u8);
+        saveg_write8(playeringame(i) as u8);
     }
 
     // Write leveltime (3 bytes, big-endian)
-    let lt = leveltime as u32;
+    let lt = leveltime() as u32;
     saveg_write8(((lt >> 16) & 0xff) as u8);
     saveg_write8(((lt >> 8) & 0xff) as u8);
     saveg_write8((lt & 0xff) as u8);
@@ -1278,20 +1296,27 @@ pub unsafe fn P_ReadSaveGameHeader() -> i32 {
     }
 
     // Read skill, episode, map
-    gameskill = saveg_read8() as i32;
-    gameepisode = saveg_read8() as i32;
-    gamemap = saveg_read8() as i32;
+    let gameskill = saveg_read8() as i32;
+    let gameepisode = saveg_read8() as i32;
+    let gamemap = saveg_read8() as i32;
+    {
+        let mut game = GAME.borrow_mut();
+        game.gameskill = gameskill;
+        game.gameepisode = gameepisode;
+        game.gamemap = gamemap;
+    }
 
     // Read playeringame
     for i in 0..MAXPLAYERS {
-        playeringame[i] = saveg_read8() as i32;
+        let in_game = saveg_read8() as i32;
+        GAME.borrow_mut().playeringame[i] = in_game;
     }
 
     // Read leveltime (3 bytes, big-endian)
     let a = saveg_read8() as u32;
     let b = saveg_read8() as u32;
     let c = saveg_read8() as u32;
-    leveltime = ((a << 16) | (b << 8) | c) as i32;
+    TICK.borrow_mut().leveltime = ((a << 16) | (b << 8) | c) as i32;
 
     1 // success
 }
@@ -1332,7 +1357,7 @@ pub unsafe fn P_WriteSaveGameEOF() {
     saveg_write8(SAVEGAME_EOF);
 }
 
-use crate::engine::game::{gameepisode, gamemap, gameskill, playeringame};
+use crate::engine::game::{gameepisode, gamemap, gameskill, playeringame, GAME};
 
 // ---------------------------------------------------------------------------
 // P_ArchivePlayers / P_UnArchivePlayers
@@ -1353,11 +1378,11 @@ use crate::engine::game::{gameepisode, gamemap, gameskill, playeringame};
 /// before `P_WriteSaveGameEOF`.
 pub unsafe fn P_ArchivePlayers() {
     for i in 0..MAXPLAYERS {
-        if playeringame[i] == 0 {
+        if playeringame(i) == 0 {
             continue;
         }
         saveg_write_pad();
-        saveg_write_player_t(&players[i]);
+        saveg_write_player_t(&*game_player(i));
     }
 }
 
@@ -1378,16 +1403,17 @@ pub unsafe fn P_ArchivePlayers() {
 /// null and must not be dereferenced until thinkers are unarchived.
 pub unsafe fn P_UnArchivePlayers() {
     for i in 0..MAXPLAYERS {
-        if playeringame[i] == 0 {
+        if playeringame(i) == 0 {
             continue;
         }
         saveg_read_pad();
-        saveg_read_player_t(&mut players[i]);
+        let player = &mut *game_player(i);
+        saveg_read_player_t(player);
 
         // will be set when unarc thinker
-        players[i].mo = std::ptr::null_mut();
-        players[i].message = PlayerMessage::NONE;
-        players[i].attacker = std::ptr::null_mut();
+        player.mo = std::ptr::null_mut();
+        player.message = PlayerMessage::NONE;
+        player.attacker = std::ptr::null_mut();
     }
 }
 
@@ -1415,6 +1441,14 @@ pub unsafe fn P_UnArchivePlayers() {
 /// `numlines`), and `sides` array must all be fully initialized. Every
 /// `line_t.sidenum[j]` that is not `-1` must be a valid index into `sides`.
 pub unsafe fn P_ArchiveWorld() {
+    let LevelState {
+        numsectors,
+        sectors,
+        numlines,
+        lines,
+        sides,
+        ..
+    } = level();
     let num_sec = numsectors as usize;
     let num_li = numlines as usize;
 
@@ -1473,6 +1507,14 @@ pub unsafe fn P_ArchiveWorld() {
 /// completed). Every `line_t.sidenum[j]` that is not `-1` must be a valid
 /// index into `sides`.
 pub unsafe fn P_UnArchiveWorld() {
+    let LevelState {
+        numsectors,
+        sectors,
+        numlines,
+        lines,
+        sides,
+        ..
+    } = level();
     let num_sec = numsectors as usize;
     let num_li = numlines as usize;
 
@@ -1545,7 +1587,7 @@ const tc_mobj: u8 = 1;
 /// a valid doubly-linked circular list. Every thinker in the chain of kind
 /// [`ThinkerKind::Mobj`] must be embedded in a valid `mobj_t`.
 pub unsafe fn P_ArchiveThinkers() {
-    let cap = &raw mut thinkercap;
+    let cap = thinkercap();
     let mut th = (*cap).next;
 
     while th != cap {
@@ -1589,7 +1631,7 @@ pub unsafe fn P_ArchiveThinkers() {
 /// can place each restored mobj. Must be called before `P_UnArchiveSpecials`
 /// and before any code dereferences `players[i].mo`.
 pub unsafe fn P_UnArchiveThinkers() {
-    let cap = &raw mut thinkercap;
+    let cap = thinkercap();
     let mut currentthinker = (*cap).next;
 
     // remove all current thinkers
@@ -1634,7 +1676,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_SetThingPosition(mobj.cast());
 
                 // rebuild info from mobjinfo
-                (*mo).info = &raw mut mobjinfo[(*mo).kind as usize];
+                (*mo).info = mobjinfo_ptr((*mo).kind as usize);
 
                 // rebuild floorz/ceilingz from subsector
                 let subsec = (*mo).subsector;
@@ -1712,7 +1754,7 @@ const tc_endspecials: u8 = 7;
 /// initialized. Every thinker of a special kind must be embedded in a fully
 /// initialized special struct (`ceiling_t`, `vldoor_t`, etc.).
 pub unsafe fn P_ArchiveSpecials() {
-    let cap = &raw mut thinkercap;
+    let cap = thinkercap();
     let mut th = (*cap).next;
 
     while th != cap {
@@ -1721,11 +1763,9 @@ pub unsafe fn P_ArchiveSpecials() {
             // is in `activeceilings`. A platform in stasis is not saved at
             // all (vanilla behaviour).
             ThinkerKind::None | ThinkerKind::CeilingInStasis | ThinkerKind::PlatInStasis => {
-                let activeceilings_ptr =
-                    std::ptr::addr_of!(crate::engine::play::ceilng::activeceilings[0]);
+                let activeceilings = CEILINGS.borrow().activeceilings;
                 let mut found = false;
-                for i in 0..MAXCEILINGS {
-                    let ceiling = *activeceilings_ptr.add(i);
+                for &ceiling in activeceilings.iter().take(MAXCEILINGS) {
                     if !ceiling.is_null() && &raw mut (*ceiling).thinker == th {
                         found = true;
                         break;
@@ -2017,16 +2057,17 @@ mod tests {
 
     /// Runs `f` with `save_stream` reading a copy of `data`, then restores
     /// the original stream and error globals on exit.
-    unsafe fn with_mem_stream<F: FnOnce()>(data: &mut [u8], f: F) {
-        let old_stream = std::mem::replace(stream(), Cursor::new(data.to_vec()));
-        let old_error = savegame_error;
-        let old_len = savegamelength;
-        savegame_error = 0;
-        savegamelength = 0;
+    fn with_mem_stream<F: FnOnce()>(data: &mut [u8], f: F) {
+        let old_state = std::mem::replace(
+            &mut *SAVEG.borrow_mut(),
+            SaveGameState {
+                save_stream: Cursor::new(data.to_vec()),
+                savegamelength: 0,
+                savegame_error: 0,
+            },
+        );
         f();
-        *stream() = old_stream;
-        savegame_error = old_error;
-        savegamelength = old_len;
+        *SAVEG.borrow_mut() = old_state;
     }
 
     /// Bytes written to `save_stream` read back in order, padding aligns
@@ -2036,20 +2077,25 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         unsafe {
             with_mem_stream(&mut [], || {
-                *stream() = Cursor::default();
                 saveg_write8(0xAB);
                 saveg_write_pad();
                 saveg_write32(0x1234_5678);
-                assert_eq!(stream().get_ref(), &[0xAB, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]);
-                assert_eq!({ savegamelength }, 8);
+                {
+                    let saveg = SAVEG.borrow();
+                    assert_eq!(
+                        saveg.save_stream.get_ref(),
+                        &[0xAB, 0, 0, 0, 0x78, 0x56, 0x34, 0x12]
+                    );
+                    assert_eq!(saveg.savegamelength, 8);
+                }
 
-                stream().set_position(0);
+                SAVEG.borrow_mut().save_stream.set_position(0);
                 assert_eq!(saveg_read8(), 0xAB);
                 saveg_read_pad();
                 assert_eq!(saveg_read32(), 0x1234_5678);
-                assert_eq!({ savegame_error }, 0);
+                assert_eq!(SAVEG.borrow().savegame_error, 0);
                 assert_eq!(saveg_read8(), 0);
-                assert_eq!({ savegame_error }, 1);
+                assert_eq!(SAVEG.borrow().savegame_error, 1);
             });
         }
     }

@@ -65,7 +65,7 @@ impl room::engine::platform::Platform for Headless {
 
 use room::engine::{
     doom::main_loop::{gametic, MAIN_LOOP},
-    game::{gamestate, longtics},
+    game::{gamestate, GAME},
     misc::random::RANDOM,
 };
 
@@ -637,17 +637,17 @@ fn is_checkpoint(tic: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 fn capture_snapshot(tic: usize) -> Snapshot {
-    use room::engine::doom::player::{consoleplayer, players, MAXPLAYERS};
+    use room::engine::doom::player::{consoleplayer, player, MAXPLAYERS};
 
     let random = RANDOM.get();
 
-    let cp = unsafe { consoleplayer };
+    let cp = consoleplayer();
     let pidx = if cp >= 0 && (cp as usize) < MAXPLAYERS {
         cp as usize
     } else {
         0
     };
-    let p = unsafe { &players[pidx] };
+    let p = unsafe { &*player(pidx) };
     let (mo_x, mo_y, mo_z, mo_angle) = if p.mo.is_null() {
         (0, 0, 0, 0)
     } else {
@@ -660,7 +660,7 @@ fn capture_snapshot(tic: usize) -> Snapshot {
         virtual_ms: virtual_ms(),
         frames: frame_count(),
         gametic: gametic(),
-        gamestate: unsafe { gamestate },
+        gamestate: gamestate(),
         rndindex: random.rndindex,
         prndindex: random.prndindex,
         health: p.health,
@@ -733,7 +733,7 @@ fn demo_playthrough() {
     // Sanity-check invariants that future agents often re-validate when
     // debugging random-tick divergence between C and Rust.
     assert_eq!(
-        unsafe { longtics },
+        GAME.borrow().longtics,
         0,
         "longtics should be false when neither -longtics nor a v1.91 demo is loaded"
     );
@@ -824,17 +824,15 @@ fn demo_playthrough() {
         if is_checkpoint(tic + 1) {
             let checkpoint_idx = snapshots.len();
             let pct = ((checkpoint_idx + 1) * 100) / CHECKPOINTS.len();
-            unsafe {
-                eprintln!(
-                    "  checkpoint {}/{} ({}%) at tic {} gametic={} leveltime={}",
-                    checkpoint_idx + 1,
-                    CHECKPOINTS.len(),
-                    pct,
-                    tic + 1,
-                    gametic(),
-                    { room::engine::play::tick::leveltime },
-                );
-            }
+            eprintln!(
+                "  checkpoint {}/{} ({}%) at tic {} gametic={} leveltime={}",
+                checkpoint_idx + 1,
+                CHECKPOINTS.len(),
+                pct,
+                tic + 1,
+                gametic(),
+                room::engine::play::tick::leveltime(),
+            );
             let snap = capture_snapshot(tic + 1);
             if !bless {
                 assert!(

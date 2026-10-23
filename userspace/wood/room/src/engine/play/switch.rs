@@ -15,6 +15,7 @@ use {
 use crate::{
     engine::{
         doom,
+        global::Global,
         map::{degenmobj_t, line_t},
         play::{
             ceilng::EV_DoCeiling,
@@ -387,29 +388,51 @@ const ALPH_SWITCH_LIST: [SwitchDef; 41] = [
 // Globals
 // ---------------------------------------------------------------------------
 
-/// Flat array of texture-number pairs filled by `P_InitSwitchList`.
-/// Stored as alternating (off-texture, on-texture) pairs; valid length is
-/// `numswitches * 2`.  The sentinel `switchlist[numswitches * 2] == -1`
-/// marks the end of valid data.
-/// Matches `switchlist[]` in `p_switch.c`.
-pub static mut switchlist: [i32; MAXSWITCHES * 2] = [0; MAXSWITCHES * 2];
+/// The switch texture pairs and the timed-button table (`p_switch.c`
+/// globals).
+pub struct SwitchState {
+    /// Flat array of texture-number pairs filled by `P_InitSwitchList`.
+    /// Stored as alternating (off-texture, on-texture) pairs; valid length is
+    /// `numswitches * 2`.  The sentinel `switchlist[numswitches * 2] == -1`
+    /// marks the end of valid data.
+    /// Matches `switchlist[]` in `p_switch.c`.
+    pub switchlist: [i32; MAXSWITCHES * 2],
+    /// Number of valid switch pairs in `switchlist` after `P_InitSwitchList`
+    /// runs.  Zero before initialization.
+    /// Matches `numswitches` in `p_switch.c`.
+    pub numswitches: i32,
+    /// Ring-buffer of active timed buttons.  Slots with `btimer == 0` are free.
+    /// Decremented each tic by the thinker subsystem; when a slot's timer
+    /// reaches zero the original texture is restored.
+    /// Matches `buttonlist[]` in `p_switch.c`.
+    pub buttonlist: [button_t; MAXBUTTONS],
+}
 
-/// Number of valid switch pairs in `switchlist` after `P_InitSwitchList`
-/// runs.  Zero before initialization.
-/// Matches `numswitches` in `p_switch.c`.
-pub static mut numswitches: i32 = 0;
+impl SwitchState {
+    /// No switch pairs loaded, no button pressed.
+    pub const fn new() -> Self {
+        Self {
+            switchlist: [0; MAXSWITCHES * 2],
+            numswitches: 0,
+            buttonlist: [button_t {
+                line: std::ptr::null_mut(),
+                where_: 0,
+                btexture: 0,
+                btimer: 0,
+                soundorg: std::ptr::null_mut(),
+            }; MAXBUTTONS],
+        }
+    }
+}
 
-/// Ring-buffer of active timed buttons.  Slots with `btimer == 0` are free.
-/// Decremented each tic by the thinker subsystem; when a slot's timer
-/// reaches zero the original texture is restored.
-/// Matches `buttonlist[]` in `p_switch.c`.
-pub static mut buttonlist: [button_t; MAXBUTTONS] = [button_t {
-    line: std::ptr::null_mut(),
-    where_: 0,
-    btexture: 0,
-    btimer: 0,
-    soundorg: std::ptr::null_mut(),
-}; MAXBUTTONS];
+impl Default for SwitchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The switch texture pairs and the timed-button table.
+pub static SWITCHES: Global<SwitchState> = Global::new(SwitchState::new());
 
 // ---------------------------------------------------------------------------
 // External declarations (unported C functions)
@@ -420,7 +443,7 @@ use crate::engine::{
     game::{G_ExitLevel, G_SecretExitLevel},
     play::{
         doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor},
-        setup::sides,
+        setup::level,
         spec::EV_DoDonut,
     },
     render_3d::data::R_TextureNumForName,
@@ -456,17 +479,18 @@ pub fn P_InitSwitchList() {
             _ => 1,
         };
 
+        let mut switches = SWITCHES.borrow_mut();
         let mut index = 0usize;
         for sw in &ALPH_SWITCH_LIST {
             if sw.episode == 0 {
-                numswitches = (index / 2) as i32;
-                switchlist[index] = -1;
+                switches.numswitches = (index / 2) as i32;
+                switches.switchlist[index] = -1;
                 break;
             }
             if sw.episode <= episode {
-                switchlist[index] = R_TextureNumForName(sw.name1.as_bytes());
+                switches.switchlist[index] = R_TextureNumForName(sw.name1.as_bytes());
                 index += 1;
-                switchlist[index] = R_TextureNumForName(sw.name2.as_bytes());
+                switches.switchlist[index] = R_TextureNumForName(sw.name2.as_bytes());
                 index += 1;
             }
         }
@@ -494,21 +518,26 @@ pub fn P_InitSwitchList() {
 /// `line` must be a valid, non-null pointer to a live `line_t`.
 /// `buttonlist` must only be accessed from the game-logic thread.
 pub unsafe fn P_StartButton(line: *mut line_t, w: i32, texture: i32, time: i32) {
-    // See if button is already pressed
-    for i in 0..MAXBUTTONS {
-        if buttonlist[i].btimer != 0 && buttonlist[i].line == line {
-            return;
-        }
-    }
+    {
+        let mut switches = SWITCHES.borrow_mut();
+        let buttonlist = &mut switches.buttonlist;
 
-    for i in 0..MAXBUTTONS {
-        if buttonlist[i].btimer == 0 {
-            buttonlist[i].line = line;
-            buttonlist[i].where_ = w;
-            buttonlist[i].btexture = texture;
-            buttonlist[i].btimer = time;
-            buttonlist[i].soundorg = &raw mut (*(*line).frontsector).soundorg;
-            return;
+        // See if button is already pressed
+        for button in buttonlist.iter() {
+            if button.btimer != 0 && button.line == line {
+                return;
+            }
+        }
+
+        for button in buttonlist.iter_mut() {
+            if button.btimer == 0 {
+                button.line = line;
+                button.where_ = w;
+                button.btexture = texture;
+                button.btimer = time;
+                button.soundorg = &raw mut (*(*line).frontsector).soundorg;
+                return;
+            }
         }
     }
 
@@ -541,6 +570,15 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
         (*line).special = 0;
     }
 
+    let sides = level().sides;
+    let (switchlist, numswitches, button_soundorg) = {
+        let switches = SWITCHES.borrow();
+        (
+            switches.switchlist,
+            switches.numswitches,
+            switches.buttonlist[0].soundorg,
+        )
+    };
     let sidenum = (*line).sidenum[0] as isize;
     let texTop = (*sides.offset(sidenum)).toptexture;
     let texMid = (*sides.offset(sidenum)).midtexture;
@@ -555,21 +593,21 @@ pub unsafe fn P_ChangeSwitchTexture(line: *mut line_t, useAgain: i32) {
 
     for i in 0..(numswitches * 2) as usize {
         if switchlist[i] == texTop as i32 {
-            S_StartSectorSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(button_soundorg, sound);
             (*sides.offset(sidenum)).toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, top, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texMid as i32 {
-            S_StartSectorSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(button_soundorg, sound);
             (*sides.offset(sidenum)).midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, middle, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texBot as i32 {
-            S_StartSectorSound(buttonlist[0].soundorg, sound);
+            S_StartSectorSound(button_soundorg, sound);
             (*sides.offset(sidenum)).bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(line, bottom, switchlist[i], BUTTONTIME);
@@ -809,9 +847,7 @@ pub unsafe fn P_UseSpecialLine(thing: *mut c_void, line: *mut line_t, side: i32)
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn constants_match_c() {
@@ -825,24 +861,21 @@ mod tests {
 
     #[test]
     fn globals_are_zero_initialized() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ numswitches }, 0);
-            for (i, &v) in (*&raw const switchlist).iter().enumerate() {
-                assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
-            }
-            for (i, b) in (*&raw const buttonlist).iter().enumerate() {
-                assert!(b.line.is_null(), "buttonlist[{i}].line should be null");
-                assert_eq!(b.btimer, 0, "buttonlist[{i}].btimer should be 0");
-            }
+        let switches = SwitchState::new();
+        assert_eq!(switches.numswitches, 0);
+        for (i, &v) in switches.switchlist.iter().enumerate() {
+            assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
+        }
+        for (i, b) in switches.buttonlist.iter().enumerate() {
+            assert!(b.line.is_null(), "buttonlist[{i}].line should be null");
+            assert_eq!(b.btimer, 0, "buttonlist[{i}].btimer should be 0");
         }
     }
 
     #[test]
     fn switchlist_length_is_maxswitches_times_2() {
-        unsafe {
-            assert_eq!((*&raw const switchlist).len(), MAXSWITCHES * 2);
-            assert_eq!((*&raw const switchlist).len(), 100);
-        }
+        let switches = SwitchState::new();
+        assert_eq!(switches.switchlist.len(), MAXSWITCHES * 2);
+        assert_eq!(switches.switchlist.len(), 100);
     }
 }

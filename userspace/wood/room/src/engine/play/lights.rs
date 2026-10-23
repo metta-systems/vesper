@@ -9,7 +9,7 @@ use crate::engine::{
     map::{line_t, sector_t},
     misc::random::P_Random,
     play::{
-        setup::{numsectors, sectors},
+        setup::{level, LevelState},
         spec::{getNextSector, P_FindMinSurroundingLight, P_FindSectorFromLineTag},
         tick::{thinker_t, P_AddThinker, ThinkerKind},
     },
@@ -290,7 +290,7 @@ pub fn EV_StartLightStrobing(line: *mut line_t) {
             if secnum < 0 {
                 break;
             }
-            let sec = sectors.add(secnum as usize);
+            let sec = level().sectors.add(secnum as usize);
             if !(*sec).specialdata.is_null() {
                 continue;
             }
@@ -304,6 +304,11 @@ pub fn EV_StartLightStrobing(line: *mut line_t) {
 /// For each sector whose tag matches `line`'s tag, scans adjacent sectors and
 /// sets the light level to the minimum found among all neighbors.
 pub fn EV_TurnTagLightsOff(line: *mut line_t) {
+    let LevelState {
+        numsectors,
+        sectors,
+        ..
+    } = level();
     unsafe {
         for j in 0..numsectors as usize {
             let sec = sectors.add(j);
@@ -333,6 +338,11 @@ pub fn EV_TurnTagLightsOff(line: *mut line_t) {
 /// If `bright == 0`, the function searches adjacent sectors and uses the
 /// highest light level found among them instead.
 pub fn EV_LightTurnOn(line: *mut line_t, bright: i32) {
+    let LevelState {
+        numsectors,
+        sectors,
+        ..
+    } = level();
     unsafe {
         let mut bright = bright;
         for i in 0..numsectors as usize {

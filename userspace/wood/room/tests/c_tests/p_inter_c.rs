@@ -37,57 +37,47 @@ fn bonusadd_is_6() {
 /// Bullet (clip) ammo cap is 200.
 #[test]
 fn maxammo_bullets_is_200() {
-    unsafe {
-        assert_eq!(
-            play::inter::maxammo[0],
-            200,
-            "maxammo[am_clip] should be 200"
-        );
-    }
+    assert_eq!(
+        play::inter::maxammo[0],
+        200,
+        "maxammo[am_clip] should be 200"
+    );
 }
 
 /// Shell ammo cap is 50.
 #[test]
 fn maxammo_shells_is_50() {
-    unsafe {
-        assert_eq!(
-            play::inter::maxammo[1],
-            50,
-            "maxammo[am_shell] should be 50"
-        );
-    }
+    assert_eq!(
+        play::inter::maxammo[1],
+        50,
+        "maxammo[am_shell] should be 50"
+    );
 }
 
 /// Cell ammo cap is 300.
 #[test]
 fn maxammo_cells_is_300() {
-    unsafe {
-        assert_eq!(
-            play::inter::maxammo[2],
-            300,
-            "maxammo[am_cell] should be 300"
-        );
-    }
+    assert_eq!(
+        play::inter::maxammo[2],
+        300,
+        "maxammo[am_cell] should be 300"
+    );
 }
 
 /// Missile ammo cap is 50.
 #[test]
 fn maxammo_missiles_is_50() {
-    unsafe {
-        assert_eq!(play::inter::maxammo[3], 50, "maxammo[am_misl] should be 50");
-    }
+    assert_eq!(play::inter::maxammo[3], 50, "maxammo[am_misl] should be 50");
 }
 
 /// All four maxammo entries match the verbatim C initializer: {200, 50, 300, 50}.
 #[test]
 fn maxammo_exact_values() {
-    unsafe {
-        assert_eq!(
-            { play::inter::maxammo },
-            [200, 50, 300, 50],
-            "maxammo array mismatch"
-        );
-    }
+    assert_eq!(
+        play::inter::maxammo,
+        [200, 50, 300, 50],
+        "maxammo array mismatch"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -147,34 +137,26 @@ fn clipammo_exact_values() {
 /// Bullet max (200) is exactly 20 clips of 10.
 #[test]
 fn bullets_max_is_20_clips() {
-    unsafe {
-        assert_eq!(play::inter::maxammo[0], 20 * play::inter::clipammo[0]);
-    }
+    assert_eq!(play::inter::maxammo[0], 20 * play::inter::clipammo[0]);
 }
 
 /// Shell max (50) is 12.5 boxes — not a whole multiple, but the ratio must
 /// remain fixed so ammo economy is not altered.
 #[test]
 fn shells_max_to_clip_ratio() {
-    unsafe {
-        // 50 / 4 = 12 with remainder 2.
-        assert_eq!(play::inter::maxammo[1] / play::inter::clipammo[1], 12);
-        assert_eq!(play::inter::maxammo[1] % play::inter::clipammo[1], 2);
-    }
+    // 50 / 4 = 12 with remainder 2.
+    assert_eq!(play::inter::maxammo[1] / play::inter::clipammo[1], 12);
+    assert_eq!(play::inter::maxammo[1] % play::inter::clipammo[1], 2);
 }
 
 /// Cell max (300) is exactly 15 energy cells of 20.
 #[test]
 fn cells_max_is_15_clips() {
-    unsafe {
-        assert_eq!(play::inter::maxammo[2], 15 * play::inter::clipammo[2]);
-    }
+    assert_eq!(play::inter::maxammo[2], 15 * play::inter::clipammo[2]);
 }
 
 /// Missile max (50) is exactly 50 individual rockets.
 #[test]
 fn missiles_max_is_50_clips() {
-    unsafe {
-        assert_eq!(play::inter::maxammo[3], 50 * play::inter::clipammo[3]);
-    }
+    assert_eq!(play::inter::maxammo[3], 50 * play::inter::clipammo[3]);
 }

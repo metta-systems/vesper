@@ -39,7 +39,7 @@ use crate::{
     engine::{
         doom::{
             main_loop::gametic,
-            player::{players, PlayerT, PspdefT, MAXPLAYERS},
+            player::{player as game_player, PlayerT, PspdefT, MAXPLAYERS},
             stat::{gamemode, gameversion},
         },
         map::{line_t, sector_t, slopetype_t, vertex_t},
@@ -50,8 +50,8 @@ use crate::{
         misc::random::P_Random,
         play::{
             info::{
-                mobjinfo, MobjInfo, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED,
-                MF_JUSTHIT, MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MT_ARACHPLAZ, MT_BABY,
+                MobjInfo, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED, MF_JUSTHIT,
+                MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MOBJINFO, MT_ARACHPLAZ, MT_BABY,
                 MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG, MT_FATSHOT, MT_FATSO,
                 MT_FIRE, MT_HEAD, MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET, MT_SERGEANT,
                 MT_SHADOWS, MT_SKULL, MT_SMOKE, MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER, MT_TRACER,
@@ -59,8 +59,8 @@ use crate::{
             },
             inter::P_DamageMobj,
             map::{
-                floatok, numspechit, spechit, tmfloorz, P_AimLineAttack, P_CheckPosition,
-                P_LineAttack, P_RadiusAttack, P_TeleportMove, P_TryMove,
+                floatok, tmfloorz, P_AimLineAttack, P_CheckPosition, P_LineAttack, P_RadiusAttack,
+                P_TeleportMove, P_TryMove, MAP,
             },
             maputl::{
                 openrange, P_AproxDistance, P_BlockThingsIterator, P_LineOpening,
@@ -70,7 +70,7 @@ use crate::{
                 mobj_t, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
                 P_SubstNullMobj,
             },
-            setup::{bmaporgx, bmaporgy, sides},
+            setup::{level, LevelState},
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
             tick::{thinker_t, thinkercap, ThinkerContainer, ThinkerKind},
@@ -145,6 +145,7 @@ pub const SKULLSPEED: i32 = 20 * FRACUNIT;
 use crate::engine::{
     doom::main::fastparm,
     game::{gameepisode, gamemap, gameskill, netgame, playeringame, G_ExitLevel},
+    global::Global,
     play::{doors::EV_DoDoor, floor::EV_DoFloor, pspr::A_ReFire},
 };
 
@@ -164,9 +165,56 @@ pub static opposite: [dirtype_t; 9] = [
 /// Lookup table mapping the two-bit index `(deltay<0)<<1 | (deltax>0)` to a diagonal
 /// `dirtype_t`; used by `P_NewChaseDir` to prefer diagonal movement toward the target.
 pub static diags: [dirtype_t; 4] = [DI_NORTHWEST, DI_NORTHEAST, DI_SOUTHWEST, DI_SOUTHEAST];
-/// The monster or player whose noise triggered the current `P_RecursiveSound` traversal;
-/// written by `P_NoiseAlert`, read by `P_RecursiveSound` to stamp each sector.
-pub static mut soundtarget: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
+/// Monster AI scratch state (`p_enemy.c` globals).
+pub struct EnemyState {
+    /// The monster or player whose noise triggered the current `P_RecursiveSound` traversal;
+    /// written by `P_NoiseAlert`, read by `P_RecursiveSound` to stamp each sector.
+    pub soundtarget: *mut mobj_t,
+    /// The corpse found by `PIT_VileCheck` for the Arch-vile to resurrect.
+    pub corpsehit: *mut mobj_t,
+    /// The Arch-vile currently searching for a corpse (`A_VileChase`).
+    pub vileobj: *mut mobj_t,
+    /// X coordinate the Arch-vile is about to move to; corpses are searched
+    /// around it.
+    pub viletryx: fixed_t,
+    /// Y coordinate the Arch-vile is about to move to.
+    pub viletryy: fixed_t,
+    /// Boss-brain spawn targets collected by `A_BrainAwake`.
+    pub braintargets: [*mut mobj_t; 32],
+    /// Number of valid entries in `braintargets`.
+    pub numbraintargets: i32,
+    /// Index of the next spawn target `A_BrainSpit` aims at.
+    pub braintargeton: i32,
+    /// Toggled on each `A_BrainSpit` so easy skills spit every other time
+    /// (static local `easy` in C).
+    brainspit_easy: i32,
+}
+
+impl EnemyState {
+    /// The state at program start: no noise, no corpse search, no brain.
+    pub const fn new() -> Self {
+        Self {
+            soundtarget: std::ptr::null_mut(),
+            corpsehit: std::ptr::null_mut(),
+            vileobj: std::ptr::null_mut(),
+            viletryx: 0,
+            viletryy: 0,
+            braintargets: [std::ptr::null_mut(); 32],
+            numbraintargets: 0,
+            braintargeton: 0,
+            brainspit_easy: 0,
+        }
+    }
+}
+
+impl Default for EnemyState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Monster AI scratch state.
+pub static ENEMY: Global<EnemyState> = Global::new(EnemyState::new());
 /// Recursively floods sound through adjacent sectors, stamping each with `soundtarget`.
 ///
 /// Traversal stops at sectors already visited this frame (`validcount`) and at
@@ -194,13 +242,14 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
     }
     (*sec).validcount = validcount;
     (*sec).soundtraversed = soundblocks + 1;
-    (*sec).soundtarget = soundtarget;
+    (*sec).soundtarget = ENEMY.borrow().soundtarget;
+    let sides = level().sides;
     i = 0;
     while i < (*sec).linecount {
         check = *(*sec).lines.offset(i as isize);
         if (*check).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
             P_LineOpening(check);
-            if openrange > 0 {
+            if openrange() > 0 {
                 if std::ptr::eq((*sides.offset((*check).sidenum[0] as isize)).sector, sec) {
                     other = (*sides.offset((*check).sidenum[1] as isize)).sector;
                 } else {
@@ -229,7 +278,7 @@ pub unsafe fn P_RecursiveSound(sec: *mut sector_t, soundblocks: i32) {
 /// `target` and `emmiter` must both be non-null, valid `mobj_t` pointers. `emmiter`
 /// must have a valid `subsector` with a valid `sector`.
 pub unsafe fn P_NoiseAlert(target: *mut mobj_t, emmiter: *mut mobj_t) {
-    soundtarget = target;
+    ENEMY.borrow_mut().soundtarget = target;
     VALIDCOUNT.set(VALIDCOUNT.get() + 1);
     P_RecursiveSound((*(*emmiter).subsector).sector, 0);
 }
@@ -358,8 +407,8 @@ pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
         (*actor).y + (*(*actor).info).speed as fixed_t * yspeed[(*actor).movedir as usize];
     let try_ok: Boolean = Boolean::from_raw(P_TryMove(actor, tryx, tryy));
     if try_ok.is_false() {
-        if (*actor).flags & MF_FLOAT != 0 && floatok != 0 {
-            if (*actor).z < tmfloorz {
+        if (*actor).flags & MF_FLOAT != 0 && floatok() != 0 {
+            if (*actor).z < tmfloorz() {
                 (*actor).z += FLOATSPEED;
             } else {
                 (*actor).z -= FLOATSPEED;
@@ -367,18 +416,23 @@ pub unsafe fn P_Move(actor: *mut mobj_t) -> Boolean {
             (*actor).flags |= MF_INFLOAT;
             return Boolean::TRUE;
         }
-        if numspechit == 0 {
+        if MAP.borrow().numspechit == 0 {
             return Boolean::FALSE;
         }
         (*actor).movedir = DI_NODIR;
         good = Boolean::FALSE;
+        // A used line can move things and refill the list, so the count is
+        // re-read before every pop, as in C.
         loop {
-            let c2rust_fresh0 = numspechit;
-            numspechit -= 1;
-            if c2rust_fresh0 == 0 {
-                break;
-            }
-            ld = spechit[numspechit as usize];
+            ld = {
+                let mut map = MAP.borrow_mut();
+                let c2rust_fresh0 = map.numspechit;
+                map.numspechit -= 1;
+                if c2rust_fresh0 == 0 {
+                    break;
+                }
+                map.spechit[map.numspechit as usize]
+            };
             if P_UseSpecialLine(actor as *mut c_void, ld, 0) != 0 {
                 good = Boolean::TRUE;
             }
@@ -542,13 +596,13 @@ pub unsafe fn P_LookForPlayers(actor: *mut mobj_t, allaround: Boolean) -> Boolea
     let stop: i32 = ((*actor).lastlook - 1) & 3;
     loop {
         's_20: {
-            if playeringame[(*actor).lastlook as usize] != 0 {
+            if playeringame((*actor).lastlook as usize) != 0 {
                 let c2rust_fresh1 = c;
                 c += 1;
                 if c2rust_fresh1 == 2 || (*actor).lastlook == stop {
                     return Boolean::FALSE;
                 }
-                player = (&raw mut players as *mut PlayerT).offset((*actor).lastlook as isize);
+                player = game_player((*actor).lastlook as usize);
                 if (*player).health > 0 {
                     let sight = P_CheckSight(actor, (*player).mo);
                     if sight != 0 {
@@ -612,8 +666,9 @@ pub unsafe fn A_KeenDie(mo: *mut mobj_t) {
         specialdata: std::ptr::null_mut::<c_void>(),
     };
     A_Fall(mo);
-    th = thinkercap.next;
-    while !std::ptr::eq(th, &raw const thinkercap) {
+    let cap = thinkercap();
+    th = (*cap).next;
+    while !std::ptr::eq(th, cap) {
         if (*th).kind == ThinkerKind::Mobj {
             mo2 = mobj_t::from_thinker(th);
             if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
@@ -720,7 +775,7 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
     }
     if (*actor).flags & MF_JUSTATTACKED != 0 {
         (*actor).flags &= !(MF_JUSTATTACKED);
-        if gameskill != sk_nightmare && fastparm() == 0 {
+        if gameskill() != sk_nightmare && fastparm() == 0 {
             P_NewChaseDir(actor);
         }
         return;
@@ -733,14 +788,14 @@ pub unsafe fn A_Chase(actor: *mut mobj_t) {
         return;
     }
     if (*(*actor).info).missilestate != 0
-        && !((gameskill) < sk_nightmare && fastparm() == 0 && (*actor).movecount != 0)
+        && !(gameskill() < sk_nightmare && fastparm() == 0 && (*actor).movecount != 0)
         && P_CheckMissileRange(actor).is_truthy()
     {
         P_SetMobjState(actor, (*(*actor).info).missilestate as statenum_t);
         (*actor).flags |= MF_JUSTATTACKED;
         return;
     }
-    if netgame != 0
+    if netgame() != 0
         && (*actor).threshold == 0
         && P_CheckSight(actor, (*actor).target) == 0
         && P_LookForPlayers(actor, Boolean::TRUE).is_truthy()
@@ -1147,17 +1202,6 @@ pub unsafe fn A_SkelFist(actor: *mut mobj_t) {
         P_DamageMobj((*actor).target, actor, actor, damage);
     }
 }
-/// The corpse most recently selected by `PIT_VileCheck` for resurrection; written by
-/// `PIT_VileCheck`, read and mutated by `A_VileChase`.
-pub static mut corpsehit: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
-/// The Archvile actor currently searching for a corpse to raise; set by `A_VileChase`
-/// before calling `P_BlockThingsIterator`.
-pub static mut vileobj: *mut mobj_t = std::ptr::null_mut::<mobj_t>();
-/// X coordinate of the position the Archvile is moving toward, used as the centre of the
-/// corpse search radius in `PIT_VileCheck`.
-pub static mut viletryx: fixed_t = 0;
-/// Y coordinate of the position the Archvile is moving toward.
-pub static mut viletryy: fixed_t = 0;
 /// Blockmap iterator callback: tests whether `thing` is a raiseable corpse near the Archvile.
 ///
 /// Returns `TRUE` (keep iterating) unless `thing` is a fully-settled corpse (`MF_CORPSE`,
@@ -1179,11 +1223,16 @@ pub unsafe fn PIT_VileCheck(thing: *mut mobj_t) -> Boolean {
     if (*(*thing).info).raisestate == S_NULL {
         return Boolean::TRUE;
     }
-    let maxdist: i32 = (*(*thing).info).radius + mobjinfo[MT_VILE as usize].radius;
+    let maxdist: i32 = (*(*thing).info).radius + MOBJINFO.borrow()[MT_VILE as usize].radius;
+    let (viletryx, viletryy) = {
+        let enemy = ENEMY.borrow();
+        (enemy.viletryx, enemy.viletryy)
+    };
     if ((*thing).x - viletryx).abs() > maxdist || ((*thing).y - viletryy).abs() > maxdist {
         return Boolean::TRUE;
     }
-    corpsehit = thing;
+    ENEMY.borrow_mut().corpsehit = thing;
+    let corpsehit = thing;
     (*corpsehit).momy = 0 as fixed_t;
     (*corpsehit).momx = (*corpsehit).momy;
     (*corpsehit).height <<= 2;
@@ -1223,15 +1272,23 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
     let temp: *mut mobj_t;
 
     if (*actor).movedir != DI_NODIR {
-        viletryx =
+        let viletryx =
             (*actor).x + (*(*actor).info).speed as fixed_t * xspeed[(*actor).movedir as usize];
-        viletryy =
+        let viletryy =
             (*actor).y + (*(*actor).info).speed as fixed_t * yspeed[(*actor).movedir as usize];
+        let LevelState {
+            bmaporgx, bmaporgy, ..
+        } = level();
         xl = (viletryx - bmaporgx - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         xh = (viletryx - bmaporgx + 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         yl = (viletryy - bmaporgy - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         yh = (viletryy - bmaporgy + 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
-        vileobj = actor;
+        {
+            let mut enemy = ENEMY.borrow_mut();
+            enemy.viletryx = viletryx;
+            enemy.viletryy = viletryy;
+            enemy.vileobj = actor;
+        }
         bx = xl;
         while bx <= xh {
             by = yl;
@@ -1245,6 +1302,7 @@ pub unsafe fn A_VileChase(actor: *mut mobj_t) {
                     >(PIT_VileCheck)),
                 ) == 0
                 {
+                    let corpsehit = ENEMY.borrow().corpsehit;
                     temp = (*actor).target;
                     (*actor).target = corpsehit;
                     A_FaceTarget(actor);
@@ -1512,8 +1570,8 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
     let mut currentthinker: *mut thinker_t;
 
     count = 0;
-    currentthinker = thinkercap.next;
-    while !std::ptr::eq(currentthinker, &raw const thinkercap) {
+    currentthinker = (*thinkercap()).next;
+    while !std::ptr::eq(currentthinker, thinkercap()) {
         if (*currentthinker).kind == ThinkerKind::Mobj
             && (*mobj_t::from_thinker(currentthinker)).kind as u32 == MT_SKULL as u32
         {
@@ -1525,8 +1583,8 @@ pub unsafe fn A_PainShootSkull(actor: *mut mobj_t, angle: angle_t) {
         return;
     }
     let an: angle_t = angle >> ANGLETOFINESHIFT;
-    let prestep: i32 =
-        4 * FRACUNIT + 3 * ((*(*actor).info).radius + mobjinfo[MT_SKULL as usize].radius) / 2;
+    let prestep: i32 = 4 * FRACUNIT
+        + 3 * ((*(*actor).info).radius + MOBJINFO.borrow()[MT_SKULL as usize].radius) / 2;
     let x: fixed_t = (*actor).x + FixedMul(prestep as fixed_t, *finecosine.0.add(an as usize));
     let y: fixed_t = (*actor).y + FixedMul(prestep as fixed_t, finesine[an as usize]);
     let z: fixed_t = ((*actor).z + 8 * FRACUNIT) as fixed_t;
@@ -1639,22 +1697,22 @@ pub unsafe fn A_Explode(thingy: *mut mobj_t) {
 /// Reads `gameversion`, `gameepisode`, and `gamemap` globals which must be initialised.
 unsafe fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
     if (gameversion() as u32) < exe_ultimate as u32 {
-        if gamemap != 8 {
+        if gamemap() != 8 {
             return Boolean::FALSE;
         }
-        if motype == MT_BRUISER && gameepisode != 1 {
+        if motype == MT_BRUISER && gameepisode() != 1 {
             return Boolean::FALSE;
         }
         Boolean::TRUE
     } else {
-        match gameepisode {
-            1 => Boolean::from(gamemap == 8 && motype == MT_BRUISER),
-            2 => Boolean::from(gamemap == 8 && motype == MT_CYBORG),
-            3 => Boolean::from(gamemap == 8 && motype == MT_SPIDER),
+        match gameepisode() {
+            1 => Boolean::from(gamemap() == 8 && motype == MT_BRUISER),
+            2 => Boolean::from(gamemap() == 8 && motype == MT_CYBORG),
+            3 => Boolean::from(gamemap() == 8 && motype == MT_SPIDER),
             4 => Boolean::from(
-                gamemap == 6 && motype == MT_CYBORG || gamemap == 8 && motype == MT_SPIDER,
+                gamemap() == 6 && motype == MT_CYBORG || gamemap() == 8 && motype == MT_SPIDER,
             ),
-            _ => Boolean::from(gamemap == 8),
+            _ => Boolean::from(gamemap() == 8),
         }
     }
 }
@@ -1694,7 +1752,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     };
     let _i: i32 = 0;
     if gamemode() as u32 == commercial as u32 {
-        if gamemap != 7 {
+        if gamemap() != 7 {
             return;
         }
         if (*mo).kind as u32 != MT_FATSO as u32 && (*mo).kind as u32 != MT_BABY as u32 {
@@ -1705,7 +1763,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     }
     let mut i: usize = 0;
     while i < MAXPLAYERS {
-        if playeringame[i] != 0 && players[i].health > 0 {
+        if playeringame(i) != 0 && (*game_player(i)).health > 0 {
             break;
         }
         i += 1;
@@ -1713,8 +1771,8 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
     if i == MAXPLAYERS {
         return;
     }
-    th = thinkercap.next;
-    while !std::ptr::eq(th, &raw const thinkercap) {
+    th = (*thinkercap()).next;
+    while !std::ptr::eq(th, thinkercap()) {
         if (*th).kind == ThinkerKind::Mobj {
             mo2 = mobj_t::from_thinker(th);
             if mo2 != mo && (*mo2).kind as u32 == (*mo).kind as u32 && (*mo2).health > 0 {
@@ -1724,7 +1782,7 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
         th = (*th).next;
     }
     if gamemode() as u32 == commercial as u32 {
-        if gamemap == 7 {
+        if gamemap() == 7 {
             if (*mo).kind as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
                 EV_DoFloor(&mut junk, lowerFloorToLowest);
@@ -1737,13 +1795,13 @@ pub unsafe fn A_BossDeath(mo: *mut mobj_t) {
             }
         }
     } else {
-        match gameepisode {
+        match gameepisode() {
             1 => {
                 junk.tag = 666;
                 EV_DoFloor(&mut junk, lowerFloorToLowest);
                 return;
             }
-            4 => match gamemap {
+            4 => match gamemap() {
                 6 => {
                     junk.tag = 666;
                     EV_DoDoor(&mut junk, vld_blazeOpen);
@@ -1813,13 +1871,6 @@ pub unsafe fn A_CloseShotgun2(player: *mut PlayerT, psp: *mut PspdefT) {
     S_StartSound((*player).mo, Sfx::Dbcls as i32);
     A_ReFire(player, psp);
 }
-/// Array of `MT_BOSSTARGET` map objects (Icon of Sin target spots) populated by `A_BrainAwake`.
-/// The brain cycles through these to choose spawn destinations.
-pub static mut braintargets: [*mut mobj_t; 32] = [std::ptr::null_mut::<mobj_t>(); 32];
-/// Count of valid entries in `braintargets`; set by `A_BrainAwake`.
-pub static mut numbraintargets: i32 = 0;
-/// Round-robin index into `braintargets` for the next cube launch; advanced by `A_BrainSpit`.
-pub static mut braintargeton: i32 = 0;
 /// Icon of Sin wake-up: scans the thinker list for `MT_BOSSTARGET` spots and plays `sfx_bossit`.
 ///
 /// Populates `braintargets` and resets `numbraintargets`/`braintargeton` to 0.
@@ -1834,18 +1885,23 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
 
     let mut m: *mut mobj_t;
 
-    numbraintargets = 0;
-    braintargeton = 0;
-    thinker = thinkercap.next;
-    while !std::ptr::eq(thinker, &raw const thinkercap) {
-        if (*thinker).kind == ThinkerKind::Mobj {
-            m = mobj_t::from_thinker(thinker);
-            if (*m).kind as u32 == MT_BOSSTARGET as u32 {
-                braintargets[numbraintargets as usize] = m;
-                numbraintargets += 1;
+    {
+        let mut enemy = ENEMY.borrow_mut();
+        enemy.numbraintargets = 0;
+        enemy.braintargeton = 0;
+        let cap = thinkercap();
+        thinker = (*cap).next;
+        while !std::ptr::eq(thinker, cap) {
+            if (*thinker).kind == ThinkerKind::Mobj {
+                m = mobj_t::from_thinker(thinker);
+                if (*m).kind as u32 == MT_BOSSTARGET as u32 {
+                    let index = enemy.numbraintargets as usize;
+                    enemy.braintargets[index] = m;
+                    enemy.numbraintargets += 1;
+                }
             }
+            thinker = (*thinker).next;
         }
-        thinker = (*thinker).next;
     }
     S_StartSound(std::ptr::null_mut(), Sfx::Bossit as i32);
 }
@@ -1933,13 +1989,16 @@ pub unsafe fn A_BrainDie(_mo: *mut mobj_t) {
 /// `mo` must be non-null. `braintargets` must have been populated by `A_BrainAwake` and
 /// `numbraintargets` must be > 0. Called through the state-machine action pointer.
 pub unsafe fn A_BrainSpit(mo: *mut mobj_t) {
-    static mut easy: i32 = 0;
-    easy ^= 1;
-    if gameskill <= sk_easy && easy == 0 {
-        return;
-    }
-    let targ: *mut mobj_t = braintargets[braintargeton as usize];
-    braintargeton = (braintargeton + 1) % numbraintargets;
+    let targ: *mut mobj_t = {
+        let mut enemy = ENEMY.borrow_mut();
+        enemy.brainspit_easy ^= 1;
+        if gameskill() <= sk_easy && enemy.brainspit_easy == 0 {
+            return;
+        }
+        let targ = enemy.braintargets[enemy.braintargeton as usize];
+        enemy.braintargeton = (enemy.braintargeton + 1) % enemy.numbraintargets;
+        targ
+    };
     let newmobj: *mut mobj_t = P_SpawnMissile(mo, targ, MT_SPAWNSHOT);
     (*newmobj).target = targ;
     (*newmobj).reactiontime = ((*targ).y - (*mo).y) / (*newmobj).momy / (*(*newmobj).state).tics;

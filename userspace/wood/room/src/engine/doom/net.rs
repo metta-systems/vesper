@@ -30,7 +30,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::doom::player::{consoleplayer, players, PlayerMessage, TiccmdT, MAXPLAYERS};
+use crate::engine::doom::player::{console_player, PlayerMessage, TiccmdT, MAXPLAYERS};
 
 /// Maximum number of players supported by the networking code.
 ///
@@ -202,8 +202,8 @@ use crate::engine::{
         stat::{gamemission, gamemode, gameversion},
     },
     game::{
-        deathmatch, demoplayback, demorecording, lowres_turn, netgame, playeringame, timelimit,
-        G_BuildTiccmd, G_CheckDemoStatus, G_Ticker,
+        deathmatch, demoplayback, netgame, playeringame, G_BuildTiccmd, G_CheckDemoStatus,
+        G_Ticker, GAME,
     },
     global::Global,
     misc::{argv::M_CheckParm, menu::M_Ticker},
@@ -235,11 +235,10 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
     let mut exit_message = DEH_String(EXIT_MSG).as_bytes().to_vec();
     exit_message[7] += player_idx as u8;
 
-    playeringame[player_idx] = 0;
-    (*std::ptr::addr_of_mut!(players[0]).offset(consoleplayer as isize)).message =
-        PlayerMessage::new(exit_message);
+    GAME.borrow_mut().playeringame[player_idx] = 0;
+    (*console_player()).message = PlayerMessage::new(exit_message);
 
-    if demorecording != 0 {
+    if GAME.borrow().demorecording != 0 {
         G_CheckDemoStatus();
     }
 }
@@ -263,7 +262,7 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
 /// `i32` values. All global game state must be consistently initialised.
 unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut i32) {
     for i in 0..MAXPLAYERS {
-        if demoplayback == 0 && playeringame[i] != 0 && *ingame.add(i) == 0 {
+        if demoplayback() == 0 && playeringame(i) != 0 && *ingame.add(i) == 0 {
             PlayerQuitGame(i);
         }
     }
@@ -296,7 +295,7 @@ unsafe fn RunTic(cmds: *mut TiccmdT, ingame: *mut i32) {
 /// destination globals must be safely mutable at the call site.
 unsafe fn LoadGameSettings(settings: *mut NetGameSettingsT) {
     let settings = &*settings;
-    deathmatch = settings.deathmatch;
+    GAME.borrow_mut().deathmatch = settings.deathmatch;
     {
         let mut main = DOOM_MAIN.borrow_mut();
         main.startepisode = settings.episode;
@@ -307,12 +306,13 @@ unsafe fn LoadGameSettings(settings: *mut NetGameSettingsT) {
         main.fastparm = settings.fast_monsters;
         main.respawnparm = settings.respawn_monsters;
     }
-    lowres_turn = settings.lowres_turn;
-    timelimit = settings.timelimit;
-    consoleplayer = settings.consoleplayer;
+    let mut game = GAME.borrow_mut();
+    game.lowres_turn = settings.lowres_turn;
+    game.timelimit = settings.timelimit;
+    game.consoleplayer = settings.consoleplayer;
 
     for i in 0..MAXPLAYERS {
-        playeringame[i] = if i < settings.num_players as usize {
+        game.playeringame[i] = if i < settings.num_players as usize {
             1
         } else {
             0
@@ -335,7 +335,7 @@ unsafe fn LoadGameSettings(settings: *mut NetGameSettingsT) {
 /// `settings` must point to a writable `NetGameSettingsT`. All source
 /// globals must be in a valid state.
 unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
-    (*settings).deathmatch = deathmatch;
+    (*settings).deathmatch = deathmatch();
     {
         let main = DOOM_MAIN.borrow();
         (*settings).episode = main.startepisode;
@@ -347,7 +347,7 @@ unsafe fn SaveGameSettings(settings: *mut NetGameSettingsT) {
         (*settings).respawn_monsters = main.respawnparm;
     }
     (*settings).gameversion = gameversion();
-    (*settings).timelimit = timelimit;
+    (*settings).timelimit = GAME.borrow().timelimit;
     (*settings).lowres_turn = if M_CheckParm("-record") > 0 && M_CheckParm("-longtics") == 0 {
         1
     } else {
@@ -439,10 +439,11 @@ pub fn D_ConnectNetGame() {
     unsafe {
         let mut connect_data: NetConnectDataT = std::mem::zeroed();
         InitConnectData(&mut connect_data);
-        netgame = D_InitNetGame(&mut connect_data);
+        let netgame = D_InitNetGame(&mut connect_data);
+        GAME.borrow_mut().netgame = netgame;
 
         if M_CheckParm("-solo-net") > 0 {
-            netgame = 1;
+            GAME.borrow_mut().netgame = 1;
         }
     }
 }
@@ -462,7 +463,7 @@ pub fn D_ConnectNetGame() {
 /// `D_CheckNetGame` in `d_net.c`.
 pub fn D_CheckNetGame() {
     unsafe {
-        if netgame != 0 {
+        if netgame() != 0 {
             DOOM_MAIN.borrow_mut().autostart = 1;
         }
 

@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::game;
+use room::engine::game::{self, GameState};
 
 // ---------------------------------------------------------------------------
 // Forward-movement speed table
@@ -23,38 +23,33 @@ use room::engine::game;
 /// This value has been stable since the original Doom 1.9 release.
 #[test]
 fn forwardmove_slow_is_0x19() {
-    unsafe {
-        assert_eq!(
-            game::forwardmove[0],
-            0x19,
-            "slow forwardmove should be 0x19 (25)"
-        );
-    }
+    assert_eq!(
+        GameState::new().forwardmove[0],
+        0x19,
+        "slow forwardmove should be 0x19 (25)"
+    );
 }
 
 /// Fast-run forward speed must be 0x32 = 50 fixed-point units per tic.
 #[test]
 fn forwardmove_fast_is_0x32() {
-    unsafe {
-        assert_eq!(
-            game::forwardmove[1],
-            0x32,
-            "fast forwardmove should be 0x32 (50)"
-        );
-    }
+    assert_eq!(
+        GameState::new().forwardmove[1],
+        0x32,
+        "fast forwardmove should be 0x32 (50)"
+    );
 }
 
 /// The fast forward speed is exactly double the slow speed.
 /// Vanilla Doom: `{0x19, 0x32}` = `{25, 50}`.
 #[test]
 fn forwardmove_fast_is_double_slow() {
-    unsafe {
-        assert_eq!(
-            game::forwardmove[1],
-            game::forwardmove[0] * 2,
-            "fast forwardmove should be 2× slow"
-        );
-    }
+    let forwardmove = GameState::new().forwardmove;
+    assert_eq!(
+        forwardmove[1],
+        forwardmove[0] * 2,
+        "fast forwardmove should be 2× slow"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -64,17 +59,21 @@ fn forwardmove_fast_is_double_slow() {
 /// Slow strafe speed is 0x18 = 24 units/tic.
 #[test]
 fn sidemove_slow_is_0x18() {
-    unsafe {
-        assert_eq!(game::sidemove[0], 0x18, "slow sidemove should be 0x18 (24)");
-    }
+    assert_eq!(
+        GameState::new().sidemove[0],
+        0x18,
+        "slow sidemove should be 0x18 (24)"
+    );
 }
 
 /// Fast strafe speed is 0x28 = 40 units/tic.
 #[test]
 fn sidemove_fast_is_0x28() {
-    unsafe {
-        assert_eq!(game::sidemove[1], 0x28, "fast sidemove should be 0x28 (40)");
-    }
+    assert_eq!(
+        GameState::new().sidemove[1],
+        0x28,
+        "fast sidemove should be 0x28 (40)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -84,17 +83,21 @@ fn sidemove_fast_is_0x28() {
 /// Normal turn speed is 640 BAM (binary-angle-measurement) units per tic.
 #[test]
 fn angleturn_normal_is_640() {
-    unsafe {
-        assert_eq!(game::angleturn[0], 640, "normal angleturn should be 640");
-    }
+    assert_eq!(
+        GameState::new().angleturn[0],
+        640,
+        "normal angleturn should be 640"
+    );
 }
 
 /// Fast turn speed (with the run key) is 1280 BAM units per tic.
 #[test]
 fn angleturn_fast_is_1280() {
-    unsafe {
-        assert_eq!(game::angleturn[1], 1280, "fast angleturn should be 1280");
-    }
+    assert_eq!(
+        GameState::new().angleturn[1],
+        1280,
+        "fast angleturn should be 1280"
+    );
 }
 
 /// Slow turn speed is 320 BAM units per tic.  This is used for the first
@@ -102,21 +105,22 @@ fn angleturn_fast_is_1280() {
 /// player from accidentally over-rotating when they just tap the key.
 #[test]
 fn angleturn_slow_is_320() {
-    unsafe {
-        assert_eq!(game::angleturn[2], 320, "slow angleturn should be 320");
-    }
+    assert_eq!(
+        GameState::new().angleturn[2],
+        320,
+        "slow angleturn should be 320"
+    );
 }
 
 /// Fast turn speed is exactly 2× normal turn speed.
 #[test]
 fn angleturn_fast_is_double_normal() {
-    unsafe {
-        assert_eq!(
-            game::angleturn[1],
-            game::angleturn[0] * 2,
-            "fast angleturn should be 2× normal"
-        );
-    }
+    let angleturn = GameState::new().angleturn;
+    assert_eq!(
+        angleturn[1],
+        angleturn[0] * 2,
+        "fast angleturn should be 2× normal"
+    );
 }
 
 /// Slow turn speed is exactly half the normal turn speed.
@@ -124,13 +128,12 @@ fn angleturn_fast_is_double_normal() {
 /// turn key is first pressed; important to preserve in any Rust port.
 #[test]
 fn angleturn_slow_is_half_normal() {
-    unsafe {
-        assert_eq!(
-            game::angleturn[2],
-            game::angleturn[0] / 2,
-            "slow angleturn should be angleturn[0]/2"
-        );
-    }
+    let angleturn = GameState::new().angleturn;
+    assert_eq!(
+        angleturn[2],
+        angleturn[0] / 2,
+        "slow angleturn should be angleturn[0]/2"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,14 +145,12 @@ fn angleturn_slow_is_half_normal() {
 /// per axis; if `forwardmove[1]` ever changes, the turbo logic breaks.
 #[test]
 fn forwardmove_fast_equals_turbothreshold() {
-    unsafe {
-        // TURBOTHRESHOLD = 0x32 = 50 = forwardmove[1]
-        assert_eq!(
-            game::forwardmove[1],
-            game::TURBOTHRESHOLD,
-            "forwardmove[1] (MAXPLMOVE) should equal TURBOTHRESHOLD (0x32)"
-        );
-    }
+    // TURBOTHRESHOLD = 0x32 = 50 = forwardmove[1]
+    assert_eq!(
+        GameState::new().forwardmove[1],
+        game::TURBOTHRESHOLD,
+        "forwardmove[1] (MAXPLMOVE) should equal TURBOTHRESHOLD (0x32)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -183,56 +184,45 @@ fn bodyquesize_is_32() {
 /// 0x2c000-byte maximum unless `-nosavelimit` is used.
 #[test]
 fn vanilla_savegame_limit_is_one() {
-    unsafe {
-        assert_eq!({ game::vanilla_savegame_limit }, 1);
-    }
+    assert_eq!(GameState::new().vanilla_savegame_limit, 1);
 }
 
 /// `vanilla_demo_limit = 1` by default: demos respect the vanilla size cap.
 #[test]
 fn vanilla_demo_limit_is_one() {
-    unsafe {
-        assert_eq!({ game::vanilla_demo_limit }, 1);
-    }
+    assert_eq!(GameState::new().vanilla_demo_limit, 1);
 }
 
 /// `precache = true` by default: all graphics are preloaded at level start
 /// unless `-noprecache` is passed on the command line.
 #[test]
 fn precache_is_true_by_default() {
-    unsafe {
-        assert_ne!(
-            { game::precache },
-            0,
-            "precache should be true (non-zero) by default"
-        );
-    }
+    assert_ne!(
+        GameState::new().precache,
+        0,
+        "precache should be true (non-zero) by default"
+    );
 }
 
 /// `testcontrols` starts false; it is set true only by `-testcontrols`.
 #[test]
 fn testcontrols_is_false_by_default() {
-    unsafe {
-        assert_eq!({ game::testcontrols }, 0);
-    }
+    assert_eq!(GameState::new().testcontrols, 0);
 }
 
 /// `bodyqueslot` is the write index into the ring buffer; starts at zero.
 #[test]
 fn bodyqueslot_default_zero() {
-    unsafe {
-        assert_eq!({ game::bodyqueslot }, 0);
-    }
+    assert_eq!(GameState::new().bodyqueslot, 0);
 }
 
 /// Level-start tic and kill/item/secret totals are all zero before a level
 /// has been loaded.
 #[test]
 fn level_counters_default_zero() {
-    unsafe {
-        assert_eq!({ game::levelstarttic }, 0, "levelstarttic");
-        assert_eq!({ game::totalkills }, 0, "totalkills");
-        assert_eq!({ game::totalitems }, 0, "totalitems");
-        assert_eq!({ game::totalsecret }, 0, "totalsecret");
-    }
+    let game = GameState::new();
+    assert_eq!(game.levelstarttic, 0, "levelstarttic");
+    assert_eq!(game.totalkills, 0, "totalkills");
+    assert_eq!(game.totalitems, 0, "totalitems");
+    assert_eq!(game.totalsecret, 0, "totalsecret");
 }

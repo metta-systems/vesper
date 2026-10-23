@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::play;
+use room::engine::play::{self, map::MapState};
 
 // ---------------------------------------------------------------------------
 // DEFAULT_SPECHIT_MAGIC — spechit overflow sentinel
@@ -37,19 +37,15 @@ fn default_spechit_magic_value() {
 /// P_CheckPosition test.  Before any check is run the array is all zero.
 #[test]
 fn tmbbox_default_zero() {
-    unsafe {
-        for (i, &v) in (*&raw const play::map::tmbbox).iter().enumerate() {
-            assert_eq!(v, 0, "tmbbox[{i}] should be 0 before P_CheckPosition");
-        }
+    for (i, &v) in MapState::new().tmbbox.iter().enumerate() {
+        assert_eq!(v, 0, "tmbbox[{i}] should be 0 before P_CheckPosition");
     }
 }
 
 /// `tmbbox` must contain exactly 4 entries (one per box edge).
 #[test]
 fn tmbbox_length_is_4() {
-    unsafe {
-        assert_eq!((*&raw const play::map::tmbbox).len(), 4);
-    }
+    assert_eq!(MapState::new().tmbbox.len(), 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -59,58 +55,50 @@ fn tmbbox_length_is_4() {
 /// `tmflags` holds the MF_* flags of the thing under test; zero before first use.
 #[test]
 fn tmflags_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::map::tmflags },
-            0,
-            "tmflags should be 0 before P_CheckPosition"
-        );
-    }
+    assert_eq!(
+        MapState::new().tmflags,
+        0,
+        "tmflags should be 0 before P_CheckPosition"
+    );
 }
 
 /// `tmx` and `tmy` are the proposed new position; zero before first use.
 #[test]
 fn tmx_tmy_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::tmx }, 0, "tmx");
-        assert_eq!({ play::map::tmy }, 0, "tmy");
-    }
+    let map = MapState::new();
+    assert_eq!(map.tmx, 0, "tmx");
+    assert_eq!(map.tmy, 0, "tmy");
 }
 
 /// `floatok` is the "move is possible" flag; false (0) before any check.
 #[test]
 fn floatok_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::map::floatok },
-            0,
-            "floatok should be false before P_CheckPosition"
-        );
-    }
+    assert_eq!(
+        MapState::new().floatok,
+        0,
+        "floatok should be false before P_CheckPosition"
+    );
 }
 
 /// `tmfloorz`, `tmceilingz`, and `tmdropoffz` hold the Z extents at the test
 /// position; all start at zero.
 #[test]
 fn tm_z_globals_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::tmfloorz }, 0, "tmfloorz");
-        assert_eq!({ play::map::tmceilingz }, 0, "tmceilingz");
-        assert_eq!({ play::map::tmdropoffz }, 0, "tmdropoffz");
-    }
+    let map = MapState::new();
+    assert_eq!(map.tmfloorz, 0, "tmfloorz");
+    assert_eq!(map.tmceilingz, 0, "tmceilingz");
+    assert_eq!(map.tmdropoffz, 0, "tmdropoffz");
 }
 
 /// `numspechit` counts the special lines crossed during P_CheckPosition;
 /// starts at zero.
 #[test]
 fn numspechit_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::map::numspechit },
-            0,
-            "numspechit should be 0 before P_CheckPosition"
-        );
-    }
+    assert_eq!(
+        MapState::new().numspechit,
+        0,
+        "numspechit should be 0 before P_CheckPosition"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -121,35 +109,27 @@ fn numspechit_default_zero() {
 /// before any attack traversal.
 #[test]
 fn shootz_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::shootz }, 0, "shootz");
-    }
+    assert_eq!(MapState::new().shootz, 0, "shootz");
 }
 
 /// `la_damage` is the damage for the current line-attack trace; zero before
 /// any attack (0 means "aim only" in P_AimLineAttack).
 #[test]
 fn la_damage_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::la_damage }, 0, "la_damage");
-    }
+    assert_eq!(MapState::new().la_damage, 0, "la_damage");
 }
 
 /// `attackrange` is the maximum range of the current attack; zero before use.
 #[test]
 fn attackrange_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::attackrange }, 0, "attackrange");
-    }
+    assert_eq!(MapState::new().attackrange, 0, "attackrange");
 }
 
 /// `aimslope` is the computed vertical slope of the aiming trace; zero before
 /// P_AimLineAttack has been called.
 #[test]
 fn aimslope_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::aimslope }, 0, "aimslope");
-    }
+    assert_eq!(MapState::new().aimslope, 0, "aimslope");
 }
 
 // ---------------------------------------------------------------------------
@@ -160,10 +140,9 @@ fn aimslope_default_zero() {
 /// nearest and second-nearest slide walls; zero before P_SlideMove runs.
 #[test]
 fn slide_fracs_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::bestslidefrac }, 0, "bestslidefrac");
-        assert_eq!({ play::map::secondslidefrac }, 0, "secondslidefrac");
-    }
+    let map = MapState::new();
+    assert_eq!(map.bestslidefrac, 0, "bestslidefrac");
+    assert_eq!(map.secondslidefrac, 0, "secondslidefrac");
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +153,5 @@ fn slide_fracs_default_zero() {
 /// zero before the function is called.
 #[test]
 fn bombdamage_default_zero() {
-    unsafe {
-        assert_eq!({ play::map::bombdamage }, 0, "bombdamage");
-    }
+    assert_eq!(MapState::new().bombdamage, 0, "bombdamage");
 }

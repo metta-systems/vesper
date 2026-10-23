@@ -11,7 +11,7 @@ use crate::engine::{
     math::fixed::{fixed_t, FRACUNIT},
     play::{
         map::P_ChangeSector,
-        setup::sectors,
+        setup::level,
         spec::{
             getSector, getSide, twoSided, P_FindHighestFloorSurrounding,
             P_FindLowestCeilingSurrounding, P_FindLowestFloorSurrounding, P_FindNextHighestFloor,
@@ -277,7 +277,7 @@ pub unsafe fn T_MoveFloor(floor: *mut floormove_t) {
         (*floor).direction,
     );
 
-    if (leveltime & 7) == 0 {
+    if (leveltime() & 7) == 0 {
         S_StartSectorSound(&raw mut (*(*floor).sector).soundorg, Sfx::Stnmov as i32);
     }
 
@@ -332,6 +332,7 @@ pub unsafe fn EV_DoFloor(line: *mut line_t, floortype: i32) -> i32 {
         secnum
     } >= 0
     {
+        let sectors = level().sectors;
         let sec = sectors.add(secnum as usize);
 
         if !(*sec).specialdata.is_null() {
@@ -508,6 +509,7 @@ pub unsafe fn EV_BuildStairs(line: *mut line_t, stype: i32) -> i32 {
         secnum
     } >= 0
     {
+        let sectors = level().sectors;
         let mut sec = sectors.add(secnum as usize);
 
         if !(*sec).specialdata.is_null() {

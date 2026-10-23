@@ -18,12 +18,10 @@ use {crate::harness::C_GLOBAL_LOCK, room::engine::play};
 /// values are baked into `P_GiveAmmo` and the cheat handler.
 #[test]
 fn maxammo_values() {
-    unsafe {
-        assert_eq!(play::inter::maxammo[0], 200); // bullets
-        assert_eq!(play::inter::maxammo[1], 50); // shells
-        assert_eq!(play::inter::maxammo[2], 300); // cells
-        assert_eq!(play::inter::maxammo[3], 50); // rockets
-    }
+    assert_eq!(play::inter::maxammo[0], 200); // bullets
+    assert_eq!(play::inter::maxammo[1], 50); // shells
+    assert_eq!(play::inter::maxammo[2], 300); // cells
+    assert_eq!(play::inter::maxammo[3], 50); // rockets
 }
 
 /// `clipammo[]` records how many rounds are awarded per ammo pickup of each
@@ -40,11 +38,9 @@ fn clipammo_values() {
 /// otherwise no ammo of that type can ever be picked up.
 #[test]
 fn ammo_arrays_positive() {
-    unsafe {
-        for i in 0..4 {
-            assert!(play::inter::maxammo[i] > 0, "maxammo[{}] must be > 0", i);
-            assert!(play::inter::clipammo[i] > 0, "clipammo[{}] must be > 0", i);
-        }
+    for i in 0..4 {
+        assert!(play::inter::maxammo[i] > 0, "maxammo[{}] must be > 0", i);
+        assert!(play::inter::clipammo[i] > 0, "clipammo[{}] must be > 0", i);
     }
 }
 
@@ -57,12 +53,10 @@ fn ammo_arrays_positive() {
 /// same constant.
 #[test]
 fn intercepts_array_length() {
-    unsafe {
-        assert_eq!(
-            (*&raw const play::maputl::intercepts).len(),
-            play::maputl::MAXINTERCEPTS
-        );
-    }
+    assert_eq!(
+        play::maputl::INTERCEPTS.borrow().len(),
+        play::maputl::MAXINTERCEPTS
+    );
 }
 
 /// `intercept_p` is the write cursor into `intercepts[]`; it must be NULL
@@ -71,9 +65,8 @@ fn intercepts_array_length() {
 #[test]
 fn intercept_p_initially_null() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        // Ensure we test the null state even if another test ran first.
-        play::maputl::intercept_p = std::ptr::null_mut();
-        assert!(play::maputl::intercept_p.is_null());
-    }
+    assert!(play::maputl::MapUtlState::new().intercept_p.is_null());
+    // Ensure we test the null state even if another test ran first.
+    play::maputl::MAPUTL.borrow_mut().intercept_p = std::ptr::null_mut();
+    assert!(play::maputl::MAPUTL.borrow().intercept_p.is_null());
 }

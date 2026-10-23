@@ -6,13 +6,11 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::{
     engine::{
         doom,
         doom::{
-            player::{consoleplayer, players, MAXPLAYERS},
+            player::{consoleplayer, MAXPLAYERS},
             stat::{gamemission, gamemode, gameversion, modifiedgame, STAT},
         },
         global::Global,
@@ -324,11 +322,9 @@ use crate::engine::doom::net::drone;
 
 // g_game.rs
 use crate::engine::game::{
-    deathmatch, demoplayback, demorecording, displayplayer, forwardmove, gameaction, gamestate,
-    netgame, nodrawers, paused, sidemove, singledemo, testcontrols, testcontrols_mousespeed,
-    usergame, vanilla_demo_limit, vanilla_savegame_limit, viewactive, G_BeginRecording,
+    demoplayback, displayplayer, gameaction, gamestate, netgame, paused, player, G_BeginRecording,
     G_DeferedPlayDemo, G_InitNew, G_LoadGame, G_RecordDemo, G_Responder, G_TimeDemo,
-    G_VanillaVersionCode,
+    G_VanillaVersionCode, GAME,
 };
 
 // am_map.rs
@@ -525,6 +521,10 @@ pub fn D_ProcessEvents() {
 /// Draw current display, possibly wiping it from the previous frame.
 pub fn D_Display() {
     unsafe {
+        let (nodrawers, gamestate) = {
+            let game = GAME.borrow();
+            (game.nodrawers, game.gamestate)
+        };
         if nodrawers != 0 {
             return;
         }
@@ -580,9 +580,9 @@ pub fn D_Display() {
 
         // Draw the view directly
         if gamestate == GS_LEVEL && !automap_active() && gametic() != 0 {
-            let dp = displayplayer as usize;
+            let dp = displayplayer() as usize;
             if dp < MAXPLAYERS {
-                R_RenderPlayerView(std::ptr::addr_of_mut!(players[dp]));
+                R_RenderPlayerView(player(dp));
             }
             HU_Drawer();
         }
@@ -615,6 +615,10 @@ pub fn D_Display() {
         }
 
         // Test controls: show mouse speed box
+        let (testcontrols, testcontrols_mousespeed) = {
+            let game = GAME.borrow();
+            (game.testcontrols, game.testcontrols_mousespeed)
+        };
         if testcontrols != 0 {
             V_DrawMouseSpeedBox(testcontrols_mousespeed);
         }
@@ -625,6 +629,7 @@ pub fn D_Display() {
                 let menu = MENU.borrow();
                 (menu.menuactive, menu.inhelpscreens)
             };
+            let viewactive = GAME.borrow().viewactive;
             let mut main = DOOM_MAIN.borrow_mut();
             main.display_menuactive = menuactive;
             main.display_viewactive = viewactive;
@@ -634,7 +639,7 @@ pub fn D_Display() {
         }
 
         // Draw pause pic
-        if paused != 0 {
+        if paused() != 0 {
             let (viewwindowx, viewwindowy, scaledviewwidth) = {
                 let draw = DRAW.borrow();
                 (draw.viewwindowx, draw.viewwindowy, draw.scaledviewwidth)
@@ -736,13 +741,14 @@ pub fn D_BindVariables() {
         M_BindVariable("screenblocks", (&raw mut (*menu).screenblocks).cast());
         M_BindVariable("detaillevel", (&raw mut (*menu).detailLevel).cast());
         M_BindVariable("snd_channels", (&raw mut (*sound).snd_channels).cast());
+        let game = GAME.as_ptr();
         M_BindVariable(
             "vanilla_savegame_limit",
-            &raw mut vanilla_savegame_limit as *mut c_void,
+            (&raw mut (*game).vanilla_savegame_limit).cast(),
         );
         M_BindVariable(
             "vanilla_demo_limit",
-            &raw mut vanilla_demo_limit as *mut c_void,
+            (&raw mut (*game).vanilla_demo_limit).cast(),
         );
         M_BindVariable(
             "show_endoom",
@@ -768,22 +774,20 @@ pub fn D_BindVariables() {
 ///
 /// The mouse is released for drone players, while the menu is open, or while a demo is playing.
 fn D_GrabMouseCallback() -> Boolean {
-    unsafe {
-        // Drone players don't need mouse focus
-        if drone != 0 {
-            return Boolean::FALSE;
-        }
-
-        // When menu is active or game is paused, release the mouse
-        if menu_active() || paused != 0 {
-            return Boolean::FALSE;
-        }
-
-        // Only grab mouse when playing levels (but not demos)
-        let demoplayback_val: i32 = demoplayback;
-        let advancedemo_val: i32 = DOOM_MAIN.borrow().advancedemo;
-        Boolean::from(gamestate == GS_LEVEL && demoplayback_val == 0 && advancedemo_val == 0)
+    // Drone players don't need mouse focus
+    if drone != 0 {
+        return Boolean::FALSE;
     }
+
+    // When menu is active or game is paused, release the mouse
+    if menu_active() || paused() != 0 {
+        return Boolean::FALSE;
+    }
+
+    // Only grab mouse when playing levels (but not demos)
+    let demoplayback_val: i32 = demoplayback();
+    let advancedemo_val: i32 = DOOM_MAIN.borrow().advancedemo;
+    Boolean::from(gamestate() == GS_LEVEL && demoplayback_val == 0 && advancedemo_val == 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -801,9 +805,9 @@ pub fn doomgeneric_Tick() {
         TryRunTics(); // will run at least one tic
 
         // Update positional sounds
-        let console = consoleplayer;
+        let console = consoleplayer();
         let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
-            players[console as usize].mo
+            (*player(console as usize)).mo
         } else {
             std::ptr::null_mut()
         };
@@ -824,9 +828,9 @@ pub fn doomgeneric_Tick() {
 pub fn D_DoomLoop() {
     unsafe {
         if DOOM_MAIN.borrow().bfgedition != 0 {
-            let is_recording = demorecording;
-            let is_playdemo = gameaction == ga_playdemo;
-            if is_recording != 0 || is_playdemo || netgame != 0 {
+            let is_recording = GAME.borrow().demorecording;
+            let is_playdemo = gameaction() == ga_playdemo;
+            if is_recording != 0 || is_playdemo || netgame() != 0 {
                 eprintln!(
                     " WARNING: You are playing using one of the Doom Classic\n\
                      IWAD files shipped with the Doom 3: BFG Edition. These are\n\
@@ -836,7 +840,7 @@ pub fn D_DoomLoop() {
             }
         }
 
-        if demorecording != 0 {
+        if GAME.borrow().demorecording != 0 {
             G_BeginRecording();
         }
 
@@ -862,8 +866,8 @@ pub fn D_DoomLoop() {
 
         D_StartGameLoop();
 
-        if testcontrols != 0 {
-            DOOM_MAIN.borrow_mut().wipegamestate = gamestate;
+        if GAME.borrow().testcontrols != 0 {
+            DOOM_MAIN.borrow_mut().wipegamestate = gamestate();
         }
 
         doomgeneric_Tick();
@@ -908,15 +912,18 @@ fn set_page(pagetic: i32, pagename: &'static [u8]) {
 pub fn D_DoAdvanceDemo() {
     unsafe {
         // Set player state to live (PST_LIVE = 1)
-        let cp = consoleplayer;
+        let cp = consoleplayer();
         if cp >= 0 && (cp as usize) < MAXPLAYERS {
-            players[cp as usize].playerstate = 1;
+            (*player(cp as usize)).playerstate = 1;
         }
 
         DOOM_MAIN.borrow_mut().advancedemo = 0;
-        usergame = 0;
-        paused = 0;
-        gameaction = ga_nothing;
+        {
+            let mut game = GAME.borrow_mut();
+            game.usergame = 0;
+            game.paused = 0;
+            game.gameaction = ga_nothing;
+        }
 
         // Demo sequence: 7 for ultimate/final, 6 for others
         let max_seq = {
@@ -940,7 +947,7 @@ pub fn D_DoAdvanceDemo() {
                 } else {
                     170
                 };
-                gamestate = GS_DEMOSCREEN;
+                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
                 set_page(pagetic, b"TITLEPIC");
                 if gamemode() == doom::mode::commercial {
                     S_StartMusic(Mus::Dm2ttl as i32);
@@ -952,14 +959,14 @@ pub fn D_DoAdvanceDemo() {
                 G_DeferedPlayDemo("demo1");
             }
             2 => {
-                gamestate = GS_DEMOSCREEN;
+                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
                 set_page(200, b"CREDIT");
             }
             3 => {
                 G_DeferedPlayDemo("demo2");
             }
             4 => {
-                gamestate = GS_DEMOSCREEN;
+                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
                 if gamemode() == doom::mode::commercial {
                     set_page(TICRATE * 11, b"TITLEPIC");
                     S_StartMusic(Mus::Dm2ttl as i32);
@@ -995,9 +1002,7 @@ pub fn D_DoAdvanceDemo() {
 
 /// Start the title screen demo sequence.
 pub fn D_StartTitle() {
-    unsafe {
-        gameaction = ga_nothing;
-    }
+    GAME.borrow_mut().gameaction = ga_nothing;
     DOOM_MAIN.borrow_mut().demosequence = -1;
     D_AdvanceDemo();
 }
@@ -1365,11 +1370,11 @@ pub fn D_DoomMain() {
         I_DisplayFPSDots(Boolean::from(devparm != 0));
 
         if M_CheckParm("-deathmatch") != 0 {
-            deathmatch = 1;
+            GAME.borrow_mut().deathmatch = 1;
         }
 
         if M_CheckParm("-altdeath") != 0 {
-            deathmatch = 2;
+            GAME.borrow_mut().deathmatch = 2;
         }
 
         if devparm != 0 {
@@ -1391,10 +1396,11 @@ pub fn D_DoomMain() {
 
             println!("turbo scale: {}%", scale);
 
-            forwardmove[0] = forwardmove[0] * scale / 100;
-            forwardmove[1] = forwardmove[1] * scale / 100;
-            sidemove[0] = sidemove[0] * scale / 100;
-            sidemove[1] = sidemove[1] * scale / 100;
+            let mut game = GAME.borrow_mut();
+            game.forwardmove[0] = game.forwardmove[0] * scale / 100;
+            game.forwardmove[1] = game.forwardmove[1] * scale / 100;
+            game.sidemove[0] = game.sidemove[0] * scale / 100;
+            game.sidemove[1] = game.sidemove[1] * scale / 100;
         }
 
         // Init subsystems
@@ -1596,7 +1602,7 @@ pub fn D_DoomMain() {
             startepisode = 1;
             startmap = 1;
             autostart = 1;
-            testcontrols = 1;
+            GAME.borrow_mut().testcontrols = 1;
         }
 
         // -loadgame
@@ -1662,7 +1668,7 @@ pub fn D_DoomMain() {
         // -playdemo
         let p = M_CheckParmWithArgs("-playdemo", 1);
         if p > 0 {
-            singledemo = 1;
+            GAME.borrow_mut().singledemo = 1;
             G_DeferedPlayDemo(&demolumpname);
             D_DoomLoop();
             return;
@@ -1683,7 +1689,7 @@ pub fn D_DoomMain() {
         }
 
         // Start new game or title screen
-        if gameaction != ga_loadgame {
+        if gameaction() != ga_loadgame {
             let (autostart, startskill, startepisode, startmap) = {
                 let main = DOOM_MAIN.borrow();
                 (
@@ -1693,7 +1699,7 @@ pub fn D_DoomMain() {
                     main.startmap,
                 )
             };
-            if autostart != 0 || netgame != 0 {
+            if autostart != 0 || netgame() != 0 {
                 G_InitNew(startskill, startepisode, startmap);
             } else {
                 D_StartTitle();

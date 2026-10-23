@@ -118,36 +118,28 @@ fn skullspeed_is_20_fracunits() {
 /// before `P_SpawnBrainTargets` runs.
 #[test]
 fn braintargets_initially_null() {
-    unsafe {
-        for (i, &ptr) in (*&raw const enemy::braintargets).iter().enumerate() {
-            assert!(
-                ptr.is_null(),
-                "braintargets[{i}] should be NULL before spawn"
-            );
-        }
+    for (i, &ptr) in enemy::EnemyState::new().braintargets.iter().enumerate() {
+        assert!(
+            ptr.is_null(),
+            "braintargets[{i}] should be NULL before spawn"
+        );
     }
 }
 
 /// `braintargets` has exactly 32 slots.
 #[test]
 fn braintargets_has_32_slots() {
-    unsafe {
-        assert_eq!((*&raw const enemy::braintargets).len(), 32);
-    }
+    assert_eq!(enemy::EnemyState::new().braintargets.len(), 32);
 }
 
 /// `numbraintargets` is zero before `P_SpawnBrainTargets` fills the list.
 #[test]
 fn numbraintargets_default_zero() {
-    unsafe {
-        assert_eq!({ enemy::numbraintargets }, 0);
-    }
+    assert_eq!(enemy::EnemyState::new().numbraintargets, 0);
 }
 
 /// `braintargeton` is the round-robin index; starts at 0.
 #[test]
 fn braintargeton_default_zero() {
-    unsafe {
-        assert_eq!({ enemy::braintargeton }, 0);
-    }
+    assert_eq!(enemy::EnemyState::new().braintargeton, 0);
 }

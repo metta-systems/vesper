@@ -219,8 +219,8 @@ use crate::engine::{
         strings::{doom1_endmsg, doom2_endmsg},
     },
     game::{
-        demoplayback, gamestate, netgame, testcontrols, usergame, G_DeferedInitNew, G_LoadGame,
-        G_SaveGame, G_ScreenShot,
+        demoplayback, gamestate, netgame, G_DeferedInitNew, G_LoadGame, G_SaveGame, G_ScreenShot,
+        GAME,
     },
     hud::stuff::HUD,
     interface::{
@@ -709,7 +709,7 @@ fn M_LoadSelect(choice: i32) {
 
 /// Navigate to the Load Game menu page (suppressed during network games).
 fn M_LoadGame(_choice: i32) {
-    if unsafe { netgame } != 0 {
+    if netgame() != 0 {
         M_StartMessage(LOADNET, None, 0);
         return;
     }
@@ -766,14 +766,12 @@ fn M_SaveSelect(choice: i32) {
 /// Navigate to the Save Game menu page (suppressed when not in-game or not at `GS_LEVEL`).
 fn M_SaveGame(_choice: i32) {
     const GS_LEVEL: i32 = 0;
-    unsafe {
-        if usergame == 0 {
-            M_StartMessage(SAVEDEAD, None, 0);
-            return;
-        }
-        if gamestate != GS_LEVEL {
-            return;
-        }
+    if GAME.borrow().usergame == 0 {
+        M_StartMessage(SAVEDEAD, None, 0);
+        return;
+    }
+    if gamestate() != GS_LEVEL {
+        return;
     }
     M_SetupNextMenu(page!(SaveDef));
     M_ReadSaveStrings();
@@ -786,14 +784,12 @@ fn M_SaveGame(_choice: i32) {
 /// "waiting for slot selection". Otherwise shows a y/n confirmation prompt.
 fn M_QuickSave() {
     const GS_LEVEL: i32 = 0;
-    unsafe {
-        if usergame == 0 {
-            S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
-            return;
-        }
-        if gamestate != GS_LEVEL {
-            return;
-        }
+    if GAME.borrow().usergame == 0 {
+        S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
+        return;
+    }
+    if gamestate() != GS_LEVEL {
+        return;
     }
     if MENU.borrow().quickSaveSlot < 0 {
         M_StartControlPanel();
@@ -838,7 +834,7 @@ fn M_QuickSaveResponse(key: i32) {
 ///
 /// Suppressed during network games. Shows a y/n confirmation before loading.
 fn M_QuickLoad() {
-    if unsafe { netgame } != 0 {
+    if netgame() != 0 {
         M_StartMessage(QLOADNET, None, 0);
         return;
     }
@@ -996,7 +992,7 @@ fn M_DrawNewGame() {
 /// Shows an error message if in a network game (except demo playback).
 /// Skips the episode menu for Doom II (commercial) and Chex Quest.
 fn M_NewGame(_choice: i32) {
-    if unsafe { netgame != 0 && demoplayback == 0 } {
+    if netgame() != 0 && demoplayback() == 0 {
         M_StartMessage(NEWGAME, None, 0);
         return;
     }
@@ -1135,11 +1131,11 @@ fn M_EndGameResponse(key: i32) {
 
 /// Prompt the player to confirm ending the current game (suppressed if not in-game or in a network game).
 fn M_EndGame(_choice: i32) {
-    if unsafe { usergame } == 0 {
+    if GAME.borrow().usergame == 0 {
         S_StartSound(ptr::null_mut(), Sfx::Oof as i32);
         return;
     }
-    if unsafe { netgame } != 0 {
+    if netgame() != 0 {
         M_StartMessage(NETEND, None, 0);
         return;
     }
@@ -1189,7 +1185,7 @@ fn M_QuitResponse(key: i32) {
     if key != CONTROLS.borrow().key_menu_confirm {
         return;
     }
-    if unsafe { netgame } == 0 {
+    if netgame() == 0 {
         if gamemode() == doom::mode::commercial {
             S_StartSound(
                 ptr::null_mut(),
@@ -1434,7 +1430,7 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
         let ev = &*ev;
 
         // testcontrols mode
-        if testcontrols != 0 {
+        if GAME.borrow().testcontrols != 0 {
             if ev.kind == EV_QUIT
                 || (ev.kind == EV_KEYDOWN
                     && (ev.data1 == key_menu_activate || ev.data1 == key_menu_quit))

@@ -25,7 +25,7 @@ use crate::engine::{
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        setup::{numsectors, sectors},
+        setup::{level, LevelState},
         tick::{thinkercap, ThinkerContainer, ThinkerKind},
     },
     sound::{info::Sfx, S_StartSound},
@@ -70,14 +70,20 @@ pub fn EV_Teleport(line: *mut line_t, side: i32, thing: *mut mobj_t) -> i32 {
         }
 
         let tag = (*line).tag;
+        let LevelState {
+            numsectors,
+            sectors,
+            ..
+        } = level();
+        let cap = thinkercap();
 
         for i in 0..numsectors as usize {
             if (*sectors.add(i)).tag != tag {
                 continue;
             }
 
-            let mut thinker = thinkercap.next;
-            while !std::ptr::eq(thinker, &raw const thinkercap) {
+            let mut thinker = (*cap).next;
+            while !std::ptr::eq(thinker, cap) {
                 // Not a mobj
                 if (*thinker).kind != ThinkerKind::Mobj {
                     thinker = (*thinker).next;

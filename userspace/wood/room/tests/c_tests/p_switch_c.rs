@@ -53,22 +53,20 @@ fn buttontime_equals_ticrate() {
 /// `switchlist[MAXSWITCHES * 2]` has exactly 100 elements.
 #[test]
 fn switchlist_length_is_maxswitches_times_2() {
-    unsafe {
-        assert_eq!(
-            (*&raw const play::switch::switchlist).len(),
-            play::switch::MAXSWITCHES * 2
-        );
-        assert_eq!((*&raw const play::switch::switchlist).len(), 100);
-    }
+    let switchlist = play::switch::SwitchState::new().switchlist;
+    assert_eq!(switchlist.len(), play::switch::MAXSWITCHES * 2);
+    assert_eq!(switchlist.len(), 100);
 }
 
 /// Before `P_InitSwitchList` runs, the entire array is zero.
 #[test]
 fn switchlist_default_zero() {
-    unsafe {
-        for (i, &v) in (*&raw const play::switch::switchlist).iter().enumerate() {
-            assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
-        }
+    for (i, &v) in play::switch::SwitchState::new()
+        .switchlist
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
     }
 }
 
@@ -79,11 +77,9 @@ fn switchlist_default_zero() {
 /// `numswitches` is zero before `P_InitSwitchList` fills the table.
 #[test]
 fn numswitches_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::switch::numswitches },
-            0,
-            "numswitches should be 0 before P_InitSwitchList"
-        );
-    }
+    assert_eq!(
+        play::switch::SwitchState::new().numswitches,
+        0,
+        "numswitches should be 0 before P_InitSwitchList"
+    );
 }

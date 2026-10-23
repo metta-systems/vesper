@@ -121,7 +121,7 @@ impl SoundOrigin {
 use crate::engine::doom::stat::gamemode;
 
 // g_game.rs
-use crate::engine::game::{consoleplayer, gameepisode, gamemap, players};
+use crate::engine::game::{console_player, gameepisode, gamemap};
 
 // i_sound.rs
 use crate::engine::interface::sound::{
@@ -313,6 +313,7 @@ pub fn S_Start() {
         SOUND.borrow_mut().mus_paused = 0;
 
         let mnum: i32;
+        let (gameepisode, gamemap) = (gameepisode(), gamemap());
 
         if gamemode() == doom::mode::commercial {
             mnum = Mus::Runnin as i32 + gamemap - 1;
@@ -449,6 +450,7 @@ unsafe fn S_AdjustSoundParams(
         .wrapping_add(ady)
         .wrapping_sub((if adx < ady { adx } else { ady }) >> 1);
 
+    let gamemap = gamemap();
     if gamemap != 8 && approx_dist > S_CLIPPING_DIST {
         return 0;
     }
@@ -530,7 +532,7 @@ fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
 
         let mut sep: i32 = NORM_SEP;
 
-        let player_mo = (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).mo;
+        let player_mo = (*console_player()).mo;
         if let Some(source) = origin.filter(|&source| source != SoundOrigin::Mobj(player_mo)) {
             let listener = player_mo;
             let rc = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);

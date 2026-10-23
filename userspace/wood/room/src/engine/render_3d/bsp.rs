@@ -46,10 +46,11 @@ const NF_SUBSECTOR: u32 = 0x8000;
 // the existing debug log stays usable; terminate the app the moment the
 // glitch appears and we inspect the tail of the trace.
 
-/// Returns the index of `line` within the global `segs` array, or -1 if
+/// Returns the index of `line` within the level's `segs` array, or -1 if
 /// either pointer is null. Used only for diagnostic trace logging.
 #[inline]
 unsafe fn seg_index(line: *const seg_t) -> isize {
+    let segs = level().segs;
     if segs.is_null() || line.is_null() {
         -1
     } else {
@@ -249,7 +250,7 @@ static CHECKCOORD: [[i32; 4]; 12] = [
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    play::setup::{nodes, segs, subsectors},
+    play::setup::{level, LevelState},
     render_3d::{
         draw::DRAW,
         main::{R_PointOnSide, R_PointToAngle, VIEW},
@@ -829,6 +830,9 @@ pub unsafe fn R_Subsector(num: i32) {
         view.viewz
     };
 
+    let LevelState {
+        subsectors, segs, ..
+    } = level();
     let sub = &*subsectors.add(num_usize);
     let frontsector = sub.sector;
     BSP.borrow_mut().frontsector = frontsector;
@@ -912,7 +916,7 @@ pub unsafe fn R_RenderBSPNode(bspnum: i32) {
         return;
     }
 
-    let bsp = &*(nodes.add(bspnum as usize) as *const node_t);
+    let bsp = &*(level().nodes.add(bspnum as usize) as *const node_t);
 
     let (viewx, viewy) = {
         let view = VIEW.borrow();

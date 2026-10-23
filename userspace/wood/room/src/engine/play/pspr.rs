@@ -15,16 +15,13 @@ use crate::engine::{
         player::{PlayerT, PspdefT, NUMAMMO, NUMPSPRITES, NUMWEAPONS},
         stat::gamemode,
     },
+    global::Global,
     math::{
         fixed::{fixed_t, FixedMul, FRACBITS, FRACUNIT},
         tables::{finecosine, finesine, FINEANGLES, FINEMASK},
     },
     misc::random::P_Random,
-    play::{
-        info::{self, *},
-        mobj::mobj_t,
-        tick::leveltime,
-    },
+    play::{info::*, mobj::mobj_t, tick::leveltime},
     sound::S_StartSound,
 };
 
@@ -111,14 +108,40 @@ use crate::engine::{
     render_3d::main::R_PointToAngle2,
 };
 
-/// Horizontal weapon-bob offset; updated each tic by `P_CalcSwing`.
-pub static mut swingx: fixed_t = 0;
+/// Weapon bob and aiming state (`p_pspr.c` globals).
+pub struct PsprState {
+    /// Horizontal weapon-bob offset; updated each tic by `P_CalcSwing`.
+    pub swingx: fixed_t,
+    /// Vertical weapon-bob offset; updated each tic by `P_CalcSwing`.
+    pub swingy: fixed_t,
+    /// Slope set by `P_BulletSlope` for near-miss aiming; read by `P_GunShot`.
+    pub bulletslope: fixed_t,
+}
 
-/// Vertical weapon-bob offset; updated each tic by `P_CalcSwing`.
-pub static mut swingy: fixed_t = 0;
+impl PsprState {
+    /// The state at program start: no bob, level aim.
+    pub const fn new() -> Self {
+        Self {
+            swingx: 0,
+            swingy: 0,
+            bulletslope: 0,
+        }
+    }
+}
 
-/// Slope set by `P_BulletSlope` for near-miss aiming; read by `P_GunShot`.
-pub static mut bulletslope: fixed_t = 0;
+impl Default for PsprState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Weapon bob and aiming state.
+pub static PSPR: Global<PsprState> = Global::new(PsprState::new());
+
+/// The slope computed by the last `P_BulletSlope` (C `bulletslope`).
+fn bulletslope() -> fixed_t {
+    PSPR.borrow().bulletslope
+}
 
 /// Transition a psprite slot to a new state, running action functions until a
 /// non-zero tic count is reached or the state chain ends.
@@ -140,7 +163,7 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
             break;
         }
 
-        let state = &raw mut info::states[stnum as usize];
+        let state = state_ptr(stnum as usize);
         (*psp).state = state;
         (*psp).tics = (*state).tics;
 
@@ -181,11 +204,13 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
 pub unsafe fn P_CalcSwing(player: *mut PlayerT) {
     let swing = (*player).bob;
 
+    let leveltime = leveltime();
+    let mut pspr = PSPR.borrow_mut();
     let mut angle = (FINEANGLES as i32 / 70 * leveltime) & FINEMASK;
-    swingx = FixedMul(swing, finesine[angle as usize]);
+    pspr.swingx = FixedMul(swing, finesine[angle as usize]);
 
     angle = (FINEANGLES as i32 / 70 * leveltime + FINEANGLES as i32 / 2) & FINEMASK;
-    swingy = -FixedMul(swingx, finesine[angle as usize]);
+    pspr.swingy = -FixedMul(pspr.swingx, finesine[angle as usize]);
 }
 
 /// Begin the raise animation for the pending weapon by setting the weapon
@@ -330,15 +355,14 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     let mo = (*player).mo;
 
     // Get out of attack state.
-    let state_ptr = (*mo).state;
-    if std::ptr::eq(state_ptr, &info::states[S_PLAY_ATK1 as usize])
-        || std::ptr::eq(state_ptr, &info::states[S_PLAY_ATK2 as usize])
+    let mobj_state = (*mo).state;
+    if std::ptr::eq(mobj_state, state_ptr(S_PLAY_ATK1 as usize))
+        || std::ptr::eq(mobj_state, state_ptr(S_PLAY_ATK2 as usize))
     {
         P_SetMobjState(mo, S_PLAY);
     }
 
-    if (*player).readyweapon == wp_chainsaw
-        && std::ptr::eq((*psp).state, &info::states[S_SAW as usize])
+    if (*player).readyweapon == wp_chainsaw && std::ptr::eq((*psp).state, state_ptr(S_SAW as usize))
     {
         S_StartSound(mo, Sfx::Sawidl as i32);
     }
@@ -364,7 +388,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     }
 
     // Bob the weapon based on movement speed.
-    let mut angle = (128 * leveltime) as u32 & FINEMASK as u32;
+    let mut angle = (128 * leveltime()) as u32 & FINEMASK as u32;
     (*psp).sx = FRACUNIT + FixedMul((*player).bob, *finecosine.0.add(angle as usize));
     angle &= (FINEANGLES / 2 - 1) as u32;
     (*psp).sy = WEAPONTOP + FixedMul((*player).bob, finesine[angle as usize]);
@@ -499,9 +523,10 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
     P_LineAttack(mo, angle, MELEERANGE, slope, damage);
 
     // Turn to face target.
-    if !linetarget.is_null() {
+    let target = linetarget();
+    if !target.is_null() {
         S_StartSound(mo, Sfx::Punch as i32);
-        (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
+        (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*target).x, (*target).y);
     }
 }
 
@@ -524,14 +549,15 @@ pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
     let slope = P_AimLineAttack(mo, angle, MELEERANGE + 1);
     P_LineAttack(mo, angle, MELEERANGE + 1, slope, damage);
 
-    if linetarget.is_null() {
+    let target = linetarget();
+    if target.is_null() {
         S_StartSound(mo, Sfx::Sawful as i32);
         return;
     }
     S_StartSound(mo, Sfx::Sawhit as i32);
 
     // Turn to face target.
-    let angle = R_PointToAngle2((*mo).x, (*mo).y, (*linetarget).x, (*linetarget).y);
+    let angle = R_PointToAngle2((*mo).x, (*mo).y, (*target).x, (*target).y);
     let delta = angle.wrapping_sub((*mo).angle);
     if delta > ANG180 {
         let signed_delta = delta as i32;
@@ -624,14 +650,14 @@ pub unsafe fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// `mo` must be a valid, non-null pointer to an initialised `mobj_t`.
 pub unsafe fn P_BulletSlope(mo: *mut mobj_t) {
     let mut an = (*mo).angle;
-    bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
+    PSPR.borrow_mut().bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
 
-    if linetarget.is_null() {
+    if linetarget().is_null() {
         an = an.wrapping_add(1 << 26);
-        bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
-        if linetarget.is_null() {
+        PSPR.borrow_mut().bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
+        if linetarget().is_null() {
             an = an.wrapping_sub(2 << 26);
-            bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
+            PSPR.borrow_mut().bulletslope = P_AimLineAttack(mo, an, 16 * 64 * FRACUNIT);
         }
     }
 }
@@ -653,7 +679,7 @@ pub unsafe fn P_GunShot(mo: *mut mobj_t, accurate: i32) {
         angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
     }
 
-    P_LineAttack(mo, angle, MISSILERANGE, bulletslope, damage);
+    P_LineAttack(mo, angle, MISSILERANGE, bulletslope(), damage);
 }
 
 /// Weapon action: fire the pistol (one accurate bullet, then spread on refire).
@@ -735,7 +761,7 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
             mo,
             angle,
             MISSILERANGE,
-            bulletslope + ((P_Random() - P_Random()) << 5),
+            bulletslope() + ((P_Random() - P_Random()) << 5),
             damage,
         );
     }
@@ -765,7 +791,7 @@ pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
     let state_offset = (*psp)
         .state
         .cast::<State>()
-        .offset_from(&info::states[S_CHAIN1 as usize]);
+        .offset_from(state_ptr(S_CHAIN1 as usize));
     P_SetPsprite(player, 1, flashstate + state_offset as i32);
 
     P_BulletSlope(mo);
@@ -817,14 +843,17 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
 
         P_AimLineAttack((*mo).target, an, 16 * 64 * FRACUNIT);
 
-        if linetarget.is_null() {
+        // Spawning the explosion and rolling damage do not aim, so the
+        // target found above stays current.
+        let target = linetarget();
+        if target.is_null() {
             continue;
         }
 
         P_SpawnMobj(
-            (*linetarget).x,
-            (*linetarget).y,
-            (*linetarget).z + ((*linetarget).height >> 2),
+            (*target).x,
+            (*target).y,
+            (*target).z + ((*target).height >> 2),
             MT_EXTRABFG,
         );
 
@@ -833,7 +862,7 @@ pub unsafe fn A_BFGSpray(mo: *mut mobj_t) {
             damage += (P_Random() & 7) + 1;
         }
 
-        P_DamageMobj(linetarget, (*mo).target, (*mo).target, damage);
+        P_DamageMobj(target, (*mo).target, (*mo).target, damage);
     }
 }
 
@@ -893,13 +922,10 @@ pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn constants_match_c() {
-        let _g = LOCK.lock().unwrap();
         assert_eq!(LOWERSPEED, FRACUNIT * 6);
         assert_eq!(RAISESPEED, FRACUNIT * 6);
         assert_eq!(WEAPONBOTTOM, 128 * FRACUNIT);
@@ -924,19 +950,14 @@ mod tests {
 
     #[test]
     fn swing_defaults_to_zero() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ swingx }, 0);
-            assert_eq!({ swingy }, 0);
-        }
+        let pspr = PsprState::new();
+        assert_eq!(pspr.swingx, 0);
+        assert_eq!(pspr.swingy, 0);
     }
 
     #[test]
     fn bulletslope_defaults_to_zero() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ bulletslope }, 0);
-        }
+        assert_eq!(PsprState::new().bulletslope, 0);
     }
 
     /// Regression tests for mobjtype constants used by weapon fire functions.
@@ -946,7 +967,6 @@ mod tests {
     /// shareware WAD).
     #[test]
     fn mobjtype_constants_match_info() {
-        let _g = LOCK.lock().unwrap();
         assert_eq!(MT_ROCKET, 33);
         assert_eq!(MT_PLASMA, 34);
         assert_eq!(MT_BFG, 35);
@@ -958,26 +978,22 @@ mod tests {
     /// have the expected spawnstates.  This catches index-vs-table drift.
     #[test]
     fn projectile_mobjinfo_entries() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
+        {
+            let mobjinfo = MOBJINFO.borrow();
             assert_eq!(
-                info::mobjinfo[MT_ROCKET as usize].spawnstate,
-                S_ROCKET,
+                mobjinfo[MT_ROCKET as usize].spawnstate, S_ROCKET,
                 "mobjinfo[MT_ROCKET] should spawn S_ROCKET"
             );
             assert_eq!(
-                info::mobjinfo[MT_PLASMA as usize].spawnstate,
-                S_PLASBALL,
+                mobjinfo[MT_PLASMA as usize].spawnstate, S_PLASBALL,
                 "mobjinfo[MT_PLASMA] should spawn S_PLASBALL"
             );
             assert_eq!(
-                info::mobjinfo[MT_BFG as usize].spawnstate,
-                S_BFGSHOT,
+                mobjinfo[MT_BFG as usize].spawnstate, S_BFGSHOT,
                 "mobjinfo[MT_BFG] should spawn S_BFGSHOT"
             );
             assert_eq!(
-                info::mobjinfo[MT_EXTRABFG as usize].spawnstate,
-                S_BFGEXP,
+                mobjinfo[MT_EXTRABFG as usize].spawnstate, S_BFGEXP,
                 "mobjinfo[MT_EXTRABFG] should spawn S_BFGEXP"
             );
         }

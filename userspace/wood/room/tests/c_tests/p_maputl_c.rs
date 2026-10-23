@@ -679,10 +679,8 @@ fn line_opening_single_sided() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, -1], std::ptr::null_mut(), std::ptr::null_mut());
-    unsafe {
-        play::maputl::P_LineOpening(&mut line);
-        assert_eq!({ play::maputl::openrange }, 0);
-    }
+    play::maputl::P_LineOpening(&mut line);
+    assert_eq!(play::maputl::openrange(), 0);
 }
 
 /// Two-sided line where the front sector has a higher ceiling: opening
@@ -694,17 +692,15 @@ fn line_opening_two_sided_front_higher() {
     let mut back = make_sector(-16 * FRACUNIT, 64 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe {
-        play::maputl::P_LineOpening(&mut line);
-        // opentop    = min(128, 64)  = 64
-        // openbottom = max(0, -16)   = 0
-        // lowfloor   = min(0, -16)   = -16
-        // openrange  = 64 - 0        = 64
-        assert_eq!({ play::maputl::opentop }, 64 * FRACUNIT);
-        assert_eq!({ play::maputl::openbottom }, 0);
-        assert_eq!({ play::maputl::lowfloor }, -16 * FRACUNIT);
-        assert_eq!({ play::maputl::openrange }, 64 * FRACUNIT);
-    }
+    play::maputl::P_LineOpening(&mut line);
+    // opentop    = min(128, 64)  = 64
+    // openbottom = max(0, -16)   = 0
+    // lowfloor   = min(0, -16)   = -16
+    // openrange  = 64 - 0        = 64
+    assert_eq!(play::maputl::opentop(), 64 * FRACUNIT);
+    assert_eq!(play::maputl::openbottom(), 0);
+    assert_eq!(play::maputl::lowfloor(), -16 * FRACUNIT);
+    assert_eq!(play::maputl::openrange(), 64 * FRACUNIT);
 }
 
 /// Two-sided line where the back sector has a higher floor: opening starts
@@ -716,17 +712,15 @@ fn line_opening_two_sided_back_higher() {
     let mut back = make_sector(16 * FRACUNIT, 128 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe {
-        play::maputl::P_LineOpening(&mut line);
-        // opentop    = min(64, 128)  = 64
-        // openbottom = max(0, 16)    = 16
-        // lowfloor   = min(0, 16)    = 0
-        // openrange  = 64 - 16       = 48
-        assert_eq!({ play::maputl::opentop }, 64 * FRACUNIT);
-        assert_eq!({ play::maputl::openbottom }, 16 * FRACUNIT);
-        assert_eq!({ play::maputl::lowfloor }, 0);
-        assert_eq!({ play::maputl::openrange }, 48 * FRACUNIT);
-    }
+    play::maputl::P_LineOpening(&mut line);
+    // opentop    = min(64, 128)  = 64
+    // openbottom = max(0, 16)    = 16
+    // lowfloor   = min(0, 16)    = 0
+    // openrange  = 64 - 16       = 48
+    assert_eq!(play::maputl::opentop(), 64 * FRACUNIT);
+    assert_eq!(play::maputl::openbottom(), 16 * FRACUNIT);
+    assert_eq!(play::maputl::lowfloor(), 0);
+    assert_eq!(play::maputl::openrange(), 48 * FRACUNIT);
 }
 
 /// Two-sided line with identical sectors on both sides: opening equals the
@@ -738,13 +732,11 @@ fn line_opening_two_sided_equal() {
     let mut back = make_sector(32 * FRACUNIT, 128 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe {
-        play::maputl::P_LineOpening(&mut line);
-        assert_eq!({ play::maputl::opentop }, 128 * FRACUNIT);
-        assert_eq!({ play::maputl::openbottom }, 32 * FRACUNIT);
-        assert_eq!({ play::maputl::lowfloor }, 32 * FRACUNIT);
-        assert_eq!({ play::maputl::openrange }, 96 * FRACUNIT);
-    }
+    play::maputl::P_LineOpening(&mut line);
+    assert_eq!(play::maputl::opentop(), 128 * FRACUNIT);
+    assert_eq!(play::maputl::openbottom(), 32 * FRACUNIT);
+    assert_eq!(play::maputl::lowfloor(), 32 * FRACUNIT);
+    assert_eq!(play::maputl::openrange(), 96 * FRACUNIT);
 }
 
 /// Edge case: front floor sits above back ceiling, producing a negative
@@ -757,17 +749,15 @@ fn line_opening_negative_range() {
     let mut back = make_sector(0, 64 * FRACUNIT);
     let mut v1 = vertex_t { x: 0, y: 0 };
     let mut line = make_line(&mut v1, [0, 1], &mut front, &mut back);
-    unsafe {
-        play::maputl::P_LineOpening(&mut line);
-        // opentop    = min(128, 64)   = 64
-        // openbottom = max(100, 0)    = 100
-        // lowfloor   = min(100, 0)    = 0
-        // openrange  = 64 - 100       = -36
-        assert_eq!({ play::maputl::opentop }, 64 * FRACUNIT);
-        assert_eq!({ play::maputl::openbottom }, 100 * FRACUNIT);
-        assert_eq!({ play::maputl::lowfloor }, 0);
-        assert_eq!({ play::maputl::openrange }, -36 * FRACUNIT);
-    }
+    play::maputl::P_LineOpening(&mut line);
+    // opentop    = min(128, 64)   = 64
+    // openbottom = max(100, 0)    = 100
+    // lowfloor   = min(100, 0)    = 0
+    // openrange  = 64 - 100       = -36
+    assert_eq!(play::maputl::opentop(), 64 * FRACUNIT);
+    assert_eq!(play::maputl::openbottom(), 100 * FRACUNIT);
+    assert_eq!(play::maputl::lowfloor(), 0);
+    assert_eq!(play::maputl::openrange(), -36 * FRACUNIT);
 }
 
 // ---------------------------------------------------------------------------
@@ -804,42 +794,53 @@ unsafe fn record_and_stop(intr: *mut play::maputl::intercept_t) -> u32 {
     0 // stop
 }
 
+/// Fill the first intercepts with `fracs` (thing intercepts with a null
+/// thing) and point the write cursor just past them, as `P_PathTraverse`
+/// leaves it.
+fn load_intercepts(fracs: &[i32]) {
+    {
+        let mut intercepts = play::maputl::INTERCEPTS.borrow_mut();
+        for (slot, &frac) in intercepts.iter_mut().zip(fracs) {
+            *slot = play::maputl::intercept_t {
+                frac,
+                isaline: 0,
+                d: play::maputl::intercept_t_d {
+                    thing: std::ptr::null_mut(),
+                },
+            };
+        }
+    }
+    let base = play::maputl::INTERCEPTS
+        .as_ptr()
+        .cast::<play::maputl::intercept_t>();
+    // SAFETY: `fracs` fits in the array, so the cursor stays in bounds.
+    play::maputl::MAPUTL.borrow_mut().intercept_p = unsafe { base.add(fracs.len()) };
+}
+
 /// Empty intercept list → traversal returns `true` immediately without
 /// invoking the callback.
 #[test]
 fn traverse_intercepts_empty() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        TRAVERSED_FRACS.lock().unwrap().clear();
-        play::maputl::intercept_p =
-            (&raw mut play::maputl::intercepts).cast::<play::maputl::intercept_t>();
-        let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
-        assert_eq!(result, 1); // true = all traversed
-        assert!(TRAVERSED_FRACS.lock().unwrap().is_empty());
-    }
+    TRAVERSED_FRACS.lock().unwrap().clear();
+    load_intercepts(&[]);
+    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    assert_eq!(result, 1); // true = all traversed
+    assert!(TRAVERSED_FRACS.lock().unwrap().is_empty());
 }
 
 /// Single intercept within `maxfrac` is delivered exactly once.
 #[test]
 fn traverse_intercepts_single() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        TRAVERSED_FRACS.lock().unwrap().clear();
-        play::maputl::intercepts[0] = play::maputl::intercept_t {
-            frac: FRACUNIT / 2,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<play::maputl::intercept_t>()
-            .add(1);
+    TRAVERSED_FRACS.lock().unwrap().clear();
+    load_intercepts(&[FRACUNIT / 2]);
 
-        let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
-        assert_eq!(result, 1);
-        let fracs = TRAVERSED_FRACS.lock().unwrap();
-        assert_eq!(fracs.len(), 1);
-        assert_eq!(fracs[0], FRACUNIT / 2);
-    }
+    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    assert_eq!(result, 1);
+    let fracs = TRAVERSED_FRACS.lock().unwrap();
+    assert_eq!(fracs.len(), 1);
+    assert_eq!(fracs[0], FRACUNIT / 2);
 }
 
 /// Out-of-order intercepts are delivered to the callback in ascending
@@ -848,37 +849,18 @@ fn traverse_intercepts_single() {
 #[test]
 fn traverse_intercepts_sorted_order() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        TRAVERSED_FRACS.lock().unwrap().clear();
+    TRAVERSED_FRACS.lock().unwrap().clear();
 
-        // Fill 3 intercepts with fracs out of order (all <= FRACUNIT).
-        play::maputl::intercepts[0] = play::maputl::intercept_t {
-            frac: FRACUNIT / 2,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercepts[1] = play::maputl::intercept_t {
-            frac: FRACUNIT / 4,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercepts[2] = play::maputl::intercept_t {
-            frac: 3 * FRACUNIT / 4,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<play::maputl::intercept_t>()
-            .add(3);
+    // Fill 3 intercepts with fracs out of order (all <= FRACUNIT).
+    load_intercepts(&[FRACUNIT / 2, FRACUNIT / 4, 3 * FRACUNIT / 4]);
 
-        let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
-        assert_eq!(result, 1);
-        let fracs = TRAVERSED_FRACS.lock().unwrap();
-        assert_eq!(fracs.len(), 3);
-        assert_eq!(fracs[0], FRACUNIT / 4);
-        assert_eq!(fracs[1], FRACUNIT / 2);
-        assert_eq!(fracs[2], 3 * FRACUNIT / 4);
-    }
+    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    assert_eq!(result, 1);
+    let fracs = TRAVERSED_FRACS.lock().unwrap();
+    assert_eq!(fracs.len(), 3);
+    assert_eq!(fracs[0], FRACUNIT / 4);
+    assert_eq!(fracs[1], FRACUNIT / 2);
+    assert_eq!(fracs[2], 3 * FRACUNIT / 4);
 }
 
 /// Intercepts whose `frac` exceeds `maxfrac` are skipped — only those in
@@ -886,30 +868,16 @@ fn traverse_intercepts_sorted_order() {
 #[test]
 fn traverse_intercepts_respects_maxfrac() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        TRAVERSED_FRACS.lock().unwrap().clear();
+    TRAVERSED_FRACS.lock().unwrap().clear();
 
-        play::maputl::intercepts[0] = play::maputl::intercept_t {
-            frac: FRACUNIT / 4,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercepts[1] = play::maputl::intercept_t {
-            frac: FRACUNIT,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<play::maputl::intercept_t>()
-            .add(2);
+    load_intercepts(&[FRACUNIT / 4, FRACUNIT]);
 
-        // maxfrac = FRACUNIT/2 → only the first intercept (FRACUNIT/4) is in range.
-        let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT / 2);
-        assert_eq!(result, 1);
-        let fracs = TRAVERSED_FRACS.lock().unwrap();
-        assert_eq!(fracs.len(), 1);
-        assert_eq!(fracs[0], FRACUNIT / 4);
-    }
+    // maxfrac = FRACUNIT/2 → only the first intercept (FRACUNIT/4) is in range.
+    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT / 2);
+    assert_eq!(result, 1);
+    let fracs = TRAVERSED_FRACS.lock().unwrap();
+    assert_eq!(fracs.len(), 1);
+    assert_eq!(fracs[0], FRACUNIT / 4);
 }
 
 /// Callback returning 0 stops traversal after the current intercept —
@@ -917,27 +885,13 @@ fn traverse_intercepts_respects_maxfrac() {
 #[test]
 fn traverse_intercepts_stop_early() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    unsafe {
-        TRAVERSED_FRACS.lock().unwrap().clear();
+    TRAVERSED_FRACS.lock().unwrap().clear();
 
-        play::maputl::intercepts[0] = play::maputl::intercept_t {
-            frac: FRACUNIT / 4,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercepts[1] = play::maputl::intercept_t {
-            frac: FRACUNIT / 2,
-            isaline: 0,
-            d: std::mem::MaybeUninit::zeroed().assume_init(),
-        };
-        play::maputl::intercept_p = (&raw mut play::maputl::intercepts)
-            .cast::<play::maputl::intercept_t>()
-            .add(2);
+    load_intercepts(&[FRACUNIT / 4, FRACUNIT / 2]);
 
-        let result = play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT);
-        assert_eq!(result, 0); // false = stopped early
-        let fracs = TRAVERSED_FRACS.lock().unwrap();
-        assert_eq!(fracs.len(), 1);
-        assert_eq!(fracs[0], FRACUNIT / 4);
-    }
+    let result = play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT);
+    assert_eq!(result, 0); // false = stopped early
+    let fracs = TRAVERSED_FRACS.lock().unwrap();
+    assert_eq!(fracs.len(), 1);
+    assert_eq!(fracs[0], FRACUNIT / 4);
 }

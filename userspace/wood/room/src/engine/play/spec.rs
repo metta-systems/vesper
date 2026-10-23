@@ -32,14 +32,14 @@ use crate::{
             M_StrToInt,
         },
         play::{
-            ceilng::MAXCEILINGS,
+            ceilng::{CEILINGS, MAXCEILINGS},
             floor::{floormove_t, FLOORSPEED},
             info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
             lights::{FASTDARK, SLOWDARK},
             mobj::mobj_t,
-            plats::MAXPLATS,
-            setup::{lines, numlines, numsectors, sectors, sides},
-            switch::{buttonlist, MAXBUTTONS},
+            plats::{MAXPLATS, PLATS},
+            setup::{level, LevelState},
+            switch::{MAXBUTTONS, SWITCHES},
             tick::{leveltime, P_AddThinker, ThinkerKind},
         },
         render_3d::data::{
@@ -204,51 +204,90 @@ const ANIMDEFS: &[(i32, &[u8], &[u8], i32)] = &[
 // Globals
 // ---------------------------------------------------------------------------
 
-/// Array of active animation state records, one per registered animation cycle.
-///
-/// Populated by `P_InitPicAnims`; only entries in `anims[0..lastanim)` are
-/// valid.  The renderer reads `texturetranslation`/`flattranslation`, which
-/// `P_UpdateSpecials` updates based on this array.
-pub static mut anims: [anim_t; MAXANIMS] = [anim_t {
-    istexture: 0,
-    picnum: 0,
-    basepic: 0,
-    numpics: 0,
-    speed: 0,
-}; MAXANIMS];
+/// Animated surfaces, scrolling walls, the level timer and the donut
+/// overrun defaults (`p_spec.c` globals).
+pub struct SpecState {
+    /// Array of active animation state records, one per registered animation cycle.
+    ///
+    /// Populated by `P_InitPicAnims`; only entries in `anims[0..lastanim)` are
+    /// valid.  The renderer reads `texturetranslation`/`flattranslation`, which
+    /// `P_UpdateSpecials` updates based on this array.
+    pub anims: [anim_t; MAXANIMS],
+    /// Pointer one-past the last valid entry in `anims[]`.
+    ///
+    /// Acts as an end-iterator: the range `anims..lastanim` contains every active
+    /// animation cycle.  Null on startup, set by `P_InitPicAnims`; it points
+    /// into [`SPEC`]'s stable address (see `anims_base`).
+    pub lastanim: *mut anim_t,
+    /// Number of scrolling-wall linedefs registered in `linespeciallist`.
+    ///
+    /// Counts lines with special 48 (first-column texture scroll).  Reset to zero
+    /// by `P_SpawnSpecials` at map start; read by `P_UpdateSpecials`.
+    pub numlinespecials: i16,
+    /// List of pointers to linedefs that carry the scrolling-wall special (48).
+    ///
+    /// Populated by `P_SpawnSpecials`; iterated by `P_UpdateSpecials` each tic to
+    /// advance `textureoffset` by one `FRACUNIT`.  Capped at `MAXLINEANIMS` (64)
+    /// entries.
+    pub linespeciallist: [*mut line_t; MAXLINEANIMS],
+    /// Non-zero when a deathmatch level timer is active.
+    ///
+    /// Set to 1 by `P_SpawnSpecials` when `timelimit > 0` and `deathmatch != 0`.
+    /// Checked each tic by `P_UpdateSpecials`.  Stored as `i32` boolean to
+    /// match the C declaration `boolean levelTimer`.
+    pub levelTimer: i32, // boolean
+    /// Remaining tics before the deathmatch time limit expires.
+    ///
+    /// Initialised by `P_SpawnSpecials` to `timelimit * 60 * TICRATE`.
+    /// Decremented each tic by `P_UpdateSpecials`; reaching zero calls
+    /// `G_ExitLevel`.
+    pub levelTimeCount: i32,
+    /// Whether `DonutOverrun` has resolved its defaults (static local `first`
+    /// in C, inverted).
+    donut_initialized: bool,
+    /// Substitute s3 floor height used by `DonutOverrun`.
+    donut_floorheight: i32,
+    /// Substitute s3 floor picture used by `DonutOverrun`.
+    donut_floorpic: i32,
+}
 
-/// Pointer one-past the last valid entry in `anims[]`.
-///
-/// Acts as an end-iterator: the range `anims..lastanim` contains every active
-/// animation cycle.  Null on startup, set by `P_InitPicAnims`.
-pub static mut lastanim: *mut anim_t = ptr::null_mut();
+impl SpecState {
+    /// The state at program start: no animations, no scrollers, no timer.
+    pub const fn new() -> Self {
+        Self {
+            anims: [anim_t {
+                istexture: 0,
+                picnum: 0,
+                basepic: 0,
+                numpics: 0,
+                speed: 0,
+            }; MAXANIMS],
+            lastanim: ptr::null_mut(),
+            numlinespecials: 0,
+            linespeciallist: [ptr::null_mut(); MAXLINEANIMS],
+            levelTimer: 0,
+            levelTimeCount: 0,
+            donut_initialized: false,
+            donut_floorheight: 0,
+            donut_floorpic: 0,
+        }
+    }
+}
 
-/// Number of scrolling-wall linedefs registered in `linespeciallist`.
-///
-/// Counts lines with special 48 (first-column texture scroll).  Reset to zero
-/// by `P_SpawnSpecials` at map start; read by `P_UpdateSpecials`.
-pub static mut numlinespecials: i16 = 0;
+impl Default for SpecState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// List of pointers to linedefs that carry the scrolling-wall special (48).
-///
-/// Populated by `P_SpawnSpecials`; iterated by `P_UpdateSpecials` each tic to
-/// advance `textureoffset` by one `FRACUNIT`.  Capped at `MAXLINEANIMS` (64)
-/// entries.
-pub static mut linespeciallist: [*mut line_t; MAXLINEANIMS] = [ptr::null_mut(); MAXLINEANIMS];
+/// Animated surfaces, scrolling walls and the level timer.
+pub static SPEC: Global<SpecState> = Global::new(SpecState::new());
 
-/// Non-zero when a deathmatch level timer is active.
-///
-/// Set to 1 by `P_SpawnSpecials` when `timelimit > 0` and `deathmatch != 0`.
-/// Checked each tic by `P_UpdateSpecials`.  Stored as `i32` boolean to
-/// match the C declaration `boolean levelTimer`.
-pub static mut levelTimer: i32 = 0; // boolean
-
-/// Remaining tics before the deathmatch time limit expires.
-///
-/// Initialised by `P_SpawnSpecials` to `timelimit * 60 * TICRATE`.
-/// Decremented each tic by `P_UpdateSpecials`; reaching zero calls
-/// `G_ExitLevel`.
-pub static mut levelTimeCount: i32 = 0;
+/// Stable pointer to `anims[0]`, the base that `lastanim` points past.
+fn anims_base() -> *mut anim_t {
+    // SAFETY: field projection on the stable state pointer, no reference made.
+    unsafe { (&raw mut (*SPEC.as_ptr()).anims).cast::<anim_t>() }
+}
 
 // ---------------------------------------------------------------------------
 // Externs from other modules / remaining C code
@@ -256,7 +295,8 @@ pub static mut levelTimeCount: i32 = 0;
 
 use crate::engine::{
     dehacked::DEH_String,
-    game::{deathmatch, timelimit, totalsecret, G_ExitLevel, G_SecretExitLevel},
+    game::{deathmatch, G_ExitLevel, G_SecretExitLevel, GAME},
+    global::Global,
     play::{
         ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
         doors::{EV_DoDoor, P_SpawnDoorCloseIn30, P_SpawnDoorRaiseIn5Mins},
@@ -292,7 +332,9 @@ use crate::engine::{
 /// Called once at map load time from C (p_spec.c `P_SpawnSpecials` via the
 /// game initialisation path).
 pub unsafe fn P_InitPicAnims() {
-    lastanim = std::ptr::addr_of_mut!(anims[0]);
+    // Each record is filled through the cursor; no guard on the state is
+    // live while the lump lookups run.
+    let mut lastanim = anims_base();
     for &(istexture, endname, startname, speed) in ANIMDEFS {
         if istexture == -1 {
             break;
@@ -328,6 +370,7 @@ pub unsafe fn P_InitPicAnims() {
         (*lastanim).speed = speed;
         lastanim = lastanim.offset(1);
     }
+    SPEC.borrow_mut().lastanim = lastanim;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +388,7 @@ pub unsafe fn P_InitPicAnims() {
 /// long as the map data is loaded.  Called from p_spec.c and the floor/ceiling
 /// modules.
 pub unsafe fn getSide(currentSector: i32, line: i32, side: i32) -> *mut side_t {
+    let LevelState { sectors, sides, .. } = level();
     let line_ptr = *(*sectors.offset(currentSector as isize))
         .lines
         .offset(line as isize);
@@ -362,6 +406,7 @@ pub unsafe fn getSide(currentSector: i32, line: i32, side: i32) -> *mut side_t {
 /// being null (one-sided line) before dereferencing the result.  Called from
 /// p_spec.c and various map-action modules.
 pub unsafe fn getSector(currentSector: i32, line: i32, side: i32) -> *mut sector_t {
+    let LevelState { sectors, sides, .. } = level();
     let line_ptr = *(*sectors.offset(currentSector as isize))
         .lines
         .offset(line as isize);
@@ -378,7 +423,7 @@ pub unsafe fn getSector(currentSector: i32, line: i32, side: i32) -> *mut sector
 /// sector, or zero for one-sided lines.  Called from p_spec.c and the
 /// floor/ceiling/platform modules.
 pub unsafe fn twoSided(sector: i32, line: i32) -> i32 {
-    let line_ptr = *(*sectors.offset(sector as isize))
+    let line_ptr = *(*level().sectors.offset(sector as isize))
         .lines
         .offset(line as isize);
     ((*line_ptr).flags as i32) & (LinedefFlag::TWOSIDED as i32)
@@ -549,6 +594,11 @@ pub unsafe fn P_FindHighestCeilingSurrounding(sec: *mut sector_t) -> i32 {
 /// Used as the iterator in all tag-based action loops (donut, door, floor,
 /// ceiling, etc.).  Called from many action functions including `EV_DoDonut`.
 pub unsafe fn P_FindSectorFromLineTag(line: *mut line_t, start: i32) -> i32 {
+    let LevelState {
+        numsectors,
+        sectors,
+        ..
+    } = level();
     for i in (start + 1)..numsectors {
         if (*sectors.offset(i as isize)).tag == (*line).tag {
             return i;
@@ -609,7 +659,7 @@ pub unsafe fn P_FindMinSurroundingLight(sector: *mut sector_t, max: i32) -> i32 
 ///
 /// Called from `p_map.c` via C FFI.
 pub unsafe fn P_CrossSpecialLine(linenum: i32, side: i32, thing: *mut mobj_t) {
-    let line = lines.offset(linenum as isize);
+    let line = level().lines.offset(linenum as isize);
 
     if (*thing).player.is_null() {
         match (*thing).kind {
@@ -974,17 +1024,17 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
 
     match (*sector).special as i32 {
         5 => {
-            if (*player).powers[pw_ironfeet] == 0 && leveltime & 0x1f == 0 {
+            if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
                 P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 10);
             }
         }
         7 => {
-            if (*player).powers[pw_ironfeet] == 0 && leveltime & 0x1f == 0 {
+            if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
                 P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 5);
             }
         }
         16 | 4 => {
-            if ((*player).powers[pw_ironfeet] == 0 || P_Random() < 5) && leveltime & 0x1f == 0 {
+            if ((*player).powers[pw_ironfeet] == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
                 P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 20);
             }
         }
@@ -994,7 +1044,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
         }
         11 => {
             (*player).cheats &= !CF_GODMODE;
-            if leveltime & 0x1f == 0 {
+            if leveltime() & 0x1f == 0 {
                 P_DamageMobj((*player).mo, ptr::null_mut(), ptr::null_mut(), 20);
             }
             if (*player).health <= 10 {
@@ -1037,63 +1087,87 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
 ///
 /// Called from p_tick.c `P_Ticker`.
 pub unsafe fn P_UpdateSpecials() {
-    if levelTimer != 0 {
-        levelTimeCount -= 1;
-        if levelTimeCount == 0 {
-            G_ExitLevel();
+    let timer_expired = {
+        let mut spec = SPEC.borrow_mut();
+        if spec.levelTimer != 0 {
+            spec.levelTimeCount -= 1;
+            spec.levelTimeCount == 0
+        } else {
+            false
         }
+    };
+    if timer_expired {
+        G_ExitLevel();
     }
 
     let (texturetranslation, flattranslation) = {
         let data = RENDER_DATA.borrow();
         (data.texturetranslation, data.flattranslation)
     };
-    let mut anim = std::ptr::addr_of_mut!(anims[0]);
-    while anim < lastanim {
-        let base = (*anim).basepic;
-        let numpics = (*anim).numpics;
-        for i in base..base + numpics {
-            let pic = base + ((leveltime / (*anim).speed + i) % numpics);
-            if (*anim).istexture != 0 {
-                *texturetranslation.offset(i as isize) = pic;
-            } else {
-                *flattranslation.offset(i as isize) = pic;
+    let leveltime = leveltime();
+    let sides = level().sides;
+    {
+        let spec = SPEC.borrow();
+        let numanims = if spec.lastanim.is_null() {
+            0
+        } else {
+            spec.lastanim.offset_from(anims_base()) as usize
+        };
+        for anim in spec.anims.iter().take(numanims) {
+            let base = anim.basepic;
+            let numpics = anim.numpics;
+            for i in base..base + numpics {
+                let pic = base + ((leveltime / anim.speed + i) % numpics);
+                if anim.istexture != 0 {
+                    *texturetranslation.offset(i as isize) = pic;
+                } else {
+                    *flattranslation.offset(i as isize) = pic;
+                }
             }
         }
-        anim = anim.offset(1);
-    }
 
-    for i in 0..numlinespecials as usize {
-        let line = linespeciallist[i];
-        if (*line).special as i32 == 48 {
-            let sidenum = (*line).sidenum[0] as isize;
-            (*sides.offset(sidenum)).textureoffset += FRACUNIT;
+        for &line in spec
+            .linespeciallist
+            .iter()
+            .take(spec.numlinespecials as usize)
+        {
+            if (*line).special as i32 == 48 {
+                let sidenum = (*line).sidenum[0] as isize;
+                (*sides.offset(sidenum)).textureoffset += FRACUNIT;
+            }
         }
     }
 
     for i in 0..MAXBUTTONS {
-        if buttonlist[i].btimer != 0 {
-            buttonlist[i].btimer -= 1;
-            if buttonlist[i].btimer == 0 {
-                let sidenum = (*buttonlist[i].line).sidenum[0] as isize;
-                match buttonlist[i].where_ {
-                    0 => {
-                        (*sides.offset(sidenum)).toptexture = buttonlist[i].btexture as i16;
-                    }
-                    1 => {
-                        (*sides.offset(sidenum)).midtexture = buttonlist[i].btexture as i16;
-                    }
-                    2 => {
-                        (*sides.offset(sidenum)).bottomtexture = buttonlist[i].btexture as i16;
-                    }
-                    _ => {}
-                }
-                // Vanilla Doom passes `&buttonlist[i].soundorg`, the address
-                // of the field, which plays the click from around map point
-                // (0, 0). Play it from the switch's sector as intended.
-                S_StartSectorSound(buttonlist[i].soundorg, Sfx::Swtchn as i32);
-                buttonlist[i] = std::mem::zeroed();
+        let expired = {
+            let mut switches = SWITCHES.borrow_mut();
+            let button = &mut switches.buttonlist[i];
+            if button.btimer != 0 {
+                button.btimer -= 1;
+                (button.btimer == 0).then_some(*button)
+            } else {
+                None
             }
+        };
+        if let Some(button) = expired {
+            let sidenum = (*button.line).sidenum[0] as isize;
+            match button.where_ {
+                0 => {
+                    (*sides.offset(sidenum)).toptexture = button.btexture as i16;
+                }
+                1 => {
+                    (*sides.offset(sidenum)).midtexture = button.btexture as i16;
+                }
+                2 => {
+                    (*sides.offset(sidenum)).bottomtexture = button.btexture as i16;
+                }
+                _ => {}
+            }
+            // Vanilla Doom passes `&buttonlist[i].soundorg`, the address
+            // of the field, which plays the click from around map point
+            // (0, 0). Play it from the switch's sector as intended.
+            S_StartSectorSound(button.soundorg, Sfx::Swtchn as i32);
+            SWITCHES.borrow_mut().buttonlist[i] = std::mem::zeroed();
         }
     }
 }
@@ -1112,7 +1186,7 @@ pub unsafe fn P_UpdateSpecials() {
 /// the Windows 98 memory layout, overridable with `-donut <height> <pic>`.
 ///
 /// The function initialises its state only on the first call (guarded by the
-/// `first` static flag), parsing `-donut` command-line arguments at that point.
+/// `donut_initialized` flag), parsing `-donut` command-line arguments at that point.
 /// Subsequent calls return the same cached values.
 ///
 /// - `s3_floorheight`: output - the substitute floor height (fixed-point 16.16).
@@ -1132,36 +1206,33 @@ unsafe fn DonutOverrun(
     _line: *mut line_t,
     _pillar_sector: *mut sector_t,
 ) {
-    static mut first: i32 = 1;
-    static mut tmp_s3_floorheight: i32 = 0;
-    static mut tmp_s3_floorpic: i32 = 0;
-
-    if first != 0 {
-        first = 0;
-        tmp_s3_floorheight = 0;
-        tmp_s3_floorpic = 0x16;
+    let mut spec = SPEC.borrow_mut();
+    if !spec.donut_initialized {
+        spec.donut_initialized = true;
+        spec.donut_floorheight = 0;
+        spec.donut_floorpic = 0x16;
 
         let p = M_CheckParmWithArgs("-donut", 2);
         if p > 0 {
             if let Some(value) = M_StrToInt(argument(p + 1)) {
-                tmp_s3_floorheight = value;
+                spec.donut_floorheight = value;
             }
             if let Some(value) = M_StrToInt(argument(p + 2)) {
-                tmp_s3_floorpic = value;
+                spec.donut_floorpic = value;
             }
             let numflats = RENDER_DATA.borrow().numflats;
-            if tmp_s3_floorpic >= numflats {
+            if spec.donut_floorpic >= numflats {
                 eprintln!(
                     "DonutOverrun: The second parameter for \"-donut\" switch should be greater than 0 and less than number of flats ({}). Using default value ({}) instead. ",
                     numflats, 0x16
                 );
-                tmp_s3_floorpic = 0x16;
+                spec.donut_floorpic = 0x16;
             }
         }
     }
 
-    *s3_floorheight = tmp_s3_floorheight;
-    *s3_floorpic = tmp_s3_floorpic as i16;
+    *s3_floorheight = spec.donut_floorheight;
+    *s3_floorpic = spec.donut_floorpic as i16;
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,7 +1272,7 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
         secnum
     } >= 0
     {
-        let s1 = sectors.offset(secnum as isize);
+        let s1 = level().sectors.offset(secnum as isize);
         if !(*s1).specialdata.is_null() {
             continue;
         }
@@ -1304,13 +1375,22 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
 ///
 /// 4. **Misc cleanup**: clears `activeceilings`, `activeplats`, and `buttonlist`.
 pub unsafe fn P_SpawnSpecials() {
-    if timelimit > 0 && deathmatch != 0 {
-        levelTimer = 1;
-        levelTimeCount = timelimit * 60 * TICRATE;
+    let timelimit = GAME.borrow().timelimit;
+    if timelimit > 0 && deathmatch() != 0 {
+        let mut spec = SPEC.borrow_mut();
+        spec.levelTimer = 1;
+        spec.levelTimeCount = timelimit * 60 * TICRATE;
     } else {
-        levelTimer = 0;
+        SPEC.borrow_mut().levelTimer = 0;
     }
 
+    let LevelState {
+        numsectors,
+        sectors,
+        numlines,
+        lines,
+        ..
+    } = level();
     for i in 0..numsectors {
         let sector = sectors.offset(i as isize);
         if (*sector).special == 0 {
@@ -1326,7 +1406,7 @@ pub unsafe fn P_SpawnSpecials() {
             }
             8 => P_SpawnGlowingLight(sector),
             9 => {
-                totalsecret += 1;
+                GAME.borrow_mut().totalsecret += 1;
             }
             10 => P_SpawnDoorCloseIn30(sector),
             12 => P_SpawnStrobeFlash(sector, SLOWDARK, 1),
@@ -1337,26 +1417,24 @@ pub unsafe fn P_SpawnSpecials() {
         }
     }
 
-    numlinespecials = 0;
-    for i in 0..numlines {
-        if (*lines.offset(i as isize)).special as i32 == 48 {
-            if numlinespecials as i32 >= MAXLINEANIMS as i32 {
-                i_error!("Too many scrolling wall linedefs! (Vanilla limit is 64)");
+    {
+        let mut spec = SPEC.borrow_mut();
+        spec.numlinespecials = 0;
+        for i in 0..numlines {
+            if (*lines.offset(i as isize)).special as i32 == 48 {
+                if spec.numlinespecials as i32 >= MAXLINEANIMS as i32 {
+                    i_error!("Too many scrolling wall linedefs! (Vanilla limit is 64)");
+                }
+                let index = spec.numlinespecials as usize;
+                spec.linespeciallist[index] = lines.offset(i as isize);
+                spec.numlinespecials += 1;
             }
-            linespeciallist[numlinespecials as usize] = lines.offset(i as isize);
-            numlinespecials += 1;
         }
     }
 
-    for i in 0..MAXCEILINGS {
-        crate::engine::play::ceilng::activeceilings[i] = ptr::null_mut();
-    }
-    for i in 0..MAXPLATS {
-        crate::engine::play::plats::activeplats[i] = ptr::null_mut();
-    }
-    for i in 0..MAXBUTTONS {
-        buttonlist[i] = std::mem::zeroed();
-    }
+    CEILINGS.borrow_mut().activeceilings = [ptr::null_mut(); MAXCEILINGS];
+    PLATS.borrow_mut().activeplats = [ptr::null_mut(); MAXPLATS];
+    SWITCHES.borrow_mut().buttonlist = [std::mem::zeroed(); MAXBUTTONS];
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,25 +1443,21 @@ pub unsafe fn P_SpawnSpecials() {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn globals_are_zero_initialized() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ levelTimer }, 0);
-            assert_eq!({ levelTimeCount }, 0);
-            assert_eq!({ numlinespecials }, 0);
-            assert!(lastanim.is_null());
-            for (i, &v) in (*&raw const linespeciallist).iter().enumerate() {
-                assert!(v.is_null(), "linespeciallist[{i}] should be null");
-            }
-            for (i, a) in (*&raw const anims).iter().enumerate() {
-                assert_eq!(a.istexture, 0, "anims[{i}].istexture should be 0");
-                assert_eq!(a.picnum, 0, "anims[{i}].picnum should be 0");
-            }
+        let spec = SpecState::new();
+        assert_eq!(spec.levelTimer, 0);
+        assert_eq!(spec.levelTimeCount, 0);
+        assert_eq!(spec.numlinespecials, 0);
+        assert!(spec.lastanim.is_null());
+        for (i, &v) in spec.linespeciallist.iter().enumerate() {
+            assert!(v.is_null(), "linespeciallist[{i}] should be null");
+        }
+        for (i, a) in spec.anims.iter().enumerate() {
+            assert_eq!(a.istexture, 0, "anims[{i}].istexture should be 0");
+            assert_eq!(a.picnum, 0, "anims[{i}].picnum should be 0");
         }
     }
 

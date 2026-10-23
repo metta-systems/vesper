@@ -21,7 +21,7 @@ use crate::engine::{
     },
     misc::random::P_Random,
     play::{
-        info::{self, *},
+        info::*,
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
         tick::{thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
@@ -70,15 +70,16 @@ const exe_ultimate: i32 = 6;
 use crate::engine::{
     doom::{main::nomonsters, stat::gameversion},
     game::{
-        consoleplayer, deathmatch, gameskill, netgame, playeringame, players, respawnmonsters,
-        totalitems, totalkills, G_PlayerReborn,
+        consoleplayer, deathmatch, gameskill, netgame, player, playeringame, respawnmonsters,
+        G_PlayerReborn, GAME,
     },
+    global::Global,
     play::{
         map::{
             attackrange, ceilingline, linetarget, P_AimLineAttack, P_CheckPosition, P_SlideMove,
             P_TryMove,
         },
-        setup::{deathmatch_p, deathmatchstarts, playerstarts},
+        setup::{deathmatch_p, deathmatchstart, playerstart, SPAWN_SPOTS},
         tick::leveltime,
     },
     render_3d::sky::SKY,
@@ -165,23 +166,49 @@ pub struct mobj_t {
     pub tracer: *mut mobj_t,
 }
 
-/// Circular queue of map-thing spawn records for items that need to respawn.
-///
-/// The queue is indexed by `iquehead` (write) and `iquetail` (read), both
-/// modulo `ITEMQUESIZE`.
-pub static mut itemrespawnque: [mapthing_t; ITEMQUESIZE] = [mapthing_t::ZERO; ITEMQUESIZE];
+/// The item-respawn queue and the null-object stand-in (`p_mobj.c` globals).
+pub struct MobjState {
+    /// Circular queue of map-thing spawn records for items that need to respawn.
+    ///
+    /// The queue is indexed by `iquehead` (write) and `iquetail` (read), both
+    /// modulo `ITEMQUESIZE`.
+    pub itemrespawnque: [mapthing_t; ITEMQUESIZE],
+    /// Level-time stamps recording when each item in `itemrespawnque` was removed.
+    ///
+    /// An item is eligible to respawn once `leveltime - itemrespawntime[iquetail]`
+    /// exceeds 30 * `TICRATE`.
+    pub itemrespawntime: [i32; ITEMQUESIZE],
+    /// Write index (head) of the item-respawn circular queue.
+    pub iquehead: i32,
+    /// Read index (tail) of the item-respawn circular queue.
+    pub iquetail: i32,
+    /// The zeroed stand-in `P_SubstNullMobj` returns for a null object
+    /// (static local `dummy_mobj` in C).
+    dummy_mobj: mobj_t,
+}
 
-/// Level-time stamps recording when each item in `itemrespawnque` was removed.
-///
-/// An item is eligible to respawn once `leveltime - itemrespawntime[iquetail]`
-/// exceeds 30 * `TICRATE`.
-pub static mut itemrespawntime: [i32; ITEMQUESIZE] = [0; ITEMQUESIZE];
+impl MobjState {
+    /// An empty respawn queue.
+    pub const fn new() -> Self {
+        Self {
+            itemrespawnque: [mapthing_t::ZERO; ITEMQUESIZE],
+            itemrespawntime: [0; ITEMQUESIZE],
+            iquehead: 0,
+            iquetail: 0,
+            // SAFETY: an all-zero `mobj_t` is a valid inert map object.
+            dummy_mobj: unsafe { std::mem::zeroed() },
+        }
+    }
+}
 
-/// Write index (head) of the item-respawn circular queue.
-pub static mut iquehead: i32 = 0;
+impl Default for MobjState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Read index (tail) of the item-respawn circular queue.
-pub static mut iquetail: i32 = 0;
+/// The item-respawn queue.
+pub static MOBJ: Global<MobjState> = Global::new(MobjState::new());
 
 /// Transition `mobj` to state `state`, running zero-tic chain states
 /// immediately.  Returns `1` if the mobj is still alive after the transition,
@@ -202,7 +229,7 @@ pub unsafe fn P_SetMobjState(mobj: *mut mobj_t, state: i32) -> i32 {
             P_RemoveMobj(mobj as *mut mobj_t);
             return 0;
         }
-        let st = &raw mut info::states[state as usize];
+        let st = state_ptr(state as usize);
         mobj.state = st;
         mobj.tics = (*st).tics;
         mobj.sprite = (*st).sprite;
@@ -297,7 +324,7 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
             if !mo.player.is_null() {
                 P_SlideMove(mo as *mut mobj_t);
             } else if mo.flags & MF_MISSILE != 0 {
-                let cl = ceilingline;
+                let cl = ceilingline();
                 if !cl.is_null() {
                     let line = cl;
                     if !(*line).backsector.is_null()
@@ -349,10 +376,10 @@ pub unsafe fn P_XYMovement(mo: *mut mobj_t) {
         && (player.is_null() || ((*player).cmd.forwardmove == 0 && (*player).cmd.sidemove == 0))
     {
         if !player.is_null() {
-            let state_ptr = mo.state;
-            let states_ptr = std::ptr::addr_of!(info::states) as *const State;
+            let mobj_state = mo.state;
+            let states_ptr = state_ptr(0) as *const State;
             let state_idx =
-                (state_ptr as usize - states_ptr as usize) / std::mem::size_of::<State>();
+                (mobj_state as usize - states_ptr as usize) / std::mem::size_of::<State>();
             let run_offset = state_idx as i32 - S_PLAY_RUN1;
             if (0..4).contains(&run_offset) {
                 P_SetMobjState(mo as *mut mobj_t, S_PLAY);
@@ -529,14 +556,14 @@ pub unsafe fn P_MobjThinker(mobj: *mut mobj_t) {
         if mobj.flags & MF_COUNTKILL == 0 {
             return;
         }
-        if respawnmonsters == 0 {
+        if respawnmonsters() == 0 {
             return;
         }
         mobj.movecount += 1;
         if mobj.movecount < 12 * TICRATE {
             return;
         }
-        if leveltime & 31 != 0 {
+        if leveltime() & 31 != 0 {
             return;
         }
         if P_Random() > 4 {
@@ -567,7 +594,7 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
     ) as *mut mobj_t;
     // Z_Malloc already zeroes the allocation internally.
     let mobj_ref = &mut *mobj;
-    let info = &raw mut info::mobjinfo[kind as usize];
+    let info = mobjinfo_ptr(kind as usize);
 
     mobj_ref.kind = kind;
     mobj_ref.info = info;
@@ -578,14 +605,14 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> *mut mobj_t {
     mobj_ref.flags = (*info).flags;
     mobj_ref.health = (*info).spawnhealth;
 
-    if gameskill != 4 {
+    if gameskill() != 4 {
         // sk_nightmare = 4
         mobj_ref.reactiontime = (*info).reactiontime;
     }
 
     mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
 
-    let st = &raw mut info::states[(*info).spawnstate as usize];
+    let st = state_ptr((*info).spawnstate as usize);
     mobj_ref.state = st;
     mobj_ref.tics = (*st).tics;
     mobj_ref.sprite = (*st).sprite;
@@ -629,11 +656,14 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
         && mobj.kind != MT_INV
         && mobj.kind != MT_INS
     {
-        itemrespawnque[iquehead as usize] = mobj.spawnpoint;
-        itemrespawntime[iquehead as usize] = leveltime;
-        iquehead = (iquehead + 1) & (ITEMQUESIZE as i32 - 1);
-        if iquehead == iquetail {
-            iquetail = (iquetail + 1) & (ITEMQUESIZE as i32 - 1);
+        let leveltime = leveltime();
+        let mut queue = MOBJ.borrow_mut();
+        let head = queue.iquehead as usize;
+        queue.itemrespawnque[head] = mobj.spawnpoint;
+        queue.itemrespawntime[head] = leveltime;
+        queue.iquehead = (queue.iquehead + 1) & (ITEMQUESIZE as i32 - 1);
+        if queue.iquehead == queue.iquetail {
+            queue.iquetail = (queue.iquetail + 1) & (ITEMQUESIZE as i32 - 1);
         }
     }
 
@@ -652,17 +682,21 @@ pub unsafe fn P_RemoveMobj(mobj: *mut mobj_t) {
 ///
 /// Must be called only during an active level tick.
 pub unsafe fn P_RespawnSpecials() {
-    if deathmatch != 2 {
+    if deathmatch() != 2 {
         return;
     }
-    if iquehead == iquetail {
-        return;
-    }
-    if leveltime - itemrespawntime[iquetail as usize] < 30 * TICRATE {
-        return;
-    }
-
-    let mthing = &itemrespawnque[iquetail as usize];
+    let mthing = {
+        let queue = MOBJ.borrow();
+        if queue.iquehead == queue.iquetail {
+            return;
+        }
+        let tail = queue.iquetail as usize;
+        if leveltime() - queue.itemrespawntime[tail] < 30 * TICRATE {
+            return;
+        }
+        // Spawning does not touch the queue, so the record is copied out.
+        queue.itemrespawnque[tail]
+    };
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
 
@@ -670,25 +704,30 @@ pub unsafe fn P_RespawnSpecials() {
     let mut mo = P_SpawnMobj(x, y, (*(*ss).sector).floorheight, MT_IFOG);
     S_StartSound(mo, Sfx::Itmbk as i32);
 
-    let mut i = 0;
-    while i < NUMMOBJTYPES {
-        if mthing.kind.get() as i32 == info::mobjinfo[i].doomednum {
-            break;
+    let (z, i) = {
+        let mobjinfo = MOBJINFO.borrow();
+        let mut i = 0;
+        while i < NUMMOBJTYPES {
+            if mthing.kind.get() as i32 == mobjinfo[i].doomednum {
+                break;
+            }
+            i += 1;
         }
-        i += 1;
-    }
 
-    let z = if info::mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
-        ONCEILINGZ
-    } else {
-        ONFLOORZ
+        let z = if mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
+            ONCEILINGZ
+        } else {
+            ONFLOORZ
+        };
+        (z, i)
     };
 
     mo = P_SpawnMobj(x, y, z, i as i32);
-    (*mo).spawnpoint = *mthing;
+    (*mo).spawnpoint = mthing;
     (*mo).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
 
-    iquetail = (iquetail + 1) & (ITEMQUESIZE as i32 - 1);
+    let mut queue = MOBJ.borrow_mut();
+    queue.iquetail = (queue.iquetail + 1) & (ITEMQUESIZE as i32 - 1);
 }
 
 /// Spawn the player mobj for the player indicated by `mthing->type` (1-4).
@@ -707,11 +746,11 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     if thing_type as i32 == 0 {
         return;
     }
-    if playeringame[(thing_type - 1) as usize] == 0 {
+    if playeringame((thing_type - 1) as usize) == 0 {
         return;
     }
 
-    let p = &mut players[(thing_type - 1) as usize] as *mut PlayerT;
+    let p = player((thing_type - 1) as usize);
 
     if (*p).playerstate == PST_REBORN {
         G_PlayerReborn(thing_type as i32 - 1);
@@ -742,13 +781,13 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
 
     P_SetupPsprites(p);
 
-    if deathmatch != 0 {
+    if deathmatch() != 0 {
         for i in 0..crate::engine::doom::player::NUMCARDS {
             (*p).cards[i] = 1;
         }
     }
 
-    if thing_type as i32 - 1 == consoleplayer {
+    if thing_type as i32 - 1 == consoleplayer() {
         ST_Start();
         HU_Start();
     }
@@ -772,9 +811,10 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     let mut i: usize;
 
     if thing_type as i32 == 11 {
-        if deathmatch_p < std::ptr::addr_of_mut!(deathmatchstarts[0]).add(10) {
+        let deathmatch_p = deathmatch_p();
+        if deathmatch_p < deathmatchstart(10) {
             *deathmatch_p = *mthing;
-            deathmatch_p = deathmatch_p.add(1);
+            SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatch_p.add(1);
         }
         return;
     }
@@ -784,18 +824,18 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     }
 
     if thing_type as i32 <= 4 {
-        let ps = std::ptr::addr_of_mut!(playerstarts[0]);
-        *ps.add((thing_type - 1) as usize) = *mthing;
-        if deathmatch == 0 {
+        *playerstart((thing_type - 1) as usize) = *mthing;
+        if deathmatch() == 0 {
             P_SpawnPlayer(mthing);
         }
         return;
     }
 
-    if netgame == 0 && options & 16i16 != 0 {
+    if netgame() == 0 && options & 16i16 != 0 {
         return;
     }
 
+    let gameskill = gameskill();
     let bit = if gameskill == 0 {
         // sk_baby
         1
@@ -810,9 +850,10 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         return;
     }
 
+    let mobjinfo = MOBJINFO.borrow();
     i = 0;
     while i < NUMMOBJTYPES {
-        if thing_type as i32 == info::mobjinfo[i].doomednum {
+        if thing_type as i32 == mobjinfo[i].doomednum {
             break;
         }
         i += 1;
@@ -827,23 +868,23 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         );
     }
 
-    if deathmatch != 0 && info::mobjinfo[i].flags & MF_NOTDMATCH != 0 {
+    if deathmatch() != 0 && mobjinfo[i].flags & MF_NOTDMATCH != 0 {
         return;
     }
 
-    if nomonsters() != 0 && (i == MT_SKULL as usize || info::mobjinfo[i].flags & MF_COUNTKILL != 0)
-    {
+    if nomonsters() != 0 && (i == MT_SKULL as usize || mobjinfo[i].flags & MF_COUNTKILL != 0) {
         return;
     }
 
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
 
-    let z = if info::mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
+    let z = if mobjinfo[i].flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
     } else {
         ONFLOORZ
     };
+    drop(mobjinfo);
 
     let mobj = P_SpawnMobj(x, y, z, i as i32);
     (*mobj).spawnpoint = *mthing;
@@ -852,10 +893,10 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
         (*mobj).tics = 1 + (P_Random() % (*mobj).tics);
     }
     if (*mobj).flags & MF_COUNTKILL != 0 {
-        totalkills += 1;
+        GAME.borrow_mut().totalkills += 1;
     }
     if (*mobj).flags & MF_COUNTITEM != 0 {
-        totalitems += 1;
+        GAME.borrow_mut().totalitems += 1;
     }
 
     (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
@@ -879,7 +920,7 @@ pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
-    if attackrange == MELEERANGE {
+    if attackrange() == MELEERANGE {
         P_SetMobjState(th, S_PUFF3);
     }
 }
@@ -944,12 +985,14 @@ pub unsafe fn P_CheckMissileSpawn(th: *mut mobj_t) {
 /// function from the same thread; callers must not store it across ticks.
 pub unsafe fn P_SubstNullMobj(mobj: *mut mobj_t) -> *mut mobj_t {
     if mobj.is_null() {
-        static mut DUMMY_MOBJ: mobj_t = unsafe { std::mem::zeroed() };
-        DUMMY_MOBJ.x = 0;
-        DUMMY_MOBJ.y = 0;
-        DUMMY_MOBJ.z = 0;
-        DUMMY_MOBJ.flags = 0;
-        return std::ptr::addr_of_mut!(DUMMY_MOBJ);
+        // Callers keep the returned pointer, so it is the stable address of
+        // the field.
+        let dummy_mobj = &raw mut (*MOBJ.as_ptr()).dummy_mobj;
+        (*dummy_mobj).x = 0;
+        (*dummy_mobj).y = 0;
+        (*dummy_mobj).z = 0;
+        (*dummy_mobj).flags = 0;
+        return dummy_mobj;
     }
     mobj
 }
@@ -1007,13 +1050,13 @@ pub unsafe fn P_SpawnPlayerMissile(source: *mut mobj_t, kind: i32) {
     let mut an = source.angle;
     let mut slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
 
-    if linetarget.is_null() {
+    if linetarget().is_null() {
         an = an.wrapping_add(1 << 26);
         slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
-        if linetarget.is_null() {
+        if linetarget().is_null() {
             an = an.wrapping_sub(2 << 26);
             slope = P_AimLineAttack(source as *mut mobj_t, an, 16 * 64 * FRACUNIT);
-            if linetarget.is_null() {
+            if linetarget().is_null() {
                 an = source.angle;
                 slope = 0;
             }
@@ -1078,35 +1121,27 @@ mod tests {
 
     #[test]
     fn itemrespawntime_length_is_itemquesize() {
-        unsafe {
-            assert_eq!((*&raw const itemrespawntime).len(), ITEMQUESIZE);
-        }
+        assert_eq!(MobjState::new().itemrespawntime.len(), ITEMQUESIZE);
     }
 
     #[test]
     fn itemrespawnque_length_is_itemquesize() {
-        unsafe {
-            assert_eq!((*&raw const itemrespawnque).len(), ITEMQUESIZE);
-        }
+        assert_eq!(MobjState::new().itemrespawnque.len(), ITEMQUESIZE);
     }
 
     #[test]
     fn itemque_starts_empty() {
-        unsafe {
-            assert_eq!(
-                { iquehead },
-                { iquetail },
-                "item queue must be empty (head == tail) at startup"
-            );
-        }
+        let queue = MobjState::new();
+        assert_eq!(
+            queue.iquehead, queue.iquetail,
+            "item queue must be empty (head == tail) at startup"
+        );
     }
 
     #[test]
     fn itemrespawntime_starts_zeroed() {
-        unsafe {
-            for (i, &t) in (*&raw const itemrespawntime).iter().enumerate() {
-                assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
-            }
+        for (i, &t) in MobjState::new().itemrespawntime.iter().enumerate() {
+            assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
         }
     }
 }

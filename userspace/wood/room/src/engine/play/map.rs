@@ -32,14 +32,14 @@ use crate::{
         misc::random::P_Random,
         play::{
             maputl::{
-                intercept_t, lowfloor, openbottom, openrange, opentop, P_AproxDistance,
+                intercept_t, lowfloor, openbottom, openrange, opentop, trace, P_AproxDistance,
                 P_BlockLinesIterator, P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening,
                 P_PathTraverse, P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition,
                 MAPBLOCKSHIFT, PT_ADDLINES, PT_ADDTHINGS,
             },
             mobj::mobj_t,
-            setup::{bmaporgx, bmaporgy, lines},
-            sight::{bottomslope, topslope, P_CheckSight},
+            setup::{level, LevelState},
+            sight::{P_CheckSight, SIGHT},
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2, VALIDCOUNT},
         wad::format::LinedefFlag,
@@ -133,6 +133,7 @@ const DEH_DEFAULT_SPECIES_INFIGHTING: i32 = 0;
 
 use crate::engine::{
     game::gamemap,
+    global::Global,
     misc::{
         argv::{argument, M_CheckParmWithArgs},
         M_StrToInt,
@@ -151,76 +152,293 @@ use crate::engine::{
 };
 
 // ---------------------------------------------------------------------------
-// Movement scratchpad globals
+// Movement scratchpad state
 // ---------------------------------------------------------------------------
 
-/// Axis-aligned bounding box of the thing currently being position-checked.
+/// Movement, slide, hitscan, use, splash and crush scratchpad (`p_map.c`
+/// globals).
 ///
-/// Set by [`P_CheckPosition`] / [`P_TeleportMove`] before iterating over
-/// blockmap cells. Indices follow [`BBox`] (TOP, BOTTOM, LEFT, RIGHT).
-pub static mut tmbbox: [fixed_t; 4] = [0; 4];
+/// The blockmap and path-traversal callbacks below re-enter play code:
+/// damage runs death actions that move and spawn other objects, which check
+/// positions and traverse paths again, overwriting this state exactly as
+/// they overwrote the C globals. The C code reads each global afresh after
+/// such a call, so every access here is a short borrow (or one of the
+/// accessor functions) that never spans a call into other play code; values
+/// are copied out before a call and re-read after it.
+pub struct MapState {
+    /// Axis-aligned bounding box of the thing currently being position-checked.
+    ///
+    /// Set by [`P_CheckPosition`] / [`P_TeleportMove`] before iterating over
+    /// blockmap cells. Indices follow [`BBox`] (TOP, BOTTOM, LEFT, RIGHT).
+    pub tmbbox: [fixed_t; 4],
+    /// Pointer to the map object currently being tested by [`P_CheckPosition`].
+    ///
+    /// Used by the blockmap iterator callbacks ([`PIT_CheckThing`],
+    /// [`PIT_CheckLine`]) to access the moving object without passing it through
+    /// the C-style function-pointer interface.
+    pub tmthing: *mut mobj_t,
+    /// Cached copy of `tmthing->flags` for the current position check.
+    ///
+    /// Avoids repeated pointer dereferences inside tight blockmap loops.
+    pub tmflags: i32,
+    /// Destination x-coordinate being tested in the current position check.
+    pub tmx: fixed_t,
+    /// Destination y-coordinate being tested in the current position check.
+    pub tmy: fixed_t,
+    /// Set to non-zero by [`P_TryMove`] when the gap between floor and ceiling
+    /// is large enough for the thing to fit, even if other constraints still
+    /// block the move.
+    ///
+    /// Callers (e.g. floating monsters) read this to decide whether to keep
+    /// trying to ascend or descend rather than giving up entirely.
+    pub floatok: i32, // boolean
+    /// Highest floor height touched during the current position check.
+    ///
+    /// Updated by [`PIT_CheckLine`] as two-sided linedefs are crossed.
+    /// After [`P_CheckPosition`] returns, this is the floor the thing would
+    /// stand on at the tested position.
+    pub tmfloorz: fixed_t,
+    /// Lowest ceiling height encountered during the current position check.
+    ///
+    /// Updated by [`PIT_CheckLine`]. After [`P_CheckPosition`] returns, this
+    /// is the ceiling height at the tested position.
+    pub tmceilingz: fixed_t,
+    /// Lowest floor height seen across all contacted sectors during the check.
+    ///
+    /// Monsters will not move to a position where `tmfloorz - tmdropoffz`
+    /// exceeds 24 map units unless they have `MF_DROPOFF` or `MF_FLOAT`.
+    pub tmdropoffz: fixed_t,
+    /// The linedef that produced the current value of `tmceilingz`.
+    ///
+    /// Missiles use this to avoid exploding against "sky hack" walls: if the
+    /// ceiling line's front sector has the sky flat, the missile silently
+    /// disappears instead of spawning a puff.
+    pub ceilingline: *mut line_t,
+    /// Array of special linedefs crossed during the current move attempt.
+    ///
+    /// Filled by [`PIT_CheckLine`]; processed by [`P_TryMove`] once the move
+    /// is confirmed valid. Kept separate so specials are not triggered for
+    /// moves that ultimately fail.
+    pub spechit: [*mut line_t; MAXSPECIALCROSS],
+    /// Number of valid entries currently in `spechit`.
+    pub numspechit: i32,
 
-/// Pointer to the map object currently being tested by [`P_CheckPosition`].
+    /// Fractional distance along the current path to the first blocking wall.
+    ///
+    /// Set by [`PTR_SlideTraverse`] and consumed by [`P_SlideMove`].
+    /// Initialised to `FRACUNIT + 1` (beyond the end of the path) before each
+    /// path traversal so any real hit is closer.
+    pub bestslidefrac: fixed_t,
+    /// Fractional distance to the second-best (backup) blocking wall.
+    ///
+    /// Stored alongside `secondslideline` so that if the primary wall cannot
+    /// be slid along, [`P_SlideMove`] can fall back to the next candidate.
+    pub secondslidefrac: fixed_t,
+    /// The linedef closest to the sliding object along its current path.
+    ///
+    /// Set by [`PTR_SlideTraverse`]; used by [`P_SlideMove`] to project the
+    /// remaining momentum along the wall via [`P_HitSlideLine`].
+    pub bestslideline: *mut line_t,
+    /// Backup linedef for the second-closest blocking wall found during sliding.
+    pub secondslideline: *mut line_t,
+    /// The map object currently performing a slide move.
+    ///
+    /// Set by [`P_SlideMove`] and read by [`PTR_SlideTraverse`] and
+    /// [`P_HitSlideLine`].
+    pub slidemo: *mut mobj_t,
+    /// Remaining x-component of momentum after clipping to a slide wall.
+    ///
+    /// Written by [`P_HitSlideLine`] and applied by [`P_SlideMove`].
+    pub tmxmove: fixed_t,
+    /// Remaining y-component of momentum after clipping to a slide wall.
+    ///
+    /// Written by [`P_HitSlideLine`] and applied by [`P_SlideMove`].
+    pub tmymove: fixed_t,
+
+    /// The map object struck by the most recent hitscan or auto-aim traversal.
+    ///
+    /// Set to `null` before each [`P_AimLineAttack`] / [`P_LineAttack`] call
+    /// and written by [`PTR_AimTraverse`] or [`PTR_ShootTraverse`] when a
+    /// target is hit. Callers check this to determine whether anything was
+    /// actually hit.
+    pub linetarget: *mut mobj_t,
+    /// The map object that fired the current hitscan attack.
+    ///
+    /// Set by [`P_AimLineAttack`] and [`P_LineAttack`]; read by
+    /// [`PTR_AimTraverse`] and [`PTR_ShootTraverse`] to avoid self-hits.
+    pub shootthing: *mut mobj_t,
+    /// Z-height from which the current hitscan ray originates.
+    ///
+    /// Set to the shooter's mid-height plus 8 map units by both
+    /// [`P_AimLineAttack`] and [`P_LineAttack`].
+    pub shootz: fixed_t,
+    /// Damage dealt by the current hitscan attack (0 for a pure aim/test trace).
+    pub la_damage: i32,
+    /// Maximum reach of the current hitscan ray, in fixed-point map units.
+    ///
+    /// Used together with an intercept's fractional distance to compute the
+    /// actual world distance to a hit.
+    pub attackrange: fixed_t,
+    /// Vertical slope (rise/run) of the winning auto-aim result.
+    ///
+    /// Written by [`PTR_AimTraverse`] when a valid target is found, then read
+    /// by [`P_AimLineAttack`] (return value) and passed into [`P_LineAttack`]
+    /// as the actual firing slope.
+    pub aimslope: fixed_t,
+
+    /// The map object currently attempting a Use action.
+    ///
+    /// Set by [`P_UseLines`] before calling [`P_PathTraverse`]; read by
+    /// [`PTR_UseTraverse`] to determine the initiator's position and side.
+    pub usething: *mut mobj_t,
+
+    /// The creature that triggered the explosion (may differ from `bombspot`).
+    ///
+    /// Used as the `inflictor` when calling [`P_DamageMobj`] so that frag
+    /// credit goes to the right entity (e.g. the player who fired the rocket,
+    /// not the explosion object itself).
+    pub bombsource: *mut mobj_t,
+    /// The map object at the centre of the current explosion.
+    ///
+    /// Used by [`PIT_RadiusAttack`] to measure distance and check line-of-sight.
+    pub bombspot: *mut mobj_t,
+    /// Maximum damage (and effective radius in map units) of the current explosion.
+    ///
+    /// Damage falls off linearly with Chebyshev distance from `bombspot`:
+    /// `damage = bombdamage - dist`.
+    pub bombdamage: i32,
+
+    /// Non-zero when things that do not fit during a sector-height change should
+    /// take crush damage (10 HP every 4 tics).
+    ///
+    /// Set by [`P_ChangeSector`] from the `crunch` parameter.
+    pub crushchange: i32, // boolean
+    /// Set to non-zero by [`PIT_ChangeSector`] if any thing no longer fits
+    /// after a sector-height change.
+    ///
+    /// Returned by [`P_ChangeSector`]; a truthy value tells the caller to
+    /// either continue crushing or revert the sector height.
+    pub nofit: i32, // boolean
+
+    /// Base address used by `SpechitOverrun` (static local `baseaddr` in C),
+    /// resolved from `-spechit` on first use.
+    spechit_baseaddr: u32,
+}
+
+impl MapState {
+    /// The state at program start: no move, slide, attack or crush run.
+    pub const fn new() -> Self {
+        Self {
+            tmbbox: [0; 4],
+            tmthing: ptr::null_mut(),
+            tmflags: 0,
+            tmx: 0,
+            tmy: 0,
+            floatok: 0,
+            tmfloorz: 0,
+            tmceilingz: 0,
+            tmdropoffz: 0,
+            ceilingline: ptr::null_mut(),
+            spechit: [ptr::null_mut(); MAXSPECIALCROSS],
+            numspechit: 0,
+            bestslidefrac: 0,
+            secondslidefrac: 0,
+            bestslideline: ptr::null_mut(),
+            secondslideline: ptr::null_mut(),
+            slidemo: ptr::null_mut(),
+            tmxmove: 0,
+            tmymove: 0,
+            linetarget: ptr::null_mut(),
+            shootthing: ptr::null_mut(),
+            shootz: 0,
+            la_damage: 0,
+            attackrange: 0,
+            aimslope: 0,
+            usething: ptr::null_mut(),
+            bombsource: ptr::null_mut(),
+            bombspot: ptr::null_mut(),
+            bombdamage: 0,
+            crushchange: 0,
+            nofit: 0,
+            spechit_baseaddr: 0,
+        }
+    }
+}
+
+impl Default for MapState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Movement, hitscan and crush scratchpad.
+pub static MAP: Global<MapState> = Global::new(MapState::new());
+
+/// The object found by the last aim or shot (C `linetarget`).
+pub fn linetarget() -> *mut mobj_t {
+    MAP.borrow().linetarget
+}
+
+/// Whether the last `P_TryMove` found a tall enough gap (C `floatok`).
+pub fn floatok() -> i32 {
+    MAP.borrow().floatok
+}
+
+/// Floor height at the last checked position (C `tmfloorz`).
+pub fn tmfloorz() -> fixed_t {
+    MAP.borrow().tmfloorz
+}
+
+/// The line that set the last checked position's ceiling (C `ceilingline`).
+pub fn ceilingline() -> *mut line_t {
+    MAP.borrow().ceilingline
+}
+
+/// Reach of the current hitscan attack (C `attackrange`).
+pub fn attackrange() -> fixed_t {
+    MAP.borrow().attackrange
+}
+
+/// The object being position-checked (C `tmthing`).
+fn tmthing() -> *mut mobj_t {
+    MAP.borrow().tmthing
+}
+
+/// Record `thing` at `(x, y)` as the object being position-checked and set
+/// its bounding box (the common prologue of `P_TeleportMove` and
+/// `P_CheckPosition`), then start the floor, ceiling and special-line
+/// results from the sector at that spot. Returns the bounding box.
 ///
-/// Used by the blockmap iterator callbacks ([`PIT_CheckThing`],
-/// [`PIT_CheckLine`]) to access the moving object without passing it through
-/// the C-style function-pointer interface.
-pub static mut tmthing: *mut mobj_t = ptr::null_mut();
-
-/// Cached copy of `tmthing->flags` for the current position check.
+/// # Safety
 ///
-/// Avoids repeated pointer dereferences inside tight blockmap loops.
-pub static mut tmflags: i32 = 0;
+/// `thing` must point to a live [`mobj_t`]; the level must be loaded.
+unsafe fn start_position_check(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> [fixed_t; 4] {
+    let radius = (*thing).radius;
+    {
+        let mut map = MAP.borrow_mut();
+        map.tmthing = thing;
+        map.tmflags = (*thing).flags;
+        map.tmx = x;
+        map.tmy = y;
 
-/// Destination x-coordinate being tested in the current position check.
-pub static mut tmx: fixed_t = 0;
+        map.tmbbox[BBox::TOP] = y + radius;
+        map.tmbbox[BBox::BOTTOM] = y - radius;
+        map.tmbbox[BBox::RIGHT] = x + radius;
+        map.tmbbox[BBox::LEFT] = x - radius;
+    }
 
-/// Destination y-coordinate being tested in the current position check.
-pub static mut tmy: fixed_t = 0;
+    let newsubsec = R_PointInSubsector(x, y);
+    let sec = (*newsubsec).sector;
+    let mut map = MAP.borrow_mut();
+    map.ceilingline = ptr::null_mut();
+    map.tmfloorz = (*sec).floorheight;
+    map.tmdropoffz = map.tmfloorz;
+    map.tmceilingz = (*sec).ceilingheight;
 
-/// Set to non-zero by [`P_TryMove`] when the gap between floor and ceiling
-/// is large enough for the thing to fit, even if other constraints still
-/// block the move.
-///
-/// Callers (e.g. floating monsters) read this to decide whether to keep
-/// trying to ascend or descend rather than giving up entirely.
-pub static mut floatok: i32 = 0; // boolean
-
-/// Highest floor height touched during the current position check.
-///
-/// Updated by [`PIT_CheckLine`] as two-sided linedefs are crossed.
-/// After [`P_CheckPosition`] returns, this is the floor the thing would
-/// stand on at the tested position.
-pub static mut tmfloorz: fixed_t = 0;
-
-/// Lowest ceiling height encountered during the current position check.
-///
-/// Updated by [`PIT_CheckLine`]. After [`P_CheckPosition`] returns, this
-/// is the ceiling height at the tested position.
-pub static mut tmceilingz: fixed_t = 0;
-
-/// Lowest floor height seen across all contacted sectors during the check.
-///
-/// Monsters will not move to a position where `tmfloorz - tmdropoffz`
-/// exceeds 24 map units unless they have `MF_DROPOFF` or `MF_FLOAT`.
-pub static mut tmdropoffz: fixed_t = 0;
-
-/// The linedef that produced the current value of [`tmceilingz`].
-///
-/// Missiles use this to avoid exploding against "sky hack" walls: if the
-/// ceiling line's front sector has the sky flat, the missile silently
-/// disappears instead of spawning a puff.
-pub static mut ceilingline: *mut line_t = ptr::null_mut();
-
-/// Array of special linedefs crossed during the current move attempt.
-///
-/// Filled by [`PIT_CheckLine`]; processed by [`P_TryMove`] once the move
-/// is confirmed valid. Kept separate so specials are not triggered for
-/// moves that ultimately fail.
-pub static mut spechit: [*mut line_t; MAXSPECIALCROSS] = [ptr::null_mut(); MAXSPECIALCROSS];
-
-/// Number of valid entries currently in [`spechit`].
-pub static mut numspechit: i32 = 0;
+    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
+    map.numspechit = 0;
+    map.tmbbox
+}
 
 // ---------------------------------------------------------------------------
 // TELEPORT MOVE
@@ -236,13 +454,17 @@ pub static mut numspechit: i32 = 0;
 /// # Safety
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
-/// [`tmthing`] and [`tmx`] / [`tmy`] must have been set by the caller
+/// `tmthing` and `tmx` / `tmy` must have been set by the caller
 /// ([`P_TeleportMove`]) before this callback is invoked.
 pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
     }
+    let (tmthing, tmx, tmy) = {
+        let map = MAP.borrow();
+        (map.tmthing, map.tmx, map.tmy)
+    };
     let blockdist = thing.radius + (*tmthing).radius;
     if (thing.x - tmx).wrapping_abs() >= blockdist || (thing.y - tmy).wrapping_abs() >= blockdist {
         return 1;
@@ -250,7 +472,7 @@ pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
     if std::ptr::eq(thing, tmthing) {
         return 1;
     }
-    if (*tmthing).player.is_null() && gamemap != 30 {
+    if (*tmthing).player.is_null() && gamemap() != 30 {
         return 0;
     }
     P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, tmthing, 10000);
@@ -270,25 +492,10 @@ pub unsafe fn PIT_StompThing(thing: *mut mobj_t) -> u32 {
 /// already linked into the map (sector list and blockmap). The blockmap and
 /// sector structures must be fully initialised.
 pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
-    tmthing = thing;
-    tmflags = (*thing).flags;
-    tmx = x;
-    tmy = y;
-
-    tmbbox[BBox::TOP] = y + (*tmthing).radius;
-    tmbbox[BBox::BOTTOM] = y - (*tmthing).radius;
-    tmbbox[BBox::RIGHT] = x + (*tmthing).radius;
-    tmbbox[BBox::LEFT] = x - (*tmthing).radius;
-
-    let newsubsec = R_PointInSubsector(x, y);
-    ceilingline = ptr::null_mut();
-    let sec = (*newsubsec).sector;
-    tmfloorz = (*sec).floorheight;
-    tmdropoffz = tmfloorz;
-    tmceilingz = (*sec).ceilingheight;
-
-    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
-    numspechit = 0;
+    let tmbbox = start_position_check(thing, x, y);
+    let LevelState {
+        bmaporgx, bmaporgy, ..
+    } = level();
 
     let xl = (tmbbox[BBox::LEFT] - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
@@ -304,8 +511,11 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 
     }
 
     P_UnsetThingPosition(thing);
-    (*thing).floorz = tmfloorz;
-    (*thing).ceilingz = tmceilingz;
+    {
+        let map = MAP.borrow();
+        (*thing).floorz = map.tmfloorz;
+        (*thing).ceilingz = map.tmceilingz;
+    }
     (*thing).x = x;
     (*thing).y = y;
     P_SetThingPosition(thing);
@@ -320,20 +530,24 @@ pub unsafe fn P_TeleportMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 
 /// Blockmap linedef iterator callback for [`P_CheckPosition`].
 ///
 /// Tests whether linedef `ld` blocks the current move. If the line is
-/// two-sided and passable, [`tmfloorz`], [`tmceilingz`], and
-/// [`tmdropoffz`] are updated to reflect the opening. Special linedefs
-/// are recorded in [`spechit`] for later processing by [`P_TryMove`].
+/// two-sided and passable, `tmfloorz`, `tmceilingz`, and
+/// `tmdropoffz` are updated to reflect the opening. Special linedefs
+/// are recorded in `spechit` for later processing by [`P_TryMove`].
 ///
 /// Returns 1 to continue iteration, 0 to abort (line blocks the move).
 ///
 /// # Safety
 ///
 /// `ld` must be a valid, non-null pointer to an initialised [`line_t`].
-/// [`tmthing`], [`tmbbox`], [`tmfloorz`], [`tmceilingz`], and
-/// [`tmdropoffz`] must have been initialised by [`P_CheckPosition`] before
+/// `tmthing`, `tmbbox`, `tmfloorz`, `tmceilingz`, and
+/// `tmdropoffz` must have been initialised by [`P_CheckPosition`] before
 /// this callback is invoked.
 pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
     let ld = &*ld;
+    let (mut tmbbox, tmthing) = {
+        let map = MAP.borrow();
+        (map.tmbbox, map.tmthing)
+    };
     if tmbbox[BBox::RIGHT] <= ld.bbox[BBox::LEFT]
         || tmbbox[BBox::LEFT] >= ld.bbox[BBox::RIGHT]
         || tmbbox[BBox::TOP] <= ld.bbox[BBox::BOTTOM]
@@ -341,7 +555,7 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
     {
         return 1;
     }
-    if P_BoxOnLineSide(std::ptr::addr_of_mut!(tmbbox[0]), ld as *const _ as *mut _) != -1 {
+    if P_BoxOnLineSide(tmbbox.as_mut_ptr(), ld as *const _ as *mut _) != -1 {
         return 1;
     }
     if ld.backsector.is_null() {
@@ -358,21 +572,24 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
         }
     }
     P_LineOpening(ld as *const _ as *mut _);
-    if opentop < tmceilingz {
-        tmceilingz = opentop;
-        ceilingline = ld as *const _ as *mut _;
+    let (opentop, openbottom, lowfloor) = (opentop(), openbottom(), lowfloor());
+    let mut map = MAP.borrow_mut();
+    if opentop < map.tmceilingz {
+        map.tmceilingz = opentop;
+        map.ceilingline = ld as *const _ as *mut _;
     }
-    if openbottom > tmfloorz {
-        tmfloorz = openbottom;
+    if openbottom > map.tmfloorz {
+        map.tmfloorz = openbottom;
     }
-    if lowfloor < tmdropoffz {
-        tmdropoffz = lowfloor;
+    if lowfloor < map.tmdropoffz {
+        map.tmdropoffz = lowfloor;
     }
     if ld.special != 0 {
-        spechit[numspechit as usize] = ld as *const _ as *mut _;
-        numspechit += 1;
-        if numspechit > MAXSPECIALCROSS_ORIGINAL {
-            SpechitOverrun(ld as *const _ as *mut _);
+        let index = map.numspechit as usize;
+        map.spechit[index] = ld as *const _ as *mut _;
+        map.numspechit += 1;
+        if map.numspechit > MAXSPECIALCROSS_ORIGINAL {
+            SpechitOverrun(&mut map, ld as *const _ as *mut _);
         }
     }
     1
@@ -389,13 +606,17 @@ pub unsafe fn PIT_CheckLine(ld: *mut line_t) -> u32 {
 /// # Safety
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
-/// [`tmthing`], [`tmx`], [`tmy`], and [`tmflags`] must have been set by
+/// `tmthing`, `tmx`, `tmy`, and `tmflags` must have been set by
 /// [`P_CheckPosition`] before this callback is invoked.
 pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
     if thing.flags & (MF_SOLID | MF_SPECIAL | MF_SHOOTABLE) == 0 {
         return 1;
     }
+    let (tmthing, tmx, tmy, tmflags) = {
+        let map = MAP.borrow();
+        (map.tmthing, map.tmx, map.tmy, map.tmflags)
+    };
     let blockdist = thing.radius + (*tmthing).radius;
     if (thing.x - tmx).wrapping_abs() >= blockdist || (thing.y - tmy).wrapping_abs() >= blockdist {
         return 1;
@@ -408,6 +629,9 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
     if (*tmthing).flags & MF_SKULLFLY != 0 {
         let damage = ((P_Random() % 8) + 1) * (*(*tmthing).info).damage;
         P_DamageMobj(thing as *const _ as *mut mobj_t, tmthing, tmthing, damage);
+        // The damage can run actions that check other objects' positions;
+        // like C, the rest of the slam acts on whatever `tmthing` is now.
+        let tmthing = self::tmthing();
         (*tmthing).flags &= !MF_SKULLFLY;
         (*tmthing).momx = 0;
         (*tmthing).momy = 0;
@@ -468,8 +692,8 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
 /// Test whether `thing` can occupy position `(x, y)` without clipping.
 ///
 /// This is a pure query — it does not move the thing. As a side effect it
-/// sets [`tmfloorz`], [`tmceilingz`], [`tmdropoffz`], [`spechit`], and
-/// [`numspechit`] for the tested position. Things with `MF_PICKUP` may
+/// sets `tmfloorz`, `tmceilingz`, `tmdropoffz`, `spechit`, and
+/// `numspechit` for the tested position. Things with `MF_PICKUP` may
 /// pick up items encountered during the sweep.
 ///
 /// Returns 1 if the position is unobstructed, 0 if blocked.
@@ -479,30 +703,15 @@ pub unsafe fn PIT_CheckThing(thing: *mut mobj_t) -> u32 {
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
 /// The blockmap and all sector/linedef structures must be fully initialised.
 pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
-    tmthing = thing;
-    tmflags = (*thing).flags;
-    tmx = x;
-    tmy = y;
+    let tmbbox = start_position_check(thing, x, y);
 
-    tmbbox[BBox::TOP] = y + (*tmthing).radius;
-    tmbbox[BBox::BOTTOM] = y - (*tmthing).radius;
-    tmbbox[BBox::RIGHT] = x + (*tmthing).radius;
-    tmbbox[BBox::LEFT] = x - (*tmthing).radius;
-
-    let newsubsec = R_PointInSubsector(x, y);
-    ceilingline = ptr::null_mut();
-    let sec = (*newsubsec).sector;
-    tmfloorz = (*sec).floorheight;
-    tmdropoffz = tmfloorz;
-    tmceilingz = (*sec).ceilingheight;
-
-    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
-    numspechit = 0;
-
-    if tmflags & MF_NOCLIP != 0 {
+    if (*thing).flags & MF_NOCLIP != 0 {
         return 1;
     }
 
+    let LevelState {
+        bmaporgx, bmaporgy, ..
+    } = level();
     let xl = (tmbbox[BBox::LEFT] - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
     let yl = (tmbbox[BBox::BOTTOM] - bmaporgy - MAXRADIUS) >> MAPBLOCKSHIFT;
@@ -516,6 +725,12 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
         }
     }
 
+    // A touched thing's actions may have checked another position; like C,
+    // the line pass uses the box (and blockmap origin) as it is now.
+    let tmbbox = MAP.borrow().tmbbox;
+    let LevelState {
+        bmaporgx, bmaporgy, ..
+    } = level();
     let xl = (tmbbox[BBox::LEFT] - bmaporgx) >> MAPBLOCKSHIFT;
     let xh = (tmbbox[BBox::RIGHT] - bmaporgx) >> MAPBLOCKSHIFT;
     let yl = (tmbbox[BBox::BOTTOM] - bmaporgy) >> MAPBLOCKSHIFT;
@@ -536,7 +751,7 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
 ///
 /// Calls [`P_CheckPosition`] internally. If the position is valid and all
 /// height constraints pass, the thing is re-linked at the new position and
-/// any special linedefs in [`spechit`] that were actually crossed are
+/// any special linedefs in `spechit` that were actually crossed are
 /// activated. Things with `MF_TELEPORT` or `MF_NOCLIP` skip special-line
 /// processing.
 ///
@@ -547,22 +762,25 @@ pub unsafe fn P_CheckPosition(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32
 /// `thing` must be a valid, non-null pointer to a live [`mobj_t`] that is
 /// already linked into the map. The map data must be fully initialised.
 pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
-    floatok = 0;
+    MAP.borrow_mut().floatok = 0;
     if P_CheckPosition(thing, x, y) == 0 {
         return 0;
     }
     if (*thing).flags & MF_NOCLIP == 0 {
-        if tmceilingz - tmfloorz < (*thing).height {
+        let mut map = MAP.borrow_mut();
+        if map.tmceilingz - map.tmfloorz < (*thing).height {
             return 0;
         }
-        floatok = 1;
-        if (*thing).flags & MF_TELEPORT == 0 && tmceilingz - (*thing).z < (*thing).height {
+        map.floatok = 1;
+        if (*thing).flags & MF_TELEPORT == 0 && map.tmceilingz - (*thing).z < (*thing).height {
             return 0;
         }
-        if (*thing).flags & MF_TELEPORT == 0 && tmfloorz - (*thing).z > 24 * FRACUNIT {
+        if (*thing).flags & MF_TELEPORT == 0 && map.tmfloorz - (*thing).z > 24 * FRACUNIT {
             return 0;
         }
-        if (*thing).flags & (MF_DROPOFF | MF_FLOAT) == 0 && tmfloorz - tmdropoffz > 24 * FRACUNIT {
+        if (*thing).flags & (MF_DROPOFF | MF_FLOAT) == 0
+            && map.tmfloorz - map.tmdropoffz > 24 * FRACUNIT
+        {
             return 0;
         }
     }
@@ -570,20 +788,31 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
     P_UnsetThingPosition(thing);
     let oldx = (*thing).x;
     let oldy = (*thing).y;
-    (*thing).floorz = tmfloorz;
-    (*thing).ceilingz = tmceilingz;
+    {
+        let map = MAP.borrow();
+        (*thing).floorz = map.tmfloorz;
+        (*thing).ceilingz = map.tmceilingz;
+    }
     (*thing).x = x;
     (*thing).y = y;
     P_SetThingPosition(thing);
 
     if (*thing).flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
-        while numspechit > 0 {
-            numspechit -= 1;
-            let ld = spechit[numspechit as usize];
+        // A crossed special can move things (teleporters reset the list),
+        // so the count is re-read before every pop, as in C.
+        loop {
+            let ld = {
+                let mut map = MAP.borrow_mut();
+                if map.numspechit <= 0 {
+                    break;
+                }
+                map.numspechit -= 1;
+                map.spechit[map.numspechit as usize]
+            };
             let side = P_PointOnLineSide((*thing).x, (*thing).y, ld);
             let oldside = P_PointOnLineSide(oldx, oldy, ld);
             if side != oldside && (*ld).special != 0 {
-                let linenum = ld.offset_from(lines);
+                let linenum = ld.offset_from(level().lines);
                 P_CrossSpecialLine(linenum as i32, oldside, thing);
             }
         }
@@ -595,7 +824,7 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
 /// Clip a thing's z-position after a nearby sector floor or ceiling has moved.
 ///
 /// Re-runs [`P_CheckPosition`] at the thing's current x/y to refresh
-/// [`tmfloorz`] and [`tmceilingz`], then adjusts `thing->z` if necessary.
+/// `tmfloorz` and `tmceilingz`, then adjusts `thing->z` if necessary.
 /// Walking things rise and fall with the floor; floating things are only
 /// pushed down if they would exceed the ceiling. Returns 0 if the thing no
 /// longer fits in the vertical gap (caller should crush or block the move).
@@ -607,8 +836,11 @@ pub unsafe fn P_TryMove(thing: *mut mobj_t, x: fixed_t, y: fixed_t) -> u32 {
 pub unsafe fn P_ThingHeightClip(thing: *mut mobj_t) -> u32 {
     let onfloor = (*thing).z == (*thing).floorz;
     P_CheckPosition(thing, (*thing).x, (*thing).y);
-    (*thing).floorz = tmfloorz;
-    (*thing).ceilingz = tmceilingz;
+    {
+        let map = MAP.borrow();
+        (*thing).floorz = map.tmfloorz;
+        (*thing).ceilingz = map.tmceilingz;
+    }
     if onfloor {
         (*thing).z = (*thing).floorz;
     } else if (*thing).z + (*thing).height > (*thing).ceilingz {
@@ -624,44 +856,6 @@ pub unsafe fn P_ThingHeightClip(thing: *mut mobj_t) -> u32 {
 // SLIDE MOVE
 // ---------------------------------------------------------------------------
 
-/// Fractional distance along the current path to the first blocking wall.
-///
-/// Set by [`PTR_SlideTraverse`] and consumed by [`P_SlideMove`].
-/// Initialised to `FRACUNIT + 1` (beyond the end of the path) before each
-/// path traversal so any real hit is closer.
-pub static mut bestslidefrac: fixed_t = 0;
-
-/// Fractional distance to the second-best (backup) blocking wall.
-///
-/// Stored alongside [`secondslideline`] so that if the primary wall cannot
-/// be slid along, [`P_SlideMove`] can fall back to the next candidate.
-pub static mut secondslidefrac: fixed_t = 0;
-
-/// The linedef closest to the sliding object along its current path.
-///
-/// Set by [`PTR_SlideTraverse`]; used by [`P_SlideMove`] to project the
-/// remaining momentum along the wall via [`P_HitSlideLine`].
-pub static mut bestslideline: *mut line_t = ptr::null_mut();
-
-/// Backup linedef for the second-closest blocking wall found during sliding.
-pub static mut secondslideline: *mut line_t = ptr::null_mut();
-
-/// The map object currently performing a slide move.
-///
-/// Set by [`P_SlideMove`] and read by [`PTR_SlideTraverse`] and
-/// [`P_HitSlideLine`].
-pub static mut slidemo: *mut mobj_t = ptr::null_mut();
-
-/// Remaining x-component of momentum after clipping to a slide wall.
-///
-/// Written by [`P_HitSlideLine`] and applied by [`P_SlideMove`].
-pub static mut tmxmove: fixed_t = 0;
-
-/// Remaining y-component of momentum after clipping to a slide wall.
-///
-/// Written by [`P_HitSlideLine`] and applied by [`P_SlideMove`].
-pub static mut tmymove: fixed_t = 0;
-
 /// Project the current `(tmxmove, tmymove)` velocity onto linedef `ld`.
 ///
 /// Computes the component of the velocity vector that runs parallel to the
@@ -672,18 +866,22 @@ pub static mut tmymove: fixed_t = 0;
 /// # Safety
 ///
 /// `ld` must be a valid, non-null pointer to an initialised [`line_t`].
-/// [`slidemo`], [`tmxmove`], and [`tmymove`] must be set by the caller
+/// `slidemo`, `tmxmove`, and `tmymove` must be set by the caller
 /// ([`P_SlideMove`]) before this function is called.
 pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
     let ld = &*ld;
     if ld.slopetype == ST_HORIZONTAL {
-        tmymove = 0;
+        MAP.borrow_mut().tmymove = 0;
         return;
     }
     if ld.slopetype == ST_VERTICAL {
-        tmxmove = 0;
+        MAP.borrow_mut().tmxmove = 0;
         return;
     }
+    let (slidemo, tmxmove, tmymove) = {
+        let map = MAP.borrow();
+        (map.slidemo, map.tmxmove, map.tmymove)
+    };
     let side = P_PointOnLineSide((*slidemo).x, (*slidemo).y, ld as *const _ as *mut _);
     let mut lineangle = R_PointToAngle2(0, 0, ld.dx, ld.dy);
     if side == 1 {
@@ -698,15 +896,16 @@ pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
     let deltaangle = (deltaangle >> ANGLETOFINESHIFT) as usize;
     let movelen = P_AproxDistance(tmxmove, tmymove);
     let newlen = FixedMul(movelen, *finecosine.0.add(deltaangle));
-    tmxmove = FixedMul(newlen, *finecosine.0.add(lineangle));
-    tmymove = FixedMul(newlen, finesine[lineangle]);
+    let mut map = MAP.borrow_mut();
+    map.tmxmove = FixedMul(newlen, *finecosine.0.add(lineangle));
+    map.tmymove = FixedMul(newlen, finesine[lineangle]);
 }
 
 /// Path-traversal callback that finds blocking walls for slide movement.
 ///
 /// Called by [`P_PathTraverse`] from [`P_SlideMove`]. If the intercept is
 /// not a line, the engine aborts with an error. For each blocking line the
-/// fractional intercept is compared with [`bestslidefrac`]; closer hits
+/// fractional intercept is compared with `bestslidefrac`; closer hits
 /// displace the current best and push the old best to the second slot.
 ///
 /// Returns 1 to continue traversal (line is passable), 0 to stop.
@@ -714,12 +913,13 @@ pub unsafe fn P_HitSlideLine(ld: *mut line_t) {
 /// # Safety
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
-/// [`intercept_t`]. [`slidemo`] must point to the object being moved.
+/// [`intercept_t`]. `slidemo` must point to the object being moved.
 pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline == 0 {
         i_error!("PTR_SlideTraverse: not a line?");
     }
+    let slidemo = MAP.borrow().slidemo;
     let li = in_.d.line;
     if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
         if P_PointOnLineSide((*slidemo).x, (*slidemo).y, li) != 0 {
@@ -727,18 +927,19 @@ pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
         }
     } else {
         P_LineOpening(li);
-        if openrange >= (*slidemo).height
-            && opentop - (*slidemo).z >= (*slidemo).height
-            && openbottom - (*slidemo).z <= 24 * FRACUNIT
+        if openrange() >= (*slidemo).height
+            && opentop() - (*slidemo).z >= (*slidemo).height
+            && openbottom() - (*slidemo).z <= 24 * FRACUNIT
         {
             return 1;
         }
     }
-    if in_.frac < bestslidefrac {
-        secondslidefrac = bestslidefrac;
-        secondslideline = bestslideline;
-        bestslidefrac = in_.frac;
-        bestslideline = li;
+    let mut map = MAP.borrow_mut();
+    if in_.frac < map.bestslidefrac {
+        map.secondslidefrac = map.bestslidefrac;
+        map.secondslideline = map.bestslideline;
+        map.bestslidefrac = in_.frac;
+        map.bestslideline = li;
     }
     0
 }
@@ -757,7 +958,7 @@ pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
 /// `mo` must be a valid, non-null pointer to a live [`mobj_t`]. Map data
 /// must be fully initialised.
 pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
-    slidemo = mo;
+    MAP.borrow_mut().slidemo = mo;
     let mut hitcount = 0;
 
     'retry: loop {
@@ -781,7 +982,7 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
             ((*mo).y - (*mo).radius, (*mo).y + (*mo).radius)
         };
 
-        bestslidefrac = FRACUNIT + 1;
+        MAP.borrow_mut().bestslidefrac = FRACUNIT + 1;
 
         P_PathTraverse(
             leadx,
@@ -808,7 +1009,7 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
             Some(PTR_SlideTraverse),
         );
 
-        if bestslidefrac == FRACUNIT + 1 {
+        if MAP.borrow().bestslidefrac == FRACUNIT + 1 {
             // stairstep
             if P_TryMove(mo, (*mo).x, (*mo).y + (*mo).momy) == 0 {
                 P_TryMove(mo, (*mo).x + (*mo).momx, (*mo).y);
@@ -816,7 +1017,11 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
             return;
         }
 
-        bestslidefrac -= 0x800;
+        let bestslidefrac = {
+            let mut map = MAP.borrow_mut();
+            map.bestslidefrac -= 0x800;
+            map.bestslidefrac
+        };
         if bestslidefrac > 0 {
             let newx = FixedMul((*mo).momx, bestslidefrac);
             let newy = FixedMul((*mo).momy, bestslidefrac);
@@ -825,16 +1030,27 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
             }
         }
 
-        bestslidefrac = FRACUNIT - (bestslidefrac + 0x800);
-        if bestslidefrac > FRACUNIT {
-            bestslidefrac = FRACUNIT;
-        }
+        let (bestslidefrac, bestslideline) = {
+            let mut map = MAP.borrow_mut();
+            map.bestslidefrac = FRACUNIT - (map.bestslidefrac + 0x800);
+            if map.bestslidefrac > FRACUNIT {
+                map.bestslidefrac = FRACUNIT;
+            }
+            (map.bestslidefrac, map.bestslideline)
+        };
         if bestslidefrac <= 0 {
             return;
         }
-        tmxmove = FixedMul((*mo).momx, bestslidefrac);
-        tmymove = FixedMul((*mo).momy, bestslidefrac);
+        {
+            let mut map = MAP.borrow_mut();
+            map.tmxmove = FixedMul((*mo).momx, bestslidefrac);
+            map.tmymove = FixedMul((*mo).momy, bestslidefrac);
+        }
         P_HitSlideLine(bestslideline);
+        let (tmxmove, tmymove) = {
+            let map = MAP.borrow();
+            (map.tmxmove, map.tmymove)
+        };
         (*mo).momx = tmxmove;
         (*mo).momy = tmymove;
         if P_TryMove(mo, (*mo).x + tmxmove, (*mo).y + tmymove) == 0 {
@@ -848,48 +1064,12 @@ pub unsafe fn P_SlideMove(mo: *mut mobj_t) {
 // LINE ATTACK
 // ---------------------------------------------------------------------------
 
-/// The map object struck by the most recent hitscan or auto-aim traversal.
-///
-/// Set to `null` before each [`P_AimLineAttack`] / [`P_LineAttack`] call
-/// and written by [`PTR_AimTraverse`] or [`PTR_ShootTraverse`] when a
-/// target is hit. Callers check this to determine whether anything was
-/// actually hit.
-pub static mut linetarget: *mut mobj_t = ptr::null_mut();
-
-/// The map object that fired the current hitscan attack.
-///
-/// Set by [`P_AimLineAttack`] and [`P_LineAttack`]; read by
-/// [`PTR_AimTraverse`] and [`PTR_ShootTraverse`] to avoid self-hits.
-pub static mut shootthing: *mut mobj_t = ptr::null_mut();
-
-/// Z-height from which the current hitscan ray originates.
-///
-/// Set to the shooter's mid-height plus 8 map units by both
-/// [`P_AimLineAttack`] and [`P_LineAttack`].
-pub static mut shootz: fixed_t = 0;
-
-/// Damage dealt by the current hitscan attack (0 for a pure aim/test trace).
-pub static mut la_damage: i32 = 0;
-
-/// Maximum reach of the current hitscan ray, in fixed-point map units.
-///
-/// Used together with an intercept's fractional distance to compute the
-/// actual world distance to a hit.
-pub static mut attackrange: fixed_t = 0;
-
-/// Vertical slope (rise/run) of the winning auto-aim result.
-///
-/// Written by [`PTR_AimTraverse`] when a valid target is found, then read
-/// by [`P_AimLineAttack`] (return value) and passed into [`P_LineAttack`]
-/// as the actual firing slope.
-pub static mut aimslope: fixed_t = 0;
-
 /// Path-traversal callback for [`P_AimLineAttack`] auto-aim.
 ///
 /// For each line intercept, narrows the vertical aim window (`topslope` /
 /// `bottomslope`) based on the opening. For each thing intercept, checks
 /// whether the thing falls within the aim window and, if so, records it in
-/// [`linetarget`] and computes [`aimslope`].
+/// `linetarget` and computes `aimslope`.
 ///
 /// Returns 1 to continue traversal, 0 to stop (target locked or window
 /// closed).
@@ -897,35 +1077,41 @@ pub static mut aimslope: fixed_t = 0;
 /// # Safety
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
-/// [`intercept_t`]. [`shootthing`], [`shootz`], [`attackrange`],
+/// [`intercept_t`]. `shootthing`, `shootz`, `attackrange`,
 /// `topslope`, and `bottomslope` must be set before the traversal begins.
 pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
+    let (shootthing, shootz, attackrange) = {
+        let map = MAP.borrow();
+        (map.shootthing, map.shootz, map.attackrange)
+    };
     if in_.isaline != 0 {
         let li = in_.d.line;
         if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
             return 0;
         }
         P_LineOpening(li);
+        let (opentop, openbottom) = (opentop(), openbottom());
         if openbottom >= opentop {
             return 0;
         }
         let dist = FixedMul(attackrange, in_.frac);
         let front = (*li).frontsector;
         let back = (*li).backsector;
+        let mut sight = SIGHT.borrow_mut();
         if back.is_null() || (*front).floorheight != (*back).floorheight {
             let slope = FixedDiv(openbottom - shootz, dist);
-            if slope > bottomslope {
-                bottomslope = slope;
+            if slope > sight.bottomslope {
+                sight.bottomslope = slope;
             }
         }
         if back.is_null() || (*front).ceilingheight != (*back).ceilingheight {
             let slope = FixedDiv(opentop - shootz, dist);
-            if slope < topslope {
-                topslope = slope;
+            if slope < sight.topslope {
+                sight.topslope = slope;
             }
         }
-        if topslope <= bottomslope {
+        if sight.topslope <= sight.bottomslope {
             return 0;
         }
         return 1;
@@ -935,6 +1121,10 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
     if th == shootthing {
         return 1;
     }
+    let (topslope, bottomslope) = {
+        let sight = SIGHT.borrow();
+        (sight.topslope, sight.bottomslope)
+    };
     if (*th).flags & MF_SHOOTABLE == 0 {
         return 1;
     }
@@ -955,8 +1145,9 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
     if thingbottomslope < bottomslope {
         thingbottomslope = bottomslope;
     }
-    aimslope = (thingtopslope + thingbottomslope) / 2;
-    linetarget = th;
+    let mut map = MAP.borrow_mut();
+    map.aimslope = (thingtopslope + thingbottomslope) / 2;
+    map.linetarget = th;
     0
 }
 
@@ -965,25 +1156,31 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
 /// For line intercepts, activates any special on the line, then checks
 /// whether the shot passes through the opening or hits the wall; if it
 /// hits, `goto_hitline` spawns a bullet puff and the traversal stops.
-/// For thing intercepts, checks z-overlap with [`aimslope`], spawns puff
-/// or blood, and calls [`P_DamageMobj`] if [`la_damage`] is non-zero.
+/// For thing intercepts, checks z-overlap with `aimslope`, spawns puff
+/// or blood, and calls [`P_DamageMobj`] if `la_damage` is non-zero.
 ///
 /// Returns 1 to continue traversal, 0 to stop (shot consumed).
 ///
 /// # Safety
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
-/// [`intercept_t`]. [`shootthing`], [`shootz`], [`attackrange`],
-/// [`aimslope`], and [`la_damage`] must be set before the traversal.
+/// [`intercept_t`]. `shootthing`, `shootz`, `attackrange`,
+/// `aimslope`, and `la_damage` must be set before the traversal.
 pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if in_.isaline != 0 {
         let li = in_.d.line;
         if (*li).special != 0 {
+            let shootthing = MAP.borrow().shootthing;
             P_ShootSpecialLine(shootthing, li);
         }
         if (*li).flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
             P_LineOpening(li);
+            let (opentop, openbottom) = (opentop(), openbottom());
+            let (shootz, attackrange, aimslope) = {
+                let map = MAP.borrow();
+                (map.shootz, map.attackrange, map.aimslope)
+            };
             let dist = FixedMul(attackrange, in_.frac);
             let back = (*li).backsector;
             if back.is_null() {
@@ -1021,6 +1218,16 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     }
 
     let th = in_.d.thing as *mut mobj_t;
+    let (shootthing, shootz, attackrange, aimslope, la_damage) = {
+        let map = MAP.borrow();
+        (
+            map.shootthing,
+            map.shootz,
+            map.attackrange,
+            map.aimslope,
+            map.la_damage,
+        )
+    };
     if th == shootthing {
         return 1;
     }
@@ -1038,16 +1245,20 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     }
 
     let frac = in_.frac - FixedDiv(10 * FRACUNIT, attackrange);
-    let x = crate::engine::play::maputl::trace.x
-        + FixedMul(crate::engine::play::maputl::trace.dx, frac);
-    let y = crate::engine::play::maputl::trace.y
-        + FixedMul(crate::engine::play::maputl::trace.dy, frac);
+    let trace = trace();
+    let x = trace.x + FixedMul(trace.dx, frac);
+    let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
     if (*th).flags & MF_NOBLOOD != 0 {
         P_SpawnPuff(x, y, z);
     } else {
         P_SpawnBlood(x, y, z, la_damage);
     }
+    // Spawning sets the new object's state, so re-read the shot as C does.
+    let (shootthing, la_damage) = {
+        let map = MAP.borrow();
+        (map.shootthing, map.la_damage)
+    };
     if la_damage != 0 {
         P_DamageMobj(th, shootthing, shootthing, la_damage);
     }
@@ -1064,13 +1275,16 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
 ///
 /// `li` must be a valid, non-null pointer to an initialised [`line_t`].
 /// `in_` must refer to the intercept that triggered this call.
-/// [`shootz`], [`aimslope`], and [`attackrange`] must be current.
+/// `shootz`, `aimslope`, and `attackrange` must be current.
 unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
+    let (shootz, attackrange, aimslope) = {
+        let map = MAP.borrow();
+        (map.shootz, map.attackrange, map.aimslope)
+    };
     let frac = in_.frac - FixedDiv(4 * FRACUNIT, attackrange);
-    let x = crate::engine::play::maputl::trace.x
-        + FixedMul(crate::engine::play::maputl::trace.dx, frac);
-    let y = crate::engine::play::maputl::trace.y
-        + FixedMul(crate::engine::play::maputl::trace.dy, frac);
+    let trace = trace();
+    let x = trace.x + FixedMul(trace.dx, frac);
+    let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
     let front = (*li).frontsector;
     let skyflatnum = SKY.borrow().skyflatnum;
@@ -1091,7 +1305,7 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
 /// Runs [`PTR_AimTraverse`] to find the best shootable target within the
 /// vertical aim window (approximately ±35 degrees). Returns the vertical
 /// slope to the centre of that target, or 0 if nothing was found.
-/// Sets [`linetarget`] as a side effect.
+/// Sets `linetarget` as a side effect.
 ///
 /// # Safety
 ///
@@ -1100,14 +1314,20 @@ unsafe fn goto_hitline(li: *mut line_t, in_: &intercept_t) {
 pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: u32, distance: fixed_t) -> fixed_t {
     let t1 = P_SubstNullMobj(t1);
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
-    shootthing = t1;
     let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
     let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
-    shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
-    topslope = 100 * FRACUNIT / 160;
-    bottomslope = -(100 * FRACUNIT / 160);
-    attackrange = distance;
-    linetarget = ptr::null_mut();
+    {
+        let mut map = MAP.borrow_mut();
+        map.shootthing = t1;
+        map.shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
+        map.attackrange = distance;
+        map.linetarget = ptr::null_mut();
+    }
+    {
+        let mut sight = SIGHT.borrow_mut();
+        sight.topslope = 100 * FRACUNIT / 160;
+        sight.bottomslope = -(100 * FRACUNIT / 160);
+    }
     P_PathTraverse(
         (*t1).x,
         (*t1).y,
@@ -1116,8 +1336,9 @@ pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: u32, distance: fixed_t) ->
         PT_ADDLINES | PT_ADDTHINGS,
         Some(PTR_AimTraverse),
     );
-    if !linetarget.is_null() {
-        return aimslope;
+    let map = MAP.borrow();
+    if !map.linetarget.is_null() {
+        return map.aimslope;
     }
     0
 }
@@ -1126,7 +1347,7 @@ pub unsafe fn P_AimLineAttack(t1: *mut mobj_t, angle: u32, distance: fixed_t) ->
 /// `slope`, and `damage`.
 ///
 /// Runs [`PTR_ShootTraverse`] along the ray. If `damage` is 0 the call is
-/// a pure trace that sets [`linetarget`] without dealing damage. Spawns
+/// a pure trace that sets `linetarget` without dealing damage. Spawns
 /// puffs or blood at the impact point as a side effect.
 ///
 /// # Safety
@@ -1141,13 +1362,16 @@ pub unsafe fn P_LineAttack(
     damage: i32,
 ) {
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
-    shootthing = t1;
-    la_damage = damage;
     let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
     let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
-    shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
-    attackrange = distance;
-    aimslope = slope;
+    {
+        let mut map = MAP.borrow_mut();
+        map.shootthing = t1;
+        map.la_damage = damage;
+        map.shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
+        map.attackrange = distance;
+        map.aimslope = slope;
+    }
     P_PathTraverse(
         (*t1).x,
         (*t1).y,
@@ -1162,12 +1386,6 @@ pub unsafe fn P_LineAttack(
 // USE LINES
 // ---------------------------------------------------------------------------
 
-/// The map object currently attempting a Use action.
-///
-/// Set by [`P_UseLines`] before calling [`P_PathTraverse`]; read by
-/// [`PTR_UseTraverse`] to determine the initiator's position and side.
-pub static mut usething: *mut mobj_t = ptr::null_mut();
-
 /// Path-traversal callback for the player's Use action.
 ///
 /// For non-special lines with a closed opening, plays the "oof" sound and
@@ -1180,12 +1398,13 @@ pub static mut usething: *mut mobj_t = ptr::null_mut();
 /// # Safety
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
-/// [`intercept_t`] whose `d.line` is valid. [`usething`] must be set.
+/// [`intercept_t`] whose `d.line` is valid. `usething` must be set.
 pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
+    let usething = MAP.borrow().usething;
     if (*in_.d.line).special == 0 {
         P_LineOpening(in_.d.line);
-        if openrange <= 0 {
+        if openrange() <= 0 {
             S_StartSound(usething, Sfx::Noway as i32);
             return 0;
         }
@@ -1213,7 +1432,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
 pub unsafe fn P_UseLines(player: *mut c_void) {
     let player = player as *mut crate::engine::doom::player::PlayerT;
     let mo = (*player).mo;
-    usething = mo;
+    MAP.borrow_mut().usething = mo;
     let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;
     let x1 = (*mo).x;
     let y1 = (*mo).y;
@@ -1226,29 +1445,11 @@ pub unsafe fn P_UseLines(player: *mut c_void) {
 // RADIUS ATTACK
 // ---------------------------------------------------------------------------
 
-/// The creature that triggered the explosion (may differ from [`bombspot`]).
-///
-/// Used as the `inflictor` when calling [`P_DamageMobj`] so that frag
-/// credit goes to the right entity (e.g. the player who fired the rocket,
-/// not the explosion object itself).
-pub static mut bombsource: *mut mobj_t = ptr::null_mut();
-
-/// The map object at the centre of the current explosion.
-///
-/// Used by [`PIT_RadiusAttack`] to measure distance and check line-of-sight.
-pub static mut bombspot: *mut mobj_t = ptr::null_mut();
-
-/// Maximum damage (and effective radius in map units) of the current explosion.
-///
-/// Damage falls off linearly with Chebyshev distance from [`bombspot`]:
-/// `damage = bombdamage - dist`.
-pub static mut bombdamage: i32 = 0;
-
 /// Blockmap thing iterator callback for [`P_RadiusAttack`].
 ///
 /// Skips non-shootable things and the two boss types immune to splash
 /// (Cyberdemon and Spider Mastermind). Computes Chebyshev distance from
-/// [`bombspot`], subtracts the thing's radius, and if in range and in
+/// `bombspot`, subtracts the thing's radius, and if in range and in
 /// line-of-sight, deals `bombdamage - dist` damage.
 ///
 /// Always returns 1 (continues blockmap iteration).
@@ -1256,7 +1457,7 @@ pub static mut bombdamage: i32 = 0;
 /// # Safety
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
-/// [`bombspot`], [`bombsource`], and [`bombdamage`] must be set by
+/// `bombspot`, `bombsource`, and `bombdamage` must be set by
 /// [`P_RadiusAttack`] before this callback is invoked.
 pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
     let thing = &*thing;
@@ -1266,6 +1467,12 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
     if thing.kind == MT_CYBORG || thing.kind == MT_SPIDER {
         return 1;
     }
+    // The sight check below does not touch this state, so one read serves
+    // the whole callback.
+    let (bombspot, bombsource, bombdamage) = {
+        let map = MAP.borrow();
+        (map.bombspot, map.bombsource, map.bombdamage)
+    };
     let dx = (thing.x - (*bombspot).x).wrapping_abs();
     let dy = (thing.y - (*bombspot).y).wrapping_abs();
     let mut dist = if dx > dy { dx } else { dy };
@@ -1301,14 +1508,20 @@ pub unsafe fn PIT_RadiusAttack(thing: *mut mobj_t) -> u32 {
 /// `spot` and `source` must be valid, non-null pointers to live [`mobj_t`]s.
 /// Map and blockmap data must be fully initialised.
 pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: i32) {
+    let LevelState {
+        bmaporgx, bmaporgy, ..
+    } = level();
     let dist = (damage + MAXRADIUS) << FRACBITS;
     let yh = ((*spot).y + dist - bmaporgy) >> MAPBLOCKSHIFT;
     let yl = ((*spot).y - dist - bmaporgy) >> MAPBLOCKSHIFT;
     let xh = ((*spot).x + dist - bmaporgx) >> MAPBLOCKSHIFT;
     let xl = ((*spot).x - dist - bmaporgx) >> MAPBLOCKSHIFT;
-    bombspot = spot;
-    bombsource = source;
-    bombdamage = damage;
+    {
+        let mut map = MAP.borrow_mut();
+        map.bombspot = spot;
+        map.bombsource = source;
+        map.bombdamage = damage;
+    }
     for y in yl..=yh {
         for x in xl..=xh {
             P_BlockThingsIterator(x, y, Some(PIT_RadiusAttack));
@@ -1320,25 +1533,12 @@ pub unsafe fn P_RadiusAttack(spot: *mut mobj_t, source: *mut mobj_t, damage: i32
 // SECTOR HEIGHT CHANGING
 // ---------------------------------------------------------------------------
 
-/// Non-zero when things that do not fit during a sector-height change should
-/// take crush damage (10 HP every 4 tics).
-///
-/// Set by [`P_ChangeSector`] from the `crunch` parameter.
-pub static mut crushchange: i32 = 0; // boolean
-
-/// Set to non-zero by [`PIT_ChangeSector`] if any thing no longer fits
-/// after a sector-height change.
-///
-/// Returned by [`P_ChangeSector`]; a truthy value tells the caller to
-/// either continue crushing or revert the sector height.
-pub static mut nofit: i32 = 0; // boolean
-
 /// Blockmap thing iterator callback for [`P_ChangeSector`].
 ///
 /// Calls [`P_ThingHeightClip`] on each thing. If the thing fits, returns 1.
 /// If it does not fit: dead things are gibbed, dropped items are removed,
 /// non-shootable things are ignored (assumed decorative), and live shootable
-/// things set [`nofit`] and optionally receive crush damage with a blood
+/// things set `nofit` and optionally receive crush damage with a blood
 /// spray every 4 tics.
 ///
 /// Always returns 1 to continue checking other things.
@@ -1346,7 +1546,7 @@ pub static mut nofit: i32 = 0; // boolean
 /// # Safety
 ///
 /// `thing` must be a valid, non-null pointer to an initialised [`mobj_t`].
-/// [`crushchange`] must be set by [`P_ChangeSector`] before iteration.
+/// `crushchange` must be set by [`P_ChangeSector`] before iteration.
 pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
     if P_ThingHeightClip(thing) != 0 {
         return 1;
@@ -1366,8 +1566,12 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
     }
-    nofit = 1;
-    if crushchange != 0 && leveltime & 3 == 0 {
+    let crushchange = {
+        let mut map = MAP.borrow_mut();
+        map.nofit = 1;
+        map.crushchange
+    };
+    if crushchange != 0 && leveltime() & 3 == 0 {
         P_DamageMobj(
             thing as *const _ as *mut mobj_t,
             ptr::null_mut(),
@@ -1385,7 +1589,7 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
 ///
 /// Re-checks height constraints for every thing in the blockmap cells that
 /// overlap `sector->blockbox`. Returns non-zero if any thing no longer fits
-/// (i.e. [`nofit`] was set). If `crunch` is zero and this returns non-zero,
+/// (i.e. `nofit` was set). If `crunch` is zero and this returns non-zero,
 /// the caller should revert the sector height and call this again.
 ///
 /// # Safety
@@ -1393,15 +1597,18 @@ pub unsafe fn PIT_ChangeSector(thing: *mut mobj_t) -> u32 {
 /// `sector` must be a valid, non-null pointer to an initialised [`sector_t`]
 /// whose `blockbox` indices are within the blockmap bounds.
 pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
-    nofit = 0;
-    crushchange = crunch;
+    {
+        let mut map = MAP.borrow_mut();
+        map.nofit = 0;
+        map.crushchange = crunch;
+    }
     let sec = &*sector;
     for x in sec.blockbox[BBox::LEFT]..=sec.blockbox[BBox::RIGHT] {
         for y in sec.blockbox[BBox::BOTTOM]..=sec.blockbox[BBox::TOP] {
             P_BlockThingsIterator(x, y, Some(PIT_ChangeSector));
         }
     }
-    nofit
+    MAP.borrow().nofit
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,36 +1631,36 @@ pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
 /// # Safety
 ///
 /// `ld` must be a valid, non-null pointer to a [`line_t`] that is part of
-/// the global `lines` array so that `ld.offset_from(lines)` is well-defined.
+/// the level's `lines` array so that `ld.offset_from(lines)` is well-defined.
 /// Must only be called from [`PIT_CheckLine`] after `numspechit` has been
 /// incremented beyond [`MAXSPECIALCROSS_ORIGINAL`].
-unsafe fn SpechitOverrun(ld: *mut line_t) {
-    static mut baseaddr: u32 = 0;
-    if baseaddr == 0 {
+unsafe fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
+    if map.spechit_baseaddr == 0 {
         let p = M_CheckParmWithArgs("-spechit", 1);
         if p > 0 {
             if let Some(value) = M_StrToInt(argument(p + 1)) {
-                baseaddr = value as u32;
+                map.spechit_baseaddr = value as u32;
             }
         } else {
-            baseaddr = DEFAULT_SPECHIT_MAGIC;
+            map.spechit_baseaddr = DEFAULT_SPECHIT_MAGIC;
         }
     }
-    let addr = baseaddr as i32 + (ld.offset_from(lines) * 0x3e) as i32;
-    match numspechit {
+    let addr = map.spechit_baseaddr as i32 + (ld.offset_from(level().lines) * 0x3e) as i32;
+    match map.numspechit {
         9..=12 => {
-            tmbbox[(numspechit - 9) as usize] = addr;
+            let index = (map.numspechit - 9) as usize;
+            map.tmbbox[index] = addr;
         }
         13 => {
-            crushchange = addr;
+            map.crushchange = addr;
         }
         14 => {
-            nofit = addr;
+            map.nofit = addr;
         }
         _ => {
             eprintln!(
                 "SpechitOverrun: Warning: unable to emulate an overrun where numspechit={}",
-                { numspechit }
+                map.numspechit
             );
         }
     }

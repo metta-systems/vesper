@@ -71,67 +71,59 @@ fn itemquesize_is_128() {
 /// The respawn queue is exactly ITEMQUESIZE entries of mapthing_t.
 #[test]
 fn itemrespawnque_length() {
-    unsafe {
-        assert_eq!(
-            (*&raw const play::mobj::itemrespawnque).len(),
-            play::mobj::ITEMQUESIZE
-        );
-    }
+    assert_eq!(
+        play::mobj::MobjState::new().itemrespawnque.len(),
+        play::mobj::ITEMQUESIZE
+    );
 }
 
 /// `iquehead` is the write index; starts at 0 before any level is loaded.
 #[test]
 fn iquehead_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::mobj::iquehead },
-            0,
-            "iquehead should be 0 before level load"
-        );
-    }
+    assert_eq!(
+        play::mobj::MobjState::new().iquehead,
+        0,
+        "iquehead should be 0 before level load"
+    );
 }
 
 /// `iquetail` is the read index; starts at 0 before any level is loaded.
 #[test]
 fn iquetail_default_zero() {
-    unsafe {
-        assert_eq!(
-            { play::mobj::iquetail },
-            0,
-            "iquetail should be 0 before level load"
-        );
-    }
+    assert_eq!(
+        play::mobj::MobjState::new().iquetail,
+        0,
+        "iquetail should be 0 before level load"
+    );
 }
 
 /// At startup the head and tail indices are equal, meaning the queue is empty.
 #[test]
 fn itemque_starts_empty() {
-    unsafe {
-        assert_eq!(
-            { play::mobj::iquehead },
-            { play::mobj::iquetail },
-            "item queue must be empty (head == tail) at startup"
-        );
-    }
+    let queue = play::mobj::MobjState::new();
+    assert_eq!(
+        queue.iquehead, queue.iquetail,
+        "item queue must be empty (head == tail) at startup"
+    );
 }
 
 /// `itemrespawntime[ITEMQUESIZE]` is zero-initialised before any level runs.
 #[test]
 fn itemrespawntime_starts_zeroed() {
-    unsafe {
-        for (i, &t) in (*&raw const play::mobj::itemrespawntime).iter().enumerate() {
-            assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
-        }
+    for (i, &t) in play::mobj::MobjState::new()
+        .itemrespawntime
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
     }
 }
 
 /// `itemrespawntime` has exactly ITEMQUESIZE entries.
 #[test]
 fn itemrespawntime_length_is_itemquesize() {
-    unsafe {
-        assert_eq!(
-            (*&raw const play::mobj::itemrespawntime).len(),
-            play::mobj::ITEMQUESIZE
-        );
-    }
+    assert_eq!(
+        play::mobj::MobjState::new().itemrespawntime.len(),
+        play::mobj::ITEMQUESIZE
+    );
 }

@@ -14,7 +14,9 @@ use crate::{
         dehacked::DEH_String,
         doom::{
             items::weaponinfo,
-            player::{consoleplayer, players, PlayerMessage, PlayerT, CF_GODMODE, NUMAMMO},
+            player::{
+                console_player, player as game_player, PlayerMessage, PlayerT, CF_GODMODE, NUMAMMO,
+            },
             stat::{gamemode, gameversion},
         },
         math::{
@@ -22,11 +24,7 @@ use crate::{
             tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
         },
         misc::random::P_Random,
-        play::{
-            info::{self, *},
-            mobj::mobj_t,
-            pspr::P_DropWeapon,
-        },
+        play::{info::*, mobj::mobj_t, pspr::P_DropWeapon},
     },
     i_error,
 };
@@ -320,7 +318,7 @@ use crate::engine::{
 /// Maximum ammo capacity for each ammo type when the player has no backpack.
 /// Indexed by `am_clip`, `am_shell`, `am_cell`, `am_misl` (0-3).
 /// Matches `maxammo[]` in `p_inter.c`.
-pub static mut maxammo: [i32; NUMAMMO] = [200, 50, 300, 50];
+pub const maxammo: [i32; NUMAMMO] = [200, 50, 300, 50];
 
 /// Base ammo count per pickup for each ammo type.
 /// A weapon pickup grants 2× this amount; a dropped weapon grants 1×;
@@ -371,7 +369,7 @@ unsafe fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     } else {
         num = clipammo[idx] / 2;
     }
-    if gameskill == sk_baby || gameskill == sk_nightmare {
+    if gameskill() == sk_baby || gameskill() == sk_nightmare {
         num <<= 1;
     }
     let oldammo = player.ammo[idx];
@@ -441,23 +439,20 @@ pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: i32, dropped: i32) -> i
 unsafe fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
-    if netgame != 0 && deathmatch != 2 && dropped == 0 {
+    if netgame() != 0 && deathmatch() != 2 && dropped == 0 {
         if player.weaponowned[widx] != 0 {
             return 0;
         }
         player.bonuscount += BONUSADD;
         player.weaponowned[widx] = 1;
-        if deathmatch != 0 {
+        if deathmatch() != 0 {
             p_give_ammo(player, ammo_kind, 5);
         } else {
             p_give_ammo(player, ammo_kind, 2);
         }
         player.pendingweapon = weapon;
         let player_ptr = player as *mut PlayerT;
-        if std::ptr::eq(
-            player_ptr,
-            std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
-        ) {
+        if std::ptr::eq(player_ptr, console_player()) {
             S_StartSound(std::ptr::null_mut(), Sfx::Wpnup as i32);
         }
         return 0;
@@ -750,7 +745,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTBLUECARD));
             }
             p_give_card(player, it_bluecard);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -759,7 +754,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTYELWCARD));
             }
             p_give_card(player, it_yellowcard);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -768,7 +763,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTREDCARD));
             }
             p_give_card(player, it_redcard);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -777,7 +772,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTBLUESKUL));
             }
             p_give_card(player, it_blueskull);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -786,7 +781,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTYELWSKUL));
             }
             p_give_card(player, it_yellowskull);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -795,7 +790,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
                 player.message = PlayerMessage::new(DEH_String(GOTREDSKULL));
             }
             p_give_card(player, it_redskull);
-            if netgame != 0 {
+            if netgame() != 0 {
                 return;
             }
         }
@@ -1003,10 +998,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
     }
     P_RemoveMobj(special);
     player.bonuscount += BONUSADD;
-    if std::ptr::eq(
-        player_ptr,
-        std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
-    ) {
+    if std::ptr::eq(player_ptr, console_player()) {
         S_StartSound(std::ptr::null_mut(), sound);
     }
 }
@@ -1054,27 +1046,23 @@ pub unsafe fn P_KillMobj(source: *mut mobj_t, target: *mut mobj_t) {
         }
         if !(*target).player.is_null() {
             let target_player = (*target).player;
-            let idx = target_player.offset_from(std::ptr::addr_of_mut!(players[0])) as usize;
+            let idx = target_player.offset_from(game_player(0)) as usize;
             (*source_player).frags[idx] += 1;
         }
-    } else if netgame == 0 && (*target).flags & MF_COUNTKILL != 0 {
-        players[0].killcount += 1;
+    } else if netgame() == 0 && (*target).flags & MF_COUNTKILL != 0 {
+        (*game_player(0)).killcount += 1;
     }
 
     if !(*target).player.is_null() {
         let target_player = (*target).player;
         if source.is_null() {
-            let idx = target_player.offset_from(std::ptr::addr_of_mut!(players[0])) as usize;
+            let idx = target_player.offset_from(game_player(0)) as usize;
             (*target_player).frags[idx] += 1;
         }
         (*target).flags &= !MF_SOLID;
         (*target_player).playerstate = 1; // PST_DEAD
         P_DropWeapon(target_player);
-        if std::ptr::eq(
-            target_player,
-            std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
-        ) && automap_active()
-        {
+        if std::ptr::eq(target_player, console_player()) && automap_active() {
             AM_Stop();
         }
     }
@@ -1156,7 +1144,7 @@ pub unsafe fn P_DamageMobj(
     }
 
     let player = (*target).player;
-    if !player.is_null() && gameskill == sk_baby {
+    if !player.is_null() && gameskill() == sk_baby {
         damage >>= 1;
     }
 
@@ -1220,10 +1208,7 @@ pub unsafe fn P_DamageMobj(
             (*player).damagecount = 100;
         }
         let temp = if damage < 100 { damage } else { 100 };
-        if std::ptr::eq(
-            player,
-            std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize),
-        ) {
+        if std::ptr::eq(player, console_player()) {
             I_Tactile(40, 10, 40 + temp * 2);
         }
     }
@@ -1249,9 +1234,9 @@ pub unsafe fn P_DamageMobj(
     {
         (*target).target = source;
         (*target).threshold = BASETHRESHOLD;
-        let state_ptr = (*target).state;
-        let spawnstate_ptr = &info::states[(*info).spawnstate as usize] as *const State;
-        if std::ptr::eq(state_ptr, spawnstate_ptr) && (*info).seestate != S_NULL {
+        let target_state = (*target).state;
+        let spawnstate_ptr = state_ptr((*info).spawnstate as usize);
+        if std::ptr::eq(target_state, spawnstate_ptr) && (*info).seestate != S_NULL {
             P_SetMobjState(target, (*info).seestate);
         }
     }
@@ -1263,21 +1248,15 @@ pub unsafe fn P_DamageMobj(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn maxammo_defaults() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ maxammo }, [200, 50, 300, 50]);
-        }
+        assert_eq!(maxammo, [200, 50, 300, 50]);
     }
 
     #[test]
     fn clipammo_defaults() {
-        let _g = LOCK.lock().unwrap();
         assert_eq!(clipammo, [10, 4, 20, 1]);
     }
 
@@ -1320,7 +1299,6 @@ mod tests {
 
     #[test]
     fn deh_runtime_globals_default_to_deh_values() {
-        let _g = LOCK.lock().unwrap();
         assert_eq!(deh_max_health, DEH_DEFAULT_MAX_HEALTH);
         assert_eq!(deh_max_armor, DEH_DEFAULT_MAX_ARMOR);
         assert_eq!(deh_green_armor_class, DEH_DEFAULT_GREEN_ARMOR_CLASS);

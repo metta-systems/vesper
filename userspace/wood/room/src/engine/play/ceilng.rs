@@ -3,18 +3,19 @@
 //! Rust port of `vendor/doomgeneric/p_ceilng.c`.  Manages the per-tic update
 //! logic for moving ceilings ([`T_MoveCeiling`]), linedef-triggered ceiling
 //! activation ([`EV_DoCeiling`] / [`EV_CeilingCrushStop`]), and the fixed-size
-//! active-ceiling table ([`activeceilings`]).
+//! active-ceiling table ([`CeilingState::activeceilings`]).
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
+    global::Global,
     map::{line_t, sector_t},
     math::fixed::{fixed_t, FRACUNIT},
     play::{
         floor::T_MovePlane,
-        setup::sectors,
+        setup::level,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
     },
@@ -87,11 +88,32 @@ pub struct ceiling_t {
     pub olddirection: i32,
 }
 
-/// Table of all currently active ceiling thinkers.
-///
-/// Null entries represent free slots.  [`P_AddActiveCeiling`] fills the first
-/// null slot; [`P_RemoveActiveCeiling`] nulls the matching slot.
-pub static mut activeceilings: [*mut ceiling_t; MAXCEILINGS] = [std::ptr::null_mut(); MAXCEILINGS];
+/// The active-ceiling table (`p_ceilng.c` global).
+pub struct CeilingState {
+    /// Table of all currently active ceiling thinkers.
+    ///
+    /// Null entries represent free slots.  [`P_AddActiveCeiling`] fills the first
+    /// null slot; [`P_RemoveActiveCeiling`] nulls the matching slot.
+    pub activeceilings: [*mut ceiling_t; MAXCEILINGS],
+}
+
+impl CeilingState {
+    /// No ceiling active.
+    pub const fn new() -> Self {
+        Self {
+            activeceilings: [std::ptr::null_mut(); MAXCEILINGS],
+        }
+    }
+}
+
+impl Default for CeilingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The active-ceiling table.
+pub static CEILINGS: Global<CeilingState> = Global::new(CeilingState::new());
 
 /// Per-tic update for a moving ceiling thinker.
 ///
@@ -148,7 +170,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
         (*ceiling).direction,
     );
 
-    if (leveltime & 7) == 0 {
+    if (leveltime() & 7) == 0 {
         match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
@@ -192,7 +214,7 @@ pub unsafe fn T_MoveCeiling(ceiling: *mut ceiling_t) {
 ///    crush flag, direction).  `silentCrushAndRaise` and `crushAndRaise` only
 ///    initialise `crush` and `topheight`; `bottomheight` and `direction` keep
 ///    their zero-initialised defaults and are set dynamically by `T_MoveCeiling`.
-/// 3. Registers it in [`activeceilings`].
+/// 3. Registers it in `activeceilings`.
 ///
 /// Returns `1` if at least one ceiling was activated, `0` otherwise.
 ///
@@ -219,7 +241,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
         secnum
     } >= 0
     {
-        let sec = sectors.add(secnum as usize);
+        let sec = level().sectors.add(secnum as usize);
         if !(*sec).specialdata.is_null() {
             continue;
         }
@@ -271,7 +293,7 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
     rtn
 }
 
-/// Register `c` in the first available slot of [`activeceilings`].
+/// Register `c` in the first available slot of `activeceilings`.
 ///
 /// If all [`MAXCEILINGS`] slots are occupied the function returns silently,
 /// discarding the ceiling — matching the C behaviour which has no overflow
@@ -279,12 +301,11 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
 ///
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
 pub fn P_AddActiveCeiling(c: *mut ceiling_t) {
-    unsafe {
-        for i in 0..MAXCEILINGS {
-            if activeceilings[i].is_null() {
-                activeceilings[i] = c;
-                return;
-            }
+    let mut ceilings = CEILINGS.borrow_mut();
+    for slot in ceilings.activeceilings.iter_mut() {
+        if slot.is_null() {
+            *slot = c;
+            return;
         }
     }
 }
@@ -293,16 +314,17 @@ pub fn P_AddActiveCeiling(c: *mut ceiling_t) {
 ///
 /// Clears `sector->specialdata`, calls [`P_RemoveThinker`] (which marks the
 /// thinker for deferred `Z_Free`), and nulls the matching slot in
-/// [`activeceilings`].  Does nothing if `c` is not found in the table.
+/// `activeceilings`.  Does nothing if `c` is not found in the table.
 ///
 /// Corresponds to `P_RemoveActiveCeiling` in `p_ceilng.c`.
 pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
+    let mut ceilings = CEILINGS.borrow_mut();
     unsafe {
-        for i in 0..MAXCEILINGS {
-            if activeceilings[i] == c {
-                (*activeceilings[i]).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
-                P_RemoveThinker(&raw mut (*activeceilings[i]).thinker);
-                activeceilings[i] = std::ptr::null_mut();
+        for slot in ceilings.activeceilings.iter_mut() {
+            if *slot == c {
+                (**slot).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
+                P_RemoveThinker(&raw mut (**slot).thinker);
+                *slot = std::ptr::null_mut();
                 break;
             }
         }
@@ -322,14 +344,15 @@ pub fn P_RemoveActiveCeiling(c: *mut ceiling_t) {
 ///
 /// `line` must be a valid, non-null pointer.
 pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
+    let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
-        for i in 0..MAXCEILINGS {
-            if !activeceilings[i].is_null()
-                && (*activeceilings[i]).tag == (*line).tag as i32
-                && (*activeceilings[i]).direction == 0
+        for ceiling in activeceilings {
+            if !ceiling.is_null()
+                && (*ceiling).tag == (*line).tag as i32
+                && (*ceiling).direction == 0
             {
-                (*activeceilings[i]).direction = (*activeceilings[i]).olddirection;
-                (*activeceilings[i]).thinker.kind = ThinkerKind::Ceiling;
+                (*ceiling).direction = (*ceiling).olddirection;
+                (*ceiling).thinker.kind = ThinkerKind::Ceiling;
             }
         }
     }
@@ -340,7 +363,7 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
 /// Each matching ceiling has its `direction` saved to `olddirection`, its
 /// `direction` set to `0` (stasis), and its thinker kind set to
 /// [`ThinkerKind::CeilingInStasis`] so `T_MoveCeiling` is skipped each tic.  The ceiling is not removed from
-/// [`activeceilings`]; it can be restarted by [`P_ActivateInStasisCeiling`].
+/// `activeceilings`; it can be restarted by [`P_ActivateInStasisCeiling`].
 ///
 /// Returns `1` if at least one ceiling was stopped, `0` otherwise.
 ///
@@ -350,16 +373,17 @@ pub fn P_ActivateInStasisCeiling(line: *mut line_t) {
 ///
 /// `line` must be a valid, non-null pointer.
 pub fn EV_CeilingCrushStop(line: *mut line_t) -> i32 {
+    let activeceilings = CEILINGS.borrow().activeceilings;
     unsafe {
         let mut rtn: i32 = 0;
-        for i in 0..MAXCEILINGS {
-            if !activeceilings[i].is_null()
-                && (*activeceilings[i]).tag == (*line).tag as i32
-                && (*activeceilings[i]).direction != 0
+        for ceiling in activeceilings {
+            if !ceiling.is_null()
+                && (*ceiling).tag == (*line).tag as i32
+                && (*ceiling).direction != 0
             {
-                (*activeceilings[i]).olddirection = (*activeceilings[i]).direction;
-                (*activeceilings[i]).thinker.kind = ThinkerKind::CeilingInStasis;
-                (*activeceilings[i]).direction = 0;
+                (*ceiling).olddirection = (*ceiling).direction;
+                (*ceiling).thinker.kind = ThinkerKind::CeilingInStasis;
+                (*ceiling).direction = 0;
                 rtn = 1;
             }
         }

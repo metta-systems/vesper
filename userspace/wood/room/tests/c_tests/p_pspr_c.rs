@@ -91,18 +91,22 @@ fn weapon_travel_range_is_96_fracunits() {
 /// before `P_CalcSwing` has been called (i.e. before the first game tic).
 #[test]
 fn swingx_default_zero() {
-    unsafe {
-        assert_eq!({ pspr::swingx }, 0, "swingx should be 0 before any tic");
-    }
+    assert_eq!(
+        pspr::PsprState::new().swingx,
+        0,
+        "swingx should be 0 before any tic"
+    );
 }
 
 /// `swingy` is the vertical component of the weapon-bob offset.  Like
 /// `swingx`, it starts at zero and is only updated by `P_CalcSwing`.
 #[test]
 fn swingy_default_zero() {
-    unsafe {
-        assert_eq!({ pspr::swingy }, 0, "swingy should be 0 before any tic");
-    }
+    assert_eq!(
+        pspr::PsprState::new().swingy,
+        0,
+        "swingy should be 0 before any tic"
+    );
 }
 
 // ---------------------------------------------------------------------------

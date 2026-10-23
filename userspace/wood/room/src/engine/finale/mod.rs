@@ -247,7 +247,7 @@ struct CastInfo {
 // g_game.rs
 use crate::engine::{
     dehacked::DEH_String,
-    game::{gameaction, gameepisode, gamemap, gamestate, players, viewactive},
+    game::{gameepisode, gamemap, player, GAME},
 };
 
 // am_map.rs
@@ -638,8 +638,7 @@ pub static FINALE: Global<FinaleState> = Global::new(FinaleState::new());
 ///
 /// `castnum` must index `CASTORDER`.
 unsafe fn cast_info(castnum: i32) -> &'static MobjInfo {
-    &*std::ptr::addr_of!(crate::engine::play::info::mobjinfo[0])
-        .add(CASTORDER[castnum as usize].kind as usize)
+    &*crate::engine::play::info::mobjinfo_ptr(CASTORDER[castnum as usize].kind as usize)
 }
 
 /// The `states` entry `state`.
@@ -648,7 +647,7 @@ unsafe fn cast_info(castnum: i32) -> &'static MobjInfo {
 ///
 /// `state` must index `states`.
 unsafe fn state_ptr(state: i32) -> *mut State {
-    &raw mut crate::engine::play::info::states[state as usize]
+    crate::engine::play::info::state_ptr(state as usize)
 }
 
 // ---------------------------------------------------------------------------
@@ -671,10 +670,14 @@ unsafe fn state_ptr(state: i32) -> *mut State {
 /// f_finale.c.
 pub fn F_StartFinale() {
     unsafe {
-        gameaction = ga_nothing;
-        gamestate = GS_FINALE;
-        viewactive = 0;
+        {
+            let mut game = GAME.borrow_mut();
+            game.gameaction = ga_nothing;
+            game.gamestate = GS_FINALE;
+            game.viewactive = 0;
+        }
         AUTOMAP.borrow_mut().automapactive = 0;
+        let (gameepisode, gamemap) = (gameepisode(), gamemap());
 
         if logical_gamemission() == doom::mode::doom {
             S_ChangeMusic(Mus::Victor as i32, 1);
@@ -750,11 +753,11 @@ pub fn F_Ticker() {
         // check for skipping
         if gamemode() == doom::mode::commercial && FINALE.borrow().count > 50 {
             for i in 0..MAXPLAYERS {
-                if players[i].cmd.buttons != 0 {
-                    if gamemap == 30 {
+                if (*player(i)).cmd.buttons != 0 {
+                    if gamemap() == 30 {
                         F_StartCast();
                     } else {
-                        gameaction = ga_worlddone;
+                        GAME.borrow_mut().gameaction = ga_worlddone;
                     }
                     break;
                 }
@@ -790,7 +793,7 @@ pub fn F_Ticker() {
             };
             if text_done {
                 DOOM_MAIN.borrow_mut().wipegamestate = -1;
-                if gameepisode == 3 {
+                if gameepisode() == 3 {
                     S_StartMusic(Mus::Bunny as i32);
                 }
             }
@@ -1231,31 +1234,30 @@ pub fn F_BunnyScroll() {
 ///
 /// Called from [`F_Drawer`].  C origin: `F_ArtScreenDrawer` in f_finale.c.
 pub fn F_ArtScreenDrawer() {
-    unsafe {
-        if gameepisode == 3 {
-            F_BunnyScroll();
-            return;
-        }
-
-        let lumpname: &[u8] = match gameepisode {
-            1 => {
-                if gamemode() == doom::mode::retail {
-                    b"CREDIT"
-                } else {
-                    b"HELP2"
-                }
-            }
-            2 => b"VICTORY2",
-            4 => b"ENDPIC",
-            _ => return,
-        };
-
-        V_DrawPatch(
-            0,
-            0,
-            W_CacheLumpName(DEH_String(lumpname), PU_CACHE) as *mut patch_t,
-        );
+    let gameepisode = gameepisode();
+    if gameepisode == 3 {
+        F_BunnyScroll();
+        return;
     }
+
+    let lumpname: &[u8] = match gameepisode {
+        1 => {
+            if gamemode() == doom::mode::retail {
+                b"CREDIT"
+            } else {
+                b"HELP2"
+            }
+        }
+        2 => b"VICTORY2",
+        4 => b"ENDPIC",
+        _ => return,
+    };
+
+    V_DrawPatch(
+        0,
+        0,
+        W_CacheLumpName(DEH_String(lumpname), PU_CACHE) as *mut patch_t,
+    );
 }
 
 /// Dispatch to the appropriate draw function based on the current finale stage.

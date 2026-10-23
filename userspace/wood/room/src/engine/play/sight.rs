@@ -22,55 +22,79 @@ use crate::engine::{
 /// (leaf) rather than an internal node. Matches `NF_SUBSECTOR` in `p_local.h`.
 const NF_SUBSECTOR: u32 = 0x8000;
 
-/// Z-coordinate of the looker's eyes (fixed-point map units).
+/// Sight-check state (`p_sight.c` globals).
 ///
-/// Set by `P_CheckSight` to `t1->z + t1->height - (t1->height >> 2)` before
-/// BSP traversal. Read by `P_CrossSubsector` for slope comparisons.
-pub static mut sightzstart: i32 = 0;
+/// A sight check calls nothing that re-enters play code, so `P_CheckSight`
+/// borrows this once and hands it down the BSP traversal.
+pub struct SightState {
+    /// Z-coordinate of the looker's eyes (fixed-point map units).
+    ///
+    /// Set by `P_CheckSight` to `t1->z + t1->height - (t1->height >> 2)` before
+    /// BSP traversal. Read by `P_CrossSubsector` for slope comparisons.
+    pub sightzstart: i32,
+    /// Upper slope bound for the sight corridor (fixed-point).
+    ///
+    /// Initialised to the slope from `sightzstart` to the top of the target.
+    /// Narrowed downward as occluding portals are encountered. `p_map.c`
+    /// shares it as the auto-aim window.
+    pub topslope: i32,
+    /// Lower slope bound for the sight corridor (fixed-point).
+    ///
+    /// Initialised to the slope from `sightzstart` to the bottom of the target.
+    /// Narrowed upward as occluding portals are encountered. `p_map.c`
+    /// shares it as the auto-aim window.
+    pub bottomslope: i32,
+    /// The sight-trace ray from `t1` to `t2`, stored as a `divline_t`.
+    ///
+    /// Set by `P_CheckSight` and used throughout the BSP traversal in
+    /// `P_CrossBSPNode` and `P_CrossSubsector`.
+    pub strace: divline_t,
+    /// X coordinate of the sight target (`t2->x`).
+    ///
+    /// Stored separately from `strace` so that `P_CrossBSPNode` can test which
+    /// side of each partition the target falls on without a full ray struct.
+    pub t2x: i32,
+    /// Y coordinate of the sight target (`t2->y`).
+    ///
+    /// See `t2x`.
+    pub t2y: i32,
+    /// Diagnostic counters: `sightcounts[0]` is REJECT table hits (early-out),
+    /// `sightcounts[1]` is full BSP traversals attempted.
+    pub sightcounts: [i32; 2],
+}
 
-/// Upper slope bound for the sight corridor (fixed-point).
-///
-/// Initialised to the slope from `sightzstart` to the top of the target.
-/// Narrowed downward as occluding portals are encountered.
-pub static mut topslope: i32 = 0;
+impl SightState {
+    /// The state at program start: no sight check run.
+    pub const fn new() -> Self {
+        Self {
+            sightzstart: 0,
+            topslope: 0,
+            bottomslope: 0,
+            strace: divline_t {
+                x: 0,
+                y: 0,
+                dx: 0,
+                dy: 0,
+            },
+            t2x: 0,
+            t2y: 0,
+            sightcounts: [0, 0],
+        }
+    }
+}
 
-/// Lower slope bound for the sight corridor (fixed-point).
-///
-/// Initialised to the slope from `sightzstart` to the bottom of the target.
-/// Narrowed upward as occluding portals are encountered.
-pub static mut bottomslope: i32 = 0;
+impl Default for SightState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// The sight-trace ray from `t1` to `t2`, stored as a `divline_t`.
-///
-/// Set by `P_CheckSight` and used throughout the BSP traversal in
-/// `P_CrossBSPNode` and `P_CrossSubsector`.
-pub static mut strace: divline_t = divline_t {
-    x: 0,
-    y: 0,
-    dx: 0,
-    dy: 0,
-};
-
-/// X coordinate of the sight target (`t2->x`).
-///
-/// Stored separately from `strace` so that `P_CrossBSPNode` can test which
-/// side of each partition the target falls on without a full ray struct.
-pub static mut t2x: i32 = 0;
-
-/// Y coordinate of the sight target (`t2->y`).
-///
-/// See `t2x`.
-pub static mut t2y: i32 = 0;
-
-/// Diagnostic counters: `sightcounts[0]` is REJECT table hits (early-out),
-/// `sightcounts[1]` is full BSP traversals attempted.
-pub static mut sightcounts: [i32; 2] = [0, 0];
+/// Sight-check state.
+pub static SIGHT: Global<SightState> = Global::new(SightState::new());
 
 use crate::engine::{
-    play::setup::{
-        nodes as p_setup_nodes, numnodes, numsectors, numsubsectors, rejectmatrix,
-        sectors as p_setup_sectors, segs as p_setup_segs, subsectors as p_setup_subsectors,
-    },
+    global::Global,
+    play::setup::{level, LevelState},
     render_3d::main::VALIDCOUNT,
 };
 
@@ -143,7 +167,7 @@ fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> i32 {
     FixedDiv(num, den)
 }
 
-/// Test whether the global sight ray (`strace`) passes through subsector `num`
+/// Test whether the sight ray (`sight.strace`) passes through subsector `num`
 /// without being blocked.
 ///
 /// Iterates every seg in the subsector. For each linedef crossed by the sight
@@ -154,22 +178,22 @@ fn P_InterceptVector2(v2: &divline_t, v1: &divline_t) -> i32 {
 /// Returns `true` if the ray is unobstructed through this subsector.
 ///
 /// Matches `P_CrossSubsector` in `p_sight.c`.
-fn P_CrossSubsector(num: i32) -> bool {
+fn P_CrossSubsector(sight: &mut SightState, level: &LevelState, num: i32) -> bool {
     unsafe {
-        let strace_copy = strace;
-        let numsubsectors_val = *std::ptr::addr_of!(numsubsectors);
-        if num >= numsubsectors_val {
+        let strace_copy = sight.strace;
+        let (t2x, t2y) = (sight.t2x, sight.t2y);
+        if num >= level.numsubsectors {
             i_error!(
                 "P_CrossSubsector: ss {} with numss = {}",
                 num,
-                numsubsectors_val
+                level.numsubsectors
             );
         }
 
-        let sub = &*p_setup_subsectors.add(num as usize);
+        let sub = &*level.subsectors.add(num as usize);
 
         let mut count = sub.numlines as i32;
-        let mut seg_ptr = p_setup_segs.add(sub.firstline as usize);
+        let mut seg_ptr = level.segs.add(sub.firstline as usize);
 
         while count > 0 {
             let seg = &*seg_ptr;
@@ -259,20 +283,20 @@ fn P_CrossSubsector(num: i32) -> bool {
             let frac = P_InterceptVector2(&strace_copy, &divl);
 
             if front_floor != back_floor {
-                let slope = FixedDiv(openbottom - sightzstart, frac);
-                if slope > bottomslope {
-                    bottomslope = slope;
+                let slope = FixedDiv(openbottom - sight.sightzstart, frac);
+                if slope > sight.bottomslope {
+                    sight.bottomslope = slope;
                 }
             }
 
             if front_ceil != back_ceil {
-                let slope = FixedDiv(opentop - sightzstart, frac);
-                if slope < topslope {
-                    topslope = slope;
+                let slope = FixedDiv(opentop - sight.sightzstart, frac);
+                if slope < sight.topslope {
+                    sight.topslope = slope;
                 }
             }
 
-            if topslope <= bottomslope {
+            if sight.topslope <= sight.bottomslope {
                 return false;
             }
         }
@@ -304,37 +328,37 @@ fn node_as_divline(node: &node_t) -> divline_t {
 /// Returns `true` if the sight ray is unobstructed through `bspnum`.
 ///
 /// Matches `P_CrossBSPNode` in `p_sight.c`.
-fn P_CrossBSPNode(bspnum: i32) -> bool {
+fn P_CrossBSPNode(sight: &mut SightState, level: &LevelState, bspnum: i32) -> bool {
     unsafe {
-        let strace_copy = strace;
+        let strace_copy = sight.strace;
         if bspnum & NF_SUBSECTOR as i32 != 0 {
             if bspnum == -1 {
-                return P_CrossSubsector(0);
+                return P_CrossSubsector(sight, level, 0);
             } else {
-                return P_CrossSubsector(bspnum & !(NF_SUBSECTOR as i32));
+                return P_CrossSubsector(sight, level, bspnum & !(NF_SUBSECTOR as i32));
             }
         }
 
-        let bsp = &*p_setup_nodes.add(bspnum as usize);
+        let bsp = &*level.nodes.add(bspnum as usize);
         let bsp_div = node_as_divline(bsp);
 
         let side = P_DivlineSide(strace_copy.x, strace_copy.y, &bsp_div);
         let side = if side == 2 { 0 } else { side };
 
         // Cross the starting side.
-        if !P_CrossBSPNode(bsp.children[side as usize] as i32) {
+        if !P_CrossBSPNode(sight, level, bsp.children[side as usize] as i32) {
             return false;
         }
 
         // The partition plane is crossed here.
         let bsp_div2 = node_as_divline(bsp);
-        let t2_side = P_DivlineSide(t2x, t2y, &bsp_div2);
+        let t2_side = P_DivlineSide(sight.t2x, sight.t2y, &bsp_div2);
         if side == t2_side {
             return true;
         }
 
         // Cross the ending side.
-        P_CrossBSPNode(bsp.children[(side ^ 1) as usize] as i32)
+        P_CrossBSPNode(sight, level, bsp.children[(side ^ 1) as usize] as i32)
     }
 }
 
@@ -360,33 +384,35 @@ fn P_CrossBSPNode(bspnum: i32) -> bool {
 /// `mobj_t` instances. Their `subsector` fields must point into the live
 /// subsector/sector arrays loaded by `p_setup`.
 pub fn P_CheckSight(t1: *mut mobj_t, t2: *mut mobj_t) -> i32 {
+    let level = level();
+    let mut sight = SIGHT.borrow_mut();
     unsafe {
-        let s1 = (*(*t1).subsector).sector.offset_from(p_setup_sectors) as i32;
-        let s2 = (*(*t2).subsector).sector.offset_from(p_setup_sectors) as i32;
-        let pnum = s1 * numsectors + s2;
+        let s1 = (*(*t1).subsector).sector.offset_from(level.sectors) as i32;
+        let s2 = (*(*t2).subsector).sector.offset_from(level.sectors) as i32;
+        let pnum = s1 * level.numsectors + s2;
         let bytenum = pnum >> 3;
         let bitnum = 1 << (pnum & 7);
 
         // Check in REJECT table.
-        if *rejectmatrix.add(bytenum as usize) & bitnum != 0 {
-            sightcounts[0] += 1;
+        if *level.rejectmatrix.add(bytenum as usize) & bitnum != 0 {
+            sight.sightcounts[0] += 1;
             return 0;
         }
 
-        sightcounts[1] += 1;
+        sight.sightcounts[1] += 1;
         VALIDCOUNT.set(VALIDCOUNT.get() + 1);
 
-        sightzstart = (*t1).z + (*t1).height - ((*t1).height >> 2);
-        topslope = (*t2).z + (*t2).height - sightzstart;
-        bottomslope = (*t2).z - sightzstart;
+        sight.sightzstart = (*t1).z + (*t1).height - ((*t1).height >> 2);
+        sight.topslope = (*t2).z + (*t2).height - sight.sightzstart;
+        sight.bottomslope = (*t2).z - sight.sightzstart;
 
-        strace.x = (*t1).x;
-        strace.y = (*t1).y;
-        t2x = (*t2).x;
-        t2y = (*t2).y;
-        strace.dx = (*t2).x - (*t1).x;
-        strace.dy = (*t2).y - (*t1).y;
+        sight.strace.x = (*t1).x;
+        sight.strace.y = (*t1).y;
+        sight.t2x = (*t2).x;
+        sight.t2y = (*t2).y;
+        sight.strace.dx = (*t2).x - (*t1).x;
+        sight.strace.dy = (*t2).y - (*t1).y;
 
-        P_CrossBSPNode(numnodes - 1) as i32
+        P_CrossBSPNode(&mut sight, &level, level.numnodes - 1) as i32
     }
 }

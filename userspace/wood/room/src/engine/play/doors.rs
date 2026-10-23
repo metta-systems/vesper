@@ -18,7 +18,7 @@ use crate::engine::{
         floor::{floormove_t, T_MovePlane},
         mobj::mobj_t,
         plats::plat_t,
-        setup::{sectors, sides},
+        setup::level,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
             thinker_t, P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind,
@@ -317,7 +317,7 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
         secnum
     } >= 0
     {
-        let sec = sectors.add(secnum as usize);
+        let sec = level().sectors.add(secnum as usize);
         if !(*sec).specialdata.is_null() {
             continue;
         }
@@ -473,7 +473,10 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
         _ => {}
     }
 
-    let sec = (*sides.offset((*line).sidenum[(side ^ 1) as usize] as isize)).sector;
+    let sec = (*level()
+        .sides
+        .offset((*line).sidenum[(side ^ 1) as usize] as isize))
+    .sector;
 
     let special = (*sec).specialdata;
     if !special.is_null() {

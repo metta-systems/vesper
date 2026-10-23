@@ -32,8 +32,7 @@ use crate::{
             player::{PlayerMessage, PlayerT, MAXPLAYERS},
         },
         game::{
-            consoleplayer, deathmatch, gameepisode, gamemap, netgame, playeringame, players,
-            singledemo, viewactive,
+            consoleplayer, deathmatch, gameepisode, gamemap, netgame, player, playeringame, GAME,
         },
         global::Global,
         interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
@@ -47,9 +46,7 @@ use crate::{
         },
         play::{
             maputl::MAPBLOCKUNITS,
-            setup::{
-                bmaporgx, bmaporgy, lines, numlines, numsectors, numvertexes, sectors, vertexes,
-            },
+            setup::{level, LevelState},
         },
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
@@ -982,6 +979,11 @@ unsafe fn AM_findMinMaxBoundaries(automap: &mut AutomapState) {
     automap.max_x = -i32::MAX;
     automap.max_y = -i32::MAX;
 
+    let LevelState {
+        numvertexes,
+        vertexes,
+        ..
+    } = level();
     for i in 0..numvertexes {
         let v = &*vertexes.add(i as usize);
         if v.x < automap.min_x {
@@ -1071,13 +1073,14 @@ unsafe fn AM_initVariables(automap: &mut AutomapState) {
     automap.m_h = FTOM(automap, automap.f_h);
 
     let mut plr;
-    if playeringame[consoleplayer as usize] != 0 {
-        plr = std::ptr::addr_of_mut!(players[0]).add(consoleplayer as usize);
+    let consoleplayer = consoleplayer() as usize;
+    if playeringame(consoleplayer) != 0 {
+        plr = player(consoleplayer);
     } else {
-        plr = std::ptr::addr_of_mut!(players[0]);
+        plr = player(0);
         for pnum in 0..MAXPLAYERS {
-            if playeringame[pnum] != 0 {
-                plr = std::ptr::addr_of_mut!(players[0]).add(pnum);
+            if playeringame(pnum) != 0 {
+                plr = player(pnum);
                 break;
             }
         }
@@ -1224,6 +1227,7 @@ pub unsafe fn AM_Start() {
     {
         let mut automap = AUTOMAP.borrow_mut();
         automap.stopped = 0;
+        let (gamemap, gameepisode) = (gamemap(), gameepisode());
         if automap.lastlevel != gamemap || automap.lastepisode != gameepisode {
             AM_LevelInit(&mut automap);
             automap.lastlevel = gamemap;
@@ -1300,7 +1304,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
         if (*ev).kind == 0 && (*ev).data1 == key_map_toggle {
             // ev_keydown
             AM_Start();
-            viewactive = 0;
+            GAME.borrow_mut().viewactive = 0;
             rc = 1;
         }
     } else if (*ev).kind == 0 {
@@ -1342,7 +1346,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             automap.ftom_zoommul = M_ZOOMOUT;
         } else if key == key_map_toggle {
             automap.bigstate = 0;
-            viewactive = 1;
+            GAME.borrow_mut().viewactive = 1;
             drop(automap);
             AM_Stop();
             automap = AUTOMAP.borrow_mut();
@@ -1383,7 +1387,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             rc = 0;
         }
 
-        if deathmatch == 0 && cht_CheckCheat(&mut automap.cheat_amap, (*ev).data2 as u8) != 0 {
+        if deathmatch() == 0 && cht_CheckCheat(&mut automap.cheat_amap, (*ev).data2 as u8) != 0 {
             rc = 0;
             automap.cheating = (automap.cheating + 1) % 3;
         }
@@ -1788,6 +1792,10 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
+    let LevelState {
+        bmaporgx, bmaporgy, ..
+    } = level();
+
     // Vertical gridlines.
     start = m_x;
     if (start - bmaporgx) % (MAPBLOCKUNITS << FRACBITS) != 0 {
@@ -1851,6 +1859,9 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
+    let LevelState {
+        numlines, lines, ..
+    } = level();
     for i in 0..numlines {
         let li = &*lines.add(i as usize);
         l.a.x = (*li.v1).x;
@@ -1998,7 +2009,7 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
     let mut their_color: i32 = -1;
     let mut color: i32;
 
-    if netgame == 0 {
+    if netgame() == 0 {
         if automap.cheating != 0 {
             AM_drawLineCharacter(
                 automap,
@@ -2025,13 +2036,13 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
 
     for i in 0..MAXPLAYERS {
         their_color += 1;
-        let p = std::ptr::addr_of_mut!(players[0]).add(i);
+        let p = player(i);
 
-        if deathmatch != 0 && singledemo == 0 && p != plr {
+        if deathmatch() != 0 && GAME.borrow().singledemo == 0 && p != plr {
             continue;
         }
 
-        if playeringame[i] == 0 {
+        if playeringame(i) == 0 {
             continue;
         }
 
@@ -2067,6 +2078,11 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
 /// `sectors` / `numsectors` must be valid; thing linked lists must be
 /// properly terminated.
 unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i32) {
+    let LevelState {
+        numsectors,
+        sectors,
+        ..
+    } = level();
     for i in 0..numsectors {
         let mut t = (*sectors.add(i as usize)).thinglist;
         while !t.is_null() {

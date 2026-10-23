@@ -3,7 +3,7 @@
 //! Rust port of `vendor/doomgeneric/p_plats.c`.  Manages the per-tic update
 //! logic for moving platforms ([`T_PlatRaise`]), linedef-triggered platform
 //! activation ([`EV_DoPlat`] / [`EV_StopPlat`]), and the fixed-size active
-//! platform table ([`activeplats`]).
+//! platform table ([`PlatState::activeplats`]).
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -11,13 +11,14 @@ use crate::engine::sound::info::Sfx;
 
 use crate::{
     engine::{
+        global::Global,
         interface::timer::TICRATE,
         map::{line_t, sector_t},
         math::fixed::{fixed_t, FRACUNIT},
         misc::random::P_Random,
         play::{
             floor::T_MovePlane,
-            setup::{sectors, sides},
+            setup::{level, LevelState},
             spec::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
@@ -111,12 +112,33 @@ pub struct plat_t {
     pub kind: i32,
 }
 
-/// Table of all currently active platform thinkers.
-///
-/// Null entries represent free slots.  [`P_AddActivePlat`] fills the first
-/// null slot; [`P_RemoveActivePlat`] nulls the matching slot.  Unlike ceilings,
-/// overflowing this table is a fatal error.
-pub static mut activeplats: [*mut plat_t; MAXPLATS] = [std::ptr::null_mut(); MAXPLATS];
+/// The active-platform table (`p_plats.c` global).
+pub struct PlatState {
+    /// Table of all currently active platform thinkers.
+    ///
+    /// Null entries represent free slots.  [`P_AddActivePlat`] fills the first
+    /// null slot; [`P_RemoveActivePlat`] nulls the matching slot.  Unlike ceilings,
+    /// overflowing this table is a fatal error.
+    pub activeplats: [*mut plat_t; MAXPLATS],
+}
+
+impl PlatState {
+    /// No platform active.
+    pub const fn new() -> Self {
+        Self {
+            activeplats: [std::ptr::null_mut(); MAXPLATS],
+        }
+    }
+}
+
+impl Default for PlatState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The active-platform table.
+pub static PLATS: Global<PlatState> = Global::new(PlatState::new());
 
 /// Per-tic update for a moving platform thinker.
 ///
@@ -158,7 +180,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
             );
 
             if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
-                && (leveltime & 7) == 0
+                && (leveltime() & 7) == 0
             {
                 S_StartSectorSound(&raw mut (*(*plat).sector).soundorg, Sfx::Stnmov as i32);
             }
@@ -218,7 +240,7 @@ pub unsafe fn T_PlatRaise(plat: *mut plat_t) {
 /// 1. Allocates and links a new `plat_t` thinker.
 /// 2. Initialises its parameters (speed, height targets, wait time, initial
 ///    status) based on `plattype`.
-/// 3. Registers it in [`activeplats`].
+/// 3. Registers it in `activeplats`.
 ///
 /// The `amount` parameter is only used by `raiseAndChange` to set the target
 /// height to `floorheight + amount * FRACUNIT`.
@@ -247,6 +269,7 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
         secnum
     } >= 0
     {
+        let LevelState { sectors, sides, .. } = level();
         let sec = sectors.add(secnum as usize);
 
         if !(*sec).specialdata.is_null() {
@@ -339,14 +362,12 @@ pub unsafe fn EV_DoPlat(line: *mut line_t, plattype: i32, amount: i32) -> i32 {
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
 pub fn P_ActivateInStasis(tag: i32) {
+    let activeplats = PLATS.borrow().activeplats;
     unsafe {
-        for i in 0..MAXPLATS {
-            if !activeplats[i].is_null()
-                && (*activeplats[i]).tag == tag
-                && (*activeplats[i]).status == in_stasis
-            {
-                (*activeplats[i]).status = (*activeplats[i]).oldstatus;
-                (*activeplats[i]).thinker.kind = ThinkerKind::Plat;
+        for plat in activeplats {
+            if !plat.is_null() && (*plat).tag == tag && (*plat).status == in_stasis {
+                (*plat).status = (*plat).oldstatus;
+                (*plat).thinker.kind = ThinkerKind::Plat;
             }
         }
     }
@@ -356,7 +377,7 @@ pub fn P_ActivateInStasis(tag: i32) {
 ///
 /// Saves `status` to `oldstatus`, sets `status` to `in_stasis`, and sets the
 /// thinker kind to [`ThinkerKind::PlatInStasis`] so `T_PlatRaise` is skipped.  The platform
-/// remains in [`activeplats`] and can be resumed by [`P_ActivateInStasis`].
+/// remains in `activeplats` and can be resumed by [`P_ActivateInStasis`].
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
 ///
@@ -364,55 +385,57 @@ pub fn P_ActivateInStasis(tag: i32) {
 ///
 /// `line` must be a valid, non-null pointer.
 pub fn EV_StopPlat(line: *mut line_t) {
+    let activeplats = PLATS.borrow().activeplats;
     unsafe {
-        for j in 0..MAXPLATS {
-            if !activeplats[j].is_null()
-                && (*activeplats[j]).status != in_stasis
-                && (*activeplats[j]).tag == (*line).tag as i32
-            {
-                (*activeplats[j]).oldstatus = (*activeplats[j]).status;
-                (*activeplats[j]).status = in_stasis;
-                (*activeplats[j]).thinker.kind = ThinkerKind::PlatInStasis;
+        for plat in activeplats {
+            if !plat.is_null() && (*plat).status != in_stasis && (*plat).tag == (*line).tag as i32 {
+                (*plat).oldstatus = (*plat).status;
+                (*plat).status = in_stasis;
+                (*plat).thinker.kind = ThinkerKind::PlatInStasis;
             }
         }
     }
 }
 
-/// Register `plat` in the first available slot of [`activeplats`].
+/// Register `plat` in the first available slot of `activeplats`.
 ///
 /// If all `MAXPLATS` (30) slots are occupied, calls `I_Error` and aborts — unlike
 /// `P_AddActiveCeiling` which silently discards overflows.
 ///
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
 pub fn P_AddActivePlat(plat: *mut plat_t) {
-    unsafe {
-        for i in 0..MAXPLATS {
-            if activeplats[i].is_null() {
-                activeplats[i] = plat;
+    {
+        let mut plats = PLATS.borrow_mut();
+        for slot in plats.activeplats.iter_mut() {
+            if slot.is_null() {
+                *slot = plat;
                 return;
             }
         }
-        i_error!("P_AddActivePlat: no more plats!");
     }
+    i_error!("P_AddActivePlat: no more plats!");
 }
 
 /// Unlink and schedule deallocation of the active platform `plat`.
 ///
 /// Clears `sector->specialdata`, calls [`P_RemoveThinker`] (which marks the
 /// thinker for deferred `Z_Free`), and nulls the matching slot in
-/// [`activeplats`].  Calls `I_Error` if the platform is not found.
+/// `activeplats`.  Calls `I_Error` if the platform is not found.
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
 pub fn P_RemoveActivePlat(plat: *mut plat_t) {
-    unsafe {
-        for i in 0..MAXPLATS {
-            if plat == activeplats[i] {
-                (*activeplats[i]).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
-                P_RemoveThinker(&raw mut (*activeplats[i]).thinker);
-                activeplats[i] = std::ptr::null_mut();
+    {
+        let mut plats = PLATS.borrow_mut();
+        for slot in plats.activeplats.iter_mut() {
+            if plat == *slot {
+                unsafe {
+                    (**slot).sector.as_mut().unwrap().specialdata = std::ptr::null_mut();
+                    P_RemoveThinker(&raw mut (**slot).thinker);
+                }
+                *slot = std::ptr::null_mut();
                 return;
             }
         }
-        i_error!("P_RemoveActivePlat: can't find plat!");
     }
+    i_error!("P_RemoveActivePlat: can't find plat!");
 }

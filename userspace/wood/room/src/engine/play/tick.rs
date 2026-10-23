@@ -11,8 +11,9 @@
 use std::ffi::c_void;
 
 use crate::engine::{
-    doom::player::{consoleplayer, players, MAXPLAYERS},
-    game::{demoplayback, netgame, paused, playeringame},
+    doom::player::MAXPLAYERS,
+    game::{console_player, demoplayback, netgame, paused, player, playeringame},
+    global::Global,
     misc::menu::menu_active,
     play::{
         ceilng::{ceiling_t, T_MoveCeiling},
@@ -209,31 +210,68 @@ pub unsafe fn thinker_allocation(thinker: *mut thinker_t, class: ThinkerClass) -
     }
 }
 
-/// Current level time in tics, incremented once per [`P_Ticker`] call.
-///
-/// Used throughout the engine to
-/// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
-pub static mut leveltime: i32 = 0;
+/// The level clock and the thinker list head (`p_tick.c` globals).
+pub struct TickState {
+    /// Current level time in tics, incremented once per [`P_Ticker`] call.
+    ///
+    /// Used throughout the engine to
+    /// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
+    pub leveltime: i32,
+    /// Sentinel head/tail node of the doubly-linked thinker list.
+    ///
+    /// The list is circular: `thinkercap.next` is the first real thinker and
+    /// `thinkercap.prev` is the last.  When the list is empty both fields point
+    /// back to `thinkercap` itself (see [`P_InitThinkers`]). Linked nodes
+    /// point at it, so it is reached through [`thinkercap`] only.
+    thinkercap: thinker_t,
+}
 
-/// Sentinel head/tail node of the doubly-linked thinker list.
+impl TickState {
+    /// The state at program start: level time zero, thinker list unlinked.
+    pub const fn new() -> Self {
+        Self {
+            leveltime: 0,
+            thinkercap: thinker_t {
+                prev: std::ptr::null_mut::<thinker_t>(),
+                next: std::ptr::null_mut::<thinker_t>(),
+                kind: ThinkerKind::None,
+            },
+        }
+    }
+}
+
+impl Default for TickState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The level clock and thinker list head.
+pub static TICK: Global<TickState> = Global::new(TickState::new());
+
+/// Current level time in tics (C `leveltime`).
+pub fn leveltime() -> i32 {
+    TICK.borrow().leveltime
+}
+
+/// The sentinel head of the thinker list (C `&thinkercap`).
 ///
-/// The list is circular: `thinkercap.next` is the first real thinker and
-/// `thinkercap.prev` is the last.  When the list is empty both fields point
-/// back to `thinkercap` itself (see [`P_InitThinkers`]).
-pub static mut thinkercap: thinker_t = thinker_t {
-    prev: std::ptr::null_mut::<thinker_t>(),
-    next: std::ptr::null_mut::<thinker_t>(),
-    kind: ThinkerKind::None,
-};
+/// Thinker nodes point back at the head, so its address must stay stable:
+/// it is taken from [`Global::as_ptr`].
+pub fn thinkercap() -> *mut thinker_t {
+    // SAFETY: field projection on the stable state pointer, no reference made.
+    unsafe { &raw mut (*TICK.as_ptr()).thinkercap }
+}
 
 /// Reset the thinker list to empty by making [`thinkercap`] point to itself.
 ///
 /// Must be called at the start of each level before any thinker is added.
 /// Corresponds to `P_InitThinkers` in `p_tick.c`.
 pub fn P_InitThinkers() {
+    let cap = thinkercap();
     unsafe {
-        thinkercap.prev = &raw mut thinkercap;
-        thinkercap.next = &raw mut thinkercap;
+        (*cap).prev = cap;
+        (*cap).next = cap;
     }
 }
 
@@ -249,8 +287,8 @@ pub fn P_InitThinkers() {
 /// freed by the caller — ownership transfers to the thinker list, which frees
 /// it in [`P_RunThinkers`] once it is marked [`ThinkerKind::Removed`].
 pub fn P_AddThinker(thinker: *mut thinker_t) {
+    let cap = thinkercap();
     unsafe {
-        let cap = &raw mut thinkercap;
         (*(*cap).prev).next = thinker;
         (*thinker).next = cap;
         (*thinker).prev = (*cap).prev;
@@ -327,8 +365,8 @@ unsafe fn run_thinker(thinker: *mut thinker_t) {
 ///
 /// Corresponds to `P_RunThinkers` in `p_tick.c`.
 pub fn P_RunThinkers() {
+    let cap = thinkercap();
     unsafe {
-        let cap = &raw mut thinkercap;
         let mut current = (*cap).next;
 
         while current != cap {
@@ -358,21 +396,18 @@ pub fn P_RunThinkers() {
 /// Corresponds to `P_Ticker` in `p_tick.c`.
 pub fn P_Ticker() {
     unsafe {
-        if paused != 0 {
+        if paused() != 0 {
             return;
         }
 
-        if netgame == 0
-            && menu_active()
-            && demoplayback == 0
-            && (*std::ptr::addr_of!(players[0]).offset(consoleplayer as isize)).viewz != 1
+        if netgame() == 0 && menu_active() && demoplayback() == 0 && (*console_player()).viewz != 1
         {
             return;
         }
 
         for i in 0..MAXPLAYERS {
-            if playeringame[i] != 0 {
-                P_PlayerThink(&mut players[i]);
+            if playeringame(i) != 0 {
+                P_PlayerThink(player(i));
             }
         }
 
@@ -380,22 +415,17 @@ pub fn P_Ticker() {
         P_UpdateSpecials();
         P_RespawnSpecials();
 
-        leveltime += 1;
+        TICK.borrow_mut().leveltime += 1;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
-
-    static LOCK: Mutex<()> = Mutex::new(());
+    use super::*;
 
     #[test]
     fn globals_default() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ leveltime }, 0);
-        }
+        assert_eq!(TickState::new().leveltime, 0);
     }
 
     #[test]
@@ -442,13 +472,11 @@ mod tests {
 
     #[test]
     fn init_sets_self_pointers() {
-        let _g = LOCK.lock().unwrap();
+        let cap = thinkercap();
+        P_InitThinkers();
         unsafe {
-            thinkercap.prev = std::ptr::null_mut();
-            thinkercap.next = std::ptr::null_mut();
-            P_InitThinkers();
-            assert_eq!({ thinkercap.prev }, &raw mut thinkercap);
-            assert_eq!({ thinkercap.next }, &raw mut thinkercap);
+            assert_eq!((*cap).prev, cap);
+            assert_eq!((*cap).next, cap);
         }
     }
 }

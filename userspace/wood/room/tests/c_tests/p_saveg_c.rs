@@ -57,13 +57,11 @@ fn versionsize_is_power_of_two() {
 /// it is zero before any save operation has been started.
 #[test]
 fn savegamelength_default_zero() {
-    unsafe {
-        assert_eq!(
-            { saveg::savegamelength },
-            0,
-            "savegamelength should be 0 before any P_SaveGame call"
-        );
-    }
+    assert_eq!(
+        saveg::SaveGameState::new().savegamelength,
+        0,
+        "savegamelength should be 0 before any P_SaveGame call"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -74,11 +72,9 @@ fn savegamelength_default_zero() {
 /// be false (0) at program start before any save operation.
 #[test]
 fn savegame_error_default_false() {
-    unsafe {
-        assert_eq!(
-            { saveg::savegame_error },
-            0,
-            "savegame_error should be false before any save operation"
-        );
-    }
+    assert_eq!(
+        saveg::SaveGameState::new().savegame_error,
+        0,
+        "savegame_error should be false before any save operation"
+    );
 }

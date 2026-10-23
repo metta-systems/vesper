@@ -12,6 +12,7 @@ use crate::engine::{
         player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM},
         stat::gamemode,
     },
+    global::Global,
     math::{
         fixed::{fixed_t, FixedMul, FRACUNIT},
         tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
@@ -115,10 +116,29 @@ const PST_REBORN: i32 = 2;
 /// invulnerability. Matches `INVERSECOLORMAP` in `p_user.c`.
 const INVERSECOLORMAP: i32 = 32;
 
-/// Whether the player is standing on the floor (`mo->z == mo->floorz`).
-///
-/// Stored as a `i32` (0 or 1), as in the C source.
-pub static mut onground: i32 = 0;
+/// Player movement state (`p_user.c` global).
+pub struct UserState {
+    /// Whether the player is standing on the floor (`mo->z == mo->floorz`).
+    ///
+    /// Stored as a `i32` (0 or 1), as in the C source.
+    pub onground: i32,
+}
+
+impl UserState {
+    /// The state at program start: not on the ground.
+    pub const fn new() -> Self {
+        Self { onground: 0 }
+    }
+}
+
+impl Default for UserState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Player movement state.
+pub static USER: Global<UserState> = Global::new(UserState::new());
 
 use crate::engine::{
     play::{
@@ -170,7 +190,7 @@ pub fn P_CalcHeight(player: *mut PlayerT) {
             (*player).bob = MAXBOB;
         }
 
-        if ((*player).cheats & CF_NOMOMENTUM) != 0 || onground == 0 {
+        if ((*player).cheats & CF_NOMOMENTUM) != 0 || USER.borrow().onground == 0 {
             (*player).viewz = (*mo).z + VIEWHEIGHT;
 
             if (*player).viewz > (*mo).ceilingz - 4 * FRACUNIT {
@@ -181,7 +201,7 @@ pub fn P_CalcHeight(player: *mut PlayerT) {
             return;
         }
 
-        let angle: i32 = (FINEANGLES as i32 / 20 * leveltime) & (FINEANGLES as i32 - 1);
+        let angle: i32 = (FINEANGLES as i32 / 20 * leveltime()) & (FINEANGLES as i32 - 1);
         let bob: fixed_t = FixedMul((*player).bob / 2, finesine[angle as usize]);
 
         // Move viewheight
@@ -236,7 +256,8 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
             .wrapping_add(((cmd.angleturn) as u32).wrapping_shl(16));
 
         // Do not let the player control movement if not onground.
-        onground = ((*mo).z <= (*mo).floorz) as i32;
+        let onground = ((*mo).z <= (*mo).floorz) as i32;
+        USER.borrow_mut().onground = onground;
 
         if cmd.forwardmove != 0 && onground != 0 {
             P_Thrust(player, (*mo).angle, cmd.forwardmove as fixed_t * 2048);
@@ -251,7 +272,7 @@ pub fn P_MovePlayer(player: *mut PlayerT) {
         }
 
         // C: player->mo->state == &states[S_PLAY]
-        let p_play = &raw const states[S_PLAY as usize];
+        let p_play = state_ptr(S_PLAY as usize);
         if (cmd.forwardmove != 0 || cmd.sidemove != 0) && std::ptr::eq((*mo).state, p_play) {
             P_SetMobjState(mo, S_PLAY_RUN1);
         }
@@ -287,7 +308,7 @@ pub fn P_DeathThink(player: *mut PlayerT) {
         }
 
         (*player).deltaviewheight = 0;
-        onground = ((*mo).z <= (*mo).floorz) as i32;
+        USER.borrow_mut().onground = ((*mo).z <= (*mo).floorz) as i32;
         P_CalcHeight(player);
 
         if !(*player).attacker.is_null() && (*player).attacker != (*player).mo {
@@ -494,17 +515,11 @@ mod tests {
             },
             math::tables::ANG270,
         },
-        std::sync::Mutex,
     };
-
-    static LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn onground_defaults_to_zero() {
-        let _g = LOCK.lock().unwrap();
-        unsafe {
-            assert_eq!({ onground }, 0);
-        }
+        assert_eq!(UserState::new().onground, 0);
     }
 
     #[test]

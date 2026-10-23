@@ -328,7 +328,7 @@ pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
 use crate::engine::{
     doom::main_loop::NetUpdate,
     misc::menu::MENU,
-    play::setup::{nodes, numnodes, subsectors},
+    play::setup::{level, LevelState},
     render_3d::{
         bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
         data::{R_InitData, RENDER_DATA},
@@ -1002,6 +1002,12 @@ const NF_SUBSECTOR: u32 = 0x8000;
 /// fully populated (i.e. the map must have been loaded) before this function
 /// is called.
 pub unsafe fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> *mut subsector_t {
+    let LevelState {
+        numnodes,
+        nodes,
+        subsectors,
+        ..
+    } = level();
     // single subsector is a special case
     if numnodes == 0 {
         return subsectors;
@@ -1103,7 +1109,7 @@ pub unsafe fn R_RenderPlayerView(player: *mut PlayerT) {
     R_ClearSprites();
 
     NetUpdate();
-    R_RenderBSPNode(numnodes - 1);
+    R_RenderBSPNode(level().numnodes - 1);
     NetUpdate();
     R_DrawPlanes();
     NetUpdate();
