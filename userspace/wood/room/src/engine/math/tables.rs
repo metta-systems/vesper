@@ -126,9 +126,8 @@ pub const ANG270: u32 = 0xC000_0000;
 /// Renderer code indexes this directly with a fine-angle, e.g.
 /// `(rw_centerangle + xtoviewangle[x]) >> ANGLETOFINESHIFT` in
 /// `r_segs.c`. The table only covers the first half of the fine-angle
-/// space (`0..4096`); callers are expected to keep the resulting index
-/// in range and to avoid the singular endpoints when divisor semantics
-/// matter.
+/// space (`0..4096`); tangent repeats every half turn, so callers wrap
+/// their index into it.
 pub static finetangent: [i32; 4096] = [
     -170910304, -56965752, -34178904, -24413316, -18988036, -15535599, -13145455, -11392683,
     -10052327, -8994149, -8137527, -7429880, -6835455, -6329090, -5892567, -5512368, -5178251,

@@ -74,8 +74,11 @@ const MAXLIGHTSCALE: usize = 48;
 /// Shift applied to a column scale value to derive an index into `scalelight[n]`.
 const LIGHTSCALESHIFT: u32 = 12;
 
-/// Mask for the fine-angle table (8192 entries, indices 0..=8191).
-const FINEMASK: usize = 0x1FFF;
+/// Mask that wraps a fine angle into `finetangent` (4096 entries, half a
+/// turn). Tangent repeats every half turn, so the wrapped index is the
+/// correct tangent; vanilla instead reads past the table into `finesine`
+/// for a wall seen edge-on at the screen edge.
+const FINETANGENTMASK: usize = 0x0FFF;
 
 /// Screen width in pixels, re-exported from [`i_video`] for local use.
 const SCREENWIDTH: usize = crate::engine::interface::video::SCREENWIDTH as usize;
@@ -462,8 +465,11 @@ unsafe fn R_RenderSegLoop() {
         if segtextured != 0 {
             let angle =
                 (rw_centerangle.wrapping_add(xtoviewangle[rw_x as usize])) >> ANGLETOFINESHIFT;
-            texturecolumn =
-                rw_offset - FixedMul(tables::finetangent[angle as usize & FINEMASK], rw_distance);
+            texturecolumn = rw_offset
+                - FixedMul(
+                    tables::finetangent[angle as usize & FINETANGENTMASK],
+                    rw_distance,
+                );
 
             let mut index = (rw_scale as u32) >> LIGHTSCALESHIFT;
             if index >= MAXLIGHTSCALE as u32 {
