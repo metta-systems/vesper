@@ -15,13 +15,13 @@ use crate::{
         doom::{
             items::weaponinfo,
             player::{
-                console_player, player as game_player, PlayerMessage, PlayerT, CF_GODMODE, NUMAMMO,
+                CF_GODMODE, NUMAMMO, PlayerMessage, PlayerT, console_player, player as game_player,
             },
             stat::{gamemode, gameversion},
         },
         math::{
-            fixed::{FixedMul, FRACUNIT},
-            tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
+            fixed::{FRACUNIT, FixedMul},
+            tables::{ANG180, ANGLETOFINESHIFT, finecosine, finesine},
         },
         misc::random::P_Random,
         play::{info::*, mobj::mobj_t, pspr::P_DropWeapon},
@@ -303,7 +303,7 @@ const GOTSHOTGUN2: &str = "You got the super shotgun!";
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    automap::{automap_active, AM_Stop},
+    automap::{AM_Stop, automap_active},
     game::{deathmatch, gameskill, netgame},
     interface::system::I_Tactile,
     play::mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},

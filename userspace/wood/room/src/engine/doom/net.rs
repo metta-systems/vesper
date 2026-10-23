@@ -30,7 +30,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::doom::player::{console_player, PlayerMessage, TiccmdT, MAXPLAYERS};
+use crate::engine::doom::player::{MAXPLAYERS, PlayerMessage, TiccmdT, console_player};
 
 /// Maximum number of players supported by the networking code.
 ///
@@ -202,13 +202,13 @@ use crate::engine::{
         stat::{gamemission, gamemode, gameversion},
     },
     game::{
-        deathmatch, demoplayback, netgame, playeringame, G_BuildTiccmd, G_CheckDemoStatus,
-        G_Ticker, GAME,
+        G_BuildTiccmd, G_CheckDemoStatus, G_Ticker, GAME, deathmatch, demoplayback, netgame,
+        playeringame,
     },
     global::Global,
     misc::{argv::M_CheckParm, menu::M_Ticker},
     render_3d::main::VIEW,
-    wad::{checksum::W_Checksum, W_CheckNumForName},
+    wad::{W_CheckNumForName, checksum::W_Checksum},
 };
 
 /// Notify the game that a player has disconnected.

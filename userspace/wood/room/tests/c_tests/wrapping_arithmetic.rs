@@ -14,8 +14,8 @@
 
 use room::engine::{
     math::{
-        fixed::{FixedDiv, FixedMul, FRACUNIT},
-        tables::{ANG180, ANG45, ANG90, ANGLETOFINESHIFT, FINEMASK},
+        fixed::{FRACUNIT, FixedDiv, FixedMul},
+        tables::{ANG45, ANG90, ANG180, ANGLETOFINESHIFT, FINEMASK},
     },
     play::{maputl, mobj},
 };

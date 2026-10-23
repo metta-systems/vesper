@@ -29,12 +29,12 @@ use crate::engine::{
     global::Global,
     map::degenmobj_t,
     math::{
-        fixed::{fixed_t, FRACBITS, FRACUNIT},
-        tables::{finesine, ANGLETOFINESHIFT},
+        fixed::{FRACBITS, FRACUNIT, fixed_t},
+        tables::{ANGLETOFINESHIFT, finesine},
     },
     play::mobj::mobj_t,
     sound::info::{
-        music_table, sfx_table, Mus, MusicInfo, S_InitSfxLinks, SfxInfo, NUMMUSIC, NUMSFX,
+        Mus, MusicInfo, NUMMUSIC, NUMSFX, S_InitSfxLinks, SfxInfo, music_table, sfx_table,
     },
     zone::PU_STATIC,
 };

@@ -3,7 +3,7 @@
 [package]
 name = "room"
 version = "0.1.0"
-edition = "2021" # TODO: 2024!
+edition = "2024"
 description = "A Rust implementation of Doom Generic"
 repository = "https://github.com/sunsided/room"
 license = "GPL-2.0"

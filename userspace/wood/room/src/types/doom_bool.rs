@@ -95,11 +95,7 @@ impl From<bool> for Boolean {
     /// `true` becomes [`Boolean::TRUE`]; `false` becomes [`Boolean::FALSE`].
     #[inline]
     fn from(value: bool) -> Self {
-        if value {
-            Self::TRUE
-        } else {
-            Self::FALSE
-        }
+        if value { Self::TRUE } else { Self::FALSE }
     }
 }
 

@@ -29,11 +29,11 @@ pub mod statdump;
 use {crate::engine::sound::info::Sfx, std::ptr, zerocopy::little_endian::I16};
 
 use crate::{
-    c_write,
+    DEH_snprintf, c_write,
     engine::{
         dehacked::DEH_String,
         doom::{self, event::event_t, player::MAXPLAYERS, stat::gamemode},
-        game::{deathmatch, netgame, player as game_player, playeringame, G_WorldDone},
+        game::{G_WorldDone, deathmatch, netgame, player as game_player, playeringame},
         global::Global,
         interface::{
             timer::TICRATE,
@@ -41,11 +41,10 @@ use crate::{
         },
         misc::random::M_Random,
         render_2d::V_DrawPatch,
-        sound::{info::Mus, S_ChangeMusic, S_StartSound},
-        wad::{format::patch_t, W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName},
-        zone::{Z_Malloc, PU_STATIC},
+        sound::{S_ChangeMusic, S_StartSound, info::Mus},
+        wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName, format::patch_t},
+        zone::{PU_STATIC, Z_Malloc},
     },
-    DEH_snprintf,
 };
 
 // ---------------------------------------------------------------------------

@@ -250,11 +250,11 @@ static CHECKCOORD: [[i32; 4]; 12] = [
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    play::setup::{level, LevelState},
+    play::setup::{LevelState, level},
     render_3d::{
         draw::DRAW,
         main::{R_PointOnSide, R_PointToAngle, VIEW},
-        plane::{R_FindPlane, PLANES},
+        plane::{PLANES, R_FindPlane},
         segs::{R_StoreWallRange, WALL},
         sky::SKY,
         things::R_AddSprites,
@@ -563,7 +563,16 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     if tspan > clipangle_d2 {
         tspan = tspan.wrapping_sub(clipangle_d2);
         if tspan >= span {
-            log::trace!("R_AddLine SKIP off-left: orig_a1={:#x} orig_a2={:#x} va={:#x} a1={:#x} a2={:#x} span={:#x} tspan={:#x}", orig_angle1, orig_angle2, viewangle, angle1, angle2, span, tspan);
+            log::trace!(
+                "R_AddLine SKIP off-left: orig_a1={:#x} orig_a2={:#x} va={:#x} a1={:#x} a2={:#x} span={:#x} tspan={:#x}",
+                orig_angle1,
+                orig_angle2,
+                viewangle,
+                angle1,
+                angle2,
+                span,
+                tspan
+            );
             return;
         }
         angle1 = clipangle;
@@ -573,7 +582,16 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     if tspan > clipangle_d2 {
         tspan = tspan.wrapping_sub(clipangle_d2);
         if tspan >= span {
-            log::trace!("R_AddLine SKIP off-right: orig_a1={:#x} orig_a2={:#x} va={:#x} a1={:#x} a2={:#x} span={:#x} tspan={:#x}", orig_angle1, orig_angle2, viewangle, angle1, angle2, span, tspan);
+            log::trace!(
+                "R_AddLine SKIP off-right: orig_a1={:#x} orig_a2={:#x} va={:#x} a1={:#x} a2={:#x} span={:#x} tspan={:#x}",
+                orig_angle1,
+                orig_angle2,
+                viewangle,
+                angle1,
+                angle2,
+                span,
+                tspan
+            );
             return;
         }
         angle2 = 0u32.wrapping_sub(clipangle);
@@ -590,7 +608,16 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     if x2 >= 200 || x1 >= 200 {
         log::trace!(
             "R_AddLine wall: orig_a1={:#x} orig_a2={:#x} va={:#x} clip={:#x} a1={:#x} a2={:#x} idx1={} idx2={} x1={} x2={}",
-            orig_angle1, orig_angle2, viewangle, clipangle, angle1, angle2, idx1, idx2, x1, x2
+            orig_angle1,
+            orig_angle2,
+            viewangle,
+            clipangle,
+            angle1,
+            angle2,
+            idx1,
+            idx2,
+            x1,
+            x2
         );
     }
     // Diagnostic: log every surviving wall (full screen) at TRACE.
@@ -622,7 +649,11 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     if backsector.is_null() {
         log::trace!(
             "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(1-sided) back=null front={:p}",
-            probe_frame, seg_index(line), x1, x2, frontsector as *const _
+            probe_frame,
+            seg_index(line),
+            x1,
+            x2,
+            frontsector as *const _
         );
         R_ClipSolidWallSegment(x1, x2 - 1);
         return;
@@ -634,9 +665,15 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     {
         log::trace!(
             "R_AddLine classify: frame={} seg={} x1={} x2={} decision=SOLID(closed-door) back={:p} f.ch={} f.fh={} b.ch={} b.fh={}",
-            probe_frame, seg_index(line), x1, x2, backsector as *const _,
-            (*frontsector).ceilingheight, (*frontsector).floorheight,
-            (*backsector).ceilingheight, (*backsector).floorheight
+            probe_frame,
+            seg_index(line),
+            x1,
+            x2,
+            backsector as *const _,
+            (*frontsector).ceilingheight,
+            (*frontsector).floorheight,
+            (*backsector).ceilingheight,
+            (*backsector).floorheight
         );
         R_ClipSolidWallSegment(x1, x2 - 1);
         return;
@@ -648,9 +685,15 @@ unsafe fn R_AddLine(line: *mut seg_t) {
     {
         log::trace!(
             "R_AddLine classify: frame={} seg={} x1={} x2={} decision=PASS(window) back={:p} f.ch={} f.fh={} b.ch={} b.fh={}",
-            probe_frame, seg_index(line), x1, x2, backsector as *const _,
-            (*frontsector).ceilingheight, (*frontsector).floorheight,
-            (*backsector).ceilingheight, (*backsector).floorheight
+            probe_frame,
+            seg_index(line),
+            x1,
+            x2,
+            backsector as *const _,
+            (*frontsector).ceilingheight,
+            (*frontsector).floorheight,
+            (*backsector).ceilingheight,
+            (*backsector).floorheight
         );
         R_ClipPassWallSegment(x1, x2 - 1);
         return;

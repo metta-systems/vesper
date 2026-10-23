@@ -21,8 +21,8 @@ use crate::{
     engine::{
         doom,
         misc::{
-            argv::{argument, M_CheckParmWithArgs},
             M_FileExists,
+            argv::{M_CheckParmWithArgs, argument},
         },
     },
     i_error,

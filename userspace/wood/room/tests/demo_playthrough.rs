@@ -64,8 +64,8 @@ impl room::engine::platform::Platform for Headless {
 // ---------------------------------------------------------------------------
 
 use room::engine::{
-    doom::main_loop::{gametic, MAIN_LOOP},
-    game::{gamestate, GAME},
+    doom::main_loop::{MAIN_LOOP, gametic},
+    game::{GAME, gamestate},
     misc::random::RANDOM,
 };
 
@@ -637,7 +637,7 @@ fn is_checkpoint(tic: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 fn capture_snapshot(tic: usize) -> Snapshot {
-    use room::engine::doom::player::{consoleplayer, player, MAXPLAYERS};
+    use room::engine::doom::player::{MAXPLAYERS, consoleplayer, player};
 
     let random = RANDOM.get();
 

@@ -19,7 +19,7 @@ use std::{
     ptr,
 };
 
-use crate::engine::zone::{Z_Free, Z_Malloc, PU_STATIC};
+use crate::engine::zone::{PU_STATIC, Z_Free, Z_Malloc};
 
 /// An open WAD file. Merges the C `wad_file_t` base and its
 /// `stdc_wad_file_t` stdio backend.

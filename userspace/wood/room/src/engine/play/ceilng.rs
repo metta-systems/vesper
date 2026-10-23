@@ -12,15 +12,15 @@ use crate::engine::sound::info::Sfx;
 use crate::engine::{
     global::Global,
     map::{line_t, sector_t},
-    math::fixed::{fixed_t, FRACUNIT},
+    math::fixed::{FRACUNIT, fixed_t},
     play::{
         floor::T_MovePlane,
         setup::level,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
-        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
+        tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, leveltime, thinker_t},
     },
     sound::S_StartSectorSound,
-    zone::{Z_Malloc, PU_LEVSPEC},
+    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Default ceiling movement speed: 1 fixed-point unit per tic (`FRACUNIT`).

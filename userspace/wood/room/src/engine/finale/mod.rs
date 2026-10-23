@@ -26,6 +26,7 @@ pub mod wipe;
 use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
+    DEH_snprintf,
     engine::{
         doom,
         doom::{
@@ -33,11 +34,10 @@ use crate::{
             stat::{gamemission, gameversion},
         },
         global::Global,
-        hud::stuff::{HUD, HU_FONTSIZE, HU_FONTSTART},
+        hud::stuff::{HU_FONTSIZE, HU_FONTSTART, HUD},
         play::info::*,
         wad::format::{column_t, patch_t},
     },
-    DEH_snprintf,
 };
 
 // ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ struct CastInfo {
 // g_game.rs
 use crate::engine::{
     dehacked::DEH_String,
-    game::{gameepisode, gamemap, player, GAME},
+    game::{GAME, gameepisode, gamemap, player},
 };
 
 // am_map.rs
@@ -275,7 +275,7 @@ use crate::engine::wad::{W_CacheLumpName, W_CacheLumpNum};
 use crate::engine::render_2d::{V_DrawPatch, V_DrawPatchFlipped, V_MarkRect};
 
 // s_sound.rs
-use crate::engine::sound::{info::Mus, S_ChangeMusic, S_StartMusic, S_StartSound};
+use crate::engine::sound::{S_ChangeMusic, S_StartMusic, S_StartSound, info::Mus};
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -1311,9 +1311,11 @@ mod tests {
     /// roll ends with exactly one empty-name sentinel.
     #[test]
     fn finale_tables_are_complete() {
-        assert!(TEXTSCREENS
-            .iter()
-            .all(|screen| !screen.background.is_empty() && !screen.text.is_empty()));
+        assert!(
+            TEXTSCREENS
+                .iter()
+                .all(|screen| !screen.background.is_empty() && !screen.text.is_empty())
+        );
         let (sentinel, names) = CASTORDER.split_last().unwrap();
         assert!(sentinel.name.is_empty());
         assert!(names.iter().all(|cast| !cast.name.is_empty()));

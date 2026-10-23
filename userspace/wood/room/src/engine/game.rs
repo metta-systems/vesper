@@ -50,10 +50,10 @@ use std::ptr;
 use crate::engine::{
     doom::{
         mode::{
-            commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_666, exe_doom_1_7, exe_doom_1_8,
+            commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_7, exe_doom_1_8, exe_doom_1_666,
             exe_final2, exe_ultimate, shareware,
         },
-        player::{PlayerMessage, PlayerT, TiccmdT, MAXPLAYERS},
+        player::{MAXPLAYERS, PlayerMessage, PlayerT, TiccmdT},
         stat::{gamemission, gamemode, gameversion},
     },
     intermission::{wbplayerstruct_t, wbstartstruct_t},
@@ -736,7 +736,7 @@ use crate::engine::doom::main_loop::{gametic, ticdup};
 /// Command-line `-fast`, `-nomonsters`, `-respawn` toggles, the wipe-state
 /// latch, demo advancement, and the title-screen page ticker from `d_main.c`.
 use crate::engine::doom::main::{
-    fastparm, nomonsters, respawnparm, D_AdvanceDemo, D_PageTicker, DOOM_MAIN,
+    D_AdvanceDemo, D_PageTicker, DOOM_MAIN, fastparm, nomonsters, respawnparm,
 };
 
 /// Clear the `-respawn`, `-fast` and `-nomonsters` toggles.
@@ -748,7 +748,7 @@ fn clear_monster_parms() {
 }
 
 /// Automap toggle, responder, stop hook and ticker from `am_map.c`.
-use crate::engine::automap::{automap_active, AM_Responder, AM_Stop, AM_Ticker, AUTOMAP};
+use crate::engine::automap::{AM_Responder, AM_Stop, AM_Ticker, AUTOMAP, automap_active};
 
 /// Per-player command buffer ring from `d_net.c`.
 use crate::engine::doom::net::netcmds;
@@ -788,13 +788,13 @@ use crate::engine::zone::{Z_CheckHeap, Z_Free, Z_Malloc};
 
 /// `leveltime` counter (tics since level start) and thinker tick driver from
 /// `p_tick.c`.
-use crate::engine::play::tick::{leveltime, P_Ticker, TICK};
+use crate::engine::play::tick::{P_Ticker, TICK, leveltime};
 
 /// Status-bar event responder and ticker from `st_stuff.c`.
 use crate::engine::status::stuff::{ST_Responder, ST_Ticker};
 
 /// HUD chat / message primitives and player-name table from `hu_stuff.c`.
-use crate::engine::hud::stuff::{player_names, HU_Responder, HU_Ticker, HU_dequeueChatChar};
+use crate::engine::hud::stuff::{HU_Responder, HU_Ticker, HU_dequeueChatChar, player_names};
 
 /// Intermission start/end/tick hooks from `wi_stuff.c`.
 use crate::engine::intermission::{WI_End, WI_Start, WI_Ticker};
@@ -809,10 +809,10 @@ use crate::engine::sound::{S_PauseSound, S_ResumeSound, S_StartSound};
 use crate::engine::misc::menu::{M_StartControlPanel, MENU};
 
 /// String / file / formatted-print utilities from `m_misc.c`.
-use crate::engine::misc::{atoi, M_StringCopy, M_TempFile, M_WriteFile};
+use crate::engine::misc::{M_StringCopy, M_TempFile, M_WriteFile, atoi};
 
 /// Command-line argument table and lookup helpers from `m_argv.c`.
-use crate::engine::misc::argv::{argument, M_CheckParm, M_CheckParmWithArgs};
+use crate::engine::misc::argv::{M_CheckParm, M_CheckParmWithArgs, argument};
 
 /// `rndindex` consistency-check cookie and seed reset from `m_random.c`.
 use crate::engine::misc::random::{M_ClearRandom, RANDOM};
@@ -832,7 +832,7 @@ use crate::engine::wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName};
 /// Configurable key, joystick and mouse button bindings from `m_controls.c`.
 /// `G_BuildTiccmd` and `G_Responder` copy the bindings they interrogate out
 /// of `CONTROLS` once per call.
-use crate::engine::misc::controls::{ControlsState, CONTROLS};
+use crate::engine::misc::controls::{CONTROLS, ControlsState};
 
 /// `PU_STATIC` Z_Malloc purge tag used for the demo buffer and demo filename.
 use crate::engine::zone::PU_STATIC;
@@ -2632,7 +2632,7 @@ unsafe fn set_fast_monsters(fast: bool) {
 /// Mutates the shared `states` and `mobjinfo` arrays.
 pub unsafe fn G_SetFastMonsters(fast: i32) {
     use crate::engine::play::info::{
-        MOBJINFO, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, STATES, S_SARG_PAIN2, S_SARG_RUN1,
+        MOBJINFO, MT_BRUISERSHOT, MT_HEADSHOT, MT_TROOPSHOT, S_SARG_PAIN2, S_SARG_RUN1, STATES,
     };
 
     {

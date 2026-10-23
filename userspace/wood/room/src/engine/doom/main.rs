@@ -10,8 +10,8 @@ use crate::{
     engine::{
         doom,
         doom::{
-            player::{consoleplayer, MAXPLAYERS},
-            stat::{gamemission, gamemode, gameversion, modifiedgame, STAT},
+            player::{MAXPLAYERS, consoleplayer},
+            stat::{STAT, gamemission, gamemode, gameversion, modifiedgame},
         },
         global::Global,
         interface::{
@@ -322,36 +322,36 @@ use crate::engine::doom::net::drone;
 
 // g_game.rs
 use crate::engine::game::{
-    demoplayback, displayplayer, gameaction, gamestate, netgame, paused, player, G_BeginRecording,
-    G_DeferedPlayDemo, G_InitNew, G_LoadGame, G_RecordDemo, G_Responder, G_TimeDemo,
-    G_VanillaVersionCode, GAME,
+    G_BeginRecording, G_DeferedPlayDemo, G_InitNew, G_LoadGame, G_RecordDemo, G_Responder,
+    G_TimeDemo, G_VanillaVersionCode, GAME, demoplayback, displayplayer, gameaction, gamestate,
+    netgame, paused, player,
 };
 
 // am_map.rs
-use crate::engine::automap::{automap_active, AM_Drawer};
+use crate::engine::automap::{AM_Drawer, automap_active};
 
 // deh_str.rs
 use crate::engine::dehacked::DEH_String;
 
 // m_menu.rs
-use crate::engine::misc::menu::{menu_active, MENU};
+use crate::engine::misc::menu::{MENU, menu_active};
 
 // s_sound.rs
-use crate::engine::sound::{info::Mus, S_Init, S_StartMusic, S_UpdateSounds, SoundState, SOUND};
+use crate::engine::sound::{S_Init, S_StartMusic, S_UpdateSounds, SOUND, SoundState, info::Mus};
 
 // r_main.rs
 use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_Init, R_RenderPlayerView, VIEW};
 
 // r_draw.rs
-use crate::engine::render_3d::draw::{R_DrawViewBorder, R_FillBackScreen, DRAW};
+use crate::engine::render_3d::draw::{DRAW, R_DrawViewBorder, R_FillBackScreen};
 
 // i_video.rs
-use crate::engine::interface::video::{screensaver_mode, VIDEO};
+use crate::engine::interface::video::{VIDEO, screensaver_mode};
 
 // w_wad.rs
 use crate::engine::wad::{
-    lump_name, lump_names_equal, lumpinfo, W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD,
-    W_CheckNumForName, W_GenerateHashTable, W_NumLumps,
+    W_AddFile, W_CacheLumpName, W_CheckCorrectIWAD, W_CheckNumForName, W_GenerateHashTable,
+    W_NumLumps, lump_name, lump_names_equal, lumpinfo,
 };
 
 // hu_stuff.rs
@@ -381,7 +381,7 @@ use crate::engine::doom::net::{D_CheckNetGame, D_ConnectNetGame};
 use crate::engine::doom::event::D_PopEvent;
 
 // d_loop.rs
-use crate::engine::doom::main_loop::{gametic, D_StartGameLoop, NetUpdate, TryRunTics};
+use crate::engine::doom::main_loop::{D_StartGameLoop, NetUpdate, TryRunTics, gametic};
 
 // d_iwad.rs
 use crate::engine::doom::iwad::{D_FindIWAD, D_SaveGameIWADName};
@@ -404,7 +404,7 @@ use crate::engine::finale::F_Drawer;
 use crate::engine::finale::wipe::{wipe_EndScreen, wipe_ScreenWipe, wipe_StartScreen};
 
 // m_argv.rs
-use crate::engine::misc::argv::{argument, argument_count, M_CheckParm, M_CheckParmWithArgs};
+use crate::engine::misc::argv::{M_CheckParm, M_CheckParmWithArgs, argument, argument_count};
 
 // m_config.rs
 use crate::engine::misc::config::{
@@ -1420,7 +1420,9 @@ pub fn D_DoomMain() {
         let found_iwad = D_FindIWAD(1, &mut mission); // IWAD_MASK_DOOM = 1
         STAT.borrow_mut().gamemission = mission;
         let Some(found_iwad) = found_iwad else {
-            i_error!("Game mode indeterminate.  No IWAD file was found.  Try\nspecifying one with the '-iwad' command line parameter.\n");
+            i_error!(
+                "Game mode indeterminate.  No IWAD file was found.  Try\nspecifying one with the '-iwad' command line parameter.\n"
+            );
         };
         DOOM_MAIN.borrow_mut().iwadfile = found_iwad.clone();
 

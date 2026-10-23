@@ -298,12 +298,12 @@ pub fn deathmatch_p() -> *mut mapthing_t {
 
 use crate::engine::{
     doom::stat::gamemode,
-    game::{console_player, deathmatch, player, playeringame, G_DeathMatchSpawnPlayer, GAME},
+    game::{G_DeathMatchSpawnPlayer, GAME, console_player, deathmatch, player, playeringame},
     interface::system::I_GetMemoryValue,
     math::fixed::FixedDiv,
     misc::argv::M_CheckParm,
     play::{
-        mobj::{P_SpawnMapThing, MOBJ},
+        mobj::{MOBJ, P_SpawnMapThing},
         spec::{P_InitPicAnims, P_SpawnSpecials},
         switch::P_InitSwitchList,
     },
@@ -313,12 +313,12 @@ use crate::engine::{
     },
     sound::S_Start,
     wad::{
+        W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum,
         cache_lump_records,
         format::{
             maplinedef_t, mapnode_t, mapsector_t, mapseg_t, mapsidedef_t, mapsubsector_t,
             mapthing_t, mapvertex_t,
         },
-        W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReadLump, W_ReleaseLumpNum,
     },
     zone::{Z_FreeTags, Z_Malloc},
 };
@@ -1372,10 +1372,8 @@ mod tests {
         let mut count = 0;
         for &thing_type in things {
             let mut spawn = true;
-            if !commercial {
-                if non_commercial_types.contains(&thing_type) {
-                    spawn = false;
-                }
+            if !commercial && non_commercial_types.contains(&thing_type) {
+                spawn = false;
             }
             if !spawn {
                 break; // MUST break – was `continue` in the buggy port

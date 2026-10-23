@@ -18,10 +18,10 @@ use crate::engine::{
     dehacked::DEH_String,
     doom::{mode::commercial, stat::gamemode},
     global::Global,
-    interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
+    interface::video::{SCREENHEIGHT, SCREENWIDTH, video_buffer},
     math::fixed::FRACBITS,
     render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
-    wad::{format::patch_t, W_CacheLumpName},
+    wad::{W_CacheLumpName, format::patch_t},
     zone::{Z_Free, Z_Malloc},
 };
 

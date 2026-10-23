@@ -28,52 +28,49 @@ type mobjtype_t = i32;
 /// Returns the absolute value of `x`; local substitute for `stdlib.h` `abs` used in `p_enemy.c`.
 #[inline]
 fn abs(x: i32) -> i32 {
-    if x < 0 {
-        -x
-    } else {
-        x
-    }
+    if x < 0 { -x } else { x }
 }
 
 use crate::{
     engine::{
         doom::{
             main_loop::gametic,
-            player::{player as game_player, PlayerT, PspdefT, MAXPLAYERS},
+            player::{MAXPLAYERS, PlayerT, PspdefT, player as game_player},
             stat::{gamemode, gameversion},
         },
         map::{line_t, sector_t, slopetype_t, vertex_t},
         math::{
-            fixed::{fixed_t, FixedMul, FRACUNIT},
-            tables::{finecosine, finesine, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
+            fixed::{FRACUNIT, FixedMul, fixed_t},
+            tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, finecosine, finesine},
         },
         misc::random::P_Random,
         play::{
             info::{
-                MobjInfo, MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED, MF_JUSTHIT,
-                MF_SHADOW, MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MOBJINFO, MT_ARACHPLAZ, MT_BABY,
+                MF_AMBUSH, MF_CORPSE, MF_FLOAT, MF_INFLOAT, MF_JUSTATTACKED, MF_JUSTHIT, MF_SHADOW,
+                MF_SHOOTABLE, MF_SKULLFLY, MF_SOLID, MOBJINFO, MT_ARACHPLAZ, MT_BABY,
                 MT_BOSSTARGET, MT_BRUISER, MT_BRUISERSHOT, MT_CYBORG, MT_FATSHOT, MT_FATSO,
                 MT_FIRE, MT_HEAD, MT_HEADSHOT, MT_KNIGHT, MT_PAIN, MT_ROCKET, MT_SERGEANT,
                 MT_SHADOWS, MT_SKULL, MT_SMOKE, MT_SPAWNFIRE, MT_SPAWNSHOT, MT_SPIDER, MT_TRACER,
-                MT_TROOP, MT_TROOPSHOT, MT_UNDEAD, MT_VILE, S_BRAINEXPLODE1, S_NULL, S_VILE_HEAL1,
+                MT_TROOP, MT_TROOPSHOT, MT_UNDEAD, MT_VILE, MobjInfo, S_BRAINEXPLODE1, S_NULL,
+                S_VILE_HEAL1,
             },
             inter::P_DamageMobj,
             map::{
-                floatok, tmfloorz, P_AimLineAttack, P_CheckPosition, P_LineAttack, P_RadiusAttack,
-                P_TeleportMove, P_TryMove, MAP,
+                MAP, P_AimLineAttack, P_CheckPosition, P_LineAttack, P_RadiusAttack,
+                P_TeleportMove, P_TryMove, floatok, tmfloorz,
             },
             maputl::{
-                openrange, P_AproxDistance, P_BlockThingsIterator, P_LineOpening,
-                P_SetThingPosition, P_UnsetThingPosition, MAPBLOCKSHIFT,
+                MAPBLOCKSHIFT, P_AproxDistance, P_BlockThingsIterator, P_LineOpening,
+                P_SetThingPosition, P_UnsetThingPosition, openrange,
             },
             mobj::{
-                mobj_t, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
-                P_SubstNullMobj,
+                P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
+                P_SubstNullMobj, mobj_t,
             },
-            setup::{level, LevelState},
+            setup::{LevelState, level},
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
-            tick::{thinker_t, thinkercap, ThinkerContainer, ThinkerKind},
+            tick::{ThinkerContainer, ThinkerKind, thinker_t, thinkercap},
         },
         render_3d::main::{R_PointToAngle2, VALIDCOUNT},
         sound::S_StartSound,
@@ -144,7 +141,7 @@ pub const SKULLSPEED: i32 = 20 * FRACUNIT;
 
 use crate::engine::{
     doom::main::fastparm,
-    game::{gameepisode, gamemap, gameskill, netgame, playeringame, G_ExitLevel},
+    game::{G_ExitLevel, gameepisode, gamemap, gameskill, netgame, playeringame},
     global::Global,
     play::{doors::EV_DoDoor, floor::EV_DoFloor, pspr::A_ReFire},
 };

@@ -12,13 +12,13 @@ use crate::engine::{
     doom::{
         items::weaponinfo,
         mode::{commercial, shareware},
-        player::{PlayerT, PspdefT, NUMAMMO, NUMPSPRITES, NUMWEAPONS},
+        player::{NUMAMMO, NUMPSPRITES, NUMWEAPONS, PlayerT, PspdefT},
         stat::gamemode,
     },
     global::Global,
     math::{
-        fixed::{fixed_t, FixedMul, FRACBITS, FRACUNIT},
-        tables::{finecosine, finesine, FINEANGLES, FINEMASK},
+        fixed::{FRACBITS, FRACUNIT, FixedMul, fixed_t},
+        tables::{FINEANGLES, FINEMASK, finecosine, finesine},
     },
     misc::random::P_Random,
     play::{info::*, mobj::mobj_t, tick::leveltime},
@@ -102,7 +102,7 @@ use crate::engine::{
     play::{
         enemy::P_NoiseAlert,
         inter::P_DamageMobj,
-        map::{linetarget, P_AimLineAttack, P_LineAttack},
+        map::{P_AimLineAttack, P_LineAttack, linetarget},
         mobj::{P_SetMobjState, P_SpawnMobj, P_SpawnPlayerMissile},
     },
     render_3d::main::R_PointToAngle2,

@@ -28,7 +28,7 @@ use winit::{
 use room::engine::platform::{DOOMGENERIC_RESX, DOOMGENERIC_RESY};
 
 use super::{
-    gpu::GpuState, init_start_time, keys::to_doom_key, Host, GPU, KEY_QUEUE, QUIT_REQUESTED, WINDOW,
+    GPU, Host, KEY_QUEUE, QUIT_REQUESTED, WINDOW, gpu::GpuState, init_start_time, keys::to_doom_key,
 };
 
 // ---------------------------------------------------------------------------

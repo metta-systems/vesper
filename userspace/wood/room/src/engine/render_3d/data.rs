@@ -120,14 +120,15 @@ use crate::engine::{
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::{
-        setup::{level, LevelState},
-        tick::{thinkercap, ThinkerContainer, ThinkerKind},
+        setup::{LevelState, level},
+        tick::{ThinkerContainer, ThinkerKind, thinkercap},
     },
     render_3d::{sky::SKY, things::SPRITES},
     wad::{
+        W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
+        W_LumpNameHash, W_ReleaseLumpName,
         format::{column_t, mappatch_t, maptexture_t, patch_t},
-        lump_name, lump_names_equal, lumpinfo, W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName,
-        W_GetNumForName, W_LumpLength, W_LumpNameHash, W_ReleaseLumpName,
+        lump_name, lump_names_equal, lumpinfo,
     },
     zone::{Z_ChangeTag2, Z_Free, Z_Malloc},
 };

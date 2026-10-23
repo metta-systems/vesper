@@ -14,8 +14,9 @@ use {
     crate::engine::{
         global::Global,
         misc::{
-            argv::{argument, argument_count, M_CheckParmWithArgs, M_ParmExists},
-            atoi, M_StrToInt,
+            M_StrToInt,
+            argv::{M_CheckParmWithArgs, M_ParmExists, argument, argument_count},
+            atoi,
         },
     },
     std::{ffi::c_void, ptr},

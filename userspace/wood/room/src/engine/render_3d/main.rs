@@ -18,8 +18,8 @@ use crate::{
         math::{
             self,
             bbox::BBox,
-            fixed::{angle_t, fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
-            tables::{SlopeDiv, ANG180, ANG270, ANG90, ANGLETOFINESHIFT},
+            fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, angle_t, fixed_t},
+            tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, SlopeDiv},
         },
     },
     types::Boolean,
@@ -328,17 +328,17 @@ pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
 use crate::engine::{
     doom::main_loop::NetUpdate,
     misc::menu::MENU,
-    play::setup::{level, LevelState},
+    play::setup::{LevelState, level},
     render_3d::{
         bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
         data::{R_InitData, RENDER_DATA},
         draw::{
-            ColumnFunction, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn, R_DrawFuzzColumnLow,
-            R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn, R_DrawTranslatedColumnLow,
-            R_InitBuffer, R_InitTranslationTables, SpanFunction, DRAW,
+            ColumnFunction, DRAW, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn,
+            R_DrawFuzzColumnLow, R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn,
+            R_DrawTranslatedColumnLow, R_InitBuffer, R_InitTranslationTables, SpanFunction,
         },
-        plane::{R_ClearPlanes, R_DrawPlanes, R_InitPlanes, PLANES},
-        segs::{WallState, WALL},
+        plane::{PLANES, R_ClearPlanes, R_DrawPlanes, R_InitPlanes},
+        segs::{WALL, WallState},
         things::{R_ClearSprites, R_DrawMasked, SPRITES},
     },
 };
@@ -413,11 +413,7 @@ pub unsafe fn R_PointOnSide(x: fixed_t, y: fixed_t, node: *const node_t) -> i32 
     let left = FixedMul((*node).dy >> FRACBITS, dx);
     let right = FixedMul(dy, (*node).dx >> FRACBITS);
 
-    if right < left {
-        0
-    } else {
-        1
-    }
+    if right < left { 0 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------
@@ -468,11 +464,7 @@ pub unsafe fn R_PointOnSegSide(x: fixed_t, y: fixed_t, line: *const seg_t) -> i3
     let left = FixedMul(ldy >> FRACBITS, dx);
     let right = FixedMul(dy, ldx >> FRACBITS);
 
-    if right < left {
-        0
-    } else {
-        1
-    }
+    if right < left { 0 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------

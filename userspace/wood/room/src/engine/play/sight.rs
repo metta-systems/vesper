@@ -94,7 +94,7 @@ pub static SIGHT: Global<SightState> = Global::new(SightState::new());
 
 use crate::engine::{
     global::Global,
-    play::setup::{level, LevelState},
+    play::setup::{LevelState, level},
     render_3d::main::VALIDCOUNT,
 };
 

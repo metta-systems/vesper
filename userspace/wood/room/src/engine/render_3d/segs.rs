@@ -35,8 +35,8 @@ use std::{ffi::c_void, ptr};
 use crate::engine::{
     global::Global,
     math::{
-        fixed::{angle_t, fixed_t, FixedMul, FRACBITS},
-        tables::{self, ANG180, ANG90, ANGLETOFINESHIFT},
+        fixed::{FRACBITS, FixedMul, angle_t, fixed_t},
+        tables::{self, ANG90, ANG180, ANGLETOFINESHIFT},
     },
     render_3d::bsp::drawseg_t,
     wad::format::LinedefFlag,
@@ -94,12 +94,12 @@ const MAXDRAWSEGS: usize = 256;
 
 use crate::engine::render_3d::{
     bsp::BSP,
-    data::{R_GetColumn, RenderDataState, RENDER_DATA},
-    draw::{ColumnParams, DrawState, DRAW},
-    main::{scalelight_row, R_PointToDist, R_ScaleFromGlobalAngle, ViewState, VIEW},
-    plane::{PlaneState, R_CheckPlane, PLANES},
+    data::{R_GetColumn, RENDER_DATA, RenderDataState},
+    draw::{ColumnParams, DRAW, DrawState},
+    main::{R_PointToDist, R_ScaleFromGlobalAngle, VIEW, ViewState, scalelight_row},
+    plane::{PLANES, PlaneState, R_CheckPlane},
     sky::SKY,
-    things::{negonearray_ptr, screenheightarray_ptr, MaskedColumnParams, R_DrawMaskedColumn},
+    things::{MaskedColumnParams, R_DrawMaskedColumn, negonearray_ptr, screenheightarray_ptr},
 };
 
 // ---------------------------------------------------------------------------

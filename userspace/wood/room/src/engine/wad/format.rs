@@ -20,8 +20,8 @@
 use {
     std::mem::size_of,
     zerocopy::{
-        little_endian::{I16, I32, U16},
         FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
+        little_endian::{I16, I32, U16},
     },
 };
 

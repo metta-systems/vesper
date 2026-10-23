@@ -14,19 +14,19 @@ use crate::{
         global::Global,
         interface::timer::TICRATE,
         map::{line_t, sector_t},
-        math::fixed::{fixed_t, FRACUNIT},
+        math::fixed::{FRACUNIT, fixed_t},
         misc::random::P_Random,
         play::{
             floor::T_MovePlane,
-            setup::{level, LevelState},
+            setup::{LevelState, level},
             spec::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
             },
-            tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
+            tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, leveltime, thinker_t},
         },
         sound::S_StartSectorSound,
-        zone::{Z_Malloc, PU_LEVSPEC},
+        zone::{PU_LEVSPEC, Z_Malloc},
     },
     i_error,
 };

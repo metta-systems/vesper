@@ -290,7 +290,7 @@ fn make_divline(x: i32, y: i32, dx: i32, dy: i32) -> divline_t {
 #[test]
 fn divline_side_horizontal_above() {
     let line = make_divline(0, 0, FRACUNIT, 0); // pointing right
-                                                // Above the line → side 1 (back)
+    // Above the line → side 1 (back)
     assert_eq!(
         play::maputl::P_PointOnDivlineSide(FRACUNIT, FRACUNIT, &line as *const _ as *mut _),
         1
@@ -323,7 +323,7 @@ fn divline_side_horizontal_on_line() {
 #[test]
 fn divline_side_vertical_left() {
     let line = make_divline(0, 0, 0, FRACUNIT); // pointing up
-                                                // Left of the line (x <= 0) → side 1 (back)
+    // Left of the line (x <= 0) → side 1 (back)
     assert_eq!(
         play::maputl::P_PointOnDivlineSide(-FRACUNIT, FRACUNIT, &line as *const _ as *mut _),
         1
@@ -395,7 +395,7 @@ fn intercept_parallel_returns_zero() {
 fn intercept_perpendicular_crossing_at_origin() {
     let v1 = make_divline(0, 0, FRACUNIT, 0); // x-axis
     let v2 = make_divline(0, 0, 0, FRACUNIT); // y-axis
-                                              // They cross at origin → frac = 0 along v2
+    // They cross at origin → frac = 0 along v2
     assert_eq!(
         play::maputl::P_InterceptVector(&v2 as *const _ as *mut _, &v1 as *const _ as *mut _),
         0
@@ -777,7 +777,10 @@ static TRAVERSED_FRACS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
 unsafe fn record_and_continue(intr: *mut play::maputl::intercept_t) -> u32 {
-    TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
+    TRAVERSED_FRACS
+        .lock()
+        .unwrap()
+        .push(unsafe { (*intr).frac });
     1 // continue
 }
 
@@ -790,7 +793,10 @@ unsafe fn record_and_continue(intr: *mut play::maputl::intercept_t) -> u32 {
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
 unsafe fn record_and_stop(intr: *mut play::maputl::intercept_t) -> u32 {
-    TRAVERSED_FRACS.lock().unwrap().push((*intr).frac);
+    TRAVERSED_FRACS
+        .lock()
+        .unwrap()
+        .push(unsafe { (*intr).frac });
     0 // stop
 }
 

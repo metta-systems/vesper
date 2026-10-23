@@ -29,8 +29,10 @@
 //!   signatures, accepting raw pointers their callers validate.
 //! - `clippy::needless_range_loop`, `clippy::explicit_counter_loop` - direct
 //!   index loops are kept where the originals were so the diff with C stays
-//!   minimal; many arrays are `static mut` and would otherwise need
-//!   `slice::from_raw_parts` wrappers.
+//!   minimal.
+//! - `unsafe_op_in_unsafe_fn` - the ported `unsafe fn`s keep C's style of one
+//!   unsafe body; wrapping each operation in its own `unsafe {}` block is
+//!   left for a separate pass.
 
 // TODO: Add `# Safety` documentation to all unsafe functions.
 #![allow(clippy::missing_safety_doc)]
@@ -45,9 +47,11 @@
 // This is a C-to-Rust port: ported functions routinely take raw pointer
 // arguments that are dereferenced in the body. The callers ensure validity.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
-// C-style indexed loops are idiomatic in this port; many arrays are static mut,
-// so converting to iterators would require from_raw_parts complexity.
+// C-style indexed loops are kept where the original had them.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
+// Edition 2024 warns on unsafe operations in `unsafe fn` bodies without their
+// own `unsafe {}` block; the ported functions still use C's whole-body style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod engine;
 pub mod types;

@@ -36,11 +36,7 @@ pub fn FixedMul(a: fixed_t, b: fixed_t) -> fixed_t {
 /// but without UB or panics.
 pub fn FixedDiv(a: fixed_t, b: fixed_t) -> fixed_t {
     if (a.wrapping_abs() >> 14) >= b.wrapping_abs() {
-        if (a ^ b) < 0 {
-            i32::MIN
-        } else {
-            i32::MAX
-        }
+        if (a ^ b) < 0 { i32::MIN } else { i32::MAX }
     } else {
         (((a as i64) << 16) / b as i64) as fixed_t
     }

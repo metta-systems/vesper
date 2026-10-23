@@ -26,19 +26,19 @@ use crate::{
         },
         math::{
             bbox::BBox,
-            fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
-            tables::{finecosine, finesine, ANG180, ANGLETOFINESHIFT},
+            fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
+            tables::{ANG180, ANGLETOFINESHIFT, finecosine, finesine},
         },
         misc::random::P_Random,
         play::{
             maputl::{
-                intercept_t, lowfloor, openbottom, openrange, opentop, trace, P_AproxDistance,
-                P_BlockLinesIterator, P_BlockThingsIterator, P_BoxOnLineSide, P_LineOpening,
-                P_PathTraverse, P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition,
-                MAPBLOCKSHIFT, PT_ADDLINES, PT_ADDTHINGS,
+                MAPBLOCKSHIFT, P_AproxDistance, P_BlockLinesIterator, P_BlockThingsIterator,
+                P_BoxOnLineSide, P_LineOpening, P_PathTraverse, P_PointOnLineSide,
+                P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES, PT_ADDTHINGS, intercept_t,
+                lowfloor, openbottom, openrange, opentop, trace,
             },
             mobj::mobj_t,
-            setup::{level, LevelState},
+            setup::{LevelState, level},
             sight::{P_CheckSight, SIGHT},
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2, VALIDCOUNT},
@@ -135,8 +135,8 @@ use crate::engine::{
     game::gamemap,
     global::Global,
     misc::{
-        argv::{argument, M_CheckParmWithArgs},
         M_StrToInt,
+        argv::{M_CheckParmWithArgs, argument},
     },
     play::{
         inter::{P_DamageMobj, P_TouchSpecialThing},
@@ -148,7 +148,7 @@ use crate::engine::{
         tick::leveltime,
     },
     render_3d::sky::SKY,
-    sound::{info::Sfx, S_StartSound},
+    sound::{S_StartSound, info::Sfx},
 };
 
 // ---------------------------------------------------------------------------

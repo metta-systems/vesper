@@ -15,9 +15,9 @@
 
 use crate::engine::{
     misc::sha1::{
-        sha1_digest_t, SHA1Context, SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString,
+        SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString, SHA1Context, sha1_digest_t,
     },
-    wad::{file::wad_file_t, lumpinfo, lumpinfo_t, W_NumLumps},
+    wad::{W_NumLumps, file::wad_file_t, lumpinfo, lumpinfo_t},
 };
 
 /// Map a `wad_file` handle to a stable small integer for inclusion in the

@@ -8,20 +8,20 @@
 
 use crate::engine::{
     map::{line_t, sector_t},
-    math::fixed::{fixed_t, FRACUNIT},
+    math::fixed::{FRACUNIT, fixed_t},
     play::{
         map::P_ChangeSector,
         setup::level,
         spec::{
-            getSector, getSide, twoSided, P_FindHighestFloorSurrounding,
-            P_FindLowestCeilingSurrounding, P_FindLowestFloorSurrounding, P_FindNextHighestFloor,
-            P_FindSectorFromLineTag,
+            P_FindHighestFloorSurrounding, P_FindLowestCeilingSurrounding,
+            P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
+            getSector, getSide, twoSided,
         },
-        tick::{leveltime, thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
+        tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, leveltime, thinker_t},
     },
     render_3d::data::RENDER_DATA,
-    sound::{info::Sfx, S_StartSectorSound},
-    zone::{Z_Malloc, PU_LEVSPEC},
+    sound::{S_StartSectorSound, info::Sfx},
+    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).

@@ -28,7 +28,7 @@ use crate::engine::{
 };
 
 use crate::engine::{
-    interface::video::{video_buffer, I_ReadScreen},
+    interface::video::{I_ReadScreen, video_buffer},
     render_2d::{V_DrawBlock, V_MarkRect},
     zone::{Z_Free, Z_Malloc},
 };
@@ -184,11 +184,7 @@ unsafe fn wipe_do_color_xform(width: i32, height: i32, ticks: i32) -> i32 {
         }
     }
 
-    if changed {
-        0
-    } else {
-        1
-    }
+    if changed { 0 } else { 1 }
 }
 
 /// Clean up after the colour cross-fade wipe; a no-op that always returns 0.
@@ -312,11 +308,7 @@ unsafe fn wipe_do_melt(width: i32, height: i32, ticks: i32) -> i32 {
         }
     }
 
-    if done {
-        1
-    } else {
-        0
-    }
+    if done { 1 } else { 0 }
 }
 
 /// Clean up after the melt wipe by freeing the Y-position and pixel snapshot
@@ -446,11 +438,7 @@ pub fn wipe_ScreenWipe(wipeno: i32, _x: i32, _y: i32, width: i32, height: i32, t
             WIPES[(wipeno * 3 + 2) as usize](width, height, ticks);
         }
 
-        if WIPE.borrow().go == 0 {
-            1
-        } else {
-            0
-        }
+        if WIPE.borrow().go == 0 { 1 } else { 0 }
     }
 }
 

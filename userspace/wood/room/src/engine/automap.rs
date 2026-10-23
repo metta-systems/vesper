@@ -29,30 +29,30 @@ use crate::{
         dehacked::DEH_String,
         doom::{
             event::event_t,
-            player::{PlayerMessage, PlayerT, MAXPLAYERS},
+            player::{MAXPLAYERS, PlayerMessage, PlayerT},
         },
         game::{
-            consoleplayer, deathmatch, gameepisode, gamemap, netgame, player, playeringame, GAME,
+            GAME, consoleplayer, deathmatch, gameepisode, gamemap, netgame, player, playeringame,
         },
         global::Global,
-        interface::video::{video_buffer, SCREENHEIGHT, SCREENWIDTH},
+        interface::video::{SCREENHEIGHT, SCREENWIDTH, video_buffer},
         math::{
-            fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
-            tables::{finecosine, finesine, ANGLETOFINESHIFT},
+            fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
+            tables::{ANGLETOFINESHIFT, finecosine, finesine},
         },
         misc::{
             cheat::{cheatseq_t, cht_CheckCheat},
-            controls::{ControlsState, CONTROLS},
+            controls::{CONTROLS, ControlsState},
         },
         play::{
             maputl::MAPBLOCKUNITS,
-            setup::{level, LevelState},
+            setup::{LevelState, level},
         },
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
         wad::{
-            format::{patch_t, LinedefFlag},
             W_CacheLumpName, W_ReleaseLumpName,
+            format::{LinedefFlag, patch_t},
         },
     },
 };

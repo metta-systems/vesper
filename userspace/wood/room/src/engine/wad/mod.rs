@@ -24,17 +24,17 @@ use {
             doom::{iwad::D_SuggestGameName, mode::D_GameMissionString},
             global::Global,
             interface::video::{I_BeginRead, I_EndRead},
-            misc::{until_nul, M_ExtractFileBase},
+            misc::{M_ExtractFileBase, until_nul},
             wad::{
-                file::{wad_file_t, W_OpenFile, W_Read},
+                file::{W_OpenFile, W_Read, wad_file_t},
                 format::{filelump_t, wadinfo_t},
             },
-            zone::{Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc, PU_CACHE, PU_STATIC},
+            zone::{PU_CACHE, PU_STATIC, Z_ChangeTag2, Z_ChangeUser, Z_Free, Z_Malloc},
         },
         i_error,
     },
     std::{ffi::c_void, ptr},
-    zerocopy::{little_endian::I32, FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout},
+    zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, little_endian::I32},
 };
 
 /// One entry in the global lump directory. Mirrors `lumpinfo_t` in

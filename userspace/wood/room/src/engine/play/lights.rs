@@ -9,11 +9,11 @@ use crate::engine::{
     map::{line_t, sector_t},
     misc::random::P_Random,
     play::{
-        setup::{level, LevelState},
-        spec::{getNextSector, P_FindMinSurroundingLight, P_FindSectorFromLineTag},
-        tick::{thinker_t, P_AddThinker, ThinkerKind},
+        setup::{LevelState, level},
+        spec::{P_FindMinSurroundingLight, P_FindSectorFromLineTag, getNextSector},
+        tick::{P_AddThinker, ThinkerKind, thinker_t},
     },
-    zone::{Z_Malloc, PU_LEVSPEC},
+    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Light change applied each step of the glow oscillation (light units per tic).

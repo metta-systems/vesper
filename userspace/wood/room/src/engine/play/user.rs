@@ -9,13 +9,13 @@
 use crate::engine::{
     doom::{
         mode::{commercial, shareware},
-        player::{PlayerT, CF_NOCLIP, CF_NOMOMENTUM},
+        player::{CF_NOCLIP, CF_NOMOMENTUM, PlayerT},
         stat::gamemode,
     },
     global::Global,
     math::{
-        fixed::{fixed_t, FixedMul, FRACUNIT},
-        tables::{finecosine, finesine, ANG180, ANG90, ANGLETOFINESHIFT, FINEANGLES},
+        fixed::{FRACUNIT, FixedMul, fixed_t},
+        tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
     },
     play::{info::*, tick::leveltime},
 };

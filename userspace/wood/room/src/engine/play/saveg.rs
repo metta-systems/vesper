@@ -36,29 +36,29 @@ use {
 
 use crate::engine::{
     doom::player::{
-        PlayerMessage, PlayerT, PspdefT, TiccmdT, MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS,
-        NUMPSPRITES, NUMWEAPONS,
+        MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES, NUMWEAPONS, PlayerMessage, PlayerT,
+        PspdefT, TiccmdT,
     },
     game::player as game_player,
     global::Global,
     map::{line_t, sector_t, side_t, subsector_t},
     play::{
-        ceilng::{ceiling_t, P_AddActiveCeiling, T_MoveCeiling, CEILINGS, MAXCEILINGS},
-        doors::{vldoor_t, T_VerticalDoor},
-        floor::{floormove_t, T_MoveFloor},
-        info::{mobjinfo_ptr, state_ptr, MobjInfo, State, NUMSTATES},
+        ceilng::{CEILINGS, MAXCEILINGS, P_AddActiveCeiling, T_MoveCeiling, ceiling_t},
+        doors::{T_VerticalDoor, vldoor_t},
+        floor::{T_MoveFloor, floormove_t},
+        info::{MobjInfo, NUMSTATES, State, mobjinfo_ptr, state_ptr},
         lights::{
-            glow_t, lightflash_t, strobe_t, T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash,
+            T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash, glow_t, lightflash_t, strobe_t,
         },
         mobj::mobj_t,
-        plats::{plat_t, P_AddActivePlat, T_PlatRaise},
+        plats::{P_AddActivePlat, T_PlatRaise, plat_t},
         tick::{
-            leveltime, thinker_allocation, thinker_t, thinkercap, P_AddThinker, P_InitThinkers,
-            ThinkerContainer, ThinkerKind, TICK,
+            P_AddThinker, P_InitThinkers, TICK, ThinkerContainer, ThinkerKind, leveltime,
+            thinker_allocation, thinker_t, thinkercap,
         },
     },
     wad::format::mapthing_t,
-    zone::{Z_Free, Z_Malloc, PU_LEVEL, PU_LEVSPEC},
+    zone::{PU_LEVEL, PU_LEVSPEC, Z_Free, Z_Malloc},
 };
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ use crate::engine::{
     play::{
         maputl::P_SetThingPosition,
         mobj::{P_MobjThinker, P_RemoveMobj},
-        setup::{level, LevelState},
+        setup::{LevelState, level},
     },
 };
 
@@ -1334,11 +1334,7 @@ pub unsafe fn P_ReadSaveGameHeader() -> i32 {
 /// marker. Reading past the end of the stream sets `savegame_error`.
 pub unsafe fn P_ReadSaveGameEOF() -> i32 {
     let value = saveg_read8();
-    if value == SAVEGAME_EOF {
-        1
-    } else {
-        0
-    }
+    if value == SAVEGAME_EOF { 1 } else { 0 }
 }
 
 /// Writes the end-of-file marker byte (`SAVEGAME_EOF` = `0x1d`) to
@@ -1357,7 +1353,7 @@ pub unsafe fn P_WriteSaveGameEOF() {
     saveg_write8(SAVEGAME_EOF);
 }
 
-use crate::engine::game::{gameepisode, gamemap, gameskill, playeringame, GAME};
+use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 
 // ---------------------------------------------------------------------------
 // P_ArchivePlayers / P_UnArchivePlayers

@@ -19,7 +19,7 @@
 use std::ffi::c_void;
 
 #[cfg(not(test))]
-use crate::engine::zone::{Z_Free, Z_Malloc, PU_STATIC};
+use crate::engine::zone::{PU_STATIC, Z_Free, Z_Malloc};
 
 /// Direction of a `MEMFILE`: either a read view over an external buffer or a
 /// write sink that owns its own growable buffer. Mirrors the unnamed C

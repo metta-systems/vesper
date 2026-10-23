@@ -6,21 +6,21 @@
 
 use {
     std::{mem::size_of, ptr},
-    zerocopy::{little_endian::U16, IntoBytes},
+    zerocopy::{IntoBytes, little_endian::U16},
 };
 
 use crate::{
     engine::{
         global::Global,
         interface::video::{
-            mouse_acceleration, mouse_threshold, usemouse, video_buffer, I_GetPaletteIndex,
-            SCREENHEIGHT, SCREENWIDTH,
+            I_GetPaletteIndex, SCREENHEIGHT, SCREENWIDTH, mouse_acceleration, mouse_threshold,
+            usemouse, video_buffer,
         },
         math::bbox::M_AddToBox,
         misc::{M_FileExists, M_WriteFile},
         wad::{
-            format::{column_t, patch_t, pcx_t},
             W_CacheLumpName,
+            format::{column_t, patch_t, pcx_t},
         },
         zone::{PU_CACHE, PU_STATIC},
     },
@@ -119,10 +119,10 @@ pub fn V_DrawPatch(x: i32, y: i32, patch: *mut patch_t) {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
 
-        if let Some(cb) = patchclip_callback {
-            if cb(patch, x, y) == 0 {
-                return;
-            }
+        if let Some(cb) = patchclip_callback
+            && cb(patch, x, y) == 0
+        {
+            return;
         }
 
         V_MarkRect(
@@ -172,10 +172,10 @@ pub fn V_DrawPatchFlipped(x: i32, y: i32, patch: *mut patch_t) {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
 
-        if let Some(cb) = patchclip_callback {
-            if cb(patch, x, y) == 0 {
-                return;
-            }
+        if let Some(cb) = patchclip_callback
+            && cb(patch, x, y) == 0
+        {
+            return;
         }
 
         V_MarkRect(
@@ -271,10 +271,10 @@ pub fn V_DrawXlaPatch(x: i32, y: i32, patch: *mut patch_t) {
         let y = y - (*patch).topoffset.get() as i32;
         let x = x - (*patch).leftoffset.get() as i32;
 
-        if let Some(cb) = patchclip_callback {
-            if cb(patch, x, y) == 0 {
-                return;
-            }
+        if let Some(cb) = patchclip_callback
+            && cb(patch, x, y) == 0
+        {
+            return;
         }
 
         let w = (*patch).width.get() as i32;

@@ -21,11 +21,11 @@ use std::{
     sync::Arc,
 };
 
-use rodio::{buffer::SamplesBuffer, DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player, buffer::SamplesBuffer};
 
-use room::engine::misc::argv::{argument, M_CheckParmWithArgs};
+use room::engine::misc::argv::{M_CheckParmWithArgs, argument};
 
-pub(crate) use sfx::{decode_doom_sfx, PannedSource};
+pub(crate) use sfx::{PannedSource, decode_doom_sfx};
 
 // ---------------------------------------------------------------------------
 // Sound and music, as `Host` hands them over
@@ -110,12 +110,12 @@ fn find_soundfont_path() -> Option<PathBuf> {
         return Some(bundled.to_path_buf());
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join(bundled);
-            if p.exists() {
-                return Some(p);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let p = dir.join(bundled);
+        if p.exists() {
+            return Some(p);
         }
     }
 

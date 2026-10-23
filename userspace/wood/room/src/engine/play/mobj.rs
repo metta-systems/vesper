@@ -11,20 +11,20 @@ use {
 };
 
 use crate::engine::{
-    doom::player::{PlayerMessage, PlayerT, CF_NOMOMENTUM, MAXPLAYERS},
+    doom::player::{CF_NOMOMENTUM, MAXPLAYERS, PlayerMessage, PlayerT},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
     map::subsector_t,
     math::{
-        fixed::{FixedMul, FRACBITS, FRACUNIT},
-        tables::{finecosine, finesine, ANG45, ANGLETOFINESHIFT},
+        fixed::{FRACBITS, FRACUNIT, FixedMul},
+        tables::{ANG45, ANGLETOFINESHIFT, finecosine, finesine},
     },
     misc::random::P_Random,
     play::{
         info::*,
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
-        tick::{thinker_t, P_AddThinker, P_RemoveThinker, ThinkerKind},
+        tick::{P_AddThinker, P_RemoveThinker, ThinkerKind, thinker_t},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{S_StartSound, S_StopSound},
@@ -70,16 +70,16 @@ const exe_ultimate: i32 = 6;
 use crate::engine::{
     doom::{main::nomonsters, stat::gameversion},
     game::{
-        consoleplayer, deathmatch, gameskill, netgame, player, playeringame, respawnmonsters,
-        G_PlayerReborn, GAME,
+        G_PlayerReborn, GAME, consoleplayer, deathmatch, gameskill, netgame, player, playeringame,
+        respawnmonsters,
     },
     global::Global,
     play::{
         map::{
-            attackrange, ceilingline, linetarget, P_AimLineAttack, P_CheckPosition, P_SlideMove,
-            P_TryMove,
+            P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove, attackrange, ceilingline,
+            linetarget,
         },
-        setup::{deathmatch_p, deathmatchstart, playerstart, SPAWN_SPOTS},
+        setup::{SPAWN_SPOTS, deathmatch_p, deathmatchstart, playerstart},
         tick::leveltime,
     },
     render_3d::sky::SKY,

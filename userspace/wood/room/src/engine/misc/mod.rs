@@ -84,15 +84,14 @@ pub fn M_StrToInt(text: impl AsRef<[u8]>) -> Option<i32> {
     if let Some(hex) = text
         .strip_prefix(b"0x")
         .or_else(|| text.strip_prefix(b"0X"))
+        && let Some(value) = parse_digits(hex, 16)
     {
-        if let Some(value) = parse_digits(hex, 16) {
-            return Some(value);
-        }
+        return Some(value);
     }
-    if let Some(octal) = text.strip_prefix(b"0") {
-        if let Some(value) = parse_digits(octal, 8) {
-            return Some(value);
-        }
+    if let Some(octal) = text.strip_prefix(b"0")
+        && let Some(value) = parse_digits(octal, 8)
+    {
+        return Some(value);
     }
     parse_signed_decimal(text)
 }

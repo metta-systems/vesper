@@ -12,20 +12,20 @@ use crate::engine::{
     doom::player::PlayerMessage,
     interface::timer::TICRATE,
     map::{line_t, sector_t},
-    math::fixed::{fixed_t, FRACUNIT},
+    math::fixed::{FRACUNIT, fixed_t},
     play::{
         ceilng::ceiling_t,
-        floor::{floormove_t, T_MovePlane},
+        floor::{T_MovePlane, floormove_t},
         mobj::mobj_t,
         plats::plat_t,
         setup::level,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            thinker_t, P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind,
+            P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind, thinker_t,
         },
     },
     sound::{S_StartSectorSound, S_StartSound},
-    zone::{Z_Malloc, PU_LEVSPEC},
+    zone::{PU_LEVSPEC, Z_Malloc},
 };
 
 /// Movement speed for normal vertical doors (in fixed-point units per tic).

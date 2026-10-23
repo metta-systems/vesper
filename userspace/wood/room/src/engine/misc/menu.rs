@@ -175,8 +175,7 @@ const NEWGAME: &str = "you can't start a new game\nwhile in a network game.\n\np
 const NIGHTMARE: &str =
     "are you sure? this skill level\nisn't even remotely fair.\n\npress y or n.";
 /// Shareware episode restriction (C `SWSTRING`).
-const SWSTRING: &str =
-    "this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.";
+const SWSTRING: &str = "this is the shareware version of doom.\n\nyou need to order the entire trilogy.\n\npress a key.";
 /// Messages toggled off (C `MSGOFF`).
 const MSGOFF: &str = "Messages OFF";
 /// Messages toggled on (C `MSGON`).
@@ -219,8 +218,8 @@ use crate::engine::{
         strings::{doom1_endmsg, doom2_endmsg},
     },
     game::{
-        demoplayback, gamestate, netgame, G_DeferedInitNew, G_LoadGame, G_SaveGame, G_ScreenShot,
-        GAME,
+        G_DeferedInitNew, G_LoadGame, G_SaveGame, G_ScreenShot, GAME, demoplayback, gamestate,
+        netgame,
     },
     hud::stuff::HUD,
     interface::{
@@ -230,14 +229,15 @@ use crate::engine::{
         video::{I_SetPalette, VIDEO},
     },
     misc::{
-        controls::{ControlsState, CONTROLS},
-        until_nul, M_StringCopy,
+        M_StringCopy,
+        controls::{CONTROLS, ControlsState},
+        until_nul,
     },
     play::saveg::P_SaveGameFile,
     render_2d::V_DrawPatchDirect,
     render_3d::main::R_SetViewSize,
-    sound::{info::Sfx, S_SetMusicVolume, S_SetSfxVolume, S_StartSound},
-    wad::{format::patch_t, W_CacheLumpName},
+    sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartSound, info::Sfx},
+    wad::{W_CacheLumpName, format::patch_t},
 };
 
 /// Menu state (C `m_menu.c` globals other than the menu pages).
@@ -918,7 +918,7 @@ fn M_DrawReadThis2() {
 
 /// Draw the Sound Volume menu page: title patch and two thermometer sliders.
 fn M_DrawSound() {
-    use crate::engine::sound::{SoundState, SOUND};
+    use crate::engine::sound::{SOUND, SoundState};
     let SoundState {
         sfxVolume,
         musicVolume,
@@ -1785,33 +1785,33 @@ pub fn M_Responder(ev: *mut event_t) -> Boolean {
             }
             return Boolean::TRUE;
         } else if key == key_menu_left {
-            if item_status(item_on) == 2 {
-                if let Some(routine) = item_routine(item_on) {
-                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
-                    routine(0);
-                }
+            if item_status(item_on) == 2
+                && let Some(routine) = item_routine(item_on)
+            {
+                S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
+                routine(0);
             }
             return Boolean::TRUE;
         } else if key == key_menu_right {
-            if item_status(item_on) == 2 {
-                if let Some(routine) = item_routine(item_on) {
-                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
-                    routine(1);
-                }
+            if item_status(item_on) == 2
+                && let Some(routine) = item_routine(item_on)
+            {
+                S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
+                routine(1);
             }
             return Boolean::TRUE;
         } else if key == key_menu_forward {
             let status = item_status(item_on);
-            if let Some(routine) = item_routine(item_on) {
-                if status != 0 {
-                    (*current_menu).lastOn = item_on;
-                    if status == 2 {
-                        routine(1);
-                        S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
-                    } else {
-                        routine(item_on as i32);
-                        S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
-                    }
+            if let Some(routine) = item_routine(item_on)
+                && status != 0
+            {
+                (*current_menu).lastOn = item_on;
+                if status == 2 {
+                    routine(1);
+                    S_StartSound(ptr::null_mut(), Sfx::Stnmov as i32);
+                } else {
+                    routine(item_on as i32);
+                    S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
                 }
             }
             return Boolean::TRUE;

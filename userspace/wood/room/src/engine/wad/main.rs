@@ -14,7 +14,7 @@ use crate::types::Boolean;
 
 use crate::engine::{
     doom::iwad::D_TryFindWADByName,
-    misc::argv::{argument, argument_count, M_CheckParmWithArgs},
+    misc::argv::{M_CheckParmWithArgs, argument, argument_count},
     wad::W_AddFile,
 };
 

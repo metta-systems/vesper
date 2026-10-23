@@ -29,7 +29,7 @@ use std::ptr;
 use super::{
     doom::main::D_DoomMain,
     global::Global,
-    misc::argv::{set_arguments, M_FindResponseFile},
+    misc::argv::{M_FindResponseFile, set_arguments},
 };
 
 /// Width of the doomgeneric frame buffer in pixels.

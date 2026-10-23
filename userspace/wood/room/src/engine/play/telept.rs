@@ -25,10 +25,10 @@ use crate::engine::{
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        setup::{level, LevelState},
-        tick::{thinkercap, ThinkerContainer, ThinkerKind},
+        setup::{LevelState, level},
+        tick::{ThinkerContainer, ThinkerKind, thinkercap},
     },
-    sound::{info::Sfx, S_StartSound},
+    sound::{S_StartSound, info::Sfx},
 };
 
 /// Teleport `thing` across the linedef special `line` if all conditions are met.

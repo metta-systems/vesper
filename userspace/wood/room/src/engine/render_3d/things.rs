@@ -18,11 +18,11 @@ use {
 };
 
 use crate::engine::{
-    doom::player::{PspdefT, NUMPSPRITES},
+    doom::player::{NUMPSPRITES, PspdefT},
     global::Global,
     map::sector_t,
     math::{
-        fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+        fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
         tables::ANG45,
     },
     play::{info::*, mobj::mobj_t},
@@ -160,13 +160,14 @@ use crate::engine::{
     render_3d::{
         bsp::BSP,
         data::RENDER_DATA,
-        draw::{ColumnFunction, ColumnParams, DrawState, DRAW},
-        main::{scalelight_row, R_PointOnSegSide, R_PointToAngle, VALIDCOUNT, VIEW},
+        draw::{ColumnFunction, ColumnParams, DRAW, DrawState},
+        main::{R_PointOnSegSide, R_PointToAngle, VALIDCOUNT, VIEW, scalelight_row},
         segs::R_RenderMaskedSegRange,
     },
     wad::{
+        W_CacheLumpNum, W_GetNumForName,
         format::{column_t, patch_t},
-        lumpinfo, W_CacheLumpNum, W_GetNumForName,
+        lumpinfo,
     },
     zone::Z_Malloc,
 };

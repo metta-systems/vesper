@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn exactly_one_block() {
         let data = [0x61u8; 64]; // 64 × 'a'
-                                 // Must not panic and must produce a non-zero digest.
+        // Must not panic and must produce a non-zero digest.
         let hex = sha1_hex(&data);
         assert_eq!(hex.len(), 40);
         assert_ne!(hex, "da39a3ee5e6b4b0d3255bfef95601890afd80709"); // != empty

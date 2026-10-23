@@ -22,25 +22,25 @@ use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
     engine::{
-        doom::player::{PlayerT, CF_GODMODE},
+        doom::player::{CF_GODMODE, PlayerT},
         interface::timer::TICRATE,
         map::{line_t, sector_t, side_t},
         math::fixed::FRACUNIT,
         misc::{
-            argv::{argument, M_CheckParmWithArgs},
-            random::P_Random,
             M_StrToInt,
+            argv::{M_CheckParmWithArgs, argument},
+            random::P_Random,
         },
         play::{
             ceilng::{CEILINGS, MAXCEILINGS},
-            floor::{floormove_t, FLOORSPEED},
+            floor::{FLOORSPEED, floormove_t},
             info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
             lights::{FASTDARK, SLOWDARK},
             mobj::mobj_t,
             plats::{MAXPLATS, PLATS},
-            setup::{level, LevelState},
+            setup::{LevelState, level},
             switch::{MAXBUTTONS, SWITCHES},
-            tick::{leveltime, P_AddThinker, ThinkerKind},
+            tick::{P_AddThinker, ThinkerKind, leveltime},
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
@@ -295,7 +295,7 @@ fn anims_base() -> *mut anim_t {
 
 use crate::engine::{
     dehacked::DEH_String,
-    game::{deathmatch, G_ExitLevel, G_SecretExitLevel, GAME},
+    game::{G_ExitLevel, G_SecretExitLevel, GAME, deathmatch},
     global::Global,
     play::{
         ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
@@ -1281,7 +1281,9 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
         let s2 = getNextSector(*(*s1).lines.offset(0), s1);
 
         if s2.is_null() {
-            eprintln!("EV_DoDonut: linedef had no second sidedef! Unexpected behavior may occur in Vanilla Doom. ");
+            eprintln!(
+                "EV_DoDonut: linedef had no second sidedef! Unexpected behavior may occur in Vanilla Doom. "
+            );
             break;
         }
 
@@ -1293,7 +1295,9 @@ pub unsafe fn EV_DoDonut(line: *mut line_t) -> i32 {
             }
 
             let (s3_floorheight, s3_floorpic) = if s3.is_null() {
-                eprintln!("EV_DoDonut: WARNING: emulating buffer overrun due to NULL back sector. Unexpected behavior may occur in Vanilla Doom.");
+                eprintln!(
+                    "EV_DoDonut: WARNING: emulating buffer overrun due to NULL back sector. Unexpected behavior may occur in Vanilla Doom."
+                );
                 let mut fh = 0;
                 let mut fp = 0i16;
                 DonutOverrun(&mut fh, &mut fp, line, s1);

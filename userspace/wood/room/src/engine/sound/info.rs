@@ -1533,9 +1533,11 @@ mod tests {
         let music = SoundInfoState::new().S_music;
         assert_eq!(music[0].name, "");
         assert_eq!(music[Mus::E1m1 as usize].name, "e1m1");
-        assert!(music[1..]
-            .iter()
-            .all(|entry| !entry.name.is_empty() && !entry.name.contains('\0')));
+        assert!(
+            music[1..]
+                .iter()
+                .all(|entry| !entry.name.is_empty() && !entry.name.contains('\0'))
+        );
     }
 
     /// sfx_pistol is entry 1 with priority 64.

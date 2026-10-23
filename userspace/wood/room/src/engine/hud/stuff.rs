@@ -30,22 +30,22 @@ use crate::engine::{
     doom::{
         self,
         event::event_t,
-        player::{PlayerMessage, PlayerT, MAXPLAYERS},
+        player::{MAXPLAYERS, PlayerMessage, PlayerT},
         stat::{gamemission, gameversion},
     },
     global::Global,
     hud::lib::{
-        hu_itext_t, hu_stext_t, hu_textline_t, HUlib_addCharToTextLine, HUlib_addMessageToSText,
-        HUlib_drawIText, HUlib_drawSText, HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText,
-        HUlib_eraseTextLine, HUlib_initIText, HUlib_initSText, HUlib_initTextLine,
-        HUlib_keyInIText, HUlib_resetIText,
+        HUlib_addCharToTextLine, HUlib_addMessageToSText, HUlib_drawIText, HUlib_drawSText,
+        HUlib_drawTextLine, HUlib_eraseIText, HUlib_eraseSText, HUlib_eraseTextLine,
+        HUlib_initIText, HUlib_initSText, HUlib_initTextLine, HUlib_keyInIText, HUlib_resetIText,
+        hu_itext_t, hu_stext_t, hu_textline_t,
     },
     interface::{
         keys::{KEY_ENTER, KEY_ESCAPE, KEY_LALT, KEY_RALT, KEY_RSHIFT},
         timer::TICRATE,
     },
     misc::{
-        controls::{ControlsState, CONTROLS},
+        controls::{CONTROLS, ControlsState},
         until_nul,
     },
     wad::format::patch_t,
@@ -437,7 +437,7 @@ pub static HUD: Global<HudState> = Global::new(HudState::new());
 use crate::engine::{
     automap::automap_active,
     doom::stat::gamemode,
-    game::{console_player, consoleplayer, gameepisode, gamemap, netgame, playeringame},
+    game::{console_player, consoleplayer, gameepisode, gamemap, netgame, player, playeringame},
     misc::menu::MENU,
     sound::S_StartSound,
     wad::W_CacheLumpName,
@@ -864,10 +864,6 @@ pub fn HU_Responder(ev: *mut event_t) -> i32 {
             }
         }
 
-        if eatkey {
-            1
-        } else {
-            0
-        }
+        if eatkey { 1 } else { 0 }
     }
 }

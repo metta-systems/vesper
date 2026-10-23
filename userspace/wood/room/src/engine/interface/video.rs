@@ -24,7 +24,7 @@ use {
             global::Global,
             interface::input::{I_GetEvent, I_InitInput},
             math::tables::gammatable,
-            misc::argv::{argument, M_CheckParmWithArgs},
+            misc::argv::{M_CheckParmWithArgs, argument},
             zone::{Z_Free, Z_Malloc},
         },
         i_error,

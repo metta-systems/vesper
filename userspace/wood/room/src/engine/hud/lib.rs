@@ -111,7 +111,7 @@ pub struct hu_itext_t {
 use crate::engine::{
     automap::automap_active,
     render_2d::V_DrawPatchDirect,
-    render_3d::draw::{R_VideoErase, DRAW},
+    render_3d::draw::{DRAW, R_VideoErase},
 };
 
 /// Initialize the heads-up widget library (no-op in this port, matching C).

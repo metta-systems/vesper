@@ -13,12 +13,12 @@ use std::{ffi::c_void, ptr};
 use crate::engine::{
     global::Global,
     map::{line_t, slopetype_t},
-    math::fixed::{fixed_t, FixedDiv, FixedMul, FRACBITS, FRACUNIT},
+    math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
     play::{
         info::*,
         mobj::mobj_t,
         pspr::PSPR,
-        setup::{level, LevelState, LEVEL, SPAWN_SPOTS},
+        setup::{LEVEL, LevelState, SPAWN_SPOTS, level},
     },
 };
 
@@ -275,11 +275,7 @@ pub fn P_PointOnLineSide(x: fixed_t, y: fixed_t, line: *mut line_t) -> i32 {
         let dy = y - (*line.v1).y;
         let left = FixedMul(line.dy >> FRACBITS, dx);
         let right = FixedMul(dy, line.dx >> FRACBITS);
-        if right < left {
-            0
-        } else {
-            1
-        }
+        if right < left { 0 } else { 1 }
     }
 }
 
@@ -322,11 +318,7 @@ pub fn P_PointOnDivlineSide(x: fixed_t, y: fixed_t, line: *mut divline_t) -> i32
         }
         let left = FixedMul(line.dy >> 8, dx >> 8);
         let right = FixedMul(dy >> 8, line.dx >> 8);
-        if right < left {
-            0
-        } else {
-            1
-        }
+        if right < left { 0 } else { 1 }
     }
 }
 
@@ -439,11 +431,7 @@ pub fn P_BoxOnLineSide(tmbox: *mut i32, ld: *mut line_t) -> i32 {
                 p2 = P_PointOnLineSide(tmbox[2], tmbox[1], ld as *const _ as *mut _);
             }
         }
-        if p1 == p2 {
-            p1
-        } else {
-            -1
-        }
+        if p1 == p2 { p1 } else { -1 }
     }
 }
 

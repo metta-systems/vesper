@@ -97,8 +97,8 @@ const fn cfg(name: &'static str, ty: DefaultType) -> Default {
 }
 
 use crate::engine::misc::{
-    argv::{argument, M_CheckParmWithArgs},
     M_MakeDirectory, M_StrToInt,
+    argv::{M_CheckParmWithArgs, argument},
 };
 
 /// Configuration state (C `m_config.c` globals).
@@ -859,12 +859,14 @@ mod tests {
         assert_eq!(config.doom_defaults.defaults.len(), 76);
         assert_eq!(config.extra_defaults.defaults.len(), 119);
         assert_eq!(config.doom_defaults.defaults[0].name, "mouse_sensitivity");
-        assert!(config
-            .doom_defaults
-            .defaults
-            .iter()
-            .chain(&config.extra_defaults.defaults)
-            .all(|default| !default.bound && default.location.is_null()));
+        assert!(
+            config
+                .doom_defaults
+                .defaults
+                .iter()
+                .chain(&config.extra_defaults.defaults)
+                .all(|default| !default.bound && default.location.is_null())
+        );
     }
 
     /// Locations the test binds, at stable addresses.

@@ -30,7 +30,7 @@ use crate::{
     engine::{
         global::Global,
         math::{
-            fixed::{fixed_t, FixedDiv, FixedMul},
+            fixed::{FixedDiv, FixedMul, fixed_t},
             tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
         },
     },
@@ -334,8 +334,8 @@ static OPENINGS: Global<[i16; MAXOPENINGS]> = Global::new([0; MAXOPENINGS]);
 use crate::engine::{
     render_3d::{
         data::{R_GetColumn, RENDER_DATA},
-        draw::{ColumnParams, DrawState, SpanParams, DRAW},
-        main::{zlight_row, ViewState, VIEW},
+        draw::{ColumnParams, DRAW, DrawState, SpanParams},
+        main::{VIEW, ViewState, zlight_row},
         sky::SKY,
         things::SPRITES,
     },
