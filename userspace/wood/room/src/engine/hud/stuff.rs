@@ -659,7 +659,7 @@ pub fn HU_Ticker() {
                     continue;
                 }
                 if i != consoleplayer as usize {
-                    let c = (*plr.add(i)).cmd.chatchar;
+                    let c = (*player(i)).cmd.chatchar;
                     if c != 0 {
                         if c <= HU_BROADCAST as u8 {
                             HUD.borrow_mut().chat_dest[i] = c;
@@ -700,7 +700,7 @@ pub fn HU_Ticker() {
                                 HUlib_resetIText(input);
                             }
                         }
-                        (*plr.add(i)).cmd.chatchar = 0;
+                        (*player(i)).cmd.chatchar = 0;
                     }
                 }
             }
