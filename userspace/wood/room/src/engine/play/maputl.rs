@@ -602,10 +602,15 @@ pub unsafe fn P_SetThingPosition(thing: *mut mobj_t) {
 /// Matches `P_BlockLinesIterator` in `p_maputl.c`.
 ///
 /// # Safety
-/// The global blockmap arrays from `p_setup` must be initialised. `func` must
-/// be a valid function pointer; it will be called with non-null `line_t`
-/// pointers from the loaded map data.
-pub fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(*mut line_t) -> u32>) -> u32 {
+/// A level must be loaded (blockmap, blockmap lump and lines from `p_setup`).
+/// `func` must be `Some`, and calling it with any line of the loaded level
+/// must be sound in the caller's current state: it is an `unsafe fn` and
+/// this function discharges its contract on the caller's behalf.
+pub unsafe fn P_BlockLinesIterator(
+    x: i32,
+    y: i32,
+    func: Option<unsafe fn(*mut line_t) -> u32>,
+) -> u32 {
     // The callback can start a nested traversal whose intercept overrun
     // rewrites the blockmap dimensions; like C, this cell's list was located
     // before any callback ran.
@@ -647,10 +652,16 @@ pub fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(*mut line_t) 
 /// Matches `P_BlockThingsIterator` in `p_maputl.c`.
 ///
 /// # Safety
-/// The global `blocklinks` array from `p_setup` must be initialised. `func`
-/// must be a valid function pointer; it will be called with non-null `mobj_t`
-/// pointers from the live thing-list.
-pub fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(*mut mobj_t) -> u32>) -> u32 {
+/// A level must be loaded and its `blocklinks` chains must link only live
+/// map objects. `func` must be `Some`, and calling it with any of those map
+/// objects must be sound in the caller's current state: it is an
+/// `unsafe fn` and this function discharges its contract on the caller's
+/// behalf.
+pub unsafe fn P_BlockThingsIterator(
+    x: i32,
+    y: i32,
+    func: Option<unsafe fn(*mut mobj_t) -> u32>,
+) -> u32 {
     let level = level();
     unsafe {
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
@@ -936,10 +947,12 @@ pub unsafe fn PIT_AddThingIntercepts(thing: *mut mobj_t) -> u32 {
 /// Matches `P_TraverseIntercepts` in `p_maputl.c`.
 ///
 /// # Safety
-/// `func` must be a valid function pointer. `intercepts` and `intercept_p`
-/// must be in a consistent state as set by `P_PathTraverse` / the `PIT_Add*`
-/// callbacks.
-pub fn P_TraverseIntercepts(
+/// `func` must be `Some`, and calling it with each collected intercept must
+/// be sound in the caller's current state (it is an `unsafe fn`). The
+/// intercepts and `intercept_p` must be in a consistent state as set by
+/// `P_PathTraverse` / the `PIT_Add*` callbacks, so their lines and things
+/// still point into the loaded level.
+pub unsafe fn P_TraverseIntercepts(
     func: Option<unsafe fn(*mut intercept_t) -> u32>,
     maxfrac: fixed_t,
 ) -> u32 {
@@ -996,9 +1009,12 @@ pub fn P_TraverseIntercepts(
 /// Matches `P_PathTraverse` in `p_maputl.c`.
 ///
 /// # Safety
-/// The global map data from `p_setup` must be loaded. `trav` must be a valid
-/// function pointer or `None`. All coordinates are in fixed-point map units.
-pub fn P_PathTraverse(
+/// A level must be loaded (see `P_BlockLinesIterator` and
+/// `P_BlockThingsIterator`). `trav` must be `Some` whenever the ray collects
+/// an intercept, and calling it with any intercept on the ray must be sound
+/// in the caller's current state (it is an `unsafe fn`). All coordinates
+/// are in fixed-point map units.
+pub unsafe fn P_PathTraverse(
     x1: fixed_t,
     y1: fixed_t,
     x2: fixed_t,

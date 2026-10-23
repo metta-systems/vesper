@@ -842,7 +842,8 @@ fn traverse_intercepts_empty() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     TRAVERSED_FRACS.lock().unwrap().clear();
     load_intercepts(&[]);
-    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    // SAFETY: the callback only reads `frac` from the loaded intercepts.
+    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
     assert_eq!(result, 1); // true = all traversed
     assert!(TRAVERSED_FRACS.lock().unwrap().is_empty());
 }
@@ -854,7 +855,8 @@ fn traverse_intercepts_single() {
     TRAVERSED_FRACS.lock().unwrap().clear();
     load_intercepts(&[FRACUNIT / 2]);
 
-    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    // SAFETY: the callback only reads `frac` from the loaded intercepts.
+    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);
@@ -872,7 +874,8 @@ fn traverse_intercepts_sorted_order() {
     // Fill 3 intercepts with fracs out of order (all <= FRACUNIT).
     load_intercepts(&[FRACUNIT / 2, FRACUNIT / 4, 3 * FRACUNIT / 4]);
 
-    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT);
+    // SAFETY: the callback only reads `frac` from the loaded intercepts.
+    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 3);
@@ -891,7 +894,9 @@ fn traverse_intercepts_respects_maxfrac() {
     load_intercepts(&[FRACUNIT / 4, FRACUNIT]);
 
     // maxfrac = FRACUNIT/2 → only the first intercept (FRACUNIT/4) is in range.
-    let result = play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT / 2);
+    // SAFETY: the callback only reads `frac` from the loaded intercepts.
+    let result =
+        unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT / 2) };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);
@@ -907,7 +912,8 @@ fn traverse_intercepts_stop_early() {
 
     load_intercepts(&[FRACUNIT / 4, FRACUNIT / 2]);
 
-    let result = play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT);
+    // SAFETY: the callback only reads `frac` from the loaded intercepts.
+    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT) };
     assert_eq!(result, 0); // false = stopped early
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);

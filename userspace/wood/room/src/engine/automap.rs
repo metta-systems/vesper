@@ -1109,11 +1109,7 @@ unsafe fn AM_notifyStatusBar(event: event_t) {
 ///
 /// Cached as `PU_STATIC` so they remain resident while the automap is open.
 /// C origin: `AM_loadPics` in am_map.c.
-///
-/// # Safety
-///
-/// `W_CacheLumpName` must succeed; WAD must be loaded.
-unsafe fn AM_loadPics(automap: &mut AutomapState) {
+fn AM_loadPics(automap: &mut AutomapState) {
     let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);
@@ -1125,11 +1121,7 @@ unsafe fn AM_loadPics(automap: &mut AutomapState) {
 ///
 /// Called by [`AM_Stop`] when the automap closes.
 /// C origin: `AM_unloadPics` in am_map.c.
-///
-/// # Safety
-///
-/// WAD must be loaded; patch lumps must have been loaded by [`AM_loadPics`].
-unsafe fn AM_unloadPics() {
+fn AM_unloadPics() {
     let mut namebuf: [u8; 9] = [0; 9];
     for i in 0..10i32 {
         c_write!(namebuf, "AMMNUM{}", i);

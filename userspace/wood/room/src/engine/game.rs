@@ -585,7 +585,7 @@ pub static PLAYERS: Global<[PlayerT; MAXPLAYERS]> =
 
 /// Stable pointer to player slot `index` (C `&players[index]`).
 pub fn player(index: usize) -> *mut PlayerT {
-    debug_assert!(index < MAXPLAYERS);
+    assert!(index < MAXPLAYERS);
     // SAFETY: in-bounds projection on the stable state pointer.
     unsafe { PLAYERS.as_ptr().cast::<PlayerT>().add(index) }
 }

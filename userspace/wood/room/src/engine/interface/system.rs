@@ -368,7 +368,11 @@ enum DosMemDump {
 /// a latent bug in the C source (missing `else` after the `dos622`
 /// branch lets it fall through to `dos71`). The custom-byte loop also
 /// uses a single index, fixing a double-increment bug in C.
-pub fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
+///
+/// # Safety
+/// `value` must be valid for a write of `size` bytes (1, 2 or 4) and
+/// aligned for the matching unsigned integer type.
+pub unsafe fn I_GetMemoryValue(offset: u32, value: *mut c_void, size: i32) -> i32 {
     let mut system = SYSTEM.borrow_mut();
     if system.firsttime {
         system.firsttime = false;

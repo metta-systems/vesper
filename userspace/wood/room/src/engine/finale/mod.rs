@@ -275,7 +275,7 @@ use crate::engine::wad::{W_CacheLumpName, W_CacheLumpNum};
 use crate::engine::render_2d::{V_DrawPatch, V_DrawPatchFlipped, V_MarkRect};
 
 // s_sound.rs
-use crate::engine::sound::{S_ChangeMusic, S_StartMusic, S_StartSound, info::Mus};
+use crate::engine::sound::{S_ChangeMusic, S_StartMusic, S_StartNonPositionalSound, info::Mus};
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -915,7 +915,7 @@ pub fn F_CastTicker() {
             let info = cast_info(finale.castnum);
             if info.seesound != Sfx::None {
                 drop(finale);
-                S_StartSound(ptr::null_mut(), info.seesound as i32);
+                S_StartNonPositionalSound(info.seesound as i32);
                 finale = FINALE.borrow_mut();
             }
             finale.caststate = state_ptr(info.seestate);
@@ -954,7 +954,7 @@ pub fn F_CastTicker() {
 
             if sfx != 0 {
                 drop(finale);
-                S_StartSound(ptr::null_mut(), sfx);
+                S_StartNonPositionalSound(sfx);
                 finale = FINALE.borrow_mut();
             }
         }
@@ -1049,7 +1049,7 @@ pub unsafe fn F_CastResponder(ev: *mut event_t) -> i32 {
             info
         };
         if info.deathsound != Sfx::None {
-            S_StartSound(ptr::null_mut(), info.deathsound as i32);
+            S_StartNonPositionalSound(info.deathsound as i32);
         }
         1
     }
@@ -1227,7 +1227,7 @@ pub fn F_BunnyScroll() {
         new_stage
     };
     if new_stage {
-        S_StartSound(ptr::null_mut(), Sfx::Pistol as i32);
+        S_StartNonPositionalSound(Sfx::Pistol as i32);
     }
 
     let mut namebuf: [u8; 10] = [0; 10];

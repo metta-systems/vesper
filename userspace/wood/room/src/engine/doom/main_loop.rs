@@ -670,7 +670,8 @@ pub fn TryRunTics() {
 ///
 /// # Safety
 /// `i` must be a valid, non-null pointer to a fully-initialised
-/// `LoopInterfaceT` with all four function pointers set to non-null values.
-pub fn D_RegisterLoopCallbacks(i: *const LoopInterfaceT) {
+/// `LoopInterfaceT` with all four function pointers set to non-null values,
+/// and it must stay valid for as long as the game loop runs.
+pub unsafe fn D_RegisterLoopCallbacks(i: *const LoopInterfaceT) {
     MAIN_LOOP.borrow_mut().loop_interface = i;
 }

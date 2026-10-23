@@ -24,7 +24,7 @@ use crate::engine::{
             P_AddThinker, P_RemoveThinker, ThinkerClass, ThinkerContainer, ThinkerKind, thinker_t,
         },
     },
-    sound::{S_StartSectorSound, S_StartSound},
+    sound::{S_StartNonPositionalSound, S_StartSectorSound},
     zone::{PU_LEVSPEC, Z_Malloc},
 };
 
@@ -272,21 +272,21 @@ pub unsafe fn EV_DoLockedDoor(line: *mut line_t, kind: i32, thing: *mut mobj_t) 
         99 | 133 => {
             if p.cards[it_bluecard] == 0 && p.cards[it_blueskull] == 0 {
                 p.message = locked_object_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
         }
         134 | 135 => {
             if p.cards[it_redcard] == 0 && p.cards[it_redskull] == 0 {
                 p.message = locked_object_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
         }
         136 | 137 => {
             if p.cards[it_yellowcard] == 0 && p.cards[it_yellowskull] == 0 {
                 p.message = locked_object_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return 0;
             }
         }
@@ -446,7 +446,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
             };
             if player.cards[it_bluecard] == 0 && player.cards[it_blueskull] == 0 {
                 player.message = locked_door_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
         }
@@ -456,7 +456,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
             };
             if player.cards[it_yellowcard] == 0 && player.cards[it_yellowskull] == 0 {
                 player.message = locked_door_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
         }
@@ -466,7 +466,7 @@ pub unsafe fn EV_VerticalDoor(line: *mut line_t, thing: *mut mobj_t) {
             };
             if player.cards[it_redcard] == 0 && player.cards[it_redskull] == 0 {
                 player.message = locked_door_message((*line).special as i32);
-                S_StartSound(std::ptr::null_mut(), Sfx::Oof as i32);
+                S_StartNonPositionalSound(Sfx::Oof as i32);
                 return;
             }
         }

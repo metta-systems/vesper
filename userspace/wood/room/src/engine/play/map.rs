@@ -1628,13 +1628,10 @@ pub unsafe fn P_ChangeSector(sector: *mut sector_t, crunch: i32) -> i32 {
 /// compatible) but can be overridden with the `-spechit <n>` command-line
 /// argument.
 ///
-/// # Safety
-///
-/// `ld` must be a valid, non-null pointer to a [`line_t`] that is part of
-/// the level's `lines` array so that `ld.offset_from(lines)` is well-defined.
-/// Must only be called from [`PIT_CheckLine`] after `numspechit` has been
+/// `ld` is only used for its index in the level's `lines` array, computed
+/// from addresses. Called from [`PIT_CheckLine`] after `numspechit` has been
 /// incremented beyond [`MAXSPECIALCROSS_ORIGINAL`].
-unsafe fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
+fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
     if map.spechit_baseaddr == 0 {
         let p = M_CheckParmWithArgs("-spechit", 1);
         if p > 0 {
@@ -1645,7 +1642,9 @@ unsafe fn SpechitOverrun(map: &mut MapState, ld: *mut line_t) {
             map.spechit_baseaddr = DEFAULT_SPECHIT_MAGIC;
         }
     }
-    let addr = map.spechit_baseaddr as i32 + (ld.offset_from(level().lines) * 0x3e) as i32;
+    let line_index =
+        (ld.addr() as isize - level().lines.addr() as isize) / size_of::<line_t>() as isize;
+    let addr = map.spechit_baseaddr as i32 + (line_index * 0x3e) as i32;
     match map.numspechit {
         9..=12 => {
             let index = (map.numspechit - 9) as usize;

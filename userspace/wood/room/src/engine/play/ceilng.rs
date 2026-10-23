@@ -300,7 +300,12 @@ pub unsafe fn EV_DoCeiling(line: *mut line_t, ceilingtype: i32) -> i32 {
 /// guard.
 ///
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
-pub fn P_AddActiveCeiling(c: *mut ceiling_t) {
+///
+/// # Safety
+/// `c` must point to a live ceiling thinker whose `sector` points into the
+/// loaded level. It stays registered until `P_RemoveActiveCeiling` or the
+/// next level load clears the table, and later safe calls dereference it.
+pub unsafe fn P_AddActiveCeiling(c: *mut ceiling_t) {
     let mut ceilings = CEILINGS.borrow_mut();
     for slot in ceilings.activeceilings.iter_mut() {
         if slot.is_null() {

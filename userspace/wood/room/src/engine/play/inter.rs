@@ -308,7 +308,7 @@ use crate::engine::{
     interface::system::I_Tactile,
     play::mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
     render_3d::main::R_PointToAngle2,
-    sound::S_StartSound,
+    sound::S_StartNonPositionalSound,
 };
 
 // ---------------------------------------------------------------------------
@@ -453,7 +453,7 @@ fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
         player.pendingweapon = weapon;
         let player_ptr = player as *mut PlayerT;
         if std::ptr::eq(player_ptr, console_player()) {
-            S_StartSound(std::ptr::null_mut(), Sfx::Wpnup as i32);
+            S_StartNonPositionalSound(Sfx::Wpnup as i32);
         }
         return 0;
     }
@@ -999,7 +999,7 @@ pub unsafe fn P_TouchSpecialThing(special: *mut mobj_t, toucher: *mut mobj_t) {
     P_RemoveMobj(special);
     player.bonuscount += BONUSADD;
     if std::ptr::eq(player_ptr, console_player()) {
-        S_StartSound(std::ptr::null_mut(), sound);
+        S_StartNonPositionalSound(sound);
     }
 }
 

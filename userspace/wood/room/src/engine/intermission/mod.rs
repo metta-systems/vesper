@@ -40,7 +40,7 @@ use crate::{
         },
         misc::random::M_Random,
         render_2d::V_DrawPatch,
-        sound::{S_ChangeMusic, S_StartSound, info::Mus},
+        sound::{S_ChangeMusic, S_StartNonPositionalSound, info::Mus},
         wad::{W_CacheLumpName, W_CheckNumForName, W_ReleaseLumpName, format::patch_t},
         zone::{PU_STATIC, Z_Malloc},
     },
@@ -725,7 +725,7 @@ pub static INTERMISSION: Global<IntermissionState> = Global::new(IntermissionSta
 /// later start changes nothing else.
 fn play_sounds(sounds: &[Sfx]) {
     for &sound in sounds {
-        S_StartSound(ptr::null_mut(), sound as i32);
+        S_StartNonPositionalSound(sound as i32);
     }
 }
 

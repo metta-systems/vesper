@@ -78,8 +78,11 @@ fn mem_malloc(size: usize) -> *mut c_void {
 /// Uses a `(1, 1)` placeholder layout because the original size is not
 /// tracked; this matches what the global allocator on the supported
 /// platforms (jemalloc, system malloc) tolerates.
+///
+/// # Safety
+/// `ptr` must be null or a live block from `mem_malloc`/`mem_malloc_zero`.
 #[cfg(test)]
-fn mem_free(ptr: *mut c_void) {
+unsafe fn mem_free(ptr: *mut c_void) {
     if !ptr.is_null() {
         let layout = std::alloc::Layout::from_size_align(1, 1).unwrap();
         unsafe { std::alloc::dealloc(ptr as *mut u8, layout) };
@@ -94,8 +97,11 @@ fn mem_malloc(size: usize) -> *mut c_void {
 }
 
 /// Production deallocator: forwards to `Z_Free`, matching the C source.
+///
+/// # Safety
+/// `ptr` must be a live block from `mem_malloc`/`mem_malloc_zero`.
 #[cfg(not(test))]
-fn mem_free(ptr: *mut c_void) {
+unsafe fn mem_free(ptr: *mut c_void) {
     unsafe { Z_Free(ptr) }
 }
 
@@ -122,9 +128,13 @@ fn mem_malloc_zero(size: usize) -> *mut c_void {
 /// Opens a read-only `MEMFILE` over a caller-owned buffer.
 ///
 /// The buffer is borrowed; `mem_fclose` does not free it. The C signature
-/// uses `void *` for parity with `fread`; the caller must keep `buf` alive
-/// until `mem_fclose` is called.
-pub fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFILE {
+/// uses `void *` for parity with `fread`.
+///
+/// # Safety
+/// `buf` must be readable for `buflen` bytes and stay alive and unchanged
+/// until `mem_fclose` is called: the stream keeps the pointer and
+/// `mem_fread` reads through it.
+pub unsafe fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFILE {
     let file: *mut _MEMFILE = mem_malloc(std::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
     unsafe {
         (*file).buf = buf as *mut u8;

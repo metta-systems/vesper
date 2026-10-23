@@ -32,32 +32,24 @@ impl BBox {
 
 /// `void M_ClearBox(fixed_t *box)` — initialises an inverted bbox so
 /// subsequent `M_AddToBox` calls shrink it to fit.
-///
-/// # Safety
-/// `bbox` must point to at least 4 contiguous `fixed_t` values.
-pub unsafe fn M_ClearBox(bbox: *mut fixed_t) {
-    let slice = std::slice::from_raw_parts_mut(bbox, 4);
-    slice[BBox::TOP] = i32::MIN;
-    slice[BBox::RIGHT] = i32::MIN;
-    slice[BBox::BOTTOM] = i32::MAX;
-    slice[BBox::LEFT] = i32::MAX;
+pub fn M_ClearBox(bbox: &mut [fixed_t; 4]) {
+    bbox[BBox::TOP] = i32::MIN;
+    bbox[BBox::RIGHT] = i32::MIN;
+    bbox[BBox::BOTTOM] = i32::MAX;
+    bbox[BBox::LEFT] = i32::MAX;
 }
 
 /// `void M_AddToBox(fixed_t *box, fixed_t x, fixed_t y)`.
-///
-/// # Safety
-/// `bbox` must point to at least 4 contiguous `fixed_t` values.
-pub unsafe fn M_AddToBox(bbox: *mut fixed_t, x: fixed_t, y: fixed_t) {
-    let slice = std::slice::from_raw_parts_mut(bbox, 4);
-    if x < slice[BBox::LEFT] {
-        slice[BBox::LEFT] = x;
-    } else if x > slice[BBox::RIGHT] {
-        slice[BBox::RIGHT] = x;
+pub fn M_AddToBox(bbox: &mut [fixed_t; 4], x: fixed_t, y: fixed_t) {
+    if x < bbox[BBox::LEFT] {
+        bbox[BBox::LEFT] = x;
+    } else if x > bbox[BBox::RIGHT] {
+        bbox[BBox::RIGHT] = x;
     }
-    if y < slice[BBox::BOTTOM] {
-        slice[BBox::BOTTOM] = y;
-    } else if y > slice[BBox::TOP] {
-        slice[BBox::TOP] = y;
+    if y < bbox[BBox::BOTTOM] {
+        bbox[BBox::BOTTOM] = y;
+    } else if y > bbox[BBox::TOP] {
+        bbox[BBox::TOP] = y;
     }
 }
 
@@ -71,10 +63,8 @@ mod tests {
     #[test]
     fn clear_then_add_shrinks_to_point() {
         let mut bbox: [fixed_t; 4] = [0; 4];
-        unsafe {
-            M_ClearBox(bbox.as_mut_ptr());
-            M_AddToBox(bbox.as_mut_ptr(), 10, 20);
-        }
+        M_ClearBox(&mut bbox);
+        M_AddToBox(&mut bbox, 10, 20);
         // BBox::TOP=0, BBox::BOTTOM=1, BBox::LEFT=2, BBox::RIGHT=3
         // After M_ClearBox: [INT_MIN, INT_MAX, INT_MAX, INT_MIN]
         // M_AddToBox(10, 20):
@@ -91,12 +81,10 @@ mod tests {
     #[test]
     fn add_multiple_points_expands_box() {
         let mut bbox: [fixed_t; 4] = [0; 4];
-        unsafe {
-            M_ClearBox(bbox.as_mut_ptr());
-            M_AddToBox(bbox.as_mut_ptr(), 10, 20);
-            M_AddToBox(bbox.as_mut_ptr(), -5, 100);
-            M_AddToBox(bbox.as_mut_ptr(), 50, 5);
-        }
+        M_ClearBox(&mut bbox);
+        M_AddToBox(&mut bbox, 10, 20);
+        M_AddToBox(&mut bbox, -5, 100);
+        M_AddToBox(&mut bbox, 50, 5);
         assert_eq!(bbox[0], 100); // top
         assert_eq!(bbox[1], 5); // bottom
         assert_eq!(bbox[2], -5); // left

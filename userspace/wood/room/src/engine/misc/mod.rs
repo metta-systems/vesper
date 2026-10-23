@@ -187,10 +187,8 @@ pub fn M_StringCopy(dest: &mut [u8], src: &[u8]) -> bool {
 #[macro_export]
 macro_rules! c_write {
     ($buf:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
-        let ptr = ::std::ptr::addr_of_mut!($buf);
         let s = ::std::format!($fmt $(, $arg)*);
-        #[allow(unused_unsafe)]
-        unsafe { $crate::engine::misc::write_c_buf_ptr(ptr, &s) }
+        $crate::engine::misc::write_c_buf(&mut $buf, &s)
     }};
 }
 
@@ -202,10 +200,8 @@ macro_rules! c_write {
 #[macro_export]
 macro_rules! DEH_snprintf {
     ($buf:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
-        let ptr = ::std::ptr::addr_of_mut!($buf);
         let s = ::std::format!($fmt $(, $arg)*);
-        #[allow(unused_unsafe)]
-        unsafe { $crate::engine::misc::write_c_buf_ptr(ptr, &s) }
+        $crate::engine::misc::write_c_buf(&mut $buf, &s)
     }};
 }
 
@@ -218,31 +214,11 @@ macro_rules! i_error {
     };
 }
 
-/// Writes a Rust `&str` into a `*mut [u8; N]` buffer with truncation
-/// and NUL termination.
-///
-/// Intended to be invoked by the `c_write!` and `DEH_snprintf!` macros via
-/// `addr_of_mut!`, which avoids creating a `&mut` reference to a mutable
-/// static. Bytes beyond the `N - 1` boundary are dropped; the final slot is
-/// always set to `0`.
-///
-/// # Safety
-///
-/// `ptr` must be a valid, properly aligned pointer to an array of `N`
-/// `u8`s for the duration of the call. Aliasing rules must be observed
-/// by the caller: no other `&` or `&mut` reference to the buffer may exist
-/// during the call.
-pub(crate) unsafe fn write_c_buf_ptr<const N: usize>(ptr: *mut [u8; N], s: &str) {
-    // SAFETY: ptr is valid for N bytes; obtained via addr_of_mut! to avoid
-    // creating a reference to a mutable static.
-    let slice = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u8>(), N) };
-    write_c_buf(slice, s);
-}
-
 /// Copy `s` into the `u8` slice `buf`, truncating and NUL-terminating.
 ///
 /// Writes at most `buf.len() - 1` bytes from `s`, then stores `0` in the
 /// next slot. If `buf` is empty, the call is a no-op (no panic, no write).
+/// The `c_write!` and `DEH_snprintf!` macros format into buffers with it.
 pub(crate) fn write_c_buf(buf: &mut [u8], s: &str) {
     if buf.is_empty() {
         return;

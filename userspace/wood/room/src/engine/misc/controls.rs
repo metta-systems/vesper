@@ -458,7 +458,9 @@ use crate::engine::misc::config::M_BindVariable;
 /// address inside the `CONTROLS` static.
 macro_rules! bind_control {
     ($name:expr, $($field:tt)+) => {
-        M_BindVariable($name, unsafe { &raw mut (*CONTROLS.as_ptr()).$($field)+ }.cast())
+        // SAFETY: the field lives inside the `CONTROLS` static, so the
+        // bound location stays valid for the rest of the program.
+        unsafe { M_BindVariable($name, (&raw mut (*CONTROLS.as_ptr()).$($field)+).cast()) }
     };
 }
 

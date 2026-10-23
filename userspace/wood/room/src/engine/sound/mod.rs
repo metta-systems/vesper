@@ -13,7 +13,8 @@
 //! - C passes sound origins as `void *` and reads them as `mobj_t`. Here an
 //!   origin is a typed [`SoundOrigin`]: a map object or a sector's
 //!   `degenmobj_t`. Map-object sounds go through `S_StartSound`, sector sounds
-//!   through `S_StartSectorSound`.
+//!   through `S_StartSectorSound`, and sounds C starts with a null origin
+//!   through `S_StartNonPositionalSound`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -146,7 +147,7 @@ use crate::engine::render_3d::main::R_PointToAngle2;
 use crate::engine::math::fixed::FixedMul;
 
 // w_wad.rs
-use crate::engine::wad::{W_CacheLumpNum, W_GetNumForName, W_LumpLength, W_ReleaseLumpNum};
+use crate::engine::wad::{W_GetNumForName, W_ReleaseLumpNum, cache_lump_bytes};
 
 /// Sound subsystem state (C `s_sound.c` globals).
 ///
@@ -488,14 +489,35 @@ unsafe fn S_AdjustSoundParams(
 
 /// Start an SFX from map object `origin` (may be null for a non-positional
 /// sound) with id `sfx_id`. C origin: `S_StartSound` in `s_sound.c`.
-pub fn S_StartSound(origin: *mut mobj_t, sfx_id: i32) {
+///
+/// # Safety
+/// `origin` must be null or point to a live `mobj_t` that stays live until
+/// its sound stops or the origin is stopped with `S_StopSound` (as
+/// `P_RemoveMobj` does): the channel keeps the pointer and `S_UpdateSounds`
+/// reads the object's position every tic.
+pub unsafe fn S_StartSound(origin: *mut mobj_t, sfx_id: i32) {
     S_StartOriginSound(SoundOrigin::from_mobj(origin), sfx_id);
+}
+
+/// Start an SFX with id `sfx_id` that is not attached to anything in the
+/// map, so it plays centred at full SFX volume (menus, intermission, global
+/// boss sounds). C passes a null origin to `S_StartSound` for these.
+pub fn S_StartNonPositionalSound(sfx_id: i32) {
+    // SAFETY: no origin is stored or read for a non-positional sound.
+    unsafe { S_StartOriginSound(None, sfx_id) }
 }
 
 /// Start an SFX from a sector's sound origin (`sector_t::soundorg`; may be
 /// null for a non-positional sound) with id `sfx_id`. C calls `S_StartSound`
 /// with the `degenmobj_t` address for these.
-pub fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
+///
+/// # Safety
+/// `origin` must be null or point to a live `degenmobj_t` that stays live
+/// until its sound stops: the channel keeps the pointer and `S_UpdateSounds`
+/// reads its position every tic. Sector origins live in the level's sector
+/// array, so the level must stay loaded while the sound plays (`S_Start`
+/// stops every channel when the next level starts).
+pub unsafe fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
     S_StartOriginSound(SoundOrigin::from_sector(origin), sfx_id);
 }
 
@@ -506,7 +528,11 @@ pub fn S_StartSectorSound(origin: *mut degenmobj_t, sfx_id: i32) {
 /// listener (the console player) unless `origin` is the listener itself, in
 /// which case stereo is forced to centre. The chosen sfx replaces any sound
 /// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
-fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
+///
+/// # Safety
+/// The object `origin` wraps must stay live until its sound stops (see
+/// `S_StartSound`); the channel keeps it and `S_UpdateSounds` reads it.
+unsafe fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
     unsafe {
         let snd_SfxVolume = SOUND.get().snd_SfxVolume;
         let mut volume = snd_SfxVolume;
@@ -596,7 +622,8 @@ pub fn S_ResumeSound() {
 ///
 /// # Safety
 /// `listener` must be a valid `mobj_t` pointer whenever a positional sound
-/// is playing.
+/// is playing, and every playing sound's origin must still be live (the
+/// contract of `S_StartSound` and `S_StartSectorSound`).
 pub unsafe fn S_UpdateSounds(listener: *mut mobj_t) {
     unsafe {
         I_UpdateSound();
@@ -709,10 +736,10 @@ pub fn S_ChangeMusic(musicnum: i32, looping: i32) {
             music.lumpnum = W_GetNumForName(format!("d_{}", music.name).as_bytes());
         }
 
-        music.data = W_CacheLumpNum(music.lumpnum, PU_STATIC);
+        let song = cache_lump_bytes(music.lumpnum, PU_STATIC);
+        music.data = song.as_ptr().cast_mut().cast();
 
-        let len = W_LumpLength(music.lumpnum as u32);
-        let handle = I_RegisterSong(music.data, len);
+        let handle = I_RegisterSong(song);
         music.handle = handle;
         I_PlaySong(handle, looping);
 
@@ -743,7 +770,9 @@ pub fn S_StopMusic() {
         }
 
         I_StopSong();
-        I_UnRegisterSong(m.handle);
+        // SAFETY: `S_ChangeMusic` registered this handle and only this
+        // function unregisters it, right before clearing `mus_playing`.
+        unsafe { I_UnRegisterSong(m.handle) };
         W_ReleaseLumpNum(m.lumpnum);
         m.data = std::ptr::null_mut();
         SOUND.borrow_mut().mus_playing = std::ptr::null_mut();

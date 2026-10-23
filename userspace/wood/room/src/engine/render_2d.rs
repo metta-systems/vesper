@@ -71,11 +71,8 @@ pub static RENDER_2D: Global<Render2dState> = Global::new(Render2dState::new());
 pub fn V_MarkRect(x: i32, y: i32, width: i32, height: i32) {
     let mut render = RENDER_2D.borrow_mut();
     if render.dest_screen == video_buffer() {
-        let dirtybox = render.dirtybox.as_mut_ptr();
-        unsafe {
-            M_AddToBox(dirtybox, x, y);
-            M_AddToBox(dirtybox, x + width - 1, y + height - 1);
-        }
+        M_AddToBox(&mut render.dirtybox, x, y);
+        M_AddToBox(&mut render.dirtybox, x + width - 1, y + height - 1);
     }
 }
 
@@ -511,7 +508,13 @@ pub fn V_Init() {
     // no-op
 }
 
-pub fn V_UseBuffer(buffer: *mut u8) {
+/// Redirect the drawing functions to `buffer` until `V_RestoreBuffer`.
+///
+/// # Safety
+/// `buffer` must be writable for `SCREENWIDTH * SCREENHEIGHT` bytes and
+/// stay valid until `V_RestoreBuffer` is called: the drawing functions
+/// write through it.
+pub unsafe fn V_UseBuffer(buffer: *mut u8) {
     RENDER_2D.borrow_mut().dest_screen = buffer;
 }
 
@@ -520,53 +523,45 @@ pub fn V_RestoreBuffer() {
     RENDER_2D.borrow_mut().dest_screen = screen;
 }
 
-/// # Safety
-/// `data` must hold `width * height` readable bytes and `palette` 768.
-pub unsafe fn WritePCXfile(
-    filename: &str,
-    data: *mut u8,
-    width: i32,
-    height: i32,
-    palette: *mut u8,
-) {
-    unsafe {
-        let header = pcx_t {
-            manufacturer: 0x0a,
-            version: 5,
-            encoding: 1,
-            bits_per_pixel: 8,
-            xmin: U16::ZERO,
-            ymin: U16::ZERO,
-            xmax: U16::new((width - 1) as u16),
-            ymax: U16::new((height - 1) as u16),
-            hres: U16::new(width as u16),
-            vres: U16::new(height as u16),
-            palette: [0; 48],
-            reserved: 0,
-            color_planes: 1,
-            bytes_per_line: U16::new(width as u16),
-            palette_type: U16::new(2),
-            filler: [0; 58],
-        };
+/// Write `width * height` pixels from `data` with the 768-byte `palette` as
+/// a PCX file. Panics if either slice is shorter than that.
+pub fn WritePCXfile(filename: &str, data: &[u8], width: i32, height: i32, palette: &[u8]) {
+    let header = pcx_t {
+        manufacturer: 0x0a,
+        version: 5,
+        encoding: 1,
+        bits_per_pixel: 8,
+        xmin: U16::ZERO,
+        ymin: U16::ZERO,
+        xmax: U16::new((width - 1) as u16),
+        ymax: U16::new((height - 1) as u16),
+        hres: U16::new(width as u16),
+        vres: U16::new(height as u16),
+        palette: [0; 48],
+        reserved: 0,
+        color_planes: 1,
+        bytes_per_line: U16::new(width as u16),
+        palette_type: U16::new(2),
+        filler: [0; 58],
+    };
 
-        let total = (width * height) as usize;
-        let mut pcx = Vec::with_capacity(size_of::<pcx_t>() + total * 2 + 1 + 768);
-        pcx.extend_from_slice(header.as_bytes());
+    let total = (width * height) as usize;
+    let mut pcx = Vec::with_capacity(size_of::<pcx_t>() + total * 2 + 1 + 768);
+    pcx.extend_from_slice(header.as_bytes());
 
-        for &byte in std::slice::from_raw_parts(data, total) {
-            if (byte & 0xc0) != 0xc0 {
-                pcx.push(byte);
-            } else {
-                pcx.extend_from_slice(&[0xc1, byte]);
-            }
+    for &byte in &data[..total] {
+        if (byte & 0xc0) != 0xc0 {
+            pcx.push(byte);
+        } else {
+            pcx.extend_from_slice(&[0xc1, byte]);
         }
-
-        // write palette
-        pcx.push(0x0c);
-        pcx.extend_from_slice(std::slice::from_raw_parts(palette, 768));
-
-        M_WriteFile(filename, &pcx);
     }
+
+    // write palette
+    pcx.push(0x0c);
+    pcx.extend_from_slice(&palette[..768]);
+
+    M_WriteFile(filename, &pcx);
 }
 
 /// Build a screenshot filename for index `i`: `"DOOM{i:02}.pcx"`, the
@@ -589,16 +584,20 @@ pub fn V_ScreenShot() {
     }
 
     // SAFETY: the video buffer is a full screen and PLAYPAL starts with a
-    // 768-byte palette.
-    unsafe {
-        WritePCXfile(
-            &screenshot_filename(i),
-            video_buffer(),
-            SCREENWIDTH,
-            SCREENHEIGHT,
-            W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *mut u8,
-        );
-    }
+    // 768-byte palette; both outlive the call.
+    let (screen, palette) = unsafe {
+        (
+            std::slice::from_raw_parts(video_buffer(), (SCREENWIDTH * SCREENHEIGHT) as usize),
+            std::slice::from_raw_parts(W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *const u8, 768),
+        )
+    };
+    WritePCXfile(
+        &screenshot_filename(i),
+        screen,
+        SCREENWIDTH,
+        SCREENHEIGHT,
+        palette,
+    );
 }
 
 const MOUSE_SPEED_BOX_WIDTH: i32 = 120;

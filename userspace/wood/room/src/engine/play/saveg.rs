@@ -256,13 +256,13 @@ fn saveg_write_enum(value: u32) {
 /// `sectors` array.
 ///
 /// Returns `0` for a null pointer. The C equivalent uses pointer subtraction
-/// (`sector - sectors`). Callers must ensure `sector` actually points into
-/// `sectors` when non-null.
-unsafe fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
+/// (`sector - sectors`); this compares addresses, so a `sector` outside
+/// `sectors` yields a meaningless index rather than undefined behaviour.
+fn saveg_write_sector_ptr(sector: *const sector_t) -> u32 {
     if sector.is_null() {
         0
     } else {
-        sector.offset_from(level().sectors) as u32
+        ((sector.addr() - level().sectors.addr()) / size_of::<sector_t>()) as u32
     }
 }
 
@@ -278,12 +278,13 @@ unsafe fn saveg_read_sector_ptr(index: u32) -> *mut sector_t {
 /// Serializes a `State` pointer as a zero-based index into the `states`
 /// table.
 ///
-/// Returns `0` for a null pointer. The C equivalent computes `state - states`.
-unsafe fn saveg_write_state_ptr(state: *const State) -> u32 {
+/// Returns `0` for a null pointer. The C equivalent computes `state - states`;
+/// this compares addresses.
+fn saveg_write_state_ptr(state: *const State) -> u32 {
     if state.is_null() {
         0
     } else {
-        state.offset_from(state_ptr(0)) as u32
+        ((state.addr() - state_ptr(0).addr()) / size_of::<State>()) as u32
     }
 }
 
@@ -305,12 +306,12 @@ fn saveg_read_state_ptr(index: u32) -> *mut State {
 ///
 /// Returns `0` for a null pointer; otherwise returns
 /// `(player - players) + 1`. The 1-based encoding reserves `0` to represent
-/// NULL. C origin: `str->player - players + 1`.
-unsafe fn saveg_write_player_ptr(player: *const PlayerT) -> u32 {
+/// NULL. C origin: `str->player - players + 1`; this compares addresses.
+fn saveg_write_player_ptr(player: *const PlayerT) -> u32 {
     if player.is_null() {
         0
     } else {
-        (player.offset_from(game_player(0)) as u32) + 1
+        ((player.addr() - game_player(0).addr()) / size_of::<PlayerT>()) as u32 + 1
     }
 }
 
@@ -2141,6 +2142,22 @@ mod tests {
             });
             assert_eq!(mo.thinker.kind, ThinkerKind::None);
         }
+    }
+
+    /// The address-based index helpers give the same indices as the C
+    /// pointer subtraction and round-trip through the read helpers.
+    #[test]
+    fn pointer_indices_round_trip() {
+        assert_eq!(saveg_write_state_ptr(std::ptr::null()), 0);
+        assert_eq!(saveg_write_state_ptr(state_ptr(5)), 5);
+        assert_eq!(saveg_read_state_ptr(5), state_ptr(5));
+
+        assert_eq!(saveg_write_player_ptr(std::ptr::null()), 0);
+        assert_eq!(saveg_write_player_ptr(game_player(0)), 1);
+        assert_eq!(saveg_write_player_ptr(game_player(2)), 3);
+        assert_eq!(unsafe { saveg_read_player_ptr(3) }, game_player(2));
+
+        assert_eq!(saveg_write_sector_ptr(std::ptr::null()), 0);
     }
 
     #[test]

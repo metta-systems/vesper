@@ -73,7 +73,7 @@ use crate::{
             tick::{ThinkerContainer, ThinkerKind, thinker_t, thinkercap},
         },
         render_3d::main::{R_PointToAngle2, VALIDCOUNT},
-        sound::S_StartSound,
+        sound::{S_StartNonPositionalSound, S_StartSound},
         wad::format::LinedefFlag,
     },
     i_error,
@@ -714,7 +714,7 @@ pub unsafe fn A_Look(actor: *mut mobj_t) {
             s => s as i32,
         };
         if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
-            S_StartSound(std::ptr::null_mut(), sound);
+            S_StartNonPositionalSound(sound);
         } else {
             S_StartSound(actor, sound);
         }
@@ -1636,7 +1636,7 @@ pub unsafe fn A_Scream(actor: *mut mobj_t) {
         s => s as i32,
     };
     if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
-        S_StartSound(std::ptr::null_mut(), sound);
+        S_StartNonPositionalSound(sound);
     } else {
         S_StartSound(actor, sound);
     };
@@ -1896,11 +1896,11 @@ pub unsafe fn A_BrainAwake(_mo: *mut mobj_t) {
             thinker = (*thinker).next;
         }
     }
-    S_StartSound(std::ptr::null_mut(), Sfx::Bossit as i32);
+    S_StartNonPositionalSound(Sfx::Bossit as i32);
 }
 /// Icon of Sin pain reaction: plays `sfx_bospn` at full (global) volume.
 pub fn A_BrainPain(_mo: *mut mobj_t) {
-    S_StartSound(std::ptr::null_mut(), Sfx::Bospn as i32);
+    S_StartNonPositionalSound(Sfx::Bospn as i32);
 }
 /// Icon of Sin death scream: spawns a row of exploding rockets across the brain's width.
 ///
@@ -1934,7 +1934,7 @@ pub unsafe fn A_BrainScream(mo: *mut mobj_t) {
         }
         x += FRACUNIT * 8;
     }
-    S_StartSound(std::ptr::null_mut(), Sfx::Bosdth as i32);
+    S_StartNonPositionalSound(Sfx::Bosdth as i32);
 }
 /// Individual brain explosion particle: spawns one `MT_ROCKET` at a random horizontal offset.
 ///
@@ -1987,7 +1987,7 @@ pub unsafe fn A_BrainSpit(mo: *mut mobj_t) {
     let newmobj: *mut mobj_t = P_SpawnMissile(mo, targ, MT_SPAWNSHOT);
     (*newmobj).target = targ;
     (*newmobj).reactiontime = ((*targ).y - (*mo).y) / (*newmobj).momy / (*(*newmobj).state).tics;
-    S_StartSound(std::ptr::null_mut(), Sfx::Bospit as i32);
+    S_StartNonPositionalSound(Sfx::Bospit as i32);
 }
 /// In-flight cube sound: plays `sfx_boscub` while the cube travels, then calls `A_SpawnFly`.
 ///

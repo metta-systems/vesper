@@ -403,7 +403,12 @@ pub unsafe fn EV_StopPlat(line: *mut line_t) {
 /// `P_AddActiveCeiling` which silently discards overflows.
 ///
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
-pub fn P_AddActivePlat(plat: *mut plat_t) {
+///
+/// # Safety
+/// `plat` must point to a live platform thinker whose `sector` points into
+/// the loaded level. It stays registered until `P_RemoveActivePlat` or the
+/// next level load clears the table, and later safe calls dereference it.
+pub unsafe fn P_AddActivePlat(plat: *mut plat_t) {
     {
         let mut plats = PLATS.borrow_mut();
         for slot in plats.activeplats.iter_mut() {

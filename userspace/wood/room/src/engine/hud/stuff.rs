@@ -439,7 +439,7 @@ use crate::engine::{
     doom::stat::gamemode,
     game::{console_player, consoleplayer, gameepisode, gamemap, netgame, player, playeringame},
     misc::menu::MENU,
-    sound::S_StartSound,
+    sound::S_StartNonPositionalSound,
     wad::W_CacheLumpName,
 };
 
@@ -692,9 +692,9 @@ pub fn HU_Ticker() {
                                         hud.message_counter = HU_MSGTIMEOUT;
                                     }
                                     if gamemode() == doom::mode::commercial {
-                                        S_StartSound(ptr::null_mut(), Sfx::Radio as i32);
+                                        S_StartNonPositionalSound(Sfx::Radio as i32);
                                     } else {
-                                        S_StartSound(ptr::null_mut(), Sfx::Tink as i32);
+                                        S_StartNonPositionalSound(Sfx::Tink as i32);
                                     }
                                 }
                                 HUlib_resetIText(input);

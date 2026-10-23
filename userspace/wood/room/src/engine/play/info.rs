@@ -9760,7 +9760,7 @@ pub static STATES: Global<[State; NUMSTATES]> = Global::new([
 /// Stable pointer to `states[index]` (C `&states[index]`), as stored in
 /// `mobj_t.state` and `pspdef_t.state`.
 pub fn state_ptr(index: usize) -> *mut State {
-    debug_assert!(index < NUMSTATES);
+    assert!(index < NUMSTATES);
     // SAFETY: in-bounds projection on the stable table pointer.
     unsafe { STATES.as_ptr().cast::<State>().add(index) }
 }
@@ -9768,7 +9768,7 @@ pub fn state_ptr(index: usize) -> *mut State {
 /// Stable pointer to `mobjinfo[kind]` (C `&mobjinfo[kind]`), as stored in
 /// `mobj_t.info`.
 pub fn mobjinfo_ptr(kind: usize) -> *mut MobjInfo {
-    debug_assert!(kind < NUMMOBJTYPES);
+    assert!(kind < NUMMOBJTYPES);
     // SAFETY: in-bounds projection on the stable table pointer.
     unsafe { MOBJINFO.as_ptr().cast::<MobjInfo>().add(kind) }
 }

@@ -267,7 +267,7 @@ pub static SPAWN_SPOTS: Global<SpawnSpots> = Global::new(SpawnSpots {
 
 /// Stable pointer to `playerstarts[player]` (C `&playerstarts[player]`).
 pub fn playerstart(player: usize) -> *mut mapthing_t {
-    debug_assert!(player < MAXPLAYERS);
+    assert!(player < MAXPLAYERS);
     // SAFETY: in-bounds projection on the stable state pointer.
     unsafe {
         (&raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts)
@@ -278,6 +278,7 @@ pub fn playerstart(player: usize) -> *mut mapthing_t {
 
 /// Stable pointer to `deathmatchstarts[index]` (C `&deathmatchstarts[index]`).
 pub fn deathmatchstart(index: usize) -> *mut mapthing_t {
+    assert!(index <= MAX_DEATHMATCH_STARTS);
     // SAFETY: projection on the stable state pointer; one past the end is
     // allowed, as the C cursor reaches it.
     unsafe {
@@ -987,12 +988,12 @@ pub fn P_GroupLines() {
         let mut sector = sectors;
         for _ in 0..numsectors {
             let mut bbox: [i32; 4] = [0; 4];
-            M_ClearBox(bbox.as_mut_ptr());
+            M_ClearBox(&mut bbox);
 
             for j in 0..(*sector).linecount {
                 let line = *(*sector).lines.offset(j as isize);
-                M_AddToBox(bbox.as_mut_ptr(), (*(*line).v1).x, (*(*line).v1).y);
-                M_AddToBox(bbox.as_mut_ptr(), (*(*line).v2).x, (*(*line).v2).y);
+                M_AddToBox(&mut bbox, (*(*line).v1).x, (*(*line).v1).y);
+                M_AddToBox(&mut bbox, (*(*line).v2).x, (*(*line).v2).y);
             }
 
             // Set the degenmobj_t to the middle of the bounding box.

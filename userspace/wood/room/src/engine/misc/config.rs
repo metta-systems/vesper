@@ -745,7 +745,13 @@ pub fn M_LoadDefaults() {
 /// integer and key variables, an `f32` for floats, a `Cow<'static, str>`
 /// for strings. Aborts via `I_Error` if the name is unknown. Mirrors C
 /// `M_BindVariable`.
-pub fn M_BindVariable(name: &str, location: *mut c_void) {
+///
+/// # Safety
+/// `location` must point to a value of the variable's type that stays
+/// valid for reads and writes for the rest of the program (in practice a
+/// field of a static state), since later safe calls such as
+/// [`M_SetVariable`] and [`M_LoadDefaults`] access it.
+pub unsafe fn M_BindVariable(name: &str, location: *mut c_void) {
     with_default_for_name(name, |variable| {
         variable.location = location;
         variable.bound = true;

@@ -132,7 +132,11 @@ pub fn I_ShutdownSound() {
 /// In the C source this is delegated to `sound_module->GetSfxLumpNum`
 /// and the lump-name construction lives in the SDL backend. This port
 /// inlines the construction here.
-pub fn I_GetSfxLumpNum(sfxinfo: *mut c_void) -> i32 {
+///
+/// # Safety
+/// `sfxinfo` must be null or point to a live `SfxInfo` whose `link` chain
+/// points only at live `SfxInfo`s.
+pub unsafe fn I_GetSfxLumpNum(sfxinfo: *mut c_void) -> i32 {
     if sfxinfo.is_null() {
         return -1;
     }
@@ -183,7 +187,10 @@ pub fn I_UpdateSoundParams(channel: i32, vol: i32, sep: i32) {
 /// Loads the sample data via `W_CacheLumpNum` with `PU_CACHE`, then
 /// hands the lump bytes to the platform's `sound_start`.
 /// The cache tag means the data may be evicted once the SFX finishes.
-pub fn I_StartSound(sfxinfo: *mut c_void, channel: i32, vol: i32, sep: i32) -> i32 {
+///
+/// # Safety
+/// `sfxinfo` must be null or point to a live `SfxInfo`.
+pub unsafe fn I_StartSound(sfxinfo: *mut c_void, channel: i32, vol: i32, sep: i32) -> i32 {
     if sfxinfo.is_null() || !(0..8).contains(&channel) {
         return -1;
     }
@@ -264,19 +271,18 @@ pub fn I_ResumeSong() {
 /// to MIDI and returning an opaque `*mut MusicHandle` cast to
 /// `*mut c_void`.
 ///
-/// Returns null on null input, zero/negative length, or if MUS-to-MIDI
-/// conversion fails. The caller must release the returned handle via
-/// `I_UnRegisterSong`; the boxed handle owns the MIDI bytes.
+/// Returns null on empty input or if MUS-to-MIDI conversion fails. The
+/// caller must release the returned handle via `I_UnRegisterSong`; the
+/// boxed handle owns the MIDI bytes.
 ///
 /// In the C source the song data is the raw MUS lump, which the SDL
 /// backend hands to libtimidity. This port performs the MUS->MIDI
 /// conversion up front so the platform only ever plays MIDI.
-pub fn I_RegisterSong(data: *mut c_void, len: i32) -> *mut c_void {
-    if data.is_null() || len <= 0 {
+pub fn I_RegisterSong(data: &[u8]) -> *mut c_void {
+    if data.is_empty() {
         return std::ptr::null_mut();
     }
-    let slice = unsafe { std::slice::from_raw_parts(data as *const u8, len as usize) };
-    match mus2midi(slice) {
+    match mus2midi(data) {
         Some(midi_bytes) => Box::into_raw(Box::new(MusicHandle { midi_bytes })) as *mut c_void,
         None => {
             log::warn!("I_RegisterSong: MUS-to-MIDI conversion failed");
@@ -287,7 +293,11 @@ pub fn I_RegisterSong(data: *mut c_void, len: i32) -> *mut c_void {
 
 /// Free a music handle previously returned by `I_RegisterSong`.
 /// Null pointers are ignored. After this call the handle is invalid.
-pub fn I_UnRegisterSong(handle: *mut c_void) {
+///
+/// # Safety
+/// `handle` must be null or a handle returned by `I_RegisterSong` that has
+/// not been unregistered yet.
+pub unsafe fn I_UnRegisterSong(handle: *mut c_void) {
     if !handle.is_null() {
         unsafe {
             drop(Box::from_raw(handle as *mut MusicHandle));
@@ -300,7 +310,10 @@ pub fn I_UnRegisterSong(handle: *mut c_void) {
 ///
 /// The MIDI bytes inside the handle are borrowed for the duration of
 /// the call; the platform copies what it needs to keep playing.
-pub fn I_PlaySong(handle: *mut c_void, looping: i32) {
+///
+/// # Safety
+/// `handle` must be null or a live handle returned by `I_RegisterSong`.
+pub unsafe fn I_PlaySong(handle: *mut c_void, looping: i32) {
     if handle.is_null() {
         return;
     }
