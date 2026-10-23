@@ -5,6 +5,8 @@ Next is the read-only filesystem over `block_v1`: should it be exFAT or ext4?
 
 `Mobj -> MapObject` in Room
 
+Filesystem ops to Platform.
+
 ---
 
 Room's config file is never loaded or saved
