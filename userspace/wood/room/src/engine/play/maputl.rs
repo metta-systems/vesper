@@ -61,7 +61,6 @@ pub union intercept_t_d {
 /// Used by `P_PointOnDivlineSide`, the sight check and the
 /// intercept-traversal helpers. `(x, y)` is the start point; `(dx, dy)` is
 /// the direction vector in fixed-point map units.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct divline_t {
     /// X coordinate of the line origin (fixed-point map units).

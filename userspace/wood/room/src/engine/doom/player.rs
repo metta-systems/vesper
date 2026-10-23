@@ -1,18 +1,16 @@
-//! Mirror of `d_player.h` types for FFI with remaining C code.
+//! Player types from `d_player.h`.
 //!
 //! Provides `PlayerT`, `TiccmdT`, `PspdefT` and the C globals `players` / `consoleplayer`.
-//! Also implements `M_Menu_SetPlayerMessage` (previously in `m_menu_shim.c`).
+//! Also implements `M_Menu_SetPlayerMessage`.
 //!
 //! In the original C code `player_t`, `ticcmd_t`, and `pspdef_t` are spread
 //! across `d_player.h`, `d_ticcmd.h`, and `p_pspr.h`.  They are collected
-//! here for convenience because they form a tight cluster needed for FFI.
+//! here because they form a tight cluster.
 //!
 //! Rust differences from C:
 //! - Boolean fields (`cards`, `backpack`, `weaponowned`, `didsecret`) that are
 //!   `boolean` in C are stored as `i32` here, like the C `boolean`
 //!   (`unsigned int`).
-//! - `TiccmdT` adds an explicit `_pad: [u8; 2]` after `arti` to match the
-//!   C compiler's padding and reach the expected struct size.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -64,10 +62,6 @@ pub const CF_NOMOMENTUM: i32 = 4;
 /// - `inventory`: Strife-specific inventory item index.
 /// - `lookfly`: Heretic/Hexen look-up/down/center.
 /// - `arti`: Heretic/Hexen artifact type to use.
-///
-/// The two padding bytes after `arti` are not present in the C struct but are
-/// required here to reach the ABI size on x86-64 Linux.
-#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TiccmdT {
     /// Signed forward/backward movement unit; multiply by 2048 to get fixed-point speed.
@@ -90,8 +84,6 @@ pub struct TiccmdT {
     pub lookfly: u8,
     /// Heretic/Hexen artifact (`artitype_t`) to activate this tic.
     pub arti: u8,
-    /// Explicit padding to match C ABI struct size on x86-64 Linux.
-    _pad: [u8; 2],
 }
 
 /// Player-sprite definition: the on-screen weapon/hand overlay animation state.

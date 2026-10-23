@@ -80,12 +80,6 @@ const SIL_TOP: i32 = 2;
 // ---------------------------------------------------------------------------
 
 /// One animation frame of a sprite (`spriteframe_t` in `r_defs.h`).
-///
-/// Layout (28 bytes):
-///   +0  rotate (boolean/int – 4 bytes)
-///   +4  lump[8] (short[8] – 16 bytes)
-///   +20 flip[8] (byte[8] – 8 bytes)
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct spriteframe_t {
     /// 0 = use frame 0 for all rotations; 1 = use rotation-specific lumps.
@@ -99,7 +93,6 @@ pub struct spriteframe_t {
 /// Sprite definition table entry for one sprite name (e.g., "TROO")
 /// (`spritedef_t` in `r_defs.h`).
 /// Points to an array of `spriteframe_t` records, one per animation frame.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct spritedef_t {
     /// Number of animation frames defined for this sprite.
@@ -114,7 +107,6 @@ pub struct spritedef_t {
 /// Built by `R_ProjectSprite`; sorted by `scale` (depth) before
 /// rasterisation. `colormap` selects light level / palette translation
 /// per-column.
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct vissprite_t {
     pub prev: *mut vissprite_t,
@@ -130,10 +122,8 @@ pub struct vissprite_t {
     pub xiscale: i32,
     pub texturemid: i32,
     pub patch: i32,
-    _pad: [u8; 4],
     pub colormap: *mut u8,
     pub mobjflags: i32,
-    _pad2: [u8; 4],
 }
 
 /// The 4-character sprite prefix of a lump or sprite name, up to the first

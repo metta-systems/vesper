@@ -60,11 +60,10 @@ fn LONG(x: i32) -> i32 {
 // Internal types
 // ---------------------------------------------------------------------------
 
-/// Runtime patch descriptor stored inside a `texture_t` (C layout).
+/// Runtime patch descriptor stored inside a `texture_t`.
 ///
 /// Corresponds to `texpatch_t` in `r_data.c`.  `patch` is a WAD lump number
 /// (resolved from the PNAMES index during `R_InitTextures`).
-#[repr(C)]
 #[derive(Clone, Copy)]
 struct texpatch_t {
     /// Horizontal origin of the patch within the texture, in pixels.
@@ -82,6 +81,8 @@ struct texpatch_t {
 /// `patchcount - 1` additional `texpatch_t` entries immediately after.
 /// The `next` pointer links entries that hash to the same bucket in
 /// `textures_hashtable`.
+// repr(C) keeps `patches` the last field, so the extra entries allocated past
+// the struct extend that flexible array instead of overlapping other fields.
 #[repr(C)]
 struct texture_t {
     /// Texture name, up to 8 ASCII characters, NUL-padded.
@@ -99,6 +100,12 @@ struct texture_t {
     /// First patch descriptor; additional patches follow contiguously.
     patches: texpatch_t,
 }
+
+// Nothing but tail padding follows `patches`.
+const _: () = assert!(
+    std::mem::size_of::<texture_t>() - std::mem::offset_of!(texture_t, patches)
+        < std::mem::size_of::<texpatch_t>() + std::mem::align_of::<texture_t>()
+);
 
 // ---------------------------------------------------------------------------
 // C library

@@ -115,16 +115,12 @@ fn locked_door_message(special: i32) -> PlayerMessage {
 /// - `-1` = moving down (closing)
 /// - `0` = waiting at the top
 /// - `2` = initial wait (used by `vld_raiseIn5Mins`)
-///
-/// `_pad0` keeps the struct, and so its zone allocation, the size of the C
-/// `vldoor_t` on 64-bit targets.
 #[derive(Clone, Copy)]
 pub struct vldoor_t {
     /// Thinker list node.
     pub thinker: thinker_t,
     /// Door type (`vld_*` constant); controls behaviour at open/close limits.
     pub kind: i32,
-    _pad0: [u8; 4],
     /// The sector this door controls (its ceiling is the moving plane).
     pub sector: *mut sector_t,
     /// Target height of the open position (lowest surrounding ceiling - 4 units).
@@ -389,7 +385,8 @@ pub unsafe fn EV_DoDoor(line: *mut line_t, kind: i32) -> i32 {
 ///
 /// This port follows the 64-bit C layout, where the `int` at
 /// `vldoor_t.direction`'s offset is `plat_t.count`, `ceiling_t.speed`, or
-/// `floormove_t.texture` with the two padding bytes after it.
+/// `floormove_t.texture` with the two padding bytes after it (see
+/// [`floormove_t::door_direction_alias`]).
 ///
 /// # Safety
 ///
@@ -400,7 +397,7 @@ unsafe fn special_door_direction(special: *mut thinker_t) -> i32 {
         Some(ThinkerClass::Door) => (*vldoor_t::from_thinker(special)).direction,
         Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count,
         Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed,
-        Some(ThinkerClass::Floor) => (*floormove_t::from_thinker(special)).texture_with_padding(),
+        Some(ThinkerClass::Floor) => (*floormove_t::from_thinker(special)).door_direction_alias(),
         other => unreachable!("sector special data is a {other:?} thinker"),
     }
 }
@@ -416,7 +413,7 @@ unsafe fn set_special_door_direction(special: *mut thinker_t, direction: i32) {
         Some(ThinkerClass::Plat) => (*plat_t::from_thinker(special)).count = direction,
         Some(ThinkerClass::Ceiling) => (*ceiling_t::from_thinker(special)).speed = direction,
         Some(ThinkerClass::Floor) => {
-            (*floormove_t::from_thinker(special)).set_texture_with_padding(direction)
+            (*floormove_t::from_thinker(special)).set_door_direction_alias(direction)
         }
         other => unreachable!("sector special data is a {other:?} thinker"),
     }

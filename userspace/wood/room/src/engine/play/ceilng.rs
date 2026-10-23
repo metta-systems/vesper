@@ -63,16 +63,12 @@ const silentCrushAndRaise: i32 = 5;
 ///
 /// Allocated via `Z_Malloc` and linked into the thinker list through its
 /// embedded `thinker`.
-///
-/// Padding (`_pad0`, `_pad1`) keeps the struct, and so its zone allocation,
-/// the size of the C `ceiling_t` on 64-bit targets.
 #[derive(Clone, Copy)]
 pub struct ceiling_t {
     /// Thinker list node.
     pub thinker: thinker_t,
     /// Ceiling type (one of the `ceiling_e` integer constants).
     pub kind: i32,
-    _pad0: [u8; 4],
     /// The sector whose ceiling this thinker is moving.
     pub sector: *mut sector_t,
     /// Target height when the ceiling is moving downward.
@@ -89,7 +85,6 @@ pub struct ceiling_t {
     pub tag: i32,
     /// Saved direction used to resume a ceiling that was put into stasis.
     pub olddirection: i32,
-    _pad1: [u8; 4],
 }
 
 /// Table of all currently active ceiling thinkers.

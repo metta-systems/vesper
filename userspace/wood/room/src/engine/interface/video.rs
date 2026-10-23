@@ -45,13 +45,9 @@ pub const SCREENWIDTH: i32 = 320;
 /// Doom's logical screen height in palette-indexed pixels.
 pub const SCREENHEIGHT: i32 = 200;
 
-/// 32-bit pixel as the framebuffer expects it: BGRA with alpha last.
-///
-/// Mirrors `struct color` in `i_video.c`. `#[repr(C)]` because
-/// pointers into this layout cross the FFI boundary (the
-/// `DG_ScreenBuffer` is written byte by byte but interpreted as
-/// 32-bit pixels by the host platform's display code).
-#[repr(C)]
+/// One gamma-corrected palette entry. Mirrors `struct color` in
+/// `i_video.c`; the channels are read by name and packed into
+/// framebuffer pixels by `cmap_to_fb` / `cmap_to_rgb565`.
 #[derive(Clone, Copy)]
 struct Color {
     b: u8,

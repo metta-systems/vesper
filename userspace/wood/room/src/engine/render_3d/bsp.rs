@@ -62,9 +62,7 @@ unsafe fn seg_index(line: *const seg_t) -> isize {
 /// A seg prepared for the column renderer, holding scale, silhouette, and
 /// sprite-clip arrays (`drawseg_t` in `r_defs.h`). Written by
 /// `R_StoreWallRange` and read back during sprite clipping in
-/// `R_DrawSprite`. The C layout is pinned by compile-time assertions in
-/// `layout_checks`.
-#[repr(C)]
+/// `R_DrawSprite`.
 #[derive(Clone, Copy)]
 pub struct drawseg_t {
     /// The seg that generated this draw-seg.
@@ -109,29 +107,6 @@ const ZERO_DRAWSEG: drawseg_t = drawseg_t {
     sprbottomclip: ptr::null_mut(),
     maskedtexturecol: ptr::null_mut(),
 };
-
-// Compile-time size and offset checks for `drawseg_t`
-// (values verified against vendor/doomgeneric C structs on x86_64 Linux)
-/// Compile-time layout assertions ensuring `drawseg_t` has the C size and
-/// field offsets on x86-64 Linux.
-#[cfg(target_pointer_width = "64")]
-mod layout_checks {
-    // This module is intentionally private; it exists only for compile-time assertions.
-    use super::*;
-    const _: () = assert!(std::mem::size_of::<drawseg_t>() == 64);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, curline) == 0);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, x1) == 8);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, x2) == 12);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, scale1) == 16);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, scale2) == 20);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, scalestep) == 24);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, silhouette) == 28);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, bsilheight) == 32);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, tsilheight) == 36);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, sprtopclip) == 40);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, sprbottomclip) == 48);
-    const _: () = assert!(std::mem::offset_of!(drawseg_t, maskedtexturecol) == 56);
-}
 
 // ---------------------------------------------------------------------------
 // cliprange_t (internal)

@@ -32,6 +32,5 @@ mod r_draw_c;
 mod r_segs_c;
 mod r_things_c;
 mod st_stuff_c;
-mod struct_layouts;
 mod wi_stuff_c;
 mod wrapping_arithmetic;

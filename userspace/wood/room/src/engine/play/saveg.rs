@@ -968,6 +968,7 @@ unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
     s.direction = saveg_read32() as i32;
     s.newspecial = saveg_read32() as i32;
     s.texture = saveg_read16() as i16;
+    s.texture_upper_half = 0;
     s.floordestheight = saveg_read32() as i32;
     s.speed = saveg_read32() as i32;
 }

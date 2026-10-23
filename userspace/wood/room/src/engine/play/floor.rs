@@ -95,10 +95,9 @@ pub struct floormove_t {
     pub newspecial: i32,
     /// Floor flat (texture) to apply when the floor finishes.
     pub texture: i16,
-    /// The two C padding bytes after `texture`. Only `EV_VerticalDoor`'s
-    /// door-direction pun touches them, through
-    /// [`texture_with_padding`](Self::texture_with_padding).
-    texture_padding: [u8; 2],
+    /// The two C padding bytes after `texture`; only the door alias below
+    /// touches them. Not saved, so zero after a load.
+    pub texture_upper_half: u16,
     /// Target floor height in fixed-point units.
     pub floordestheight: fixed_t,
     /// Movement speed in fixed-point units per tic.
@@ -106,21 +105,23 @@ pub struct floormove_t {
 }
 
 impl floormove_t {
-    /// The little-endian `int` made of `texture` and the padding after it:
-    /// what vanilla reads as `door->direction` when a sector's `specialdata`
-    /// is a floor (64-bit C layout).
-    pub fn texture_with_padding(&self) -> i32 {
-        let [texture_low, texture_high] = self.texture.to_le_bytes();
-        let [padding_low, padding_high] = self.texture_padding;
-        i32::from_le_bytes([texture_low, texture_high, padding_low, padding_high])
+    /// What vanilla `EV_VerticalDoor` reads as `door->direction` when a
+    /// sector's `specialdata` is a floor: the little-endian `int` made of
+    /// `texture` and the two C padding bytes after it (64-bit C layout),
+    /// kept in `texture_upper_half`.
+    ///
+    /// The upper half matters after a save-game load: a door may have
+    /// written -1 here, but only the 16-bit `texture` is saved, so the
+    /// loaded floor reads 0x0000_FFFF (65535), not -1.
+    pub fn door_direction_alias(&self) -> i32 {
+        ((u32::from(self.texture_upper_half) << 16) | u32::from(self.texture as u16)) as i32
     }
 
-    /// Store `value` where [`texture_with_padding`](Self::texture_with_padding)
-    /// reads it.
-    pub fn set_texture_with_padding(&mut self, value: i32) {
-        let [texture_low, texture_high, padding_low, padding_high] = value.to_le_bytes();
-        self.texture = i16::from_le_bytes([texture_low, texture_high]);
-        self.texture_padding = [padding_low, padding_high];
+    /// Store a door `direction` where
+    /// [`door_direction_alias`](Self::door_direction_alias) reads it.
+    pub fn set_door_direction_alias(&mut self, direction: i32) {
+        self.texture = direction as i16;
+        self.texture_upper_half = (direction >> 16) as u16;
     }
 }
 
@@ -599,19 +600,24 @@ mod tests {
     static LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn texture_with_padding_is_the_c_door_direction_alias() {
+    fn door_direction_alias_is_the_c_texture_pun() {
         let _g = LOCK.lock().unwrap();
         let mut floor: floormove_t = unsafe { std::mem::zeroed() };
         floor.texture = 0x1234;
-        assert_eq!(floor.texture_with_padding(), 0x1234);
+        assert_eq!(floor.door_direction_alias(), 0x1234);
 
         // EV_VerticalDoor writing direction -1 into a floor clobbers the
-        // texture and its padding; writing 1 leaves texture 1, padding 0.
-        floor.set_texture_with_padding(-1);
-        assert_eq!(floor.texture, -1);
-        assert_eq!(floor.texture_with_padding(), -1);
-        floor.set_texture_with_padding(1);
-        assert_eq!(floor.texture, 1);
-        assert_eq!(floor.texture_with_padding(), 1);
+        // texture (and, in C, its padding); writing 1 leaves texture 1.
+        for direction in [-1, 0, 1, -1] {
+            floor.set_door_direction_alias(direction);
+            assert_eq!(floor.texture, direction as i16);
+            assert_eq!(floor.door_direction_alias(), direction);
+        }
+
+        // A save keeps only `texture`; the loaded floor has zero upper bytes.
+        let saved_texture = floor.texture;
+        let mut loaded: floormove_t = unsafe { std::mem::zeroed() };
+        loaded.texture = saved_texture;
+        assert_eq!(loaded.door_direction_alias(), 0xFFFF);
     }
 }

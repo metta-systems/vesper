@@ -112,9 +112,9 @@ pub type planefunction_t = unsafe fn(i32, i32);
 ///
 /// The `pad1`/`pad2`/`pad3`/`pad4` bytes are intentional: the C renderer uses
 /// `pl->top[pl->minx-1]` and `pl->top[pl->maxx+1]` as sentinel writes, which
-/// land in the padding when the plane spans the full screen width.  The layout
-/// is verified at compile time by the `assert!` blocks below.
-#[repr(C)]
+/// land in the padding when the plane spans the full screen width.
+/// `R_DrawPlanes` reads and writes these bytes by name instead of indexing
+/// out of bounds, so the field order does not matter.
 #[derive(Clone, Copy)]
 pub struct visplane_t {
     /// World height of the flat, in fixed-point units.
@@ -142,34 +142,6 @@ pub struct visplane_t {
     /// Padding byte after `bottom[]`.
     pub pad4: u8,
 }
-
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(
-    std::mem::size_of::<visplane_t>() == 664,
-    "visplane_t size mismatch"
-);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, height) == 0);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, picnum) == 4);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, lightlevel) == 8);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, minx) == 12);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, maxx) == 16);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, pad1) == 20);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, top) == 21);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, pad2) == 341);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, pad3) == 342);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, bottom) == 343);
-#[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::offset_of!(visplane_t, pad4) == 663);
 
 /// Default initialization for visplane pool entries.
 impl Default for visplane_t {

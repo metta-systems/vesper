@@ -726,25 +726,25 @@ unsafe fn joybutton(n: i32) -> boolean {
 // G_CmdChecksum
 // ---------------------------------------------------------------------------
 
-/// Compute a checksum over the first `sizeof(ticcmd_t)/4 - 1` 4-byte words
-/// of `cmd` using wrapping integer addition.
+/// Wrapping sum of the first `sizeof(ticcmd_t)/4 - 1` little-endian 4-byte
+/// words of the C `ticcmd_t`, rebuilt from the named fields.
 ///
-/// Vanilla Doom uses this checksum for netgame and demo-validation purposes.
-/// The final word is excluded so that fields stored at the tail of the
-/// struct (e.g. inventory padding) do not affect compatibility.
-///
-/// # Safety
-/// `cmd` must point to a fully-initialised `TiccmdT` with at least
-/// `sizeof::<TiccmdT>()` valid bytes; reads through the pointer as a raw
-/// `i32` array.
-pub unsafe fn G_CmdChecksum(cmd: *const TiccmdT) -> i32 {
-    let n = std::mem::size_of::<TiccmdT>() / 4 - 1;
-    let words = cmd as *const i32;
-    let mut sum: i32 = 0;
-    for i in 0..n {
-        sum = sum.wrapping_add(*words.add(i));
-    }
-    sum
+/// The three summed words are `forwardmove`, `sidemove`, `angleturn`;
+/// `chatchar`, `buttons`, `consistancy`, `buttons2`; and `inventory`. The
+/// final word (`lookfly`, `arti` and padding) is excluded. As in vanilla
+/// `g_game.c`, nothing in the engine calls it.
+pub fn G_CmdChecksum(cmd: &TiccmdT) -> i32 {
+    let movement_word = i32::from_le_bytes([
+        cmd.forwardmove as u8,
+        cmd.sidemove as u8,
+        cmd.angleturn.to_le_bytes()[0],
+        cmd.angleturn.to_le_bytes()[1],
+    ]);
+    let button_word =
+        i32::from_le_bytes([cmd.chatchar, cmd.buttons, cmd.consistancy, cmd.buttons2]);
+    movement_word
+        .wrapping_add(button_word)
+        .wrapping_add(cmd.inventory)
 }
 
 // ---------------------------------------------------------------------------
@@ -2826,35 +2826,28 @@ mod tests {
     #[test]
     fn cmdchecksum_all_zeros_is_zero() {
         let cmd = zeroed_cmd();
-        unsafe {
-            assert_eq!(G_CmdChecksum(&cmd as *const TiccmdT), 0);
-        }
+        assert_eq!(G_CmdChecksum(&cmd), 0);
     }
 
     /// `forwardmove = 1` produces a single bit in the first 4-byte word.
     #[test]
     fn cmdchecksum_forwardmove_one() {
-        // sizeof(TiccmdT) = 16 bytes = 4 ints; loop runs for 3 ints.
-        // First int = bytes [forwardmove(i8), sidemove(i8), angleturn_lo(u8), angleturn_hi(u8)]
-        // With forwardmove=1, rest zero: first int = 0x00_00_00_01 = 1 (little-endian).
+        // First C word = bytes [forwardmove, sidemove, angleturn_lo, angleturn_hi].
+        // With forwardmove=1, rest zero: first word = 0x00_00_00_01 = 1 (little-endian).
         let mut cmd = zeroed_cmd();
         cmd.forwardmove = 1;
-        unsafe {
-            assert_eq!(G_CmdChecksum(&cmd as *const TiccmdT), 1);
-        }
+        assert_eq!(G_CmdChecksum(&cmd), 1);
     }
 
-    /// The tail-word `lookfly` / `arti` / `_pad` fields are excluded from the sum.
+    /// The tail-word `lookfly` / `arti` fields are excluded from the sum.
     #[test]
     fn cmdchecksum_excludes_last_int() {
         // G_CmdChecksum sums sizeof(ticcmd_t)/4 - 1 = 3 words (bytes 0-11).
-        // The last word (bytes 12-15: lookfly + arti + _pad) is NOT summed.
+        // The last word (bytes 12-15: lookfly + arti + padding) is NOT summed.
         let mut cmd = zeroed_cmd();
         cmd.lookfly = 0x12;
         cmd.arti = 0x34;
-        unsafe {
-            assert_eq!(G_CmdChecksum(&cmd as *const TiccmdT), 0);
-        }
+        assert_eq!(G_CmdChecksum(&cmd), 0);
     }
 
     /// `inventory` sits in word 2 and is included in the checksum.
@@ -2863,9 +2856,50 @@ mod tests {
         // inventory is at bytes 8-11 (word 2), which IS included in the sum.
         let mut cmd = zeroed_cmd();
         cmd.inventory = 1;
-        unsafe {
-            assert_eq!(G_CmdChecksum(&cmd as *const TiccmdT), 1);
-        }
+        assert_eq!(G_CmdChecksum(&cmd), 1);
+    }
+
+    /// The field-wise sum equals the C sum of raw `int` words over the
+    /// 16-byte `ticcmd_t` layout, including sign bits and wrapping.
+    #[test]
+    fn cmdchecksum_matches_c_raw_word_sum() {
+        let cmd = TiccmdT {
+            forwardmove: -50,
+            sidemove: 40,
+            angleturn: -1280,
+            chatchar: b'x',
+            buttons: 0x83,
+            consistancy: 0xfe,
+            buttons2: 0x91,
+            inventory: i32::MAX,
+            lookfly: 7,
+            arti: 9,
+        };
+        let [angleturn_low, angleturn_high] = cmd.angleturn.to_le_bytes();
+        let c_layout: [u8; 16] = {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&[
+                cmd.forwardmove as u8,
+                cmd.sidemove as u8,
+                angleturn_low,
+                angleturn_high,
+                cmd.chatchar,
+                cmd.buttons,
+                cmd.consistancy,
+                cmd.buttons2,
+            ]);
+            bytes[8..12].copy_from_slice(&cmd.inventory.to_le_bytes());
+            bytes[12] = cmd.lookfly;
+            bytes[13] = cmd.arti;
+            bytes
+        };
+        let (words, _) = c_layout.as_chunks::<4>();
+        let raw_word_sum = words
+            .iter()
+            .take(3)
+            .map(|word| i32::from_le_bytes(*word))
+            .fold(0i32, i32::wrapping_add);
+        assert_eq!(G_CmdChecksum(&cmd), raw_word_sum);
     }
 
     // --- G_ReadDemoTiccmd (non-longtics) ---

@@ -91,10 +91,6 @@ use crate::engine::{
 ///
 /// The embedded `thinker` is mapped back to its `mobj_t` through
 /// [`ThinkerContainer::from_thinker`](crate::engine::play::tick::ThinkerContainer).
-///
-/// Padding bytes (`_pad0`–`_pad4`) are the gaps C compilers insert for
-/// alignment; they keep `size_of::<mobj_t>()`, and so every zone allocation,
-/// the size of the C struct, and have no other meaning in this port.
 #[derive(Clone, Copy)]
 pub struct mobj_t {
     /// Thinker list node.
@@ -105,7 +101,6 @@ pub struct mobj_t {
     pub y: i32,
     /// Map Z position (height above the floor) in fixed-point units.
     pub z: i32,
-    _pad0: [u8; 4],
     /// Next thing in this sector's sprite-order linked list.
     pub snext: *mut mobj_t,
     /// Previous thing in this sector's sprite-order linked list.
@@ -116,7 +111,6 @@ pub struct mobj_t {
     pub sprite: i32,
     /// Current animation frame index.
     pub frame: i32,
-    _pad1: [u8; 4],
     /// Next thing in the blockmap block's linked list.
     pub bnext: *mut mobj_t,
     /// Previous thing in the blockmap block's linked list.
@@ -141,12 +135,10 @@ pub struct mobj_t {
     pub validcount: i32,
     /// Thing type index into the `mobjinfo` table (`type` in C).
     pub kind: i32,
-    _pad2: [u8; 4],
     /// Pointer to the thing's type info record.
     pub info: *mut MobjInfo,
     /// Remaining tics in the current animation frame.
     pub tics: i32,
-    _pad3: [u8; 4],
     /// Pointer to the current animation frame state.
     pub state: *mut State,
     /// Bit-field of `MF_*` flags controlling collision, rendering, AI, etc.
@@ -169,7 +161,6 @@ pub struct mobj_t {
     pub lastlook: i32,
     /// The WAD spawn point from which this thing was created.
     pub spawnpoint: mapthing_t,
-    _pad4: [u8; 2],
     /// Tracer target used by homing missiles (cyberdemon rockets, etc.).
     pub tracer: *mut mobj_t,
 }

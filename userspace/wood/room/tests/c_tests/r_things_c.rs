@@ -6,17 +6,12 @@
 //!
 //! These tests cover:
 //!   * Pre-init default values (zero / NULL before `R_InitSprites`)
-//!   * Struct layout of `spriteframe_t` (matches r_defs.h)
 //!   * Constants derived from the C source (`MINZ`, `BASEYCENTER`)
 //!   * Array sizes for `negonearray` and `screenheightarray` (= SCREENWIDTH)
 
 #![allow(non_snake_case)]
 
-use room::engine::{
-    interface::video::SCREENWIDTH,
-    math::fixed::FRACUNIT,
-    render_3d::{things, things::spriteframe_t},
-};
+use room::engine::{interface::video::SCREENWIDTH, math::fixed::FRACUNIT, render_3d::things};
 
 // ---------------------------------------------------------------------------
 // Constants derived from r_things.c / r_defs.h
@@ -35,52 +30,6 @@ fn minz_is_four_fracunits() {
 #[test]
 fn baseycenter_is_100() {
     assert_eq!(things::BASEYCENTER, 100);
-}
-
-// ---------------------------------------------------------------------------
-// spriteframe_t layout
-// ---------------------------------------------------------------------------
-
-/// The C layout of `spriteframe_t` (r_defs.h) is:
-///   boolean rotate  (int,   4 bytes)  at offset  0
-///   short   lump[8] (short[8], 16 bytes) at offset  4
-///   byte    flip[8] (u8[8],   8 bytes) at offset 20
-/// Total: 28 bytes, alignment 4.
-#[test]
-fn spriteframe_t_size_is_28() {
-    assert_eq!(std::mem::size_of::<spriteframe_t>(), 28);
-}
-
-/// `spriteframe_t` alignment is 4 (dictated by the leading `int rotate` field).
-#[test]
-fn spriteframe_t_align_is_4() {
-    assert_eq!(std::mem::align_of::<spriteframe_t>(), 4);
-}
-
-/// The `lump` field starts at offset 4 (after the 4-byte `rotate` int).
-#[test]
-fn spriteframe_t_lump_offset_is_4() {
-    let frame = spriteframe_t {
-        rotate: 0,
-        lump: [0; 8],
-        flip: [0; 8],
-    };
-    let base = &frame as *const _ as usize;
-    let lump_addr = frame.lump.as_ptr() as usize;
-    assert_eq!(lump_addr - base, 4, "lump[] should be at offset 4");
-}
-
-/// The `flip` field starts at offset 20 (= 4 + 16).
-#[test]
-fn spriteframe_t_flip_offset_is_20() {
-    let frame = spriteframe_t {
-        rotate: 0,
-        lump: [0; 8],
-        flip: [0; 8],
-    };
-    let base = &frame as *const _ as usize;
-    let flip_addr = frame.flip.as_ptr() as usize;
-    assert_eq!(flip_addr - base, 20, "flip[] should be at offset 20");
 }
 
 // ---------------------------------------------------------------------------
