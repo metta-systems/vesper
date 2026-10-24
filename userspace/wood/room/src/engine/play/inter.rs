@@ -1028,7 +1028,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
 pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
     let source = mobj_or_null(source_id);
     let target = target_id.ptr();
-    let info = (*target).info;
+    let info = (*target).info.get();
     (*target).flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
     if (*target).kind != MT_SKULL {
         (*target).flags &= !MF_NOGRAVITY;
@@ -1065,10 +1065,10 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
         }
     }
 
-    if (*target).health < -(*info).spawnhealth && (*info).xdeathstate != 0 {
-        P_SetMobjState(target_id, (*info).xdeathstate);
+    if (*target).health < -info.spawnhealth && info.xdeathstate != 0 {
+        P_SetMobjState(target_id, info.xdeathstate);
     } else {
-        P_SetMobjState(target_id, (*info).deathstate);
+        P_SetMobjState(target_id, info.deathstate);
     }
     (*target).tics -= P_Random() & 3;
     if (*target).tics < 1 {
@@ -1157,8 +1157,8 @@ pub unsafe fn P_DamageMobj(
                 .is_none_or(|source_player| source_player.read(|p| p.readyweapon) != wp_chainsaw))
     {
         let mut ang = R_PointToAngle2((*inflictor).x, (*inflictor).y, (*target).x, (*target).y);
-        let info = (*target).info;
-        let mut thrust = damage * (FRACUNIT >> 3) * 100 / (*info).mass;
+        let info = (*target).info.get();
+        let mut thrust = damage * (FRACUNIT >> 3) * 100 / info.mass;
 
         if damage < 40
             && damage > (*target).health
@@ -1228,10 +1228,10 @@ pub unsafe fn P_DamageMobj(
         return;
     }
 
-    let info = (*target).info;
-    if P_Random() < (*info).painchance && ((*target).flags & MF_SKULLFLY) == 0 {
+    let info = (*target).info.get();
+    if P_Random() < info.painchance && ((*target).flags & MF_SKULLFLY) == 0 {
         (*target).flags |= MF_JUSTHIT;
-        P_SetMobjState(target_id, (*info).painstate);
+        P_SetMobjState(target_id, info.painstate);
     }
 
     (*target).reactiontime = 0;
@@ -1243,10 +1243,8 @@ pub unsafe fn P_DamageMobj(
     {
         (*target).target = source_id;
         (*target).threshold = BASETHRESHOLD;
-        let target_state = (*target).state;
-        let spawnstate_ptr = state_ptr((*info).spawnstate as usize);
-        if std::ptr::eq(target_state, spawnstate_ptr) && (*info).seestate != S_NULL {
-            P_SetMobjState(target_id, (*info).seestate);
+        if (*target).state.number() == info.spawnstate && info.seestate != S_NULL {
+            P_SetMobjState(target_id, info.seestate);
         }
     }
 }

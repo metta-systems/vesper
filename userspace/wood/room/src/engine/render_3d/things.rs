@@ -930,7 +930,6 @@ pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
 /// If the player carries the partial-invisibility power-up at a sufficient
 /// level the weapon is drawn with `fuzzcolfunc` (shadow effect).
 /// # Safety
-/// - `psp.state` must be null or point to a valid `State`.
 /// - `sprites`, `pspritescale`, `pspriteiscale`, `spritelights`, and the
 ///   clip pointers in `masked` must all be valid for the current frame.
 /// - `R_SetupFrame` must have set `viewplayer`.
@@ -940,7 +939,7 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
         return;
     }
 
-    let state = psp.state;
+    let state = psp.state.get();
 
     let (sprites, spritelights, pspritescale, pspriteiscale) = {
         let sprite_state = SPRITES.borrow();
@@ -954,26 +953,26 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
 
     #[cfg(feature = "rangecheck")]
     {
-        let sprite = (*state).sprite;
+        let sprite = state.sprite;
         if sprite as u32 >= SPRITES.borrow().numsprites as u32 {
             i_error!("R_ProjectSprite: invalid sprite number {}", sprite);
         }
     }
 
-    let sprdef = &*sprites.add((*state).sprite as usize);
+    let sprdef = &*sprites.add(state.sprite as usize);
     #[cfg(feature = "rangecheck")]
     {
-        if ((*state).frame & FF_FRAMEMASK) >= sprdef.numframes {
+        if (state.frame & FF_FRAMEMASK) >= sprdef.numframes {
             i_error!(
                 "R_ProjectSprite [PSPRITE]: invalid sprite frame {} : {}",
-                (*state).sprite,
-                (*state).frame
+                state.sprite,
+                state.frame
             );
         }
     }
     let sprframe = &*sprdef
         .spriteframes
-        .add(((*state).frame & FF_FRAMEMASK) as usize);
+        .add((state.frame & FF_FRAMEMASK) as usize);
 
     let lump = sprframe.lump[0] as i32;
     let flip = sprframe.flip[0] as i32;
@@ -1047,7 +1046,7 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
     } else if !fixedcolormap.is_null() {
         // Fixed color.
         vis.colormap = fixedcolormap;
-    } else if (*state).frame & FF_FULLBRIGHT != 0 {
+    } else if state.frame & FF_FULLBRIGHT != 0 {
         // Full bright.
         vis.colormap = colormaps;
     } else {

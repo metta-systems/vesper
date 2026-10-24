@@ -586,9 +586,9 @@ pub struct FinaleState {
     /// Non-zero while a cast enemy is in an attack animation.
     /// C origin: `castattacking`.
     pub castattacking: i32,
-    /// Pointer to the current animation state for the cast-roll entity.
-    /// C origin: `caststate`.
-    pub caststate: *mut State,
+    /// The current animation state for the cast-roll entity (a pointer in
+    /// C). C origin: `caststate`.
+    pub caststate: StateNum,
     /// Current stage of the finale sequence.
     ///
     /// Drives the dispatch in [`F_Ticker`] and [`F_Drawer`].
@@ -618,7 +618,7 @@ impl FinaleState {
             castframes: 0,
             castonmelee: 0,
             castattacking: 0,
-            caststate: ptr::null_mut(),
+            caststate: StateNum::NULL,
             stage: FinaleStage::Text,
             count: 0,
             last_stage: 0,
@@ -637,20 +637,11 @@ pub static FINALE: Global<FinaleState> = Global::new(FinaleState::new());
 
 /// The `mobjinfo` entry of the cast-roll enemy at `castnum`.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `castnum` must index `CASTORDER`.
-unsafe fn cast_info(castnum: i32) -> &'static MobjInfo {
-    &*crate::engine::play::info::mobjinfo_ptr(CASTORDER[castnum as usize].kind as usize)
-}
-
-/// The `states` entry `state`.
-///
-/// # Safety
-///
-/// `state` must index `states`.
-unsafe fn state_ptr(state: i32) -> *mut State {
-    crate::engine::play::info::state_ptr(state as usize)
+/// If `castnum` does not index `CASTORDER`.
+fn cast_info(castnum: i32) -> MobjInfo {
+    MobjType::new(CASTORDER[castnum as usize].kind).get()
 }
 
 // ---------------------------------------------------------------------------
@@ -868,21 +859,19 @@ pub fn F_TextWrite() {
 /// Called by [`F_Ticker`] when the player presses fire on map 30.
 /// C origin: `F_StartCast` in f_finale.c.
 pub fn F_StartCast() {
-    unsafe {
-        DOOM_MAIN.borrow_mut().wipegamestate = -1;
-        {
-            let mut finale = FINALE.borrow_mut();
-            finale.castnum = 0;
-            finale.caststate = state_ptr(cast_info(0).seestate);
-            finale.casttics = (*finale.caststate).tics;
-            finale.castdeath = 0;
-            finale.stage = FinaleStage::Cast;
-            finale.castframes = 0;
-            finale.castonmelee = 0;
-            finale.castattacking = 0;
-        }
-        S_ChangeMusic(Mus::Evil as i32, 1);
+    DOOM_MAIN.borrow_mut().wipegamestate = -1;
+    {
+        let mut finale = FINALE.borrow_mut();
+        finale.castnum = 0;
+        finale.caststate = StateNum::new(cast_info(0).seestate);
+        finale.casttics = finale.caststate.get().tics;
+        finale.castdeath = 0;
+        finale.stage = FinaleStage::Cast;
+        finale.castframes = 0;
+        finale.castonmelee = 0;
+        finale.castattacking = 0;
     }
+    S_ChangeMusic(Mus::Evil as i32, 1);
 }
 
 /// Advance the cast-roll animation by one game tick.
@@ -898,100 +887,99 @@ pub fn F_StartCast() {
 /// Called by [`F_Ticker`] each game tick while in the Cast stage.
 /// C origin: `F_CastTicker` in f_finale.c.
 pub fn F_CastTicker() {
-    unsafe {
-        let mut finale = FINALE.borrow_mut();
-        finale.casttics -= 1;
-        if finale.casttics > 0 {
+    let mut finale = FINALE.borrow_mut();
+    finale.casttics -= 1;
+    if finale.casttics > 0 {
+        return;
+    }
+
+    let cast_state = finale.caststate.get();
+    if cast_state.tics == -1 || cast_state.nextstate == S_NULL {
+        // switch from deathstate to next monster
+        finale.castnum += 1;
+        finale.castdeath = 0;
+        if CASTORDER[finale.castnum as usize].name.is_empty() {
+            finale.castnum = 0;
+        }
+        let info = cast_info(finale.castnum);
+        if info.seesound != Sfx::None {
+            drop(finale);
+            S_StartNonPositionalSound(info.seesound as i32);
+            finale = FINALE.borrow_mut();
+        }
+        finale.caststate = StateNum::new(info.seestate);
+        finale.castframes = 0;
+    } else {
+        // just advance to next state in animation
+        if finale.caststate.number() == S_PLAY_ATK1 {
+            // Oh, gross hack! Jump to stopattack logic below
+            goto_stopattack(&mut finale);
             return;
         }
+        let st = cast_state.nextstate;
+        finale.caststate = StateNum::new(st);
+        finale.castframes += 1;
 
-        if (*finale.caststate).tics == -1 || (*finale.caststate).nextstate == S_NULL {
-            // switch from deathstate to next monster
-            finale.castnum += 1;
-            finale.castdeath = 0;
-            if CASTORDER[finale.castnum as usize].name.is_empty() {
-                finale.castnum = 0;
-            }
-            let info = cast_info(finale.castnum);
-            if info.seesound != Sfx::None {
-                drop(finale);
-                S_StartNonPositionalSound(info.seesound as i32);
-                finale = FINALE.borrow_mut();
-            }
-            finale.caststate = state_ptr(info.seestate);
-            finale.castframes = 0;
-        } else {
-            // just advance to next state in animation
-            if finale.caststate == state_ptr(S_PLAY_ATK1) {
-                // Oh, gross hack! Jump to stopattack logic below
-                goto_stopattack(&mut finale);
-                return;
-            }
-            let st = (*finale.caststate).nextstate;
-            finale.caststate = state_ptr(st);
-            finale.castframes += 1;
+        let sfx = match st {
+            S_PLAY_ATK1 => Sfx::Dshtgn as i32,
+            S_POSS_ATK2 => Sfx::Pistol as i32,
+            S_SPOS_ATK2 => Sfx::Shotgn as i32,
+            S_VILE_ATK2 => Sfx::Vilatk as i32,
+            S_SKEL_FIST2 => Sfx::Skeswg as i32,
+            S_SKEL_FIST4 => Sfx::Skepch as i32,
+            S_SKEL_MISS2 => Sfx::Skeatk as i32,
+            S_FATT_ATK8 | S_FATT_ATK5 | S_FATT_ATK2 => Sfx::Firsht as i32,
+            S_CPOS_ATK2 | S_CPOS_ATK3 | S_CPOS_ATK4 => Sfx::Shotgn as i32,
+            S_TROO_ATK3 => Sfx::Claw as i32,
+            S_SARG_ATK2 => Sfx::Sgtatk as i32,
+            S_BOSS_ATK2 | S_BOS2_ATK2 | S_HEAD_ATK2 => Sfx::Firsht as i32,
+            S_SKULL_ATK2 => Sfx::Sklatk as i32,
+            S_SPID_ATK2 | S_SPID_ATK3 => Sfx::Shotgn as i32,
+            S_BSPI_ATK2 => Sfx::Plasma as i32,
+            S_CYBER_ATK2 | S_CYBER_ATK4 | S_CYBER_ATK6 => Sfx::Rlaunc as i32,
+            S_PAIN_ATK3 => Sfx::Sklatk as i32,
+            _ => 0,
+        };
 
-            let sfx = match st {
-                S_PLAY_ATK1 => Sfx::Dshtgn as i32,
-                S_POSS_ATK2 => Sfx::Pistol as i32,
-                S_SPOS_ATK2 => Sfx::Shotgn as i32,
-                S_VILE_ATK2 => Sfx::Vilatk as i32,
-                S_SKEL_FIST2 => Sfx::Skeswg as i32,
-                S_SKEL_FIST4 => Sfx::Skepch as i32,
-                S_SKEL_MISS2 => Sfx::Skeatk as i32,
-                S_FATT_ATK8 | S_FATT_ATK5 | S_FATT_ATK2 => Sfx::Firsht as i32,
-                S_CPOS_ATK2 | S_CPOS_ATK3 | S_CPOS_ATK4 => Sfx::Shotgn as i32,
-                S_TROO_ATK3 => Sfx::Claw as i32,
-                S_SARG_ATK2 => Sfx::Sgtatk as i32,
-                S_BOSS_ATK2 | S_BOS2_ATK2 | S_HEAD_ATK2 => Sfx::Firsht as i32,
-                S_SKULL_ATK2 => Sfx::Sklatk as i32,
-                S_SPID_ATK2 | S_SPID_ATK3 => Sfx::Shotgn as i32,
-                S_BSPI_ATK2 => Sfx::Plasma as i32,
-                S_CYBER_ATK2 | S_CYBER_ATK4 | S_CYBER_ATK6 => Sfx::Rlaunc as i32,
-                S_PAIN_ATK3 => Sfx::Sklatk as i32,
-                _ => 0,
-            };
-
-            if sfx != 0 {
-                drop(finale);
-                S_StartNonPositionalSound(sfx);
-                finale = FINALE.borrow_mut();
-            }
+        if sfx != 0 {
+            drop(finale);
+            S_StartNonPositionalSound(sfx);
+            finale = FINALE.borrow_mut();
         }
+    }
 
-        if finale.castframes == 12 {
-            finale.castattacking = 1;
-            let info = cast_info(finale.castnum);
-            let st = if finale.castonmelee != 0 {
+    if finale.castframes == 12 {
+        finale.castattacking = 1;
+        let info = cast_info(finale.castnum);
+        let st = if finale.castonmelee != 0 {
+            info.meleestate
+        } else {
+            info.missilestate
+        };
+        finale.castonmelee ^= 1;
+        finale.caststate = StateNum::new(st);
+        if finale.caststate.is_null() {
+            let st2 = if finale.castonmelee != 0 {
                 info.meleestate
             } else {
                 info.missilestate
             };
-            finale.castonmelee ^= 1;
-            finale.caststate = state_ptr(st);
-            if finale.caststate == state_ptr(S_NULL) {
-                let st2 = if finale.castonmelee != 0 {
-                    info.meleestate
-                } else {
-                    info.missilestate
-                };
-                finale.caststate = state_ptr(st2);
-            }
+            finale.caststate = StateNum::new(st2);
         }
+    }
 
-        if finale.castattacking != 0
-            && (finale.castframes == 24
-                || finale.caststate == state_ptr(cast_info(finale.castnum).seestate))
-        {
-            finale.castattacking = 0;
-            finale.castframes = 0;
-            finale.caststate = state_ptr(cast_info(finale.castnum).seestate);
-        }
+    if finale.castattacking != 0
+        && (finale.castframes == 24
+            || finale.caststate.number() == cast_info(finale.castnum).seestate)
+    {
+        finale.castattacking = 0;
+        finale.castframes = 0;
+        finale.caststate = StateNum::new(cast_info(finale.castnum).seestate);
+    }
 
-        finale.casttics = (*finale.caststate).tics;
-        if finale.casttics == -1 {
-            finale.casttics = 15;
-        }
+    finale.casttics = finale.caststate.get().tics;
+    if finale.casttics == -1 {
+        finale.casttics = 15;
     }
 }
 
@@ -1003,16 +991,11 @@ pub fn F_CastTicker() {
 /// looping state with no fixed duration), defaults to 15 ticks.
 ///
 /// C origin: the `stopattack:` label inside `F_CastTicker` in f_finale.c.
-///
-/// # Safety
-///
-/// The cast fields (`caststate`, `castnum`, etc.) must be in a consistent
-/// state, as established by [`F_StartCast`].
-unsafe fn goto_stopattack(finale: &mut FinaleState) {
+fn goto_stopattack(finale: &mut FinaleState) {
     finale.castattacking = 0;
     finale.castframes = 0;
-    finale.caststate = state_ptr(cast_info(finale.castnum).seestate);
-    finale.casttics = (*finale.caststate).tics;
+    finale.caststate = StateNum::new(cast_info(finale.castnum).seestate);
+    finale.casttics = finale.caststate.get().tics;
     if finale.casttics == -1 {
         finale.casttics = 15;
     }
@@ -1042,8 +1025,8 @@ pub unsafe fn F_CastResponder(ev: *mut event_t) -> i32 {
             }
             finale.castdeath = 1;
             let info = cast_info(finale.castnum);
-            finale.caststate = state_ptr(info.deathstate);
-            finale.casttics = (*finale.caststate).tics;
+            finale.caststate = StateNum::new(info.deathstate);
+            finale.casttics = finale.caststate.get().tics;
             finale.castframes = 0;
             finale.castattacking = 0;
             info
@@ -1108,14 +1091,14 @@ pub fn F_CastDrawer() {
         V_DrawPatch(0, 0, cache_patch_name(DEH_String(b"BOSSBACK"), PU_CACHE));
         let (castnum, caststate) = {
             let finale = FINALE.borrow();
-            (finale.castnum, finale.caststate)
+            (finale.castnum, finale.caststate.get())
         };
         F_CastPrint(DEH_String(CASTORDER[castnum as usize].name));
 
-        let sprdef = &*SPRITES.borrow().sprites.add((*caststate).sprite as usize);
+        let sprdef = &*SPRITES.borrow().sprites.add(caststate.sprite as usize);
         let sprframe = &*sprdef
             .spriteframes
-            .add(((*caststate).frame & FF_FRAMEMASK) as usize);
+            .add((caststate.frame & FF_FRAMEMASK) as usize);
         let lump = sprframe.lump[0] as i32;
         let flip = sprframe.flip[0] as i32;
 

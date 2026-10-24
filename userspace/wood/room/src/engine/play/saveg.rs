@@ -68,7 +68,7 @@ use crate::engine::{
         ceilng::{CEILINGS, MAXCEILINGS, P_AddActiveCeiling, T_MoveCeiling, ceiling_t},
         doors::{T_VerticalDoor, vldoor_t},
         floor::{T_MoveFloor, floormove_t},
-        info::{MobjInfo, NUMSTATES, State, mobjinfo_ptr, state_ptr},
+        info::{MOBJINFO, MobjType, NUMSTATES, StateNum},
         lights::{
             T_FireFlicker, T_Glow, T_LightFlash, T_StrobeFlash, glow_t, lightflash_t, strobe_t,
         },
@@ -124,6 +124,9 @@ pub struct SaveGameState {
     /// read (`None` for a slot it did not read), kept until
     /// [`P_UnArchiveThinkers`] has recreated the map objects it refers to.
     saved_attackers: [Option<u32>; MAXPLAYERS],
+    /// Stream positions of the 32-bit words written as addresses (see
+    /// [`saveg_write_address`]), recorded while a save is archived.
+    address_words: Vec<usize>,
 }
 
 impl SaveGameState {
@@ -134,8 +137,21 @@ impl SaveGameState {
             savegamelength: 0,
             savegame_error: 0,
             saved_attackers: [None; MAXPLAYERS],
+            address_words: Vec::new(),
         }
     }
+}
+
+/// A save game archived in memory by [`archive_save_game`].
+pub struct ArchivedSaveGame {
+    /// The bytes of the save file.
+    pub bytes: Vec<u8>,
+    /// Offsets in `bytes` of the 32-bit words written as addresses, as C
+    /// writes its pointers: the thinker function slots and each map object's
+    /// `subsector` and `info`. Their values change from run to run (address
+    /// space layout, build); the loader ignores them, except that it tests a
+    /// function slot against `0`.
+    pub address_words: Vec<usize>,
 }
 
 impl Default for SaveGameState {
@@ -233,6 +249,17 @@ fn saveg_write32(value: u32) {
     saveg_write8(((value >> 24) & 0xff) as u8);
 }
 
+/// Writes `address`, a pointer truncated to 32 bits, and records its stream
+/// position in [`ArchivedSaveGame::address_words`].
+fn saveg_write_address(address: u32) {
+    {
+        let mut saveg = SAVEG.borrow_mut();
+        let position = saveg.save_stream.position() as usize;
+        saveg.address_words.push(position);
+    }
+    saveg_write32(address);
+}
+
 /// Reads and discards padding bytes to align the stream to the next 4-byte
 /// boundary.
 ///
@@ -292,31 +319,25 @@ fn saveg_read_sector_ptr(index: u32) -> SectorId {
     SectorId::new(index as usize)
 }
 
-/// Serializes a `State` pointer as a zero-based index into the `states`
-/// table.
-///
-/// Returns `0` for a null pointer. The C equivalent computes `state - states`;
-/// this compares addresses.
-fn saveg_write_state_ptr(state: *const State) -> u32 {
-    if state.is_null() {
-        0
-    } else {
-        ((state.addr() - state_ptr(0).addr()) / size_of::<State>()) as u32
-    }
+/// Serializes a state as its zero-based index into the `states` table (C
+/// `state - states`, or `0` for a null pointer, which [`StateNum::NULL`]
+/// stands for).
+fn saveg_write_state_ptr(state: StateNum) -> u32 {
+    state.number() as u32
 }
 
-/// Deserializes a state index into a `*mut State`.
+/// Deserializes a state index.
 ///
 /// If `index >= NUMSTATES`, sets `savegame_error = 1` and clamps to
 /// `states[0]` rather than accessing out-of-bounds memory. The C version
 /// performs no such guard (`&states[saveg_read32()]` would silently
 /// out-of-bounds).
-fn saveg_read_state_ptr(index: u32) -> *mut State {
+fn saveg_read_state_ptr(index: u32) -> StateNum {
     if index as usize >= NUMSTATES {
         SAVEG.borrow_mut().savegame_error = 1;
-        return state_ptr(0);
+        return StateNum::NULL;
     }
-    state_ptr(index as usize)
+    StateNum::new(index as i32)
 }
 
 /// Serializes a player slot reference as a 1-based player index.
@@ -438,7 +459,7 @@ fn saveg_read_thinker_t(th: &mut thinker_t, kind_if_function_set: ThinkerKind) {
 fn saveg_write_thinker_t(th: &thinker_t) {
     saveg_write32(0);
     saveg_write32(0);
-    saveg_write32(saved_function_word(th.kind));
+    saveg_write_address(saved_function_word(th.kind));
 }
 
 /// The map object `thinker` is, if [`P_ArchiveThinkers`] saves it: a listed
@@ -530,7 +551,8 @@ unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)
 /// - `state` is resolved from a stream index via `saveg_read_state_ptr`.
 /// - `player` is a 1-based index; re-resolved and the back-reference
 ///   `player->mo` is set to `mobj_id`.
-/// - `info` is a raw saved pointer (will be overwritten by caller with
+/// - `info` is saved as an address; it is skipped, and the caller sets it
+///   from `type` (C reads the address, then the caller overwrites it with
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
 unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
@@ -582,8 +604,8 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
     // type
     (*mo).kind = saveg_read_enum() as i32;
 
-    // info (raw pointer)
-    (*mo).info = saveg_read32() as *mut MobjInfo;
+    // info (a saved address, rebuilt by the caller from `type`)
+    saveg_read32();
 
     // tics
     (*mo).tics = saveg_read32() as i32;
@@ -665,7 +687,7 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
 
     // subsector (C writes the pointer: the subsector record's address)
     let subsector_address = (&raw const LEVEL.borrow().subsectors[(*mo).subsector]).addr();
-    saveg_write32(subsector_address as u32);
+    saveg_write_address(subsector_address as u32);
 
     // floorz, ceilingz, radius, height
     saveg_write32((*mo).floorz as u32);
@@ -684,19 +706,15 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
     // type
     saveg_write_enum((*mo).kind as u32);
 
-    // info
-    saveg_write32((*mo).info as u32);
+    // info (C writes the pointer: the mobjinfo entry's address)
+    let info_address = (&raw const MOBJINFO.borrow()[(*mo).info]).addr();
+    saveg_write_address(info_address as u32);
 
     // tics
     saveg_write32((*mo).tics as u32);
 
     // state (index)
-    let state = (*mo).state;
-    if state.is_null() {
-        saveg_write32(0);
-    } else {
-        saveg_write32(saveg_write_state_ptr(state));
-    }
+    saveg_write32(saveg_write_state_ptr((*mo).state));
 
     // flags
     saveg_write32((*mo).flags as u32);
@@ -769,20 +787,12 @@ unsafe fn saveg_write_ticcmd_t(cmd: *const TiccmdT) {
 
 /// Reads a `pspdef_t` (player sprite definition) from the save stream.
 ///
-/// The `state` field uses a 1-based convention for psprites: index `0` maps
-/// to NULL (weapon not active), while any positive index maps to
-/// `states[index]`. This differs from `mobj_t` state handling where index `0`
-/// refers to `states[0]`.
+/// The `state` index `0` loads as [`StateNum::NULL`], the weapon not active
+/// (C guards it to load NULL rather than `&states[0]`, unlike `mobj_t`;
+/// here `S_NULL` stands for both).
 /// C origin: `saveg_read_pspdef_t`.
-unsafe fn saveg_read_pspdef_t(psp: *mut PspdefT) {
-    let s = &mut *psp;
-    let state_idx = saveg_read32();
-    // C guards state == 0 → NULL for pspdef (unlike mobj which always indexes states[]).
-    s.state = if state_idx == 0 {
-        std::ptr::null_mut()
-    } else {
-        saveg_read_state_ptr(state_idx)
-    };
+fn saveg_read_pspdef_t(s: &mut PspdefT) {
+    s.state = saveg_read_state_ptr(saveg_read32());
     s.tics = saveg_read32() as i32;
     s.sx = saveg_read32() as i32;
     s.sy = saveg_read32() as i32;
@@ -793,13 +803,8 @@ unsafe fn saveg_read_pspdef_t(psp: *mut PspdefT) {
 /// Writes the state index (`state - states`) or `0` for NULL, followed by
 /// `tics`, `sx` (fixed-point screen x offset), and `sy` (fixed-point screen y
 /// offset). C origin: `saveg_write_pspdef_t`.
-unsafe fn saveg_write_pspdef_t(psp: *const PspdefT) {
-    let s = &*psp;
-    if s.state.is_null() {
-        saveg_write32(0);
-    } else {
-        saveg_write32(saveg_write_state_ptr(s.state));
-    }
+fn saveg_write_pspdef_t(s: &PspdefT) {
+    saveg_write32(saveg_write_state_ptr(s.state));
     saveg_write32(s.tics as u32);
     saveg_write32(s.sx as u32);
     saveg_write32(s.sy as u32);
@@ -1449,6 +1454,40 @@ pub unsafe fn P_WriteSaveGameEOF() {
     saveg_write8(SAVEGAME_EOF);
 }
 
+/// Archives the game in progress into memory under `description`: the
+/// header, players, world, thinkers, specials and end marker that
+/// `G_DoSaveGame` writes to the save file (C writes them to the file
+/// directly).
+///
+/// `savegame_error` is cleared first and set by a failed write; the save
+/// stream is left empty.
+///
+/// # Safety
+///
+/// A level must be loaded, with every listed thinker belonging to it (see
+/// [`P_ArchiveThinkers`] and [`P_ArchiveSpecials`]).
+pub unsafe fn archive_save_game(description: &[u8]) -> ArchivedSaveGame {
+    {
+        let mut saveg = SAVEG.borrow_mut();
+        saveg.save_stream = Cursor::default();
+        saveg.savegame_error = 0;
+        saveg.address_words.clear();
+    }
+
+    P_WriteSaveGameHeader(description);
+    P_ArchivePlayers();
+    P_ArchiveWorld();
+    P_ArchiveThinkers();
+    P_ArchiveSpecials();
+    P_WriteSaveGameEOF();
+
+    let mut saveg = SAVEG.borrow_mut();
+    ArchivedSaveGame {
+        bytes: std::mem::take(&mut saveg.save_stream).into_inner(),
+        address_words: std::mem::take(&mut saveg.address_words),
+    }
+}
+
 use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 
 // ---------------------------------------------------------------------------
@@ -1722,7 +1761,7 @@ pub unsafe fn P_UnArchiveThinkers() {
                 P_SetThingPosition(mobj_id);
 
                 // rebuild info from mobjinfo
-                (*mo).info = mobjinfo_ptr((*mo).kind as usize);
+                (*mo).info = MobjType::new((*mo).kind);
 
                 // rebuild floorz/ceilingz from subsector
                 {
@@ -2131,15 +2170,19 @@ mod tests {
     }
 
     /// The thinker header keeps C's layout: two zero link words, then the
-    /// function word.
+    /// function word, which is recorded as an address word.
     #[test]
     fn saveg_write_thinker_t_writes_zero_links_and_the_function_word() {
         let _g = LOCK.lock().unwrap();
         with_mem_stream(&mut [], || {
+            saveg_write8(tc_mobj);
+            saveg_write_pad();
             saveg_write_thinker_t(&thinker_t {
                 kind: ThinkerKind::None,
             });
-            assert_eq!(SAVEG.borrow().save_stream.get_ref(), &[0u8; 12]);
+            let saveg = SAVEG.borrow();
+            assert_eq!(saveg.save_stream.get_ref()[4..], [0u8; 12]);
+            assert_eq!(saveg.address_words, [12]);
         });
     }
 
@@ -2420,9 +2463,10 @@ mod tests {
     /// and round-trip through the read helpers.
     #[test]
     fn pointer_indices_round_trip() {
-        assert_eq!(saveg_write_state_ptr(std::ptr::null()), 0);
-        assert_eq!(saveg_write_state_ptr(state_ptr(5)), 5);
-        assert_eq!(saveg_read_state_ptr(5), state_ptr(5));
+        assert_eq!(saveg_write_state_ptr(StateNum::NULL), 0);
+        assert_eq!(saveg_write_state_ptr(StateNum::new(5)), 5);
+        assert_eq!(saveg_read_state_ptr(5), StateNum::new(5));
+        assert_eq!(saveg_read_state_ptr(0), StateNum::NULL);
 
         assert_eq!(saveg_write_player_index(None), 0);
         assert_eq!(saveg_write_player_index(Some(PlayerId::new(0))), 1);

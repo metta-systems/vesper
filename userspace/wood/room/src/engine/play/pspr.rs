@@ -161,21 +161,22 @@ pub unsafe fn P_SetPsprite(player_id: PlayerId, position: i32, stnum: i32) {
     let mut stnum = stnum;
     loop {
         if stnum == 0 {
-            (*psp).state = std::ptr::null_mut();
+            (*psp).state = StateNum::NULL;
             break;
         }
 
-        let state = state_ptr(stnum as usize);
-        (*psp).state = state;
-        (*psp).tics = (*state).tics;
+        let state_num = StateNum::new(stnum);
+        let state = state_num.get();
+        (*psp).state = state_num;
+        (*psp).tics = state.tics;
 
-        if (*state).misc1 != 0 {
-            (*psp).sx = (*state).misc1 << FRACBITS;
-            (*psp).sy = (*state).misc2 << FRACBITS;
+        if state.misc1 != 0 {
+            (*psp).sx = state.misc1 << FRACBITS;
+            (*psp).sy = state.misc2 << FRACBITS;
         }
 
         // Call action routine.
-        match (*state).action {
+        match state.action {
             StateAction::None => {}
             StateAction::Weapon(action) => {
                 action(player_id, psp);
@@ -189,7 +190,7 @@ pub unsafe fn P_SetPsprite(player_id: PlayerId, position: i32, stnum: i32) {
         }
 
         // Read nextstate from psp->state (action may have changed it).
-        stnum = (*(*psp).state).nextstate;
+        stnum = (*psp).state.get().nextstate;
 
         if (*psp).tics != 0 {
             break;
@@ -357,15 +358,12 @@ pub unsafe fn A_WeaponReady(player_id: PlayerId, psp: *mut PspdefT) {
     let mo = mo_id.ptr();
 
     // Get out of attack state.
-    let mobj_state = (*mo).state;
-    if std::ptr::eq(mobj_state, state_ptr(S_PLAY_ATK1 as usize))
-        || std::ptr::eq(mobj_state, state_ptr(S_PLAY_ATK2 as usize))
-    {
+    let mobj_state = (*mo).state.number();
+    if mobj_state == S_PLAY_ATK1 || mobj_state == S_PLAY_ATK2 {
         P_SetMobjState(mo_id, S_PLAY);
     }
 
-    if (*player).readyweapon == wp_chainsaw && std::ptr::eq((*psp).state, state_ptr(S_SAW as usize))
-    {
+    if (*player).readyweapon == wp_chainsaw && (*psp).state.number() == S_SAW {
         S_StartSound(mo_id, Sfx::Sawidl as i32);
     }
 
@@ -786,11 +784,8 @@ pub unsafe fn A_FireCGun(player: PlayerId, psp: *mut PspdefT) {
     DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
 
     let flashstate = weaponinfo[ready_weapon(player)].flashstate;
-    let state_offset = (*psp)
-        .state
-        .cast::<State>()
-        .offset_from(state_ptr(S_CHAIN1 as usize));
-    P_SetPsprite(player, 1, flashstate + state_offset as i32);
+    let state_offset = (*psp).state.number() - S_CHAIN1;
+    P_SetPsprite(player, 1, flashstate + state_offset);
 
     P_BulletSlope(mo);
     P_GunShot(mo, (player.read(|player| player.refire) == 0) as i32);
@@ -872,7 +867,7 @@ pub unsafe fn A_BFGsound(player: PlayerId, _psp: *mut PspdefT) {
 pub unsafe fn P_SetupPsprites(player: PlayerId) {
     player.write(|player| {
         for psprite in &mut player.psprites {
-            psprite.state = std::ptr::null_mut();
+            psprite.state = StateNum::NULL;
         }
 
         player.pendingweapon = player.readyweapon;
@@ -898,7 +893,7 @@ pub unsafe fn P_MovePsprites(player_id: PlayerId) {
             if (*psp).tics != -1 {
                 (*psp).tics -= 1;
                 if (*psp).tics == 0 {
-                    P_SetPsprite(player_id, i as i32, (*state).nextstate);
+                    P_SetPsprite(player_id, i as i32, state.get().nextstate);
                 }
             }
         }

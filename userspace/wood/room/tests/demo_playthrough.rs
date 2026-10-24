@@ -4,9 +4,13 @@
 //! captures snapshots of player / RNG / game state at checkpoint tics,
 //! and compares them against a frozen baseline.
 //!
+//! At tic [`GOLDEN_SAVE_TIC`] it also archives a save game in memory and
+//! compares its bytes with the golden save [`GOLDEN_SAVE_PATH`].
+//!
 //! Usage:
-//!   cargo test --test demo_playthrough        — compare vs BASELINE
+//!   cargo test --test demo_playthrough        — compare vs BASELINE and the golden save
 //!   BLESS=1 cargo test --test demo_playthrough — print new BASELINE to stdout
+//!   BLESS_SAVE=1 cargo test --test demo_playthrough — rewrite the golden save
 
 #![allow(non_snake_case, non_upper_case_globals)]
 
@@ -679,6 +683,78 @@ fn capture_snapshot(tic: usize) -> Snapshot {
 }
 
 // ---------------------------------------------------------------------------
+// Golden save
+// ---------------------------------------------------------------------------
+//
+// The save game archived at GOLDEN_SAVE_TIC must match the golden file byte
+// for byte, except for the words the engine writes as addresses (thinker
+// function slots, map object `subsector` and `info`, as C writes its
+// pointers): those change with the address space layout and the build, so
+// each nonzero one is replaced by ADDRESS_WORD_MARKER before comparing. A
+// zero one stays zero, since the loader tells a ceiling or platform in
+// stasis by its null function slot. Capturing mid-run also checks that
+// saving does not disturb the simulation: the later checkpoints still have
+// to match.
+
+const GOLDEN_SAVE_TIC: usize = 3000;
+const GOLDEN_SAVE_PATH: &str = "tests/golden/demo_tic3000.dsg";
+const ADDRESS_WORD_MARKER: u32 = 0xADD0_ADD0;
+
+/// The save game of the running demo, with its address words masked.
+fn masked_save_game() -> Vec<u8> {
+    let save = unsafe { room::engine::play::saveg::archive_save_game(b"golden save") };
+    let mut bytes = save.bytes;
+    for offset in save.address_words {
+        let word = &mut bytes[offset..offset + 4];
+        if word != [0; 4] {
+            word.copy_from_slice(&ADDRESS_WORD_MARKER.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// Compares the save game with the golden save, or rewrites the golden save
+/// with `BLESS_SAVE=1`.
+fn check_golden_save() {
+    let golden_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(GOLDEN_SAVE_PATH);
+    let actual = masked_save_game();
+
+    if std::env::var("BLESS_SAVE").is_ok() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+        panic!(
+            "BLESS_SAVE mode: wrote {} ({} bytes), re-run without BLESS_SAVE=1",
+            golden_path.display(),
+            actual.len()
+        );
+    }
+
+    let golden = std::fs::read(&golden_path).unwrap_or_else(|error| {
+        panic!(
+            "cannot read the golden save {}: {error}",
+            golden_path.display()
+        )
+    });
+    if actual != golden {
+        let actual_path = std::env::temp_dir().join("demo_golden_save.actual.dsg");
+        let _ = std::fs::write(&actual_path, &actual);
+        let first_difference = actual
+            .iter()
+            .zip(&golden)
+            .position(|(actual_byte, golden_byte)| actual_byte != golden_byte)
+            .unwrap_or(actual.len().min(golden.len()));
+        panic!(
+            "save game at tic {GOLDEN_SAVE_TIC} differs from {} at byte {first_difference} \
+             (got {} bytes, golden {} bytes); masked actual save written to {}",
+            golden_path.display(),
+            actual.len(),
+            golden.len(),
+            actual_path.display()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // WAD discovery
 // ---------------------------------------------------------------------------
 
@@ -846,6 +922,10 @@ fn demo_playthrough() {
                 validate_snapshot(checkpoint_idx, &snap, &BASELINE[checkpoint_idx]);
             }
             snapshots.push(snap);
+        }
+
+        if tic + 1 == GOLDEN_SAVE_TIC {
+            check_golden_save();
         }
     }
 

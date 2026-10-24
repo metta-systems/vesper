@@ -5,10 +5,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::{engine::sound::info::Sfx, i_error},
-    std::ptr,
-};
+use crate::{engine::sound::info::Sfx, i_error};
 
 use crate::engine::{
     arena::Handle,
@@ -157,12 +154,13 @@ pub struct mobj_t {
     pub validcount: i32,
     /// Thing type index into the `mobjinfo` table (`type` in C).
     pub kind: i32,
-    /// Pointer to the thing's type info record.
-    pub info: *mut MobjInfo,
+    /// The thing's type info record in [`MOBJINFO`] (a pointer in C).
+    pub info: MobjType,
     /// Remaining tics in the current animation frame.
     pub tics: i32,
-    /// Pointer to the current animation frame state.
-    pub state: *mut State,
+    /// The current animation frame state in [`STATES`] (a pointer in C);
+    /// [`StateNum::NULL`] once `P_SetMobjState` has removed the thing.
+    pub state: StateNum,
     /// Bit-field of `MF_*` flags controlling collision, rendering, AI, etc.
     pub flags: i32,
     /// Current hit points.
@@ -246,23 +244,24 @@ pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
     let mut state = state;
     loop {
         if state == S_NULL {
-            mobj.state = ptr::null_mut();
+            mobj.state = StateNum::NULL;
             P_RemoveMobj(mobj_id);
             return 0;
         }
-        let st = state_ptr(state as usize);
-        mobj.state = st;
-        mobj.tics = (*st).tics;
-        mobj.sprite = (*st).sprite;
-        mobj.frame = (*st).frame;
-        match (*st).action {
+        let state_num = StateNum::new(state);
+        let st = state_num.get();
+        mobj.state = state_num;
+        mobj.tics = st.tics;
+        mobj.sprite = st.sprite;
+        mobj.frame = st.frame;
+        match st.action {
             StateAction::None => {}
             StateAction::Mobj(action) => action(mobj_id),
             StateAction::Weapon(_) => {
                 unreachable!("P_SetMobjState: state {state} has a weapon action")
             }
         }
-        state = (*st).nextstate;
+        state = st.nextstate;
         if mobj.tics != 0 {
             break;
         }
@@ -279,18 +278,18 @@ pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
 /// `mo_id` must name a map object of the loaded level with `MF_MISSILE` set.
 pub unsafe fn P_ExplodeMissile(mo_id: MobjId) {
     let mo = &mut *mo_id.ptr();
-    let info = mo.info;
+    let info = mo.info.get();
     mo.momx = 0;
     mo.momy = 0;
     mo.momz = 0;
-    P_SetMobjState(mo_id, (*info).deathstate);
+    P_SetMobjState(mo_id, info.deathstate);
     mo.tics -= P_Random() & 3;
     if mo.tics < 1 {
         mo.tics = 1;
     }
     mo.flags &= !MF_MISSILE;
-    if (*info).deathsound != Sfx::None {
-        S_StartSound(mo_id, (*info).deathsound as i32);
+    if info.deathsound != Sfx::None {
+        S_StartSound(mo_id, info.deathsound as i32);
     }
 }
 
@@ -311,12 +310,11 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
 
     if mo.momx == 0 && mo.momy == 0 {
         if mo.flags & MF_SKULLFLY != 0 {
-            let info = mo.info;
             mo.flags &= !MF_SKULLFLY;
             mo.momx = 0;
             mo.momy = 0;
             mo.momz = 0;
-            P_SetMobjState(mo_id, (*info).spawnstate);
+            P_SetMobjState(mo_id, mo.info.get().spawnstate);
         }
         return;
     }
@@ -401,11 +399,7 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
         && player_input.is_none_or(|(cmd, _)| cmd.forwardmove == 0 && cmd.sidemove == 0)
     {
         if player.is_some() {
-            let mobj_state = mo.state;
-            let states_ptr = state_ptr(0) as *const State;
-            let state_idx =
-                (mobj_state as usize - states_ptr as usize) / std::mem::size_of::<State>();
-            let run_offset = state_idx as i32 - S_PLAY_RUN1;
+            let run_offset = mo.state.number() - S_PLAY_RUN1;
             if (0..4).contains(&run_offset) {
                 P_SetMobjState(mo_id, S_PLAY);
             }
@@ -532,8 +526,7 @@ pub unsafe fn P_NightmareRespawn(mobj_id: MobjId) {
     S_StartSound(fog, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
-    let info = mobj.info;
-    let z = if (*info).flags & MF_SPAWNCEILING != 0 {
+    let z = if mobj.info.get().flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
     } else {
         ONFLOORZ
@@ -576,7 +569,7 @@ pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
     if mobj.tics != -1 {
         mobj.tics -= 1;
         if mobj.tics == 0 {
-            P_SetMobjState(mobj_id, (*mobj.state).nextstate);
+            P_SetMobjState(mobj_id, mobj.state.get().nextstate);
         }
     } else {
         if mobj.flags & MF_COUNTKILL == 0 {
@@ -616,29 +609,31 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
     // A zeroed object, as C's `Z_Malloc` + `memset` gives.
     let mobj = new_thinker::<mobj_t>();
     let mobj_ref = &mut *mobj.ptr();
-    let info = mobjinfo_ptr(kind as usize);
+    let mobj_type = MobjType::new(kind);
+    let info = mobj_type.get();
 
     mobj_ref.kind = kind;
-    mobj_ref.info = info;
+    mobj_ref.info = mobj_type;
     mobj_ref.x = x;
     mobj_ref.y = y;
-    mobj_ref.radius = (*info).radius;
-    mobj_ref.height = (*info).height;
-    mobj_ref.flags = (*info).flags;
-    mobj_ref.health = (*info).spawnhealth;
+    mobj_ref.radius = info.radius;
+    mobj_ref.height = info.height;
+    mobj_ref.flags = info.flags;
+    mobj_ref.health = info.spawnhealth;
 
     if gameskill() != 4 {
         // sk_nightmare = 4
-        mobj_ref.reactiontime = (*info).reactiontime;
+        mobj_ref.reactiontime = info.reactiontime;
     }
 
     mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
 
-    let st = state_ptr((*info).spawnstate as usize);
-    mobj_ref.state = st;
-    mobj_ref.tics = (*st).tics;
-    mobj_ref.sprite = (*st).sprite;
-    mobj_ref.frame = (*st).frame;
+    let state = StateNum::new(info.spawnstate);
+    let st = state.get();
+    mobj_ref.state = state;
+    mobj_ref.tics = st.tics;
+    mobj_ref.sprite = st.sprite;
+    mobj_ref.frame = st.frame;
 
     P_SetThingPosition(mobj);
 
@@ -652,7 +647,7 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
     if z == ONFLOORZ {
         mobj_ref.z = mobj_ref.floorz;
     } else if z == ONCEILINGZ {
-        mobj_ref.z = mobj_ref.ceilingz - (*info).height;
+        mobj_ref.z = mobj_ref.ceilingz - info.height;
     } else {
         mobj_ref.z = z;
     }
@@ -1047,9 +1042,9 @@ pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> M
     let dest = &*dest_id.ptr();
     let th_id = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
     let th = th_id.ptr();
-    let info = (*th).info;
-    if (*info).seesound != Sfx::None {
-        S_StartSound(th_id, (*info).seesound as i32);
+    let info = (*th).info.get();
+    if info.seesound != Sfx::None {
+        S_StartSound(th_id, info.seesound as i32);
     }
     (*th).target = Some(source_id);
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
@@ -1058,11 +1053,11 @@ pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> M
     }
     (*th).angle = an;
     an >>= ANGLETOFINESHIFT;
-    (*th).momx = FixedMul((*info).speed, *finecosine.0.add(an as usize));
-    (*th).momy = FixedMul((*info).speed, finesine[an as usize]);
+    (*th).momx = FixedMul(info.speed, *finecosine.0.add(an as usize));
+    (*th).momy = FixedMul(info.speed, finesine[an as usize]);
 
     let mut dist = P_AproxDistance(dest.x - source.x, dest.y - source.y);
-    dist /= (*info).speed;
+    dist /= info.speed;
     if dist < 1 {
         dist = 1;
     }
@@ -1103,16 +1098,16 @@ pub unsafe fn P_SpawnPlayerMissile(source_id: MobjId, kind: i32) {
 
     let th_id = P_SpawnMobj(x, y, z, kind);
     let th = th_id.ptr();
-    let info = (*th).info;
-    if (*info).seesound != Sfx::None {
-        S_StartSound(th_id, (*info).seesound as i32);
+    let info = (*th).info.get();
+    if info.seesound != Sfx::None {
+        S_StartSound(th_id, info.seesound as i32);
     }
     (*th).target = Some(source_id);
     (*th).angle = an;
     let fine_idx = (an >> ANGLETOFINESHIFT) as usize;
-    (*th).momx = FixedMul((*info).speed, *finecosine.0.add(fine_idx));
-    (*th).momy = FixedMul((*info).speed, finesine[fine_idx]);
-    (*th).momz = FixedMul((*info).speed, slope);
+    (*th).momx = FixedMul(info.speed, *finecosine.0.add(fine_idx));
+    (*th).momy = FixedMul(info.speed, finesine[fine_idx]);
+    (*th).momz = FixedMul(info.speed, slope);
 
     P_CheckMissileSpawn(th_id);
 }

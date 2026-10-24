@@ -15,7 +15,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::play::{info::State, mobj::MobjId};
+use crate::engine::play::{info::StateNum, mobj::MobjId};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -94,8 +94,9 @@ pub struct TiccmdT {
 /// `PlayerT::psprites`.
 #[derive(Clone, Copy, Debug)]
 pub struct PspdefT {
-    /// Pointer to the current animation state for this sprite overlay.
-    pub state: *mut State,
+    /// The current animation state for this sprite overlay (a pointer in
+    /// C); [`StateNum::NULL`] (C's null) while the overlay is off.
+    pub state: StateNum,
     /// Remaining tics in the current animation state; 0 means advance to next.
     pub tics: i32,
     /// Screen-space X position of the sprite, in fixed-point pixels.

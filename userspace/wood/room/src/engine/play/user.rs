@@ -271,8 +271,7 @@ pub unsafe fn P_MovePlayer(player_id: PlayerId) {
         }
 
         // C: player->mo->state == &states[S_PLAY]
-        let p_play = state_ptr(S_PLAY as usize);
-        if (cmd.forwardmove != 0 || cmd.sidemove != 0) && std::ptr::eq((*mo).state, p_play) {
+        if (cmd.forwardmove != 0 || cmd.sidemove != 0) && (*mo).state.number() == S_PLAY {
             P_SetMobjState((*player).mo(), S_PLAY_RUN1);
         }
     }

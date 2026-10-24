@@ -35,10 +35,11 @@
 //!
 //! # The state cycle
 //!
-//! Every actor (`mobj_t`) holds a `*mut State` that the thinker decrements by
-//! one tic each frame. When `tics` reaches zero, `P_SetMobjState` advances
-//! the actor to `state->nextstate`, runs `state->action` if non-null, and
-//! resets the tic counter from the new state. A self-referencing
+//! Every actor (`mobj_t`) holds a [`StateNum`] whose `tics` the thinker
+//! counts down by one tic each frame. When `tics` reaches zero,
+//! `P_SetMobjState` advances the actor to `state->nextstate`, runs
+//! `state->action` if non-null, and resets the tic counter from the new
+//! state. A self-referencing
 //! `nextstate == self` with `tics == -1` is the idiomatic "freeze on this
 //! frame" terminator (used for `S_NULL`, corpses, dropped items, ...).
 //!
@@ -83,9 +84,10 @@
 //! [`STATES`] and [`MOBJINFO`] are [`Global`]s. `G_InitNew` rewrites
 //! state durations and projectile speeds for `-fast` / nightmare through
 //! `borrow_mut` (Dehacked patches, `deh_*.c`, also rewrite fields in C);
-//! table lookups go through `borrow`. Map objects and psprites keep raw
-//! pointers into the tables (`mobj_t.state`, `mobj_t.info`,
-//! `pspdef_t.state`), taken from [`state_ptr`] and [`mobjinfo_ptr`].
+//! that runs between levels and is the only writer. Table lookups go
+//! through short `borrow`s. Map objects and psprites keep indices into the
+//! tables where C keeps pointers (`mobj_t.state`, `pspdef_t.state`:
+//! [`StateNum`]; `mobj_t.info`: [`MobjType`]).
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -104,7 +106,10 @@ pub const NUMSTATES: usize = 967;
 /// `mt_enum_matches_c_header` enforces this against the C source.
 pub const NUMMOBJTYPES: usize = 137;
 
-use crate::engine::{global::Global, math::fixed::FRACUNIT};
+use {
+    crate::engine::{global::Global, math::fixed::FRACUNIT},
+    std::ops::Index,
+};
 
 // Sprite name indices
 //
@@ -762,12 +767,13 @@ pub const MT_MISC86: i32 = 136;
 /// `state_t` from `info.h`.
 ///
 /// Every actor (`mobj_t`) and every player-weapon (`pspdef_t`) holds a
-/// pointer into the [`STATES`] table. The thinker decrements `tics` each
-/// game frame; when it reaches zero, the simulation advances the actor
-/// to `nextstate`, invokes `action` (if `Some`), and reloads the tic
-/// counter from the new state. A self-looping entry with `tics == -1`
-/// is the standard "freeze on this frame" terminator (e.g. `S_NULL`,
-/// corpses, dropped items).
+/// [`StateNum`] index into the [`STATES`] table (a pointer in C). The
+/// thinker decrements `tics` each game frame; when it reaches zero, the
+/// simulation advances the actor to `nextstate`, invokes `action` (if
+/// `Some`), and reloads the tic counter from the new state. A self-looping
+/// entry with `tics == -1` is the standard "freeze on this frame"
+/// terminator (e.g. `S_NULL`, corpses, dropped items).
+#[derive(Clone, Copy)]
 pub struct State {
     /// Sprite tag index into [`sprnames`] (a `SPR_*` constant).
     pub sprite: i32,
@@ -803,6 +809,7 @@ pub struct State {
 /// variants; `flags` is a bitmask of [`MF_*`](MF_SPECIAL) values; the
 /// `speed`, `radius`, `height` are in Doom fixed-point units (see
 /// [`FRACUNIT`]).
+#[derive(Clone, Copy)]
 pub struct MobjInfo {
     /// Editor number recognised by WAD level files. `-1` means this
     /// type is spawned only by code (never placed in maps).
@@ -1041,9 +1048,10 @@ pub const sprnames: [&str; 138] = [
 ///
 /// Mutability is required because `G_InitNew` rescales monster state
 /// durations for `-fast` / nightmare (and Dehacked patches, `deh_state.c`,
-/// overwrite individual entries in C). Map objects and psprites hold
-/// `*mut State` pointers into the table, so those are taken from
-/// [`state_ptr`] (a stable [`Global::as_ptr`] address).
+/// overwrite individual entries in C). That is the only writer, and it runs
+/// between levels; everything else reads entries by [`StateNum`] through
+/// short `borrow`s. Map objects and psprites hold [`StateNum`]s, not
+/// pointers, so the table needs no stable address.
 ///
 /// # Per-entry comments
 ///
@@ -9757,20 +9765,98 @@ pub static STATES: Global<[State; NUMSTATES]> = Global::new([
     }, // S_TECH2LAMP4
 ]);
 
-/// Stable pointer to `states[index]` (C `&states[index]`), as stored in
-/// `mobj_t.state` and `pspdef_t.state`.
-pub fn state_ptr(index: usize) -> *mut State {
-    assert!(index < NUMSTATES);
-    // SAFETY: in-bounds projection on the stable table pointer.
-    unsafe { STATES.as_ptr().cast::<State>().add(index) }
+/// Index of a [`State`] in [`STATES`]: an `S_*` value, held where C holds a
+/// `state_t *` into `states` (`mobj_t.state`, `pspdef_t.state`, the
+/// finale's `caststate`).
+///
+/// [`StateNum::NULL`] (`S_NULL`) also stands for C's null state pointer.
+/// `P_SetMobjState` stores `(state_t *) S_NULL` in a map object it removes,
+/// and `P_SetPsprite` stores null exactly for `S_NULL`, so the two never
+/// need telling apart; both are saved as `0`. The all-zero value is
+/// `S_NULL`, so zeroed map objects and players stay valid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct StateNum(u16);
+
+impl StateNum {
+    /// `S_NULL`, and C's null state pointer.
+    pub const NULL: Self = Self(S_NULL as u16);
+
+    /// The index of state `state` (an `S_*` value).
+    ///
+    /// # Panics
+    ///
+    /// If `state` is not an index into [`STATES`].
+    #[track_caller]
+    pub fn new(state: i32) -> Self {
+        assert!(
+            (0..NUMSTATES as i32).contains(&state),
+            "state {state} is not in the state table"
+        );
+        Self(state as u16)
+    }
+
+    /// The `S_*` value (C `state - states`).
+    pub const fn number(self) -> i32 {
+        self.0 as i32
+    }
+
+    /// Whether this is `S_NULL`, which stands for C's null state pointer.
+    pub fn is_null(self) -> bool {
+        self == Self::NULL
+    }
+
+    /// A copy of the table entry (C `*state`).
+    pub fn get(self) -> State {
+        STATES.borrow()[self]
+    }
 }
 
-/// Stable pointer to `mobjinfo[kind]` (C `&mobjinfo[kind]`), as stored in
-/// `mobj_t.info`.
-pub fn mobjinfo_ptr(kind: usize) -> *mut MobjInfo {
-    assert!(kind < NUMMOBJTYPES);
-    // SAFETY: in-bounds projection on the stable table pointer.
-    unsafe { MOBJINFO.as_ptr().cast::<MobjInfo>().add(kind) }
+impl Index<StateNum> for [State; NUMSTATES] {
+    type Output = State;
+
+    fn index(&self, state: StateNum) -> &State {
+        &self[state.0 as usize]
+    }
+}
+
+/// Index of a [`MobjInfo`] in [`MOBJINFO`]: an `MT_*` value, held where C
+/// holds a `mobjinfo_t *` into `mobjinfo` (`mobj_t.info`). The all-zero
+/// value is `MT_PLAYER`, so zeroed map objects stay valid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct MobjType(u8);
+
+impl MobjType {
+    /// The index of thing type `kind` (an `MT_*` value).
+    ///
+    /// # Panics
+    ///
+    /// If `kind` is not an index into [`MOBJINFO`].
+    #[track_caller]
+    pub fn new(kind: i32) -> Self {
+        assert!(
+            (0..NUMMOBJTYPES as i32).contains(&kind),
+            "thing type {kind} is not in the thing table"
+        );
+        Self(kind as u8)
+    }
+
+    /// The `MT_*` value (C `info - mobjinfo`).
+    pub const fn number(self) -> i32 {
+        self.0 as i32
+    }
+
+    /// A copy of the table entry (C `*info`).
+    pub fn get(self) -> MobjInfo {
+        MOBJINFO.borrow()[self]
+    }
+}
+
+impl Index<MobjType> for [MobjInfo; NUMMOBJTYPES] {
+    type Output = MobjInfo;
+
+    fn index(&self, kind: MobjType) -> &MobjInfo {
+        &self[kind.0 as usize]
+    }
 }
 
 /// The full per-thing prototype table: one [`MobjInfo`] per `MT_*`
@@ -9801,9 +9887,10 @@ pub fn mobjinfo_ptr(kind: usize) -> *mut MobjInfo {
 ///
 /// Mutability is required because `G_InitNew` changes projectile speeds
 /// for `-fast` / nightmare (and Dehacked patches, `deh_mobj.c`, overwrite
-/// individual entries in C). Map objects hold `*mut MobjInfo` pointers into
-/// the table, so those are taken from [`mobjinfo_ptr`] (a stable
-/// [`Global::as_ptr`] address).
+/// individual entries in C). That is the only writer, and it runs between
+/// levels; everything else reads entries by [`MobjType`] through short
+/// `borrow`s. Map objects hold a [`MobjType`], not a pointer, so the table
+/// needs no stable address.
 ///
 /// # Per-entry comments
 ///
@@ -15200,6 +15287,42 @@ pub const S_TECH2LAMP4: i32 = 966;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The all-zero table indices of zeroed map objects and players are
+    /// `S_NULL` (C's null state) and `MT_PLAYER`, and the indices name the
+    /// table entries they were made from.
+    #[test]
+    fn table_indices_name_their_entries() {
+        let zeroed_psprite: PspdefT = unsafe { std::mem::zeroed() };
+        assert!(zeroed_psprite.state.is_null());
+        assert_eq!(StateNum::default(), StateNum::NULL);
+        assert_eq!(StateNum::NULL.number(), S_NULL);
+        assert_eq!(MobjType::default().number(), MT_PLAYER);
+
+        let last_state = StateNum::new(NUMSTATES as i32 - 1);
+        assert_eq!(last_state.number(), S_TECH2LAMP4);
+        assert_eq!(StateNum::new(S_PLAY_RUN4).get().nextstate, S_PLAY_RUN1);
+        assert_eq!(
+            MobjType::new(MT_TROOP).get().spawnstate,
+            MOBJINFO.borrow()[MT_TROOP as usize].spawnstate
+        );
+        assert_eq!(
+            MobjType::new(NUMMOBJTYPES as i32 - 1).number(),
+            NUMMOBJTYPES as i32 - 1
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "is not in the state table")]
+    fn state_index_past_the_table_panics() {
+        StateNum::new(NUMSTATES as i32);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not in the thing table")]
+    fn thing_type_past_the_table_panics() {
+        MobjType::new(-1);
+    }
 
     /// Verify that the mobjinfo table is internally consistent:
     /// the spawnstate of each well-known mobj type should point to a state

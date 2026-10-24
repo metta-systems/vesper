@@ -636,7 +636,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
 
     // check for skulls slamming into things
     if (*tmthing).flags & MF_SKULLFLY != 0 {
-        let damage = ((P_Random() % 8) + 1) * (*(*tmthing).info).damage;
+        let damage = ((P_Random() % 8) + 1) * (*tmthing).info.get().damage;
         P_DamageMobj(thing_id, Some(tmthing_id), Some(tmthing_id), damage);
         // The damage can run actions that check other objects' positions;
         // like C, the rest of the slam acts on whatever `tmthing` is now.
@@ -646,7 +646,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
         (*tmthing).momx = 0;
         (*tmthing).momy = 0;
         (*tmthing).momz = 0;
-        P_SetMobjState(tmthing_id, (*(*tmthing).info).spawnstate);
+        P_SetMobjState(tmthing_id, (*tmthing).info.get().spawnstate);
         return 0;
     }
 
@@ -677,7 +677,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
         if thing.flags & MF_SHOOTABLE == 0 {
             return (thing.flags & MF_SOLID == 0) as u32;
         }
-        let damage = ((P_Random() % 8) + 1) * (*(*tmthing).info).damage;
+        let damage = ((P_Random() % 8) + 1) * (*tmthing).info.get().damage;
         let target = (*tmthing).target;
         P_DamageMobj(thing_id, Some(tmthing_id), target, damage);
         return 0;

@@ -147,8 +147,8 @@ macro_rules! thinker_arenas {
             }
 
             // SAFETY: the thinker structs hold plain numbers, typed level
-            // indices, raw pointers, optional handles and `ThinkerKind`
-            // (whose zero is `None`), all valid when zero.
+            // and table indices, optional handles and `ThinkerKind` (whose
+            // zero is `None`), all valid when zero.
             unsafe impl ZeroValid for $kind {}
         )+
 

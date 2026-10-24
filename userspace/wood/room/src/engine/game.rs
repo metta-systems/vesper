@@ -745,10 +745,9 @@ use crate::engine::doom::net::netcmds;
 /// Savegame I/O primitives (header read/write, world/thinker/specials
 /// archive/unarchive, file-path helpers) from `p_saveg.c`.
 use crate::engine::play::saveg::{
-    P_ArchivePlayers, P_ArchiveSpecials, P_ArchiveThinkers, P_ArchiveWorld, P_ReadSaveGameEOF,
-    P_ReadSaveGameHeader, P_SaveGameFile, P_TempSaveGameFile, P_UnArchivePlayers,
-    P_UnArchiveSpecials, P_UnArchiveThinkers, P_UnArchiveWorld, P_WriteSaveGameEOF,
-    P_WriteSaveGameHeader, SAVEG,
+    P_ReadSaveGameEOF, P_ReadSaveGameHeader, P_SaveGameFile, P_TempSaveGameFile,
+    P_UnArchivePlayers, P_UnArchiveSpecials, P_UnArchiveThinkers, P_UnArchiveWorld, SAVEG,
+    archive_save_game,
 };
 
 /// Top-level map loader from `p_setup.c`.
@@ -2331,7 +2330,7 @@ pub fn G_SaveGame(slot: i32, description: &[u8]) {
 /// `I_Error("Savegame buffer overrun")` to match the DOS limit; otherwise
 /// the save is allowed to grow.
 ///
-/// The save is archived into the in-memory `save_stream`, then written to
+/// The save is archived in memory by [`archive_save_game`], then written to
 /// the file opened at the start, which the C code wrote to directly.
 ///
 /// # Safety
@@ -2361,27 +2360,14 @@ pub unsafe fn G_DoSaveGame() {
         }
     };
 
-    {
-        let mut saveg = SAVEG.borrow_mut();
-        saveg.save_stream = Cursor::default();
-        saveg.savegame_error = 0;
-    }
+    let saved = archive_save_game(&savedescription);
 
-    P_WriteSaveGameHeader(&savedescription);
-    P_ArchivePlayers();
-    P_ArchiveWorld();
-    P_ArchiveThinkers();
-    P_ArchiveSpecials();
-    P_WriteSaveGameEOF();
-
-    let save_length = SAVEG.borrow().save_stream.position();
-    if GAME.borrow().vanilla_savegame_limit != 0 && save_length > SAVEGAMESIZE as u64 {
+    if GAME.borrow().vanilla_savegame_limit != 0 && saved.bytes.len() as u64 > SAVEGAMESIZE as u64 {
         I_Error("Savegame buffer overrun");
     }
 
     // A failed write would have failed the C `fwrite`, which sets the flag.
-    let saved = std::mem::take(&mut SAVEG.borrow_mut().save_stream);
-    if save_file.write_all(saved.get_ref()).is_err() {
+    if save_file.write_all(&saved.bytes).is_err() {
         SAVEG.borrow_mut().savegame_error = 1;
     }
     drop(save_file);
