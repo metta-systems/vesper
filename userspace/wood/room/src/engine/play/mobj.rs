@@ -82,6 +82,7 @@ use crate::engine::{
     },
     render_3d::sky::SKY,
     status::stuff::ST_Start,
+    world::World,
 };
 
 /// A map object in the mobj arena (C's `mobj_t *`).
@@ -239,13 +240,13 @@ pub static MOBJ: Global<MobjState> = Global::new(MobjState::new());
 ///
 /// `mobj_id` must name an initialised map object of the loaded level.
 /// `state` must be a valid state-table index or `S_NULL`.
-pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
+pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> i32 {
     let mobj = &mut *mobj_id.ptr();
     let mut state = state;
     loop {
         if state == S_NULL {
             mobj.state = StateNum::NULL;
-            P_RemoveMobj(mobj_id);
+            P_RemoveMobj(world, mobj_id);
             return 0;
         }
         let state_num = StateNum::new(state);
@@ -256,7 +257,7 @@ pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
         mobj.frame = st.frame;
         match st.action {
             StateAction::None => {}
-            StateAction::Mobj(action) => action(mobj_id),
+            StateAction::Mobj(action) => action(world, mobj_id),
             StateAction::Weapon(_) => {
                 unreachable!("P_SetMobjState: state {state} has a weapon action")
             }
@@ -276,13 +277,13 @@ pub unsafe fn P_SetMobjState(mobj_id: MobjId, state: i32) -> i32 {
 /// # Safety
 ///
 /// `mo_id` must name a map object of the loaded level with `MF_MISSILE` set.
-pub unsafe fn P_ExplodeMissile(mo_id: MobjId) {
+pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
     let mo = &mut *mo_id.ptr();
     let info = mo.info.get();
     mo.momx = 0;
     mo.momy = 0;
     mo.momz = 0;
-    P_SetMobjState(mo_id, info.deathstate);
+    P_SetMobjState(world, mo_id, info.deathstate);
     mo.tics -= P_Random() & 3;
     if mo.tics < 1 {
         mo.tics = 1;
@@ -300,7 +301,7 @@ pub unsafe fn P_ExplodeMissile(mo_id: MobjId) {
 /// # Safety
 ///
 /// `mo_id` must name a map object that is part of the active thinker list.
-pub unsafe fn P_XYMovement(mo_id: MobjId) {
+pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
     let mo = &mut *mo_id.ptr();
     let mut ptryx: i32;
     let mut ptryy: i32;
@@ -314,7 +315,7 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
             mo.momx = 0;
             mo.momy = 0;
             mo.momz = 0;
-            P_SetMobjState(mo_id, mo.info.get().spawnstate);
+            P_SetMobjState(world, mo_id, mo.info.get().spawnstate);
         }
         return;
     }
@@ -338,9 +339,9 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
             ymove = 0;
         }
 
-        if P_TryMove(mo_id, ptryx, ptryy) == 0 {
+        if P_TryMove(world, mo_id, ptryx, ptryy) == 0 {
             if mo.player.is_some() {
-                P_SlideMove(mo_id);
+                P_SlideMove(world, mo_id);
             } else if mo.flags & MF_MISSILE != 0 {
                 if let Some(line) = ceilingline() {
                     let skyflatnum = SKY.borrow().skyflatnum as i16;
@@ -351,11 +352,11 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
                             .is_some_and(|back| level.sectors[back].ceilingpic == skyflatnum)
                     };
                     if hits_sky {
-                        P_RemoveMobj(mo_id);
+                        P_RemoveMobj(world, mo_id);
                         return;
                     }
                 }
-                P_ExplodeMissile(mo_id);
+                P_ExplodeMissile(world, mo_id);
             } else {
                 mo.momx = 0;
                 mo.momy = 0;
@@ -401,7 +402,7 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
         if player.is_some() {
             let run_offset = mo.state.number() - S_PLAY_RUN1;
             if (0..4).contains(&run_offset) {
-                P_SetMobjState(mo_id, S_PLAY);
+                P_SetMobjState(world, mo_id, S_PLAY);
             }
         }
         mo.momx = 0;
@@ -421,7 +422,7 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
 /// # Safety
 ///
 /// `mo_id` must name a map object that is part of the active thinker list.
-pub unsafe fn P_ZMovement(mo_id: MobjId) {
+pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
     let mo = &mut *mo_id.ptr();
     let dist: i32;
     let delta: i32;
@@ -473,7 +474,7 @@ pub unsafe fn P_ZMovement(mo_id: MobjId) {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
-            P_ExplodeMissile(mo_id);
+            P_ExplodeMissile(world, mo_id);
             return;
         }
     } else if mo.flags & MF_NOGRAVITY == 0 {
@@ -493,7 +494,7 @@ pub unsafe fn P_ZMovement(mo_id: MobjId) {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
-            P_ExplodeMissile(mo_id);
+            P_ExplodeMissile(world, mo_id);
         }
     }
 }
@@ -508,21 +509,21 @@ pub unsafe fn P_ZMovement(mo_id: MobjId) {
 ///
 /// `mobj_id` must name a map object that has `MF_COUNTKILL` set and whose
 /// `spawnpoint` field is valid.
-pub unsafe fn P_NightmareRespawn(mobj_id: MobjId) {
+pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
     let mobj = &mut *mobj_id.ptr();
     let x = (mobj.spawnpoint.x.get() as i32) << FRACBITS;
     let y = (mobj.spawnpoint.y.get() as i32) << FRACBITS;
-    if P_CheckPosition(mobj_id, x, y) == 0 {
+    if P_CheckPosition(world, mobj_id, x, y) == 0 {
         return;
     }
 
     let floorheight = LEVEL.borrow().subsector_sector(mobj.subsector).floorheight;
-    let fog = P_SpawnMobj(mobj.x, mobj.y, floorheight, MT_TFOG);
+    let fog = P_SpawnMobj(world, mobj.x, mobj.y, floorheight, MT_TFOG);
     S_StartSound(fog, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
-    let fog = P_SpawnMobj(x, y, floorheight, MT_TFOG);
+    let fog = P_SpawnMobj(world, x, y, floorheight, MT_TFOG);
     S_StartSound(fog, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
@@ -532,14 +533,14 @@ pub unsafe fn P_NightmareRespawn(mobj_id: MobjId) {
         ONFLOORZ
     };
 
-    let respawned = &mut *P_SpawnMobj(x, y, z, mobj.kind).ptr();
+    let respawned = &mut *P_SpawnMobj(world, x, y, z, mobj.kind).ptr();
     respawned.spawnpoint = mobj.spawnpoint;
     respawned.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
         respawned.flags |= MF_AMBUSH;
     }
     respawned.reactiontime = 18;
-    P_RemoveMobj(mobj_id);
+    P_RemoveMobj(world, mobj_id);
 }
 
 /// Per-tic thinker for every active map object.
@@ -551,16 +552,16 @@ pub unsafe fn P_NightmareRespawn(mobj_id: MobjId) {
 /// # Safety
 ///
 /// `mobj_id` must name a map object that is currently in the thinker list.
-pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
+pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
     let mobj = &mut *mobj_id.ptr();
     if mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0 {
-        P_XYMovement(mobj_id);
+        P_XYMovement(world, mobj_id);
         if mobj.thinker.kind.is_removed() {
             return;
         }
     }
     if mobj.z != mobj.floorz || mobj.momz != 0 {
-        P_ZMovement(mobj_id);
+        P_ZMovement(world, mobj_id);
         if mobj.thinker.kind.is_removed() {
             return;
         }
@@ -569,7 +570,7 @@ pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
     if mobj.tics != -1 {
         mobj.tics -= 1;
         if mobj.tics == 0 {
-            P_SetMobjState(mobj_id, mobj.state.get().nextstate);
+            P_SetMobjState(world, mobj_id, mobj.state.get().nextstate);
         }
     } else {
         if mobj.flags & MF_COUNTKILL == 0 {
@@ -588,7 +589,7 @@ pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
         if P_Random() > 4 {
             return;
         }
-        P_NightmareRespawn(mobj_id);
+        P_NightmareRespawn(world, mobj_id);
     }
 }
 
@@ -605,7 +606,7 @@ pub unsafe fn P_MobjThinker(mobj_id: MobjId) {
 ///
 /// Must be called only while a level is active (its map data loaded).
 /// `kind` must be a valid `mobjtype_t` index.
-pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
+pub unsafe fn P_SpawnMobj(world: &mut World, x: i32, y: i32, z: i32, kind: i32) -> MobjId {
     // A zeroed object, as C's `Z_Malloc` + `memset` gives.
     let mobj = new_thinker::<mobj_t>();
     let mobj_ref = &mut *mobj.ptr();
@@ -635,7 +636,7 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
     mobj_ref.sprite = st.sprite;
     mobj_ref.frame = st.frame;
 
-    P_SetThingPosition(mobj);
+    P_SetThingPosition(world, mobj);
 
     {
         let level = LEVEL.borrow();
@@ -669,7 +670,7 @@ pub unsafe fn P_SpawnMobj(x: i32, y: i32, z: i32, kind: i32) -> MobjId {
 /// # Safety
 ///
 /// `mobj_id` must name a map object that is currently linked into the world.
-pub unsafe fn P_RemoveMobj(mobj_id: MobjId) {
+pub unsafe fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
     let mobj = &mut *mobj_id.ptr();
     if mobj.flags & MF_SPECIAL != 0
         && mobj.flags & MF_DROPPED == 0
@@ -687,7 +688,7 @@ pub unsafe fn P_RemoveMobj(mobj_id: MobjId) {
         }
     }
 
-    P_UnsetThingPosition(mobj_id);
+    P_UnsetThingPosition(world, mobj_id);
     S_StopSound(mobj_id);
     P_RemoveThinker(&mut mobj.thinker);
 }
@@ -701,7 +702,7 @@ pub unsafe fn P_RemoveMobj(mobj_id: MobjId) {
 /// # Safety
 ///
 /// Must be called only during an active level tick.
-pub unsafe fn P_RespawnSpecials() {
+pub unsafe fn P_RespawnSpecials(world: &mut World) {
     if deathmatch() != 2 {
         return;
     }
@@ -722,7 +723,7 @@ pub unsafe fn P_RespawnSpecials() {
 
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
-    let fog = P_SpawnMobj(x, y, floorheight, MT_IFOG);
+    let fog = P_SpawnMobj(world, x, y, floorheight, MT_IFOG);
     S_StartSound(fog, Sfx::Itmbk as i32);
 
     let (z, i) = {
@@ -743,7 +744,7 @@ pub unsafe fn P_RespawnSpecials() {
         (z, i)
     };
 
-    let item = &mut *P_SpawnMobj(x, y, z, i as i32).ptr();
+    let item = &mut *P_SpawnMobj(world, x, y, z, i as i32).ptr();
     item.spawnpoint = mthing;
     item.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
 
@@ -761,7 +762,7 @@ pub unsafe fn P_RespawnSpecials() {
 /// `mthing` must be a valid, non-null pointer to a `mapthing_t` whose `type`
 /// field is in `0..=4`.  Must be called only during level load with zone
 /// memory active.
-pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
+pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
     let thing_type = mthing.kind.get();
     if thing_type as i32 == 0 {
@@ -780,7 +781,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
     let z = ONFLOORZ;
-    let mobj_id = P_SpawnMobj(x, y, z, MT_PLAYER);
+    let mobj_id = P_SpawnMobj(world, x, y, z, MT_PLAYER);
     let mobj = &mut *mobj_id.ptr();
 
     if thing_type > 1 {
@@ -803,7 +804,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
         player.viewheight = VIEWHEIGHT;
     });
 
-    P_SetupPsprites(player);
+    P_SetupPsprites(world, player);
 
     if deathmatch() != 0 {
         player.write(|player| player.cards = [1; crate::engine::doom::player::NUMCARDS]);
@@ -826,7 +827,7 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
 ///
 /// `mthing` must be a valid, non-null pointer to a `mapthing_t`.  Must be
 /// called during level load.
-pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
+pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
     let mthing = &mut *mthing;
     let thing_type = mthing.kind.get();
     let options = mthing.options.get();
@@ -848,7 +849,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     if thing_type as i32 <= 4 {
         *playerstart((thing_type - 1) as usize) = *mthing;
         if deathmatch() == 0 {
-            P_SpawnPlayer(mthing);
+            P_SpawnPlayer(world, mthing);
         }
         return;
     }
@@ -908,7 +909,7 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
     };
     drop(mobjinfo);
 
-    let mobj = P_SpawnMobj(x, y, z, i as i32).ptr();
+    let mobj = P_SpawnMobj(world, x, y, z, i as i32).ptr();
     (*mobj).spawnpoint = *mthing;
 
     if (*mobj).tics > 0 {
@@ -934,9 +935,9 @@ pub unsafe fn P_SpawnMapThing(mthing: *mut mapthing_t) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
+pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
-    let th_id = P_SpawnMobj(x, y, z, MT_PUFF);
+    let th_id = P_SpawnMobj(world, x, y, z, MT_PUFF);
     let th = th_id.ptr();
     (*th).momz = FRACUNIT;
     (*th).tics -= P_Random() & 3;
@@ -944,7 +945,7 @@ pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
         (*th).tics = 1;
     }
     if attackrange() == MELEERANGE {
-        P_SetMobjState(th_id, S_PUFF3);
+        P_SetMobjState(world, th_id, S_PUFF3);
     }
 }
 
@@ -957,9 +958,9 @@ pub unsafe fn P_SpawnPuff(x: i32, y: i32, z: i32) {
 /// # Safety
 ///
 /// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
+pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i32) {
     let z = z + ((P_Random() - P_Random()) << 10);
-    let th_id = P_SpawnMobj(x, y, z, MT_BLOOD);
+    let th_id = P_SpawnMobj(world, x, y, z, MT_BLOOD);
     let th = th_id.ptr();
     (*th).momz = FRACUNIT * 2;
     (*th).tics -= P_Random() & 3;
@@ -967,9 +968,9 @@ pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
         (*th).tics = 1;
     }
     if (9..=12).contains(&damage) {
-        P_SetMobjState(th_id, S_BLOOD2);
+        P_SetMobjState(world, th_id, S_BLOOD2);
     } else if damage < 9 {
-        P_SetMobjState(th_id, S_BLOOD3);
+        P_SetMobjState(world, th_id, S_BLOOD3);
     }
 }
 
@@ -981,7 +982,7 @@ pub unsafe fn P_SpawnBlood(x: i32, y: i32, z: i32, damage: i32) {
 ///
 /// `th_id` must name a map object with `MF_MISSILE` set and non-zero
 /// momentum.
-pub unsafe fn P_CheckMissileSpawn(th_id: MobjId) {
+pub unsafe fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
     let th = &mut *th_id.ptr();
     th.tics -= P_Random() & 3;
     if th.tics < 1 {
@@ -990,8 +991,8 @@ pub unsafe fn P_CheckMissileSpawn(th_id: MobjId) {
     th.x += th.momx >> 1;
     th.y += th.momy >> 1;
     th.z += th.momz >> 1;
-    if P_TryMove(th_id, th.x, th.y) == 0 {
-        P_ExplodeMissile(th_id);
+    if P_TryMove(world, th_id, th.x, th.y) == 0 {
+        P_ExplodeMissile(world, th_id);
     }
 }
 
@@ -1037,10 +1038,15 @@ pub fn P_SubstNullMobj(mobj: Option<MobjId>) -> MobjId {
 ///
 /// `source_id` and `dest_id` must name map objects of the loaded level.
 /// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> MobjId {
+pub unsafe fn P_SpawnMissile(
+    world: &mut World,
+    source_id: MobjId,
+    dest_id: MobjId,
+    kind: i32,
+) -> MobjId {
     let source = &*source_id.ptr();
     let dest = &*dest_id.ptr();
-    let th_id = P_SpawnMobj(source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
+    let th_id = P_SpawnMobj(world, source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
     let th = th_id.ptr();
     let info = (*th).info.get();
     if info.seesound != Sfx::None {
@@ -1062,7 +1068,7 @@ pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> M
         dist = 1;
     }
     (*th).momz = (dest.z - source.z) / dist;
-    P_CheckMissileSpawn(th_id);
+    P_CheckMissileSpawn(world, th_id);
     th_id
 }
 
@@ -1074,17 +1080,17 @@ pub unsafe fn P_SpawnMissile(source_id: MobjId, dest_id: MobjId, kind: i32) -> M
 ///
 /// `source_id` must name a player's map object.
 /// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnPlayerMissile(source_id: MobjId, kind: i32) {
+pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i32) {
     let source = &mut *source_id.ptr();
     let mut an = source.angle;
-    let mut slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
+    let mut slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
 
     if linetarget().is_none() {
         an = an.wrapping_add(1 << 26);
-        slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
+        slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
         if linetarget().is_none() {
             an = an.wrapping_sub(2 << 26);
-            slope = P_AimLineAttack(source_id, an, 16 * 64 * FRACUNIT);
+            slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
             if linetarget().is_none() {
                 an = source.angle;
                 slope = 0;
@@ -1096,7 +1102,7 @@ pub unsafe fn P_SpawnPlayerMissile(source_id: MobjId, kind: i32) {
     let y = source.y;
     let z = source.z + 4 * 8 * FRACUNIT;
 
-    let th_id = P_SpawnMobj(x, y, z, kind);
+    let th_id = P_SpawnMobj(world, x, y, z, kind);
     let th = th_id.ptr();
     let info = (*th).info.get();
     if info.seesound != Sfx::None {
@@ -1109,7 +1115,7 @@ pub unsafe fn P_SpawnPlayerMissile(source_id: MobjId, kind: i32) {
     (*th).momy = FixedMul(info.speed, finesine[fine_idx]);
     (*th).momz = FixedMul(info.speed, slope);
 
-    P_CheckMissileSpawn(th_id);
+    P_CheckMissileSpawn(world, th_id);
 }
 
 #[cfg(test)]

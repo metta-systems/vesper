@@ -27,6 +27,7 @@ use crate::{
             mobj::{MobjId, mobj_or_null},
             pspr::P_DropWeapon,
         },
+        world::World,
     },
     i_error,
 };
@@ -346,7 +347,7 @@ pub static clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 /// if the player had zero ammo of this type before the pickup, a more
 /// appropriate weapon may be queued as `pendingweapon`.
 ///
-pub fn P_GiveAmmo(player: PlayerId, ammo: i32, num: i32) -> i32 {
+pub fn P_GiveAmmo(_world: &mut World, player: PlayerId, ammo: i32, num: i32) -> i32 {
     player.write(|player| p_give_ammo(player, ammo, num))
 }
 
@@ -427,7 +428,7 @@ fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
 ///
 /// No reference into `player`'s slot may be live while this runs: the
 /// pickup sound reads the console player.
-pub unsafe fn P_GiveWeapon(player: PlayerId, weapon: i32, dropped: i32) -> i32 {
+pub unsafe fn P_GiveWeapon(_world: &mut World, player: PlayerId, weapon: i32, dropped: i32) -> i32 {
     p_give_weapon(player, &mut *player.ptr(), weapon, dropped)
 }
 
@@ -487,7 +488,7 @@ fn p_give_weapon(player_id: PlayerId, player: &mut PlayerT, weapon: i32, dropped
 /// # Safety
 ///
 /// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_GiveBody(player: PlayerId, num: i32) -> i32 {
+pub unsafe fn P_GiveBody(_world: &mut World, player: PlayerId, num: i32) -> i32 {
     player.write(|player| p_give_body(player, num))
 }
 
@@ -515,7 +516,7 @@ unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
 /// player already has at least that many armor points (i.e. the pick-up
 /// would not help).  Otherwise sets `armortype` and `armorpoints` and
 /// returns `1`.
-pub fn P_GiveArmor(player: PlayerId, armortype: i32) -> i32 {
+pub fn P_GiveArmor(_world: &mut World, player: PlayerId, armortype: i32) -> i32 {
     player.write(|player| p_give_armor(player, armortype))
 }
 
@@ -539,7 +540,7 @@ fn p_give_armor(player: &mut PlayerT, armortype: i32) -> i32 {
 /// Also adds `BONUSADD` to `bonuscount` to flash the HUD gold.  If the
 /// player already owns the card the function returns immediately without
 /// side-effects.
-pub fn P_GiveCard(player: PlayerId, card: i32) {
+pub fn P_GiveCard(_world: &mut World, player: PlayerId, card: i32) {
     player.write(|player| p_give_card(player, card))
 }
 
@@ -570,7 +571,7 @@ fn p_give_card(player: &mut PlayerT, card: i32) {
 ///
 /// For `pw_invisibility` and `pw_strength`, `player`'s `mo` must name a map
 /// object of the loaded level.
-pub unsafe fn P_GivePower(player: PlayerId, power: i32) -> i32 {
+pub unsafe fn P_GivePower(_world: &mut World, player: PlayerId, power: i32) -> i32 {
     player.write(|player| p_give_power(player, power))
 }
 
@@ -630,7 +631,7 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
 /// must be a player).  Global game-state statics (`players`, `consoleplayer`,
 /// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
 /// game-logic thread.
-pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
+pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher_id: MobjId) {
     let special = special_id.ptr();
     let toucher = toucher_id.ptr();
     // Read all primitives from `special` / `toucher` up front via raw
@@ -991,7 +992,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
     if special_flags & MF_COUNTITEM != 0 {
         player.itemcount += 1;
     }
-    P_RemoveMobj(special_id);
+    P_RemoveMobj(world, special_id);
     player.bonuscount += BONUSADD;
     if player_id == PlayerId::console() {
         S_StartNonPositionalSound(sound);
@@ -1025,7 +1026,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
 /// `target_id` must name a map object of the level. `source_id` may be
 /// `None` (environmental kill).  All global game-state statics must only be
 /// accessed from the game-logic thread.
-pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
+pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id: MobjId) {
     let source = mobj_or_null(source_id);
     let target = target_id.ptr();
     let info = (*target).info.get();
@@ -1059,16 +1060,16 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
             player.playerstate = 1; // PST_DEAD
         });
         (*target).flags &= !MF_SOLID;
-        P_DropWeapon(target_player);
+        P_DropWeapon(world, target_player);
         if target_player == PlayerId::console() && automap_active() {
             AM_Stop();
         }
     }
 
     if (*target).health < -info.spawnhealth && info.xdeathstate != 0 {
-        P_SetMobjState(target_id, info.xdeathstate);
+        P_SetMobjState(world, target_id, info.xdeathstate);
     } else {
-        P_SetMobjState(target_id, info.deathstate);
+        P_SetMobjState(world, target_id, info.deathstate);
     }
     (*target).tics -= P_Random() & 3;
     if (*target).tics < 1 {
@@ -1086,7 +1087,7 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
         _ => return,
     };
 
-    let mo = P_SpawnMobj((*target).x, (*target).y, ONFLOORZ, item).ptr();
+    let mo = P_SpawnMobj(world, (*target).x, (*target).y, ONFLOORZ, item).ptr();
     (*mo).flags |= MF_DROPPED;
 }
 
@@ -1124,6 +1125,7 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
 /// may be live.  All global game-state statics must only be accessed from
 /// the game-logic thread.
 pub unsafe fn P_DamageMobj(
+    world: &mut World,
     target_id: MobjId,
     inflictor_id: Option<MobjId>,
     source_id: Option<MobjId>,
@@ -1224,14 +1226,14 @@ pub unsafe fn P_DamageMobj(
 
     (*target).health -= damage;
     if (*target).health <= 0 {
-        P_KillMobj(source_id, target_id);
+        P_KillMobj(world, source_id, target_id);
         return;
     }
 
     let info = (*target).info.get();
     if P_Random() < info.painchance && ((*target).flags & MF_SKULLFLY) == 0 {
         (*target).flags |= MF_JUSTHIT;
-        P_SetMobjState(target_id, info.painstate);
+        P_SetMobjState(world, target_id, info.painstate);
     }
 
     (*target).reactiontime = 0;
@@ -1244,7 +1246,7 @@ pub unsafe fn P_DamageMobj(
         (*target).target = source_id;
         (*target).threshold = BASETHRESHOLD;
         if (*target).state.number() == info.spawnstate && info.seestate != S_NULL {
-            P_SetMobjState(target_id, info.seestate);
+            P_SetMobjState(world, target_id, info.seestate);
         }
     }
 }

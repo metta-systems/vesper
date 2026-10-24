@@ -319,6 +319,7 @@ use crate::engine::{
             mapthing_t, mapvertex_t,
         },
     },
+    world::World,
     zone::{PU_STATIC, Z_FreeTags},
 };
 
@@ -582,7 +583,7 @@ pub fn P_LoadNodes(lump: i32) {
 /// must already be loaded; `deathmatch_p` must be reset to the base of
 /// `deathmatchstarts`.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadThings(lump: i32) {
+pub fn P_LoadThings(world: &mut World, lump: i32) {
     unsafe {
         let map_things = cache_lump_records::<mapthing_t>(lump);
 
@@ -604,7 +605,7 @@ pub fn P_LoadThings(lump: i32) {
             }
 
             let mut spawnthing = *mt;
-            P_SpawnMapThing(&raw mut spawnthing);
+            P_SpawnMapThing(world, &raw mut spawnthing);
         }
 
         W_ReleaseLumpNum(lump);
@@ -1026,7 +1027,7 @@ fn P_LoadReject(lumpnum: i32) {
 // FIXME: C uses DEH_snprintf for lump name construction, allowing DeHackEd
 // patches to rename map lumps. The Rust port uses format! and does not apply
 // DEH patches to the lump name, which may break modded WADs that rely on this.
-pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
+pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32, _skill: i32) {
     unsafe {
         {
             let mut game = GAME.borrow_mut();
@@ -1090,13 +1091,13 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
 
         GAME.borrow_mut().bodyqueslot = 0;
         SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatchstart(0);
-        P_LoadThings(lumpnum + MapLump::THINGS);
+        P_LoadThings(world, lumpnum + MapLump::THINGS);
 
         if deathmatch() != 0 {
             for i in 0..MAXPLAYERS {
                 if playeringame(i) != 0 {
                     PlayerId::new(i).write(|player| player.mo = None);
-                    G_DeathMatchSpawnPlayer(i as i32);
+                    G_DeathMatchSpawnPlayer(world, i as i32);
                 }
             }
         }
@@ -1107,7 +1108,7 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
             mobj.iquetail = 0;
         }
 
-        P_SpawnSpecials();
+        P_SpawnSpecials(world);
 
         if GAME.borrow().precache != 0 {
             R_PrecacheLevel();

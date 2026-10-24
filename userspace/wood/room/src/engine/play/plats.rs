@@ -29,6 +29,7 @@ use crate::{
             },
         },
         sound::S_StartSectorSound,
+        world::World,
     },
     i_error,
 };
@@ -169,11 +170,12 @@ pub static PLATS: Global<PlatState> = Global::new(PlatState::new());
 ///
 /// `plat_id` must name a platform in the thinker list whose `sector`
 /// belongs to the current map.
-pub unsafe fn T_PlatRaise(plat_id: PlatId) {
+pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
     let plat = plat_id.ptr();
     match (*plat).status {
         x if x == up => {
             let res = T_MovePlane(
+                world,
                 (*plat).sector,
                 (*plat).speed,
                 (*plat).high,
@@ -203,14 +205,14 @@ pub unsafe fn T_PlatRaise(plat_id: PlatId) {
                         || x == raiseAndChange
                         || x == raiseToNearestAndChange =>
                     {
-                        P_RemoveActivePlat(plat_id);
+                        P_RemoveActivePlat(world, plat_id);
                     }
                     _ => {}
                 }
             }
         }
         x if x == down => {
-            let res = T_MovePlane((*plat).sector, (*plat).speed, (*plat).low, 0, 0, -1);
+            let res = T_MovePlane(world, (*plat).sector, (*plat).speed, (*plat).low, 0, 0, -1);
 
             if res == result_pastdest {
                 (*plat).count = (*plat).wait;
@@ -255,13 +257,13 @@ pub unsafe fn T_PlatRaise(plat_id: PlatId) {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoPlat(line: &line_t, plattype: i32, amount: i32) -> i32 {
+pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     match plattype {
         x if x == perpetualRaise => {
-            P_ActivateInStasis(line.tag as i32);
+            P_ActivateInStasis(world, line.tag as i32);
         }
         _ => {}
     }
@@ -359,7 +361,7 @@ pub unsafe fn EV_DoPlat(line: &line_t, plattype: i32, amount: i32) -> i32 {
         if let Some(sound) = sound {
             S_StartSectorSound(sec, sound as i32);
         }
-        P_AddActivePlat(plat_id);
+        P_AddActivePlat(world, plat_id);
     }
     rtn
 }
@@ -371,7 +373,7 @@ pub unsafe fn EV_DoPlat(line: &line_t, plattype: i32, amount: i32) -> i32 {
 /// [`EV_DoPlat`] for the `perpetualRaise` type.
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
-pub fn P_ActivateInStasis(tag: i32) {
+pub fn P_ActivateInStasis(_world: &mut World, tag: i32) {
     let activeplats = PLATS.borrow().activeplats;
     for plat in activeplats.into_iter().flatten() {
         // SAFETY: platforms are only reached through arena pointers, and no
@@ -391,7 +393,7 @@ pub fn P_ActivateInStasis(tag: i32) {
 /// remains in `activeplats` and can be resumed by [`P_ActivateInStasis`].
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
-pub fn EV_StopPlat(line: &line_t) {
+pub fn EV_StopPlat(_world: &mut World, line: &line_t) {
     let activeplats = PLATS.borrow().activeplats;
     for plat in activeplats.into_iter().flatten() {
         // SAFETY: platforms are only reached through arena pointers, and no
@@ -413,7 +415,7 @@ pub fn EV_StopPlat(line: &line_t) {
 /// `P_RemoveActivePlat` or the next level load clears the table.
 ///
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
-pub fn P_AddActivePlat(plat: PlatId) {
+pub fn P_AddActivePlat(_world: &mut World, plat: PlatId) {
     {
         let mut plats = PLATS.borrow_mut();
         for slot in plats.activeplats.iter_mut() {
@@ -433,7 +435,7 @@ pub fn P_AddActivePlat(plat: PlatId) {
 /// `activeplats`.  Calls `I_Error` if the platform is not found.
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
-pub fn P_RemoveActivePlat(plat: PlatId) {
+pub fn P_RemoveActivePlat(_world: &mut World, plat: PlatId) {
     {
         let mut plats = PLATS.borrow_mut();
         for slot in plats.activeplats.iter_mut() {

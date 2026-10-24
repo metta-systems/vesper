@@ -753,6 +753,10 @@ use crate::engine::play::saveg::{
 /// Top-level map loader from `p_setup.c`.
 use crate::engine::play::setup::P_SetupLevel;
 
+/// The play simulation's state, borrowed by the game actions and ticker
+/// phases that run play code.
+use crate::engine::world::{WORLD, World};
+
 /// Mobj lifecycle and spawn helpers from `p_mobj.c`.
 use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
 
@@ -1323,7 +1327,7 @@ pub unsafe fn G_DoLoadLevel() {
         (game.gameepisode, game.gamemap, game.gameskill)
     };
 
-    P_SetupLevel(gameepisode, gamemap, 0, gameskill);
+    P_SetupLevel(&mut WORLD.borrow_mut(), gameepisode, gamemap, 0, gameskill);
     let testcontrols = {
         let mut game = GAME.borrow_mut();
         game.displayplayer = game.consoleplayer;
@@ -1586,7 +1590,7 @@ pub unsafe fn G_Ticker() {
     // Player reborns
     for id in PlayerId::all() {
         if playeringame(id.index()) != 0 && id.read(|player| player.playerstate) == PST_REBORN {
-            G_DoReborn(id.index() as i32);
+            G_DoReborn(&mut WORLD.borrow_mut(), id.index() as i32);
         }
     }
 
@@ -1711,7 +1715,7 @@ pub unsafe fn G_Ticker() {
     // Main game-state dispatch
     match gamestate {
         GS_LEVEL => {
-            P_Ticker();
+            P_Ticker(&mut WORLD.borrow_mut());
             ST_Ticker();
             AM_Ticker();
             HU_Ticker();
@@ -1759,7 +1763,7 @@ pub fn G_InitPlayer(player: i32) {
 /// # Safety
 /// `player` must index a valid slot whose `mo` pointer is non-null (the
 /// caller is `G_DoCompleted`, which guarantees this).
-pub unsafe fn G_PlayerFinishLevel(player: i32) {
+pub unsafe fn G_PlayerFinishLevel(_world: &mut World, player: i32) {
     let mo = PlayerId::new(player as usize).write(|p| {
         p.powers = [0; 6];
         p.cards = [0; 6];
@@ -1838,7 +1842,7 @@ pub fn G_PlayerReborn(player: i32) {
 /// # Safety
 /// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
 /// queue globals.
-pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
+pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let spawning_player = PlayerId::new(playernum as usize);
     let Some(spawning_mo) = spawning_player.read(|player| player.mo) else {
         // First spawn of level, before corpses
@@ -1856,7 +1860,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let x = ((*mthing).x.get() as fixed_t) << 16;
     let y = ((*mthing).y.get() as fixed_t) << 16;
 
-    if P_CheckPosition(spawning_mo, x, y) == 0 {
+    if P_CheckPosition(world, spawning_mo, x, y) == 0 {
         return 0;
     }
 
@@ -1869,7 +1873,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     if bodyqueslot >= BODYQUESIZE as i32 {
         // The queue has wrapped, so the slot holds a corpse (C removes it
         // without a check).
-        P_RemoveMobj(oldest_corpse.expect("body queue slot is empty"));
+        P_RemoveMobj(world, oldest_corpse.expect("body queue slot is empty"));
     }
     {
         let mut game = GAME.borrow_mut();
@@ -1912,7 +1916,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
     }
 
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
-    let mo = P_SpawnMobj(x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
+    let mo = P_SpawnMobj(world, x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
     if PlayerId::console().read(|console| console.viewz) != 1 {
         S_StartSound(mo, Sfx::Telept as i32);
@@ -1935,7 +1939,7 @@ pub unsafe fn G_CheckSpot(playernum: i32, mthing: *mut mapthing_t) -> boolean {
 /// # Safety
 /// `playernum` must be in `0..MAXPLAYERS` and the level's deathmatch start
 /// table must already be populated by `P_SetupLevel`.
-pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
+pub unsafe fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
     let selections = deathmatch_p().offset_from(deathmatchstart(0)) as i32;
     if selections < 4 {
         crate::i_error!("Only {} deathmatch spots, 4 required", selections);
@@ -1943,13 +1947,13 @@ pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
 
     for _ in 0..20 {
         let i = (P_Random() % selections) as usize;
-        if G_CheckSpot(playernum, deathmatchstart(i)) != 0 {
+        if G_CheckSpot(world, playernum, deathmatchstart(i)) != 0 {
             (*deathmatchstart(i)).kind.set((playernum + 1) as i16);
-            P_SpawnPlayer(deathmatchstart(i));
+            P_SpawnPlayer(world, deathmatchstart(i));
             return;
         }
     }
-    P_SpawnPlayer(playerstart(playernum as usize));
+    P_SpawnPlayer(world, playerstart(playernum as usize));
 }
 
 // ---------------------------------------------------------------------------
@@ -1967,7 +1971,7 @@ pub unsafe fn G_DeathMatchSpawnPlayer(playernum: i32) {
 ///
 /// # Safety
 /// `playernum` must be a valid player index.
-pub unsafe fn G_DoReborn(playernum: i32) {
+pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
     if netgame() == 0 {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
@@ -1976,25 +1980,25 @@ pub unsafe fn G_DoReborn(playernum: i32) {
         }
 
         if deathmatch() != 0 {
-            G_DeathMatchSpawnPlayer(playernum);
+            G_DeathMatchSpawnPlayer(world, playernum);
             return;
         }
 
-        if G_CheckSpot(playernum, playerstart(playernum as usize)) != 0 {
-            P_SpawnPlayer(playerstart(playernum as usize));
+        if G_CheckSpot(world, playernum, playerstart(playernum as usize)) != 0 {
+            P_SpawnPlayer(world, playerstart(playernum as usize));
             return;
         }
 
         for i in 0..MAXPLAYERS as i32 {
             let start = playerstart(i as usize);
-            if G_CheckSpot(playernum, start) != 0 {
+            if G_CheckSpot(world, playernum, start) != 0 {
                 (*start).kind.set((playernum + 1) as i16);
-                P_SpawnPlayer(start);
+                P_SpawnPlayer(world, start);
                 (*start).kind.set((i + 1) as i16);
                 return;
             }
         }
-        P_SpawnPlayer(playerstart(playernum as usize));
+        P_SpawnPlayer(world, playerstart(playernum as usize));
     }
 }
 
@@ -2061,9 +2065,12 @@ pub fn G_SecretExitLevel() {
 pub unsafe fn G_DoCompleted() {
     GAME.borrow_mut().gameaction = ga_nothing;
 
-    for i in 0..MAXPLAYERS {
-        if playeringame(i) != 0 {
-            G_PlayerFinishLevel(i as i32);
+    {
+        let mut world = WORLD.borrow_mut();
+        for i in 0..MAXPLAYERS {
+            if playeringame(i) != 0 {
+                G_PlayerFinishLevel(&mut world, i as i32);
+            }
         }
     }
 
@@ -2284,10 +2291,13 @@ pub unsafe fn G_DoLoadGame() {
 
     TICK.borrow_mut().leveltime = savedleveltime;
 
-    P_UnArchivePlayers();
-    P_UnArchiveWorld();
-    P_UnArchiveThinkers();
-    P_UnArchiveSpecials();
+    {
+        let mut world = WORLD.borrow_mut();
+        P_UnArchivePlayers(&mut world);
+        P_UnArchiveWorld(&mut world);
+        P_UnArchiveThinkers(&mut world);
+        P_UnArchiveSpecials(&mut world);
+    }
 
     if P_ReadSaveGameEOF() == 0 {
         I_Error("Bad savegame");
@@ -2360,7 +2370,7 @@ pub unsafe fn G_DoSaveGame() {
         }
     };
 
-    let saved = archive_save_game(&savedescription);
+    let saved = archive_save_game(&WORLD.borrow(), &savedescription);
 
     if GAME.borrow().vanilla_savegame_limit != 0 && saved.bytes.len() as u64 > SAVEGAMESIZE as u64 {
         I_Error("Savegame buffer overrun");

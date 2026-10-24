@@ -46,6 +46,7 @@ use crate::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
         },
         wad::format::LinedefFlag,
+        world::World,
     },
     i_error,
 };
@@ -626,7 +627,7 @@ pub fn P_FindMinSurroundingLight(level: &LevelState, sector: SectorId, max: i32)
 /// - `thing`: the map object that crossed the line.
 ///
 /// Called from `p_map.c` via C FFI.
-pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
+pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, thing: MobjId) {
     // The line's record as the crossing found it; the actions read its tag
     // and sectors, and clearing the special writes the level's line.
     let line_record = LEVEL.borrow().lines[linenum];
@@ -653,260 +654,260 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
 
     match line.special as i32 {
         2 => {
-            EV_DoDoor(line, vld_open);
+            EV_DoDoor(world, line, vld_open);
             clear_special();
         }
         3 => {
-            EV_DoDoor(line, vld_close);
+            EV_DoDoor(world, line, vld_close);
             clear_special();
         }
         4 => {
-            EV_DoDoor(line, vld_normal);
+            EV_DoDoor(world, line, vld_normal);
             clear_special();
         }
         5 => {
-            EV_DoFloor(line, raiseFloor);
+            EV_DoFloor(world, line, raiseFloor);
             clear_special();
         }
         6 => {
-            EV_DoCeiling(line, fastCrushAndRaise);
+            EV_DoCeiling(world, line, fastCrushAndRaise);
             clear_special();
         }
         8 => {
-            EV_BuildStairs(line, build8);
+            EV_BuildStairs(world, line, build8);
             clear_special();
         }
         10 => {
-            EV_DoPlat(line, downWaitUpStay, 0);
+            EV_DoPlat(world, line, downWaitUpStay, 0);
             clear_special();
         }
         12 => {
-            EV_LightTurnOn(line, 0);
+            EV_LightTurnOn(world, line, 0);
             clear_special();
         }
         13 => {
-            EV_LightTurnOn(line, 255);
+            EV_LightTurnOn(world, line, 255);
             clear_special();
         }
         16 => {
-            EV_DoDoor(line, vld_close30ThenOpen);
+            EV_DoDoor(world, line, vld_close30ThenOpen);
             clear_special();
         }
         17 => {
-            EV_StartLightStrobing(line);
+            EV_StartLightStrobing(world, line);
             clear_special();
         }
         19 => {
-            EV_DoFloor(line, lowerFloor);
+            EV_DoFloor(world, line, lowerFloor);
             clear_special();
         }
         22 => {
-            EV_DoPlat(line, raiseToNearestAndChange, 0);
+            EV_DoPlat(world, line, raiseToNearestAndChange, 0);
             clear_special();
         }
         25 => {
-            EV_DoCeiling(line, crushAndRaise);
+            EV_DoCeiling(world, line, crushAndRaise);
             clear_special();
         }
         30 => {
-            EV_DoFloor(line, raiseToTexture);
+            EV_DoFloor(world, line, raiseToTexture);
             clear_special();
         }
         35 => {
-            EV_LightTurnOn(line, 35);
+            EV_LightTurnOn(world, line, 35);
             clear_special();
         }
         36 => {
-            EV_DoFloor(line, turboLower);
+            EV_DoFloor(world, line, turboLower);
             clear_special();
         }
         37 => {
-            EV_DoFloor(line, lowerAndChange);
+            EV_DoFloor(world, line, lowerAndChange);
             clear_special();
         }
         38 => {
-            EV_DoFloor(line, lowerFloorToLowest);
+            EV_DoFloor(world, line, lowerFloorToLowest);
             clear_special();
         }
         39 => {
-            EV_Teleport(line, side, thing);
+            EV_Teleport(world, line, side, thing);
             clear_special();
         }
         40 => {
-            EV_DoCeiling(line, raiseToHighest);
-            EV_DoFloor(line, lowerFloorToLowest);
+            EV_DoCeiling(world, line, raiseToHighest);
+            EV_DoFloor(world, line, lowerFloorToLowest);
             clear_special();
         }
         44 => {
-            EV_DoCeiling(line, lowerAndCrush);
+            EV_DoCeiling(world, line, lowerAndCrush);
             clear_special();
         }
         52 => {
             G_ExitLevel();
         }
         53 => {
-            EV_DoPlat(line, perpetualRaise, 0);
+            EV_DoPlat(world, line, perpetualRaise, 0);
             clear_special();
         }
         54 => {
-            EV_StopPlat(line);
+            EV_StopPlat(world, line);
             clear_special();
         }
         56 => {
-            EV_DoFloor(line, raiseFloorCrush);
+            EV_DoFloor(world, line, raiseFloorCrush);
             clear_special();
         }
         57 => {
-            EV_CeilingCrushStop(line);
+            EV_CeilingCrushStop(world, line);
             clear_special();
         }
         58 => {
-            EV_DoFloor(line, raiseFloor24);
+            EV_DoFloor(world, line, raiseFloor24);
             clear_special();
         }
         59 => {
-            EV_DoFloor(line, raiseFloor24AndChange);
+            EV_DoFloor(world, line, raiseFloor24AndChange);
             clear_special();
         }
         104 => {
-            EV_TurnTagLightsOff(line);
+            EV_TurnTagLightsOff(world, line);
             clear_special();
         }
         108 => {
-            EV_DoDoor(line, vld_blazeRaise);
+            EV_DoDoor(world, line, vld_blazeRaise);
             clear_special();
         }
         109 => {
-            EV_DoDoor(line, vld_blazeOpen);
+            EV_DoDoor(world, line, vld_blazeOpen);
             clear_special();
         }
         100 => {
-            EV_BuildStairs(line, turbo16);
+            EV_BuildStairs(world, line, turbo16);
             clear_special();
         }
         110 => {
-            EV_DoDoor(line, vld_blazeClose);
+            EV_DoDoor(world, line, vld_blazeClose);
             clear_special();
         }
         119 => {
-            EV_DoFloor(line, raiseFloorToNearest);
+            EV_DoFloor(world, line, raiseFloorToNearest);
             clear_special();
         }
         121 => {
-            EV_DoPlat(line, blazeDWUS, 0);
+            EV_DoPlat(world, line, blazeDWUS, 0);
             clear_special();
         }
         124 => {
             G_SecretExitLevel();
         }
         125 if (*thing.ptr()).player.is_none() => {
-            EV_Teleport(line, side, thing);
+            EV_Teleport(world, line, side, thing);
             clear_special();
         }
         130 => {
-            EV_DoFloor(line, raiseFloorTurbo);
+            EV_DoFloor(world, line, raiseFloorTurbo);
             clear_special();
         }
         141 => {
-            EV_DoCeiling(line, silentCrushAndRaise);
+            EV_DoCeiling(world, line, silentCrushAndRaise);
             clear_special();
         }
         // RETRIGGERS
         72 => {
-            EV_DoCeiling(line, lowerAndCrush);
+            EV_DoCeiling(world, line, lowerAndCrush);
         }
         73 => {
-            EV_DoCeiling(line, crushAndRaise);
+            EV_DoCeiling(world, line, crushAndRaise);
         }
         74 => {
-            EV_CeilingCrushStop(line);
+            EV_CeilingCrushStop(world, line);
         }
         75 => {
-            EV_DoDoor(line, vld_close);
+            EV_DoDoor(world, line, vld_close);
         }
         76 => {
-            EV_DoDoor(line, vld_close30ThenOpen);
+            EV_DoDoor(world, line, vld_close30ThenOpen);
         }
         77 => {
-            EV_DoCeiling(line, fastCrushAndRaise);
+            EV_DoCeiling(world, line, fastCrushAndRaise);
         }
         79 => {
-            EV_LightTurnOn(line, 35);
+            EV_LightTurnOn(world, line, 35);
         }
         80 => {
-            EV_LightTurnOn(line, 0);
+            EV_LightTurnOn(world, line, 0);
         }
         81 => {
-            EV_LightTurnOn(line, 255);
+            EV_LightTurnOn(world, line, 255);
         }
         82 => {
-            EV_DoFloor(line, lowerFloorToLowest);
+            EV_DoFloor(world, line, lowerFloorToLowest);
         }
         83 => {
-            EV_DoFloor(line, lowerFloor);
+            EV_DoFloor(world, line, lowerFloor);
         }
         84 => {
-            EV_DoFloor(line, lowerAndChange);
+            EV_DoFloor(world, line, lowerAndChange);
         }
         86 => {
-            EV_DoDoor(line, vld_open);
+            EV_DoDoor(world, line, vld_open);
         }
         87 => {
-            EV_DoPlat(line, perpetualRaise, 0);
+            EV_DoPlat(world, line, perpetualRaise, 0);
         }
         88 => {
-            EV_DoPlat(line, downWaitUpStay, 0);
+            EV_DoPlat(world, line, downWaitUpStay, 0);
         }
         89 => {
-            EV_StopPlat(line);
+            EV_StopPlat(world, line);
         }
         90 => {
-            EV_DoDoor(line, vld_normal);
+            EV_DoDoor(world, line, vld_normal);
         }
         91 => {
-            EV_DoFloor(line, raiseFloor);
+            EV_DoFloor(world, line, raiseFloor);
         }
         92 => {
-            EV_DoFloor(line, raiseFloor24);
+            EV_DoFloor(world, line, raiseFloor24);
         }
         93 => {
-            EV_DoFloor(line, raiseFloor24AndChange);
+            EV_DoFloor(world, line, raiseFloor24AndChange);
         }
         94 => {
-            EV_DoFloor(line, raiseFloorCrush);
+            EV_DoFloor(world, line, raiseFloorCrush);
         }
         95 => {
-            EV_DoPlat(line, raiseToNearestAndChange, 0);
+            EV_DoPlat(world, line, raiseToNearestAndChange, 0);
         }
         96 => {
-            EV_DoFloor(line, raiseToTexture);
+            EV_DoFloor(world, line, raiseToTexture);
         }
         97 => {
-            EV_Teleport(line, side, thing);
+            EV_Teleport(world, line, side, thing);
         }
         98 => {
-            EV_DoFloor(line, turboLower);
+            EV_DoFloor(world, line, turboLower);
         }
         105 => {
-            EV_DoDoor(line, vld_blazeRaise);
+            EV_DoDoor(world, line, vld_blazeRaise);
         }
         106 => {
-            EV_DoDoor(line, vld_blazeOpen);
+            EV_DoDoor(world, line, vld_blazeOpen);
         }
         107 => {
-            EV_DoDoor(line, vld_blazeClose);
+            EV_DoDoor(world, line, vld_blazeClose);
         }
         120 => {
-            EV_DoPlat(line, blazeDWUS, 0);
+            EV_DoPlat(world, line, blazeDWUS, 0);
         }
         126 if (*thing.ptr()).player.is_none() => {
-            EV_Teleport(line, side, thing);
+            EV_Teleport(world, line, side, thing);
         }
         128 => {
-            EV_DoFloor(line, raiseFloorToNearest);
+            EV_DoFloor(world, line, raiseFloorToNearest);
         }
         129 => {
-            EV_DoFloor(line, raiseFloorTurbo);
+            EV_DoFloor(world, line, raiseFloorTurbo);
         }
         _ => {}
     }
@@ -932,7 +933,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
 ///
 /// Called from p_map.c (`PTR_ShootTraverse`) when a bullet or projectile
 /// hits a special linedef.
-pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
+pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
     let line_record = LEVEL.borrow().lines[line_id];
     let line = &line_record;
     if (*thing.ptr()).player.is_none() {
@@ -947,16 +948,16 @@ pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
 
     match line.special as i32 {
         24 => {
-            EV_DoFloor(line, raiseFloor);
-            P_ChangeSwitchTexture(line_id, 0);
+            EV_DoFloor(world, line, raiseFloor);
+            P_ChangeSwitchTexture(world, line_id, 0);
         }
         46 => {
-            EV_DoDoor(line, vld_open);
-            P_ChangeSwitchTexture(line_id, 1);
+            EV_DoDoor(world, line, vld_open);
+            P_ChangeSwitchTexture(world, line_id, 1);
         }
         47 => {
-            EV_DoPlat(line, raiseToNearestAndChange, 0);
-            P_ChangeSwitchTexture(line_id, 0);
+            EV_DoPlat(world, line, raiseToNearestAndChange, 0);
+            P_ChangeSwitchTexture(world, line_id, 0);
         }
         _ => {}
     }
@@ -992,7 +993,7 @@ pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
 ///
 /// `player`'s `mo` must name a map object of the loaded level, and no
 /// reference into its slot may be live while this runs.
-pub unsafe fn P_PlayerInSpecialSector(player: PlayerId) {
+pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     let mo = player.mo().ptr();
     let ironfeet = player.read(|player| player.powers[pw_ironfeet]);
     let (sector, floorheight, special) = {
@@ -1012,17 +1013,17 @@ pub unsafe fn P_PlayerInSpecialSector(player: PlayerId) {
     match special as i32 {
         5 => {
             if ironfeet == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj(player.mo(), None, None, 10);
+                P_DamageMobj(world, player.mo(), None, None, 10);
             }
         }
         7 => {
             if ironfeet == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj(player.mo(), None, None, 5);
+                P_DamageMobj(world, player.mo(), None, None, 5);
             }
         }
         16 | 4 => {
             if (ironfeet == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
-                P_DamageMobj(player.mo(), None, None, 20);
+                P_DamageMobj(world, player.mo(), None, None, 20);
             }
         }
         9 => {
@@ -1032,7 +1033,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: PlayerId) {
         11 => {
             player.write(|player| player.cheats &= !CF_GODMODE);
             if leveltime() & 0x1f == 0 {
-                P_DamageMobj(player.mo(), None, None, 20);
+                P_DamageMobj(world, player.mo(), None, None, 20);
             }
             if player.read(|player| player.health) <= 10 {
                 G_ExitLevel();
@@ -1070,7 +1071,7 @@ pub unsafe fn P_PlayerInSpecialSector(player: PlayerId) {
 ///    `buttonlist[i].where_`) and plays the switch sound.
 ///
 /// Called from p_tick.c `P_Ticker`.
-pub unsafe fn P_UpdateSpecials() {
+pub unsafe fn P_UpdateSpecials(_world: &mut World) {
     let timer_expired = {
         let mut spec = SPEC.borrow_mut();
         if spec.levelTimer != 0 {
@@ -1249,7 +1250,7 @@ fn DonutOverrun(
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
 /// Called from p_spec.c via C when a donut-tagged line is activated.
-pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
+pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
     let mut secnum = -1;
     let mut rtn = 0;
 
@@ -1365,7 +1366,7 @@ pub unsafe fn EV_DoDonut(line: &line_t) -> i32 {
 ///    more than `MAXLINEANIMS` (64) scrolling walls are found.
 ///
 /// 4. **Misc cleanup**: clears `activeceilings`, `activeplats`, and `buttonlist`.
-pub unsafe fn P_SpawnSpecials() {
+pub unsafe fn P_SpawnSpecials(world: &mut World) {
     let timelimit = GAME.borrow().timelimit;
     if timelimit > 0 && deathmatch() != 0 {
         let mut spec = SPEC.borrow_mut();
@@ -1383,22 +1384,22 @@ pub unsafe fn P_SpawnSpecials() {
             continue;
         }
         match special as i32 {
-            1 => P_SpawnLightFlash(sector),
-            2 => P_SpawnStrobeFlash(sector, FASTDARK, 0),
-            3 => P_SpawnStrobeFlash(sector, SLOWDARK, 0),
+            1 => P_SpawnLightFlash(world, sector),
+            2 => P_SpawnStrobeFlash(world, sector, FASTDARK, 0),
+            3 => P_SpawnStrobeFlash(world, sector, SLOWDARK, 0),
             4 => {
-                P_SpawnStrobeFlash(sector, FASTDARK, 0);
+                P_SpawnStrobeFlash(world, sector, FASTDARK, 0);
                 LEVEL.borrow_mut().sectors[sector].special = 4;
             }
-            8 => P_SpawnGlowingLight(sector),
+            8 => P_SpawnGlowingLight(world, sector),
             9 => {
                 GAME.borrow_mut().totalsecret += 1;
             }
-            10 => P_SpawnDoorCloseIn30(sector),
-            12 => P_SpawnStrobeFlash(sector, SLOWDARK, 1),
-            13 => P_SpawnStrobeFlash(sector, FASTDARK, 1),
-            14 => P_SpawnDoorRaiseIn5Mins(sector, i),
-            17 => P_SpawnFireFlicker(sector),
+            10 => P_SpawnDoorCloseIn30(world, sector),
+            12 => P_SpawnStrobeFlash(world, sector, SLOWDARK, 1),
+            13 => P_SpawnStrobeFlash(world, sector, FASTDARK, 1),
+            14 => P_SpawnDoorRaiseIn5Mins(world, sector, i),
+            17 => P_SpawnFireFlicker(world, sector),
             _ => {}
         }
     }

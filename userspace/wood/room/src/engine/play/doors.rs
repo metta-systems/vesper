@@ -23,6 +23,7 @@ use crate::engine::{
         },
     },
     sound::{S_StartNonPositionalSound, S_StartSectorSound},
+    world::World,
 };
 
 /// Movement speed for normal vertical doors (in fixed-point units per tic).
@@ -162,7 +163,7 @@ pub struct vldoor_t {
 ///
 /// `door_id` must name a door whose `sector` belongs to the current map.
 /// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_VerticalDoor(door_id: DoorId) {
+pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
     let door = door_id.ptr();
     let res: i32;
     let clear_specialdata =
@@ -207,7 +208,7 @@ pub unsafe fn T_VerticalDoor(door_id: DoorId) {
         -1 => {
             // DOWN
             let floorheight = LEVEL.borrow().sectors[(*door).sector].floorheight;
-            res = T_MovePlane((*door).sector, (*door).speed, floorheight, 0, 1, -1);
+            res = T_MovePlane(world, (*door).sector, (*door).speed, floorheight, 0, 1, -1);
             if res == result_pastdest {
                 match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
@@ -239,7 +240,15 @@ pub unsafe fn T_VerticalDoor(door_id: DoorId) {
         }
         1 => {
             // UP
-            res = T_MovePlane((*door).sector, (*door).speed, (*door).topheight, 0, 1, 1);
+            res = T_MovePlane(
+                world,
+                (*door).sector,
+                (*door).speed,
+                (*door).topheight,
+                0,
+                1,
+                1,
+            );
             if res == result_pastdest {
                 match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_normal => {
@@ -274,7 +283,7 @@ pub unsafe fn T_VerticalDoor(door_id: DoorId) {
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: MobjId) -> i32 {
+pub unsafe fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing: MobjId) -> i32 {
     let Some(player) = (*thing.ptr()).player else {
         return 0;
     };
@@ -292,7 +301,7 @@ pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: MobjId) -> i32 {
         return 0;
     }
 
-    EV_DoDoor(line, kind)
+    EV_DoDoor(world, line, kind)
 }
 
 /// Linedef-triggered event: activate doors on all sectors tagged to `line`.
@@ -306,7 +315,7 @@ pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: MobjId) -> i32 {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoDoor(line: &line_t, kind: i32) -> i32 {
+pub unsafe fn EV_DoDoor(_world: &mut World, line: &line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -440,7 +449,7 @@ fn set_special_door_direction(special: ThinkerId, direction: i32) {
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: MobjId) {
+pub unsafe fn EV_VerticalDoor(_world: &mut World, line_id: LineId, thing: MobjId) {
     let side = 0;
     // The line's record as the use found it; clearing its special below
     // writes the level's line.
@@ -557,7 +566,7 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: MobjId) {
 /// # Panics
 ///
 /// If `sec` is not a sector of the current map.
-pub fn P_SpawnDoorCloseIn30(sec: SectorId) {
+pub fn P_SpawnDoorCloseIn30(_world: &mut World, sec: SectorId) {
     let door_id = new_thinker::<vldoor_t>();
 
     P_AddThinker(ThinkerId::Door(door_id));
@@ -587,7 +596,7 @@ pub fn P_SpawnDoorCloseIn30(sec: SectorId) {
 /// # Panics
 ///
 /// If `sec` is not a sector of the current map.
-pub fn P_SpawnDoorRaiseIn5Mins(sec: SectorId, _secnum: i32) {
+pub fn P_SpawnDoorRaiseIn5Mins(_world: &mut World, sec: SectorId, _secnum: i32) {
     let door_id = new_thinker::<vldoor_t>();
 
     P_AddThinker(ThinkerId::Door(door_id));

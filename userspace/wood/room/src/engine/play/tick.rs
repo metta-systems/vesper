@@ -28,6 +28,7 @@ use crate::engine::{
         spec::P_UpdateSpecials,
         user::P_PlayerThink,
     },
+    world::World,
 };
 
 /// What a thinker does each tic: the typed replacement for the C
@@ -337,18 +338,18 @@ pub fn P_RemoveThinker(thinker: &mut thinker_t) {
 ///
 /// The thinker's think function must be sound to run in the current game
 /// state (a level is loaded).
-unsafe fn run_thinker(thinker: ThinkerId) {
+unsafe fn run_thinker(world: &mut World, thinker: ThinkerId) {
     unsafe {
         match (thinker, thinker.kind()) {
-            (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(id),
-            (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(id),
-            (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(id),
-            (ThinkerId::Floor(id), ThinkerKind::Floor) => T_MoveFloor(id),
-            (ThinkerId::Plat(id), ThinkerKind::Plat) => T_PlatRaise(id),
-            (ThinkerId::LightFlash(id), ThinkerKind::LightFlash) => T_LightFlash(id),
-            (ThinkerId::Strobe(id), ThinkerKind::Strobe) => T_StrobeFlash(id),
-            (ThinkerId::Glow(id), ThinkerKind::Glow) => T_Glow(id),
-            (ThinkerId::FireFlicker(id), ThinkerKind::FireFlicker) => T_FireFlicker(id),
+            (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(world, id),
+            (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(world, id),
+            (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(world, id),
+            (ThinkerId::Floor(id), ThinkerKind::Floor) => T_MoveFloor(world, id),
+            (ThinkerId::Plat(id), ThinkerKind::Plat) => T_PlatRaise(world, id),
+            (ThinkerId::LightFlash(id), ThinkerKind::LightFlash) => T_LightFlash(world, id),
+            (ThinkerId::Strobe(id), ThinkerKind::Strobe) => T_StrobeFlash(world, id),
+            (ThinkerId::Glow(id), ThinkerKind::Glow) => T_Glow(world, id),
+            (ThinkerId::FireFlicker(id), ThinkerKind::FireFlicker) => T_FireFlicker(world, id),
             // C's null function (stasis, not yet set) and removed thinkers
             // do not think.
             _ => {}
@@ -362,7 +363,7 @@ unsafe fn run_thinker(thinker: ThinkerId) {
 /// Thinkers appended while the walk runs are reached in the same walk, and a
 /// thinker removed ahead of the cursor is freed when the cursor gets there,
 /// as with C's linked list.
-fn run_thinker_list(mut think: impl FnMut(ThinkerId)) {
+fn run_thinker_list(world: &mut World, mut think: impl FnMut(&mut World, ThinkerId)) {
     let mut position = 0;
     // `thinker_at` releases its borrow of the list before the body runs.
     while let Some(thinker) = thinker_at(position) {
@@ -370,7 +371,7 @@ fn run_thinker_list(mut think: impl FnMut(ThinkerId)) {
             TICK.borrow_mut().thinkers.remove(position);
             thinker.free();
         } else {
-            think(thinker);
+            think(world, thinker);
             position += 1;
         }
     }
@@ -387,9 +388,11 @@ fn run_thinker_list(mut think: impl FnMut(ThinkerId)) {
 ///   one (C's null function: stasis) are skipped.
 ///
 /// Corresponds to `P_RunThinkers` in `p_tick.c`.
-pub fn P_RunThinkers() {
+pub fn P_RunThinkers(world: &mut World) {
     // SAFETY: the ticker runs only while a level is loaded.
-    run_thinker_list(|thinker| unsafe { run_thinker(thinker) });
+    run_thinker_list(world, |world, thinker| unsafe {
+        run_thinker(world, thinker)
+    });
 }
 
 /// Run one game tic: advance all players, thinkers, specials, and the level
@@ -401,7 +404,7 @@ pub fn P_RunThinkers() {
 /// player has been processed once the check is false and menus pause the game.
 ///
 /// Corresponds to `P_Ticker` in `p_tick.c`.
-pub fn P_Ticker() {
+pub fn P_Ticker(world: &mut World) {
     unsafe {
         if paused() != 0 {
             return;
@@ -417,13 +420,13 @@ pub fn P_Ticker() {
 
         for player in PlayerId::all() {
             if playeringame(player.index()) != 0 {
-                P_PlayerThink(player);
+                P_PlayerThink(world, player);
             }
         }
 
-        P_RunThinkers();
-        P_UpdateSpecials();
-        P_RespawnSpecials();
+        P_RunThinkers(world);
+        P_UpdateSpecials(world);
+        P_RespawnSpecials(world);
 
         TICK.borrow_mut().leveltime += 1;
     }
@@ -490,8 +493,9 @@ mod tests {
         let second = add_glow(2);
         let third = add_glow(3);
 
+        let mut world = World::new();
         let mut ran = Vec::new();
-        run_thinker_list(|thinker| {
+        run_thinker_list(&mut world, |_world, thinker| {
             let level = glow_level(thinker);
             ran.push(level);
             if level == 1 {
@@ -519,7 +523,10 @@ mod tests {
         assert!(glow.is_live(), "removal is deferred");
         assert_eq!(thinkers().count(), 1);
 
-        run_thinker_list(|thinker| panic!("{thinker:?} is removed and must not run"));
+        let mut world = World::new();
+        run_thinker_list(&mut world, |_world, thinker| {
+            panic!("{thinker:?} is removed and must not run")
+        });
         assert!(!glow.is_live());
         assert_eq!(thinkers().count(), 0);
         assert_eq!(unsafe { (*glow.ptr()).minlight }, 5);

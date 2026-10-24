@@ -49,6 +49,7 @@ use crate::{
         wad::{
             W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch,
         },
+        world::WORLD,
         zone::{PU_CACHE, PU_STATIC, Z_Malloc},
     },
     types::Boolean,
@@ -756,7 +757,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             for i in 0..6 {
                 if check_cheat(|status| &mut status.cheat_powerup[i], key) {
                     if (*plyr).powers[i] == 0 {
-                        P_GivePower(player, i as i32);
+                        P_GivePower(&mut WORLD.borrow_mut(), player, i as i32);
                     } else if i != 1 {
                         // pw_strength = 1
                         (*plyr).powers[i] = 1;

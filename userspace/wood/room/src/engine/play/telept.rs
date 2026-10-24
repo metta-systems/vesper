@@ -29,6 +29,7 @@ use crate::engine::{
         tick::{ThinkerId, ThinkerKind, thinkers},
     },
     sound::{S_StartSound, info::Sfx},
+    world::World,
 };
 
 /// Teleport `thing` across the linedef special `line` if all conditions are met.
@@ -56,7 +57,7 @@ use crate::engine::{
 ///
 /// `thing_id` must name a map object of the level, and a level must be
 /// loaded.
-pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
+pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id: MobjId) -> i32 {
     unsafe {
         let thing = thing_id.ptr();
         // Don't teleport missiles
@@ -103,7 +104,7 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
                 let oldy = (*thing).y;
                 let oldz = (*thing).z;
 
-                if P_TeleportMove(thing_id, (*m).x, (*m).y) == 0 {
+                if P_TeleportMove(world, thing_id, (*m).x, (*m).y) == 0 {
                     return 0;
                 }
 
@@ -118,12 +119,13 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
                 }
 
                 // Spawn teleport fog at source
-                let fog = P_SpawnMobj(oldx, oldy, oldz, MT_TFOG);
+                let fog = P_SpawnMobj(world, oldx, oldy, oldz, MT_TFOG);
                 S_StartSound(fog, Sfx::Telept as i32);
 
                 // Spawn teleport fog at destination
                 let an = ((*m).angle >> ANGLETOFINESHIFT) as usize;
                 let fog = P_SpawnMobj(
+                    world,
                     (*m).x + 20 * *finecosine.0.add(an),
                     (*m).y + 20 * finesine[an],
                     (*thing).z,

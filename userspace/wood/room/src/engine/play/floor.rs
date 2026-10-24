@@ -24,6 +24,7 @@ use crate::engine::{
     },
     render_3d::data::RENDER_DATA,
     sound::{S_StartSectorSound, info::Sfx},
+    world::World,
 };
 
 /// Movement speed for floors: 1 unit per tic in fixed-point (`FRACUNIT`).
@@ -171,6 +172,7 @@ fn set_plane_height(sector: SectorId, floorOrCeiling: i32, height: fixed_t) {
 /// `sector` must belong to the current map, and every thing linked into the
 /// blockmap must be live (see `P_ChangeSector`).
 pub unsafe fn T_MovePlane(
+    world: &mut World,
     sector: SectorId,
     speed: fixed_t,
     dest: fixed_t,
@@ -188,18 +190,18 @@ pub unsafe fn T_MovePlane(
                         let lastpos = plane_height(sector, 0);
                         if lastpos - speed < dest {
                             set_plane_height(sector, 0, dest);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 set_plane_height(sector, 0, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
                             set_plane_height(sector, 0, lastpos - speed);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 set_plane_height(sector, 0, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
                         }
@@ -209,21 +211,21 @@ pub unsafe fn T_MovePlane(
                         let lastpos = plane_height(sector, 0);
                         if lastpos + speed > dest {
                             set_plane_height(sector, 0, dest);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 set_plane_height(sector, 0, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
                             set_plane_height(sector, 0, lastpos + speed);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
                                 set_plane_height(sector, 0, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
                         }
@@ -239,21 +241,21 @@ pub unsafe fn T_MovePlane(
                         let lastpos = plane_height(sector, 1);
                         if lastpos - speed < dest {
                             set_plane_height(sector, 1, dest);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 set_plane_height(sector, 1, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
                             set_plane_height(sector, 1, lastpos - speed);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
                                 set_plane_height(sector, 1, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
                         }
@@ -263,15 +265,15 @@ pub unsafe fn T_MovePlane(
                         let lastpos = plane_height(sector, 1);
                         if lastpos + speed > dest {
                             set_plane_height(sector, 1, dest);
-                            let flag = P_ChangeSector(sector, crush);
+                            let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 set_plane_height(sector, 1, lastpos);
-                                P_ChangeSector(sector, crush);
+                                P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
                             set_plane_height(sector, 1, lastpos + speed);
-                            let _flag = P_ChangeSector(sector, crush);
+                            let _flag = P_ChangeSector(world, sector, crush);
                             // The original C code has #if 0 here, so no crush check.
                         }
                     }
@@ -294,9 +296,10 @@ pub unsafe fn T_MovePlane(
 ///
 /// `floor_id` must name a floor mover whose `sector` belongs to the current
 /// map. Called exclusively by the thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_MoveFloor(floor_id: FloorId) {
+pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
     let floor = floor_id.ptr();
     let res = T_MovePlane(
+        world,
         (*floor).sector,
         (*floor).speed,
         (*floor).floordestheight,
@@ -358,7 +361,7 @@ pub fn add_floor_mover(sector: SectorId) -> *mut floormove_t {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
+pub unsafe fn EV_DoFloor(_world: &mut World, line: &line_t, floortype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -531,7 +534,7 @@ pub unsafe fn EV_DoFloor(line: &line_t, floortype: i32) -> i32 {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_BuildStairs(line: &line_t, stype: i32) -> i32 {
+pub unsafe fn EV_BuildStairs(_world: &mut World, line: &line_t, stype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -714,7 +717,8 @@ mod tests {
         // SAFETY: the thinker list is set up just before the call.
         let destinations: Vec<fixed_t> = unsafe {
             P_InitThinkers();
-            assert_eq!(EV_BuildStairs(&trigger, stair_build8), 1);
+            let mut world = World::new();
+            assert_eq!(EV_BuildStairs(&mut world, &trigger, stair_build8), 1);
             LEVEL
                 .borrow()
                 .sectors

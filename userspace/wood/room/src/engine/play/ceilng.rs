@@ -23,6 +23,7 @@ use crate::engine::{
         },
     },
     sound::S_StartSectorSound,
+    world::World,
 };
 
 /// Default ceiling movement speed: 1 fixed-point unit per tic (`FRACUNIT`).
@@ -158,9 +159,10 @@ pub static CEILINGS: Global<CeilingState> = Global::new(CeilingState::new());
 ///
 /// `ceiling_id` must name a ceiling in the thinker list whose `sector`
 /// belongs to the current map.
-pub unsafe fn T_MoveCeiling(ceiling_id: CeilingId) {
+pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
     let ceiling = ceiling_id.ptr();
     let res = T_MovePlane(
+        world,
         (*ceiling).sector,
         (*ceiling).speed,
         if (*ceiling).direction == 1 {
@@ -185,7 +187,7 @@ pub unsafe fn T_MoveCeiling(ceiling_id: CeilingId) {
     if res == result_pastdest {
         match (*ceiling).kind {
             x if x == raiseToHighest => {
-                P_RemoveActiveCeiling(ceiling_id);
+                P_RemoveActiveCeiling(world, ceiling_id);
             }
             x if x == silentCrushAndRaise => {
                 S_StartSectorSound((*ceiling).sector, Sfx::Pstop as i32);
@@ -226,14 +228,14 @@ pub unsafe fn T_MoveCeiling(ceiling_id: CeilingId) {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoCeiling(line: &line_t, ceilingtype: i32) -> i32 {
+pub unsafe fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     // Reactivate in-stasis ceilings for certain types.
     match ceilingtype {
         x if x == fastCrushAndRaise || x == silentCrushAndRaise || x == crushAndRaise => {
-            P_ActivateInStasisCeiling(line);
+            P_ActivateInStasisCeiling(world, line);
         }
         _ => {}
     }
@@ -295,7 +297,7 @@ pub unsafe fn EV_DoCeiling(line: &line_t, ceilingtype: i32) -> i32 {
             (*ceiling).tag = level.sectors[sec].tag as i32;
         }
         (*ceiling).kind = ceilingtype;
-        P_AddActiveCeiling(ceiling_id);
+        P_AddActiveCeiling(world, ceiling_id);
     }
     rtn
 }
@@ -309,7 +311,7 @@ pub unsafe fn EV_DoCeiling(line: &line_t, ceilingtype: i32) -> i32 {
 /// the table.
 ///
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
-pub fn P_AddActiveCeiling(c: CeilingId) {
+pub fn P_AddActiveCeiling(_world: &mut World, c: CeilingId) {
     let mut ceilings = CEILINGS.borrow_mut();
     for slot in ceilings.activeceilings.iter_mut() {
         if slot.is_none() {
@@ -326,7 +328,7 @@ pub fn P_AddActiveCeiling(c: CeilingId) {
 /// `activeceilings`.  Does nothing if `c` is not found in the table.
 ///
 /// Corresponds to `P_RemoveActiveCeiling` in `p_ceilng.c`.
-pub fn P_RemoveActiveCeiling(c: CeilingId) {
+pub fn P_RemoveActiveCeiling(_world: &mut World, c: CeilingId) {
     let mut ceilings = CEILINGS.borrow_mut();
     for slot in ceilings.activeceilings.iter_mut() {
         if *slot == Some(c) {
@@ -349,7 +351,7 @@ pub fn P_RemoveActiveCeiling(c: CeilingId) {
 ///
 /// Called by [`EV_DoCeiling`] for crusher types, and corresponds to
 /// `P_ActivateInStasisCeiling` in `p_ceilng.c`.
-pub fn P_ActivateInStasisCeiling(line: &line_t) {
+pub fn P_ActivateInStasisCeiling(_world: &mut World, line: &line_t) {
     let activeceilings = CEILINGS.borrow().activeceilings;
     for ceiling in activeceilings.into_iter().flatten() {
         // SAFETY: ceilings are only reached through arena pointers, and no
@@ -372,7 +374,7 @@ pub fn P_ActivateInStasisCeiling(line: &line_t) {
 /// Returns `1` if at least one ceiling was stopped, `0` otherwise.
 ///
 /// Corresponds to `EV_CeilingCrushStop` in `p_ceilng.c`.
-pub fn EV_CeilingCrushStop(line: &line_t) -> i32 {
+pub fn EV_CeilingCrushStop(_world: &mut World, line: &line_t) -> i32 {
     let activeceilings = CEILINGS.borrow().activeceilings;
     let mut rtn: i32 = 0;
     for ceiling in activeceilings.into_iter().flatten() {

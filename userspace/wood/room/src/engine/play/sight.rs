@@ -16,6 +16,7 @@ use crate::engine::{
     map::{NodeId, node_t},
     play::{maputl::divline_t, mobj::MobjId},
     wad::format::LinedefFlag,
+    world::World,
 };
 
 /// BSP node flag: child index has this bit set when the child is a subsector
@@ -380,7 +381,7 @@ fn P_CrossBSPNode(sight: &mut SightState, level: &mut LevelState, bspnum: i32) -
 /// # Safety
 /// Both `t1` and `t2` must name initialised map objects whose `subsector`
 /// belongs to the loaded level.
-pub unsafe fn P_CheckSight(t1: MobjId, t2: MobjId) -> i32 {
+pub unsafe fn P_CheckSight(_world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
     let (t1, t2) = (t1.ptr(), t2.ptr());
     let mut level = LEVEL.borrow_mut();
     let mut sight = SIGHT.borrow_mut();

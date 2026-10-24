@@ -31,6 +31,7 @@ pub mod render_3d;
 pub mod sound;
 pub mod status;
 pub mod wad;
+pub mod world;
 pub mod zone;
 
 pub mod memio;

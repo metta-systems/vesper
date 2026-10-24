@@ -21,6 +21,7 @@ use crate::engine::{
         setup::{LEVEL, LevelState, SPAWN_SPOTS, blockmap_origin},
     },
     render_3d::main::{R_PointInSubsector, VALIDCOUNT},
+    world::World,
 };
 
 /// Width/height of one blockmap cell in map units (`MAPBLOCKUNITS` in
@@ -475,7 +476,7 @@ pub fn P_LineOpening(level: &LevelState, linedef: LineId) {
 /// (`snext`, `sprev`, `bnext`, `bprev`) name objects of the loaded level,
 /// and no reference to those objects may be live. The global blockmap
 /// arrays from `p_setup` must be initialised.
-pub unsafe fn P_UnsetThingPosition(thing_id: MobjId) {
+pub unsafe fn P_UnsetThingPosition(_world: &mut World, thing_id: MobjId) {
     unsafe {
         let thing = &mut *thing_id.ptr();
         let mut level = LEVEL.borrow_mut();
@@ -532,7 +533,7 @@ pub unsafe fn P_UnsetThingPosition(thing_id: MobjId) {
 /// `thing_id` must name an initialised map object, and no reference to the
 /// objects at the head of its new sector and block lists may be live. The
 /// global map data (sectors, blockmap) from `p_setup` must be loaded.
-pub unsafe fn P_SetThingPosition(thing_id: MobjId) {
+pub unsafe fn P_SetThingPosition(_world: &mut World, thing_id: MobjId) {
     unsafe {
         let thing = &mut *thing_id.ptr();
         let ss = R_PointInSubsector(thing.x, thing.y);
@@ -588,7 +589,12 @@ pub unsafe fn P_SetThingPosition(thing_id: MobjId) {
 /// `func` must be `Some`, and calling it with any line of the loaded level
 /// must be sound in the caller's current state: it is an `unsafe fn` and
 /// this function discharges its contract on the caller's behalf.
-pub unsafe fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(LineId) -> u32>) -> u32 {
+pub unsafe fn P_BlockLinesIterator(
+    world: &mut World,
+    x: i32,
+    y: i32,
+    func: Option<unsafe fn(&mut World, LineId) -> u32>,
+) -> u32 {
     // The callback can start a nested traversal whose intercept overrun
     // rewrites the blockmap dimensions; like C, this cell's list was located
     // before any callback ran. The callback may also borrow the level, so
@@ -616,7 +622,7 @@ pub unsafe fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(LineId
             line.validcount = validcount;
             LineId::new(linenum as usize)
         };
-        if unsafe { func.unwrap()(ld) } == 0 {
+        if unsafe { func.unwrap()(world, ld) } == 0 {
             return 0;
         }
     }
@@ -640,7 +646,12 @@ pub unsafe fn P_BlockLinesIterator(x: i32, y: i32, func: Option<unsafe fn(LineId
 /// objects must be sound in the caller's current state: it is an
 /// `unsafe fn` and this function discharges its contract on the caller's
 /// behalf.
-pub unsafe fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(MobjId) -> u32>) -> u32 {
+pub unsafe fn P_BlockThingsIterator(
+    world: &mut World,
+    x: i32,
+    y: i32,
+    func: Option<unsafe fn(&mut World, MobjId) -> u32>,
+) -> u32 {
     let mut mobj = {
         let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
@@ -650,7 +661,7 @@ pub unsafe fn P_BlockThingsIterator(x: i32, y: i32, func: Option<unsafe fn(MobjI
     };
     unsafe {
         while let Some(current) = mobj {
-            if func.unwrap()(current) == 0 {
+            if func.unwrap()(world, current) == 0 {
                 return 0;
             }
             // Read after the callback, as C does: it may have moved or
@@ -793,7 +804,7 @@ unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
 /// # Safety
 /// The global `trace`, `intercepts`, and `intercept_p` must be set up by a
 /// preceding `P_PathTraverse` call.
-pub unsafe fn PIT_AddLineIntercepts(ld: LineId) -> u32 {
+pub unsafe fn PIT_AddLineIntercepts(_world: &mut World, ld: LineId) -> u32 {
     unsafe {
         let (trace, earlyout) = {
             let maputl = MAPUTL.borrow();
@@ -868,7 +879,7 @@ pub unsafe fn PIT_AddLineIntercepts(ld: LineId) -> u32 {
 /// `thing_id` must name an initialised map object. The global `trace`,
 /// `intercepts`, and `intercept_p` must be set up by a preceding
 /// `P_PathTraverse` call.
-pub unsafe fn PIT_AddThingIntercepts(thing_id: MobjId) -> u32 {
+pub unsafe fn PIT_AddThingIntercepts(_world: &mut World, thing_id: MobjId) -> u32 {
     unsafe {
         let thing = &*thing_id.ptr();
         let trace = trace();
@@ -939,7 +950,8 @@ pub unsafe fn PIT_AddThingIntercepts(thing_id: MobjId) -> u32 {
 /// `P_PathTraverse` / the `PIT_Add*` callbacks, so their lines and things
 /// still point into the loaded level.
 pub unsafe fn P_TraverseIntercepts(
-    func: Option<unsafe fn(*mut intercept_t) -> u32>,
+    world: &mut World,
+    func: Option<unsafe fn(&mut World, *mut intercept_t) -> u32>,
     maxfrac: fixed_t,
 ) -> u32 {
     // A callback can start a nested traversal that refills the array and
@@ -965,7 +977,7 @@ pub unsafe fn P_TraverseIntercepts(
             if dist > maxfrac {
                 return 1;
             }
-            if func.unwrap()(in_ptr) == 0 {
+            if func.unwrap()(world, in_ptr) == 0 {
                 return 0;
             }
             (*in_ptr).frac = i32::MAX;
@@ -1001,12 +1013,13 @@ pub unsafe fn P_TraverseIntercepts(
 /// in the caller's current state (it is an `unsafe fn`). All coordinates
 /// are in fixed-point map units.
 pub unsafe fn P_PathTraverse(
+    world: &mut World,
     x1: fixed_t,
     y1: fixed_t,
     x2: fixed_t,
     y2: fixed_t,
     flags: i32,
-    trav: Option<unsafe fn(*mut intercept_t) -> u32>,
+    trav: Option<unsafe fn(&mut World, *mut intercept_t) -> u32>,
 ) -> u32 {
     VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
     let (bmaporgx, bmaporgy) = blockmap_origin();
@@ -1074,18 +1087,20 @@ pub unsafe fn P_PathTraverse(
     for _ in 0..64 {
         if flags & PT_ADDLINES != 0
             && P_BlockLinesIterator(
+                world,
                 mapx,
                 mapy,
-                Some(PIT_AddLineIntercepts as unsafe fn(LineId) -> u32),
+                Some(PIT_AddLineIntercepts as unsafe fn(&mut World, LineId) -> u32),
             ) == 0
         {
             return 0;
         }
         if flags & PT_ADDTHINGS != 0
             && P_BlockThingsIterator(
+                world,
                 mapx,
                 mapy,
-                Some(PIT_AddThingIntercepts as unsafe fn(MobjId) -> u32),
+                Some(PIT_AddThingIntercepts as unsafe fn(&mut World, MobjId) -> u32),
             ) == 0
         {
             return 0;
@@ -1101,7 +1116,7 @@ pub unsafe fn P_PathTraverse(
             mapy += mapystep;
         }
     }
-    P_TraverseIntercepts(trav, FRACUNIT)
+    P_TraverseIntercepts(world, trav, FRACUNIT)
 }
 
 #[cfg(test)]
@@ -1119,7 +1134,7 @@ mod tests {
     static VISITED: Mutex<Vec<LineId>> = Mutex::new(Vec::new());
 
     /// Blockmap callback that records `line` and continues.
-    unsafe fn record_line(line: LineId) -> u32 {
+    unsafe fn record_line(_world: &mut World, line: LineId) -> u32 {
         VISITED.lock().unwrap().push(line);
         1
     }
@@ -1163,11 +1178,12 @@ mod tests {
         VISITED.lock().unwrap().clear();
         VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
 
+        let mut world = World::new();
         // SAFETY: the callback only records the line it is given.
         unsafe {
-            assert_eq!(P_BlockLinesIterator(0, 0, Some(record_line)), 1);
-            assert_eq!(P_BlockLinesIterator(1, 0, Some(record_line)), 1);
-            assert_eq!(P_BlockLinesIterator(2, 0, Some(record_line)), 1);
+            assert_eq!(P_BlockLinesIterator(&mut world, 0, 0, Some(record_line)), 1);
+            assert_eq!(P_BlockLinesIterator(&mut world, 1, 0, Some(record_line)), 1);
+            assert_eq!(P_BlockLinesIterator(&mut world, 2, 0, Some(record_line)), 1);
         }
 
         assert_eq!(*VISITED.lock().unwrap(), [LineId::new(0), LineId::new(1)]);

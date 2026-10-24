@@ -16,6 +16,7 @@ use crate::engine::{
             new_thinker, thinker_t,
         },
     },
+    world::World,
 };
 
 /// Light change applied each step of the glow oscillation (light units per tic).
@@ -132,7 +133,7 @@ fn light_and_min_surrounding(sector: SectorId) -> (i32, i32) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_FireFlicker(flick: FireFlickerId) {
+pub fn T_FireFlicker(_world: &mut World, flick: FireFlickerId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let flick = unsafe { &mut *flick.ptr() };
@@ -162,7 +163,7 @@ pub fn T_FireFlicker(flick: FireFlickerId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnFireFlicker(sector: SectorId) {
+pub fn P_SpawnFireFlicker(_world: &mut World, sector: SectorId) {
     LEVEL.borrow_mut().sectors[sector].special = 0;
 
     let flick_id = new_thinker::<fireflicker_t>();
@@ -189,7 +190,7 @@ pub fn P_SpawnFireFlicker(sector: SectorId) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_LightFlash(flash: LightFlashId) {
+pub fn T_LightFlash(_world: &mut World, flash: LightFlashId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let flash = unsafe { &mut *flash.ptr() };
@@ -218,7 +219,7 @@ pub fn T_LightFlash(flash: LightFlashId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnLightFlash(sector: SectorId) {
+pub fn P_SpawnLightFlash(_world: &mut World, sector: SectorId) {
     LEVEL.borrow_mut().sectors[sector].special = 0;
 
     let flash_id = new_thinker::<lightflash_t>();
@@ -248,7 +249,7 @@ pub fn P_SpawnLightFlash(sector: SectorId) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_StrobeFlash(flash: StrobeId) {
+pub fn T_StrobeFlash(_world: &mut World, flash: StrobeId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let flash = unsafe { &mut *flash.ptr() };
@@ -278,7 +279,7 @@ pub fn T_StrobeFlash(flash: StrobeId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnStrobeFlash(sector: SectorId, fastOrSlow: i32, inSync: i32) {
+pub fn P_SpawnStrobeFlash(_world: &mut World, sector: SectorId, fastOrSlow: i32, inSync: i32) {
     let flash_id = new_thinker::<strobe_t>();
 
     P_AddThinker(ThinkerId::Strobe(flash_id));
@@ -310,7 +311,7 @@ pub fn P_SpawnStrobeFlash(sector: SectorId, fastOrSlow: i32, inSync: i32) {
 ///
 /// Iterates over sectors whose tag matches `line`'s tag. Sectors that already
 /// have an active special effect are skipped.
-pub fn EV_StartLightStrobing(line: &line_t) {
+pub fn EV_StartLightStrobing(world: &mut World, line: &line_t) {
     let mut secnum: i32 = -1;
     loop {
         secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
@@ -321,7 +322,7 @@ pub fn EV_StartLightStrobing(line: &line_t) {
         if LEVEL.borrow().sectors[sec].specialdata.is_some() {
             continue;
         }
-        P_SpawnStrobeFlash(sec, SLOWDARK, 0);
+        P_SpawnStrobeFlash(world, sec, SLOWDARK, 0);
     }
 }
 
@@ -329,7 +330,7 @@ pub fn EV_StartLightStrobing(line: &line_t) {
 ///
 /// For each sector whose tag matches `line`'s tag, scans adjacent sectors and
 /// sets the light level to the minimum found among all neighbors.
-pub fn EV_TurnTagLightsOff(line: &line_t) {
+pub fn EV_TurnTagLightsOff(_world: &mut World, line: &line_t) {
     let mut level = LEVEL.borrow_mut();
     for j in 0..level.numsectors as usize {
         let sec = SectorId::new(j);
@@ -355,7 +356,7 @@ pub fn EV_TurnTagLightsOff(line: &line_t) {
 ///
 /// If `bright == 0`, the function searches adjacent sectors and uses the
 /// highest light level found among them instead.
-pub fn EV_LightTurnOn(line: &line_t, bright: i32) {
+pub fn EV_LightTurnOn(_world: &mut World, line: &line_t, bright: i32) {
     let mut level = LEVEL.borrow_mut();
     let mut bright = bright;
     for i in 0..level.numsectors as usize {
@@ -389,7 +390,7 @@ pub fn EV_LightTurnOn(line: &line_t, bright: i32) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_Glow(glow: GlowId) {
+pub fn T_Glow(_world: &mut World, glow: GlowId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let g = unsafe { &mut *glow.ptr() };
@@ -423,7 +424,7 @@ pub fn T_Glow(glow: GlowId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnGlowingLight(sector: SectorId) {
+pub fn P_SpawnGlowingLight(_world: &mut World, sector: SectorId) {
     let glow_id = new_thinker::<glow_t>();
 
     P_AddThinker(ThinkerId::Glow(glow_id));

@@ -80,6 +80,7 @@ use crate::engine::{
         },
     },
     wad::format::mapthing_t,
+    world::World,
 };
 
 // ---------------------------------------------------------------------------
@@ -1466,7 +1467,7 @@ pub unsafe fn P_WriteSaveGameEOF() {
 ///
 /// A level must be loaded, with every listed thinker belonging to it (see
 /// [`P_ArchiveThinkers`] and [`P_ArchiveSpecials`]).
-pub unsafe fn archive_save_game(description: &[u8]) -> ArchivedSaveGame {
+pub unsafe fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSaveGame {
     {
         let mut saveg = SAVEG.borrow_mut();
         saveg.save_stream = Cursor::default();
@@ -1475,10 +1476,10 @@ pub unsafe fn archive_save_game(description: &[u8]) -> ArchivedSaveGame {
     }
 
     P_WriteSaveGameHeader(description);
-    P_ArchivePlayers();
-    P_ArchiveWorld();
-    P_ArchiveThinkers();
-    P_ArchiveSpecials();
+    P_ArchivePlayers(world);
+    P_ArchiveWorld(world);
+    P_ArchiveThinkers(world);
+    P_ArchiveSpecials(world);
     P_WriteSaveGameEOF();
 
     let mut saveg = SAVEG.borrow_mut();
@@ -1509,7 +1510,7 @@ use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 /// The `players` array and `playeringame` flags must be fully initialized for
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
-pub unsafe fn P_ArchivePlayers() {
+pub unsafe fn P_ArchivePlayers(_world: &World) {
     let ordinals = mobj_save_ordinals();
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
@@ -1537,7 +1538,7 @@ pub unsafe fn P_ArchivePlayers() {
 /// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// empty until thinkers are unarchived.
-pub unsafe fn P_UnArchivePlayers() {
+pub unsafe fn P_UnArchivePlayers(_world: &mut World) {
     let mut saved_attackers = [None; MAXPLAYERS];
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
@@ -1574,7 +1575,7 @@ pub unsafe fn P_UnArchivePlayers() {
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
 /// stream written and a level loaded.
-pub fn P_ArchiveWorld() {
+pub fn P_ArchiveWorld(_world: &World) {
     let level = LEVEL.borrow();
 
     // do sectors
@@ -1619,7 +1620,7 @@ pub fn P_ArchiveWorld() {
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`), with `save_stream` positioned at
 /// the byte sequence written by `P_ArchiveWorld` and the saved level loaded.
-pub fn P_UnArchiveWorld() {
+pub fn P_UnArchiveWorld(_world: &mut World) {
     let mut level = LEVEL.borrow_mut();
     let level = &mut *level;
     let numsectors = level.numsectors as usize;
@@ -1687,7 +1688,7 @@ const tc_mobj: u8 = 1;
 ///
 /// `save_stream` must be the stream being written, and a level must be
 /// loaded (each map object's subsector is written by address).
-pub unsafe fn P_ArchiveThinkers() {
+pub unsafe fn P_ArchiveThinkers(_world: &World) {
     let ordinals = mobj_save_ordinals();
     for mobj in thinkers().filter_map(saved_mobj) {
         saveg_write8(tc_mobj);
@@ -1729,13 +1730,13 @@ pub unsafe fn P_ArchiveThinkers() {
 /// be loaded so that `P_SetThingPosition` can place each restored mobj.
 /// Must be called before `P_UnArchiveSpecials` and before any code reads
 /// `players[i].mo`.
-pub unsafe fn P_UnArchiveThinkers() {
+pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
     // remove all current thinkers
     for thinker in thinkers() {
         if let ThinkerId::Mobj(mobj) = thinker
             && thinker.kind() == ThinkerKind::Mobj
         {
-            P_RemoveMobj(mobj);
+            P_RemoveMobj(world, mobj);
         }
     }
 
@@ -1758,7 +1759,7 @@ pub unsafe fn P_UnArchiveThinkers() {
 
                 let mo = mobj_id.ptr();
 
-                P_SetThingPosition(mobj_id);
+                P_SetThingPosition(world, mobj_id);
 
                 // rebuild info from mobjinfo
                 (*mo).info = MobjType::new((*mo).kind);
@@ -1833,7 +1834,7 @@ const tc_endspecials: u8 = 7;
 ///
 /// `save_stream` must be the stream being written, and every listed special
 /// must belong to the loaded level.
-pub unsafe fn P_ArchiveSpecials() {
+pub unsafe fn P_ArchiveSpecials(_world: &World) {
     for thinker in thinkers() {
         match (thinker, thinker.kind()) {
             // C's null function: a ceiling in stasis is still saved when it
@@ -1924,7 +1925,7 @@ pub unsafe fn P_ArchiveSpecials() {
 /// fully initialized so that `sector->specialdata` can be set. Must be
 /// called after `P_UnArchiveThinkers` so the thinker list is in a
 /// consistent state before new specials are registered with `P_AddThinker`.
-pub unsafe fn P_UnArchiveSpecials() {
+pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
     loop {
         let tclass = saveg_read8();
         match tclass {
@@ -1944,7 +1945,7 @@ pub unsafe fn P_UnArchiveSpecials() {
                 }
 
                 P_AddThinker(ThinkerId::Ceiling(ceiling_id));
-                P_AddActiveCeiling(ceiling_id);
+                P_AddActiveCeiling(world, ceiling_id);
             }
             x if x == tc_door => {
                 saveg_read_pad();
@@ -1981,7 +1982,7 @@ pub unsafe fn P_UnArchiveSpecials() {
                 }
 
                 P_AddThinker(ThinkerId::Plat(plat_id));
-                P_AddActivePlat(plat_id);
+                P_AddActivePlat(world, plat_id);
             }
             x if x == tc_flash => {
                 saveg_read_pad();
@@ -2348,16 +2349,17 @@ mod tests {
             });
         }
 
+        let mut world = World::new();
         with_mem_stream(&mut [], || unsafe {
-            P_ArchivePlayers();
-            P_ArchiveThinkers();
+            P_ArchivePlayers(&world);
+            P_ArchiveThinkers(&world);
 
             player.write(|player| *player = std::mem::zeroed());
             P_InitThinkers();
             SAVEG.borrow_mut().save_stream.set_position(0);
 
-            P_UnArchivePlayers();
-            P_UnArchiveThinkers();
+            P_UnArchivePlayers(&mut world);
+            P_UnArchiveThinkers(&mut world);
             assert_eq!(SAVEG.borrow().savegame_error, 0);
         });
 

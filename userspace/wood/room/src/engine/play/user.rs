@@ -18,6 +18,7 @@ use crate::engine::{
         tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
     },
     play::{info::*, setup::LEVEL, tick::leveltime},
+    world::World,
 };
 
 /// Maximum view-bob amplitude in fixed-point units (16 pixels = 0x100000).
@@ -155,7 +156,7 @@ use crate::engine::{
 ///
 /// # Safety
 /// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_Thrust(player: PlayerId, angle: u32, move_: fixed_t) {
+pub unsafe fn P_Thrust(_world: &mut World, player: PlayerId, angle: u32, move_: fixed_t) {
     unsafe {
         let mo = player.mo().ptr();
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
@@ -175,7 +176,7 @@ pub unsafe fn P_Thrust(player: PlayerId, angle: u32, move_: fixed_t) {
 ///
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_CalcHeight(player_id: PlayerId) {
+pub unsafe fn P_CalcHeight(_world: &mut World, player_id: PlayerId) {
     unsafe {
         let player = player_id.ptr();
         let mo = (*player).mo().ptr();
@@ -244,7 +245,7 @@ pub unsafe fn P_CalcHeight(player_id: PlayerId) {
 ///
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_MovePlayer(player_id: PlayerId) {
+pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
     unsafe {
         let player = player_id.ptr();
         let mo = (*player).mo().ptr();
@@ -259,11 +260,17 @@ pub unsafe fn P_MovePlayer(player_id: PlayerId) {
         USER.borrow_mut().onground = onground;
 
         if cmd.forwardmove != 0 && onground != 0 {
-            P_Thrust(player_id, (*mo).angle, cmd.forwardmove as fixed_t * 2048);
+            P_Thrust(
+                world,
+                player_id,
+                (*mo).angle,
+                cmd.forwardmove as fixed_t * 2048,
+            );
         }
 
         if cmd.sidemove != 0 && onground != 0 {
             P_Thrust(
+                world,
                 player_id,
                 (*mo).angle.wrapping_sub(ANG90),
                 cmd.sidemove as fixed_t * 2048,
@@ -272,7 +279,7 @@ pub unsafe fn P_MovePlayer(player_id: PlayerId) {
 
         // C: player->mo->state == &states[S_PLAY]
         if (cmd.forwardmove != 0 || cmd.sidemove != 0) && (*mo).state.number() == S_PLAY {
-            P_SetMobjState((*player).mo(), S_PLAY_RUN1);
+            P_SetMobjState(world, (*player).mo(), S_PLAY_RUN1);
         }
     }
 }
@@ -287,14 +294,14 @@ pub unsafe fn P_MovePlayer(player_id: PlayerId) {
 ///
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_DeathThink(player_id: PlayerId) {
+pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
     unsafe {
         let player = player_id.ptr();
         let mo = (*player).mo().ptr();
         let angle: u32;
         let delta: u32;
 
-        P_MovePsprites(player_id);
+        P_MovePsprites(world, player_id);
 
         // Fall to the ground
         if (*player).viewheight > 6 * FRACUNIT {
@@ -307,7 +314,7 @@ pub unsafe fn P_DeathThink(player_id: PlayerId) {
 
         (*player).deltaviewheight = 0;
         USER.borrow_mut().onground = ((*mo).z <= (*mo).floorz) as i32;
-        P_CalcHeight(player_id);
+        P_CalcHeight(world, player_id);
 
         // The attacker may have been removed since (an exploded barrel); like
         // C, its last position is read through the stale handle.
@@ -363,7 +370,7 @@ pub unsafe fn P_DeathThink(player_id: PlayerId) {
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level with a
 /// valid `subsector` chain.
-pub unsafe fn P_PlayerThink(player_id: PlayerId) {
+pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     unsafe {
         let player = player_id.ptr();
         let mo = (*player).mo().ptr();
@@ -386,7 +393,7 @@ pub unsafe fn P_PlayerThink(player_id: PlayerId) {
         }
 
         if (*player).playerstate == PST_DEAD {
-            P_DeathThink(player_id);
+            P_DeathThink(world, player_id);
             return;
         }
 
@@ -395,12 +402,12 @@ pub unsafe fn P_PlayerThink(player_id: PlayerId) {
         if (*mo).reactiontime != 0 {
             (*mo).reactiontime -= 1;
         } else {
-            P_MovePlayer(player_id);
+            P_MovePlayer(world, player_id);
         }
 
-        P_CalcHeight(player_id);
+        P_CalcHeight(world, player_id);
         if LEVEL.borrow().subsector_sector((*mo).subsector).special != 0 {
-            P_PlayerInSpecialSector(player_id);
+            P_PlayerInSpecialSector(world, player_id);
         }
         // Check for weapon change.
         // A special event has no other buttons.
@@ -442,7 +449,7 @@ pub unsafe fn P_PlayerThink(player_id: PlayerId) {
         // Check for use
         if cmd.buttons & BT_USE != 0 {
             if (*player).usedown == 0 {
-                P_UseLines(player_id);
+                P_UseLines(world, player_id);
                 (*player).usedown = 1;
             }
         } else {
@@ -450,7 +457,7 @@ pub unsafe fn P_PlayerThink(player_id: PlayerId) {
         }
 
         // Cycle psprites
-        P_MovePsprites(player_id);
+        P_MovePsprites(world, player_id);
 
         // Counters, time dependent power ups.
         // Strength counts up to diminish fade.

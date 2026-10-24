@@ -42,6 +42,7 @@ use crate::{
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2, VALIDCOUNT},
         wad::format::LinedefFlag,
+        world::World,
     },
     i_error,
 };
@@ -467,7 +468,7 @@ unsafe fn start_position_check(thing_id: MobjId, x: fixed_t, y: fixed_t) -> [fix
 /// `thing_id` must name an initialised map object. `tmthing` and
 /// `tmx` / `tmy` must have been set by the caller ([`P_TeleportMove`])
 /// before this callback is invoked.
-pub unsafe fn PIT_StompThing(thing_id: MobjId) -> u32 {
+pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
     let thing = &*thing_id.ptr();
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
@@ -487,7 +488,7 @@ pub unsafe fn PIT_StompThing(thing_id: MobjId) -> u32 {
     if (*tmthing).player.is_none() && gamemap() != 30 {
         return 0;
     }
-    P_DamageMobj(thing_id, Some(tmthing_id), Some(tmthing_id), 10000);
+    P_DamageMobj(world, thing_id, Some(tmthing_id), Some(tmthing_id), 10000);
     1
 }
 
@@ -503,7 +504,7 @@ pub unsafe fn PIT_StompThing(thing_id: MobjId) -> u32 {
 /// `thing_id` must name a map object that is already linked into the map
 /// (sector list and blockmap). The blockmap and sector structures must be
 /// fully initialised.
-pub unsafe fn P_TeleportMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let thing = thing_id.ptr();
     let tmbbox = start_position_check(thing_id, x, y);
     let (bmaporgx, bmaporgy) = blockmap_origin();
@@ -515,13 +516,13 @@ pub unsafe fn P_TeleportMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            if P_BlockThingsIterator(bx, by, Some(PIT_StompThing)) == 0 {
+            if P_BlockThingsIterator(world, bx, by, Some(PIT_StompThing)) == 0 {
                 return 0;
             }
         }
     }
 
-    P_UnsetThingPosition(thing_id);
+    P_UnsetThingPosition(world, thing_id);
     {
         let map = MAP.borrow();
         (*thing).floorz = map.tmfloorz;
@@ -529,7 +530,7 @@ pub unsafe fn P_TeleportMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     }
     (*thing).x = x;
     (*thing).y = y;
-    P_SetThingPosition(thing_id);
+    P_SetThingPosition(world, thing_id);
 
     1
 }
@@ -552,7 +553,7 @@ pub unsafe fn P_TeleportMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 /// `ld` must be a linedef of the loaded level. `tmthing`, `tmbbox`,
 /// `tmfloorz`, `tmceilingz`, and `tmdropoffz` must have been initialised by
 /// [`P_CheckPosition`] before this callback is invoked.
-pub unsafe fn PIT_CheckLine(ld: LineId) -> u32 {
+pub unsafe fn PIT_CheckLine(_world: &mut World, ld: LineId) -> u32 {
     let (tmbbox, tmthing) = (MAP.borrow().tmbbox, tmthing().ptr());
     let level = LEVEL.borrow();
     let line = &level.lines[ld];
@@ -616,7 +617,7 @@ pub unsafe fn PIT_CheckLine(ld: LineId) -> u32 {
 /// `thing_id` must name an initialised map object. `tmthing`, `tmx`,
 /// `tmy`, and `tmflags` must have been set by [`P_CheckPosition`] before
 /// this callback is invoked.
-pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
+pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
     let thing = &*thing_id.ptr();
     if thing.flags & (MF_SOLID | MF_SPECIAL | MF_SHOOTABLE) == 0 {
         return 1;
@@ -637,7 +638,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
     // check for skulls slamming into things
     if (*tmthing).flags & MF_SKULLFLY != 0 {
         let damage = ((P_Random() % 8) + 1) * (*tmthing).info.get().damage;
-        P_DamageMobj(thing_id, Some(tmthing_id), Some(tmthing_id), damage);
+        P_DamageMobj(world, thing_id, Some(tmthing_id), Some(tmthing_id), damage);
         // The damage can run actions that check other objects' positions;
         // like C, the rest of the slam acts on whatever `tmthing` is now.
         let tmthing_id = self::tmthing();
@@ -646,7 +647,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
         (*tmthing).momx = 0;
         (*tmthing).momy = 0;
         (*tmthing).momz = 0;
-        P_SetMobjState(tmthing_id, (*tmthing).info.get().spawnstate);
+        P_SetMobjState(world, tmthing_id, (*tmthing).info.get().spawnstate);
         return 0;
     }
 
@@ -679,7 +680,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
         }
         let damage = ((P_Random() % 8) + 1) * (*tmthing).info.get().damage;
         let target = (*tmthing).target;
-        P_DamageMobj(thing_id, Some(tmthing_id), target, damage);
+        P_DamageMobj(world, thing_id, Some(tmthing_id), target, damage);
         return 0;
     }
 
@@ -687,7 +688,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
     if thing.flags & MF_SPECIAL != 0 {
         let solid = thing.flags & MF_SOLID;
         if tmflags & MF_PICKUP != 0 {
-            P_TouchSpecialThing(thing_id, tmthing_id);
+            P_TouchSpecialThing(world, thing_id, tmthing_id);
         }
         return (solid == 0) as u32;
     }
@@ -712,7 +713,7 @@ pub unsafe fn PIT_CheckThing(thing_id: MobjId) -> u32 {
 ///
 /// `thing_id` must name an initialised map object. The blockmap and all
 /// sector/linedef structures must be fully initialised.
-pub unsafe fn P_CheckPosition(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let thing = thing_id.ptr();
     let tmbbox = start_position_check(thing_id, x, y);
 
@@ -728,7 +729,7 @@ pub unsafe fn P_CheckPosition(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            if P_BlockThingsIterator(bx, by, Some(PIT_CheckThing)) == 0 {
+            if P_BlockThingsIterator(world, bx, by, Some(PIT_CheckThing)) == 0 {
                 return 0;
             }
         }
@@ -745,7 +746,7 @@ pub unsafe fn P_CheckPosition(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            if P_BlockLinesIterator(bx, by, Some(PIT_CheckLine)) == 0 {
+            if P_BlockLinesIterator(world, bx, by, Some(PIT_CheckLine)) == 0 {
                 return 0;
             }
         }
@@ -768,10 +769,10 @@ pub unsafe fn P_CheckPosition(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 ///
 /// `thing_id` must name a map object that is already linked into the map.
 /// The map data must be fully initialised.
-pub unsafe fn P_TryMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let thing = thing_id.ptr();
     MAP.borrow_mut().floatok = 0;
-    if P_CheckPosition(thing_id, x, y) == 0 {
+    if P_CheckPosition(world, thing_id, x, y) == 0 {
         return 0;
     }
     if (*thing).flags & MF_NOCLIP == 0 {
@@ -793,7 +794,7 @@ pub unsafe fn P_TryMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
         }
     }
 
-    P_UnsetThingPosition(thing_id);
+    P_UnsetThingPosition(world, thing_id);
     let oldx = (*thing).x;
     let oldy = (*thing).y;
     {
@@ -803,7 +804,7 @@ pub unsafe fn P_TryMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     }
     (*thing).x = x;
     (*thing).y = y;
-    P_SetThingPosition(thing_id);
+    P_SetThingPosition(world, thing_id);
 
     if (*thing).flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
         // A crossed special can move things (teleporters reset the list),
@@ -826,7 +827,7 @@ pub unsafe fn P_TryMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
                 )
             };
             if side != oldside && special != 0 {
-                P_CrossSpecialLine(ld, oldside, thing_id);
+                P_CrossSpecialLine(world, ld, oldside, thing_id);
             }
         }
     }
@@ -846,10 +847,10 @@ pub unsafe fn P_TryMove(thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
 ///
 /// `thing_id` must name a map object of the level. Called only from
 /// [`PIT_ChangeSector`] during sector-height propagation.
-pub unsafe fn P_ThingHeightClip(thing_id: MobjId) -> u32 {
+pub unsafe fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
     let thing = thing_id.ptr();
     let onfloor = (*thing).z == (*thing).floorz;
-    P_CheckPosition(thing_id, (*thing).x, (*thing).y);
+    P_CheckPosition(world, thing_id, (*thing).x, (*thing).y);
     {
         let map = MAP.borrow();
         (*thing).floorz = map.tmfloorz;
@@ -929,7 +930,7 @@ pub unsafe fn P_HitSlideLine(ld: LineId) {
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. `slidemo` must point to the object being moved.
-pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
+pub unsafe fn PTR_SlideTraverse(_world: &mut World, in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     let InterceptHit::Line(li) = in_.hit else {
         i_error!("PTR_SlideTraverse: not a line?");
@@ -974,7 +975,7 @@ pub unsafe fn PTR_SlideTraverse(in_: *mut intercept_t) -> u32 {
 ///
 /// `mo_id` must name a map object of the level. Map data must be fully
 /// initialised.
-pub unsafe fn P_SlideMove(mo_id: MobjId) {
+pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
     let mo = mo_id.ptr();
     MAP.borrow_mut().slidemo = Some(mo_id);
     let mut hitcount = 0;
@@ -983,8 +984,8 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
         hitcount += 1;
         if hitcount == 3 {
             // stairstep
-            if P_TryMove(mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
-                P_TryMove(mo_id, (*mo).x + (*mo).momx, (*mo).y);
+            if P_TryMove(world, mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
+                P_TryMove(world, mo_id, (*mo).x + (*mo).momx, (*mo).y);
             }
             return;
         }
@@ -1003,6 +1004,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
         MAP.borrow_mut().bestslidefrac = FRACUNIT + 1;
 
         P_PathTraverse(
+            world,
             leadx,
             leady,
             leadx + (*mo).momx,
@@ -1011,6 +1013,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
             Some(PTR_SlideTraverse),
         );
         P_PathTraverse(
+            world,
             trailx,
             leady,
             trailx + (*mo).momx,
@@ -1019,6 +1022,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
             Some(PTR_SlideTraverse),
         );
         P_PathTraverse(
+            world,
             leadx,
             traily,
             leadx + (*mo).momx,
@@ -1029,8 +1033,8 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
 
         if MAP.borrow().bestslidefrac == FRACUNIT + 1 {
             // stairstep
-            if P_TryMove(mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
-                P_TryMove(mo_id, (*mo).x + (*mo).momx, (*mo).y);
+            if P_TryMove(world, mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
+                P_TryMove(world, mo_id, (*mo).x + (*mo).momx, (*mo).y);
             }
             return;
         }
@@ -1043,7 +1047,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
         if bestslidefrac > 0 {
             let newx = FixedMul((*mo).momx, bestslidefrac);
             let newy = FixedMul((*mo).momy, bestslidefrac);
-            if P_TryMove(mo_id, (*mo).x + newx, (*mo).y + newy) == 0 {
+            if P_TryMove(world, mo_id, (*mo).x + newx, (*mo).y + newy) == 0 {
                 continue 'retry;
             }
         }
@@ -1073,7 +1077,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
         };
         (*mo).momx = tmxmove;
         (*mo).momy = tmymove;
-        if P_TryMove(mo_id, (*mo).x + tmxmove, (*mo).y + tmymove) == 0 {
+        if P_TryMove(world, mo_id, (*mo).x + tmxmove, (*mo).y + tmymove) == 0 {
             continue 'retry;
         }
         return;
@@ -1099,7 +1103,7 @@ pub unsafe fn P_SlideMove(mo_id: MobjId) {
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. `shootthing`, `shootz`, `attackrange`,
 /// `topslope`, and `bottomslope` must be set before the traversal begins.
-pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
+pub unsafe fn PTR_AimTraverse(_world: &mut World, in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     let (shootthing, shootz, attackrange) = {
         let map = MAP.borrow();
@@ -1192,12 +1196,12 @@ pub unsafe fn PTR_AimTraverse(in_: *mut intercept_t) -> u32 {
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`]. `shootthing`, `shootz`, `attackrange`,
 /// `aimslope`, and `la_damage` must be set before the traversal.
-pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
+pub unsafe fn PTR_ShootTraverse(world: &mut World, in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     if let InterceptHit::Line(li) = in_.hit {
         if LEVEL.borrow().lines[li].special != 0 {
             let shootthing = MAP.borrow().shootthing.expect("shot without a shooter");
-            P_ShootSpecialLine(shootthing, li);
+            P_ShootSpecialLine(world, shootthing, li);
         }
         // The special can change the line (a switch clears it) and move
         // sectors, so the line is read afresh, as C does.
@@ -1214,12 +1218,12 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
                 None => {
                     let slope = FixedDiv(openbottom - shootz, dist);
                     if slope > aimslope {
-                        goto_hitline(li, in_);
+                        goto_hitline(world, li, in_);
                         return 0;
                     }
                     let slope = FixedDiv(opentop - shootz, dist);
                     if slope < aimslope {
-                        goto_hitline(li, in_);
+                        goto_hitline(world, li, in_);
                         return 0;
                     }
                 }
@@ -1234,14 +1238,14 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
                     if front.floorheight != back.floorheight {
                         let slope = FixedDiv(openbottom - shootz, dist);
                         if slope > aimslope {
-                            goto_hitline(li, in_);
+                            goto_hitline(world, li, in_);
                             return 0;
                         }
                     }
                     if front.ceilingheight != back.ceilingheight {
                         let slope = FixedDiv(opentop - shootz, dist);
                         if slope < aimslope {
-                            goto_hitline(li, in_);
+                            goto_hitline(world, li, in_);
                             return 0;
                         }
                     }
@@ -1249,7 +1253,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
             }
             return 1;
         }
-        goto_hitline(li, in_);
+        goto_hitline(world, li, in_);
         return 0;
     }
 
@@ -1289,9 +1293,9 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
     let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
     if (*th).flags & MF_NOBLOOD != 0 {
-        P_SpawnPuff(x, y, z);
+        P_SpawnPuff(world, x, y, z);
     } else {
-        P_SpawnBlood(x, y, z, la_damage);
+        P_SpawnBlood(world, x, y, z, la_damage);
     }
     // Spawning sets the new object's state, so re-read the shot as C does.
     let (shootthing, la_damage) = {
@@ -1299,7 +1303,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
         (map.shootthing, map.la_damage)
     };
     if la_damage != 0 {
-        P_DamageMobj(th_id, shootthing, shootthing, la_damage);
+        P_DamageMobj(world, th_id, shootthing, shootthing, la_damage);
     }
     0
 }
@@ -1315,7 +1319,7 @@ pub unsafe fn PTR_ShootTraverse(in_: *mut intercept_t) -> u32 {
 /// `li` must be a linedef of the loaded level. `in_` must refer to the
 /// intercept that triggered this call. `shootz`, `aimslope`, and
 /// `attackrange` must be current.
-unsafe fn goto_hitline(li: LineId, in_: &intercept_t) {
+unsafe fn goto_hitline(world: &mut World, li: LineId, in_: &intercept_t) {
     let (shootz, attackrange, aimslope) = {
         let map = MAP.borrow();
         (map.shootz, map.attackrange, map.aimslope)
@@ -1342,7 +1346,7 @@ unsafe fn goto_hitline(li: LineId, in_: &intercept_t) {
             }
         }
     }
-    P_SpawnPuff(x, y, z);
+    P_SpawnPuff(world, x, y, z);
 }
 
 /// Auto-aim a hitscan ray from `t1` along `angle` up to `distance` away.
@@ -1357,7 +1361,12 @@ unsafe fn goto_hitline(li: LineId, in_: &intercept_t) {
 /// `t1` names the shooter (C substitutes a dummy for null via
 /// [`P_SubstNullMobj`]; the callers always pass one). Map data must be
 /// initialised.
-pub unsafe fn P_AimLineAttack(t1: MobjId, angle: u32, distance: fixed_t) -> fixed_t {
+pub unsafe fn P_AimLineAttack(
+    world: &mut World,
+    t1: MobjId,
+    angle: u32,
+    distance: fixed_t,
+) -> fixed_t {
     let t1_id = P_SubstNullMobj(Some(t1));
     let t1 = t1_id.ptr();
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
@@ -1376,6 +1385,7 @@ pub unsafe fn P_AimLineAttack(t1: MobjId, angle: u32, distance: fixed_t) -> fixe
         sight.bottomslope = -(100 * FRACUNIT / 160);
     }
     P_PathTraverse(
+        world,
         (*t1).x,
         (*t1).y,
         x2,
@@ -1402,6 +1412,7 @@ pub unsafe fn P_AimLineAttack(t1: MobjId, angle: u32, distance: fixed_t) -> fixe
 /// `t1_id` must name a map object of the level. Map data must be fully
 /// initialised.
 pub unsafe fn P_LineAttack(
+    world: &mut World,
     t1_id: MobjId,
     angle: u32,
     distance: fixed_t,
@@ -1421,6 +1432,7 @@ pub unsafe fn P_LineAttack(
         map.aimslope = slope;
     }
     P_PathTraverse(
+        world,
         (*t1).x,
         (*t1).y,
         x2,
@@ -1447,7 +1459,7 @@ pub unsafe fn P_LineAttack(
 ///
 /// `in_` must be a valid, non-null pointer to an initialised
 /// [`intercept_t`] that hit a line. `usething` must be set.
-pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
+pub unsafe fn PTR_UseTraverse(world: &mut World, in_: *mut intercept_t) -> u32 {
     let in_ = &*in_;
     let usething_id = MAP.borrow().usething.expect("use without a user");
     let usething = usething_id.ptr();
@@ -1471,7 +1483,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
         }
         side
     };
-    P_UseSpecialLine(usething_id, line, side);
+    P_UseSpecialLine(world, usething_id, line, side);
     0
 }
 
@@ -1485,7 +1497,7 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
 ///
 /// `player`'s `mo` must name a map object of the loaded level. Map data
 /// must be initialised.
-pub unsafe fn P_UseLines(player: PlayerId) {
+pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
     let mo_id = player.mo();
     let mo = mo_id.ptr();
     MAP.borrow_mut().usething = Some(mo_id);
@@ -1494,7 +1506,7 @@ pub unsafe fn P_UseLines(player: PlayerId) {
     let y1 = (*mo).y;
     let x2 = x1 + (USERANGE >> FRACBITS) * *finecosine.0.add(angle);
     let y2 = y1 + (USERANGE >> FRACBITS) * finesine[angle];
-    P_PathTraverse(x1, y1, x2, y2, PT_ADDLINES, Some(PTR_UseTraverse));
+    P_PathTraverse(world, x1, y1, x2, y2, PT_ADDLINES, Some(PTR_UseTraverse));
 }
 
 // ---------------------------------------------------------------------------
@@ -1515,7 +1527,7 @@ pub unsafe fn P_UseLines(player: PlayerId) {
 /// `thing_id` must name an initialised map object. `bombspot`,
 /// `bombsource`, and `bombdamage` must be set by [`P_RadiusAttack`] before
 /// this callback is invoked.
-pub unsafe fn PIT_RadiusAttack(thing_id: MobjId) -> u32 {
+pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
     let thing = &*thing_id.ptr();
     if thing.flags & MF_SHOOTABLE == 0 {
         return 1;
@@ -1544,8 +1556,14 @@ pub unsafe fn PIT_RadiusAttack(thing_id: MobjId) -> u32 {
     if dist >= bombdamage {
         return 1;
     }
-    if P_CheckSight(thing_id, bombspot_id) != 0 {
-        P_DamageMobj(thing_id, Some(bombspot_id), bombsource, bombdamage - dist);
+    if P_CheckSight(world, thing_id, bombspot_id) != 0 {
+        P_DamageMobj(
+            world,
+            thing_id,
+            Some(bombspot_id),
+            bombsource,
+            bombdamage - dist,
+        );
     }
     1
 }
@@ -1564,7 +1582,12 @@ pub unsafe fn PIT_RadiusAttack(thing_id: MobjId) -> u32 {
 /// `spot_id` must name a map object of the level; `source` may be `None`
 /// or stale (C passes the exploding object's `target`, which may be gone).
 /// Map and blockmap data must be fully initialised.
-pub unsafe fn P_RadiusAttack(spot_id: MobjId, source: Option<MobjId>, damage: i32) {
+pub unsafe fn P_RadiusAttack(
+    world: &mut World,
+    spot_id: MobjId,
+    source: Option<MobjId>,
+    damage: i32,
+) {
     let spot = spot_id.ptr();
     let (bmaporgx, bmaporgy) = blockmap_origin();
     let dist = (damage + MAXRADIUS) << FRACBITS;
@@ -1580,7 +1603,7 @@ pub unsafe fn P_RadiusAttack(spot_id: MobjId, source: Option<MobjId>, damage: i3
     }
     for y in yl..=yh {
         for x in xl..=xh {
-            P_BlockThingsIterator(x, y, Some(PIT_RadiusAttack));
+            P_BlockThingsIterator(world, x, y, Some(PIT_RadiusAttack));
         }
     }
 }
@@ -1603,20 +1626,20 @@ pub unsafe fn P_RadiusAttack(spot_id: MobjId, source: Option<MobjId>, damage: i3
 ///
 /// `thing_id` must name an initialised map object. `crushchange` must be
 /// set by [`P_ChangeSector`] before iteration.
-pub unsafe fn PIT_ChangeSector(thing_id: MobjId) -> u32 {
-    if P_ThingHeightClip(thing_id) != 0 {
+pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
+    if P_ThingHeightClip(world, thing_id) != 0 {
         return 1;
     }
     let thing = &mut *thing_id.ptr();
     if thing.health <= 0 {
-        P_SetMobjState(thing_id, S_GIBS);
+        P_SetMobjState(world, thing_id, S_GIBS);
         thing.flags &= !MF_SOLID;
         thing.height = 0;
         thing.radius = 0;
         return 1;
     }
     if thing.flags & MF_DROPPED != 0 {
-        P_RemoveMobj(thing_id);
+        P_RemoveMobj(world, thing_id);
         return 1;
     }
     if thing.flags & MF_SHOOTABLE == 0 {
@@ -1628,8 +1651,15 @@ pub unsafe fn PIT_ChangeSector(thing_id: MobjId) -> u32 {
         map.crushchange
     };
     if crushchange != 0 && leveltime() & 3 == 0 {
-        P_DamageMobj(thing_id, None, None, 10);
-        let mo = P_SpawnMobj(thing.x, thing.y, thing.z + thing.height / 2, MT_BLOOD).ptr();
+        P_DamageMobj(world, thing_id, None, None, 10);
+        let mo = P_SpawnMobj(
+            world,
+            thing.x,
+            thing.y,
+            thing.z + thing.height / 2,
+            MT_BLOOD,
+        )
+        .ptr();
         (*mo).momx = (P_Random() - P_Random()) << 12;
         (*mo).momy = (P_Random() - P_Random()) << 12;
     }
@@ -1647,7 +1677,7 @@ pub unsafe fn PIT_ChangeSector(thing_id: MobjId) -> u32 {
 ///
 /// `sector` must be a sector of the loaded level, and every thing linked
 /// into the blockmap must be live.
-pub unsafe fn P_ChangeSector(sector: SectorId, crunch: i32) -> i32 {
+pub unsafe fn P_ChangeSector(world: &mut World, sector: SectorId, crunch: i32) -> i32 {
     {
         let mut map = MAP.borrow_mut();
         map.nofit = 0;
@@ -1656,7 +1686,7 @@ pub unsafe fn P_ChangeSector(sector: SectorId, crunch: i32) -> i32 {
     let blockbox = LEVEL.borrow().sectors[sector].blockbox;
     for x in blockbox[BBox::LEFT]..=blockbox[BBox::RIGHT] {
         for y in blockbox[BBox::BOTTOM]..=blockbox[BBox::TOP] {
-            P_BlockThingsIterator(x, y, Some(PIT_ChangeSector));
+            P_BlockThingsIterator(world, x, y, Some(PIT_ChangeSector));
         }
     }
     MAP.borrow().nofit

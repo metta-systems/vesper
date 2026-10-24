@@ -14,6 +14,7 @@ use {
         map::{LineId, SectorId, VertexId, line_t, sector_t, slopetype_t, vertex_t},
         math::{bbox::BBox, fixed::FRACUNIT},
         play::{self, maputl::divline_t, setup::LevelState},
+        world::World,
     },
 };
 
@@ -696,7 +697,7 @@ static TRAVERSED_FRACS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_continue(intr: *mut play::maputl::intercept_t) -> u32 {
+unsafe fn record_and_continue(_world: &mut World, intr: *mut play::maputl::intercept_t) -> u32 {
     TRAVERSED_FRACS
         .lock()
         .unwrap()
@@ -712,7 +713,7 @@ unsafe fn record_and_continue(intr: *mut play::maputl::intercept_t) -> u32 {
 /// `intr` must be a valid, non-null, properly aligned pointer to an
 /// `intercept_t` whose `frac` field is initialised. Only called from
 /// within `P_TraverseIntercepts`, which satisfies these requirements.
-unsafe fn record_and_stop(intr: *mut play::maputl::intercept_t) -> u32 {
+unsafe fn record_and_stop(_world: &mut World, intr: *mut play::maputl::intercept_t) -> u32 {
     TRAVERSED_FRACS
         .lock()
         .unwrap()
@@ -747,7 +748,9 @@ fn traverse_intercepts_empty() {
     TRAVERSED_FRACS.lock().unwrap().clear();
     load_intercepts(&[]);
     // SAFETY: the callback only reads `frac` from the loaded intercepts.
-    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
+    let result = unsafe {
+        play::maputl::P_TraverseIntercepts(&mut World::new(), Some(record_and_continue), FRACUNIT)
+    };
     assert_eq!(result, 1); // true = all traversed
     assert!(TRAVERSED_FRACS.lock().unwrap().is_empty());
 }
@@ -760,7 +763,9 @@ fn traverse_intercepts_single() {
     load_intercepts(&[FRACUNIT / 2]);
 
     // SAFETY: the callback only reads `frac` from the loaded intercepts.
-    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
+    let result = unsafe {
+        play::maputl::P_TraverseIntercepts(&mut World::new(), Some(record_and_continue), FRACUNIT)
+    };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);
@@ -779,7 +784,9 @@ fn traverse_intercepts_sorted_order() {
     load_intercepts(&[FRACUNIT / 2, FRACUNIT / 4, 3 * FRACUNIT / 4]);
 
     // SAFETY: the callback only reads `frac` from the loaded intercepts.
-    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT) };
+    let result = unsafe {
+        play::maputl::P_TraverseIntercepts(&mut World::new(), Some(record_and_continue), FRACUNIT)
+    };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 3);
@@ -799,8 +806,13 @@ fn traverse_intercepts_respects_maxfrac() {
 
     // maxfrac = FRACUNIT/2 → only the first intercept (FRACUNIT/4) is in range.
     // SAFETY: the callback only reads `frac` from the loaded intercepts.
-    let result =
-        unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_continue), FRACUNIT / 2) };
+    let result = unsafe {
+        play::maputl::P_TraverseIntercepts(
+            &mut World::new(),
+            Some(record_and_continue),
+            FRACUNIT / 2,
+        )
+    };
     assert_eq!(result, 1);
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);
@@ -817,7 +829,9 @@ fn traverse_intercepts_stop_early() {
     load_intercepts(&[FRACUNIT / 4, FRACUNIT / 2]);
 
     // SAFETY: the callback only reads `frac` from the loaded intercepts.
-    let result = unsafe { play::maputl::P_TraverseIntercepts(Some(record_and_stop), FRACUNIT) };
+    let result = unsafe {
+        play::maputl::P_TraverseIntercepts(&mut World::new(), Some(record_and_stop), FRACUNIT)
+    };
     assert_eq!(result, 0); // false = stopped early
     let fracs = TRAVERSED_FRACS.lock().unwrap();
     assert_eq!(fracs.len(), 1);

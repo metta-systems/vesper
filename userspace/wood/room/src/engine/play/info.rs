@@ -882,17 +882,19 @@ pub struct MobjInfo {
 pub enum StateAction {
     /// No action (C null `actionf_t`).
     None,
-    /// Map-object action, called with the actor entering the state.
-    Mobj(unsafe fn(MobjId)),
-    /// Player-sprite (weapon) action, called with the player and the
-    /// psprite entering the state.
-    Weapon(unsafe fn(PlayerId, *mut PspdefT)),
+    /// Map-object action, called with the world and the actor entering the
+    /// state.
+    Mobj(unsafe fn(&mut World, MobjId)),
+    /// Player-sprite (weapon) action, called with the world, the player and
+    /// the psprite entering the state.
+    Weapon(unsafe fn(&mut World, PlayerId, *mut PspdefT)),
 }
 
 // Every action function referenced from [`STATES`]. The bodies live in
-// `p_pspr` (mostly player weapon actions, `fn(PlayerId, *mut PspdefT)`)
-// and `p_enemy` (mostly map object actions, `fn(MobjId)`); `action!`
-// wraps each in its [`StateAction`] variant.
+// `p_pspr` (mostly player weapon actions,
+// `fn(&mut World, PlayerId, *mut PspdefT)`) and `p_enemy` (mostly map object
+// actions, `fn(&mut World, MobjId)`); `action!` wraps each in its
+// [`StateAction`] variant.
 use crate::engine::{
     doom::player::{PlayerId, PspdefT},
     play::{
@@ -914,6 +916,7 @@ use crate::engine::{
             A_Light1, A_Light2, A_Lower, A_Punch, A_Raise, A_ReFire, A_Saw, A_WeaponReady,
         },
     },
+    world::World,
 };
 
 /// The [`StateAction`] for action function `$f`: `Weapon` for the
