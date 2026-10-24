@@ -18,8 +18,7 @@ use crate::engine::{
             getSector, getSide, twoSided,
         },
         tick::{
-            FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, leveltime, new_thinker,
-            thinker_t,
+            FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
         },
     },
     render_3d::data::RENDER_DATA,
@@ -308,7 +307,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
         (*floor).direction,
     );
 
-    if (leveltime() & 7) == 0 {
+    if (world.leveltime & 7) == 0 {
         S_StartSectorSound(world, (*floor).sector, Sfx::Stnmov as i32);
     }
 

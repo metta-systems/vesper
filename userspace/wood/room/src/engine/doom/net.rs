@@ -239,8 +239,12 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
     exit_message[7] += player_idx as u8;
 
     GAME.borrow_mut().playeringame[player_idx] = 0;
-    // Runs from `NetUpdate`, outside any world borrow.
-    WORLD.borrow_mut().players[PlayerId::console()].set_message(exit_message);
+    // Runs from `NetUpdate`, outside any world borrow. Play reads the
+    // session's copy of `playeringame`, which changes here mid-level.
+    let mut world = WORLD.borrow_mut();
+    world.session.playeringame[player_idx] = 0;
+    world.players[PlayerId::console()].set_message(exit_message);
+    drop(world);
 
     if GAME.borrow().demorecording != 0 {
         G_CheckDemoStatus();

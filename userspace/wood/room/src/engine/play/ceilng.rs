@@ -10,7 +10,6 @@
 use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
-    global::Global,
     map::{SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
     play::{
@@ -18,8 +17,8 @@ use crate::engine::{
         setup::LEVEL,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            CeilingId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, leveltime,
-            new_thinker, thinker_t,
+            CeilingId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker,
+            thinker_t,
         },
     },
     sound::S_StartSectorSound,
@@ -91,7 +90,8 @@ pub struct ceiling_t {
     pub olddirection: i32,
 }
 
-/// The active-ceiling table (`p_ceilng.c` global).
+/// The active-ceiling table (`p_ceilng.c` global), kept in
+/// [`ActiveSpecials`](crate::engine::world::ActiveSpecials).
 pub struct CeilingState {
     /// Table of all currently active ceiling thinkers.
     ///
@@ -114,9 +114,6 @@ impl Default for CeilingState {
         Self::new()
     }
 }
-
-/// The active-ceiling table.
-pub static CEILINGS: Global<CeilingState> = Global::new(CeilingState::new());
 
 /// Per-tic update for a moving ceiling thinker.
 ///
@@ -175,7 +172,7 @@ pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
         (*ceiling).direction,
     );
 
-    if (leveltime() & 7) == 0 {
+    if (world.leveltime & 7) == 0 {
         match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
@@ -311,9 +308,8 @@ pub unsafe fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -
 /// the table.
 ///
 /// Corresponds to `P_AddActiveCeiling` in `p_ceilng.c`.
-pub fn P_AddActiveCeiling(_world: &mut World, c: CeilingId) {
-    let mut ceilings = CEILINGS.borrow_mut();
-    for slot in ceilings.activeceilings.iter_mut() {
+pub fn P_AddActiveCeiling(world: &mut World, c: CeilingId) {
+    for slot in world.active.ceilings.activeceilings.iter_mut() {
         if slot.is_none() {
             *slot = Some(c);
             return;
@@ -328,9 +324,8 @@ pub fn P_AddActiveCeiling(_world: &mut World, c: CeilingId) {
 /// `activeceilings`.  Does nothing if `c` is not found in the table.
 ///
 /// Corresponds to `P_RemoveActiveCeiling` in `p_ceilng.c`.
-pub fn P_RemoveActiveCeiling(_world: &mut World, c: CeilingId) {
-    let mut ceilings = CEILINGS.borrow_mut();
-    for slot in ceilings.activeceilings.iter_mut() {
+pub fn P_RemoveActiveCeiling(world: &mut World, c: CeilingId) {
+    for slot in world.active.ceilings.activeceilings.iter_mut() {
         if *slot == Some(c) {
             // SAFETY: ceilings are only reached through arena pointers, and
             // no reference to one is live while a ceiling is removed.
@@ -351,9 +346,8 @@ pub fn P_RemoveActiveCeiling(_world: &mut World, c: CeilingId) {
 ///
 /// Called by [`EV_DoCeiling`] for crusher types, and corresponds to
 /// `P_ActivateInStasisCeiling` in `p_ceilng.c`.
-pub fn P_ActivateInStasisCeiling(_world: &mut World, line: &line_t) {
-    let activeceilings = CEILINGS.borrow().activeceilings;
-    for ceiling in activeceilings.into_iter().flatten() {
+pub fn P_ActivateInStasisCeiling(world: &mut World, line: &line_t) {
+    for ceiling in world.active.ceilings.activeceilings.into_iter().flatten() {
         // SAFETY: ceilings are only reached through arena pointers, and no
         // reference to one is live while a line special runs.
         let ceiling = unsafe { &mut *ceiling.ptr() };
@@ -374,10 +368,9 @@ pub fn P_ActivateInStasisCeiling(_world: &mut World, line: &line_t) {
 /// Returns `1` if at least one ceiling was stopped, `0` otherwise.
 ///
 /// Corresponds to `EV_CeilingCrushStop` in `p_ceilng.c`.
-pub fn EV_CeilingCrushStop(_world: &mut World, line: &line_t) -> i32 {
-    let activeceilings = CEILINGS.borrow().activeceilings;
+pub fn EV_CeilingCrushStop(world: &mut World, line: &line_t) -> i32 {
     let mut rtn: i32 = 0;
-    for ceiling in activeceilings.into_iter().flatten() {
+    for ceiling in world.active.ceilings.activeceilings.into_iter().flatten() {
         // SAFETY: ceilings are only reached through arena pointers, and no
         // reference to one is live while a line special runs.
         let ceiling = unsafe { &mut *ceiling.ptr() };

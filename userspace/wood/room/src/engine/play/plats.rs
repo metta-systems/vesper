@@ -11,7 +11,6 @@ use crate::engine::sound::info::Sfx;
 
 use crate::{
     engine::{
-        global::Global,
         interface::timer::TICRATE,
         map::{SectorId, line_t},
         math::fixed::{FRACUNIT, fixed_t},
@@ -24,8 +23,8 @@ use crate::{
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
             },
             tick::{
-                P_AddThinker, P_RemoveThinker, PlatId, ThinkerId, ThinkerKind, leveltime,
-                new_thinker, thinker_t,
+                P_AddThinker, P_RemoveThinker, PlatId, ThinkerId, ThinkerKind, new_thinker,
+                thinker_t,
             },
         },
         sound::S_StartSectorSound,
@@ -115,7 +114,8 @@ pub struct plat_t {
     pub kind: i32,
 }
 
-/// The active-platform table (`p_plats.c` global).
+/// The active-platform table (`p_plats.c` global), kept in
+/// [`ActiveSpecials`](crate::engine::world::ActiveSpecials).
 pub struct PlatState {
     /// Table of all currently active platform thinkers.
     ///
@@ -139,9 +139,6 @@ impl Default for PlatState {
         Self::new()
     }
 }
-
-/// The active-platform table.
-pub static PLATS: Global<PlatState> = Global::new(PlatState::new());
 
 /// Per-tic update for a moving platform thinker.
 ///
@@ -185,7 +182,7 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             );
 
             if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
-                && (leveltime() & 7) == 0
+                && (world.leveltime & 7) == 0
             {
                 S_StartSectorSound(world, (*plat).sector, Sfx::Stnmov as i32);
             }
@@ -352,7 +349,7 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
                         (*plat).high = floorheight;
                     }
                     (*plat).wait = TICRATE * PLATWAIT;
-                    (*plat).status = P_Random() & 1;
+                    (*plat).status = P_Random(world) & 1;
                     Some(Sfx::Pstart)
                 }
                 _ => None,
@@ -373,9 +370,8 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
 /// [`EV_DoPlat`] for the `perpetualRaise` type.
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
-pub fn P_ActivateInStasis(_world: &mut World, tag: i32) {
-    let activeplats = PLATS.borrow().activeplats;
-    for plat in activeplats.into_iter().flatten() {
+pub fn P_ActivateInStasis(world: &mut World, tag: i32) {
+    for plat in world.active.plats.activeplats.into_iter().flatten() {
         // SAFETY: platforms are only reached through arena pointers, and no
         // reference to one is live while a line special runs.
         let plat = unsafe { &mut *plat.ptr() };
@@ -393,9 +389,8 @@ pub fn P_ActivateInStasis(_world: &mut World, tag: i32) {
 /// remains in `activeplats` and can be resumed by [`P_ActivateInStasis`].
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
-pub fn EV_StopPlat(_world: &mut World, line: &line_t) {
-    let activeplats = PLATS.borrow().activeplats;
-    for plat in activeplats.into_iter().flatten() {
+pub fn EV_StopPlat(world: &mut World, line: &line_t) {
+    for plat in world.active.plats.activeplats.into_iter().flatten() {
         // SAFETY: platforms are only reached through arena pointers, and no
         // reference to one is live while a line special runs.
         let plat = unsafe { &mut *plat.ptr() };
@@ -415,14 +410,11 @@ pub fn EV_StopPlat(_world: &mut World, line: &line_t) {
 /// `P_RemoveActivePlat` or the next level load clears the table.
 ///
 /// Corresponds to `P_AddActivePlat` in `p_plats.c`.
-pub fn P_AddActivePlat(_world: &mut World, plat: PlatId) {
-    {
-        let mut plats = PLATS.borrow_mut();
-        for slot in plats.activeplats.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(plat);
-                return;
-            }
+pub fn P_AddActivePlat(world: &mut World, plat: PlatId) {
+    for slot in world.active.plats.activeplats.iter_mut() {
+        if slot.is_none() {
+            *slot = Some(plat);
+            return;
         }
     }
     i_error!("P_AddActivePlat: no more plats!");
@@ -435,19 +427,16 @@ pub fn P_AddActivePlat(_world: &mut World, plat: PlatId) {
 /// `activeplats`.  Calls `I_Error` if the platform is not found.
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
-pub fn P_RemoveActivePlat(_world: &mut World, plat: PlatId) {
-    {
-        let mut plats = PLATS.borrow_mut();
-        for slot in plats.activeplats.iter_mut() {
-            if *slot == Some(plat) {
-                // SAFETY: platforms are only reached through arena pointers,
-                // and no reference to one is live while it is removed.
-                let plat = unsafe { &mut *plat.ptr() };
-                LEVEL.borrow_mut().sectors[plat.sector].specialdata = None;
-                P_RemoveThinker(&mut plat.thinker);
-                *slot = None;
-                return;
-            }
+pub fn P_RemoveActivePlat(world: &mut World, plat: PlatId) {
+    for slot in world.active.plats.activeplats.iter_mut() {
+        if *slot == Some(plat) {
+            // SAFETY: platforms are only reached through arena pointers, and
+            // no reference to one is live while it is removed.
+            let plat = unsafe { &mut *plat.ptr() };
+            LEVEL.borrow_mut().sectors[plat.sector].specialdata = None;
+            P_RemoveThinker(&mut plat.thinker);
+            *slot = None;
+            return;
         }
     }
     i_error!("P_RemoveActivePlat: can't find plat!");

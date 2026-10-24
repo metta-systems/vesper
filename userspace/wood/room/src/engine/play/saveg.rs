@@ -65,7 +65,7 @@ use crate::engine::{
     global::Global,
     map::{SectorId, SubsectorId},
     play::{
-        ceilng::{CEILINGS, MAXCEILINGS, P_AddActiveCeiling, T_MoveCeiling, ceiling_t},
+        ceilng::{MAXCEILINGS, P_AddActiveCeiling, T_MoveCeiling, ceiling_t},
         doors::{T_VerticalDoor, vldoor_t},
         floor::{T_MoveFloor, floormove_t},
         info::{MOBJINFO, MobjType, NUMSTATES, StateNum},
@@ -75,8 +75,7 @@ use crate::engine::{
         mobj::{MobjId, mobj_t},
         plats::{P_AddActivePlat, T_PlatRaise, plat_t},
         tick::{
-            P_AddThinker, P_InitThinkers, TICK, ThinkerId, ThinkerKind, leveltime, new_thinker,
-            thinker_t, thinkers,
+            P_AddThinker, P_InitThinkers, ThinkerId, ThinkerKind, new_thinker, thinker_t, thinkers,
         },
     },
     wad::format::mapthing_t,
@@ -433,7 +432,8 @@ unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
 /// Reads a `thinker_t` header (prev, next, function) from the save stream.
 ///
 /// The `prev` and `next` words are list links from the saving session; the
-/// thinker list here is [`TICK`]'s ordered list, so they are read and
+/// thinker list here is [`TICK`](crate::engine::play::tick::TICK)'s
+/// ordered list, so they are read and
 /// dropped (C overwrites them when it relinks the thinker). The saved
 /// function slot is only tested against null, as in C: `0` reads as
 /// [`ThinkerKind::None`], anything else as `kind_if_function_set`. The
@@ -1322,13 +1322,14 @@ fn savegame_version(version_code: i32) -> [u8; VERSIONSIZE] {
 ///
 /// # Safety
 ///
-/// `save_stream` must be the stream being written. The global state
-/// `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and `leveltime`
-/// must have been set to valid values before this call.
+/// `save_stream` must be the stream being written. The session settings
+/// `gameskill`, `gameepisode`, `gamemap`, `playeringame` and the
+/// `leveltime` of `world` must have been set to valid values before this
+/// call.
 ///
 /// `description` is read up to its first NUL, so the fixed description
 /// buffer can be passed whole.
-pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
+pub unsafe fn P_WriteSaveGameHeader(world: &World, description: &[u8]) {
     let desc_bytes = until_nul(description);
 
     // Write description (padded to SAVESTRINGSIZE)
@@ -1346,17 +1347,18 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
     }
 
     // Write skill, episode, map
-    saveg_write8(gameskill() as u8);
-    saveg_write8(gameepisode() as u8);
-    saveg_write8(gamemap() as u8);
+    let session = &world.session;
+    saveg_write8(session.gameskill as u8);
+    saveg_write8(session.gameepisode as u8);
+    saveg_write8(session.gamemap as u8);
 
     // Write playeringame
-    for i in 0..MAXPLAYERS {
-        saveg_write8(playeringame(i) as u8);
+    for in_game in session.playeringame {
+        saveg_write8(in_game as u8);
     }
 
     // Write leveltime (3 bytes, big-endian)
-    let lt = leveltime() as u32;
+    let lt = world.leveltime as u32;
     saveg_write8(((lt >> 16) & 0xff) as u8);
     saveg_write8(((lt >> 8) & 0xff) as u8);
     saveg_write8((lt & 0xff) as u8);
@@ -1367,8 +1369,9 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
 /// Returns `1` (true) on success, `0` (false) if the version string is not
 /// [`savegame_version`] of `G_VanillaVersionCode()`: a save of another game
 /// version, or a vanilla save (whose format Room no longer reads). On
-/// success, `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
-/// `leveltime` are updated from the stream.
+/// success, the game controller's `gameskill`, `gameepisode`, `gamemap`
+/// and `playeringame` (which `G_InitNew` then copies into the session) and
+/// the `leveltime` of `world` are updated from the stream.
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
@@ -1378,12 +1381,12 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
 /// a save file written by `P_WriteSaveGameHeader`. On success, `gameskill`,
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
-pub unsafe fn P_ReadSaveGameHeader() -> i32 {
-    read_save_game_header(G_VanillaVersionCode())
+pub unsafe fn P_ReadSaveGameHeader(world: &mut World) -> i32 {
+    read_save_game_header(world, G_VanillaVersionCode())
 }
 
 /// [`P_ReadSaveGameHeader`] for game version code `version_code`.
-fn read_save_game_header(version_code: i32) -> i32 {
+fn read_save_game_header(world: &mut World, version_code: i32) -> i32 {
     // Skip description (SAVESTRINGSIZE bytes)
     for _ in 0..SAVESTRINGSIZE {
         saveg_read8();
@@ -1421,7 +1424,7 @@ fn read_save_game_header(version_code: i32) -> i32 {
     let a = saveg_read8() as u32;
     let b = saveg_read8() as u32;
     let c = saveg_read8() as u32;
-    TICK.borrow_mut().leveltime = ((a << 16) | (b << 8) | c) as i32;
+    world.leveltime = ((a << 16) | (b << 8) | c) as i32;
 
     1 // success
 }
@@ -1478,7 +1481,7 @@ pub unsafe fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSa
         saveg.address_words.clear();
     }
 
-    P_WriteSaveGameHeader(description);
+    P_WriteSaveGameHeader(world, description);
     P_ArchivePlayers(world);
     P_ArchiveWorld(world);
     P_ArchiveThinkers(world);
@@ -1492,7 +1495,7 @@ pub unsafe fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSa
     }
 }
 
-use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
+use crate::engine::game::GAME;
 
 // ---------------------------------------------------------------------------
 // P_ArchivePlayers / P_UnArchivePlayers
@@ -1516,7 +1519,7 @@ use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 pub unsafe fn P_ArchivePlayers(world: &World) {
     let ordinals = mobj_save_ordinals();
     for i in 0..MAXPLAYERS {
-        if playeringame(i) == 0 {
+        if !world.session.in_game(i) {
             continue;
         }
         saveg_write_pad();
@@ -1537,14 +1540,14 @@ pub unsafe fn P_ArchivePlayers(world: &World) {
 /// # Safety
 ///
 /// `save_stream` must be positioned at the byte
-/// sequence written by `P_ArchivePlayers`. `playeringame` must already have
-/// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
-/// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
+/// sequence written by `P_ArchivePlayers`. The session's `playeringame`
+/// must already hold the flags `P_ReadSaveGameHeader` read (`G_InitNew`
+/// copies them in) so the active-slot bitmask is correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// empty until thinkers are unarchived.
 pub unsafe fn P_UnArchivePlayers(world: &mut World) {
     let mut saved_attackers = [None; MAXPLAYERS];
     for i in 0..MAXPLAYERS {
-        if playeringame(i) == 0 {
+        if !world.session.in_game(i) {
             continue;
         }
         saveg_read_pad();
@@ -1836,15 +1839,17 @@ const tc_endspecials: u8 = 7;
 ///
 /// `save_stream` must be the stream being written, and every listed special
 /// must belong to the loaded level.
-pub unsafe fn P_ArchiveSpecials(_world: &World) {
+pub unsafe fn P_ArchiveSpecials(world: &World) {
     for thinker in thinkers() {
         match (thinker, thinker.kind()) {
             // C's null function: a ceiling in stasis is still saved when it
             // is in `activeceilings`. A platform in stasis is not saved at
             // all (vanilla behaviour).
             (ThinkerId::Ceiling(ceiling), ThinkerKind::None | ThinkerKind::CeilingInStasis) => {
-                let activeceilings = CEILINGS.borrow().activeceilings;
-                if activeceilings
+                if world
+                    .active
+                    .ceilings
+                    .activeceilings
                     .iter()
                     .take(MAXCEILINGS)
                     .any(|&active| active == Some(ceiling))
@@ -2325,7 +2330,6 @@ mod tests {
         };
         let saved_level = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
         let player = PlayerId::new(0);
-        let saved_playeringame = GAME.borrow().playeringame;
 
         P_InitThinkers();
         let first = add_mobj(1);
@@ -2343,7 +2347,7 @@ mod tests {
             (*second.ptr()).tracer = Some(unlisted);
             (*third.ptr()).target = Some(first);
 
-            GAME.borrow_mut().playeringame = [1, 0, 0, 0];
+            world.session.playeringame = [1, 0, 0, 0];
             world.players[player].mo = Some(first);
             world.players[player].attacker = Some(third);
         }
@@ -2400,7 +2404,6 @@ mod tests {
         assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
 
         P_InitThinkers();
-        GAME.borrow_mut().playeringame = saved_playeringame;
         *LEVEL.borrow_mut() = saved_level;
     }
 
@@ -2418,24 +2421,23 @@ mod tests {
         let _g = LOCK.lock().unwrap();
         assert_eq!(&savegame_version(109), b"wood 109\0\0\0\0\0\0\0\0");
 
+        let mut world = World::new();
         let mut vanilla = header_with_version(b"version 109");
         with_mem_stream(&mut vanilla, || {
-            assert_eq!(read_save_game_header(109), 0);
+            assert_eq!(read_save_game_header(&mut world, 109), 0);
         });
 
         let mut other_game_version = header_with_version(&savegame_version(106));
         with_mem_stream(&mut other_game_version, || {
-            assert_eq!(read_save_game_header(109), 0);
+            assert_eq!(read_save_game_header(&mut world, 109), 0);
         });
 
         let saved_playeringame = GAME.borrow().playeringame;
-        let saved_leveltime = leveltime();
         let mut room = header_with_version(&savegame_version(109));
         with_mem_stream(&mut room, || {
-            assert_eq!(read_save_game_header(109), 1);
+            assert_eq!(read_save_game_header(&mut world, 109), 1);
         });
         GAME.borrow_mut().playeringame = saved_playeringame;
-        TICK.borrow_mut().leveltime = saved_leveltime;
     }
 
     /// The vanilla saves in `.savegame` carry `"version 109"` and are
@@ -2453,7 +2455,7 @@ mod tests {
                 b"version 109\0\0\0\0\0"
             );
             with_mem_stream(&mut contents, || {
-                assert_eq!(read_save_game_header(109), 0);
+                assert_eq!(read_save_game_header(&mut World::new(), 109), 0);
             });
         }
     }

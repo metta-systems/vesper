@@ -53,12 +53,12 @@ use crate::{
             },
             inter::P_DamageMobj,
             map::{
-                MAP, P_AimLineAttack, P_CheckPosition, P_LineAttack, P_RadiusAttack,
-                P_TeleportMove, P_TryMove, floatok, tmfloorz,
+                P_AimLineAttack, P_CheckPosition, P_LineAttack, P_RadiusAttack, P_TeleportMove,
+                P_TryMove,
             },
             maputl::{
                 MAPBLOCKSHIFT, P_AproxDistance, P_BlockThingsIterator, P_LineOpening,
-                P_SetThingPosition, P_UnsetThingPosition, openrange,
+                P_SetThingPosition, P_UnsetThingPosition,
             },
             mobj::{
                 MobjId, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
@@ -69,10 +69,10 @@ use crate::{
             switch::P_UseSpecialLine,
             tick::{ThinkerId, ThinkerKind, thinkers},
         },
-        render_3d::main::{R_PointToAngle2, VALIDCOUNT},
+        render_3d::main::R_PointToAngle2,
         sound::{S_StartNonPositionalSound, S_StartSound},
         wad::format::LinedefFlag,
-        world::World,
+        world::{PlayScratch, Session, World},
     },
     i_error,
 };
@@ -138,9 +138,7 @@ pub const FATSPREAD: i32 = ANG90 as i32 / 8;
 pub const SKULLSPEED: i32 = 20 * FRACUNIT;
 
 use crate::engine::{
-    doom::main::fastparm,
-    game::{G_ExitLevel, gameepisode, gamemap, gameskill, netgame, playeringame},
-    global::Global,
+    game::G_ExitLevel,
     play::{doors::EV_DoDoor, floor::EV_DoFloor, pspr::A_ReFire},
 };
 
@@ -160,7 +158,8 @@ pub static opposite: [dirtype_t; 9] = [
 /// Lookup table mapping the two-bit index `(deltay<0)<<1 | (deltax>0)` to a diagonal
 /// `dirtype_t`; used by `P_NewChaseDir` to prefer diagonal movement toward the target.
 pub static diags: [dirtype_t; 4] = [DI_NORTHWEST, DI_NORTHEAST, DI_SOUTHWEST, DI_SOUTHEAST];
-/// Monster AI scratch state (`p_enemy.c` globals).
+/// Monster AI scratch state (`p_enemy.c` globals), kept in
+/// [`PlayScratch`].
 pub struct EnemyState {
     /// The monster or player whose noise triggered the current `P_RecursiveSound` traversal;
     /// written by `P_NoiseAlert`, read by `P_RecursiveSound` to stamp each sector.
@@ -208,8 +207,6 @@ impl Default for EnemyState {
     }
 }
 
-/// Monster AI scratch state.
-pub static ENEMY: Global<EnemyState> = Global::new(EnemyState::new());
 /// Recursively floods sound through adjacent sectors, stamping each with `soundtarget`.
 ///
 /// Traversal stops at sectors already visited this frame (`validcount`) and at
@@ -218,9 +215,15 @@ pub static ENEMY: Global<EnemyState> = Global::new(EnemyState::new());
 /// cannot pass through two consecutive blocking walls.
 ///
 /// Called by `P_NoiseAlert`, which borrows the level for the whole flood,
-/// and recursively by itself.
-pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32) {
-    let validcount = VALIDCOUNT.get();
+/// and recursively by itself. Reads `validcount` and `soundtarget` from
+/// `scratch` and leaves the last line opening in it.
+pub fn P_RecursiveSound(
+    scratch: &mut PlayScratch,
+    level: &mut LevelState,
+    sec: SectorId,
+    soundblocks: i32,
+) {
+    let validcount = scratch.validcount;
     {
         let sector = &mut level.sectors[sec];
         if sector.validcount == validcount && sector.soundtraversed <= soundblocks + 1 {
@@ -228,15 +231,15 @@ pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32)
         }
         sector.validcount = validcount;
         sector.soundtraversed = soundblocks + 1;
-        sector.soundtarget = ENEMY.borrow().soundtarget;
+        sector.soundtarget = scratch.enemy.soundtarget;
     }
     let mut i = 0;
     while i < level.sectors[sec].linecount {
         let check = level.sector_lines(sec)[i as usize];
         let line = level.lines[check];
         if line.flags as i32 & LinedefFlag::TWOSIDED as i32 != 0 {
-            P_LineOpening(level, check);
-            if openrange() > 0 {
+            P_LineOpening(&mut scratch.maputl, level, check);
+            if scratch.maputl.openrange > 0 {
                 let other = if level.sides[line.sidenum[0] as usize].sector == sec {
                     level.sides[line.sidenum[1] as usize].sector
                 } else {
@@ -244,10 +247,10 @@ pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32)
                 };
                 if line.flags as i32 & LinedefFlag::SOUNDBLOCK as i32 != 0 {
                     if soundblocks == 0 {
-                        P_RecursiveSound(level, other, 1);
+                        P_RecursiveSound(scratch, level, other, 1);
                     }
                 } else {
-                    P_RecursiveSound(level, other, soundblocks);
+                    P_RecursiveSound(scratch, level, other, soundblocks);
                 }
             }
         }
@@ -256,7 +259,7 @@ pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32)
 }
 /// Alerts monsters in earshot that a target (typically the player) has made noise.
 ///
-/// Sets the global `soundtarget`, increments `validcount` to mark a new traversal
+/// Sets the scratch `soundtarget`, increments `validcount` to mark a new traversal
 /// frame, then calls `P_RecursiveSound` starting from the sector containing `emmiter`.
 /// Called by `p_inter.rs` and `p_map.rs` whenever a shot, explosion, or door fires.
 ///
@@ -264,12 +267,13 @@ pub fn P_RecursiveSound(level: &mut LevelState, sec: SectorId, soundblocks: i32)
 ///
 /// `target` and `emmiter` must both name map objects of the level. `emmiter`
 /// must have a valid `subsector` with a valid `sector`.
-pub unsafe fn P_NoiseAlert(_world: &mut World, target: MobjId, emmiter: MobjId) {
-    ENEMY.borrow_mut().soundtarget = Some(target);
-    VALIDCOUNT.set(VALIDCOUNT.get() + 1);
+pub unsafe fn P_NoiseAlert(world: &mut World, target: MobjId, emmiter: MobjId) {
+    let scratch = &mut world.scratch;
+    scratch.enemy.soundtarget = Some(target);
+    scratch.validcount += 1;
     let mut level = LEVEL.borrow_mut();
     let sector = level.subsectors[(*emmiter.ptr()).subsector].sector;
-    P_RecursiveSound(&mut level, sector, 0);
+    P_RecursiveSound(scratch, &mut level, sector, 0);
 }
 /// The target of `actor`, which C dereferences without a null check: the
 /// callers have checked it, or C would crash too.
@@ -366,7 +370,7 @@ pub unsafe fn P_CheckMissileRange(world: &mut World, actor_id: MobjId) -> Boolea
     if (*actor).kind as u32 == MT_CYBORG as u32 && dist > 160 {
         dist = 160 as fixed_t;
     }
-    if P_Random() < dist {
+    if P_Random(world) < dist {
         return Boolean::FALSE;
     }
     Boolean::TRUE
@@ -390,7 +394,7 @@ pub static yspeed: [fixed_t; 8] = [0, 47000, FRACUNIT, 47000, 0, -47000, -FRACUN
 ///
 /// # Safety
 ///
-/// `actor_id` must name a map object with valid `info`. All globals
+/// `actor_id` must name a map object with valid `info`. The scratch values
 /// `floatok`, `tmfloorz`, `numspechit`, and `spechit` must be consistent with the
 /// most recent `P_TryMove` call.
 pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
@@ -411,8 +415,8 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
         (*actor).y + (*actor).info.get().speed as fixed_t * yspeed[(*actor).movedir as usize];
     let try_ok: Boolean = Boolean::from_raw(P_TryMove(world, actor_id, tryx, tryy));
     if try_ok.is_false() {
-        if (*actor).flags & MF_FLOAT != 0 && floatok() != 0 {
-            if (*actor).z < tmfloorz() {
+        if (*actor).flags & MF_FLOAT != 0 && world.scratch.map.floatok != 0 {
+            if (*actor).z < world.scratch.map.tmfloorz {
                 (*actor).z += FLOATSPEED;
             } else {
                 (*actor).z -= FLOATSPEED;
@@ -420,7 +424,7 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
             (*actor).flags |= MF_INFLOAT;
             return Boolean::TRUE;
         }
-        if MAP.borrow().numspechit == 0 {
+        if world.scratch.map.numspechit == 0 {
             return Boolean::FALSE;
         }
         (*actor).movedir = DI_NODIR;
@@ -429,7 +433,7 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
         // re-read before every pop, as in C.
         loop {
             ld = {
-                let mut map = MAP.borrow_mut();
+                let map = &mut world.scratch.map;
                 let c2rust_fresh0 = map.numspechit;
                 map.numspechit -= 1;
                 if c2rust_fresh0 == 0 {
@@ -463,7 +467,7 @@ pub unsafe fn P_TryWalk(world: &mut World, actor_id: MobjId) -> Boolean {
     if P_Move(world, actor_id).is_false() {
         return Boolean::FALSE;
     }
-    (*actor_id.ptr()).movecount = P_Random() & 15;
+    (*actor_id.ptr()).movecount = P_Random(world) & 15;
     Boolean::TRUE
 }
 /// Selects a new movement direction for `actor` based on the vector to its target.
@@ -516,7 +520,7 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
             return;
         }
     }
-    if P_Random() > 200 || (deltay as i32).abs() > (deltax as i32).abs() {
+    if P_Random(world) > 200 || (deltay as i32).abs() > (deltax as i32).abs() {
         tdir = d[1];
         d[1] = d[2];
         d[2] = tdir as dirtype_t;
@@ -545,7 +549,7 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
             return;
         }
     }
-    if P_Random() & 1 != 0 {
+    if P_Random(world) & 1 != 0 {
         tdir = DI_EAST;
         while tdir <= DI_SOUTHEAST {
             if tdir != turnaround as i32 {
@@ -587,8 +591,8 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
 ///
 /// # Safety
 ///
-/// `actor_id` must name a map object of the level. The global `players` array and
-/// `playeringame` flags must be consistent.
+/// `actor_id` must name a map object of the level. The players and the
+/// session's `playeringame` flags must be consistent.
 pub unsafe fn P_LookForPlayers(world: &mut World, actor_id: MobjId, allaround: Boolean) -> Boolean {
     let actor = actor_id.ptr();
     let mut c: i32;
@@ -601,7 +605,7 @@ pub unsafe fn P_LookForPlayers(world: &mut World, actor_id: MobjId, allaround: B
     let stop: i32 = ((*actor).lastlook - 1) & 3;
     loop {
         's_20: {
-            if playeringame((*actor).lastlook as usize) != 0 {
+            if world.session.in_game((*actor).lastlook as usize) {
                 let c2rust_fresh1 = c;
                 c += 1;
                 if c2rust_fresh1 == 2 || (*actor).lastlook == stop {
@@ -737,8 +741,8 @@ pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
     }
     if (*actor).info.get().seesound != Sfx::None {
         let sound = match (*actor).info.get().seesound {
-            Sfx::Posit1 | Sfx::Posit2 | Sfx::Posit3 => Sfx::Posit1 as i32 + P_Random() % 3,
-            Sfx::Bgsit1 | Sfx::Bgsit2 => Sfx::Bgsit1 as i32 + P_Random() % 2,
+            Sfx::Posit1 | Sfx::Posit2 | Sfx::Posit3 => Sfx::Posit1 as i32 + P_Random(world) % 3,
+            Sfx::Bgsit1 | Sfx::Bgsit2 => Sfx::Bgsit1 as i32 + P_Random(world) % 2,
             s => s as i32,
         };
         if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
@@ -765,8 +769,8 @@ pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
 ///
 /// # Safety
 ///
-/// `actor_id` must name a map object with valid `info`. All referenced
-/// globals (`gameskill`, `fastparm`, `netgame`) must be initialised.
+/// `actor_id` must name a map object with valid `info`. The session
+/// settings (`gameskill`, `fastparm`, `netgame`) must be initialised.
 pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     let delta: i32;
@@ -805,7 +809,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     }
     if (*actor).flags & MF_JUSTATTACKED != 0 {
         (*actor).flags &= !(MF_JUSTATTACKED);
-        if gameskill() != sk_nightmare && fastparm() == 0 {
+        if world.session.gameskill != sk_nightmare && world.session.fastparm == 0 {
             P_NewChaseDir(world, actor_id);
         }
         return;
@@ -822,7 +826,9 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
         return;
     }
     if (*actor).info.get().missilestate != 0
-        && !(gameskill() < sk_nightmare && fastparm() == 0 && (*actor).movecount != 0)
+        && !(world.session.gameskill < sk_nightmare
+            && world.session.fastparm == 0
+            && (*actor).movecount != 0)
         && P_CheckMissileRange(world, actor_id).is_truthy()
     {
         P_SetMobjState(
@@ -833,7 +839,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
         (*actor).flags |= MF_JUSTATTACKED;
         return;
     }
-    if netgame() != 0
+    if world.session.netgame != 0
         && (*actor).threshold == 0
         && P_CheckSight(world, actor_id, target_of(actor)) == 0
         && P_LookForPlayers(world, actor_id, Boolean::TRUE).is_truthy()
@@ -844,7 +850,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     if (*actor).movecount < 0 || P_Move(world, actor_id).is_false() {
         P_NewChaseDir(world, actor_id);
     }
-    if (*actor).info.get().activesound != Sfx::None && P_Random() < 3 {
+    if (*actor).info.get().activesound != Sfx::None && P_Random(world) < 3 {
         S_StartSound(world, actor_id, (*actor).info.get().activesound as i32);
     }
 }
@@ -857,7 +863,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
 /// # Safety
 ///
 /// `actor_id` must name a map object of the level.
-pub unsafe fn A_FaceTarget(_world: &mut World, actor_id: MobjId) {
+pub unsafe fn A_FaceTarget(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     if (*actor).target.is_none() {
         return;
@@ -872,7 +878,7 @@ pub unsafe fn A_FaceTarget(_world: &mut World, actor_id: MobjId) {
     if (*target_of(actor).ptr()).flags & MF_SHADOW != 0 {
         (*actor).angle = (*actor)
             .angle
-            .wrapping_add(((P_Random() - P_Random()) << 21) as angle_t);
+            .wrapping_add(((P_Random(world) - P_Random(world)) << 21) as angle_t);
     }
 }
 /// Attack action for the Former Human (Zombieman): single hitscan shot.
@@ -894,8 +900,8 @@ pub unsafe fn A_PosAttack(world: &mut World, actor_id: MobjId) {
     angle = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, angle as angle_t, MISSILERANGE) as i32;
     S_StartSound(world, actor_id, Sfx::Pistol as i32);
-    angle = angle.wrapping_add((P_Random() - P_Random()) << 20);
-    let damage: i32 = (P_Random() % 5 + 1) * 3;
+    angle = angle.wrapping_add((P_Random(world) - P_Random(world)) << 20);
+    let damage: i32 = (P_Random(world) % 5 + 1) * 3;
     P_LineAttack(
         world,
         actor_id,
@@ -930,8 +936,8 @@ pub unsafe fn A_SPosAttack(world: &mut World, actor_id: MobjId) {
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
     i = 0;
     while i < 3 {
-        angle = bangle.wrapping_add((P_Random() - P_Random()) << 20);
-        damage = (P_Random() % 5 + 1) * 3;
+        angle = bangle.wrapping_add((P_Random(world) - P_Random(world)) << 20);
+        damage = (P_Random(world) % 5 + 1) * 3;
         P_LineAttack(
             world,
             actor_id,
@@ -961,8 +967,8 @@ pub unsafe fn A_CPosAttack(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     let bangle: i32 = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
-    let angle: i32 = bangle.wrapping_add((P_Random() - P_Random()) << 20);
-    let damage: i32 = (P_Random() % 5 + 1) * 3;
+    let angle: i32 = bangle.wrapping_add((P_Random(world) - P_Random(world)) << 20);
+    let damage: i32 = (P_Random(world) % 5 + 1) * 3;
     P_LineAttack(
         world,
         actor_id,
@@ -984,7 +990,7 @@ pub unsafe fn A_CPosAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_CPosRefire(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     A_FaceTarget(world, actor_id);
-    if P_Random() < 40 {
+    if P_Random(world) < 40 {
         return;
     }
     if (*actor).target.is_none()
@@ -1005,7 +1011,7 @@ pub unsafe fn A_CPosRefire(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_SpidRefire(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     A_FaceTarget(world, actor_id);
-    if P_Random() < 10 {
+    if P_Random(world) < 10 {
         return;
     }
     if (*actor).target.is_none()
@@ -1046,7 +1052,7 @@ pub unsafe fn A_TroopAttack(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
         S_StartSound(world, actor_id, Sfx::Claw as i32);
-        damage = (P_Random() % 8 + 1) * 3;
+        damage = (P_Random(world) % 8 + 1) * 3;
         P_DamageMobj(
             world,
             target_of(actor),
@@ -1074,7 +1080,7 @@ pub unsafe fn A_SargAttack(world: &mut World, actor_id: MobjId) {
     }
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
-        damage = (P_Random() % 10 + 1) * 4;
+        damage = (P_Random(world) % 10 + 1) * 4;
         P_DamageMobj(
             world,
             target_of(actor),
@@ -1100,7 +1106,7 @@ pub unsafe fn A_HeadAttack(world: &mut World, actor_id: MobjId) {
     }
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
-        damage = (P_Random() % 6 + 1) * 10;
+        damage = (P_Random(world) % 6 + 1) * 10;
         P_DamageMobj(
             world,
             target_of(actor),
@@ -1142,7 +1148,7 @@ pub unsafe fn A_BruisAttack(world: &mut World, actor_id: MobjId) {
     }
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
         S_StartSound(world, actor_id, Sfx::Claw as i32);
-        damage = (P_Random() % 8 + 1) * 10;
+        damage = (P_Random(world) % 8 + 1) * 10;
         P_DamageMobj(
             world,
             target_of(actor),
@@ -1211,7 +1217,7 @@ pub unsafe fn A_Tracer(world: &mut World, actor_id: MobjId) {
     )
     .ptr();
     (*th).momz = FRACUNIT as fixed_t;
-    (*th).tics -= P_Random() & 3;
+    (*th).tics -= P_Random(world) & 3;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
@@ -1283,7 +1289,7 @@ pub unsafe fn A_SkelFist(world: &mut World, actor_id: MobjId) {
     }
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
-        damage = (P_Random() % 10 + 1) * 6;
+        damage = (P_Random(world) % 10 + 1) * 6;
         S_StartSound(world, actor_id, Sfx::Skepch as i32);
         P_DamageMobj(
             world,
@@ -1317,14 +1323,11 @@ pub unsafe fn PIT_VileCheck(world: &mut World, thing_id: MobjId) -> Boolean {
         return Boolean::TRUE;
     }
     let maxdist: i32 = (*thing).info.get().radius + MOBJINFO.borrow()[MT_VILE as usize].radius;
-    let (viletryx, viletryy) = {
-        let enemy = ENEMY.borrow();
-        (enemy.viletryx, enemy.viletryy)
-    };
+    let (viletryx, viletryy) = (world.scratch.enemy.viletryx, world.scratch.enemy.viletryy);
     if ((*thing).x - viletryx).abs() > maxdist || ((*thing).y - viletryy).abs() > maxdist {
         return Boolean::TRUE;
     }
-    ENEMY.borrow_mut().corpsehit = Some(thing_id);
+    world.scratch.enemy.corpsehit = Some(thing_id);
     let corpsehit = thing;
     (*corpsehit).momy = 0 as fixed_t;
     (*corpsehit).momx = (*corpsehit).momy;
@@ -1378,7 +1381,7 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
         yl = (viletryy - bmaporgy - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         yh = (viletryy - bmaporgy + 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         {
-            let mut enemy = ENEMY.borrow_mut();
+            let enemy = &mut world.scratch.enemy;
             enemy.viletryx = viletryx;
             enemy.viletryy = viletryy;
             enemy.vileobj = Some(actor_id);
@@ -1387,18 +1390,14 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
         while bx <= xh {
             by = yl;
             while by <= yh {
-                if P_BlockThingsIterator(
-                    world,
-                    bx,
-                    by,
-                    Some(core::mem::transmute::<
-                        unsafe fn(&mut World, MobjId) -> Boolean,
-                        unsafe fn(&mut World, MobjId) -> u32,
-                    >(PIT_VileCheck)),
-                ) == 0
-                {
-                    let corpsehit_id = ENEMY
-                        .borrow()
+                // SAFETY: the iterator hands over map objects linked into
+                // the blockmap, and `viletryx`/`viletryy` are set above.
+                if !P_BlockThingsIterator(world, bx, by, |world, thing| unsafe {
+                    PIT_VileCheck(world, thing).is_truthy()
+                }) {
+                    let corpsehit_id = world
+                        .scratch
+                        .enemy
                         .corpsehit
                         .expect("the corpse search stopped without a corpse");
                     temp = (*actor).target;
@@ -1464,7 +1463,7 @@ pub unsafe fn A_Fire(world: &mut World, actor_id: MobjId) {
     let Some(dest_id) = (*actor).tracer else {
         return;
     };
-    let target = P_SubstNullMobj((*actor).target);
+    let target = P_SubstNullMobj(world, (*actor).target);
     if P_CheckSight(world, target, dest_id) == 0 {
         return;
     }
@@ -1561,7 +1560,7 @@ pub unsafe fn A_FatAttack1(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     A_FaceTarget(world, actor_id);
     (*actor).angle = (*actor).angle.wrapping_add(FATSPREAD as angle_t);
-    let target = P_SubstNullMobj((*actor).target);
+    let target = P_SubstNullMobj(world, (*actor).target);
     P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
     let mo: *mut mobj_t = P_SpawnMissile(world, actor_id, target, MT_FATSHOT).ptr();
     (*mo).angle = (*mo).angle.wrapping_add(FATSPREAD as angle_t);
@@ -1584,7 +1583,7 @@ pub unsafe fn A_FatAttack2(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     A_FaceTarget(world, actor_id);
     (*actor).angle = (*actor).angle.wrapping_sub(FATSPREAD as angle_t);
-    let target = P_SubstNullMobj((*actor).target);
+    let target = P_SubstNullMobj(world, (*actor).target);
     P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
     let mo: *mut mobj_t = P_SpawnMissile(world, actor_id, target, MT_FATSHOT).ptr();
     (*mo).angle = (*mo).angle.wrapping_sub((FATSPREAD * 2) as angle_t);
@@ -1610,7 +1609,7 @@ pub unsafe fn A_FatAttack3(world: &mut World, actor_id: MobjId) {
     let mut an: i32;
 
     A_FaceTarget(world, actor_id);
-    let target = P_SubstNullMobj((*actor).target);
+    let target = P_SubstNullMobj(world, (*actor).target);
     mo = P_SpawnMissile(world, actor_id, target, MT_FATSHOT).ptr();
     (*mo).angle = (*mo).angle.wrapping_sub((FATSPREAD / 2) as angle_t);
     an = ((*mo).angle >> ANGLETOFINESHIFT) as i32;
@@ -1743,8 +1742,8 @@ pub unsafe fn A_Scream(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     let sound = match (*actor).info.get().deathsound {
         Sfx::None => return,
-        Sfx::Podth1 | Sfx::Podth2 | Sfx::Podth3 => Sfx::Podth1 as i32 + P_Random() % 3,
-        Sfx::Bgdth1 | Sfx::Bgdth2 => Sfx::Bgdth1 as i32 + P_Random() % 2,
+        Sfx::Podth1 | Sfx::Podth2 | Sfx::Podth3 => Sfx::Podth1 as i32 + P_Random(world) % 3,
+        Sfx::Bgdth1 | Sfx::Bgdth2 => Sfx::Bgdth1 as i32 + P_Random(world) % 2,
         s => s as i32,
     };
     if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
@@ -1802,24 +1801,25 @@ pub unsafe fn A_Explode(world: &mut World, thingy: MobjId) {
 /// - Ep 3 map 8: Spider Mastermind.
 /// - Ep 4 map 6: Cyberdemon; map 8: Spider Mastermind.
 /// - All other episodes: map 8 unconditionally.
-fn CheckBossEnd(motype: mobjtype_t) -> Boolean {
+fn CheckBossEnd(session: &Session, motype: mobjtype_t) -> Boolean {
+    let (gameepisode, gamemap) = (session.gameepisode, session.gamemap);
     if (gameversion() as u32) < exe_ultimate as u32 {
-        if gamemap() != 8 {
+        if gamemap != 8 {
             return Boolean::FALSE;
         }
-        if motype == MT_BRUISER && gameepisode() != 1 {
+        if motype == MT_BRUISER && gameepisode != 1 {
             return Boolean::FALSE;
         }
         Boolean::TRUE
     } else {
-        match gameepisode() {
-            1 => Boolean::from(gamemap() == 8 && motype == MT_BRUISER),
-            2 => Boolean::from(gamemap() == 8 && motype == MT_CYBORG),
-            3 => Boolean::from(gamemap() == 8 && motype == MT_SPIDER),
+        match gameepisode {
+            1 => Boolean::from(gamemap == 8 && motype == MT_BRUISER),
+            2 => Boolean::from(gamemap == 8 && motype == MT_CYBORG),
+            3 => Boolean::from(gamemap == 8 && motype == MT_SPIDER),
             4 => Boolean::from(
-                gamemap() == 6 && motype == MT_CYBORG || gamemap() == 8 && motype == MT_SPIDER,
+                gamemap == 6 && motype == MT_CYBORG || gamemap == 8 && motype == MT_SPIDER,
             ),
-            _ => Boolean::from(gamemap() == 8),
+            _ => Boolean::from(gamemap == 8),
         }
     }
 }
@@ -1841,18 +1841,18 @@ pub unsafe fn A_BossDeath(world: &mut World, mo_id: MobjId) {
     let mut junk: line_t = JUNK_LINE;
     let _i: i32 = 0;
     if gamemode() as u32 == commercial as u32 {
-        if gamemap() != 7 {
+        if world.session.gamemap != 7 {
             return;
         }
         if (*mo).kind as u32 != MT_FATSO as u32 && (*mo).kind as u32 != MT_BABY as u32 {
             return;
         }
-    } else if CheckBossEnd((*mo).kind).is_false() {
+    } else if CheckBossEnd(&world.session, (*mo).kind).is_false() {
         return;
     }
     let mut i: usize = 0;
     while i < MAXPLAYERS {
-        if playeringame(i) != 0 && world.players[i].health > 0 {
+        if world.session.in_game(i) && world.players[i].health > 0 {
             break;
         }
         i += 1;
@@ -1864,7 +1864,7 @@ pub unsafe fn A_BossDeath(world: &mut World, mo_id: MobjId) {
         return;
     }
     if gamemode() as u32 == commercial as u32 {
-        if gamemap() == 7 {
+        if world.session.gamemap == 7 {
             if (*mo).kind as u32 == MT_FATSO as u32 {
                 junk.tag = 666;
                 EV_DoFloor(world, &junk, lowerFloorToLowest);
@@ -1877,13 +1877,13 @@ pub unsafe fn A_BossDeath(world: &mut World, mo_id: MobjId) {
             }
         }
     } else {
-        match gameepisode() {
+        match world.session.gameepisode {
             1 => {
                 junk.tag = 666;
                 EV_DoFloor(world, &junk, lowerFloorToLowest);
                 return;
             }
-            4 => match gamemap() {
+            4 => match world.session.gamemap {
                 6 => {
                     junk.tag = 666;
                     EV_DoDoor(world, &junk, vld_blazeOpen);
@@ -1962,9 +1962,9 @@ pub unsafe fn A_CloseShotgun2(world: &mut World, player: PlayerId, psprite: usiz
 /// # Safety
 ///
 /// The thinker list must be consistent. Called through the state-machine action pointer.
-pub unsafe fn A_BrainAwake(_world: &mut World, _mo: MobjId) {
+pub unsafe fn A_BrainAwake(world: &mut World, _mo: MobjId) {
     {
-        let mut enemy = ENEMY.borrow_mut();
+        let enemy = &mut world.scratch.enemy;
         enemy.numbraintargets = 0;
         enemy.braintargeton = 0;
         for thinker in thinkers() {
@@ -2006,12 +2006,12 @@ pub unsafe fn A_BrainScream(world: &mut World, mo_id: MobjId) {
     x = (*mo).x - 196 * FRACUNIT;
     while x < (*mo).x + 320 * FRACUNIT {
         y = (*mo).y - 320 * FRACUNIT;
-        z = 128 + P_Random() * 2 * FRACUNIT;
+        z = 128 + P_Random(world) * 2 * FRACUNIT;
         let th_id = P_SpawnMobj(world, x as fixed_t, y as fixed_t, z as fixed_t, MT_ROCKET);
         let th = th_id.ptr();
-        (*th).momz = (P_Random() * 512) as fixed_t;
+        (*th).momz = (P_Random(world) * 512) as fixed_t;
         P_SetMobjState(world, th_id, S_BRAINEXPLODE1);
-        (*th).tics -= P_Random() & 7;
+        (*th).tics -= P_Random(world) & 7;
         if (*th).tics < 1 {
             (*th).tics = 1;
         }
@@ -2032,14 +2032,14 @@ pub unsafe fn A_BrainScream(world: &mut World, mo_id: MobjId) {
 /// action pointer.
 pub unsafe fn A_BrainExplode(world: &mut World, mo_id: MobjId) {
     let mo = mo_id.ptr();
-    let x: i32 = (*mo).x + (P_Random() - P_Random()) * 2048;
+    let x: i32 = (*mo).x + (P_Random(world) - P_Random(world)) * 2048;
     let y: i32 = (*mo).y;
-    let z: i32 = 128 + P_Random() * 2 * FRACUNIT;
+    let z: i32 = 128 + P_Random(world) * 2 * FRACUNIT;
     let th_id = P_SpawnMobj(world, x as fixed_t, y as fixed_t, z as fixed_t, MT_ROCKET);
     let th = th_id.ptr();
-    (*th).momz = (P_Random() * 512) as fixed_t;
+    (*th).momz = (P_Random(world) * 512) as fixed_t;
     P_SetMobjState(world, th_id, S_BRAINEXPLODE1);
-    (*th).tics -= P_Random() & 7;
+    (*th).tics -= P_Random(world) & 7;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
@@ -2067,9 +2067,10 @@ pub fn A_BrainDie(_world: &mut World, _mo: MobjId) {
 pub unsafe fn A_BrainSpit(world: &mut World, mo_id: MobjId) {
     let mo = mo_id.ptr();
     let targ_id = {
-        let mut enemy = ENEMY.borrow_mut();
+        let gameskill = world.session.gameskill;
+        let enemy = &mut world.scratch.enemy;
         enemy.brainspit_easy ^= 1;
-        if gameskill() <= sk_easy && enemy.brainspit_easy == 0 {
+        if gameskill <= sk_easy && enemy.brainspit_easy == 0 {
             return;
         }
         let targ = enemy.braintargets[enemy.braintargeton as usize];
@@ -2115,10 +2116,10 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
     if (*mo).reactiontime != 0 {
         return;
     }
-    let targ: *mut mobj_t = P_SubstNullMobj((*mo).target).ptr();
+    let targ: *mut mobj_t = P_SubstNullMobj(world, (*mo).target).ptr();
     let fog = P_SpawnMobj(world, (*targ).x, (*targ).y, (*targ).z, MT_SPAWNFIRE);
     S_StartSound(world, fog, Sfx::Telept as i32);
-    let r: i32 = P_Random();
+    let r: i32 = P_Random(world);
     if r < 50 {
         type_0 = MT_TROOP;
     } else if r < 90 {

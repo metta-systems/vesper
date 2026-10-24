@@ -163,7 +163,7 @@ use crate::engine::{
         bsp::BSP,
         data::RENDER_DATA,
         draw::{ColumnFunction, ColumnParams, DRAW, DrawState},
-        main::{R_PointOnSegSide, R_PointToAngle, VALIDCOUNT, VIEW, scalelight_row},
+        main::{R_PointOnSegSide, R_PointToAngle, VIEW, scalelight_row},
         segs::R_RenderMaskedSegRange,
     },
     wad::{W_GetNumForName, cache_patch_num, format::Column, lumpinfo},
@@ -888,11 +888,11 @@ fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
 /// # Safety
 /// - `sec` must be a sector of `level` whose thing list links live map
 ///   objects.
-/// - `VALIDCOUNT`, `scalelight`, `extralight` must be initialised for the
-///   current frame before this function is called.
+/// - The world's `validcount`, `scalelight`, `extralight` must be
+///   initialised for the current frame before this function is called.
 pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
     let sec = &mut level.sectors[sec];
-    let validcount = VALIDCOUNT.get();
+    let validcount = WORLD.borrow().scratch.validcount;
 
     // BSP is traversed by subsector.
     // A sector might have been split into several subsectors during BSP building.

@@ -2,8 +2,8 @@
 //!
 //! Rust port of `vendor/doomgeneric/r_main.c`. Hosts the renderer view state
 //! ([`ViewState`] in [`VIEW`]: viewport dimensions, view position/angle,
-//! light tables, column/span function pointers), the engine-wide
-//! [`VALIDCOUNT`], and the per-frame entry point [`R_RenderPlayerView`].
+//! light tables, column/span function pointers) and the per-frame entry
+//! point [`R_RenderPlayerView`].
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -304,12 +304,6 @@ impl Default for ViewState {
 
 /// The renderer view state.
 pub static VIEW: Global<ViewState> = Global::new(ViewState::new());
-
-/// Monotonically incrementing counter; bumped once per frame in
-/// [`R_SetupFrame`] and by the play code before each map search. Sectors
-/// and linedefs tag themselves with `validcount` when first visited so they
-/// are not processed twice.
-pub static VALIDCOUNT: Global<i32> = Global::new(1);
 
 /// Stable address of `scalelight[level]`, for the `walllights` and
 /// `spritelights` row pointers that outlive any borrow of [`VIEW`].
@@ -1010,7 +1004,8 @@ pub fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> SubsectorId {
 ///
 /// Sets `viewplayer`, `viewx`, `viewy`, `viewz`, `viewangle`, `viewsin`,
 /// `viewcos`, `extralight`, and `fixedcolormap`. Also resets `sscount` and
-/// increments both `framecount` and [`VALIDCOUNT`].
+/// increments both `framecount` and the world's `validcount` (one counter
+/// for the renderer and play, which stamp the same sectors with it).
 ///
 /// When the player has a fixed colormap powerup, fills `scalelightfixed`
 /// with the fixed colormap pointer and redirects the wall state's
@@ -1060,7 +1055,7 @@ pub unsafe fn R_SetupFrame(player_id: PlayerId) {
     }
 
     view.framecount += 1;
-    VALIDCOUNT.set(VALIDCOUNT.get() + 1);
+    WORLD.borrow_mut().scratch.validcount += 1;
 }
 
 // ---------------------------------------------------------------------------

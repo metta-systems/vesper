@@ -66,19 +66,11 @@ const PST_REBORN: i32 = 2;
 const exe_ultimate: i32 = 6;
 
 use crate::engine::{
-    doom::{main::nomonsters, stat::gameversion},
-    game::{
-        G_PlayerReborn, GAME, consoleplayer, deathmatch, gameskill, netgame, playeringame,
-        respawnmonsters,
-    },
-    global::Global,
+    doom::stat::gameversion,
+    game::G_PlayerReborn,
     play::{
-        map::{
-            P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove, attackrange, ceilingline,
-            linetarget,
-        },
+        map::{P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove},
         setup::{SPAWN_SPOTS, deathmatch_p, deathmatchstart, playerstart},
-        tick::leveltime,
     },
     render_3d::sky::SKY,
     status::stuff::ST_Start,
@@ -186,7 +178,8 @@ pub struct mobj_t {
     pub tracer: Option<MobjId>,
 }
 
-/// The item-respawn queue and the null-object stand-in (`p_mobj.c` globals).
+/// The item-respawn queue and the null-object stand-in (`p_mobj.c`
+/// globals), kept in [`ActiveSpecials`](crate::engine::world::ActiveSpecials).
 pub struct MobjState {
     /// Circular queue of map-thing spawn records for items that need to respawn.
     ///
@@ -226,9 +219,6 @@ impl Default for MobjState {
         Self::new()
     }
 }
-
-/// The item-respawn queue.
-pub static MOBJ: Global<MobjState> = Global::new(MobjState::new());
 
 /// Transition `mobj` to state `state`, running zero-tic chain states
 /// immediately.  Returns `1` if the mobj is still alive after the transition,
@@ -284,7 +274,7 @@ pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
     mo.momy = 0;
     mo.momz = 0;
     P_SetMobjState(world, mo_id, info.deathstate);
-    mo.tics -= P_Random() & 3;
+    mo.tics -= P_Random(world) & 3;
     if mo.tics < 1 {
         mo.tics = 1;
     }
@@ -343,7 +333,7 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
             if mo.player.is_some() {
                 P_SlideMove(world, mo_id);
             } else if mo.flags & MF_MISSILE != 0 {
-                if let Some(line) = ceilingline() {
+                if let Some(line) = world.scratch.map.ceilingline {
                     let skyflatnum = SKY.borrow().skyflatnum as i16;
                     let hits_sky = {
                         let level = LEVEL.borrow();
@@ -575,17 +565,17 @@ pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
         if mobj.flags & MF_COUNTKILL == 0 {
             return;
         }
-        if respawnmonsters() == 0 {
+        if world.session.respawnmonsters == 0 {
             return;
         }
         mobj.movecount += 1;
         if mobj.movecount < 12 * TICRATE {
             return;
         }
-        if leveltime() & 31 != 0 {
+        if world.leveltime & 31 != 0 {
             return;
         }
-        if P_Random() > 4 {
+        if P_Random(world) > 4 {
             return;
         }
         P_NightmareRespawn(world, mobj_id);
@@ -621,12 +611,12 @@ pub unsafe fn P_SpawnMobj(world: &mut World, x: i32, y: i32, z: i32, kind: i32) 
     mobj_ref.flags = info.flags;
     mobj_ref.health = info.spawnhealth;
 
-    if gameskill() != 4 {
+    if world.session.gameskill != 4 {
         // sk_nightmare = 4
         mobj_ref.reactiontime = info.reactiontime;
     }
 
-    mobj_ref.lastlook = P_Random() % MAXPLAYERS as i32;
+    mobj_ref.lastlook = P_Random(world) % MAXPLAYERS as i32;
 
     let state = StateNum::new(info.spawnstate);
     let st = state.get();
@@ -676,8 +666,8 @@ pub unsafe fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
         && mobj.kind != MT_INV
         && mobj.kind != MT_INS
     {
-        let leveltime = leveltime();
-        let mut queue = MOBJ.borrow_mut();
+        let leveltime = world.leveltime;
+        let queue = &mut world.active.mobj;
         let head = queue.iquehead as usize;
         queue.itemrespawnque[head] = mobj.spawnpoint;
         queue.itemrespawntime[head] = leveltime;
@@ -702,16 +692,16 @@ pub unsafe fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
 ///
 /// Must be called only during an active level tick.
 pub unsafe fn P_RespawnSpecials(world: &mut World) {
-    if deathmatch() != 2 {
+    if world.session.deathmatch != 2 {
         return;
     }
     let mthing = {
-        let queue = MOBJ.borrow();
+        let queue = &world.active.mobj;
         if queue.iquehead == queue.iquetail {
             return;
         }
         let tail = queue.iquetail as usize;
-        if leveltime() - queue.itemrespawntime[tail] < 30 * TICRATE {
+        if world.leveltime - queue.itemrespawntime[tail] < 30 * TICRATE {
             return;
         }
         // Spawning does not touch the queue, so the record is copied out.
@@ -747,7 +737,7 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
     item.spawnpoint = mthing;
     item.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
 
-    let mut queue = MOBJ.borrow_mut();
+    let queue = &mut world.active.mobj;
     queue.iquetail = (queue.iquetail + 1) & (ITEMQUESIZE as i32 - 1);
 }
 
@@ -767,7 +757,7 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
     if thing_type as i32 == 0 {
         return;
     }
-    if playeringame((thing_type - 1) as usize) == 0 {
+    if !world.session.in_game((thing_type - 1) as usize) {
         return;
     }
 
@@ -804,11 +794,11 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
 
     P_SetupPsprites(world, player);
 
-    if deathmatch() != 0 {
+    if world.session.deathmatch != 0 {
         world.players[player].cards = [1; crate::engine::doom::player::NUMCARDS];
     }
 
-    if thing_type as i32 - 1 == consoleplayer() {
+    if thing_type as i32 - 1 == world.session.consoleplayer {
         ST_Start(world);
         HU_Start();
     }
@@ -846,17 +836,17 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
 
     if thing_type as i32 <= 4 {
         *playerstart((thing_type - 1) as usize) = *mthing;
-        if deathmatch() == 0 {
+        if world.session.deathmatch == 0 {
             P_SpawnPlayer(world, mthing);
         }
         return;
     }
 
-    if netgame() == 0 && options & 16i16 != 0 {
+    if world.session.netgame == 0 && options & 16i16 != 0 {
         return;
     }
 
-    let gameskill = gameskill();
+    let gameskill = world.session.gameskill;
     let bit = if gameskill == 0 {
         // sk_baby
         1
@@ -889,11 +879,13 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
         );
     }
 
-    if deathmatch() != 0 && mobjinfo[i].flags & MF_NOTDMATCH != 0 {
+    if world.session.deathmatch != 0 && mobjinfo[i].flags & MF_NOTDMATCH != 0 {
         return;
     }
 
-    if nomonsters() != 0 && (i == MT_SKULL as usize || mobjinfo[i].flags & MF_COUNTKILL != 0) {
+    if world.session.nomonsters != 0
+        && (i == MT_SKULL as usize || mobjinfo[i].flags & MF_COUNTKILL != 0)
+    {
         return;
     }
 
@@ -911,13 +903,13 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
     (*mobj).spawnpoint = *mthing;
 
     if (*mobj).tics > 0 {
-        (*mobj).tics = 1 + (P_Random() % (*mobj).tics);
+        (*mobj).tics = 1 + (P_Random(world) % (*mobj).tics);
     }
     if (*mobj).flags & MF_COUNTKILL != 0 {
-        GAME.borrow_mut().totalkills += 1;
+        world.session.totalkills += 1;
     }
     if (*mobj).flags & MF_COUNTITEM != 0 {
-        GAME.borrow_mut().totalitems += 1;
+        world.session.totalitems += 1;
     }
 
     (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
@@ -934,15 +926,15 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
 ///
 /// Must be called during an active level tick with zone memory available.
 pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
-    let z = z + ((P_Random() - P_Random()) << 10);
+    let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_PUFF);
     let th = th_id.ptr();
     (*th).momz = FRACUNIT;
-    (*th).tics -= P_Random() & 3;
+    (*th).tics -= P_Random(world) & 3;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
-    if attackrange() == MELEERANGE {
+    if world.scratch.map.attackrange == MELEERANGE {
         P_SetMobjState(world, th_id, S_PUFF3);
     }
 }
@@ -957,11 +949,11 @@ pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
 ///
 /// Must be called during an active level tick with zone memory available.
 pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i32) {
-    let z = z + ((P_Random() - P_Random()) << 10);
+    let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_BLOOD);
     let th = th_id.ptr();
     (*th).momz = FRACUNIT * 2;
-    (*th).tics -= P_Random() & 3;
+    (*th).tics -= P_Random(world) & 3;
     if (*th).tics < 1 {
         (*th).tics = 1;
     }
@@ -982,7 +974,7 @@ pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i3
 /// momentum.
 pub unsafe fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
     let th = &mut *th_id.ptr();
-    th.tics -= P_Random() & 3;
+    th.tics -= P_Random(world) & 3;
     if th.tics < 1 {
         th.tics = 1;
     }
@@ -1004,14 +996,15 @@ pub unsafe fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
 /// The dummy is a slot of the mobj arena that is not in the thinker list;
 /// it is allocated on first use in each level, and its position and flags
 /// are zeroed on every substitution, as C does.
-pub fn P_SubstNullMobj(mobj: Option<MobjId>) -> MobjId {
+pub fn P_SubstNullMobj(world: &mut World, mobj: Option<MobjId>) -> MobjId {
     if let Some(mobj) = mobj {
         return mobj;
     }
-    let existing = MOBJ.borrow().dummy_mobj.filter(|dummy| dummy.is_live());
+    let queue = &mut world.active.mobj;
+    let existing = queue.dummy_mobj.filter(|dummy| dummy.is_live());
     let dummy_id = existing.unwrap_or_else(|| {
         let dummy = new_thinker::<mobj_t>();
-        MOBJ.borrow_mut().dummy_mobj = Some(dummy);
+        queue.dummy_mobj = Some(dummy);
         dummy
     });
     // SAFETY: the dummy is not in the thinker list or any map list, so no
@@ -1053,7 +1046,7 @@ pub unsafe fn P_SpawnMissile(
     (*th).target = Some(source_id);
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
     if dest.flags & MF_SHADOW != 0 {
-        an = an.wrapping_add(((P_Random() - P_Random()) << 20) as u32);
+        an = an.wrapping_add(((P_Random(world) - P_Random(world)) << 20) as u32);
     }
     (*th).angle = an;
     an >>= ANGLETOFINESHIFT;
@@ -1083,13 +1076,13 @@ pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i
     let mut an = source.angle;
     let mut slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
 
-    if linetarget().is_none() {
+    if world.scratch.map.linetarget.is_none() {
         an = an.wrapping_add(1 << 26);
         slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
-        if linetarget().is_none() {
+        if world.scratch.map.linetarget.is_none() {
             an = an.wrapping_sub(2 << 26);
             slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
-            if linetarget().is_none() {
+            if world.scratch.map.linetarget.is_none() {
                 an = source.angle;
                 slope = 0;
             }

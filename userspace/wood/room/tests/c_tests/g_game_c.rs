@@ -13,7 +13,10 @@
 
 #![allow(non_snake_case)]
 
-use room::engine::game::{self, GameState};
+use room::engine::{
+    game::{self, GameState},
+    world::Session,
+};
 
 // ---------------------------------------------------------------------------
 // Forward-movement speed table
@@ -213,16 +216,16 @@ fn testcontrols_is_false_by_default() {
 /// `bodyqueslot` is the write index into the ring buffer; starts at zero.
 #[test]
 fn bodyqueslot_default_zero() {
-    assert_eq!(GameState::new().bodyqueslot, 0);
+    assert_eq!(Session::new().bodyqueslot, 0);
 }
 
 /// Level-start tic and kill/item/secret totals are all zero before a level
 /// has been loaded.
 #[test]
 fn level_counters_default_zero() {
-    let game = GameState::new();
-    assert_eq!(game.levelstarttic, 0, "levelstarttic");
-    assert_eq!(game.totalkills, 0, "totalkills");
-    assert_eq!(game.totalitems, 0, "totalitems");
-    assert_eq!(game.totalsecret, 0, "totalsecret");
+    assert_eq!(GameState::new().levelstarttic, 0, "levelstarttic");
+    let session = Session::new();
+    assert_eq!(session.totalkills, 0, "totalkills");
+    assert_eq!(session.totalitems, 0, "totalitems");
+    assert_eq!(session.totalsecret, 0, "totalsecret");
 }

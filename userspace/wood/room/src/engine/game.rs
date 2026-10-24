@@ -61,7 +61,6 @@ use crate::engine::{
     misc::random::P_Random,
     play::{
         inter::maxammo,
-        mobj::MobjId,
         setup::{LEVEL, deathmatch_p, deathmatchstart, playerstart},
     },
     wad::format::mapthing_t,
@@ -286,7 +285,9 @@ static WEAPON_ORDER_TABLE: [WeaponOrder; 9] = [
 // ---------------------------------------------------------------------------
 
 /// The game controller's state (`g_game.c` globals other than the player
-/// slots and the ticcmd input latches).
+/// slots, the level totals, the body queue and the ticcmd input latches).
+/// Play reads its settings from the copy in the world's
+/// [`Session`] (see [`copy_session_settings`]).
 ///
 /// Other modules read the common fields through the accessor functions
 /// below (`gamestate()`, `consoleplayer()`, `playeringame(i)`, ...) and write
@@ -335,12 +336,6 @@ pub struct GameState {
     pub displayplayer: i32,
     /// `gametic` value captured when the current level was loaded.
     pub levelstarttic: i32,
-    /// Sum of monster kills across all players for the current level.
-    pub totalkills: i32,
-    /// Sum of item pickups across all players for the current level.
-    pub totalitems: i32,
-    /// Sum of secret-sector finds across all players for the current level.
-    pub totalsecret: i32,
     /// File name of the demo currently being recorded.
     demoname: String,
     /// Non-zero while a `.lmp` demo is being written from input.
@@ -377,11 +372,6 @@ pub struct GameState {
     /// Net consistency check ring: `consistancy[player][gametic/ticdup % BACKUPTICS]`.
     /// A mismatch on a remote command triggers `I_Error("consistency failure ...")`.
     consistancy: [[byte; 128]; MAXPLAYERS],
-    /// Index into `bodyque` for the next corpse to add (modulo [`BODYQUESIZE`]).
-    pub bodyqueslot: i32,
-    /// Circular queue of [`BODYQUESIZE`] recent player corpses; the oldest is
-    /// removed when the queue wraps (see `G_CheckSpot`).
-    bodyque: [Option<MobjId>; BODYQUESIZE],
     /// Non-zero enforces the vanilla `SAVEGAMESIZE` cap (`I_Error` on overrun).
     /// The config table binds it by its stable address.
     pub vanilla_savegame_limit: i32,
@@ -437,9 +427,6 @@ impl GameState {
             consoleplayer: 0,
             displayplayer: 0,
             levelstarttic: 0,
-            totalkills: 0,
-            totalitems: 0,
-            totalsecret: 0,
             demoname: String::new(),
             demorecording: 0,
             longtics: 0,
@@ -475,8 +462,6 @@ impl GameState {
                 }; MAXPLAYERS],
             },
             consistancy: [[0; 128]; MAXPLAYERS],
-            bodyqueslot: 0,
-            bodyque: [None; BODYQUESIZE],
             vanilla_savegame_limit: 1,
             vanilla_demo_limit: 1,
             forwardmove: [0x19, 0x32],
@@ -744,7 +729,7 @@ use crate::engine::play::setup::P_SetupLevel;
 
 /// The play simulation's state, borrowed by the game actions and ticker
 /// phases that run play code.
-use crate::engine::world::{WORLD, World};
+use crate::engine::world::{Session, WORLD, World};
 
 /// Mobj lifecycle and spawn helpers from `p_mobj.c`.
 use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
@@ -769,7 +754,7 @@ use crate::engine::zone::{Z_CheckHeap, Z_Free, Z_Malloc};
 
 /// `leveltime` counter (tics since level start) and thinker tick driver from
 /// `p_tick.c`.
-use crate::engine::play::tick::{P_Ticker, TICK, leveltime};
+use crate::engine::play::tick::P_Ticker;
 
 /// Status-bar event responder and ticker from `st_stuff.c`.
 use crate::engine::status::stuff::{ST_Responder, ST_Ticker};
@@ -1262,6 +1247,30 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
 // G_DoLoadLevel
 // ---------------------------------------------------------------------------
 
+/// Copy the game settings play reads into `session`: skill, episode and
+/// map, deathmatch, netgame, respawning and fast monsters, `-nomonsters`,
+/// the console player and the players in the game.
+///
+/// [`GAME`] and [`DOOM_MAIN`] own these settings; play reads only the copy.
+/// [`G_DoLoadLevel`] copies them before it sets up a level (a new game and
+/// a loaded save reach it through [`G_InitNew`]); none of them changes
+/// while a level runs except `playeringame`, which `PlayerQuitGame` clears
+/// in both places. The level totals and the body queue live only in the
+/// session.
+pub fn copy_session_settings(session: &mut Session) {
+    let game = GAME.borrow();
+    session.gameskill = game.gameskill;
+    session.gameepisode = game.gameepisode;
+    session.gamemap = game.gamemap;
+    session.deathmatch = game.deathmatch;
+    session.netgame = game.netgame;
+    session.respawnmonsters = game.respawnmonsters;
+    session.consoleplayer = game.consoleplayer;
+    session.playeringame = game.playeringame;
+    session.fastparm = fastparm();
+    session.nomonsters = nomonsters();
+}
+
 /// Execute the deferred `ga_loadlevel` action: load the current
 /// `gameepisode`/`gamemap`, reset per-player input state, force a wipe and
 /// transition into `GS_LEVEL`.
@@ -1316,6 +1325,7 @@ pub unsafe fn G_DoLoadLevel() {
         (game.gameepisode, game.gamemap, game.gameskill)
     };
 
+    copy_session_settings(&mut world.session);
     P_SetupLevel(&mut world, gameepisode, gamemap, 0, gameskill);
     let testcontrols = {
         let mut game = GAME.borrow_mut();
@@ -1832,8 +1842,8 @@ pub fn G_PlayerReborn(world: &mut World, player: i32) {
 /// demos compatible.
 ///
 /// # Safety
-/// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
-/// queue globals.
+/// Dereferences `mthing`; reads and mutates the players and the session's
+/// body queue.
 pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthing_t) -> boolean {
     let spawning_player = playernum as usize;
     let Some(spawning_mo) = world.players[spawning_player].mo else {
@@ -1858,9 +1868,9 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
 
     // Flush old corpse
     let (bodyqueslot, oldest_corpse) = {
-        let game = GAME.borrow();
-        let slot = (game.bodyqueslot % BODYQUESIZE as i32) as usize;
-        (game.bodyqueslot, game.bodyque[slot])
+        let session = &world.session;
+        let slot = (session.bodyqueslot % BODYQUESIZE as i32) as usize;
+        (session.bodyqueslot, session.bodyque[slot])
     };
     if bodyqueslot >= BODYQUESIZE as i32 {
         // The queue has wrapped, so the slot holds a corpse (C removes it
@@ -1868,10 +1878,9 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
         P_RemoveMobj(world, oldest_corpse.expect("body queue slot is empty"));
     }
     {
-        let mut game = GAME.borrow_mut();
         let slot = (bodyqueslot % BODYQUESIZE as i32) as usize;
-        game.bodyque[slot] = world.players[spawning_player].mo;
-        game.bodyqueslot += 1;
+        world.session.bodyque[slot] = world.players[spawning_player].mo;
+        world.session.bodyqueslot += 1;
     }
 
     // Spawn teleport fog
@@ -1910,7 +1919,7 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
     let mo = P_SpawnMobj(world, x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
-    if world.players[PlayerId::console()].viewz != 1 {
+    if world.players[world.session.console()].viewz != 1 {
         S_StartSound(world, mo, Sfx::Telept as i32);
     }
     1
@@ -1938,7 +1947,7 @@ pub unsafe fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
     }
 
     for _ in 0..20 {
-        let i = (P_Random() % selections) as usize;
+        let i = (P_Random(world) % selections) as usize;
         if G_CheckSpot(world, playernum, deathmatchstart(i)) != 0 {
             (*deathmatchstart(i)).kind.set((playernum + 1) as i16);
             P_SpawnPlayer(world, deathmatchstart(i));
@@ -2143,9 +2152,9 @@ pub unsafe fn G_DoCompleted() {
             };
         }
 
-        wminfo.maxkills = game.totalkills;
-        wminfo.maxitems = game.totalitems;
-        wminfo.maxsecret = game.totalsecret;
+        wminfo.maxkills = world.session.totalkills;
+        wminfo.maxitems = world.session.totalitems;
+        wminfo.maxsecret = world.session.totalsecret;
         wminfo.maxfrags = 0;
 
         wminfo.partime = if gamemode() == commercial {
@@ -2158,7 +2167,7 @@ pub unsafe fn G_DoCompleted() {
 
         wminfo.pnum = game.consoleplayer;
 
-        let leveltime = leveltime();
+        let leveltime = world.leveltime;
         for (i, slot) in world.players.iter().enumerate() {
             wminfo.plyr[i].in_ = game.playeringame[i];
             wminfo.plyr[i].skills = slot.killcount;
@@ -2273,19 +2282,18 @@ pub unsafe fn G_DoLoadGame() {
         saveg.savegame_error = 0;
     }
 
-    if P_ReadSaveGameHeader() == 0 {
+    if P_ReadSaveGameHeader(&mut WORLD.borrow_mut()) == 0 {
         SAVEG.borrow_mut().save_stream = Cursor::default();
         return;
     }
 
-    let savedleveltime = leveltime();
+    let savedleveltime = WORLD.borrow().leveltime;
 
     G_InitNew(gameskill(), gameepisode(), gamemap());
 
-    TICK.borrow_mut().leveltime = savedleveltime;
-
     {
         let mut world = WORLD.borrow_mut();
+        world.leveltime = savedleveltime;
         P_UnArchivePlayers(&mut world);
         P_UnArchiveWorld(&mut world);
         P_UnArchiveThinkers(&mut world);
@@ -2484,7 +2492,7 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
         map = 9;
     }
 
-    M_ClearRandom();
+    M_ClearRandom(&mut WORLD.borrow_mut());
 
     // sk_nightmare = 4
     let respawnmonsters = (skill == 4 || respawnparm() != 0) as boolean;

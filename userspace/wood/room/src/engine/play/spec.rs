@@ -32,15 +32,15 @@ use crate::{
             random::P_Random,
         },
         play::{
-            ceilng::{CEILINGS, MAXCEILINGS},
+            ceilng::CeilingState,
             floor::{FLOORSPEED, add_floor_mover},
             info::{MT_BFG, MT_BRUISERSHOT, MT_HEADSHOT, MT_PLASMA, MT_ROCKET, MT_TROOPSHOT},
             lights::{FASTDARK, SLOWDARK},
             mobj::MobjId,
-            plats::{MAXPLATS, PLATS},
+            plats::PlatState,
             setup::{LEVEL, LevelState},
-            switch::{MAXBUTTONS, SWITCHES, button_t, start_button_sound},
-            tick::{ThinkerKind, leveltime},
+            switch::{MAXBUTTONS, button_t, start_button_sound},
+            tick::ThinkerKind,
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
@@ -295,7 +295,7 @@ fn anims_base() -> *mut anim_t {
 
 use crate::engine::{
     dehacked::DEH_String,
-    game::{G_ExitLevel, G_SecretExitLevel, GAME, deathmatch},
+    game::{G_ExitLevel, G_SecretExitLevel, GAME},
     global::Global,
     play::{
         ceilng::{EV_CeilingCrushStop, EV_DoCeiling},
@@ -977,7 +977,7 @@ pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: Line
 /// - 5: Hellslime - 10 hp damage every 32 tics unless Radiation Suit active.
 /// - 7: Nukage - 5 hp damage every 32 tics unless Radiation Suit active.
 /// - 4 / 16: Strobe Hurt / Super Hellslime - 20 hp damage every 32 tics;
-///   Radiation Suit grants only partial protection (bypassed if `P_Random() < 5`).
+///   Radiation Suit grants only partial protection (bypassed if `P_Random(world) < 5`).
 /// - 9: Secret - increments `player->secretcount` and clears `sector->special`
 ///   so it fires only once.
 /// - 11: End-level damage (E1M8 finale style) - strips God Mode, deals 20 hp
@@ -1012,17 +1012,17 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
 
     match special as i32 {
         5 => {
-            if ironfeet == 0 && leveltime() & 0x1f == 0 {
+            if ironfeet == 0 && world.leveltime & 0x1f == 0 {
                 P_DamageMobj(world, mo_id, None, None, 10);
             }
         }
         7 => {
-            if ironfeet == 0 && leveltime() & 0x1f == 0 {
+            if ironfeet == 0 && world.leveltime & 0x1f == 0 {
                 P_DamageMobj(world, mo_id, None, None, 5);
             }
         }
         16 | 4 => {
-            if (ironfeet == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
+            if (ironfeet == 0 || P_Random(world) < 5) && world.leveltime & 0x1f == 0 {
                 P_DamageMobj(world, mo_id, None, None, 20);
             }
         }
@@ -1032,7 +1032,7 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
         }
         11 => {
             world.players[player].cheats &= !CF_GODMODE;
-            if leveltime() & 0x1f == 0 {
+            if world.leveltime & 0x1f == 0 {
                 P_DamageMobj(world, mo_id, None, None, 20);
             }
             if world.players[player].health <= 10 {
@@ -1089,7 +1089,7 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
         let data = RENDER_DATA.borrow();
         (data.texturetranslation, data.flattranslation)
     };
-    let leveltime = leveltime();
+    let leveltime = world.leveltime;
     {
         let spec = SPEC.borrow();
         let mut level = LEVEL.borrow_mut();
@@ -1125,8 +1125,7 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
 
     for i in 0..MAXBUTTONS {
         let expired = {
-            let mut switches = SWITCHES.borrow_mut();
-            let button = &mut switches.buttonlist[i];
+            let button = &mut world.active.buttons[i];
             if button.btimer != 0 {
                 button.btimer -= 1;
                 (button.btimer == 0).then_some(*button)
@@ -1157,7 +1156,7 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
             // of the field, which plays the click from around map point
             // (0, 0). Play it from the switch's sector as intended.
             start_button_sound(world, button.soundorg, Sfx::Swtchn as i32);
-            SWITCHES.borrow_mut().buttonlist[i] = button_t::EMPTY;
+            world.active.buttons[i] = button_t::EMPTY;
         }
     }
 }
@@ -1368,7 +1367,7 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
 /// 4. **Misc cleanup**: clears `activeceilings`, `activeplats`, and `buttonlist`.
 pub unsafe fn P_SpawnSpecials(world: &mut World) {
     let timelimit = GAME.borrow().timelimit;
-    if timelimit > 0 && deathmatch() != 0 {
+    if timelimit > 0 && world.session.deathmatch != 0 {
         let mut spec = SPEC.borrow_mut();
         spec.levelTimer = 1;
         spec.levelTimeCount = timelimit * 60 * TICRATE;
@@ -1393,7 +1392,7 @@ pub unsafe fn P_SpawnSpecials(world: &mut World) {
             }
             8 => P_SpawnGlowingLight(world, sector),
             9 => {
-                GAME.borrow_mut().totalsecret += 1;
+                world.session.totalsecret += 1;
             }
             10 => P_SpawnDoorCloseIn30(world, sector),
             12 => P_SpawnStrobeFlash(world, sector, SLOWDARK, 1),
@@ -1420,9 +1419,9 @@ pub unsafe fn P_SpawnSpecials(world: &mut World) {
         }
     }
 
-    CEILINGS.borrow_mut().activeceilings = [None; MAXCEILINGS];
-    PLATS.borrow_mut().activeplats = [None; MAXPLATS];
-    SWITCHES.borrow_mut().buttonlist = [button_t::EMPTY; MAXBUTTONS];
+    world.active.ceilings = CeilingState::new();
+    world.active.plats = PlatState::new();
+    world.active.buttons = [button_t::EMPTY; MAXBUTTONS];
 }
 
 // ---------------------------------------------------------------------------

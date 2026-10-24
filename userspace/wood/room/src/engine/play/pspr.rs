@@ -15,13 +15,12 @@ use crate::engine::{
         player::{NUMAMMO, NUMPSPRITES, NUMWEAPONS, PlayerId, PlayerT},
         stat::gamemode,
     },
-    global::Global,
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedMul, fixed_t},
         tables::{FINEANGLES, FINEMASK, finecosine, finesine},
     },
     misc::random::P_Random,
-    play::{info::*, mobj::MobjId, tick::leveltime},
+    play::{info::*, mobj::MobjId},
     sound::S_StartSound,
     world::World,
 };
@@ -103,13 +102,14 @@ use crate::engine::{
     play::{
         enemy::P_NoiseAlert,
         inter::P_DamageMobj,
-        map::{P_AimLineAttack, P_LineAttack, linetarget},
+        map::{P_AimLineAttack, P_LineAttack},
         mobj::{P_SetMobjState, P_SpawnMobj, P_SpawnPlayerMissile, P_SubstNullMobj},
     },
     render_3d::main::R_PointToAngle2,
 };
 
-/// Weapon bob and aiming state (`p_pspr.c` globals).
+/// Weapon bob and aiming state (`p_pspr.c` globals), kept in
+/// [`PlayScratch`](crate::engine::world::PlayScratch).
 pub struct PsprState {
     /// Horizontal weapon-bob offset; updated each tic by `P_CalcSwing`.
     pub swingx: fixed_t,
@@ -134,14 +134,6 @@ impl Default for PsprState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Weapon bob and aiming state.
-pub static PSPR: Global<PsprState> = Global::new(PsprState::new());
-
-/// The slope computed by the last `P_BulletSlope` (C `bulletslope`).
-fn bulletslope() -> fixed_t {
-    PSPR.borrow().bulletslope
 }
 
 /// Transition a psprite slot to a new state, running action functions until a
@@ -206,8 +198,8 @@ pub unsafe fn P_SetPsprite(world: &mut World, player_id: PlayerId, position: i32
 pub fn P_CalcSwing(world: &mut World, player: PlayerId) {
     let swing = world.players[player].bob;
 
-    let leveltime = leveltime();
-    let mut pspr = PSPR.borrow_mut();
+    let leveltime = world.leveltime;
+    let pspr = &mut world.scratch.pspr;
     let mut angle = (FINEANGLES as i32 / 70 * leveltime) & FINEMASK;
     pspr.swingx = FixedMul(swing, finesine[angle as usize]);
 
@@ -391,7 +383,7 @@ pub unsafe fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usi
     // Bob the weapon based on movement speed.
     let bob = player.bob;
     let psp = &mut player.psprites[psprite];
-    let mut angle = (128 * leveltime()) as u32 & FINEMASK as u32;
+    let mut angle = (128 * world.leveltime) as u32 & FINEMASK as u32;
     psp.sx = FRACUNIT + FixedMul(bob, *finecosine.0.add(angle as usize));
     angle &= (FINEANGLES / 2 - 1) as u32;
     psp.sy = WEAPONTOP + FixedMul(bob, finesine[angle as usize]);
@@ -515,18 +507,18 @@ pub unsafe fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
     let mo = mo_id.ptr();
 
-    let mut damage = ((P_Random() % 10) + 1) << 1;
+    let mut damage = ((P_Random(world) % 10) + 1) << 1;
     if world.players[player].powers[pw_strength] != 0 {
         damage *= 10;
     }
 
     let mut angle = (*mo).angle;
-    angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
+    angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
     let slope = P_AimLineAttack(world, mo_id, angle, MELEERANGE);
     P_LineAttack(world, mo_id, angle, MELEERANGE, slope, damage);
 
     // Turn to face target.
-    if let Some(target) = linetarget() {
+    if let Some(target) = world.scratch.map.linetarget {
         let target = target.ptr();
         S_StartSound(world, mo_id, Sfx::Punch as i32);
         (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*target).x, (*target).y);
@@ -545,14 +537,14 @@ pub unsafe fn A_Saw(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
     let mo = mo_id.ptr();
 
-    let damage = 2 * ((P_Random() % 10) + 1);
+    let damage = 2 * ((P_Random(world) % 10) + 1);
     let mut angle = (*mo).angle;
-    angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
+    angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
 
     let slope = P_AimLineAttack(world, mo_id, angle, MELEERANGE + 1);
     P_LineAttack(world, mo_id, angle, MELEERANGE + 1, slope, damage);
 
-    let Some(target) = linetarget() else {
+    let Some(target) = world.scratch.map.linetarget else {
         S_StartSound(world, mo_id, Sfx::Sawful as i32);
         return;
     };
@@ -636,7 +628,8 @@ pub unsafe fn A_FirePlasma(world: &mut World, player: PlayerId, _psprite: usize)
     DecreaseReadyAmmo(&mut world.players[player], 1);
 
     let flashstate = weaponinfo[ready_weapon(&world.players[player])].flashstate;
-    P_SetPsprite(world, player, 1, flashstate + (P_Random() & 1));
+    let flashstate = flashstate + (P_Random(world) & 1);
+    P_SetPsprite(world, player, 1, flashstate);
 
     P_SpawnPlayerMissile(world, mo, MT_PLASMA);
 }
@@ -650,14 +643,14 @@ pub unsafe fn A_FirePlasma(world: &mut World, player: PlayerId, _psprite: usize)
 /// `mo` must name an initialised map object of the level.
 pub unsafe fn P_BulletSlope(world: &mut World, mo: MobjId) {
     let mut an = (*mo.ptr()).angle;
-    PSPR.borrow_mut().bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
+    world.scratch.pspr.bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
 
-    if linetarget().is_none() {
+    if world.scratch.map.linetarget.is_none() {
         an = an.wrapping_add(1 << 26);
-        PSPR.borrow_mut().bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
-        if linetarget().is_none() {
+        world.scratch.pspr.bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
+        if world.scratch.map.linetarget.is_none() {
             an = an.wrapping_sub(2 << 26);
-            PSPR.borrow_mut().bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
+            world.scratch.pspr.bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
         }
     }
 }
@@ -672,14 +665,15 @@ pub unsafe fn P_BulletSlope(world: &mut World, mo: MobjId) {
 /// `P_BulletSlope` must have been called before this function so that
 /// `bulletslope` is valid.
 pub unsafe fn P_GunShot(world: &mut World, mo: MobjId, accurate: i32) {
-    let damage = 5 * ((P_Random() % 3) + 1);
+    let damage = 5 * ((P_Random(world) % 3) + 1);
     let mut angle = (*mo.ptr()).angle;
 
     if accurate == 0 {
-        angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 18);
+        angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
     }
 
-    P_LineAttack(world, mo, angle, MISSILERANGE, bulletslope(), damage);
+    let slope = world.scratch.pspr.bulletslope;
+    P_LineAttack(world, mo, angle, MISSILERANGE, slope, damage);
 }
 
 /// Weapon action: fire the pistol (one accurate bullet, then spread on refire).
@@ -743,17 +737,11 @@ pub unsafe fn A_FireShotgun2(world: &mut World, player: PlayerId, _psprite: usiz
     P_BulletSlope(world, mo);
 
     for _ in 0..20 {
-        let damage = 5 * ((P_Random() % 3) + 1);
+        let damage = 5 * ((P_Random(world) % 3) + 1);
         let mut angle = (*mo.ptr()).angle;
-        angle = angle.wrapping_add(((P_Random() - P_Random()) as u32) << 19);
-        P_LineAttack(
-            world,
-            mo,
-            angle,
-            MISSILERANGE,
-            bulletslope() + ((P_Random() - P_Random()) << 5),
-            damage,
-        );
+        angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 19);
+        let slope = world.scratch.pspr.bulletslope + ((P_Random(world) - P_Random(world)) << 5);
+        P_LineAttack(world, mo, angle, MISSILERANGE, slope, damage);
     }
 }
 
@@ -820,11 +808,12 @@ pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
     for i in 0..40 {
         let an = (*mo).angle - ANG90 / 2 + (ANG90 / 40) * i as u32;
 
-        P_AimLineAttack(world, P_SubstNullMobj((*mo).target), an, 16 * 64 * FRACUNIT);
+        let shooter = P_SubstNullMobj(world, (*mo).target);
+        P_AimLineAttack(world, shooter, an, 16 * 64 * FRACUNIT);
 
         // Spawning the explosion and rolling damage do not aim, so the
         // target found above stays current.
-        let Some(target_id) = linetarget() else {
+        let Some(target_id) = world.scratch.map.linetarget else {
             continue;
         };
         let target = target_id.ptr();
@@ -839,7 +828,7 @@ pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
 
         let mut damage = 0;
         for _ in 0..15 {
-            damage += (P_Random() & 7) + 1;
+            damage += (P_Random(world) & 7) + 1;
         }
 
         P_DamageMobj(world, target_id, (*mo).target, (*mo).target, damage);

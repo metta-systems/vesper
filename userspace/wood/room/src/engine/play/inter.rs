@@ -27,7 +27,7 @@ use crate::{
             mobj::{MobjId, mobj_or_null},
             pspr::P_DropWeapon,
         },
-        world::World,
+        world::{Session, World},
     },
     i_error,
 };
@@ -307,7 +307,6 @@ const GOTSHOTGUN2: &str = "You got the super shotgun!";
 
 use crate::engine::{
     automap::{AM_Stop, automap_active},
-    game::{deathmatch, gameskill, netgame},
     interface::system::I_Tactile,
     play::{
         mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
@@ -348,12 +347,12 @@ pub static clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 /// appropriate weapon may be queued as `pendingweapon`.
 ///
 pub fn P_GiveAmmo(world: &mut World, player: PlayerId, ammo: i32, num: i32) -> i32 {
-    p_give_ammo(&mut world.players[player], ammo, num)
+    p_give_ammo(&world.session, &mut world.players[player], ammo, num)
 }
 
 /// Rust-side body of [`P_GiveAmmo`]. Takes `&mut PlayerT` so callers can
-/// pass the slot they already borrow.
-fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
+/// pass the slot they already borrow, with the session settings beside it.
+fn p_give_ammo(session: &Session, player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     if ammo == am_noammo {
         return 0;
     }
@@ -369,7 +368,7 @@ fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     } else {
         num = clipammo[idx] / 2;
     }
-    if gameskill() == sk_baby || gameskill() == sk_nightmare {
+    if session.gameskill == sk_baby || session.gameskill == sk_nightmare {
         num <<= 1;
     }
     let oldammo = player.ammo[idx];
@@ -423,37 +422,49 @@ fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
 /// Returns `1` if either the weapon or its ammo was successfully added;
 /// `0` otherwise.  The weapon is queued as `pendingweapon` when granted.
 pub fn P_GiveWeapon(world: &mut World, player: PlayerId, weapon: i32, dropped: i32) -> i32 {
-    p_give_weapon(player, &mut world.players[player], weapon, dropped)
+    p_give_weapon(
+        &world.session,
+        player,
+        &mut world.players[player],
+        weapon,
+        dropped,
+    )
 }
 
 /// Rust-side body of [`P_GiveWeapon`]. Takes `&mut PlayerT` so callers can
-/// pass the slot they already borrow. `player_id` names the slot `player`
-/// borrows.
-fn p_give_weapon(player_id: PlayerId, player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
+/// pass the slot they already borrow, with the session settings beside it.
+/// `player_id` names the slot `player` borrows.
+fn p_give_weapon(
+    session: &Session,
+    player_id: PlayerId,
+    player: &mut PlayerT,
+    weapon: i32,
+    dropped: i32,
+) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
-    if netgame() != 0 && deathmatch() != 2 && dropped == 0 {
+    if session.netgame != 0 && session.deathmatch != 2 && dropped == 0 {
         if player.weaponowned[widx] != 0 {
             return 0;
         }
         player.bonuscount += BONUSADD;
         player.weaponowned[widx] = 1;
-        if deathmatch() != 0 {
-            p_give_ammo(player, ammo_kind, 5);
+        if session.deathmatch != 0 {
+            p_give_ammo(session, player, ammo_kind, 5);
         } else {
-            p_give_ammo(player, ammo_kind, 2);
+            p_give_ammo(session, player, ammo_kind, 2);
         }
         player.pendingweapon = weapon;
-        if player_id == PlayerId::console() {
+        if player_id == session.console() {
             S_StartNonPositionalSound(Sfx::Wpnup as i32);
         }
         return 0;
     }
     let gaveammo: i32 = if ammo_kind != am_noammo {
         if dropped != 0 {
-            p_give_ammo(player, ammo_kind, 1)
+            p_give_ammo(session, player, ammo_kind, 1)
         } else {
-            p_give_ammo(player, ammo_kind, 2)
+            p_give_ammo(session, player, ammo_kind, 2)
         }
     } else {
         0
@@ -658,7 +669,9 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
     let soulsphere_health = deh_soulsphere_health;
     let megasphere_health = deh_megasphere_health;
     // `player` borrows the slot until the special is removed. Every helper
-    // called meanwhile takes `&mut PlayerT` (the `p_give_*` inner fns).
+    // called meanwhile takes `&mut PlayerT` (the `p_give_*` inner fns),
+    // and the session settings beside it.
+    let session = &world.session;
     let player = &mut world.players[player_id];
 
     // Identify by sprite.
@@ -730,7 +743,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTBLUECARD));
             }
             p_give_card(player, it_bluecard);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -739,7 +752,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTYELWCARD));
             }
             p_give_card(player, it_yellowcard);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -748,7 +761,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTREDCARD));
             }
             p_give_card(player, it_redcard);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -757,7 +770,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTBLUESKUL));
             }
             p_give_card(player, it_blueskull);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -766,7 +779,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTYELWSKUL));
             }
             p_give_card(player, it_yellowskull);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -775,7 +788,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.message = PlayerMessage::new(DEH_String(GOTREDSKULL));
             }
             p_give_card(player, it_redskull);
-            if netgame() != 0 {
+            if session.netgame != 0 {
                 return;
             }
         }
@@ -849,49 +862,49 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
             } else {
                 1
             };
-            if p_give_ammo(player, am_clip, amount) == 0 {
+            if p_give_ammo(session, player, am_clip, amount) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCLIP));
         }
         SPR_AMMO => {
-            if p_give_ammo(player, am_clip, 5) == 0 {
+            if p_give_ammo(session, player, am_clip, 5) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCLIPBOX));
         }
         SPR_ROCK => {
-            if p_give_ammo(player, am_misl, 1) == 0 {
+            if p_give_ammo(session, player, am_misl, 1) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTROCKET));
         }
         SPR_BROK => {
-            if p_give_ammo(player, am_misl, 5) == 0 {
+            if p_give_ammo(session, player, am_misl, 5) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTROCKBOX));
         }
         SPR_CELL => {
-            if p_give_ammo(player, am_cell, 1) == 0 {
+            if p_give_ammo(session, player, am_cell, 1) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCELL));
         }
         SPR_CELP => {
-            if p_give_ammo(player, am_cell, 5) == 0 {
+            if p_give_ammo(session, player, am_cell, 5) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCELLBOX));
         }
         SPR_SHEL => {
-            if p_give_ammo(player, am_shell, 1) == 0 {
+            if p_give_ammo(session, player, am_shell, 1) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTSHELLS));
         }
         SPR_SBOX => {
-            if p_give_ammo(player, am_shell, 5) == 0 {
+            if p_give_ammo(session, player, am_shell, 5) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTSHELLBOX));
@@ -904,13 +917,13 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 player.backpack = 1;
             }
             for i in 0..NUMAMMO {
-                p_give_ammo(player, i as i32, 1);
+                p_give_ammo(session, player, i as i32, 1);
             }
             player.message = PlayerMessage::new(DEH_String(GOTBACKPACK));
         }
         // weapons
         SPR_BFUG => {
-            if p_give_weapon(player_id, player, wp_bfg, 0) == 0 {
+            if p_give_weapon(session, player_id, player, wp_bfg, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTBFG9000));
@@ -918,6 +931,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         }
         SPR_MGUN => {
             if p_give_weapon(
+                session,
                 player_id,
                 player,
                 wp_chaingun,
@@ -930,21 +944,21 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
             sound = Sfx::Wpnup as i32;
         }
         SPR_CSAW => {
-            if p_give_weapon(player_id, player, wp_chainsaw, 0) == 0 {
+            if p_give_weapon(session, player_id, player, wp_chainsaw, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCHAINSAW));
             sound = Sfx::Wpnup as i32;
         }
         SPR_LAUN => {
-            if p_give_weapon(player_id, player, wp_missile, 0) == 0 {
+            if p_give_weapon(session, player_id, player, wp_missile, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTLAUNCHER));
             sound = Sfx::Wpnup as i32;
         }
         SPR_PLAS => {
-            if p_give_weapon(player_id, player, wp_plasma, 0) == 0 {
+            if p_give_weapon(session, player_id, player, wp_plasma, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTPLASMA));
@@ -952,6 +966,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         }
         SPR_SHOT => {
             if p_give_weapon(
+                session,
                 player_id,
                 player,
                 wp_shotgun,
@@ -965,6 +980,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         }
         SPR_SGN2 => {
             if p_give_weapon(
+                session,
                 player_id,
                 player,
                 wp_supershotgun,
@@ -986,7 +1002,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
     }
     P_RemoveMobj(world, special_id);
     world.players[player_id].bonuscount += BONUSADD;
-    if player_id == PlayerId::console() {
+    if player_id == world.session.console() {
         S_StartNonPositionalSound(sound);
     }
 }
@@ -1039,7 +1055,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
         if let Some(target_player) = target_player {
             source_player.frags[target_player.index()] += 1;
         }
-    } else if netgame() == 0 && counts_kill {
+    } else if world.session.netgame == 0 && counts_kill {
         world.players[0].killcount += 1;
     }
 
@@ -1051,7 +1067,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
         player.playerstate = 1; // PST_DEAD
         (*target).flags &= !MF_SOLID;
         P_DropWeapon(world, target_player);
-        if target_player == PlayerId::console() && automap_active() {
+        if target_player == world.session.console() && automap_active() {
             AM_Stop();
         }
     }
@@ -1061,7 +1077,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
     } else {
         P_SetMobjState(world, target_id, info.deathstate);
     }
-    (*target).tics -= P_Random() & 3;
+    (*target).tics -= P_Random(world) & 3;
     if (*target).tics < 1 {
         (*target).tics = 1;
     }
@@ -1136,7 +1152,7 @@ pub unsafe fn P_DamageMobj(
     }
 
     let player = (*target).player;
-    if player.is_some() && gameskill() == sk_baby {
+    if player.is_some() && world.session.gameskill == sk_baby {
         damage >>= 1;
     }
 
@@ -1154,7 +1170,7 @@ pub unsafe fn P_DamageMobj(
         if damage < 40
             && damage > (*target).health
             && (*target).z - (*inflictor).z > 64 * FRACUNIT
-            && (P_Random() & 1) != 0
+            && (P_Random(world) & 1) != 0
         {
             ang = ang.wrapping_add(ANG180);
             thrust *= 4;
@@ -1209,7 +1225,7 @@ pub unsafe fn P_DamageMobj(
             return;
         }
         let temp = if damage < 100 { damage } else { 100 };
-        if player_id == PlayerId::console() {
+        if player_id == world.session.console() {
             I_Tactile(40, 10, 40 + temp * 2);
         }
     }
@@ -1221,7 +1237,7 @@ pub unsafe fn P_DamageMobj(
     }
 
     let info = (*target).info.get();
-    if P_Random() < info.painchance && ((*target).flags & MF_SKULLFLY) == 0 {
+    if P_Random(world) < info.painchance && ((*target).flags & MF_SKULLFLY) == 0 {
         (*target).flags |= MF_JUSTHIT;
         P_SetMobjState(world, target_id, info.painstate);
     }

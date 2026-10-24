@@ -12,12 +12,11 @@ use crate::engine::{
         player::{CF_NOCLIP, CF_NOMOMENTUM, PlayerId},
         stat::gamemode,
     },
-    global::Global,
     math::{
         fixed::{FRACUNIT, FixedMul, fixed_t},
         tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
     },
-    play::{info::*, setup::LEVEL, tick::leveltime},
+    play::{info::*, setup::LEVEL},
     world::World,
 };
 
@@ -117,7 +116,8 @@ const PST_REBORN: i32 = 2;
 /// invulnerability. Matches `INVERSECOLORMAP` in `p_user.c`.
 const INVERSECOLORMAP: i32 = 32;
 
-/// Player movement state (`p_user.c` global).
+/// Player movement state (`p_user.c` global), kept in
+/// [`PlayScratch`](crate::engine::world::PlayScratch).
 pub struct UserState {
     /// Whether the player is standing on the floor (`mo->z == mo->floorz`).
     ///
@@ -137,9 +137,6 @@ impl Default for UserState {
         Self::new()
     }
 }
-
-/// Player movement state.
-pub static USER: Global<UserState> = Global::new(UserState::new());
 
 use crate::engine::{
     play::{
@@ -190,7 +187,7 @@ pub unsafe fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
             player.bob = MAXBOB;
         }
 
-        if (player.cheats & CF_NOMOMENTUM) != 0 || USER.borrow().onground == 0 {
+        if (player.cheats & CF_NOMOMENTUM) != 0 || world.scratch.user.onground == 0 {
             player.viewz = (*mo).z + VIEWHEIGHT;
 
             if player.viewz > (*mo).ceilingz - 4 * FRACUNIT {
@@ -201,7 +198,7 @@ pub unsafe fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
             return;
         }
 
-        let angle: i32 = (FINEANGLES as i32 / 20 * leveltime()) & (FINEANGLES as i32 - 1);
+        let angle: i32 = (FINEANGLES as i32 / 20 * world.leveltime) & (FINEANGLES as i32 - 1);
         let bob: fixed_t = FixedMul(player.bob / 2, finesine[angle as usize]);
 
         // Move viewheight
@@ -258,7 +255,7 @@ pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
 
         // Do not let the player control movement if not onground.
         let onground = ((*mo).z <= (*mo).floorz) as i32;
-        USER.borrow_mut().onground = onground;
+        world.scratch.user.onground = onground;
 
         if cmd.forwardmove != 0 && onground != 0 {
             P_Thrust(
@@ -314,7 +311,7 @@ pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
         }
 
         player.deltaviewheight = 0;
-        USER.borrow_mut().onground = ((*mo).z <= (*mo).floorz) as i32;
+        world.scratch.user.onground = ((*mo).z <= (*mo).floorz) as i32;
         P_CalcHeight(world, player_id);
 
         // The attacker may have been removed since (an exploded barrel); like

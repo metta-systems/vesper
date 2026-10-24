@@ -17,7 +17,7 @@
 use room::engine::{
     interface::timer::TICRATE,
     math::fixed::FRACUNIT,
-    play::{ceilng, doors, floor, lights, plats, spec, tick},
+    play::{ceilng, doors, floor, lights, plats, spec},
 };
 
 // ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ use room::engine::{
 #[test]
 fn leveltime_default_zero() {
     assert_eq!(
-        tick::TickState::new().leveltime,
+        room::engine::world::World::new().leveltime,
         0,
         "leveltime should be 0 before level load"
     );

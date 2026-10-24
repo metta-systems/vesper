@@ -8,19 +8,17 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ptr;
+use zerocopy::IntoBytes;
 
 use crate::engine::{
-    global::Global,
     map::{LineId, slopetype_t},
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
     play::{
         info::*,
         mobj::MobjId,
-        pspr::PSPR,
         setup::{LEVEL, LevelState, SPAWN_SPOTS, blockmap_origin},
     },
-    render_3d::main::{R_PointInSubsector, VALIDCOUNT},
+    render_3d::main::R_PointInSubsector,
     world::World,
 };
 
@@ -108,14 +106,15 @@ pub const PT_ADDTHINGS: i32 = 2;
 pub const PT_EARLYOUT: i32 = 4;
 
 // ---------------------------------------------------------------------------
-// Globals
+// Line-opening and traversal state
 // ---------------------------------------------------------------------------
 
-/// Line-opening results and path-traversal state (`p_maputl.c` globals).
+/// Line-opening results and path-traversal state (`p_maputl.c` globals),
+/// kept in [`PlayScratch`](crate::engine::world::PlayScratch).
 ///
 /// Path traversals re-enter: an intercept callback can damage or kill a map
 /// object, whose actions move other objects and traverse again. Every access
-/// is therefore a short borrow that never spans a callback, matching the C
+/// is therefore a short one that never spans a callback, matching the C
 /// globals that each nested call overwrites.
 pub struct MapUtlState {
     /// Top of the open vertical range through the last line tested by
@@ -130,13 +129,14 @@ pub struct MapUtlState {
     /// The lower of the two floor heights on either side of the last line tested
     /// by `P_LineOpening`. Used for step-up logic in `p_map.c`.
     pub lowfloor: fixed_t,
-    /// Write cursor into the [`INTERCEPTS`] array.
+    /// Write cursor into
+    /// [`PlayScratch::intercepts`](crate::engine::world::PlayScratch::intercepts): the number of entries
+    /// collected (C `intercept_p - intercepts`).
     ///
-    /// Initialised to `&intercepts[0]` at the start of each `P_PathTraverse`
-    /// call and advanced by `PIT_AddLineIntercepts` / `PIT_AddThingIntercepts`.
-    /// `P_TraverseIntercepts` uses `intercept_p - intercepts` to know how many
-    /// entries were collected.
-    pub intercept_p: *mut intercept_t,
+    /// Reset to 0 at the start of each `P_PathTraverse` call and advanced by
+    /// `PIT_AddLineIntercepts` / `PIT_AddThingIntercepts`.
+    /// `P_TraverseIntercepts` walks the entries below it.
+    pub intercept_count: usize,
     /// The current path-traverse ray, set by `P_PathTraverse`.
     ///
     /// `PIT_AddLineIntercepts` and `PIT_AddThingIntercepts` read this to
@@ -155,7 +155,7 @@ impl MapUtlState {
             openbottom: 0,
             openrange: 0,
             lowfloor: 0,
-            intercept_p: ptr::null_mut(),
+            intercept_count: 0,
             trace: divline_t {
                 x: 0,
                 y: 0,
@@ -171,56 +171,6 @@ impl Default for MapUtlState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Line-opening results and path-traversal state.
-pub static MAPUTL: Global<MapUtlState> = Global::new(MapUtlState::new());
-
-/// Array of intercept records accumulated during a `P_PathTraverse` call.
-///
-/// Each entry records where the trace ray hit a line or thing along with the
-/// parametric fraction `t` along the ray. The array is indexed via
-/// `intercept_p`. Entries beyond index `MAXINTERCEPTS_ORIGINAL` trigger
-/// `InterceptsOverrun` to emulate vanilla memory layout behaviour.
-///
-/// `P_TraverseIntercepts` hands entries to callbacks that may start a nested
-/// traversal, so the array is only reached through `intercepts_base`'s
-/// stable pointer.
-pub static INTERCEPTS: Global<[intercept_t; MAXINTERCEPTS]> = Global::new(
-    [intercept_t {
-        frac: 0,
-        hit: InterceptHit::Line(LineId::new(0)),
-    }; MAXINTERCEPTS],
-);
-
-/// Stable pointer to `intercepts[0]`.
-fn intercepts_base() -> *mut intercept_t {
-    INTERCEPTS.as_ptr().cast::<intercept_t>()
-}
-
-/// Top of the last line opening (C `opentop`).
-pub fn opentop() -> fixed_t {
-    MAPUTL.borrow().opentop
-}
-
-/// Bottom of the last line opening (C `openbottom`).
-pub fn openbottom() -> fixed_t {
-    MAPUTL.borrow().openbottom
-}
-
-/// Height of the last line opening (C `openrange`).
-pub fn openrange() -> fixed_t {
-    MAPUTL.borrow().openrange
-}
-
-/// Lower floor of the last line opening (C `lowfloor`).
-pub fn lowfloor() -> fixed_t {
-    MAPUTL.borrow().lowfloor
-}
-
-/// The current path-traverse ray (C `trace`).
-pub fn trace() -> divline_t {
-    MAPUTL.borrow().trace
 }
 
 // ---------------------------------------------------------------------------
@@ -414,12 +364,12 @@ pub fn P_BoxOnLineSide(level: &LevelState, tmbox: &[fixed_t; 4], ld: LineId) -> 
 /// Compute the open vertical portal range for two-sided linedef `linedef`
 /// of `level`.
 ///
-/// Sets the module globals `opentop`, `openbottom`, `openrange`, and
-/// `lowfloor` based on the floor/ceiling heights of the front and back sectors.
-/// If the linedef has no back side (`sidenum[1] == -1`) then `openrange` is
-/// set to 0 (no passage).
+/// Sets `opentop`, `openbottom`, `openrange`, and `lowfloor` of `opening`
+/// based on the floor/ceiling heights of the front and back sectors.
+/// If the linedef has no back side (`sidenum[1] == -1`) then only
+/// `openrange` is set, to 0 (no passage).
 ///
-/// These globals are read by `p_map.c` after each crossing test to determine
+/// These values are read by `p_map.c` after each crossing test to determine
 /// whether a moving object fits through the gap.
 ///
 /// Matches `P_LineOpening` in `p_maputl.c`.
@@ -427,9 +377,8 @@ pub fn P_BoxOnLineSide(level: &LevelState, tmbox: &[fixed_t; 4], ld: LineId) -> 
 /// # Panics
 /// If the line has a back side but lacks a front or back sector (C
 /// dereferences the null sector).
-pub fn P_LineOpening(level: &LevelState, linedef: LineId) {
+pub fn P_LineOpening(opening: &mut MapUtlState, level: &LevelState, linedef: LineId) {
     let linedef = &level.lines[linedef];
-    let mut opening = MAPUTL.borrow_mut();
     if linedef.sidenum[1] == -1 {
         opening.openrange = 0;
         return;
@@ -575,34 +524,31 @@ pub unsafe fn P_SetThingPosition(_world: &mut World, thing_id: MobjId) {
 
 /// Iterate all linedefs in blockmap cell `(x, y)`, calling `func` for each.
 ///
-/// Returns 1 (true) if `func` returned non-zero for every line, 0 (false) if
-/// `func` returned 0 for any line (early-out). Lines marked with the current
+/// Returns `true` if `func` returned `true` for every line, `false` if it
+/// returned `false` for any line (early-out). Lines marked with the current
 /// `validcount` are skipped to avoid processing the same line twice when it
 /// spans multiple blockmap cells.
 ///
-/// Out-of-bounds cell coordinates return 1 without calling `func`.
+/// Out-of-bounds cell coordinates return `true` without calling `func`.
 ///
 /// Matches `P_BlockLinesIterator` in `p_maputl.c`.
 ///
-/// # Safety
-/// A level must be loaded (blockmap, blockmap lump and lines from `p_setup`).
-/// `func` must be `Some`, and calling it with any line of the loaded level
-/// must be sound in the caller's current state: it is an `unsafe fn` and
-/// this function discharges its contract on the caller's behalf.
-pub unsafe fn P_BlockLinesIterator(
+/// # Panics
+/// If no level is loaded (the cell's list lies outside the blockmap lump).
+pub fn P_BlockLinesIterator(
     world: &mut World,
     x: i32,
     y: i32,
-    func: Option<unsafe fn(&mut World, LineId) -> u32>,
-) -> u32 {
+    mut func: impl FnMut(&mut World, LineId) -> bool,
+) -> bool {
     // The callback can start a nested traversal whose intercept overrun
     // rewrites the blockmap dimensions; like C, this cell's list was located
     // before any callback ran. The callback may also borrow the level, so
-    // each line is marked under a borrow that ends before the call.
+    // each line is read and marked under a borrow that ends before the call.
     let mut list = {
         let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
-            return 1;
+            return true;
         }
         level.blockmaplump[4 + (y * level.bmapwidth + x) as usize] as usize
     };
@@ -611,10 +557,10 @@ pub unsafe fn P_BlockLinesIterator(
             let mut level = LEVEL.borrow_mut();
             let linenum = level.blockmaplump[list];
             if linenum == -1 {
-                return 1;
+                return true;
             }
             list += 1;
-            let validcount = VALIDCOUNT.get();
+            let validcount = world.scratch.validcount;
             let line = &mut level.lines[linenum as usize];
             if line.validcount == validcount {
                 continue;
@@ -622,8 +568,8 @@ pub unsafe fn P_BlockLinesIterator(
             line.validcount = validcount;
             LineId::new(linenum as usize)
         };
-        if unsafe { func.unwrap()(world, ld) } == 0 {
-            return 0;
+        if !func(world, ld) {
+            return false;
         }
     }
 }
@@ -634,42 +580,38 @@ pub unsafe fn P_BlockLinesIterator(
 
 /// Iterate all map objects in blockmap cell `(x, y)`, calling `func` for each.
 ///
-/// Returns 1 (true) if `func` returned non-zero for every thing, 0 (false)
-/// if `func` returned 0 for any thing (early-out). Out-of-bounds cell
-/// coordinates return 1 without calling `func`.
+/// Returns `true` if `func` returned `true` for every thing, `false` if it
+/// returned `false` for any thing (early-out). Out-of-bounds cell
+/// coordinates return `true` without calling `func`.
 ///
 /// Matches `P_BlockThingsIterator` in `p_maputl.c`.
 ///
 /// # Safety
-/// A level must be loaded and its `blocklinks` chains must link only live
-/// map objects. `func` must be `Some`, and calling it with any of those map
-/// objects must be sound in the caller's current state: it is an
-/// `unsafe fn` and this function discharges its contract on the caller's
-/// behalf.
+/// A level must be loaded and its `blocklinks` chains must link only map
+/// objects of the level (the next link is read from each object after
+/// `func` has run on it, freed or not).
 pub unsafe fn P_BlockThingsIterator(
     world: &mut World,
     x: i32,
     y: i32,
-    func: Option<unsafe fn(&mut World, MobjId) -> u32>,
-) -> u32 {
+    mut func: impl FnMut(&mut World, MobjId) -> bool,
+) -> bool {
     let mut mobj = {
         let level = LEVEL.borrow();
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
-            return 1;
+            return true;
         }
         level.blocklinks[(y * level.bmapwidth + x) as usize]
     };
-    unsafe {
-        while let Some(current) = mobj {
-            if func.unwrap()(world, current) == 0 {
-                return 0;
-            }
-            // Read after the callback, as C does: it may have moved or
-            // removed the object, whose links still name its old neighbour.
-            mobj = (*current.ptr()).bnext;
+    while let Some(current) = mobj {
+        if !func(world, current) {
+            return false;
         }
-        1
+        // Read after the callback, as C does: it may have moved or
+        // removed the object, whose links still name its old neighbour.
+        mobj = unsafe { (*current.ptr()).bnext };
     }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -682,77 +624,44 @@ pub unsafe fn P_BlockThingsIterator(
 /// Doom's original engine laid out its BSS segment in a fixed order; when
 /// `intercepts[]` overflowed, writes would corrupt the adjacent variables in
 /// that order. This function reproduces that behaviour for demo compatibility.
-/// Each `skip!` / `write_i32!` / `write_i16_arr!` call accounts for one
-/// variable in the original layout (offsets noted in the comments).
+/// Each arm of the match below is one variable of the original layout, by
+/// its byte range after the array; variables this port does not emulate
+/// (their writes would be lost or harmless) are listed as skipped.
 ///
 /// Based on PrBoom-plus research by Andrey Budko (entryway).
 ///
-/// # Safety
-/// Writes directly through raw pointers into engine state. Caller must
-/// ensure `location` is within the range covered by the table (0..=~300 bytes).
-#[allow(unused_assignments)]
-unsafe fn InterceptsMemoryOverrun(location: i32, value: i32) {
-    let mut offset: usize = 0;
-    let loc = location as usize;
-
-    macro_rules! skip {
-        ($len:expr) => {
-            if offset + $len > loc {
-                return;
-            }
-            offset += $len;
-        };
+/// No guard on the level or the spawn spots may be live (the overrun writes
+/// the blockmap dimensions and the player starts).
+fn InterceptsMemoryOverrun(world: &mut World, location: i32, value: i32) {
+    match location {
+        // 0..12: an unnamed word, `earlyout`, `intercept_p` (skipped).
+        12..16 => world.scratch.maputl.lowfloor = value,
+        16..20 => world.scratch.maputl.openbottom = value,
+        20..24 => world.scratch.maputl.opentop = value,
+        24..28 => world.scratch.maputl.openrange = value,
+        // 28..160: an unnamed word, `activeplats`, two unnamed words
+        // (skipped).
+        160..164 => world.scratch.pspr.bulletslope = value,
+        // 164..176: `swingx`, `swingy`, an unnamed word (skipped).
+        176..216 => {
+            // `playerstarts`, an array of `short`: the value lands in two
+            // consecutive shorts, low half first.
+            let mut spots = SPAWN_SPOTS.borrow_mut();
+            let shorts = spots.playerstarts.as_mut_bytes();
+            let offset = (location - 176) as usize / 2 * 2;
+            shorts[offset..offset + 2].copy_from_slice(&((value & 0xffff) as i16).to_le_bytes());
+            shorts[offset + 2..offset + 4]
+                .copy_from_slice(&(((value >> 16) & 0xffff) as i16).to_le_bytes());
+        }
+        // 216..220: `blocklinks` (skipped).
+        220..224 => LEVEL.borrow_mut().bmapwidth = value,
+        // 224..228: `blockmap` (skipped).
+        228..232 => LEVEL.borrow_mut().bmaporgx = value,
+        232..236 => LEVEL.borrow_mut().bmaporgy = value,
+        // 236..240: `blockmaplump` (skipped).
+        240..244 => LEVEL.borrow_mut().bmapheight = value,
+        _ => {}
     }
-    macro_rules! write_i32 {
-        ($len:expr, $ptr:expr) => {
-            if offset + $len > loc {
-                let index = (loc - offset) / 4;
-                ($ptr as *mut i32).add(index).write(value);
-                return;
-            }
-            offset += $len;
-        };
-    }
-    macro_rules! write_i16_arr {
-        ($len:expr, $ptr:expr) => {
-            if offset + $len > loc {
-                let index = (loc - offset) / 2;
-                let p = ($ptr as *mut _ as *mut u8) as *mut i16;
-                p.add(index).write((value & 0xffff) as i16);
-                p.add(index + 1).write(((value >> 16) & 0xffff) as i16);
-                return;
-            }
-            offset += $len;
-        };
-    }
-
-    // The targets live in other modules' state; they are written through
-    // stable field pointers, and no guard on those states is live while a
-    // path traversal collects intercepts.
-    let maputl = MAPUTL.as_ptr();
-    let level = LEVEL.as_ptr();
-    skip!(4); // 0
-    skip!(4); // 1 earlyout
-    skip!(4); // 2 intercept_p
-    write_i32!(4, &raw mut (*maputl).lowfloor); // 3 lowfloor
-    write_i32!(4, &raw mut (*maputl).openbottom); // 4 openbottom
-    write_i32!(4, &raw mut (*maputl).opentop); // 5 opentop
-    write_i32!(4, &raw mut (*maputl).openrange); // 6 openrange
-    skip!(4); // 7
-    skip!(120); // 8 activeplats
-    skip!(8); // 9
-    write_i32!(4, &raw mut (*PSPR.as_ptr()).bulletslope); // 10 bulletslope
-    skip!(4); // 11 swingx
-    skip!(4); // 12 swingy
-    skip!(4); // 13
-    write_i16_arr!(40, &raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts); // 14 playerstarts
-    skip!(4); // 15 blocklinks
-    write_i32!(4, &raw mut (*level).bmapwidth); // 16 bmapwidth
-    skip!(4); // 17 blockmap
-    write_i32!(4, &raw mut (*level).bmaporgx); // 18 bmaporgx
-    write_i32!(4, &raw mut (*level).bmaporgy); // 19 bmaporgy
-    skip!(4); // 20 blockmaplump
-    write_i32!(4, &raw mut (*level).bmapheight); // 21 bmapheight
 }
 
 /// Emulate the vanilla Doom `intercepts[]` buffer overrun for demo fidelity.
@@ -763,23 +672,32 @@ unsafe fn InterceptsMemoryOverrun(location: i32, value: i32) {
 /// `d`) to reproduce those writes. `d` is the address C stores: the thing's,
 /// or for a line the address of its record in the level's `lines`.
 ///
-/// # Safety
-/// `intercept` must be a valid, non-null pointer to an initialised
-/// `intercept_t`. No guard on the level may be live (the overrun writes the
-/// blockmap dimensions).
-unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
-    if num_intercepts <= MAXINTERCEPTS_ORIGINAL as i32 {
+/// No guard on the level may be live (the overrun writes the blockmap
+/// dimensions).
+fn InterceptsOverrun(world: &mut World, num_intercepts: usize, intercept: intercept_t) {
+    if num_intercepts <= MAXINTERCEPTS_ORIGINAL {
         return;
     }
-    let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL as i32 - 1) * 12;
-    let intercept = *intercept;
+    let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL - 1) as i32 * 12;
     let address = match intercept.hit {
         InterceptHit::Line(line) => (&raw const LEVEL.borrow().lines[line]).addr(),
         InterceptHit::Thing(thing) => thing.address(),
     };
-    InterceptsMemoryOverrun(location, intercept.frac);
-    InterceptsMemoryOverrun(location + 4, intercept.isaline());
-    InterceptsMemoryOverrun(location + 8, address as i32);
+    InterceptsMemoryOverrun(world, location, intercept.frac);
+    InterceptsMemoryOverrun(world, location + 4, intercept.isaline());
+    InterceptsMemoryOverrun(world, location + 8, address as i32);
+}
+
+/// Append `intercept` to the traversal's intercepts, emulating the vanilla
+/// overrun once the original array is full (the `PIT_Add*` epilogue).
+///
+/// # Panics
+/// If the extended array is full too (C writes past it).
+fn add_intercept(world: &mut World, intercept: intercept_t) {
+    let index = world.scratch.maputl.intercept_count;
+    world.scratch.intercepts[index] = intercept;
+    InterceptsOverrun(world, index, intercept);
+    world.scratch.maputl.intercept_count = index + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -791,72 +709,65 @@ unsafe fn InterceptsOverrun(num_intercepts: i32, intercept: *mut intercept_t) {
 /// Called by `P_BlockLinesIterator` during `P_PathTraverse`. If the ray
 /// crosses `ld` (endpoints on opposite sides) and the intersection fraction
 /// `t >= 0`, appends an `intercept_t` to `intercepts` and advances
-/// `intercept_p`. Uses `P_PointOnDivlineSide` for long traces and
+/// `intercept_count`. Uses `P_PointOnDivlineSide` for long traces and
 /// `P_PointOnLineSide` for short ones to avoid fixed-point precision issues.
 ///
-/// If `PT_EARLYOUT` is set and the line has no back sector, returns 0 to halt
-/// traversal immediately.
+/// If `PT_EARLYOUT` is set and the line has no back sector, returns `false`
+/// to halt traversal immediately.
 ///
-/// Returns 1 (continue) or 0 (stop).
+/// Returns `true` (continue) or `false` (stop).
+///
+/// `ld` must be a line of the loaded level, and `trace`, the intercepts and
+/// their count must be set up by a preceding `P_PathTraverse` call.
 ///
 /// Matches `PIT_AddLineIntercepts` in `p_maputl.c`.
-///
-/// # Safety
-/// The global `trace`, `intercepts`, and `intercept_p` must be set up by a
-/// preceding `P_PathTraverse` call.
-pub unsafe fn PIT_AddLineIntercepts(_world: &mut World, ld: LineId) -> u32 {
-    unsafe {
-        let (trace, earlyout) = {
-            let maputl = MAPUTL.borrow();
-            (maputl.trace, maputl.earlyout)
+pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
+    let (trace, earlyout) = (world.scratch.maputl.trace, world.scratch.maputl.earlyout);
+    let (frac, backsector) = {
+        let level = LEVEL.borrow();
+        let line = &level.lines[ld];
+        let (s1, s2) = if trace.dx > FRACUNIT * 16
+            || trace.dy > FRACUNIT * 16
+            || trace.dx < -FRACUNIT * 16
+            || trace.dy < -FRACUNIT * 16
+        {
+            let (v1, v2) = (level.vertexes[line.v1], level.vertexes[line.v2]);
+            (
+                P_PointOnDivlineSide(v1.x, v1.y, &trace),
+                P_PointOnDivlineSide(v2.x, v2.y, &trace),
+            )
+        } else {
+            (
+                P_PointOnLineSide(&level, trace.x, trace.y, ld),
+                P_PointOnLineSide(&level, trace.x + trace.dx, trace.y + trace.dy, ld),
+            )
         };
-        let (frac, backsector) = {
-            let level = LEVEL.borrow();
-            let line = &level.lines[ld];
-            let (s1, s2) = if trace.dx > FRACUNIT * 16
-                || trace.dy > FRACUNIT * 16
-                || trace.dx < -FRACUNIT * 16
-                || trace.dy < -FRACUNIT * 16
-            {
-                let (v1, v2) = (level.vertexes[line.v1], level.vertexes[line.v2]);
-                (
-                    P_PointOnDivlineSide(v1.x, v1.y, &trace),
-                    P_PointOnDivlineSide(v2.x, v2.y, &trace),
-                )
-            } else {
-                (
-                    P_PointOnLineSide(&level, trace.x, trace.y, ld),
-                    P_PointOnLineSide(&level, trace.x + trace.dx, trace.y + trace.dy, ld),
-                )
-            };
-            if s1 == s2 {
-                return 1;
-            }
-            let mut dl = divline_t {
-                x: 0,
-                y: 0,
-                dx: 0,
-                dy: 0,
-            };
-            P_MakeDivline(&level, ld, &mut dl);
-            (P_InterceptVector(&trace, &dl), line.backsector)
+        if s1 == s2 {
+            return true;
+        }
+        let mut dl = divline_t {
+            x: 0,
+            y: 0,
+            dx: 0,
+            dy: 0,
         };
-        if frac < 0 {
-            return 1;
-        }
-        if earlyout != 0 && frac < FRACUNIT && backsector.is_none() {
-            return 0;
-        }
-        let intercept_p = MAPUTL.borrow().intercept_p;
-        (*intercept_p).frac = frac;
-        (*intercept_p).hit = InterceptHit::Line(ld);
-        InterceptsOverrun(
-            intercept_p.offset_from(intercepts_base()) as i32,
-            intercept_p,
-        );
-        MAPUTL.borrow_mut().intercept_p = intercept_p.offset(1);
-        1
+        P_MakeDivline(&level, ld, &mut dl);
+        (P_InterceptVector(&trace, &dl), line.backsector)
+    };
+    if frac < 0 {
+        return true;
     }
+    if earlyout != 0 && frac < FRACUNIT && backsector.is_none() {
+        return false;
+    }
+    add_intercept(
+        world,
+        intercept_t {
+            frac,
+            hit: InterceptHit::Line(ld),
+        },
+    );
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -869,62 +780,51 @@ pub unsafe fn PIT_AddLineIntercepts(_world: &mut World, ld: LineId) -> u32 {
 /// the thing as a diagonal bounding segment (corner-to-corner across its
 /// radius), choosing orientation based on `trace` direction sign. If the ray
 /// crosses the segment and `t >= 0`, appends an `intercept_t` (with
-/// `isaline = 0`) and advances `intercept_p`.
+/// `isaline = 0`) and advances `intercept_count`.
 ///
-/// Returns 1 (continue) always.
+/// Returns `true` (continue) always.
 ///
 /// Matches `PIT_AddThingIntercepts` in `p_maputl.c`.
 ///
 /// # Safety
-/// `thing_id` must name an initialised map object. The global `trace`,
-/// `intercepts`, and `intercept_p` must be set up by a preceding
-/// `P_PathTraverse` call.
-pub unsafe fn PIT_AddThingIntercepts(_world: &mut World, thing_id: MobjId) -> u32 {
-    unsafe {
-        let thing = &*thing_id.ptr();
-        let trace = trace();
-        // C: tracepositive = (trace.dx ^ trace.dy)>0;
-        let tracepositive = (trace.dx ^ trace.dy) > 0;
-        let (x1, y1, x2, y2) = if tracepositive {
-            (
-                thing.x - thing.radius,
-                thing.y + thing.radius,
-                thing.x + thing.radius,
-                thing.y - thing.radius,
-            )
-        } else {
-            (
-                thing.x - thing.radius,
-                thing.y - thing.radius,
-                thing.x + thing.radius,
-                thing.y + thing.radius,
-            )
-        };
-        let s1 = P_PointOnDivlineSide(x1, y1, &trace);
-        let s2 = P_PointOnDivlineSide(x2, y2, &trace);
-        if s1 == s2 {
-            return 1;
-        }
-        let dl = divline_t {
-            x: x1,
-            y: y1,
-            dx: x2 - x1,
-            dy: y2 - y1,
-        };
-        let frac = P_InterceptVector(&trace, &dl);
-        if frac < 0 {
-            return 1;
-        }
-        let intercept_p = MAPUTL.borrow().intercept_p;
-        (*intercept_p).frac = frac;
-        (*intercept_p).hit = InterceptHit::Thing(thing_id);
-        InterceptsOverrun(
-            intercept_p.offset_from(intercepts_base()) as i32,
-            intercept_p,
-        );
-        MAPUTL.borrow_mut().intercept_p = intercept_p.offset(1);
-        1
+/// `thing_id` must name an initialised map object. `trace`, the intercepts
+/// and their count must be set up by a preceding `P_PathTraverse` call.
+pub unsafe fn PIT_AddThingIntercepts(world: &mut World, thing_id: MobjId) -> bool {
+    let (x, y, radius) = {
+        let thing = unsafe { &*thing_id.ptr() };
+        (thing.x, thing.y, thing.radius)
+    };
+    let trace = world.scratch.maputl.trace;
+    // C: tracepositive = (trace.dx ^ trace.dy)>0;
+    let tracepositive = (trace.dx ^ trace.dy) > 0;
+    let (x1, y1, x2, y2) = if tracepositive {
+        (x - radius, y + radius, x + radius, y - radius)
+    } else {
+        (x - radius, y - radius, x + radius, y + radius)
+    };
+    let s1 = P_PointOnDivlineSide(x1, y1, &trace);
+    let s2 = P_PointOnDivlineSide(x2, y2, &trace);
+    if s1 == s2 {
+        return true;
     }
+    let dl = divline_t {
+        x: x1,
+        y: y1,
+        dx: x2 - x1,
+        dy: y2 - y1,
+    };
+    let frac = P_InterceptVector(&trace, &dl);
+    if frac < 0 {
+        return true;
+    }
+    add_intercept(
+        world,
+        intercept_t {
+            frac,
+            hit: InterceptHit::Thing(thing_id),
+        },
+    );
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -933,57 +833,44 @@ pub unsafe fn PIT_AddThingIntercepts(_world: &mut World, thing_id: MobjId) -> u3
 
 /// Walk the collected intercepts in nearest-first order, calling `func` for each.
 ///
-/// After `P_PathTraverse` has filled `intercepts[0..intercept_p]`, this
-/// function iterates them in ascending `frac` order (selection sort: picks the
-/// minimum each pass, marks it with `i32::MAX` after processing). Stops
-/// when the nearest remaining intercept has `frac > maxfrac`.
+/// After `P_PathTraverse` has filled the first `intercept_count`
+/// intercepts, this function iterates them in ascending `frac` order
+/// (selection sort: picks the first minimum each pass, marks it with
+/// `i32::MAX` after processing). Stops when the nearest remaining intercept
+/// has `frac > maxfrac`. `func` gets a copy of the intercept; a nested
+/// traversal it starts refills the array, as in C.
 ///
-/// Returns 1 (true) if `func` accepted every intercept, 0 (false) if `func`
-/// returned 0 for any intercept.
+/// Returns `true` if `func` accepted every intercept, `false` if `func`
+/// returned `false` for any intercept.
 ///
 /// Matches `P_TraverseIntercepts` in `p_maputl.c`.
-///
-/// # Safety
-/// `func` must be `Some`, and calling it with each collected intercept must
-/// be sound in the caller's current state (it is an `unsafe fn`). The
-/// intercepts and `intercept_p` must be in a consistent state as set by
-/// `P_PathTraverse` / the `PIT_Add*` callbacks, so their lines and things
-/// still point into the loaded level.
-pub unsafe fn P_TraverseIntercepts(
+pub fn P_TraverseIntercepts(
     world: &mut World,
-    func: Option<unsafe fn(&mut World, *mut intercept_t) -> u32>,
+    mut func: impl FnMut(&mut World, intercept_t) -> bool,
     maxfrac: fixed_t,
-) -> u32 {
+) -> bool {
     // A callback can start a nested traversal that refills the array and
     // moves the cursor; like C, each scan reads the cursor afresh.
-    let intercept_p = || MAPUTL.borrow().intercept_p;
-    unsafe {
-        let count = if intercept_p().is_null() {
-            0
-        } else {
-            intercept_p().offset_from(intercepts_base()) as i32
-        };
-        for _ in 0..count {
-            let mut dist = i32::MAX;
-            let mut in_ptr: *mut intercept_t = ptr::null_mut();
-            let mut scan = intercepts_base();
-            while scan < intercept_p() {
-                if (*scan).frac < dist {
-                    dist = (*scan).frac;
-                    in_ptr = scan;
-                }
-                scan = scan.offset(1);
+    let count = world.scratch.maputl.intercept_count;
+    for _ in 0..count {
+        let mut dist = i32::MAX;
+        let mut nearest = 0;
+        let collected = world.scratch.maputl.intercept_count;
+        for (index, intercept) in world.scratch.intercepts[..collected].iter().enumerate() {
+            if intercept.frac < dist {
+                dist = intercept.frac;
+                nearest = index;
             }
-            if dist > maxfrac {
-                return 1;
-            }
-            if func.unwrap()(world, in_ptr) == 0 {
-                return 0;
-            }
-            (*in_ptr).frac = i32::MAX;
         }
-        1
+        if dist > maxfrac {
+            return true;
+        }
+        if !func(world, world.scratch.intercepts[nearest]) {
+            return false;
+        }
+        world.scratch.intercepts[nearest].frac = i32::MAX;
     }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,16 +888,13 @@ pub unsafe fn P_TraverseIntercepts(
 /// The origin is nudged by `FRACUNIT` if it falls exactly on a blockmap grid
 /// line to avoid ambiguous cell assignments.
 ///
-/// Returns 1 if the traverser accepted all intercepts, 0 if it rejected one
-/// (signalling a hit / early stop).
+/// Returns `true` if the traverser accepted all intercepts, `false` if it
+/// rejected one (signalling a hit / early stop).
 ///
 /// Matches `P_PathTraverse` in `p_maputl.c`.
 ///
 /// # Safety
-/// A level must be loaded (see `P_BlockLinesIterator` and
-/// `P_BlockThingsIterator`). `trav` must be `Some` whenever the ray collects
-/// an intercept, and calling it with any intercept on the ray must be sound
-/// in the caller's current state (it is an `unsafe fn`). All coordinates
+/// A level must be loaded (see `P_BlockThingsIterator`). All coordinates
 /// are in fixed-point map units.
 pub unsafe fn P_PathTraverse(
     world: &mut World,
@@ -1019,9 +903,9 @@ pub unsafe fn P_PathTraverse(
     x2: fixed_t,
     y2: fixed_t,
     flags: i32,
-    trav: Option<unsafe fn(&mut World, *mut intercept_t) -> u32>,
-) -> u32 {
-    VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
+    trav: impl FnMut(&mut World, intercept_t) -> bool,
+) -> bool {
+    world.scratch.validcount = world.scratch.validcount.wrapping_add(1);
     let (bmaporgx, bmaporgy) = blockmap_origin();
     let mut x1 = x1;
     let mut y1 = y1;
@@ -1032,9 +916,9 @@ pub unsafe fn P_PathTraverse(
         y1 += FRACUNIT;
     }
     {
-        let mut maputl = MAPUTL.borrow_mut();
+        let maputl = &mut world.scratch.maputl;
         maputl.earlyout = flags & PT_EARLYOUT;
-        maputl.intercept_p = intercepts_base();
+        maputl.intercept_count = 0;
         maputl.trace = divline_t {
             x: x1,
             y: y1,
@@ -1086,24 +970,20 @@ pub unsafe fn P_PathTraverse(
     let mut mapy = yt1;
     for _ in 0..64 {
         if flags & PT_ADDLINES != 0
-            && P_BlockLinesIterator(
-                world,
-                mapx,
-                mapy,
-                Some(PIT_AddLineIntercepts as unsafe fn(&mut World, LineId) -> u32),
-            ) == 0
+            && !P_BlockLinesIterator(world, mapx, mapy, PIT_AddLineIntercepts)
         {
-            return 0;
+            return false;
         }
+        // SAFETY: the iterator hands over the map objects linked into the
+        // blockmap, and the traversal is set up above.
         if flags & PT_ADDTHINGS != 0
-            && P_BlockThingsIterator(
-                world,
-                mapx,
-                mapy,
-                Some(PIT_AddThingIntercepts as unsafe fn(&mut World, MobjId) -> u32),
-            ) == 0
+            && !unsafe {
+                P_BlockThingsIterator(world, mapx, mapy, |world, thing| {
+                    PIT_AddThingIntercepts(world, thing)
+                })
+            }
         {
-            return 0;
+            return false;
         }
         if mapx == xt2 && mapy == yt2 {
             break;
@@ -1125,19 +1005,13 @@ mod tests {
         super::*,
         crate::engine::{
             map::{VertexId, line_t},
-            play::setup::LEVEL_TEST_LOCK,
+            play::{
+                mobj::mobj_t,
+                setup::LEVEL_TEST_LOCK,
+                tick::{MOBJ_ARENA, P_InitThinkers, THINKER_TEST_LOCK, new_thinker},
+            },
         },
-        std::sync::Mutex,
     };
-
-    /// The lines handed to [`record_line`], in call order.
-    static VISITED: Mutex<Vec<LineId>> = Mutex::new(Vec::new());
-
-    /// Blockmap callback that records `line` and continues.
-    unsafe fn record_line(_world: &mut World, line: LineId) -> u32 {
-        VISITED.lock().unwrap().push(line);
-        1
-    }
 
     /// A one-sided line record; the iterator reads only its `validcount`.
     fn line_record() -> line_t {
@@ -1175,19 +1049,19 @@ mod tests {
             ..LevelState::new()
         };
         let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
-        VISITED.lock().unwrap().clear();
-        VALIDCOUNT.set(VALIDCOUNT.get().wrapping_add(1));
 
         let mut world = World::new();
-        // SAFETY: the callback only records the line it is given.
-        unsafe {
-            assert_eq!(P_BlockLinesIterator(&mut world, 0, 0, Some(record_line)), 1);
-            assert_eq!(P_BlockLinesIterator(&mut world, 1, 0, Some(record_line)), 1);
-            assert_eq!(P_BlockLinesIterator(&mut world, 2, 0, Some(record_line)), 1);
+        world.scratch.validcount += 1;
+        let mut visited = Vec::new();
+        for x in 0..3 {
+            assert!(P_BlockLinesIterator(&mut world, x, 0, |_, line| {
+                visited.push(line);
+                true
+            }));
         }
 
-        assert_eq!(*VISITED.lock().unwrap(), [LineId::new(0), LineId::new(1)]);
-        let validcount = VALIDCOUNT.get();
+        assert_eq!(visited, [LineId::new(0), LineId::new(1)]);
+        let validcount = world.scratch.validcount;
         assert!(
             LEVEL
                 .borrow()
@@ -1196,5 +1070,163 @@ mod tests {
                 .all(|line| line.validcount == validcount)
         );
         *LEVEL.borrow_mut() = saved;
+    }
+
+    /// A thing removed by the callback during a blockmap walk (unlinked and
+    /// freed) keeps its `bnext`, so the walk continues with the thing after
+    /// it, as C does; the list itself no longer holds the removed thing.
+    #[test]
+    fn block_things_iterator_continues_after_removal_via_bnext() {
+        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
+        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
+        P_InitThinkers();
+
+        // Three things at (0, 0) chained in the one cell of a 1x1 blockmap,
+        // kept out of the sector lists, which the test level does not have.
+        let things: Vec<MobjId> = (0..3).map(|_| new_thinker::<mobj_t>()).collect();
+        // SAFETY: the things are fresh and only reached through these
+        // short accesses.
+        unsafe {
+            for (index, &thing) in things.iter().enumerate() {
+                let mobj = &mut *thing.ptr();
+                mobj.flags = MF_NOSECTOR;
+                mobj.bprev = index.checked_sub(1).map(|previous| things[previous]);
+                mobj.bnext = things.get(index + 1).copied();
+            }
+        }
+        let level = LevelState {
+            bmapwidth: 1,
+            bmapheight: 1,
+            blocklinks: vec![Some(things[0])],
+            ..LevelState::new()
+        };
+        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
+
+        let mut world = World::new();
+        let mut visited = Vec::new();
+        // SAFETY: the cell links only the things made above; the removed
+        // one stays readable through its stale handle.
+        let completed = unsafe {
+            P_BlockThingsIterator(&mut world, 0, 0, |world, thing| {
+                visited.push(thing);
+                if thing == things[1] {
+                    P_UnsetThingPosition(world, thing);
+                    MOBJ_ARENA.borrow_mut().free(thing);
+                }
+                true
+            })
+        };
+
+        assert!(completed);
+        assert_eq!(visited, things);
+        assert_eq!(unsafe { (*things[0].ptr()).bnext }, Some(things[2]));
+        assert_eq!(unsafe { (*things[2].ptr()).bprev }, Some(things[0]));
+
+        // A callback returning `false` stops the walk at that thing.
+        let mut visited = Vec::new();
+        let completed = unsafe {
+            P_BlockThingsIterator(&mut world, 0, 0, |_, thing| {
+                visited.push(thing);
+                false
+            })
+        };
+        assert!(!completed);
+        assert_eq!(visited, [things[0]]);
+
+        *LEVEL.borrow_mut() = saved;
+        P_InitThinkers();
+    }
+
+    /// The collected intercepts reach the callback nearest first, by value,
+    /// with ties in collection order; each is marked done after its call,
+    /// and those beyond `maxfrac` are left alone.
+    #[test]
+    fn traverse_intercepts_keeps_the_nearest_first_order() {
+        let mut world = World::new();
+        let fracs = [
+            FRACUNIT / 2,
+            FRACUNIT / 4,
+            FRACUNIT / 4,
+            2 * FRACUNIT,
+            FRACUNIT,
+        ];
+        for (index, &frac) in fracs.iter().enumerate() {
+            world.scratch.intercepts[index] = intercept_t {
+                frac,
+                hit: InterceptHit::Line(LineId::new(index)),
+            };
+        }
+        world.scratch.maputl.intercept_count = fracs.len();
+
+        let mut received = Vec::new();
+        assert!(P_TraverseIntercepts(
+            &mut world,
+            |_, intercept| {
+                received.push((intercept.hit, intercept.frac));
+                true
+            },
+            FRACUNIT,
+        ));
+
+        let line = |index| InterceptHit::Line(LineId::new(index));
+        assert_eq!(
+            received,
+            [
+                (line(1), FRACUNIT / 4),
+                (line(2), FRACUNIT / 4),
+                (line(0), FRACUNIT / 2),
+                (line(4), FRACUNIT),
+            ]
+        );
+        let fracs_after: Vec<i32> = world.scratch.intercepts[..fracs.len()]
+            .iter()
+            .map(|intercept| intercept.frac)
+            .collect();
+        assert_eq!(
+            fracs_after,
+            [i32::MAX, i32::MAX, i32::MAX, 2 * FRACUNIT, i32::MAX]
+        );
+    }
+
+    /// Past the original 128 intercepts, each added intercept also writes
+    /// its `frac`, `isaline` and address words into the emulated variables
+    /// after the vanilla array: the 131st lands on the line opening.
+    #[test]
+    fn intercepts_overrun_writes_the_emulated_variables() {
+        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
+        let mut world = World::new();
+        world.scratch.maputl.intercept_count = MAXINTERCEPTS_ORIGINAL + 2;
+        let thing = new_thinker::<mobj_t>();
+        add_intercept(
+            &mut world,
+            intercept_t {
+                frac: 0x1234,
+                hit: InterceptHit::Thing(thing),
+            },
+        );
+        // Entry 130 starts at byte 12: `lowfloor`, `openbottom`, `opentop`.
+        assert_eq!(world.scratch.maputl.lowfloor, 0x1234);
+        assert_eq!(world.scratch.maputl.openbottom, 0);
+        assert_eq!(world.scratch.maputl.opentop, thing.address() as i32);
+        assert_eq!(
+            world.scratch.maputl.intercept_count,
+            MAXINTERCEPTS_ORIGINAL + 3
+        );
+        assert_eq!(
+            world.scratch.intercepts[MAXINTERCEPTS_ORIGINAL + 2].frac,
+            0x1234
+        );
+
+        // Entry 142 starts at byte 156: its `isaline` word is `bulletslope`.
+        world.scratch.pspr.bulletslope = 99;
+        world.scratch.maputl.intercept_count = MAXINTERCEPTS_ORIGINAL + 14;
+        add_intercept(
+            &mut world,
+            intercept_t {
+                frac: 7,
+                hit: InterceptHit::Thing(thing),
+            },
+        );
+        assert_eq!(world.scratch.pspr.bulletslope, 0);
     }
 }

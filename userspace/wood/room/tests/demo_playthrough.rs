@@ -670,7 +670,7 @@ fn capture_snapshot(tic: usize) -> Snapshot {
         gametic: gametic(),
         gamestate: gamestate(),
         rndindex: random.rndindex,
-        prndindex: random.prndindex,
+        prndindex: WORLD.borrow().random.prndindex,
         health: p.health,
         armorpoints: p.armorpoints,
         killcount: p.killcount,
@@ -916,7 +916,7 @@ fn demo_playthrough() {
                 pct,
                 tic + 1,
                 gametic(),
-                room::engine::play::tick::leveltime(),
+                room::engine::world::WORLD.borrow().leveltime,
             );
             let snap = capture_snapshot(tic + 1);
             if !bless {

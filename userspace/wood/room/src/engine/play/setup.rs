@@ -29,10 +29,7 @@ use std::{ffi::c_void, ptr};
 
 use {
     crate::engine::{
-        doom::{
-            self,
-            player::{MAXPLAYERS, PlayerId},
-        },
+        doom::{self, player::MAXPLAYERS},
         global::Global,
         map::{
             LineId, SectorId, SideId, SubsectorId, VertexId, degenmobj_t, line_t, node_t, sector_t,
@@ -44,12 +41,7 @@ use {
             bbox::{BBox, M_AddToBox, M_ClearBox},
             fixed::{FRACBITS, FRACUNIT},
         },
-        play::{
-            info::sprnames,
-            maputl::MAPBLOCKSHIFT,
-            mobj::MobjId,
-            tick::{P_InitThinkers, TICK},
-        },
+        play::{info::sprnames, maputl::MAPBLOCKSHIFT, mobj::MobjId, tick::P_InitThinkers},
         wad::format::{LinedefFlag, MapLump},
         zone::PU_LEVEL,
     },
@@ -298,12 +290,12 @@ pub fn deathmatch_p() -> *mut mapthing_t {
 
 use crate::engine::{
     doom::stat::gamemode,
-    game::{G_DeathMatchSpawnPlayer, GAME, deathmatch, playeringame},
+    game::{G_DeathMatchSpawnPlayer, GAME},
     interface::system::I_GetMemoryValue,
     math::fixed::FixedDiv,
     misc::argv::M_CheckParm,
     play::{
-        mobj::{MOBJ, P_SpawnMapThing},
+        mobj::P_SpawnMapThing,
         spec::{P_InitPicAnims, P_SpawnSpecials},
         switch::P_InitSwitchList,
     },
@@ -1029,11 +1021,11 @@ fn P_LoadReject(lumpnum: i32) {
 // DEH patches to the lump name, which may break modded WADs that rely on this.
 pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32, _skill: i32) {
     unsafe {
+        world.session.totalkills = 0;
+        world.session.totalitems = 0;
+        world.session.totalsecret = 0;
         {
             let mut game = GAME.borrow_mut();
-            game.totalkills = 0;
-            game.totalitems = 0;
-            game.totalsecret = 0;
             game.wminfo.maxfrags = 0;
             game.wminfo.partime = 180;
         }
@@ -1044,7 +1036,8 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
             player.itemcount = 0;
         }
 
-        world.players[PlayerId::console()].viewz = 1;
+        let console = world.session.console();
+        world.players[console].viewz = 1;
 
         S_Start();
         Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -1071,7 +1064,7 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
 
         let lumpnum = W_GetNumForName(&lumpname);
 
-        TICK.borrow_mut().leveltime = 0;
+        world.leveltime = 0;
 
         // Note: most of this ordering is important.
         P_LoadBlockMap(lumpnum + MapLump::BLOCKMAP);
@@ -1087,24 +1080,21 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
         P_GroupLines();
         P_LoadReject(lumpnum + MapLump::REJECT);
 
-        GAME.borrow_mut().bodyqueslot = 0;
+        world.session.bodyqueslot = 0;
         SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatchstart(0);
         P_LoadThings(world, lumpnum + MapLump::THINGS);
 
-        if deathmatch() != 0 {
+        if world.session.deathmatch != 0 {
             for i in 0..MAXPLAYERS {
-                if playeringame(i) != 0 {
+                if world.session.in_game(i) {
                     world.players[i].mo = None;
                     G_DeathMatchSpawnPlayer(world, i as i32);
                 }
             }
         }
 
-        {
-            let mut mobj = MOBJ.borrow_mut();
-            mobj.iquehead = 0;
-            mobj.iquetail = 0;
-        }
+        world.active.mobj.iquehead = 0;
+        world.active.mobj.iquetail = 0;
 
         P_SpawnSpecials(world);
 

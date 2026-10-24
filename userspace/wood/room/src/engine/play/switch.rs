@@ -409,8 +409,9 @@ const ALPH_SWITCH_LIST: [SwitchDef; 41] = [
 // Globals
 // ---------------------------------------------------------------------------
 
-/// The switch texture pairs and the timed-button table (`p_switch.c`
-/// globals).
+/// The switch texture pairs (`p_switch.c` globals; the level's timed-button
+/// table `buttonlist` is in
+/// [`ActiveSpecials`](crate::engine::world::ActiveSpecials)).
 pub struct SwitchState {
     /// Flat array of texture-number pairs filled by `P_InitSwitchList`.
     /// Stored as alternating (off-texture, on-texture) pairs; valid length is
@@ -422,20 +423,14 @@ pub struct SwitchState {
     /// runs.  Zero before initialization.
     /// Matches `numswitches` in `p_switch.c`.
     pub numswitches: i32,
-    /// Ring-buffer of active timed buttons.  Slots with `btimer == 0` are free.
-    /// Decremented each tic by the thinker subsystem; when a slot's timer
-    /// reaches zero the original texture is restored.
-    /// Matches `buttonlist[]` in `p_switch.c`.
-    pub buttonlist: [button_t; MAXBUTTONS],
 }
 
 impl SwitchState {
-    /// No switch pairs loaded, no button pressed.
+    /// No switch pairs loaded.
     pub const fn new() -> Self {
         Self {
             switchlist: [0; MAXSWITCHES * 2],
             numswitches: 0,
-            buttonlist: [button_t::EMPTY; MAXBUTTONS],
         }
     }
 }
@@ -446,7 +441,7 @@ impl Default for SwitchState {
     }
 }
 
-/// The switch texture pairs and the timed-button table.
+/// The switch texture pairs.
 pub static SWITCHES: Global<SwitchState> = Global::new(SwitchState::new());
 
 // ---------------------------------------------------------------------------
@@ -529,10 +524,9 @@ pub fn P_InitSwitchList() {
 /// - `time` — countdown in tics; typically `BUTTONTIME` (35).
 ///
 /// `line` must be a linedef of the loaded level.
-pub fn P_StartButton(_world: &mut World, line: LineId, w: i32, texture: i32, time: i32) {
+pub fn P_StartButton(world: &mut World, line: LineId, w: i32, texture: i32, time: i32) {
     {
-        let mut switches = SWITCHES.borrow_mut();
-        let buttonlist = &mut switches.buttonlist;
+        let buttonlist = &mut world.active.buttons;
 
         // See if button is already pressed
         for button in buttonlist.iter() {
@@ -583,14 +577,11 @@ pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
         let (sidenum, special) = (linedef.sidenum[0] as usize, linedef.special);
         (sidenum, special, level.sides[sidenum])
     };
-    let (switchlist, numswitches, button_soundorg) = {
+    let (switchlist, numswitches) = {
         let switches = SWITCHES.borrow();
-        (
-            switches.switchlist,
-            switches.numswitches,
-            switches.buttonlist[0].soundorg,
-        )
+        (switches.switchlist, switches.numswitches)
     };
+    let button_soundorg = world.active.buttons[0].soundorg;
     let texTop = side.toptexture;
     let texMid = side.midtexture;
     let texBot = side.bottomtexture;
@@ -886,7 +877,7 @@ mod tests {
         for (i, &v) in switches.switchlist.iter().enumerate() {
             assert_eq!(v, 0, "switchlist[{i}] should be 0 before P_InitSwitchList");
         }
-        for (i, b) in switches.buttonlist.iter().enumerate() {
+        for (i, b) in World::new().active.buttons.iter().enumerate() {
             assert!(b.line.is_none(), "buttonlist[{i}].line should be null");
             assert_eq!(b.btimer, 0, "buttonlist[{i}].btimer should be 0");
         }

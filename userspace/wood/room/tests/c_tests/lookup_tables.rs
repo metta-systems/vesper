@@ -7,7 +7,7 @@
 
 #![allow(non_snake_case)]
 
-use {crate::harness::C_GLOBAL_LOCK, room::engine::play};
+use room::engine::play;
 
 // ---------------------------------------------------------------------------
 // p_inter.c: maxammo and clipammo
@@ -54,19 +54,21 @@ fn ammo_arrays_positive() {
 #[test]
 fn intercepts_array_length() {
     assert_eq!(
-        play::maputl::INTERCEPTS.borrow().len(),
+        room::engine::world::PlayScratch::new().intercepts.len(),
         play::maputl::MAXINTERCEPTS
     );
 }
 
-/// `intercept_p` is the write cursor into `intercepts[]`; it must be NULL
-/// before `P_PathTraverse` has populated the array.  The test takes the global
-/// lock and explicitly resets the cursor so it is not polluted by prior tests.
+/// The write cursor into `intercepts[]` (C `intercept_p`, here a count) is
+/// at the start before `P_PathTraverse` has populated the array.
 #[test]
 fn intercept_p_initially_null() {
-    let _guard = C_GLOBAL_LOCK.lock().unwrap();
-    assert!(play::maputl::MapUtlState::new().intercept_p.is_null());
-    // Ensure we test the null state even if another test ran first.
-    play::maputl::MAPUTL.borrow_mut().intercept_p = std::ptr::null_mut();
-    assert!(play::maputl::MAPUTL.borrow().intercept_p.is_null());
+    assert_eq!(play::maputl::MapUtlState::new().intercept_count, 0);
+    assert_eq!(
+        room::engine::world::World::new()
+            .scratch
+            .maputl
+            .intercept_count,
+        0
+    );
 }

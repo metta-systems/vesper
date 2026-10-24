@@ -12,7 +12,7 @@
 use crate::engine::{
     arena::{Arena, Handle, Pooled},
     doom::player::PlayerId,
-    game::{demoplayback, netgame, paused, playeringame},
+    game::{demoplayback, paused},
     global::Global,
     misc::menu::menu_active,
     play::{
@@ -241,13 +241,9 @@ impl ThinkerId {
     }
 }
 
-/// The level clock and the thinker list (`p_tick.c` globals).
+/// The thinker list (`p_tick.c` global; the level clock `leveltime` is in
+/// [`World`]).
 pub struct TickState {
-    /// Current level time in tics, incremented once per [`P_Ticker`] call.
-    ///
-    /// Used throughout the engine to
-    /// throttle periodic events (e.g. crushing-ceiling sound plays every 8 tics).
-    pub leveltime: i32,
     /// Every thinker in run order: C's circular list from `thinkercap.next`
     /// to `thinkercap.prev`. [`P_AddThinker`] appends; [`P_RunThinkers`]
     /// drops removed thinkers when it reaches them.
@@ -255,10 +251,9 @@ pub struct TickState {
 }
 
 impl TickState {
-    /// The state at program start: level time zero, no thinkers.
+    /// The state at program start: no thinkers.
     pub const fn new() -> Self {
         Self {
-            leveltime: 0,
             thinkers: Vec::new(),
         }
     }
@@ -270,13 +265,8 @@ impl Default for TickState {
     }
 }
 
-/// The level clock and thinker list.
+/// The thinker list.
 pub static TICK: Global<TickState> = Global::new(TickState::new());
-
-/// Current level time in tics (C `leveltime`).
-pub fn leveltime() -> i32 {
-    TICK.borrow().leveltime
-}
 
 /// The thinker at `position` in the list, if the list is that long.
 ///
@@ -410,16 +400,16 @@ pub fn P_Ticker(world: &mut World) {
             return;
         }
 
-        if netgame() == 0
+        if world.session.netgame == 0
             && menu_active()
             && demoplayback() == 0
-            && world.players[PlayerId::console()].viewz != 1
+            && world.players[world.session.console()].viewz != 1
         {
             return;
         }
 
         for player in PlayerId::all() {
-            if playeringame(player.index()) != 0 {
+            if world.session.in_game(player.index()) {
                 P_PlayerThink(world, player);
             }
         }
@@ -428,7 +418,7 @@ pub fn P_Ticker(world: &mut World) {
         P_UpdateSpecials(world);
         P_RespawnSpecials(world);
 
-        TICK.borrow_mut().leveltime += 1;
+        world.leveltime += 1;
     }
 }
 
@@ -442,7 +432,8 @@ mod tests {
 
     #[test]
     fn globals_default() {
-        assert_eq!(TickState::new().leveltime, 0);
+        assert!(TickState::new().thinkers.is_empty());
+        assert_eq!(World::new().leveltime, 0);
     }
 
     #[test]

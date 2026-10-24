@@ -133,7 +133,7 @@ fn light_and_min_surrounding(sector: SectorId) -> (i32, i32) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_FireFlicker(_world: &mut World, flick: FireFlickerId) {
+pub fn T_FireFlicker(world: &mut World, flick: FireFlickerId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let flick = unsafe { &mut *flick.ptr() };
@@ -142,7 +142,7 @@ pub fn T_FireFlicker(_world: &mut World, flick: FireFlickerId) {
         return;
     }
 
-    let amount = (P_Random() & 3) * 16;
+    let amount = (P_Random(world) & 3) * 16;
     let mut level = LEVEL.borrow_mut();
     let sec = &mut level.sectors[flick.sector];
 
@@ -190,7 +190,7 @@ pub fn P_SpawnFireFlicker(_world: &mut World, sector: SectorId) {
 /// # Panics
 ///
 /// If the effect's `sector` is not a sector of the current map.
-pub fn T_LightFlash(_world: &mut World, flash: LightFlashId) {
+pub fn T_LightFlash(world: &mut World, flash: LightFlashId) {
     // SAFETY: light effects are only reached through arena pointers, and no
     // other reference to this one is live while it thinks.
     let flash = unsafe { &mut *flash.ptr() };
@@ -204,10 +204,10 @@ pub fn T_LightFlash(_world: &mut World, flash: LightFlashId) {
 
     if sec.lightlevel as i32 == flash.maxlight {
         sec.lightlevel = flash.minlight as i16;
-        flash.count = (P_Random() & flash.mintime) + 1;
+        flash.count = (P_Random(world) & flash.mintime) + 1;
     } else {
         sec.lightlevel = flash.maxlight as i16;
-        flash.count = (P_Random() & flash.maxtime) + 1;
+        flash.count = (P_Random(world) & flash.maxtime) + 1;
     }
 }
 
@@ -219,7 +219,7 @@ pub fn T_LightFlash(_world: &mut World, flash: LightFlashId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnLightFlash(_world: &mut World, sector: SectorId) {
+pub fn P_SpawnLightFlash(world: &mut World, sector: SectorId) {
     LEVEL.borrow_mut().sectors[sector].special = 0;
 
     let flash_id = new_thinker::<lightflash_t>();
@@ -235,7 +235,7 @@ pub fn P_SpawnLightFlash(_world: &mut World, sector: SectorId) {
     flash.minlight = minlight;
     flash.maxtime = 64;
     flash.mintime = 7;
-    flash.count = (P_Random() & flash.maxtime) + 1;
+    flash.count = (P_Random(world) & flash.maxtime) + 1;
 }
 
 /// Per-tic update for the strobe-flash effect.
@@ -279,7 +279,7 @@ pub fn T_StrobeFlash(_world: &mut World, flash: StrobeId) {
 /// # Panics
 ///
 /// If `sector` is not a sector of the current map.
-pub fn P_SpawnStrobeFlash(_world: &mut World, sector: SectorId, fastOrSlow: i32, inSync: i32) {
+pub fn P_SpawnStrobeFlash(world: &mut World, sector: SectorId, fastOrSlow: i32, inSync: i32) {
     let flash_id = new_thinker::<strobe_t>();
 
     P_AddThinker(ThinkerId::Strobe(flash_id));
@@ -301,7 +301,7 @@ pub fn P_SpawnStrobeFlash(_world: &mut World, sector: SectorId, fastOrSlow: i32,
     LEVEL.borrow_mut().sectors[sector].special = 0;
 
     if inSync == 0 {
-        flash.count = (P_Random() & 7) + 1;
+        flash.count = (P_Random(world) & 7) + 1;
     } else {
         flash.count = 1;
     }
