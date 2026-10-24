@@ -14,7 +14,7 @@ use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::{
     map::{NodeId, node_t},
-    play::{maputl::divline_t, mobj::MobjId},
+    play::{maputl::divline_t, mobj::MobjId, tick::MOBJ_ARENA},
     wad::format::LinedefFlag,
     world::World,
 };
@@ -388,43 +388,43 @@ fn P_CrossBSPNode(
 /// (split from the sight scratch) for its whole run; it calls no other play
 /// code.
 ///
-/// # Safety
-/// Both `t1` and `t2` must name initialised map objects whose `subsector`
-/// belongs to the loaded level.
-pub unsafe fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
-    let (t1, t2) = (t1.ptr(), t2.ptr());
+/// # Panics
+///
+/// If either object's `subsector` is not a subsector of the loaded level.
+pub fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
     let World { level, scratch, .. } = world;
     let PlayScratch {
         sight, validcount, ..
     } = scratch;
-    unsafe {
-        let s1 = level.subsectors[(*t1).subsector].sector.index() as i32;
-        let s2 = level.subsectors[(*t2).subsector].sector.index() as i32;
-        let pnum = s1 * level.numsectors + s2;
-        let bytenum = pnum >> 3;
-        let bitnum = 1 << (pnum & 7);
+    let mobjs = MOBJ_ARENA.borrow();
+    let (t1, t2) = (&mobjs[t1], &mobjs[t2]);
+    let s1 = level.subsectors[t1.subsector].sector.index() as i32;
+    let s2 = level.subsectors[t2.subsector].sector.index() as i32;
+    let pnum = s1 * level.numsectors + s2;
+    let bytenum = pnum >> 3;
+    let bitnum = 1 << (pnum & 7);
 
-        // Check in REJECT table.
-        if level.rejectmatrix[bytenum as usize] & bitnum != 0 {
-            sight.sightcounts[0] += 1;
-            return 0;
-        }
-
-        sight.sightcounts[1] += 1;
-        *validcount += 1;
-
-        sight.sightzstart = (*t1).z + (*t1).height - ((*t1).height >> 2);
-        sight.topslope = (*t2).z + (*t2).height - sight.sightzstart;
-        sight.bottomslope = (*t2).z - sight.sightzstart;
-
-        sight.strace.x = (*t1).x;
-        sight.strace.y = (*t1).y;
-        sight.t2x = (*t2).x;
-        sight.t2y = (*t2).y;
-        sight.strace.dx = (*t2).x - (*t1).x;
-        sight.strace.dy = (*t2).y - (*t1).y;
-
-        let root_node = level.nodes.len() as i32 - 1;
-        P_CrossBSPNode(sight, level, *validcount, root_node) as i32
+    // Check in REJECT table.
+    if level.rejectmatrix[bytenum as usize] & bitnum != 0 {
+        sight.sightcounts[0] += 1;
+        return 0;
     }
+
+    sight.sightcounts[1] += 1;
+    *validcount += 1;
+
+    sight.sightzstart = t1.z + t1.height - (t1.height >> 2);
+    sight.topslope = t2.z + t2.height - sight.sightzstart;
+    sight.bottomslope = t2.z - sight.sightzstart;
+
+    sight.strace.x = t1.x;
+    sight.strace.y = t1.y;
+    sight.t2x = t2.x;
+    sight.t2y = t2.y;
+    sight.strace.dx = t2.x - t1.x;
+    sight.strace.dy = t2.y - t1.y;
+    drop(mobjs);
+
+    let root_node = level.nodes.len() as i32 - 1;
+    P_CrossBSPNode(sight, level, *validcount, root_node) as i32
 }

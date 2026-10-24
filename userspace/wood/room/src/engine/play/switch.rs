@@ -20,6 +20,7 @@ use crate::{
             lights::EV_LightTurnOn,
             mobj::MobjId,
             plats::EV_DoPlat,
+            tick::MOBJ_ARENA,
         },
         world::World,
     },
@@ -646,9 +647,11 @@ pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
 ///
 /// # Safety
 ///
-/// `thing` must name a map object of the level.  `line_id` must be a
-/// linedef of the loaded level.  All global game-state statics must only be
-/// accessed from the game-logic thread.
+/// The texture tables must be loaded (see [`EV_DoFloor`]).
+///
+/// # Panics
+///
+/// If `line_id` is not a linedef of the loaded level.
 pub unsafe fn P_UseSpecialLine(
     world: &mut World,
     thing: MobjId,
@@ -673,7 +676,7 @@ pub unsafe fn P_UseSpecialLine(
     }
 
     // Switches that other things can activate.
-    if (*thing.ptr()).player.is_none() {
+    if MOBJ_ARENA.borrow()[thing].player.is_none() {
         // never open secret doors
         if line.flags & LinedefFlag::SECRET as i16 != 0 {
             return 0;

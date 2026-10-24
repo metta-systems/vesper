@@ -18,7 +18,8 @@ use crate::engine::{
         mobj::MobjId,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            DoorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
+            CEILING_ARENA, DOOR_ARENA, DoorId, FLOOR_ARENA, MOBJ_ARENA, P_AddThinker,
+            P_RemoveThinker, PLAT_ARENA, ThinkerId, ThinkerKind, new_thinker, thinker_t,
         },
     },
     sound::{S_StartNonPositionalSound, S_StartSectorSound},
@@ -160,103 +161,113 @@ pub struct vldoor_t {
 ///
 /// # Safety
 ///
-/// `door_id` must name a door whose `sector` belongs to the current map.
-/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+/// The door's `sector` must belong to the current map, and every thing
+/// linked into the blockmap must be live (see `T_MovePlane`). Called
+/// exclusively by the thinker dispatcher from `P_RunThinkers`.
 pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
-    let door = door_id.ptr();
-    let res: i32;
-    let clear_specialdata =
-        |world: &mut World, sector: SectorId| world.level.sectors[sector].specialdata = None;
+    // The door is copied out around each call that can run play code
+    // (`T_MovePlane`), read afresh after it, and each change is written
+    // back before the next such call, as C sees it through its pointer.
+    let door = DOOR_ARENA.borrow()[door_id];
 
-    match (*door).direction {
+    match door.direction {
         0 => {
             // WAITING
-            (*door).topcountdown -= 1;
-            if (*door).topcountdown == 0 {
-                match (*door).kind {
+            let sound = {
+                let mut doors = DOOR_ARENA.borrow_mut();
+                let door = &mut doors[door_id];
+                door.topcountdown -= 1;
+                if door.topcountdown != 0 {
+                    return;
+                }
+                match door.kind {
                     x if x == vld_blazeRaise => {
-                        (*door).direction = -1;
-                        S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
+                        door.direction = -1;
+                        Some(Sfx::Bdcls)
                     }
                     x if x == vld_normal => {
-                        (*door).direction = -1;
-                        S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
+                        door.direction = -1;
+                        Some(Sfx::Dorcls)
                     }
                     x if x == vld_close30ThenOpen => {
-                        (*door).direction = 1;
-                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
+                        door.direction = 1;
+                        Some(Sfx::Doropn)
                     }
-                    _ => {}
+                    _ => None,
                 }
+            };
+            if let Some(sound) = sound {
+                S_StartSectorSound(world, door.sector, sound as i32);
             }
         }
         2 => {
             // INITIAL WAIT
-            (*door).topcountdown -= 1;
-            if (*door).topcountdown == 0 {
-                match (*door).kind {
-                    x if x == vld_raiseIn5Mins => {
-                        (*door).direction = 1;
-                        (*door).kind = vld_normal;
-                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
-                    }
-                    _ => {}
+            let raised = {
+                let mut doors = DOOR_ARENA.borrow_mut();
+                let door = &mut doors[door_id];
+                door.topcountdown -= 1;
+                if door.topcountdown != 0 {
+                    return;
                 }
+                match door.kind {
+                    x if x == vld_raiseIn5Mins => {
+                        door.direction = 1;
+                        door.kind = vld_normal;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if raised {
+                S_StartSectorSound(world, door.sector, Sfx::Doropn as i32);
             }
         }
         -1 => {
             // DOWN
-            let floorheight = world.level.sectors[(*door).sector].floorheight;
-            res = T_MovePlane(world, (*door).sector, (*door).speed, floorheight, 0, 1, -1);
+            let floorheight = world.level.sectors[door.sector].floorheight;
+            let res = T_MovePlane(world, door.sector, door.speed, floorheight, 0, 1, -1);
+            let door = DOOR_ARENA.borrow()[door_id];
             if res == result_pastdest {
-                match (*door).kind {
+                match door.kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
-                        clear_specialdata(world, (*door).sector);
-                        P_RemoveThinker(&mut (*door).thinker);
-                        S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
+                        remove_door(world, door_id);
+                        S_StartSectorSound(world, door.sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal || x == vld_close => {
-                        clear_specialdata(world, (*door).sector);
-                        P_RemoveThinker(&mut (*door).thinker);
+                        remove_door(world, door_id);
                     }
                     x if x == vld_close30ThenOpen => {
-                        (*door).direction = 0;
-                        (*door).topcountdown = TICRATE * 30;
+                        let mut doors = DOOR_ARENA.borrow_mut();
+                        doors[door_id].direction = 0;
+                        doors[door_id].topcountdown = TICRATE * 30;
                     }
                     _ => {}
                 }
             } else if res == result_crushed {
-                match (*door).kind {
+                match door.kind {
                     x if x == vld_blazeClose || x == vld_close => {
                         // DO NOT GO BACK UP!
                     }
                     _ => {
-                        (*door).direction = 1;
-                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
+                        DOOR_ARENA.borrow_mut()[door_id].direction = 1;
+                        S_StartSectorSound(world, door.sector, Sfx::Doropn as i32);
                     }
                 }
             }
         }
         1 => {
             // UP
-            res = T_MovePlane(
-                world,
-                (*door).sector,
-                (*door).speed,
-                (*door).topheight,
-                0,
-                1,
-                1,
-            );
+            let res = T_MovePlane(world, door.sector, door.speed, door.topheight, 0, 1, 1);
             if res == result_pastdest {
-                match (*door).kind {
+                let door = DOOR_ARENA.borrow()[door_id];
+                match door.kind {
                     x if x == vld_blazeRaise || x == vld_normal => {
-                        (*door).direction = 0;
-                        (*door).topcountdown = (*door).topwait;
+                        let mut doors = DOOR_ARENA.borrow_mut();
+                        doors[door_id].direction = 0;
+                        doors[door_id].topcountdown = door.topwait;
                     }
                     x if x == vld_close30ThenOpen || x == vld_blazeOpen || x == vld_open => {
-                        clear_specialdata(world, (*door).sector);
-                        P_RemoveThinker(&mut (*door).thinker);
+                        remove_door(world, door_id);
                     }
                     _ => {}
                 }
@@ -264,6 +275,14 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
         }
         _ => {}
     }
+}
+
+/// Clear the door's sector special and mark the door for removal.
+fn remove_door(world: &mut World, door_id: DoorId) {
+    let mut doors = DOOR_ARENA.borrow_mut();
+    let door = &mut doors[door_id];
+    world.level.sectors[door.sector].specialdata = None;
+    P_RemoveThinker(&mut door.thinker);
 }
 
 /// Linedef-triggered event: activate a key-locked door for `thing`.
@@ -275,15 +294,10 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
 ///
 /// Returns `1` if the door was activated, `0` otherwise.
 ///
-/// # Safety
-///
-/// `thing` must name a map object of the level; the thinker list must be
-/// initialised and a level loaded.
-///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing: MobjId) -> i32 {
-    let Some(player) = (*thing.ptr()).player else {
+pub fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing: MobjId) -> i32 {
+    let Some(player) = MOBJ_ARENA.borrow()[thing].player else {
         return 0;
     };
 
@@ -315,11 +329,7 @@ pub unsafe fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing
 /// move at `VDOORSPEED * 4`.
 ///
 /// Returns `1` if at least one door was activated, `0` otherwise.
-///
-/// # Safety
-///
-/// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
+pub fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -335,15 +345,8 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
 
         rtn = 1;
         let door_id = new_thinker::<vldoor_t>();
-        let door = door_id.ptr();
         P_AddThinker(ThinkerId::Door(door_id));
         world.level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
-
-        (*door).thinker.kind = ThinkerKind::Door;
-        (*door).sector = sec;
-        (*door).kind = kind;
-        (*door).topwait = VDOORWAIT;
-        (*door).speed = VDOORSPEED;
 
         let (lowest_ceiling, ceilingheight) = {
             let level = &world.level;
@@ -352,43 +355,53 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
                 level.sectors[sec].ceilingheight,
             )
         };
-        match kind {
-            x if x == vld_blazeClose => {
-                (*door).topheight = lowest_ceiling;
-                (*door).topheight -= 4 * FRACUNIT;
-                (*door).direction = -1;
-                (*door).speed = VDOORSPEED * 4;
-                S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
-            }
-            x if x == vld_close => {
-                (*door).topheight = lowest_ceiling;
-                (*door).topheight -= 4 * FRACUNIT;
-                (*door).direction = -1;
-                S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
-            }
-            x if x == vld_close30ThenOpen => {
-                (*door).topheight = ceilingheight;
-                (*door).direction = -1;
-                S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
-            }
-            x if x == vld_blazeRaise || x == vld_blazeOpen => {
-                (*door).direction = 1;
-                (*door).topheight = lowest_ceiling;
-                (*door).topheight -= 4 * FRACUNIT;
-                (*door).speed = VDOORSPEED * 4;
-                if (*door).topheight != ceilingheight {
-                    S_StartSectorSound(world, (*door).sector, Sfx::Bdopn as i32);
+        // The door's sound starts once it is set up.
+        let sound = {
+            let mut doors = DOOR_ARENA.borrow_mut();
+            let door = &mut doors[door_id];
+            door.thinker.kind = ThinkerKind::Door;
+            door.sector = sec;
+            door.kind = kind;
+            door.topwait = VDOORWAIT;
+            door.speed = VDOORSPEED;
+
+            match kind {
+                x if x == vld_blazeClose => {
+                    door.topheight = lowest_ceiling;
+                    door.topheight -= 4 * FRACUNIT;
+                    door.direction = -1;
+                    door.speed = VDOORSPEED * 4;
+                    Some(Sfx::Bdcls)
                 }
-            }
-            x if x == vld_normal || x == vld_open => {
-                (*door).direction = 1;
-                (*door).topheight = lowest_ceiling;
-                (*door).topheight -= 4 * FRACUNIT;
-                if (*door).topheight != ceilingheight {
-                    S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
+                x if x == vld_close => {
+                    door.topheight = lowest_ceiling;
+                    door.topheight -= 4 * FRACUNIT;
+                    door.direction = -1;
+                    Some(Sfx::Dorcls)
                 }
+                x if x == vld_close30ThenOpen => {
+                    door.topheight = ceilingheight;
+                    door.direction = -1;
+                    Some(Sfx::Dorcls)
+                }
+                x if x == vld_blazeRaise || x == vld_blazeOpen => {
+                    door.direction = 1;
+                    door.topheight = lowest_ceiling;
+                    door.topheight -= 4 * FRACUNIT;
+                    door.speed = VDOORSPEED * 4;
+                    (door.topheight != ceilingheight).then_some(Sfx::Bdopn)
+                }
+                x if x == vld_normal || x == vld_open => {
+                    door.direction = 1;
+                    door.topheight = lowest_ceiling;
+                    door.topheight -= 4 * FRACUNIT;
+                    (door.topheight != ceilingheight).then_some(Sfx::Doropn)
+                }
+                _ => None,
             }
-            _ => {}
+        };
+        if let Some(sound) = sound {
+            S_StartSectorSound(world, sec, sound as i32);
         }
     }
     rtn
@@ -407,16 +420,12 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
 ///
 /// If `special` is a light, which no sector holds as its special data.
 fn special_door_direction(special: ThinkerId) -> i32 {
-    // SAFETY (all arms): a read through an arena pointer; no reference to a
-    // sector special is live while a line is used.
-    unsafe {
-        match special {
-            ThinkerId::Door(door) => (*door.ptr()).direction,
-            ThinkerId::Plat(plat) => (*plat.ptr()).count,
-            ThinkerId::Ceiling(ceiling) => (*ceiling.ptr()).speed,
-            ThinkerId::Floor(floor) => (*floor.ptr()).door_direction_alias(),
-            other => unreachable!("sector special data is {other:?}"),
-        }
+    match special {
+        ThinkerId::Door(door) => DOOR_ARENA.borrow()[door].direction,
+        ThinkerId::Plat(plat) => PLAT_ARENA.borrow()[plat].count,
+        ThinkerId::Ceiling(ceiling) => CEILING_ARENA.borrow()[ceiling].speed,
+        ThinkerId::Floor(floor) => FLOOR_ARENA.borrow()[floor].door_direction_alias(),
+        other => unreachable!("sector special data is {other:?}"),
     }
 }
 
@@ -426,15 +435,14 @@ fn special_door_direction(special: ThinkerId) -> i32 {
 ///
 /// Same as [`special_door_direction`].
 fn set_special_door_direction(special: ThinkerId, direction: i32) {
-    // SAFETY (all arms): as in `special_door_direction`.
-    unsafe {
-        match special {
-            ThinkerId::Door(door) => (*door.ptr()).direction = direction,
-            ThinkerId::Plat(plat) => (*plat.ptr()).count = direction,
-            ThinkerId::Ceiling(ceiling) => (*ceiling.ptr()).speed = direction,
-            ThinkerId::Floor(floor) => (*floor.ptr()).set_door_direction_alias(direction),
-            other => unreachable!("sector special data is {other:?}"),
+    match special {
+        ThinkerId::Door(door) => DOOR_ARENA.borrow_mut()[door].direction = direction,
+        ThinkerId::Plat(plat) => PLAT_ARENA.borrow_mut()[plat].count = direction,
+        ThinkerId::Ceiling(ceiling) => CEILING_ARENA.borrow_mut()[ceiling].speed = direction,
+        ThinkerId::Floor(floor) => {
+            FLOOR_ARENA.borrow_mut()[floor].set_door_direction_alias(direction);
         }
+        other => unreachable!("sector special data is {other:?}"),
     }
 }
 
@@ -445,15 +453,13 @@ fn set_special_door_direction(special: ThinkerId, direction: i32) {
 /// active thinker, toggles its direction (open doors begin closing, and vice
 /// versa). Otherwise spawns a new `vldoor_t` thinker.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `thing` must name a map object whose `player` is null or valid, and
-/// `line_id` a linedef of the current map; the thinker list must be
-/// initialised.
+/// If `line_id` is not a linedef of the current map.
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
+pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
     let side = 0;
     // The line's record as the use found it; clearing its special below
     // writes the level's line.
@@ -461,7 +467,6 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
     let line = &line_record;
 
     // Check for locks
-    let thing = thing.ptr();
     let special = line.special as i32;
     let keys = match special {
         26 | 32 => Some((it_bluecard, it_blueskull)),
@@ -470,7 +475,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
         _ => None,
     };
     if let Some((card, skull)) = keys {
-        let Some(player) = (*thing).player else {
+        let Some(player) = MOBJ_ARENA.borrow()[thing].player else {
             return;
         };
         if !has_key_or_complain(
@@ -495,7 +500,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
                 if special_door_direction(special) == -1 {
                     set_special_door_direction(special, 1);
                 } else {
-                    if (*thing).player.is_none() {
+                    if MOBJ_ARENA.borrow()[thing].player.is_none() {
                         return;
                     }
                     if special.kind() == ThinkerKind::Door {
@@ -503,7 +508,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
                     } else if let ThinkerId::Plat(plat) = special
                         && special.kind() == ThinkerKind::Plat
                     {
-                        (*plat.ptr()).wait = -1;
+                        PLAT_ARENA.borrow_mut()[plat].wait = -1;
                     } else {
                         eprintln!("EV_VerticalDoor: Tried to close something that wasn't a door.");
                         set_special_door_direction(special, -1);
@@ -530,47 +535,46 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
 
     // new door thinker
     let door_id = new_thinker::<vldoor_t>();
-    let door = door_id.ptr();
     P_AddThinker(ThinkerId::Door(door_id));
     let level = &mut world.level;
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
-    (*door).thinker.kind = ThinkerKind::Door;
-    (*door).sector = sec;
-    (*door).direction = 1;
-    (*door).speed = VDOORSPEED;
-    (*door).topwait = VDOORWAIT;
+    let mut doors = DOOR_ARENA.borrow_mut();
+    let door = &mut doors[door_id];
+    door.thinker.kind = ThinkerKind::Door;
+    door.sector = sec;
+    door.direction = 1;
+    door.speed = VDOORSPEED;
+    door.topwait = VDOORWAIT;
 
     match line.special as i32 {
         1 | 26 | 27 | 28 => {
-            (*door).kind = vld_normal;
+            door.kind = vld_normal;
         }
         31..=34 => {
-            (*door).kind = vld_open;
+            door.kind = vld_open;
             level.lines[line_id].special = 0;
         }
         117 => {
-            (*door).kind = vld_blazeRaise;
-            (*door).speed = VDOORSPEED * 4;
+            door.kind = vld_blazeRaise;
+            door.speed = VDOORSPEED * 4;
         }
         118 => {
-            (*door).kind = vld_blazeOpen;
+            door.kind = vld_blazeOpen;
             level.lines[line_id].special = 0;
-            (*door).speed = VDOORSPEED * 4;
+            door.speed = VDOORSPEED * 4;
         }
         _ => {}
     }
 
     // find the top and bottom of the movement range
-    (*door).topheight = P_FindLowestCeilingSurrounding(level, sec);
-    (*door).topheight -= 4 * FRACUNIT;
+    door.topheight = P_FindLowestCeilingSurrounding(level, sec);
+    door.topheight -= 4 * FRACUNIT;
 }
 
 /// Spawn a door thinker that closes `sec` after 30 seconds.
 ///
 /// The door starts in direction `0` (waiting) with `topcountdown = 30 * TICRATE`.
 /// After the countdown it begins closing as a `vld_normal` door.
-///
-/// # Safety
 ///
 /// # Panics
 ///
@@ -586,8 +590,8 @@ pub fn P_SpawnDoorCloseIn30(world: &mut World, sec: SectorId) {
         level.sectors[sec].special = 0;
     }
 
-    // SAFETY: the door was just made; nothing else refers to it yet.
-    let door = unsafe { &mut *door_id.ptr() };
+    let mut doors = DOOR_ARENA.borrow_mut();
+    let door = &mut doors[door_id];
     door.thinker.kind = ThinkerKind::Door;
     door.sector = sec;
     door.direction = 0;
@@ -614,8 +618,8 @@ pub fn P_SpawnDoorRaiseIn5Mins(world: &mut World, sec: SectorId, _secnum: i32) {
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     level.sectors[sec].special = 0;
 
-    // SAFETY: the door was just made; nothing else refers to it yet.
-    let door = unsafe { &mut *door_id.ptr() };
+    let mut doors = DOOR_ARENA.borrow_mut();
+    let door = &mut doors[door_id];
     door.thinker.kind = ThinkerKind::Door;
     door.sector = sec;
     door.direction = 2;

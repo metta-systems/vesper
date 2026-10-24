@@ -18,10 +18,17 @@
 //! slots be handed out again. A stale handle therefore always reads the data
 //! its object had when it was freed.
 //!
+//! Objects are read and written by indexing a borrowed arena with a handle
+//! (`arena[handle]`), which reports stale handles at the indexing site. The
+//! play code holds such a borrow only between calls that can run other play
+//! code: it copies the fields it needs out before such a call and reads them
+//! afresh after it, as C sees them through its pointer.
+//!
 //! Slots live in fixed-size chunks that are never moved or freed, so a
 //! pointer from [`Handle::ptr`] stays valid while other objects are spawned:
-//! the play code keeps a reference to the object it is working on across
-//! calls that spawn, move or remove other objects, as the C code does.
+//! play code not yet moved to indexing keeps a reference to the object it is
+//! working on across calls that spawn, move or remove other objects, as the
+//! C code does.
 
 use std::{
     cell::{Cell, UnsafeCell},
@@ -30,6 +37,7 @@ use std::{
     marker::PhantomData,
     mem::MaybeUninit,
     num::NonZeroU32,
+    ops::{Index, IndexMut},
     panic::Location,
 };
 
@@ -107,13 +115,7 @@ impl<T: Pooled> Handle<T> {
     #[inline]
     #[track_caller]
     pub fn ptr(self) -> *mut T {
-        let arena = T::arena().borrow();
-        let slot = arena.slot(self.index);
-        #[cfg(debug_assertions)]
-        if slot.generation.get() != self.generation {
-            record_stale_access(Location::caller(), T::NAME);
-        }
-        slot.value.get().cast()
+        T::arena().borrow().checked_slot(self).value.get().cast()
     }
 
     /// `true` while the object has not been freed.
@@ -226,6 +228,52 @@ impl<T: 'static> Arena<T> {
     }
 }
 
+impl<T: Pooled> Arena<T> {
+    /// The slot `handle` names, reporting a stale handle at the caller's
+    /// location in debug builds (see [`stale_accesses`]).
+    #[inline]
+    #[track_caller]
+    fn checked_slot(&self, handle: Handle<T>) -> &Slot<T> {
+        let slot = self.slot(handle.index);
+        #[cfg(debug_assertions)]
+        if slot.generation.get() != handle.generation {
+            record_stale_access(Location::caller(), T::NAME);
+        }
+        slot
+    }
+}
+
+/// `arena[handle]` reads the object `handle` names. A stale handle reads
+/// the data its object had when it was freed, as C reads a freed zone
+/// block; debug builds report the indexing site (see [`stale_accesses`]).
+impl<T: Pooled> Index<Handle<T>> for Arena<T> {
+    type Output = T;
+
+    #[inline]
+    #[track_caller]
+    fn index(&self, handle: Handle<T>) -> &T {
+        let slot = self.checked_slot(handle);
+        // SAFETY: a handle is only made by `insert`, which initialised the
+        // slot; freeing and clearing keep its data. The arena is borrowed
+        // for as long as the reference lives, so no `&mut` from `IndexMut`
+        // aliases it (references made from `Handle::ptr` follow its rules).
+        unsafe { (*slot.value.get()).assume_init_ref() }
+    }
+}
+
+/// `arena[handle]` writes the object `handle` names, with the same stale
+/// handle semantics as [`Index`].
+impl<T: Pooled> IndexMut<Handle<T>> for Arena<T> {
+    #[inline]
+    #[track_caller]
+    fn index_mut(&mut self, handle: Handle<T>) -> &mut T {
+        let slot = self.checked_slot(handle);
+        // SAFETY: the slot is initialised (see `index`), and the arena is
+        // borrowed mutably for as long as the reference lives.
+        unsafe { (*slot.value.get()).assume_init_mut() }
+    }
+}
+
 impl<T: 'static> Default for Arena<T> {
     fn default() -> Self {
         Self::new()
@@ -331,6 +379,24 @@ mod tests {
                 .iter()
                 .any(|access| access.kind == "Probe" && access.count >= 1)
         );
+    }
+
+    #[test]
+    fn indexing_reads_and_writes_and_reports_stale_reads_at_the_site() {
+        let _guard = PROBES_LOCK.lock().unwrap();
+        let handle = insert(1);
+        PROBES.borrow_mut()[handle].value = 2;
+        assert_eq!(PROBES.borrow()[handle].value, 2);
+        PROBES.borrow_mut().free(handle);
+        // A freed object still reads its last data through the index.
+        let stale_line = line!() + 1;
+        assert_eq!(PROBES.borrow()[handle].value, 2);
+        #[cfg(debug_assertions)]
+        assert!(stale_accesses().iter().any(|access| {
+            access.kind == "Probe"
+                && access.site.file() == file!()
+                && access.site.line() == stale_line
+        }));
     }
 
     #[test]

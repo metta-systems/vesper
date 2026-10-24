@@ -40,7 +40,7 @@ use crate::{
             plats::PlatState,
             setup::LevelState,
             switch::{MAXBUTTONS, button_t, start_button_sound},
-            tick::ThinkerKind,
+            tick::{FLOOR_ARENA, MOBJ_ARENA, ThinkerKind},
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
@@ -633,9 +633,14 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
     let line_record = world.level.lines[linenum];
     let line = &line_record;
     let clear_special = |world: &mut World| world.level.lines[linenum].special = 0;
+    // Nothing runs before the specials below that could change these.
+    let (thing_player, thing_kind) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[thing].player, mobjs[thing].kind)
+    };
 
-    if (*thing.ptr()).player.is_none() {
-        match (*thing.ptr()).kind {
+    if thing_player.is_none() {
+        match thing_kind {
             MT_ROCKET | MT_PLASMA | MT_BFG | MT_TROOPSHOT | MT_HEADSHOT | MT_BRUISERSHOT => {
                 return;
             }
@@ -800,7 +805,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
         124 => {
             G_SecretExitLevel();
         }
-        125 if (*thing.ptr()).player.is_none() => {
+        125 if thing_player.is_none() => {
             EV_Teleport(world, line, side, thing);
             clear_special(world);
         }
@@ -900,7 +905,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
         120 => {
             EV_DoPlat(world, line, blazeDWUS, 0);
         }
-        126 if (*thing.ptr()).player.is_none() => {
+        126 if thing_player.is_none() => {
             EV_Teleport(world, line, side, thing);
         }
         128 => {
@@ -936,7 +941,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
 pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
     let line_record = world.level.lines[line_id];
     let line = &line_record;
-    if (*thing.ptr()).player.is_none() {
+    if MOBJ_ARENA.borrow()[thing].player.is_none() {
         let mut ok = 0;
         if line.special as i32 == 46 {
             ok = 1
@@ -991,14 +996,18 @@ pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: Line
 ///
 /// # Safety
 ///
-/// `player`'s `mo` must name a map object of the loaded level.
+/// `player`'s `mo` must name a map object of the loaded level (see
+/// `P_DamageMobj`).
 pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
-    let mo = mo_id.ptr();
+    let (mo_subsector, mo_z) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[mo_id].subsector, mobjs[mo_id].z)
+    };
     let ironfeet = world.players[player].powers[pw_ironfeet];
     let (sector, floorheight, special) = {
         let level = &world.level;
-        let sector = level.subsectors[(*mo).subsector].sector;
+        let sector = level.subsectors[mo_subsector].sector;
         (
             sector,
             level.sectors[sector].floorheight,
@@ -1006,7 +1015,7 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
         )
     };
 
-    if (*mo).z != floorheight {
+    if mo_z != floorheight {
         return;
     }
 
@@ -1249,7 +1258,7 @@ fn DonutOverrun(
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
 /// Called from p_spec.c via C when a donut-tagged line is activated.
-pub unsafe fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
+pub fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
     let level = &mut world.level;
     let mut secnum = -1;
     let mut rtn = 0;
@@ -1300,26 +1309,32 @@ pub unsafe fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
             };
 
             // Spawn rising slime
-            let floor = add_floor_mover(level, s2);
-            (*floor).thinker.kind = ThinkerKind::Floor;
-            (*floor).kind = donutRaise;
-            (*floor).crush = 0;
-            (*floor).direction = 1;
-            (*floor).sector = s2;
-            (*floor).speed = FLOORSPEED / 2;
-            (*floor).texture = s3_floorpic;
-            (*floor).newspecial = 0;
-            (*floor).floordestheight = s3_floorheight;
+            let floor_id = add_floor_mover(level, s2);
+            {
+                let mut floors = FLOOR_ARENA.borrow_mut();
+                let floor = &mut floors[floor_id];
+                floor.thinker.kind = ThinkerKind::Floor;
+                floor.kind = donutRaise;
+                floor.crush = 0;
+                floor.direction = 1;
+                floor.sector = s2;
+                floor.speed = FLOORSPEED / 2;
+                floor.texture = s3_floorpic;
+                floor.newspecial = 0;
+                floor.floordestheight = s3_floorheight;
+            }
 
             // Spawn lowering donut-hole
-            let floor = add_floor_mover(level, s1);
-            (*floor).thinker.kind = ThinkerKind::Floor;
-            (*floor).kind = lowerFloor;
-            (*floor).crush = 0;
-            (*floor).direction = -1;
-            (*floor).sector = s1;
-            (*floor).speed = FLOORSPEED / 2;
-            (*floor).floordestheight = s3_floorheight;
+            let floor_id = add_floor_mover(level, s1);
+            let mut floors = FLOOR_ARENA.borrow_mut();
+            let floor = &mut floors[floor_id];
+            floor.thinker.kind = ThinkerKind::Floor;
+            floor.kind = lowerFloor;
+            floor.crush = 0;
+            floor.direction = -1;
+            floor.sector = s1;
+            floor.speed = FLOORSPEED / 2;
+            floor.floordestheight = s3_floorheight;
 
             break;
         }

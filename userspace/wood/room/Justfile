@@ -31,7 +31,7 @@ check:
 
 # Build the workspace
 build:
-    cargo build
+    cargo build --release
 
 # Run the game on the shareware WAD
 run:

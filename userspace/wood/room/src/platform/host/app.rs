@@ -192,7 +192,12 @@ impl ApplicationHandler for App {
 /// exits with status `1`.
 pub fn run() {
     // Initialise the logger.  Set `RUST_LOG=debug` for verbose output.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // calloop warns whenever winit's Wayland key-repeat timer fires in the
+    // same dispatch that removed it (a key release), which is harmless.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,calloop=error"),
+    )
+    .init();
 
     log::info!("room – doomgeneric Rust port");
 

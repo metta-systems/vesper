@@ -22,8 +22,8 @@ use crate::{
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
             },
             tick::{
-                P_AddThinker, P_RemoveThinker, PlatId, ThinkerId, ThinkerKind, new_thinker,
-                thinker_t,
+                P_AddThinker, P_RemoveThinker, PLAT_ARENA, PlatId, ThinkerId, ThinkerKind,
+                new_thinker, thinker_t,
             },
         },
         sound::S_StartSectorSound,
@@ -164,38 +164,32 @@ impl Default for PlatState {
 ///
 /// # Safety
 ///
-/// `plat_id` must name a platform in the thinker list whose `sector`
-/// belongs to the current map.
+/// The platform's `sector` must belong to the current map, and every thing
+/// linked into the blockmap must be live (see [`T_MovePlane`]).
 pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
-    let plat = plat_id.ptr();
-    match (*plat).status {
+    // The platform is copied out around each call that can run play code
+    // (`T_MovePlane`), read afresh after it, and each change is written
+    // back before the next such call, as C sees it through its pointer.
+    let plat = PLAT_ARENA.borrow()[plat_id];
+    match plat.status {
         x if x == up => {
-            let res = T_MovePlane(
-                world,
-                (*plat).sector,
-                (*plat).speed,
-                (*plat).high,
-                (*plat).crush,
-                0,
-                1,
-            );
+            let res = T_MovePlane(world, plat.sector, plat.speed, plat.high, plat.crush, 0, 1);
+            let plat = PLAT_ARENA.borrow()[plat_id];
 
-            if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
+            if (plat.kind == raiseAndChange || plat.kind == raiseToNearestAndChange)
                 && (world.leveltime & 7) == 0
             {
-                S_StartSectorSound(world, (*plat).sector, Sfx::Stnmov as i32);
+                S_StartSectorSound(world, plat.sector, Sfx::Stnmov as i32);
             }
 
-            if res == result_crushed && (*plat).crush == 0 {
-                (*plat).count = (*plat).wait;
-                (*plat).status = down;
-                S_StartSectorSound(world, (*plat).sector, Sfx::Pstart as i32);
+            if res == result_crushed && plat.crush == 0 {
+                set_plat_status(plat_id, plat.wait, down);
+                S_StartSectorSound(world, plat.sector, Sfx::Pstart as i32);
             } else if res == result_pastdest {
-                (*plat).count = (*plat).wait;
-                (*plat).status = waiting;
-                S_StartSectorSound(world, (*plat).sector, Sfx::Pstop as i32);
+                set_plat_status(plat_id, plat.wait, waiting);
+                S_StartSectorSound(world, plat.sector, Sfx::Pstop as i32);
 
-                match (*plat).kind {
+                match plat.kind {
                     x if x == blazeDWUS
                         || x == downWaitUpStay
                         || x == raiseAndChange
@@ -208,28 +202,42 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             }
         }
         x if x == down => {
-            let res = T_MovePlane(world, (*plat).sector, (*plat).speed, (*plat).low, 0, 0, -1);
+            let res = T_MovePlane(world, plat.sector, plat.speed, plat.low, 0, 0, -1);
 
             if res == result_pastdest {
-                (*plat).count = (*plat).wait;
-                (*plat).status = waiting;
-                S_StartSectorSound(world, (*plat).sector, Sfx::Pstop as i32);
+                let plat = PLAT_ARENA.borrow()[plat_id];
+                set_plat_status(plat_id, plat.wait, waiting);
+                S_StartSectorSound(world, plat.sector, Sfx::Pstop as i32);
             }
         }
         x if x == waiting => {
-            (*plat).count -= 1;
-            if (*plat).count == 0 {
-                if world.level.sectors[(*plat).sector].floorheight == (*plat).low {
-                    (*plat).status = up;
-                } else {
-                    (*plat).status = down;
+            let sector = {
+                let mut plats = PLAT_ARENA.borrow_mut();
+                let plat = &mut plats[plat_id];
+                plat.count -= 1;
+                if plat.count != 0 {
+                    return;
                 }
-                S_StartSectorSound(world, (*plat).sector, Sfx::Pstart as i32);
-            }
+                if world.level.sectors[plat.sector].floorheight == plat.low {
+                    plat.status = up;
+                } else {
+                    plat.status = down;
+                }
+                plat.sector
+            };
+            S_StartSectorSound(world, sector, Sfx::Pstart as i32);
         }
         x if x == in_stasis => {}
         _ => {}
     }
+}
+
+/// Set the platform's wait `count` and motion `status`.
+fn set_plat_status(plat_id: PlatId, count: i32, status: i32) {
+    let mut plats = PLAT_ARENA.borrow_mut();
+    let plat = &mut plats[plat_id];
+    plat.count = count;
+    plat.status = status;
 }
 
 /// Activate a platform mover on every sector whose tag matches `line->tag`.
@@ -249,11 +257,7 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
 /// Returns `1` if at least one platform was activated, `0` otherwise.
 ///
 /// Corresponds to `EV_DoPlat` in `p_plats.c`.
-///
-/// # Safety
-///
-/// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -> i32 {
+pub fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -277,81 +281,83 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
 
         rtn = 1;
         let plat_id = new_thinker::<plat_t>();
-        let plat = plat_id.ptr();
         P_AddThinker(ThinkerId::Plat(plat_id));
 
-        // The platform's sound starts once it is set up.
+        // The platform is set up in a copy (the random draw needs `world`)
+        // and stored before its sound starts.
+        let mut plat = PLAT_ARENA.borrow()[plat_id];
         let sound = {
             let level = &mut world.level;
-            (*plat).kind = plattype;
-            (*plat).sector = sec;
+            plat.kind = plattype;
+            plat.sector = sec;
             level.sectors[sec].specialdata = Some(ThinkerId::Plat(plat_id));
-            (*plat).thinker.kind = ThinkerKind::Plat;
-            (*plat).crush = 0;
-            (*plat).tag = line.tag as i32;
+            plat.thinker.kind = ThinkerKind::Plat;
+            plat.crush = 0;
+            plat.tag = line.tag as i32;
             let floorheight = level.sectors[sec].floorheight;
 
             match plattype {
                 x if x == raiseToNearestAndChange => {
-                    (*plat).speed = PLATSPEED / 2;
+                    plat.speed = PLATSPEED / 2;
                     let sidenum = line.sidenum[0] as usize;
                     level.sectors[sec].floorpic =
                         level.sectors[level.sides[sidenum].sector].floorpic;
-                    (*plat).high = P_FindNextHighestFloor(level, sec, floorheight);
-                    (*plat).wait = 0;
-                    (*plat).status = up;
+                    plat.high = P_FindNextHighestFloor(level, sec, floorheight);
+                    plat.wait = 0;
+                    plat.status = up;
                     level.sectors[sec].special = 0;
                     Some(Sfx::Stnmov)
                 }
                 x if x == raiseAndChange => {
-                    (*plat).speed = PLATSPEED / 2;
+                    plat.speed = PLATSPEED / 2;
                     let sidenum = line.sidenum[0] as usize;
                     level.sectors[sec].floorpic =
                         level.sectors[level.sides[sidenum].sector].floorpic;
-                    (*plat).high = floorheight + amount * FRACUNIT;
-                    (*plat).wait = 0;
-                    (*plat).status = up;
+                    plat.high = floorheight + amount * FRACUNIT;
+                    plat.wait = 0;
+                    plat.status = up;
                     Some(Sfx::Stnmov)
                 }
                 x if x == downWaitUpStay => {
-                    (*plat).speed = PLATSPEED * 4;
-                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
-                    if (*plat).low > floorheight {
-                        (*plat).low = floorheight;
+                    plat.speed = PLATSPEED * 4;
+                    plat.low = P_FindLowestFloorSurrounding(level, sec);
+                    if plat.low > floorheight {
+                        plat.low = floorheight;
                     }
-                    (*plat).high = floorheight;
-                    (*plat).wait = TICRATE * PLATWAIT;
-                    (*plat).status = down;
+                    plat.high = floorheight;
+                    plat.wait = TICRATE * PLATWAIT;
+                    plat.status = down;
                     Some(Sfx::Pstart)
                 }
                 x if x == blazeDWUS => {
-                    (*plat).speed = PLATSPEED * 8;
-                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
-                    if (*plat).low > floorheight {
-                        (*plat).low = floorheight;
+                    plat.speed = PLATSPEED * 8;
+                    plat.low = P_FindLowestFloorSurrounding(level, sec);
+                    if plat.low > floorheight {
+                        plat.low = floorheight;
                     }
-                    (*plat).high = floorheight;
-                    (*plat).wait = TICRATE * PLATWAIT;
-                    (*plat).status = down;
+                    plat.high = floorheight;
+                    plat.wait = TICRATE * PLATWAIT;
+                    plat.status = down;
                     Some(Sfx::Pstart)
                 }
                 x if x == perpetualRaise => {
-                    (*plat).speed = PLATSPEED;
-                    (*plat).low = P_FindLowestFloorSurrounding(level, sec);
-                    if (*plat).low > floorheight {
-                        (*plat).low = floorheight;
+                    plat.speed = PLATSPEED;
+                    plat.low = P_FindLowestFloorSurrounding(level, sec);
+                    if plat.low > floorheight {
+                        plat.low = floorheight;
                     }
-                    (*plat).high = P_FindHighestFloorSurrounding(level, sec);
-                    if (*plat).high < floorheight {
-                        (*plat).high = floorheight;
+                    plat.high = P_FindHighestFloorSurrounding(level, sec);
+                    if plat.high < floorheight {
+                        plat.high = floorheight;
                     }
-                    (*plat).wait = TICRATE * PLATWAIT;
-                    (*plat).status = P_Random(world) & 1;
+                    plat.wait = TICRATE * PLATWAIT;
+                    plat.status = P_Random(world) & 1;
                     Some(Sfx::Pstart)
                 }
                 _ => None,
             }
         };
+        PLAT_ARENA.borrow_mut()[plat_id] = plat;
         if let Some(sound) = sound {
             S_StartSectorSound(world, sec, sound as i32);
         }
@@ -368,10 +374,9 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
 pub fn P_ActivateInStasis(world: &mut World, tag: i32) {
-    for plat in world.active.plats.activeplats.into_iter().flatten() {
-        // SAFETY: platforms are only reached through arena pointers, and no
-        // reference to one is live while a line special runs.
-        let plat = unsafe { &mut *plat.ptr() };
+    let mut plats = PLAT_ARENA.borrow_mut();
+    for plat_id in world.active.plats.activeplats.into_iter().flatten() {
+        let plat = &mut plats[plat_id];
         if plat.tag == tag && plat.status == in_stasis {
             plat.status = plat.oldstatus;
             plat.thinker.kind = ThinkerKind::Plat;
@@ -387,10 +392,9 @@ pub fn P_ActivateInStasis(world: &mut World, tag: i32) {
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
 pub fn EV_StopPlat(world: &mut World, line: &line_t) {
-    for plat in world.active.plats.activeplats.into_iter().flatten() {
-        // SAFETY: platforms are only reached through arena pointers, and no
-        // reference to one is live while a line special runs.
-        let plat = unsafe { &mut *plat.ptr() };
+    let mut plats = PLAT_ARENA.borrow_mut();
+    for plat_id in world.active.plats.activeplats.into_iter().flatten() {
+        let plat = &mut plats[plat_id];
         if plat.status != in_stasis && plat.tag == line.tag as i32 {
             plat.oldstatus = plat.status;
             plat.status = in_stasis;
@@ -424,13 +428,12 @@ pub fn P_AddActivePlat(world: &mut World, plat: PlatId) {
 /// `activeplats`.  Calls `I_Error` if the platform is not found.
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
-pub fn P_RemoveActivePlat(world: &mut World, plat: PlatId) {
+pub fn P_RemoveActivePlat(world: &mut World, plat_id: PlatId) {
     let World { level, active, .. } = world;
     for slot in active.plats.activeplats.iter_mut() {
-        if *slot == Some(plat) {
-            // SAFETY: platforms are only reached through arena pointers, and
-            // no reference to one is live while it is removed.
-            let plat = unsafe { &mut *plat.ptr() };
+        if *slot == Some(plat_id) {
+            let mut plats = PLAT_ARENA.borrow_mut();
+            let plat = &mut plats[plat_id];
             level.sectors[plat.sector].specialdata = None;
             P_RemoveThinker(&mut plat.thinker);
             *slot = None;

@@ -21,11 +21,11 @@ const EXE_FINAL: i32 = 7;
 
 use crate::engine::{
     doom::stat::gameversion,
-    math::tables::{finecosine, finesine},
+    math::tables::{FINEANGLES, finesine},
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        tick::{ThinkerId, ThinkerKind, thinkers},
+        tick::{MOBJ_ARENA, ThinkerId, ThinkerKind, thinkers},
     },
     sound::{S_StartSound, info::Sfx},
     world::World,
@@ -54,95 +54,120 @@ use crate::engine::{
 ///
 /// # Safety
 ///
-/// `thing_id` must name a map object of the level, and a level must be
-/// loaded.
+/// `thing_id` must name a map object linked into the map, and a level must
+/// be loaded.
 pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id: MobjId) -> i32 {
-    unsafe {
-        let thing = thing_id.ptr();
-        // Don't teleport missiles
-        if (*thing).flags & MF_MISSILE != 0 {
-            return 0;
+    // Don't teleport missiles
+    if MOBJ_ARENA.borrow()[thing_id].flags & MF_MISSILE != 0 {
+        return 0;
+    }
+
+    // Don't teleport if hit back of line
+    if side == 1 {
+        return 0;
+    }
+
+    let tag = line.tag;
+    let numsectors = world.level.numsectors;
+
+    for i in 0..numsectors as usize {
+        if world.level.sectors[i].tag != tag {
+            continue;
         }
 
-        // Don't teleport if hit back of line
-        if side == 1 {
-            return 0;
-        }
-
-        let tag = line.tag;
-        let numsectors = world.level.numsectors;
-
-        for i in 0..numsectors as usize {
-            if world.level.sectors[i].tag != tag {
+        for thinker in thinkers() {
+            // Not a mobj
+            let ThinkerId::Mobj(marker_id) = thinker else {
+                continue;
+            };
+            if thinker.kind() != ThinkerKind::Mobj {
                 continue;
             }
 
-            for thinker in thinkers() {
-                // Not a mobj
-                let ThinkerId::Mobj(m) = thinker else {
-                    continue;
-                };
-                if thinker.kind() != ThinkerKind::Mobj {
-                    continue;
-                }
+            let (marker_kind, marker_subsector) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                (mobjs[marker_id].kind, mobjs[marker_id].subsector)
+            };
 
-                let m = m.ptr();
+            // Not a teleportman
+            if marker_kind != MT_TELEPORTMAN {
+                continue;
+            }
 
-                // Not a teleportman
-                if (*m).kind != MT_TELEPORTMAN {
-                    continue;
-                }
+            let sector = world.level.subsectors[marker_subsector].sector;
+            // Wrong sector
+            if sector.index() != i {
+                continue;
+            }
 
-                let sector = world.level.subsectors[(*m).subsector].sector;
-                // Wrong sector
-                if sector.index() != i {
-                    continue;
-                }
+            let (oldx, oldy, oldz, marker_x, marker_y) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                let thing = &mobjs[thing_id];
+                let marker = &mobjs[marker_id];
+                (thing.x, thing.y, thing.z, marker.x, marker.y)
+            };
 
-                let oldx = (*thing).x;
-                let oldy = (*thing).y;
-                let oldz = (*thing).z;
+            // SAFETY: the caller guarantees `thing_id` is linked into the map.
+            if unsafe { P_TeleportMove(world, thing_id, marker_x, marker_y) } == 0 {
+                return 0;
+            }
 
-                if P_TeleportMove(world, thing_id, (*m).x, (*m).y) == 0 {
-                    return 0;
-                }
-
+            let (thing_z, thing_player) = {
+                let mut mobjs = MOBJ_ARENA.borrow_mut();
+                let thing = &mut mobjs[thing_id];
                 // Final Doom quirk: don't set z
                 if gameversion() != EXE_FINAL {
-                    (*thing).z = (*thing).floorz;
+                    thing.z = thing.floorz;
                 }
+                (thing.z, thing.player)
+            };
 
-                if let Some(player) = (*thing).player {
-                    let player = &mut world.players[player];
-                    player.viewz = (*thing).z + player.viewheight;
-                }
+            if let Some(player) = thing_player {
+                let player = &mut world.players[player];
+                player.viewz = thing_z + player.viewheight;
+            }
 
-                // Spawn teleport fog at source
+            // Spawn teleport fog at source
+            // SAFETY (both fogs): a level is loaded, and the fog is a map
+            // object of it that stays until its sound is over.
+            unsafe {
                 let fog = P_SpawnMobj(world, oldx, oldy, oldz, MT_TFOG);
                 S_StartSound(world, fog, Sfx::Telept as i32);
+            }
 
-                // Spawn teleport fog at destination
-                let an = ((*m).angle >> ANGLETOFINESHIFT) as usize;
+            // Spawn teleport fog at destination
+            let (marker_x, marker_y, marker_angle, thing_z) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                let marker = &mobjs[marker_id];
+                (marker.x, marker.y, marker.angle, mobjs[thing_id].z)
+            };
+            let an = (marker_angle >> ANGLETOFINESHIFT) as usize;
+            // `finecosine[an]`: the cosine table is the sine table a quarter
+            // turn on.
+            unsafe {
                 let fog = P_SpawnMobj(
                     world,
-                    (*m).x + 20 * *finecosine.0.add(an),
-                    (*m).y + 20 * finesine[an],
-                    (*thing).z,
+                    marker_x + 20 * finesine[an + FINEANGLES / 4],
+                    marker_y + 20 * finesine[an],
+                    thing_z,
                     MT_TFOG,
                 );
                 S_StartSound(world, fog, Sfx::Telept as i32);
-
-                // Don't move for a bit
-                if (*thing).player.is_some() {
-                    (*thing).reactiontime = 18;
-                }
-
-                (*thing).angle = (*m).angle;
-                (*thing).momx = 0;
-                (*thing).momy = 0;
-                (*thing).momz = 0;
-                return 1;
             }
+
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let marker_angle = mobjs[marker_id].angle;
+            let thing = &mut mobjs[thing_id];
+            // Don't move for a bit
+            if thing.player.is_some() {
+                thing.reactiontime = 18;
+            }
+
+            thing.angle = marker_angle;
+            thing.momx = 0;
+            thing.momy = 0;
+            thing.momz = 0;
+            return 1;
         }
     }
     0

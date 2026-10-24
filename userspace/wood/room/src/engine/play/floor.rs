@@ -18,7 +18,8 @@ use crate::engine::{
             getSector, getSide, twoSided,
         },
         tick::{
-            FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
+            FLOOR_ARENA, FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind,
+            new_thinker, thinker_t,
         },
     },
     render_3d::data::RENDER_DATA,
@@ -295,55 +296,60 @@ pub unsafe fn T_MovePlane(
 ///
 /// # Safety
 ///
-/// `floor_id` must name a floor mover whose `sector` belongs to the current
-/// map. Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+/// The mover's `sector` must belong to the current map, and every thing
+/// linked into the blockmap must be live (see [`T_MovePlane`]). Called
+/// exclusively by the thinker dispatcher from `P_RunThinkers`.
 pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
-    let floor = floor_id.ptr();
+    let floor = FLOOR_ARENA.borrow()[floor_id];
     let res = T_MovePlane(
         world,
-        (*floor).sector,
-        (*floor).speed,
-        (*floor).floordestheight,
-        (*floor).crush,
+        floor.sector,
+        floor.speed,
+        floor.floordestheight,
+        floor.crush,
         0,
-        (*floor).direction,
+        floor.direction,
     );
+    // `T_MovePlane` can run play code: read the floor afresh, as C does
+    // through its pointer.
+    let floor_sector = FLOOR_ARENA.borrow()[floor_id].sector;
 
     if (world.leveltime & 7) == 0 {
-        S_StartSectorSound(world, (*floor).sector, Sfx::Stnmov as i32);
+        S_StartSectorSound(world, floor_sector, Sfx::Stnmov as i32);
     }
 
     if res == result_pastdest {
         {
-            let sec = &mut world.level.sectors[(*floor).sector];
+            let mut floors = FLOOR_ARENA.borrow_mut();
+            let floor = &mut floors[floor_id];
+            let sec = &mut world.level.sectors[floor.sector];
             sec.specialdata = None;
 
-            if (*floor).direction == 1 {
-                if (*floor).kind == floor_donutRaise {
-                    sec.special = (*floor).newspecial as i16;
-                    sec.floorpic = (*floor).texture;
+            if floor.direction == 1 {
+                if floor.kind == floor_donutRaise {
+                    sec.special = floor.newspecial as i16;
+                    sec.floorpic = floor.texture;
                 }
-            } else if (*floor).direction == -1 && (*floor).kind == floor_lowerAndChange {
-                sec.special = (*floor).newspecial as i16;
-                sec.floorpic = (*floor).texture;
+            } else if floor.direction == -1 && floor.kind == floor_lowerAndChange {
+                sec.special = floor.newspecial as i16;
+                sec.floorpic = floor.texture;
             }
+            P_RemoveThinker(&mut floor.thinker);
         }
-        P_RemoveThinker(&mut (*floor).thinker);
 
-        S_StartSectorSound(world, (*floor).sector, Sfx::Pstop as i32);
+        S_StartSectorSound(world, floor_sector, Sfx::Pstop as i32);
     }
 }
 
 /// Make a zeroed floor mover, list it as a thinker and make it `sector`'s
 /// special (C's `Z_Malloc`, `P_AddThinker` and `sec->specialdata = floor`).
 ///
-/// The caller fills in the mover through the returned pointer, which stays
-/// valid for the rest of the program.
-pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> *mut floormove_t {
+/// The caller fills in the mover through the returned handle.
+pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> FloorId {
     let floor = new_thinker::<floormove_t>();
     P_AddThinker(ThinkerId::Floor(floor));
     level.sectors[sector].specialdata = Some(ThinkerId::Floor(floor));
-    floor.ptr()
+    floor
 }
 
 /// Linedef-triggered event: activate floor movement on all tagged sectors.
@@ -360,7 +366,8 @@ pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> *mut floormo
 ///
 /// # Safety
 ///
-/// The thinker list must be initialised and a level loaded.
+/// The texture tables must be loaded (`floor_raiseToTexture` reads the
+/// texture heights through their raw pointer).
 pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
     let level = &mut world.level;
     let mut secnum: i32 = -1;
@@ -378,79 +385,81 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
         }
 
         rtn = 1;
-        let floor = add_floor_mover(level, sec);
+        let floor_id = add_floor_mover(level, sec);
+        let mut floors = FLOOR_ARENA.borrow_mut();
+        let floor = &mut floors[floor_id];
 
-        (*floor).thinker.kind = ThinkerKind::Floor;
-        (*floor).kind = floortype;
-        (*floor).crush = 0;
+        floor.thinker.kind = ThinkerKind::Floor;
+        floor.kind = floortype;
+        floor.crush = 0;
 
         match floortype {
             floor_lowerFloor => {
-                (*floor).direction = -1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindHighestFloorSurrounding(level, sec);
+                floor.direction = -1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = P_FindHighestFloorSurrounding(level, sec);
             }
             floor_lowerFloorToLowest => {
-                (*floor).direction = -1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestFloorSurrounding(level, sec);
+                floor.direction = -1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = P_FindLowestFloorSurrounding(level, sec);
             }
             floor_turboLower => {
-                (*floor).direction = -1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED * 4;
-                (*floor).floordestheight = P_FindHighestFloorSurrounding(level, sec);
-                if (*floor).floordestheight != level.sectors[sec].floorheight {
-                    (*floor).floordestheight += 8 * FRACUNIT;
+                floor.direction = -1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED * 4;
+                floor.floordestheight = P_FindHighestFloorSurrounding(level, sec);
+                if floor.floordestheight != level.sectors[sec].floorheight {
+                    floor.floordestheight += 8 * FRACUNIT;
                 }
             }
             floor_raiseFloorCrush | floor_raiseFloor => {
                 if floortype == floor_raiseFloorCrush {
-                    (*floor).crush = 1;
+                    floor.crush = 1;
                 }
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestCeilingSurrounding(level, sec);
-                if (*floor).floordestheight > level.sectors[sec].ceilingheight {
-                    (*floor).floordestheight = level.sectors[sec].ceilingheight;
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = P_FindLowestCeilingSurrounding(level, sec);
+                if floor.floordestheight > level.sectors[sec].ceilingheight {
+                    floor.floordestheight = level.sectors[sec].ceilingheight;
                 }
-                (*floor).floordestheight -=
+                floor.floordestheight -=
                     (8 * FRACUNIT) * ((floortype == floor_raiseFloorCrush) as i32);
             }
             floor_raiseFloorTurbo => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED * 4;
-                (*floor).floordestheight =
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED * 4;
+                floor.floordestheight =
                     P_FindNextHighestFloor(level, sec, level.sectors[sec].floorheight);
             }
             floor_raiseFloorToNearest => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight =
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight =
                     P_FindNextHighestFloor(level, sec, level.sectors[sec].floorheight);
             }
             floor_raiseFloor24 => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
             }
             floor_raiseFloor512 => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = level.sectors[sec].floorheight + 512 * FRACUNIT;
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = level.sectors[sec].floorheight + 512 * FRACUNIT;
             }
             floor_raiseFloor24AndChange => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = level.sectors[sec].floorheight + 24 * FRACUNIT;
                 let frontsector = level.sectors[line
                     .frontsector
                     .expect("activating line without front sector")];
@@ -458,9 +467,9 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
                 level.sectors[sec].special = frontsector.special;
             }
             floor_raiseToTexture => {
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
+                floor.direction = 1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
                 let mut minsize: i32 = INT_MAX;
                 let textureheight = RENDER_DATA.borrow().textureheight;
                 for i in 0..level.sectors[sec].linecount {
@@ -483,14 +492,14 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
                         }
                     }
                 }
-                (*floor).floordestheight = level.sectors[sec].floorheight + minsize;
+                floor.floordestheight = level.sectors[sec].floorheight + minsize;
             }
             floor_lowerAndChange => {
-                (*floor).direction = -1;
-                (*floor).sector = sec;
-                (*floor).speed = FLOORSPEED;
-                (*floor).floordestheight = P_FindLowestFloorSurrounding(level, sec);
-                (*floor).texture = level.sectors[sec].floorpic;
+                floor.direction = -1;
+                floor.sector = sec;
+                floor.speed = FLOORSPEED;
+                floor.floordestheight = P_FindLowestFloorSurrounding(level, sec);
+                floor.texture = level.sectors[sec].floorpic;
 
                 for i in 0..level.sectors[sec].linecount {
                     if twoSided(level, secnum, i) != 0 {
@@ -501,9 +510,9 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
                             getSector(level, secnum, i, 0)
                         };
                         let check_sec = &level.sectors[check_sec];
-                        if check_sec.floorheight == (*floor).floordestheight {
-                            (*floor).texture = check_sec.floorpic;
-                            (*floor).newspecial = check_sec.special as i32;
+                        if check_sec.floorheight == floor.floordestheight {
+                            floor.texture = check_sec.floorpic;
+                            floor.newspecial = check_sec.special as i32;
                             break;
                         }
                     }
@@ -513,6 +522,19 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
         }
     }
     rtn
+}
+
+/// Start one step of a staircase: a floor mover raising `sector` to
+/// `height` at `speed`.
+fn start_stair_step(level: &mut LevelState, sector: SectorId, speed: fixed_t, height: fixed_t) {
+    let floor_id = add_floor_mover(level, sector);
+    let mut floors = FLOOR_ARENA.borrow_mut();
+    let floor = &mut floors[floor_id];
+    floor.thinker.kind = ThinkerKind::Floor;
+    floor.direction = 1;
+    floor.sector = sector;
+    floor.speed = speed;
+    floor.floordestheight = height;
 }
 
 /// Linedef-triggered event: build a rising staircase starting from tagged sectors.
@@ -528,11 +550,7 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
 /// resumes after the last step's sector number.
 ///
 /// Returns `1` if at least one stair was started, `0` otherwise.
-///
-/// # Safety
-///
-/// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i32 {
+pub fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i32 {
     let level = &mut world.level;
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
@@ -549,21 +567,14 @@ pub unsafe fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i3
         }
 
         rtn = 1;
-        let mut floor = add_floor_mover(level, sec);
-        (*floor).thinker.kind = ThinkerKind::Floor;
-        (*floor).direction = 1;
-        (*floor).sector = sec;
-
         let (speed, stairsize): (fixed_t, fixed_t) = match stype {
             stair_build8 => (FLOORSPEED / 4, 8 * FRACUNIT),
             stair_turbo16 => (FLOORSPEED * 4, 16 * FRACUNIT),
             _ => (FLOORSPEED, 8 * FRACUNIT),
         };
-
-        (*floor).speed = speed;
         let (floorheight, texture) = (level.sectors[sec].floorheight, level.sectors[sec].floorpic);
         let mut height: fixed_t = floorheight + stairsize;
-        (*floor).floordestheight = height;
+        start_stair_step(level, sec, speed, height);
 
         // Find next sector to raise
         loop {
@@ -598,12 +609,7 @@ pub unsafe fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i3
 
                 sec = tsec;
                 secnum = tsec.index() as i32;
-                floor = add_floor_mover(level, sec);
-                (*floor).thinker.kind = ThinkerKind::Floor;
-                (*floor).direction = 1;
-                (*floor).sector = sec;
-                (*floor).speed = speed;
-                (*floor).floordestheight = height;
+                start_stair_step(level, sec, speed, height);
                 ok = 1;
                 break;
             }
@@ -705,22 +711,21 @@ mod tests {
         let mut trigger = step_line(0, 1);
         trigger.tag = 1;
 
-        // SAFETY: the thinker list is set up just before the call.
-        let destinations: Vec<fixed_t> = unsafe {
-            P_InitThinkers();
-            assert_eq!(EV_BuildStairs(&mut world, &trigger, stair_build8), 1);
-            world
-                .level
-                .sectors
-                .iter()
-                .map(|sector| {
-                    let Some(ThinkerId::Floor(floor)) = sector.specialdata else {
-                        panic!("every step gets a mover");
-                    };
-                    (*floor.ptr()).floordestheight
-                })
-                .collect()
-        };
+        P_InitThinkers();
+        assert_eq!(EV_BuildStairs(&mut world, &trigger, stair_build8), 1);
+        let floors = FLOOR_ARENA.borrow();
+        let destinations: Vec<fixed_t> = world
+            .level
+            .sectors
+            .iter()
+            .map(|sector| {
+                let Some(ThinkerId::Floor(floor)) = sector.specialdata else {
+                    panic!("every step gets a mover");
+                };
+                floors[floor].floordestheight
+            })
+            .collect();
+        drop(floors);
         assert_eq!(destinations, [8 * FRACUNIT, 16 * FRACUNIT, 24 * FRACUNIT]);
 
         P_InitThinkers();
