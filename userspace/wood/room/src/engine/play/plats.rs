@@ -187,17 +187,17 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             if ((*plat).kind == raiseAndChange || (*plat).kind == raiseToNearestAndChange)
                 && (leveltime() & 7) == 0
             {
-                S_StartSectorSound((*plat).sector, Sfx::Stnmov as i32);
+                S_StartSectorSound(world, (*plat).sector, Sfx::Stnmov as i32);
             }
 
             if res == result_crushed && (*plat).crush == 0 {
                 (*plat).count = (*plat).wait;
                 (*plat).status = down;
-                S_StartSectorSound((*plat).sector, Sfx::Pstart as i32);
+                S_StartSectorSound(world, (*plat).sector, Sfx::Pstart as i32);
             } else if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSectorSound((*plat).sector, Sfx::Pstop as i32);
+                S_StartSectorSound(world, (*plat).sector, Sfx::Pstop as i32);
 
                 match (*plat).kind {
                     x if x == blazeDWUS
@@ -217,7 +217,7 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             if res == result_pastdest {
                 (*plat).count = (*plat).wait;
                 (*plat).status = waiting;
-                S_StartSectorSound((*plat).sector, Sfx::Pstop as i32);
+                S_StartSectorSound(world, (*plat).sector, Sfx::Pstop as i32);
             }
         }
         x if x == waiting => {
@@ -228,7 +228,7 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
                 } else {
                     (*plat).status = down;
                 }
-                S_StartSectorSound((*plat).sector, Sfx::Pstart as i32);
+                S_StartSectorSound(world, (*plat).sector, Sfx::Pstart as i32);
             }
         }
         x if x == in_stasis => {}
@@ -359,7 +359,7 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
             }
         };
         if let Some(sound) = sound {
-            S_StartSectorSound(sec, sound as i32);
+            S_StartSectorSound(world, sec, sound as i32);
         }
         P_AddActivePlat(world, plat_id);
     }

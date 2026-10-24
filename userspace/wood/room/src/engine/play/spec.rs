@@ -991,11 +991,11 @@ pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: Line
 ///
 /// # Safety
 ///
-/// `player`'s `mo` must name a map object of the loaded level, and no
-/// reference into its slot may be live while this runs.
+/// `player`'s `mo` must name a map object of the loaded level.
 pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
-    let mo = player.mo().ptr();
-    let ironfeet = player.read(|player| player.powers[pw_ironfeet]);
+    let mo_id = world.players[player].mo();
+    let mo = mo_id.ptr();
+    let ironfeet = world.players[player].powers[pw_ironfeet];
     let (sector, floorheight, special) = {
         let level = LEVEL.borrow();
         let sector = level.subsectors[(*mo).subsector].sector;
@@ -1013,29 +1013,29 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     match special as i32 {
         5 => {
             if ironfeet == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj(world, player.mo(), None, None, 10);
+                P_DamageMobj(world, mo_id, None, None, 10);
             }
         }
         7 => {
             if ironfeet == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj(world, player.mo(), None, None, 5);
+                P_DamageMobj(world, mo_id, None, None, 5);
             }
         }
         16 | 4 => {
             if (ironfeet == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
-                P_DamageMobj(world, player.mo(), None, None, 20);
+                P_DamageMobj(world, mo_id, None, None, 20);
             }
         }
         9 => {
-            player.write(|player| player.secretcount += 1);
+            world.players[player].secretcount += 1;
             LEVEL.borrow_mut().sectors[sector].special = 0;
         }
         11 => {
-            player.write(|player| player.cheats &= !CF_GODMODE);
+            world.players[player].cheats &= !CF_GODMODE;
             if leveltime() & 0x1f == 0 {
-                P_DamageMobj(world, player.mo(), None, None, 20);
+                P_DamageMobj(world, mo_id, None, None, 20);
             }
-            if player.read(|player| player.health) <= 10 {
+            if world.players[player].health <= 10 {
                 G_ExitLevel();
             }
         }
@@ -1071,7 +1071,7 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
 ///    `buttonlist[i].where_`) and plays the switch sound.
 ///
 /// Called from p_tick.c `P_Ticker`.
-pub unsafe fn P_UpdateSpecials(_world: &mut World) {
+pub unsafe fn P_UpdateSpecials(world: &mut World) {
     let timer_expired = {
         let mut spec = SPEC.borrow_mut();
         if spec.levelTimer != 0 {
@@ -1156,7 +1156,7 @@ pub unsafe fn P_UpdateSpecials(_world: &mut World) {
             // Vanilla Doom passes `&buttonlist[i].soundorg`, the address
             // of the field, which plays the click from around map point
             // (0, 0). Play it from the switch's sector as intended.
-            start_button_sound(button.soundorg, Sfx::Swtchn as i32);
+            start_button_sound(world, button.soundorg, Sfx::Swtchn as i32);
             SWITCHES.borrow_mut().buttonlist[i] = button_t::EMPTY;
         }
     }

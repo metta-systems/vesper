@@ -347,13 +347,12 @@ pub static clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 /// if the player had zero ammo of this type before the pickup, a more
 /// appropriate weapon may be queued as `pendingweapon`.
 ///
-pub fn P_GiveAmmo(_world: &mut World, player: PlayerId, ammo: i32, num: i32) -> i32 {
-    player.write(|player| p_give_ammo(player, ammo, num))
+pub fn P_GiveAmmo(world: &mut World, player: PlayerId, ammo: i32, num: i32) -> i32 {
+    p_give_ammo(&mut world.players[player], ammo, num)
 }
 
 /// Rust-side body of [`P_GiveAmmo`]. Takes `&mut PlayerT` so callers can
-/// pass an existing borrow without re-deriving a second `&mut` from the
-/// same raw pointer (which would violate aliasing rules).
+/// pass the slot they already borrow.
 fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
     if ammo == am_noammo {
         return 0;
@@ -423,18 +422,13 @@ fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
 ///
 /// Returns `1` if either the weapon or its ammo was successfully added;
 /// `0` otherwise.  The weapon is queued as `pendingweapon` when granted.
-///
-/// # Safety
-///
-/// No reference into `player`'s slot may be live while this runs: the
-/// pickup sound reads the console player.
-pub unsafe fn P_GiveWeapon(_world: &mut World, player: PlayerId, weapon: i32, dropped: i32) -> i32 {
-    p_give_weapon(player, &mut *player.ptr(), weapon, dropped)
+pub fn P_GiveWeapon(world: &mut World, player: PlayerId, weapon: i32, dropped: i32) -> i32 {
+    p_give_weapon(player, &mut world.players[player], weapon, dropped)
 }
 
 /// Rust-side body of [`P_GiveWeapon`]. Takes `&mut PlayerT` so callers can
-/// pass an existing borrow; avoids re-deriving a second `&mut` from the
-/// same raw pointer. `player_id` names the slot `player` borrows.
+/// pass the slot they already borrow. `player_id` names the slot `player`
+/// borrows.
 fn p_give_weapon(player_id: PlayerId, player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
@@ -488,8 +482,8 @@ fn p_give_weapon(player_id: PlayerId, player: &mut PlayerT, weapon: i32, dropped
 /// # Safety
 ///
 /// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_GiveBody(_world: &mut World, player: PlayerId, num: i32) -> i32 {
-    player.write(|player| p_give_body(player, num))
+pub unsafe fn P_GiveBody(world: &mut World, player: PlayerId, num: i32) -> i32 {
+    p_give_body(&mut world.players[player], num)
 }
 
 /// Rust-side body of [`P_GiveBody`]. See [`p_give_ammo`] for rationale.
@@ -516,8 +510,8 @@ unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
 /// player already has at least that many armor points (i.e. the pick-up
 /// would not help).  Otherwise sets `armortype` and `armorpoints` and
 /// returns `1`.
-pub fn P_GiveArmor(_world: &mut World, player: PlayerId, armortype: i32) -> i32 {
-    player.write(|player| p_give_armor(player, armortype))
+pub fn P_GiveArmor(world: &mut World, player: PlayerId, armortype: i32) -> i32 {
+    p_give_armor(&mut world.players[player], armortype)
 }
 
 /// Rust-side body of [`P_GiveArmor`]. See [`p_give_ammo`] for rationale.
@@ -540,8 +534,8 @@ fn p_give_armor(player: &mut PlayerT, armortype: i32) -> i32 {
 /// Also adds `BONUSADD` to `bonuscount` to flash the HUD gold.  If the
 /// player already owns the card the function returns immediately without
 /// side-effects.
-pub fn P_GiveCard(_world: &mut World, player: PlayerId, card: i32) {
-    player.write(|player| p_give_card(player, card))
+pub fn P_GiveCard(world: &mut World, player: PlayerId, card: i32) {
+    p_give_card(&mut world.players[player], card)
 }
 
 /// Rust-side body of [`P_GiveCard`]. See [`p_give_ammo`] for rationale.
@@ -571,8 +565,8 @@ fn p_give_card(player: &mut PlayerT, card: i32) {
 ///
 /// For `pw_invisibility` and `pw_strength`, `player`'s `mo` must name a map
 /// object of the loaded level.
-pub unsafe fn P_GivePower(_world: &mut World, player: PlayerId, power: i32) -> i32 {
-    player.write(|player| p_give_power(player, power))
+pub unsafe fn P_GivePower(world: &mut World, player: PlayerId, power: i32) -> i32 {
+    p_give_power(&mut world.players[player], power)
 }
 
 /// Rust-side body of [`P_GivePower`]. See [`p_give_ammo`] for rationale.
@@ -626,9 +620,8 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `special_id` and `toucher_id` must name map objects of the level, and
-/// no reference into the toucher's player slot may be live (the toucher
-/// must be a player).  Global game-state statics (`players`, `consoleplayer`,
+/// `special_id` and `toucher_id` must name map objects of the level (the
+/// toucher must be a player).  Global game-state statics (`consoleplayer`,
 /// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
 /// game-logic thread.
 pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher_id: MobjId) {
@@ -664,10 +657,9 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
     let max_soulsphere = deh_max_soulsphere;
     let soulsphere_health = deh_soulsphere_health;
     let megasphere_health = deh_megasphere_health;
-    // `player` is the long-lived borrow. Every helper called below
-    // takes `&mut PlayerT` (the `p_give_*` inner fns), so no second
-    // `&mut PlayerT` is ever derived from the slot.
-    let player = &mut *player_id.ptr();
+    // `player` borrows the slot until the special is removed. Every helper
+    // called meanwhile takes `&mut PlayerT` (the `p_give_*` inner fns).
+    let player = &mut world.players[player_id];
 
     // Identify by sprite.
     match sprite {
@@ -993,7 +985,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         player.itemcount += 1;
     }
     P_RemoveMobj(world, special_id);
-    player.bonuscount += BONUSADD;
+    world.players[player_id].bonuscount += BONUSADD;
     if player_id == PlayerId::console() {
         S_StartNonPositionalSound(sound);
     }
@@ -1040,25 +1032,23 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
     let counts_kill = (*target).flags & MF_COUNTKILL != 0;
     let target_player = (*target).player;
     if let Some(source_player) = source_id.and_then(|source| (*source.ptr()).player) {
-        source_player.write(|source_player| {
-            if counts_kill {
-                source_player.killcount += 1;
-            }
-            if let Some(target_player) = target_player {
-                source_player.frags[target_player.index()] += 1;
-            }
-        });
+        let source_player = &mut world.players[source_player];
+        if counts_kill {
+            source_player.killcount += 1;
+        }
+        if let Some(target_player) = target_player {
+            source_player.frags[target_player.index()] += 1;
+        }
     } else if netgame() == 0 && counts_kill {
-        PlayerId::new(0).write(|player| player.killcount += 1);
+        world.players[0].killcount += 1;
     }
 
     if let Some(target_player) = target_player {
-        target_player.write(|player| {
-            if source.is_null() {
-                player.frags[target_player.index()] += 1;
-            }
-            player.playerstate = 1; // PST_DEAD
-        });
+        let player = &mut world.players[target_player];
+        if source.is_null() {
+            player.frags[target_player.index()] += 1;
+        }
+        player.playerstate = 1; // PST_DEAD
         (*target).flags &= !MF_SOLID;
         P_DropWeapon(world, target_player);
         if target_player == PlayerId::console() && automap_active() {
@@ -1121,9 +1111,8 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
 /// # Safety
 ///
 /// `target_id` must name a map object of the level. `inflictor_id` and
-/// `source_id` may be `None`.  No reference into the target player's slot
-/// may be live.  All global game-state statics must only be accessed from
-/// the game-logic thread.
+/// `source_id` may be `None`.  All global game-state statics must only be
+/// accessed from the game-logic thread.
 pub unsafe fn P_DamageMobj(
     world: &mut World,
     target_id: MobjId,
@@ -1154,9 +1143,9 @@ pub unsafe fn P_DamageMobj(
     if !inflictor.is_null()
         && ((*target).flags & MF_NOCLIP) == 0
         && (source.is_null()
-            || (*source)
-                .player
-                .is_none_or(|source_player| source_player.read(|p| p.readyweapon) != wp_chainsaw))
+            || (*source).player.is_none_or(|source_player| {
+                world.players[source_player].readyweapon != wp_chainsaw
+            }))
     {
         let mut ang = R_PointToAngle2((*inflictor).x, (*inflictor).y, (*target).x, (*target).y);
         let info = (*target).info.get();
@@ -1183,11 +1172,12 @@ pub unsafe fn P_DamageMobj(
             damage = (*target).health - 1;
         }
 
-        let protected = player_id.write(|player| {
+        let player = &mut world.players[player_id];
+        let protected = 'protected: {
             if damage < 1000
                 && ((player.cheats & CF_GODMODE) != 0 || player.powers[pw_invulnerability] != 0)
             {
-                return true;
+                break 'protected true;
             }
 
             if player.armortype != 0 {
@@ -1214,7 +1204,7 @@ pub unsafe fn P_DamageMobj(
                 player.damagecount = 100;
             }
             false
-        });
+        };
         if protected {
             return;
         }

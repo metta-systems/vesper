@@ -17,7 +17,10 @@
 //! status bar background).
 //!
 //! Notable Rust-vs-C differences:
-//! * C `boolean*` is `*mut i32` throughout.
+//! * C widgets keep `int*` / `boolean*` pointers to the value they show and
+//!   to their visibility flag (fields of the player and of the status
+//!   state). Here the `STlib_update*` calls receive the value and the flag
+//!   instead, so nothing points into the player slots.
 //! * The `SHORT` macro (little-endian swap) is an identity function on x86_64.
 //! * C `patch_t**` patch arrays are `*const [Option<Patch<'static>>]`
 //!   pointers to the patch tables in the status state, and a single
@@ -76,7 +79,6 @@ const ST_Y: i32 = 200 - ST_HEIGHT; // 168
 ///
 /// # Invariants
 /// * `p` must point to a table of the loaded digit patches 0-9 when drawing.
-/// * `on` and `num` must be valid non-null pointers for the widget's lifetime.
 #[derive(Clone, Copy)]
 pub struct st_number_t {
     /// Right edge X coordinate of the number (digits extend leftward from here).
@@ -87,11 +89,6 @@ pub struct st_number_t {
     pub width: i32,
     /// Cached value from the previous frame; used to detect changes.
     pub oldnum: i32,
-    /// Pointer to the current integer value to display.
-    pub num: *mut i32,
-    /// Visibility flag pointer; widget is only drawn when `*on != 0`.
-    /// Maps to `boolean*` in C.
-    pub on: *mut i32, // boolean* (i32 in C)
     /// Array of digit patches; `p[d]` is the patch for digit `d` (0-9).
     pub p: PatchTable,
     /// User-defined auxiliary data (unused by the widget library itself).
@@ -99,14 +96,12 @@ pub struct st_number_t {
 }
 
 impl st_number_t {
-    /// A number widget before [`STlib_initNum`]: no value, no patches.
+    /// A number widget before [`STlib_initNum`]: no patches.
     pub const EMPTY: Self = Self {
         x: 0,
         y: 0,
         width: 0,
         oldnum: 0,
-        num: ptr::null_mut(),
-        on: ptr::null_mut(),
         p: ptr::slice_from_raw_parts(ptr::null(), 0),
         data: 0,
     };
@@ -142,9 +137,9 @@ impl st_percent_t {
 /// drawn.
 ///
 /// # Invariants
-/// * `p` must point to a table holding loaded patches for all possible
-///   values of `*inum`.
-/// * `inum == -1` means "no image"; the widget skips drawing entirely.
+/// * `p` must point to a table holding loaded patches for every index the
+///   widget is given.
+/// * An index of `-1` means "no image"; the widget skips drawing entirely.
 #[derive(Clone, Copy)]
 pub struct st_multicon_t {
     /// Center-justified screen X position (patch offset subtracted at draw time).
@@ -154,39 +149,41 @@ pub struct st_multicon_t {
     /// Index of the patch displayed in the previous frame; `-1` if no patch was
     /// shown.
     pub oldinum: i32,
-    /// Pointer to the current icon index; `-1` suppresses drawing.
-    pub inum: *mut i32,
-    /// Visibility flag pointer; widget is only drawn when `*on != 0`.
-    pub on: *mut i32,
-    /// Array of icon patches indexed by `*inum`.
+    /// Array of icon patches indexed by the icon index.
     pub p: PatchTable,
     /// User-defined auxiliary data (unused by the widget library itself).
     pub data: i32,
 }
 
+impl st_multicon_t {
+    /// A multi-icon widget before [`STlib_initMultIcon`]: no patches.
+    pub const EMPTY: Self = Self {
+        x: 0,
+        y: 0,
+        oldinum: 0,
+        p: ptr::slice_from_raw_parts(ptr::null(), 0),
+        data: 0,
+    };
+}
+
 /// A widget that shows a single patch when a boolean flag is set.
 ///
-/// Corresponds to `st_binicon_t` in `st_lib.h`. When `*val` transitions from
-/// zero to non-zero the patch is drawn; when it transitions back to zero the
-/// patch area is erased from the backing screen. Used for key-card presence
-/// indicators and similar binary status elements.
+/// Corresponds to `st_binicon_t` in `st_lib.h`. When the value transitions
+/// from zero to non-zero the patch is drawn; when it transitions back to zero
+/// the patch area is erased from the backing screen. Used for key-card
+/// presence indicators and similar binary status elements.
 ///
 /// # Invariants
 /// * `p` must be loaded when the widget draws.
-/// * `val` and `on` must be valid non-null pointers.
 #[derive(Clone, Copy)]
 pub struct st_binicon_t {
     /// Center-justified screen X position.
     pub x: i32,
     /// Center-justified screen Y position.
     pub y: i32,
-    /// Cached value of `*val` from the previous frame.
+    /// The value drawn in the previous frame.
     pub oldval: i32,
-    /// Pointer to the current boolean value (non-zero = draw, zero = hide).
-    pub val: *mut i32,
-    /// Visibility flag pointer; widget is only drawn when `*on != 0`.
-    pub on: *mut i32,
-    /// The patch to display when `*val != 0`.
+    /// The patch to display when the value is non-zero.
     pub p: Option<Patch<'static>>,
     /// User-defined auxiliary data (unused by the widget library itself).
     pub data: i32,
@@ -198,8 +195,6 @@ impl st_binicon_t {
         x: 0,
         y: 0,
         oldval: 0,
-        val: ptr::null_mut(),
-        on: ptr::null_mut(),
         p: None,
         data: 0,
     };
@@ -231,35 +226,18 @@ pub fn STlib_init() {
 
 /// Initialize a number widget.
 ///
-/// Stores the position, digit-patch array, value pointer, visibility flag,
-/// and field width into `*n`. Sets `oldnum` to 0.
-///
-/// # Safety
-/// * `n` must be a valid non-null pointer.
-/// * `pl` must point to a table of the 10 digit patches (0-9) for the
-///   widget's lifetime.
-/// * `num` and `on` must be valid non-null pointers for the widget's lifetime.
-pub unsafe fn STlib_initNum(
-    n: *mut st_number_t,
-    x: i32,
-    y: i32,
-    pl: PatchTable,
-    num: *mut i32,
-    on: *mut i32,
-    width: i32,
-) {
-    unsafe {
-        (*n).x = x;
-        (*n).y = y;
-        (*n).oldnum = 0;
-        (*n).width = width;
-        (*n).num = num;
-        (*n).on = on;
-        (*n).p = pl;
-    }
+/// Stores the position, digit-patch array and field width into `n`. Sets
+/// `oldnum` to 0. `pl` must point to a table of the 10 digit patches (0-9)
+/// whenever the widget draws.
+pub fn STlib_initNum(n: &mut st_number_t, x: i32, y: i32, pl: PatchTable, width: i32) {
+    n.x = x;
+    n.y = y;
+    n.oldnum = 0;
+    n.width = width;
+    n.p = pl;
 }
 
-/// Draw a number widget unconditionally.
+/// Draw a number widget showing `num` unconditionally.
 ///
 /// Algorithm:
 /// 1. Clamp negative values only for `width == 2` (floor at -9) and
@@ -277,17 +255,16 @@ pub unsafe fn STlib_initNum(
 /// (`n->y - ST_Y < 0`).
 ///
 /// # Safety
-/// `n` must be a valid non-null pointer to a widget set up by
-/// [`STlib_initNum`].
-pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
+/// `n` must be a widget set up by [`STlib_initNum`], whose patch table is
+/// live.
+pub unsafe fn STlib_drawNum(n: &mut st_number_t, num: i32, _refresh: i32) {
     unsafe {
-        let mut numdigits = (*n).width;
-        let num = *(*n).num;
+        let mut numdigits = n.width;
 
-        let digit_zero = table_patch((*n).p, 0);
+        let digit_zero = table_patch(n.p, 0);
         let w = digit_zero.width();
         let h = digit_zero.height();
-        (*n).oldnum = num;
+        n.oldnum = num;
 
         let neg = num < 0;
         let mut num = num;
@@ -302,38 +279,30 @@ pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
         }
 
         // clear the area
-        let mut x = (*n).x - numdigits * w;
+        let mut x = n.x - numdigits * w;
 
-        if (*n).y - ST_Y < 0 {
+        if n.y - ST_Y < 0 {
             i_error!("drawNum: n->y - ST_Y < 0");
         }
 
-        V_CopyRect(
-            x,
-            (*n).y - ST_Y,
-            backing_screen(),
-            w * numdigits,
-            h,
-            x,
-            (*n).y,
-        );
+        V_CopyRect(x, n.y - ST_Y, backing_screen(), w * numdigits, h, x, n.y);
 
         // if non-number, do not draw it
         if num == 1994 {
             return;
         }
 
-        x = (*n).x;
+        x = n.x;
 
         // in the special case of 0, you draw 0
         if num == 0 {
-            V_DrawPatch(x - w, (*n).y, digit_zero);
+            V_DrawPatch(x - w, n.y, digit_zero);
         }
 
         // draw the new number
         while num != 0 && numdigits > 0 {
             x -= w;
-            V_DrawPatch(x, (*n).y, table_patch((*n).p, num % 10));
+            V_DrawPatch(x, n.y, table_patch(n.p, num % 10));
             num /= 10;
             numdigits -= 1;
         }
@@ -341,24 +310,25 @@ pub unsafe fn STlib_drawNum(n: *mut st_number_t, _refresh: i32) {
         // draw a minus sign if necessary
         if neg {
             let sttminus = STATUS.borrow().sttminus;
-            V_DrawPatch(x - 8, (*n).y, loaded_patch(sttminus));
+            V_DrawPatch(x - 8, n.y, loaded_patch(sttminus));
         }
     }
 }
 
-/// Update a number widget, redrawing it if the widget is visible.
+/// Update a number widget showing `num`, redrawing it if the widget is
+/// visible (`on`).
 ///
-/// Calls [`STlib_drawNum`] when `*n.on != 0`. In the C original this function
+/// Calls [`STlib_drawNum`] when `on`. In the C original this function
 /// also checked whether the value had changed before drawing; this port always
 /// redraws when visible (matching the `refresh` path).
 ///
 /// # Safety
-/// `n` must be a valid non-null pointer to a widget set up by
-/// [`STlib_initNum`].
-pub unsafe fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
+/// `n` must be a widget set up by [`STlib_initNum`], whose patch table is
+/// live.
+pub unsafe fn STlib_updateNum(n: &mut st_number_t, num: i32, on: bool, refresh: i32) {
     unsafe {
-        if *(*n).on != 0 {
-            STlib_drawNum(n, refresh);
+        if on {
+            STlib_drawNum(n, num, refresh);
         }
     }
 }
@@ -366,99 +336,74 @@ pub unsafe fn STlib_updateNum(n: *mut st_number_t, refresh: i32) {
 /// Initialize a percent widget.
 ///
 /// Calls [`STlib_initNum`] with `width = 3` for the embedded number, then
-/// stores the `%` sign patch in `p.p`.
-///
-/// # Safety
-/// * `p` must be a valid non-null pointer.
-/// * `pl` must point to a table of the 10 digit patches for the widget's
-///   lifetime.
-/// * `num` and `on` must be valid non-null pointers.
-pub unsafe fn STlib_initPercent(
-    p: *mut st_percent_t,
+/// stores the `%` sign patch in `p.p`. `pl` must point to a table of the 10
+/// digit patches whenever the widget draws.
+pub fn STlib_initPercent(
+    p: &mut st_percent_t,
     x: i32,
     y: i32,
     pl: PatchTable,
-    num: *mut i32,
-    on: *mut i32,
     percent: Option<Patch<'static>>,
 ) {
-    unsafe {
-        STlib_initNum(&mut (*p).n, x, y, pl, num, on, 3);
-    }
-    unsafe {
-        (*p).p = percent;
-    }
+    STlib_initNum(&mut p.n, x, y, pl, 3);
+    p.p = percent;
 }
 
-/// Update a percent widget, drawing the `%` patch and updating the number.
+/// Update a percent widget showing `num`, drawing the `%` patch and updating
+/// the number.
 ///
-/// When `refresh != 0` and the widget is visible, draws the `%` patch at the
-/// number's position before delegating to [`STlib_updateNum`].
+/// When `refresh != 0` and the widget is visible (`on`), draws the `%` patch
+/// at the number's position before delegating to [`STlib_updateNum`].
 ///
 /// # Safety
-/// `per` must be a valid non-null pointer to a widget set up by
-/// [`STlib_initPercent`].
-pub unsafe fn STlib_updatePercent(per: *mut st_percent_t, refresh: i32) {
+/// `per` must be a widget set up by [`STlib_initPercent`], whose patch table
+/// is live.
+pub unsafe fn STlib_updatePercent(per: &mut st_percent_t, num: i32, on: bool, refresh: i32) {
     unsafe {
-        if refresh != 0 && *(*per).n.on != 0 {
-            V_DrawPatch((*per).n.x, (*per).n.y, loaded_patch((*per).p));
+        if refresh != 0 && on {
+            V_DrawPatch(per.n.x, per.n.y, loaded_patch(per.p));
         }
-        STlib_updateNum(&mut (*per).n, refresh);
+        STlib_updateNum(&mut per.n, num, on, refresh);
     }
 }
 
 /// Initialize a multi-icon widget.
 ///
-/// Sets position, patch array, current-index pointer, and visibility flag.
-/// `oldinum` is initialized to `-1` so the first draw is unconditional.
-///
-/// # Safety
-/// * `i`, `inum` and `on` must be valid non-null pointers.
-/// * `il` must point to a patch table covering all expected index values
-///   for the widget's lifetime.
-pub unsafe fn STlib_initMultIcon(
-    i: *mut st_multicon_t,
-    x: i32,
-    y: i32,
-    il: PatchTable,
-    inum: *mut i32,
-    on: *mut i32,
-) {
-    unsafe {
-        (*i).x = x;
-        (*i).y = y;
-        (*i).oldinum = -1;
-        (*i).inum = inum;
-        (*i).on = on;
-        (*i).p = il;
-    }
+/// Sets position and patch array. `oldinum` is initialized to `-1` so the
+/// first draw is unconditional. `il` must point to a patch table covering
+/// every index the widget is given whenever it draws.
+pub fn STlib_initMultIcon(i: &mut st_multicon_t, x: i32, y: i32, il: PatchTable) {
+    i.x = x;
+    i.y = y;
+    i.oldinum = -1;
+    i.p = il;
 }
 
-/// Update a multi-icon widget, redrawing if the index changed or refresh is
-/// requested.
+/// Update a multi-icon widget showing icon `inum`, redrawing if the index
+/// changed or refresh is requested.
 ///
-/// When the widget is visible and (`oldinum != *inum` or `refresh != 0`) and
-/// `*inum != -1`:
+/// When the widget is visible (`on`) and (`oldinum != inum` or
+/// `refresh != 0`) and `inum != -1`:
 /// * If there was a previous icon (`oldinum != -1`), erases it by blitting its
 ///   patch area from `st_backing_screen`.
 /// * Draws the new icon patch using `V_DrawPatch`.
 /// * Updates `oldinum`.
 ///
-/// Skips all work when `*on == 0` or `*inum == -1`.
+/// Skips all work when not `on` or `inum == -1`.
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`) when erasing a previous icon.
 ///
 /// # Safety
-/// `mi` must be a valid non-null pointer to a widget set up by
-/// [`STlib_initMultIcon`].
-pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
+/// `mi` must be a widget set up by [`STlib_initMultIcon`], whose patch table
+/// is live.
+pub unsafe fn STlib_updateMultIcon(mi: &mut st_multicon_t, inum: i32, on: bool, refresh: i32) {
     unsafe {
-        if *(*mi).on != 0 && ((*mi).oldinum != *(*mi).inum || refresh != 0) && *(*mi).inum != -1 {
-            if (*mi).oldinum != -1 {
-                let old_patch = table_patch((*mi).p, (*mi).oldinum);
-                let x = (*mi).x - old_patch.leftoffset();
-                let y = (*mi).y - old_patch.topoffset();
+        if on && (mi.oldinum != inum || refresh != 0) && inum != -1 {
+            if mi.oldinum != -1 {
+                let old_patch = table_patch(mi.p, mi.oldinum);
+                let x = mi.x - old_patch.leftoffset();
+                let y = mi.y - old_patch.topoffset();
                 let w = old_patch.width();
                 let h = old_patch.height();
 
@@ -468,59 +413,45 @@ pub unsafe fn STlib_updateMultIcon(mi: *mut st_multicon_t, refresh: i32) {
 
                 V_CopyRect(x, y - ST_Y, backing_screen(), w, h, x, y);
             }
-            V_DrawPatch((*mi).x, (*mi).y, table_patch((*mi).p, *(*mi).inum));
-            (*mi).oldinum = *(*mi).inum;
+            V_DrawPatch(mi.x, mi.y, table_patch(mi.p, inum));
+            mi.oldinum = inum;
         }
     }
 }
 
 /// Initialize a binary icon widget.
 ///
-/// Sets position, icon patch, value pointer, and visibility flag. `oldval` is
-/// initialized to 0.
-///
-/// # Safety
-/// * `b`, `val`, and `on` must be valid non-null pointers.
-pub unsafe fn STlib_initBinIcon(
-    b: *mut st_binicon_t,
-    x: i32,
-    y: i32,
-    i: Option<Patch<'static>>,
-    val: *mut i32,
-    on: *mut i32,
-) {
-    unsafe {
-        (*b).x = x;
-        (*b).y = y;
-        (*b).oldval = 0;
-        (*b).val = val;
-        (*b).on = on;
-        (*b).p = i;
-    }
+/// Sets position and icon patch. `oldval` is initialized to 0.
+pub fn STlib_initBinIcon(b: &mut st_binicon_t, x: i32, y: i32, i: Option<Patch<'static>>) {
+    b.x = x;
+    b.y = y;
+    b.oldval = 0;
+    b.p = i;
 }
 
-/// Update a binary icon widget, toggling the patch when the value changes.
+/// Update a binary icon widget showing `val`, toggling the patch when the
+/// value changes.
 ///
-/// When the widget is visible and (`oldval != *val` or `refresh != 0`):
+/// When the widget is visible (`on`) and (`oldval != val` or
+/// `refresh != 0`):
 /// * Computes the patch's top-left corner using its `leftoffset` / `topoffset`.
-/// * If `*val != 0`, draws the patch with `V_DrawPatch`.
-/// * If `*val == 0`, erases the patch area by blitting from `st_backing_screen`.
+/// * If `val != 0`, draws the patch with `V_DrawPatch`.
+/// * If `val == 0`, erases the patch area by blitting from `st_backing_screen`.
 /// * Updates `oldval`.
 ///
-/// Skips all work when `*on == 0`.
+/// Skips all work when not `on`.
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`).
 ///
 /// # Safety
-/// `bi` must be a valid non-null pointer to a widget set up by
-/// [`STlib_initBinIcon`].
-pub unsafe fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
+/// The status bar's backing screen must be allocated.
+pub unsafe fn STlib_updateBinIcon(bi: &mut st_binicon_t, val: i32, on: bool, refresh: i32) {
     unsafe {
-        if *(*bi).on != 0 && ((*bi).oldval != *(*bi).val || refresh != 0) {
-            let p = loaded_patch((*bi).p);
-            let x = (*bi).x - p.leftoffset();
-            let y = (*bi).y - p.topoffset();
+        if on && (bi.oldval != val || refresh != 0) {
+            let p = loaded_patch(bi.p);
+            let x = bi.x - p.leftoffset();
+            let y = bi.y - p.topoffset();
             let w = p.width();
             let h = p.height();
 
@@ -528,13 +459,13 @@ pub unsafe fn STlib_updateBinIcon(bi: *mut st_binicon_t, refresh: i32) {
                 i_error!("updateBinIcon: y - ST_Y < 0");
             }
 
-            if *(*bi).val != 0 {
-                V_DrawPatch((*bi).x, (*bi).y, p);
+            if val != 0 {
+                V_DrawPatch(bi.x, bi.y, p);
             } else {
                 V_CopyRect(x, y - ST_Y, backing_screen(), w, h, x, y);
             }
 
-            (*bi).oldval = *(*bi).val;
+            bi.oldval = val;
         }
     }
 }

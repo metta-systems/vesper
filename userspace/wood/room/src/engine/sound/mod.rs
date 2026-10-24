@@ -122,6 +122,9 @@ use crate::engine::doom::stat::gamemode;
 // d_player.rs
 use crate::engine::doom::player::PlayerId;
 
+// The play state the listener is read from.
+use crate::engine::world::World;
+
 // g_game.rs
 use crate::engine::game::{gameepisode, gamemap};
 
@@ -499,16 +502,17 @@ unsafe fn S_AdjustSoundParams(
 /// stopped with `S_StopSound` (as `P_RemoveMobj` does): the channel keeps
 /// the handle and `S_UpdateSounds` reads the object's position every tic.
 /// No reference to `origin` or the console player's object may be live.
-pub unsafe fn S_StartSound(origin: MobjId, sfx_id: i32) {
-    S_StartOriginSound(Some(SoundOrigin::Mobj(origin)), sfx_id);
+pub unsafe fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
+    S_StartOriginSound(listener(world), Some(SoundOrigin::Mobj(origin)), sfx_id);
 }
 
 /// Start an SFX with id `sfx_id` that is not attached to anything in the
 /// map, so it plays centred at full SFX volume (menus, intermission, global
 /// boss sounds). C passes a null origin to `S_StartSound` for these.
 pub fn S_StartNonPositionalSound(sfx_id: i32) {
-    // SAFETY: no origin is stored or read for a non-positional sound.
-    unsafe { S_StartOriginSound(None, sfx_id) }
+    // SAFETY: no origin is stored or read for a non-positional sound, so
+    // the listener is not read either.
+    unsafe { S_StartOriginSound(None, None, sfx_id) }
 }
 
 /// Start an SFX from `sector`'s sound origin (`sector_t::soundorg`) with id
@@ -518,24 +522,31 @@ pub fn S_StartNonPositionalSound(sfx_id: i32) {
 /// every tic; `S_Start` stops every channel when the next level starts, so
 /// the sector always belongs to the loaded level. The level must not be
 /// mutably borrowed during the call.
-pub fn S_StartSectorSound(sector: SectorId, sfx_id: i32) {
+pub fn S_StartSectorSound(world: &World, sector: SectorId, sfx_id: i32) {
     // SAFETY: a sector origin stays valid for as long as its level is
     // loaded, and its sound is stopped before the next level loads.
-    unsafe { S_StartOriginSound(Some(SoundOrigin::Sector(sector)), sfx_id) }
+    unsafe { S_StartOriginSound(listener(world), Some(SoundOrigin::Sector(sector)), sfx_id) }
 }
 
-/// Start an SFX from `origin` (`None` for a non-positional sound).
+/// The listener positional sounds are heard from: the console player's
+/// map object (C `players[consoleplayer].mo`).
+fn listener(world: &World) -> Option<MobjId> {
+    world.players[PlayerId::console()].mo
+}
+
+/// Start an SFX from `origin` (`None` for a non-positional sound), heard
+/// from `listener` (the console player's object).
 ///
 /// Bogus ids are silently dropped. If the sfx has a `link`, its `volume`
 /// modifier is applied and clamped. Stereo/volume are computed from the
-/// listener (the console player) unless `origin` is the listener itself, in
-/// which case stereo is forced to centre. The chosen sfx replaces any sound
-/// already playing on `origin`. C origin: `S_StartSound` in `s_sound.c`.
+/// listener unless `origin` is the listener itself, in which case stereo is
+/// forced to centre. The chosen sfx replaces any sound already playing on
+/// `origin`. C origin: `S_StartSound` in `s_sound.c`.
 ///
 /// # Safety
 /// The object `origin` wraps must stay live until its sound stops (see
 /// `S_StartSound`); the channel keeps it and `S_UpdateSounds` reads it.
-unsafe fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
+unsafe fn S_StartOriginSound(listener: Option<MobjId>, origin: Option<SoundOrigin>, sfx_id: i32) {
     unsafe {
         let snd_SfxVolume = SOUND.get().snd_SfxVolume;
         let mut volume = snd_SfxVolume;
@@ -561,13 +572,12 @@ unsafe fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
 
         let mut sep: i32 = NORM_SEP;
 
-        let player_mo = PlayerId::console().read(|console| console.mo);
         if let Some(source) =
-            origin.filter(|&source| Some(source) != player_mo.map(SoundOrigin::Mobj))
+            origin.filter(|&source| Some(source) != listener.map(SoundOrigin::Mobj))
         {
             // C reads the listener without a check: a positional sound
             // plays only while the console player is in the level.
-            let listener = PlayerId::console().mo();
+            let listener = listener.expect("player has no map object");
             let rc = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
 
             if source.position() == SoundOrigin::Mobj(listener).position() {

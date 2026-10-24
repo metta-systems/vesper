@@ -309,7 +309,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
     );
 
     if (leveltime() & 7) == 0 {
-        S_StartSectorSound((*floor).sector, Sfx::Stnmov as i32);
+        S_StartSectorSound(world, (*floor).sector, Sfx::Stnmov as i32);
     }
 
     if res == result_pastdest {
@@ -330,7 +330,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
         }
         P_RemoveThinker(&mut (*floor).thinker);
 
-        S_StartSectorSound((*floor).sector, Sfx::Pstop as i32);
+        S_StartSectorSound(world, (*floor).sector, Sfx::Pstop as i32);
     }
 }
 

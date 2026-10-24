@@ -179,7 +179,7 @@ pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
         match (*ceiling).kind {
             x if x == silentCrushAndRaise => {}
             _ => {
-                S_StartSectorSound((*ceiling).sector, Sfx::Stnmov as i32);
+                S_StartSectorSound(world, (*ceiling).sector, Sfx::Stnmov as i32);
             }
         }
     }
@@ -190,7 +190,7 @@ pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
                 P_RemoveActiveCeiling(world, ceiling_id);
             }
             x if x == silentCrushAndRaise => {
-                S_StartSectorSound((*ceiling).sector, Sfx::Pstop as i32);
+                S_StartSectorSound(world, (*ceiling).sector, Sfx::Pstop as i32);
             }
             x if x == fastCrushAndRaise || x == crushAndRaise => {
                 (*ceiling).direction = -1;

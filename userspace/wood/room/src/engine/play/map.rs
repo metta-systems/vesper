@@ -1472,7 +1472,7 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, in_: *mut intercept_t) -> u32 {
             P_LineOpening(&level, line);
             drop(level);
             if openrange() <= 0 {
-                S_StartSound(usething_id, Sfx::Noway as i32);
+                S_StartSound(world, usething_id, Sfx::Noway as i32);
                 return 0;
             }
             return 1;
@@ -1498,7 +1498,7 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, in_: *mut intercept_t) -> u32 {
 /// `player`'s `mo` must name a map object of the loaded level. Map data
 /// must be initialised.
 pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
-    let mo_id = player.mo();
+    let mo_id = world.players[player].mo();
     let mo = mo_id.ptr();
     MAP.borrow_mut().usething = Some(mo_id);
     let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;

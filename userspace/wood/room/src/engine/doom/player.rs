@@ -1,7 +1,7 @@
 //! Player types from `d_player.h`.
 //!
 //! Provides `PlayerT`, `TiccmdT`, `PspdefT`, the `PlayerId` that names a
-//! slot of the C global `players`, and `consoleplayer`.
+//! slot of `World::players` (C global `players`), and `consoleplayer`.
 //! Also implements `M_Menu_SetPlayerMessage`.
 //!
 //! In the original C code `player_t`, `ticcmd_t`, and `pspdef_t` are spread
@@ -15,7 +15,12 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::play::{info::StateNum, mobj::MobjId};
+use std::ops::{Index, IndexMut};
+
+use crate::engine::{
+    play::{info::StateNum, mobj::MobjId},
+    world::WORLD,
+};
 
 /// Number of power-up slots in `PlayerT::powers`.  Matches `NUMPOWERS` in `doomdef.h`.
 pub const NUMPOWERS: usize = 6;
@@ -199,14 +204,20 @@ impl PlayerT {
     pub fn mo(&self) -> MobjId {
         self.mo.expect("player has no map object")
     }
+
+    /// Set the HUD hint message (C `player->message = text`).
+    pub fn set_message(&mut self, text: impl AsRef<[u8]>) {
+        self.message = PlayerMessage::new(text);
+    }
 }
 
 /// The index of the player whose view is shown locally (`consoleplayer`),
 /// defined in `g_game`.
 pub use crate::engine::game::consoleplayer;
 
-/// Names one of the [`MAXPLAYERS`] slots in `players` (`g_game`); C passes
-/// and stores `&players[i]` where Rust passes and stores a `PlayerId`.
+/// Names one of the [`MAXPLAYERS`] slots in `World::players`; C passes and
+/// stores `&players[i]` where Rust passes and stores a `PlayerId`, and reads
+/// the slot as `world.players[id]`.
 ///
 /// The index is checked when the id is made, so every id names a slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -239,58 +250,21 @@ impl PlayerId {
     pub fn index(self) -> usize {
         usize::from(self.0)
     }
+}
 
-    /// Pointer to the slot, stable for the whole program.
-    ///
-    /// For code that keeps the player across calls back into play code,
-    /// which may reach the same slot (weapon actions, `P_PlayerThink`,
-    /// damage): such code reads and writes through this pointer for its
-    /// whole body, as C does through `player_t *`. Every use of it is a
-    /// place the move to explicit world borrows still has to rework.
-    pub fn ptr(self) -> *mut PlayerT {
-        use crate::engine::game::PLAYERS;
-        // SAFETY: in-bounds projection on the stable state pointer.
-        unsafe { PLAYERS.as_ptr().cast::<PlayerT>().add(self.index()) }
+/// The player slots (C `players[MAXPLAYERS]`), indexed by [`PlayerId`]:
+/// `world.players[id]` is C's `*player`.
+impl Index<PlayerId> for [PlayerT; MAXPLAYERS] {
+    type Output = PlayerT;
+
+    fn index(&self, id: PlayerId) -> &PlayerT {
+        &self[id.index()]
     }
+}
 
-    /// Run `f` on the slot for reading.
-    ///
-    /// `f` must not reach play code; the slot stays borrowed while it runs.
-    ///
-    /// # Panics
-    ///
-    /// In debug builds, if the players are mutably borrowed.
-    #[track_caller]
-    pub fn read<R>(self, f: impl FnOnce(&PlayerT) -> R) -> R {
-        f(&crate::engine::game::PLAYERS.borrow()[self.index()])
-    }
-
-    /// Run `f` on the slot for writing.
-    ///
-    /// `f` must not reach play code; the slot stays borrowed while it runs.
-    ///
-    /// # Panics
-    ///
-    /// In debug builds, if the players are borrowed.
-    #[track_caller]
-    pub fn write<R>(self, f: impl FnOnce(&mut PlayerT) -> R) -> R {
-        f(&mut crate::engine::game::PLAYERS.borrow_mut()[self.index()])
-    }
-
-    /// The player's map object (C `player->mo`).
-    ///
-    /// # Panics
-    ///
-    /// If the player has not been spawned.
-    #[track_caller]
-    pub fn mo(self) -> MobjId {
-        self.read(PlayerT::mo)
-    }
-
-    /// Set the player's HUD hint message (C `player->message = text`).
-    pub fn set_message(self, text: impl AsRef<[u8]>) {
-        let message = PlayerMessage::new(text);
-        self.write(|player| player.message = message);
+impl IndexMut<PlayerId> for [PlayerT; MAXPLAYERS] {
+    fn index_mut(&mut self, id: PlayerId) -> &mut PlayerT {
+        &mut self[id.index()]
     }
 }
 
@@ -301,9 +275,9 @@ impl PlayerId {
 /// `players[consoleplayer].message` so the HUD renderer can display it.
 ///
 /// Called from `m_menu` when a menu action produces a status message
-/// (e.g., "Gamma correction OFF").
+/// (e.g., "Gamma correction OFF"); the menu runs outside any world borrow.
 pub fn M_Menu_SetPlayerMessage(msg: &str) {
-    PlayerId::console().set_message(msg);
+    WORLD.borrow_mut().players[PlayerId::console()].set_message(msg);
 }
 
 /// A HUD hint message, stored inline so [`PlayerT`] stays `Copy` and a

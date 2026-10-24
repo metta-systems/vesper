@@ -9,7 +9,7 @@ use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     dehacked::DEH_String,
-    doom::player::{PlayerId, PlayerMessage},
+    doom::player::{PlayerMessage, PlayerT},
     interface::timer::TICRATE,
     map::{LineId, SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
@@ -109,15 +109,15 @@ fn locked_door_message(special: i32) -> PlayerMessage {
 /// `player` holds key `card` or `skull`. A player holding neither gets
 /// `message` and the "oof" sound.
 fn has_key_or_complain(
-    player: PlayerId,
+    player: &mut PlayerT,
     card: usize,
     skull: usize,
     message: PlayerMessage,
 ) -> bool {
-    if player.read(|player| player.cards[card] != 0 || player.cards[skull] != 0) {
+    if player.cards[card] != 0 || player.cards[skull] != 0 {
         return true;
     }
-    player.write(|player| player.message = message);
+    player.message = message;
     S_StartNonPositionalSound(Sfx::Oof as i32);
     false
 }
@@ -177,15 +177,15 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                 match (*door).kind {
                     x if x == vld_blazeRaise => {
                         (*door).direction = -1;
-                        S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal => {
                         (*door).direction = -1;
-                        S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
                     }
                     x if x == vld_close30ThenOpen => {
                         (*door).direction = 1;
-                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -199,7 +199,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                     x if x == vld_raiseIn5Mins => {
                         (*door).direction = 1;
                         (*door).kind = vld_normal;
-                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
                     }
                     _ => {}
                 }
@@ -214,7 +214,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
                         clear_specialdata((*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
-                        S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal || x == vld_close => {
                         clear_specialdata((*door).sector);
@@ -233,7 +233,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                     }
                     _ => {
                         (*door).direction = 1;
-                        S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
+                        S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
                     }
                 }
             }
@@ -296,7 +296,12 @@ pub unsafe fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing
         _ => None,
     };
     if let Some((card, skull)) = keys
-        && !has_key_or_complain(player, card, skull, locked_object_message(special))
+        && !has_key_or_complain(
+            &mut world.players[player],
+            card,
+            skull,
+            locked_object_message(special),
+        )
     {
         return 0;
     }
@@ -315,7 +320,7 @@ pub unsafe fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoDoor(_world: &mut World, line: &line_t, kind: i32) -> i32 {
+pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
@@ -354,18 +359,18 @@ pub unsafe fn EV_DoDoor(_world: &mut World, line: &line_t, kind: i32) -> i32 {
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
                 (*door).speed = VDOORSPEED * 4;
-                S_StartSectorSound((*door).sector, Sfx::Bdcls as i32);
+                S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
             }
             x if x == vld_close => {
                 (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).direction = -1;
-                S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
+                S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
             }
             x if x == vld_close30ThenOpen => {
                 (*door).topheight = ceilingheight;
                 (*door).direction = -1;
-                S_StartSectorSound((*door).sector, Sfx::Dorcls as i32);
+                S_StartSectorSound(world, (*door).sector, Sfx::Dorcls as i32);
             }
             x if x == vld_blazeRaise || x == vld_blazeOpen => {
                 (*door).direction = 1;
@@ -373,7 +378,7 @@ pub unsafe fn EV_DoDoor(_world: &mut World, line: &line_t, kind: i32) -> i32 {
                 (*door).topheight -= 4 * FRACUNIT;
                 (*door).speed = VDOORSPEED * 4;
                 if (*door).topheight != ceilingheight {
-                    S_StartSectorSound((*door).sector, Sfx::Bdopn as i32);
+                    S_StartSectorSound(world, (*door).sector, Sfx::Bdopn as i32);
                 }
             }
             x if x == vld_normal || x == vld_open => {
@@ -381,7 +386,7 @@ pub unsafe fn EV_DoDoor(_world: &mut World, line: &line_t, kind: i32) -> i32 {
                 (*door).topheight = lowest_ceiling;
                 (*door).topheight -= 4 * FRACUNIT;
                 if (*door).topheight != ceilingheight {
-                    S_StartSectorSound((*door).sector, Sfx::Doropn as i32);
+                    S_StartSectorSound(world, (*door).sector, Sfx::Doropn as i32);
                 }
             }
             _ => {}
@@ -449,7 +454,7 @@ fn set_special_door_direction(special: ThinkerId, direction: i32) {
 ///
 /// Key-locked door messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
-pub unsafe fn EV_VerticalDoor(_world: &mut World, line_id: LineId, thing: MobjId) {
+pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
     let side = 0;
     // The line's record as the use found it; clearing its special below
     // writes the level's line.
@@ -469,7 +474,12 @@ pub unsafe fn EV_VerticalDoor(_world: &mut World, line_id: LineId, thing: MobjId
         let Some(player) = (*thing).player else {
             return;
         };
-        if !has_key_or_complain(player, card, skull, locked_door_message(special)) {
+        if !has_key_or_complain(
+            &mut world.players[player],
+            card,
+            skull,
+            locked_door_message(special),
+        ) {
             return;
         }
     }
@@ -509,13 +519,13 @@ pub unsafe fn EV_VerticalDoor(_world: &mut World, line_id: LineId, thing: MobjId
     // for proper sound
     match line.special as i32 {
         117 | 118 => {
-            S_StartSectorSound(sec, Sfx::Bdopn as i32);
+            S_StartSectorSound(world, sec, Sfx::Bdopn as i32);
         }
         1 | 31 => {
-            S_StartSectorSound(sec, Sfx::Doropn as i32);
+            S_StartSectorSound(world, sec, Sfx::Doropn as i32);
         }
         _ => {
-            S_StartSectorSound(sec, Sfx::Doropn as i32);
+            S_StartSectorSound(world, sec, Sfx::Doropn as i32);
         }
     }
 

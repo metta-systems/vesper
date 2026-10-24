@@ -114,13 +114,13 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
                 }
 
                 if let Some(player) = (*thing).player {
-                    let thing_z = (*thing).z;
-                    player.write(|player| player.viewz = thing_z + player.viewheight);
+                    let player = &mut world.players[player];
+                    player.viewz = (*thing).z + player.viewheight;
                 }
 
                 // Spawn teleport fog at source
                 let fog = P_SpawnMobj(world, oldx, oldy, oldz, MT_TFOG);
-                S_StartSound(fog, Sfx::Telept as i32);
+                S_StartSound(world, fog, Sfx::Telept as i32);
 
                 // Spawn teleport fog at destination
                 let an = ((*m).angle >> ANGLETOFINESHIFT) as usize;
@@ -131,7 +131,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
                     (*thing).z,
                     MT_TFOG,
                 );
-                S_StartSound(fog, Sfx::Telept as i32);
+                S_StartSound(world, fog, Sfx::Telept as i32);
 
                 // Don't move for a bit
                 if (*thing).player.is_some() {

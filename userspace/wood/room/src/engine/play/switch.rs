@@ -166,9 +166,9 @@ impl button_t {
 
 /// Play `sound` from a button's sound origin: from that sector, or
 /// non-positionally where C passes a null origin.
-pub fn start_button_sound(soundorg: Option<SectorId>, sound: i32) {
+pub fn start_button_sound(world: &World, soundorg: Option<SectorId>, sound: i32) {
     match soundorg {
-        Some(sector) => S_StartSectorSound(sector, sound),
+        Some(sector) => S_StartSectorSound(world, sector, sound),
         None => S_StartNonPositionalSound(sound),
     }
 }
@@ -604,21 +604,21 @@ pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
 
     for i in 0..(numswitches * 2) as usize {
         if switchlist[i] == texTop as i32 {
-            start_button_sound(button_soundorg, sound);
+            start_button_sound(world, button_soundorg, sound);
             LEVEL.borrow_mut().sides[sidenum].toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, top, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texMid as i32 {
-            start_button_sound(button_soundorg, sound);
+            start_button_sound(world, button_soundorg, sound);
             LEVEL.borrow_mut().sides[sidenum].midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, middle, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texBot as i32 {
-            start_button_sound(button_soundorg, sound);
+            start_button_sound(world, button_soundorg, sound);
             LEVEL.borrow_mut().sides[sidenum].bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, bottom, switchlist[i], BUTTONTIME);

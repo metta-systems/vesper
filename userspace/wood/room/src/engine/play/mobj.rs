@@ -290,7 +290,7 @@ pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
     }
     mo.flags &= !MF_MISSILE;
     if info.deathsound != Sfx::None {
-        S_StartSound(mo_id, info.deathsound as i32);
+        S_StartSound(world, mo_id, info.deathsound as i32);
     }
 }
 
@@ -368,7 +368,8 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
     }
 
     // The player's command and cheats, read once the move has run.
-    let player_input = player.map(|player| player.read(|player| (player.cmd, player.cheats)));
+    let player_input =
+        player.map(|player| (world.players[player].cmd, world.players[player].cheats));
     if player_input.is_some_and(|(_, cheats)| cheats & CF_NOMOMENTUM != 0) {
         mo.momx = 0;
         mo.momy = 0;
@@ -431,10 +432,9 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
         && mo.z < mo.floorz
     {
         let step_up = mo.floorz - mo.z;
-        player.write(|player| {
-            player.viewheight -= step_up;
-            player.deltaviewheight = (VIEWHEIGHT - player.viewheight) >> 3;
-        });
+        let player = &mut world.players[player];
+        player.viewheight -= step_up;
+        player.deltaviewheight = (VIEWHEIGHT - player.viewheight) >> 3;
     }
 
     mo.z += mo.momz;
@@ -463,9 +463,8 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
             if let Some(player) = mo.player
                 && mo.momz < -GRAVITY * 8
             {
-                let momz = mo.momz;
-                player.write(|player| player.deltaviewheight = momz >> 3);
-                S_StartSound(mo_id, Sfx::Oof as i32);
+                world.players[player].deltaviewheight = mo.momz >> 3;
+                S_StartSound(world, mo_id, Sfx::Oof as i32);
             }
             mo.momz = 0;
         }
@@ -519,12 +518,12 @@ pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
 
     let floorheight = LEVEL.borrow().subsector_sector(mobj.subsector).floorheight;
     let fog = P_SpawnMobj(world, mobj.x, mobj.y, floorheight, MT_TFOG);
-    S_StartSound(fog, Sfx::Telept as i32);
+    S_StartSound(world, fog, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
     let fog = P_SpawnMobj(world, x, y, floorheight, MT_TFOG);
-    S_StartSound(fog, Sfx::Telept as i32);
+    S_StartSound(world, fog, Sfx::Telept as i32);
 
     let mthing = &mobj.spawnpoint;
     let z = if mobj.info.get().flags & MF_SPAWNCEILING != 0 {
@@ -724,7 +723,7 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
     let ss = R_PointInSubsector(x, y);
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
     let fog = P_SpawnMobj(world, x, y, floorheight, MT_IFOG);
-    S_StartSound(fog, Sfx::Itmbk as i32);
+    S_StartSound(world, fog, Sfx::Itmbk as i32);
 
     let (z, i) = {
         let mobjinfo = MOBJINFO.borrow();
@@ -774,8 +773,8 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
 
     let player = PlayerId::new((thing_type - 1) as usize);
 
-    if player.read(|player| player.playerstate) == PST_REBORN {
-        G_PlayerReborn(thing_type as i32 - 1);
+    if world.players[player].playerstate == PST_REBORN {
+        G_PlayerReborn(world, thing_type as i32 - 1);
     }
 
     let x = (mthing.x.get() as i32) << FRACBITS;
@@ -790,28 +789,27 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
 
     mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     mobj.player = Some(player);
-    mobj.health = player.read(|player| player.health);
+    let player_slot = &mut world.players[player];
+    mobj.health = player_slot.health;
 
-    player.write(|player| {
-        player.mo = Some(mobj_id);
-        player.playerstate = PST_LIVE;
-        player.refire = 0;
-        player.message = PlayerMessage::NONE;
-        player.damagecount = 0;
-        player.bonuscount = 0;
-        player.extralight = 0;
-        player.fixedcolormap = 0;
-        player.viewheight = VIEWHEIGHT;
-    });
+    player_slot.mo = Some(mobj_id);
+    player_slot.playerstate = PST_LIVE;
+    player_slot.refire = 0;
+    player_slot.message = PlayerMessage::NONE;
+    player_slot.damagecount = 0;
+    player_slot.bonuscount = 0;
+    player_slot.extralight = 0;
+    player_slot.fixedcolormap = 0;
+    player_slot.viewheight = VIEWHEIGHT;
 
     P_SetupPsprites(world, player);
 
     if deathmatch() != 0 {
-        player.write(|player| player.cards = [1; crate::engine::doom::player::NUMCARDS]);
+        world.players[player].cards = [1; crate::engine::doom::player::NUMCARDS];
     }
 
     if thing_type as i32 - 1 == consoleplayer() {
-        ST_Start();
+        ST_Start(world);
         HU_Start();
     }
 }
@@ -1050,7 +1048,7 @@ pub unsafe fn P_SpawnMissile(
     let th = th_id.ptr();
     let info = (*th).info.get();
     if info.seesound != Sfx::None {
-        S_StartSound(th_id, info.seesound as i32);
+        S_StartSound(world, th_id, info.seesound as i32);
     }
     (*th).target = Some(source_id);
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
@@ -1106,7 +1104,7 @@ pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i
     let th = th_id.ptr();
     let info = (*th).info.get();
     if info.seesound != Sfx::None {
-        S_StartSound(th_id, info.seesound as i32);
+        S_StartSound(world, th_id, info.seesound as i32);
     }
     (*th).target = Some(source_id);
     (*th).angle = an;

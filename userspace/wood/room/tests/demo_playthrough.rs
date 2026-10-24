@@ -641,7 +641,10 @@ fn is_checkpoint(tic: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 fn capture_snapshot(tic: usize) -> Snapshot {
-    use room::engine::doom::player::{MAXPLAYERS, PlayerId, consoleplayer};
+    use room::engine::{
+        doom::player::{MAXPLAYERS, consoleplayer},
+        world::WORLD,
+    };
 
     let random = RANDOM.get();
 
@@ -651,7 +654,7 @@ fn capture_snapshot(tic: usize) -> Snapshot {
     } else {
         0
     };
-    let p = PlayerId::new(pidx).read(|player| *player);
+    let p = WORLD.borrow().players[pidx];
     let (mo_x, mo_y, mo_z, mo_angle) = match p.mo {
         None => (0, 0, 0, 0),
         Some(mo) => {

@@ -19,6 +19,7 @@ use crate::{
             video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
         },
         misc::{atoi, config::M_SaveDefaults},
+        world::WORLD,
     },
     i_error,
     types::Boolean,
@@ -808,7 +809,7 @@ pub fn doomgeneric_Tick() {
         // Update positional sounds
         let console = consoleplayer();
         let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
-            PlayerId::new(console as usize).read(|player| player.mo)
+            WORLD.borrow().players[console as usize].mo
         } else {
             None
         };
@@ -915,7 +916,7 @@ pub fn D_DoAdvanceDemo() {
     // Set player state to live (PST_LIVE = 1)
     let cp = consoleplayer();
     if cp >= 0 && (cp as usize) < MAXPLAYERS {
-        PlayerId::new(cp as usize).write(|player| player.playerstate = 1);
+        WORLD.borrow_mut().players[cp as usize].playerstate = 1;
     }
 
     DOOM_MAIN.borrow_mut().advancedemo = 0;

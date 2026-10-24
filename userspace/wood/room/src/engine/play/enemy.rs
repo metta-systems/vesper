@@ -33,7 +33,7 @@ use crate::{
     engine::{
         doom::{
             main_loop::gametic,
-            player::{MAXPLAYERS, PlayerId, PspdefT},
+            player::{MAXPLAYERS, PlayerId},
             stat::{gamemode, gameversion},
         },
         map::{LineId, SectorId, VertexId, line_t, slopetype_t},
@@ -608,8 +608,8 @@ pub unsafe fn P_LookForPlayers(world: &mut World, actor_id: MobjId, allaround: B
                     return Boolean::FALSE;
                 }
                 let player = PlayerId::new((*actor).lastlook as usize);
-                if player.read(|player| player.health) > 0 {
-                    let player_mo = player.mo();
+                if world.players[player].health > 0 {
+                    let player_mo = world.players[player].mo();
                     let sight = P_CheckSight(world, actor_id, player_mo);
                     if sight != 0 {
                         if allaround.is_false() {
@@ -744,7 +744,7 @@ pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
         if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
             S_StartNonPositionalSound(sound);
         } else {
-            S_StartSound(actor_id, sound);
+            S_StartSound(world, actor_id, sound);
         }
     }
     P_SetMobjState(world, actor_id, (*actor).info.get().seestate as statenum_t);
@@ -812,7 +812,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     }
     if (*actor).info.get().meleestate != 0 && P_CheckMeleeRange(world, actor_id).is_truthy() {
         if (*actor).info.get().attacksound != Sfx::None {
-            S_StartSound(actor_id, (*actor).info.get().attacksound as i32);
+            S_StartSound(world, actor_id, (*actor).info.get().attacksound as i32);
         }
         P_SetMobjState(
             world,
@@ -845,7 +845,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
         P_NewChaseDir(world, actor_id);
     }
     if (*actor).info.get().activesound != Sfx::None && P_Random() < 3 {
-        S_StartSound(actor_id, (*actor).info.get().activesound as i32);
+        S_StartSound(world, actor_id, (*actor).info.get().activesound as i32);
     }
 }
 /// Turns `actor` to face its `target` and clears the `MF_AMBUSH` flag.
@@ -893,7 +893,7 @@ pub unsafe fn A_PosAttack(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     angle = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, angle as angle_t, MISSILERANGE) as i32;
-    S_StartSound(actor_id, Sfx::Pistol as i32);
+    S_StartSound(world, actor_id, Sfx::Pistol as i32);
     angle = angle.wrapping_add((P_Random() - P_Random()) << 20);
     let damage: i32 = (P_Random() % 5 + 1) * 3;
     P_LineAttack(
@@ -924,7 +924,7 @@ pub unsafe fn A_SPosAttack(world: &mut World, actor_id: MobjId) {
     if (*actor).target.is_none() {
         return;
     }
-    S_StartSound(actor_id, Sfx::Shotgn as i32);
+    S_StartSound(world, actor_id, Sfx::Shotgn as i32);
     A_FaceTarget(world, actor_id);
     let bangle: i32 = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
@@ -957,7 +957,7 @@ pub unsafe fn A_CPosAttack(world: &mut World, actor_id: MobjId) {
     if (*actor).target.is_none() {
         return;
     }
-    S_StartSound(actor_id, Sfx::Shotgn as i32);
+    S_StartSound(world, actor_id, Sfx::Shotgn as i32);
     A_FaceTarget(world, actor_id);
     let bangle: i32 = (*actor).angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
@@ -1045,7 +1045,7 @@ pub unsafe fn A_TroopAttack(world: &mut World, actor_id: MobjId) {
     }
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
-        S_StartSound(actor_id, Sfx::Claw as i32);
+        S_StartSound(world, actor_id, Sfx::Claw as i32);
         damage = (P_Random() % 8 + 1) * 3;
         P_DamageMobj(
             world,
@@ -1141,7 +1141,7 @@ pub unsafe fn A_BruisAttack(world: &mut World, actor_id: MobjId) {
         return;
     }
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
-        S_StartSound(actor_id, Sfx::Claw as i32);
+        S_StartSound(world, actor_id, Sfx::Claw as i32);
         damage = (P_Random() % 8 + 1) * 10;
         P_DamageMobj(
             world,
@@ -1265,7 +1265,7 @@ pub unsafe fn A_SkelWhoosh(world: &mut World, actor_id: MobjId) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    S_StartSound(actor_id, Sfx::Skeswg as i32);
+    S_StartSound(world, actor_id, Sfx::Skeswg as i32);
 }
 /// Revenant melee strike: deals `(rnd%10+1)*6` damage (6-60) when in melee range.
 ///
@@ -1284,7 +1284,7 @@ pub unsafe fn A_SkelFist(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
         damage = (P_Random() % 10 + 1) * 6;
-        S_StartSound(actor_id, Sfx::Skepch as i32);
+        S_StartSound(world, actor_id, Sfx::Skepch as i32);
         P_DamageMobj(
             world,
             target_of(actor),
@@ -1406,7 +1406,7 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
                     A_FaceTarget(world, actor_id);
                     (*actor).target = temp;
                     P_SetMobjState(world, actor_id, S_VILE_HEAL1);
-                    S_StartSound(corpsehit_id, Sfx::Slop as i32);
+                    S_StartSound(world, corpsehit_id, Sfx::Slop as i32);
                     let corpsehit = corpsehit_id.ptr();
                     let info = (*corpsehit).info.get();
                     P_SetMobjState(world, corpsehit_id, info.raisestate as statenum_t);
@@ -1428,8 +1428,8 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
 /// # Safety
 ///
 /// `actor_id` must name a map object of the level.
-pub unsafe fn A_VileStart(_world: &mut World, actor_id: MobjId) {
-    S_StartSound(actor_id, Sfx::Vilatk as i32);
+pub unsafe fn A_VileStart(world: &mut World, actor_id: MobjId) {
+    S_StartSound(world, actor_id, Sfx::Vilatk as i32);
 }
 /// Archvile fire start: plays the flame start sound then positions the fire object.
 ///
@@ -1437,7 +1437,7 @@ pub unsafe fn A_VileStart(_world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level (see [`A_Fire`]).
 pub unsafe fn A_StartFire(world: &mut World, actor_id: MobjId) {
-    S_StartSound(actor_id, Sfx::Flamst as i32);
+    S_StartSound(world, actor_id, Sfx::Flamst as i32);
     A_Fire(world, actor_id);
 }
 /// Archvile fire crackle: plays the sustained flame sound then repositions the fire object.
@@ -1446,7 +1446,7 @@ pub unsafe fn A_StartFire(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level (see [`A_Fire`]).
 pub unsafe fn A_FireCrackle(world: &mut World, actor_id: MobjId) {
-    S_StartSound(actor_id, Sfx::Flame as i32);
+    S_StartSound(world, actor_id, Sfx::Flame as i32);
     A_Fire(world, actor_id);
 }
 /// Repositions the Archvile fire object 24 units in front of its tracer (the victim).
@@ -1524,7 +1524,7 @@ pub unsafe fn A_VileAttack(world: &mut World, actor_id: MobjId) {
     if P_CheckSight(world, actor_id, target_of(actor)) == 0 {
         return;
     }
-    S_StartSound(actor_id, Sfx::Barexp as i32);
+    S_StartSound(world, actor_id, Sfx::Barexp as i32);
     P_DamageMobj(world, target_of(actor), Some(actor_id), Some(actor_id), 20);
     // Nothing from here on changes `actor->target`, so C's repeated reads
     // after the damage are one read here.
@@ -1546,7 +1546,7 @@ pub unsafe fn A_VileAttack(world: &mut World, actor_id: MobjId) {
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_FatRaise(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
-    S_StartSound(actor_id, Sfx::Manatk as i32);
+    S_StartSound(world, actor_id, Sfx::Manatk as i32);
 }
 /// Mancubus attack phase 1: two `MT_FATSHOT` fireballs spread to the right.
 ///
@@ -1646,7 +1646,7 @@ pub unsafe fn A_SkullAttack(world: &mut World, actor_id: MobjId) {
     }
     let dest: *mut mobj_t = target_of(actor).ptr();
     (*actor).flags |= MF_SKULLFLY;
-    S_StartSound(actor_id, (*actor).info.get().attacksound as i32);
+    S_StartSound(world, actor_id, (*actor).info.get().attacksound as i32);
     A_FaceTarget(world, actor_id);
     let an: angle_t = (*actor).angle >> ANGLETOFINESHIFT;
     (*actor).momx = FixedMul(SKULLSPEED, *finecosine.0.add(an as usize));
@@ -1739,7 +1739,7 @@ pub unsafe fn A_PainDie(world: &mut World, actor_id: MobjId) {
 /// # Safety
 ///
 /// `actor_id` must name a map object with a valid `info`.
-pub unsafe fn A_Scream(_world: &mut World, actor_id: MobjId) {
+pub unsafe fn A_Scream(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     let sound = match (*actor).info.get().deathsound {
         Sfx::None => return,
@@ -1750,7 +1750,7 @@ pub unsafe fn A_Scream(_world: &mut World, actor_id: MobjId) {
     if (*actor).kind as u32 == MT_SPIDER as u32 || (*actor).kind as u32 == MT_CYBORG as u32 {
         S_StartNonPositionalSound(sound);
     } else {
-        S_StartSound(actor_id, sound);
+        S_StartSound(world, actor_id, sound);
     };
 }
 /// Plays the player/monster gibbing scream (`sfx_slop`) positioned at the actor.
@@ -1758,18 +1758,18 @@ pub unsafe fn A_Scream(_world: &mut World, actor_id: MobjId) {
 /// # Safety
 ///
 /// `actor_id` must name a map object of the level.
-pub unsafe fn A_XScream(_world: &mut World, actor_id: MobjId) {
-    S_StartSound(actor_id, Sfx::Slop as i32);
+pub unsafe fn A_XScream(world: &mut World, actor_id: MobjId) {
+    S_StartSound(world, actor_id, Sfx::Slop as i32);
 }
 /// Plays the monster's pain sound if it has one.
 ///
 /// # Safety
 ///
 /// `actor_id` must name a map object with a valid `info`.
-pub unsafe fn A_Pain(_world: &mut World, actor_id: MobjId) {
+pub unsafe fn A_Pain(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     if (*actor).info.get().painsound != Sfx::None {
-        S_StartSound(actor_id, (*actor).info.get().painsound as i32);
+        S_StartSound(world, actor_id, (*actor).info.get().painsound as i32);
     }
 }
 /// Clears `MF_SOLID` so the falling corpse can be walked over.
@@ -1852,7 +1852,7 @@ pub unsafe fn A_BossDeath(world: &mut World, mo_id: MobjId) {
     }
     let mut i: usize = 0;
     while i < MAXPLAYERS {
-        if playeringame(i) != 0 && PlayerId::new(i).read(|player| player.health) > 0 {
+        if playeringame(i) != 0 && world.players[i].health > 0 {
             break;
         }
         i += 1;
@@ -1907,7 +1907,7 @@ pub unsafe fn A_BossDeath(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object with a valid `info`.
 pub unsafe fn A_Hoof(world: &mut World, mo_id: MobjId) {
-    S_StartSound(mo_id, Sfx::Hoof as i32);
+    S_StartSound(world, mo_id, Sfx::Hoof as i32);
     A_Chase(world, mo_id);
 }
 /// Spider Mastermind footstep: plays `sfx_metal` then advances via `A_Chase`.
@@ -1916,7 +1916,7 @@ pub unsafe fn A_Hoof(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object with a valid `info`.
 pub unsafe fn A_Metal(world: &mut World, mo_id: MobjId) {
-    S_StartSound(mo_id, Sfx::Metal as i32);
+    S_StartSound(world, mo_id, Sfx::Metal as i32);
     A_Chase(world, mo_id);
 }
 /// Arachnotron footstep: plays `sfx_bspwlk` then advances via `A_Chase`.
@@ -1925,7 +1925,7 @@ pub unsafe fn A_Metal(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object with a valid `info`.
 pub unsafe fn A_BabyMetal(world: &mut World, mo_id: MobjId) {
-    S_StartSound(mo_id, Sfx::Bspwlk as i32);
+    S_StartSound(world, mo_id, Sfx::Bspwlk as i32);
     A_Chase(world, mo_id);
 }
 /// Super Shotgun open action: plays the barrel-break sound (`sfx_dbopn`) for the player.
@@ -1933,26 +1933,25 @@ pub unsafe fn A_BabyMetal(world: &mut World, mo_id: MobjId) {
 /// # Safety
 ///
 /// `player` must be spawned in the level.
-pub unsafe fn A_OpenShotgun2(_world: &mut World, player: PlayerId, _psp: *mut PspdefT) {
-    S_StartSound(player.mo(), Sfx::Dbopn as i32);
+pub unsafe fn A_OpenShotgun2(world: &mut World, player: PlayerId, _psprite: usize) {
+    S_StartSound(world, world.players[player].mo(), Sfx::Dbopn as i32);
 }
 /// Super Shotgun load action: plays the shell-load sound (`sfx_dbload`) for the player.
 ///
 /// # Safety
 ///
 /// `player` must be spawned in the level.
-pub unsafe fn A_LoadShotgun2(_world: &mut World, player: PlayerId, _psp: *mut PspdefT) {
-    S_StartSound(player.mo(), Sfx::Dbload as i32);
+pub unsafe fn A_LoadShotgun2(world: &mut World, player: PlayerId, _psprite: usize) {
+    S_StartSound(world, world.players[player].mo(), Sfx::Dbload as i32);
 }
 /// Super Shotgun close action: plays the close sound (`sfx_dbcls`) then checks for refire.
 ///
 /// # Safety
 ///
-/// `player` must be spawned in the level, and no reference into its slot
-/// may be live while this runs; `psp` must be non-null.
-pub unsafe fn A_CloseShotgun2(world: &mut World, player: PlayerId, psp: *mut PspdefT) {
-    S_StartSound(player.mo(), Sfx::Dbcls as i32);
-    A_ReFire(world, player, psp);
+/// `player` must be spawned in the level.
+pub unsafe fn A_CloseShotgun2(world: &mut World, player: PlayerId, psprite: usize) {
+    S_StartSound(world, world.players[player].mo(), Sfx::Dbcls as i32);
+    A_ReFire(world, player, psprite);
 }
 /// Icon of Sin wake-up: scans the thinker list for `MT_BOSSTARGET` spots and plays `sfx_bossit`.
 ///
@@ -2090,7 +2089,7 @@ pub unsafe fn A_BrainSpit(world: &mut World, mo_id: MobjId) {
 /// `mo_id` must name a map object of the level. Called through the state-machine
 /// action pointer.
 pub unsafe fn A_SpawnSound(world: &mut World, mo_id: MobjId) {
-    S_StartSound(mo_id, Sfx::Boscub as i32);
+    S_StartSound(world, mo_id, Sfx::Boscub as i32);
     A_SpawnFly(world, mo_id);
 }
 /// Monster cube arrival: materializes a random monster at the target spot when `reactiontime` hits 0.
@@ -2118,7 +2117,7 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
     }
     let targ: *mut mobj_t = P_SubstNullMobj((*mo).target).ptr();
     let fog = P_SpawnMobj(world, (*targ).x, (*targ).y, (*targ).z, MT_SPAWNFIRE);
-    S_StartSound(fog, Sfx::Telept as i32);
+    S_StartSound(world, fog, Sfx::Telept as i32);
     let r: i32 = P_Random();
     if r < 50 {
         type_0 = MT_TROOP;
@@ -2164,11 +2163,11 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object of the level. Called through the state-machine
 /// action pointer.
-pub unsafe fn A_PlayerScream(_world: &mut World, mo_id: MobjId) {
+pub unsafe fn A_PlayerScream(world: &mut World, mo_id: MobjId) {
     let mo = mo_id.ptr();
     let mut sound: i32 = Sfx::Pldeth as i32;
     if gamemode() as u32 == commercial as u32 && (*mo).health < -50 {
         sound = Sfx::Pdiehi as i32;
     }
-    S_StartSound(mo_id, sound);
+    S_StartSound(world, mo_id, sound);
 }

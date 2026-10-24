@@ -9,20 +9,22 @@
 //! `NetUpdate`, which reach those entry points again; the debug borrow
 //! counter of [`Global`] panics on such a nested borrow.
 
-use crate::engine::global::Global;
+use crate::engine::{
+    doom::player::{MAXPLAYERS, PlayerT},
+    global::Global,
+};
 
 /// The play simulation's state.
 ///
-/// Empty for now: the play call graph takes it as a parameter while the
-/// state itself still lives in the subsystem `Global`s. It is to hold, as
-/// `pub` fields so callers can split borrows:
+/// Holds the player slots; the rest of the state still lives in the
+/// subsystem `Global`s. It is to hold, as `pub` fields so callers can split
+/// borrows:
 ///
 /// - `level`: the loaded level (`LEVEL`, spawn spots, player starts);
 /// - `mobjs`: the map object arena (`MOBJ_ARENA`);
 /// - `thinkers`: the thinker list and the other thinker arenas (`TICK`,
 ///   `CEILING_ARENA` ... `FIRE_FLICKER_ARENA`);
 /// - `leveltime`;
-/// - `players` (`PLAYERS`);
 /// - `session`: the game settings play reads (skill, deathmatch, netgame,
 ///   respawn and fast monsters, map and episode, console player, players in
 ///   game, level totals, the body queue), copied from `GAME`;
@@ -31,13 +33,24 @@ use crate::engine::global::Global;
 ///   the item respawn queue (`CEILINGS`, `PLATS`, `SWITCHES`, `MOBJ`);
 /// - `scratch`: the per-call scratch state of play (`MAP`, `MAPUTL`,
 ///   `INTERCEPTS`, `SIGHT`, `ENEMY`, `PSPR`, `USER`, `VALIDCOUNT`).
-#[derive(Default)]
-pub struct World {}
+pub struct World {
+    /// The player slots (C `players[MAXPLAYERS]`), indexed by `PlayerId`.
+    pub players: [PlayerT; MAXPLAYERS],
+}
 
 impl World {
-    /// The state at program start.
+    /// The state at program start: every player slot empty.
     pub const fn new() -> Self {
-        Self {}
+        Self {
+            // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
+            players: unsafe { std::mem::zeroed() },
+        }
+    }
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

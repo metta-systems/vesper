@@ -30,7 +30,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use crate::engine::doom::player::{MAXPLAYERS, PlayerId, TiccmdT};
+use crate::engine::{
+    doom::player::{MAXPLAYERS, PlayerId, TiccmdT},
+    world::WORLD,
+};
 
 /// Maximum number of players supported by the networking code.
 ///
@@ -236,7 +239,8 @@ unsafe fn PlayerQuitGame(player_idx: usize) {
     exit_message[7] += player_idx as u8;
 
     GAME.borrow_mut().playeringame[player_idx] = 0;
-    PlayerId::console().set_message(exit_message);
+    // Runs from `NetUpdate`, outside any world borrow.
+    WORLD.borrow_mut().players[PlayerId::console()].set_message(exit_message);
 
     if GAME.borrow().demorecording != 0 {
         G_CheckDemoStatus();

@@ -515,7 +515,10 @@ struct SavedMobjReferences {
 /// # Safety
 ///
 /// The handles in `loaded_mobjs` must be live map objects.
-unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)]) {
+unsafe fn resolve_saved_references(
+    world: &mut World,
+    loaded_mobjs: &[(MobjId, SavedMobjReferences)],
+) {
     let recreated: Vec<MobjId> = loaded_mobjs.iter().map(|&(mobj, _)| mobj).collect();
     for &(mobj, references) in loaded_mobjs {
         let mo = mobj.ptr();
@@ -527,7 +530,7 @@ unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)
     for (index, attacker) in saved_attackers.into_iter().enumerate() {
         if let Some(ordinal) = attacker {
             let attacker = mobj_for_saved_ordinal(&recreated, ordinal);
-            PlayerId::new(index).write(|player| player.attacker = attacker);
+            world.players[index].attacker = attacker;
         }
     }
 }
@@ -551,12 +554,12 @@ unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)
 ///   subsector 0 until `P_SetThingPosition` finds the real one.
 /// - `state` is resolved from a stream index via `saveg_read_state_ptr`.
 /// - `player` is a 1-based index; re-resolved and the back-reference
-///   `player->mo` is set to `mobj_id`.
+///   `player->mo` in `world` is set to `mobj_id`.
 /// - `info` is saved as an address; it is skipped, and the caller sets it
 ///   from `type` (C reads the address, then the caller overwrites it with
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
-unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
+unsafe fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences {
     let mo = mobj_id.ptr();
 
     // thinker_t
@@ -636,7 +639,7 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
     // player (index + 1)
     (*mo).player = saveg_read_player_index(saveg_read32());
     if let Some(player) = (*mo).player {
-        player.write(|player| player.mo = Some(mobj_id));
+        world.players[player].mo = Some(mobj_id);
     }
 
     // lastlook
@@ -1510,14 +1513,14 @@ use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 /// The `players` array and `playeringame` flags must be fully initialized for
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
-pub unsafe fn P_ArchivePlayers(_world: &World) {
+pub unsafe fn P_ArchivePlayers(world: &World) {
     let ordinals = mobj_save_ordinals();
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
             continue;
         }
         saveg_write_pad();
-        PlayerId::new(i).read(|player| saveg_write_player_t(player, &ordinals));
+        saveg_write_player_t(&world.players[i], &ordinals);
     }
 }
 
@@ -1538,22 +1541,21 @@ pub unsafe fn P_ArchivePlayers(_world: &World) {
 /// been populated by `P_ReadSaveGameHeader` so the active-slot bitmask is
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// empty until thinkers are unarchived.
-pub unsafe fn P_UnArchivePlayers(_world: &mut World) {
+pub unsafe fn P_UnArchivePlayers(world: &mut World) {
     let mut saved_attackers = [None; MAXPLAYERS];
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
             continue;
         }
         saveg_read_pad();
-        saved_attackers[i] = Some(PlayerId::new(i).write(|player| {
-            let attacker = saveg_read_player_t(player);
+        let player = &mut world.players[i];
+        let attacker = saveg_read_player_t(player);
 
-            // will be set when unarc thinker
-            player.mo = None;
-            player.message = PlayerMessage::NONE;
-            player.attacker = None;
-            attacker
-        }));
+        // will be set when unarc thinker
+        player.mo = None;
+        player.message = PlayerMessage::NONE;
+        player.attacker = None;
+        saved_attackers[i] = Some(attacker);
     }
     SAVEG.borrow_mut().saved_attackers = saved_attackers;
 }
@@ -1748,13 +1750,13 @@ pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
         let tclass = saveg_read8();
         match tclass {
             x if x == tc_end => {
-                resolve_saved_references(&loaded_mobjs);
+                resolve_saved_references(world, &loaded_mobjs);
                 return;
             }
             x if x == tc_mobj => {
                 saveg_read_pad();
                 let mobj_id = new_thinker::<mobj_t>();
-                let references = saveg_read_mobj_t(mobj_id);
+                let references = saveg_read_mobj_t(world, mobj_id);
                 loaded_mobjs.push((mobj_id, references));
 
                 let mo = mobj_id.ptr();
@@ -2222,7 +2224,7 @@ mod tests {
             (*mo).thinker.kind = ThinkerKind::Mobj;
             let mut references = None;
             with_mem_stream(&mut data, || {
-                references = Some(saveg_read_mobj_t(mobj));
+                references = Some(saveg_read_mobj_t(&mut World::new(), mobj));
             });
             assert_eq!((*mo).thinker.kind, ThinkerKind::None);
             // The links load empty; target and tracer come back as save
@@ -2323,7 +2325,6 @@ mod tests {
         };
         let saved_level = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
         let player = PlayerId::new(0);
-        let saved_player = player.read(|player| *player);
         let saved_playeringame = GAME.borrow().playeringame;
 
         P_InitThinkers();
@@ -2332,6 +2333,7 @@ mod tests {
         let removed = add_mobj(3);
         let third = add_mobj(4);
         let unlisted = new_thinker::<mobj_t>();
+        let mut world = World::new();
         unsafe {
             P_RemoveThinker(&mut (*removed.ptr()).thinker);
             (*first.ptr()).target = Some(third);
@@ -2342,19 +2344,15 @@ mod tests {
             (*third.ptr()).target = Some(first);
 
             GAME.borrow_mut().playeringame = [1, 0, 0, 0];
-            player.write(|player| {
-                *player = std::mem::zeroed();
-                player.mo = Some(first);
-                player.attacker = Some(third);
-            });
+            world.players[player].mo = Some(first);
+            world.players[player].attacker = Some(third);
         }
 
-        let mut world = World::new();
         with_mem_stream(&mut [], || unsafe {
             P_ArchivePlayers(&world);
             P_ArchiveThinkers(&world);
 
-            player.write(|player| *player = std::mem::zeroed());
+            world.players[player] = std::mem::zeroed();
             P_InitThinkers();
             SAVEG.borrow_mut().save_stream.set_position(0);
 
@@ -2397,12 +2395,11 @@ mod tests {
             assert_eq!((*first.ptr()).player, Some(player));
             assert_eq!((*second.ptr()).player, None);
         }
-        assert_eq!(player.read(|player| player.mo), Some(first));
-        assert_eq!(player.read(|player| player.attacker), Some(third));
+        assert_eq!(world.players[player].mo, Some(first));
+        assert_eq!(world.players[player].attacker, Some(third));
         assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
 
         P_InitThinkers();
-        player.write(|player| *player = saved_player);
         GAME.borrow_mut().playeringame = saved_playeringame;
         *LEVEL.borrow_mut() = saved_level;
     }

@@ -46,6 +46,7 @@ use crate::engine::{
         until_nul,
     },
     wad::cache_patch_name,
+    world::{WORLD, World},
 };
 
 // ---------------------------------------------------------------------------
@@ -623,8 +624,9 @@ pub fn HU_Erase() {
 ///    player's `cmd.chatchar`, feeds them into the corresponding input buffer
 ///    widget, and displays the completed message when Enter is received.
 ///
-/// Called from `G_Ticker` in `g_game.c` once per game tic.
-pub fn HU_Ticker() {
+/// Called from `G_Ticker` in `g_game.c` once per game tic, with the world
+/// it borrowed for the level phase.
+pub fn HU_Ticker(world: &mut World) {
     let hud_state = HUD.as_ptr();
     unsafe {
         let (plr, message_dontfuckwithme, message_nottobefuckedwith) = {
@@ -646,11 +648,11 @@ pub fn HU_Ticker() {
 
         if MENU.borrow().showMessages != 0 || message_dontfuckwithme != 0 {
             // display message if necessary
-            let message = plr.read(|player| player.message);
+            let message = world.players[plr].message;
             if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
             {
                 HUlib_addMessageToSText(&raw mut (*hud_state).w_message, None, message.as_bytes());
-                plr.write(|player| player.message = PlayerMessage::NONE);
+                world.players[plr].message = PlayerMessage::NONE;
                 let mut hud = HUD.borrow_mut();
                 hud.message_on = 1;
                 hud.message_counter = HU_MSGTIMEOUT;
@@ -667,8 +669,7 @@ pub fn HU_Ticker() {
                     continue;
                 }
                 if i != consoleplayer as usize {
-                    let sender = PlayerId::new(i);
-                    let c = sender.read(|player| player.cmd.chatchar);
+                    let c = world.players[i].cmd.chatchar;
                     if c != 0 {
                         if c <= HU_BROADCAST as u8 {
                             HUD.borrow_mut().chat_dest[i] = c;
@@ -709,7 +710,7 @@ pub fn HU_Ticker() {
                                 HUlib_resetIText(input);
                             }
                         }
-                        sender.write(|player| player.cmd.chatchar = 0);
+                        world.players[i].cmd.chatchar = 0;
                     }
                 }
             }
@@ -722,11 +723,12 @@ pub fn HU_Ticker() {
 /// If the buffer is full (writing would overlap `tail`), posts an
 /// `"[Message unsent]"` notice to the player instead of enqueuing.
 /// The head index advances modulo `QUEUESIZE` (128; power-of-two bitmask).
-/// Called from `HU_Responder` and the macro-expansion path.
+/// Called from `HU_Responder` and the macro-expansion path, outside any
+/// world borrow.
 pub fn HU_queueChatChar(c: u8) {
     let mut hud = HUD.borrow_mut();
     if ((hud.head + 1) & (QUEUESIZE - 1)) == hud.tail {
-        hud.player().set_message(DEH_String(HUSTR_MSGU));
+        WORLD.borrow_mut().players[hud.player()].set_message(DEH_String(HUSTR_MSGU));
     } else {
         let head = hud.head;
         hud.chatchars[head] = c;
@@ -763,7 +765,8 @@ pub fn HU_dequeueChatChar() -> u8 {
 ///   fed to the chat input widget and queued for transmission; Enter confirms
 ///   and sends the message; Escape cancels.
 ///
-/// Called from `G_Responder` in `g_game.c`.
+/// Called from `G_Responder` in `g_game.c`, outside any world borrow; the
+/// player messages it sets borrow the world briefly.
 ///
 /// # Safety
 /// `ev` must be a valid, non-null pointer to an initialised `event_t`.
@@ -830,13 +833,15 @@ pub unsafe fn HU_Responder(ev: *mut event_t) -> i32 {
                                 hud.num_nobrainers += 1;
                                 hud.num_nobrainers
                             };
-                            plr.set_message(DEH_String(match num_nobrainers {
-                                1..=2 => HUSTR_TALKTOSELF1,
-                                3..=5 => HUSTR_TALKTOSELF2,
-                                6..=8 => HUSTR_TALKTOSELF3,
-                                9..=31 => HUSTR_TALKTOSELF4,
-                                _ => HUSTR_TALKTOSELF5,
-                            }));
+                            WORLD.borrow_mut().players[plr].set_message(DEH_String(
+                                match num_nobrainers {
+                                    1..=2 => HUSTR_TALKTOSELF1,
+                                    3..=5 => HUSTR_TALKTOSELF2,
+                                    6..=8 => HUSTR_TALKTOSELF3,
+                                    9..=31 => HUSTR_TALKTOSELF4,
+                                    _ => HUSTR_TALKTOSELF5,
+                                },
+                            ));
                         }
                     }
                 }
@@ -856,7 +861,7 @@ pub unsafe fn HU_Responder(ev: *mut event_t) -> i32 {
                 }
                 HU_queueChatChar(KEY_ENTER);
                 HUD.borrow_mut().chat_on = 0;
-                plr.set_message(macromessage);
+                WORLD.borrow_mut().players[plr].set_message(macromessage);
                 eatkey = true;
             } else {
                 let c = ev.data2 as u8;
@@ -868,7 +873,7 @@ pub unsafe fn HU_Responder(ev: *mut event_t) -> i32 {
                     let mut hud = HUD.borrow_mut();
                     hud.chat_on = 0;
                     if hud.w_chat.l.len != 0 {
-                        plr.set_message(until_nul(&hud.w_chat.l.l));
+                        WORLD.borrow_mut().players[plr].set_message(until_nul(&hud.w_chat.l.l));
                     }
                 } else if c == KEY_ESCAPE {
                     HUD.borrow_mut().chat_on = 0;

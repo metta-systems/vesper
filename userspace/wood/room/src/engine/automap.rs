@@ -49,6 +49,7 @@ use crate::{
             W_ReleaseLumpName, cache_patch_name,
             format::{LinedefFlag, Patch},
         },
+        world::{WORLD, World},
     },
 };
 
@@ -937,15 +938,15 @@ fn AM_saveScaleAndLoc(automap: &mut AutomapState) {
 ///
 /// # Safety
 ///
-/// `plr` must be a valid pointer.
-unsafe fn AM_restoreScaleAndLoc(automap: &mut AutomapState) {
+/// The player's `mo` must name a map object of the level.
+unsafe fn AM_restoreScaleAndLoc(automap: &mut AutomapState, world: &World) {
     automap.m_w = automap.old_m_w;
     automap.m_h = automap.old_m_h;
     if automap.followplayer == 0 {
         automap.m_x = automap.old_m_x;
         automap.m_y = automap.old_m_y;
     } else {
-        let mo = automap.player().mo().ptr();
+        let mo = world.players[automap.player()].mo().ptr();
         automap.m_x = (*mo).x - automap.m_w / 2;
         automap.m_y = (*mo).y - automap.m_h / 2;
     }
@@ -1053,8 +1054,8 @@ fn AM_changeWindowLoc(automap: &mut AutomapState) {
 ///
 /// # Safety
 ///
-/// `players` and `playeringame` must be valid.
-unsafe fn AM_initVariables(automap: &mut AutomapState) {
+/// The tracked player's `mo` must name a map object of the level.
+unsafe fn AM_initVariables(automap: &mut AutomapState, world: &World) {
     automap.automapactive = 1;
     automap.fb = video_buffer();
 
@@ -1080,7 +1081,7 @@ unsafe fn AM_initVariables(automap: &mut AutomapState) {
     };
     automap.plr = Some(plr);
 
-    let mo = plr.mo().ptr();
+    let mo = world.players[plr].mo().ptr();
     automap.m_x = (*mo).x - automap.m_w / 2;
     automap.m_y = (*mo).y - automap.m_h / 2;
     AM_changeWindowLoc(automap);
@@ -1221,7 +1222,9 @@ pub unsafe fn AM_Start() {
             automap.lastlevel = gamemap;
             automap.lastepisode = gameepisode;
         }
-        AM_initVariables(&mut automap);
+        // Released before the status bar is notified: its responder
+        // borrows the world too.
+        AM_initVariables(&mut automap, &WORLD.borrow());
     }
     AM_notifyStatusBar(event_t {
         kind: 1, // ev_keyup
@@ -1343,33 +1346,32 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
                 AM_saveScaleAndLoc(&mut automap);
                 AM_minOutWindowScale(&mut automap);
             } else {
-                AM_restoreScaleAndLoc(&mut automap);
+                AM_restoreScaleAndLoc(&mut automap, &WORLD.borrow());
             }
         } else if key == key_map_follow {
             automap.followplayer = !automap.followplayer;
             automap.f_oldloc.x = i32::MAX;
             if automap.followplayer != 0 {
-                automap.player().set_message(DEH_String(AMSTR_FOLLOWON));
+                set_player_message(&automap, DEH_String(AMSTR_FOLLOWON));
             } else {
-                automap.player().set_message(DEH_String(AMSTR_FOLLOWOFF));
+                set_player_message(&automap, DEH_String(AMSTR_FOLLOWOFF));
             }
         } else if key == key_map_grid {
             automap.grid = !automap.grid;
             if automap.grid != 0 {
-                automap.player().set_message(DEH_String(AMSTR_GRIDON));
+                set_player_message(&automap, DEH_String(AMSTR_GRIDON));
             } else {
-                automap.player().set_message(DEH_String(AMSTR_GRIDOFF));
+                set_player_message(&automap, DEH_String(AMSTR_GRIDOFF));
             }
         } else if key == key_map_mark {
-            automap.player().set_message(format!(
-                "{} {}",
-                DEH_String(AMSTR_MARKEDSPOT),
-                automap.markpointnum
-            ));
+            set_player_message(
+                &automap,
+                format!("{} {}", DEH_String(AMSTR_MARKEDSPOT), automap.markpointnum),
+            );
             AM_addMark(&mut automap);
         } else if key == key_map_clearmark {
             AM_clearMarks(&mut automap);
-            automap.player().set_message(DEH_String(AMSTR_MARKSCLEARED));
+            set_player_message(&automap, DEH_String(AMSTR_MARKSCLEARED));
         } else {
             rc = 0;
         }
@@ -1399,6 +1401,13 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
     }
 
     rc
+}
+
+/// Set the HUD message of the player the automap shows. The responder runs
+/// outside any world borrow (and reaches the status bar's responder, which
+/// borrows the world itself), so this borrows the world just for the write.
+fn set_player_message(automap: &AutomapState, text: impl AsRef<[u8]>) {
+    WORLD.borrow_mut().players[automap.player()].set_message(text);
 }
 
 /// Apply the current zoom multipliers and clamp to the allowed scale range.
@@ -1434,9 +1443,9 @@ fn AM_changeWindowScale(automap: &mut AutomapState) {
 ///
 /// # Safety
 ///
-/// `plr` must be a valid pointer.
-unsafe fn AM_doFollowPlayer(automap: &mut AutomapState) {
-    let mo = automap.player().mo().ptr();
+/// The player's `mo` must name a map object of the level.
+unsafe fn AM_doFollowPlayer(automap: &mut AutomapState, world: &World) {
+    let mo = world.players[automap.player()].mo().ptr();
     if automap.f_oldloc.x != (*mo).x || automap.f_oldloc.y != (*mo).y {
         automap.m_x = FTOM(automap, MTOF(automap, (*mo).x)) - automap.m_w / 2;
         automap.m_y = FTOM(automap, MTOF(automap, (*mo).y)) - automap.m_h / 2;
@@ -1474,13 +1483,15 @@ fn AM_updateLightLev(automap: &mut AutomapState) {
 /// `amclock`, updates the follow-player position, applies zoom, and pans the
 /// viewport.
 ///
-/// Called from `g_game` once per game tick.
+/// Called from `g_game` once per game tick, with the world `G_Ticker`
+/// borrowed for the level phase.
 /// C origin: `AM_Ticker` in am_map.c.
 ///
 /// # Safety
 ///
-/// `plr` must be valid while the automap is active.
-pub unsafe fn AM_Ticker() {
+/// The player's `mo` must name a map object of the level while the automap
+/// is active.
+pub unsafe fn AM_Ticker(world: &World) {
     let mut automap = AUTOMAP.borrow_mut();
     if automap.automapactive == 0 {
         return;
@@ -1489,7 +1500,7 @@ pub unsafe fn AM_Ticker() {
     automap.amclock += 1;
 
     if automap.followplayer != 0 {
-        AM_doFollowPlayer(&mut automap);
+        AM_doFollowPlayer(&mut automap, world);
     }
 
     if automap.ftom_zoommul != FRACUNIT {
@@ -1834,10 +1845,10 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
 ///
 /// # Safety
 ///
-/// `plr` must be valid, and the level loaded.
-unsafe fn AM_drawWalls(automap: &mut AutomapState) {
+/// The level must be loaded.
+unsafe fn AM_drawWalls(automap: &mut AutomapState, world: &World) {
     let (cheating, lightlev) = (automap.cheating, automap.lightlev);
-    let allmap = automap.player().read(|player| player.powers[4]) != 0;
+    let allmap = world.players[automap.player()].powers[4] != 0;
     // Scratch line; every iteration sets all of it.
     let mut l = mline_t {
         a: mpoint_t { x: 0, y: 0 },
@@ -1985,16 +1996,16 @@ unsafe fn AM_drawLineCharacter(
 ///
 /// # Safety
 ///
-/// `plr` and `players` must be valid; `mobj_t` pointers within player structs
-/// must be valid.
-unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
+/// The `mo` of every player in the game must name a map object of the
+/// level.
+unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
     let plr = automap.player();
     let their_colors: [i32; 4] = [GREENS, GRAYS, BROWNS, REDS];
     let mut their_color: i32 = -1;
     let mut color: i32;
 
     if netgame() == 0 {
-        let mo = plr.mo().ptr();
+        let mo = world.players[plr].mo().ptr();
         let arrow: &[mline_t] = if automap.cheating != 0 {
             &CHEAT_ARROW
         } else {
@@ -2015,14 +2026,14 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
             continue;
         }
 
-        if p.read(|player| player.powers[2]) != 0 {
+        if world.players[p].powers[2] != 0 {
             // pw_invisibility
             color = 246;
         } else {
             color = their_colors[their_color as usize];
         }
 
-        let mo = p.mo().ptr();
+        let mo = world.players[p].mo().ptr();
         AM_drawLineCharacter(
             automap,
             &PLAYER_ARROW,
@@ -2119,7 +2130,8 @@ unsafe fn AM_drawCrosshair(automap: &AutomapState, color: i32) {
 /// `cheating == 2`), crosshair, and mark points, then marks the dirty
 /// rectangle via `V_MarkRect`.
 ///
-/// Called from `g_game` once per frame.
+/// Called from `D_Display` once per frame, outside any world borrow; reads
+/// the players through its own shared borrow of the world.
 /// C origin: `AM_Drawer` in am_map.c.
 ///
 /// # Safety
@@ -2132,12 +2144,13 @@ pub unsafe fn AM_Drawer() {
         return;
     }
 
+    let world = WORLD.borrow();
     AM_clearFB(&automap, BACKGROUND);
     if automap.grid != 0 {
         AM_drawGrid(&mut automap, GRIDCOLORS);
     }
-    AM_drawWalls(&mut automap);
-    AM_drawPlayers(&mut automap);
+    AM_drawWalls(&mut automap, &world);
+    AM_drawPlayers(&mut automap, &world);
     if automap.cheating == 2 {
         AM_drawThings(&mut automap, THINGCOLORS, THINGRANGE);
     }

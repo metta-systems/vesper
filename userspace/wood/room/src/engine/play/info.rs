@@ -57,9 +57,9 @@
 //! `void (*)(void*)`, and `void (*)(void*, void*)`; in this Rust port it is
 //! a [`StateAction`]: `Mobj` for map-object actions (`fn(MobjId)`, run
 //! by `P_SetMobjState`) and `Weapon` for player-sprite actions
-//! (`fn(PlayerId, *mut PspdefT)`, run by `P_SetPsprite`). The `action!`
-//! macro picks the variant from the action's name, and the compiler checks
-//! it against the function's signature.
+//! (`fn(PlayerId, usize)` with the psprite index, run by `P_SetPsprite`).
+//! The `action!` macro picks the variant from the action's name, and the
+//! compiler checks it against the function's signature.
 //!
 //! The action functions themselves live in `p_enemy` and `p_pspr`, and are
 //! only ever invoked indirectly, through `State::action`, by the
@@ -886,17 +886,17 @@ pub enum StateAction {
     /// state.
     Mobj(unsafe fn(&mut World, MobjId)),
     /// Player-sprite (weapon) action, called with the world, the player and
-    /// the psprite entering the state.
-    Weapon(unsafe fn(&mut World, PlayerId, *mut PspdefT)),
+    /// the index of the psprite entering the state (C `pspdef_t *psp`).
+    Weapon(unsafe fn(&mut World, PlayerId, usize)),
 }
 
 // Every action function referenced from [`STATES`]. The bodies live in
 // `p_pspr` (mostly player weapon actions,
-// `fn(&mut World, PlayerId, *mut PspdefT)`) and `p_enemy` (mostly map object
+// `fn(&mut World, PlayerId, usize)`) and `p_enemy` (mostly map object
 // actions, `fn(&mut World, MobjId)`); `action!` wraps each in its
 // [`StateAction`] variant.
 use crate::engine::{
-    doom::player::{PlayerId, PspdefT},
+    doom::player::PlayerId,
     play::{
         enemy::{
             A_BabyMetal, A_BossDeath, A_BrainAwake, A_BrainDie, A_BrainExplode, A_BrainPain,
@@ -15289,7 +15289,7 @@ pub const S_TECH2LAMP4: i32 = 966;
 /// reference.
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::engine::doom::player::PspdefT};
 
     /// The all-zero table indices of zeroed map objects and players are
     /// `S_NULL` (C's null state) and `MT_PLAYER`, and the indices name the

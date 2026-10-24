@@ -21,6 +21,7 @@ use crate::{
             fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, angle_t, fixed_t},
             tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, SlopeDiv},
         },
+        world::WORLD,
     },
     types::Boolean,
 };
@@ -1024,7 +1025,9 @@ pub fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> SubsectorId {
 pub unsafe fn R_SetupFrame(player_id: PlayerId) {
     let colormaps = RENDER_DATA.borrow().colormaps;
     // Play does not run while a frame is drawn, so the view takes a copy.
-    let player = player_id.read(|player| *player);
+    // The renderer borrows the world only for such reads until it takes
+    // the world as a parameter; never across `NetUpdate`.
+    let player = WORLD.borrow().players[player_id];
     let mut view = VIEW.borrow_mut();
 
     view.viewplayer = Some(player_id);

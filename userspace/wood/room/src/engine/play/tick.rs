@@ -413,7 +413,7 @@ pub fn P_Ticker(world: &mut World) {
         if netgame() == 0
             && menu_active()
             && demoplayback() == 0
-            && PlayerId::console().read(|console| console.viewz) != 1
+            && world.players[PlayerId::console()].viewz != 1
         {
             return;
         }

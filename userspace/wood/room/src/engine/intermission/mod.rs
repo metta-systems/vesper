@@ -47,6 +47,7 @@ use crate::{
         render_2d::V_DrawPatch,
         sound::{S_ChangeMusic, S_StartNonPositionalSound, info::Mus},
         wad::{W_CheckNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch},
+        world::{WORLD, World},
         zone::PU_STATIC,
     },
     i_error,
@@ -1862,32 +1863,31 @@ unsafe fn WI_drawStats(wi: &IntermissionState) {
 /// pressing fire or use during the intermission screen.
 ///
 /// Reads `playeringame` and mutates each active player's `attackdown`/
-/// `usedown` flags, and may set `acceleratestage`.
-fn WI_checkForAccelerate(wi: &mut IntermissionState) {
+/// `usedown` flags in `world`, and may set `acceleratestage`.
+fn WI_checkForAccelerate(wi: &mut IntermissionState, world: &mut World) {
     for id in PlayerId::all() {
         if playeringame(id.index()) == 0 {
             continue;
         }
-        id.write(|player| {
-            if player.cmd.buttons & 1 != 0 {
-                // BT_ATTACK
-                if player.attackdown == 0 {
-                    wi.acceleratestage = 1;
-                }
-                player.attackdown = 1;
-            } else {
-                player.attackdown = 0;
+        let player = &mut world.players[id];
+        if player.cmd.buttons & 1 != 0 {
+            // BT_ATTACK
+            if player.attackdown == 0 {
+                wi.acceleratestage = 1;
             }
-            if player.cmd.buttons & 2 != 0 {
-                // BT_USE
-                if player.usedown == 0 {
-                    wi.acceleratestage = 1;
-                }
-                player.usedown = 1;
-            } else {
-                player.usedown = 0;
+            player.attackdown = 1;
+        } else {
+            player.attackdown = 0;
+        }
+        if player.cmd.buttons & 2 != 0 {
+            // BT_USE
+            if player.usedown == 0 {
+                wi.acceleratestage = 1;
             }
-        });
+            player.usedown = 1;
+        } else {
+            player.usedown = 0;
+        }
     }
 }
 
@@ -1899,7 +1899,10 @@ fn WI_checkForAccelerate(wi: &mut IntermissionState) {
 ///
 /// Increments `bcnt`, starts the intermission music on the first tic,
 /// checks for acceleration input, and dispatches to the appropriate state
-/// update function. Called by `G_Ticker` in `g_game.c`.
+/// update function. Called by `G_Ticker` in `g_game.c`, outside any world
+/// borrow: the players' buttons are read through a borrow of the world for
+/// the acceleration check only, since the updaters reach `G_WorldDone`,
+/// which borrows the world itself.
 ///
 /// # Safety
 ///
@@ -1925,7 +1928,7 @@ pub unsafe fn WI_Ticker() {
 
     let state = {
         let mut wi = INTERMISSION.borrow_mut();
-        WI_checkForAccelerate(&mut wi);
+        WI_checkForAccelerate(&mut wi, &mut WORLD.borrow_mut());
         wi.state
     };
 

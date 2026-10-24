@@ -27,6 +27,7 @@ use crate::engine::{
         mobj::mobj_t,
         setup::{LEVEL, LevelState},
     },
+    world::WORLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1040,7 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
 
     vis.patch = lump;
 
-    let invisibility = viewplayer.read(|player| player.powers[pw_invisibility]);
+    let invisibility = WORLD.borrow().players[viewplayer].powers[pw_invisibility];
     if invisibility > 4 * 32 || invisibility & 8 != 0 {
         // Shadow draw.
         vis.colormap = ptr::null_mut();
@@ -1081,7 +1082,13 @@ pub unsafe fn R_DrawPlayerSprites() {
         let view = VIEW.borrow();
         (view.player(), view.extralight)
     };
-    let mo = viewplayer.mo().ptr();
+    // Play does not run while a frame is drawn, so the renderer draws a
+    // copy of the psprites.
+    let (mo, psprites) = {
+        let world = WORLD.borrow();
+        let player = &world.players[viewplayer];
+        (player.mo().ptr(), player.psprites)
+    };
     let lightlevel = {
         let level = LEVEL.borrow();
         level.sectors[level.subsectors[(*mo).subsector].sector].lightlevel
@@ -1096,9 +1103,7 @@ pub unsafe fn R_DrawPlayerSprites() {
         sprtopscreen: 0,
     };
 
-    // Add all active psprites. Play does not run while a frame is drawn,
-    // so the renderer draws a copy.
-    let psprites = viewplayer.read(|player| player.psprites);
+    // Add all active psprites.
     for psp in &psprites {
         if !psp.state.is_null() {
             R_DrawPSprite(psp, &mut masked);

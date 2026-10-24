@@ -26,7 +26,7 @@ use crate::{
             self,
             event::event_t,
             items::weaponinfo,
-            player::{MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS, PlayerId, PlayerMessage},
+            player::{MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS, PlayerId, PlayerMessage, PlayerT},
             stat::{gamemission, gamemode, gameversion},
         },
         game::{G_DeferedInitNew, consoleplayer, deathmatch, gameskill, netgame},
@@ -49,7 +49,7 @@ use crate::{
         wad::{
             W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch,
         },
-        world::WORLD,
+        world::{WORLD, World},
         zone::{PU_CACHE, PU_STATIC, Z_Malloc},
     },
     types::Boolean,
@@ -324,9 +324,10 @@ const fn cheat(seq: &[u8], params: i32) -> cheatseq_t {
 
 /// Status bar state (C `st_stuff.c` and `st_lib.c` globals).
 ///
-/// The widgets keep raw pointers to the patch tables and to the visibility
-/// and value fields here, and the `STlib_*` calls take the widgets by
-/// pointer, so those go through [`Global::as_ptr`] rather than a guard.
+/// The widgets keep raw pointers to the patch tables here, so those are
+/// taken through [`Global::as_ptr`]. The values and visibility flags the
+/// widgets show (player fields and fields here) are passed to the
+/// `STlib_update*` calls when they draw.
 ///
 /// The patches are `'static` views of lumps cached at `PU_STATIC` by
 /// `ST_loadGraphics` (and `STlib_init` for `sttminus`); `None` is a patch
@@ -546,9 +547,9 @@ impl StatusState {
             w_frags: st_number_t::EMPTY,
             w_health: st_percent_t::EMPTY,
             w_armsbg: st_binicon_t::EMPTY,
-            w_arms: unsafe { std::mem::zeroed() },
-            w_faces: unsafe { std::mem::zeroed() },
-            w_keyboxes: unsafe { std::mem::zeroed() },
+            w_arms: [st_multicon_t::EMPTY; 6],
+            w_faces: st_multicon_t::EMPTY,
+            w_keyboxes: [st_multicon_t::EMPTY; 3],
             w_armor: st_percent_t::EMPTY,
             w_ammo: [st_number_t::EMPTY; NUMAMMO],
             w_maxammo: [st_number_t::EMPTY; NUMAMMO],
@@ -679,49 +680,52 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
     } else if ev.kind == 0 {
         // ev_keydown
         let key = ev.data2 as u8;
-        // Responders run only in a level, after `ST_Start`.
+        // Responders run only in a level, after `ST_Start`, and outside any
+        // world borrow: the cheats borrow the world for this key.
         let player = STATUS.borrow().player();
-        let plyr = player.ptr();
+        let mut world_guard = WORLD.borrow_mut();
+        let world = &mut *world_guard;
         if netgame() == 0 && gameskill() != 4 {
             // sk_nightmare = 4
+            let plyr = &mut world.players[player];
             if check_cheat(|status| &mut status.cheat_god, key) {
-                (*plyr).cheats ^= 2; // CF_GODMODE
-                if (*plyr).cheats & 2 != 0 {
-                    if let Some(mo) = (*plyr).mo {
+                plyr.cheats ^= 2; // CF_GODMODE
+                if plyr.cheats & 2 != 0 {
+                    if let Some(mo) = plyr.mo {
                         (*mo.ptr()).health = 100;
                     }
-                    (*plyr).health = 100; // deh_god_mode_health
-                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDON));
+                    plyr.health = 100; // deh_god_mode_health
+                    plyr.message = PlayerMessage::new(DEH_String(STSTR_DQDON));
                 } else {
-                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_DQDOFF));
+                    plyr.message = PlayerMessage::new(DEH_String(STSTR_DQDOFF));
                 }
             } else if check_cheat(|status| &mut status.cheat_ammonokey, key) {
-                (*plyr).armorpoints = 200; // deh_idfa_armor
-                (*plyr).armortype = 2; // deh_idfa_armor_class
+                plyr.armorpoints = 200; // deh_idfa_armor
+                plyr.armortype = 2; // deh_idfa_armor_class
                 for i in 0..NUMWEAPONS {
-                    (*plyr).weaponowned[i] = 1;
+                    plyr.weaponowned[i] = 1;
                 }
                 for i in 0..NUMAMMO {
-                    (*plyr).ammo[i] = (*plyr).maxammo[i];
+                    plyr.ammo[i] = plyr.maxammo[i];
                 }
-                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_FAADDED));
+                plyr.message = PlayerMessage::new(DEH_String(STSTR_FAADDED));
             } else if check_cheat(|status| &mut status.cheat_ammo, key) {
-                (*plyr).armorpoints = 200; // deh_idkfa_armor
-                (*plyr).armortype = 2; // deh_idkfa_armor_class
+                plyr.armorpoints = 200; // deh_idkfa_armor
+                plyr.armortype = 2; // deh_idkfa_armor_class
                 for i in 0..NUMWEAPONS {
-                    (*plyr).weaponowned[i] = 1;
+                    plyr.weaponowned[i] = 1;
                 }
                 for i in 0..NUMAMMO {
-                    (*plyr).ammo[i] = (*plyr).maxammo[i];
+                    plyr.ammo[i] = plyr.maxammo[i];
                 }
                 for i in 0..NUMCARDS {
-                    (*plyr).cards[i] = 1;
+                    plyr.cards[i] = 1;
                 }
-                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_KFAADDED));
+                plyr.message = PlayerMessage::new(DEH_String(STSTR_KFAADDED));
             } else if check_cheat(|status| &mut status.cheat_mus, key) {
                 let mut buf = [0u8; 3];
                 let musnum: i32;
-                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_MUS));
+                plyr.message = PlayerMessage::new(DEH_String(STSTR_MUS));
                 cht_GetParam(&STATUS.borrow().cheat_mus, &mut buf);
 
                 if gamemode() == doom::mode::commercial || gameversion() < doom::mode::exe_ultimate
@@ -729,14 +733,14 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                     musnum =
                         33 + (buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32) - 1;
                     if ((buf[0] as i32 - '0' as i32) * 10 + (buf[1] as i32 - '0' as i32)) > 35 {
-                        (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
+                        plyr.message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
                 } else {
                     musnum = 1 + (buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32);
                     if ((buf[0] as i32 - '1' as i32) * 9 + (buf[1] as i32 - '1' as i32)) > 31 {
-                        (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
+                        plyr.message = PlayerMessage::new(DEH_String(STSTR_NOMUS));
                     } else {
                         S_ChangeMusic(musnum, 1);
                     }
@@ -746,37 +750,38 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 || (logical_gamemission() != doom::mode::doom
                     && check_cheat(|status| &mut status.cheat_commercial_noclip, key))
             {
-                (*plyr).cheats ^= 1; // CF_NOCLIP
-                if (*plyr).cheats & 1 != 0 {
-                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NCON));
+                plyr.cheats ^= 1; // CF_NOCLIP
+                if plyr.cheats & 1 != 0 {
+                    plyr.message = PlayerMessage::new(DEH_String(STSTR_NCON));
                 } else {
-                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_NCOFF));
+                    plyr.message = PlayerMessage::new(DEH_String(STSTR_NCOFF));
                 }
             }
 
             for i in 0..6 {
                 if check_cheat(|status| &mut status.cheat_powerup[i], key) {
-                    if (*plyr).powers[i] == 0 {
-                        P_GivePower(&mut WORLD.borrow_mut(), player, i as i32);
+                    if world.players[player].powers[i] == 0 {
+                        P_GivePower(world, player, i as i32);
                     } else if i != 1 {
                         // pw_strength = 1
-                        (*plyr).powers[i] = 1;
+                        world.players[player].powers[i] = 1;
                     } else {
-                        (*plyr).powers[i] = 0;
+                        world.players[player].powers[i] = 0;
                     }
-                    (*plyr).message = PlayerMessage::new(DEH_String(STSTR_BEHOLDX));
+                    world.players[player].message = PlayerMessage::new(DEH_String(STSTR_BEHOLDX));
                 }
             }
 
             if check_cheat(|status| &mut status.cheat_powerup[6], key) {
-                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_BEHOLD));
+                world.players[player].message = PlayerMessage::new(DEH_String(STSTR_BEHOLD));
             } else if check_cheat(|status| &mut status.cheat_choppers, key) {
-                (*plyr).weaponowned[7] = 1; // wp_chainsaw
-                (*plyr).powers[0] = 1; // pw_invulnerability
-                (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
+                let plyr = &mut world.players[player];
+                plyr.weaponowned[7] = 1; // wp_chainsaw
+                plyr.powers[0] = 1; // pw_invulnerability
+                plyr.message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
-                let mo = PlayerId::console().mo().ptr();
-                (*plyr).message = PlayerMessage::new(format!(
+                let mo = world.players[PlayerId::console()].mo().ptr();
+                world.players[player].message = PlayerMessage::new(format!(
                     "ang=0x{:x};x,y=(0x{:x},0x{:x})",
                     (*mo).angle,
                     (*mo).x,
@@ -822,7 +827,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 return 0;
             }
 
-            (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CLEV));
+            world.players[player].message = PlayerMessage::new(DEH_String(STSTR_CLEV));
             G_DeferedInitNew(gameskill(), epsd, map);
         }
     }
@@ -865,16 +870,14 @@ pub fn ST_calcPainOffset(status: &mut StatusState, health: i32) -> i32 {
 /// 6. God-mode / invulnerability face (priority 4).
 /// 7. Idle random straight face (priority 0, selected when `st_facecount` reaches 0).
 ///
-/// Precondition: `ST_Start` has set the player, and `oldweaponsowned`
+/// `plyr` is the status bar's player. Precondition: `oldweaponsowned`
 /// matches the snapshot from the previous call.
 ///
 /// # Safety
 ///
 /// The player's `mo` and `attacker` must name map objects of the level
 /// (read when computing turn directions).
-pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
-    // The status bar only reads the player, so it works on a copy.
-    let plyr = status.player().read(|player| *player);
+pub unsafe fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
     let health = plyr.health;
     let diffang: u32;
     let i: i32;
@@ -984,31 +987,22 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
 // Widget update
 // ---------------------------------------------------------------------------
 
-/// Refresh all status-bar widget data pointers and counters from the player state.
+/// Refresh the status-bar widget data and counters from the player state
+/// `plyr`.
 ///
-/// Called once per tic by `ST_Ticker`. Updates the ready-ammo pointer (using a
-/// sentinel value of 1994 for weapons with no ammo type), key-slot indices,
-/// visibility flags for the arms panel and frag counter, the frag total, and
-/// the face widget via `ST_updateFaceWidget`. Also decrements `st_msgcounter`
-/// and restores `st_chat` when it expires.
+/// Called once per tic by `ST_Ticker`. Records the ready weapon, whose ammo
+/// the ready-ammo widget shows (the value 1994 for weapons with no ammo
+/// type), key-slot indices, visibility flags for the arms panel and frag
+/// counter, the frag total, and the face widget via `ST_updateFaceWidget`.
+/// Also decrements `st_msgcounter` and restores `st_chat` when it expires.
 ///
 /// # Safety
 ///
 /// Caller must ensure `ST_createWidgets` has run, and the player's `mo`
 /// and `attacker` must name map objects of the level.
-pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
-    let player = status.player();
-    let plyr = player.read(|player| *player);
-    let ready_ammo = weaponinfo[plyr.readyweapon as usize].ammo;
-    // The widget keeps this pointer, so it takes a stable address.
-    if ready_ammo == 5 {
-        // am_noammo
-        status.w_ready.num = &raw mut (*STATUS.as_ptr()).largeammo;
-    } else {
-        status.w_ready.num = (&raw mut (*player.ptr()).ammo)
-            .cast::<i32>()
-            .add(ready_ammo as usize);
-    }
+pub unsafe fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT) {
+    // C points the ready-ammo widget at the ammo of the weapon ready now;
+    // the weapon recorded here picks that ammo when the widget draws.
     status.w_ready.data = plyr.readyweapon;
 
     for i in 0..3 {
@@ -1018,7 +1012,7 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
         }
     }
 
-    ST_updateFaceWidget(status);
+    ST_updateFaceWidget(status, plyr);
 
     status.st_notdeathmatch = if deathmatch() == 0 { 1 } else { 0 };
     status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
@@ -1057,20 +1051,23 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
 /// Increments the internal clock, samples a new random number for face-idle
 /// variation, updates all widget data via `ST_updateWidgets`, and records the
 /// current health for the ouch-face comparison next tic.
-/// Called once per tic by `G_Ticker` in `g_game.c`.
+/// Called once per tic by `G_Ticker` in `g_game.c`, with the world it
+/// borrowed for the level phase.
 ///
 /// # Safety
 ///
 /// Mutates `st_clock`, `st_randomnumber`, and `st_oldhealth`, and indirectly
 /// touches every widget global via `ST_updateWidgets`. Caller must ensure
-/// `ST_Start` has been called and that `plyr` is valid.
-pub unsafe fn ST_Ticker() {
+/// `ST_Start` has been called, and the player's `mo` and `attacker` must
+/// name map objects of the level.
+pub unsafe fn ST_Ticker(world: &World) {
     let random_number = M_Random();
     let mut status = STATUS.borrow_mut();
+    let plyr = &world.players[status.player()];
     status.st_clock = status.st_clock.wrapping_add(1);
     status.st_randomnumber = random_number;
-    ST_updateWidgets(&mut status);
-    status.st_oldhealth = status.player().read(|player| player.health);
+    ST_updateWidgets(&mut status, plyr);
+    status.st_oldhealth = plyr.health;
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,14 +1085,14 @@ pub unsafe fn ST_Ticker() {
 /// In Chex Quest the red-damage palettes are replaced with `RADIATIONPAL` to
 /// avoid gore. Only calls `I_SetPalette` when the palette index changes.
 ///
+/// `plyr` is the status bar's player.
+///
 /// # Safety
 ///
-/// Reads the status bar's player and mutates `st_palette`. Calls
-/// `W_CacheLumpNum`/`I_SetPalette` so the WAD subsystem and video backend
-/// must be initialised, and `lu_palette` must hold a valid lump number set
-/// up by `ST_loadData`.
-pub unsafe fn ST_doPaletteStuff() {
-    let plyr = STATUS.borrow().player().read(|player| *player);
+/// Mutates `st_palette`. Calls `W_CacheLumpNum`/`I_SetPalette` so the WAD
+/// subsystem and video backend must be initialised, and `lu_palette` must
+/// hold a valid lump number set up by `ST_loadData`.
+pub unsafe fn ST_doPaletteStuff(plyr: &PlayerT) {
     let mut palette: i32;
     let mut cnt = plyr.damagecount;
 
@@ -1148,7 +1145,21 @@ pub unsafe fn ST_doPaletteStuff() {
 // Drawing
 // ---------------------------------------------------------------------------
 
-/// Drive all st_lib widget update calls for a single frame.
+/// Run `update` on a copy of the widget `select` picks out of the status
+/// state, then store the copy back. The widget library reads the status state
+/// (backing screen, minus patch) while it draws, so the state is not
+/// borrowed during `update`.
+fn update_widget<Widget: Copy>(
+    select: impl Fn(&mut StatusState) -> &mut Widget,
+    update: impl FnOnce(&mut Widget),
+) {
+    let mut widget = *select(&mut STATUS.borrow_mut());
+    update(&mut widget);
+    *select(&mut STATUS.borrow_mut()) = widget;
+}
+
+/// Drive all st_lib widget update calls for a single frame, showing the
+/// values of the status bar's player `plyr` and of the status state.
 ///
 /// `refresh` is passed through to each widget: non-zero forces a full redraw,
 /// zero redraws only widgets whose value changed since last frame.
@@ -1156,12 +1167,11 @@ pub unsafe fn ST_doPaletteStuff() {
 ///
 /// # Safety
 ///
-/// Mutates `st_armson`/`st_fragson` and reads every `w_*` widget, passing
-/// them to the `STlib_update*` family. Caller must ensure
-/// `ST_createWidgets` has been called so the widget pointers refer to live
-/// player/state values.
-pub unsafe fn ST_drawWidgets(refresh: i32) {
-    {
+/// Mutates `st_armson`/`st_fragson` and updates every `w_*` widget through
+/// the `STlib_update*` family. Caller must ensure `ST_createWidgets` has
+/// been called so the widgets' patch tables are set up.
+pub unsafe fn ST_drawWidgets(plyr: &PlayerT, refresh: i32) {
+    let status = {
         let mut status = STATUS.borrow_mut();
         status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
             1
@@ -1173,54 +1183,126 @@ pub unsafe fn ST_drawWidgets(refresh: i32) {
         } else {
             0
         };
-    }
+        // The values the widgets show: none of them changes while they draw.
+        StatusValues {
+            statusbaron: status.st_statusbaron != 0,
+            armson: status.st_armson != 0,
+            fragson: status.st_fragson != 0,
+            ready_weapon: status.w_ready.data,
+            largeammo: status.largeammo,
+            notdeathmatch: status.st_notdeathmatch,
+            faceindex: status.st_faceindex,
+            keyboxes: status.keyboxes,
+            fragscount: status.st_fragscount,
+        }
+    };
 
-    let status = STATUS.as_ptr();
-    STlib_updateNum(&raw mut (*status).w_ready, refresh);
+    let ready_ammo = weaponinfo[status.ready_weapon as usize].ammo;
+    let ready_value = if ready_ammo == 5 {
+        // am_noammo
+        status.largeammo
+    } else {
+        plyr.ammo[ready_ammo as usize]
+    };
+    update_widget(
+        |status| &mut status.w_ready,
+        |widget| STlib_updateNum(widget, ready_value, status.statusbaron, refresh),
+    );
 
     for i in 0..NUMAMMO {
-        STlib_updateNum(&raw mut (*status).w_ammo[i], refresh);
-        STlib_updateNum(&raw mut (*status).w_maxammo[i], refresh);
+        update_widget(
+            |status| &mut status.w_ammo[i],
+            |widget| STlib_updateNum(widget, plyr.ammo[i], status.statusbaron, refresh),
+        );
+        update_widget(
+            |status| &mut status.w_maxammo[i],
+            |widget| STlib_updateNum(widget, plyr.maxammo[i], status.statusbaron, refresh),
+        );
     }
 
-    STlib_updatePercent(&raw mut (*status).w_health, refresh);
-    STlib_updatePercent(&raw mut (*status).w_armor, refresh);
-    STlib_updateBinIcon(&raw mut (*status).w_armsbg, refresh);
+    update_widget(
+        |status| &mut status.w_health,
+        |widget| STlib_updatePercent(widget, plyr.health, status.statusbaron, refresh),
+    );
+    update_widget(
+        |status| &mut status.w_armor,
+        |widget| STlib_updatePercent(widget, plyr.armorpoints, status.statusbaron, refresh),
+    );
+    update_widget(
+        |status| &mut status.w_armsbg,
+        |widget| STlib_updateBinIcon(widget, status.notdeathmatch, status.statusbaron, refresh),
+    );
 
     for i in 0..6 {
-        STlib_updateMultIcon(&raw mut (*status).w_arms[i], refresh);
+        update_widget(
+            |status| &mut status.w_arms[i],
+            |widget| STlib_updateMultIcon(widget, plyr.weaponowned[i + 1], status.armson, refresh),
+        );
     }
 
-    STlib_updateMultIcon(&raw mut (*status).w_faces, refresh);
+    update_widget(
+        |status| &mut status.w_faces,
+        |widget| STlib_updateMultIcon(widget, status.faceindex, status.statusbaron, refresh),
+    );
 
     for i in 0..3 {
-        STlib_updateMultIcon(&raw mut (*status).w_keyboxes[i], refresh);
+        update_widget(
+            |status| &mut status.w_keyboxes[i],
+            |widget| STlib_updateMultIcon(widget, status.keyboxes[i], status.statusbaron, refresh),
+        );
     }
 
-    STlib_updateNum(&raw mut (*status).w_frags, refresh);
+    update_widget(
+        |status| &mut status.w_frags,
+        |widget| STlib_updateNum(widget, status.fragscount, status.fragson, refresh),
+    );
 }
 
-/// Perform a full status-bar redraw: clear `st_firsttime`, refresh the background, then redraw all widgets.
+/// The status-state values and visibility flags the widgets show in one
+/// frame (the C widgets' `num`/`inum`/`val`/`on` pointer targets).
+struct StatusValues {
+    /// Whether the bar is shown (`st_statusbaron`).
+    statusbaron: bool,
+    /// Whether the weapons-owned display is shown (`st_armson`).
+    armson: bool,
+    /// Whether the frag counter is shown (`st_fragson`).
+    fragson: bool,
+    /// The ready weapon recorded by the last `ST_updateWidgets`.
+    ready_weapon: i32,
+    /// The ready-ammo value for weapons without ammo (`largeammo`).
+    largeammo: i32,
+    /// Whether the arms background is shown (`st_notdeathmatch`).
+    notdeathmatch: i32,
+    /// The face to show (`st_faceindex`).
+    faceindex: i32,
+    /// The key icons to show (`keyboxes`).
+    keyboxes: [i32; 3],
+    /// The frag total (`st_fragscount`).
+    fragscount: i32,
+}
+
+/// Perform a full status-bar redraw of `plyr`: clear `st_firsttime`, refresh
+/// the background, then redraw all widgets.
 ///
 /// # Safety
 ///
 /// Mutates `st_firsttime` and delegates to `ST_refreshBackground` and
-/// `ST_drawWidgets`, which require an initialised status bar and live
-/// `plyr` pointer.
-pub unsafe fn ST_doRefresh() {
+/// `ST_drawWidgets`, which require an initialised status bar.
+pub unsafe fn ST_doRefresh(plyr: &PlayerT) {
     STATUS.borrow_mut().st_firsttime = 0;
     ST_refreshBackground();
-    ST_drawWidgets(1);
+    ST_drawWidgets(plyr, 1);
 }
 
-/// Perform a differential redraw: only redraw widgets whose value changed.
+/// Perform a differential redraw of `plyr`: only redraw widgets whose value
+/// changed.
 ///
 /// # Safety
 ///
 /// Delegates to `ST_drawWidgets`; same invariants apply (widgets must have
-/// been created and `plyr` must be valid).
-pub unsafe fn ST_diffDraw() {
-    ST_drawWidgets(0);
+/// been created).
+pub unsafe fn ST_diffDraw(plyr: &PlayerT) {
+    ST_drawWidgets(plyr, 0);
 }
 
 /// Draw the status bar for the current frame.
@@ -1230,7 +1312,9 @@ pub unsafe fn ST_diffDraw() {
 /// `fullscreen` is false or the automap is active, the bar is shown; otherwise
 /// it is hidden.
 ///
-/// Called once per frame by the main render loop (`D_Display` in `d_main.c`).
+/// Called once per frame by the main render loop (`D_Display` in `d_main.c`),
+/// outside any world borrow; reads the player through its own shared borrow
+/// of the world.
 ///
 /// # Safety
 ///
@@ -1240,7 +1324,7 @@ pub unsafe fn ST_diffDraw() {
 /// video backend is ready.
 pub unsafe fn ST_Drawer(fullscreen: Boolean, refresh: Boolean) {
     let automap_shown = automap_active();
-    {
+    let player = {
         let mut status = STATUS.borrow_mut();
         status.st_statusbaron = if fullscreen.is_false() || automap_shown {
             1
@@ -1252,12 +1336,15 @@ pub unsafe fn ST_Drawer(fullscreen: Boolean, refresh: Boolean) {
         } else {
             0
         };
-    }
-    ST_doPaletteStuff();
+        status.player()
+    };
+    let world = WORLD.borrow();
+    let plyr = &world.players[player];
+    ST_doPaletteStuff(plyr);
     if STATUS.borrow().st_firsttime != 0 {
-        ST_doRefresh();
+        ST_doRefresh(plyr);
     } else {
-        ST_diffDraw();
+        ST_diffDraw(plyr);
     }
 }
 
@@ -1425,12 +1512,12 @@ pub unsafe fn ST_unloadData() {
 /// key-slot values to -1. Calls `STlib_init` to reset the widget library.
 ///
 /// Writes to every internal status-bar state field and sets `plyr` to the
-/// console player.
+/// console player, whose slot in `world` gives the weapon snapshot.
 ///
 /// # Panics
 ///
 /// If `consoleplayer` is not a player slot.
-pub fn ST_initData() {
+pub fn ST_initData(world: &World) {
     {
         let mut status = STATUS.borrow_mut();
         status.st_firsttime = 1;
@@ -1447,7 +1534,7 @@ pub fn ST_initData() {
         status.st_palette = -1;
         status.st_oldhealth = -1;
 
-        status.oldweaponsowned = player.read(|player| player.weaponowned);
+        status.oldweaponsowned = world.players[player].weaponowned;
         for i in 0..3 {
             status.keyboxes[i] = -1;
         }
@@ -1463,125 +1550,86 @@ pub fn ST_initData() {
 /// widgets for: ready ammo, health, armor, arms background, weapons-owned icons,
 /// frag counter, face, key slots, and per-ammo-type current/max displays.
 ///
+/// `plyr` is the status bar's player, whose ready weapon the ready-ammo
+/// widget starts with.
+///
 /// # Safety
 ///
-/// Initialises every `w_*` widget global with raw pointers into `plyr`'s
-/// ammo/health/armor/weapon-owned arrays and the cached patch tables.
-/// Caller must ensure `ST_initData` and `ST_loadGraphics` ran first so
-/// `plyr` is valid and the patches are loaded.
-pub unsafe fn ST_createWidgets() {
-    // The widgets keep pointers to the patch tables and to the visibility
-    // and value fields, so they all point into the stable address of `STATUS`.
-    // The value widgets likewise point into the player's stable slot.
+/// Initialises every `w_*` widget global with raw pointers to the cached
+/// patch tables. Caller must ensure `ST_initData` and `ST_loadGraphics` ran
+/// first so the patches are loaded.
+pub unsafe fn ST_createWidgets(plyr: &PlayerT) {
+    // The widgets keep pointers to the patch tables, so those point into the
+    // stable address of `STATUS`.
     let status = STATUS.as_ptr();
-    let plyr = (*status).player().ptr();
-    let statusbaron = &raw mut (*status).st_statusbaron;
     let tallnum: PatchTable = &raw const (*status).tallnum;
     let shortnum: PatchTable = &raw const (*status).shortnum;
     let keys: PatchTable = &raw const (*status).keys;
 
     STlib_initNum(
-        &raw mut (*status).w_ready,
+        &mut (*status).w_ready,
         ST_AMMOX,
         ST_AMMOY,
         tallnum,
-        (*plyr)
-            .ammo
-            .as_mut_ptr()
-            .add(weaponinfo[(*plyr).readyweapon as usize].ammo as usize),
-        statusbaron,
         ST_AMMOWIDTH,
     );
-    (*status).w_ready.data = (*plyr).readyweapon;
+    (*status).w_ready.data = plyr.readyweapon;
 
     STlib_initPercent(
-        &raw mut (*status).w_health,
+        &mut (*status).w_health,
         ST_HEALTHX,
         ST_HEALTHY,
         tallnum,
-        &mut (*plyr).health,
-        statusbaron,
         (*status).tallpercent,
     );
 
     STlib_initBinIcon(
-        &raw mut (*status).w_armsbg,
+        &mut (*status).w_armsbg,
         ST_ARMSBGX,
         ST_ARMSBGY,
         (*status).armsbg,
-        &raw mut (*status).st_notdeathmatch,
-        statusbaron,
     );
 
     for i in 0..6 {
         let i_i = i as i32;
         STlib_initMultIcon(
-            &raw mut (*status).w_arms[i],
+            &mut (*status).w_arms[i],
             ST_ARMSX + (i_i % 3) * ST_ARMSXSPACE,
             ST_ARMSY + (i_i / 3) * ST_ARMSYSPACE,
             &raw const (*status).arms[i] as PatchTable,
-            (*plyr).weaponowned.as_mut_ptr().add(i + 1),
-            &raw mut (*status).st_armson,
         );
     }
 
     STlib_initNum(
-        &raw mut (*status).w_frags,
+        &mut (*status).w_frags,
         ST_FRAGSX,
         ST_FRAGSY,
         tallnum,
-        &raw mut (*status).st_fragscount,
-        &raw mut (*status).st_fragson,
         ST_FRAGSWIDTH,
     );
 
     STlib_initMultIcon(
-        &raw mut (*status).w_faces,
+        &mut (*status).w_faces,
         ST_FACESX,
         ST_FACESY,
         &raw const (*status).faces as PatchTable,
-        &raw mut (*status).st_faceindex,
-        statusbaron,
     );
 
     STlib_initPercent(
-        &raw mut (*status).w_armor,
+        &mut (*status).w_armor,
         ST_ARMORX,
         ST_ARMORY,
         tallnum,
-        &mut (*plyr).armorpoints,
-        statusbaron,
         (*status).tallpercent,
     );
 
-    STlib_initMultIcon(
-        &raw mut (*status).w_keyboxes[0],
-        ST_KEY0X,
-        ST_KEY0Y,
-        keys,
-        &raw mut (*status).keyboxes[0],
-        statusbaron,
-    );
-    STlib_initMultIcon(
-        &raw mut (*status).w_keyboxes[1],
-        ST_KEY1X,
-        ST_KEY1Y,
-        keys,
-        &raw mut (*status).keyboxes[1],
-        statusbaron,
-    );
-    STlib_initMultIcon(
-        &raw mut (*status).w_keyboxes[2],
-        ST_KEY2X,
-        ST_KEY2Y,
-        keys,
-        &raw mut (*status).keyboxes[2],
-        statusbaron,
-    );
+    STlib_initMultIcon(&mut (*status).w_keyboxes[0], ST_KEY0X, ST_KEY0Y, keys);
+    STlib_initMultIcon(&mut (*status).w_keyboxes[1], ST_KEY1X, ST_KEY1Y, keys);
+    STlib_initMultIcon(&mut (*status).w_keyboxes[2], ST_KEY2X, ST_KEY2Y, keys);
 
     for i in 0..NUMAMMO {
         STlib_initNum(
-            &raw mut (*status).w_ammo[i],
+            &mut (*status).w_ammo[i],
             match i {
                 0 => ST_AMMO0X,
                 1 => ST_AMMO1X,
@@ -1597,15 +1645,13 @@ pub unsafe fn ST_createWidgets() {
                 _ => unreachable!(),
             },
             shortnum,
-            (*plyr).ammo.as_mut_ptr().add(i),
-            statusbaron,
             ST_AMMO0WIDTH,
         );
     }
 
     for i in 0..NUMAMMO {
         STlib_initNum(
-            &raw mut (*status).w_maxammo[i],
+            &mut (*status).w_maxammo[i],
             match i {
                 0 => ST_MAXAMMO0X,
                 1 => ST_MAXAMMO1X,
@@ -1621,8 +1667,6 @@ pub unsafe fn ST_createWidgets() {
                 _ => unreachable!(),
             },
             shortnum,
-            (*plyr).maxammo.as_mut_ptr().add(i),
-            statusbaron,
             ST_MAXAMMO0WIDTH,
         );
     }
@@ -1631,20 +1675,21 @@ pub unsafe fn ST_createWidgets() {
 /// Start the status bar subsystem for a new game or level.
 ///
 /// Calls `ST_Stop` if already running, then re-initialises state, creates
-/// widgets, and clears `st_stopped`. Called from `G_DoLoadLevel` in `g_game.c`.
+/// widgets, and clears `st_stopped`. Called from `P_SpawnPlayer` with the
+/// world the play code holds.
 ///
 /// # Safety
 ///
 /// Reads/mutates `st_stopped` and runs `ST_initData`/`ST_createWidgets`,
-/// which mutate every status-bar global and require the WAD/player subsystems
+/// which mutate every status-bar global and require the WAD subsystem
 /// to be initialised (see those functions' own safety contracts). Caller must
 /// ensure `ST_Init` has run once at startup.
-pub unsafe fn ST_Start() {
+pub unsafe fn ST_Start(world: &World) {
     if STATUS.borrow().st_stopped == 0 {
         ST_Stop();
     }
-    ST_initData();
-    ST_createWidgets();
+    ST_initData(world);
+    ST_createWidgets(&world.players[PlayerId::console()]);
     STATUS.borrow_mut().st_stopped = 0;
 }
 

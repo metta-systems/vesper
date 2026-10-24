@@ -86,11 +86,6 @@ const ev_keydown: i32 = 0;
 /// C origin: `FF_FRAMEMASK` in f_finale.c.
 const FF_FRAMEMASK: i32 = 0x7fff;
 
-/// Maximum number of simultaneously active players.
-///
-/// C origin: `MAXPLAYERS` in `doomdef.h`.
-const MAXPLAYERS: usize = 4;
-
 // ---------------------------------------------------------------------------
 // Finale text strings (from d_englsh.h)
 // ---------------------------------------------------------------------------
@@ -247,8 +242,8 @@ struct CastInfo {
 // g_game.rs
 use crate::engine::{
     dehacked::DEH_String,
-    doom::player::PlayerId,
     game::{GAME, gameepisode, gamemap},
+    world::World,
 };
 
 // am_map.rs
@@ -740,13 +735,14 @@ pub unsafe fn F_Responder(event: *mut event_t) -> i32 {
 /// from Text to ArtScreen when the text has been fully displayed and the wait
 /// period has expired (triggering a wipe and, for episode 3, the bunny music).
 ///
-/// Called from C code in `g_game.c` once per game tick.
+/// Called from `G_Ticker` in `g_game.c` once per game tick, with the world it
+/// borrowed for the finale phase; the players' buttons are read from it.
 /// C origin: `F_Ticker` in f_finale.c.
-pub fn F_Ticker() {
+pub fn F_Ticker(world: &World) {
     // check for skipping
     if gamemode() == doom::mode::commercial && FINALE.borrow().count > 50 {
-        for i in 0..MAXPLAYERS {
-            if PlayerId::new(i).read(|player| player.cmd.buttons) != 0 {
+        for player in &world.players {
+            if player.cmd.buttons != 0 {
                 if gamemap() == 30 {
                     F_StartCast();
                 } else {

@@ -1038,15 +1038,13 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
             game.wminfo.partime = 180;
         }
 
-        for id in PlayerId::all() {
-            id.write(|player| {
-                player.killcount = 0;
-                player.secretcount = 0;
-                player.itemcount = 0;
-            });
+        for player in &mut world.players {
+            player.killcount = 0;
+            player.secretcount = 0;
+            player.itemcount = 0;
         }
 
-        PlayerId::console().write(|console| console.viewz = 1);
+        world.players[PlayerId::console()].viewz = 1;
 
         S_Start();
         Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -1096,7 +1094,7 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
         if deathmatch() != 0 {
             for i in 0..MAXPLAYERS {
                 if playeringame(i) != 0 {
-                    PlayerId::new(i).write(|player| player.mo = None);
+                    world.players[i].mo = None;
                     G_DeathMatchSpawnPlayer(world, i as i32);
                 }
             }

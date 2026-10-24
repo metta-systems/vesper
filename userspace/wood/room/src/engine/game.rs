@@ -53,7 +53,7 @@ use crate::engine::{
             commercial, doom, exe_chex, exe_doom_1_2, exe_doom_1_7, exe_doom_1_8, exe_doom_1_666,
             exe_final2, exe_ultimate, shareware,
         },
-        player::{MAXPLAYERS, PlayerId, PlayerT, TiccmdT},
+        player::{MAXPLAYERS, PlayerId, TiccmdT},
         stat::{gamemission, gamemode, gameversion},
     },
     intermission::{wbplayerstruct_t, wbstartstruct_t},
@@ -573,17 +573,6 @@ pub fn wminfo_ptr() -> *mut wbstartstruct_t {
     unsafe { &raw mut (*GAME.as_ptr()).wminfo }
 }
 
-/// The player slots (C `players[MAXPLAYERS]`).
-///
-/// Map objects (`mobj_t.player`), the status bar, the HUD and the automap
-/// name a slot by [`PlayerId`]. Leaf code reads and writes a slot through
-/// [`PlayerId::read`] / [`PlayerId::write`]; play code that keeps a player
-/// across calls that may reach the same slot works through
-/// [`PlayerId::ptr`]'s stable [`Global::as_ptr`] address.
-pub static PLAYERS: Global<[PlayerT; MAXPLAYERS]> =
-    // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
-    Global::new(unsafe { std::mem::zeroed() });
-
 /// Doom episode par times (episodes 1-3, maps 1-9), in seconds.
 /// Index `[0]` and `[*][0]` are dummies to keep the table 1-based.
 pub static pars: [[i32; 10]; 4] = [
@@ -899,15 +888,16 @@ fn weapon_selectable(weapon: i32) -> bool {
     {
         return false;
     }
-    PlayerId::console().read(|console| {
-        if console.weaponowned[weapon as usize] == 0 {
-            return false;
-        }
-        // Can't select fist if we have chainsaw, unless we also have berserk.
-        !(weapon == wp_fist
-            && console.weaponowned[wp_chainsaw as usize] != 0
-            && console.powers[pw_strength] == 0)
-    })
+    // Ticcmds are built outside any world borrow.
+    let world = WORLD.borrow();
+    let console = &world.players[PlayerId::console()];
+    if console.weaponowned[weapon as usize] == 0 {
+        return false;
+    }
+    // Can't select fist if we have chainsaw, unless we also have berserk.
+    !(weapon == wp_fist
+        && console.weaponowned[wp_chainsaw as usize] != 0
+        && console.powers[pw_strength] == 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -924,13 +914,15 @@ fn weapon_selectable(weapon: i32) -> bool {
 ///
 /// Mirrors `G_NextWeapon` in `g_game.c`.
 fn g_next_weapon(direction: i32) -> i32 {
-    let weapon = PlayerId::console().read(|console| {
+    let weapon = {
+        let world = WORLD.borrow();
+        let console = &world.players[PlayerId::console()];
         if console.pendingweapon == wp_nochange {
             console.readyweapon
         } else {
             console.pendingweapon
         }
-    });
+    };
 
     let n = WEAPON_ORDER_TABLE.len() as i32;
     let mut i = 0;
@@ -1309,25 +1301,22 @@ pub unsafe fn G_DoLoadLevel() {
         }
     }
 
+    let mut world = WORLD.borrow_mut();
     let (gameepisode, gamemap, gameskill) = {
         let mut game = GAME.borrow_mut();
         game.gamestate = GS_LEVEL;
 
-        for id in PlayerId::all() {
-            let i = id.index();
+        for (i, player) in world.players.iter_mut().enumerate() {
             game.turbodetected[i] = 0;
-            let in_game = game.playeringame[i] != 0;
-            id.write(|player| {
-                if in_game && player.playerstate == PST_DEAD {
-                    player.playerstate = PST_REBORN;
-                }
-                player.frags = [0; MAXPLAYERS];
-            });
+            if game.playeringame[i] != 0 && player.playerstate == PST_DEAD {
+                player.playerstate = PST_REBORN;
+            }
+            player.frags = [0; MAXPLAYERS];
         }
         (game.gameepisode, game.gamemap, game.gameskill)
     };
 
-    P_SetupLevel(&mut WORLD.borrow_mut(), gameepisode, gamemap, 0, gameskill);
+    P_SetupLevel(&mut world, gameepisode, gamemap, 0, gameskill);
     let testcontrols = {
         let mut game = GAME.borrow_mut();
         game.displayplayer = game.consoleplayer;
@@ -1353,7 +1342,7 @@ pub unsafe fn G_DoLoadLevel() {
     }
 
     if testcontrols != 0 {
-        PlayerId::console().set_message("Press escape to quit.");
+        world.players[PlayerId::console()].set_message("Press escape to quit.");
     }
 }
 
@@ -1588,9 +1577,12 @@ pub unsafe fn G_Ticker() {
     use crate::engine::doom::main_loop::BACKUPTICS;
 
     // Player reborns
-    for id in PlayerId::all() {
-        if playeringame(id.index()) != 0 && id.read(|player| player.playerstate) == PST_REBORN {
-            G_DoReborn(&mut WORLD.borrow_mut(), id.index() as i32);
+    {
+        let mut world = WORLD.borrow_mut();
+        for i in 0..MAXPLAYERS {
+            if playeringame(i) != 0 && world.players[i].playerstate == PST_REBORN {
+                G_DoReborn(&mut world, i as i32);
+            }
         }
     }
 
@@ -1608,7 +1600,8 @@ pub unsafe fn G_Ticker() {
             ga_worlddone => G_DoWorldDone(),
             ga_screenshot => {
                 V_ScreenShot();
-                PlayerId::console().set_message(DEH_String("screen shot"));
+                WORLD.borrow_mut().players[PlayerId::console()]
+                    .set_message(DEH_String("screen shot"));
                 GAME.borrow_mut().gameaction = ga_nothing;
             }
             _ => {}
@@ -1621,24 +1614,25 @@ pub unsafe fn G_Ticker() {
 
     for i in 0..MAXPLAYERS {
         if playeringame(i) != 0 {
-            let cmd = &raw mut (*PlayerId::new(i).ptr()).cmd;
-
-            // Copy net command into player command
-            std::ptr::copy_nonoverlapping(netcmds().add(i), cmd, 1);
+            // Copy net command into player command. The demo calls work on
+            // a copy, stored into the player slot once they are done.
+            let mut cmd = *netcmds().add(i);
 
             // Reading can end the demo and writing can stop the recording,
             // so each flag is read just before it is tested.
             if demoplayback() != 0 {
-                G_ReadDemoTiccmd(cmd);
+                G_ReadDemoTiccmd(&mut cmd);
             }
             if GAME.borrow().demorecording != 0 {
-                G_WriteDemoTiccmd(cmd);
+                G_WriteDemoTiccmd(&mut cmd);
             }
 
+            let mut world = WORLD.borrow_mut();
+            world.players[i].cmd = cmd;
             let mut game = GAME.borrow_mut();
 
             // Turbo detection
-            if (*cmd).forwardmove as i32 > TURBOTHRESHOLD {
+            if cmd.forwardmove as i32 > TURBOTHRESHOLD {
                 game.turbodetected[i] = 1;
             }
 
@@ -1646,20 +1640,20 @@ pub unsafe fn G_Ticker() {
                 && ((gametic >> 5) % MAXPLAYERS as i32) == i as i32
                 && game.turbodetected[i] != 0
             {
-                PlayerId::new(game.consoleplayer as usize)
+                world.players[game.consoleplayer as usize]
                     .set_message(format!("{} is turbo!", player_names[i]));
                 game.turbodetected[i] = 0;
             }
 
             if game.netgame != 0 && game.netdemo == 0 && (gametic % ticdup) == 0 {
-                if gametic > BACKUPTICS as i32 && game.consistancy[i][buf] != (*cmd).consistancy {
+                if gametic > BACKUPTICS as i32 && game.consistancy[i][buf] != cmd.consistancy {
                     crate::i_error!(
                         "consistency failure ({} should be {})",
-                        (*cmd).consistancy as i32,
+                        cmd.consistancy as i32,
                         game.consistancy[i][buf] as i32,
                     );
                 }
-                if let Some(mo) = PlayerId::new(i).read(|player| player.mo) {
+                if let Some(mo) = world.players[i].mo {
                     game.consistancy[i][buf] = (*mo.ptr()).x as u8;
                 } else {
                     game.consistancy[i][buf] = RANDOM.get().rndindex as u8;
@@ -1671,7 +1665,7 @@ pub unsafe fn G_Ticker() {
     // Check for special buttons
     for i in 0..MAXPLAYERS {
         if playeringame(i) != 0 {
-            let buttons = PlayerId::new(i).read(|player| player.cmd.buttons);
+            let buttons = WORLD.borrow().players[i].cmd.buttons;
             if buttons & BT_SPECIAL != 0 {
                 match buttons & BT_SPECIALMASK {
                     BTS_PAUSE => {
@@ -1712,19 +1706,20 @@ pub unsafe fn G_Ticker() {
     }
     GAME.borrow_mut().oldgamestate = gamestate;
 
-    // Main game-state dispatch
+    // Main game-state dispatch; each phase borrows the world once.
     match gamestate {
         GS_LEVEL => {
-            P_Ticker(&mut WORLD.borrow_mut());
-            ST_Ticker();
-            AM_Ticker();
-            HU_Ticker();
+            let mut world = WORLD.borrow_mut();
+            P_Ticker(&mut world);
+            ST_Ticker(&world);
+            AM_Ticker(&world);
+            HU_Ticker(&mut world);
         }
         GS_INTERMISSION => {
             WI_Ticker();
         }
         GS_FINALE => {
-            F_Ticker();
+            F_Ticker(&WORLD.borrow());
         }
         GS_DEMOSCREEN => {
             D_PageTicker();
@@ -1745,8 +1740,8 @@ pub unsafe fn G_Ticker() {
 ///
 /// # Panics
 /// If `player` is not a valid index into `players[]` (0..`MAXPLAYERS`).
-pub fn G_InitPlayer(player: i32) {
-    G_PlayerReborn(player);
+pub fn G_InitPlayer(world: &mut World, player: i32) {
+    G_PlayerReborn(world, player);
 }
 
 // ---------------------------------------------------------------------------
@@ -1763,17 +1758,15 @@ pub fn G_InitPlayer(player: i32) {
 /// # Safety
 /// `player` must index a valid slot whose `mo` pointer is non-null (the
 /// caller is `G_DoCompleted`, which guarantees this).
-pub unsafe fn G_PlayerFinishLevel(_world: &mut World, player: i32) {
-    let mo = PlayerId::new(player as usize).write(|p| {
-        p.powers = [0; 6];
-        p.cards = [0; 6];
-        p.extralight = 0;
-        p.fixedcolormap = 0;
-        p.damagecount = 0;
-        p.bonuscount = 0;
-        p.mo()
-    });
-    (*mo.ptr()).flags &= !crate::engine::play::info::MF_SHADOW;
+pub unsafe fn G_PlayerFinishLevel(world: &mut World, player: i32) {
+    let p = &mut world.players[player as usize];
+    p.powers = [0; 6];
+    p.cards = [0; 6];
+    p.extralight = 0;
+    p.fixedcolormap = 0;
+    p.damagecount = 0;
+    p.bonuscount = 0;
+    (*p.mo().ptr()).flags &= !crate::engine::play::info::MF_SHADOW;
 }
 
 // ---------------------------------------------------------------------------
@@ -1789,36 +1782,35 @@ pub unsafe fn G_PlayerFinishLevel(_world: &mut World, player: i32) {
 ///
 /// # Panics
 /// If `player` is not a valid index into `players[]`.
-pub fn G_PlayerReborn(player: i32) {
-    PlayerId::new(player as usize).write(|slot| {
-        let frags = slot.frags;
-        let killcount = slot.killcount;
-        let itemcount = slot.itemcount;
-        let secretcount = slot.secretcount;
+pub fn G_PlayerReborn(world: &mut World, player: i32) {
+    let slot = &mut world.players[player as usize];
+    let frags = slot.frags;
+    let killcount = slot.killcount;
+    let itemcount = slot.itemcount;
+    let secretcount = slot.secretcount;
 
-        // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
-        *slot = unsafe { std::mem::zeroed() };
+    // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
+    *slot = unsafe { std::mem::zeroed() };
 
-        slot.frags = frags;
-        slot.killcount = killcount;
-        slot.itemcount = itemcount;
-        slot.secretcount = secretcount;
+    slot.frags = frags;
+    slot.killcount = killcount;
+    slot.itemcount = itemcount;
+    slot.secretcount = secretcount;
 
-        slot.usedown = 1;
-        slot.attackdown = 1;
-        slot.playerstate = PST_LIVE;
-        slot.health = DEH_INITIAL_HEALTH;
-        slot.readyweapon = wp_pistol;
-        slot.pendingweapon = wp_pistol;
-        slot.weaponowned[wp_fist as usize] = 1;
-        slot.weaponowned[wp_pistol as usize] = 1;
-        slot.ammo[am_clip] = DEH_INITIAL_BULLETS;
+    slot.usedown = 1;
+    slot.attackdown = 1;
+    slot.playerstate = PST_LIVE;
+    slot.health = DEH_INITIAL_HEALTH;
+    slot.readyweapon = wp_pistol;
+    slot.pendingweapon = wp_pistol;
+    slot.weaponowned[wp_fist as usize] = 1;
+    slot.weaponowned[wp_pistol as usize] = 1;
+    slot.ammo[am_clip] = DEH_INITIAL_BULLETS;
 
-        for i in 0..4 {
-            // NUMAMMO = 4
-            slot.maxammo[i] = maxammo[i];
-        }
-    });
+    for i in 0..4 {
+        // NUMAMMO = 4
+        slot.maxammo[i] = maxammo[i];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1843,11 +1835,11 @@ pub fn G_PlayerReborn(player: i32) {
 /// Dereferences `mthing`; reads and mutates the players / bodyque / corpse
 /// queue globals.
 pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthing_t) -> boolean {
-    let spawning_player = PlayerId::new(playernum as usize);
-    let Some(spawning_mo) = spawning_player.read(|player| player.mo) else {
+    let spawning_player = playernum as usize;
+    let Some(spawning_mo) = world.players[spawning_player].mo else {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
-            let mo = PlayerId::new(i).mo().ptr();
+            let mo = world.players[i].mo().ptr();
             if (*mo).x == ((*mthing).x.get() as fixed_t) << 16
                 && (*mo).y == ((*mthing).y.get() as fixed_t) << 16
             {
@@ -1878,7 +1870,7 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
     {
         let mut game = GAME.borrow_mut();
         let slot = (bodyqueslot % BODYQUESIZE as i32) as usize;
-        game.bodyque[slot] = spawning_player.read(|player| player.mo);
+        game.bodyque[slot] = world.players[spawning_player].mo;
         game.bodyqueslot += 1;
     }
 
@@ -1918,8 +1910,8 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
     let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
     let mo = P_SpawnMobj(world, x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
-    if PlayerId::console().read(|console| console.viewz) != 1 {
-        S_StartSound(mo, Sfx::Telept as i32);
+    if world.players[PlayerId::console()].viewz != 1 {
+        S_StartSound(world, mo, Sfx::Telept as i32);
     }
     1
 }
@@ -1975,7 +1967,7 @@ pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
     if netgame() == 0 {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
-        if let Some(mo) = PlayerId::new(playernum as usize).read(|player| player.mo) {
+        if let Some(mo) = world.players[playernum as usize].mo {
             (*mo.ptr()).player = None;
         }
 
@@ -2092,8 +2084,8 @@ pub unsafe fn G_DoCompleted() {
                     return;
                 }
                 9 => {
-                    for id in PlayerId::all() {
-                        id.write(|player| player.didsecret = 1);
+                    for player in &mut WORLD.borrow_mut().players {
+                        player.didsecret = 1;
                     }
                 }
                 _ => {}
@@ -2106,19 +2098,19 @@ pub unsafe fn G_DoCompleted() {
         return;
     }
     if gamemap == 9 && gamemode() != commercial {
-        for id in PlayerId::all() {
-            id.write(|player| player.didsecret = 1);
+        for player in &mut WORLD.borrow_mut().players {
+            player.didsecret = 1;
         }
     }
 
     {
+        let world = WORLD.borrow();
         let mut game_guard = GAME.borrow_mut();
         let game = &mut *game_guard;
         let gameepisode = game.gameepisode;
         let secretexit = game.secretexit;
         let wminfo = &mut game.wminfo;
-        wminfo.didsecret =
-            PlayerId::new(game.consoleplayer as usize).read(|console| console.didsecret);
+        wminfo.didsecret = world.players[game.consoleplayer as usize].didsecret;
         wminfo.epsd = gameepisode - 1;
         wminfo.last = gamemap - 1;
 
@@ -2167,8 +2159,7 @@ pub unsafe fn G_DoCompleted() {
         wminfo.pnum = game.consoleplayer;
 
         let leveltime = leveltime();
-        let players = PLAYERS.borrow();
-        for (i, slot) in players.iter().enumerate() {
+        for (i, slot) in world.players.iter().enumerate() {
             wminfo.plyr[i].in_ = game.playeringame[i];
             wminfo.plyr[i].skills = slot.killcount;
             wminfo.plyr[i].sitems = slot.itemcount;
@@ -2195,6 +2186,8 @@ pub unsafe fn G_DoCompleted() {
 /// the appropriate "end of segment" maps (6, 11, 20, 30 - and 15/31 only via
 /// the secret exit).
 ///
+/// Runs from the intermission's ticker, which holds no world borrow.
+///
 /// # Safety
 /// Writes `gameaction`, `players[consoleplayer].didsecret`.
 pub unsafe fn G_WorldDone() {
@@ -2205,7 +2198,7 @@ pub unsafe fn G_WorldDone() {
     };
 
     if secretexit != 0 {
-        PlayerId::console().write(|console| console.didsecret = 1);
+        WORLD.borrow_mut().players[PlayerId::console()].didsecret = 1;
     }
 
     if gamemode() == commercial {
@@ -2397,7 +2390,7 @@ pub unsafe fn G_DoSaveGame() {
     GAME.borrow_mut().gameaction = ga_nothing;
     M_StringCopy(&mut GAME_INPUT.borrow_mut().savedescription, b"");
 
-    PlayerId::console().set_message(DEH_String("game saved."));
+    WORLD.borrow_mut().players[PlayerId::console()].set_message(DEH_String("game saved."));
 
     R_FillBackScreen();
 }
@@ -2506,8 +2499,8 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
     }
 
     // Force players to be reborn on first level load
-    for id in PlayerId::all() {
-        id.write(|player| player.playerstate = PST_REBORN);
+    for player in &mut WORLD.borrow_mut().players {
+        player.playerstate = PST_REBORN;
     }
 
     {
@@ -3374,17 +3367,20 @@ mod tests {
         assert_eq!(angleturn[2], 320);
     }
 
-    /// Player ids name the slots in order, and their pointers step through
-    /// the slot array.
+    /// Player ids name the slots in order, and index the world's slot array
+    /// as their slot index does.
     #[test]
     fn player_ids_index_the_slots() {
         let ids: Vec<usize> = PlayerId::all().map(PlayerId::index).collect();
         assert_eq!(ids, [0, 1, 2, 3]);
-        assert_eq!(PlayerId::new(0).ptr(), PLAYERS.as_ptr().cast::<PlayerT>());
-        assert_eq!(
-            unsafe { PlayerId::new(3).ptr().offset_from(PlayerId::new(0).ptr()) },
-            3
-        );
+
+        let mut world = World::new();
+        world.players[PlayerId::new(3)].health = 7;
+        assert_eq!(world.players[3].health, 7);
+        assert!(std::ptr::eq(
+            &world.players[PlayerId::new(2)],
+            &world.players[2]
+        ));
     }
 
     /// An id past the last slot is refused.
