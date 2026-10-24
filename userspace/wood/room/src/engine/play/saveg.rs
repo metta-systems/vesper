@@ -12,12 +12,32 @@
 //! serialized as array indices; player pointers use a 1-based index (0 means
 //! NULL). Thinker function slots stored in saves are raw addresses that are
 //! only tested against null on load; the thinker kind is re-established from
-//! the record's class (see [`saved_function_word`]). References between map
-//! objects (and a player's `mo` and `attacker`) are written where C writes
-//! its pointers, as truncated arena-slot addresses ([`saved_mobj_word`]);
-//! they cannot be turned back into handles, so they load as `None`.
+//! the record's class (see [`saved_function_word`]).
 //!
-//! Notable differences from the C source:
+//! # Format difference from vanilla
+//!
+//! Room saves are not vanilla saves, and vanilla (doomgeneric) saves do not
+//! load in Room:
+//! - References to map objects (a map object's `target` and `tracer`, a
+//!   player's `mo` and `attacker`) are written in the 32-bit words where C
+//!   writes its pointers, but as save ordinals rather than addresses: the
+//!   1-based position of the referenced object among the map objects
+//!   [`P_ArchiveThinkers`] writes, in thinker-list order, or `0` for none
+//!   (see [`mobj_save_ordinals`]). A reference to an object that is not
+//!   saved (removed, or freed) is written as `0`. On load the ordinals are
+//!   resolved to the recreated objects once all of them are read (see
+//!   [`resolve_saved_references`]), so the references survive a save and
+//!   load; C writes addresses and loads them as dangling pointers.
+//! - The map objects' sector and blockmap links (`snext`, `sprev`, `bnext`,
+//!   `bprev`) are written as `0`; `P_SetThingPosition` rebuilds them on
+//!   load, as it does in C.
+//! - The header's version field holds [`savegame_version`] (`"wood 109"`
+//!   for v1.9) instead of vanilla's `"version 109"`, so the loader's version
+//!   check rejects a vanilla save rather than misreading its addresses as
+//!   ordinals. The field keeps its [`VERSIONSIZE`] bytes; the rest of the
+//!   byte layout is vanilla's.
+//!
+//! Other differences from the C source:
 //! - `saveg_write8` increments `savegamelength`; the C version does not.
 //! - `saveg_read16`/`saveg_write16` operate on `u16`/`u16` rather than C
 //!   `short`/`short`, avoiding sign-extension ambiguity.
@@ -31,6 +51,7 @@
 use {
     crate::i_error,
     std::{
+        collections::HashMap,
         io::{Cursor, Read, Write},
         ptr,
     },
@@ -100,6 +121,10 @@ pub struct SaveGameState {
     /// archiving/unarchiving to decide whether to accept the save.
     /// C origin: `savegame_error` in `p_saveg.c`.
     pub savegame_error: i32,
+    /// The `attacker` save ordinal of each player [`P_UnArchivePlayers`]
+    /// read (`None` for a slot it did not read), kept until
+    /// [`P_UnArchiveThinkers`] has recreated the map objects it refers to.
+    saved_attackers: [Option<u32>; MAXPLAYERS],
 }
 
 impl SaveGameState {
@@ -109,6 +134,7 @@ impl SaveGameState {
             save_stream: Cursor::new(Vec::new()),
             savegamelength: 0,
             savegame_error: 0,
+            saved_attackers: [None; MAXPLAYERS],
         }
     }
 }
@@ -418,12 +444,72 @@ fn saveg_write_thinker_t(th: &thinker_t) {
     saveg_write32(saved_function_word(th.kind));
 }
 
-/// The 32-bit word C writes for a map object pointer: the object's address
-/// truncated to 32 bits, or `0` for null. As meaningless across sessions as
-/// C's; it is never followed, so a stale handle is written without a
-/// liveness check.
-fn saved_mobj_word(mobj: Option<MobjId>) -> u32 {
-    mobj.map_or(0, |mobj| mobj.address() as u32)
+/// The map object `thinker` is, if [`P_ArchiveThinkers`] saves it: a listed
+/// map object that is not removed.
+fn saved_mobj(thinker: ThinkerId) -> Option<MobjId> {
+    match thinker {
+        ThinkerId::Mobj(mobj) if thinker.kind() == ThinkerKind::Mobj => Some(mobj),
+        _ => None,
+    }
+}
+
+/// The save ordinal of each map object [`P_ArchiveThinkers`] writes: its
+/// 1-based position among the saved map objects, in thinker-list order.
+fn mobj_save_ordinals() -> HashMap<MobjId, u32> {
+    thinkers().filter_map(saved_mobj).zip(1..).collect()
+}
+
+/// The 32-bit word written for a map object reference: the referenced
+/// object's save ordinal (see [`mobj_save_ordinals`]), or `0` for none.
+///
+/// A reference to an object that is not saved (removed and awaiting its
+/// free, or a stale handle to a freed one) is written as `0` too, so it
+/// loads as `None`.
+fn saved_mobj_ordinal(ordinals: &HashMap<MobjId, u32>, mobj: Option<MobjId>) -> u32 {
+    mobj.and_then(|mobj| ordinals.get(&mobj).copied())
+        .unwrap_or(0)
+}
+
+/// The map object recreated for save ordinal `ordinal`, given the objects
+/// in the order they were read; `None` for `0` or an ordinal past the end.
+fn mobj_for_saved_ordinal(loaded_mobjs: &[MobjId], ordinal: u32) -> Option<MobjId> {
+    let position = (ordinal as usize).checked_sub(1)?;
+    loaded_mobjs.get(position).copied()
+}
+
+/// The save ordinals a map object record refers to, resolved by
+/// [`resolve_saved_references`] once every map object is read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SavedMobjReferences {
+    /// Save ordinal of `target`.
+    target: u32,
+    /// Save ordinal of `tracer`.
+    tracer: u32,
+}
+
+/// Points the references read as save ordinals at the recreated objects:
+/// `target` and `tracer` of each object in `loaded_mobjs` (paired with the
+/// ordinals its record held) and the `attacker` of each player
+/// [`P_UnArchivePlayers`] read. An ordinal that names no recreated object
+/// gives `None`.
+///
+/// # Safety
+///
+/// The handles in `loaded_mobjs` must be live map objects.
+unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)]) {
+    let recreated: Vec<MobjId> = loaded_mobjs.iter().map(|&(mobj, _)| mobj).collect();
+    for &(mobj, references) in loaded_mobjs {
+        let mo = mobj.ptr();
+        (*mo).target = mobj_for_saved_ordinal(&recreated, references.target);
+        (*mo).tracer = mobj_for_saved_ordinal(&recreated, references.tracer);
+    }
+
+    let saved_attackers = std::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
+    for (index, attacker) in saved_attackers.into_iter().enumerate() {
+        if let Some(ordinal) = attacker {
+            (*game_player(index)).attacker = mobj_for_saved_ordinal(&recreated, ordinal);
+        }
+    }
 }
 
 //
@@ -436,10 +522,12 @@ fn saved_mobj_word(mobj: Option<MobjId>) -> u32 {
 /// After reading:
 /// - The thinker's saved list links are dropped (see
 ///   [`saveg_read_thinker_t`]); the caller lists it with `P_AddThinker`.
-/// - `snext`, `sprev`, `bnext`, `bprev` are saved addresses; they are
-///   dropped and rebuilt by `P_SetThingPosition`.
-/// - `target` and `tracer` are saved addresses too; they load as `None`.
-/// - `subsector` is saved as an address too; it is skipped and left as
+/// - `snext`, `sprev`, `bnext`, `bprev` are dropped and rebuilt by
+///   `P_SetThingPosition`.
+/// - `target` and `tracer` are save ordinals; they load as `None` and are
+///   returned for [`resolve_saved_references`] to set once every map object
+///   is read.
+/// - `subsector` is saved as an address; it is skipped and left as
 ///   subsector 0 until `P_SetThingPosition` finds the real one.
 /// - `state` is resolved from a stream index via `saveg_read_state_ptr`.
 /// - `player` is a 1-based index; re-resolved and the back-reference
@@ -447,7 +535,7 @@ fn saved_mobj_word(mobj: Option<MobjId>) -> u32 {
 /// - `info` is a raw saved pointer (will be overwritten by caller with
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
-unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
+unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
     let mo = mobj_id.ptr();
 
     // thinker_t
@@ -458,7 +546,7 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
     (*mo).y = saveg_read32() as i32;
     (*mo).z = saveg_read32() as i32;
 
-    // snext, sprev (saved addresses, rebuilt by `P_SetThingPosition`)
+    // snext, sprev (rebuilt by `P_SetThingPosition`)
     saveg_read32();
     saveg_read32();
     (*mo).snext = None;
@@ -469,7 +557,7 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
     (*mo).sprite = saveg_read_enum() as i32;
     (*mo).frame = saveg_read32() as i32;
 
-    // bnext, bprev (saved addresses, rebuilt by `P_SetThingPosition`)
+    // bnext, bprev (rebuilt by `P_SetThingPosition`)
     saveg_read32();
     saveg_read32();
     (*mo).bnext = None;
@@ -516,10 +604,8 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
     (*mo).movedir = saveg_read32() as i32;
     (*mo).movecount = saveg_read32() as i32;
 
-    // target. Step 3b replaces this: the saved word is a truncated address,
-    // which a handle cannot be rebuilt from, so the reference is dropped (C
-    // loads it as a dangling pointer).
-    saveg_read32();
+    // target (a save ordinal, resolved once every map object is read)
+    let target = saveg_read32();
     (*mo).target = None;
 
     // reactiontime, threshold
@@ -544,22 +630,24 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) {
     // spawnpoint
     saveg_read_mapthing_t(std::ptr::addr_of_mut!((*mo).spawnpoint));
 
-    // tracer. Step 3b replaces this: the saved word is a truncated address,
-    // which a handle cannot be rebuilt from, so the reference is dropped.
-    saveg_read32();
+    // tracer (a save ordinal, resolved once every map object is read)
+    let tracer = saveg_read32();
     (*mo).tracer = None;
+
+    SavedMobjReferences { target, tracer }
 }
 
 /// Writes a full `mobj_t` record to the save stream from `mobj`.
 ///
-/// References (snext, sprev, bnext, bprev, target, tracer, as
-/// [`saved_mobj_word`]; subsector and info as addresses) are written as
-/// 32-bit addresses, as C writes its pointers; they are not portable across
-/// sessions and are dropped or reconstructed on load. `state` is written as
-/// an index into `states`. `player` is written as a 1-based player index
-/// (0 for NULL).
+/// `target` and `tracer` are written as save ordinals looked up in
+/// `ordinals` (see [`saved_mobj_ordinal`]). `snext`, `sprev`, `bnext` and
+/// `bprev` are written as `0`, as the loader rebuilds them. `subsector` and
+/// `info` are written as 32-bit addresses, as C writes its pointers; they are
+/// not portable across sessions and are reconstructed on load. `state` is
+/// written as an index into `states`. `player` is written as a 1-based player
+/// index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-unsafe fn saveg_write_mobj_t(mobj: MobjId) {
+unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
     let mo = mobj.ptr() as *const mobj_t;
 
     // thinker_t
@@ -570,18 +658,18 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId) {
     saveg_write32((*mo).y as u32);
     saveg_write32((*mo).z as u32);
 
-    // snext, sprev
-    saveg_write32(saved_mobj_word((*mo).snext));
-    saveg_write32(saved_mobj_word((*mo).sprev));
+    // snext, sprev (rebuilt on load)
+    saveg_write32(0);
+    saveg_write32(0);
 
     // angle, sprite, frame
     saveg_write32((*mo).angle);
     saveg_write_enum((*mo).sprite as u32);
     saveg_write32((*mo).frame as u32);
 
-    // bnext, bprev
-    saveg_write32(saved_mobj_word((*mo).bnext));
-    saveg_write32(saved_mobj_word((*mo).bprev));
+    // bnext, bprev (rebuilt on load)
+    saveg_write32(0);
+    saveg_write32(0);
 
     // subsector (C writes the pointer: the subsector record's address)
     let subsector_address = (&raw const LEVEL.borrow().subsectors[(*mo).subsector]).addr();
@@ -628,8 +716,8 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId) {
     saveg_write32((*mo).movedir as u32);
     saveg_write32((*mo).movecount as u32);
 
-    // target (step 3b replaces this word)
-    saveg_write32(saved_mobj_word((*mo).target));
+    // target (save ordinal)
+    saveg_write32(saved_mobj_ordinal(ordinals, (*mo).target));
 
     // reactiontime, threshold
     saveg_write32((*mo).reactiontime as u32);
@@ -649,8 +737,8 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId) {
     // spawnpoint
     saveg_write_mapthing_t(std::ptr::addr_of!((*mo).spawnpoint));
 
-    // tracer (step 3b replaces this word)
-    saveg_write32(saved_mobj_word((*mo).tracer));
+    // tracer (save ordinal)
+    saveg_write32(saved_mobj_ordinal(ordinals, (*mo).tracer));
 }
 
 //
@@ -737,21 +825,22 @@ unsafe fn saveg_write_pspdef_t(psp: *const PspdefT) {
 /// Reads a full `player_t` record from the save stream into `*pl`.
 ///
 /// Fields are read in the same order as the C version. Notable points:
-/// - `mo` is a saved address; it loads as `None` and is set again by
+/// - `mo` is a save ordinal; it loads as `None` and is set again by
 ///   `P_UnArchiveThinkers` when the player's map object is read.
 /// - `playerstate` and enum fields (`readyweapon`, `pendingweapon`) are read
 ///   as 32-bit values.
 /// - Power timers, key cards, frag counts, weapon ownership, ammo, and max
 ///   ammo are each 32-bit entries.
-/// - `message` and `attacker` are saved addresses; they load as empty and
-///   `None`.
+/// - `message` is a saved address; it loads as empty.
+/// - `attacker` is a save ordinal; it loads as `None` and is returned for
+///   [`resolve_saved_references`] to set once every map object is read.
 /// - Each of `NUMPSPRITES` player-sprite slots is read via
 ///   `saveg_read_pspdef_t`.
 /// C origin: `saveg_read_player_t`.
-unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
+unsafe fn saveg_read_player_t(pl: *mut PlayerT) -> u32 {
     let s = &mut *pl;
 
-    // mo (a saved address; set when the player's map object is read)
+    // mo (a save ordinal; set when the player's map object is read)
     saveg_read32();
     s.mo = None;
 
@@ -830,10 +919,8 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
     s.damagecount = saveg_read32() as i32;
     s.bonuscount = saveg_read32() as i32;
 
-    // attacker. Step 3b replaces this: the saved word is a truncated
-    // address, which a handle cannot be rebuilt from, so the reference is
-    // dropped (C loads it as a dangling pointer).
-    saveg_read32();
+    // attacker (a save ordinal, resolved once every map object is read)
+    let attacker = saveg_read32();
     s.attacker = None;
 
     // extralight, fixedcolormap, colormap
@@ -848,18 +935,20 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) {
 
     // didsecret
     s.didsecret = saveg_read32() as i32;
+
+    attacker
 }
 
 /// Writes a full `player_t` record to the save stream from `*pl`.
 ///
-/// References (`mo`, `message`, `attacker`) are written as 32-bit addresses,
-/// as C writes its pointers; they are not valid across sessions and load as
-/// empty. All other fields mirror `saveg_read_player_t` in order.
+/// `mo` and `attacker` are written as save ordinals looked up in `ordinals`
+/// (see [`saved_mobj_ordinal`]); the `message` slot is written as `0`. All
+/// other fields mirror `saveg_read_player_t` in order.
 /// C origin: `saveg_write_player_t`.
-unsafe fn saveg_write_player_t(pl: *const PlayerT) {
+unsafe fn saveg_write_player_t(pl: *const PlayerT, ordinals: &HashMap<MobjId, u32>) {
     let s = &*pl;
 
-    saveg_write32(saved_mobj_word(s.mo));
+    saveg_write32(saved_mobj_ordinal(ordinals, s.mo));
     saveg_write_enum(s.playerstate as u32);
     saveg_write_ticcmd_t(&s.cmd);
     saveg_write32(s.viewz as u32);
@@ -900,7 +989,7 @@ unsafe fn saveg_write_player_t(pl: *const PlayerT) {
     saveg_write32(0); // message pointer slot
     saveg_write32(s.damagecount as u32);
     saveg_write32(s.bonuscount as u32);
-    saveg_write32(saved_mobj_word(s.attacker));
+    saveg_write32(saved_mobj_ordinal(ordinals, s.attacker));
     saveg_write32(s.extralight as u32);
     saveg_write32(s.fixedcolormap as u32);
     saveg_write32(s.colormap as u32);
@@ -1208,11 +1297,30 @@ pub fn P_SaveGameFile(slot: i32) -> String {
     save_filename(&DOOM_MAIN.borrow().savegamedir, slot)
 }
 
+/// The header's version field for game version code `version_code` (see
+/// `G_VanillaVersionCode`): `"wood N"`, NUL-padded to [`VERSIONSIZE`] bytes.
+///
+/// Vanilla writes `"version N"`. Room's save format differs from vanilla's
+/// (map object references are save ordinals, see the module docs), so it
+/// carries its own string: the version check in [`P_ReadSaveGameHeader`]
+/// then rejects vanilla saves, and vanilla rejects Room's, instead of either
+/// misreading the other's references. `N` keeps saves of different game
+/// versions apart, as in vanilla.
+fn savegame_version(version_code: i32) -> [u8; VERSIONSIZE] {
+    let version_string = format!("wood {version_code}");
+    let mut version = [0u8; VERSIONSIZE];
+    // Keep at least one NUL, as vanilla's strcmp of the field expects.
+    let length = version_string.len().min(VERSIONSIZE - 1);
+    version[..length].copy_from_slice(&version_string.as_bytes()[..length]);
+    version
+}
+
 /// Writes the save-game file header to the open `save_stream`.
 ///
 /// The header layout (bytes written in order):
 /// 1. `description` string, NUL-padded to `SAVESTRINGSIZE` (24) bytes.
-/// 2. Version string `"version N"`, NUL-padded to `VERSIONSIZE` (16) bytes.
+/// 2. Version string [`savegame_version`] (`"wood N"`, vanilla writes
+///    `"version N"`), NUL-padded to `VERSIONSIZE` (16) bytes.
 /// 3. One byte each: `gameskill`, `gameepisode`, `gamemap`.
 /// 4. `MAXPLAYERS` bytes: `playeringame[i]` flags.
 /// 5. Three bytes: `leveltime` encoded big-endian as
@@ -1241,15 +1349,8 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
     }
 
     // Write version string (VERSIONSIZE bytes)
-    let version_code = G_VanillaVersionCode();
-    let version_str = format!("version {}\0", version_code);
-    let version_bytes = version_str.as_bytes();
-    for i in 0..VERSIONSIZE {
-        if i < version_bytes.len() {
-            saveg_write8(version_bytes[i]);
-        } else {
-            saveg_write8(0);
-        }
+    for byte in savegame_version(G_VanillaVersionCode()) {
+        saveg_write8(byte);
     }
 
     // Write skill, episode, map
@@ -1271,9 +1372,11 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
 
 /// Reads and validates the save-game header from `save_stream`.
 ///
-/// Returns `1` (true) on success, `0` (false) if the version string does not
-/// match `G_VanillaVersionCode()`. On success, `gameskill`, `gameepisode`,
-/// `gamemap`, `playeringame`, and `leveltime` are updated from the stream.
+/// Returns `1` (true) on success, `0` (false) if the version string is not
+/// [`savegame_version`] of `G_VanillaVersionCode()`: a save of another game
+/// version, or a vanilla save (whose format Room no longer reads). On
+/// success, `gameskill`, `gameepisode`, `gamemap`, `playeringame`, and
+/// `leveltime` are updated from the stream.
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
@@ -1284,6 +1387,11 @@ pub unsafe fn P_WriteSaveGameHeader(description: &[u8]) {
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
 pub unsafe fn P_ReadSaveGameHeader() -> i32 {
+    read_save_game_header(G_VanillaVersionCode())
+}
+
+/// [`P_ReadSaveGameHeader`] for game version code `version_code`.
+fn read_save_game_header(version_code: i32) -> i32 {
     // Skip description (SAVESTRINGSIZE bytes)
     for _ in 0..SAVESTRINGSIZE {
         saveg_read8();
@@ -1291,22 +1399,12 @@ pub unsafe fn P_ReadSaveGameHeader() -> i32 {
 
     // Read version string
     let mut read_vcheck = [0u8; VERSIONSIZE];
-    for i in 0..VERSIONSIZE {
-        read_vcheck[i] = saveg_read8();
+    for byte in &mut read_vcheck {
+        *byte = saveg_read8();
     }
 
-    // Compare version
-    let version_code = G_VanillaVersionCode();
-    let expected = format!("version {}\0", version_code);
-    let expected_bytes = expected.as_bytes();
-
-    // Null-terminate both for strcmp-like comparison
-    let mut expected_padded = [0u8; VERSIONSIZE];
-    for (i, &b) in expected_bytes.iter().enumerate().take(VERSIONSIZE) {
-        expected_padded[i] = b;
-    }
-
-    if read_vcheck != expected_padded {
+    // Compare version (the whole NUL-padded field)
+    if read_vcheck != savegame_version(version_code) {
         return 0; // bad version
     }
 
@@ -1378,7 +1476,9 @@ use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 ///
 /// Iterates over `players[0..MAXPLAYERS]`; skips slots where
 /// `playeringame[i] == 0`. Each active player record is 4-byte aligned
-/// (`saveg_write_pad`) then written by `saveg_write_player_t`.
+/// (`saveg_write_pad`) then written by `saveg_write_player_t`, with its map
+/// object references as save ordinals in the current thinker list, the one
+/// `P_ArchiveThinkers` then writes.
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
 /// # Safety
@@ -1388,12 +1488,13 @@ use crate::engine::game::{GAME, gameepisode, gamemap, gameskill, playeringame};
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
 pub unsafe fn P_ArchivePlayers() {
+    let ordinals = mobj_save_ordinals();
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
             continue;
         }
         saveg_write_pad();
-        saveg_write_player_t(&*game_player(i));
+        saveg_write_player_t(&*game_player(i), &ordinals);
     }
 }
 
@@ -1402,7 +1503,9 @@ pub unsafe fn P_ArchivePlayers() {
 /// For each active player slot, aligns the stream (`saveg_read_pad`) then
 /// reads the player record. After reading, `mo`, `message`, and `attacker` are
 /// empty; `mo` is restored when `P_UnArchiveThinkers` reads the player's map
-/// object, `attacker` stays `None` (C keeps a dangling pointer).
+/// object, and `attacker` once it has recreated every map object (the save
+/// ordinal is kept in [`SaveGameState`] until then; C loads a dangling
+/// pointer).
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
 /// # Safety
@@ -1413,19 +1516,21 @@ pub unsafe fn P_ArchivePlayers() {
 /// correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// empty until thinkers are unarchived.
 pub unsafe fn P_UnArchivePlayers() {
+    let mut saved_attackers = [None; MAXPLAYERS];
     for i in 0..MAXPLAYERS {
         if playeringame(i) == 0 {
             continue;
         }
         saveg_read_pad();
         let player = &mut *game_player(i);
-        saveg_read_player_t(player);
+        saved_attackers[i] = Some(saveg_read_player_t(player));
 
         // will be set when unarc thinker
         player.mo = None;
         player.message = PlayerMessage::NONE;
         player.attacker = None;
     }
+    SAVEG.borrow_mut().saved_attackers = saved_attackers;
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,7 +1654,8 @@ const tc_mobj: u8 = 1;
 /// [`ThinkerKind::Mobj`], writes a `tc_mobj` byte, 4-byte alignment padding,
 /// then the full `mobj_t` record. Other thinkers are silently skipped (the C
 /// version also skips them without error). Terminates the list with a
-/// `tc_end` byte.
+/// `tc_end` byte. The `n`th record written is the map object with save
+/// ordinal `n` (see [`mobj_save_ordinals`]).
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
@@ -1558,14 +1664,11 @@ const tc_mobj: u8 = 1;
 /// `save_stream` must be the stream being written, and a level must be
 /// loaded (each map object's subsector is written by address).
 pub unsafe fn P_ArchiveThinkers() {
-    for thinker in thinkers() {
-        if let ThinkerId::Mobj(mobj) = thinker
-            && thinker.kind() == ThinkerKind::Mobj
-        {
-            saveg_write8(tc_mobj);
-            saveg_write_pad();
-            saveg_write_mobj_t(mobj);
-        }
+    let ordinals = mobj_save_ordinals();
+    for mobj in thinkers().filter_map(saved_mobj) {
+        saveg_write8(tc_mobj);
+        saveg_write_pad();
+        saveg_write_mobj_t(mobj, &ordinals);
     }
 
     // terminating marker
@@ -1582,9 +1685,12 @@ pub unsafe fn P_ArchiveThinkers() {
 /// `Z_Free` and leaves the removed mobjs to the level's zone purge).
 ///
 /// Second pass: reads thinker-class bytes from the stream in a loop.
-/// - `tc_end`: returns immediately.
+/// - `tc_end`: resolves the references saved as save ordinals (the map
+///   objects' `target` and `tracer`, the players' `attacker`) to the
+///   recreated objects with [`resolve_saved_references`], and returns.
 /// - `tc_mobj`: puts a zeroed `mobj_t` in the mobj arena, reads its fields
-///   (`target` and `tracer` load as `None`), calls `P_SetThingPosition`,
+///   (`target` and `tracer` stay `None` until `tc_end`), calls
+///   `P_SetThingPosition`,
 ///   rebuilds `info` from `mobjinfo[type]`, recomputes `floorz`/`ceilingz`
 ///   from the subsector's sector, sets the thinker kind to
 ///   [`ThinkerKind::Mobj`], and registers it with `P_AddThinker`.
@@ -1611,15 +1717,20 @@ pub unsafe fn P_UnArchiveThinkers() {
 
     P_InitThinkers();
 
-    // read saved thinkers
+    // read saved thinkers, the n-th map object read having save ordinal n
+    let mut loaded_mobjs = Vec::new();
     loop {
         let tclass = saveg_read8();
         match tclass {
-            x if x == tc_end => return,
+            x if x == tc_end => {
+                resolve_saved_references(&loaded_mobjs);
+                return;
+            }
             x if x == tc_mobj => {
                 saveg_read_pad();
                 let mobj_id = new_thinker::<mobj_t>();
-                saveg_read_mobj_t(mobj_id);
+                let references = saveg_read_mobj_t(mobj_id);
+                loaded_mobjs.push((mobj_id, references));
 
                 let mo = mobj_id.ptr();
 
@@ -1888,7 +1999,14 @@ pub unsafe fn P_UnArchiveSpecials() {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::sync::Mutex};
+    use {
+        super::*,
+        crate::engine::play::{
+            info::{MF_NOBLOCKMAP, MF_NOSECTOR},
+            tick::P_RemoveThinker,
+        },
+        std::sync::Mutex,
+    };
 
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -1954,8 +2072,9 @@ mod tests {
     fn version_string_length() {
         let _g = LOCK.lock().unwrap();
         assert_eq!(VERSIONSIZE, 16);
-        let test_str = "version 110"; // typical version string
-        assert!(test_str.len() < VERSIONSIZE);
+        // The version string keeps a terminating NUL in the field.
+        assert_eq!(savegame_version(109)[VERSIONSIZE - 1], 0);
+        assert_eq!(savegame_version(i32::MIN)[VERSIONSIZE - 1], 0);
     }
 
     #[test]
@@ -1971,8 +2090,7 @@ mod tests {
             &mut *SAVEG.borrow_mut(),
             SaveGameState {
                 save_stream: Cursor::new(data.to_vec()),
-                savegamelength: 0,
-                savegame_error: 0,
+                ..SaveGameState::new()
             },
         );
         f();
@@ -2063,8 +2181,8 @@ mod tests {
         // The thinker (prev+next+fn) is the first 12 bytes.
         // saveg_read_mobj_t reads many fields — pad to 256 zeros.
         let mut data = [0u8; 256];
-        // Non-zero saved addresses in snext, sprev, bnext, bprev, target and
-        // tracer (byte offsets in the record); the function slot stays zero.
+        // Non-zero words in snext, sprev, bnext, bprev, target and tracer
+        // (byte offsets in the record); the function slot stays zero.
         for offset in [24, 28, 44, 48, 120, 150] {
             data[offset..offset + 4].copy_from_slice(&0x1234_5678u32.to_le_bytes());
         }
@@ -2073,16 +2191,238 @@ mod tests {
         unsafe {
             let mo = mobj.ptr();
             (*mo).thinker.kind = ThinkerKind::Mobj;
+            let mut references = None;
             with_mem_stream(&mut data, || {
-                saveg_read_mobj_t(mobj);
+                references = Some(saveg_read_mobj_t(mobj));
             });
             assert_eq!((*mo).thinker.kind, ThinkerKind::None);
-            // Saved addresses cannot become handles: the references load
-            // empty (step 3b replaces target and tracer).
+            // The links load empty; target and tracer come back as save
+            // ordinals for `resolve_saved_references`.
+            assert_eq!(
+                references,
+                Some(SavedMobjReferences {
+                    target: 0x1234_5678,
+                    tracer: 0x1234_5678,
+                })
+            );
             assert_eq!((*mo).target, None);
             assert_eq!((*mo).tracer, None);
             assert_eq!((*mo).snext, None);
             assert_eq!((*mo).bprev, None);
+        }
+    }
+
+    /// A listed map object with `health` as its tag, for telling the
+    /// recreated objects apart.
+    fn add_mobj(health: i32) -> MobjId {
+        let mobj = new_thinker::<mobj_t>();
+        let mo = unsafe { &mut *mobj.ptr() };
+        mo.health = health;
+        // Kept out of the sector and blockmap lists, which the test level
+        // does not have.
+        mo.flags = MF_NOSECTOR | MF_NOBLOCKMAP;
+        mo.thinker.kind = ThinkerKind::Mobj;
+        P_AddThinker(ThinkerId::Mobj(mobj));
+        mobj
+    }
+
+    /// The listed map object tagged with `health` (see [`add_mobj`]).
+    fn mobj_with_health(health: i32) -> MobjId {
+        thinkers()
+            .find_map(|thinker| match thinker {
+                ThinkerId::Mobj(mobj) if unsafe { (*mobj.ptr()).health } == health => Some(mobj),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no map object with health {health}"))
+    }
+
+    /// Save ordinals number the saved map objects from 1 in list order and
+    /// skip removed ones; references to unsaved objects write 0, and
+    /// ordinals that name no loaded object resolve to `None`.
+    #[test]
+    fn save_ordinals_follow_the_thinker_list() {
+        let _g = LOCK.lock().unwrap();
+        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
+        P_InitThinkers();
+        let first = add_mobj(1);
+        let removed = add_mobj(2);
+        let second = add_mobj(3);
+        P_RemoveThinker(unsafe { &mut (*removed.ptr()).thinker });
+        let unlisted = new_thinker::<mobj_t>();
+
+        let ordinals = mobj_save_ordinals();
+        assert_eq!(saved_mobj_ordinal(&ordinals, Some(first)), 1);
+        assert_eq!(saved_mobj_ordinal(&ordinals, Some(second)), 2);
+        assert_eq!(saved_mobj_ordinal(&ordinals, Some(removed)), 0);
+        assert_eq!(saved_mobj_ordinal(&ordinals, Some(unlisted)), 0);
+        assert_eq!(saved_mobj_ordinal(&ordinals, None), 0);
+
+        let loaded_mobjs = [second, first];
+        assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 0), None);
+        assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 1), Some(second));
+        assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 2), Some(first));
+        assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 3), None);
+        assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, u32::MAX), None);
+        P_InitThinkers();
+    }
+
+    /// Map object references survive a save and load: `target`, `tracer`
+    /// and a player's `attacker` point at the recreated objects, including
+    /// a forward reference and a self-reference; references to a removed
+    /// object and to one not in the thinker list load as `None`.
+    #[test]
+    fn mobj_references_survive_save_and_load() {
+        use crate::engine::{
+            map::{sector_t, subsector_t},
+            play::setup::{LEVEL_TEST_LOCK, LevelState},
+        };
+
+        let _g = LOCK.lock().unwrap();
+        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
+        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
+
+        // One sector, one subsector and no nodes: every point is in it.
+        let level = LevelState {
+            numsectors: 1,
+            sectors: vec![sector_t::ZERO],
+            subsectors: vec![subsector_t {
+                sector: SectorId::new(0),
+                numlines: 0,
+                firstline: 0,
+            }],
+            ..LevelState::new()
+        };
+        let saved_level = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
+        let saved_player = unsafe { *game_player(0) };
+        let saved_playeringame = GAME.borrow().playeringame;
+
+        P_InitThinkers();
+        let first = add_mobj(1);
+        let second = add_mobj(2);
+        let removed = add_mobj(3);
+        let third = add_mobj(4);
+        let unlisted = new_thinker::<mobj_t>();
+        unsafe {
+            P_RemoveThinker(&mut (*removed.ptr()).thinker);
+            (*first.ptr()).target = Some(third);
+            (*first.ptr()).tracer = Some(first);
+            (*first.ptr()).player = game_player(0);
+            (*second.ptr()).target = Some(removed);
+            (*second.ptr()).tracer = Some(unlisted);
+            (*third.ptr()).target = Some(first);
+
+            GAME.borrow_mut().playeringame = [1, 0, 0, 0];
+            *game_player(0) = std::mem::zeroed();
+            (*game_player(0)).mo = Some(first);
+            (*game_player(0)).attacker = Some(third);
+        }
+
+        with_mem_stream(&mut [], || unsafe {
+            P_ArchivePlayers();
+            P_ArchiveThinkers();
+
+            *game_player(0) = std::mem::zeroed();
+            P_InitThinkers();
+            SAVEG.borrow_mut().save_stream.set_position(0);
+
+            P_UnArchivePlayers();
+            P_UnArchiveThinkers();
+            assert_eq!(SAVEG.borrow().savegame_error, 0);
+        });
+
+        let healths: Vec<i32> = thinkers()
+            .map(|thinker| match thinker {
+                ThinkerId::Mobj(mobj) => unsafe { (*mobj.ptr()).health },
+                _ => panic!("{thinker:?} is not a map object"),
+            })
+            .collect();
+        assert_eq!(
+            healths,
+            [1, 2, 4],
+            "saved in list order, removed one left out"
+        );
+        let (first, second, third) = (
+            mobj_with_health(1),
+            mobj_with_health(2),
+            mobj_with_health(4),
+        );
+        unsafe {
+            assert_eq!((*first.ptr()).target, Some(third));
+            assert_eq!((*first.ptr()).tracer, Some(first));
+            assert_eq!(
+                (*second.ptr()).target,
+                None,
+                "the removed object is not saved"
+            );
+            assert_eq!(
+                (*second.ptr()).tracer,
+                None,
+                "the unlisted object is not saved"
+            );
+            assert_eq!((*third.ptr()).target, Some(first));
+            assert_eq!((*third.ptr()).tracer, None);
+            assert_eq!((*game_player(0)).mo, Some(first));
+            assert_eq!((*game_player(0)).attacker, Some(third));
+        }
+        assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
+
+        P_InitThinkers();
+        unsafe { *game_player(0) = saved_player };
+        GAME.borrow_mut().playeringame = saved_playeringame;
+        *LEVEL.borrow_mut() = saved_level;
+    }
+
+    /// A save-game header with `version` in its version field.
+    fn header_with_version(version: &[u8]) -> Vec<u8> {
+        let mut header = vec![0u8; SAVESTRINGSIZE + VERSIONSIZE + 3 + MAXPLAYERS + 3];
+        header[SAVESTRINGSIZE..][..version.len()].copy_from_slice(version);
+        header
+    }
+
+    /// Room's version string differs from vanilla's: a vanilla header is
+    /// rejected, Room's own is accepted.
+    #[test]
+    fn header_with_vanilla_version_is_rejected() {
+        let _g = LOCK.lock().unwrap();
+        assert_eq!(&savegame_version(109), b"wood 109\0\0\0\0\0\0\0\0");
+
+        let mut vanilla = header_with_version(b"version 109");
+        with_mem_stream(&mut vanilla, || {
+            assert_eq!(read_save_game_header(109), 0);
+        });
+
+        let mut other_game_version = header_with_version(&savegame_version(106));
+        with_mem_stream(&mut other_game_version, || {
+            assert_eq!(read_save_game_header(109), 0);
+        });
+
+        let saved_playeringame = GAME.borrow().playeringame;
+        let saved_leveltime = leveltime();
+        let mut room = header_with_version(&savegame_version(109));
+        with_mem_stream(&mut room, || {
+            assert_eq!(read_save_game_header(109), 1);
+        });
+        GAME.borrow_mut().playeringame = saved_playeringame;
+        TICK.borrow_mut().leveltime = saved_leveltime;
+    }
+
+    /// The vanilla saves in `.savegame` carry `"version 109"` and are
+    /// rejected by the version check.
+    #[test]
+    fn vanilla_fixture_saves_are_rejected() {
+        let _g = LOCK.lock().unwrap();
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".savegame");
+        for slot in 0..4 {
+            let path = directory.join(format!("{SAVEGAMENAME}{slot}.dsg"));
+            let mut contents =
+                std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert_eq!(
+                &contents[SAVESTRINGSIZE..SAVESTRINGSIZE + VERSIONSIZE],
+                b"version 109\0\0\0\0\0"
+            );
+            with_mem_stream(&mut contents, || {
+                assert_eq!(read_save_game_header(109), 0);
+            });
         }
     }
 
