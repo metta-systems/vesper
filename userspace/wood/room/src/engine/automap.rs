@@ -27,13 +27,8 @@ use crate::{
     c_write,
     engine::{
         dehacked::DEH_String,
-        doom::{
-            event::event_t,
-            player::{MAXPLAYERS, PlayerMessage, PlayerT},
-        },
-        game::{
-            GAME, consoleplayer, deathmatch, gameepisode, gamemap, netgame, player, playeringame,
-        },
+        doom::{event::event_t, player::PlayerId},
+        game::{GAME, deathmatch, gameepisode, gamemap, netgame, playeringame},
         global::Global,
         interface::video::{SCREENHEIGHT, SCREENWIDTH, video_buffer},
         math::{
@@ -685,7 +680,7 @@ pub struct AutomapState {
     ///
     /// Set to the console player (or the first active player in a network
     /// game) in [`AM_initVariables`].  C origin: `plr`.
-    plr: *mut PlayerT,
+    plr: Option<PlayerId>,
     /// Cached patches for the ten mark-number glyphs (`AMMNUM0`-`AMMNUM9`),
     /// `None` while not loaded.
     ///
@@ -774,7 +769,7 @@ impl AutomapState {
             f_oldloc: mpoint_t { x: 0, y: 0 },
             scale_mtof: INITSCALEMTOF,
             scale_ftom: 0,
-            plr: ptr::null_mut(),
+            plr: None,
             marknums: [None; AM_NUMMARKPOINTS],
             markpoints: [mpoint_t { x: -1, y: -1 }; AM_NUMMARKPOINTS],
             markpointnum: 0,
@@ -795,6 +790,16 @@ impl AutomapState {
             litelevelscnt: 0,
             rejected_flines: 0,
         }
+    }
+
+    /// The player the automap follows (C `plr`).
+    ///
+    /// # Panics
+    ///
+    /// Before [`AM_initVariables`] has set it.
+    #[track_caller]
+    fn player(&self) -> PlayerId {
+        self.plr.expect("automap has no player before AM_Start")
     }
 }
 
@@ -940,8 +945,9 @@ unsafe fn AM_restoreScaleAndLoc(automap: &mut AutomapState) {
         automap.m_x = automap.old_m_x;
         automap.m_y = automap.old_m_y;
     } else {
-        automap.m_x = (*(*automap.plr).mo().ptr()).x - automap.m_w / 2;
-        automap.m_y = (*(*automap.plr).mo().ptr()).y - automap.m_h / 2;
+        let mo = automap.player().mo().ptr();
+        automap.m_x = (*mo).x - automap.m_w / 2;
+        automap.m_y = (*mo).y - automap.m_h / 2;
     }
     automap.m_x2 = automap.m_x + automap.m_w;
     automap.m_y2 = automap.m_y + automap.m_h;
@@ -1064,23 +1070,19 @@ unsafe fn AM_initVariables(automap: &mut AutomapState) {
     automap.m_w = FTOM(automap, automap.f_w);
     automap.m_h = FTOM(automap, automap.f_h);
 
-    let mut plr;
-    let consoleplayer = consoleplayer() as usize;
-    if playeringame(consoleplayer) != 0 {
-        plr = player(consoleplayer);
+    let console = PlayerId::console();
+    let plr = if playeringame(console.index()) != 0 {
+        console
     } else {
-        plr = player(0);
-        for pnum in 0..MAXPLAYERS {
-            if playeringame(pnum) != 0 {
-                plr = player(pnum);
-                break;
-            }
-        }
-    }
-    automap.plr = plr;
+        PlayerId::all()
+            .find(|player| playeringame(player.index()) != 0)
+            .unwrap_or(PlayerId::new(0))
+    };
+    automap.plr = Some(plr);
 
-    automap.m_x = (*(*plr).mo().ptr()).x - automap.m_w / 2;
-    automap.m_y = (*(*plr).mo().ptr()).y - automap.m_h / 2;
+    let mo = plr.mo().ptr();
+    automap.m_x = (*mo).x - automap.m_w / 2;
+    automap.m_y = (*mo).y - automap.m_h / 2;
     AM_changeWindowLoc(automap);
 
     automap.old_m_x = automap.m_x;
@@ -1298,7 +1300,6 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
         rc = 1;
         let key = (*ev).data1;
         let mut automap = AUTOMAP.borrow_mut();
-        let plr = automap.plr;
 
         if key == key_map_east {
             if automap.followplayer == 0 {
@@ -1348,19 +1349,19 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             automap.followplayer = !automap.followplayer;
             automap.f_oldloc.x = i32::MAX;
             if automap.followplayer != 0 {
-                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_FOLLOWON));
+                automap.player().set_message(DEH_String(AMSTR_FOLLOWON));
             } else {
-                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_FOLLOWOFF));
+                automap.player().set_message(DEH_String(AMSTR_FOLLOWOFF));
             }
         } else if key == key_map_grid {
             automap.grid = !automap.grid;
             if automap.grid != 0 {
-                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_GRIDON));
+                automap.player().set_message(DEH_String(AMSTR_GRIDON));
             } else {
-                (*plr).message = PlayerMessage::new(DEH_String(AMSTR_GRIDOFF));
+                automap.player().set_message(DEH_String(AMSTR_GRIDOFF));
             }
         } else if key == key_map_mark {
-            (*plr).message = PlayerMessage::new(format!(
+            automap.player().set_message(format!(
                 "{} {}",
                 DEH_String(AMSTR_MARKEDSPOT),
                 automap.markpointnum
@@ -1368,7 +1369,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             AM_addMark(&mut automap);
         } else if key == key_map_clearmark {
             AM_clearMarks(&mut automap);
-            (*plr).message = PlayerMessage::new(DEH_String(AMSTR_MARKSCLEARED));
+            automap.player().set_message(DEH_String(AMSTR_MARKSCLEARED));
         } else {
             rc = 0;
         }
@@ -1435,7 +1436,7 @@ fn AM_changeWindowScale(automap: &mut AutomapState) {
 ///
 /// `plr` must be a valid pointer.
 unsafe fn AM_doFollowPlayer(automap: &mut AutomapState) {
-    let mo = (*automap.plr).mo().ptr();
+    let mo = automap.player().mo().ptr();
     if automap.f_oldloc.x != (*mo).x || automap.f_oldloc.y != (*mo).y {
         automap.m_x = FTOM(automap, MTOF(automap, (*mo).x)) - automap.m_w / 2;
         automap.m_y = FTOM(automap, MTOF(automap, (*mo).y)) - automap.m_h / 2;
@@ -1835,7 +1836,8 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
 ///
 /// `plr` must be valid, and the level loaded.
 unsafe fn AM_drawWalls(automap: &mut AutomapState) {
-    let (cheating, lightlev, plr) = (automap.cheating, automap.lightlev, automap.plr);
+    let (cheating, lightlev) = (automap.cheating, automap.lightlev);
+    let allmap = automap.player().read(|player| player.powers[4]) != 0;
     // Scratch line; every iteration sets all of it.
     let mut l = mline_t {
         a: mpoint_t { x: 0, y: 0 },
@@ -1879,7 +1881,7 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState) {
             } else {
                 AM_drawMline(automap, &mut l, WALLCOLORS + lightlev);
             }
-        } else if (*plr).powers[4] != 0 {
+        } else if allmap {
             // pw_allmap
             if (flags & LinedefFlag::DONTDRAW as i32) == 0 {
                 AM_drawMline(automap, &mut l, GRAYS + 3);
@@ -1986,63 +1988,49 @@ unsafe fn AM_drawLineCharacter(
 /// `plr` and `players` must be valid; `mobj_t` pointers within player structs
 /// must be valid.
 unsafe fn AM_drawPlayers(automap: &mut AutomapState) {
-    let plr = automap.plr;
+    let plr = automap.player();
     let their_colors: [i32; 4] = [GREENS, GRAYS, BROWNS, REDS];
     let mut their_color: i32 = -1;
     let mut color: i32;
 
     if netgame() == 0 {
-        if automap.cheating != 0 {
-            AM_drawLineCharacter(
-                automap,
-                &CHEAT_ARROW,
-                0,
-                (*(*plr).mo().ptr()).angle,
-                WHITE,
-                (*(*plr).mo().ptr()).x,
-                (*(*plr).mo().ptr()).y,
-            );
+        let mo = plr.mo().ptr();
+        let arrow: &[mline_t] = if automap.cheating != 0 {
+            &CHEAT_ARROW
         } else {
-            AM_drawLineCharacter(
-                automap,
-                &PLAYER_ARROW,
-                0,
-                (*(*plr).mo().ptr()).angle,
-                WHITE,
-                (*(*plr).mo().ptr()).x,
-                (*(*plr).mo().ptr()).y,
-            );
-        }
+            &PLAYER_ARROW
+        };
+        AM_drawLineCharacter(automap, arrow, 0, (*mo).angle, WHITE, (*mo).x, (*mo).y);
         return;
     }
 
-    for i in 0..MAXPLAYERS {
+    for p in PlayerId::all() {
         their_color += 1;
-        let p = player(i);
 
         if deathmatch() != 0 && GAME.borrow().singledemo == 0 && p != plr {
             continue;
         }
 
-        if playeringame(i) == 0 {
+        if playeringame(p.index()) == 0 {
             continue;
         }
 
-        if (*p).powers[2] != 0 {
+        if p.read(|player| player.powers[2]) != 0 {
             // pw_invisibility
             color = 246;
         } else {
             color = their_colors[their_color as usize];
         }
 
+        let mo = p.mo().ptr();
         AM_drawLineCharacter(
             automap,
             &PLAYER_ARROW,
             0,
-            (*(*p).mo().ptr()).angle,
+            (*mo).angle,
             color,
-            (*(*p).mo().ptr()).x,
-            (*(*p).mo().ptr()).y,
+            (*mo).x,
+            (*mo).y,
         );
     }
 }

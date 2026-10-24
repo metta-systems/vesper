@@ -22,7 +22,7 @@ use {crate::engine::sound::info::Sfx, std::ptr};
 
 use crate::{
     engine::{
-        doom::player::{CF_GODMODE, PlayerT},
+        doom::player::{CF_GODMODE, PlayerId},
         interface::timer::TICRATE,
         map::{LineId, SectorId, SideId, line_t, sector_t},
         math::fixed::FRACUNIT,
@@ -633,7 +633,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
     let line = &line_record;
     let clear_special = || LEVEL.borrow_mut().lines[linenum].special = 0;
 
-    if (*thing.ptr()).player.is_null() {
+    if (*thing.ptr()).player.is_none() {
         match (*thing.ptr()).kind {
             MT_ROCKET | MT_PLASMA | MT_BFG | MT_TROOPSHOT | MT_HEADSHOT | MT_BRUISERSHOT => {
                 return;
@@ -799,7 +799,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
         124 => {
             G_SecretExitLevel();
         }
-        125 if (*thing.ptr()).player.is_null() => {
+        125 if (*thing.ptr()).player.is_none() => {
             EV_Teleport(line, side, thing);
             clear_special();
         }
@@ -899,7 +899,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
         120 => {
             EV_DoPlat(line, blazeDWUS, 0);
         }
-        126 if (*thing.ptr()).player.is_null() => {
+        126 if (*thing.ptr()).player.is_none() => {
             EV_Teleport(line, side, thing);
         }
         128 => {
@@ -935,7 +935,7 @@ pub unsafe fn P_CrossSpecialLine(linenum: LineId, side: i32, thing: MobjId) {
 pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
     let line_record = LEVEL.borrow().lines[line_id];
     let line = &line_record;
-    if (*thing.ptr()).player.is_null() {
+    if (*thing.ptr()).player.is_none() {
         let mut ok = 0;
         if line.special as i32 == 46 {
             ok = 1
@@ -984,11 +984,17 @@ pub unsafe fn P_ShootSpecialLine(thing: MobjId, line_id: LineId) {
 ///
 /// Calls `i_error!` for any unhandled special number, matching C `I_Error`.
 ///
-/// - `player`: pointer to the player structure being updated.
+/// - `player`: the player being updated.
 ///
 /// Called from g_game.c / p_tick.c each game tic for every active player.
-pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
-    let mo = (*player).mo().ptr();
+///
+/// # Safety
+///
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn P_PlayerInSpecialSector(player: PlayerId) {
+    let mo = player.mo().ptr();
+    let ironfeet = player.read(|player| player.powers[pw_ironfeet]);
     let (sector, floorheight, special) = {
         let level = LEVEL.borrow();
         let sector = level.subsectors[(*mo).subsector].sector;
@@ -1005,30 +1011,30 @@ pub unsafe fn P_PlayerInSpecialSector(player: *mut PlayerT) {
 
     match special as i32 {
         5 => {
-            if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo(), None, None, 10);
+            if ironfeet == 0 && leveltime() & 0x1f == 0 {
+                P_DamageMobj(player.mo(), None, None, 10);
             }
         }
         7 => {
-            if (*player).powers[pw_ironfeet] == 0 && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo(), None, None, 5);
+            if ironfeet == 0 && leveltime() & 0x1f == 0 {
+                P_DamageMobj(player.mo(), None, None, 5);
             }
         }
         16 | 4 => {
-            if ((*player).powers[pw_ironfeet] == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo(), None, None, 20);
+            if (ironfeet == 0 || P_Random() < 5) && leveltime() & 0x1f == 0 {
+                P_DamageMobj(player.mo(), None, None, 20);
             }
         }
         9 => {
-            (*player).secretcount += 1;
+            player.write(|player| player.secretcount += 1);
             LEVEL.borrow_mut().sectors[sector].special = 0;
         }
         11 => {
-            (*player).cheats &= !CF_GODMODE;
+            player.write(|player| player.cheats &= !CF_GODMODE);
             if leveltime() & 0x1f == 0 {
-                P_DamageMobj((*player).mo(), None, None, 20);
+                P_DamageMobj(player.mo(), None, None, 20);
             }
-            if (*player).health <= 10 {
+            if player.read(|player| player.health) <= 10 {
                 G_ExitLevel();
             }
         }

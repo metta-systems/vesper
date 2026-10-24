@@ -112,9 +112,9 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
                     (*thing).z = (*thing).floorz;
                 }
 
-                if !(*thing).player.is_null() {
-                    let player = (*thing).player;
-                    (*player).viewz = (*thing).z + (*player).viewheight;
+                if let Some(player) = (*thing).player {
+                    let thing_z = (*thing).z;
+                    player.write(|player| player.viewz = thing_z + player.viewheight);
                 }
 
                 // Spawn teleport fog at source
@@ -132,7 +132,7 @@ pub unsafe fn EV_Teleport(line: &line_t, side: i32, thing_id: MobjId) -> i32 {
                 S_StartSound(fog, Sfx::Telept as i32);
 
                 // Don't move for a bit
-                if !(*thing).player.is_null() {
+                if (*thing).player.is_some() {
                     (*thing).reactiontime = 18;
                 }
 

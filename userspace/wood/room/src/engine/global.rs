@@ -9,8 +9,8 @@
 //! Release builds keep no count, so the guards cost nothing.
 //!
 //! Code that needs a stable address inside the state (the config table
-//! binds settings by pointer, map objects point into `players`) takes it
-//! from [`Global::as_ptr`].
+//! binds settings by pointer, status bar widgets point into `players`)
+//! takes it from [`Global::as_ptr`].
 
 use std::{
     cell::UnsafeCell,

@@ -33,7 +33,7 @@ use crate::{
     engine::{
         doom::{
             main_loop::gametic,
-            player::{MAXPLAYERS, PlayerT, PspdefT, player as game_player},
+            player::{MAXPLAYERS, PlayerId, PspdefT},
             stat::{gamemode, gameversion},
         },
         map::{LineId, SectorId, VertexId, line_t, slopetype_t},
@@ -593,8 +593,6 @@ pub unsafe fn P_LookForPlayers(actor_id: MobjId, allaround: Boolean) -> Boolean 
     let actor = actor_id.ptr();
     let mut c: i32;
 
-    let mut player: *mut PlayerT;
-
     let mut an: angle_t;
 
     let mut dist: fixed_t;
@@ -609,9 +607,9 @@ pub unsafe fn P_LookForPlayers(actor_id: MobjId, allaround: Boolean) -> Boolean 
                 if c2rust_fresh1 == 2 || (*actor).lastlook == stop {
                     return Boolean::FALSE;
                 }
-                player = game_player((*actor).lastlook as usize);
-                if (*player).health > 0 {
-                    let player_mo = (*player).mo();
+                let player = PlayerId::new((*actor).lastlook as usize);
+                if player.read(|player| player.health) > 0 {
+                    let player_mo = player.mo();
                     let sight = P_CheckSight(actor_id, player_mo);
                     if sight != 0 {
                         if allaround.is_false() {
@@ -1798,7 +1796,7 @@ pub unsafe fn A_BossDeath(mo_id: MobjId) {
     }
     let mut i: usize = 0;
     while i < MAXPLAYERS {
-        if playeringame(i) != 0 && (*game_player(i)).health > 0 {
+        if playeringame(i) != 0 && PlayerId::new(i).read(|player| player.health) > 0 {
             break;
         }
         i += 1;
@@ -1878,25 +1876,26 @@ pub unsafe fn A_BabyMetal(mo_id: MobjId) {
 ///
 /// # Safety
 ///
-/// `player` must be non-null and spawned in the level.
-pub unsafe fn A_OpenShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo(), Sfx::Dbopn as i32);
+/// `player` must be spawned in the level.
+pub unsafe fn A_OpenShotgun2(player: PlayerId, _psp: *mut PspdefT) {
+    S_StartSound(player.mo(), Sfx::Dbopn as i32);
 }
 /// Super Shotgun load action: plays the shell-load sound (`sfx_dbload`) for the player.
 ///
 /// # Safety
 ///
-/// `player` must be non-null and spawned in the level.
-pub unsafe fn A_LoadShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo(), Sfx::Dbload as i32);
+/// `player` must be spawned in the level.
+pub unsafe fn A_LoadShotgun2(player: PlayerId, _psp: *mut PspdefT) {
+    S_StartSound(player.mo(), Sfx::Dbload as i32);
 }
 /// Super Shotgun close action: plays the close sound (`sfx_dbcls`) then checks for refire.
 ///
 /// # Safety
 ///
-/// `player` must be non-null and spawned in the level; `psp` must be non-null.
-pub unsafe fn A_CloseShotgun2(player: *mut PlayerT, psp: *mut PspdefT) {
-    S_StartSound((*player).mo(), Sfx::Dbcls as i32);
+/// `player` must be spawned in the level, and no reference into its slot
+/// may be live while this runs; `psp` must be non-null.
+pub unsafe fn A_CloseShotgun2(player: PlayerId, psp: *mut PspdefT) {
+    S_StartSound(player.mo(), Sfx::Dbcls as i32);
     A_ReFire(player, psp);
 }
 /// Icon of Sin wake-up: scans the thinker list for `MT_BOSSTARGET` spots and plays `sfx_bossit`.

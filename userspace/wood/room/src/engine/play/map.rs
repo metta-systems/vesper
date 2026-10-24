@@ -16,10 +16,9 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
-
 use crate::{
     engine::{
+        doom::player::PlayerId,
         map::{
             LineId, SectorId,
             slopetype_t::{ST_HORIZONTAL, ST_VERTICAL},
@@ -485,7 +484,7 @@ pub unsafe fn PIT_StompThing(thing_id: MobjId) -> u32 {
     if thing_id == tmthing_id {
         return 1;
     }
-    if (*tmthing).player.is_null() && gamemap() != 30 {
+    if (*tmthing).player.is_none() && gamemap() != 30 {
         return 0;
     }
     P_DamageMobj(thing_id, Some(tmthing_id), Some(tmthing_id), 10000);
@@ -574,7 +573,7 @@ pub unsafe fn PIT_CheckLine(ld: LineId) -> u32 {
         if (line.flags as i32) & (LinedefFlag::BLOCKING as i32) != 0 {
             return 0;
         }
-        if (*tmthing).player.is_null()
+        if (*tmthing).player.is_none()
             && (line.flags as i32) & (LinedefFlag::BLOCKMONSTERS as i32) != 0
         {
             return 0;
@@ -1484,12 +1483,10 @@ pub unsafe fn PTR_UseTraverse(in_: *mut intercept_t) -> u32 {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to a [`crate::engine::doom::player::PlayerT`]
-/// whose `mo` field points to a live [`mobj_t`]. Map data must be
-/// initialised.
-pub unsafe fn P_UseLines(player: *mut c_void) {
-    let player = player as *mut crate::engine::doom::player::PlayerT;
-    let mo_id = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level. Map data
+/// must be initialised.
+pub unsafe fn P_UseLines(player: PlayerId) {
+    let mo_id = player.mo();
     let mo = mo_id.ptr();
     MAP.borrow_mut().usething = Some(mo_id);
     let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;

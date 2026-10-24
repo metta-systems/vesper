@@ -11,7 +11,7 @@ use std::ptr;
 
 use crate::{
     engine::{
-        doom::player::PlayerT,
+        doom::player::PlayerId,
         global::Global,
         interface::video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
         map::{SegId, SubsectorId, node_t},
@@ -153,11 +153,11 @@ pub struct ViewState {
     /// `sin(viewangle)` in 16.16 fixed-point. Precomputed each frame in
     /// [`R_SetupFrame`] for fast world-space projection.
     pub viewsin: fixed_t,
-    /// Pointer to the player struct whose view is currently being rendered.
+    /// The player whose view is currently being rendered.
     ///
     /// Set at the start of each frame by [`R_SetupFrame`]; read by several
     /// renderer subsystems that need player-specific state (e.g. weapon sprites).
-    pub viewplayer: *mut PlayerT,
+    pub viewplayer: Option<PlayerId>,
     /// Detail level shift: `0` = high detail, `1` = low detail (half-width
     /// columns doubled horizontally). Controls which column/span draw functions
     /// are active and affects several scaling calculations.
@@ -265,7 +265,7 @@ impl ViewState {
             viewangle: 0,
             viewcos: 0,
             viewsin: 0,
-            viewplayer: ptr::null_mut(),
+            viewplayer: None,
             detailshift: 0,
             clipangle: 0,
             viewangletox: [0; math::tables::FINEANGLES / 2 + 1],
@@ -282,6 +282,16 @@ impl ViewState {
             setblocks: 0,
             setdetail: 0,
         }
+    }
+
+    /// The player whose view is being rendered (C `viewplayer`).
+    ///
+    /// # Panics
+    ///
+    /// Before [`R_SetupFrame`] has set it.
+    #[track_caller]
+    pub fn player(&self) -> PlayerId {
+        self.viewplayer.expect("no view player before R_SetupFrame")
     }
 }
 
@@ -1009,20 +1019,22 @@ pub fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> SubsectorId {
 /// Equivalent to `R_SetupFrame` in `r_main.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to a [`PlayerT`] whose `mo`
-/// mobj pointer is also valid. Reads and writes numerous renderer state fields.
-pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
+/// `player_id`'s `mo` must name a map object of the level. Reads and writes
+/// numerous renderer state fields.
+pub unsafe fn R_SetupFrame(player_id: PlayerId) {
     let colormaps = RENDER_DATA.borrow().colormaps;
+    // Play does not run while a frame is drawn, so the view takes a copy.
+    let player = player_id.read(|player| *player);
     let mut view = VIEW.borrow_mut();
 
-    view.viewplayer = player;
-    let mo = (*player).mo().ptr();
+    view.viewplayer = Some(player_id);
+    let mo = player.mo().ptr();
     view.viewx = (*mo).x;
     view.viewy = (*mo).y;
     view.viewangle = (*mo).angle.wrapping_add(view.viewangleoffset as u32);
-    view.extralight = (*player).extralight;
+    view.extralight = player.extralight;
 
-    view.viewz = (*player).viewz;
+    view.viewz = player.viewz;
 
     view.viewsin = math::tables::finesine[(view.viewangle >> ANGLETOFINESHIFT) as usize];
     view.viewcos = *math::tables::finecosine
@@ -1031,9 +1043,9 @@ pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
 
     view.sscount = 0;
 
-    if (*player).fixedcolormap != 0 {
+    if player.fixedcolormap != 0 {
         view.fixedcolormap = colormaps
-            .add((*player).fixedcolormap as usize * 256 * std::mem::size_of::<lighttable_t>());
+            .add(player.fixedcolormap as usize * 256 * std::mem::size_of::<lighttable_t>());
 
         let fixedcolormap = view.fixedcolormap;
         for i in 0..MAXLIGHTSCALE {
@@ -1064,10 +1076,9 @@ pub unsafe fn R_SetupFrame(player: *mut PlayerT) {
 /// Equivalent to `R_RenderPlayerView` (`R_RenderView`) in `r_main.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to a fully-initialised
-/// [`PlayerT`]. All renderer state and map data must have been loaded and
-/// initialised prior to this call.
-pub unsafe fn R_RenderPlayerView(player: *mut PlayerT) {
+/// `player`'s `mo` must name a map object of the level. All renderer state
+/// and map data must have been loaded and initialised prior to this call.
+pub unsafe fn R_RenderPlayerView(player: PlayerId) {
     R_SetupFrame(player);
 
     R_ClearClipSegs();

@@ -9,7 +9,7 @@
 use crate::engine::{
     doom::{
         mode::{commercial, shareware},
-        player::{CF_NOCLIP, CF_NOMOMENTUM, PlayerT},
+        player::{CF_NOCLIP, CF_NOMOMENTUM, PlayerId},
         stat::gamemode,
     },
     global::Global,
@@ -154,11 +154,10 @@ use crate::engine::{
 /// Corresponds to `P_Thrust` in `p_user.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
+/// `player`'s `mo` must name a map object of the loaded level.
+pub unsafe fn P_Thrust(player: PlayerId, angle: u32, move_: fixed_t) {
     unsafe {
-        let mo = (*player).mo().ptr();
+        let mo = player.mo().ptr();
         let angle = (angle >> ANGLETOFINESHIFT) as usize;
         (*mo).momx += FixedMul(move_, *finecosine.0.add(angle));
         (*mo).momy += FixedMul(move_, finesine[angle]);
@@ -175,10 +174,10 @@ pub unsafe fn P_Thrust(player: *mut PlayerT, angle: u32, move_: fixed_t) {
 /// Corresponds to `P_CalcHeight` in `p_user.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn P_CalcHeight(player: *mut PlayerT) {
+/// `player_id`'s `mo` must name a map object of the loaded level.
+pub unsafe fn P_CalcHeight(player_id: PlayerId) {
     unsafe {
+        let player = player_id.ptr();
         let mo = (*player).mo().ptr();
 
         // Regular movement bobbing
@@ -244,12 +243,12 @@ pub unsafe fn P_CalcHeight(player: *mut PlayerT) {
 /// Corresponds to `P_MovePlayer` in `p_user.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
+/// `player_id`'s `mo` must name a map object of the loaded level.
+pub unsafe fn P_MovePlayer(player_id: PlayerId) {
     unsafe {
+        let player = player_id.ptr();
         let mo = (*player).mo().ptr();
-        let cmd = &(*player).cmd;
+        let cmd = (*player).cmd;
 
         (*mo).angle = (*mo)
             .angle
@@ -260,12 +259,12 @@ pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
         USER.borrow_mut().onground = onground;
 
         if cmd.forwardmove != 0 && onground != 0 {
-            P_Thrust(player, (*mo).angle, cmd.forwardmove as fixed_t * 2048);
+            P_Thrust(player_id, (*mo).angle, cmd.forwardmove as fixed_t * 2048);
         }
 
         if cmd.sidemove != 0 && onground != 0 {
             P_Thrust(
-                player,
+                player_id,
                 (*mo).angle.wrapping_sub(ANG90),
                 cmd.sidemove as fixed_t * 2048,
             );
@@ -288,15 +287,15 @@ pub unsafe fn P_MovePlayer(player: *mut PlayerT) {
 /// Corresponds to `P_DeathThink` in `p_user.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn P_DeathThink(player: *mut PlayerT) {
+/// `player_id`'s `mo` must name a map object of the loaded level.
+pub unsafe fn P_DeathThink(player_id: PlayerId) {
     unsafe {
+        let player = player_id.ptr();
         let mo = (*player).mo().ptr();
         let angle: u32;
         let delta: u32;
 
-        P_MovePsprites(player);
+        P_MovePsprites(player_id);
 
         // Fall to the ground
         if (*player).viewheight > 6 * FRACUNIT {
@@ -309,7 +308,7 @@ pub unsafe fn P_DeathThink(player: *mut PlayerT) {
 
         (*player).deltaviewheight = 0;
         USER.borrow_mut().onground = ((*mo).z <= (*mo).floorz) as i32;
-        P_CalcHeight(player);
+        P_CalcHeight(player_id);
 
         // The attacker may have been removed since (an exploded barrel); like
         // C, its last position is read through the stale handle.
@@ -363,11 +362,11 @@ pub unsafe fn P_DeathThink(player: *mut PlayerT) {
 /// Corresponds to `P_PlayerThink` in `p_user.c`.
 ///
 /// # Safety
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set and has a valid `subsector`
-/// chain.
-pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
+/// `player_id`'s `mo` must name a map object of the loaded level with a
+/// valid `subsector` chain.
+pub unsafe fn P_PlayerThink(player_id: PlayerId) {
     unsafe {
+        let player = player_id.ptr();
         let mo = (*player).mo().ptr();
         let mut newweapon: i32;
 
@@ -379,8 +378,8 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         }
 
         // Chain saw run forward
-        let cmd = &mut (*player).cmd;
         if (*mo).flags & MF_JUSTATTACKED != 0 {
+            let cmd = &mut (*player).cmd;
             cmd.angleturn = 0;
             cmd.forwardmove = (0xc800 / 512) as i8;
             cmd.sidemove = 0;
@@ -388,7 +387,7 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         }
 
         if (*player).playerstate == PST_DEAD {
-            P_DeathThink(player);
+            P_DeathThink(player_id);
             return;
         }
 
@@ -397,15 +396,16 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         if (*mo).reactiontime != 0 {
             (*mo).reactiontime -= 1;
         } else {
-            P_MovePlayer(player);
+            P_MovePlayer(player_id);
         }
 
-        P_CalcHeight(player);
+        P_CalcHeight(player_id);
         if LEVEL.borrow().subsector_sector((*mo).subsector).special != 0 {
-            P_PlayerInSpecialSector(player);
+            P_PlayerInSpecialSector(player_id);
         }
         // Check for weapon change.
         // A special event has no other buttons.
+        let cmd = &mut (*player).cmd;
         if cmd.buttons & BT_SPECIAL != 0 {
             cmd.buttons = 0;
         }
@@ -443,7 +443,7 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         // Check for use
         if cmd.buttons & BT_USE != 0 {
             if (*player).usedown == 0 {
-                P_UseLines(player as *mut std::ffi::c_void);
+                P_UseLines(player_id);
                 (*player).usedown = 1;
             }
         } else {
@@ -451,7 +451,7 @@ pub unsafe fn P_PlayerThink(player: *mut PlayerT) {
         }
 
         // Cycle psprites
-        P_MovePsprites(player);
+        P_MovePsprites(player_id);
 
         // Counters, time dependent power ups.
         // Strength counts up to diminish fade.

@@ -29,7 +29,10 @@ use std::{ffi::c_void, ptr};
 
 use {
     crate::engine::{
-        doom::{self, player::MAXPLAYERS},
+        doom::{
+            self,
+            player::{MAXPLAYERS, PlayerId},
+        },
         global::Global,
         map::{
             LineId, SectorId, SideId, SubsectorId, VertexId, degenmobj_t, line_t, node_t, sector_t,
@@ -295,7 +298,7 @@ pub fn deathmatch_p() -> *mut mapthing_t {
 
 use crate::engine::{
     doom::stat::gamemode,
-    game::{G_DeathMatchSpawnPlayer, GAME, console_player, deathmatch, player, playeringame},
+    game::{G_DeathMatchSpawnPlayer, GAME, deathmatch, playeringame},
     interface::system::I_GetMemoryValue,
     math::fixed::FixedDiv,
     misc::argv::M_CheckParm,
@@ -1034,14 +1037,15 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
             game.wminfo.partime = 180;
         }
 
-        for i in 0..MAXPLAYERS {
-            let player = &mut *player(i);
-            player.killcount = 0;
-            player.secretcount = 0;
-            player.itemcount = 0;
+        for id in PlayerId::all() {
+            id.write(|player| {
+                player.killcount = 0;
+                player.secretcount = 0;
+                player.itemcount = 0;
+            });
         }
 
-        (*console_player()).viewz = 1;
+        PlayerId::console().write(|console| console.viewz = 1);
 
         S_Start();
         Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -1091,7 +1095,7 @@ pub fn P_SetupLevel(episode: i32, map: i32, _playermask: i32, _skill: i32) {
         if deathmatch() != 0 {
             for i in 0..MAXPLAYERS {
                 if playeringame(i) != 0 {
-                    (*player(i)).mo = None;
+                    PlayerId::new(i).write(|player| player.mo = None);
                     G_DeathMatchSpawnPlayer(i as i32);
                 }
             }

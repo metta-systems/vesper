@@ -9,7 +9,7 @@ use crate::engine::sound::info::Sfx;
 
 use crate::engine::{
     dehacked::DEH_String,
-    doom::player::PlayerMessage,
+    doom::player::{PlayerId, PlayerMessage},
     interface::timer::TICRATE,
     map::{LineId, SectorId, line_t},
     math::fixed::{FRACUNIT, fixed_t},
@@ -102,6 +102,23 @@ fn locked_door_message(special: i32) -> PlayerMessage {
         28 | 33 => DEH_String(PD_REDK),
         _ => unreachable!("unexpected locked door special: {special}"),
     })
+}
+
+/// The lock check of `EV_DoLockedDoor` and `EV_VerticalDoor`: `true` if
+/// `player` holds key `card` or `skull`. A player holding neither gets
+/// `message` and the "oof" sound.
+fn has_key_or_complain(
+    player: PlayerId,
+    card: usize,
+    skull: usize,
+    message: PlayerMessage,
+) -> bool {
+    if player.read(|player| player.cards[card] != 0 || player.cards[skull] != 0) {
+        return true;
+    }
+    player.write(|player| player.message = message);
+    S_StartNonPositionalSound(Sfx::Oof as i32);
+    false
 }
 
 /// Thinker state for an active vertical door.
@@ -252,39 +269,27 @@ pub unsafe fn T_VerticalDoor(door_id: DoorId) {
 ///
 /// # Safety
 ///
-/// `thing` must name a map object whose `player` is null or valid; the
-/// thinker list must be initialised and a level loaded.
+/// `thing` must name a map object of the level; the thinker list must be
+/// initialised and a level loaded.
 ///
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
 pub unsafe fn EV_DoLockedDoor(line: &line_t, kind: i32, thing: MobjId) -> i32 {
-    let Some(p) = (*thing.ptr()).player.as_mut() else {
+    let Some(player) = (*thing.ptr()).player else {
         return 0;
     };
 
-    match line.special as i32 {
-        99 | 133 => {
-            if p.cards[it_bluecard] == 0 && p.cards[it_blueskull] == 0 {
-                p.message = locked_object_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return 0;
-            }
-        }
-        134 | 135 => {
-            if p.cards[it_redcard] == 0 && p.cards[it_redskull] == 0 {
-                p.message = locked_object_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return 0;
-            }
-        }
-        136 | 137 => {
-            if p.cards[it_yellowcard] == 0 && p.cards[it_yellowskull] == 0 {
-                p.message = locked_object_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return 0;
-            }
-        }
-        _ => {}
+    let special = line.special as i32;
+    let keys = match special {
+        99 | 133 => Some((it_bluecard, it_blueskull)),
+        134 | 135 => Some((it_redcard, it_redskull)),
+        136 | 137 => Some((it_yellowcard, it_yellowskull)),
+        _ => None,
+    };
+    if let Some((card, skull)) = keys
+        && !has_key_or_complain(player, card, skull, locked_object_message(special))
+    {
+        return 0;
     }
 
     EV_DoDoor(line, kind)
@@ -444,40 +449,20 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: MobjId) {
 
     // Check for locks
     let thing = thing.ptr();
-    let player = (*thing).player;
-
-    match line.special as i32 {
-        26 | 32 => {
-            let Some(player) = player.as_mut() else {
-                return;
-            };
-            if player.cards[it_bluecard] == 0 && player.cards[it_blueskull] == 0 {
-                player.message = locked_door_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return;
-            }
+    let special = line.special as i32;
+    let keys = match special {
+        26 | 32 => Some((it_bluecard, it_blueskull)),
+        27 | 34 => Some((it_yellowcard, it_yellowskull)),
+        28 | 33 => Some((it_redcard, it_redskull)),
+        _ => None,
+    };
+    if let Some((card, skull)) = keys {
+        let Some(player) = (*thing).player else {
+            return;
+        };
+        if !has_key_or_complain(player, card, skull, locked_door_message(special)) {
+            return;
         }
-        27 | 34 => {
-            let Some(player) = player.as_mut() else {
-                return;
-            };
-            if player.cards[it_yellowcard] == 0 && player.cards[it_yellowskull] == 0 {
-                player.message = locked_door_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return;
-            }
-        }
-        28 | 33 => {
-            let Some(player) = player.as_mut() else {
-                return;
-            };
-            if player.cards[it_redcard] == 0 && player.cards[it_redskull] == 0 {
-                player.message = locked_door_message(line.special as i32);
-                S_StartNonPositionalSound(Sfx::Oof as i32);
-                return;
-            }
-        }
-        _ => {}
     }
 
     let (sec, special) = {
@@ -492,7 +477,7 @@ pub unsafe fn EV_VerticalDoor(line_id: LineId, thing: MobjId) {
                 if special_door_direction(special) == -1 {
                     set_special_door_direction(special, 1);
                 } else {
-                    if (*thing).player.is_null() {
+                    if (*thing).player.is_none() {
                         return;
                     }
                     if special.kind() == ThinkerKind::Door {

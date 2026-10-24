@@ -247,7 +247,8 @@ struct CastInfo {
 // g_game.rs
 use crate::engine::{
     dehacked::DEH_String,
-    game::{GAME, gameepisode, gamemap, player},
+    doom::player::PlayerId,
+    game::{GAME, gameepisode, gamemap},
 };
 
 // am_map.rs
@@ -751,53 +752,50 @@ pub unsafe fn F_Responder(event: *mut event_t) -> i32 {
 /// Called from C code in `g_game.c` once per game tick.
 /// C origin: `F_Ticker` in f_finale.c.
 pub fn F_Ticker() {
-    unsafe {
-        // check for skipping
-        if gamemode() == doom::mode::commercial && FINALE.borrow().count > 50 {
-            for i in 0..MAXPLAYERS {
-                if (*player(i)).cmd.buttons != 0 {
-                    if gamemap() == 30 {
-                        F_StartCast();
-                    } else {
-                        GAME.borrow_mut().gameaction = ga_worlddone;
-                    }
-                    break;
+    // check for skipping
+    if gamemode() == doom::mode::commercial && FINALE.borrow().count > 50 {
+        for i in 0..MAXPLAYERS {
+            if PlayerId::new(i).read(|player| player.cmd.buttons) != 0 {
+                if gamemap() == 30 {
+                    F_StartCast();
+                } else {
+                    GAME.borrow_mut().gameaction = ga_worlddone;
                 }
+                break;
             }
         }
+    }
 
-        let stage = {
+    let stage = {
+        let mut finale = FINALE.borrow_mut();
+        finale.count += 1;
+        finale.stage
+    };
+
+    if let FinaleStage::Cast = stage {
+        F_CastTicker();
+        return;
+    }
+
+    if gamemode() == doom::mode::commercial {
+        return;
+    }
+
+    if let FinaleStage::Text = stage {
+        let text_done = {
             let mut finale = FINALE.borrow_mut();
-            finale.count += 1;
-            finale.stage
-        };
-
-        if let FinaleStage::Cast = stage {
-            F_CastTicker();
-            return;
-        }
-
-        if gamemode() == doom::mode::commercial {
-            return;
-        }
-
-        if let FinaleStage::Text = stage {
-            let text_done = {
-                let mut finale = FINALE.borrow_mut();
-                let len = finale.finaletext.len();
-                let text_done =
-                    finale.count > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32);
-                if text_done {
-                    finale.count = 0;
-                    finale.stage = FinaleStage::ArtScreen;
-                }
-                text_done
-            };
+            let len = finale.finaletext.len();
+            let text_done = finale.count > (len as u32) * (TEXTSPEED as u32) + (TEXTWAIT as u32);
             if text_done {
-                DOOM_MAIN.borrow_mut().wipegamestate = -1;
-                if gameepisode() == 3 {
-                    S_StartMusic(Mus::Bunny as i32);
-                }
+                finale.count = 0;
+                finale.stage = FinaleStage::ArtScreen;
+            }
+            text_done
+        };
+        if text_done {
+            DOOM_MAIN.borrow_mut().wipegamestate = -1;
+            if gameepisode() == 3 {
+                S_StartMusic(Mus::Bunny as i32);
             }
         }
     }

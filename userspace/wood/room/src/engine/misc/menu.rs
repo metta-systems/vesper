@@ -1108,12 +1108,10 @@ fn M_ChangeMessages(_choice: i32) {
         menu.showMessages = 1 - menu.showMessages;
         menu.showMessages
     };
-    unsafe {
-        if show_messages == 0 {
-            M_Menu_SetPlayerMessage(MSGOFF);
-        } else {
-            M_Menu_SetPlayerMessage(MSGON);
-        }
+    if show_messages == 0 {
+        M_Menu_SetPlayerMessage(MSGOFF);
+    } else {
+        M_Menu_SetPlayerMessage(MSGON);
     }
     HUD.borrow_mut().message_dontfuckwithme = 1;
 }
@@ -1240,13 +1238,11 @@ fn M_ChangeDetail(_choice: i32) {
         menu.detailLevel = 1 - menu.detailLevel;
         (menu.screenblocks, menu.detailLevel)
     };
-    unsafe {
-        R_SetViewSize(screenblocks, detail_level);
-        if detail_level == 0 {
-            M_Menu_SetPlayerMessage(DETAILHI);
-        } else {
-            M_Menu_SetPlayerMessage(DETAILLO);
-        }
+    R_SetViewSize(screenblocks, detail_level);
+    if detail_level == 0 {
+        M_Menu_SetPlayerMessage(DETAILHI);
+    } else {
+        M_Menu_SetPlayerMessage(DETAILLO);
     }
 }
 

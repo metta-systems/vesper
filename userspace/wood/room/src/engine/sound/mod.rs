@@ -119,8 +119,11 @@ impl SoundOrigin {
 // doomstat.rs
 use crate::engine::doom::stat::gamemode;
 
+// d_player.rs
+use crate::engine::doom::player::PlayerId;
+
 // g_game.rs
-use crate::engine::game::{console_player, gameepisode, gamemap};
+use crate::engine::game::{gameepisode, gamemap};
 
 // i_sound.rs
 use crate::engine::interface::sound::{
@@ -558,13 +561,13 @@ unsafe fn S_StartOriginSound(origin: Option<SoundOrigin>, sfx_id: i32) {
 
         let mut sep: i32 = NORM_SEP;
 
-        let player_mo = (*console_player()).mo;
+        let player_mo = PlayerId::console().read(|console| console.mo);
         if let Some(source) =
             origin.filter(|&source| Some(source) != player_mo.map(SoundOrigin::Mobj))
         {
             // C reads the listener without a check: a positional sound
             // plays only while the console player is in the level.
-            let listener = (*console_player()).mo();
+            let listener = PlayerId::console().mo();
             let rc = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
 
             if source.position() == SoundOrigin::Mobj(listener).position() {

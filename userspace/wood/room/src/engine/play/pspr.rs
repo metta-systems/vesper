@@ -12,7 +12,7 @@ use crate::engine::{
     doom::{
         items::weaponinfo,
         mode::{commercial, shareware},
-        player::{NUMAMMO, NUMPSPRITES, NUMWEAPONS, PlayerT, PspdefT},
+        player::{NUMAMMO, NUMPSPRITES, NUMWEAPONS, PlayerId, PspdefT},
         stat::gamemode,
     },
     global::Global,
@@ -150,11 +150,13 @@ fn bulletslope() -> fixed_t {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
+/// No reference into `player_id`'s slot may be live while this runs.
 /// `position` must be in `0..NUMPSPRITES`.  `stnum` must be a valid state
 /// index or `S_NULL` (0).
-pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
-    let psp = (*player).psprites.as_mut_ptr().add(position as usize);
+pub unsafe fn P_SetPsprite(player_id: PlayerId, position: i32, stnum: i32) {
+    let psp = (&raw mut (*player_id.ptr()).psprites)
+        .cast::<PspdefT>()
+        .add(position as usize);
 
     let mut stnum = stnum;
     loop {
@@ -176,7 +178,7 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
         match (*state).action {
             StateAction::None => {}
             StateAction::Weapon(action) => {
-                action(player, psp);
+                action(player_id, psp);
                 if (*psp).state.is_null() {
                     break;
                 }
@@ -197,12 +199,8 @@ pub unsafe fn P_SetPsprite(player: *mut PlayerT, position: i32, stnum: i32) {
 
 /// Recompute the horizontal (`swingx`) and vertical (`swingy`) weapon-bob
 /// offsets for the current tic using the player's `bob` amplitude.
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_CalcSwing(player: *mut PlayerT) {
-    let swing = (*player).bob;
+pub fn P_CalcSwing(player: PlayerId) {
+    let swing = player.read(|player| player.bob);
 
     let leveltime = leveltime();
     let mut pspr = PSPR.borrow_mut();
@@ -218,8 +216,9 @@ pub unsafe fn P_CalcSwing(player: *mut PlayerT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
+/// No reference into `player_id`'s slot may be live while this runs.
+pub unsafe fn P_BringUpWeapon(player_id: PlayerId) {
+    let player = player_id.ptr();
     if (*player).pendingweapon == wp_nochange {
         (*player).pendingweapon = (*player).readyweapon;
     }
@@ -233,7 +232,7 @@ pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
     (*player).pendingweapon = wp_nochange;
     (*player).psprites[0].sy = WEAPONBOTTOM;
 
-    P_SetPsprite(player, 0, newstate);
+    P_SetPsprite(player_id, 0, newstate);
 }
 
 /// Return `1` if the player has enough ammo to fire the ready weapon, `0`
@@ -242,8 +241,9 @@ pub unsafe fn P_BringUpWeapon(player: *mut PlayerT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
+/// No reference into `player_id`'s slot may be live while this runs.
+pub unsafe fn P_CheckAmmo(player_id: PlayerId) -> i32 {
+    let player = player_id.ptr();
     let ammo = weaponinfo[(*player).readyweapon as usize].ammo;
 
     let count: i32;
@@ -302,7 +302,7 @@ pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
     }
 
     P_SetPsprite(
-        player,
+        player_id,
         0,
         weaponinfo[(*player).readyweapon as usize].downstate,
     );
@@ -316,29 +316,29 @@ pub unsafe fn P_CheckAmmo(player: *mut PlayerT) -> i32 {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn P_FireWeapon(player: *mut PlayerT) {
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn P_FireWeapon(player: PlayerId) {
     if P_CheckAmmo(player) == 0 {
         return;
     }
 
-    P_SetMobjState((*player).mo(), S_PLAY_ATK1);
-    let newstate = weaponinfo[(*player).readyweapon as usize].atkstate;
+    P_SetMobjState(player.mo(), S_PLAY_ATK1);
+    let newstate = weaponinfo[player.read(|player| player.readyweapon) as usize].atkstate;
     P_SetPsprite(player, 0, newstate);
-    P_NoiseAlert((*player).mo(), (*player).mo());
+    P_NoiseAlert(player.mo(), player.mo());
 }
 
 /// Begin lowering the current weapon (called on player death or weapon switch).
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_DropWeapon(player: *mut PlayerT) {
+/// No reference into `player`'s slot may be live while this runs.
+pub unsafe fn P_DropWeapon(player: PlayerId) {
     P_SetPsprite(
         player,
         0,
-        weaponinfo[(*player).readyweapon as usize].downstate,
+        weaponinfo[player.read(|player| player.readyweapon) as usize].downstate,
     );
 }
 
@@ -348,10 +348,11 @@ pub unsafe fn P_DropWeapon(player: *mut PlayerT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.  `psp` must point to the
-/// weapon psprite slot.
-pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
+/// `player_id`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.  `psp` must point
+/// to the weapon psprite slot.
+pub unsafe fn A_WeaponReady(player_id: PlayerId, psp: *mut PspdefT) {
+    let player = player_id.ptr();
     let mo_id = (*player).mo();
     let mo = mo_id.ptr();
 
@@ -371,7 +372,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
     // Check for change: if player is dead, put the weapon away.
     if (*player).pendingweapon != wp_nochange || (*player).health == 0 {
         let newstate = weaponinfo[(*player).readyweapon as usize].downstate;
-        P_SetPsprite(player, 0, newstate);
+        P_SetPsprite(player_id, 0, newstate);
         return;
     }
 
@@ -381,7 +382,7 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
             || ((*player).readyweapon != wp_missile && (*player).readyweapon != wp_bfg)
         {
             (*player).attackdown = 1;
-            P_FireWeapon(player);
+            P_FireWeapon(player_id);
             return;
         }
     } else {
@@ -402,17 +403,19 @@ pub unsafe fn A_WeaponReady(player: *mut PlayerT, psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn A_ReFire(player: *mut PlayerT, _psp: *mut PspdefT) {
+/// `player_id`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_ReFire(player_id: PlayerId, _psp: *mut PspdefT) {
+    let player = player_id.ptr();
     if (*player).cmd.buttons & BT_ATTACK != 0
         && (*player).pendingweapon == wp_nochange
         && (*player).health != 0
     {
         (*player).refire += 1;
-        P_FireWeapon(player);
+        P_FireWeapon(player_id);
     } else {
         (*player).refire = 0;
-        P_CheckAmmo(player);
+        P_CheckAmmo(player_id);
     }
 }
 
@@ -423,8 +426,8 @@ pub unsafe fn A_ReFire(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn A_CheckReload(player: *mut PlayerT, _psp: *mut PspdefT) {
+/// No reference into `player`'s slot may be live while this runs.
+pub unsafe fn A_CheckReload(player: PlayerId, _psp: *mut PspdefT) {
     P_CheckAmmo(player);
 }
 
@@ -435,9 +438,10 @@ pub unsafe fn A_CheckReload(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
+/// No reference into `player_id`'s slot may be live while this runs.
 /// `psp` must point to the weapon psprite slot.
-pub unsafe fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_Lower(player_id: PlayerId, psp: *mut PspdefT) {
+    let player = player_id.ptr();
     (*psp).sy += LOWERSPEED;
 
     // Is already down.
@@ -454,12 +458,12 @@ pub unsafe fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
     // The old weapon has been lowered off the screen, so change the weapon
     // and start raising it.
     if (*player).health == 0 {
-        P_SetPsprite(player, 0, S_NULL);
+        P_SetPsprite(player_id, 0, S_NULL);
         return;
     }
 
     (*player).readyweapon = (*player).pendingweapon;
-    P_BringUpWeapon(player);
+    P_BringUpWeapon(player_id);
 }
 
 /// Weapon action: scroll the weapon psprite up by `RAISESPEED` each tic.
@@ -469,9 +473,9 @@ pub unsafe fn A_Lower(player: *mut PlayerT, psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
+/// No reference into `player`'s slot may be live while this runs.
 /// `psp` must point to the weapon psprite slot.
-pub unsafe fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
+pub unsafe fn A_Raise(player: PlayerId, psp: *mut PspdefT) {
     (*psp).sy -= RAISESPEED;
 
     if (*psp).sy > WEAPONTOP {
@@ -480,7 +484,7 @@ pub unsafe fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
 
     (*psp).sy = WEAPONTOP;
 
-    let newstate = weaponinfo[(*player).readyweapon as usize].readystate;
+    let newstate = weaponinfo[player.read(|player| player.readyweapon) as usize].readystate;
     P_SetPsprite(player, 0, newstate);
 }
 
@@ -489,15 +493,15 @@ pub unsafe fn A_Raise(player: *mut PlayerT, psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_GunFlash(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
     P_SetMobjState(mo, S_PLAY_ATK2);
     P_SetPsprite(
         player,
         1,
-        weaponinfo[(*player).readyweapon as usize].flashstate,
+        weaponinfo[player.read(|player| player.readyweapon) as usize].flashstate,
     );
 }
 
@@ -508,14 +512,14 @@ pub unsafe fn A_GunFlash(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo_id = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_Punch(player: PlayerId, _psp: *mut PspdefT) {
+    let mo_id = player.mo();
     let mo = mo_id.ptr();
 
     let mut damage = ((P_Random() % 10) + 1) << 1;
-    if (*player).powers[pw_strength] != 0 {
+    if player.read(|player| player.powers[pw_strength]) != 0 {
         damage *= 10;
     }
 
@@ -539,10 +543,10 @@ pub unsafe fn A_Punch(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo_id = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_Saw(player: PlayerId, _psp: *mut PspdefT) {
+    let mo_id = player.mo();
     let mo = mo_id.ptr();
 
     let damage = 2 * ((P_Random() % 10) + 1);
@@ -582,28 +586,30 @@ pub unsafe fn A_Saw(player: *mut PlayerT, _psp: *mut PspdefT) {
 /// Subtract `amount` from the player's ammo for slot `ammonum`, emulating
 /// the original C array-overflow behaviour: if `ammonum >= NUMAMMO` the
 /// excess indexes into `maxammo` instead (Dehacked compatibility).
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-/// `ammonum` may legally exceed `NUMAMMO - 1`; the function handles that case.
-unsafe fn DecreaseAmmo(player: *mut PlayerT, ammonum: i32, amount: i32) {
-    if ammonum < NUMAMMO as i32 {
-        (*player).ammo[ammonum as usize] -= amount;
-    } else {
-        (*player).maxammo[(ammonum - NUMAMMO as i32) as usize] -= amount;
-    }
+fn DecreaseAmmo(player: PlayerId, ammonum: i32, amount: i32) {
+    player.write(|player| {
+        if ammonum < NUMAMMO as i32 {
+            player.ammo[ammonum as usize] -= amount;
+        } else {
+            player.maxammo[(ammonum - NUMAMMO as i32) as usize] -= amount;
+        }
+    });
+}
+
+/// The player's ready weapon (C `player->readyweapon`).
+fn ready_weapon(player: PlayerId) -> usize {
+    player.read(|player| player.readyweapon) as usize
 }
 
 /// Weapon action: consume one rocket and spawn an `MT_ROCKET` projectile.
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FireMissile(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
     P_SpawnPlayerMissile(mo, MT_ROCKET);
 }
 
@@ -612,13 +618,13 @@ pub unsafe fn A_FireMissile(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FireBFG(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
     DecreaseAmmo(
         player,
-        weaponinfo[(*player).readyweapon as usize].ammo,
+        weaponinfo[ready_weapon(player)].ammo,
         DEH_DEFAULT_BFG_CELLS_PER_SHOT,
     );
     P_SpawnPlayerMissile(mo, MT_BFG);
@@ -629,16 +635,16 @@ pub unsafe fn A_FireBFG(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FirePlasma(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FirePlasma(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
 
     P_SetPsprite(
         player,
         1,
-        weaponinfo[(*player).readyweapon as usize].flashstate + (P_Random() & 1),
+        weaponinfo[ready_weapon(player)].flashstate + (P_Random() & 1),
     );
 
     P_SpawnPlayerMissile(mo, MT_PLASMA);
@@ -689,43 +695,35 @@ pub unsafe fn P_GunShot(mo: MobjId, accurate: i32) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FirePistol(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FirePistol(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
     S_StartSound(mo, Sfx::Pistol as i32);
 
     P_SetMobjState(mo, S_PLAY_ATK2);
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
 
-    P_SetPsprite(
-        player,
-        1,
-        weaponinfo[(*player).readyweapon as usize].flashstate,
-    );
+    P_SetPsprite(player, 1, weaponinfo[ready_weapon(player)].flashstate);
 
     P_BulletSlope(mo);
-    P_GunShot(mo, ((*player).refire == 0) as i32);
+    P_GunShot(mo, (player.read(|player| player.refire) == 0) as i32);
 }
 
 /// Weapon action: fire the shotgun (7 inaccurate pellets, 1 shell consumed).
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FireShotgun(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
     S_StartSound(mo, Sfx::Shotgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
 
-    P_SetPsprite(
-        player,
-        1,
-        weaponinfo[(*player).readyweapon as usize].flashstate,
-    );
+    P_SetPsprite(player, 1, weaponinfo[ready_weapon(player)].flashstate);
 
     P_BulletSlope(mo);
 
@@ -739,20 +737,16 @@ pub unsafe fn A_FireShotgun(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.
+pub unsafe fn A_FireShotgun2(player: PlayerId, _psp: *mut PspdefT) {
+    let mo = player.mo();
     S_StartSound(mo, Sfx::Dshtgn as i32);
     P_SetMobjState(mo, S_PLAY_ATK2);
 
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 2);
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 2);
 
-    P_SetPsprite(
-        player,
-        1,
-        weaponinfo[(*player).readyweapon as usize].flashstate,
-    );
+    P_SetPsprite(player, 1, weaponinfo[ready_weapon(player)].flashstate);
 
     P_BulletSlope(mo);
 
@@ -775,22 +769,23 @@ pub unsafe fn A_FireShotgun2(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.  `psp` must point to the
-/// weapon psprite slot which must currently be in state `S_CHAIN1` or
-/// `S_CHAIN2`.
-pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
-    let mo = (*player).mo();
+/// `player`'s `mo` must name a map object of the loaded level, and no
+/// reference into its slot may be live while this runs.  `psp` must point
+/// to the weapon psprite slot which must currently be in state `S_CHAIN1`
+/// or `S_CHAIN2`.
+pub unsafe fn A_FireCGun(player: PlayerId, psp: *mut PspdefT) {
+    let mo = player.mo();
     S_StartSound(mo, Sfx::Pistol as i32);
 
-    if (*player).ammo[weaponinfo[(*player).readyweapon as usize].ammo as usize] == 0 {
+    let ammo = weaponinfo[ready_weapon(player)].ammo;
+    if player.read(|player| player.ammo[ammo as usize]) == 0 {
         return;
     }
 
     P_SetMobjState(mo, S_PLAY_ATK2);
-    DecreaseAmmo(player, weaponinfo[(*player).readyweapon as usize].ammo, 1);
+    DecreaseAmmo(player, weaponinfo[ready_weapon(player)].ammo, 1);
 
-    let flashstate = weaponinfo[(*player).readyweapon as usize].flashstate;
+    let flashstate = weaponinfo[ready_weapon(player)].flashstate;
     let state_offset = (*psp)
         .state
         .cast::<State>()
@@ -798,36 +793,24 @@ pub unsafe fn A_FireCGun(player: *mut PlayerT, psp: *mut PspdefT) {
     P_SetPsprite(player, 1, flashstate + state_offset as i32);
 
     P_BulletSlope(mo);
-    P_GunShot(mo, ((*player).refire == 0) as i32);
+    P_GunShot(mo, (player.read(|player| player.refire) == 0) as i32);
 }
 
 /// Weapon action: clear the extra-light boost (normal sector lighting).
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn A_Light0(player: *mut PlayerT, _psp: *mut PspdefT) {
-    (*player).extralight = 0;
+pub fn A_Light0(player: PlayerId, _psp: *mut PspdefT) {
+    player.write(|player| player.extralight = 0);
 }
 
 /// Weapon action: set the extra-light boost to +1 (used by pistol/shotgun
 /// muzzle flash).
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn A_Light1(player: *mut PlayerT, _psp: *mut PspdefT) {
-    (*player).extralight = 1;
+pub fn A_Light1(player: PlayerId, _psp: *mut PspdefT) {
+    player.write(|player| player.extralight = 1);
 }
 
 /// Weapon action: set the extra-light boost to +2 (used by plasma / BFG
 /// muzzle flash).
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn A_Light2(player: *mut PlayerT, _psp: *mut PspdefT) {
-    (*player).extralight = 2;
+pub fn A_Light2(player: PlayerId, _psp: *mut PspdefT) {
+    player.write(|player| player.extralight = 2);
 }
 
 /// Mobj action: spray the BFG tracers across a 90-degree arc centered on the
@@ -874,10 +857,9 @@ pub unsafe fn A_BFGSpray(mo_id: MobjId) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`
-/// whose `mo` is set.
-pub unsafe fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
-    S_StartSound((*player).mo(), Sfx::Bfg as i32);
+/// `player`'s `mo` must name a map object of the loaded level.
+pub unsafe fn A_BFGsound(player: PlayerId, _psp: *mut PspdefT) {
+    S_StartSound(player.mo(), Sfx::Bfg as i32);
 }
 
 /// Initialise the player's psprite slots and begin raising the current weapon.
@@ -886,13 +868,15 @@ pub unsafe fn A_BFGsound(player: *mut PlayerT, _psp: *mut PspdefT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_SetupPsprites(player: *mut PlayerT) {
-    for i in 0..NUMPSPRITES {
-        (*player).psprites[i].state = std::ptr::null_mut();
-    }
+/// No reference into `player`'s slot may be live while this runs.
+pub unsafe fn P_SetupPsprites(player: PlayerId) {
+    player.write(|player| {
+        for psprite in &mut player.psprites {
+            psprite.state = std::ptr::null_mut();
+        }
 
-    (*player).pendingweapon = (*player).readyweapon;
+        player.pendingweapon = player.readyweapon;
+    });
     P_BringUpWeapon(player);
 }
 
@@ -901,9 +885,10 @@ pub unsafe fn P_SetupPsprites(player: *mut PlayerT) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to an initialised `PlayerT`.
-pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
-    let mut psp = (*player).psprites.as_mut_ptr();
+/// No reference into `player_id`'s slot may be live while this runs.
+pub unsafe fn P_MovePsprites(player_id: PlayerId) {
+    let player = player_id.ptr();
+    let mut psp = (&raw mut (*player).psprites).cast::<PspdefT>();
 
     for i in 0..NUMPSPRITES {
         let state = (*psp).state;
@@ -913,7 +898,7 @@ pub unsafe fn P_MovePsprites(player: *mut PlayerT) {
             if (*psp).tics != -1 {
                 (*psp).tics -= 1;
                 if (*psp).tics == 0 {
-                    P_SetPsprite(player, i as i32, (*state).nextstate);
+                    P_SetPsprite(player_id, i as i32, (*state).nextstate);
                 }
             }
         }

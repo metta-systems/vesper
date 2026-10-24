@@ -12,7 +12,7 @@ use {
 
 use crate::engine::{
     arena::Handle,
-    doom::player::{CF_NOMOMENTUM, MAXPLAYERS, PlayerMessage, PlayerT},
+    doom::player::{CF_NOMOMENTUM, MAXPLAYERS, PlayerId, PlayerMessage},
     hud::stuff::HU_Start,
     interface::timer::TICRATE,
     map::SubsectorId,
@@ -71,7 +71,7 @@ const exe_ultimate: i32 = 6;
 use crate::engine::{
     doom::{main::nomonsters, stat::gameversion},
     game::{
-        G_PlayerReborn, GAME, consoleplayer, deathmatch, gameskill, netgame, player, playeringame,
+        G_PlayerReborn, GAME, consoleplayer, deathmatch, gameskill, netgame, playeringame,
         respawnmonsters,
     },
     global::Global,
@@ -177,8 +177,8 @@ pub struct mobj_t {
     pub reactiontime: i32,
     /// Decremented each tic while pursuing a target; reset on target change.
     pub threshold: i32,
-    /// Non-null if this thing is a player; points to the `PlayerT` record.
-    pub player: *mut PlayerT,
+    /// The player slot this thing belongs to; `None` unless it is a player.
+    pub player: Option<PlayerId>,
     /// Index used to cycle through potential targets during `P_LookForPlayers`.
     pub lastlook: i32,
     /// The WAD spawn point from which this thing was created.
@@ -341,7 +341,7 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
         }
 
         if P_TryMove(mo_id, ptryx, ptryy) == 0 {
-            if !mo.player.is_null() {
+            if mo.player.is_some() {
                 P_SlideMove(mo_id);
             } else if mo.flags & MF_MISSILE != 0 {
                 if let Some(line) = ceilingline() {
@@ -368,7 +368,9 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
         }
     }
 
-    if !player.is_null() && (*player).cheats & CF_NOMOMENTUM != 0 {
+    // The player's command and cheats, read once the move has run.
+    let player_input = player.map(|player| player.read(|player| (player.cmd, player.cheats)));
+    if player_input.is_some_and(|(_, cheats)| cheats & CF_NOMOMENTUM != 0) {
         mo.momx = 0;
         mo.momy = 0;
         return;
@@ -396,9 +398,9 @@ pub unsafe fn P_XYMovement(mo_id: MobjId) {
         && mo.momx < STOPSPEED
         && mo.momy > -STOPSPEED
         && mo.momy < STOPSPEED
-        && (player.is_null() || ((*player).cmd.forwardmove == 0 && (*player).cmd.sidemove == 0))
+        && player_input.is_none_or(|(cmd, _)| cmd.forwardmove == 0 && cmd.sidemove == 0)
     {
-        if !player.is_null() {
+        if player.is_some() {
             let mobj_state = mo.state;
             let states_ptr = state_ptr(0) as *const State;
             let state_idx =
@@ -430,10 +432,14 @@ pub unsafe fn P_ZMovement(mo_id: MobjId) {
     let dist: i32;
     let delta: i32;
 
-    if !mo.player.is_null() && mo.z < mo.floorz {
-        let player = mo.player;
-        (*player).viewheight -= mo.floorz - mo.z;
-        (*player).deltaviewheight = (VIEWHEIGHT - (*player).viewheight) >> 3;
+    if let Some(player) = mo.player
+        && mo.z < mo.floorz
+    {
+        let step_up = mo.floorz - mo.z;
+        player.write(|player| {
+            player.viewheight -= step_up;
+            player.deltaviewheight = (VIEWHEIGHT - player.viewheight) >> 3;
+        });
     }
 
     mo.z += mo.momz;
@@ -459,9 +465,11 @@ pub unsafe fn P_ZMovement(mo_id: MobjId) {
             mo.momz = -mo.momz;
         }
         if mo.momz < 0 {
-            if !mo.player.is_null() && mo.momz < -GRAVITY * 8 {
-                let player = mo.player;
-                (*player).deltaviewheight = mo.momz >> 3;
+            if let Some(player) = mo.player
+                && mo.momz < -GRAVITY * 8
+            {
+                let momz = mo.momz;
+                player.write(|player| player.deltaviewheight = momz >> 3);
                 S_StartSound(mo_id, Sfx::Oof as i32);
             }
             mo.momz = 0;
@@ -768,9 +776,9 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
         return;
     }
 
-    let p = player((thing_type - 1) as usize);
+    let player = PlayerId::new((thing_type - 1) as usize);
 
-    if (*p).playerstate == PST_REBORN {
+    if player.read(|player| player.playerstate) == PST_REBORN {
         G_PlayerReborn(thing_type as i32 - 1);
     }
 
@@ -785,25 +793,25 @@ pub unsafe fn P_SpawnPlayer(mthing: *mut mapthing_t) {
     }
 
     mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    mobj.player = p;
-    mobj.health = (*p).health;
+    mobj.player = Some(player);
+    mobj.health = player.read(|player| player.health);
 
-    (*p).mo = Some(mobj_id);
-    (*p).playerstate = PST_LIVE;
-    (*p).refire = 0;
-    (*p).message = PlayerMessage::NONE;
-    (*p).damagecount = 0;
-    (*p).bonuscount = 0;
-    (*p).extralight = 0;
-    (*p).fixedcolormap = 0;
-    (*p).viewheight = VIEWHEIGHT;
+    player.write(|player| {
+        player.mo = Some(mobj_id);
+        player.playerstate = PST_LIVE;
+        player.refire = 0;
+        player.message = PlayerMessage::NONE;
+        player.damagecount = 0;
+        player.bonuscount = 0;
+        player.extralight = 0;
+        player.fixedcolormap = 0;
+        player.viewheight = VIEWHEIGHT;
+    });
 
-    P_SetupPsprites(p);
+    P_SetupPsprites(player);
 
     if deathmatch() != 0 {
-        for i in 0..crate::engine::doom::player::NUMCARDS {
-            (*p).cards[i] = 1;
-        }
+        player.write(|player| player.cards = [1; crate::engine::doom::player::NUMCARDS]);
     }
 
     if thing_type as i32 - 1 == consoleplayer() {

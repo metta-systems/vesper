@@ -14,9 +14,7 @@ use crate::{
         dehacked::DEH_String,
         doom::{
             items::weaponinfo,
-            player::{
-                CF_GODMODE, NUMAMMO, PlayerMessage, PlayerT, console_player, player as game_player,
-            },
+            player::{CF_GODMODE, NUMAMMO, PlayerId, PlayerMessage, PlayerT},
             stat::{gamemode, gameversion},
         },
         math::{
@@ -348,13 +346,8 @@ pub static clipammo: [i32; NUMAMMO] = [10, 4, 20, 1];
 /// if the player had zero ammo of this type before the pickup, a more
 /// appropriate weapon may be queued as `pendingweapon`.
 ///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`.
-/// Global mutable statics `maxammo`, `clipammo`, `gameskill` must only be
-/// accessed from the game-logic thread.
-pub unsafe fn P_GiveAmmo(player: *mut PlayerT, ammo: i32, num: i32) -> i32 {
-    p_give_ammo(&mut *player, ammo, num)
+pub fn P_GiveAmmo(player: PlayerId, ammo: i32, num: i32) -> i32 {
+    player.write(|player| p_give_ammo(player, ammo, num))
 }
 
 /// Rust-side body of [`P_GiveAmmo`]. Takes `&mut PlayerT` so callers can
@@ -432,18 +425,16 @@ fn p_give_ammo(player: &mut PlayerT, ammo: i32, mut num: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`.
-/// Global mutable statics `netgame`, `deathmatch`, `consoleplayer`,
-/// `players`, and `weaponinfo` must only be accessed from the game-logic
-/// thread.
-pub unsafe fn P_GiveWeapon(player: *mut PlayerT, weapon: i32, dropped: i32) -> i32 {
-    p_give_weapon(&mut *player, weapon, dropped)
+/// No reference into `player`'s slot may be live while this runs: the
+/// pickup sound reads the console player.
+pub unsafe fn P_GiveWeapon(player: PlayerId, weapon: i32, dropped: i32) -> i32 {
+    p_give_weapon(player, &mut *player.ptr(), weapon, dropped)
 }
 
 /// Rust-side body of [`P_GiveWeapon`]. Takes `&mut PlayerT` so callers can
 /// pass an existing borrow; avoids re-deriving a second `&mut` from the
-/// same raw pointer.
-fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
+/// same raw pointer. `player_id` names the slot `player` borrows.
+fn p_give_weapon(player_id: PlayerId, player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
     let widx = weapon as usize;
     let ammo_kind = weaponinfo[widx].ammo;
     if netgame() != 0 && deathmatch() != 2 && dropped == 0 {
@@ -458,8 +449,7 @@ fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
             p_give_ammo(player, ammo_kind, 2);
         }
         player.pendingweapon = weapon;
-        let player_ptr = player as *mut PlayerT;
-        if std::ptr::eq(player_ptr, console_player()) {
+        if player_id == PlayerId::console() {
             S_StartNonPositionalSound(Sfx::Wpnup as i32);
         }
         return 0;
@@ -496,10 +486,9 @@ fn p_give_weapon(player: &mut PlayerT, weapon: i32, dropped: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`, and
-/// `player.mo` must be a valid, non-null pointer to the player's map object.
-pub unsafe fn P_GiveBody(player: *mut PlayerT, num: i32) -> i32 {
-    p_give_body(&mut *player, num)
+/// `player`'s `mo` must name a map object of the loaded level.
+pub unsafe fn P_GiveBody(player: PlayerId, num: i32) -> i32 {
+    player.write(|player| p_give_body(player, num))
 }
 
 /// Rust-side body of [`P_GiveBody`]. See [`p_give_ammo`] for rationale.
@@ -526,12 +515,8 @@ unsafe fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
 /// player already has at least that many armor points (i.e. the pick-up
 /// would not help).  Otherwise sets `armortype` and `armorpoints` and
 /// returns `1`.
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`.
-pub unsafe fn P_GiveArmor(player: *mut PlayerT, armortype: i32) -> i32 {
-    p_give_armor(&mut *player, armortype)
+pub fn P_GiveArmor(player: PlayerId, armortype: i32) -> i32 {
+    player.write(|player| p_give_armor(player, armortype))
 }
 
 /// Rust-side body of [`P_GiveArmor`]. See [`p_give_ammo`] for rationale.
@@ -554,12 +539,8 @@ fn p_give_armor(player: &mut PlayerT, armortype: i32) -> i32 {
 /// Also adds `BONUSADD` to `bonuscount` to flash the HUD gold.  If the
 /// player already owns the card the function returns immediately without
 /// side-effects.
-///
-/// # Safety
-///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`.
-pub unsafe fn P_GiveCard(player: *mut PlayerT, card: i32) {
-    p_give_card(&mut *player, card)
+pub fn P_GiveCard(player: PlayerId, card: i32) {
+    player.write(|player| p_give_card(player, card))
 }
 
 /// Rust-side body of [`P_GiveCard`]. See [`p_give_ammo`] for rationale.
@@ -587,10 +568,10 @@ fn p_give_card(player: &mut PlayerT, card: i32) {
 ///
 /// # Safety
 ///
-/// `player` must be a valid, non-null pointer to a live `PlayerT`, and for
-/// `pw_invisibility`, `player.mo` must also be valid.
-pub unsafe fn P_GivePower(player: *mut PlayerT, power: i32) -> i32 {
-    p_give_power(&mut *player, power)
+/// For `pw_invisibility` and `pw_strength`, `player`'s `mo` must name a map
+/// object of the loaded level.
+pub unsafe fn P_GivePower(player: PlayerId, power: i32) -> i32 {
+    player.write(|player| p_give_power(player, power))
 }
 
 /// Rust-side body of [`P_GivePower`]. See [`p_give_ammo`] for rationale.
@@ -644,9 +625,9 @@ unsafe fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
 ///
 /// # Safety
 ///
-/// `special_id` and `toucher_id` must name map objects of the level.
-/// `toucher.player` must be a valid, non-null pointer to the owning
-/// `PlayerT`.  Global game-state statics (`players`, `consoleplayer`,
+/// `special_id` and `toucher_id` must name map objects of the level, and
+/// no reference into the toucher's player slot may be live (the toucher
+/// must be a player).  Global game-state statics (`players`, `consoleplayer`,
 /// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
 /// game-logic thread.
 pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
@@ -668,7 +649,9 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
     }
 
     let mut sound: i32 = Sfx::Itemup as i32;
-    let player_ptr = (*toucher).player;
+    // Only players pick things up (`MF_PICKUP`); C reads `toucher->player`
+    // without a check.
+    let player_id = (*toucher).player.expect("toucher is not a player");
     let sprite = (*special).sprite;
     let special_flags = (*special).flags;
     // Snapshot the DEH-tunable `static mut` values into locals so each
@@ -682,8 +665,8 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
     let megasphere_health = deh_megasphere_health;
     // `player` is the long-lived borrow. Every helper called below
     // takes `&mut PlayerT` (the `p_give_*` inner fns), so no second
-    // `&mut PlayerT` is ever derived from `player_ptr`.
-    let player = &mut *player_ptr;
+    // `&mut PlayerT` is ever derived from the slot.
+    let player = &mut *player_id.ptr();
 
     // Identify by sprite.
     match sprite {
@@ -934,7 +917,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
         }
         // weapons
         SPR_BFUG => {
-            if p_give_weapon(player, wp_bfg, 0) == 0 {
+            if p_give_weapon(player_id, player, wp_bfg, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTBFG9000));
@@ -942,6 +925,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
         }
         SPR_MGUN => {
             if p_give_weapon(
+                player_id,
                 player,
                 wp_chaingun,
                 ((special_flags & MF_DROPPED) != 0) as i32,
@@ -953,21 +937,21 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
             sound = Sfx::Wpnup as i32;
         }
         SPR_CSAW => {
-            if p_give_weapon(player, wp_chainsaw, 0) == 0 {
+            if p_give_weapon(player_id, player, wp_chainsaw, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTCHAINSAW));
             sound = Sfx::Wpnup as i32;
         }
         SPR_LAUN => {
-            if p_give_weapon(player, wp_missile, 0) == 0 {
+            if p_give_weapon(player_id, player, wp_missile, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTLAUNCHER));
             sound = Sfx::Wpnup as i32;
         }
         SPR_PLAS => {
-            if p_give_weapon(player, wp_plasma, 0) == 0 {
+            if p_give_weapon(player_id, player, wp_plasma, 0) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTPLASMA));
@@ -975,6 +959,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
         }
         SPR_SHOT => {
             if p_give_weapon(
+                player_id,
                 player,
                 wp_shotgun,
                 ((special_flags & MF_DROPPED) != 0) as i32,
@@ -987,6 +972,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
         }
         SPR_SGN2 => {
             if p_give_weapon(
+                player_id,
                 player,
                 wp_supershotgun,
                 ((special_flags & MF_DROPPED) != 0) as i32,
@@ -1007,7 +993,7 @@ pub unsafe fn P_TouchSpecialThing(special_id: MobjId, toucher_id: MobjId) {
     }
     P_RemoveMobj(special_id);
     player.bonuscount += BONUSADD;
-    if std::ptr::eq(player_ptr, console_player()) {
+    if player_id == PlayerId::console() {
         S_StartNonPositionalSound(sound);
     }
 }
@@ -1050,30 +1036,31 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
     (*target).flags |= MF_CORPSE | MF_DROPOFF;
     (*target).height >>= 2;
 
-    if !source.is_null() && !(*source).player.is_null() {
-        let source_player = (*source).player;
-        if (*target).flags & MF_COUNTKILL != 0 {
-            (*source_player).killcount += 1;
-        }
-        if !(*target).player.is_null() {
-            let target_player = (*target).player;
-            let idx = target_player.offset_from(game_player(0)) as usize;
-            (*source_player).frags[idx] += 1;
-        }
-    } else if netgame() == 0 && (*target).flags & MF_COUNTKILL != 0 {
-        (*game_player(0)).killcount += 1;
+    let counts_kill = (*target).flags & MF_COUNTKILL != 0;
+    let target_player = (*target).player;
+    if let Some(source_player) = source_id.and_then(|source| (*source.ptr()).player) {
+        source_player.write(|source_player| {
+            if counts_kill {
+                source_player.killcount += 1;
+            }
+            if let Some(target_player) = target_player {
+                source_player.frags[target_player.index()] += 1;
+            }
+        });
+    } else if netgame() == 0 && counts_kill {
+        PlayerId::new(0).write(|player| player.killcount += 1);
     }
 
-    if !(*target).player.is_null() {
-        let target_player = (*target).player;
-        if source.is_null() {
-            let idx = target_player.offset_from(game_player(0)) as usize;
-            (*target_player).frags[idx] += 1;
-        }
+    if let Some(target_player) = target_player {
+        target_player.write(|player| {
+            if source.is_null() {
+                player.frags[target_player.index()] += 1;
+            }
+            player.playerstate = 1; // PST_DEAD
+        });
         (*target).flags &= !MF_SOLID;
-        (*target_player).playerstate = 1; // PST_DEAD
         P_DropWeapon(target_player);
-        if std::ptr::eq(target_player, console_player()) && automap_active() {
+        if target_player == PlayerId::console() && automap_active() {
             AM_Stop();
         }
     }
@@ -1133,9 +1120,9 @@ pub unsafe fn P_KillMobj(source_id: Option<MobjId>, target_id: MobjId) {
 /// # Safety
 ///
 /// `target_id` must name a map object of the level. `inflictor_id` and
-/// `source_id` may be `None`.  If `target.player` is non-null it must point
-/// to a valid `PlayerT`.  All global game-state statics must only be
-/// accessed from the game-logic thread.
+/// `source_id` may be `None`.  No reference into the target player's slot
+/// may be live.  All global game-state statics must only be accessed from
+/// the game-logic thread.
 pub unsafe fn P_DamageMobj(
     target_id: MobjId,
     inflictor_id: Option<MobjId>,
@@ -1158,15 +1145,16 @@ pub unsafe fn P_DamageMobj(
     }
 
     let player = (*target).player;
-    if !player.is_null() && gameskill() == sk_baby {
+    if player.is_some() && gameskill() == sk_baby {
         damage >>= 1;
     }
 
     if !inflictor.is_null()
         && ((*target).flags & MF_NOCLIP) == 0
         && (source.is_null()
-            || (*source).player.is_null()
-            || (*(*source).player).readyweapon != wp_chainsaw)
+            || (*source)
+                .player
+                .is_none_or(|source_player| source_player.read(|p| p.readyweapon) != wp_chainsaw))
     {
         let mut ang = R_PointToAngle2((*inflictor).x, (*inflictor).y, (*target).x, (*target).y);
         let info = (*target).info;
@@ -1186,44 +1174,50 @@ pub unsafe fn P_DamageMobj(
         (*target).momy += FixedMul(thrust, finesine[ang as usize]);
     }
 
-    if !player.is_null() {
+    if let Some(player_id) = player {
         // end of game hell hack
         let special = LEVEL.borrow().subsector_sector((*target).subsector).special;
         if special == 11 && damage >= (*target).health {
             damage = (*target).health - 1;
         }
 
-        if damage < 1000
-            && (((*player).cheats & CF_GODMODE) != 0 || (*player).powers[pw_invulnerability] != 0)
-        {
+        let protected = player_id.write(|player| {
+            if damage < 1000
+                && ((player.cheats & CF_GODMODE) != 0 || player.powers[pw_invulnerability] != 0)
+            {
+                return true;
+            }
+
+            if player.armortype != 0 {
+                let saved = if player.armortype == 1 {
+                    damage / 3
+                } else {
+                    damage / 2
+                };
+                let mut saved_actual = saved;
+                if player.armorpoints <= saved_actual {
+                    saved_actual = player.armorpoints;
+                    player.armortype = 0;
+                }
+                player.armorpoints -= saved_actual;
+                damage -= saved_actual;
+            }
+            player.health -= damage;
+            if player.health < 0 {
+                player.health = 0;
+            }
+            player.attacker = source_id;
+            player.damagecount += damage;
+            if player.damagecount > 100 {
+                player.damagecount = 100;
+            }
+            false
+        });
+        if protected {
             return;
         }
-
-        if (*player).armortype != 0 {
-            let saved = if (*player).armortype == 1 {
-                damage / 3
-            } else {
-                damage / 2
-            };
-            let mut saved_actual = saved;
-            if (*player).armorpoints <= saved_actual {
-                saved_actual = (*player).armorpoints;
-                (*player).armortype = 0;
-            }
-            (*player).armorpoints -= saved_actual;
-            damage -= saved_actual;
-        }
-        (*player).health -= damage;
-        if (*player).health < 0 {
-            (*player).health = 0;
-        }
-        (*player).attacker = source_id;
-        (*player).damagecount += damage;
-        if (*player).damagecount > 100 {
-            (*player).damagecount = 100;
-        }
         let temp = if damage < 100 { damage } else { 100 };
-        if std::ptr::eq(player, console_player()) {
+        if player_id == PlayerId::console() {
             I_Tactile(40, 10, 40 + temp * 2);
         }
     }

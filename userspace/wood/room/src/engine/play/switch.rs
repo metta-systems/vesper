@@ -676,7 +676,7 @@ pub unsafe fn P_UseSpecialLine(thing: MobjId, line_id: LineId, side: i32) -> i32
     }
 
     // Switches that other things can activate.
-    if (*thing.ptr()).player.is_null() {
+    if (*thing.ptr()).player.is_none() {
         // never open secret doors
         if line.flags & LinedefFlag::SECRET as i16 != 0 {
             return 0;

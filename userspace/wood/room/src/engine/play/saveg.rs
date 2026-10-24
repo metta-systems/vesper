@@ -59,10 +59,9 @@ use {
 
 use crate::engine::{
     doom::player::{
-        MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES, NUMWEAPONS, PlayerMessage, PlayerT,
-        PspdefT, TiccmdT,
+        MAXPLAYERS, NUMAMMO, NUMCARDS, NUMPOWERS, NUMPSPRITES, NUMWEAPONS, PlayerId, PlayerMessage,
+        PlayerT, PspdefT, TiccmdT,
     },
-    game::player as game_player,
     global::Global,
     map::{SectorId, SubsectorId},
     play::{
@@ -320,29 +319,27 @@ fn saveg_read_state_ptr(index: u32) -> *mut State {
     state_ptr(index as usize)
 }
 
-/// Serializes a `PlayerT` pointer as a 1-based player index.
+/// Serializes a player slot reference as a 1-based player index.
 ///
-/// Returns `0` for a null pointer; otherwise returns
-/// `(player - players) + 1`. The 1-based encoding reserves `0` to represent
-/// NULL. C origin: `str->player - players + 1`; this compares addresses.
-fn saveg_write_player_ptr(player: *const PlayerT) -> u32 {
-    if player.is_null() {
-        0
-    } else {
-        ((player.addr() - game_player(0).addr()) / size_of::<PlayerT>()) as u32 + 1
-    }
+/// Returns `0` for `None`; otherwise returns the slot index + 1. The
+/// 1-based encoding reserves `0` to represent NULL. C origin:
+/// `str->player - players + 1`.
+fn saveg_write_player_index(player: Option<PlayerId>) -> u32 {
+    player.map_or(0, |player| player.index() as u32 + 1)
 }
 
-/// Deserializes a 1-based player index into a `*mut PlayerT`.
+/// Deserializes a 1-based player index into a player slot reference.
 ///
-/// `value == 0` maps to null; `value > 0` indexes `players[value - 1]`.
+/// `value == 0` maps to `None`; `value > 0` names `players[value - 1]`.
 /// C origin: `&players[pl - 1]`.
-unsafe fn saveg_read_player_ptr(value: u32) -> *mut PlayerT {
-    if value == 0 {
-        std::ptr::null_mut()
-    } else {
-        game_player(0).add((value - 1) as usize)
-    }
+///
+/// # Panics
+///
+/// If `value - 1` is not a player slot.
+fn saveg_read_player_index(value: u32) -> Option<PlayerId> {
+    value
+        .checked_sub(1)
+        .map(|index| PlayerId::new(index as usize))
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +504,8 @@ unsafe fn resolve_saved_references(loaded_mobjs: &[(MobjId, SavedMobjReferences)
     let saved_attackers = std::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
     for (index, attacker) in saved_attackers.into_iter().enumerate() {
         if let Some(ordinal) = attacker {
-            (*game_player(index)).attacker = mobj_for_saved_ordinal(&recreated, ordinal);
+            let attacker = mobj_for_saved_ordinal(&recreated, ordinal);
+            PlayerId::new(index).write(|player| player.attacker = attacker);
         }
     }
 }
@@ -613,15 +611,9 @@ unsafe fn saveg_read_mobj_t(mobj_id: MobjId) -> SavedMobjReferences {
     (*mo).threshold = saveg_read32() as i32;
 
     // player (index + 1)
-    let pl = saveg_read32();
-    if pl > 0 {
-        (*mo).player = saveg_read_player_ptr(pl);
-        let player = (*mo).player;
-        if !player.is_null() {
-            (*player).mo = Some(mobj_id);
-        }
-    } else {
-        (*mo).player = std::ptr::null_mut();
+    (*mo).player = saveg_read_player_index(saveg_read32());
+    if let Some(player) = (*mo).player {
+        player.write(|player| player.mo = Some(mobj_id));
     }
 
     // lastlook
@@ -724,12 +716,7 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
     saveg_write32((*mo).threshold as u32);
 
     // player
-    let player = (*mo).player;
-    if player.is_null() {
-        saveg_write32(0);
-    } else {
-        saveg_write32(saveg_write_player_ptr(player));
-    }
+    saveg_write32(saveg_write_player_index((*mo).player));
 
     // lastlook
     saveg_write32((*mo).lastlook as u32);
@@ -837,9 +824,7 @@ unsafe fn saveg_write_pspdef_t(psp: *const PspdefT) {
 /// - Each of `NUMPSPRITES` player-sprite slots is read via
 ///   `saveg_read_pspdef_t`.
 /// C origin: `saveg_read_player_t`.
-unsafe fn saveg_read_player_t(pl: *mut PlayerT) -> u32 {
-    let s = &mut *pl;
-
+unsafe fn saveg_read_player_t(s: &mut PlayerT) -> u32 {
     // mo (a save ordinal; set when the player's map object is read)
     saveg_read32();
     s.mo = None;
@@ -939,15 +924,13 @@ unsafe fn saveg_read_player_t(pl: *mut PlayerT) -> u32 {
     attacker
 }
 
-/// Writes a full `player_t` record to the save stream from `*pl`.
+/// Writes a full `player_t` record to the save stream from `s`.
 ///
 /// `mo` and `attacker` are written as save ordinals looked up in `ordinals`
 /// (see [`saved_mobj_ordinal`]); the `message` slot is written as `0`. All
 /// other fields mirror `saveg_read_player_t` in order.
 /// C origin: `saveg_write_player_t`.
-unsafe fn saveg_write_player_t(pl: *const PlayerT, ordinals: &HashMap<MobjId, u32>) {
-    let s = &*pl;
-
+unsafe fn saveg_write_player_t(s: &PlayerT, ordinals: &HashMap<MobjId, u32>) {
     saveg_write32(saved_mobj_ordinal(ordinals, s.mo));
     saveg_write_enum(s.playerstate as u32);
     saveg_write_ticcmd_t(&s.cmd);
@@ -1494,7 +1477,7 @@ pub unsafe fn P_ArchivePlayers() {
             continue;
         }
         saveg_write_pad();
-        saveg_write_player_t(&*game_player(i), &ordinals);
+        PlayerId::new(i).read(|player| saveg_write_player_t(player, &ordinals));
     }
 }
 
@@ -1522,13 +1505,15 @@ pub unsafe fn P_UnArchivePlayers() {
             continue;
         }
         saveg_read_pad();
-        let player = &mut *game_player(i);
-        saved_attackers[i] = Some(saveg_read_player_t(player));
+        saved_attackers[i] = Some(PlayerId::new(i).write(|player| {
+            let attacker = saveg_read_player_t(player);
 
-        // will be set when unarc thinker
-        player.mo = None;
-        player.message = PlayerMessage::NONE;
-        player.attacker = None;
+            // will be set when unarc thinker
+            player.mo = None;
+            player.message = PlayerMessage::NONE;
+            player.attacker = None;
+            attacker
+        }));
     }
     SAVEG.borrow_mut().saved_attackers = saved_attackers;
 }
@@ -2293,7 +2278,8 @@ mod tests {
             ..LevelState::new()
         };
         let saved_level = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
-        let saved_player = unsafe { *game_player(0) };
+        let player = PlayerId::new(0);
+        let saved_player = player.read(|player| *player);
         let saved_playeringame = GAME.borrow().playeringame;
 
         P_InitThinkers();
@@ -2306,22 +2292,24 @@ mod tests {
             P_RemoveThinker(&mut (*removed.ptr()).thinker);
             (*first.ptr()).target = Some(third);
             (*first.ptr()).tracer = Some(first);
-            (*first.ptr()).player = game_player(0);
+            (*first.ptr()).player = Some(player);
             (*second.ptr()).target = Some(removed);
             (*second.ptr()).tracer = Some(unlisted);
             (*third.ptr()).target = Some(first);
 
             GAME.borrow_mut().playeringame = [1, 0, 0, 0];
-            *game_player(0) = std::mem::zeroed();
-            (*game_player(0)).mo = Some(first);
-            (*game_player(0)).attacker = Some(third);
+            player.write(|player| {
+                *player = std::mem::zeroed();
+                player.mo = Some(first);
+                player.attacker = Some(third);
+            });
         }
 
         with_mem_stream(&mut [], || unsafe {
             P_ArchivePlayers();
             P_ArchiveThinkers();
 
-            *game_player(0) = std::mem::zeroed();
+            player.write(|player| *player = std::mem::zeroed());
             P_InitThinkers();
             SAVEG.borrow_mut().save_stream.set_position(0);
 
@@ -2361,13 +2349,15 @@ mod tests {
             );
             assert_eq!((*third.ptr()).target, Some(first));
             assert_eq!((*third.ptr()).tracer, None);
-            assert_eq!((*game_player(0)).mo, Some(first));
-            assert_eq!((*game_player(0)).attacker, Some(third));
+            assert_eq!((*first.ptr()).player, Some(player));
+            assert_eq!((*second.ptr()).player, None);
         }
+        assert_eq!(player.read(|player| player.mo), Some(first));
+        assert_eq!(player.read(|player| player.attacker), Some(third));
         assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
 
         P_InitThinkers();
-        unsafe { *game_player(0) = saved_player };
+        player.write(|player| *player = saved_player);
         GAME.borrow_mut().playeringame = saved_playeringame;
         *LEVEL.borrow_mut() = saved_level;
     }
@@ -2426,18 +2416,19 @@ mod tests {
         }
     }
 
-    /// The address-based index helpers give the same indices as the C
-    /// pointer subtraction and round-trip through the read helpers.
+    /// The index helpers give the same indices as the C pointer subtraction
+    /// and round-trip through the read helpers.
     #[test]
     fn pointer_indices_round_trip() {
         assert_eq!(saveg_write_state_ptr(std::ptr::null()), 0);
         assert_eq!(saveg_write_state_ptr(state_ptr(5)), 5);
         assert_eq!(saveg_read_state_ptr(5), state_ptr(5));
 
-        assert_eq!(saveg_write_player_ptr(std::ptr::null()), 0);
-        assert_eq!(saveg_write_player_ptr(game_player(0)), 1);
-        assert_eq!(saveg_write_player_ptr(game_player(2)), 3);
-        assert_eq!(unsafe { saveg_read_player_ptr(3) }, game_player(2));
+        assert_eq!(saveg_write_player_index(None), 0);
+        assert_eq!(saveg_write_player_index(Some(PlayerId::new(0))), 1);
+        assert_eq!(saveg_write_player_index(Some(PlayerId::new(2))), 3);
+        assert_eq!(saveg_read_player_index(0), None);
+        assert_eq!(saveg_read_player_index(3), Some(PlayerId::new(2)));
 
         assert_eq!(saveg_write_sector_ptr(SectorId::new(0)), 0);
         assert_eq!(saveg_write_sector_ptr(SectorId::new(17)), 17);

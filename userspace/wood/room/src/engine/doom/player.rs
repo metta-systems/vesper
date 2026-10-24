@@ -1,6 +1,7 @@
 //! Player types from `d_player.h`.
 //!
-//! Provides `PlayerT`, `TiccmdT`, `PspdefT` and the C globals `players` / `consoleplayer`.
+//! Provides `PlayerT`, `TiccmdT`, `PspdefT`, the `PlayerId` that names a
+//! slot of the C global `players`, and `consoleplayer`.
 //! Also implements `M_Menu_SetPlayerMessage`.
 //!
 //! In the original C code `player_t`, `ticcmd_t`, and `pspdef_t` are spread
@@ -199,10 +200,98 @@ impl PlayerT {
     }
 }
 
-/// The player slot accessors (`&players[i]`, `&players[consoleplayer]`) and
-/// the index of the player whose view is shown locally (`consoleplayer`),
+/// The index of the player whose view is shown locally (`consoleplayer`),
 /// defined in `g_game`.
-pub use crate::engine::game::{console_player, consoleplayer, player};
+pub use crate::engine::game::consoleplayer;
+
+/// Names one of the [`MAXPLAYERS`] slots in `players` (`g_game`); C passes
+/// and stores `&players[i]` where Rust passes and stores a `PlayerId`.
+///
+/// The index is checked when the id is made, so every id names a slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PlayerId(u8);
+
+impl PlayerId {
+    /// The id of slot `index`.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is not below [`MAXPLAYERS`].
+    #[track_caller]
+    pub fn new(index: usize) -> Self {
+        assert!(index < MAXPLAYERS, "player index {index} out of range");
+        Self(index as u8)
+    }
+
+    /// The console player's id (C `&players[consoleplayer]`).
+    #[track_caller]
+    pub fn console() -> Self {
+        Self::new(consoleplayer() as usize)
+    }
+
+    /// Every slot's id, in slot order.
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..MAXPLAYERS).map(Self::new)
+    }
+
+    /// The slot index (C `player - players`).
+    pub fn index(self) -> usize {
+        usize::from(self.0)
+    }
+
+    /// Pointer to the slot, stable for the whole program.
+    ///
+    /// For code that keeps the player across calls back into play code,
+    /// which may reach the same slot (weapon actions, `P_PlayerThink`,
+    /// damage): such code reads and writes through this pointer for its
+    /// whole body, as C does through `player_t *`. Every use of it is a
+    /// place the move to explicit world borrows still has to rework.
+    pub fn ptr(self) -> *mut PlayerT {
+        use crate::engine::game::PLAYERS;
+        // SAFETY: in-bounds projection on the stable state pointer.
+        unsafe { PLAYERS.as_ptr().cast::<PlayerT>().add(self.index()) }
+    }
+
+    /// Run `f` on the slot for reading.
+    ///
+    /// `f` must not reach play code; the slot stays borrowed while it runs.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if the players are mutably borrowed.
+    #[track_caller]
+    pub fn read<R>(self, f: impl FnOnce(&PlayerT) -> R) -> R {
+        f(&crate::engine::game::PLAYERS.borrow()[self.index()])
+    }
+
+    /// Run `f` on the slot for writing.
+    ///
+    /// `f` must not reach play code; the slot stays borrowed while it runs.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if the players are borrowed.
+    #[track_caller]
+    pub fn write<R>(self, f: impl FnOnce(&mut PlayerT) -> R) -> R {
+        f(&mut crate::engine::game::PLAYERS.borrow_mut()[self.index()])
+    }
+
+    /// The player's map object (C `player->mo`).
+    ///
+    /// # Panics
+    ///
+    /// If the player has not been spawned.
+    #[track_caller]
+    pub fn mo(self) -> MobjId {
+        self.read(PlayerT::mo)
+    }
+
+    /// Set the player's HUD hint message (C `player->message = text`).
+    pub fn set_message(self, text: impl AsRef<[u8]>) {
+        let message = PlayerMessage::new(text);
+        self.write(|player| player.message = message);
+    }
+}
 
 /// Set the HUD hint message for the console player.
 ///
@@ -212,12 +301,8 @@ pub use crate::engine::game::{console_player, consoleplayer, player};
 ///
 /// Called from `m_menu` when a menu action produces a status message
 /// (e.g., "Gamma correction OFF").
-///
-/// # Safety
-/// `consoleplayer` must be in the range `[0, MAXPLAYERS)` before this
-/// function is called (guaranteed by the engine's startup sequence).
-pub unsafe fn M_Menu_SetPlayerMessage(msg: &str) {
-    (*console_player()).message = PlayerMessage::new(msg);
+pub fn M_Menu_SetPlayerMessage(msg: &str) {
+    PlayerId::console().set_message(msg);
 }
 
 /// A HUD hint message, stored inline so [`PlayerT`] stays `Copy` and a

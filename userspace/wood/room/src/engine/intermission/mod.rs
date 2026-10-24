@@ -31,8 +31,13 @@ use crate::{
     DEH_snprintf, c_write,
     engine::{
         dehacked::DEH_String,
-        doom::{self, event::event_t, player::MAXPLAYERS, stat::gamemode},
-        game::{G_WorldDone, deathmatch, netgame, player as game_player, playeringame},
+        doom::{
+            self,
+            event::event_t,
+            player::{MAXPLAYERS, PlayerId},
+            stat::gamemode,
+        },
+        game::{G_WorldDone, deathmatch, netgame, playeringame},
         global::Global,
         interface::{
             timer::TICRATE,
@@ -1856,34 +1861,33 @@ unsafe fn WI_drawStats(wi: &IntermissionState) {
 /// This is the mechanism by which the player can skip the count-up animation by
 /// pressing fire or use during the intermission screen.
 ///
-/// # Safety
-///
 /// Reads `playeringame` and mutates each active player's `attackdown`/
-/// `usedown` flags via the global `players` array, and may set
-/// `acceleratestage`. Caller must ensure the player array is initialised.
-unsafe fn WI_checkForAccelerate(wi: &mut IntermissionState) {
-    for i in 0..MAXPLAYERS {
-        if playeringame(i) != 0 {
-            let player = game_player(i);
-            if (*player).cmd.buttons & 1 != 0 {
-                // BT_ATTACK
-                if (*player).attackdown == 0 {
-                    wi.acceleratestage = 1;
-                }
-                (*player).attackdown = 1;
-            } else {
-                (*player).attackdown = 0;
-            }
-            if (*player).cmd.buttons & 2 != 0 {
-                // BT_USE
-                if (*player).usedown == 0 {
-                    wi.acceleratestage = 1;
-                }
-                (*player).usedown = 1;
-            } else {
-                (*player).usedown = 0;
-            }
+/// `usedown` flags, and may set `acceleratestage`.
+fn WI_checkForAccelerate(wi: &mut IntermissionState) {
+    for id in PlayerId::all() {
+        if playeringame(id.index()) == 0 {
+            continue;
         }
+        id.write(|player| {
+            if player.cmd.buttons & 1 != 0 {
+                // BT_ATTACK
+                if player.attackdown == 0 {
+                    wi.acceleratestage = 1;
+                }
+                player.attackdown = 1;
+            } else {
+                player.attackdown = 0;
+            }
+            if player.cmd.buttons & 2 != 0 {
+                // BT_USE
+                if player.usedown == 0 {
+                    wi.acceleratestage = 1;
+                }
+                player.usedown = 1;
+            } else {
+                player.usedown = 0;
+            }
+        });
     }
 }
 

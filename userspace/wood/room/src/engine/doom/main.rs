@@ -10,7 +10,7 @@ use crate::{
     engine::{
         doom,
         doom::{
-            player::{MAXPLAYERS, consoleplayer},
+            player::{MAXPLAYERS, PlayerId, consoleplayer},
             stat::{STAT, gamemission, gamemode, gameversion, modifiedgame},
         },
         global::Global,
@@ -324,7 +324,7 @@ use crate::engine::doom::net::drone;
 use crate::engine::game::{
     G_BeginRecording, G_DeferedPlayDemo, G_InitNew, G_LoadGame, G_RecordDemo, G_Responder,
     G_TimeDemo, G_VanillaVersionCode, GAME, demoplayback, displayplayer, gameaction, gamestate,
-    netgame, paused, player,
+    netgame, paused,
 };
 
 // am_map.rs
@@ -582,7 +582,7 @@ pub fn D_Display() {
         if gamestate == GS_LEVEL && !automap_active() && gametic() != 0 {
             let dp = displayplayer() as usize;
             if dp < MAXPLAYERS {
-                R_RenderPlayerView(player(dp));
+                R_RenderPlayerView(PlayerId::new(dp));
             }
             HU_Drawer();
         }
@@ -808,7 +808,7 @@ pub fn doomgeneric_Tick() {
         // Update positional sounds
         let console = consoleplayer();
         let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
-            (*player(console as usize)).mo
+            PlayerId::new(console as usize).read(|player| player.mo)
         } else {
             None
         };
@@ -912,93 +912,91 @@ fn set_page(pagetic: i32, pagename: &'static [u8]) {
 
 /// Cycle through the demo sequences.
 pub fn D_DoAdvanceDemo() {
-    unsafe {
-        // Set player state to live (PST_LIVE = 1)
-        let cp = consoleplayer();
-        if cp >= 0 && (cp as usize) < MAXPLAYERS {
-            (*player(cp as usize)).playerstate = 1;
-        }
+    // Set player state to live (PST_LIVE = 1)
+    let cp = consoleplayer();
+    if cp >= 0 && (cp as usize) < MAXPLAYERS {
+        PlayerId::new(cp as usize).write(|player| player.playerstate = 1);
+    }
 
-        DOOM_MAIN.borrow_mut().advancedemo = 0;
-        {
-            let mut game = GAME.borrow_mut();
-            game.usergame = 0;
-            game.paused = 0;
-            game.gameaction = ga_nothing;
-        }
+    DOOM_MAIN.borrow_mut().advancedemo = 0;
+    {
+        let mut game = GAME.borrow_mut();
+        game.usergame = 0;
+        game.paused = 0;
+        game.gameaction = ga_nothing;
+    }
 
-        // Demo sequence: 7 for ultimate/final, 6 for others
-        let max_seq = {
-            let gameversion = gameversion();
-            if gameversion == doom::mode::exe_ultimate || gameversion == doom::mode::exe_final {
-                7
+    // Demo sequence: 7 for ultimate/final, 6 for others
+    let max_seq = {
+        let gameversion = gameversion();
+        if gameversion == doom::mode::exe_ultimate || gameversion == doom::mode::exe_final {
+            7
+        } else {
+            6
+        }
+    };
+    let demosequence = {
+        let mut main = DOOM_MAIN.borrow_mut();
+        main.demosequence = (main.demosequence + 1) % max_seq;
+        main.demosequence
+    };
+
+    match demosequence {
+        0 => {
+            let pagetic = if gamemode() == doom::mode::commercial {
+                TICRATE * 11
             } else {
-                6
+                170
+            };
+            GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
+            set_page(pagetic, b"TITLEPIC");
+            if gamemode() == doom::mode::commercial {
+                S_StartMusic(Mus::Dm2ttl as i32);
+            } else {
+                S_StartMusic(Mus::Intro as i32);
             }
-        };
-        let demosequence = {
-            let mut main = DOOM_MAIN.borrow_mut();
-            main.demosequence = (main.demosequence + 1) % max_seq;
-            main.demosequence
-        };
-
-        match demosequence {
-            0 => {
-                let pagetic = if gamemode() == doom::mode::commercial {
-                    TICRATE * 11
-                } else {
-                    170
-                };
-                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
-                set_page(pagetic, b"TITLEPIC");
-                if gamemode() == doom::mode::commercial {
-                    S_StartMusic(Mus::Dm2ttl as i32);
-                } else {
-                    S_StartMusic(Mus::Intro as i32);
-                }
-            }
-            1 => {
-                G_DeferedPlayDemo("demo1");
-            }
-            2 => {
-                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
+        }
+        1 => {
+            G_DeferedPlayDemo("demo1");
+        }
+        2 => {
+            GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
+            set_page(200, b"CREDIT");
+        }
+        3 => {
+            G_DeferedPlayDemo("demo2");
+        }
+        4 => {
+            GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
+            if gamemode() == doom::mode::commercial {
+                set_page(TICRATE * 11, b"TITLEPIC");
+                S_StartMusic(Mus::Dm2ttl as i32);
+            } else if gamemode() == doom::mode::retail {
                 set_page(200, b"CREDIT");
+            } else {
+                set_page(200, b"HELP2");
             }
-            3 => {
-                G_DeferedPlayDemo("demo2");
-            }
-            4 => {
-                GAME.borrow_mut().gamestate = GS_DEMOSCREEN;
-                if gamemode() == doom::mode::commercial {
-                    set_page(TICRATE * 11, b"TITLEPIC");
-                    S_StartMusic(Mus::Dm2ttl as i32);
-                } else if gamemode() == doom::mode::retail {
-                    set_page(200, b"CREDIT");
-                } else {
-                    set_page(200, b"HELP2");
-                }
-            }
-            5 => {
-                G_DeferedPlayDemo("demo3");
-            }
-            6 => {
-                // THE DEFINITIVE DOOM Special Edition demo
-                G_DeferedPlayDemo("demo4");
-            }
-            _ => {}
         }
+        5 => {
+            G_DeferedPlayDemo("demo3");
+        }
+        6 => {
+            // THE DEFINITIVE DOOM Special Edition demo
+            G_DeferedPlayDemo("demo4");
+        }
+        _ => {}
+    }
 
-        // BFG Edition workaround: TITLEPIC missing, use INTERPIC
-        let (bfgedition, pagename) = {
-            let main = DOOM_MAIN.borrow();
-            (main.bfgedition, main.pagename)
-        };
-        if bfgedition != 0
-            && pagename.eq_ignore_ascii_case(b"TITLEPIC")
-            && W_CheckNumForName(b"titlepic") < 0
-        {
-            DOOM_MAIN.borrow_mut().pagename = b"INTERPIC";
-        }
+    // BFG Edition workaround: TITLEPIC missing, use INTERPIC
+    let (bfgedition, pagename) = {
+        let main = DOOM_MAIN.borrow();
+        (main.bfgedition, main.pagename)
+    };
+    if bfgedition != 0
+        && pagename.eq_ignore_ascii_case(b"TITLEPIC")
+        && W_CheckNumForName(b"titlepic") < 0
+    {
+        DOOM_MAIN.borrow_mut().pagename = b"INTERPIC";
     }
 }
 

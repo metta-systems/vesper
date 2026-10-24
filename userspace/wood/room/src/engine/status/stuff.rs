@@ -26,10 +26,10 @@ use crate::{
             self,
             event::event_t,
             items::weaponinfo,
-            player::{MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS, PlayerMessage, PlayerT},
+            player::{MAXPLAYERS, NUMAMMO, NUMCARDS, NUMWEAPONS, PlayerId, PlayerMessage},
             stat::{gamemission, gamemode, gameversion},
         },
-        game::{G_DeferedInitNew, console_player, consoleplayer, deathmatch, gameskill, netgame},
+        game::{G_DeferedInitNew, consoleplayer, deathmatch, gameskill, netgame},
         global::Global,
         interface::{timer::TICRATE, video::I_SetPalette},
         math::tables::{ANG45, ANG180},
@@ -378,8 +378,8 @@ pub struct StatusState {
     /// Cheat sequence that prints the player's current map position
     /// (`idmypos`).
     cheat_mypos: cheatseq_t,
-    /// Pointer to the local player's `PlayerT` struct; set by `ST_initData`.
-    plyr: *mut PlayerT,
+    /// The local player's slot; set by `ST_initData`.
+    plyr: Option<PlayerId>,
     /// Non-zero when the status bar needs a full redraw on the next
     /// `ST_Drawer` call.
     st_firsttime: i32,
@@ -518,7 +518,7 @@ impl StatusState {
             cheat_choppers: cheat(b"idchoppers", 0),
             cheat_clev: cheat(b"idclev", 2),
             cheat_mypos: cheat(b"idmypos", 0),
-            plyr: ptr::null_mut(),
+            plyr: None,
             st_firsttime: 0,
             lu_palette: 0,
             st_clock: 0,
@@ -566,6 +566,16 @@ impl StatusState {
             priority: 0,
             largeammo: 1994,
         }
+    }
+
+    /// The player the status bar shows (C `plyr`).
+    ///
+    /// # Panics
+    ///
+    /// Before `ST_initData` has set it.
+    #[track_caller]
+    fn player(&self) -> PlayerId {
+        self.plyr.expect("status bar has no player before ST_Start")
     }
 }
 
@@ -668,7 +678,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
     } else if ev.kind == 0 {
         // ev_keydown
         let key = ev.data2 as u8;
-        let plyr = STATUS.borrow().plyr;
+        // Responders run only in a level, after `ST_Start`.
+        let player = STATUS.borrow().player();
+        let plyr = player.ptr();
         if netgame() == 0 && gameskill() != 4 {
             // sk_nightmare = 4
             if check_cheat(|status| &mut status.cheat_god, key) {
@@ -744,7 +756,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
             for i in 0..6 {
                 if check_cheat(|status| &mut status.cheat_powerup[i], key) {
                     if (*plyr).powers[i] == 0 {
-                        P_GivePower(plyr, i as i32);
+                        P_GivePower(player, i as i32);
                     } else if i != 1 {
                         // pw_strength = 1
                         (*plyr).powers[i] = 1;
@@ -762,7 +774,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 (*plyr).powers[0] = 1; // pw_invulnerability
                 (*plyr).message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
-                let mo = (*console_player()).mo().ptr();
+                let mo = PlayerId::console().mo().ptr();
                 (*plyr).message = PlayerMessage::new(format!(
                     "ang=0x{:x};x,y=(0x{:x},0x{:x})",
                     (*mo).angle,
@@ -828,18 +840,9 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
 /// computed value is cached in `status` so recalculation only happens when
 /// `health` changes.
 ///
-/// Precondition: `status.plyr` is non-null and points to a valid `PlayerT`.
-///
-/// # Safety
-///
-/// Dereferences `status.plyr`. Caller must ensure `ST_initData` has set it
-/// to a valid player.
-pub unsafe fn ST_calcPainOffset(status: &mut StatusState) -> i32 {
-    let health = if (*status.plyr).health > 100 {
-        100
-    } else {
-        (*status.plyr).health
-    };
+/// `health` is the player's health (C reads `plyr->health`).
+pub fn ST_calcPainOffset(status: &mut StatusState, health: i32) -> i32 {
+    let health = health.min(100);
 
     if health != status.pain_offset_health {
         status.pain_offset = ST_FACESTRIDE * (((100 - health) * ST_NUMPAINFACES) / 101);
@@ -861,51 +864,52 @@ pub unsafe fn ST_calcPainOffset(status: &mut StatusState) -> i32 {
 /// 6. God-mode / invulnerability face (priority 4).
 /// 7. Idle random straight face (priority 0, selected when `st_facecount` reaches 0).
 ///
-/// Precondition: `status.plyr` is non-null and `oldweaponsowned` matches the
-/// snapshot from the previous call.
+/// Precondition: `ST_Start` has set the player, and `oldweaponsowned`
+/// matches the snapshot from the previous call.
 ///
 /// # Safety
 ///
-/// Dereferences `status.plyr` (and `plyr->mo`/`plyr->attacker` when
-/// computing turn directions). Caller must ensure `ST_Start`/`ST_initData`
-/// has been called.
+/// The player's `mo` and `attacker` must name map objects of the level
+/// (read when computing turn directions).
 pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
-    let plyr = status.plyr;
+    // The status bar only reads the player, so it works on a copy.
+    let plyr = status.player().read(|player| *player);
+    let health = plyr.health;
     let diffang: u32;
     let i: i32;
 
-    if status.priority < 10 && (*plyr).health == 0 {
+    if status.priority < 10 && plyr.health == 0 {
         status.priority = 9;
         status.st_faceindex = ST_DEADFACE;
         status.st_facecount = 1;
     }
 
-    if status.priority < 9 && (*plyr).bonuscount != 0 {
+    if status.priority < 9 && plyr.bonuscount != 0 {
         let mut doevilgrin = 0;
         for i in 0..NUMWEAPONS {
-            if status.oldweaponsowned[i] != (*plyr).weaponowned[i] {
+            if status.oldweaponsowned[i] != plyr.weaponowned[i] {
                 doevilgrin = 1;
-                status.oldweaponsowned[i] = (*plyr).weaponowned[i];
+                status.oldweaponsowned[i] = plyr.weaponowned[i];
             }
         }
         if doevilgrin != 0 {
             status.priority = 8;
             status.st_facecount = ST_EVILGRINCOUNT;
-            status.st_faceindex = ST_calcPainOffset(status) + ST_EVILGRINOFFSET;
+            status.st_faceindex = ST_calcPainOffset(status, health) + ST_EVILGRINOFFSET;
         }
     }
 
     if status.priority < 8
-        && (*plyr).damagecount != 0
-        && let Some(attacker) = (*plyr).attacker
-        && Some(attacker) != (*plyr).mo
+        && plyr.damagecount != 0
+        && let Some(attacker) = plyr.attacker
+        && Some(attacker) != plyr.mo
     {
         status.priority = 7;
-        if (*plyr).health - status.st_oldhealth > ST_MUCHPAIN {
+        if plyr.health - status.st_oldhealth > ST_MUCHPAIN {
             status.st_facecount = ST_TURNCOUNT;
-            status.st_faceindex = ST_calcPainOffset(status) + ST_OUCHOFFSET;
+            status.st_faceindex = ST_calcPainOffset(status, health) + ST_OUCHOFFSET;
         } else {
-            let mo = (*plyr).mo().ptr();
+            let mo = plyr.mo().ptr();
             let attacker = attacker.ptr();
             let badguyangle = R_PointToAngle2((*mo).x, (*mo).y, (*attacker).x, (*attacker).y);
             if badguyangle > (*mo).angle {
@@ -917,7 +921,7 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
             }
 
             status.st_facecount = ST_TURNCOUNT;
-            status.st_faceindex = ST_calcPainOffset(status);
+            status.st_faceindex = ST_calcPainOffset(status, health);
 
             if diffang < ANG45 {
                 status.st_faceindex += ST_RAMPAGEOFFSET;
@@ -929,27 +933,27 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
         }
     }
 
-    if status.priority < 7 && (*plyr).damagecount != 0 {
-        if (*plyr).health - status.st_oldhealth > ST_MUCHPAIN {
+    if status.priority < 7 && plyr.damagecount != 0 {
+        if plyr.health - status.st_oldhealth > ST_MUCHPAIN {
             status.priority = 7;
             status.st_facecount = ST_TURNCOUNT;
-            status.st_faceindex = ST_calcPainOffset(status) + ST_OUCHOFFSET;
+            status.st_faceindex = ST_calcPainOffset(status, health) + ST_OUCHOFFSET;
         } else {
             status.priority = 6;
             status.st_facecount = ST_TURNCOUNT;
-            status.st_faceindex = ST_calcPainOffset(status) + ST_RAMPAGEOFFSET;
+            status.st_faceindex = ST_calcPainOffset(status, health) + ST_RAMPAGEOFFSET;
         }
     }
 
     if status.priority < 6 {
-        if (*plyr).attackdown != 0 {
+        if plyr.attackdown != 0 {
             if status.lastattackdown == -1 {
                 status.lastattackdown = ST_RAMPAGEDELAY;
             } else {
                 status.lastattackdown -= 1;
                 if status.lastattackdown == 0 {
                     status.priority = 5;
-                    status.st_faceindex = ST_calcPainOffset(status) + ST_RAMPAGEOFFSET;
+                    status.st_faceindex = ST_calcPainOffset(status, health) + ST_RAMPAGEOFFSET;
                     status.st_facecount = 1;
                     status.lastattackdown = 1;
                 }
@@ -959,7 +963,7 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
         }
     }
 
-    if status.priority < 5 && (((*plyr).cheats & 2) != 0 || (*plyr).powers[0] != 0) {
+    if status.priority < 5 && ((plyr.cheats & 2) != 0 || plyr.powers[0] != 0) {
         // CF_GODMODE || pw_invulnerability
         status.priority = 4;
         status.st_faceindex = ST_GODFACE;
@@ -967,7 +971,7 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
     }
 
     if status.st_facecount == 0 {
-        status.st_faceindex = ST_calcPainOffset(status) + (status.st_randomnumber % 3);
+        status.st_faceindex = ST_calcPainOffset(status, health) + (status.st_randomnumber % 3);
         status.st_facecount = ST_STRAIGHTFACECOUNT;
         status.priority = 0;
     }
@@ -989,24 +993,26 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState) {
 ///
 /// # Safety
 ///
-/// Dereferences `status.plyr`. Caller must ensure `ST_createWidgets` has run
-/// and that `plyr` is valid.
+/// Caller must ensure `ST_createWidgets` has run, and the player's `mo`
+/// and `attacker` must name map objects of the level.
 pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
-    let plyr = status.plyr;
-    if weaponinfo[(*plyr).readyweapon as usize].ammo == 5 {
-        // am_noammo; the widget keeps this pointer, so it takes the stable address.
+    let player = status.player();
+    let plyr = player.read(|player| *player);
+    let ready_ammo = weaponinfo[plyr.readyweapon as usize].ammo;
+    // The widget keeps this pointer, so it takes a stable address.
+    if ready_ammo == 5 {
+        // am_noammo
         status.w_ready.num = &raw mut (*STATUS.as_ptr()).largeammo;
     } else {
-        status.w_ready.num = (*plyr)
-            .ammo
-            .as_mut_ptr()
-            .add(weaponinfo[(*plyr).readyweapon as usize].ammo as usize);
+        status.w_ready.num = (&raw mut (*player.ptr()).ammo)
+            .cast::<i32>()
+            .add(ready_ammo as usize);
     }
-    status.w_ready.data = (*plyr).readyweapon;
+    status.w_ready.data = plyr.readyweapon;
 
     for i in 0..3 {
-        status.keyboxes[i] = if (*plyr).cards[i] != 0 { i as i32 } else { -1 };
-        if (*plyr).cards[i + 3] != 0 {
+        status.keyboxes[i] = if plyr.cards[i] != 0 { i as i32 } else { -1 };
+        if plyr.cards[i + 3] != 0 {
             status.keyboxes[i] = (i + 3) as i32;
         }
     }
@@ -1029,9 +1035,9 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState) {
     let consoleplayer = consoleplayer() as usize;
     for i in 0..MAXPLAYERS {
         if i != consoleplayer {
-            status.st_fragscount += (*plyr).frags[i];
+            status.st_fragscount += plyr.frags[i];
         } else {
-            status.st_fragscount -= (*plyr).frags[i];
+            status.st_fragscount -= plyr.frags[i];
         }
     }
 
@@ -1063,7 +1069,7 @@ pub unsafe fn ST_Ticker() {
     status.st_clock = status.st_clock.wrapping_add(1);
     status.st_randomnumber = random_number;
     ST_updateWidgets(&mut status);
-    status.st_oldhealth = (*status.plyr).health;
+    status.st_oldhealth = status.player().read(|player| player.health);
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,18 +1089,18 @@ pub unsafe fn ST_Ticker() {
 ///
 /// # Safety
 ///
-/// Dereferences the global `plyr` pointer and mutates `st_palette`. Calls
+/// Reads the status bar's player and mutates `st_palette`. Calls
 /// `W_CacheLumpNum`/`I_SetPalette` so the WAD subsystem and video backend
 /// must be initialised, and `lu_palette` must hold a valid lump number set
 /// up by `ST_loadData`.
 pub unsafe fn ST_doPaletteStuff() {
-    let plyr = STATUS.borrow().plyr;
+    let plyr = STATUS.borrow().player().read(|player| *player);
     let mut palette: i32;
-    let mut cnt = (*plyr).damagecount;
+    let mut cnt = plyr.damagecount;
 
-    if (*plyr).powers[1] != 0 {
+    if plyr.powers[1] != 0 {
         // pw_strength
-        let bzc = 12 - ((*plyr).powers[1] >> 6);
+        let bzc = 12 - (plyr.powers[1] >> 6);
         if bzc > cnt {
             cnt = bzc;
         }
@@ -1106,13 +1112,13 @@ pub unsafe fn ST_doPaletteStuff() {
             palette = NUMREDPALS - 1;
         }
         palette += STARTREDPALS;
-    } else if (*plyr).bonuscount != 0 {
-        palette = ((*plyr).bonuscount + 7) >> 3;
+    } else if plyr.bonuscount != 0 {
+        palette = (plyr.bonuscount + 7) >> 3;
         if palette >= NUMBONUSPALS {
             palette = NUMBONUSPALS - 1;
         }
         palette += STARTBONUSPALS;
-    } else if (*plyr).powers[3] > 4 * 32 || (*plyr).powers[3] & 8 != 0 {
+    } else if plyr.powers[3] > 4 * 32 || plyr.powers[3] & 8 != 0 {
         // pw_ironfeet
         palette = RADIATIONPAL;
     } else {
@@ -1417,17 +1423,18 @@ pub unsafe fn ST_unloadData() {
 /// palette sentinel. Snapshots the current weapon ownership array and resets
 /// key-slot values to -1. Calls `STlib_init` to reset the widget library.
 ///
-/// # Safety
+/// Writes to every internal status-bar state field and sets `plyr` to the
+/// console player.
 ///
-/// Writes to every internal status-bar state field and to `plyr`, deriving
-/// it from `players[consoleplayer]`. Caller must ensure `consoleplayer` is a
-/// valid index into `players` (i.e. `D_DoomMain` has set the network/player
-/// globals).
-pub unsafe fn ST_initData() {
+/// # Panics
+///
+/// If `consoleplayer` is not a player slot.
+pub fn ST_initData() {
     {
         let mut status = STATUS.borrow_mut();
         status.st_firsttime = 1;
-        status.plyr = console_player();
+        let player = PlayerId::console();
+        status.plyr = Some(player);
         status.st_clock = 0;
         status.st_chatstate = 0; // StartChatState
         status.st_gamestate = 1; // FirstPersonState
@@ -1439,10 +1446,7 @@ pub unsafe fn ST_initData() {
         status.st_palette = -1;
         status.st_oldhealth = -1;
 
-        let plyr = status.plyr;
-        for i in 0..NUMWEAPONS {
-            status.oldweaponsowned[i] = (*plyr).weaponowned[i];
-        }
+        status.oldweaponsowned = player.read(|player| player.weaponowned);
         for i in 0..3 {
             status.keyboxes[i] = -1;
         }
@@ -1467,8 +1471,9 @@ pub unsafe fn ST_initData() {
 pub unsafe fn ST_createWidgets() {
     // The widgets keep pointers to the patch tables and to the visibility
     // and value fields, so they all point into the stable address of `STATUS`.
+    // The value widgets likewise point into the player's stable slot.
     let status = STATUS.as_ptr();
-    let plyr = (*status).plyr;
+    let plyr = (*status).player().ptr();
     let statusbaron = &raw mut (*status).st_statusbaron;
     let tallnum: PatchTable = &raw const (*status).tallnum;
     let shortnum: PatchTable = &raw const (*status).shortnum;
@@ -1691,13 +1696,8 @@ mod tests {
     /// steps and is cached in the state.
     #[test]
     fn pain_offset_tracks_health() {
-        let mut player: PlayerT = unsafe { std::mem::zeroed() };
         let mut status = StatusState::new();
-        status.plyr = &mut player;
-        let pain_offset_at = |status: &mut StatusState, health: i32| unsafe {
-            (*status.plyr).health = health;
-            ST_calcPainOffset(status)
-        };
+        let pain_offset_at = ST_calcPainOffset;
 
         assert_eq!(pain_offset_at(&mut status, 100), 0);
         assert_eq!(status.pain_offset_health, 100);

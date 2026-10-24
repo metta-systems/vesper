@@ -11,8 +11,8 @@
 
 use crate::engine::{
     arena::{Arena, Handle, Pooled},
-    doom::player::MAXPLAYERS,
-    game::{console_player, demoplayback, netgame, paused, player, playeringame},
+    doom::player::PlayerId,
+    game::{demoplayback, netgame, paused, playeringame},
     global::Global,
     misc::menu::menu_active,
     play::{
@@ -407,14 +407,17 @@ pub fn P_Ticker() {
             return;
         }
 
-        if netgame() == 0 && menu_active() && demoplayback() == 0 && (*console_player()).viewz != 1
+        if netgame() == 0
+            && menu_active()
+            && demoplayback() == 0
+            && PlayerId::console().read(|console| console.viewz) != 1
         {
             return;
         }
 
-        for i in 0..MAXPLAYERS {
-            if playeringame(i) != 0 {
-                P_PlayerThink(player(i));
+        for player in PlayerId::all() {
+            if playeringame(player.index()) != 0 {
+                P_PlayerThink(player);
             }
         }
 

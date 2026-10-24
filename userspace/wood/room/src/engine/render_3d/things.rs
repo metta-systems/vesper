@@ -15,7 +15,7 @@
 use {crate::i_error, std::ptr};
 
 use crate::engine::{
-    doom::player::{NUMPSPRITES, PspdefT},
+    doom::player::PspdefT,
     global::Global,
     map::SectorId,
     math::{
@@ -930,14 +930,11 @@ pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
 /// If the player carries the partial-invisibility power-up at a sufficient
 /// level the weapon is drawn with `fuzzcolfunc` (shadow effect).
 /// # Safety
-/// - `psp` must be a valid, non-null `PspdefT` pointer whose `state` field
-///   points to a valid `State`.
+/// - `psp.state` must be null or point to a valid `State`.
 /// - `sprites`, `pspritescale`, `pspriteiscale`, `spritelights`, and the
 ///   clip pointers in `masked` must all be valid for the current frame.
-/// - `viewplayer` must point to a fully initialised player structure.
-pub unsafe fn R_DrawPSprite(psp: *mut PspdefT, masked: &mut MaskedColumnParams) {
-    let psp = &*psp;
-
+/// - `R_SetupFrame` must have set `viewplayer`.
+pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
     // Decide which patch to use.
     if psp.state.is_null() {
         return;
@@ -987,7 +984,7 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT, masked: &mut MaskedColumnParams) 
         (
             view.centerxfrac,
             view.detailshift,
-            view.viewplayer,
+            view.player(),
             view.fixedcolormap,
         )
     };
@@ -1043,8 +1040,8 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT, masked: &mut MaskedColumnParams) 
 
     vis.patch = lump;
 
-    let player = &*viewplayer;
-    if player.powers[pw_invisibility] > 4 * 32 || player.powers[pw_invisibility] & 8 != 0 {
+    let invisibility = viewplayer.read(|player| player.powers[pw_invisibility]);
+    if invisibility > 4 * 32 || invisibility & 8 != 0 {
         // Shadow draw.
         vis.colormap = ptr::null_mut();
     } else if !fixedcolormap.is_null() {
@@ -1076,16 +1073,16 @@ pub unsafe fn R_DrawPSprite(psp: *mut PspdefT, masked: &mut MaskedColumnParams) 
 /// Only called from `R_DrawMasked` when `viewangleoffset == 0` (i.e., the
 /// player is not looking through a camera or mirror).
 /// # Safety
-/// - `viewplayer` must point to a fully initialised player structure with a
-///   valid `mo -> subsector -> sector` chain.
+/// - `R_SetupFrame` must have set `viewplayer`, whose `mo` must name a map
+///   object of the level with a valid `subsector -> sector` chain.
 /// - `scalelight`, `extralight`, `screenheightarray`, and `negonearray` must
 ///   all be valid before this function is called.
 pub unsafe fn R_DrawPlayerSprites() {
     let (viewplayer, extralight) = {
         let view = VIEW.borrow();
-        (view.viewplayer, view.extralight)
+        (view.player(), view.extralight)
     };
-    let mo = (*viewplayer).mo().ptr();
+    let mo = viewplayer.mo().ptr();
     let lightlevel = {
         let level = LEVEL.borrow();
         level.sectors[level.subsectors[(*mo).subsector].sector].lightlevel
@@ -1100,12 +1097,12 @@ pub unsafe fn R_DrawPlayerSprites() {
         sprtopscreen: 0,
     };
 
-    // Add all active psprites.
-    let psp = (*viewplayer).psprites.as_ptr() as *mut PspdefT;
-    for i in 0..NUMPSPRITES {
-        let psp_i = psp.add(i);
-        if !(*psp_i).state.is_null() {
-            R_DrawPSprite(psp_i, &mut masked);
+    // Add all active psprites. Play does not run while a frame is drawn,
+    // so the renderer draws a copy.
+    let psprites = viewplayer.read(|player| player.psprites);
+    for psp in &psprites {
+        if !psp.state.is_null() {
+            R_DrawPSprite(psp, &mut masked);
         }
     }
 }
