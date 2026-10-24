@@ -18,10 +18,12 @@
 //! - `P_SetupLevel` uses `format!` for lump-name construction instead of
 //!   `DEH_snprintf`, so DeHackEd lump-name patches are not applied.
 //! - The C map-table globals (`vertexes`, `lines`, etc.) are arrays owned by
-//!   the [`LevelState`] held in [`LEVEL`], built from the lumps at level
-//!   load instead of `Z_Malloc(PU_LEVEL)`; records refer to each other by
-//!   typed id rather than by pointer. The start spots live in
-//!   [`SPAWN_SPOTS`] and are reached by pointer.
+//!   the [`LevelState`] held in `World::level`, built from the lumps at
+//!   level load instead of `Z_Malloc(PU_LEVEL)`; records refer to each other
+//!   by typed id rather than by pointer. The start spots live in the level
+//!   too, and the deathmatch start cursor `deathmatch_p` is an index.
+//! - `totallines` is returned by `P_GroupLines` and handed to the REJECT
+//!   padding instead of living in a file-scope global.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -30,7 +32,6 @@ use std::{ffi::c_void, ptr};
 use {
     crate::engine::{
         doom::{self, player::MAXPLAYERS},
-        global::Global,
         map::{
             LineId, SectorId, SideId, SubsectorId, VertexId, degenmobj_t, line_t, node_t, sector_t,
             seg_t, side_t,
@@ -73,17 +74,17 @@ pub const MAX_DEATHMATCH_STARTS: usize = 10;
 // MAP-related lookup tables
 // ---------------------------------------------------------------------------
 
-/// The loaded level's geometry: the map tables, the blockmap and the reject
-/// table (`p_setup.c` globals).
+/// The loaded level: the map tables, the blockmap, the reject table and the
+/// start spots (`p_setup.c` globals), held in `World::level`.
 ///
 /// `P_SetupLevel` builds every table from the map lumps and replaces the
 /// previous level's, which are dropped. Records refer to each other by typed
 /// id (see [`crate::engine::map`]) and each table is indexed by its id type.
 ///
-/// Hot paths (renderer, sight checks) borrow [`LEVEL`] once per call or
-/// traversal and index the tables. Code that calls back into play code
-/// (blockmap iterators, specials, thing movement) takes short borrows that
-/// never span such a call, because the callee may borrow the level mutably.
+/// Play code reaches the level through `world.level`; leaf functions split
+/// the world borrow (`let World { level, scratch, .. } = world;`) and the
+/// geometry helpers take `&LevelState`. The renderer borrows `WORLD` once
+/// per render phase.
 pub struct LevelState {
     /// Runtime vertexes from the map's VERTEXES lump, in fixed-point (16.16)
     /// x/y coordinates.
@@ -146,6 +147,21 @@ pub struct LevelState {
     /// means the two sectors cannot see each other, so detailed LOS checks are
     /// skipped.
     pub rejectmatrix: Vec<u8>,
+
+    /// Deathmatch start positions collected from the THINGS lump. Holds up
+    /// to `MAX_DEATHMATCH_STARTS` entries; the first `deathmatch_p` are this
+    /// level's. Referenced by `g_game.c`.
+    pub deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS],
+    /// Write cursor into `deathmatchstarts`: the index of the next free slot
+    /// (C `deathmatch_p`, a pointer there). Reset to 0 by each
+    /// `P_SetupLevel` and advanced by `P_SpawnMapThing` for each deathmatch
+    /// start.
+    pub deathmatch_p: usize,
+    /// Per-player single-player start positions, indexed by player number,
+    /// set by `P_SpawnMapThing` from the THINGS of type 1-4. Like C, a level
+    /// without a start for some player keeps the previous level's. Referenced
+    /// by `g_game.c` for respawning.
+    pub playerstarts: [mapthing_t; MAXPLAYERS],
 }
 
 impl LevelState {
@@ -168,7 +184,16 @@ impl LevelState {
             bmaporgy: 0,
             blocklinks: Vec::new(),
             rejectmatrix: Vec::new(),
+            deathmatchstarts: [mapthing_t::ZERO; MAX_DEATHMATCH_STARTS],
+            deathmatch_p: 0,
+            playerstarts: [mapthing_t::ZERO; MAXPLAYERS],
         }
+    }
+
+    /// The blockmap origin `(bmaporgx, bmaporgy)` in fixed-point map units.
+    #[inline]
+    pub fn blockmap_origin(&self) -> (i32, i32) {
+        (self.bmaporgx, self.bmaporgy)
     }
 
     /// The linedefs bounding `sector`.
@@ -188,100 +213,6 @@ impl Default for LevelState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// The loaded level's geometry tables.
-pub static LEVEL: Global<LevelState> = Global::new(LevelState::new());
-
-/// Serializes the unit tests that install a level in [`LEVEL`].
-#[cfg(test)]
-pub(crate) static LEVEL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// The blockmap origin `(bmaporgx, bmaporgy)` in fixed-point map units.
-pub fn blockmap_origin() -> (i32, i32) {
-    let level = LEVEL.borrow();
-    (level.bmaporgx, level.bmaporgy)
-}
-
-/// Map-loading scratch state private to this module.
-struct SetupState {
-    /// Running total of front+back linedef-sector references, used to size the
-    /// per-sector line buffer in `P_GroupLines`.
-    totallines: i32,
-    /// Whether [`GetSectorAtNullAddress`] has filled in `null_sector`.
-    null_sector_is_initialized: bool,
-    /// The synthetic "sector at address 0" handed out by
-    /// [`GetSectorAtNullAddress`]; each level that needs it gets a copy.
-    null_sector: sector_t,
-}
-
-/// Map-loading scratch state.
-static SETUP: Global<SetupState> = Global::new(SetupState {
-    totallines: 0,
-    null_sector_is_initialized: false,
-    null_sector: sector_t::ZERO,
-});
-
-// ---------------------------------------------------------------------------
-// Starting spots
-// ---------------------------------------------------------------------------
-
-/// Player and deathmatch start spots collected from the THINGS lump.
-///
-/// Spawning code keeps pointers into both arrays (`P_SpawnPlayer` takes a
-/// start spot, `deathmatch_p` is a cursor into `deathmatchstarts`), so the
-/// spots are reached through [`SPAWN_SPOTS`]'s stable [`Global::as_ptr`]
-/// address via [`playerstart`], [`deathmatchstart`] and [`deathmatch_p`].
-pub struct SpawnSpots {
-    /// Array of deathmatch start positions collected from the THINGS lump.
-    /// Holds up to `MAX_DEATHMATCH_STARTS` entries; the active count is tracked
-    /// by `deathmatch_p - deathmatchstarts`.
-    /// Referenced by `g_game.c`.
-    pub deathmatchstarts: [mapthing_t; MAX_DEATHMATCH_STARTS],
-    /// Write cursor into `deathmatchstarts`; points to the next free slot.
-    /// Reset to `&deathmatchstarts[0]` at the start of each `P_SetupLevel`.
-    /// Advanced by `P_SpawnMapThing` when spawning deathmatch starts.
-    pub deathmatch_p: *mut mapthing_t,
-    /// Per-player single-player start positions, indexed by player number.
-    /// Holds `MAXPLAYERS` entries; populated by `P_SpawnMapThing` from THINGS
-    /// with type 1-4 (player starts).
-    /// Referenced by `g_game.c` for respawning.
-    pub playerstarts: [mapthing_t; MAXPLAYERS],
-}
-
-/// Player and deathmatch start spots.
-pub static SPAWN_SPOTS: Global<SpawnSpots> = Global::new(SpawnSpots {
-    deathmatchstarts: [mapthing_t::ZERO; MAX_DEATHMATCH_STARTS],
-    deathmatch_p: ptr::null_mut(),
-    playerstarts: [mapthing_t::ZERO; MAXPLAYERS],
-});
-
-/// Stable pointer to `playerstarts[player]` (C `&playerstarts[player]`).
-pub fn playerstart(player: usize) -> *mut mapthing_t {
-    assert!(player < MAXPLAYERS);
-    // SAFETY: in-bounds projection on the stable state pointer.
-    unsafe {
-        (&raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts)
-            .cast::<mapthing_t>()
-            .add(player)
-    }
-}
-
-/// Stable pointer to `deathmatchstarts[index]` (C `&deathmatchstarts[index]`).
-pub fn deathmatchstart(index: usize) -> *mut mapthing_t {
-    assert!(index <= MAX_DEATHMATCH_STARTS);
-    // SAFETY: projection on the stable state pointer; one past the end is
-    // allowed, as the C cursor reaches it.
-    unsafe {
-        (&raw mut (*SPAWN_SPOTS.as_ptr()).deathmatchstarts)
-            .cast::<mapthing_t>()
-            .add(index)
-    }
-}
-
-/// The deathmatch start cursor (C `deathmatch_p`).
-pub fn deathmatch_p() -> *mut mapthing_t {
-    SPAWN_SPOTS.borrow().deathmatch_p
 }
 
 // ---------------------------------------------------------------------------
@@ -322,35 +253,25 @@ use crate::engine::{
 /// Return the id of a synthetic `sector_t` that represents the sector at
 /// address 0, used to handle malformed WAD data (the "glass hack").
 ///
-/// The sector is initialized on first call by reading 4 bytes each from
-/// address 0 and 4 via `I_GetMemoryValue`, matching vanilla Doom's behavior
-/// of reading the initial heap block header at address 0. Subsequent calls
-/// reuse the already-initialized sector without re-reading. C hands out the
-/// address of one static sector; here a copy of it follows the map's own
-/// sectors in `level.sectors` (index `numsectors`), appended on the level's
-/// first call.
+/// The sector's heights are read as 4 bytes each from address 0 and 4 via
+/// `I_GetMemoryValue`, matching vanilla Doom's behavior of reading the
+/// initial heap block header at address 0; the rest is zero. C hands out
+/// the address of one static sector, initialized on first use; here the
+/// level's first call appends it after the map's own sectors in
+/// `level.sectors` (index `numsectors`) and later calls reuse it. The
+/// emulated memory does not change while the program runs, so each level's
+/// copy holds the same heights as C's one sector.
 ///
 /// C callers: `P_LoadSegs` (this file).
 fn GetSectorAtNullAddress(level: &mut LevelState) -> SectorId {
-    let null_sector = {
-        let mut setup = SETUP.borrow_mut();
-        if !setup.null_sector_is_initialized {
-            setup.null_sector = sector_t::ZERO;
-            // SAFETY: each read fills one 4-byte height field.
-            unsafe {
-                I_GetMemoryValue(0, &raw mut setup.null_sector.floorheight as *mut c_void, 4);
-                I_GetMemoryValue(
-                    4,
-                    &raw mut setup.null_sector.ceilingheight as *mut c_void,
-                    4,
-                );
-            }
-            setup.null_sector_is_initialized = true;
-        }
-        setup.null_sector
-    };
     let index = level.numsectors as usize;
     if level.sectors.len() == index {
+        let mut null_sector = sector_t::ZERO;
+        // SAFETY: each read fills one 4-byte height field.
+        unsafe {
+            I_GetMemoryValue(0, &raw mut null_sector.floorheight as *mut c_void, 4);
+            I_GetMemoryValue(4, &raw mut null_sector.ceilingheight as *mut c_void, 4);
+        }
         level.sectors.push(null_sector);
     }
     SectorId::new(index)
@@ -369,7 +290,7 @@ fn GetSectorAtNullAddress(level: &mut LevelState) -> SectorId {
 /// `lump` must be the lump number of the VERTEXES entry for the current map
 /// (typically `lumpnum + MapLump::VERTEXES`).
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadVertexes(lump: i32) {
+pub fn P_LoadVertexes(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_vertexes = unsafe { cache_lump_records::<mapvertex_t>(lump) };
     let vertexes = map_vertexes
@@ -380,7 +301,7 @@ pub fn P_LoadVertexes(lump: i32) {
         })
         .collect();
     W_ReleaseLumpNum(lump);
-    LEVEL.borrow_mut().vertexes = vertexes;
+    level.vertexes = vertexes;
 }
 
 // ---------------------------------------------------------------------------
@@ -404,10 +325,9 @@ pub fn P_LoadVertexes(lump: i32) {
 /// `lump` must be the lump number of the SEGS entry for the current map.
 /// Precondition: `vertexes`, `lines`, and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSegs(lump: i32) {
+pub fn P_LoadSegs(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_segs = unsafe { cache_lump_records::<mapseg_t>(lump) };
-    let mut level = LEVEL.borrow_mut();
     let mut segs = Vec::with_capacity(map_segs.len());
 
     for ml in map_segs {
@@ -418,7 +338,7 @@ pub fn P_LoadSegs(lump: i32) {
         let backsector = if ldef.flags & LinedefFlag::TWOSIDED as i16 != 0 {
             let sidenum = ldef.sidenum[side ^ 1];
             if sidenum < 0 || sidenum as usize >= level.sides.len() {
-                Some(GetSectorAtNullAddress(&mut level))
+                Some(GetSectorAtNullAddress(level))
             } else {
                 Some(level.sides[sidenum as usize].sector)
             }
@@ -439,7 +359,6 @@ pub fn P_LoadSegs(lump: i32) {
     }
 
     level.segs = segs;
-    drop(level);
     W_ReleaseLumpNum(lump);
 }
 
@@ -457,7 +376,7 @@ pub fn P_LoadSegs(lump: i32) {
 ///
 /// `lump` must be the lump number of the SSECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSubsectors(lump: i32) {
+pub fn P_LoadSubsectors(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_subsectors = unsafe { cache_lump_records::<mapsubsector_t>(lump) };
     let subsectors = map_subsectors
@@ -469,7 +388,7 @@ pub fn P_LoadSubsectors(lump: i32) {
         })
         .collect();
     W_ReleaseLumpNum(lump);
-    LEVEL.borrow_mut().subsectors = subsectors;
+    level.subsectors = subsectors;
 }
 
 // ---------------------------------------------------------------------------
@@ -486,7 +405,7 @@ pub fn P_LoadSubsectors(lump: i32) {
 ///
 /// `lump` must be the lump number of the SECTORS entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSectors(lump: i32) {
+pub fn P_LoadSectors(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_sectors = unsafe { cache_lump_records::<mapsector_t>(lump) };
     // SAFETY: `R_Init` has set up the flats at startup, before any level.
@@ -513,7 +432,6 @@ pub fn P_LoadSectors(lump: i32) {
         })
         .collect();
     W_ReleaseLumpNum(lump);
-    let mut level = LEVEL.borrow_mut();
     level.numsectors = sectors.len() as i32;
     level.sectors = sectors;
 }
@@ -532,7 +450,7 @@ pub fn P_LoadSectors(lump: i32) {
 ///
 /// `lump` must be the lump number of the NODES entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadNodes(lump: i32) {
+pub fn P_LoadNodes(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_nodes = unsafe { cache_lump_records::<mapnode_t>(lump) };
     let nodes = map_nodes
@@ -549,7 +467,7 @@ pub fn P_LoadNodes(lump: i32) {
         })
         .collect();
     W_ReleaseLumpNum(lump);
-    LEVEL.borrow_mut().nodes = nodes;
+    level.nodes = nodes;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,8 +490,7 @@ pub fn P_LoadNodes(lump: i32) {
 ///
 /// `lump` must be the lump number of the THINGS entry for the current map.
 /// Preconditions: `vertexes`, `lines`, `sides`, `sectors`, and `blockmap`
-/// must already be loaded; `deathmatch_p` must be reset to the base of
-/// `deathmatchstarts`.
+/// must already be loaded; the level's `deathmatch_p` must be reset to 0.
 /// C callers: `P_SetupLevel` (this file).
 pub fn P_LoadThings(world: &mut World, lump: i32) {
     unsafe {
@@ -624,10 +541,9 @@ pub fn P_LoadThings(world: &mut World, lump: i32) {
 /// `lump` must be the lump number of the LINEDEFS entry for the current map.
 /// Preconditions: `vertexes` and `sides` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadLineDefs(lump: i32) {
+pub fn P_LoadLineDefs(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_linedefs = unsafe { cache_lump_records::<maplinedef_t>(lump) };
-    let mut level = LEVEL.borrow_mut();
     let mut lines = Vec::with_capacity(map_linedefs.len());
 
     for mld in map_linedefs {
@@ -685,7 +601,6 @@ pub fn P_LoadLineDefs(lump: i32) {
     }
 
     level.lines = lines;
-    drop(level);
     W_ReleaseLumpNum(lump);
 }
 
@@ -703,7 +618,7 @@ pub fn P_LoadLineDefs(lump: i32) {
 /// `lump` must be the lump number of the SIDEDEFS entry for the current map.
 /// Precondition: `sectors` must already be loaded.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadSideDefs(lump: i32) {
+pub fn P_LoadSideDefs(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_sidedefs = unsafe { cache_lump_records::<mapsidedef_t>(lump) };
     // SAFETY: `R_Init` has set up the textures at startup, before any level.
@@ -720,7 +635,7 @@ pub fn P_LoadSideDefs(lump: i32) {
         })
         .collect();
     W_ReleaseLumpNum(lump);
-    LEVEL.borrow_mut().sides = sides;
+    level.sides = sides;
 }
 
 // ---------------------------------------------------------------------------
@@ -744,7 +659,7 @@ pub fn P_LoadSideDefs(lump: i32) {
 ///
 /// `lump` must be the lump number of the BLOCKMAP entry for the current map.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_LoadBlockMap(lump: i32) {
+pub fn P_LoadBlockMap(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let raw_blockmap = unsafe { cache_lump_records::<I16>(lump) };
     let blockmaplump: Vec<i16> = raw_blockmap.iter().map(|short| short.get()).collect();
@@ -753,7 +668,6 @@ pub fn P_LoadBlockMap(lump: i32) {
     let bmapwidth = blockmaplump[2] as i32;
     let bmapheight = blockmaplump[3] as i32;
 
-    let mut level = LEVEL.borrow_mut();
     level.bmaporgx = (blockmaplump[0] as i32) << FRACBITS;
     level.bmaporgy = (blockmaplump[1] as i32) << FRACBITS;
     level.bmapwidth = bmapwidth;
@@ -793,12 +707,12 @@ pub fn P_LoadBlockMap(lump: i32) {
 ///    origin (`soundorg`) to the bounding-box center, and records the
 ///    clamped blockmap cell extents in `sector.blockbox`.
 ///
+/// Returns `totallines`, which sizes the REJECT padding (C keeps it in a
+/// file-scope global for `PadRejectArray`).
+///
 /// Preconditions: all lump-load functions must have been called first.
 /// C callers: `P_SetupLevel` (this file).
-pub fn P_GroupLines() {
-    let mut level = LEVEL.borrow_mut();
-    let level = &mut *level;
-
+pub fn P_GroupLines(level: &mut LevelState) -> i32 {
     // Look up sector number for each subsector.
     for subsector in level.subsectors.iter_mut() {
         let seg = &level.segs[subsector.firstline as usize];
@@ -822,7 +736,6 @@ pub fn P_GroupLines() {
             totallines += 1;
         }
     }
-    SETUP.borrow_mut().totallines = totallines;
 
     // Build line tables for each sector.
     let mut current = 0;
@@ -897,6 +810,8 @@ pub fn P_GroupLines() {
         block = if block < 0 { 0 } else { block };
         sector.blockbox[BBox::LEFT] = block;
     }
+
+    totallines
 }
 
 // ---------------------------------------------------------------------------
@@ -925,9 +840,9 @@ pub fn P_GroupLines() {
 /// depending on whether `-reject_pad_with_ff` was passed on the command line.
 ///
 /// `array` is the missing tail of the reject matrix: the caller
-/// (`P_LoadReject`) passes `rejectmatrix[lumplen..minlength]`.
-fn PadRejectArray(array: &mut [u8]) {
-    let totallines = SETUP.borrow().totallines;
+/// (`P_LoadReject`) passes `rejectmatrix[lumplen..minlength]`, and the
+/// `totallines` counted by `P_GroupLines`.
+fn PadRejectArray(array: &mut [u8], totallines: i32) {
     let rejectpad: [u32; 4] = [((totallines * 4 + 3) & !3) as u32 + 24, 0, 50, 0x1d4a11];
     let padsize = std::mem::size_of_val(&rejectpad);
 
@@ -968,10 +883,10 @@ fn PadRejectArray(array: &mut [u8]) {
 /// `minlength`, the remaining bytes are filled by `PadRejectArray` to
 /// simulate vanilla Doom's zone-header overflow.
 ///
-/// Must be called after `P_GroupLines` so that `totallines` is valid (needed
-/// by `PadRejectArray`).
-fn P_LoadReject(lumpnum: i32) {
-    let numsectors = LEVEL.borrow().numsectors;
+/// Must be called after `P_GroupLines`, which returns the `totallines`
+/// needed by `PadRejectArray`.
+fn P_LoadReject(level: &mut LevelState, lumpnum: i32, totallines: i32) {
+    let numsectors = level.numsectors;
     let minlength = (numsectors * numsectors + 7) / 8;
 
     // SAFETY: the lump view is used only before the lump is released.
@@ -981,9 +896,9 @@ fn P_LoadReject(lumpnum: i32) {
     let lumplen = rejectmatrix.len();
     if lumplen < minlength as usize {
         rejectmatrix.resize(minlength as usize, 0);
-        PadRejectArray(&mut rejectmatrix[lumplen..]);
+        PadRejectArray(&mut rejectmatrix[lumplen..], totallines);
     }
-    LEVEL.borrow_mut().rejectmatrix = rejectmatrix;
+    level.rejectmatrix = rejectmatrix;
 }
 
 // ---------------------------------------------------------------------------
@@ -1067,21 +982,22 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
         world.leveltime = 0;
 
         // Note: most of this ordering is important.
-        P_LoadBlockMap(lumpnum + MapLump::BLOCKMAP);
-        P_LoadVertexes(lumpnum + MapLump::VERTEXES);
-        P_LoadSectors(lumpnum + MapLump::SECTORS);
-        P_LoadSideDefs(lumpnum + MapLump::SIDEDEFS);
+        let level = &mut world.level;
+        P_LoadBlockMap(level, lumpnum + MapLump::BLOCKMAP);
+        P_LoadVertexes(level, lumpnum + MapLump::VERTEXES);
+        P_LoadSectors(level, lumpnum + MapLump::SECTORS);
+        P_LoadSideDefs(level, lumpnum + MapLump::SIDEDEFS);
 
-        P_LoadLineDefs(lumpnum + MapLump::LINEDEFS);
-        P_LoadSubsectors(lumpnum + MapLump::SSECTORS);
-        P_LoadNodes(lumpnum + MapLump::NODES);
-        P_LoadSegs(lumpnum + MapLump::SEGS);
+        P_LoadLineDefs(level, lumpnum + MapLump::LINEDEFS);
+        P_LoadSubsectors(level, lumpnum + MapLump::SSECTORS);
+        P_LoadNodes(level, lumpnum + MapLump::NODES);
+        P_LoadSegs(level, lumpnum + MapLump::SEGS);
 
-        P_GroupLines();
-        P_LoadReject(lumpnum + MapLump::REJECT);
+        let totallines = P_GroupLines(level);
+        P_LoadReject(level, lumpnum + MapLump::REJECT, totallines);
 
         world.session.bodyqueslot = 0;
-        SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatchstart(0);
+        world.level.deathmatch_p = 0;
         P_LoadThings(world, lumpnum + MapLump::THINGS);
 
         if world.session.deathmatch != 0 {
@@ -1099,7 +1015,7 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
         P_SpawnSpecials(world);
 
         if GAME.borrow().precache != 0 {
-            R_PrecacheLevel();
+            R_PrecacheLevel(world);
         }
     }
 }
@@ -1164,9 +1080,6 @@ mod tests {
         assert!(level.rejectmatrix.is_empty());
     }
 
-    /// Serializes the tests below that use the [`SETUP`] scratch state.
-    static SETUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// A zeroed sector with only its tag set.
     fn tagged_sector(tag: i16) -> sector_t {
         let mut sector = sector_t::ZERO;
@@ -1179,7 +1092,6 @@ mod tests {
     /// map's sectors.
     #[test]
     fn glass_hack_sector_follows_the_map_sectors_once() {
-        let _guard = SETUP_LOCK.lock().unwrap();
         let mut level = LevelState {
             numsectors: 2,
             sectors: vec![tagged_sector(1), tagged_sector(2)],
@@ -1199,10 +1111,8 @@ mod tests {
     /// (50) and the zone id.
     #[test]
     fn pad_reject_array_writes_the_zone_block_header() {
-        let _guard = SETUP_LOCK.lock().unwrap();
-        SETUP.borrow_mut().totallines = 3;
         let mut tail = [0xAAu8; 16];
-        PadRejectArray(&mut tail);
+        PadRejectArray(&mut tail, 3);
         let words: Vec<u32> = tail
             .chunks(4)
             .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
@@ -1210,7 +1120,7 @@ mod tests {
         assert_eq!(words, [((3 * 4 + 3) & !3) + 24, 0, 50, 0x1d4a11]);
 
         let mut short_tail = [0xAAu8; 5];
-        PadRejectArray(&mut short_tail);
+        PadRejectArray(&mut short_tail, 3);
         assert_eq!(short_tail, [36, 0, 0, 0, 0]);
     }
 
@@ -1224,19 +1134,14 @@ mod tests {
         let _: i32 = level.bmaporgy;
     }
 
+    /// A new level has no deathmatch starts and empty player starts.
     #[test]
-    fn spawn_spot_pointers_index_the_arrays() {
-        let base = unsafe { &raw mut (*SPAWN_SPOTS.as_ptr()).playerstarts };
-        assert_eq!(playerstart(0), base.cast::<mapthing_t>());
-        assert_eq!(
-            unsafe { playerstart(3).offset_from(playerstart(0)) },
-            3,
-            "playerstart(i) must step one mapthing_t per player"
-        );
-        assert_eq!(
-            unsafe { deathmatchstart(MAX_DEATHMATCH_STARTS).offset_from(deathmatchstart(0)) },
-            MAX_DEATHMATCH_STARTS as isize
-        );
+    fn spawn_spots_start_empty() {
+        let level = LevelState::new();
+        assert_eq!(level.deathmatch_p, 0);
+        assert_eq!(level.playerstarts.len(), MAXPLAYERS);
+        assert_eq!(level.deathmatchstarts.len(), MAX_DEATHMATCH_STARTS);
+        assert!(level.playerstarts.iter().all(|start| start.kind.get() == 0));
     }
 
     // =========================================================================

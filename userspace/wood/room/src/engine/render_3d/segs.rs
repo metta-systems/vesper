@@ -39,9 +39,10 @@ use crate::engine::{
         fixed::{FRACBITS, FixedMul, angle_t, fixed_t},
         tables::{self, ANG90, ANG180, ANGLETOFINESHIFT},
     },
-    play::setup::{LEVEL, LevelState},
+    play::setup::LevelState,
     render_3d::bsp::drawseg_t,
     wad::format::LinedefFlag,
+    world::WORLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -355,7 +356,8 @@ fn wall_light_row(
 /// `sprbottomclip`, `sprtopclip`) must still be valid, and `ds.curline` must
 /// be a two-sided seg of the loaded level.
 pub unsafe fn R_RenderMaskedSegRange(ds: &drawseg_t, x1: i32, x2: i32) {
-    let level = LEVEL.borrow();
+    let world = WORLD.borrow();
+    let level = &world.level;
     let data = RENDER_DATA.borrow();
     let curline = ds.curline;
     let seg = &level.segs[curline];
@@ -375,7 +377,7 @@ pub unsafe fn R_RenderMaskedSegRange(ds: &drawseg_t, x1: i32, x2: i32) {
     let mut wall = WALL.borrow_mut();
     let mut draw = DRAW.borrow_mut();
 
-    wall.walllights = wall_light_row(&level, seg.frontsector, curline, view.extralight);
+    wall.walllights = wall_light_row(level, seg.frontsector, curline, view.extralight);
 
     wall.maskedtexturecol = ds.maskedtexturecol;
     wall.rw_scalestep = ds.scalestep;

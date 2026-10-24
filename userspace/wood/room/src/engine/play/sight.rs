@@ -90,10 +90,7 @@ impl Default for SightState {
     }
 }
 
-use crate::engine::{
-    play::setup::{LEVEL, LevelState},
-    world::PlayScratch,
-};
+use crate::engine::{play::setup::LevelState, world::PlayScratch};
 
 /// Determine which half-space of a `divline_t` a point lies in.
 ///
@@ -388,17 +385,18 @@ fn P_CrossBSPNode(
 /// Matches `P_CheckSight` in `p_sight.c`.
 ///
 /// The check marks the linedefs it crosses, so it borrows the level mutably
-/// for its whole run; it calls no other play code.
+/// (split from the sight scratch) for its whole run; it calls no other play
+/// code.
 ///
 /// # Safety
 /// Both `t1` and `t2` must name initialised map objects whose `subsector`
 /// belongs to the loaded level.
 pub unsafe fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
     let (t1, t2) = (t1.ptr(), t2.ptr());
-    let mut level = LEVEL.borrow_mut();
+    let World { level, scratch, .. } = world;
     let PlayScratch {
         sight, validcount, ..
-    } = &mut world.scratch;
+    } = scratch;
     unsafe {
         let s1 = level.subsectors[(*t1).subsector].sector.index() as i32;
         let s2 = level.subsectors[(*t2).subsector].sector.index() as i32;
@@ -427,6 +425,6 @@ pub unsafe fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
         sight.strace.dy = (*t2).y - (*t1).y;
 
         let root_node = level.nodes.len() as i32 - 1;
-        P_CrossBSPNode(sight, &mut level, *validcount, root_node) as i32
+        P_CrossBSPNode(sight, level, *validcount, root_node) as i32
     }
 }

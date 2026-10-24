@@ -14,7 +14,6 @@ use crate::engine::{
     math::fixed::{FRACUNIT, fixed_t},
     play::{
         floor::T_MovePlane,
-        setup::LEVEL,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
             CeilingId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker,
@@ -238,12 +237,12 @@ pub unsafe fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(&world.level, line, secnum);
         secnum
     } >= 0
     {
         let sec = SectorId::new(secnum as usize);
-        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+        if world.level.sectors[sec].specialdata.is_some() {
             continue;
         }
 
@@ -252,8 +251,7 @@ pub unsafe fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -
         let ceiling = ceiling_id.ptr();
         P_AddThinker(ThinkerId::Ceiling(ceiling_id));
         {
-            // Setting up the ceiling runs no play code, so one borrow serves it.
-            let mut level = LEVEL.borrow_mut();
+            let level = &mut world.level;
             level.sectors[sec].specialdata = Some(ThinkerId::Ceiling(ceiling_id));
             (*ceiling).thinker.kind = ThinkerKind::Ceiling;
             (*ceiling).sector = sec;
@@ -284,7 +282,7 @@ pub unsafe fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -
                     (*ceiling).speed = CEILSPEED;
                 }
                 x if x == raiseToHighest => {
-                    (*ceiling).topheight = P_FindHighestCeilingSurrounding(&level, sec);
+                    (*ceiling).topheight = P_FindHighestCeilingSurrounding(level, sec);
                     (*ceiling).direction = 1;
                     (*ceiling).speed = CEILSPEED;
                 }
@@ -325,12 +323,13 @@ pub fn P_AddActiveCeiling(world: &mut World, c: CeilingId) {
 ///
 /// Corresponds to `P_RemoveActiveCeiling` in `p_ceilng.c`.
 pub fn P_RemoveActiveCeiling(world: &mut World, c: CeilingId) {
-    for slot in world.active.ceilings.activeceilings.iter_mut() {
+    let World { level, active, .. } = world;
+    for slot in active.ceilings.activeceilings.iter_mut() {
         if *slot == Some(c) {
             // SAFETY: ceilings are only reached through arena pointers, and
             // no reference to one is live while a ceiling is removed.
             let ceiling = unsafe { &mut *c.ptr() };
-            LEVEL.borrow_mut().sectors[ceiling.sector].specialdata = None;
+            level.sectors[ceiling.sector].specialdata = None;
             P_RemoveThinker(&mut ceiling.thinker);
             *slot = None;
             break;

@@ -38,7 +38,7 @@ use crate::{
             lights::{FASTDARK, SLOWDARK},
             mobj::MobjId,
             plats::PlatState,
-            setup::{LEVEL, LevelState},
+            setup::LevelState,
             switch::{MAXBUTTONS, button_t, start_button_sound},
             tick::ThinkerKind,
         },
@@ -630,9 +630,9 @@ pub fn P_FindMinSurroundingLight(level: &LevelState, sector: SectorId, max: i32)
 pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, thing: MobjId) {
     // The line's record as the crossing found it; the actions read its tag
     // and sectors, and clearing the special writes the level's line.
-    let line_record = LEVEL.borrow().lines[linenum];
+    let line_record = world.level.lines[linenum];
     let line = &line_record;
-    let clear_special = || LEVEL.borrow_mut().lines[linenum].special = 0;
+    let clear_special = |world: &mut World| world.level.lines[linenum].special = 0;
 
     if (*thing.ptr()).player.is_none() {
         match (*thing.ptr()).kind {
@@ -655,162 +655,162 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
     match line.special as i32 {
         2 => {
             EV_DoDoor(world, line, vld_open);
-            clear_special();
+            clear_special(world);
         }
         3 => {
             EV_DoDoor(world, line, vld_close);
-            clear_special();
+            clear_special(world);
         }
         4 => {
             EV_DoDoor(world, line, vld_normal);
-            clear_special();
+            clear_special(world);
         }
         5 => {
             EV_DoFloor(world, line, raiseFloor);
-            clear_special();
+            clear_special(world);
         }
         6 => {
             EV_DoCeiling(world, line, fastCrushAndRaise);
-            clear_special();
+            clear_special(world);
         }
         8 => {
             EV_BuildStairs(world, line, build8);
-            clear_special();
+            clear_special(world);
         }
         10 => {
             EV_DoPlat(world, line, downWaitUpStay, 0);
-            clear_special();
+            clear_special(world);
         }
         12 => {
             EV_LightTurnOn(world, line, 0);
-            clear_special();
+            clear_special(world);
         }
         13 => {
             EV_LightTurnOn(world, line, 255);
-            clear_special();
+            clear_special(world);
         }
         16 => {
             EV_DoDoor(world, line, vld_close30ThenOpen);
-            clear_special();
+            clear_special(world);
         }
         17 => {
             EV_StartLightStrobing(world, line);
-            clear_special();
+            clear_special(world);
         }
         19 => {
             EV_DoFloor(world, line, lowerFloor);
-            clear_special();
+            clear_special(world);
         }
         22 => {
             EV_DoPlat(world, line, raiseToNearestAndChange, 0);
-            clear_special();
+            clear_special(world);
         }
         25 => {
             EV_DoCeiling(world, line, crushAndRaise);
-            clear_special();
+            clear_special(world);
         }
         30 => {
             EV_DoFloor(world, line, raiseToTexture);
-            clear_special();
+            clear_special(world);
         }
         35 => {
             EV_LightTurnOn(world, line, 35);
-            clear_special();
+            clear_special(world);
         }
         36 => {
             EV_DoFloor(world, line, turboLower);
-            clear_special();
+            clear_special(world);
         }
         37 => {
             EV_DoFloor(world, line, lowerAndChange);
-            clear_special();
+            clear_special(world);
         }
         38 => {
             EV_DoFloor(world, line, lowerFloorToLowest);
-            clear_special();
+            clear_special(world);
         }
         39 => {
             EV_Teleport(world, line, side, thing);
-            clear_special();
+            clear_special(world);
         }
         40 => {
             EV_DoCeiling(world, line, raiseToHighest);
             EV_DoFloor(world, line, lowerFloorToLowest);
-            clear_special();
+            clear_special(world);
         }
         44 => {
             EV_DoCeiling(world, line, lowerAndCrush);
-            clear_special();
+            clear_special(world);
         }
         52 => {
             G_ExitLevel();
         }
         53 => {
             EV_DoPlat(world, line, perpetualRaise, 0);
-            clear_special();
+            clear_special(world);
         }
         54 => {
             EV_StopPlat(world, line);
-            clear_special();
+            clear_special(world);
         }
         56 => {
             EV_DoFloor(world, line, raiseFloorCrush);
-            clear_special();
+            clear_special(world);
         }
         57 => {
             EV_CeilingCrushStop(world, line);
-            clear_special();
+            clear_special(world);
         }
         58 => {
             EV_DoFloor(world, line, raiseFloor24);
-            clear_special();
+            clear_special(world);
         }
         59 => {
             EV_DoFloor(world, line, raiseFloor24AndChange);
-            clear_special();
+            clear_special(world);
         }
         104 => {
             EV_TurnTagLightsOff(world, line);
-            clear_special();
+            clear_special(world);
         }
         108 => {
             EV_DoDoor(world, line, vld_blazeRaise);
-            clear_special();
+            clear_special(world);
         }
         109 => {
             EV_DoDoor(world, line, vld_blazeOpen);
-            clear_special();
+            clear_special(world);
         }
         100 => {
             EV_BuildStairs(world, line, turbo16);
-            clear_special();
+            clear_special(world);
         }
         110 => {
             EV_DoDoor(world, line, vld_blazeClose);
-            clear_special();
+            clear_special(world);
         }
         119 => {
             EV_DoFloor(world, line, raiseFloorToNearest);
-            clear_special();
+            clear_special(world);
         }
         121 => {
             EV_DoPlat(world, line, blazeDWUS, 0);
-            clear_special();
+            clear_special(world);
         }
         124 => {
             G_SecretExitLevel();
         }
         125 if (*thing.ptr()).player.is_none() => {
             EV_Teleport(world, line, side, thing);
-            clear_special();
+            clear_special(world);
         }
         130 => {
             EV_DoFloor(world, line, raiseFloorTurbo);
-            clear_special();
+            clear_special(world);
         }
         141 => {
             EV_DoCeiling(world, line, silentCrushAndRaise);
-            clear_special();
+            clear_special(world);
         }
         // RETRIGGERS
         72 => {
@@ -934,7 +934,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
 /// Called from p_map.c (`PTR_ShootTraverse`) when a bullet or projectile
 /// hits a special linedef.
 pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
-    let line_record = LEVEL.borrow().lines[line_id];
+    let line_record = world.level.lines[line_id];
     let line = &line_record;
     if (*thing.ptr()).player.is_none() {
         let mut ok = 0;
@@ -997,7 +997,7 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     let mo = mo_id.ptr();
     let ironfeet = world.players[player].powers[pw_ironfeet];
     let (sector, floorheight, special) = {
-        let level = LEVEL.borrow();
+        let level = &world.level;
         let sector = level.subsectors[(*mo).subsector].sector;
         (
             sector,
@@ -1028,7 +1028,7 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
         }
         9 => {
             world.players[player].secretcount += 1;
-            LEVEL.borrow_mut().sectors[sector].special = 0;
+            world.level.sectors[sector].special = 0;
         }
         11 => {
             world.players[player].cheats &= !CF_GODMODE;
@@ -1092,7 +1092,7 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
     let leveltime = world.leveltime;
     {
         let spec = SPEC.borrow();
-        let mut level = LEVEL.borrow_mut();
+        let level = &mut world.level;
         let numanims = if spec.lastanim.is_null() {
             0
         } else {
@@ -1135,7 +1135,7 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
         };
         if let Some(button) = expired {
             {
-                let mut level = LEVEL.borrow_mut();
+                let level = &mut world.level;
                 let line = button.line.expect("pressed button without a line");
                 let sidenum = level.lines[line].sidenum[0] as usize;
                 let side = &mut level.sides[sidenum];
@@ -1249,18 +1249,18 @@ fn DonutOverrun(
 /// Returns 1 if at least one sector was acted upon, 0 otherwise.
 ///
 /// Called from p_spec.c via C when a donut-tagged line is activated.
-pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
+pub unsafe fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
+    let level = &mut world.level;
     let mut secnum = -1;
     let mut rtn = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(level, line, secnum);
         secnum
     } >= 0
     {
         let s1 = SectorId::new(secnum as usize);
         let s2 = {
-            let level = LEVEL.borrow();
             if level.sectors[s1].specialdata.is_some() {
                 continue;
             }
@@ -1268,7 +1268,7 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
             rtn = 1;
             // C reads `s1->lines[0]` even when the list is empty.
             let first_line = level.linebuffer[level.sectors[s1].lines];
-            getNextSector(&level, first_line, s1)
+            getNextSector(level, first_line, s1)
         };
 
         let Some(s2) = s2 else {
@@ -1278,12 +1278,9 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
             break;
         };
 
-        let s2_linecount = LEVEL.borrow().sectors[s2].linecount;
+        let s2_linecount = level.sectors[s2].linecount;
         for i in 0..s2_linecount as usize {
-            let s3 = {
-                let level = LEVEL.borrow();
-                level.lines[level.sector_lines(s2)[i]].backsector
-            };
+            let s3 = level.lines[level.sector_lines(s2)[i]].backsector;
 
             if s3 == Some(s1) {
                 continue;
@@ -1299,14 +1296,11 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
                     DonutOverrun(&mut fh, &mut fp, line, s1);
                     (fh, fp)
                 }
-                Some(s3) => {
-                    let level = LEVEL.borrow();
-                    (level.sectors[s3].floorheight, level.sectors[s3].floorpic)
-                }
+                Some(s3) => (level.sectors[s3].floorheight, level.sectors[s3].floorpic),
             };
 
             // Spawn rising slime
-            let floor = add_floor_mover(s2);
+            let floor = add_floor_mover(level, s2);
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = donutRaise;
             (*floor).crush = 0;
@@ -1318,7 +1312,7 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
             (*floor).floordestheight = s3_floorheight;
 
             // Spawn lowering donut-hole
-            let floor = add_floor_mover(s1);
+            let floor = add_floor_mover(level, s1);
             (*floor).thinker.kind = ThinkerKind::Floor;
             (*floor).kind = lowerFloor;
             (*floor).crush = 0;
@@ -1365,7 +1359,7 @@ pub unsafe fn EV_DoDonut(_world: &mut World, line: &line_t) -> i32 {
 ///    more than `MAXLINEANIMS` (64) scrolling walls are found.
 ///
 /// 4. **Misc cleanup**: clears `activeceilings`, `activeplats`, and `buttonlist`.
-pub unsafe fn P_SpawnSpecials(world: &mut World) {
+pub fn P_SpawnSpecials(world: &mut World) {
     let timelimit = GAME.borrow().timelimit;
     if timelimit > 0 && world.session.deathmatch != 0 {
         let mut spec = SPEC.borrow_mut();
@@ -1375,10 +1369,10 @@ pub unsafe fn P_SpawnSpecials(world: &mut World) {
         SPEC.borrow_mut().levelTimer = 0;
     }
 
-    let numsectors = LEVEL.borrow().numsectors;
+    let numsectors = world.level.numsectors;
     for i in 0..numsectors {
         let sector = SectorId::new(i as usize);
-        let special = LEVEL.borrow().sectors[sector].special;
+        let special = world.level.sectors[sector].special;
         if special == 0 {
             continue;
         }
@@ -1388,7 +1382,7 @@ pub unsafe fn P_SpawnSpecials(world: &mut World) {
             3 => P_SpawnStrobeFlash(world, sector, SLOWDARK, 0),
             4 => {
                 P_SpawnStrobeFlash(world, sector, FASTDARK, 0);
-                LEVEL.borrow_mut().sectors[sector].special = 4;
+                world.level.sectors[sector].special = 4;
             }
             8 => P_SpawnGlowingLight(world, sector),
             9 => {
@@ -1405,9 +1399,8 @@ pub unsafe fn P_SpawnSpecials(world: &mut World) {
 
     {
         let mut spec = SPEC.borrow_mut();
-        let level = LEVEL.borrow();
         spec.numlinespecials = 0;
-        for (i, line) in level.lines.iter().enumerate() {
+        for (i, line) in world.level.lines.iter().enumerate() {
             if line.special as i32 == 48 {
                 if spec.numlinespecials as i32 >= MAXLINEANIMS as i32 {
                     i_error!("Too many scrolling wall linedefs! (Vanilla limit is 64)");

@@ -11,7 +11,7 @@ use crate::engine::{
     math::fixed::{FRACUNIT, fixed_t},
     play::{
         map::P_ChangeSector,
-        setup::LEVEL,
+        setup::LevelState,
         spec::{
             P_FindHighestFloorSurrounding, P_FindLowestCeilingSurrounding,
             P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
@@ -128,8 +128,7 @@ impl floormove_t {
 }
 
 /// Height of `sector`'s floor (`floorOrCeiling == 0`) or ceiling.
-fn plane_height(sector: SectorId, floorOrCeiling: i32) -> fixed_t {
-    let level = LEVEL.borrow();
+fn plane_height(level: &LevelState, sector: SectorId, floorOrCeiling: i32) -> fixed_t {
     let sec = &level.sectors[sector];
     if floorOrCeiling == 0 {
         sec.floorheight
@@ -139,8 +138,12 @@ fn plane_height(sector: SectorId, floorOrCeiling: i32) -> fixed_t {
 }
 
 /// Set the height of `sector`'s floor (`floorOrCeiling == 0`) or ceiling.
-fn set_plane_height(sector: SectorId, floorOrCeiling: i32, height: fixed_t) {
-    let mut level = LEVEL.borrow_mut();
+fn set_plane_height(
+    level: &mut LevelState,
+    sector: SectorId,
+    floorOrCeiling: i32,
+    height: fixed_t,
+) {
     let sec = &mut level.sectors[sector];
     if floorOrCeiling == 0 {
         sec.floorheight = height;
@@ -158,8 +161,7 @@ fn set_plane_height(sector: SectorId, floorOrCeiling: i32, height: fixed_t) {
 /// `crush`: non-zero enables crushing things caught by the moving plane.
 ///
 /// Each height change is written to the level before `P_ChangeSector`
-/// re-checks the things it moves (which can run any play code), so no
-/// borrow of the level spans that call.
+/// re-checks the things it moves (which can run any play code).
 ///
 /// Returns one of:
 /// - `result_ok` — moved without incident.
@@ -186,20 +188,20 @@ pub unsafe fn T_MovePlane(
                 match direction {
                     -1 => {
                         // DOWN
-                        let lastpos = plane_height(sector, 0);
+                        let lastpos = plane_height(&world.level, sector, 0);
                         if lastpos - speed < dest {
-                            set_plane_height(sector, 0, dest);
+                            set_plane_height(&mut world.level, sector, 0, dest);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
-                                set_plane_height(sector, 0, lastpos);
+                                set_plane_height(&mut world.level, sector, 0, lastpos);
                                 P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            set_plane_height(sector, 0, lastpos - speed);
+                            set_plane_height(&mut world.level, sector, 0, lastpos - speed);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
-                                set_plane_height(sector, 0, lastpos);
+                                set_plane_height(&mut world.level, sector, 0, lastpos);
                                 P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
@@ -207,23 +209,23 @@ pub unsafe fn T_MovePlane(
                     }
                     1 => {
                         // UP
-                        let lastpos = plane_height(sector, 0);
+                        let lastpos = plane_height(&world.level, sector, 0);
                         if lastpos + speed > dest {
-                            set_plane_height(sector, 0, dest);
+                            set_plane_height(&mut world.level, sector, 0, dest);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
-                                set_plane_height(sector, 0, lastpos);
+                                set_plane_height(&mut world.level, sector, 0, lastpos);
                                 P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            set_plane_height(sector, 0, lastpos + speed);
+                            set_plane_height(&mut world.level, sector, 0, lastpos + speed);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
-                                set_plane_height(sector, 0, lastpos);
+                                set_plane_height(&mut world.level, sector, 0, lastpos);
                                 P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
@@ -237,23 +239,23 @@ pub unsafe fn T_MovePlane(
                 match direction {
                     -1 => {
                         // DOWN
-                        let lastpos = plane_height(sector, 1);
+                        let lastpos = plane_height(&world.level, sector, 1);
                         if lastpos - speed < dest {
-                            set_plane_height(sector, 1, dest);
+                            set_plane_height(&mut world.level, sector, 1, dest);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
-                                set_plane_height(sector, 1, lastpos);
+                                set_plane_height(&mut world.level, sector, 1, lastpos);
                                 P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            set_plane_height(sector, 1, lastpos - speed);
+                            set_plane_height(&mut world.level, sector, 1, lastpos - speed);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
                                 if crush != 0 {
                                     return result_crushed;
                                 }
-                                set_plane_height(sector, 1, lastpos);
+                                set_plane_height(&mut world.level, sector, 1, lastpos);
                                 P_ChangeSector(world, sector, crush);
                                 return result_crushed;
                             }
@@ -261,17 +263,17 @@ pub unsafe fn T_MovePlane(
                     }
                     1 => {
                         // UP
-                        let lastpos = plane_height(sector, 1);
+                        let lastpos = plane_height(&world.level, sector, 1);
                         if lastpos + speed > dest {
-                            set_plane_height(sector, 1, dest);
+                            set_plane_height(&mut world.level, sector, 1, dest);
                             let flag = P_ChangeSector(world, sector, crush);
                             if flag != 0 {
-                                set_plane_height(sector, 1, lastpos);
+                                set_plane_height(&mut world.level, sector, 1, lastpos);
                                 P_ChangeSector(world, sector, crush);
                             }
                             return result_pastdest;
                         } else {
-                            set_plane_height(sector, 1, lastpos + speed);
+                            set_plane_height(&mut world.level, sector, 1, lastpos + speed);
                             let _flag = P_ChangeSector(world, sector, crush);
                             // The original C code has #if 0 here, so no crush check.
                         }
@@ -313,8 +315,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
 
     if res == result_pastdest {
         {
-            let mut level = LEVEL.borrow_mut();
-            let sec = &mut level.sectors[(*floor).sector];
+            let sec = &mut world.level.sectors[(*floor).sector];
             sec.specialdata = None;
 
             if (*floor).direction == 1 {
@@ -337,11 +338,11 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
 /// special (C's `Z_Malloc`, `P_AddThinker` and `sec->specialdata = floor`).
 ///
 /// The caller fills in the mover through the returned pointer, which stays
-/// valid for the rest of the program. The level must not be borrowed.
-pub fn add_floor_mover(sector: SectorId) -> *mut floormove_t {
+/// valid for the rest of the program.
+pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> *mut floormove_t {
     let floor = new_thinker::<floormove_t>();
     P_AddThinker(ThinkerId::Floor(floor));
-    LEVEL.borrow_mut().sectors[sector].specialdata = Some(ThinkerId::Floor(floor));
+    level.sectors[sector].specialdata = Some(ThinkerId::Floor(floor));
     floor.ptr()
 }
 
@@ -360,27 +361,25 @@ pub fn add_floor_mover(sector: SectorId) -> *mut floormove_t {
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_DoFloor(_world: &mut World, line: &line_t, floortype: i32) -> i32 {
+pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
+    let level = &mut world.level;
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(level, line, secnum);
         secnum
     } >= 0
     {
         let sec = SectorId::new(secnum as usize);
 
-        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+        if level.sectors[sec].specialdata.is_some() {
             continue;
         }
 
         rtn = 1;
-        let floor = add_floor_mover(sec);
+        let floor = add_floor_mover(level, sec);
 
-        // Setting up the floor runs no play code, so one borrow serves it.
-        let mut level = LEVEL.borrow_mut();
-        let level = &mut *level;
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).kind = floortype;
         (*floor).crush = 0;
@@ -533,23 +532,24 @@ pub unsafe fn EV_DoFloor(_world: &mut World, line: &line_t, floortype: i32) -> i
 /// # Safety
 ///
 /// The thinker list must be initialised and a level loaded.
-pub unsafe fn EV_BuildStairs(_world: &mut World, line: &line_t, stype: i32) -> i32 {
+pub unsafe fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i32 {
+    let level = &mut world.level;
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(level, line, secnum);
         secnum
     } >= 0
     {
         let mut sec = SectorId::new(secnum as usize);
 
-        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+        if level.sectors[sec].specialdata.is_some() {
             continue;
         }
 
         rtn = 1;
-        let mut floor = add_floor_mover(sec);
+        let mut floor = add_floor_mover(level, sec);
         (*floor).thinker.kind = ThinkerKind::Floor;
         (*floor).direction = 1;
         (*floor).sector = sec;
@@ -561,20 +561,16 @@ pub unsafe fn EV_BuildStairs(_world: &mut World, line: &line_t, stype: i32) -> i
         };
 
         (*floor).speed = speed;
-        let (floorheight, texture) = {
-            let level = LEVEL.borrow();
-            (level.sectors[sec].floorheight, level.sectors[sec].floorpic)
-        };
+        let (floorheight, texture) = (level.sectors[sec].floorheight, level.sectors[sec].floorpic);
         let mut height: fixed_t = floorheight + stairsize;
         (*floor).floordestheight = height;
 
         // Find next sector to raise
         loop {
             let mut ok: i32 = 0;
-            let linecount = LEVEL.borrow().sectors[sec].linecount;
+            let linecount = level.sectors[sec].linecount;
             for i in 0..linecount as usize {
                 let tsec = {
-                    let level = LEVEL.borrow();
                     let l = &level.lines[level.sector_lines(sec)[i]];
                     if l.flags & LinedefFlag::TWOSIDED as i16 == 0 {
                         continue;
@@ -602,7 +598,7 @@ pub unsafe fn EV_BuildStairs(_world: &mut World, line: &line_t, stype: i32) -> i
 
                 sec = tsec;
                 secnum = tsec.index() as i32;
-                floor = add_floor_mover(sec);
+                floor = add_floor_mover(level, sec);
                 (*floor).thinker.kind = ThinkerKind::Floor;
                 (*floor).direction = 1;
                 (*floor).sector = sec;
@@ -625,10 +621,7 @@ mod tests {
         super::*,
         crate::engine::{
             map::{LineId, VertexId, sector_t, slopetype_t},
-            play::{
-                setup::{LEVEL_TEST_LOCK, LevelState},
-                tick::{P_InitThinkers, THINKER_TEST_LOCK},
-            },
+            play::tick::{P_InitThinkers, THINKER_TEST_LOCK},
             wad::format::LinedefFlag,
         },
         std::sync::Mutex,
@@ -683,7 +676,6 @@ mod tests {
     /// must move on from each new step, not only from the tagged sector.
     #[test]
     fn build_stairs_raises_every_step() {
-        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
         let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
         let step_sector = |tag: i16, lines: usize, linecount: i32| {
             let mut sector = sector_t::ZERO;
@@ -693,7 +685,8 @@ mod tests {
             sector.linecount = linecount;
             sector
         };
-        let level = LevelState {
+        let mut world = World::new();
+        world.level = LevelState {
             numsectors: 3,
             sectors: vec![
                 step_sector(1, 0, 1),
@@ -709,17 +702,15 @@ mod tests {
             ],
             ..LevelState::new()
         };
-        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
         let mut trigger = step_line(0, 1);
         trigger.tag = 1;
 
         // SAFETY: the thinker list is set up just before the call.
         let destinations: Vec<fixed_t> = unsafe {
             P_InitThinkers();
-            let mut world = World::new();
             assert_eq!(EV_BuildStairs(&mut world, &trigger, stair_build8), 1);
-            LEVEL
-                .borrow()
+            world
+                .level
                 .sectors
                 .iter()
                 .map(|sector| {
@@ -733,6 +724,5 @@ mod tests {
         assert_eq!(destinations, [8 * FRACUNIT, 16 * FRACUNIT, 24 * FRACUNIT]);
 
         P_InitThinkers();
-        *LEVEL.borrow_mut() = saved;
     }
 }

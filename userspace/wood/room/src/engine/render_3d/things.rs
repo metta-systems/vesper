@@ -22,11 +22,7 @@ use crate::engine::{
         fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
         tables::ANG45,
     },
-    play::{
-        info::*,
-        mobj::mobj_t,
-        setup::{LEVEL, LevelState},
-    },
+    play::{info::*, mobj::mobj_t, setup::LevelState},
     world::WORLD,
 };
 
@@ -882,17 +878,17 @@ fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
 /// Uses `sec.validcount` to skip sectors that were already processed this
 /// frame (a sector can appear in multiple subsectors). Sets `spritelights`
 /// from the sector's light level, then calls `R_ProjectSprite` for every
-/// thing in the sector's thing list. `level` is the BSP traversal's borrow
-/// of the level.
+/// thing in the sector's thing list. `level` and `validcount` (the frame's
+/// stamp, the world's `validcount`) come from the BSP traversal's borrow of
+/// the world.
 ///
 /// # Safety
 /// - `sec` must be a sector of `level` whose thing list links live map
 ///   objects.
-/// - The world's `validcount`, `scalelight`, `extralight` must be
-///   initialised for the current frame before this function is called.
-pub unsafe fn R_AddSprites(level: &mut LevelState, sec: SectorId) {
+/// - `scalelight` and `extralight` must be initialised for the current
+///   frame before this function is called.
+pub unsafe fn R_AddSprites(level: &mut LevelState, validcount: i32, sec: SectorId) {
     let sec = &mut level.sectors[sec];
-    let validcount = WORLD.borrow().scratch.validcount;
 
     // BSP is traversed by subsector.
     // A sector might have been split into several subsectors during BSP building.
@@ -1084,14 +1080,12 @@ pub unsafe fn R_DrawPlayerSprites() {
     };
     // Play does not run while a frame is drawn, so the renderer draws a
     // copy of the psprites.
-    let (mo, psprites) = {
+    let (psprites, lightlevel) = {
         let world = WORLD.borrow();
         let player = &world.players[viewplayer];
-        (player.mo().ptr(), player.psprites)
-    };
-    let lightlevel = {
-        let level = LEVEL.borrow();
-        level.sectors[level.subsectors[(*mo).subsector].sector].lightlevel
+        let mo = player.mo().ptr();
+        let lightlevel = world.level.subsector_sector((*mo).subsector).lightlevel;
+        (player.psprites, lightlevel)
     };
     SPRITES.borrow_mut().spritelights = sprite_light_row(lightlevel, extralight);
 
@@ -1210,7 +1204,8 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
     let spr = *spr;
     let viewheight = DRAW.borrow().viewheight;
     let ds_p = BSP.borrow().ds_p;
-    let level = LEVEL.borrow();
+    let world = WORLD.borrow();
+    let level = &world.level;
 
     {
         let mut pool = VISSPRITES.borrow_mut();
@@ -1249,7 +1244,7 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
 
             if scale < spr.scale
                 || (lowscale < spr.scale
-                    && R_PointOnSegSide(&level, spr.gx, spr.gy, ds.curline) == 0)
+                    && R_PointOnSegSide(level, spr.gx, spr.gy, ds.curline) == 0)
             {
                 // Masked mid texture?
                 if !ds.maskedtexturecol.is_null() {
@@ -1366,7 +1361,27 @@ pub unsafe fn R_DrawMasked() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::engine::map::sector_t};
+
+    /// The sprite pass stamps each sector it visits with the frame's
+    /// `validcount` handed down by the BSP traversal, so a sector split
+    /// into several subsectors adds its things once; other sectors keep
+    /// their stamp.
+    #[test]
+    fn add_sprites_stamps_the_sector_with_the_frame_validcount() {
+        let mut level = LevelState {
+            numsectors: 2,
+            sectors: vec![sector_t::ZERO; 2],
+            ..LevelState::new()
+        };
+        // SAFETY: the sectors have no things to project.
+        unsafe {
+            R_AddSprites(&mut level, 7, SectorId::new(1));
+            R_AddSprites(&mut level, 7, SectorId::new(1));
+        }
+        assert_eq!(level.sectors[1].validcount, 7);
+        assert_eq!(level.sectors[0].validcount, 0);
+    }
 
     /// Draw a vissprite into a fresh pool slot with the given scale.
     unsafe fn push_vissprite(scale: i32) {

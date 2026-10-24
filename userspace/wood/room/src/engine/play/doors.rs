@@ -16,7 +16,6 @@ use crate::engine::{
     play::{
         floor::T_MovePlane,
         mobj::MobjId,
-        setup::LEVEL,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
             DoorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
@@ -167,7 +166,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
     let door = door_id.ptr();
     let res: i32;
     let clear_specialdata =
-        |sector: SectorId| LEVEL.borrow_mut().sectors[sector].specialdata = None;
+        |world: &mut World, sector: SectorId| world.level.sectors[sector].specialdata = None;
 
     match (*door).direction {
         0 => {
@@ -207,17 +206,17 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
         }
         -1 => {
             // DOWN
-            let floorheight = LEVEL.borrow().sectors[(*door).sector].floorheight;
+            let floorheight = world.level.sectors[(*door).sector].floorheight;
             res = T_MovePlane(world, (*door).sector, (*door).speed, floorheight, 0, 1, -1);
             if res == result_pastdest {
                 match (*door).kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
-                        clear_specialdata((*door).sector);
+                        clear_specialdata(world, (*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
                         S_StartSectorSound(world, (*door).sector, Sfx::Bdcls as i32);
                     }
                     x if x == vld_normal || x == vld_close => {
-                        clear_specialdata((*door).sector);
+                        clear_specialdata(world, (*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
                     }
                     x if x == vld_close30ThenOpen => {
@@ -256,7 +255,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                         (*door).topcountdown = (*door).topwait;
                     }
                     x if x == vld_close30ThenOpen || x == vld_blazeOpen || x == vld_open => {
-                        clear_specialdata((*door).sector);
+                        clear_specialdata(world, (*door).sector);
                         P_RemoveThinker(&mut (*door).thinker);
                     }
                     _ => {}
@@ -325,12 +324,12 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
     let mut rtn: i32 = 0;
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(&world.level, line, secnum);
         secnum
     } >= 0
     {
         let sec = SectorId::new(secnum as usize);
-        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+        if world.level.sectors[sec].specialdata.is_some() {
             continue;
         }
 
@@ -338,7 +337,7 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
         let door_id = new_thinker::<vldoor_t>();
         let door = door_id.ptr();
         P_AddThinker(ThinkerId::Door(door_id));
-        LEVEL.borrow_mut().sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
+        world.level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
 
         (*door).thinker.kind = ThinkerKind::Door;
         (*door).sector = sec;
@@ -347,9 +346,9 @@ pub unsafe fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
         (*door).speed = VDOORSPEED;
 
         let (lowest_ceiling, ceilingheight) = {
-            let level = LEVEL.borrow();
+            let level = &world.level;
             (
-                P_FindLowestCeilingSurrounding(&level, sec),
+                P_FindLowestCeilingSurrounding(level, sec),
                 level.sectors[sec].ceilingheight,
             )
         };
@@ -458,7 +457,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
     let side = 0;
     // The line's record as the use found it; clearing its special below
     // writes the level's line.
-    let line_record = LEVEL.borrow().lines[line_id];
+    let line_record = world.level.lines[line_id];
     let line = &line_record;
 
     // Check for locks
@@ -485,7 +484,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
     }
 
     let (sec, special) = {
-        let level = LEVEL.borrow();
+        let level = &world.level;
         let sec = level.sides[line.sidenum[(side ^ 1) as usize] as usize].sector;
         (sec, level.sectors[sec].specialdata)
     };
@@ -533,7 +532,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
     let door_id = new_thinker::<vldoor_t>();
     let door = door_id.ptr();
     P_AddThinker(ThinkerId::Door(door_id));
-    let mut level = LEVEL.borrow_mut();
+    let level = &mut world.level;
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     (*door).thinker.kind = ThinkerKind::Door;
     (*door).sector = sec;
@@ -562,7 +561,7 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
     }
 
     // find the top and bottom of the movement range
-    (*door).topheight = P_FindLowestCeilingSurrounding(&level, sec);
+    (*door).topheight = P_FindLowestCeilingSurrounding(level, sec);
     (*door).topheight -= 4 * FRACUNIT;
 }
 
@@ -576,13 +575,13 @@ pub unsafe fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId)
 /// # Panics
 ///
 /// If `sec` is not a sector of the current map.
-pub fn P_SpawnDoorCloseIn30(_world: &mut World, sec: SectorId) {
+pub fn P_SpawnDoorCloseIn30(world: &mut World, sec: SectorId) {
     let door_id = new_thinker::<vldoor_t>();
 
     P_AddThinker(ThinkerId::Door(door_id));
 
     {
-        let mut level = LEVEL.borrow_mut();
+        let level = &mut world.level;
         level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
         level.sectors[sec].special = 0;
     }
@@ -606,12 +605,12 @@ pub fn P_SpawnDoorCloseIn30(_world: &mut World, sec: SectorId) {
 /// # Panics
 ///
 /// If `sec` is not a sector of the current map.
-pub fn P_SpawnDoorRaiseIn5Mins(_world: &mut World, sec: SectorId, _secnum: i32) {
+pub fn P_SpawnDoorRaiseIn5Mins(world: &mut World, sec: SectorId, _secnum: i32) {
     let door_id = new_thinker::<vldoor_t>();
 
     P_AddThinker(ThinkerId::Door(door_id));
 
-    let mut level = LEVEL.borrow_mut();
+    let level = &mut world.level;
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     level.sectors[sec].special = 0;
 
@@ -622,7 +621,7 @@ pub fn P_SpawnDoorRaiseIn5Mins(_world: &mut World, sec: SectorId, _secnum: i32) 
     door.direction = 2;
     door.kind = vld_raiseIn5Mins;
     door.speed = VDOORSPEED;
-    door.topheight = P_FindLowestCeilingSurrounding(&level, sec);
+    door.topheight = P_FindLowestCeilingSurrounding(level, sec);
     door.topheight -= 4 * FRACUNIT;
     door.topwait = VDOORWAIT;
     door.topcountdown = 5 * 60 * TICRATE;

@@ -8,10 +8,11 @@
 //! The C globals live in [`BspState`] ([`BSP`]) and, for the occlusion list
 //! that the clippers hold across their `R_StoreWallRange` calls,
 //! [`ClipSegsState`] ([`CLIP_SEGS`]). The recursion never holds a borrow of
-//! those across a call into the wall, plane or sprite renderers. The level
-//! geometry is borrowed once for the whole traversal (the walls mark their
-//! linedefs as seen and the sprite pass marks sectors as visited) and passed
-//! down as `&mut LevelState`.
+//! those across a call into the wall, plane or sprite renderers. The world
+//! is borrowed once for the whole traversal (by `R_RenderPlayerView`); its
+//! level is passed down as `&mut LevelState` (the walls mark their linedefs
+//! as seen and the sprite pass marks sectors as visited) together with the
+//! frame's `validcount`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -861,11 +862,13 @@ pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
 ///
 /// Corresponds to `R_Subsector` in `r_bsp.c`.
 ///
+/// `validcount` is the frame's sector stamp (see [`R_AddSprites`]).
+///
 /// # Safety
 /// `num` must be a subsector of `level` (the index is bounds-checked). The
 /// view state and the plane, opening and sprite buffers must be set up for
 /// the current frame.
-pub unsafe fn R_Subsector(level: &mut LevelState, num: SubsectorId) {
+pub unsafe fn R_Subsector(level: &mut LevelState, validcount: i32, num: SubsectorId) {
     let viewz = {
         let mut view = VIEW.borrow_mut();
         view.sscount += 1;
@@ -901,7 +904,7 @@ pub unsafe fn R_Subsector(level: &mut LevelState, num: SubsectorId) {
         };
     PLANES.borrow_mut().ceilingplane = ceilingplane;
 
-    R_AddSprites(level, frontsector_id);
+    R_AddSprites(level, validcount, frontsector_id);
 
     let firstline = sub.firstline as usize;
     for line in firstline..firstline + sub.numlines.max(0) as usize {
@@ -929,15 +932,15 @@ pub unsafe fn R_Subsector(level: &mut LevelState, num: SubsectorId) {
 ///
 /// Corresponds to `R_RenderBSPNode` in `r_bsp.c`.
 ///
-/// The caller borrows the level for the whole traversal and passes it as
-/// `level`.
+/// The caller borrows the world for the whole traversal and passes its
+/// level as `level` and the frame's sector stamp as `validcount`.
 ///
 /// # Safety
 /// `bspnum` must be either a node index into `level.nodes` or a value with
 /// the `NF_SUBSECTOR` flag set whose lower bits are a subsector index of
 /// `level`. The view position, the occlusion list and the plane, opening
 /// and sprite buffers must be initialized for the current frame.
-pub unsafe fn R_RenderBSPNode(level: &mut LevelState, bspnum: i32) {
+pub unsafe fn R_RenderBSPNode(level: &mut LevelState, validcount: i32, bspnum: i32) {
     // Found a subsector?
     if (bspnum as u32) & NF_SUBSECTOR != 0 {
         let sub_num = if bspnum == -1 {
@@ -951,7 +954,7 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, bspnum: i32) {
             sub_num,
             bspnum as u32
         );
-        R_Subsector(level, SubsectorId::new(sub_num));
+        R_Subsector(level, validcount, SubsectorId::new(sub_num));
         return;
     }
 
@@ -972,7 +975,7 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, bspnum: i32) {
         bsp.children[(side ^ 1) as usize] as u32,
     );
 
-    R_RenderBSPNode(level, bsp.children[side as usize] as i32);
+    R_RenderBSPNode(level, validcount, bsp.children[side as usize] as i32);
 
     let back_visible = R_CheckBBox(&bsp.bbox[(side ^ 1) as usize]) != 0;
     let back_box = bsp.bbox[(side ^ 1) as usize];
@@ -987,7 +990,7 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, bspnum: i32) {
         back_box[BBox::BOTTOM],
     );
     if back_visible {
-        R_RenderBSPNode(level, bsp.children[(side ^ 1) as usize] as i32);
+        R_RenderBSPNode(level, validcount, bsp.children[(side ^ 1) as usize] as i32);
     }
 }
 

@@ -453,7 +453,6 @@ use crate::engine::{
     game::{G_ExitLevel, G_SecretExitLevel},
     play::{
         doors::{EV_DoDoor, EV_DoLockedDoor, EV_VerticalDoor},
-        setup::LEVEL,
         spec::EV_DoDonut,
     },
     render_3d::data::R_TextureNumForName,
@@ -526,7 +525,8 @@ pub fn P_InitSwitchList() {
 /// `line` must be a linedef of the loaded level.
 pub fn P_StartButton(world: &mut World, line: LineId, w: i32, texture: i32, time: i32) {
     {
-        let buttonlist = &mut world.active.buttons;
+        let World { level, active, .. } = world;
+        let buttonlist = &mut active.buttons;
 
         // See if button is already pressed
         for button in buttonlist.iter() {
@@ -541,7 +541,7 @@ pub fn P_StartButton(world: &mut World, line: LineId, w: i32, texture: i32, time
                 button.where_ = w;
                 button.btexture = texture;
                 button.btimer = time;
-                button.soundorg = LEVEL.borrow().lines[line].frontsector;
+                button.soundorg = level.lines[line].frontsector;
                 return;
             }
         }
@@ -566,10 +566,10 @@ pub fn P_StartButton(world: &mut World, line: LineId, w: i32, texture: i32, time
 /// one-shot.  Exit switches (special 11) play `sfx_swtchx` instead of the
 /// normal `sfx_swtchn`.
 ///
-/// `line` must be a linedef of the loaded level, which must not be borrowed.
+/// `line` must be a linedef of the loaded level.
 pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
     let (sidenum, special, side) = {
-        let mut level = LEVEL.borrow_mut();
+        let level = &mut world.level;
         let linedef = &mut level.lines[line];
         if useAgain == 0 {
             linedef.special = 0;
@@ -596,21 +596,21 @@ pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
     for i in 0..(numswitches * 2) as usize {
         if switchlist[i] == texTop as i32 {
             start_button_sound(world, button_soundorg, sound);
-            LEVEL.borrow_mut().sides[sidenum].toptexture = switchlist[i ^ 1] as i16;
+            world.level.sides[sidenum].toptexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, top, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texMid as i32 {
             start_button_sound(world, button_soundorg, sound);
-            LEVEL.borrow_mut().sides[sidenum].midtexture = switchlist[i ^ 1] as i16;
+            world.level.sides[sidenum].midtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, middle, switchlist[i], BUTTONTIME);
             }
             return;
         } else if switchlist[i] == texBot as i32 {
             start_button_sound(world, button_soundorg, sound);
-            LEVEL.borrow_mut().sides[sidenum].bottomtexture = switchlist[i ^ 1] as i16;
+            world.level.sides[sidenum].bottomtexture = switchlist[i ^ 1] as i16;
             if useAgain != 0 {
                 P_StartButton(world, line, bottom, switchlist[i], BUTTONTIME);
             }
@@ -657,7 +657,7 @@ pub unsafe fn P_UseSpecialLine(
 ) -> i32 {
     // The line's record as the use found it; the actions read its tag and
     // sectors, and every write goes to the level through `line_id`.
-    let line_record = LEVEL.borrow().lines[line_id];
+    let line_record = world.level.lines[line_id];
     let line = &line_record;
 
     // Err...

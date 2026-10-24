@@ -13,11 +13,7 @@ use zerocopy::IntoBytes;
 use crate::engine::{
     map::{LineId, slopetype_t},
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
-    play::{
-        info::*,
-        mobj::MobjId,
-        setup::{LEVEL, LevelState, SPAWN_SPOTS, blockmap_origin},
-    },
+    play::{info::*, mobj::MobjId, setup::LevelState},
     render_3d::main::R_PointInSubsector,
     world::World,
 };
@@ -423,12 +419,12 @@ pub fn P_LineOpening(opening: &mut MapUtlState, level: &LevelState, linedef: Lin
 /// # Safety
 /// `thing_id` must name an initialised map object whose list links
 /// (`snext`, `sprev`, `bnext`, `bprev`) name objects of the loaded level,
-/// and no reference to those objects may be live. The global blockmap
-/// arrays from `p_setup` must be initialised.
-pub unsafe fn P_UnsetThingPosition(_world: &mut World, thing_id: MobjId) {
+/// and no reference to those objects may be live. The world's level must be
+/// loaded.
+pub unsafe fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
     unsafe {
         let thing = &mut *thing_id.ptr();
-        let mut level = LEVEL.borrow_mut();
+        let level = &mut world.level;
         if (thing.flags & MF_NOSECTOR) == 0 {
             if let Some(snext) = thing.snext {
                 (*snext.ptr()).sprev = thing.sprev;
@@ -481,13 +477,13 @@ pub unsafe fn P_UnsetThingPosition(_world: &mut World, thing_id: MobjId) {
 /// # Safety
 /// `thing_id` must name an initialised map object, and no reference to the
 /// objects at the head of its new sector and block lists may be live. The
-/// global map data (sectors, blockmap) from `p_setup` must be loaded.
-pub unsafe fn P_SetThingPosition(_world: &mut World, thing_id: MobjId) {
+/// world's level must be loaded.
+pub unsafe fn P_SetThingPosition(world: &mut World, thing_id: MobjId) {
     unsafe {
         let thing = &mut *thing_id.ptr();
-        let ss = R_PointInSubsector(thing.x, thing.y);
+        let level = &mut world.level;
+        let ss = R_PointInSubsector(level, thing.x, thing.y);
         thing.subsector = ss;
-        let mut level = LEVEL.borrow_mut();
         if (thing.flags & MF_NOSECTOR) == 0 {
             let sector = level.subsectors[ss].sector;
             let sec = &mut level.sectors[sector];
@@ -543,10 +539,10 @@ pub fn P_BlockLinesIterator(
 ) -> bool {
     // The callback can start a nested traversal whose intercept overrun
     // rewrites the blockmap dimensions; like C, this cell's list was located
-    // before any callback ran. The callback may also borrow the level, so
-    // each line is read and marked under a borrow that ends before the call.
+    // before any callback ran. The callback takes the world, so each line is
+    // read and marked under a borrow that ends before the call.
     let mut list = {
-        let level = LEVEL.borrow();
+        let level = &world.level;
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
             return true;
         }
@@ -554,13 +550,13 @@ pub fn P_BlockLinesIterator(
     };
     loop {
         let ld = {
-            let mut level = LEVEL.borrow_mut();
+            let World { level, scratch, .. } = &mut *world;
             let linenum = level.blockmaplump[list];
             if linenum == -1 {
                 return true;
             }
             list += 1;
-            let validcount = world.scratch.validcount;
+            let validcount = scratch.validcount;
             let line = &mut level.lines[linenum as usize];
             if line.validcount == validcount {
                 continue;
@@ -597,7 +593,7 @@ pub unsafe fn P_BlockThingsIterator(
     mut func: impl FnMut(&mut World, MobjId) -> bool,
 ) -> bool {
     let mut mobj = {
-        let level = LEVEL.borrow();
+        let level = &world.level;
         if x < 0 || y < 0 || x >= level.bmapwidth || y >= level.bmapheight {
             return true;
         }
@@ -630,8 +626,8 @@ pub unsafe fn P_BlockThingsIterator(
 ///
 /// Based on PrBoom-plus research by Andrey Budko (entryway).
 ///
-/// No guard on the level or the spawn spots may be live (the overrun writes
-/// the blockmap dimensions and the player starts).
+/// The overrun writes the play scratch, the blockmap dimensions and the
+/// player starts, all through `world`.
 fn InterceptsMemoryOverrun(world: &mut World, location: i32, value: i32) {
     match location {
         // 0..12: an unnamed word, `earlyout`, `intercept_p` (skipped).
@@ -646,20 +642,19 @@ fn InterceptsMemoryOverrun(world: &mut World, location: i32, value: i32) {
         176..216 => {
             // `playerstarts`, an array of `short`: the value lands in two
             // consecutive shorts, low half first.
-            let mut spots = SPAWN_SPOTS.borrow_mut();
-            let shorts = spots.playerstarts.as_mut_bytes();
+            let shorts = world.level.playerstarts.as_mut_bytes();
             let offset = (location - 176) as usize / 2 * 2;
             shorts[offset..offset + 2].copy_from_slice(&((value & 0xffff) as i16).to_le_bytes());
             shorts[offset + 2..offset + 4]
                 .copy_from_slice(&(((value >> 16) & 0xffff) as i16).to_le_bytes());
         }
         // 216..220: `blocklinks` (skipped).
-        220..224 => LEVEL.borrow_mut().bmapwidth = value,
+        220..224 => world.level.bmapwidth = value,
         // 224..228: `blockmap` (skipped).
-        228..232 => LEVEL.borrow_mut().bmaporgx = value,
-        232..236 => LEVEL.borrow_mut().bmaporgy = value,
+        228..232 => world.level.bmaporgx = value,
+        232..236 => world.level.bmaporgy = value,
         // 236..240: `blockmaplump` (skipped).
-        240..244 => LEVEL.borrow_mut().bmapheight = value,
+        240..244 => world.level.bmapheight = value,
         _ => {}
     }
 }
@@ -671,16 +666,13 @@ fn InterceptsMemoryOverrun(world: &mut World, location: i32, value: i32) {
 /// calls `InterceptsMemoryOverrun` three times (for `frac`, `isaline`, and
 /// `d`) to reproduce those writes. `d` is the address C stores: the thing's,
 /// or for a line the address of its record in the level's `lines`.
-///
-/// No guard on the level may be live (the overrun writes the blockmap
-/// dimensions).
 fn InterceptsOverrun(world: &mut World, num_intercepts: usize, intercept: intercept_t) {
     if num_intercepts <= MAXINTERCEPTS_ORIGINAL {
         return;
     }
     let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL - 1) as i32 * 12;
     let address = match intercept.hit {
-        InterceptHit::Line(line) => (&raw const LEVEL.borrow().lines[line]).addr(),
+        InterceptHit::Line(line) => (&raw const world.level.lines[line]).addr(),
         InterceptHit::Thing(thing) => thing.address(),
     };
     InterceptsMemoryOverrun(world, location, intercept.frac);
@@ -724,7 +716,7 @@ fn add_intercept(world: &mut World, intercept: intercept_t) {
 pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
     let (trace, earlyout) = (world.scratch.maputl.trace, world.scratch.maputl.earlyout);
     let (frac, backsector) = {
-        let level = LEVEL.borrow();
+        let level = &world.level;
         let line = &level.lines[ld];
         let (s1, s2) = if trace.dx > FRACUNIT * 16
             || trace.dy > FRACUNIT * 16
@@ -738,8 +730,8 @@ pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
             )
         } else {
             (
-                P_PointOnLineSide(&level, trace.x, trace.y, ld),
-                P_PointOnLineSide(&level, trace.x + trace.dx, trace.y + trace.dy, ld),
+                P_PointOnLineSide(level, trace.x, trace.y, ld),
+                P_PointOnLineSide(level, trace.x + trace.dx, trace.y + trace.dy, ld),
             )
         };
         if s1 == s2 {
@@ -751,7 +743,7 @@ pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
             dx: 0,
             dy: 0,
         };
-        P_MakeDivline(&level, ld, &mut dl);
+        P_MakeDivline(level, ld, &mut dl);
         (P_InterceptVector(&trace, &dl), line.backsector)
     };
     if frac < 0 {
@@ -906,7 +898,7 @@ pub unsafe fn P_PathTraverse(
     trav: impl FnMut(&mut World, intercept_t) -> bool,
 ) -> bool {
     world.scratch.validcount = world.scratch.validcount.wrapping_add(1);
-    let (bmaporgx, bmaporgy) = blockmap_origin();
+    let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
     let mut x1 = x1;
     let mut y1 = y1;
     if ((x1 - bmaporgx) & (MAPBLOCKSIZE - 1)) == 0 {
@@ -1007,7 +999,6 @@ mod tests {
             map::{VertexId, line_t},
             play::{
                 mobj::mobj_t,
-                setup::LEVEL_TEST_LOCK,
                 tick::{MOBJ_ARENA, P_InitThinkers, THINKER_TEST_LOCK, new_thinker},
             },
         },
@@ -1038,19 +1029,16 @@ mod tests {
     /// nothing.
     #[test]
     fn block_lines_iterator_visits_each_line_once_per_validcount() {
-        let _guard = LEVEL_TEST_LOCK.lock().unwrap();
         // 2x1 grid: header [orgx, orgy, width, height], the two cells' list
         // offsets, then cell 0 = [line 0, line 1] and cell 1 = [line 1].
-        let level = LevelState {
+        let mut world = World::new();
+        world.level = LevelState {
             bmapwidth: 2,
             bmapheight: 1,
             blockmaplump: vec![0, 0, 2, 1, 6, 9, 0, 1, -1, 1, -1],
             lines: vec![line_record(); 2],
             ..LevelState::new()
         };
-        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
-
-        let mut world = World::new();
         world.scratch.validcount += 1;
         let mut visited = Vec::new();
         for x in 0..3 {
@@ -1063,13 +1051,12 @@ mod tests {
         assert_eq!(visited, [LineId::new(0), LineId::new(1)]);
         let validcount = world.scratch.validcount;
         assert!(
-            LEVEL
-                .borrow()
+            world
+                .level
                 .lines
                 .iter()
                 .all(|line| line.validcount == validcount)
         );
-        *LEVEL.borrow_mut() = saved;
     }
 
     /// A thing removed by the callback during a blockmap walk (unlinked and
@@ -1077,7 +1064,6 @@ mod tests {
     /// it, as C does; the list itself no longer holds the removed thing.
     #[test]
     fn block_things_iterator_continues_after_removal_via_bnext() {
-        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
         let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
         P_InitThinkers();
 
@@ -1094,15 +1080,13 @@ mod tests {
                 mobj.bnext = things.get(index + 1).copied();
             }
         }
-        let level = LevelState {
+        let mut world = World::new();
+        world.level = LevelState {
             bmapwidth: 1,
             bmapheight: 1,
             blocklinks: vec![Some(things[0])],
             ..LevelState::new()
         };
-        let saved = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
-
-        let mut world = World::new();
         let mut visited = Vec::new();
         // SAFETY: the cell links only the things made above; the removed
         // one stays readable through its stale handle.
@@ -1133,7 +1117,6 @@ mod tests {
         assert!(!completed);
         assert_eq!(visited, [things[0]]);
 
-        *LEVEL.borrow_mut() = saved;
         P_InitThinkers();
     }
 

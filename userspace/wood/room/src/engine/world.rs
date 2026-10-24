@@ -23,6 +23,7 @@ use crate::engine::{
         mobj::{MobjId, MobjState},
         plats::PlatState,
         pspr::PsprState,
+        setup::LevelState,
         sight::SightState,
         switch::{MAXBUTTONS, button_t},
         user::UserState,
@@ -31,15 +32,16 @@ use crate::engine::{
 
 /// The play simulation's state.
 ///
-/// The level, the map object arena and the thinkers still live in their
-/// subsystem `Global`s. They are to join as `pub` fields too, so callers
-/// can split borrows:
+/// The fields are `pub` so callers can split borrows (`let World { level,
+/// scratch, .. } = world;`). The map object arena and the thinkers still
+/// live in their subsystem `Global`s. They are to join as fields too:
 ///
-/// - `level`: the loaded level (`LEVEL`, spawn spots, player starts);
 /// - `mobjs`: the map object arena (`MOBJ_ARENA`);
 /// - `thinkers`: the thinker list and the other thinker arenas (`TICK`,
 ///   `CEILING_ARENA` ... `FIRE_FLICKER_ARENA`).
 pub struct World {
+    /// The loaded level: geometry, blockmap, reject table and spawn spots.
+    pub level: LevelState,
     /// The player slots (C `players[MAXPLAYERS]`), indexed by `PlayerId`.
     pub players: [PlayerT; MAXPLAYERS],
     /// Current level time in tics (C `leveltime`), incremented once per
@@ -60,6 +62,7 @@ impl World {
     /// The state at program start: every player slot empty, no level.
     pub const fn new() -> Self {
         Self {
+            level: LevelState::new(),
             // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
             players: unsafe { std::mem::zeroed() },
             leveltime: 0,

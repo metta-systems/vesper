@@ -25,7 +25,6 @@ use crate::engine::{
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        setup::LEVEL,
         tick::{ThinkerId, ThinkerKind, thinkers},
     },
     sound::{S_StartSound, info::Sfx},
@@ -71,10 +70,10 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
         }
 
         let tag = line.tag;
-        let numsectors = LEVEL.borrow().numsectors;
+        let numsectors = world.level.numsectors;
 
         for i in 0..numsectors as usize {
-            if LEVEL.borrow().sectors[i].tag != tag {
+            if world.level.sectors[i].tag != tag {
                 continue;
             }
 
@@ -94,7 +93,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
                     continue;
                 }
 
-                let sector = LEVEL.borrow().subsectors[(*m).subsector].sector;
+                let sector = world.level.subsectors[(*m).subsector].sector;
                 // Wrong sector
                 if sector.index() != i {
                     continue;

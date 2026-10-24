@@ -59,10 +59,7 @@ use crate::engine::{
     intermission::{wbplayerstruct_t, wbstartstruct_t},
     math::tables::{finecosine, finesine, finetangent},
     misc::random::P_Random,
-    play::{
-        inter::maxammo,
-        setup::{LEVEL, deathmatch_p, deathmatchstart, playerstart},
-    },
+    play::inter::maxammo,
     wad::format::mapthing_t,
 };
 
@@ -1841,17 +1838,20 @@ pub fn G_PlayerReborn(world: &mut World, player: i32) {
 /// (4096, 5120, 6144, 7168) reproduce that table lookup exactly to keep
 /// demos compatible.
 ///
+/// `mthing` is a copy of the spot (C passes its address; the spot is only
+/// read).
+///
 /// # Safety
-/// Dereferences `mthing`; reads and mutates the players and the session's
-/// body queue.
-pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthing_t) -> boolean {
+/// The earlier players' map objects must be live on a first spawn; reads
+/// and mutates the players and the session's body queue.
+pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t) -> boolean {
     let spawning_player = playernum as usize;
     let Some(spawning_mo) = world.players[spawning_player].mo else {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
             let mo = world.players[i].mo().ptr();
-            if (*mo).x == ((*mthing).x.get() as fixed_t) << 16
-                && (*mo).y == ((*mthing).y.get() as fixed_t) << 16
+            if (*mo).x == (mthing.x.get() as fixed_t) << 16
+                && (*mo).y == (mthing.y.get() as fixed_t) << 16
             {
                 return 0;
             }
@@ -1859,8 +1859,8 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
         return 1;
     };
 
-    let x = ((*mthing).x.get() as fixed_t) << 16;
-    let y = ((*mthing).y.get() as fixed_t) << 16;
+    let x = (mthing.x.get() as fixed_t) << 16;
+    let y = (mthing.y.get() as fixed_t) << 16;
 
     if P_CheckPosition(world, spawning_mo, x, y) == 0 {
         return 0;
@@ -1884,10 +1884,10 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
     }
 
     // Spawn teleport fog
-    let ss = R_PointInSubsector(x, y);
+    let ss = R_PointInSubsector(&world.level, x, y);
 
     // Replicate vanilla signed-angle overflow (from PrBoom+)
-    let an_raw = (0x10000000i32).wrapping_mul((*mthing).angle.get() as i32 / 45);
+    let an_raw = (0x10000000i32).wrapping_mul(mthing.angle.get() as i32 / 45);
     let xa: fixed_t;
     let ya: fixed_t;
     match an_raw {
@@ -1916,7 +1916,7 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
         }
     }
 
-    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
+    let floorheight = world.level.subsector_sector(ss).floorheight;
     let mo = P_SpawnMobj(world, x + 20 * xa, y + 20 * ya, floorheight, MT_TFOG);
 
     if world.players[world.session.console()].viewz != 1 {
@@ -1941,20 +1941,22 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: *mut mapthi
 /// `playernum` must be in `0..MAXPLAYERS` and the level's deathmatch start
 /// table must already be populated by `P_SetupLevel`.
 pub unsafe fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
-    let selections = deathmatch_p().offset_from(deathmatchstart(0)) as i32;
+    let selections = world.level.deathmatch_p as i32;
     if selections < 4 {
         crate::i_error!("Only {} deathmatch spots, 4 required", selections);
     }
 
     for _ in 0..20 {
         let i = (P_Random(world) % selections) as usize;
-        if G_CheckSpot(world, playernum, deathmatchstart(i)) != 0 {
-            (*deathmatchstart(i)).kind.set((playernum + 1) as i16);
-            P_SpawnPlayer(world, deathmatchstart(i));
+        if G_CheckSpot(world, playernum, world.level.deathmatchstarts[i]) != 0 {
+            let start = &mut world.level.deathmatchstarts[i];
+            start.kind.set((playernum + 1) as i16);
+            let start = *start;
+            P_SpawnPlayer(world, start);
             return;
         }
     }
-    P_SpawnPlayer(world, playerstart(playernum as usize));
+    P_SpawnPlayer(world, world.level.playerstarts[playernum as usize]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1985,21 +1987,27 @@ pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
             return;
         }
 
-        if G_CheckSpot(world, playernum, playerstart(playernum as usize)) != 0 {
-            P_SpawnPlayer(world, playerstart(playernum as usize));
+        let own_start = world.level.playerstarts[playernum as usize];
+        if G_CheckSpot(world, playernum, own_start) != 0 {
+            P_SpawnPlayer(world, own_start);
             return;
         }
 
         for i in 0..MAXPLAYERS as i32 {
-            let start = playerstart(i as usize);
+            let mut start = world.level.playerstarts[i as usize];
             if G_CheckSpot(world, playernum, start) != 0 {
-                (*start).kind.set((playernum + 1) as i16);
+                // C fakes the spot's type for the spawn, then sets it to
+                // the slot's own type (which a spot never set by this map
+                // did not have before).
+                start.kind.set((playernum + 1) as i16);
                 P_SpawnPlayer(world, start);
-                (*start).kind.set((i + 1) as i16);
+                world.level.playerstarts[i as usize]
+                    .kind
+                    .set((i + 1) as i16);
                 return;
             }
         }
-        P_SpawnPlayer(world, playerstart(playernum as usize));
+        P_SpawnPlayer(world, world.level.playerstarts[playernum as usize]);
     }
 }
 

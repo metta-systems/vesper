@@ -22,7 +22,7 @@ use crate::engine::{
         info::*,
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
-        setup::LEVEL,
+        setup::MAX_DEATHMATCH_STARTS,
         tick::{P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t},
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
@@ -68,10 +68,7 @@ const exe_ultimate: i32 = 6;
 use crate::engine::{
     doom::stat::gameversion,
     game::G_PlayerReborn,
-    play::{
-        map::{P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove},
-        setup::{SPAWN_SPOTS, deathmatch_p, deathmatchstart, playerstart},
-    },
+    play::map::{P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove},
     render_3d::sky::SKY,
     status::stuff::ST_Start,
     world::World,
@@ -336,7 +333,7 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
                 if let Some(line) = world.scratch.map.ceilingline {
                     let skyflatnum = SKY.borrow().skyflatnum as i16;
                     let hits_sky = {
-                        let level = LEVEL.borrow();
+                        let level = &world.level;
                         level.lines[line]
                             .backsector
                             .is_some_and(|back| level.sectors[back].ceilingpic == skyflatnum)
@@ -379,7 +376,7 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
             || mo.momx < -FRACUNIT / 4
             || mo.momy > FRACUNIT / 4
             || mo.momy < -FRACUNIT / 4)
-        && mo.floorz != LEVEL.borrow().subsector_sector(mo.subsector).floorheight
+        && mo.floorz != world.level.subsector_sector(mo.subsector).floorheight
     {
         return;
     }
@@ -506,12 +503,12 @@ pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
         return;
     }
 
-    let floorheight = LEVEL.borrow().subsector_sector(mobj.subsector).floorheight;
+    let floorheight = world.level.subsector_sector(mobj.subsector).floorheight;
     let fog = P_SpawnMobj(world, mobj.x, mobj.y, floorheight, MT_TFOG);
     S_StartSound(world, fog, Sfx::Telept as i32);
 
-    let ss = R_PointInSubsector(x, y);
-    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
+    let ss = R_PointInSubsector(&world.level, x, y);
+    let floorheight = world.level.subsector_sector(ss).floorheight;
     let fog = P_SpawnMobj(world, x, y, floorheight, MT_TFOG);
     S_StartSound(world, fog, Sfx::Telept as i32);
 
@@ -628,8 +625,7 @@ pub unsafe fn P_SpawnMobj(world: &mut World, x: i32, y: i32, z: i32, kind: i32) 
     P_SetThingPosition(world, mobj);
 
     {
-        let level = LEVEL.borrow();
-        let sector = level.subsector_sector(mobj_ref.subsector);
+        let sector = world.level.subsector_sector(mobj_ref.subsector);
         mobj_ref.floorz = sector.floorheight;
         mobj_ref.ceilingz = sector.ceilingheight;
     }
@@ -710,8 +706,8 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
     let x = (mthing.x.get() as i32) << FRACBITS;
     let y = (mthing.y.get() as i32) << FRACBITS;
 
-    let ss = R_PointInSubsector(x, y);
-    let floorheight = LEVEL.borrow().subsector_sector(ss).floorheight;
+    let ss = R_PointInSubsector(&world.level, x, y);
+    let floorheight = world.level.subsector_sector(ss).floorheight;
     let fog = P_SpawnMobj(world, x, y, floorheight, MT_IFOG);
     S_StartSound(world, fog, Sfx::Itmbk as i32);
 
@@ -746,13 +742,14 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
 /// Reborns the player if necessary, initialises all HUD state, and sets up
 /// weapon psprites.  Skips the slot if the player is not in the current game.
 ///
+/// `mthing` is a copy of the start spot (C passes its address; the spot is
+/// only read).
+///
 /// # Safety
 ///
-/// `mthing` must be a valid, non-null pointer to a `mapthing_t` whose `type`
-/// field is in `0..=4`.  Must be called only during level load with zone
-/// memory active.
-pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: *mut mapthing_t) {
-    let mthing = &mut *mthing;
+/// `mthing`'s `type` field must be in `0..=4`.  Must be called only during
+/// level load with zone memory active.
+pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: mapthing_t) {
     let thing_type = mthing.kind.get();
     if thing_type as i32 == 0 {
         return;
@@ -822,10 +819,10 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
     let mut i: usize;
 
     if thing_type as i32 == 11 {
-        let deathmatch_p = deathmatch_p();
-        if deathmatch_p < deathmatchstart(10) {
-            *deathmatch_p = *mthing;
-            SPAWN_SPOTS.borrow_mut().deathmatch_p = deathmatch_p.add(1);
+        let level = &mut world.level;
+        if level.deathmatch_p < MAX_DEATHMATCH_STARTS {
+            level.deathmatchstarts[level.deathmatch_p] = *mthing;
+            level.deathmatch_p += 1;
         }
         return;
     }
@@ -835,9 +832,9 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
     }
 
     if thing_type as i32 <= 4 {
-        *playerstart((thing_type - 1) as usize) = *mthing;
+        world.level.playerstarts[(thing_type - 1) as usize] = *mthing;
         if world.session.deathmatch == 0 {
-            P_SpawnPlayer(world, mthing);
+            P_SpawnPlayer(world, *mthing);
         }
         return;
     }
@@ -1170,5 +1167,43 @@ mod tests {
         for (i, &t) in MobjState::new().itemrespawntime.iter().enumerate() {
             assert_eq!(t, 0, "itemrespawntime[{i}] should be 0 before level load");
         }
+    }
+
+    /// A THINGS record of type `kind` at `(x, 0)`.
+    fn map_thing(kind: i16, x: i16) -> mapthing_t {
+        let mut thing = mapthing_t::ZERO;
+        thing.kind.set(kind);
+        thing.x.set(x);
+        thing
+    }
+
+    /// Deathmatch starts (type 11) fill the level's array in order up to
+    /// its ten slots, later ones are dropped; in deathmatch a player start
+    /// (types 1-4) is recorded for its slot without spawning anyone.
+    #[test]
+    fn spawn_map_thing_records_the_level_start_spots() {
+        let mut world = World::new();
+        world.session.deathmatch = 1;
+        for x in 0..12 {
+            let mut start = map_thing(11, x);
+            // SAFETY: start spots are only recorded; nothing is spawned.
+            unsafe { P_SpawnMapThing(&mut world, &raw mut start) };
+        }
+        assert_eq!(world.level.deathmatch_p, MAX_DEATHMATCH_STARTS);
+        let recorded: Vec<i16> = world
+            .level
+            .deathmatchstarts
+            .iter()
+            .map(|start| start.x.get())
+            .collect();
+        assert_eq!(recorded, (0..10).collect::<Vec<i16>>());
+
+        let mut second_player_start = map_thing(2, 77);
+        // SAFETY: in deathmatch the player start is only recorded.
+        unsafe { P_SpawnMapThing(&mut world, &raw mut second_player_start) };
+        assert_eq!(world.level.playerstarts[1].x.get(), 77);
+        assert_eq!(world.level.playerstarts[1].kind.get(), 2);
+        assert_eq!(world.level.playerstarts[0].kind.get(), 0);
+        assert!(world.players.iter().all(|player| player.mo.is_none()));
     }
 }

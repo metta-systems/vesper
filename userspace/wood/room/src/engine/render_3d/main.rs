@@ -21,7 +21,7 @@ use crate::{
             fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, angle_t, fixed_t},
             tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, SlopeDiv},
         },
-        world::WORLD,
+        world::{WORLD, World},
     },
     types::Boolean,
 };
@@ -333,7 +333,7 @@ pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
 use crate::engine::{
     doom::main_loop::NetUpdate,
     misc::menu::MENU,
-    play::setup::{LEVEL, LevelState},
+    play::setup::LevelState,
     render_3d::{
         bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
         data::{R_InitData, RENDER_DATA},
@@ -975,10 +975,8 @@ const NF_SUBSECTOR: u32 = 0x8000;
 ///
 /// Equivalent to `R_PointInSubsector` in `r_main.c`.
 ///
-/// Reads the level's `nodes` (a level must be loaded), borrowing the level
-/// for the walk.
-pub fn R_PointInSubsector(x: fixed_t, y: fixed_t) -> SubsectorId {
-    let level = LEVEL.borrow();
+/// Reads `level`'s `nodes`.
+pub fn R_PointInSubsector(level: &LevelState, x: fixed_t, y: fixed_t) -> SubsectorId {
     let nodes = &level.nodes[..];
     // single subsector is a special case
     if nodes.is_empty() {
@@ -1086,10 +1084,14 @@ pub unsafe fn R_RenderPlayerView(player: PlayerId) {
 
     NetUpdate();
     {
-        // The traversal borrows the level once and hands it down.
-        let mut level = LEVEL.borrow_mut();
+        // The traversal borrows the world once and hands down the level,
+        // which it marks (automap "seen" line flags, sector sprite stamps),
+        // and the frame's `validcount` stamp. `NetUpdate` may run play, so
+        // the borrow ends before it.
+        let mut world = WORLD.borrow_mut();
+        let World { level, scratch, .. } = &mut *world;
         let root_node = level.nodes.len() as i32 - 1;
-        R_RenderBSPNode(&mut level, root_node);
+        R_RenderBSPNode(level, scratch.validcount, root_node);
     }
     NetUpdate();
     R_DrawPlanes();
@@ -1294,7 +1296,6 @@ mod tests {
 
     #[test]
     fn r_point_in_subsector_walks_the_nodes_to_a_leaf() {
-        let _guard = crate::engine::play::setup::LEVEL_TEST_LOCK.lock().unwrap();
         // One node on the vertical line x = 0 pointing north: the right
         // (front) child is subsector 1, the left (back) child subsector 0.
         let node = node_t {
@@ -1305,14 +1306,22 @@ mod tests {
             bbox: [[0; 4]; 2],
             children: [NF_SUBSECTOR as u16 | 1, NF_SUBSECTOR as u16],
         };
-        let saved_nodes = std::mem::take(&mut LEVEL.borrow_mut().nodes);
+        let mut level = LevelState::new();
         // Without nodes the level is a single subsector.
-        assert_eq!(R_PointInSubsector(5 * FRACUNIT, 0), SubsectorId::new(0));
+        assert_eq!(
+            R_PointInSubsector(&level, 5 * FRACUNIT, 0),
+            SubsectorId::new(0)
+        );
 
-        LEVEL.borrow_mut().nodes = vec![node];
-        assert_eq!(R_PointInSubsector(5 * FRACUNIT, 0), SubsectorId::new(1));
-        assert_eq!(R_PointInSubsector(-5 * FRACUNIT, 0), SubsectorId::new(0));
-        LEVEL.borrow_mut().nodes = saved_nodes;
+        level.nodes = vec![node];
+        assert_eq!(
+            R_PointInSubsector(&level, 5 * FRACUNIT, 0),
+            SubsectorId::new(1)
+        );
+        assert_eq!(
+            R_PointInSubsector(&level, -5 * FRACUNIT, 0),
+            SubsectorId::new(0)
+        );
     }
 
     #[test]

@@ -118,10 +118,7 @@ use crate::engine::{
     dehacked::DEH_String,
     game::demoplayback,
     interface::system::I_ConsoleStdout,
-    play::{
-        setup::LEVEL,
-        tick::{ThinkerId, ThinkerKind, thinkers},
-    },
+    play::tick::{ThinkerId, ThinkerKind, thinkers},
     render_3d::{sky::SKY, things::SPRITES},
     wad::{
         W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
@@ -129,6 +126,7 @@ use crate::engine::{
         format::{Column, mappatch_t, maptexture_t},
         lump_name, lump_names_equal, lumpinfo,
     },
+    world::World,
     zone::{Z_ChangeTag2, Z_Free, Z_Malloc},
 };
 
@@ -1099,14 +1097,14 @@ pub unsafe fn R_TextureNumForName(name: &[u8]) -> i32 {
 ///
 /// # Safety
 ///
-/// - All init functions (`R_InitData`, `p_setup` globals) must have run.
+/// - `R_InitData` must have run and `world`'s level must be loaded.
 /// - Must be called from the game-loop thread; touches global mutable state.
-pub unsafe fn R_PrecacheLevel() {
+pub unsafe fn R_PrecacheLevel(world: &World) {
     if demoplayback() != 0 {
         return;
     }
 
-    let level = LEVEL.borrow();
+    let level = &world.level;
     let sectors = &level.sectors[..level.numsectors as usize];
     let sides = &level.sides[..];
     let mut data = RENDER_DATA.borrow_mut();

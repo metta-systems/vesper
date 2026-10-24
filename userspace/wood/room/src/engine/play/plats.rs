@@ -17,7 +17,6 @@ use crate::{
         misc::random::P_Random,
         play::{
             floor::T_MovePlane,
-            setup::LEVEL,
             spec::{
                 P_FindHighestFloorSurrounding, P_FindLowestFloorSurrounding,
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
@@ -220,7 +219,7 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
         x if x == waiting => {
             (*plat).count -= 1;
             if (*plat).count == 0 {
-                if LEVEL.borrow().sectors[(*plat).sector].floorheight == (*plat).low {
+                if world.level.sectors[(*plat).sector].floorheight == (*plat).low {
                     (*plat).status = up;
                 } else {
                     (*plat).status = down;
@@ -266,13 +265,13 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
     }
 
     while {
-        secnum = P_FindSectorFromLineTag(&LEVEL.borrow(), line, secnum);
+        secnum = P_FindSectorFromLineTag(&world.level, line, secnum);
         secnum
     } >= 0
     {
         let sec = SectorId::new(secnum as usize);
 
-        if LEVEL.borrow().sectors[sec].specialdata.is_some() {
+        if world.level.sectors[sec].specialdata.is_some() {
             continue;
         }
 
@@ -281,11 +280,9 @@ pub unsafe fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount:
         let plat = plat_id.ptr();
         P_AddThinker(ThinkerId::Plat(plat_id));
 
-        // Setting up the platform runs no play code, so one borrow serves it;
-        // its sound starts once the borrow has ended.
+        // The platform's sound starts once it is set up.
         let sound = {
-            let mut level = LEVEL.borrow_mut();
-            let level = &mut *level;
+            let level = &mut world.level;
             (*plat).kind = plattype;
             (*plat).sector = sec;
             level.sectors[sec].specialdata = Some(ThinkerId::Plat(plat_id));
@@ -428,12 +425,13 @@ pub fn P_AddActivePlat(world: &mut World, plat: PlatId) {
 ///
 /// Corresponds to `P_RemoveActivePlat` in `p_plats.c`.
 pub fn P_RemoveActivePlat(world: &mut World, plat: PlatId) {
-    for slot in world.active.plats.activeplats.iter_mut() {
+    let World { level, active, .. } = world;
+    for slot in active.plats.activeplats.iter_mut() {
         if *slot == Some(plat) {
             // SAFETY: platforms are only reached through arena pointers, and
             // no reference to one is live while it is removed.
             let plat = unsafe { &mut *plat.ptr() };
-            LEVEL.borrow_mut().sectors[plat.sector].specialdata = None;
+            level.sectors[plat.sector].specialdata = None;
             P_RemoveThinker(&mut plat.thinker);
             *slot = None;
             return;

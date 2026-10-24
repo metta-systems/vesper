@@ -39,10 +39,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat},
             controls::{CONTROLS, ControlsState},
         },
-        play::{
-            maputl::MAPBLOCKUNITS,
-            setup::{LEVEL, blockmap_origin},
-        },
+        play::{maputl::MAPBLOCKUNITS, setup::LevelState},
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
         wad::{
@@ -975,16 +972,16 @@ fn AM_addMark(automap: &mut AutomapState) {
 /// `min_scale_mtof` is the smaller of the x- and y-axis "fit whole level"
 /// scales.  `max_scale_mtof` fits `2 * PLAYERRADIUS` within the frame height.
 ///
-/// Reads the loaded level's `vertexes` (from `P_LoadVertexes`).
+/// Reads `level`'s `vertexes` (from `P_LoadVertexes`).
 ///
 /// C origin: `AM_findMinMaxBoundaries` in am_map.c.
-fn AM_findMinMaxBoundaries(automap: &mut AutomapState) {
+fn AM_findMinMaxBoundaries(automap: &mut AutomapState, level: &LevelState) {
     automap.min_x = i32::MAX;
     automap.min_y = i32::MAX;
     automap.max_x = -i32::MAX;
     automap.max_y = -i32::MAX;
 
-    for v in LEVEL.borrow().vertexes.iter() {
+    for v in level.vertexes.iter() {
         if v.x < automap.min_x {
             automap.min_x = v.x;
         } else if v.x > automap.max_x {
@@ -1145,10 +1142,10 @@ fn AM_clearMarks(automap: &mut AutomapState) {
 /// factor to show approximately 70 % of the minimum fit (clamped to the
 /// maximum fit if that produces a smaller value).
 ///
-/// Reads the loaded level's vertexes.
+/// Reads `level`'s vertexes.
 ///
 /// C origin: `AM_LevelInit` in am_map.c.
-fn AM_LevelInit(automap: &mut AutomapState) {
+fn AM_LevelInit(automap: &mut AutomapState, level: &LevelState) {
     automap.leveljuststarted = 0;
 
     automap.f_x = 0;
@@ -1157,7 +1154,7 @@ fn AM_LevelInit(automap: &mut AutomapState) {
     automap.f_h = finit_height;
 
     AM_clearMarks(automap);
-    AM_findMinMaxBoundaries(automap);
+    AM_findMinMaxBoundaries(automap, level);
 
     automap.scale_mtof = FixedDiv(automap.min_scale_mtof, (0.7 * FRACUNIT as f64) as fixed_t);
     if automap.scale_mtof > automap.max_scale_mtof {
@@ -1214,17 +1211,18 @@ pub unsafe fn AM_Start() {
         AM_Stop();
     }
     {
+        // Released before the status bar is notified: its responder
+        // borrows the world too.
+        let world = WORLD.borrow();
         let mut automap = AUTOMAP.borrow_mut();
         automap.stopped = 0;
         let (gamemap, gameepisode) = (gamemap(), gameepisode());
         if automap.lastlevel != gamemap || automap.lastepisode != gameepisode {
-            AM_LevelInit(&mut automap);
+            AM_LevelInit(&mut automap, &world.level);
             automap.lastlevel = gamemap;
             automap.lastepisode = gameepisode;
         }
-        // Released before the status bar is notified: its responder
-        // borrows the world too.
-        AM_initVariables(&mut automap, &WORLD.borrow());
+        AM_initVariables(&mut automap, &world);
     }
     AM_notifyStatusBar(event_t {
         kind: 1, // ev_keyup
@@ -1779,8 +1777,8 @@ unsafe fn AM_drawMline(automap: &mut AutomapState, ml: *mut mline_t, color: i32)
 ///
 /// # Safety
 ///
-/// The automap framebuffer must be valid. Reads the level's blockmap origin.
-unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
+/// The automap framebuffer must be valid. Reads `level`'s blockmap origin.
+unsafe fn AM_drawGrid(automap: &mut AutomapState, level: &LevelState, color: i32) {
     let (m_x, m_y, m_w, m_h) = (automap.m_x, automap.m_y, automap.m_w, automap.m_h);
     let mut start: fixed_t;
     let mut end: fixed_t;
@@ -1789,7 +1787,7 @@ unsafe fn AM_drawGrid(automap: &mut AutomapState, color: i32) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
-    let (bmaporgx, bmaporgy) = blockmap_origin();
+    let (bmaporgx, bmaporgy) = level.blockmap_origin();
 
     // Vertical gridlines.
     start = m_x;
@@ -1855,7 +1853,7 @@ unsafe fn AM_drawWalls(automap: &mut AutomapState, world: &World) {
         b: mpoint_t { x: 0, y: 0 },
     };
 
-    let level = LEVEL.borrow();
+    let level = &world.level;
     for li in &level.lines {
         let (v1, v2) = (level.vertexes[li.v1], level.vertexes[li.v2]);
         l.a.x = v1.x;
@@ -2058,8 +2056,12 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
 ///
 /// The level must be loaded; thing linked lists must be properly
 /// terminated.
-unsafe fn AM_drawThings(automap: &mut AutomapState, colors: i32, _colorrange: i32) {
-    let level = LEVEL.borrow();
+unsafe fn AM_drawThings(
+    automap: &mut AutomapState,
+    level: &LevelState,
+    colors: i32,
+    _colorrange: i32,
+) {
     for sector in &level.sectors[..level.numsectors as usize] {
         let mut thing = sector.thinglist;
         while let Some(current) = thing {
@@ -2131,7 +2133,7 @@ unsafe fn AM_drawCrosshair(automap: &AutomapState, color: i32) {
 /// rectangle via `V_MarkRect`.
 ///
 /// Called from `D_Display` once per frame, outside any world borrow; reads
-/// the players through its own shared borrow of the world.
+/// the players and the level through its own shared borrow of the world.
 /// C origin: `AM_Drawer` in am_map.c.
 ///
 /// # Safety
@@ -2147,12 +2149,12 @@ pub unsafe fn AM_Drawer() {
     let world = WORLD.borrow();
     AM_clearFB(&automap, BACKGROUND);
     if automap.grid != 0 {
-        AM_drawGrid(&mut automap, GRIDCOLORS);
+        AM_drawGrid(&mut automap, &world.level, GRIDCOLORS);
     }
     AM_drawWalls(&mut automap, &world);
     AM_drawPlayers(&mut automap, &world);
     if automap.cheating == 2 {
-        AM_drawThings(&mut automap, THINGCOLORS, THINGRANGE);
+        AM_drawThings(&mut automap, &world.level, THINGCOLORS, THINGRANGE);
     }
     AM_drawCrosshair(&automap, XHAIRCOLORS);
     AM_drawMarks(&automap);

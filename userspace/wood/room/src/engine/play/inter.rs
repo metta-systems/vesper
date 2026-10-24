@@ -308,10 +308,7 @@ const GOTSHOTGUN2: &str = "You got the super shotgun!";
 use crate::engine::{
     automap::{AM_Stop, automap_active},
     interface::system::I_Tactile,
-    play::{
-        mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
-        setup::LEVEL,
-    },
+    play::mobj::{P_RemoveMobj, P_SetMobjState, P_SpawnMobj},
     render_3d::main::R_PointToAngle2,
     sound::S_StartNonPositionalSound,
 };
@@ -1183,7 +1180,7 @@ pub unsafe fn P_DamageMobj(
 
     if let Some(player_id) = player {
         // end of game hell hack
-        let special = LEVEL.borrow().subsector_sector((*target).subsector).special;
+        let special = world.level.subsector_sector((*target).subsector).special;
         if special == 11 && damage >= (*target).health {
             damage = (*target).health - 1;
         }

@@ -807,13 +807,16 @@ pub fn doomgeneric_Tick() {
         TryRunTics(); // will run at least one tic
 
         // Update positional sounds
-        let console = consoleplayer();
-        let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
-            WORLD.borrow().players[console as usize].mo
-        } else {
-            None
-        };
-        S_UpdateSounds(mo);
+        {
+            let world = WORLD.borrow();
+            let console = consoleplayer();
+            let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
+                world.players[console as usize].mo
+            } else {
+                None
+            };
+            S_UpdateSounds(&world.level, mo);
+        }
 
         // Update display
         if VIDEO.borrow().screenvisible != 0 {

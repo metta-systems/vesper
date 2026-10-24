@@ -16,7 +16,7 @@ use crate::engine::{
         fixed::{FRACUNIT, FixedMul, fixed_t},
         tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
     },
-    play::{info::*, setup::LEVEL},
+    play::info::*,
     world::World,
 };
 
@@ -405,7 +405,7 @@ pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
         }
 
         P_CalcHeight(world, player_id);
-        if LEVEL.borrow().subsector_sector((*mo).subsector).special != 0 {
+        if world.level.subsector_sector((*mo).subsector).special != 0 {
             P_PlayerInSpecialSector(world, player_id);
         }
         // Check for weapon change.

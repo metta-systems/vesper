@@ -64,7 +64,7 @@ use crate::{
                 MobjId, P_RemoveMobj, P_SetMobjState, P_SpawnMissile, P_SpawnMobj, P_SpawnPuff,
                 P_SubstNullMobj, mobj_or_null, mobj_t,
             },
-            setup::{LEVEL, LevelState, blockmap_origin},
+            setup::LevelState,
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
             tick::{ThinkerId, ThinkerKind, thinkers},
@@ -214,8 +214,8 @@ impl Default for EnemyState {
 /// crossing (incrementing `soundblocks` from 0 to 1) but never two, so sound
 /// cannot pass through two consecutive blocking walls.
 ///
-/// Called by `P_NoiseAlert`, which borrows the level for the whole flood,
-/// and recursively by itself. Reads `validcount` and `soundtarget` from
+/// Called by `P_NoiseAlert`, which splits the world into the level and the
+/// scratch for the whole flood, and recursively by itself. Reads `validcount` and `soundtarget` from
 /// `scratch` and leaves the last line opening in it.
 pub fn P_RecursiveSound(
     scratch: &mut PlayScratch,
@@ -268,12 +268,11 @@ pub fn P_RecursiveSound(
 /// `target` and `emmiter` must both name map objects of the level. `emmiter`
 /// must have a valid `subsector` with a valid `sector`.
 pub unsafe fn P_NoiseAlert(world: &mut World, target: MobjId, emmiter: MobjId) {
-    let scratch = &mut world.scratch;
+    let World { level, scratch, .. } = world;
     scratch.enemy.soundtarget = Some(target);
     scratch.validcount += 1;
-    let mut level = LEVEL.borrow_mut();
     let sector = level.subsectors[(*emmiter.ptr()).subsector].sector;
-    P_RecursiveSound(scratch, &mut level, sector, 0);
+    P_RecursiveSound(scratch, level, sector, 0);
 }
 /// The target of `actor`, which C dereferences without a null check: the
 /// callers have checked it, or C would crash too.
@@ -718,10 +717,7 @@ pub unsafe fn A_KeenDie(world: &mut World, mo_id: MobjId) {
 pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
     let actor = actor_id.ptr();
     (*actor).threshold = 0;
-    let targ: Option<MobjId> = LEVEL
-        .borrow()
-        .subsector_sector((*actor).subsector)
-        .soundtarget;
+    let targ: Option<MobjId> = world.level.subsector_sector((*actor).subsector).soundtarget;
     '_seeyou: {
         if let Some(targ) = targ
             && (*targ.ptr()).flags & MF_SHOOTABLE != 0
@@ -1375,7 +1371,7 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
             (*actor).x + (*actor).info.get().speed as fixed_t * xspeed[(*actor).movedir as usize];
         let viletryy =
             (*actor).y + (*actor).info.get().speed as fixed_t * yspeed[(*actor).movedir as usize];
-        let (bmaporgx, bmaporgy) = blockmap_origin();
+        let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
         xl = (viletryx - bmaporgx - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         xh = (viletryx - bmaporgx + 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;
         yl = (viletryy - bmaporgy - 32 * FRACUNIT * 2) >> MAPBLOCKSHIFT;

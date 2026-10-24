@@ -33,7 +33,7 @@ use crate::engine::{
         fixed::{FRACBITS, FRACUNIT, fixed_t},
         tables::{ANGLETOFINESHIFT, finesine},
     },
-    play::{mobj::MobjId, setup::LEVEL},
+    play::{mobj::MobjId, setup::LevelState},
     sound::info::{
         Mus, MusicInfo, NUMMUSIC, NUMSFX, S_InitSfxLinks, SfxInfo, music_table, sfx_table,
     },
@@ -101,15 +101,15 @@ impl SoundOrigin {
     ///
     /// # Safety
     /// No reference to a wrapped map object may be live; a wrapped sector
-    /// must belong to the loaded level, which must not be mutably borrowed.
-    unsafe fn position(self) -> (fixed_t, fixed_t) {
+    /// must belong to `level`.
+    unsafe fn position(self, level: &LevelState) -> (fixed_t, fixed_t) {
         match self {
             Self::Mobj(mobj) => {
                 let mobj = mobj.ptr();
                 ((*mobj).x, (*mobj).y)
             }
             Self::Sector(sector) => {
-                let soundorg = LEVEL.borrow().sectors[sector].soundorg;
+                let soundorg = level.sectors[sector].soundorg;
                 (soundorg.x, soundorg.y)
             }
         }
@@ -440,16 +440,17 @@ unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i3
 /// faintly audible.
 ///
 /// # Safety
-/// `source` must satisfy [`SoundOrigin::position`]; `vol` and `sep` must
-/// point at valid memory.
+/// `source` must satisfy [`SoundOrigin::position`] for `level`; `vol` and
+/// `sep` must point at valid memory.
 unsafe fn S_AdjustSoundParams(
+    level: &LevelState,
     listener: MobjId,
     source: SoundOrigin,
     vol: *mut i32,
     sep: *mut i32,
 ) -> i32 {
     let listener = listener.ptr();
-    let (source_x, source_y) = source.position();
+    let (source_x, source_y) = source.position(level);
     let adx = (*listener).x.wrapping_sub(source_x).wrapping_abs();
     let ady = (*listener).y.wrapping_sub(source_y).wrapping_abs();
 
@@ -503,7 +504,7 @@ unsafe fn S_AdjustSoundParams(
 /// the handle and `S_UpdateSounds` reads the object's position every tic.
 /// No reference to `origin` or the console player's object may be live.
 pub unsafe fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
-    S_StartOriginSound(listener(world), Some(SoundOrigin::Mobj(origin)), sfx_id);
+    S_StartOriginSound(Some(world), Some(SoundOrigin::Mobj(origin)), sfx_id);
 }
 
 /// Start an SFX with id `sfx_id` that is not attached to anything in the
@@ -511,7 +512,7 @@ pub unsafe fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
 /// boss sounds). C passes a null origin to `S_StartSound` for these.
 pub fn S_StartNonPositionalSound(sfx_id: i32) {
     // SAFETY: no origin is stored or read for a non-positional sound, so
-    // the listener is not read either.
+    // the world (listener and level) is not read either.
     unsafe { S_StartOriginSound(None, None, sfx_id) }
 }
 
@@ -520,12 +521,11 @@ pub fn S_StartNonPositionalSound(sfx_id: i32) {
 ///
 /// The channel keeps the sector and `S_UpdateSounds` reads its position
 /// every tic; `S_Start` stops every channel when the next level starts, so
-/// the sector always belongs to the loaded level. The level must not be
-/// mutably borrowed during the call.
+/// the sector always belongs to the loaded level.
 pub fn S_StartSectorSound(world: &World, sector: SectorId, sfx_id: i32) {
     // SAFETY: a sector origin stays valid for as long as its level is
     // loaded, and its sound is stopped before the next level loads.
-    unsafe { S_StartOriginSound(listener(world), Some(SoundOrigin::Sector(sector)), sfx_id) }
+    unsafe { S_StartOriginSound(Some(world), Some(SoundOrigin::Sector(sector)), sfx_id) }
 }
 
 /// The listener positional sounds are heard from: the console player's
@@ -535,7 +535,8 @@ fn listener(world: &World) -> Option<MobjId> {
 }
 
 /// Start an SFX from `origin` (`None` for a non-positional sound), heard
-/// from `listener` (the console player's object).
+/// from `world`'s listener (the console player's object); a positional
+/// sound needs the world, a non-positional one passes `None`.
 ///
 /// Bogus ids are silently dropped. If the sfx has a `link`, its `volume`
 /// modifier is applied and clamped. Stereo/volume are computed from the
@@ -546,7 +547,8 @@ fn listener(world: &World) -> Option<MobjId> {
 /// # Safety
 /// The object `origin` wraps must stay live until its sound stops (see
 /// `S_StartSound`); the channel keeps it and `S_UpdateSounds` reads it.
-unsafe fn S_StartOriginSound(listener: Option<MobjId>, origin: Option<SoundOrigin>, sfx_id: i32) {
+unsafe fn S_StartOriginSound(world: Option<&World>, origin: Option<SoundOrigin>, sfx_id: i32) {
+    let listener = world.and_then(listener);
     unsafe {
         let snd_SfxVolume = SOUND.get().snd_SfxVolume;
         let mut volume = snd_SfxVolume;
@@ -578,9 +580,10 @@ unsafe fn S_StartOriginSound(listener: Option<MobjId>, origin: Option<SoundOrigi
             // C reads the listener without a check: a positional sound
             // plays only while the console player is in the level.
             let listener = listener.expect("player has no map object");
-            let rc = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
+            let level = &world.expect("positional sound without a world").level;
+            let rc = S_AdjustSoundParams(level, listener, source, &mut volume, &mut sep);
 
-            if source.position() == SoundOrigin::Mobj(listener).position() {
+            if source.position(level) == SoundOrigin::Mobj(listener).position(level) {
                 sep = NORM_SEP;
             }
 
@@ -639,9 +642,9 @@ pub fn S_ResumeSound() {
 ///
 /// # Safety
 /// `listener` must be `Some` whenever a positional sound is playing, and
-/// every playing sound's origin must still be in the level (the contract of
-/// `S_StartSound` and `S_StartSectorSound`).
-pub unsafe fn S_UpdateSounds(listener: Option<MobjId>) {
+/// every playing sound's origin must still be in `level`, the loaded level
+/// (the contract of `S_StartSound` and `S_StartSectorSound`).
+pub unsafe fn S_UpdateSounds(level: &LevelState, listener: Option<MobjId>) {
     unsafe {
         I_UpdateSound();
 
@@ -675,7 +678,8 @@ pub unsafe fn S_UpdateSounds(listener: Option<MobjId>) {
                         .filter(|&source| Some(source) != listener.map(SoundOrigin::Mobj))
                     {
                         let listener = listener.expect("positional sound without a listener");
-                        let audible = S_AdjustSoundParams(listener, source, &mut volume, &mut sep);
+                        let audible =
+                            S_AdjustSoundParams(level, listener, source, &mut volume, &mut sep);
 
                         if audible == 0 {
                             S_StopChannel(cnum);
@@ -805,8 +809,6 @@ mod tests {
     /// by identity.
     #[test]
     fn sound_origin_position_and_identity() {
-        // Lock order: level, then thinkers.
-        let _level_lock = crate::engine::play::setup::LEVEL_TEST_LOCK.lock().unwrap();
         let _thinker_lock = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
         let mobj = crate::engine::play::tick::new_thinker::<crate::engine::play::mobj::mobj_t>();
         unsafe {
@@ -819,12 +821,17 @@ mod tests {
 
         let mobj_origin = SoundOrigin::Mobj(mobj);
         let sector_sound_origin = SoundOrigin::Sector(SectorId::new(1));
-        let saved_sectors = std::mem::replace(&mut LEVEL.borrow_mut().sectors, vec![sector; 2]);
+        let level = LevelState {
+            sectors: vec![sector; 2],
+            ..LevelState::new()
+        };
         unsafe {
-            assert_eq!(mobj_origin.position(), (10 * FRACUNIT, -3 * FRACUNIT));
-            assert_eq!(sector_sound_origin.position(), (7 * FRACUNIT, 8 * FRACUNIT));
+            assert_eq!(mobj_origin.position(&level), (10 * FRACUNIT, -3 * FRACUNIT));
+            assert_eq!(
+                sector_sound_origin.position(&level),
+                (7 * FRACUNIT, 8 * FRACUNIT)
+            );
         }
-        LEVEL.borrow_mut().sectors = saved_sectors;
 
         assert_eq!(mobj_origin, SoundOrigin::Mobj(mobj));
         assert_ne!(mobj_origin, sector_sound_origin);

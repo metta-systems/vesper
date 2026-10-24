@@ -170,7 +170,7 @@ use crate::engine::{
     play::{
         maputl::P_SetThingPosition,
         mobj::{P_MobjThinker, P_RemoveMobj},
-        setup::LEVEL,
+        setup::LevelState,
     },
 };
 
@@ -665,7 +665,7 @@ unsafe fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjRefe
 /// written as an index into `states`. `player` is written as a 1-based player
 /// index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
+unsafe fn saveg_write_mobj_t(level: &LevelState, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
     let mo = mobj.ptr() as *const mobj_t;
 
     // thinker_t
@@ -690,7 +690,7 @@ unsafe fn saveg_write_mobj_t(mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
     saveg_write32(0);
 
     // subsector (C writes the pointer: the subsector record's address)
-    let subsector_address = (&raw const LEVEL.borrow().subsectors[(*mo).subsector]).addr();
+    let subsector_address = (&raw const level.subsectors[(*mo).subsector]).addr();
     saveg_write_address(subsector_address as u32);
 
     // floorz, ceilingz, radius, height
@@ -1580,8 +1580,8 @@ pub unsafe fn P_UnArchivePlayers(world: &mut World) {
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
 /// stream written and a level loaded.
-pub fn P_ArchiveWorld(_world: &World) {
-    let level = LEVEL.borrow();
+pub fn P_ArchiveWorld(world: &World) {
+    let level = &world.level;
 
     // do sectors
     for sec in &level.sectors[..level.numsectors as usize] {
@@ -1625,9 +1625,8 @@ pub fn P_ArchiveWorld(_world: &World) {
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`), with `save_stream` positioned at
 /// the byte sequence written by `P_ArchiveWorld` and the saved level loaded.
-pub fn P_UnArchiveWorld(_world: &mut World) {
-    let mut level = LEVEL.borrow_mut();
-    let level = &mut *level;
+pub fn P_UnArchiveWorld(world: &mut World) {
+    let level = &mut world.level;
     let numsectors = level.numsectors as usize;
 
     // do sectors
@@ -1693,12 +1692,12 @@ const tc_mobj: u8 = 1;
 ///
 /// `save_stream` must be the stream being written, and a level must be
 /// loaded (each map object's subsector is written by address).
-pub unsafe fn P_ArchiveThinkers(_world: &World) {
+pub unsafe fn P_ArchiveThinkers(world: &World) {
     let ordinals = mobj_save_ordinals();
     for mobj in thinkers().filter_map(saved_mobj) {
         saveg_write8(tc_mobj);
         saveg_write_pad();
-        saveg_write_mobj_t(mobj, &ordinals);
+        saveg_write_mobj_t(&world.level, mobj, &ordinals);
     }
 
     // terminating marker
@@ -1771,8 +1770,7 @@ pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
 
                 // rebuild floorz/ceilingz from subsector
                 {
-                    let level = LEVEL.borrow();
-                    let sector = level.subsector_sector((*mo).subsector);
+                    let sector = world.level.subsector_sector((*mo).subsector);
                     (*mo).floorz = sector.floorheight;
                     (*mo).ceilingz = sector.ceilingheight;
                 }
@@ -1942,7 +1940,7 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
                 let ceiling_id = new_thinker::<ceiling_t>();
                 let ceiling = ceiling_id.ptr();
                 saveg_read_ceiling_t(ceiling);
-                LEVEL.borrow_mut().sectors[(*ceiling).sector].specialdata =
+                world.level.sectors[(*ceiling).sector].specialdata =
                     Some(ThinkerId::Ceiling(ceiling_id));
 
                 // A set function slot read as `Ceiling`; a null one (C keeps
@@ -1959,8 +1957,7 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
                 let door_id = new_thinker::<vldoor_t>();
                 let door = door_id.ptr();
                 saveg_read_vldoor_t(door);
-                LEVEL.borrow_mut().sectors[(*door).sector].specialdata =
-                    Some(ThinkerId::Door(door_id));
+                world.level.sectors[(*door).sector].specialdata = Some(ThinkerId::Door(door_id));
                 (*door).thinker.kind = ThinkerKind::Door;
                 P_AddThinker(ThinkerId::Door(door_id));
             }
@@ -1969,8 +1966,7 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
                 let floor_id = new_thinker::<floormove_t>();
                 let floor = floor_id.ptr();
                 saveg_read_floormove_t(floor);
-                LEVEL.borrow_mut().sectors[(*floor).sector].specialdata =
-                    Some(ThinkerId::Floor(floor_id));
+                world.level.sectors[(*floor).sector].specialdata = Some(ThinkerId::Floor(floor_id));
                 (*floor).thinker.kind = ThinkerKind::Floor;
                 P_AddThinker(ThinkerId::Floor(floor_id));
             }
@@ -1979,8 +1975,7 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
                 let plat_id = new_thinker::<plat_t>();
                 let plat = plat_id.ptr();
                 saveg_read_plat_t(plat);
-                LEVEL.borrow_mut().sectors[(*plat).sector].specialdata =
-                    Some(ThinkerId::Plat(plat_id));
+                world.level.sectors[(*plat).sector].specialdata = Some(ThinkerId::Plat(plat_id));
 
                 // A set function slot read as `Plat`; a null one (C keeps the
                 // function null) is a platform in stasis.
@@ -2310,15 +2305,15 @@ mod tests {
     fn mobj_references_survive_save_and_load() {
         use crate::engine::{
             map::{sector_t, subsector_t},
-            play::setup::{LEVEL_TEST_LOCK, LevelState},
+            play::setup::LevelState,
         };
 
         let _g = LOCK.lock().unwrap();
-        let _level_guard = LEVEL_TEST_LOCK.lock().unwrap();
         let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
 
         // One sector, one subsector and no nodes: every point is in it.
-        let level = LevelState {
+        let mut world = World::new();
+        world.level = LevelState {
             numsectors: 1,
             sectors: vec![sector_t::ZERO],
             subsectors: vec![subsector_t {
@@ -2328,7 +2323,6 @@ mod tests {
             }],
             ..LevelState::new()
         };
-        let saved_level = std::mem::replace(&mut *LEVEL.borrow_mut(), level);
         let player = PlayerId::new(0);
 
         P_InitThinkers();
@@ -2337,7 +2331,6 @@ mod tests {
         let removed = add_mobj(3);
         let third = add_mobj(4);
         let unlisted = new_thinker::<mobj_t>();
-        let mut world = World::new();
         unsafe {
             P_RemoveThinker(&mut (*removed.ptr()).thinker);
             (*first.ptr()).target = Some(third);
@@ -2404,7 +2397,6 @@ mod tests {
         assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
 
         P_InitThinkers();
-        *LEVEL.borrow_mut() = saved_level;
     }
 
     /// A save-game header with `version` in its version field.
@@ -2440,24 +2432,36 @@ mod tests {
         GAME.borrow_mut().playeringame = saved_playeringame;
     }
 
-    /// The vanilla saves in `.savegame` carry `"version 109"` and are
-    /// rejected by the version check.
+    /// Real save files in `tests/fixtures/saves`: the vanilla one
+    /// (`"version 109"`) is rejected by the version check, the Wood one
+    /// (`"wood 109"`) is accepted.
     #[test]
-    fn vanilla_fixture_saves_are_rejected() {
+    fn fixture_saves_are_checked_by_their_version() {
         let _g = LOCK.lock().unwrap();
-        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".savegame");
-        for slot in 0..4 {
-            let path = directory.join(format!("{SAVEGAMENAME}{slot}.dsg"));
+        let saved_playeringame = GAME.borrow().playeringame;
+        let directory =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/saves");
+        for (file, version, accepted) in [
+            ("vanilla_109.dsg", &b"version 109\0\0\0\0\0"[..], 0),
+            ("wood_109.dsg", &savegame_version(109)[..], 1),
+        ] {
+            let path = directory.join(file);
             let mut contents =
                 std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             assert_eq!(
                 &contents[SAVESTRINGSIZE..SAVESTRINGSIZE + VERSIONSIZE],
-                b"version 109\0\0\0\0\0"
+                version
             );
             with_mem_stream(&mut contents, || {
-                assert_eq!(read_save_game_header(&mut World::new(), 109), 0);
+                assert_eq!(
+                    read_save_game_header(&mut World::new(), 109),
+                    accepted,
+                    "{}",
+                    path.display()
+                );
             });
         }
+        GAME.borrow_mut().playeringame = saved_playeringame;
     }
 
     /// The index helpers give the same indices as the C pointer subtraction
