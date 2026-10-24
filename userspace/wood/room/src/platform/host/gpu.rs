@@ -157,7 +157,8 @@ impl GpuState {
         .map_err(|e| format!("no suitable GPU adapter found: {e}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("doom_device"),
-            required_features: wgpu::Features::empty(),
+            required_features: wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::default(),
             // Disable experimental features and API tracing for production use.
