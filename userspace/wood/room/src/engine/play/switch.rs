@@ -645,19 +645,11 @@ pub fn P_ChangeSwitchTexture(world: &mut World, line: LineId, useAgain: i32) {
 /// Returns `1` (true) after handling any special; unrecognised specials
 /// fall through silently and also return `1`.
 ///
-/// # Safety
-///
-/// The texture tables must be loaded (see [`EV_DoFloor`]).
-///
 /// # Panics
 ///
-/// If `line_id` is not a linedef of the loaded level.
-pub unsafe fn P_UseSpecialLine(
-    world: &mut World,
-    thing: MobjId,
-    line_id: LineId,
-    side: i32,
-) -> i32 {
+/// If `line_id` is not a linedef of the loaded level, or a raise-to-texture
+/// floor meets a bottom texture that is not loaded (see [`EV_DoFloor`]).
+pub fn P_UseSpecialLine(world: &mut World, thing: MobjId, line_id: LineId, side: i32) -> i32 {
     // The line's record as the use found it; the actions read its tag and
     // sectors, and every write goes to the level through `line_id`.
     let line_record = world.level.lines[line_id];

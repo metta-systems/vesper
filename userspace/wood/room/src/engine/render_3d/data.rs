@@ -40,7 +40,7 @@ use {std::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
     global::Global,
-    math::fixed::FRACBITS,
+    math::fixed::{FRACBITS, fixed_t},
     zone::{PU_CACHE, PU_STATIC},
 };
 
@@ -302,6 +302,25 @@ impl Default for RenderDataState {
 
 /// The renderer data state.
 pub static RENDER_DATA: Global<RenderDataState> = Global::new(RenderDataState::new());
+
+/// Height of wall texture `texture` in 16.16 fixed point (C
+/// `textureheight[texture]`).
+///
+/// # Panics
+///
+/// If `texture` is not in `0..numtextures` (always so before
+/// `R_InitTextures` has run).
+pub fn texture_height(texture: usize) -> fixed_t {
+    let data = RENDER_DATA.borrow();
+    assert!(
+        texture < data.numtextures as usize,
+        "texture {texture} out of range (numtextures {})",
+        data.numtextures
+    );
+    // SAFETY: `R_InitTextures` set `numtextures` and allocated and filled
+    // that many heights in a static zone block, which is never freed.
+    unsafe { *data.textureheight.add(texture) }
+}
 
 // ---------------------------------------------------------------------------
 // R_DrawColumnInCache

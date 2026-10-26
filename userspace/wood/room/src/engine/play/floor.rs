@@ -22,7 +22,7 @@ use crate::engine::{
             new_thinker, thinker_t,
         },
     },
-    render_3d::data::RENDER_DATA,
+    render_3d::data::texture_height,
     sound::{S_StartSectorSound, info::Sfx},
     world::World,
 };
@@ -364,11 +364,11 @@ pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> FloorId {
 /// it sets `crush` and then moves like a raising floor that stops 8 units
 /// lower.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The texture tables must be loaded (`floor_raiseToTexture` reads the
-/// texture heights through their raw pointer).
-pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
+/// For `floor_raiseToTexture`, if a bottom texture of the sector's lines is
+/// not a loaded texture.
+pub fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
     let level = &mut world.level;
     let mut secnum: i32 = -1;
     let mut rtn: i32 = 0;
@@ -471,21 +471,18 @@ pub unsafe fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i3
                 floor.sector = sec;
                 floor.speed = FLOORSPEED;
                 let mut minsize: i32 = INT_MAX;
-                let textureheight = RENDER_DATA.borrow().textureheight;
                 for i in 0..level.sectors[sec].linecount {
                     if twoSided(level, secnum, i) != 0 {
                         let side = getSide(level, secnum, i, 0);
                         if level.sides[side].bottomtexture >= 0 {
-                            let th =
-                                *textureheight.offset(level.sides[side].bottomtexture as isize);
+                            let th = texture_height(level.sides[side].bottomtexture as usize);
                             if th < minsize {
                                 minsize = th;
                             }
                         }
                         let side = getSide(level, secnum, i, 1);
                         if level.sides[side].bottomtexture >= 0 {
-                            let th =
-                                *textureheight.offset(level.sides[side].bottomtexture as isize);
+                            let th = texture_height(level.sides[side].bottomtexture as usize);
                             if th < minsize {
                                 minsize = th;
                             }

@@ -14,9 +14,9 @@ use crate::engine::{
     },
     math::{
         fixed::{FRACUNIT, FixedMul, fixed_t},
-        tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finecosine, finesine},
+        tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finesine},
     },
-    play::info::*,
+    play::{info::*, tick::MOBJ_ARENA},
     world::World,
 };
 
@@ -151,15 +151,17 @@ use crate::engine::{
 /// `move_ * cos(angle)` to `momx` and `move_ * sin(angle)` to `momy`.
 /// Corresponds to `P_Thrust` in `p_user.c`.
 ///
-/// # Safety
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_Thrust(world: &mut World, player: PlayerId, angle: u32, move_: fixed_t) {
-    unsafe {
-        let mo = world.players[player].mo().ptr();
-        let angle = (angle >> ANGLETOFINESHIFT) as usize;
-        (*mo).momx += FixedMul(move_, *finecosine.0.add(angle));
-        (*mo).momy += FixedMul(move_, finesine[angle]);
-    }
+/// # Panics
+///
+/// If the player has not been spawned.
+pub fn P_Thrust(world: &mut World, player: PlayerId, angle: u32, move_: fixed_t) {
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mo = &mut mobjs[world.players[player].mo()];
+    let angle = (angle >> ANGLETOFINESHIFT) as usize;
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    mo.momx += FixedMul(move_, finesine[angle + FINEANGLES / 4]);
+    mo.momy += FixedMul(move_, finesine[angle]);
 }
 
 /// Compute and set the player's view height (`viewz`) for the current tic.
@@ -171,64 +173,64 @@ pub unsafe fn P_Thrust(world: &mut World, player: PlayerId, angle: u32, move_: f
 ///
 /// Corresponds to `P_CalcHeight` in `p_user.c`.
 ///
-/// # Safety
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
-    unsafe {
-        let player = &mut world.players[player_id];
-        let mo = player.mo().ptr();
+/// # Panics
+///
+/// If the player has not been spawned.
+pub fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
+    let player = &mut world.players[player_id];
+    let mobjs = MOBJ_ARENA.borrow();
+    let mo = &mobjs[player.mo()];
 
-        // Regular movement bobbing
-        player.bob = FixedMul((*mo).momx, (*mo).momx) + FixedMul((*mo).momy, (*mo).momy);
+    // Regular movement bobbing
+    player.bob = FixedMul(mo.momx, mo.momx) + FixedMul(mo.momy, mo.momy);
 
-        player.bob >>= 2;
+    player.bob >>= 2;
 
-        if player.bob > MAXBOB {
-            player.bob = MAXBOB;
+    if player.bob > MAXBOB {
+        player.bob = MAXBOB;
+    }
+
+    if (player.cheats & CF_NOMOMENTUM) != 0 || world.scratch.user.onground == 0 {
+        player.viewz = mo.z + VIEWHEIGHT;
+
+        if player.viewz > mo.ceilingz - 4 * FRACUNIT {
+            player.viewz = mo.ceilingz - 4 * FRACUNIT;
         }
 
-        if (player.cheats & CF_NOMOMENTUM) != 0 || world.scratch.user.onground == 0 {
-            player.viewz = (*mo).z + VIEWHEIGHT;
+        player.viewz = mo.z + player.viewheight;
+        return;
+    }
 
-            if player.viewz > (*mo).ceilingz - 4 * FRACUNIT {
-                player.viewz = (*mo).ceilingz - 4 * FRACUNIT;
-            }
+    let angle: i32 = (FINEANGLES as i32 / 20 * world.leveltime) & (FINEANGLES as i32 - 1);
+    let bob: fixed_t = FixedMul(player.bob / 2, finesine[angle as usize]);
 
-            player.viewz = (*mo).z + player.viewheight;
-            return;
+    // Move viewheight
+    if player.playerstate == PST_LIVE {
+        player.viewheight += player.deltaviewheight;
+
+        if player.viewheight > VIEWHEIGHT {
+            player.viewheight = VIEWHEIGHT;
+            player.deltaviewheight = 0;
         }
 
-        let angle: i32 = (FINEANGLES as i32 / 20 * world.leveltime) & (FINEANGLES as i32 - 1);
-        let bob: fixed_t = FixedMul(player.bob / 2, finesine[angle as usize]);
-
-        // Move viewheight
-        if player.playerstate == PST_LIVE {
-            player.viewheight += player.deltaviewheight;
-
-            if player.viewheight > VIEWHEIGHT {
-                player.viewheight = VIEWHEIGHT;
-                player.deltaviewheight = 0;
-            }
-
-            if player.viewheight < VIEWHEIGHT / 2 {
-                player.viewheight = VIEWHEIGHT / 2;
-                if player.deltaviewheight <= 0 {
-                    player.deltaviewheight = 1;
-                }
-            }
-
-            if player.deltaviewheight != 0 {
-                player.deltaviewheight += FRACUNIT / 4;
-                if player.deltaviewheight == 0 {
-                    player.deltaviewheight = 1;
-                }
+        if player.viewheight < VIEWHEIGHT / 2 {
+            player.viewheight = VIEWHEIGHT / 2;
+            if player.deltaviewheight <= 0 {
+                player.deltaviewheight = 1;
             }
         }
-        player.viewz = (*mo).z + player.viewheight + bob;
 
-        if player.viewz > (*mo).ceilingz - 4 * FRACUNIT {
-            player.viewz = (*mo).ceilingz - 4 * FRACUNIT;
+        if player.deltaviewheight != 0 {
+            player.deltaviewheight += FRACUNIT / 4;
+            if player.deltaviewheight == 0 {
+                player.deltaviewheight = 1;
+            }
         }
+    }
+    player.viewz = mo.z + player.viewheight + bob;
+
+    if player.viewz > mo.ceilingz - 4 * FRACUNIT {
+        player.viewz = mo.ceilingz - 4 * FRACUNIT;
     }
 }
 
@@ -243,42 +245,40 @@ pub unsafe fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level.
 pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
-    unsafe {
-        let player = &world.players[player_id];
-        let mo_id = player.mo();
-        let mo = mo_id.ptr();
-        let cmd = player.cmd;
+    let player = &world.players[player_id];
+    let mo_id = player.mo();
+    let cmd = player.cmd;
 
-        (*mo).angle = (*mo)
+    // `P_Thrust` only changes the momentum, so the angle and state read
+    // here stay current until `P_SetMobjState`.
+    let (angle, onground, state) = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
+        mo.angle = mo
             .angle
             .wrapping_add(((cmd.angleturn) as u32).wrapping_shl(16));
 
         // Do not let the player control movement if not onground.
-        let onground = ((*mo).z <= (*mo).floorz) as i32;
-        world.scratch.user.onground = onground;
+        (mo.angle, (mo.z <= mo.floorz) as i32, mo.state)
+    };
+    world.scratch.user.onground = onground;
 
-        if cmd.forwardmove != 0 && onground != 0 {
-            P_Thrust(
-                world,
-                player_id,
-                (*mo).angle,
-                cmd.forwardmove as fixed_t * 2048,
-            );
-        }
+    if cmd.forwardmove != 0 && onground != 0 {
+        P_Thrust(world, player_id, angle, cmd.forwardmove as fixed_t * 2048);
+    }
 
-        if cmd.sidemove != 0 && onground != 0 {
-            P_Thrust(
-                world,
-                player_id,
-                (*mo).angle.wrapping_sub(ANG90),
-                cmd.sidemove as fixed_t * 2048,
-            );
-        }
+    if cmd.sidemove != 0 && onground != 0 {
+        P_Thrust(
+            world,
+            player_id,
+            angle.wrapping_sub(ANG90),
+            cmd.sidemove as fixed_t * 2048,
+        );
+    }
 
-        // C: player->mo->state == &states[S_PLAY]
-        if (cmd.forwardmove != 0 || cmd.sidemove != 0) && (*mo).state.number() == S_PLAY {
-            P_SetMobjState(world, mo_id, S_PLAY_RUN1);
-        }
+    // C: player->mo->state == &states[S_PLAY]
+    if (cmd.forwardmove != 0 || cmd.sidemove != 0) && state.number() == S_PLAY {
+        P_SetMobjState(world, mo_id, S_PLAY_RUN1);
     }
 }
 
@@ -293,57 +293,60 @@ pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
 /// # Safety
 /// `player_id`'s `mo` must name a map object of the loaded level.
 pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
-    unsafe {
-        let mo = world.players[player_id].mo().ptr();
-        let angle: u32;
-        let delta: u32;
+    let mo_id = world.players[player_id].mo();
+    let angle: u32;
+    let delta: u32;
 
-        P_MovePsprites(world, player_id);
+    P_MovePsprites(world, player_id);
 
-        // Fall to the ground
-        let player = &mut world.players[player_id];
-        if player.viewheight > 6 * FRACUNIT {
-            player.viewheight -= FRACUNIT;
-        }
+    // Fall to the ground
+    let player = &mut world.players[player_id];
+    if player.viewheight > 6 * FRACUNIT {
+        player.viewheight -= FRACUNIT;
+    }
 
-        if player.viewheight < 6 * FRACUNIT {
-            player.viewheight = 6 * FRACUNIT;
-        }
+    if player.viewheight < 6 * FRACUNIT {
+        player.viewheight = 6 * FRACUNIT;
+    }
 
-        player.deltaviewheight = 0;
-        world.scratch.user.onground = ((*mo).z <= (*mo).floorz) as i32;
-        P_CalcHeight(world, player_id);
+    player.deltaviewheight = 0;
+    world.scratch.user.onground = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[mo_id].z <= mobjs[mo_id].floorz) as i32
+    };
+    P_CalcHeight(world, player_id);
 
-        // The attacker may have been removed since (an exploded barrel); like
-        // C, its last position is read through the stale handle.
-        let player = &mut world.players[player_id];
-        if let Some(attacker) = player.attacker
-            && Some(attacker) != player.mo
-        {
-            let atk = attacker.ptr();
-            angle = R_PointToAngle2((*mo).x, (*mo).y, (*atk).x, (*atk).y);
+    // The attacker may have been removed since (an exploded barrel); like
+    // C, its last position is read through the stale handle.
+    let player = &mut world.players[player_id];
+    if let Some(attacker) = player.attacker
+        && Some(attacker) != player.mo
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let (attacker_x, attacker_y) = (mobjs[attacker].x, mobjs[attacker].y);
+        let mo = &mut mobjs[mo_id];
+        angle = R_PointToAngle2(mo.x, mo.y, attacker_x, attacker_y);
 
-            delta = angle.wrapping_sub((*mo).angle);
+        delta = angle.wrapping_sub(mo.angle);
 
-            if delta < ANG5 || delta > (!ANG5).wrapping_add(1) {
-                // Looking at killer, so fade damage flash down.
-                (*mo).angle = angle;
+        if delta < ANG5 || delta > (!ANG5).wrapping_add(1) {
+            // Looking at killer, so fade damage flash down.
+            mo.angle = angle;
 
-                if player.damagecount != 0 {
-                    player.damagecount -= 1;
-                }
-            } else if delta < ANG180 {
-                (*mo).angle = (*mo).angle.wrapping_add(ANG5);
-            } else {
-                (*mo).angle = (*mo).angle.wrapping_sub(ANG5);
+            if player.damagecount != 0 {
+                player.damagecount -= 1;
             }
-        } else if player.damagecount != 0 {
-            player.damagecount -= 1;
+        } else if delta < ANG180 {
+            mo.angle = mo.angle.wrapping_add(ANG5);
+        } else {
+            mo.angle = mo.angle.wrapping_sub(ANG5);
         }
+    } else if player.damagecount != 0 {
+        player.damagecount -= 1;
+    }
 
-        if player.cmd.buttons & BT_USE != 0 {
-            player.playerstate = PST_REBORN;
-        }
+    if player.cmd.buttons & BT_USE != 0 {
+        player.playerstate = PST_REBORN;
     }
 }
 
@@ -370,146 +373,156 @@ pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
 /// `player_id`'s `mo` must name a map object of the loaded level with a
 /// valid `subsector` chain.
 pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
-    unsafe {
-        let player = &mut world.players[player_id];
-        let mo = player.mo().ptr();
-        let mut newweapon: i32;
+    let player = &mut world.players[player_id];
+    let mo_id = player.mo();
+    let mut newweapon: i32;
 
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
         // Fixme: do this in the cheat code
         if player.cheats & CF_NOCLIP != 0 {
-            (*mo).flags |= MF_NOCLIP;
+            mo.flags |= MF_NOCLIP;
         } else {
-            (*mo).flags &= !MF_NOCLIP;
+            mo.flags &= !MF_NOCLIP;
         }
 
         // Chain saw run forward
-        if (*mo).flags & MF_JUSTATTACKED != 0 {
+        if mo.flags & MF_JUSTATTACKED != 0 {
             let cmd = &mut player.cmd;
             cmd.angleturn = 0;
             cmd.forwardmove = (0xc800 / 512) as i8;
             cmd.sidemove = 0;
-            (*mo).flags &= !MF_JUSTATTACKED;
+            mo.flags &= !MF_JUSTATTACKED;
+        }
+    }
+
+    if player.playerstate == PST_DEAD {
+        P_DeathThink(world, player_id);
+        return;
+    }
+
+    // Move around.
+    // Reactiontime is used to prevent movement for a bit after a teleport.
+    let reacting = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
+        let reacting = mo.reactiontime != 0;
+        if reacting {
+            mo.reactiontime -= 1;
+        }
+        reacting
+    };
+    if !reacting {
+        P_MovePlayer(world, player_id);
+    }
+
+    P_CalcHeight(world, player_id);
+    let subsector = MOBJ_ARENA.borrow()[mo_id].subsector;
+    if world.level.subsector_sector(subsector).special != 0 {
+        P_PlayerInSpecialSector(world, player_id);
+    }
+    // Check for weapon change.
+    // A special event has no other buttons.
+    let player = &mut world.players[player_id];
+    if player.cmd.buttons & BT_SPECIAL != 0 {
+        player.cmd.buttons = 0;
+    }
+
+    if player.cmd.buttons & BT_CHANGE != 0 {
+        // The actual changing of the weapon is done
+        // when the weapon psprite can do it
+        // (read: not in the middle of an attack).
+        newweapon = (player.cmd.buttons as i32 & BT_WEAPONMASK as i32) >> BT_WEAPONSHIFT;
+
+        if newweapon == wp_fist
+            && player.weaponowned[wp_chainsaw as usize] != 0
+            && !(player.readyweapon == wp_chainsaw && player.powers[pw_strength] != 0)
+        {
+            newweapon = wp_chainsaw;
         }
 
-        if player.playerstate == PST_DEAD {
-            P_DeathThink(world, player_id);
-            return;
+        if gamemode() == commercial
+            && newweapon == wp_shotgun
+            && player.weaponowned[wp_supershotgun as usize] != 0
+            && player.readyweapon != wp_supershotgun
+        {
+            newweapon = wp_supershotgun;
         }
 
-        // Move around.
-        // Reactiontime is used to prevent movement for a bit after a teleport.
-        if (*mo).reactiontime != 0 {
-            (*mo).reactiontime -= 1;
-        } else {
-            P_MovePlayer(world, player_id);
-        }
-
-        P_CalcHeight(world, player_id);
-        if world.level.subsector_sector((*mo).subsector).special != 0 {
-            P_PlayerInSpecialSector(world, player_id);
-        }
-        // Check for weapon change.
-        // A special event has no other buttons.
-        let player = &mut world.players[player_id];
-        if player.cmd.buttons & BT_SPECIAL != 0 {
-            player.cmd.buttons = 0;
-        }
-
-        if player.cmd.buttons & BT_CHANGE != 0 {
-            // The actual changing of the weapon is done
-            // when the weapon psprite can do it
-            // (read: not in the middle of an attack).
-            newweapon = (player.cmd.buttons as i32 & BT_WEAPONMASK as i32) >> BT_WEAPONSHIFT;
-
-            if newweapon == wp_fist
-                && player.weaponowned[wp_chainsaw as usize] != 0
-                && !(player.readyweapon == wp_chainsaw && player.powers[pw_strength] != 0)
-            {
-                newweapon = wp_chainsaw;
-            }
-
-            if gamemode() == commercial
-                && newweapon == wp_shotgun
-                && player.weaponowned[wp_supershotgun as usize] != 0
-                && player.readyweapon != wp_supershotgun
-            {
-                newweapon = wp_supershotgun;
-            }
-
-            if player.weaponowned[newweapon as usize] != 0 && newweapon != player.readyweapon {
-                // Do not go to plasma or BFG in shareware, even if cheated.
-                if (newweapon != wp_plasma && newweapon != wp_bfg) || gamemode() != shareware {
-                    player.pendingweapon = newweapon;
-                }
-            }
-        }
-
-        // Check for use
-        if player.cmd.buttons & BT_USE != 0 {
-            if player.usedown == 0 {
-                P_UseLines(world, player_id);
-                world.players[player_id].usedown = 1;
-            }
-        } else {
-            player.usedown = 0;
-        }
-
-        // Cycle psprites
-        P_MovePsprites(world, player_id);
-
-        // Counters, time dependent power ups.
-        // Strength counts up to diminish fade.
-        let player = &mut world.players[player_id];
-        if player.powers[pw_strength] != 0 {
-            player.powers[pw_strength] += 1;
-        }
-
-        if player.powers[pw_invulnerability] != 0 {
-            player.powers[pw_invulnerability] -= 1;
-        }
-
-        if player.powers[pw_invisibility] != 0 {
-            player.powers[pw_invisibility] -= 1;
-            if player.powers[pw_invisibility] == 0 {
-                (*mo).flags &= !MF_SHADOW;
+        if player.weaponowned[newweapon as usize] != 0 && newweapon != player.readyweapon {
+            // Do not go to plasma or BFG in shareware, even if cheated.
+            if (newweapon != wp_plasma && newweapon != wp_bfg) || gamemode() != shareware {
+                player.pendingweapon = newweapon;
             }
         }
+    }
 
-        if player.powers[pw_infrared] != 0 {
-            player.powers[pw_infrared] -= 1;
+    // Check for use
+    if player.cmd.buttons & BT_USE != 0 {
+        if player.usedown == 0 {
+            P_UseLines(world, player_id);
+            world.players[player_id].usedown = 1;
         }
+    } else {
+        player.usedown = 0;
+    }
 
-        if player.powers[pw_ironfeet] != 0 {
-            player.powers[pw_ironfeet] -= 1;
+    // Cycle psprites
+    P_MovePsprites(world, player_id);
+
+    // Counters, time dependent power ups.
+    // Strength counts up to diminish fade.
+    let player = &mut world.players[player_id];
+    if player.powers[pw_strength] != 0 {
+        player.powers[pw_strength] += 1;
+    }
+
+    if player.powers[pw_invulnerability] != 0 {
+        player.powers[pw_invulnerability] -= 1;
+    }
+
+    if player.powers[pw_invisibility] != 0 {
+        player.powers[pw_invisibility] -= 1;
+        if player.powers[pw_invisibility] == 0 {
+            MOBJ_ARENA.borrow_mut()[mo_id].flags &= !MF_SHADOW;
         }
+    }
 
-        if player.damagecount != 0 {
-            player.damagecount -= 1;
-        }
+    if player.powers[pw_infrared] != 0 {
+        player.powers[pw_infrared] -= 1;
+    }
 
-        if player.bonuscount != 0 {
-            player.bonuscount -= 1;
-        }
+    if player.powers[pw_ironfeet] != 0 {
+        player.powers[pw_ironfeet] -= 1;
+    }
 
-        // Handling colormaps.
-        if player.powers[pw_invulnerability] != 0 {
-            if player.powers[pw_invulnerability] > 4 * 32
-                || (player.powers[pw_invulnerability] & 8) != 0
-            {
-                player.fixedcolormap = INVERSECOLORMAP;
-            } else {
-                player.fixedcolormap = 0;
-            }
-        } else if player.powers[pw_infrared] != 0 {
-            if player.powers[pw_infrared] > 4 * 32 || (player.powers[pw_infrared] & 8) != 0 {
-                // Almost full bright
-                player.fixedcolormap = 1;
-            } else {
-                player.fixedcolormap = 0;
-            }
+    if player.damagecount != 0 {
+        player.damagecount -= 1;
+    }
+
+    if player.bonuscount != 0 {
+        player.bonuscount -= 1;
+    }
+
+    // Handling colormaps.
+    if player.powers[pw_invulnerability] != 0 {
+        if player.powers[pw_invulnerability] > 4 * 32
+            || (player.powers[pw_invulnerability] & 8) != 0
+        {
+            player.fixedcolormap = INVERSECOLORMAP;
         } else {
             player.fixedcolormap = 0;
         }
+    } else if player.powers[pw_infrared] != 0 {
+        if player.powers[pw_infrared] > 4 * 32 || (player.powers[pw_infrared] & 8) != 0 {
+            // Almost full bright
+            player.fixedcolormap = 1;
+        } else {
+            player.fixedcolormap = 0;
+        }
+    } else {
+        player.fixedcolormap = 0;
     }
 }
 

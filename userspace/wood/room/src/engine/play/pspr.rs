@@ -17,10 +17,10 @@ use crate::engine::{
     },
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedMul, fixed_t},
-        tables::{FINEANGLES, FINEMASK, finecosine, finesine},
+        tables::{FINEANGLES, FINEMASK, finesine},
     },
     misc::random::P_Random,
-    play::{info::*, mobj::MobjId},
+    play::{info::*, mobj::MobjId, tick::MOBJ_ARENA},
     sound::S_StartSound,
     world::World,
 };
@@ -346,10 +346,9 @@ pub unsafe fn P_DropWeapon(world: &mut World, player: PlayerId) {
 /// `psprite` must be the weapon psprite slot.
 pub unsafe fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usize) {
     let mo_id = world.players[player_id].mo();
-    let mo = mo_id.ptr();
 
     // Get out of attack state.
-    let mobj_state = (*mo).state.number();
+    let mobj_state = MOBJ_ARENA.borrow()[mo_id].state.number();
     if mobj_state == S_PLAY_ATK1 || mobj_state == S_PLAY_ATK2 {
         P_SetMobjState(world, mo_id, S_PLAY);
     }
@@ -384,7 +383,9 @@ pub unsafe fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usi
     let bob = player.bob;
     let psp = &mut player.psprites[psprite];
     let mut angle = (128 * world.leveltime) as u32 & FINEMASK as u32;
-    psp.sx = FRACUNIT + FixedMul(bob, *finecosine.0.add(angle as usize));
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    psp.sx = FRACUNIT + FixedMul(bob, finesine[angle as usize + FINEANGLES / 4]);
     angle &= (FINEANGLES / 2 - 1) as u32;
     psp.sy = WEAPONTOP + FixedMul(bob, finesine[angle as usize]);
 }
@@ -505,23 +506,24 @@ pub unsafe fn A_GunFlash(world: &mut World, player: PlayerId, _psprite: usize) {
 /// `player`'s `mo` must name a map object of the loaded level.
 pub unsafe fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
-    let mo = mo_id.ptr();
 
     let mut damage = ((P_Random(world) % 10) + 1) << 1;
     if world.players[player].powers[pw_strength] != 0 {
         damage *= 10;
     }
 
-    let mut angle = (*mo).angle;
+    let mut angle = MOBJ_ARENA.borrow()[mo_id].angle;
     angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
     let slope = P_AimLineAttack(world, mo_id, angle, MELEERANGE);
     P_LineAttack(world, mo_id, angle, MELEERANGE, slope, damage);
 
     // Turn to face target.
     if let Some(target) = world.scratch.map.linetarget {
-        let target = target.ptr();
         S_StartSound(world, mo_id, Sfx::Punch as i32);
-        (*mo).angle = R_PointToAngle2((*mo).x, (*mo).y, (*target).x, (*target).y);
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let (target_x, target_y) = (mobjs[target].x, mobjs[target].y);
+        let mo = &mut mobjs[mo_id];
+        mo.angle = R_PointToAngle2(mo.x, mo.y, target_x, target_y);
     }
 }
 
@@ -535,10 +537,9 @@ pub unsafe fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
 /// `player`'s `mo` must name a map object of the loaded level.
 pub unsafe fn A_Saw(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
-    let mo = mo_id.ptr();
 
     let damage = 2 * ((P_Random(world) % 10) + 1);
-    let mut angle = (*mo).angle;
+    let mut angle = MOBJ_ARENA.borrow()[mo_id].angle;
     angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
 
     let slope = P_AimLineAttack(world, mo_id, angle, MELEERANGE + 1);
@@ -548,27 +549,29 @@ pub unsafe fn A_Saw(world: &mut World, player: PlayerId, _psprite: usize) {
         S_StartSound(world, mo_id, Sfx::Sawful as i32);
         return;
     };
-    let target = target.ptr();
     S_StartSound(world, mo_id, Sfx::Sawhit as i32);
 
     // Turn to face target.
-    let angle = R_PointToAngle2((*mo).x, (*mo).y, (*target).x, (*target).y);
-    let delta = angle.wrapping_sub((*mo).angle);
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let (target_x, target_y) = (mobjs[target].x, mobjs[target].y);
+    let mo = &mut mobjs[mo_id];
+    let angle = R_PointToAngle2(mo.x, mo.y, target_x, target_y);
+    let delta = angle.wrapping_sub(mo.angle);
     if delta > ANG180 {
         let signed_delta = delta as i32;
         if signed_delta < -(ANG90 as i32) / 20 {
-            (*mo).angle = angle.wrapping_add(ANG90 / 21);
+            mo.angle = angle.wrapping_add(ANG90 / 21);
         } else {
-            (*mo).angle = (*mo).angle.wrapping_sub(ANG90 / 20);
+            mo.angle = mo.angle.wrapping_sub(ANG90 / 20);
         }
     } else {
         if delta > ANG90 / 20 {
-            (*mo).angle = angle.wrapping_sub(ANG90 / 21);
+            mo.angle = angle.wrapping_sub(ANG90 / 21);
         } else {
-            (*mo).angle = (*mo).angle.wrapping_add(ANG90 / 20);
+            mo.angle = mo.angle.wrapping_add(ANG90 / 20);
         }
     }
-    (*mo).flags |= MF_JUSTATTACKED;
+    mo.flags |= MF_JUSTATTACKED;
 }
 
 /// Subtract `amount` from the player's ammo for slot `ammonum`, emulating
@@ -642,7 +645,7 @@ pub unsafe fn A_FirePlasma(world: &mut World, player: PlayerId, _psprite: usize)
 ///
 /// `mo` must name an initialised map object of the level.
 pub unsafe fn P_BulletSlope(world: &mut World, mo: MobjId) {
-    let mut an = (*mo.ptr()).angle;
+    let mut an = MOBJ_ARENA.borrow()[mo].angle;
     world.scratch.pspr.bulletslope = P_AimLineAttack(world, mo, an, 16 * 64 * FRACUNIT);
 
     if world.scratch.map.linetarget.is_none() {
@@ -666,7 +669,7 @@ pub unsafe fn P_BulletSlope(world: &mut World, mo: MobjId) {
 /// `bulletslope` is valid.
 pub unsafe fn P_GunShot(world: &mut World, mo: MobjId, accurate: i32) {
     let damage = 5 * ((P_Random(world) % 3) + 1);
-    let mut angle = (*mo.ptr()).angle;
+    let mut angle = MOBJ_ARENA.borrow()[mo].angle;
 
     if accurate == 0 {
         angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 18);
@@ -738,7 +741,7 @@ pub unsafe fn A_FireShotgun2(world: &mut World, player: PlayerId, _psprite: usiz
 
     for _ in 0..20 {
         let damage = 5 * ((P_Random(world) % 3) + 1);
-        let mut angle = (*mo.ptr()).angle;
+        let mut angle = MOBJ_ARENA.borrow()[mo].angle;
         angle = angle.wrapping_add(((P_Random(world) - P_Random(world)) as u32) << 19);
         let slope = world.scratch.pspr.bulletslope + ((P_Random(world) - P_Random(world)) << 5);
         P_LineAttack(world, mo, angle, MISSILERANGE, slope, damage);
@@ -804,11 +807,16 @@ pub fn A_Light2(world: &mut World, player: PlayerId, _psprite: usize) {
 /// `mo_id` must name a map object of the level; a missing `target` is
 /// replaced by the dummy object, as C's `P_AimLineAttack` does.
 pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
-    let mo = mo_id.ptr();
     for i in 0..40 {
-        let an = (*mo).angle - ANG90 / 2 + (ANG90 / 40) * i as u32;
+        // The ball is read afresh on each pass: aiming, spawning and
+        // damaging run play code, as C reads it through its pointer.
+        let (angle, target) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            (mobjs[mo_id].angle, mobjs[mo_id].target)
+        };
+        let an = angle - ANG90 / 2 + (ANG90 / 40) * i as u32;
 
-        let shooter = P_SubstNullMobj(world, (*mo).target);
+        let shooter = P_SubstNullMobj(world, target);
         P_AimLineAttack(world, shooter, an, 16 * 64 * FRACUNIT);
 
         // Spawning the explosion and rolling damage do not aim, so the
@@ -816,22 +824,21 @@ pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
         let Some(target_id) = world.scratch.map.linetarget else {
             continue;
         };
-        let target = target_id.ptr();
+        let (x, y, z) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            let target = &mobjs[target_id];
+            (target.x, target.y, target.z + (target.height >> 2))
+        };
 
-        P_SpawnMobj(
-            world,
-            (*target).x,
-            (*target).y,
-            (*target).z + ((*target).height >> 2),
-            MT_EXTRABFG,
-        );
+        P_SpawnMobj(world, x, y, z, MT_EXTRABFG);
 
         let mut damage = 0;
         for _ in 0..15 {
             damage += (P_Random(world) & 7) + 1;
         }
 
-        P_DamageMobj(world, target_id, (*mo).target, (*mo).target, damage);
+        let source = MOBJ_ARENA.borrow()[mo_id].target;
+        P_DamageMobj(world, target_id, source, source, damage);
     }
 }
 

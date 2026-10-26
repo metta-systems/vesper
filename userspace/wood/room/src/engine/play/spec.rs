@@ -938,7 +938,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
 ///
 /// Called from p_map.c (`PTR_ShootTraverse`) when a bullet or projectile
 /// hits a special linedef.
-pub unsafe fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
+pub fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
     let line_record = world.level.lines[line_id];
     let line = &line_record;
     if MOBJ_ARENA.borrow()[thing].player.is_none() {

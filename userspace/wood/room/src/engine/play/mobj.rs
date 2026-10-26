@@ -15,7 +15,7 @@ use crate::engine::{
     map::SubsectorId,
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedMul},
-        tables::{ANG45, ANGLETOFINESHIFT, finecosine, finesine},
+        tables::{ANG45, ANGLETOFINESHIFT, FINEANGLES, finesine},
     },
     misc::random::P_Random,
     play::{
@@ -23,7 +23,10 @@ use crate::engine::{
         maputl::{P_AproxDistance, P_SetThingPosition, P_UnsetThingPosition},
         pspr::P_SetupPsprites,
         setup::MAX_DEATHMATCH_STARTS,
-        tick::{P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t},
+        tick::{
+            MOBJ_ARENA, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker,
+            thinker_t,
+        },
     },
     render_3d::main::{R_PointInSubsector, R_PointToAngle2},
     sound::{S_StartSound, S_StopSound},
@@ -77,9 +80,10 @@ use crate::engine::{
 /// A map object in the mobj arena (C's `mobj_t *`).
 ///
 /// Every reference between map objects, and from the rest of the engine to
-/// one, is a handle; [`Handle::ptr`] resolves it. A handle to a removed
-/// object goes stale once the thinker list frees it, and still reads the
-/// object's last data, as C's dangling pointers do (see
+/// one, is a handle; indexing the borrowed [`MOBJ_ARENA`] with it resolves
+/// it (code not yet moved off raw pointers uses [`Handle::ptr`]). A handle
+/// to a removed object goes stale once the thinker list frees it, and still
+/// reads the object's last data, as C's dangling pointers do (see
 /// [`crate::engine::arena`]).
 pub type MobjId = Handle<mobj_t>;
 
@@ -228,20 +232,23 @@ impl Default for MobjState {
 /// `mobj_id` must name an initialised map object of the loaded level.
 /// `state` must be a valid state-table index or `S_NULL`.
 pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> i32 {
-    let mobj = &mut *mobj_id.ptr();
     let mut state = state;
     loop {
         if state == S_NULL {
-            mobj.state = StateNum::NULL;
+            MOBJ_ARENA.borrow_mut()[mobj_id].state = StateNum::NULL;
             P_RemoveMobj(world, mobj_id);
             return 0;
         }
         let state_num = StateNum::new(state);
         let st = state_num.get();
-        mobj.state = state_num;
-        mobj.tics = st.tics;
-        mobj.sprite = st.sprite;
-        mobj.frame = st.frame;
+        {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobj = &mut mobjs[mobj_id];
+            mobj.state = state_num;
+            mobj.tics = st.tics;
+            mobj.sprite = st.sprite;
+            mobj.frame = st.frame;
+        }
         match st.action {
             StateAction::None => {}
             StateAction::Mobj(action) => action(world, mobj_id),
@@ -250,7 +257,8 @@ pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> 
             }
         }
         state = st.nextstate;
-        if mobj.tics != 0 {
+        // The action may have changed the object (even its state).
+        if MOBJ_ARENA.borrow()[mobj_id].tics != 0 {
             break;
         }
     }
@@ -265,17 +273,25 @@ pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> 
 ///
 /// `mo_id` must name a map object of the loaded level with `MF_MISSILE` set.
 pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
-    let mo = &mut *mo_id.ptr();
-    let info = mo.info.get();
-    mo.momx = 0;
-    mo.momy = 0;
-    mo.momz = 0;
+    let info = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
+        mo.momx = 0;
+        mo.momy = 0;
+        mo.momz = 0;
+        mo.info.get()
+    };
     P_SetMobjState(world, mo_id, info.deathstate);
-    mo.tics -= P_Random(world) & 3;
-    if mo.tics < 1 {
-        mo.tics = 1;
+    let tics_jitter = P_Random(world) & 3;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
+        mo.tics -= tics_jitter;
+        if mo.tics < 1 {
+            mo.tics = 1;
+        }
+        mo.flags &= !MF_MISSILE;
     }
-    mo.flags &= !MF_MISSILE;
     if info.deathsound != Sfx::None {
         S_StartSound(world, mo_id, info.deathsound as i32);
     }
@@ -289,47 +305,60 @@ pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object that is part of the active thinker list.
 pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
-    let mo = &mut *mo_id.ptr();
+    // The object is borrowed for each stretch of field work and read afresh
+    // after each call that runs play code (moves, slides, state changes),
+    // as C reads it through its pointer.
     let mut ptryx: i32;
     let mut ptryy: i32;
-    let player = mo.player;
-    let mut xmove: i32;
-    let mut ymove: i32;
+    let (player, mut xmove, mut ymove) = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mo = &mut mobjs[mo_id];
 
-    if mo.momx == 0 && mo.momy == 0 {
-        if mo.flags & MF_SKULLFLY != 0 {
+        if mo.momx == 0 && mo.momy == 0 {
+            if mo.flags & MF_SKULLFLY == 0 {
+                return;
+            }
             mo.flags &= !MF_SKULLFLY;
             mo.momx = 0;
             mo.momy = 0;
             mo.momz = 0;
-            P_SetMobjState(world, mo_id, mo.info.get().spawnstate);
+            let spawnstate = mo.info.get().spawnstate;
+            drop(mobjs);
+            P_SetMobjState(world, mo_id, spawnstate);
+            return;
         }
-        return;
-    }
 
-    mo.momx = mo.momx.clamp(-MAXMOVE, MAXMOVE);
-    mo.momy = mo.momy.clamp(-MAXMOVE, MAXMOVE);
+        mo.momx = mo.momx.clamp(-MAXMOVE, MAXMOVE);
+        mo.momy = mo.momy.clamp(-MAXMOVE, MAXMOVE);
 
-    xmove = mo.momx;
-    ymove = mo.momy;
+        (mo.player, mo.momx, mo.momy)
+    };
 
     loop {
+        let (x, y) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            (mobjs[mo_id].x, mobjs[mo_id].y)
+        };
         if xmove > MAXMOVE / 2 || ymove > MAXMOVE / 2 {
-            ptryx = mo.x + xmove / 2;
-            ptryy = mo.y + ymove / 2;
+            ptryx = x + xmove / 2;
+            ptryy = y + ymove / 2;
             xmove >>= 1;
             ymove >>= 1;
         } else {
-            ptryx = mo.x + xmove;
-            ptryy = mo.y + ymove;
+            ptryx = x + xmove;
+            ptryy = y + ymove;
             xmove = 0;
             ymove = 0;
         }
 
         if P_TryMove(world, mo_id, ptryx, ptryy) == 0 {
-            if mo.player.is_some() {
+            let (mo_player, mo_flags) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                (mobjs[mo_id].player, mobjs[mo_id].flags)
+            };
+            if mo_player.is_some() {
                 P_SlideMove(world, mo_id);
-            } else if mo.flags & MF_MISSILE != 0 {
+            } else if mo_flags & MF_MISSILE != 0 {
                 if let Some(line) = world.scratch.map.ceilingline {
                     let skyflatnum = SKY.borrow().skyflatnum as i16;
                     let hits_sky = {
@@ -345,6 +374,8 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
                 }
                 P_ExplodeMissile(world, mo_id);
             } else {
+                let mut mobjs = MOBJ_ARENA.borrow_mut();
+                let mo = &mut mobjs[mo_id];
                 mo.momx = 0;
                 mo.momy = 0;
             }
@@ -357,6 +388,8 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
     // The player's command and cheats, read once the move has run.
     let player_input =
         player.map(|player| (world.players[player].cmd, world.players[player].cheats));
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mo = &mut mobjs[mo_id];
     if player_input.is_some_and(|(_, cheats)| cheats & CF_NOMOMENTUM != 0) {
         mo.momx = 0;
         mo.momy = 0;
@@ -387,12 +420,13 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
         && mo.momy < STOPSPEED
         && player_input.is_none_or(|(cmd, _)| cmd.forwardmove == 0 && cmd.sidemove == 0)
     {
-        if player.is_some() {
-            let run_offset = mo.state.number() - S_PLAY_RUN1;
-            if (0..4).contains(&run_offset) {
-                P_SetMobjState(world, mo_id, S_PLAY);
-            }
+        let run_offset = mo.state.number() - S_PLAY_RUN1;
+        if player.is_some() && (0..4).contains(&run_offset) {
+            drop(mobjs);
+            P_SetMobjState(world, mo_id, S_PLAY);
+            mobjs = MOBJ_ARENA.borrow_mut();
         }
+        let mo = &mut mobjs[mo_id];
         mo.momx = 0;
         mo.momy = 0;
     } else {
@@ -411,7 +445,10 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
 ///
 /// `mo_id` must name a map object that is part of the active thinker list.
 pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
-    let mo = &mut *mo_id.ptr();
+    // The object is borrowed for its field work and released around the
+    // landing sound and the missile explosions, which run play code.
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mo = &mut mobjs[mo_id];
     let dist: i32;
     let delta: i32;
 
@@ -431,9 +468,13 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
         && mo.flags & MF_SKULLFLY == 0
         && mo.flags & MF_INFLOAT == 0
     {
-        let target = target.ptr();
-        dist = P_AproxDistance(mo.x - (*target).x, mo.y - (*target).y);
-        delta = ((*target).z + (mo.height >> 1)) - mo.z;
+        let (target_x, target_y, target_z) = {
+            let target = &mobjs[target];
+            (target.x, target.y, target.z)
+        };
+        let mo = &mut mobjs[mo_id];
+        dist = P_AproxDistance(mo.x - target_x, mo.y - target_y);
+        delta = (target_z + (mo.height >> 1)) - mo.z;
         if delta < 0 && dist < -(delta * 3) {
             mo.z -= FLOATSPEED;
         } else if delta > 0 && dist < delta * 3 {
@@ -441,6 +482,7 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
         }
     }
 
+    let mo = &mut mobjs[mo_id];
     if mo.z <= mo.floorz {
         let correct_lost_soul_bounce = gameversion() >= exe_ultimate;
         if correct_lost_soul_bounce && mo.flags & MF_SKULLFLY != 0 {
@@ -451,15 +493,19 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
                 && mo.momz < -GRAVITY * 8
             {
                 world.players[player].deltaviewheight = mo.momz >> 3;
+                drop(mobjs);
                 S_StartSound(world, mo_id, Sfx::Oof as i32);
+                mobjs = MOBJ_ARENA.borrow_mut();
             }
-            mo.momz = 0;
+            mobjs[mo_id].momz = 0;
         }
+        let mo = &mut mobjs[mo_id];
         mo.z = mo.floorz;
         if !correct_lost_soul_bounce && mo.flags & MF_SKULLFLY != 0 {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
+            drop(mobjs);
             P_ExplodeMissile(world, mo_id);
             return;
         }
@@ -471,6 +517,7 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
         }
     }
 
+    let mo = &mut mobjs[mo_id];
     if mo.z + mo.height > mo.ceilingz {
         if mo.momz > 0 {
             mo.momz = 0;
@@ -480,6 +527,7 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
             mo.momz = -mo.momz;
         }
         if mo.flags & MF_MISSILE != 0 && mo.flags & MF_NOCLIP == 0 {
+            drop(mobjs);
             P_ExplodeMissile(world, mo_id);
         }
     }
@@ -496,15 +544,20 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
 /// `mobj_id` must name a map object that has `MF_COUNTKILL` set and whose
 /// `spawnpoint` field is valid.
 pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
-    let mobj = &mut *mobj_id.ptr();
-    let x = (mobj.spawnpoint.x.get() as i32) << FRACBITS;
-    let y = (mobj.spawnpoint.y.get() as i32) << FRACBITS;
+    let spawnpoint = MOBJ_ARENA.borrow()[mobj_id].spawnpoint;
+    let x = (spawnpoint.x.get() as i32) << FRACBITS;
+    let y = (spawnpoint.y.get() as i32) << FRACBITS;
     if P_CheckPosition(world, mobj_id, x, y) == 0 {
         return;
     }
 
-    let floorheight = world.level.subsector_sector(mobj.subsector).floorheight;
-    let fog = P_SpawnMobj(world, mobj.x, mobj.y, floorheight, MT_TFOG);
+    let (mobj_x, mobj_y, mobj_subsector) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mobj = &mobjs[mobj_id];
+        (mobj.x, mobj.y, mobj.subsector)
+    };
+    let floorheight = world.level.subsector_sector(mobj_subsector).floorheight;
+    let fog = P_SpawnMobj(world, mobj_x, mobj_y, floorheight, MT_TFOG);
     S_StartSound(world, fog, Sfx::Telept as i32);
 
     let ss = R_PointInSubsector(&world.level, x, y);
@@ -512,20 +565,28 @@ pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
     let fog = P_SpawnMobj(world, x, y, floorheight, MT_TFOG);
     S_StartSound(world, fog, Sfx::Telept as i32);
 
-    let mthing = &mobj.spawnpoint;
-    let z = if mobj.info.get().flags & MF_SPAWNCEILING != 0 {
+    let (mthing, kind, info_flags) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mobj = &mobjs[mobj_id];
+        (mobj.spawnpoint, mobj.kind, mobj.info.get().flags)
+    };
+    let z = if info_flags & MF_SPAWNCEILING != 0 {
         ONCEILINGZ
     } else {
         ONFLOORZ
     };
 
-    let respawned = &mut *P_SpawnMobj(world, x, y, z, mobj.kind).ptr();
-    respawned.spawnpoint = mobj.spawnpoint;
-    respawned.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
-        respawned.flags |= MF_AMBUSH;
+    let respawned_id = P_SpawnMobj(world, x, y, z, kind);
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let respawned = &mut mobjs[respawned_id];
+        respawned.spawnpoint = mthing;
+        respawned.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+        if mthing.options.get() & MTF_AMBUSH as i16 != 0 {
+            respawned.flags |= MF_AMBUSH;
+        }
+        respawned.reactiontime = 18;
     }
-    respawned.reactiontime = 18;
     P_RemoveMobj(world, mobj_id);
 }
 
@@ -539,24 +600,39 @@ pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
 ///
 /// `mobj_id` must name a map object that is currently in the thinker list.
 pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
-    let mobj = &mut *mobj_id.ptr();
-    if mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0 {
+    // The object is read afresh after each movement step, which runs play
+    // code and may remove it.
+    let moving = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mobj = &mobjs[mobj_id];
+        mobj.momx != 0 || mobj.momy != 0 || mobj.flags & MF_SKULLFLY != 0
+    };
+    if moving {
         P_XYMovement(world, mobj_id);
-        if mobj.thinker.kind.is_removed() {
+        if MOBJ_ARENA.borrow()[mobj_id].thinker.kind.is_removed() {
             return;
         }
     }
-    if mobj.z != mobj.floorz || mobj.momz != 0 {
+    let off_floor = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mobj = &mobjs[mobj_id];
+        mobj.z != mobj.floorz || mobj.momz != 0
+    };
+    if off_floor {
         P_ZMovement(world, mobj_id);
-        if mobj.thinker.kind.is_removed() {
+        if MOBJ_ARENA.borrow()[mobj_id].thinker.kind.is_removed() {
             return;
         }
     }
 
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobj = &mut mobjs[mobj_id];
     if mobj.tics != -1 {
         mobj.tics -= 1;
         if mobj.tics == 0 {
-            P_SetMobjState(world, mobj_id, mobj.state.get().nextstate);
+            let nextstate = mobj.state.get().nextstate;
+            drop(mobjs);
+            P_SetMobjState(world, mobj_id, nextstate);
         }
     } else {
         if mobj.flags & MF_COUNTKILL == 0 {
@@ -569,6 +645,7 @@ pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
         if mobj.movecount < 12 * TICRATE {
             return;
         }
+        drop(mobjs);
         if world.leveltime & 31 != 0 {
             return;
         }
@@ -595,50 +672,57 @@ pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
 pub unsafe fn P_SpawnMobj(world: &mut World, x: i32, y: i32, z: i32, kind: i32) -> MobjId {
     // A zeroed object, as C's `Z_Malloc` + `memset` gives.
     let mobj = new_thinker::<mobj_t>();
-    let mobj_ref = &mut *mobj.ptr();
     let mobj_type = MobjType::new(kind);
     let info = mobj_type.get();
-
-    mobj_ref.kind = kind;
-    mobj_ref.info = mobj_type;
-    mobj_ref.x = x;
-    mobj_ref.y = y;
-    mobj_ref.radius = info.radius;
-    mobj_ref.height = info.height;
-    mobj_ref.flags = info.flags;
-    mobj_ref.health = info.spawnhealth;
-
-    if world.session.gameskill != 4 {
-        // sk_nightmare = 4
-        mobj_ref.reactiontime = info.reactiontime;
-    }
-
-    mobj_ref.lastlook = P_Random(world) % MAXPLAYERS as i32;
-
     let state = StateNum::new(info.spawnstate);
     let st = state.get();
-    mobj_ref.state = state;
-    mobj_ref.tics = st.tics;
-    mobj_ref.sprite = st.sprite;
-    mobj_ref.frame = st.frame;
+    // The only random number spawning draws; nothing else reads it.
+    let lastlook = P_Random(world) % MAXPLAYERS as i32;
+
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobj_ref = &mut mobjs[mobj];
+        mobj_ref.kind = kind;
+        mobj_ref.info = mobj_type;
+        mobj_ref.x = x;
+        mobj_ref.y = y;
+        mobj_ref.radius = info.radius;
+        mobj_ref.height = info.height;
+        mobj_ref.flags = info.flags;
+        mobj_ref.health = info.spawnhealth;
+
+        if world.session.gameskill != 4 {
+            // sk_nightmare = 4
+            mobj_ref.reactiontime = info.reactiontime;
+        }
+
+        mobj_ref.lastlook = lastlook;
+
+        mobj_ref.state = state;
+        mobj_ref.tics = st.tics;
+        mobj_ref.sprite = st.sprite;
+        mobj_ref.frame = st.frame;
+    }
 
     P_SetThingPosition(world, mobj);
 
     {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobj_ref = &mut mobjs[mobj];
         let sector = world.level.subsector_sector(mobj_ref.subsector);
         mobj_ref.floorz = sector.floorheight;
         mobj_ref.ceilingz = sector.ceilingheight;
-    }
 
-    if z == ONFLOORZ {
-        mobj_ref.z = mobj_ref.floorz;
-    } else if z == ONCEILINGZ {
-        mobj_ref.z = mobj_ref.ceilingz - info.height;
-    } else {
-        mobj_ref.z = z;
-    }
+        if z == ONFLOORZ {
+            mobj_ref.z = mobj_ref.floorz;
+        } else if z == ONCEILINGZ {
+            mobj_ref.z = mobj_ref.ceilingz - info.height;
+        } else {
+            mobj_ref.z = z;
+        }
 
-    mobj_ref.thinker.kind = ThinkerKind::Mobj;
+        mobj_ref.thinker.kind = ThinkerKind::Mobj;
+    }
 
     P_AddThinker(ThinkerId::Mobj(mobj));
 
@@ -656,16 +740,16 @@ pub unsafe fn P_SpawnMobj(world: &mut World, x: i32, y: i32, z: i32, kind: i32) 
 ///
 /// `mobj_id` must name a map object that is currently linked into the world.
 pub unsafe fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
-    let mobj = &mut *mobj_id.ptr();
-    if mobj.flags & MF_SPECIAL != 0
-        && mobj.flags & MF_DROPPED == 0
-        && mobj.kind != MT_INV
-        && mobj.kind != MT_INS
-    {
+    let (flags, kind, spawnpoint) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mobj = &mobjs[mobj_id];
+        (mobj.flags, mobj.kind, mobj.spawnpoint)
+    };
+    if flags & MF_SPECIAL != 0 && flags & MF_DROPPED == 0 && kind != MT_INV && kind != MT_INS {
         let leveltime = world.leveltime;
         let queue = &mut world.active.mobj;
         let head = queue.iquehead as usize;
-        queue.itemrespawnque[head] = mobj.spawnpoint;
+        queue.itemrespawnque[head] = spawnpoint;
         queue.itemrespawntime[head] = leveltime;
         queue.iquehead = (queue.iquehead + 1) & (ITEMQUESIZE as i32 - 1);
         if queue.iquehead == queue.iquetail {
@@ -675,7 +759,7 @@ pub unsafe fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
 
     P_UnsetThingPosition(world, mobj_id);
     S_StopSound(mobj_id);
-    P_RemoveThinker(&mut mobj.thinker);
+    P_RemoveThinker(&mut MOBJ_ARENA.borrow_mut()[mobj_id].thinker);
 }
 
 /// Respawn the oldest queued special item if deathmatch mode 2 is active and
@@ -729,9 +813,13 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
         (z, i)
     };
 
-    let item = &mut *P_SpawnMobj(world, x, y, z, i as i32).ptr();
-    item.spawnpoint = mthing;
-    item.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    let item_id = P_SpawnMobj(world, x, y, z, i as i32);
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let item = &mut mobjs[item_id];
+        item.spawnpoint = mthing;
+        item.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    }
 
     let queue = &mut world.active.mobj;
     queue.iquetail = (queue.iquetail + 1) & (ITEMQUESIZE as i32 - 1);
@@ -768,16 +856,19 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: mapthing_t) {
     let y = (mthing.y.get() as i32) << FRACBITS;
     let z = ONFLOORZ;
     let mobj_id = P_SpawnMobj(world, x, y, z, MT_PLAYER);
-    let mobj = &mut *mobj_id.ptr();
-
-    if thing_type > 1 {
-        mobj.flags |= ((thing_type - 1) as i32) << MF_TRANSSHIFT;
-    }
-
-    mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
-    mobj.player = Some(player);
     let player_slot = &mut world.players[player];
-    mobj.health = player_slot.health;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobj = &mut mobjs[mobj_id];
+
+        if thing_type > 1 {
+            mobj.flags |= ((thing_type - 1) as i32) << MF_TRANSSHIFT;
+        }
+
+        mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+        mobj.player = Some(player);
+        mobj.health = player_slot.health;
+    }
 
     player_slot.mo = Some(mobj_id);
     player_slot.playerstate = PST_LIVE;
@@ -896,22 +987,30 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
     };
     drop(mobjinfo);
 
-    let mobj = P_SpawnMobj(world, x, y, z, i as i32).ptr();
-    (*mobj).spawnpoint = *mthing;
+    let mobj_id = P_SpawnMobj(world, x, y, z, i as i32);
+    let tics = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        mobjs[mobj_id].spawnpoint = *mthing;
+        mobjs[mobj_id].tics
+    };
 
-    if (*mobj).tics > 0 {
-        (*mobj).tics = 1 + (P_Random(world) % (*mobj).tics);
+    if tics > 0 {
+        let roll = P_Random(world);
+        MOBJ_ARENA.borrow_mut()[mobj_id].tics = 1 + (roll % tics);
     }
-    if (*mobj).flags & MF_COUNTKILL != 0 {
+
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobj = &mut mobjs[mobj_id];
+    if mobj.flags & MF_COUNTKILL != 0 {
         world.session.totalkills += 1;
     }
-    if (*mobj).flags & MF_COUNTITEM != 0 {
+    if mobj.flags & MF_COUNTITEM != 0 {
         world.session.totalitems += 1;
     }
 
-    (*mobj).angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
+    mobj.angle = ANG45.wrapping_mul((mthing.angle.get() as u32) / 45);
     if options & MTF_AMBUSH as i16 != 0 {
-        (*mobj).flags |= MF_AMBUSH;
+        mobj.flags |= MF_AMBUSH;
     }
 }
 
@@ -925,11 +1024,15 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
 pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
     let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_PUFF);
-    let th = th_id.ptr();
-    (*th).momz = FRACUNIT;
-    (*th).tics -= P_Random(world) & 3;
-    if (*th).tics < 1 {
-        (*th).tics = 1;
+    let tics_jitter = P_Random(world) & 3;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let th = &mut mobjs[th_id];
+        th.momz = FRACUNIT;
+        th.tics -= tics_jitter;
+        if th.tics < 1 {
+            th.tics = 1;
+        }
     }
     if world.scratch.map.attackrange == MELEERANGE {
         P_SetMobjState(world, th_id, S_PUFF3);
@@ -948,11 +1051,15 @@ pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
 pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i32) {
     let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_BLOOD);
-    let th = th_id.ptr();
-    (*th).momz = FRACUNIT * 2;
-    (*th).tics -= P_Random(world) & 3;
-    if (*th).tics < 1 {
-        (*th).tics = 1;
+    let tics_jitter = P_Random(world) & 3;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let th = &mut mobjs[th_id];
+        th.momz = FRACUNIT * 2;
+        th.tics -= tics_jitter;
+        if th.tics < 1 {
+            th.tics = 1;
+        }
     }
     if (9..=12).contains(&damage) {
         P_SetMobjState(world, th_id, S_BLOOD2);
@@ -970,15 +1077,20 @@ pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i3
 /// `th_id` must name a map object with `MF_MISSILE` set and non-zero
 /// momentum.
 pub unsafe fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
-    let th = &mut *th_id.ptr();
-    th.tics -= P_Random(world) & 3;
-    if th.tics < 1 {
-        th.tics = 1;
-    }
-    th.x += th.momx >> 1;
-    th.y += th.momy >> 1;
-    th.z += th.momz >> 1;
-    if P_TryMove(world, th_id, th.x, th.y) == 0 {
+    let tics_jitter = P_Random(world) & 3;
+    let (x, y) = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let th = &mut mobjs[th_id];
+        th.tics -= tics_jitter;
+        if th.tics < 1 {
+            th.tics = 1;
+        }
+        th.x += th.momx >> 1;
+        th.y += th.momy >> 1;
+        th.z += th.momz >> 1;
+        (th.x, th.y)
+    };
+    if P_TryMove(world, th_id, x, y) == 0 {
         P_ExplodeMissile(world, th_id);
     }
 }
@@ -1004,9 +1116,8 @@ pub fn P_SubstNullMobj(world: &mut World, mobj: Option<MobjId>) -> MobjId {
         queue.dummy_mobj = Some(dummy);
         dummy
     });
-    // SAFETY: the dummy is not in the thinker list or any map list, so no
-    // other reference to it is live outside its callers' short reads.
-    let dummy = unsafe { &mut *dummy_id.ptr() };
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let dummy = &mut mobjs[dummy_id];
     dummy.x = 0;
     dummy.y = 0;
     dummy.z = 0;
@@ -1032,30 +1143,42 @@ pub unsafe fn P_SpawnMissile(
     dest_id: MobjId,
     kind: i32,
 ) -> MobjId {
-    let source = &*source_id.ptr();
-    let dest = &*dest_id.ptr();
+    // Spawning, the see sound and the random spread leave the source and
+    // the destination where they are, so they are copied out once.
+    let (source, dest) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[source_id], mobjs[dest_id])
+    };
     let th_id = P_SpawnMobj(world, source.x, source.y, source.z + 4 * 8 * FRACUNIT, kind);
-    let th = th_id.ptr();
-    let info = (*th).info.get();
+    let info = MOBJ_ARENA.borrow()[th_id].info.get();
     if info.seesound != Sfx::None {
         S_StartSound(world, th_id, info.seesound as i32);
     }
-    (*th).target = Some(source_id);
     let mut an = R_PointToAngle2(source.x, source.y, dest.x, dest.y);
-    if dest.flags & MF_SHADOW != 0 {
-        an = an.wrapping_add(((P_Random(world) - P_Random(world)) << 20) as u32);
-    }
-    (*th).angle = an;
-    an >>= ANGLETOFINESHIFT;
-    (*th).momx = FixedMul(info.speed, *finecosine.0.add(an as usize));
-    (*th).momy = FixedMul(info.speed, finesine[an as usize]);
+    let spread = if dest.flags & MF_SHADOW != 0 {
+        ((P_Random(world) - P_Random(world)) << 20) as u32
+    } else {
+        0
+    };
+    an = an.wrapping_add(spread);
 
     let mut dist = P_AproxDistance(dest.x - source.x, dest.y - source.y);
     dist /= info.speed;
     if dist < 1 {
         dist = 1;
     }
-    (*th).momz = (dest.z - source.z) / dist;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let th = &mut mobjs[th_id];
+        th.target = Some(source_id);
+        th.angle = an;
+        let fine_angle = (an >> ANGLETOFINESHIFT) as usize;
+        // `finecosine[fine_angle]`: the cosine table is the sine table a
+        // quarter turn on.
+        th.momx = FixedMul(info.speed, finesine[fine_angle + FINEANGLES / 4]);
+        th.momy = FixedMul(info.speed, finesine[fine_angle]);
+        th.momz = (dest.z - source.z) / dist;
+    }
     P_CheckMissileSpawn(world, th_id);
     th_id
 }
@@ -1069,8 +1192,7 @@ pub unsafe fn P_SpawnMissile(
 /// `source_id` must name a player's map object.
 /// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
 pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i32) {
-    let source = &mut *source_id.ptr();
-    let mut an = source.angle;
+    let mut an = MOBJ_ARENA.borrow()[source_id].angle;
     let mut slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
 
     if world.scratch.map.linetarget.is_none() {
@@ -1080,28 +1202,35 @@ pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i
             an = an.wrapping_sub(2 << 26);
             slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
             if world.scratch.map.linetarget.is_none() {
-                an = source.angle;
+                an = MOBJ_ARENA.borrow()[source_id].angle;
                 slope = 0;
             }
         }
     }
 
-    let x = source.x;
-    let y = source.y;
-    let z = source.z + 4 * 8 * FRACUNIT;
+    let (x, y, z) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let source = &mobjs[source_id];
+        (source.x, source.y, source.z + 4 * 8 * FRACUNIT)
+    };
 
     let th_id = P_SpawnMobj(world, x, y, z, kind);
-    let th = th_id.ptr();
-    let info = (*th).info.get();
+    let info = MOBJ_ARENA.borrow()[th_id].info.get();
     if info.seesound != Sfx::None {
         S_StartSound(world, th_id, info.seesound as i32);
     }
-    (*th).target = Some(source_id);
-    (*th).angle = an;
-    let fine_idx = (an >> ANGLETOFINESHIFT) as usize;
-    (*th).momx = FixedMul(info.speed, *finecosine.0.add(fine_idx));
-    (*th).momy = FixedMul(info.speed, finesine[fine_idx]);
-    (*th).momz = FixedMul(info.speed, slope);
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let th = &mut mobjs[th_id];
+        th.target = Some(source_id);
+        th.angle = an;
+        let fine_angle = (an >> ANGLETOFINESHIFT) as usize;
+        // `finecosine[fine_angle]`: the cosine table is the sine table a
+        // quarter turn on.
+        th.momx = FixedMul(info.speed, finesine[fine_angle + FINEANGLES / 4]);
+        th.momy = FixedMul(info.speed, finesine[fine_angle]);
+        th.momz = FixedMul(info.speed, slope);
+    }
 
     P_CheckMissileSpawn(world, th_id);
 }
