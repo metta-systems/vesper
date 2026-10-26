@@ -39,7 +39,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat},
             controls::{CONTROLS, ControlsState},
         },
-        play::{maputl::MAPBLOCKUNITS, setup::LevelState},
+        play::{maputl::MAPBLOCKUNITS, setup::LevelState, tick::MOBJ_ARENA},
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
         wad::{
@@ -933,19 +933,20 @@ fn AM_saveScaleAndLoc(automap: &mut AutomapState) {
 /// restoring the saved origin.  Recalculates both scale factors.
 /// C origin: `AM_restoreScaleAndLoc` in am_map.c.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The player's `mo` must name a map object of the level.
-unsafe fn AM_restoreScaleAndLoc(automap: &mut AutomapState, world: &World) {
+/// If follow mode is on and the player has no map object.
+fn AM_restoreScaleAndLoc(automap: &mut AutomapState, world: &World) {
     automap.m_w = automap.old_m_w;
     automap.m_h = automap.old_m_h;
     if automap.followplayer == 0 {
         automap.m_x = automap.old_m_x;
         automap.m_y = automap.old_m_y;
     } else {
-        let mo = world.players[automap.player()].mo().ptr();
-        automap.m_x = (*mo).x - automap.m_w / 2;
-        automap.m_y = (*mo).y - automap.m_h / 2;
+        let mobjs = MOBJ_ARENA.borrow();
+        let mo = &mobjs[world.players[automap.player()].mo()];
+        automap.m_x = mo.x - automap.m_w / 2;
+        automap.m_y = mo.y - automap.m_h / 2;
     }
     automap.m_x2 = automap.m_x + automap.m_w;
     automap.m_y2 = automap.m_y + automap.m_h;
@@ -1049,10 +1050,10 @@ fn AM_changeWindowLoc(automap: &mut AutomapState) {
 ///
 /// C origin: `AM_initVariables` in am_map.c.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The tracked player's `mo` must name a map object of the level.
-unsafe fn AM_initVariables(automap: &mut AutomapState, world: &World) {
+/// If the tracked player has no map object.
+fn AM_initVariables(automap: &mut AutomapState, world: &World) {
     automap.automapactive = 1;
     automap.fb = video_buffer();
 
@@ -1078,9 +1079,12 @@ unsafe fn AM_initVariables(automap: &mut AutomapState, world: &World) {
     };
     automap.plr = Some(plr);
 
-    let mo = world.players[plr].mo().ptr();
-    automap.m_x = (*mo).x - automap.m_w / 2;
-    automap.m_y = (*mo).y - automap.m_h / 2;
+    {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mo = &mobjs[world.players[plr].mo()];
+        automap.m_x = mo.x - automap.m_w / 2;
+        automap.m_y = mo.y - automap.m_h / 2;
+    }
     AM_changeWindowLoc(automap);
 
     automap.old_m_x = automap.m_x;
@@ -1439,18 +1443,19 @@ fn AM_changeWindowScale(automap: &mut AutomapState) {
 ///
 /// C origin: `AM_doFollowPlayer` in am_map.c.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The player's `mo` must name a map object of the level.
-unsafe fn AM_doFollowPlayer(automap: &mut AutomapState, world: &World) {
-    let mo = world.players[automap.player()].mo().ptr();
-    if automap.f_oldloc.x != (*mo).x || automap.f_oldloc.y != (*mo).y {
-        automap.m_x = FTOM(automap, MTOF(automap, (*mo).x)) - automap.m_w / 2;
-        automap.m_y = FTOM(automap, MTOF(automap, (*mo).y)) - automap.m_h / 2;
+/// If the player has no map object.
+fn AM_doFollowPlayer(automap: &mut AutomapState, world: &World) {
+    let mobjs = MOBJ_ARENA.borrow();
+    let mo = &mobjs[world.players[automap.player()].mo()];
+    if automap.f_oldloc.x != mo.x || automap.f_oldloc.y != mo.y {
+        automap.m_x = FTOM(automap, MTOF(automap, mo.x)) - automap.m_w / 2;
+        automap.m_y = FTOM(automap, MTOF(automap, mo.y)) - automap.m_h / 2;
         automap.m_x2 = automap.m_x + automap.m_w;
         automap.m_y2 = automap.m_y + automap.m_h;
-        automap.f_oldloc.x = (*mo).x;
-        automap.f_oldloc.y = (*mo).y;
+        automap.f_oldloc.x = mo.x;
+        automap.f_oldloc.y = mo.y;
     }
 }
 
@@ -2003,13 +2008,17 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
     let mut color: i32;
 
     if netgame() == 0 {
-        let mo = world.players[plr].mo().ptr();
+        let (angle, x, y) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            let mo = &mobjs[world.players[plr].mo()];
+            (mo.angle, mo.x, mo.y)
+        };
         let arrow: &[mline_t] = if automap.cheating != 0 {
             &CHEAT_ARROW
         } else {
             &PLAYER_ARROW
         };
-        AM_drawLineCharacter(automap, arrow, 0, (*mo).angle, WHITE, (*mo).x, (*mo).y);
+        AM_drawLineCharacter(automap, arrow, 0, angle, WHITE, x, y);
         return;
     }
 
@@ -2031,16 +2040,12 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
             color = their_colors[their_color as usize];
         }
 
-        let mo = world.players[p].mo().ptr();
-        AM_drawLineCharacter(
-            automap,
-            &PLAYER_ARROW,
-            0,
-            (*mo).angle,
-            color,
-            (*mo).x,
-            (*mo).y,
-        );
+        let (angle, x, y) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            let mo = &mobjs[world.players[p].mo()];
+            (mo.angle, mo.x, mo.y)
+        };
+        AM_drawLineCharacter(automap, &PLAYER_ARROW, 0, angle, color, x, y);
     }
 }
 
@@ -2065,18 +2070,22 @@ unsafe fn AM_drawThings(
     for sector in &level.sectors[..level.numsectors as usize] {
         let mut thing = sector.thinglist;
         while let Some(current) = thing {
-            let t = current.ptr();
+            let (angle, x, y, snext) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                let t = &mobjs[current];
+                (t.angle, t.x, t.y, t.snext)
+            };
             let lightlev = automap.lightlev;
             AM_drawLineCharacter(
                 automap,
                 &THINTRIANGLE_GUY,
                 16 << FRACBITS,
-                (*t).angle,
+                angle,
                 colors + lightlev,
-                (*t).x,
-                (*t).y,
+                x,
+                y,
             );
-            thing = (*t).snext;
+            thing = snext;
         }
     }
 }

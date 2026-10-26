@@ -37,7 +37,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
             random::M_Random,
         },
-        play::inter::P_GivePower,
+        play::{inter::P_GivePower, tick::MOBJ_ARENA},
         render_2d::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
@@ -692,7 +692,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 plyr.cheats ^= 2; // CF_GODMODE
                 if plyr.cheats & 2 != 0 {
                     if let Some(mo) = plyr.mo {
-                        (*mo.ptr()).health = 100;
+                        MOBJ_ARENA.borrow_mut()[mo].health = 100;
                     }
                     plyr.health = 100; // deh_god_mode_health
                     plyr.message = PlayerMessage::new(DEH_String(STSTR_DQDON));
@@ -780,13 +780,13 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 plyr.powers[0] = 1; // pw_invulnerability
                 plyr.message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
-                let mo = world.players[PlayerId::console()].mo().ptr();
-                world.players[player].message = PlayerMessage::new(format!(
-                    "ang=0x{:x};x,y=(0x{:x},0x{:x})",
-                    (*mo).angle,
-                    (*mo).x,
-                    (*mo).y
-                ));
+                let (angle, x, y) = {
+                    let mobjs = MOBJ_ARENA.borrow();
+                    let mo = &mobjs[world.players[PlayerId::console()].mo()];
+                    (mo.angle, mo.x, mo.y)
+                };
+                world.players[player].message =
+                    PlayerMessage::new(format!("ang=0x{angle:x};x,y=(0x{x:x},0x{y:x})"));
             }
         }
 
@@ -873,11 +873,11 @@ pub fn ST_calcPainOffset(status: &mut StatusState, health: i32) -> i32 {
 /// `plyr` is the status bar's player. Precondition: `oldweaponsowned`
 /// matches the snapshot from the previous call.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The player's `mo` and `attacker` must name map objects of the level
-/// (read when computing turn directions).
-pub unsafe fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
+/// If the player is hurt by an attacker while it has no map object (its
+/// `mo` and the `attacker` are read when computing turn directions).
+pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
     let health = plyr.health;
     let diffang: u32;
     let i: i32;
@@ -913,14 +913,15 @@ pub unsafe fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
             status.st_facecount = ST_TURNCOUNT;
             status.st_faceindex = ST_calcPainOffset(status, health) + ST_OUCHOFFSET;
         } else {
-            let mo = plyr.mo().ptr();
-            let attacker = attacker.ptr();
-            let badguyangle = R_PointToAngle2((*mo).x, (*mo).y, (*attacker).x, (*attacker).y);
-            if badguyangle > (*mo).angle {
-                diffang = badguyangle - (*mo).angle;
+            let mobjs = MOBJ_ARENA.borrow();
+            let mo = &mobjs[plyr.mo()];
+            let attacker = &mobjs[attacker];
+            let badguyangle = R_PointToAngle2(mo.x, mo.y, attacker.x, attacker.y);
+            if badguyangle > mo.angle {
+                diffang = badguyangle - mo.angle;
                 i = if diffang > ANG180 { 1 } else { 0 };
             } else {
-                diffang = (*mo).angle - badguyangle;
+                diffang = mo.angle - badguyangle;
                 i = if diffang <= ANG180 { 1 } else { 0 };
             }
 

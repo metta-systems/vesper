@@ -731,6 +731,9 @@ use crate::engine::world::{Session, WORLD, World};
 /// Mobj lifecycle and spawn helpers from `p_mobj.c`.
 use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
 
+/// The map objects, read and written by handle.
+use crate::engine::play::tick::MOBJ_ARENA;
+
 /// Movement collision check used to validate respawn spots from `p_map.c`.
 use crate::engine::play::map::P_CheckPosition;
 
@@ -1661,7 +1664,7 @@ pub unsafe fn G_Ticker() {
                     );
                 }
                 if let Some(mo) = world.players[i].mo {
-                    game.consistancy[i][buf] = (*mo.ptr()).x as u8;
+                    game.consistancy[i][buf] = MOBJ_ARENA.borrow()[mo].x as u8;
                 } else {
                     game.consistancy[i][buf] = RANDOM.get().rndindex as u8;
                 }
@@ -1762,10 +1765,10 @@ pub fn G_InitPlayer(world: &mut World, player: i32) {
 /// player's mobj, extra-light, fixed colormap, damage-flash and bonus-flash
 /// counters.
 ///
-/// # Safety
-/// `player` must index a valid slot whose `mo` pointer is non-null (the
-/// caller is `G_DoCompleted`, which guarantees this).
-pub unsafe fn G_PlayerFinishLevel(world: &mut World, player: i32) {
+/// # Panics
+/// If `player` has no map object (the caller is `G_DoCompleted`, which
+/// passes only spawned players).
+pub fn G_PlayerFinishLevel(world: &mut World, player: i32) {
     let p = &mut world.players[player as usize];
     p.powers = [0; 6];
     p.cards = [0; 6];
@@ -1773,7 +1776,7 @@ pub unsafe fn G_PlayerFinishLevel(world: &mut World, player: i32) {
     p.fixedcolormap = 0;
     p.damagecount = 0;
     p.bonuscount = 0;
-    (*p.mo().ptr()).flags &= !crate::engine::play::info::MF_SHADOW;
+    MOBJ_ARENA.borrow_mut()[p.mo()].flags &= !crate::engine::play::info::MF_SHADOW;
 }
 
 // ---------------------------------------------------------------------------
@@ -1849,9 +1852,10 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t)
     let Some(spawning_mo) = world.players[spawning_player].mo else {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
-            let mo = world.players[i].mo().ptr();
-            if (*mo).x == (mthing.x.get() as fixed_t) << 16
-                && (*mo).y == (mthing.y.get() as fixed_t) << 16
+            let mobjs = MOBJ_ARENA.borrow();
+            let mo = &mobjs[world.players[i].mo()];
+            if mo.x == (mthing.x.get() as fixed_t) << 16
+                && mo.y == (mthing.y.get() as fixed_t) << 16
             {
                 return 0;
             }
@@ -1979,7 +1983,7 @@ pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
         if let Some(mo) = world.players[playernum as usize].mo {
-            (*mo.ptr()).player = None;
+            MOBJ_ARENA.borrow_mut()[mo].player = None;
         }
 
         if deathmatch() != 0 {

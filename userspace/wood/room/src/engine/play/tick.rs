@@ -459,9 +459,12 @@ mod tests {
     /// A listed glow with the given light level, for telling thinkers apart.
     fn add_glow(level: i32) -> GlowId {
         let id = new_thinker::<glow_t>();
-        let glow = unsafe { &mut *id.ptr() };
-        glow.minlight = level;
-        glow.thinker.kind = ThinkerKind::Glow;
+        {
+            let mut glows = GLOW_ARENA.borrow_mut();
+            let glow = &mut glows[id];
+            glow.minlight = level;
+            glow.thinker.kind = ThinkerKind::Glow;
+        }
         P_AddThinker(ThinkerId::Glow(id));
         id
     }
@@ -470,7 +473,7 @@ mod tests {
         let ThinkerId::Glow(id) = thinker else {
             panic!("{thinker:?} is not a glow");
         };
-        unsafe { (*id.ptr()).minlight }
+        GLOW_ARENA.borrow()[id].minlight
     }
 
     /// Thinkers run in insertion order; one removed ahead of the cursor is
@@ -491,7 +494,7 @@ mod tests {
             ran.push(level);
             if level == 1 {
                 // Remove the next thinker before the walk reaches it.
-                P_RemoveThinker(unsafe { &mut (*second.ptr()).thinker });
+                P_RemoveThinker(&mut GLOW_ARENA.borrow_mut()[second].thinker);
                 add_glow(4);
             }
         });
@@ -510,7 +513,7 @@ mod tests {
         let _guard = THINKER_TEST_LOCK.lock().unwrap();
         P_InitThinkers();
         let glow = add_glow(5);
-        P_RemoveThinker(unsafe { &mut (*glow.ptr()).thinker });
+        P_RemoveThinker(&mut GLOW_ARENA.borrow_mut()[glow].thinker);
         assert!(glow.is_live(), "removal is deferred");
         assert_eq!(thinkers().count(), 1);
 
@@ -520,7 +523,7 @@ mod tests {
         });
         assert!(!glow.is_live());
         assert_eq!(thinkers().count(), 0);
-        assert_eq!(unsafe { (*glow.ptr()).minlight }, 5);
+        assert_eq!(GLOW_ARENA.borrow()[glow].minlight, 5);
         P_InitThinkers();
     }
 

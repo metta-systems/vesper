@@ -75,7 +75,9 @@ use crate::engine::{
         mobj::{MobjId, mobj_t},
         plats::{P_AddActivePlat, T_PlatRaise, plat_t},
         tick::{
-            P_AddThinker, P_InitThinkers, ThinkerId, ThinkerKind, new_thinker, thinker_t, thinkers,
+            CEILING_ARENA, DOOR_ARENA, FLOOR_ARENA, GLOW_ARENA, LIGHT_FLASH_ARENA, MOBJ_ARENA,
+            P_AddThinker, P_InitThinkers, PLAT_ARENA, STROBE_ARENA, ThinkerId, ThinkerKind,
+            new_thinker, thinker_t, thinkers,
         },
     },
     wad::format::mapthing_t,
@@ -399,12 +401,11 @@ fn saved_function_word(kind: ThinkerKind) -> u32 {
 // mapthing_t
 //
 
-/// Reads a `mapthing_t` from the save stream into `*mt`.
+/// Reads a `mapthing_t` from the save stream into `s`.
 ///
 /// Reads five `i16` fields in order: x, y, angle, type, options.
 /// C origin: `saveg_read_mapthing_t`.
-unsafe fn saveg_read_mapthing_t(mt: *mut mapthing_t) {
-    let s = &mut *mt;
+fn saveg_read_mapthing_t(s: &mut mapthing_t) {
     s.x.set(saveg_read16() as i16);
     s.y.set(saveg_read16() as i16);
     s.angle.set(saveg_read16() as i16);
@@ -412,12 +413,11 @@ unsafe fn saveg_read_mapthing_t(mt: *mut mapthing_t) {
     s.options.set(saveg_read16() as i16);
 }
 
-/// Writes a `mapthing_t` to the save stream from `*mt`.
+/// Writes a `mapthing_t` to the save stream from `s`.
 ///
 /// Writes five `i16` fields in order: x, y, angle, type, options.
 /// C origin: `saveg_write_mapthing_t`.
-unsafe fn saveg_write_mapthing_t(mt: *const mapthing_t) {
-    let s = &*mt;
+fn saveg_write_mapthing_t(s: &mapthing_t) {
     saveg_write16(s.x.get() as u16);
     saveg_write16(s.y.get() as u16);
     saveg_write16(s.angle.get() as u16);
@@ -511,20 +511,15 @@ struct SavedMobjReferences {
 /// ordinals its record held) and the `attacker` of each player
 /// [`P_UnArchivePlayers`] read. An ordinal that names no recreated object
 /// gives `None`.
-///
-/// # Safety
-///
-/// The handles in `loaded_mobjs` must be live map objects.
-unsafe fn resolve_saved_references(
-    world: &mut World,
-    loaded_mobjs: &[(MobjId, SavedMobjReferences)],
-) {
+fn resolve_saved_references(world: &mut World, loaded_mobjs: &[(MobjId, SavedMobjReferences)]) {
     let recreated: Vec<MobjId> = loaded_mobjs.iter().map(|&(mobj, _)| mobj).collect();
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
     for &(mobj, references) in loaded_mobjs {
-        let mo = mobj.ptr();
-        (*mo).target = mobj_for_saved_ordinal(&recreated, references.target);
-        (*mo).tracer = mobj_for_saved_ordinal(&recreated, references.tracer);
+        let mo = &mut mobjs[mobj];
+        mo.target = mobj_for_saved_ordinal(&recreated, references.target);
+        mo.tracer = mobj_for_saved_ordinal(&recreated, references.tracer);
     }
+    drop(mobjs);
 
     let saved_attackers = std::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
     for (index, attacker) in saved_attackers.into_iter().enumerate() {
@@ -559,98 +554,99 @@ unsafe fn resolve_saved_references(
 ///   from `type` (C reads the address, then the caller overwrites it with
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
-unsafe fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences {
-    let mo = mobj_id.ptr();
+fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences {
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mo = &mut mobjs[mobj_id];
 
     // thinker_t
-    saveg_read_thinker_t(&mut (*mo).thinker, ThinkerKind::Mobj);
+    saveg_read_thinker_t(&mut mo.thinker, ThinkerKind::Mobj);
 
     // x, y, z
-    (*mo).x = saveg_read32() as i32;
-    (*mo).y = saveg_read32() as i32;
-    (*mo).z = saveg_read32() as i32;
+    mo.x = saveg_read32() as i32;
+    mo.y = saveg_read32() as i32;
+    mo.z = saveg_read32() as i32;
 
     // snext, sprev (rebuilt by `P_SetThingPosition`)
     saveg_read32();
     saveg_read32();
-    (*mo).snext = None;
-    (*mo).sprev = None;
+    mo.snext = None;
+    mo.sprev = None;
 
     // angle, sprite, frame
-    (*mo).angle = saveg_read32();
-    (*mo).sprite = saveg_read_enum() as i32;
-    (*mo).frame = saveg_read32() as i32;
+    mo.angle = saveg_read32();
+    mo.sprite = saveg_read_enum() as i32;
+    mo.frame = saveg_read32() as i32;
 
     // bnext, bprev (rebuilt by `P_SetThingPosition`)
     saveg_read32();
     saveg_read32();
-    (*mo).bnext = None;
-    (*mo).bprev = None;
+    mo.bnext = None;
+    mo.bprev = None;
 
     // subsector (a saved address, rebuilt by `P_SetThingPosition`)
     saveg_read32();
-    (*mo).subsector = SubsectorId::new(0);
+    mo.subsector = SubsectorId::new(0);
 
     // floorz, ceilingz, radius, height
-    (*mo).floorz = saveg_read32() as i32;
-    (*mo).ceilingz = saveg_read32() as i32;
-    (*mo).radius = saveg_read32() as i32;
-    (*mo).height = saveg_read32() as i32;
+    mo.floorz = saveg_read32() as i32;
+    mo.ceilingz = saveg_read32() as i32;
+    mo.radius = saveg_read32() as i32;
+    mo.height = saveg_read32() as i32;
 
     // momx, momy, momz
-    (*mo).momx = saveg_read32() as i32;
-    (*mo).momy = saveg_read32() as i32;
-    (*mo).momz = saveg_read32() as i32;
+    mo.momx = saveg_read32() as i32;
+    mo.momy = saveg_read32() as i32;
+    mo.momz = saveg_read32() as i32;
 
     // validcount
-    (*mo).validcount = saveg_read32() as i32;
+    mo.validcount = saveg_read32() as i32;
 
     // type
-    (*mo).kind = saveg_read_enum() as i32;
+    mo.kind = saveg_read_enum() as i32;
 
     // info (a saved address, rebuilt by the caller from `type`)
     saveg_read32();
 
     // tics
-    (*mo).tics = saveg_read32() as i32;
+    mo.tics = saveg_read32() as i32;
 
     // state (index into states array)
     let state_idx = saveg_read32();
-    (*mo).state = saveg_read_state_ptr(state_idx);
+    mo.state = saveg_read_state_ptr(state_idx);
 
     // flags
-    (*mo).flags = saveg_read32() as i32;
+    mo.flags = saveg_read32() as i32;
 
     // health
-    (*mo).health = saveg_read32() as i32;
+    mo.health = saveg_read32() as i32;
 
     // movedir, movecount
-    (*mo).movedir = saveg_read32() as i32;
-    (*mo).movecount = saveg_read32() as i32;
+    mo.movedir = saveg_read32() as i32;
+    mo.movecount = saveg_read32() as i32;
 
     // target (a save ordinal, resolved once every map object is read)
     let target = saveg_read32();
-    (*mo).target = None;
+    mo.target = None;
 
     // reactiontime, threshold
-    (*mo).reactiontime = saveg_read32() as i32;
-    (*mo).threshold = saveg_read32() as i32;
+    mo.reactiontime = saveg_read32() as i32;
+    mo.threshold = saveg_read32() as i32;
 
     // player (index + 1)
-    (*mo).player = saveg_read_player_index(saveg_read32());
-    if let Some(player) = (*mo).player {
+    mo.player = saveg_read_player_index(saveg_read32());
+    if let Some(player) = mo.player {
         world.players[player].mo = Some(mobj_id);
     }
 
     // lastlook
-    (*mo).lastlook = saveg_read32() as i32;
+    mo.lastlook = saveg_read32() as i32;
 
     // spawnpoint
-    saveg_read_mapthing_t(std::ptr::addr_of_mut!((*mo).spawnpoint));
+    saveg_read_mapthing_t(&mut mo.spawnpoint);
 
     // tracer (a save ordinal, resolved once every map object is read)
     let tracer = saveg_read32();
-    (*mo).tracer = None;
+    mo.tracer = None;
 
     SavedMobjReferences { target, tracer }
 }
@@ -665,89 +661,90 @@ unsafe fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjRefe
 /// written as an index into `states`. `player` is written as a 1-based player
 /// index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-unsafe fn saveg_write_mobj_t(level: &LevelState, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
-    let mo = mobj.ptr() as *const mobj_t;
+fn saveg_write_mobj_t(level: &LevelState, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
+    let mobjs = MOBJ_ARENA.borrow();
+    let mo = &mobjs[mobj];
 
     // thinker_t
-    saveg_write_thinker_t(&(*mo).thinker);
+    saveg_write_thinker_t(&mo.thinker);
 
     // x, y, z
-    saveg_write32((*mo).x as u32);
-    saveg_write32((*mo).y as u32);
-    saveg_write32((*mo).z as u32);
+    saveg_write32(mo.x as u32);
+    saveg_write32(mo.y as u32);
+    saveg_write32(mo.z as u32);
 
     // snext, sprev (rebuilt on load)
     saveg_write32(0);
     saveg_write32(0);
 
     // angle, sprite, frame
-    saveg_write32((*mo).angle);
-    saveg_write_enum((*mo).sprite as u32);
-    saveg_write32((*mo).frame as u32);
+    saveg_write32(mo.angle);
+    saveg_write_enum(mo.sprite as u32);
+    saveg_write32(mo.frame as u32);
 
     // bnext, bprev (rebuilt on load)
     saveg_write32(0);
     saveg_write32(0);
 
     // subsector (C writes the pointer: the subsector record's address)
-    let subsector_address = (&raw const level.subsectors[(*mo).subsector]).addr();
+    let subsector_address = (&raw const level.subsectors[mo.subsector]).addr();
     saveg_write_address(subsector_address as u32);
 
     // floorz, ceilingz, radius, height
-    saveg_write32((*mo).floorz as u32);
-    saveg_write32((*mo).ceilingz as u32);
-    saveg_write32((*mo).radius as u32);
-    saveg_write32((*mo).height as u32);
+    saveg_write32(mo.floorz as u32);
+    saveg_write32(mo.ceilingz as u32);
+    saveg_write32(mo.radius as u32);
+    saveg_write32(mo.height as u32);
 
     // momx, momy, momz
-    saveg_write32((*mo).momx as u32);
-    saveg_write32((*mo).momy as u32);
-    saveg_write32((*mo).momz as u32);
+    saveg_write32(mo.momx as u32);
+    saveg_write32(mo.momy as u32);
+    saveg_write32(mo.momz as u32);
 
     // validcount
-    saveg_write32((*mo).validcount as u32);
+    saveg_write32(mo.validcount as u32);
 
     // type
-    saveg_write_enum((*mo).kind as u32);
+    saveg_write_enum(mo.kind as u32);
 
     // info (C writes the pointer: the mobjinfo entry's address)
-    let info_address = (&raw const MOBJINFO.borrow()[(*mo).info]).addr();
+    let info_address = (&raw const MOBJINFO.borrow()[mo.info]).addr();
     saveg_write_address(info_address as u32);
 
     // tics
-    saveg_write32((*mo).tics as u32);
+    saveg_write32(mo.tics as u32);
 
     // state (index)
-    saveg_write32(saveg_write_state_ptr((*mo).state));
+    saveg_write32(saveg_write_state_ptr(mo.state));
 
     // flags
-    saveg_write32((*mo).flags as u32);
+    saveg_write32(mo.flags as u32);
 
     // health
-    saveg_write32((*mo).health as u32);
+    saveg_write32(mo.health as u32);
 
     // movedir, movecount
-    saveg_write32((*mo).movedir as u32);
-    saveg_write32((*mo).movecount as u32);
+    saveg_write32(mo.movedir as u32);
+    saveg_write32(mo.movecount as u32);
 
     // target (save ordinal)
-    saveg_write32(saved_mobj_ordinal(ordinals, (*mo).target));
+    saveg_write32(saved_mobj_ordinal(ordinals, mo.target));
 
     // reactiontime, threshold
-    saveg_write32((*mo).reactiontime as u32);
-    saveg_write32((*mo).threshold as u32);
+    saveg_write32(mo.reactiontime as u32);
+    saveg_write32(mo.threshold as u32);
 
     // player
-    saveg_write32(saveg_write_player_index((*mo).player));
+    saveg_write32(saveg_write_player_index(mo.player));
 
     // lastlook
-    saveg_write32((*mo).lastlook as u32);
+    saveg_write32(mo.lastlook as u32);
 
     // spawnpoint
-    saveg_write_mapthing_t(std::ptr::addr_of!((*mo).spawnpoint));
+    saveg_write_mapthing_t(&mo.spawnpoint);
 
     // tracer (save ordinal)
-    saveg_write32(saved_mobj_ordinal(ordinals, (*mo).tracer));
+    saveg_write32(saved_mobj_ordinal(ordinals, mo.tracer));
 }
 
 //
@@ -762,8 +759,7 @@ unsafe fn saveg_write_mobj_t(level: &LevelState, mobj: MobjId, ordinals: &HashMa
 /// `forwardmove`, `sidemove`, `angleturn`, `consistancy`, `chatchar`,
 /// `buttons`. Extra fields present in `TiccmdT` are not touched.
 /// C origin: `saveg_read_ticcmd_t`.
-unsafe fn saveg_read_ticcmd_t(cmd: *mut TiccmdT) {
-    let s = &mut *cmd;
+fn saveg_read_ticcmd_t(s: &mut TiccmdT) {
     s.forwardmove = saveg_read8() as i8;
     s.sidemove = saveg_read8() as i8;
     s.angleturn = saveg_read16() as i16;
@@ -775,8 +771,7 @@ unsafe fn saveg_read_ticcmd_t(cmd: *mut TiccmdT) {
 /// Writes the 6 canonical `ticcmd_t` fields to the save stream.
 ///
 /// C origin: `saveg_write_ticcmd_t`.
-unsafe fn saveg_write_ticcmd_t(cmd: *const TiccmdT) {
-    let s = &*cmd;
+fn saveg_write_ticcmd_t(s: &TiccmdT) {
     saveg_write8(s.forwardmove as u8);
     saveg_write8(s.sidemove as u8);
     saveg_write16(s.angleturn as u16);
@@ -818,7 +813,7 @@ fn saveg_write_pspdef_t(s: &PspdefT) {
 // player_t
 //
 
-/// Reads a full `player_t` record from the save stream into `*pl`.
+/// Reads a full `player_t` record from the save stream into `s`.
 ///
 /// Fields are read in the same order as the C version. Notable points:
 /// - `mo` is a save ordinal; it loads as `None` and is set again by
@@ -833,7 +828,7 @@ fn saveg_write_pspdef_t(s: &PspdefT) {
 /// - Each of `NUMPSPRITES` player-sprite slots is read via
 ///   `saveg_read_pspdef_t`.
 /// C origin: `saveg_read_player_t`.
-unsafe fn saveg_read_player_t(s: &mut PlayerT) -> u32 {
+fn saveg_read_player_t(s: &mut PlayerT) -> u32 {
     // mo (a save ordinal; set when the player's map object is read)
     saveg_read32();
     s.mo = None;
@@ -939,7 +934,7 @@ unsafe fn saveg_read_player_t(s: &mut PlayerT) -> u32 {
 /// (see [`saved_mobj_ordinal`]); the `message` slot is written as `0`. All
 /// other fields mirror `saveg_read_player_t` in order.
 /// C origin: `saveg_write_player_t`.
-unsafe fn saveg_write_player_t(s: &PlayerT, ordinals: &HashMap<MobjId, u32>) {
+fn saveg_write_player_t(s: &PlayerT, ordinals: &HashMap<MobjId, u32>) {
     saveg_write32(saved_mobj_ordinal(ordinals, s.mo));
     saveg_write_enum(s.playerstate as u32);
     saveg_write_ticcmd_t(&s.cmd);
@@ -995,14 +990,13 @@ unsafe fn saveg_write_player_t(s: &PlayerT, ordinals: &HashMap<MobjId, u32>) {
 // ceiling_t
 //
 
-/// Reads a `ceiling_t` special thinker from the save stream into `*ceil`.
+/// Reads a `ceiling_t` special thinker from the save stream into `s`.
 ///
 /// The embedded `thinker_t` header is read first, followed by type, sector
 /// index, height fields, speed, crush flag, direction, tag, and old direction.
 /// The sector index becomes a sector id via `saveg_read_sector_ptr`.
 /// C origin: `saveg_read_ceiling_t`.
-unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
-    let s = &mut *ceil;
+fn saveg_read_ceiling_t(s: &mut ceiling_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Ceiling);
     s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
@@ -1016,12 +1010,11 @@ unsafe fn saveg_read_ceiling_t(ceil: *mut ceiling_t) {
     s.olddirection = saveg_read32() as i32;
 }
 
-/// Writes a `ceiling_t` special thinker to the save stream from `*ceil`.
+/// Writes a `ceiling_t` special thinker to the save stream from `s`.
 ///
 /// The sector is serialized as an index via `saveg_write_sector_ptr`.
 /// C origin: `saveg_write_ceiling_t`.
-unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
-    let s = &*ceil;
+fn saveg_write_ceiling_t(s: &ceiling_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write_enum(s.kind as u32);
     saveg_write32(saveg_write_sector_ptr(s.sector));
@@ -1043,8 +1036,7 @@ unsafe fn saveg_write_ceiling_t(ceil: *const ceiling_t) {
 /// Fields: thinker header, door type enum, sector index, top height (16.16
 /// fixed-point), speed (16.16), direction, top-wait tic count, and current
 /// top-countdown. C origin: `saveg_read_vldoor_t`.
-unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
-    let s = &mut *door;
+fn saveg_read_vldoor_t(s: &mut vldoor_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Door);
     s.kind = saveg_read_enum() as i32;
     let sector_idx = saveg_read32();
@@ -1059,8 +1051,7 @@ unsafe fn saveg_read_vldoor_t(door: *mut vldoor_t) {
 /// Writes a `vldoor_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_vldoor_t`.
-unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
-    let s = &*door;
+fn saveg_write_vldoor_t(s: &vldoor_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write_enum(s.kind as u32);
     saveg_write32(saveg_write_sector_ptr(s.sector));
@@ -1080,8 +1071,7 @@ unsafe fn saveg_write_vldoor_t(door: *const vldoor_t) {
 /// Fields: thinker header, floor type enum, crush flag, sector index,
 /// direction, new special number, texture (16-bit), destination height
 /// (16.16), and speed (16.16). C origin: `saveg_read_floormove_t`.
-unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
-    let s = &mut *floor;
+fn saveg_read_floormove_t(s: &mut floormove_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Floor);
     s.kind = saveg_read_enum() as i32;
     s.crush = saveg_read32() as i32;
@@ -1098,8 +1088,7 @@ unsafe fn saveg_read_floormove_t(floor: *mut floormove_t) {
 /// Writes a `floormove_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_floormove_t`.
-unsafe fn saveg_write_floormove_t(floor: *const floormove_t) {
-    let s = &*floor;
+fn saveg_write_floormove_t(s: &floormove_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write_enum(s.kind as u32);
     saveg_write32(s.crush as u32);
@@ -1120,8 +1109,7 @@ unsafe fn saveg_write_floormove_t(floor: *const floormove_t) {
 /// Fields: thinker header, sector index, speed (16.16), low and high heights
 /// (16.16), wait time, count, status enum, old-status enum, crush flag, tag,
 /// and platform type enum. C origin: `saveg_read_plat_t`.
-unsafe fn saveg_read_plat_t(plat: *mut plat_t) {
-    let s = &mut *plat;
+fn saveg_read_plat_t(s: &mut plat_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Plat);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -1140,8 +1128,7 @@ unsafe fn saveg_read_plat_t(plat: *mut plat_t) {
 /// Writes a `plat_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_plat_t`.
-unsafe fn saveg_write_plat_t(plat: *const plat_t) {
-    let s = &*plat;
+fn saveg_write_plat_t(s: &plat_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.speed as u32);
@@ -1164,8 +1151,7 @@ unsafe fn saveg_write_plat_t(plat: *const plat_t) {
 ///
 /// Fields: thinker header, sector index, count, max light, min light, max
 /// time, min time. C origin: `saveg_read_lightflash_t`.
-unsafe fn saveg_read_lightflash_t(flash: *mut lightflash_t) {
-    let s = &mut *flash;
+fn saveg_read_lightflash_t(s: &mut lightflash_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::LightFlash);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -1179,8 +1165,7 @@ unsafe fn saveg_read_lightflash_t(flash: *mut lightflash_t) {
 /// Writes a `lightflash_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_lightflash_t`.
-unsafe fn saveg_write_lightflash_t(flash: *const lightflash_t) {
-    let s = &*flash;
+fn saveg_write_lightflash_t(s: &lightflash_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.count as u32);
@@ -1198,8 +1183,7 @@ unsafe fn saveg_write_lightflash_t(flash: *const lightflash_t) {
 ///
 /// Fields: thinker header, sector index, count, min light, max light, dark
 /// time (tics), bright time (tics). C origin: `saveg_read_strobe_t`.
-unsafe fn saveg_read_strobe_t(strobe: *mut strobe_t) {
-    let s = &mut *strobe;
+fn saveg_read_strobe_t(s: &mut strobe_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Strobe);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -1213,8 +1197,7 @@ unsafe fn saveg_read_strobe_t(strobe: *mut strobe_t) {
 /// Writes a `strobe_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_strobe_t`.
-unsafe fn saveg_write_strobe_t(strobe: *const strobe_t) {
-    let s = &*strobe;
+fn saveg_write_strobe_t(s: &strobe_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.count as u32);
@@ -1232,8 +1215,7 @@ unsafe fn saveg_write_strobe_t(strobe: *const strobe_t) {
 ///
 /// Fields: thinker header, sector index, min light, max light, direction
 /// (+1 or -1). C origin: `saveg_read_glow_t`.
-unsafe fn saveg_read_glow_t(glow: *mut glow_t) {
-    let s = &mut *glow;
+fn saveg_read_glow_t(s: &mut glow_t) {
     saveg_read_thinker_t(&mut s.thinker, ThinkerKind::Glow);
     let sector_idx = saveg_read32();
     s.sector = saveg_read_sector_ptr(sector_idx);
@@ -1245,8 +1227,7 @@ unsafe fn saveg_read_glow_t(glow: *mut glow_t) {
 /// Writes a `glow_t` thinker to the save stream.
 ///
 /// C origin: `saveg_write_glow_t`.
-unsafe fn saveg_write_glow_t(glow: *const glow_t) {
-    let s = &*glow;
+fn saveg_write_glow_t(s: &glow_t) {
     saveg_write_thinker_t(&s.thinker);
     saveg_write32(saveg_write_sector_ptr(s.sector));
     saveg_write32(s.minlight as u32);
@@ -1320,8 +1301,6 @@ fn savegame_version(version_code: i32) -> [u8; VERSIONSIZE] {
 ///
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be the stream being written. The session settings
 /// `gameskill`, `gameepisode`, `gamemap`, `playeringame` and the
 /// `leveltime` of `world` must have been set to valid values before this
@@ -1329,7 +1308,7 @@ fn savegame_version(version_code: i32) -> [u8; VERSIONSIZE] {
 ///
 /// `description` is read up to its first NUL, so the fixed description
 /// buffer can be passed whole.
-pub unsafe fn P_WriteSaveGameHeader(world: &World, description: &[u8]) {
+pub fn P_WriteSaveGameHeader(world: &World, description: &[u8]) {
     let desc_bytes = until_nul(description);
 
     // Write description (padded to SAVESTRINGSIZE)
@@ -1375,13 +1354,11 @@ pub unsafe fn P_WriteSaveGameHeader(world: &World, description: &[u8]) {
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be positioned at the start of
 /// a save file written by `P_WriteSaveGameHeader`. On success, `gameskill`,
 /// `gameepisode`, `gamemap`, `playeringame`, and `leveltime` are overwritten
 /// with values from the stream.
-pub unsafe fn P_ReadSaveGameHeader(world: &mut World) -> i32 {
+pub fn P_ReadSaveGameHeader(world: &mut World) -> i32 {
     read_save_game_header(world, G_VanillaVersionCode())
 }
 
@@ -1435,12 +1412,10 @@ fn read_save_game_header(world: &mut World, version_code: i32) -> i32 {
 /// A mismatch indicates a truncated or corrupt save file.
 /// Called by `g_game.c` after all game state has been unarchived.
 ///
-/// # Safety
-///
 /// `save_stream` must be positioned immediately
 /// after the last unarchived byte, i.e. where `P_WriteSaveGameEOF` wrote its
 /// marker. Reading past the end of the stream sets `savegame_error`.
-pub unsafe fn P_ReadSaveGameEOF() -> i32 {
+pub fn P_ReadSaveGameEOF() -> i32 {
     let value = saveg_read8();
     if value == SAVEGAME_EOF { 1 } else { 0 }
 }
@@ -1452,12 +1427,10 @@ pub unsafe fn P_ReadSaveGameEOF() -> i32 {
 /// `P_ReadSaveGameEOF` on load to detect truncation.
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be the stream being written. This must be called after
 /// all archive functions have finished writing so that the marker byte appears
 /// at the correct position for `P_ReadSaveGameEOF` to validate.
-pub unsafe fn P_WriteSaveGameEOF() {
+pub fn P_WriteSaveGameEOF() {
     saveg_write8(SAVEGAME_EOF);
 }
 
@@ -1469,11 +1442,10 @@ pub unsafe fn P_WriteSaveGameEOF() {
 /// `savegame_error` is cleared first and set by a failed write; the save
 /// stream is left empty.
 ///
-/// # Safety
+/// # Panics
 ///
-/// A level must be loaded, with every listed thinker belonging to it (see
-/// [`P_ArchiveThinkers`] and [`P_ArchiveSpecials`]).
-pub unsafe fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSaveGame {
+/// If no level is loaded (see [`P_ArchiveThinkers`]).
+pub fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSaveGame {
     {
         let mut saveg = SAVEG.borrow_mut();
         saveg.save_stream = Cursor::default();
@@ -1510,13 +1482,11 @@ use crate::engine::game::GAME;
 /// `P_ArchiveThinkers` then writes.
 /// Called by `g_game.c` (`G_DoSaveGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be the stream being written.
 /// The `players` array and `playeringame` flags must be fully initialized for
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
-pub unsafe fn P_ArchivePlayers(world: &World) {
+pub fn P_ArchivePlayers(world: &World) {
     let ordinals = mobj_save_ordinals();
     for i in 0..MAXPLAYERS {
         if !world.session.in_game(i) {
@@ -1537,14 +1507,12 @@ pub unsafe fn P_ArchivePlayers(world: &World) {
 /// pointer).
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchivePlayers`. The session's `playeringame`
 /// must already hold the flags `P_ReadSaveGameHeader` read (`G_InitNew`
 /// copies them in) so the active-slot bitmask is correct. After this call, `players[i].mo`, `.message`, and `.attacker` are
 /// empty until thinkers are unarchived.
-pub unsafe fn P_UnArchivePlayers(world: &mut World) {
+pub fn P_UnArchivePlayers(world: &mut World) {
     let mut saved_attackers = [None; MAXPLAYERS];
     for i in 0..MAXPLAYERS {
         if !world.session.in_game(i) {
@@ -1686,13 +1654,14 @@ const tc_mobj: u8 = 1;
 /// `tc_end` byte. The `n`th record written is the map object with save
 /// ordinal `n` (see [`mobj_save_ordinals`]).
 ///
-/// Called by `g_game.c` (`G_DoSaveGame`).
+/// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
+/// stream written.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `save_stream` must be the stream being written, and a level must be
-/// loaded (each map object's subsector is written by address).
-pub unsafe fn P_ArchiveThinkers(world: &World) {
+/// If no level is loaded (each map object's subsector is written by
+/// address).
+pub fn P_ArchiveThinkers(world: &World) {
     let ordinals = mobj_save_ordinals();
     for mobj in thinkers().filter_map(saved_mobj) {
         saveg_write8(tc_mobj);
@@ -1761,22 +1730,23 @@ pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
                 let references = saveg_read_mobj_t(world, mobj_id);
                 loaded_mobjs.push((mobj_id, references));
 
-                let mo = mobj_id.ptr();
-
                 P_SetThingPosition(world, mobj_id);
 
-                // rebuild info from mobjinfo
-                (*mo).info = MobjType::new((*mo).kind);
-
-                // rebuild floorz/ceilingz from subsector
                 {
-                    let sector = world.level.subsector_sector((*mo).subsector);
-                    (*mo).floorz = sector.floorheight;
-                    (*mo).ceilingz = sector.ceilingheight;
-                }
+                    let mut mobjs = MOBJ_ARENA.borrow_mut();
+                    let mo = &mut mobjs[mobj_id];
 
-                // set thinker kind
-                (*mo).thinker.kind = ThinkerKind::Mobj;
+                    // rebuild info from mobjinfo
+                    mo.info = MobjType::new(mo.kind);
+
+                    // rebuild floorz/ceilingz from subsector
+                    let sector = world.level.subsector_sector(mo.subsector);
+                    mo.floorz = sector.floorheight;
+                    mo.ceilingz = sector.ceilingheight;
+
+                    // set thinker kind
+                    mo.thinker.kind = ThinkerKind::Mobj;
+                }
 
                 P_AddThinker(ThinkerId::Mobj(mobj_id));
             }
@@ -1831,13 +1801,9 @@ const tc_endspecials: u8 = 7;
 /// alignment padding. Unrecognized thinkers are silently skipped. The list is
 /// terminated by `tc_endspecials`.
 ///
-/// Called by `g_game.c` (`G_DoSaveGame`).
-///
-/// # Safety
-///
-/// `save_stream` must be the stream being written, and every listed special
-/// must belong to the loaded level.
-pub unsafe fn P_ArchiveSpecials(world: &World) {
+/// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
+/// stream written.
+pub fn P_ArchiveSpecials(world: &World) {
     for thinker in thinkers() {
         match (thinker, thinker.kind()) {
             // C's null function: a ceiling in stasis is still saved when it
@@ -1854,43 +1820,43 @@ pub unsafe fn P_ArchiveSpecials(world: &World) {
                 {
                     saveg_write8(tc_ceiling);
                     saveg_write_pad();
-                    saveg_write_ceiling_t(ceiling.ptr());
+                    saveg_write_ceiling_t(&CEILING_ARENA.borrow()[ceiling]);
                 }
             }
             (ThinkerId::Ceiling(ceiling), ThinkerKind::Ceiling) => {
                 saveg_write8(tc_ceiling);
                 saveg_write_pad();
-                saveg_write_ceiling_t(ceiling.ptr());
+                saveg_write_ceiling_t(&CEILING_ARENA.borrow()[ceiling]);
             }
             (ThinkerId::Door(door), ThinkerKind::Door) => {
                 saveg_write8(tc_door);
                 saveg_write_pad();
-                saveg_write_vldoor_t(door.ptr());
+                saveg_write_vldoor_t(&DOOR_ARENA.borrow()[door]);
             }
             (ThinkerId::Floor(floor), ThinkerKind::Floor) => {
                 saveg_write8(tc_floor);
                 saveg_write_pad();
-                saveg_write_floormove_t(floor.ptr());
+                saveg_write_floormove_t(&FLOOR_ARENA.borrow()[floor]);
             }
             (ThinkerId::Plat(plat), ThinkerKind::Plat) => {
                 saveg_write8(tc_plat);
                 saveg_write_pad();
-                saveg_write_plat_t(plat.ptr());
+                saveg_write_plat_t(&PLAT_ARENA.borrow()[plat]);
             }
             (ThinkerId::LightFlash(flash), ThinkerKind::LightFlash) => {
                 saveg_write8(tc_flash);
                 saveg_write_pad();
-                saveg_write_lightflash_t(flash.ptr());
+                saveg_write_lightflash_t(&LIGHT_FLASH_ARENA.borrow()[flash]);
             }
             (ThinkerId::Strobe(strobe), ThinkerKind::Strobe) => {
                 saveg_write8(tc_strobe);
                 saveg_write_pad();
-                saveg_write_strobe_t(strobe.ptr());
+                saveg_write_strobe_t(&STROBE_ARENA.borrow()[strobe]);
             }
             (ThinkerId::Glow(glow), ThinkerKind::Glow) => {
                 saveg_write8(tc_glow);
                 saveg_write_pad();
-                saveg_write_glow_t(glow.ptr());
+                saveg_write_glow_t(&GLOW_ARENA.borrow()[glow]);
             }
             // Map objects are saved by `P_ArchiveThinkers`; fire flickers and
             // platforms in stasis are not saved (vanilla behaviour); removed
@@ -1923,14 +1889,12 @@ pub unsafe fn P_ArchiveSpecials(world: &World) {
 ///
 /// Called by `g_game.c` (`G_DoLoadGame`).
 ///
-/// # Safety
-///
 /// `save_stream` must be positioned at the byte
 /// sequence written by `P_ArchiveSpecials`. The `sectors` array must be
 /// fully initialized so that `sector->specialdata` can be set. Must be
 /// called after `P_UnArchiveThinkers` so the thinker list is in a
 /// consistent state before new specials are registered with `P_AddThinker`.
-pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
+pub fn P_UnArchiveSpecials(world: &mut World) {
     loop {
         let tclass = saveg_read8();
         match tclass {
@@ -1938,16 +1902,19 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
             x if x == tc_ceiling => {
                 saveg_read_pad();
                 let ceiling_id = new_thinker::<ceiling_t>();
-                let ceiling = ceiling_id.ptr();
-                saveg_read_ceiling_t(ceiling);
-                world.level.sectors[(*ceiling).sector].specialdata =
-                    Some(ThinkerId::Ceiling(ceiling_id));
+                let sector = {
+                    let mut ceilings = CEILING_ARENA.borrow_mut();
+                    let ceiling = &mut ceilings[ceiling_id];
+                    saveg_read_ceiling_t(ceiling);
 
-                // A set function slot read as `Ceiling`; a null one (C keeps
-                // the function null) is a ceiling in stasis.
-                if (*ceiling).thinker.kind == ThinkerKind::None {
-                    (*ceiling).thinker.kind = ThinkerKind::CeilingInStasis;
-                }
+                    // A set function slot read as `Ceiling`; a null one (C
+                    // keeps the function null) is a ceiling in stasis.
+                    if ceiling.thinker.kind == ThinkerKind::None {
+                        ceiling.thinker.kind = ThinkerKind::CeilingInStasis;
+                    }
+                    ceiling.sector
+                };
+                world.level.sectors[sector].specialdata = Some(ThinkerId::Ceiling(ceiling_id));
 
                 P_AddThinker(ThinkerId::Ceiling(ceiling_id));
                 P_AddActiveCeiling(world, ceiling_id);
@@ -1955,33 +1922,45 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
             x if x == tc_door => {
                 saveg_read_pad();
                 let door_id = new_thinker::<vldoor_t>();
-                let door = door_id.ptr();
-                saveg_read_vldoor_t(door);
-                world.level.sectors[(*door).sector].specialdata = Some(ThinkerId::Door(door_id));
-                (*door).thinker.kind = ThinkerKind::Door;
+                let sector = {
+                    let mut doors = DOOR_ARENA.borrow_mut();
+                    let door = &mut doors[door_id];
+                    saveg_read_vldoor_t(door);
+                    door.thinker.kind = ThinkerKind::Door;
+                    door.sector
+                };
+                world.level.sectors[sector].specialdata = Some(ThinkerId::Door(door_id));
                 P_AddThinker(ThinkerId::Door(door_id));
             }
             x if x == tc_floor => {
                 saveg_read_pad();
                 let floor_id = new_thinker::<floormove_t>();
-                let floor = floor_id.ptr();
-                saveg_read_floormove_t(floor);
-                world.level.sectors[(*floor).sector].specialdata = Some(ThinkerId::Floor(floor_id));
-                (*floor).thinker.kind = ThinkerKind::Floor;
+                let sector = {
+                    let mut floors = FLOOR_ARENA.borrow_mut();
+                    let floor = &mut floors[floor_id];
+                    saveg_read_floormove_t(floor);
+                    floor.thinker.kind = ThinkerKind::Floor;
+                    floor.sector
+                };
+                world.level.sectors[sector].specialdata = Some(ThinkerId::Floor(floor_id));
                 P_AddThinker(ThinkerId::Floor(floor_id));
             }
             x if x == tc_plat => {
                 saveg_read_pad();
                 let plat_id = new_thinker::<plat_t>();
-                let plat = plat_id.ptr();
-                saveg_read_plat_t(plat);
-                world.level.sectors[(*plat).sector].specialdata = Some(ThinkerId::Plat(plat_id));
+                let sector = {
+                    let mut plats = PLAT_ARENA.borrow_mut();
+                    let plat = &mut plats[plat_id];
+                    saveg_read_plat_t(plat);
 
-                // A set function slot read as `Plat`; a null one (C keeps the
-                // function null) is a platform in stasis.
-                if (*plat).thinker.kind == ThinkerKind::None {
-                    (*plat).thinker.kind = ThinkerKind::PlatInStasis;
-                }
+                    // A set function slot read as `Plat`; a null one (C keeps
+                    // the function null) is a platform in stasis.
+                    if plat.thinker.kind == ThinkerKind::None {
+                        plat.thinker.kind = ThinkerKind::PlatInStasis;
+                    }
+                    plat.sector
+                };
+                world.level.sectors[sector].specialdata = Some(ThinkerId::Plat(plat_id));
 
                 P_AddThinker(ThinkerId::Plat(plat_id));
                 P_AddActivePlat(world, plat_id);
@@ -1989,25 +1968,34 @@ pub unsafe fn P_UnArchiveSpecials(world: &mut World) {
             x if x == tc_flash => {
                 saveg_read_pad();
                 let flash_id = new_thinker::<lightflash_t>();
-                let flash = flash_id.ptr();
-                saveg_read_lightflash_t(flash);
-                (*flash).thinker.kind = ThinkerKind::LightFlash;
+                {
+                    let mut flashes = LIGHT_FLASH_ARENA.borrow_mut();
+                    let flash = &mut flashes[flash_id];
+                    saveg_read_lightflash_t(flash);
+                    flash.thinker.kind = ThinkerKind::LightFlash;
+                }
                 P_AddThinker(ThinkerId::LightFlash(flash_id));
             }
             x if x == tc_strobe => {
                 saveg_read_pad();
                 let strobe_id = new_thinker::<strobe_t>();
-                let strobe = strobe_id.ptr();
-                saveg_read_strobe_t(strobe);
-                (*strobe).thinker.kind = ThinkerKind::Strobe;
+                {
+                    let mut strobes = STROBE_ARENA.borrow_mut();
+                    let strobe = &mut strobes[strobe_id];
+                    saveg_read_strobe_t(strobe);
+                    strobe.thinker.kind = ThinkerKind::Strobe;
+                }
                 P_AddThinker(ThinkerId::Strobe(strobe_id));
             }
             x if x == tc_glow => {
                 saveg_read_pad();
                 let glow_id = new_thinker::<glow_t>();
-                let glow = glow_id.ptr();
-                saveg_read_glow_t(glow);
-                (*glow).thinker.kind = ThinkerKind::Glow;
+                {
+                    let mut glows = GLOW_ARENA.borrow_mut();
+                    let glow = &mut glows[glow_id];
+                    saveg_read_glow_t(glow);
+                    glow.thinker.kind = ThinkerKind::Glow;
+                }
                 P_AddThinker(ThinkerId::Glow(glow_id));
             }
             _ => {
@@ -2219,40 +2207,42 @@ mod tests {
         }
         let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
         let mobj = new_thinker::<mobj_t>();
-        unsafe {
-            let mo = mobj.ptr();
-            (*mo).thinker.kind = ThinkerKind::Mobj;
-            let mut references = None;
-            with_mem_stream(&mut data, || {
-                references = Some(saveg_read_mobj_t(&mut World::new(), mobj));
-            });
-            assert_eq!((*mo).thinker.kind, ThinkerKind::None);
-            // The links load empty; target and tracer come back as save
-            // ordinals for `resolve_saved_references`.
-            assert_eq!(
-                references,
-                Some(SavedMobjReferences {
-                    target: 0x1234_5678,
-                    tracer: 0x1234_5678,
-                })
-            );
-            assert_eq!((*mo).target, None);
-            assert_eq!((*mo).tracer, None);
-            assert_eq!((*mo).snext, None);
-            assert_eq!((*mo).bprev, None);
-        }
+        MOBJ_ARENA.borrow_mut()[mobj].thinker.kind = ThinkerKind::Mobj;
+        let mut references = None;
+        with_mem_stream(&mut data, || {
+            references = Some(saveg_read_mobj_t(&mut World::new(), mobj));
+        });
+        let mobjs = MOBJ_ARENA.borrow();
+        let mo = &mobjs[mobj];
+        assert_eq!(mo.thinker.kind, ThinkerKind::None);
+        // The links load empty; target and tracer come back as save
+        // ordinals for `resolve_saved_references`.
+        assert_eq!(
+            references,
+            Some(SavedMobjReferences {
+                target: 0x1234_5678,
+                tracer: 0x1234_5678,
+            })
+        );
+        assert_eq!(mo.target, None);
+        assert_eq!(mo.tracer, None);
+        assert_eq!(mo.snext, None);
+        assert_eq!(mo.bprev, None);
     }
 
     /// A listed map object with `health` as its tag, for telling the
     /// recreated objects apart.
     fn add_mobj(health: i32) -> MobjId {
         let mobj = new_thinker::<mobj_t>();
-        let mo = unsafe { &mut *mobj.ptr() };
-        mo.health = health;
-        // Kept out of the sector and blockmap lists, which the test level
-        // does not have.
-        mo.flags = MF_NOSECTOR | MF_NOBLOCKMAP;
-        mo.thinker.kind = ThinkerKind::Mobj;
+        {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mo = &mut mobjs[mobj];
+            mo.health = health;
+            // Kept out of the sector and blockmap lists, which the test
+            // level does not have.
+            mo.flags = MF_NOSECTOR | MF_NOBLOCKMAP;
+            mo.thinker.kind = ThinkerKind::Mobj;
+        }
         P_AddThinker(ThinkerId::Mobj(mobj));
         mobj
     }
@@ -2261,7 +2251,7 @@ mod tests {
     fn mobj_with_health(health: i32) -> MobjId {
         thinkers()
             .find_map(|thinker| match thinker {
-                ThinkerId::Mobj(mobj) if unsafe { (*mobj.ptr()).health } == health => Some(mobj),
+                ThinkerId::Mobj(mobj) if MOBJ_ARENA.borrow()[mobj].health == health => Some(mobj),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no map object with health {health}"))
@@ -2278,7 +2268,7 @@ mod tests {
         let first = add_mobj(1);
         let removed = add_mobj(2);
         let second = add_mobj(3);
-        P_RemoveThinker(unsafe { &mut (*removed.ptr()).thinker });
+        P_RemoveThinker(&mut MOBJ_ARENA.borrow_mut()[removed].thinker);
         let unlisted = new_thinker::<mobj_t>();
 
         let ordinals = mobj_save_ordinals();
@@ -2331,20 +2321,22 @@ mod tests {
         let removed = add_mobj(3);
         let third = add_mobj(4);
         let unlisted = new_thinker::<mobj_t>();
-        unsafe {
-            P_RemoveThinker(&mut (*removed.ptr()).thinker);
-            (*first.ptr()).target = Some(third);
-            (*first.ptr()).tracer = Some(first);
-            (*first.ptr()).player = Some(player);
-            (*second.ptr()).target = Some(removed);
-            (*second.ptr()).tracer = Some(unlisted);
-            (*third.ptr()).target = Some(first);
-
-            world.session.playeringame = [1, 0, 0, 0];
-            world.players[player].mo = Some(first);
-            world.players[player].attacker = Some(third);
+        {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            P_RemoveThinker(&mut mobjs[removed].thinker);
+            mobjs[first].target = Some(third);
+            mobjs[first].tracer = Some(first);
+            mobjs[first].player = Some(player);
+            mobjs[second].target = Some(removed);
+            mobjs[second].tracer = Some(unlisted);
+            mobjs[third].target = Some(first);
         }
+        world.session.playeringame = [1, 0, 0, 0];
+        world.players[player].mo = Some(first);
+        world.players[player].attacker = Some(third);
 
+        // SAFETY: the zeroed player is a valid empty player record, and the
+        // unarchived thinkers belong to the test level.
         with_mem_stream(&mut [], || unsafe {
             P_ArchivePlayers(&world);
             P_ArchiveThinkers(&world);
@@ -2360,7 +2352,7 @@ mod tests {
 
         let healths: Vec<i32> = thinkers()
             .map(|thinker| match thinker {
-                ThinkerId::Mobj(mobj) => unsafe { (*mobj.ptr()).health },
+                ThinkerId::Mobj(mobj) => MOBJ_ARENA.borrow()[mobj].health,
                 _ => panic!("{thinker:?} is not a map object"),
             })
             .collect();
@@ -2374,23 +2366,22 @@ mod tests {
             mobj_with_health(2),
             mobj_with_health(4),
         );
-        unsafe {
-            assert_eq!((*first.ptr()).target, Some(third));
-            assert_eq!((*first.ptr()).tracer, Some(first));
+        {
+            let mobjs = MOBJ_ARENA.borrow();
+            assert_eq!(mobjs[first].target, Some(third));
+            assert_eq!(mobjs[first].tracer, Some(first));
             assert_eq!(
-                (*second.ptr()).target,
-                None,
+                mobjs[second].target, None,
                 "the removed object is not saved"
             );
             assert_eq!(
-                (*second.ptr()).tracer,
-                None,
+                mobjs[second].tracer, None,
                 "the unlisted object is not saved"
             );
-            assert_eq!((*third.ptr()).target, Some(first));
-            assert_eq!((*third.ptr()).tracer, None);
-            assert_eq!((*first.ptr()).player, Some(player));
-            assert_eq!((*second.ptr()).player, None);
+            assert_eq!(mobjs[third].target, Some(first));
+            assert_eq!(mobjs[third].tracer, None);
+            assert_eq!(mobjs[first].player, Some(player));
+            assert_eq!(mobjs[second].player, None);
         }
         assert_eq!(world.players[player].mo, Some(first));
         assert_eq!(world.players[player].attacker, Some(third));

@@ -81,22 +81,10 @@ use crate::engine::{
 ///
 /// Every reference between map objects, and from the rest of the engine to
 /// one, is a handle; indexing the borrowed [`MOBJ_ARENA`] with it resolves
-/// it (code not yet moved off raw pointers uses [`Handle::ptr`]). A handle
-/// to a removed object goes stale once the thinker list frees it, and still
-/// reads the object's last data, as C's dangling pointers do (see
-/// [`crate::engine::arena`]).
+/// it. A handle to a removed object goes stale once the thinker list frees
+/// it, and still reads the object's last data, as C's dangling pointers do
+/// (see [`crate::engine::arena`]).
 pub type MobjId = Handle<mobj_t>;
-
-/// Pointer to the map object `mobj` names, or null for `None`: C's nullable
-/// `mobj_t *`, for code that reads an optional object through its pointer.
-#[inline]
-#[track_caller]
-pub fn mobj_or_null(mobj: Option<MobjId>) -> *mut mobj_t {
-    match mobj {
-        Some(mobj) => mobj.ptr(),
-        None => std::ptr::null_mut(),
-    }
-}
 
 /// A map object (thing) that lives in the world and can think each tic
 /// (`mobj_t` in `p_mobj.h`).

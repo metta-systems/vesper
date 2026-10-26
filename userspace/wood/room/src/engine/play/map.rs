@@ -26,7 +26,7 @@ use crate::{
         math::{
             bbox::BBox,
             fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
-            tables::{ANG180, ANGLETOFINESHIFT, finecosine, finesine},
+            tables::{ANG180, ANGLETOFINESHIFT, FINEANGLES, finesine},
         },
         misc::random::P_Random,
         play::{
@@ -36,8 +36,9 @@ use crate::{
                 P_PointOnLineSide, P_SetThingPosition, P_UnsetThingPosition, PT_ADDLINES,
                 PT_ADDTHINGS, intercept_t,
             },
-            mobj::{MobjId, mobj_or_null},
+            mobj::MobjId,
             sight::P_CheckSight,
+            tick::MOBJ_ARENA,
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2},
         wad::format::LinedefFlag,
@@ -167,7 +168,7 @@ pub struct MapState {
     /// Set by [`P_CheckPosition`] / [`P_TeleportMove`] before iterating over
     /// blockmap cells. Indices follow [`BBox`] (TOP, BOTTOM, LEFT, RIGHT).
     pub tmbbox: [fixed_t; 4],
-    /// Pointer to the map object currently being tested by [`P_CheckPosition`].
+    /// The map object currently being tested by [`P_CheckPosition`].
     ///
     /// Used by the blockmap iterator callbacks ([`PIT_CheckThing`],
     /// [`PIT_CheckLine`]) to access the moving object without passing it through
@@ -175,7 +176,7 @@ pub struct MapState {
     pub tmthing: Option<MobjId>,
     /// Cached copy of `tmthing->flags` for the current position check.
     ///
-    /// Avoids repeated pointer dereferences inside tight blockmap loops.
+    /// Avoids repeated arena reads inside tight blockmap loops.
     pub tmflags: i32,
     /// Destination x-coordinate being tested in the current position check.
     pub tmx: fixed_t,
@@ -387,22 +388,20 @@ fn tmthing(world: &World) -> MobjId {
 /// its bounding box (the common prologue of `P_TeleportMove` and
 /// `P_CheckPosition`), then start the floor, ceiling and special-line
 /// results from the sector at that spot. Returns the bounding box.
-///
-/// # Safety
-///
-/// `thing_id` must name a map object of the loaded level.
-unsafe fn start_position_check(
+fn start_position_check(
     world: &mut World,
     thing_id: MobjId,
     x: fixed_t,
     y: fixed_t,
 ) -> [fixed_t; 4] {
-    let thing = thing_id.ptr();
-    let radius = (*thing).radius;
+    let (radius, flags) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[thing_id].radius, mobjs[thing_id].flags)
+    };
     {
         let map = &mut world.scratch.map;
         map.tmthing = Some(thing_id);
-        map.tmflags = (*thing).flags;
+        map.tmflags = flags;
         map.tmx = x;
         map.tmy = y;
 
@@ -440,25 +439,30 @@ unsafe fn start_position_check(
 ///
 /// # Safety
 ///
-/// `thing_id` must name an initialised map object. `tmthing` and
-/// `tmx` / `tmy` must have been set by the caller ([`P_TeleportMove`])
-/// before this callback is invoked.
+/// `tmthing` and `tmx` / `tmy` must have been set by the caller
+/// ([`P_TeleportMove`]) before this callback is invoked; the stomp runs
+/// [`P_DamageMobj`].
 pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
-    let thing = &*thing_id.ptr();
-    if thing.flags & MF_SHOOTABLE == 0 {
-        return 1;
-    }
     let (tmthing_id, tmx, tmy) = (tmthing(world), world.scratch.map.tmx, world.scratch.map.tmy);
-    let tmthing = tmthing_id.ptr();
-    let blockdist = thing.radius + (*tmthing).radius;
-    if (thing.x - tmx).wrapping_abs() >= blockdist || (thing.y - tmy).wrapping_abs() >= blockdist {
-        return 1;
-    }
-    if thing_id == tmthing_id {
-        return 1;
-    }
-    if (*tmthing).player.is_none() && world.session.gamemap != 30 {
-        return 0;
+    {
+        let mobjs = MOBJ_ARENA.borrow();
+        let thing = &mobjs[thing_id];
+        if thing.flags & MF_SHOOTABLE == 0 {
+            return 1;
+        }
+        let tmthing = &mobjs[tmthing_id];
+        let blockdist = thing.radius + tmthing.radius;
+        if (thing.x - tmx).wrapping_abs() >= blockdist
+            || (thing.y - tmy).wrapping_abs() >= blockdist
+        {
+            return 1;
+        }
+        if thing_id == tmthing_id {
+            return 1;
+        }
+        if tmthing.player.is_none() && world.session.gamemap != 30 {
+            return 0;
+        }
     }
     P_DamageMobj(world, thing_id, Some(tmthing_id), Some(tmthing_id), 10000);
     1
@@ -474,10 +478,8 @@ pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
 /// # Safety
 ///
 /// `thing_id` must name a map object that is already linked into the map
-/// (sector list and blockmap). The blockmap and sector structures must be
-/// fully initialised.
+/// (sector list and blockmap). The stomps run [`P_DamageMobj`].
 pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
-    let thing = thing_id.ptr();
     let tmbbox = start_position_check(world, thing_id, x, y);
     let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
 
@@ -488,8 +490,7 @@ pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y:
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            // SAFETY: the iterator hands over map objects linked into the
-            // blockmap, and the stomp parameters are set above.
+            // SAFETY: the stomp parameters are set above.
             if !P_BlockThingsIterator(world, bx, by, |world, thing| unsafe {
                 PIT_StompThing(world, thing) != 0
             }) {
@@ -499,10 +500,14 @@ pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y:
     }
 
     P_UnsetThingPosition(world, thing_id);
-    (*thing).floorz = world.scratch.map.tmfloorz;
-    (*thing).ceilingz = world.scratch.map.tmceilingz;
-    (*thing).x = x;
-    (*thing).y = y;
+    {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let thing = &mut mobjs[thing_id];
+        thing.floorz = world.scratch.map.tmfloorz;
+        thing.ceilingz = world.scratch.map.tmceilingz;
+        thing.x = x;
+        thing.y = y;
+    }
     P_SetThingPosition(world, thing_id);
 
     1
@@ -521,13 +526,15 @@ pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y:
 ///
 /// Returns 1 to continue iteration, 0 to abort (line blocks the move).
 ///
-/// # Safety
+/// `tmthing`, `tmbbox`, `tmfloorz`, `tmceilingz`, and `tmdropoffz` must have
+/// been initialised by [`P_CheckPosition`] before this callback is invoked.
 ///
-/// `ld` must be a linedef of the loaded level. `tmthing`, `tmbbox`,
-/// `tmfloorz`, `tmceilingz`, and `tmdropoffz` must have been initialised by
-/// [`P_CheckPosition`] before this callback is invoked.
-pub unsafe fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
-    let (tmbbox, tmthing) = (world.scratch.map.tmbbox, tmthing(world).ptr());
+/// # Panics
+///
+/// If `ld` is not a linedef of the loaded level, or no position check is
+/// running.
+pub fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
+    let tmbbox = world.scratch.map.tmbbox;
     let World { level, scratch, .. } = world;
     let line = &level.lines[ld];
     if tmbbox[BBox::RIGHT] <= line.bbox[BBox::LEFT]
@@ -543,11 +550,16 @@ pub unsafe fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
     if line.backsector.is_none() {
         return 0;
     }
-    if (*tmthing).flags & MF_MISSILE == 0 {
+    let (tmthing_flags, tmthing_player) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let tmthing = &mobjs[scratch.map.tmthing.expect("no position check running")];
+        (tmthing.flags, tmthing.player)
+    };
+    if tmthing_flags & MF_MISSILE == 0 {
         if (line.flags as i32) & (LinedefFlag::BLOCKING as i32) != 0 {
             return 0;
         }
-        if (*tmthing).player.is_none()
+        if tmthing_player.is_none()
             && (line.flags as i32) & (LinedefFlag::BLOCKMONSTERS as i32) != 0
         {
             return 0;
@@ -587,11 +599,14 @@ pub unsafe fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
 ///
 /// # Safety
 ///
-/// `thing_id` must name an initialised map object. `tmthing`, `tmx`,
-/// `tmy`, and `tmflags` must have been set by [`P_CheckPosition`] before
-/// this callback is invoked.
+/// `tmthing`, `tmx`, `tmy`, and `tmflags` must have been set by
+/// [`P_CheckPosition`] before this callback is invoked; a hit runs
+/// [`P_DamageMobj`] or [`P_TouchSpecialThing`].
 pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
-    let thing = &*thing_id.ptr();
+    // Both objects are read before the first call that runs play code, and
+    // every path returns right after it (the skull slam re-reads `tmthing`).
+    let mobjs = MOBJ_ARENA.borrow();
+    let thing = &mobjs[thing_id];
     if thing.flags & (MF_SOLID | MF_SPECIAL | MF_SHOOTABLE) == 0 {
         return 1;
     }
@@ -599,48 +614,57 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
         let map = &world.scratch.map;
         (tmthing(world), map.tmx, map.tmy, map.tmflags)
     };
-    let tmthing = tmthing_id.ptr();
-    let blockdist = thing.radius + (*tmthing).radius;
+    let tmthing = &mobjs[tmthing_id];
+    let blockdist = thing.radius + tmthing.radius;
     if (thing.x - tmx).wrapping_abs() >= blockdist || (thing.y - tmy).wrapping_abs() >= blockdist {
         return 1;
     }
     if thing_id == tmthing_id {
         return 1;
     }
+    let (thing_flags, thing_z, thing_height, thing_type) =
+        (thing.flags, thing.z, thing.height, thing.kind);
+    let (tmthing_flags, tmthing_z, tmthing_height, tmthing_target) =
+        (tmthing.flags, tmthing.z, tmthing.height, tmthing.target);
+    let tmthing_info = tmthing.info;
 
     // check for skulls slamming into things
-    if (*tmthing).flags & MF_SKULLFLY != 0 {
-        let damage = ((P_Random(world) % 8) + 1) * (*tmthing).info.get().damage;
+    if tmthing_flags & MF_SKULLFLY != 0 {
+        drop(mobjs);
+        let damage = ((P_Random(world) % 8) + 1) * tmthing_info.get().damage;
         P_DamageMobj(world, thing_id, Some(tmthing_id), Some(tmthing_id), damage);
         // The damage can run actions that check other objects' positions;
         // like C, the rest of the slam acts on whatever `tmthing` is now.
         let tmthing_id = self::tmthing(world);
-        let tmthing = tmthing_id.ptr();
-        (*tmthing).flags &= !MF_SKULLFLY;
-        (*tmthing).momx = 0;
-        (*tmthing).momy = 0;
-        (*tmthing).momz = 0;
-        P_SetMobjState(world, tmthing_id, (*tmthing).info.get().spawnstate);
+        let spawnstate = {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let tmthing = &mut mobjs[tmthing_id];
+            tmthing.flags &= !MF_SKULLFLY;
+            tmthing.momx = 0;
+            tmthing.momy = 0;
+            tmthing.momz = 0;
+            tmthing.info.get().spawnstate
+        };
+        P_SetMobjState(world, tmthing_id, spawnstate);
         return 0;
     }
 
     // missiles can hit other things
-    if (*tmthing).flags & MF_MISSILE != 0 {
-        if (*tmthing).z > thing.z + thing.height {
+    if tmthing_flags & MF_MISSILE != 0 {
+        if tmthing_z > thing_z + thing_height {
             return 1;
         }
-        if (*tmthing).z + (*tmthing).height < thing.z {
+        if tmthing_z + tmthing_height < thing_z {
             return 1;
         }
-        if let Some(target_id) = (*tmthing).target {
-            let target = target_id.ptr();
-            let target_type = (*target).kind;
-            let thing_type = thing.kind;
+        if let Some(target_id) = tmthing_target {
+            let target_type = mobjs[target_id].kind;
             if target_type == thing_type
                 || (target_type == MT_KNIGHT && thing_type == MT_BRUISER)
                 || (target_type == MT_BRUISER && thing_type == MT_KNIGHT)
             {
-                if std::ptr::eq(thing, target) {
+                // C compares the pointers: the same slot is the same object.
+                if thing_id.index() == target_id.index() {
                     return 1;
                 }
                 if thing_type != MT_PLAYER && DEH_DEFAULT_SPECIES_INFIGHTING == 0 {
@@ -648,25 +672,26 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
                 }
             }
         }
-        if thing.flags & MF_SHOOTABLE == 0 {
-            return (thing.flags & MF_SOLID == 0) as u32;
+        if thing_flags & MF_SHOOTABLE == 0 {
+            return (thing_flags & MF_SOLID == 0) as u32;
         }
-        let damage = ((P_Random(world) % 8) + 1) * (*tmthing).info.get().damage;
-        let target = (*tmthing).target;
-        P_DamageMobj(world, thing_id, Some(tmthing_id), target, damage);
+        drop(mobjs);
+        let damage = ((P_Random(world) % 8) + 1) * tmthing_info.get().damage;
+        P_DamageMobj(world, thing_id, Some(tmthing_id), tmthing_target, damage);
         return 0;
     }
+    drop(mobjs);
 
     // check for special pickup
-    if thing.flags & MF_SPECIAL != 0 {
-        let solid = thing.flags & MF_SOLID;
+    if thing_flags & MF_SPECIAL != 0 {
+        let solid = thing_flags & MF_SOLID;
         if tmflags & MF_PICKUP != 0 {
             P_TouchSpecialThing(world, thing_id, tmthing_id);
         }
         return (solid == 0) as u32;
     }
 
-    (thing.flags & MF_SOLID == 0) as u32
+    (thing_flags & MF_SOLID == 0) as u32
 }
 
 // ---------------------------------------------------------------------------
@@ -684,13 +709,12 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
 ///
 /// # Safety
 ///
-/// `thing_id` must name an initialised map object. The blockmap and all
-/// sector/linedef structures must be fully initialised.
+/// `thing_id` must name a map object of the loaded level; touching things
+/// runs [`PIT_CheckThing`].
 pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
-    let thing = thing_id.ptr();
     let tmbbox = start_position_check(world, thing_id, x, y);
 
-    if (*thing).flags & MF_NOCLIP != 0 {
+    if MOBJ_ARENA.borrow()[thing_id].flags & MF_NOCLIP != 0 {
         return 1;
     }
 
@@ -702,8 +726,7 @@ pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            // SAFETY: the iterator hands over map objects linked into the
-            // blockmap, and the check parameters are set above.
+            // SAFETY: the check parameters are set above.
             if !P_BlockThingsIterator(world, bx, by, |world, thing| unsafe {
                 PIT_CheckThing(world, thing) != 0
             }) {
@@ -723,11 +746,7 @@ pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            // SAFETY: the iterator hands over lines of the loaded level, and
-            // the check parameters are set above.
-            if !P_BlockLinesIterator(world, bx, by, |world, line| unsafe {
-                PIT_CheckLine(world, line) != 0
-            }) {
+            if !P_BlockLinesIterator(world, bx, by, |world, line| PIT_CheckLine(world, line) != 0) {
                 return 0;
             }
         }
@@ -748,43 +767,50 @@ pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y
 ///
 /// # Safety
 ///
-/// `thing_id` must name a map object that is already linked into the map.
-/// The map data must be fully initialised.
+/// `thing_id` must name a map object that is already linked into the map;
+/// the move runs [`PIT_CheckThing`] and crossed line specials.
 pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
-    let thing = thing_id.ptr();
     world.scratch.map.floatok = 0;
     if P_CheckPosition(world, thing_id, x, y) == 0 {
         return 0;
     }
-    if (*thing).flags & MF_NOCLIP == 0 {
+    // The check can run play code; the thing is read afresh after it.
+    let (flags, height, z) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let thing = &mobjs[thing_id];
+        (thing.flags, thing.height, thing.z)
+    };
+    if flags & MF_NOCLIP == 0 {
         let map = &mut world.scratch.map;
-        if map.tmceilingz - map.tmfloorz < (*thing).height {
+        if map.tmceilingz - map.tmfloorz < height {
             return 0;
         }
         map.floatok = 1;
-        if (*thing).flags & MF_TELEPORT == 0 && map.tmceilingz - (*thing).z < (*thing).height {
+        if flags & MF_TELEPORT == 0 && map.tmceilingz - z < height {
             return 0;
         }
-        if (*thing).flags & MF_TELEPORT == 0 && map.tmfloorz - (*thing).z > 24 * FRACUNIT {
+        if flags & MF_TELEPORT == 0 && map.tmfloorz - z > 24 * FRACUNIT {
             return 0;
         }
-        if (*thing).flags & (MF_DROPOFF | MF_FLOAT) == 0
-            && map.tmfloorz - map.tmdropoffz > 24 * FRACUNIT
-        {
+        if flags & (MF_DROPOFF | MF_FLOAT) == 0 && map.tmfloorz - map.tmdropoffz > 24 * FRACUNIT {
             return 0;
         }
     }
 
     P_UnsetThingPosition(world, thing_id);
-    let oldx = (*thing).x;
-    let oldy = (*thing).y;
-    (*thing).floorz = world.scratch.map.tmfloorz;
-    (*thing).ceilingz = world.scratch.map.tmceilingz;
-    (*thing).x = x;
-    (*thing).y = y;
+    let (oldx, oldy) = {
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let thing = &mut mobjs[thing_id];
+        let old_position = (thing.x, thing.y);
+        thing.floorz = world.scratch.map.tmfloorz;
+        thing.ceilingz = world.scratch.map.tmceilingz;
+        thing.x = x;
+        thing.y = y;
+        old_position
+    };
     P_SetThingPosition(world, thing_id);
 
-    if (*thing).flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
+    if MOBJ_ARENA.borrow()[thing_id].flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
         // A crossed special can move things (teleporters reset the list),
         // so the count is re-read before every pop, as in C.
         loop {
@@ -796,10 +822,14 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
                 map.numspechit -= 1;
                 map.spechit[map.numspechit as usize]
             };
+            let (thing_x, thing_y) = {
+                let mobjs = MOBJ_ARENA.borrow();
+                (mobjs[thing_id].x, mobjs[thing_id].y)
+            };
             let (side, oldside, special) = {
                 let level = &world.level;
                 (
-                    P_PointOnLineSide(level, (*thing).x, (*thing).y, ld),
+                    P_PointOnLineSide(level, thing_x, thing_y, ld),
                     P_PointOnLineSide(level, oldx, oldy, ld),
                     level.lines[ld].special,
                 )
@@ -823,20 +853,26 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
 ///
 /// # Safety
 ///
-/// `thing_id` must name a map object of the level. Called only from
-/// [`PIT_ChangeSector`] during sector-height propagation.
+/// `thing_id` must name a map object of the level; the check runs
+/// [`PIT_CheckThing`]. Called only from [`PIT_ChangeSector`] during
+/// sector-height propagation.
 pub unsafe fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
-    let thing = thing_id.ptr();
-    let onfloor = (*thing).z == (*thing).floorz;
-    P_CheckPosition(world, thing_id, (*thing).x, (*thing).y);
-    (*thing).floorz = world.scratch.map.tmfloorz;
-    (*thing).ceilingz = world.scratch.map.tmceilingz;
+    let (onfloor, x, y) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let thing = &mobjs[thing_id];
+        (thing.z == thing.floorz, thing.x, thing.y)
+    };
+    P_CheckPosition(world, thing_id, x, y);
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let thing = &mut mobjs[thing_id];
+    thing.floorz = world.scratch.map.tmfloorz;
+    thing.ceilingz = world.scratch.map.tmceilingz;
     if onfloor {
-        (*thing).z = (*thing).floorz;
-    } else if (*thing).z + (*thing).height > (*thing).ceilingz {
-        (*thing).z = (*thing).ceilingz - (*thing).height;
+        thing.z = thing.floorz;
+    } else if thing.z + thing.height > thing.ceilingz {
+        thing.z = thing.ceilingz - thing.height;
     }
-    if (*thing).ceilingz - (*thing).floorz < (*thing).height {
+    if thing.ceilingz - thing.floorz < thing.height {
         return 0;
     }
     1
@@ -853,12 +889,14 @@ pub unsafe fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
 /// Handles horizontal and vertical walls as fast special cases; uses
 /// trigonometry for diagonal walls.
 ///
-/// # Safety
+/// `slidemo`, `tmxmove`, and `tmymove` must be set by the caller
+/// ([`P_SlideMove`]) before this function is called.
 ///
-/// `ld` must be a linedef of the loaded level. `slidemo`, `tmxmove`, and
-/// `tmymove` must be set by the caller ([`P_SlideMove`]) before this
-/// function is called.
-pub unsafe fn P_HitSlideLine(world: &mut World, ld: LineId) {
+/// # Panics
+///
+/// If `ld` is not a linedef of the loaded level, or a diagonal wall is hit
+/// with no `slidemo` set.
+pub fn P_HitSlideLine(world: &mut World, ld: LineId) {
     let World { level, scratch, .. } = world;
     let line = &level.lines[ld];
     let map = &mut scratch.map;
@@ -870,8 +908,13 @@ pub unsafe fn P_HitSlideLine(world: &mut World, ld: LineId) {
         map.tmxmove = 0;
         return;
     }
-    let (slidemo, tmxmove, tmymove) = (mobj_or_null(map.slidemo), map.tmxmove, map.tmymove);
-    let side = P_PointOnLineSide(level, (*slidemo).x, (*slidemo).y, ld);
+    let (tmxmove, tmymove) = (map.tmxmove, map.tmymove);
+    let (slidemo_x, slidemo_y) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let slidemo = &mobjs[map.slidemo.expect("slide without a moving object")];
+        (slidemo.x, slidemo.y)
+    };
+    let side = P_PointOnLineSide(level, slidemo_x, slidemo_y, ld);
     let mut lineangle = R_PointToAngle2(0, 0, line.dx, line.dy);
     if side == 1 {
         lineangle = lineangle.wrapping_add(ANG180);
@@ -884,8 +927,10 @@ pub unsafe fn P_HitSlideLine(world: &mut World, ld: LineId) {
     let lineangle = (lineangle >> ANGLETOFINESHIFT) as usize;
     let deltaangle = (deltaangle >> ANGLETOFINESHIFT) as usize;
     let movelen = P_AproxDistance(tmxmove, tmymove);
-    let newlen = FixedMul(movelen, *finecosine.0.add(deltaangle));
-    map.tmxmove = FixedMul(newlen, *finecosine.0.add(lineangle));
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    let newlen = FixedMul(movelen, finesine[deltaangle + FINEANGLES / 4]);
+    map.tmxmove = FixedMul(newlen, finesine[lineangle + FINEANGLES / 4]);
     map.tmymove = FixedMul(newlen, finesine[lineangle]);
 }
 
@@ -898,27 +943,31 @@ pub unsafe fn P_HitSlideLine(world: &mut World, ld: LineId) {
 ///
 /// Returns 1 to continue traversal (line is passable), 0 to stop.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `intercept` must hit a line of the loaded level. `slidemo` must name the
-/// object being moved.
-pub unsafe fn PTR_SlideTraverse(world: &mut World, intercept: intercept_t) -> u32 {
+/// If `intercept` does not hit a line of the loaded level, or no `slidemo`
+/// is set.
+pub fn PTR_SlideTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     let InterceptHit::Line(li) = intercept.hit else {
         i_error!("PTR_SlideTraverse: not a line?");
     };
     let World { level, scratch, .. } = world;
     let PlayScratch { map, maputl, .. } = scratch;
-    let slidemo = mobj_or_null(map.slidemo);
+    let (slidemo_x, slidemo_y, slidemo_z, slidemo_height) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let slidemo = &mobjs[map.slidemo.expect("slide without a moving object")];
+        (slidemo.x, slidemo.y, slidemo.z, slidemo.height)
+    };
     {
         if level.lines[li].flags as i32 & LinedefFlag::TWOSIDED as i32 == 0 {
-            if P_PointOnLineSide(level, (*slidemo).x, (*slidemo).y, li) != 0 {
+            if P_PointOnLineSide(level, slidemo_x, slidemo_y, li) != 0 {
                 return 1;
             }
         } else {
             P_LineOpening(maputl, level, li);
-            if maputl.openrange >= (*slidemo).height
-                && maputl.opentop - (*slidemo).z >= (*slidemo).height
-                && maputl.openbottom - (*slidemo).z <= 24 * FRACUNIT
+            if maputl.openrange >= slidemo_height
+                && maputl.opentop - slidemo_z >= slidemo_height
+                && maputl.openbottom - slidemo_z <= 24 * FRACUNIT
             {
                 return 1;
             }
@@ -944,46 +993,58 @@ pub unsafe fn PTR_SlideTraverse(world: &mut World, intercept: intercept_t) -> u3
 ///
 /// # Safety
 ///
-/// `mo_id` must name a map object of the level. Map data must be fully
-/// initialised.
+/// `mo_id` must name a map object of the level; the moves run
+/// [`P_TryMove`].
 pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
-    let mo = mo_id.ptr();
     world.scratch.map.slidemo = Some(mo_id);
     let mut hitcount = 0;
-    // SAFETY: the traversal hands over intercepts of lines of the loaded
-    // level, and `slidemo` is set above.
-    let slide_traverse =
-        |world: &mut World, intercept| unsafe { PTR_SlideTraverse(world, intercept) != 0 };
+    let slide_traverse = |world: &mut World, intercept| PTR_SlideTraverse(world, intercept) != 0;
+    // The object's position and momentum, read afresh after every move
+    // (each runs play code), as C reads them through its pointer.
+    let position_and_momentum = || {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mo = &mobjs[mo_id];
+        (mo.x, mo.y, mo.momx, mo.momy)
+    };
+    // The stairstep fallback: try the pure-y move, then the pure-x one.
+    let stairstep = |world: &mut World| {
+        let (x, y, _, momy) = position_and_momentum();
+        if P_TryMove(world, mo_id, x, y + momy) == 0 {
+            let (x, y, momx, _) = position_and_momentum();
+            P_TryMove(world, mo_id, x + momx, y);
+        }
+    };
 
     'retry: loop {
         hitcount += 1;
         if hitcount == 3 {
-            // stairstep
-            if P_TryMove(world, mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
-                P_TryMove(world, mo_id, (*mo).x + (*mo).momx, (*mo).y);
-            }
+            stairstep(world);
             return;
         }
 
-        let (leadx, trailx) = if (*mo).momx > 0 {
-            ((*mo).x + (*mo).radius, (*mo).x - (*mo).radius)
+        let (x, y, momx, momy) = position_and_momentum();
+        let radius = MOBJ_ARENA.borrow()[mo_id].radius;
+        let (leadx, trailx) = if momx > 0 {
+            (x + radius, x - radius)
         } else {
-            ((*mo).x - (*mo).radius, (*mo).x + (*mo).radius)
+            (x - radius, x + radius)
         };
-        let (leady, traily) = if (*mo).momy > 0 {
-            ((*mo).y + (*mo).radius, (*mo).y - (*mo).radius)
+        let (leady, traily) = if momy > 0 {
+            (y + radius, y - radius)
         } else {
-            ((*mo).y - (*mo).radius, (*mo).y + (*mo).radius)
+            (y - radius, y + radius)
         };
 
         world.scratch.map.bestslidefrac = FRACUNIT + 1;
 
+        // The slide traversal runs no play code, so the momentum read above
+        // holds for all three traces.
         P_PathTraverse(
             world,
             leadx,
             leady,
-            leadx + (*mo).momx,
-            leady + (*mo).momy,
+            leadx + momx,
+            leady + momy,
             PT_ADDLINES,
             slide_traverse,
         );
@@ -991,8 +1052,8 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
             world,
             trailx,
             leady,
-            trailx + (*mo).momx,
-            leady + (*mo).momy,
+            trailx + momx,
+            leady + momy,
             PT_ADDLINES,
             slide_traverse,
         );
@@ -1000,26 +1061,23 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
             world,
             leadx,
             traily,
-            leadx + (*mo).momx,
-            traily + (*mo).momy,
+            leadx + momx,
+            traily + momy,
             PT_ADDLINES,
             slide_traverse,
         );
 
         if world.scratch.map.bestslidefrac == FRACUNIT + 1 {
-            // stairstep
-            if P_TryMove(world, mo_id, (*mo).x, (*mo).y + (*mo).momy) == 0 {
-                P_TryMove(world, mo_id, (*mo).x + (*mo).momx, (*mo).y);
-            }
+            stairstep(world);
             return;
         }
 
         world.scratch.map.bestslidefrac -= 0x800;
         let bestslidefrac = world.scratch.map.bestslidefrac;
         if bestslidefrac > 0 {
-            let newx = FixedMul((*mo).momx, bestslidefrac);
-            let newy = FixedMul((*mo).momy, bestslidefrac);
-            if P_TryMove(world, mo_id, (*mo).x + newx, (*mo).y + newy) == 0 {
+            let newx = FixedMul(momx, bestslidefrac);
+            let newy = FixedMul(momy, bestslidefrac);
+            if P_TryMove(world, mo_id, x + newx, y + newy) == 0 {
                 continue 'retry;
             }
         }
@@ -1035,18 +1093,25 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
         if bestslidefrac <= 0 {
             return;
         }
+        // The move above may have run play code; the momentum is re-read.
+        let (_, _, momx, momy) = position_and_momentum();
         {
             let map = &mut world.scratch.map;
-            map.tmxmove = FixedMul((*mo).momx, bestslidefrac);
-            map.tmymove = FixedMul((*mo).momy, bestslidefrac);
+            map.tmxmove = FixedMul(momx, bestslidefrac);
+            map.tmymove = FixedMul(momy, bestslidefrac);
         }
         // A traversal that brought `bestslidefrac` below `FRACUNIT + 1` set
         // the line with it.
         P_HitSlideLine(world, bestslideline.expect("slide hit without a line"));
         let (tmxmove, tmymove) = (world.scratch.map.tmxmove, world.scratch.map.tmymove);
-        (*mo).momx = tmxmove;
-        (*mo).momy = tmymove;
-        if P_TryMove(world, mo_id, (*mo).x + tmxmove, (*mo).y + tmymove) == 0 {
+        let (x, y) = {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mo = &mut mobjs[mo_id];
+            mo.momx = tmxmove;
+            mo.momy = tmymove;
+            (mo.x, mo.y)
+        };
+        if P_TryMove(world, mo_id, x + tmxmove, y + tmymove) == 0 {
             continue 'retry;
         }
         return;
@@ -1067,12 +1132,13 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
 /// Returns 1 to continue traversal, 0 to stop (target locked or window
 /// closed).
 ///
-/// # Safety
-///
-/// `intercept` must hit a line or map object of the loaded level.
 /// `shootthing`, `shootz`, `attackrange`, `topslope`, and `bottomslope`
 /// must be set before the traversal begins.
-pub unsafe fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 {
+///
+/// # Panics
+///
+/// If `intercept` does not hit a line or map object of the loaded level.
+pub fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     let (shootthing, shootz, attackrange) = {
         let map = &world.scratch.map;
         (map.shootthing, map.shootz, map.attackrange)
@@ -1118,20 +1184,24 @@ pub unsafe fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 
     if Some(th_id) == shootthing {
         return 1;
     }
-    let th = th_id.ptr();
+    let (th_flags, th_z, th_height) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let th = &mobjs[th_id];
+        (th.flags, th.z, th.height)
+    };
     let (topslope, bottomslope) = (
         world.scratch.sight.topslope,
         world.scratch.sight.bottomslope,
     );
-    if (*th).flags & MF_SHOOTABLE == 0 {
+    if th_flags & MF_SHOOTABLE == 0 {
         return 1;
     }
     let dist = FixedMul(attackrange, intercept.frac);
-    let thingtopslope = FixedDiv((*th).z + (*th).height - shootz, dist);
+    let thingtopslope = FixedDiv(th_z + th_height - shootz, dist);
     if thingtopslope < bottomslope {
         return 1;
     }
-    let thingbottomslope = FixedDiv((*th).z - shootz, dist);
+    let thingbottomslope = FixedDiv(th_z - shootz, dist);
     if thingbottomslope > topslope {
         return 1;
     }
@@ -1161,9 +1231,8 @@ pub unsafe fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 
 ///
 /// # Safety
 ///
-/// `intercept` must hit a line or map object of the loaded level.
 /// `shootthing`, `shootz`, `attackrange`, `aimslope`, and `la_damage` must
-/// be set before the traversal.
+/// be set before the traversal; a hit runs [`P_DamageMobj`].
 pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     if let InterceptHit::Line(li) = intercept.hit {
         if world.level.lines[li].special != 0 {
@@ -1245,16 +1314,20 @@ pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u3
     if Some(th_id) == shootthing {
         return 1;
     }
-    let th = th_id.ptr();
-    if (*th).flags & MF_SHOOTABLE == 0 {
+    let (th_flags, th_z, th_height) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let th = &mobjs[th_id];
+        (th.flags, th.z, th.height)
+    };
+    if th_flags & MF_SHOOTABLE == 0 {
         return 1;
     }
     let dist = FixedMul(attackrange, intercept.frac);
-    let thingtopslope = FixedDiv((*th).z + (*th).height - shootz, dist);
+    let thingtopslope = FixedDiv(th_z + th_height - shootz, dist);
     if thingtopslope < aimslope {
         return 1;
     }
-    let thingbottomslope = FixedDiv((*th).z - shootz, dist);
+    let thingbottomslope = FixedDiv(th_z - shootz, dist);
     if thingbottomslope > aimslope {
         return 1;
     }
@@ -1264,7 +1337,7 @@ pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u3
     let x = trace.x + FixedMul(trace.dx, frac);
     let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
-    if (*th).flags & MF_NOBLOOD != 0 {
+    if th_flags & MF_NOBLOOD != 0 {
         P_SpawnPuff(world, x, y, z);
     } else {
         P_SpawnBlood(world, x, y, z, la_damage);
@@ -1325,26 +1398,28 @@ unsafe fn goto_hitline(world: &mut World, li: LineId, intercept: intercept_t) {
 /// slope to the centre of that target, or 0 if nothing was found.
 /// Sets `linetarget` as a side effect.
 ///
-/// # Safety
-///
 /// `t1` names the shooter (C substitutes a dummy for null via
-/// [`P_SubstNullMobj`]; the callers always pass one). Map data must be
-/// initialised.
-pub unsafe fn P_AimLineAttack(
-    world: &mut World,
-    t1: MobjId,
-    angle: u32,
-    distance: fixed_t,
-) -> fixed_t {
+/// [`P_SubstNullMobj`]; the callers always pass one).
+///
+/// # Panics
+///
+/// If no level is loaded.
+pub fn P_AimLineAttack(world: &mut World, t1: MobjId, angle: u32, distance: fixed_t) -> fixed_t {
     let t1_id = P_SubstNullMobj(world, Some(t1));
-    let t1 = t1_id.ptr();
+    let (t1_x, t1_y, t1_z, t1_height) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let t1 = &mobjs[t1_id];
+        (t1.x, t1.y, t1.z, t1.height)
+    };
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
-    let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
-    let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    let x2 = t1_x + (distance >> FRACBITS) * finesine[angle + FINEANGLES / 4];
+    let y2 = t1_y + (distance >> FRACBITS) * finesine[angle];
     {
         let map = &mut world.scratch.map;
         map.shootthing = Some(t1_id);
-        map.shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
+        map.shootz = t1_z + (t1_height >> 1) + 8 * FRACUNIT;
         map.attackrange = distance;
         map.linetarget = None;
     }
@@ -1355,14 +1430,12 @@ pub unsafe fn P_AimLineAttack(
     }
     P_PathTraverse(
         world,
-        (*t1).x,
-        (*t1).y,
+        t1_x,
+        t1_y,
         x2,
         y2,
         PT_ADDLINES | PT_ADDTHINGS,
-        // SAFETY: the traversal hands over intercepts of the loaded level,
-        // and the aim parameters are set above.
-        |world, intercept| unsafe { PTR_AimTraverse(world, intercept) != 0 },
+        |world, intercept| PTR_AimTraverse(world, intercept) != 0,
     );
     let map = &world.scratch.map;
     if map.linetarget.is_some() {
@@ -1380,8 +1453,8 @@ pub unsafe fn P_AimLineAttack(
 ///
 /// # Safety
 ///
-/// `t1_id` must name a map object of the level. Map data must be fully
-/// initialised.
+/// `t1_id` must name a map object of the level; a hit runs
+/// [`PTR_ShootTraverse`].
 pub unsafe fn P_LineAttack(
     world: &mut World,
     t1_id: MobjId,
@@ -1390,27 +1463,32 @@ pub unsafe fn P_LineAttack(
     slope: fixed_t,
     damage: i32,
 ) {
-    let t1 = t1_id.ptr();
+    let (t1_x, t1_y, t1_z, t1_height) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let t1 = &mobjs[t1_id];
+        (t1.x, t1.y, t1.z, t1.height)
+    };
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
-    let x2 = (*t1).x + (distance >> FRACBITS) * *finecosine.0.add(angle);
-    let y2 = (*t1).y + (distance >> FRACBITS) * finesine[angle];
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    let x2 = t1_x + (distance >> FRACBITS) * finesine[angle + FINEANGLES / 4];
+    let y2 = t1_y + (distance >> FRACBITS) * finesine[angle];
     {
         let map = &mut world.scratch.map;
         map.shootthing = Some(t1_id);
         map.la_damage = damage;
-        map.shootz = (*t1).z + ((*t1).height >> 1) + 8 * FRACUNIT;
+        map.shootz = t1_z + (t1_height >> 1) + 8 * FRACUNIT;
         map.attackrange = distance;
         map.aimslope = slope;
     }
     P_PathTraverse(
         world,
-        (*t1).x,
-        (*t1).y,
+        t1_x,
+        t1_y,
         x2,
         y2,
         PT_ADDLINES | PT_ADDTHINGS,
-        // SAFETY: the traversal hands over intercepts of the loaded level,
-        // and the shot parameters are set above.
+        // SAFETY: the shot parameters are set above.
         |world, intercept| unsafe { PTR_ShootTraverse(world, intercept) != 0 },
     );
 }
@@ -1430,10 +1508,9 @@ pub unsafe fn P_LineAttack(
 ///
 /// # Safety
 ///
-/// `intercept` must hit a line of the loaded level. `usething` must be set.
+/// `usething` must be set; a blocked use runs [`S_StartSound`].
 pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     let usething_id = world.scratch.map.usething.expect("use without a user");
-    let usething = usething_id.ptr();
     let InterceptHit::Line(line) = intercept.hit else {
         unreachable!("the use traversal collects only lines");
     };
@@ -1447,7 +1524,11 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 
             return 1;
         }
         let mut side = 0;
-        if P_PointOnLineSide(&world.level, (*usething).x, (*usething).y, line) == 1 {
+        let (usething_x, usething_y) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            (mobjs[usething_id].x, mobjs[usething_id].y)
+        };
+        if P_PointOnLineSide(&world.level, usething_x, usething_y, line) == 1 {
             side = 1;
         }
         side
@@ -1464,19 +1545,22 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 
 ///
 /// # Safety
 ///
-/// `player`'s `mo` must name a map object of the loaded level. Map data
-/// must be initialised.
+/// `player`'s `mo` must name a map object of the loaded level; the use runs
+/// [`PTR_UseTraverse`].
 pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
-    let mo = mo_id.ptr();
     world.scratch.map.usething = Some(mo_id);
-    let angle = ((*mo).angle >> ANGLETOFINESHIFT) as usize;
-    let x1 = (*mo).x;
-    let y1 = (*mo).y;
-    let x2 = x1 + (USERANGE >> FRACBITS) * *finecosine.0.add(angle);
+    let (angle, x1, y1) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let mo = &mobjs[mo_id];
+        ((mo.angle >> ANGLETOFINESHIFT) as usize, mo.x, mo.y)
+    };
+    // `finecosine[angle]`: the cosine table is the sine table a quarter
+    // turn on.
+    let x2 = x1 + (USERANGE >> FRACBITS) * finesine[angle + FINEANGLES / 4];
     let y2 = y1 + (USERANGE >> FRACBITS) * finesine[angle];
-    // SAFETY: the traversal collects only lines of the loaded level, and
-    // `usething` is set above.
+    // SAFETY: the traversal collects only lines, and `usething` is set
+    // above.
     P_PathTraverse(
         world,
         x1,
@@ -1503,17 +1587,21 @@ pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
 ///
 /// # Safety
 ///
-/// `thing_id` must name an initialised map object. `bombspot`,
-/// `bombsource`, and `bombdamage` must be set by [`P_RadiusAttack`] before
-/// this callback is invoked.
+/// `bombspot`, `bombsource`, and `bombdamage` must be set by
+/// [`P_RadiusAttack`] before this callback is invoked; a hit runs
+/// [`P_DamageMobj`].
 pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
-    let thing = &*thing_id.ptr();
-    if thing.flags & MF_SHOOTABLE == 0 {
-        return 1;
-    }
-    if thing.kind == MT_CYBORG || thing.kind == MT_SPIDER {
-        return 1;
-    }
+    let (thing_x, thing_y, thing_radius) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let thing = &mobjs[thing_id];
+        if thing.flags & MF_SHOOTABLE == 0 {
+            return 1;
+        }
+        if thing.kind == MT_CYBORG || thing.kind == MT_SPIDER {
+            return 1;
+        }
+        (thing.x, thing.y, thing.radius)
+    };
     // The sight check below does not touch this state, so one read serves
     // the whole callback.
     let (bombspot_id, bombsource, bombdamage) = {
@@ -1524,11 +1612,14 @@ pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
             map.bombdamage,
         )
     };
-    let bombspot = bombspot_id.ptr();
-    let dx = (thing.x - (*bombspot).x).wrapping_abs();
-    let dy = (thing.y - (*bombspot).y).wrapping_abs();
+    let (bombspot_x, bombspot_y) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[bombspot_id].x, mobjs[bombspot_id].y)
+    };
+    let dx = (thing_x - bombspot_x).wrapping_abs();
+    let dy = (thing_y - bombspot_y).wrapping_abs();
     let mut dist = if dx > dy { dx } else { dy };
-    dist = (dist - thing.radius) >> FRACBITS;
+    dist = (dist - thing_radius) >> FRACBITS;
     if dist < 0 {
         dist = 0;
     }
@@ -1560,20 +1651,23 @@ pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
 ///
 /// `spot_id` must name a map object of the level; `source` may be `None`
 /// or stale (C passes the exploding object's `target`, which may be gone).
-/// Map and blockmap data must be fully initialised.
+/// The blast runs [`PIT_RadiusAttack`].
 pub unsafe fn P_RadiusAttack(
     world: &mut World,
     spot_id: MobjId,
     source: Option<MobjId>,
     damage: i32,
 ) {
-    let spot = spot_id.ptr();
+    let (spot_x, spot_y) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[spot_id].x, mobjs[spot_id].y)
+    };
     let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
     let dist = (damage + MAXRADIUS) << FRACBITS;
-    let yh = ((*spot).y + dist - bmaporgy) >> MAPBLOCKSHIFT;
-    let yl = ((*spot).y - dist - bmaporgy) >> MAPBLOCKSHIFT;
-    let xh = ((*spot).x + dist - bmaporgx) >> MAPBLOCKSHIFT;
-    let xl = ((*spot).x - dist - bmaporgx) >> MAPBLOCKSHIFT;
+    let yh = (spot_y + dist - bmaporgy) >> MAPBLOCKSHIFT;
+    let yl = (spot_y - dist - bmaporgy) >> MAPBLOCKSHIFT;
+    let xh = (spot_x + dist - bmaporgx) >> MAPBLOCKSHIFT;
+    let xl = (spot_x - dist - bmaporgx) >> MAPBLOCKSHIFT;
     {
         let map = &mut world.scratch.map;
         map.bombspot = Some(spot_id);
@@ -1582,8 +1676,7 @@ pub unsafe fn P_RadiusAttack(
     }
     for y in yl..=yh {
         for x in xl..=xh {
-            // SAFETY: the iterator hands over map objects linked into the
-            // blockmap, and the blast parameters are set above.
+            // SAFETY: the blast parameters are set above.
             P_BlockThingsIterator(world, x, y, |world, thing| unsafe {
                 PIT_RadiusAttack(world, thing) != 0
             });
@@ -1607,41 +1700,47 @@ pub unsafe fn P_RadiusAttack(
 ///
 /// # Safety
 ///
-/// `thing_id` must name an initialised map object. `crushchange` must be
-/// set by [`P_ChangeSector`] before iteration.
+/// `crushchange` must be set by [`P_ChangeSector`] before iteration; the
+/// crush runs state changes, removal and [`P_DamageMobj`].
 pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
     if P_ThingHeightClip(world, thing_id) != 0 {
         return 1;
     }
-    let thing = &mut *thing_id.ptr();
-    if thing.health <= 0 {
+    let (health, flags) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        (mobjs[thing_id].health, mobjs[thing_id].flags)
+    };
+    if health <= 0 {
         P_SetMobjState(world, thing_id, S_GIBS);
+        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let thing = &mut mobjs[thing_id];
         thing.flags &= !MF_SOLID;
         thing.height = 0;
         thing.radius = 0;
         return 1;
     }
-    if thing.flags & MF_DROPPED != 0 {
+    if flags & MF_DROPPED != 0 {
         P_RemoveMobj(world, thing_id);
         return 1;
     }
-    if thing.flags & MF_SHOOTABLE == 0 {
+    if flags & MF_SHOOTABLE == 0 {
         return 1;
     }
     world.scratch.map.nofit = 1;
     let crushchange = world.scratch.map.crushchange;
     if crushchange != 0 && world.leveltime & 3 == 0 {
         P_DamageMobj(world, thing_id, None, None, 10);
-        let mo = P_SpawnMobj(
-            world,
-            thing.x,
-            thing.y,
-            thing.z + thing.height / 2,
-            MT_BLOOD,
-        )
-        .ptr();
-        (*mo).momx = (P_Random(world) - P_Random(world)) << 12;
-        (*mo).momy = (P_Random(world) - P_Random(world)) << 12;
+        // The damage can move the thing; the blood goes where it is now.
+        let (x, y, z) = {
+            let mobjs = MOBJ_ARENA.borrow();
+            let thing = &mobjs[thing_id];
+            (thing.x, thing.y, thing.z + thing.height / 2)
+        };
+        let mo = P_SpawnMobj(world, x, y, z, MT_BLOOD);
+        let momx = (P_Random(world) - P_Random(world)) << 12;
+        MOBJ_ARENA.borrow_mut()[mo].momx = momx;
+        let momy = (P_Random(world) - P_Random(world)) << 12;
+        MOBJ_ARENA.borrow_mut()[mo].momy = momy;
     }
     1
 }
@@ -1655,16 +1754,15 @@ pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
 ///
 /// # Safety
 ///
-/// `sector` must be a sector of the loaded level, and every thing linked
-/// into the blockmap must be live.
+/// `sector` must be a sector of the loaded level; the things that no longer
+/// fit run [`PIT_ChangeSector`].
 pub unsafe fn P_ChangeSector(world: &mut World, sector: SectorId, crunch: i32) -> i32 {
     world.scratch.map.nofit = 0;
     world.scratch.map.crushchange = crunch;
     let blockbox = world.level.sectors[sector].blockbox;
     for x in blockbox[BBox::LEFT]..=blockbox[BBox::RIGHT] {
         for y in blockbox[BBox::BOTTOM]..=blockbox[BBox::TOP] {
-            // SAFETY: the iterator hands over map objects linked into the
-            // blockmap, and `crushchange` is set above.
+            // SAFETY: `crushchange` is set above.
             P_BlockThingsIterator(world, x, y, |world, thing| unsafe {
                 PIT_ChangeSector(world, thing) != 0
             });

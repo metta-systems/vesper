@@ -33,7 +33,7 @@ use crate::engine::{
         fixed::{FRACBITS, FRACUNIT, fixed_t},
         tables::{ANGLETOFINESHIFT, finesine},
     },
-    play::{mobj::MobjId, setup::LevelState},
+    play::{mobj::MobjId, setup::LevelState, tick::MOBJ_ARENA},
     sound::info::{
         Mus, MusicInfo, NUMMUSIC, NUMSFX, S_InitSfxLinks, SfxInfo, music_table, sfx_table,
     },
@@ -99,14 +99,13 @@ pub enum SoundOrigin {
 impl SoundOrigin {
     /// Current map position of the origin.
     ///
-    /// # Safety
-    /// No reference to a wrapped map object may be live; a wrapped sector
-    /// must belong to `level`.
-    unsafe fn position(self, level: &LevelState) -> (fixed_t, fixed_t) {
+    /// # Panics
+    /// If a wrapped sector does not belong to `level`.
+    fn position(self, level: &LevelState) -> (fixed_t, fixed_t) {
         match self {
             Self::Mobj(mobj) => {
-                let mobj = mobj.ptr();
-                ((*mobj).x, (*mobj).y)
+                let mobjs = MOBJ_ARENA.borrow();
+                (mobjs[mobj].x, mobjs[mobj].y)
             }
             Self::Sector(sector) => {
                 let soundorg = level.sectors[sector].soundorg;
@@ -440,8 +439,8 @@ unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i3
 /// faintly audible.
 ///
 /// # Safety
-/// `source` must satisfy [`SoundOrigin::position`] for `level`; `vol` and
-/// `sep` must point at valid memory.
+/// `vol` and `sep` must point at valid memory. A sector `source` must
+/// belong to `level`.
 unsafe fn S_AdjustSoundParams(
     level: &LevelState,
     listener: MobjId,
@@ -449,10 +448,14 @@ unsafe fn S_AdjustSoundParams(
     vol: *mut i32,
     sep: *mut i32,
 ) -> i32 {
-    let listener = listener.ptr();
+    let (listener_x, listener_y, listener_angle) = {
+        let mobjs = MOBJ_ARENA.borrow();
+        let listener = &mobjs[listener];
+        (listener.x, listener.y, listener.angle)
+    };
     let (source_x, source_y) = source.position(level);
-    let adx = (*listener).x.wrapping_sub(source_x).wrapping_abs();
-    let ady = (*listener).y.wrapping_sub(source_y).wrapping_abs();
+    let adx = listener_x.wrapping_sub(source_x).wrapping_abs();
+    let ady = listener_y.wrapping_sub(source_y).wrapping_abs();
 
     let approx_dist = adx
         .wrapping_add(ady)
@@ -463,12 +466,12 @@ unsafe fn S_AdjustSoundParams(
         return 0;
     }
 
-    let mut angle = R_PointToAngle2((*listener).x, (*listener).y, source_x, source_y);
+    let mut angle = R_PointToAngle2(listener_x, listener_y, source_x, source_y);
 
-    if angle > (*listener).angle {
-        angle -= (*listener).angle;
+    if angle > listener_angle {
+        angle -= listener_angle;
     } else {
-        angle = angle.wrapping_add(0xffffffff_u32 - (*listener).angle);
+        angle = angle.wrapping_add(0xffffffff_u32 - listener_angle);
     }
 
     angle >>= ANGLETOFINESHIFT;
@@ -811,9 +814,10 @@ mod tests {
     fn sound_origin_position_and_identity() {
         let _thinker_lock = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
         let mobj = crate::engine::play::tick::new_thinker::<crate::engine::play::mobj::mobj_t>();
-        unsafe {
-            (*mobj.ptr()).x = 10 * FRACUNIT;
-            (*mobj.ptr()).y = -3 * FRACUNIT;
+        {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            mobjs[mobj].x = 10 * FRACUNIT;
+            mobjs[mobj].y = -3 * FRACUNIT;
         }
         let mut sector = sector_t::ZERO;
         sector.soundorg.x = 7 * FRACUNIT;
@@ -825,13 +829,11 @@ mod tests {
             sectors: vec![sector; 2],
             ..LevelState::new()
         };
-        unsafe {
-            assert_eq!(mobj_origin.position(&level), (10 * FRACUNIT, -3 * FRACUNIT));
-            assert_eq!(
-                sector_sound_origin.position(&level),
-                (7 * FRACUNIT, 8 * FRACUNIT)
-            );
-        }
+        assert_eq!(mobj_origin.position(&level), (10 * FRACUNIT, -3 * FRACUNIT));
+        assert_eq!(
+            sector_sound_origin.position(&level),
+            (7 * FRACUNIT, 8 * FRACUNIT)
+        );
 
         assert_eq!(mobj_origin, SoundOrigin::Mobj(mobj));
         assert_ne!(mobj_origin, sector_sound_origin);

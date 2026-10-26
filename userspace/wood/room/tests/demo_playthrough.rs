@@ -705,12 +705,10 @@ const ADDRESS_WORD_MARKER: u32 = 0xADD0_ADD0;
 
 /// The save game of the running demo, with its address words masked.
 fn masked_save_game() -> Vec<u8> {
-    let save = unsafe {
-        room::engine::play::saveg::archive_save_game(
-            &room::engine::world::WORLD.borrow(),
-            b"golden save",
-        )
-    };
+    let save = room::engine::play::saveg::archive_save_game(
+        &room::engine::world::WORLD.borrow(),
+        b"golden save",
+    );
     let mut bytes = save.bytes;
     for offset in save.address_words {
         let word = &mut bytes[offset..offset + 4];

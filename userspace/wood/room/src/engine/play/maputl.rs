@@ -13,7 +13,7 @@ use zerocopy::IntoBytes;
 use crate::engine::{
     map::{LineId, slopetype_t},
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
-    play::{info::*, mobj::MobjId, setup::LevelState},
+    play::{info::*, mobj::MobjId, setup::LevelState, tick::MOBJ_ARENA},
     render_3d::main::R_PointInSubsector,
     world::World,
 };
@@ -416,43 +416,42 @@ pub fn P_LineOpening(opening: &mut MapUtlState, level: &LevelState, linedef: Lin
 ///
 /// Matches `P_UnsetThingPosition` in `p_maputl.c`.
 ///
-/// # Safety
-/// `thing_id` must name an initialised map object whose list links
-/// (`snext`, `sprev`, `bnext`, `bprev`) name objects of the loaded level,
-/// and no reference to those objects may be live. The world's level must be
-/// loaded.
-pub unsafe fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
-    unsafe {
-        let thing = &mut *thing_id.ptr();
-        let level = &mut world.level;
-        if (thing.flags & MF_NOSECTOR) == 0 {
-            if let Some(snext) = thing.snext {
-                (*snext.ptr()).sprev = thing.sprev;
-            }
-            if let Some(sprev) = thing.sprev {
-                (*sprev.ptr()).snext = thing.snext;
-            } else {
-                let sector = level.subsectors[thing.subsector].sector;
-                level.sectors[sector].thinglist = thing.snext;
-            }
+/// # Panics
+/// If the thing's subsector or its list links lie outside the loaded level
+/// and the mobj arena.
+pub fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
+    // The link surgery touches the thing and its neighbours; the neighbour
+    // writes change only the neighbours' links (or rewrite the thing's own
+    // link with its value, for a corrupt self-link), so the thing's fields
+    // are read once.
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let level = &mut world.level;
+    let thing = &mobjs[thing_id];
+    let (flags, x, y, subsector) = (thing.flags, thing.x, thing.y, thing.subsector);
+    let (snext, sprev, bnext, bprev) = (thing.snext, thing.sprev, thing.bnext, thing.bprev);
+    if (flags & MF_NOSECTOR) == 0 {
+        if let Some(snext) = snext {
+            mobjs[snext].sprev = sprev;
         }
-        if (thing.flags & MF_NOBLOCKMAP) == 0 {
-            if let Some(bnext) = thing.bnext {
-                (*bnext.ptr()).bprev = thing.bprev;
-            }
-            if let Some(bprev) = thing.bprev {
-                (*bprev.ptr()).bnext = thing.bnext;
-            } else {
-                let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
-                let blocky = (thing.y - level.bmaporgy) >> MAPBLOCKSHIFT;
-                if blockx >= 0
-                    && blockx < level.bmapwidth
-                    && blocky >= 0
-                    && blocky < level.bmapheight
-                {
-                    let index = (blocky * level.bmapwidth + blockx) as usize;
-                    level.blocklinks[index] = thing.bnext;
-                }
+        if let Some(sprev) = sprev {
+            mobjs[sprev].snext = snext;
+        } else {
+            let sector = level.subsectors[subsector].sector;
+            level.sectors[sector].thinglist = snext;
+        }
+    }
+    if (flags & MF_NOBLOCKMAP) == 0 {
+        if let Some(bnext) = bnext {
+            mobjs[bnext].bprev = bprev;
+        }
+        if let Some(bprev) = bprev {
+            mobjs[bprev].bnext = bnext;
+        } else {
+            let blockx = (x - level.bmaporgx) >> MAPBLOCKSHIFT;
+            let blocky = (y - level.bmaporgy) >> MAPBLOCKSHIFT;
+            if blockx >= 0 && blockx < level.bmapwidth && blocky >= 0 && blocky < level.bmapheight {
+                let index = (blocky * level.bmapwidth + blockx) as usize;
+                level.blocklinks[index] = bnext;
             }
         }
     }
@@ -474,42 +473,47 @@ pub unsafe fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
 ///
 /// Matches `P_SetThingPosition` in `p_maputl.c`.
 ///
-/// # Safety
-/// `thing_id` must name an initialised map object, and no reference to the
-/// objects at the head of its new sector and block lists may be live. The
-/// world's level must be loaded.
-pub unsafe fn P_SetThingPosition(world: &mut World, thing_id: MobjId) {
-    unsafe {
-        let thing = &mut *thing_id.ptr();
-        let level = &mut world.level;
-        let ss = R_PointInSubsector(level, thing.x, thing.y);
-        thing.subsector = ss;
-        if (thing.flags & MF_NOSECTOR) == 0 {
-            let sector = level.subsectors[ss].sector;
-            let sec = &mut level.sectors[sector];
-            thing.sprev = None;
-            thing.snext = sec.thinglist;
-            if let Some(thinglist) = sec.thinglist {
-                (*thinglist.ptr()).sprev = Some(thing_id);
-            }
-            sec.thinglist = Some(thing_id);
+/// # Panics
+/// If no level is loaded or the heads of the new lists lie outside the mobj
+/// arena.
+pub fn P_SetThingPosition(world: &mut World, thing_id: MobjId) {
+    // The writes go through the arena in C's order, so a thing that already
+    // heads its new list links to itself as it does in C.
+    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let level = &mut world.level;
+    let (x, y, flags) = {
+        let thing = &mobjs[thing_id];
+        (thing.x, thing.y, thing.flags)
+    };
+    let ss = R_PointInSubsector(level, x, y);
+    mobjs[thing_id].subsector = ss;
+    if (flags & MF_NOSECTOR) == 0 {
+        let sector = level.subsectors[ss].sector;
+        let sec = &mut level.sectors[sector];
+        let thing = &mut mobjs[thing_id];
+        thing.sprev = None;
+        thing.snext = sec.thinglist;
+        if let Some(thinglist) = sec.thinglist {
+            mobjs[thinglist].sprev = Some(thing_id);
         }
-        if (thing.flags & MF_NOBLOCKMAP) == 0 {
-            let blockx = (thing.x - level.bmaporgx) >> MAPBLOCKSHIFT;
-            let blocky = (thing.y - level.bmaporgy) >> MAPBLOCKSHIFT;
-            if blockx >= 0 && blockx < level.bmapwidth && blocky >= 0 && blocky < level.bmapheight {
-                let index = (blocky * level.bmapwidth + blockx) as usize;
-                let link = &mut level.blocklinks[index];
-                thing.bprev = None;
-                thing.bnext = *link;
-                if let Some(head) = *link {
-                    (*head.ptr()).bprev = Some(thing_id);
-                }
-                *link = Some(thing_id);
-            } else {
-                thing.bnext = None;
-                thing.bprev = None;
+        sec.thinglist = Some(thing_id);
+    }
+    if (flags & MF_NOBLOCKMAP) == 0 {
+        let blockx = (x - level.bmaporgx) >> MAPBLOCKSHIFT;
+        let blocky = (y - level.bmaporgy) >> MAPBLOCKSHIFT;
+        let thing = &mut mobjs[thing_id];
+        if blockx >= 0 && blockx < level.bmapwidth && blocky >= 0 && blocky < level.bmapheight {
+            let index = (blocky * level.bmapwidth + blockx) as usize;
+            let link = &mut level.blocklinks[index];
+            thing.bprev = None;
+            thing.bnext = *link;
+            if let Some(head) = *link {
+                mobjs[head].bprev = Some(thing_id);
             }
+            *link = Some(thing_id);
+        } else {
+            thing.bnext = None;
+            thing.bprev = None;
         }
     }
 }
@@ -582,11 +586,12 @@ pub fn P_BlockLinesIterator(
 ///
 /// Matches `P_BlockThingsIterator` in `p_maputl.c`.
 ///
-/// # Safety
-/// A level must be loaded and its `blocklinks` chains must link only map
-/// objects of the level (the next link is read from each object after
-/// `func` has run on it, freed or not).
-pub unsafe fn P_BlockThingsIterator(
+/// The next link is read from each object after `func` has run on it,
+/// freed or not.
+///
+/// # Panics
+/// If the cell's `blocklinks` chain names an object outside the mobj arena.
+pub fn P_BlockThingsIterator(
     world: &mut World,
     x: i32,
     y: i32,
@@ -605,7 +610,7 @@ pub unsafe fn P_BlockThingsIterator(
         }
         // Read after the callback, as C does: it may have moved or
         // removed the object, whose links still name its old neighbour.
-        mobj = unsafe { (*current.ptr()).bnext };
+        mobj = MOBJ_ARENA.borrow()[current].bnext;
     }
     true
 }
@@ -776,14 +781,14 @@ pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
 ///
 /// Returns `true` (continue) always.
 ///
-/// Matches `PIT_AddThingIntercepts` in `p_maputl.c`.
+/// `trace`, the intercepts and their count must be set up by a preceding
+/// `P_PathTraverse` call.
 ///
-/// # Safety
-/// `thing_id` must name an initialised map object. `trace`, the intercepts
-/// and their count must be set up by a preceding `P_PathTraverse` call.
-pub unsafe fn PIT_AddThingIntercepts(world: &mut World, thing_id: MobjId) -> bool {
+/// Matches `PIT_AddThingIntercepts` in `p_maputl.c`.
+pub fn PIT_AddThingIntercepts(world: &mut World, thing_id: MobjId) -> bool {
     let (x, y, radius) = {
-        let thing = unsafe { &*thing_id.ptr() };
+        let mobjs = MOBJ_ARENA.borrow();
+        let thing = &mobjs[thing_id];
         (thing.x, thing.y, thing.radius)
     };
     let trace = world.scratch.maputl.trace;
@@ -883,12 +888,13 @@ pub fn P_TraverseIntercepts(
 /// Returns `true` if the traverser accepted all intercepts, `false` if it
 /// rejected one (signalling a hit / early stop).
 ///
+/// All coordinates are in fixed-point map units.
+///
 /// Matches `P_PathTraverse` in `p_maputl.c`.
 ///
-/// # Safety
-/// A level must be loaded (see `P_BlockThingsIterator`). All coordinates
-/// are in fixed-point map units.
-pub unsafe fn P_PathTraverse(
+/// # Panics
+/// If no level is loaded (see `P_BlockThingsIterator`).
+pub fn P_PathTraverse(
     world: &mut World,
     x1: fixed_t,
     y1: fixed_t,
@@ -966,14 +972,8 @@ pub unsafe fn P_PathTraverse(
         {
             return false;
         }
-        // SAFETY: the iterator hands over the map objects linked into the
-        // blockmap, and the traversal is set up above.
         if flags & PT_ADDTHINGS != 0
-            && !unsafe {
-                P_BlockThingsIterator(world, mapx, mapy, |world, thing| {
-                    PIT_AddThingIntercepts(world, thing)
-                })
-            }
+            && !P_BlockThingsIterator(world, mapx, mapy, PIT_AddThingIntercepts)
         {
             return false;
         }
@@ -999,7 +999,7 @@ mod tests {
             map::{VertexId, line_t},
             play::{
                 mobj::mobj_t,
-                tick::{MOBJ_ARENA, P_InitThinkers, THINKER_TEST_LOCK, new_thinker},
+                tick::{P_InitThinkers, THINKER_TEST_LOCK, new_thinker},
             },
         },
     };
@@ -1070,11 +1070,10 @@ mod tests {
         // Three things at (0, 0) chained in the one cell of a 1x1 blockmap,
         // kept out of the sector lists, which the test level does not have.
         let things: Vec<MobjId> = (0..3).map(|_| new_thinker::<mobj_t>()).collect();
-        // SAFETY: the things are fresh and only reached through these
-        // short accesses.
-        unsafe {
+        {
+            let mut mobjs = MOBJ_ARENA.borrow_mut();
             for (index, &thing) in things.iter().enumerate() {
-                let mobj = &mut *thing.ptr();
+                let mobj = &mut mobjs[thing];
                 mobj.flags = MF_NOSECTOR;
                 mobj.bprev = index.checked_sub(1).map(|previous| things[previous]);
                 mobj.bnext = things.get(index + 1).copied();
@@ -1088,32 +1087,27 @@ mod tests {
             ..LevelState::new()
         };
         let mut visited = Vec::new();
-        // SAFETY: the cell links only the things made above; the removed
-        // one stays readable through its stale handle.
-        let completed = unsafe {
-            P_BlockThingsIterator(&mut world, 0, 0, |world, thing| {
-                visited.push(thing);
-                if thing == things[1] {
-                    P_UnsetThingPosition(world, thing);
-                    MOBJ_ARENA.borrow_mut().free(thing);
-                }
-                true
-            })
-        };
+        // The removed thing stays readable through its stale handle.
+        let completed = P_BlockThingsIterator(&mut world, 0, 0, |world, thing| {
+            visited.push(thing);
+            if thing == things[1] {
+                P_UnsetThingPosition(world, thing);
+                MOBJ_ARENA.borrow_mut().free(thing);
+            }
+            true
+        });
 
         assert!(completed);
         assert_eq!(visited, things);
-        assert_eq!(unsafe { (*things[0].ptr()).bnext }, Some(things[2]));
-        assert_eq!(unsafe { (*things[2].ptr()).bprev }, Some(things[0]));
+        assert_eq!(MOBJ_ARENA.borrow()[things[0]].bnext, Some(things[2]));
+        assert_eq!(MOBJ_ARENA.borrow()[things[2]].bprev, Some(things[0]));
 
         // A callback returning `false` stops the walk at that thing.
         let mut visited = Vec::new();
-        let completed = unsafe {
-            P_BlockThingsIterator(&mut world, 0, 0, |_, thing| {
-                visited.push(thing);
-                false
-            })
-        };
+        let completed = P_BlockThingsIterator(&mut world, 0, 0, |_, thing| {
+            visited.push(thing);
+            false
+        });
         assert!(!completed);
         assert_eq!(visited, [things[0]]);
 
