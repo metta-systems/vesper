@@ -10,6 +10,7 @@
 //! counter of [`Global`] panics on such a nested borrow.
 
 use crate::engine::{
+    arena::Arena,
     doom::player::{MAXPLAYERS, PlayerId, PlayerT},
     game::BODYQUESIZE,
     global::Global,
@@ -20,12 +21,13 @@ use crate::engine::{
         enemy::EnemyState,
         map::MapState,
         maputl::{InterceptHit, MAXINTERCEPTS, MapUtlState, intercept_t},
-        mobj::{MobjId, MobjState},
+        mobj::{MobjId, MobjState, mobj_t},
         plats::PlatState,
         pspr::PsprState,
         setup::LevelState,
         sight::SightState,
         switch::{MAXBUTTONS, button_t},
+        tick::Thinkers,
         user::UserState,
     },
 };
@@ -33,15 +35,15 @@ use crate::engine::{
 /// The play simulation's state.
 ///
 /// The fields are `pub` so callers can split borrows (`let World { level,
-/// scratch, .. } = world;`). The map object arena and the thinkers still
-/// live in their subsystem `Global`s. They are to join as fields too:
-///
-/// - `mobjs`: the map object arena (`MOBJ_ARENA`);
-/// - `thinkers`: the thinker list and the other thinker arenas (`TICK`,
-///   `CEILING_ARENA` ... `FIRE_FLICKER_ARENA`).
+/// mobjs, .. } = world;`).
 pub struct World {
     /// The loaded level: geometry, blockmap, reject table and spawn spots.
     pub level: LevelState,
+    /// Every map object of the level, indexed by `MobjId`.
+    pub mobjs: Arena<mobj_t>,
+    /// The thinker list, in run order, and the arenas of the other thinker
+    /// types (moving sectors, lights).
+    pub thinkers: Thinkers,
     /// The player slots (C `players[MAXPLAYERS]`), indexed by `PlayerId`.
     pub players: [PlayerT; MAXPLAYERS],
     /// Current level time in tics (C `leveltime`), incremented once per
@@ -63,6 +65,8 @@ impl World {
     pub const fn new() -> Self {
         Self {
             level: LevelState::new(),
+            mobjs: Arena::new(),
+            thinkers: Thinkers::new(),
             // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
             players: unsafe { std::mem::zeroed() },
             leveltime: 0,

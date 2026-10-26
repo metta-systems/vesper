@@ -18,41 +18,33 @@
 //! slots be handed out again. A stale handle therefore always reads the data
 //! its object had when it was freed.
 //!
-//! Objects are read and written by indexing a borrowed arena with a handle
-//! (`arena[handle]`), which reports stale handles at the indexing site. The
-//! play code holds such a borrow only between calls that can run other play
-//! code: it copies the fields it needs out before such a call and reads them
-//! afresh after it, as C sees them through its pointer.
+//! Objects are read and written by indexing the arena with a handle
+//! (`world.mobjs[handle]`), which reports stale handles at the indexing
+//! site. The arenas are fields of the play `World`, so the borrow checker
+//! keeps a reference into an arena from living across a call that takes the
+//! world: the play code copies the fields it needs out before such a call
+//! and reads them afresh after it, as C sees them through its pointer.
 //!
-//! Slots live in fixed-size chunks that are never moved or freed, so a
-//! pointer from [`Handle::ptr`] stays valid while other objects are spawned:
-//! play code not yet moved to indexing keeps a reference to the object it is
-//! working on across calls that spawn, move or remove other objects, as the
-//! C code does.
+//! Slots live in fixed-size chunks whose storage is never moved or freed
+//! while the arena lives, so [`Arena::address`] of an object stays the same
+//! while other objects are spawned and removed, as a C pointer does.
 
 use std::{
-    cell::{Cell, UnsafeCell},
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
-    mem::MaybeUninit,
     num::NonZeroU32,
     ops::{Index, IndexMut},
     panic::Location,
 };
 
-use crate::engine::global::Global;
-
 /// Slots per chunk; a chunk is allocated when the previous ones are full.
 const CHUNK_LEN: usize = 256;
 
-/// A type stored in an [`Arena`] held by a [`Global`].
+/// A type stored in an [`Arena`].
 pub trait Pooled: Sized + 'static {
     /// Type name used in stale-access reports.
     const NAME: &'static str;
-
-    /// The arena holding every object of this type.
-    fn arena() -> &'static Global<Arena<Self>>;
 }
 
 /// Names an object in the [`Arena`] of `T`: its slot and the generation the
@@ -101,50 +93,21 @@ impl<T> Handle<T> {
     }
 }
 
-impl<T: Pooled> Handle<T> {
-    /// Pointer to the object, valid for the rest of the program.
-    ///
-    /// The pointer stays valid across insertions, frees and level resets;
-    /// once the object is freed it still points at the object's data until
-    /// the slot is reused by a later level. Dereferencing it is subject to
-    /// the usual aliasing rules: the play code holds at most one reference
-    /// per object at a time, or reads through the raw pointer.
-    ///
-    /// In debug builds a stale handle (its object freed) is recorded with
-    /// the caller's location, see [`stale_accesses`].
-    #[inline]
-    #[track_caller]
-    pub fn ptr(self) -> *mut T {
-        T::arena().borrow().checked_slot(self).value.get().cast()
-    }
-
-    /// `true` while the object has not been freed.
-    pub fn is_live(self) -> bool {
-        T::arena().borrow().is_live(self)
-    }
-
-    /// The object's address, without a liveness check: the value C writes
-    /// where it stores a pointer it never follows (save files, the
-    /// intercepts overrun emulation).
-    pub fn address(self) -> usize {
-        T::arena().borrow().slot(self.index).value.get().addr()
-    }
-}
-
 /// One arena slot: the generation of its current (or last) object and the
 /// object's data.
 struct Slot<T> {
     /// Generation of the object in the slot; bumped when it is freed.
-    generation: Cell<NonZeroU32>,
-    /// The object, uninitialised until the slot is first used.
-    value: UnsafeCell<MaybeUninit<T>>,
+    generation: NonZeroU32,
+    /// The object, or the last one put in the slot.
+    value: T,
 }
 
 /// Storage for objects of type `T`, named by [`Handle`]s.
 pub struct Arena<T: 'static> {
-    /// Fixed-size slot chunks. They are leaked, so slots never move and
-    /// pointers into them stay valid for the rest of the program.
-    chunks: Vec<&'static [Slot<T>]>,
+    /// Slot chunks, each allocated with room for `CHUNK_LEN` slots and
+    /// never filled past that, so a chunk's storage is never reallocated and
+    /// slots keep their address for the arena's lifetime.
+    chunks: Vec<Vec<Slot<T>>>,
     /// Slots handed out since the last [`Arena::clear`]; the next insertion
     /// takes slot `used`.
     used: u32,
@@ -163,34 +126,45 @@ impl<T: 'static> Arena<T> {
     ///
     /// # Panics
     ///
-    /// If no chunk holds `index`.
+    /// If no object was ever put in slot `index`.
     #[inline]
     fn slot(&self, index: u32) -> &Slot<T> {
         let index = index as usize;
         &self.chunks[index / CHUNK_LEN][index % CHUNK_LEN]
     }
 
+    /// The slot at `index`, for writing (see [`Arena::slot`]).
+    #[inline]
+    fn slot_mut(&mut self, index: u32) -> &mut Slot<T> {
+        let index = index as usize;
+        &mut self.chunks[index / CHUNK_LEN][index % CHUNK_LEN]
+    }
+
     /// Put `value` in the next fresh slot and return its handle.
     pub fn insert(&mut self, value: T) -> Handle<T> {
         let index = self.used;
-        if index as usize == self.chunks.len() * CHUNK_LEN {
-            let chunk: Box<[Slot<T>]> = (0..CHUNK_LEN)
-                .map(|_| Slot {
-                    generation: Cell::new(NonZeroU32::MIN),
-                    value: UnsafeCell::new(MaybeUninit::uninit()),
-                })
-                .collect();
-            self.chunks.push(Box::leak(chunk));
+        let chunk_index = index as usize / CHUNK_LEN;
+        let offset = index as usize % CHUNK_LEN;
+        if chunk_index == self.chunks.len() {
+            self.chunks.push(Vec::with_capacity(CHUNK_LEN));
         }
         self.used += 1;
-        let slot = self.slot(index);
-        // SAFETY: the arena is borrowed mutably, so no reference into the
-        // slot's value is live; handles to its previous object only make
-        // raw pointers, which the play code does not hold across a spawn.
-        unsafe { (*slot.value.get()).write(value) };
+        let chunk = &mut self.chunks[chunk_index];
+        let generation = if let Some(slot) = chunk.get_mut(offset) {
+            // A slot freed by `clear`: it keeps its bumped generation.
+            slot.value = value;
+            slot.generation
+        } else {
+            // Never past `CHUNK_LEN`, so the chunk does not reallocate.
+            chunk.push(Slot {
+                generation: NonZeroU32::MIN,
+                value,
+            });
+            NonZeroU32::MIN
+        };
         Handle {
             index,
-            generation: slot.generation.get(),
+            generation,
             marker: PhantomData,
         }
     }
@@ -203,28 +177,36 @@ impl<T: 'static> Arena<T> {
     /// In debug builds, if the object was already freed.
     pub fn free(&mut self, handle: Handle<T>) {
         debug_assert!(self.is_live(handle), "{handle:?} freed twice");
-        let slot = self.slot(handle.index);
-        slot.generation.set(next_generation(slot.generation.get()));
+        let slot = self.slot_mut(handle.index);
+        slot.generation = next_generation(slot.generation);
     }
 
     /// Free every object and make all slots available again: the level is
     /// over. Every handle into the arena goes stale.
     pub fn clear(&mut self) {
         for index in 0..self.used {
-            let slot = self.slot(index);
-            slot.generation.set(next_generation(slot.generation.get()));
+            let slot = self.slot_mut(index);
+            slot.generation = next_generation(slot.generation);
         }
         self.used = 0;
     }
 
     /// `true` while the object `handle` names has not been freed.
     pub fn is_live(&self, handle: Handle<T>) -> bool {
-        handle.index < self.used && self.slot(handle.index).generation.get() == handle.generation
+        handle.index < self.used && self.slot(handle.index).generation == handle.generation
     }
 
     /// Number of slots handed out since the last [`Arena::clear`].
     pub fn used(&self) -> u32 {
         self.used
+    }
+
+    /// The object's address, without a liveness check: the value C writes
+    /// where it stores a pointer it never follows (save files, the
+    /// intercepts overrun emulation). It stays the same while the arena
+    /// lives; a slot reused after [`Arena::clear`] has its old address.
+    pub fn address(&self, handle: Handle<T>) -> usize {
+        std::ptr::from_ref(&self.slot(handle.index).value).addr()
     }
 }
 
@@ -236,7 +218,19 @@ impl<T: Pooled> Arena<T> {
     fn checked_slot(&self, handle: Handle<T>) -> &Slot<T> {
         let slot = self.slot(handle.index);
         #[cfg(debug_assertions)]
-        if slot.generation.get() != handle.generation {
+        if slot.generation != handle.generation {
+            record_stale_access(Location::caller(), T::NAME);
+        }
+        slot
+    }
+
+    /// The slot `handle` names, for writing (see [`Arena::checked_slot`]).
+    #[inline]
+    #[track_caller]
+    fn checked_slot_mut(&mut self, handle: Handle<T>) -> &mut Slot<T> {
+        let slot = self.slot_mut(handle.index);
+        #[cfg(debug_assertions)]
+        if slot.generation != handle.generation {
             record_stale_access(Location::caller(), T::NAME);
         }
         slot
@@ -252,12 +246,7 @@ impl<T: Pooled> Index<Handle<T>> for Arena<T> {
     #[inline]
     #[track_caller]
     fn index(&self, handle: Handle<T>) -> &T {
-        let slot = self.checked_slot(handle);
-        // SAFETY: a handle is only made by `insert`, which initialised the
-        // slot; freeing and clearing keep its data. The arena is borrowed
-        // for as long as the reference lives, so no `&mut` from `IndexMut`
-        // aliases it (references made from `Handle::ptr` follow its rules).
-        unsafe { (*slot.value.get()).assume_init_ref() }
+        &self.checked_slot(handle).value
     }
 }
 
@@ -267,10 +256,7 @@ impl<T: Pooled> IndexMut<Handle<T>> for Arena<T> {
     #[inline]
     #[track_caller]
     fn index_mut(&mut self, handle: Handle<T>) -> &mut T {
-        let slot = self.checked_slot(handle);
-        // SAFETY: the slot is initialised (see `index`), and the arena is
-        // borrowed mutably for as long as the reference lives.
-        unsafe { (*slot.value.get()).assume_init_mut() }
+        &mut self.checked_slot_mut(handle).value
     }
 }
 
@@ -340,39 +326,30 @@ pub fn stale_accesses() -> Vec<StaleAccess> {
 mod tests {
     use super::*;
 
-    /// A stand-in object with its own arena, so the tests share no state
-    /// with the engine.
+    /// A stand-in object, so the stale-access reports of the tests are told
+    /// apart from the engine's.
     #[derive(Clone, Copy, Debug, PartialEq)]
     struct Probe {
         value: i32,
     }
 
-    static PROBES: Global<Arena<Probe>> = Global::new(Arena::new());
-
     impl Pooled for Probe {
         const NAME: &'static str = "Probe";
-
-        fn arena() -> &'static Global<Arena<Self>> {
-            &PROBES
-        }
     }
 
-    /// The tests share `PROBES`.
-    static PROBES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn insert(value: i32) -> Handle<Probe> {
-        PROBES.borrow_mut().insert(Probe { value })
+    fn probe(value: i32) -> Probe {
+        Probe { value }
     }
 
     #[test]
     fn freed_handle_is_stale_but_reads_the_old_data() {
-        let _guard = PROBES_LOCK.lock().unwrap();
-        let handle = insert(7);
-        assert!(handle.is_live());
-        PROBES.borrow_mut().free(handle);
-        assert!(!handle.is_live());
+        let mut probes = Arena::new();
+        let handle = probes.insert(probe(7));
+        assert!(probes.is_live(handle));
+        probes.free(handle);
+        assert!(!probes.is_live(handle));
         // The slot keeps the object's data, as C's freed zone block does.
-        assert_eq!(unsafe { (*handle.ptr()).value }, 7);
+        assert_eq!(probes[handle].value, 7);
         #[cfg(debug_assertions)]
         assert!(
             stale_accesses()
@@ -383,14 +360,14 @@ mod tests {
 
     #[test]
     fn indexing_reads_and_writes_and_reports_stale_reads_at_the_site() {
-        let _guard = PROBES_LOCK.lock().unwrap();
-        let handle = insert(1);
-        PROBES.borrow_mut()[handle].value = 2;
-        assert_eq!(PROBES.borrow()[handle].value, 2);
-        PROBES.borrow_mut().free(handle);
+        let mut probes = Arena::new();
+        let handle = probes.insert(probe(1));
+        probes[handle].value = 2;
+        assert_eq!(probes[handle].value, 2);
+        probes.free(handle);
         // A freed object still reads its last data through the index.
         let stale_line = line!() + 1;
-        assert_eq!(PROBES.borrow()[handle].value, 2);
+        assert_eq!(probes[handle].value, 2);
         #[cfg(debug_assertions)]
         assert!(stale_accesses().iter().any(|access| {
             access.kind == "Probe"
@@ -401,41 +378,53 @@ mod tests {
 
     #[test]
     fn slots_are_not_reused_until_cleared() {
-        let _guard = PROBES_LOCK.lock().unwrap();
-        let first = insert(1);
-        PROBES.borrow_mut().free(first);
-        let second = insert(2);
+        let mut probes = Arena::new();
+        let first = probes.insert(probe(1));
+        probes.free(first);
+        let second = probes.insert(probe(2));
         assert_ne!(first.index(), second.index());
-        assert_eq!(unsafe { (*first.ptr()).value }, 1);
-        assert_eq!(unsafe { (*second.ptr()).value }, 2);
+        assert_eq!(probes[first].value, 1);
+        assert_eq!(probes[second].value, 2);
     }
 
     #[test]
     fn clear_makes_every_handle_stale_and_reuses_slots() {
-        let _guard = PROBES_LOCK.lock().unwrap();
-        PROBES.borrow_mut().clear();
-        let before = insert(3);
-        let pointer = before.ptr();
-        PROBES.borrow_mut().clear();
-        assert!(!before.is_live());
-        let after = insert(4);
+        let mut probes = Arena::new();
+        probes.insert(probe(2));
+        probes.clear();
+        let before = probes.insert(probe(3));
+        let address = probes.address(before);
+        probes.clear();
+        assert!(!probes.is_live(before));
+        let after = probes.insert(probe(4));
         assert_eq!(after.index(), before.index());
         assert_ne!(after, before);
-        assert!(after.is_live());
+        assert!(probes.is_live(after));
         // Same slot, same address: the old handle now reads the new object.
-        assert_eq!(after.ptr(), pointer);
-        assert_eq!(after.address(), before.address());
+        assert_eq!(probes.address(after), address);
+        assert_eq!(probes[before].value, 4);
     }
 
+    /// Addresses are what the save game and the intercepts overrun
+    /// emulation store for an object; they must not change while other
+    /// objects are spawned (C's zone blocks do not move).
     #[test]
-    fn pointers_survive_growth() {
-        let _guard = PROBES_LOCK.lock().unwrap();
-        let first = insert(10);
-        let pointer = first.ptr();
-        let handles: Vec<_> = (0..3 * CHUNK_LEN as i32).map(insert).collect();
-        assert_eq!(first.ptr(), pointer);
-        assert_eq!(unsafe { (*pointer).value }, 10);
-        assert!(handles.iter().all(|handle| handle.is_live()));
+    fn addresses_survive_growth() {
+        let mut probes = Arena::new();
+        let first = probes.insert(probe(10));
+        let address = probes.address(first);
+        let handles: Vec<_> = (0..3 * CHUNK_LEN as i32)
+            .map(|value| probes.insert(probe(value)))
+            .collect();
+        assert_eq!(probes.address(first), address);
+        assert_eq!(probes[first].value, 10);
+        assert!(handles.iter().all(|&handle| probes.is_live(handle)));
+        assert!(probes.chunks.iter().all(|chunk| chunk.len() <= CHUNK_LEN));
+        let distinct: std::collections::HashSet<usize> = handles
+            .iter()
+            .map(|&handle| probes.address(handle))
+            .collect();
+        assert_eq!(distinct.len(), handles.len());
     }
 
     #[test]

@@ -75,9 +75,8 @@ use crate::engine::{
         mobj::{MobjId, mobj_t},
         plats::{P_AddActivePlat, T_PlatRaise, plat_t},
         tick::{
-            CEILING_ARENA, DOOR_ARENA, FLOOR_ARENA, GLOW_ARENA, LIGHT_FLASH_ARENA, MOBJ_ARENA,
-            P_AddThinker, P_InitThinkers, PLAT_ARENA, STROBE_ARENA, ThinkerId, ThinkerKind,
-            new_thinker, thinker_t, thinkers,
+            P_AddThinker, P_InitThinkers, ThinkerId, ThinkerKind, new_thinker, thinker_at,
+            thinker_t,
         },
     },
     wad::format::mapthing_t,
@@ -172,7 +171,6 @@ use crate::engine::{
     play::{
         maputl::P_SetThingPosition,
         mobj::{P_MobjThinker, P_RemoveMobj},
-        setup::LevelState,
     },
 };
 
@@ -432,9 +430,9 @@ fn saveg_write_mapthing_t(s: &mapthing_t) {
 /// Reads a `thinker_t` header (prev, next, function) from the save stream.
 ///
 /// The `prev` and `next` words are list links from the saving session; the
-/// thinker list here is [`TICK`](crate::engine::play::tick::TICK)'s
-/// ordered list, so they are read and
-/// dropped (C overwrites them when it relinks the thinker). The saved
+/// thinker list here is the ordered
+/// [`Thinkers::list`](crate::engine::play::tick::Thinkers::list), so they
+/// are read and dropped (C overwrites them when it relinks the thinker). The saved
 /// function slot is only tested against null, as in C: `0` reads as
 /// [`ThinkerKind::None`], anything else as `kind_if_function_set`. The
 /// `P_UnArchive*` callers then settle the kind (C overwrites the function
@@ -465,17 +463,26 @@ fn saveg_write_thinker_t(th: &thinker_t) {
 
 /// The map object `thinker` is, if [`P_ArchiveThinkers`] saves it: a listed
 /// map object that is not removed.
-fn saved_mobj(thinker: ThinkerId) -> Option<MobjId> {
+fn saved_mobj(world: &World, thinker: ThinkerId) -> Option<MobjId> {
     match thinker {
-        ThinkerId::Mobj(mobj) if thinker.kind() == ThinkerKind::Mobj => Some(mobj),
+        ThinkerId::Mobj(mobj) if thinker.kind(world) == ThinkerKind::Mobj => Some(mobj),
         _ => None,
     }
 }
 
+/// The map objects [`P_ArchiveThinkers`] saves, in thinker-list order.
+fn saved_mobjs(world: &World) -> impl Iterator<Item = MobjId> {
+    world
+        .thinkers
+        .list
+        .iter()
+        .filter_map(|&thinker| saved_mobj(world, thinker))
+}
+
 /// The save ordinal of each map object [`P_ArchiveThinkers`] writes: its
 /// 1-based position among the saved map objects, in thinker-list order.
-fn mobj_save_ordinals() -> HashMap<MobjId, u32> {
-    thinkers().filter_map(saved_mobj).zip(1..).collect()
+fn mobj_save_ordinals(world: &World) -> HashMap<MobjId, u32> {
+    saved_mobjs(world).zip(1..).collect()
 }
 
 /// The 32-bit word written for a map object reference: the referenced
@@ -513,13 +520,12 @@ struct SavedMobjReferences {
 /// gives `None`.
 fn resolve_saved_references(world: &mut World, loaded_mobjs: &[(MobjId, SavedMobjReferences)]) {
     let recreated: Vec<MobjId> = loaded_mobjs.iter().map(|&(mobj, _)| mobj).collect();
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     for &(mobj, references) in loaded_mobjs {
         let mo = &mut mobjs[mobj];
         mo.target = mobj_for_saved_ordinal(&recreated, references.target);
         mo.tracer = mobj_for_saved_ordinal(&recreated, references.tracer);
     }
-    drop(mobjs);
 
     let saved_attackers = std::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
     for (index, attacker) in saved_attackers.into_iter().enumerate() {
@@ -555,7 +561,7 @@ fn resolve_saved_references(world: &mut World, loaded_mobjs: &[(MobjId, SavedMob
 ///   `&mobjinfo[type]`).
 /// C origin: `saveg_read_mobj_t`.
 fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences {
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let mo = &mut mobjs[mobj_id];
 
     // thinker_t
@@ -661,9 +667,9 @@ fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences 
 /// written as an index into `states`. `player` is written as a 1-based player
 /// index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-fn saveg_write_mobj_t(level: &LevelState, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
-    let mobjs = MOBJ_ARENA.borrow();
-    let mo = &mobjs[mobj];
+fn saveg_write_mobj_t(world: &World, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
+    let level = &world.level;
+    let mo = &world.mobjs[mobj];
 
     // thinker_t
     saveg_write_thinker_t(&mo.thinker);
@@ -1487,7 +1493,7 @@ use crate::engine::game::GAME;
 /// all `MAXPLAYERS` slots. Must be called after `P_WriteSaveGameHeader` and
 /// before `P_WriteSaveGameEOF`.
 pub fn P_ArchivePlayers(world: &World) {
-    let ordinals = mobj_save_ordinals();
+    let ordinals = mobj_save_ordinals(world);
     for i in 0..MAXPLAYERS {
         if !world.session.in_game(i) {
             continue;
@@ -1662,11 +1668,11 @@ const tc_mobj: u8 = 1;
 /// If no level is loaded (each map object's subsector is written by
 /// address).
 pub fn P_ArchiveThinkers(world: &World) {
-    let ordinals = mobj_save_ordinals();
-    for mobj in thinkers().filter_map(saved_mobj) {
+    let ordinals = mobj_save_ordinals(world);
+    for mobj in saved_mobjs(world) {
         saveg_write8(tc_mobj);
         saveg_write_pad();
-        saveg_write_mobj_t(&world.level, mobj, &ordinals);
+        saveg_write_mobj_t(world, mobj, &ordinals);
     }
 
     // terminating marker
@@ -1694,26 +1700,24 @@ pub fn P_ArchiveThinkers(world: &World) {
 ///   [`ThinkerKind::Mobj`], and registers it with `P_AddThinker`.
 /// - Any other byte: calls `i_error!` (fatal).
 ///
-/// Called by `g_game.c` (`G_DoLoadGame`).
-///
-/// # Safety
-///
-/// `save_stream` must be positioned at the byte sequence written by
-/// `P_ArchiveThinkers`. The map geometry (`sectors`, block-map, etc.) must
-/// be loaded so that `P_SetThingPosition` can place each restored mobj.
-/// Must be called before `P_UnArchiveSpecials` and before any code reads
-/// `players[i].mo`.
-pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
+/// Called by `g_game.c` (`G_DoLoadGame`), with `save_stream` positioned at
+/// the byte sequence written by `P_ArchiveThinkers` and the map geometry
+/// (`sectors`, block-map, etc.) loaded so that `P_SetThingPosition` can
+/// place each restored mobj; before `P_UnArchiveSpecials` and before any
+/// code reads `players[i].mo`.
+pub fn P_UnArchiveThinkers(world: &mut World) {
     // remove all current thinkers
-    for thinker in thinkers() {
+    let mut position = 0;
+    while let Some(thinker) = thinker_at(world, position) {
+        position += 1;
         if let ThinkerId::Mobj(mobj) = thinker
-            && thinker.kind() == ThinkerKind::Mobj
+            && thinker.kind(world) == ThinkerKind::Mobj
         {
             P_RemoveMobj(world, mobj);
         }
     }
 
-    P_InitThinkers();
+    P_InitThinkers(world);
 
     // read saved thinkers, the n-th map object read having save ordinal n
     let mut loaded_mobjs = Vec::new();
@@ -1726,14 +1730,14 @@ pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
             }
             x if x == tc_mobj => {
                 saveg_read_pad();
-                let mobj_id = new_thinker::<mobj_t>();
+                let mobj_id = new_thinker::<mobj_t>(world);
                 let references = saveg_read_mobj_t(world, mobj_id);
                 loaded_mobjs.push((mobj_id, references));
 
                 P_SetThingPosition(world, mobj_id);
 
                 {
-                    let mut mobjs = MOBJ_ARENA.borrow_mut();
+                    let mobjs = &mut world.mobjs;
                     let mo = &mut mobjs[mobj_id];
 
                     // rebuild info from mobjinfo
@@ -1748,7 +1752,7 @@ pub unsafe fn P_UnArchiveThinkers(world: &mut World) {
                     mo.thinker.kind = ThinkerKind::Mobj;
                 }
 
-                P_AddThinker(ThinkerId::Mobj(mobj_id));
+                P_AddThinker(world, ThinkerId::Mobj(mobj_id));
             }
             _ => {
                 i_error!("Unknown tclass {} in savegame", tclass as i32);
@@ -1804,8 +1808,8 @@ const tc_endspecials: u8 = 7;
 /// Called by `g_game.c` (`G_DoSaveGame`), with `save_stream` being the
 /// stream written.
 pub fn P_ArchiveSpecials(world: &World) {
-    for thinker in thinkers() {
-        match (thinker, thinker.kind()) {
+    for &thinker in &world.thinkers.list {
+        match (thinker, thinker.kind(world)) {
             // C's null function: a ceiling in stasis is still saved when it
             // is in `activeceilings`. A platform in stasis is not saved at
             // all (vanilla behaviour).
@@ -1820,43 +1824,43 @@ pub fn P_ArchiveSpecials(world: &World) {
                 {
                     saveg_write8(tc_ceiling);
                     saveg_write_pad();
-                    saveg_write_ceiling_t(&CEILING_ARENA.borrow()[ceiling]);
+                    saveg_write_ceiling_t(&world.thinkers.ceilings[ceiling]);
                 }
             }
             (ThinkerId::Ceiling(ceiling), ThinkerKind::Ceiling) => {
                 saveg_write8(tc_ceiling);
                 saveg_write_pad();
-                saveg_write_ceiling_t(&CEILING_ARENA.borrow()[ceiling]);
+                saveg_write_ceiling_t(&world.thinkers.ceilings[ceiling]);
             }
             (ThinkerId::Door(door), ThinkerKind::Door) => {
                 saveg_write8(tc_door);
                 saveg_write_pad();
-                saveg_write_vldoor_t(&DOOR_ARENA.borrow()[door]);
+                saveg_write_vldoor_t(&world.thinkers.doors[door]);
             }
             (ThinkerId::Floor(floor), ThinkerKind::Floor) => {
                 saveg_write8(tc_floor);
                 saveg_write_pad();
-                saveg_write_floormove_t(&FLOOR_ARENA.borrow()[floor]);
+                saveg_write_floormove_t(&world.thinkers.floors[floor]);
             }
             (ThinkerId::Plat(plat), ThinkerKind::Plat) => {
                 saveg_write8(tc_plat);
                 saveg_write_pad();
-                saveg_write_plat_t(&PLAT_ARENA.borrow()[plat]);
+                saveg_write_plat_t(&world.thinkers.plats[plat]);
             }
             (ThinkerId::LightFlash(flash), ThinkerKind::LightFlash) => {
                 saveg_write8(tc_flash);
                 saveg_write_pad();
-                saveg_write_lightflash_t(&LIGHT_FLASH_ARENA.borrow()[flash]);
+                saveg_write_lightflash_t(&world.thinkers.light_flashes[flash]);
             }
             (ThinkerId::Strobe(strobe), ThinkerKind::Strobe) => {
                 saveg_write8(tc_strobe);
                 saveg_write_pad();
-                saveg_write_strobe_t(&STROBE_ARENA.borrow()[strobe]);
+                saveg_write_strobe_t(&world.thinkers.strobes[strobe]);
             }
             (ThinkerId::Glow(glow), ThinkerKind::Glow) => {
                 saveg_write8(tc_glow);
                 saveg_write_pad();
-                saveg_write_glow_t(&GLOW_ARENA.borrow()[glow]);
+                saveg_write_glow_t(&world.thinkers.glows[glow]);
             }
             // Map objects are saved by `P_ArchiveThinkers`; fire flickers and
             // platforms in stasis are not saved (vanilla behaviour); removed
@@ -1901,9 +1905,9 @@ pub fn P_UnArchiveSpecials(world: &mut World) {
             x if x == tc_endspecials => return,
             x if x == tc_ceiling => {
                 saveg_read_pad();
-                let ceiling_id = new_thinker::<ceiling_t>();
+                let ceiling_id = new_thinker::<ceiling_t>(world);
                 let sector = {
-                    let mut ceilings = CEILING_ARENA.borrow_mut();
+                    let ceilings = &mut world.thinkers.ceilings;
                     let ceiling = &mut ceilings[ceiling_id];
                     saveg_read_ceiling_t(ceiling);
 
@@ -1916,40 +1920,40 @@ pub fn P_UnArchiveSpecials(world: &mut World) {
                 };
                 world.level.sectors[sector].specialdata = Some(ThinkerId::Ceiling(ceiling_id));
 
-                P_AddThinker(ThinkerId::Ceiling(ceiling_id));
+                P_AddThinker(world, ThinkerId::Ceiling(ceiling_id));
                 P_AddActiveCeiling(world, ceiling_id);
             }
             x if x == tc_door => {
                 saveg_read_pad();
-                let door_id = new_thinker::<vldoor_t>();
+                let door_id = new_thinker::<vldoor_t>(world);
                 let sector = {
-                    let mut doors = DOOR_ARENA.borrow_mut();
+                    let doors = &mut world.thinkers.doors;
                     let door = &mut doors[door_id];
                     saveg_read_vldoor_t(door);
                     door.thinker.kind = ThinkerKind::Door;
                     door.sector
                 };
                 world.level.sectors[sector].specialdata = Some(ThinkerId::Door(door_id));
-                P_AddThinker(ThinkerId::Door(door_id));
+                P_AddThinker(world, ThinkerId::Door(door_id));
             }
             x if x == tc_floor => {
                 saveg_read_pad();
-                let floor_id = new_thinker::<floormove_t>();
+                let floor_id = new_thinker::<floormove_t>(world);
                 let sector = {
-                    let mut floors = FLOOR_ARENA.borrow_mut();
+                    let floors = &mut world.thinkers.floors;
                     let floor = &mut floors[floor_id];
                     saveg_read_floormove_t(floor);
                     floor.thinker.kind = ThinkerKind::Floor;
                     floor.sector
                 };
                 world.level.sectors[sector].specialdata = Some(ThinkerId::Floor(floor_id));
-                P_AddThinker(ThinkerId::Floor(floor_id));
+                P_AddThinker(world, ThinkerId::Floor(floor_id));
             }
             x if x == tc_plat => {
                 saveg_read_pad();
-                let plat_id = new_thinker::<plat_t>();
+                let plat_id = new_thinker::<plat_t>(world);
                 let sector = {
-                    let mut plats = PLAT_ARENA.borrow_mut();
+                    let plats = &mut world.thinkers.plats;
                     let plat = &mut plats[plat_id];
                     saveg_read_plat_t(plat);
 
@@ -1962,41 +1966,41 @@ pub fn P_UnArchiveSpecials(world: &mut World) {
                 };
                 world.level.sectors[sector].specialdata = Some(ThinkerId::Plat(plat_id));
 
-                P_AddThinker(ThinkerId::Plat(plat_id));
+                P_AddThinker(world, ThinkerId::Plat(plat_id));
                 P_AddActivePlat(world, plat_id);
             }
             x if x == tc_flash => {
                 saveg_read_pad();
-                let flash_id = new_thinker::<lightflash_t>();
+                let flash_id = new_thinker::<lightflash_t>(world);
                 {
-                    let mut flashes = LIGHT_FLASH_ARENA.borrow_mut();
+                    let flashes = &mut world.thinkers.light_flashes;
                     let flash = &mut flashes[flash_id];
                     saveg_read_lightflash_t(flash);
                     flash.thinker.kind = ThinkerKind::LightFlash;
                 }
-                P_AddThinker(ThinkerId::LightFlash(flash_id));
+                P_AddThinker(world, ThinkerId::LightFlash(flash_id));
             }
             x if x == tc_strobe => {
                 saveg_read_pad();
-                let strobe_id = new_thinker::<strobe_t>();
+                let strobe_id = new_thinker::<strobe_t>(world);
                 {
-                    let mut strobes = STROBE_ARENA.borrow_mut();
+                    let strobes = &mut world.thinkers.strobes;
                     let strobe = &mut strobes[strobe_id];
                     saveg_read_strobe_t(strobe);
                     strobe.thinker.kind = ThinkerKind::Strobe;
                 }
-                P_AddThinker(ThinkerId::Strobe(strobe_id));
+                P_AddThinker(world, ThinkerId::Strobe(strobe_id));
             }
             x if x == tc_glow => {
                 saveg_read_pad();
-                let glow_id = new_thinker::<glow_t>();
+                let glow_id = new_thinker::<glow_t>(world);
                 {
-                    let mut glows = GLOW_ARENA.borrow_mut();
+                    let glows = &mut world.thinkers.glows;
                     let glow = &mut glows[glow_id];
                     saveg_read_glow_t(glow);
                     glow.thinker.kind = ThinkerKind::Glow;
                 }
-                P_AddThinker(ThinkerId::Glow(glow_id));
+                P_AddThinker(world, ThinkerId::Glow(glow_id));
             }
             _ => {
                 i_error!(
@@ -2205,15 +2209,14 @@ mod tests {
         for offset in [24, 28, 44, 48, 120, 150] {
             data[offset..offset + 4].copy_from_slice(&0x1234_5678u32.to_le_bytes());
         }
-        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
-        let mobj = new_thinker::<mobj_t>();
-        MOBJ_ARENA.borrow_mut()[mobj].thinker.kind = ThinkerKind::Mobj;
+        let mut world = World::new();
+        let mobj = new_thinker::<mobj_t>(&mut world);
+        world.mobjs[mobj].thinker.kind = ThinkerKind::Mobj;
         let mut references = None;
         with_mem_stream(&mut data, || {
-            references = Some(saveg_read_mobj_t(&mut World::new(), mobj));
+            references = Some(saveg_read_mobj_t(&mut world, mobj));
         });
-        let mobjs = MOBJ_ARENA.borrow();
-        let mo = &mobjs[mobj];
+        let mo = &world.mobjs[mobj];
         assert_eq!(mo.thinker.kind, ThinkerKind::None);
         // The links load empty; target and tracer come back as save
         // ordinals for `resolve_saved_references`.
@@ -2232,26 +2235,26 @@ mod tests {
 
     /// A listed map object with `health` as its tag, for telling the
     /// recreated objects apart.
-    fn add_mobj(health: i32) -> MobjId {
-        let mobj = new_thinker::<mobj_t>();
-        {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
-            let mo = &mut mobjs[mobj];
-            mo.health = health;
-            // Kept out of the sector and blockmap lists, which the test
-            // level does not have.
-            mo.flags = MF_NOSECTOR | MF_NOBLOCKMAP;
-            mo.thinker.kind = ThinkerKind::Mobj;
-        }
-        P_AddThinker(ThinkerId::Mobj(mobj));
+    fn add_mobj(world: &mut World, health: i32) -> MobjId {
+        let mobj = new_thinker::<mobj_t>(world);
+        let mo = &mut world.mobjs[mobj];
+        mo.health = health;
+        // Kept out of the sector and blockmap lists, which the test level
+        // does not have.
+        mo.flags = MF_NOSECTOR | MF_NOBLOCKMAP;
+        mo.thinker.kind = ThinkerKind::Mobj;
+        P_AddThinker(world, ThinkerId::Mobj(mobj));
         mobj
     }
 
     /// The listed map object tagged with `health` (see [`add_mobj`]).
-    fn mobj_with_health(health: i32) -> MobjId {
-        thinkers()
-            .find_map(|thinker| match thinker {
-                ThinkerId::Mobj(mobj) if MOBJ_ARENA.borrow()[mobj].health == health => Some(mobj),
+    fn mobj_with_health(world: &World, health: i32) -> MobjId {
+        world
+            .thinkers
+            .list
+            .iter()
+            .find_map(|&thinker| match thinker {
+                ThinkerId::Mobj(mobj) if world.mobjs[mobj].health == health => Some(mobj),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no map object with health {health}"))
@@ -2262,16 +2265,14 @@ mod tests {
     /// ordinals that name no loaded object resolve to `None`.
     #[test]
     fn save_ordinals_follow_the_thinker_list() {
-        let _g = LOCK.lock().unwrap();
-        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
-        P_InitThinkers();
-        let first = add_mobj(1);
-        let removed = add_mobj(2);
-        let second = add_mobj(3);
-        P_RemoveThinker(&mut MOBJ_ARENA.borrow_mut()[removed].thinker);
-        let unlisted = new_thinker::<mobj_t>();
+        let mut world = World::new();
+        let first = add_mobj(&mut world, 1);
+        let removed = add_mobj(&mut world, 2);
+        let second = add_mobj(&mut world, 3);
+        P_RemoveThinker(&mut world.mobjs[removed].thinker);
+        let unlisted = new_thinker::<mobj_t>(&mut world);
 
-        let ordinals = mobj_save_ordinals();
+        let ordinals = mobj_save_ordinals(&world);
         assert_eq!(saved_mobj_ordinal(&ordinals, Some(first)), 1);
         assert_eq!(saved_mobj_ordinal(&ordinals, Some(second)), 2);
         assert_eq!(saved_mobj_ordinal(&ordinals, Some(removed)), 0);
@@ -2284,7 +2285,6 @@ mod tests {
         assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 2), Some(first));
         assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, 3), None);
         assert_eq!(mobj_for_saved_ordinal(&loaded_mobjs, u32::MAX), None);
-        P_InitThinkers();
     }
 
     /// Map object references survive a save and load: `target`, `tracer`
@@ -2299,7 +2299,6 @@ mod tests {
         };
 
         let _g = LOCK.lock().unwrap();
-        let _thinker_guard = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
 
         // One sector, one subsector and no nodes: every point is in it.
         let mut world = World::new();
@@ -2315,14 +2314,13 @@ mod tests {
         };
         let player = PlayerId::new(0);
 
-        P_InitThinkers();
-        let first = add_mobj(1);
-        let second = add_mobj(2);
-        let removed = add_mobj(3);
-        let third = add_mobj(4);
-        let unlisted = new_thinker::<mobj_t>();
+        let first = add_mobj(&mut world, 1);
+        let second = add_mobj(&mut world, 2);
+        let removed = add_mobj(&mut world, 3);
+        let third = add_mobj(&mut world, 4);
+        let unlisted = new_thinker::<mobj_t>(&mut world);
         {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             P_RemoveThinker(&mut mobjs[removed].thinker);
             mobjs[first].target = Some(third);
             mobjs[first].tracer = Some(first);
@@ -2342,7 +2340,7 @@ mod tests {
             P_ArchiveThinkers(&world);
 
             world.players[player] = std::mem::zeroed();
-            P_InitThinkers();
+            P_InitThinkers(&mut world);
             SAVEG.borrow_mut().save_stream.set_position(0);
 
             P_UnArchivePlayers(&mut world);
@@ -2350,9 +2348,12 @@ mod tests {
             assert_eq!(SAVEG.borrow().savegame_error, 0);
         });
 
-        let healths: Vec<i32> = thinkers()
-            .map(|thinker| match thinker {
-                ThinkerId::Mobj(mobj) => MOBJ_ARENA.borrow()[mobj].health,
+        let healths: Vec<i32> = world
+            .thinkers
+            .list
+            .iter()
+            .map(|&thinker| match thinker {
+                ThinkerId::Mobj(mobj) => world.mobjs[mobj].health,
                 _ => panic!("{thinker:?} is not a map object"),
             })
             .collect();
@@ -2362,12 +2363,12 @@ mod tests {
             "saved in list order, removed one left out"
         );
         let (first, second, third) = (
-            mobj_with_health(1),
-            mobj_with_health(2),
-            mobj_with_health(4),
+            mobj_with_health(&world, 1),
+            mobj_with_health(&world, 2),
+            mobj_with_health(&world, 4),
         );
         {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             assert_eq!(mobjs[first].target, Some(third));
             assert_eq!(mobjs[first].tracer, Some(first));
             assert_eq!(
@@ -2386,8 +2387,6 @@ mod tests {
         assert_eq!(world.players[player].mo, Some(first));
         assert_eq!(world.players[player].attacker, Some(third));
         assert_eq!(SAVEG.borrow().saved_attackers, [None; MAXPLAYERS]);
-
-        P_InitThinkers();
     }
 
     /// A save-game header with `version` in its version field.

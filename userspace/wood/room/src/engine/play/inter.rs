@@ -11,6 +11,7 @@ use crate::engine::sound::info::Sfx;
 
 use crate::{
     engine::{
+        arena::Arena,
         dehacked::DEH_String,
         doom::{
             items::weaponinfo,
@@ -22,7 +23,11 @@ use crate::{
             tables::{ANG180, ANGLETOFINESHIFT, FINEANGLES, finesine},
         },
         misc::random::P_Random,
-        play::{info::*, mobj::MobjId, pspr::P_DropWeapon, tick::MOBJ_ARENA},
+        play::{
+            info::*,
+            mobj::{MobjId, mobj_t},
+            pspr::P_DropWeapon,
+        },
         world::{Session, World},
     },
     i_error,
@@ -487,11 +492,11 @@ fn p_give_weapon(
 ///
 /// If the player has not been spawned.
 pub fn P_GiveBody(world: &mut World, player: PlayerId, num: i32) -> i32 {
-    p_give_body(&mut world.players[player], num)
+    p_give_body(&mut world.players[player], &mut world.mobjs, num)
 }
 
 /// Rust-side body of [`P_GiveBody`]. See [`p_give_ammo`] for rationale.
-fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
+fn p_give_body(player: &mut PlayerT, mobjs: &mut Arena<mobj_t>, num: i32) -> i32 {
     if player.health >= MAXHEALTH {
         return 0;
     }
@@ -499,7 +504,7 @@ fn p_give_body(player: &mut PlayerT, num: i32) -> i32 {
     if player.health > MAXHEALTH {
         player.health = MAXHEALTH;
     }
-    MOBJ_ARENA.borrow_mut()[player.mo()].health = player.health;
+    mobjs[player.mo()].health = player.health;
     1
 }
 
@@ -569,11 +574,11 @@ fn p_give_card(player: &mut PlayerT, card: i32) {
 /// For `pw_invisibility` and `pw_strength`, if the player has not been
 /// spawned.
 pub fn P_GivePower(world: &mut World, player: PlayerId, power: i32) -> i32 {
-    p_give_power(&mut world.players[player], power)
+    p_give_power(&mut world.players[player], &mut world.mobjs, power)
 }
 
 /// Rust-side body of [`P_GivePower`]. See [`p_give_ammo`] for rationale.
-fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
+fn p_give_power(player: &mut PlayerT, mobjs: &mut Arena<mobj_t>, power: i32) -> i32 {
     let power = power as usize;
     if power == pw_invulnerability {
         player.powers[power] = INVULNTICS;
@@ -581,7 +586,7 @@ fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
     }
     if power == pw_invisibility {
         player.powers[power] = INVISTICS;
-        MOBJ_ARENA.borrow_mut()[player.mo()].flags |= MF_SHADOW;
+        mobjs[player.mo()].flags |= MF_SHADOW;
         return 1;
     }
     if power == pw_infrared {
@@ -593,7 +598,7 @@ fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
         return 1;
     }
     if power == pw_strength {
-        p_give_body(player, 100);
+        p_give_body(player, mobjs, 100);
         player.powers[power] = 1;
         return 1;
     }
@@ -620,18 +625,15 @@ fn p_give_power(player: &mut PlayerT, power: i32) -> i32 {
 /// `special` and `toucher` is greater than the toucher's height or less
 /// than -8 map units, preventing pickups from platforms above or pits below.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `special_id` and `toucher_id` must name map objects of the level (the
-/// toucher must be a player).  Global game-state statics (`consoleplayer`,
-/// `netgame`, `gamemode`, `gameskill`) must only be accessed from the
-/// game-logic thread.
-pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher_id: MobjId) {
+/// If the toucher is not a player.
+pub fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher_id: MobjId) {
     // Everything read from `special` and `toucher` is copied out up front:
     // the pickup only changes the player (and its object's health and
     // flags, written by the `p_give_*` helpers) before `P_RemoveMobj`.
     let (delta, toucher_height, toucher_health, toucher_player, sprite, special_flags) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let special = &mobjs[special_id];
         let toucher = &mobjs[toucher_id];
         (
@@ -693,7 +695,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
             if player.health > max_health {
                 player.health = max_health;
             }
-            MOBJ_ARENA.borrow_mut()[player.mo()].health = player.health;
+            world.mobjs[player.mo()].health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTHTHBONUS));
         }
         SPR_BON2 => {
@@ -713,7 +715,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
             if player.health > max_soulsphere {
                 player.health = max_soulsphere;
             }
-            MOBJ_ARENA.borrow_mut()[player.mo()].health = player.health;
+            world.mobjs[player.mo()].health = player.health;
             player.message = PlayerMessage::new(DEH_String(GOTSUPER));
             sound = Sfx::Getpow as i32;
         }
@@ -722,7 +724,7 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
                 return;
             }
             player.health = megasphere_health;
-            MOBJ_ARENA.borrow_mut()[player.mo()].health = player.health;
+            world.mobjs[player.mo()].health = player.health;
             // We always give armor type 2 for the megasphere; DEHacked
             // only affects the standalone MegaArmor pickup
             // (`SPR_ARM2`), not this one.
@@ -787,13 +789,13 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         }
         // medikits, heals
         SPR_STIM => {
-            if p_give_body(player, 10) == 0 {
+            if p_give_body(player, &mut world.mobjs, 10) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTSTIM));
         }
         SPR_MEDI => {
-            if p_give_body(player, 25) == 0 {
+            if p_give_body(player, &mut world.mobjs, 25) == 0 {
                 return;
             }
             if player.health < 25 {
@@ -804,14 +806,14 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
         }
         // power ups
         SPR_PINV => {
-            if p_give_power(player, pw_invulnerability as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_invulnerability as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTINVUL));
             sound = Sfx::Getpow as i32;
         }
         SPR_PSTR => {
-            if p_give_power(player, pw_strength as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_strength as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTBERSERK));
@@ -821,28 +823,28 @@ pub unsafe fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher
             sound = Sfx::Getpow as i32;
         }
         SPR_PINS => {
-            if p_give_power(player, pw_invisibility as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_invisibility as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTINVIS));
             sound = Sfx::Getpow as i32;
         }
         SPR_SUIT => {
-            if p_give_power(player, pw_ironfeet as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_ironfeet as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTSUIT));
             sound = Sfx::Getpow as i32;
         }
         SPR_PMAP => {
-            if p_give_power(player, pw_allmap as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_allmap as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTMAP));
             sound = Sfx::Getpow as i32;
         }
         SPR_PVIS => {
-            if p_give_power(player, pw_infrared as i32) == 0 {
+            if p_give_power(player, &mut world.mobjs, pw_infrared as i32) == 0 {
                 return;
             }
             player.message = PlayerMessage::new(DEH_String(GOTVISOR));
@@ -1031,7 +1033,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
     // The target is read afresh after each call that runs play code
     // (`P_DropWeapon`, `P_SetMobjState`), as C reads it through its pointer.
     let (info, counts_kill, target_player) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         target.flags &= !(MF_SHOOTABLE | MF_FLOAT | MF_SKULLFLY);
         if target.kind != MT_SKULL {
@@ -1046,7 +1048,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
         )
     };
 
-    let source_player = source_id.and_then(|source| MOBJ_ARENA.borrow()[source].player);
+    let source_player = source_id.and_then(|source| world.mobjs[source].player);
     if let Some(source_player) = source_player {
         let source_player = &mut world.players[source_player];
         if counts_kill {
@@ -1065,14 +1067,14 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
             player.frags[target_player.index()] += 1;
         }
         player.playerstate = 1; // PST_DEAD
-        MOBJ_ARENA.borrow_mut()[target_id].flags &= !MF_SOLID;
+        world.mobjs[target_id].flags &= !MF_SOLID;
         P_DropWeapon(world, target_player);
         if target_player == world.session.console() && automap_active() {
             AM_Stop();
         }
     }
 
-    let health = MOBJ_ARENA.borrow()[target_id].health;
+    let health = world.mobjs[target_id].health;
     if health < -info.spawnhealth && info.xdeathstate != 0 {
         P_SetMobjState(world, target_id, info.xdeathstate);
     } else {
@@ -1080,7 +1082,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
     }
     let tics_jitter = P_Random(world) & 3;
     let (kind, x, y) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         target.tics -= tics_jitter;
         if target.tics < 1 {
@@ -1101,7 +1103,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
     };
 
     let mo = P_SpawnMobj(world, x, y, ONFLOORZ, item);
-    MOBJ_ARENA.borrow_mut()[mo].flags |= MF_DROPPED;
+    world.mobjs[mo].flags |= MF_DROPPED;
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,7 +1149,7 @@ pub unsafe fn P_DamageMobj(
     // read afresh after each call that runs play code (`P_Random` aside),
     // as C reads it through its pointer.
     let (player, target_flags) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         if (target.flags & MF_SHOOTABLE) == 0 {
             return;
@@ -1167,14 +1169,14 @@ pub unsafe fn P_DamageMobj(
         damage >>= 1;
     }
 
-    let source_player = source_id.and_then(|source| MOBJ_ARENA.borrow()[source].player);
+    let source_player = source_id.and_then(|source| world.mobjs[source].player);
     if let Some(inflictor_id) = inflictor_id
         && (target_flags & MF_NOCLIP) == 0
         && source_player
             .is_none_or(|source_player| world.players[source_player].readyweapon != wp_chainsaw)
     {
         let (inflictor, target) = {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             (mobjs[inflictor_id], mobjs[target_id])
         };
         let mut ang = R_PointToAngle2(inflictor.x, inflictor.y, target.x, target.y);
@@ -1192,7 +1194,7 @@ pub unsafe fn P_DamageMobj(
 
         ang >>= ANGLETOFINESHIFT;
         let fine_angle = ang as usize;
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         // `finecosine[fine_angle]`: the cosine table is the sine table a
         // quarter turn on.
@@ -1203,7 +1205,7 @@ pub unsafe fn P_DamageMobj(
     if let Some(player_id) = player {
         // end of game hell hack
         let (subsector, health) = {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             (mobjs[target_id].subsector, mobjs[target_id].health)
         };
         let special = world.level.subsector_sector(subsector).special;
@@ -1254,7 +1256,7 @@ pub unsafe fn P_DamageMobj(
     }
 
     let (killed, info) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         target.health -= damage;
         (target.health <= 0, target.info.get())
@@ -1266,7 +1268,7 @@ pub unsafe fn P_DamageMobj(
 
     let pain_roll = P_Random(world);
     let in_pain = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target = &mut mobjs[target_id];
         let in_pain = pain_roll < info.painchance && (target.flags & MF_SKULLFLY) == 0;
         if in_pain {
@@ -1278,7 +1280,7 @@ pub unsafe fn P_DamageMobj(
         P_SetMobjState(world, target_id, info.painstate);
     }
 
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let target = &mut mobjs[target_id];
     target.reactiontime = 0;
 
@@ -1289,7 +1291,6 @@ pub unsafe fn P_DamageMobj(
         target.target = source_id;
         target.threshold = BASETHRESHOLD;
         let see = target.state.number() == info.spawnstate && info.seestate != S_NULL;
-        drop(mobjs);
         if see {
             P_SetMobjState(world, target_id, info.seestate);
         }

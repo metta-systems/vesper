@@ -13,7 +13,7 @@ use zerocopy::IntoBytes;
 use crate::engine::{
     map::{LineId, slopetype_t},
     math::fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
-    play::{info::*, mobj::MobjId, setup::LevelState, tick::MOBJ_ARENA},
+    play::{info::*, mobj::MobjId, setup::LevelState},
     render_3d::main::R_PointInSubsector,
     world::World,
 };
@@ -424,7 +424,7 @@ pub fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
     // writes change only the neighbours' links (or rewrite the thing's own
     // link with its value, for a corrupt self-link), so the thing's fields
     // are read once.
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let level = &mut world.level;
     let thing = &mobjs[thing_id];
     let (flags, x, y, subsector) = (thing.flags, thing.x, thing.y, thing.subsector);
@@ -479,7 +479,7 @@ pub fn P_UnsetThingPosition(world: &mut World, thing_id: MobjId) {
 pub fn P_SetThingPosition(world: &mut World, thing_id: MobjId) {
     // The writes go through the arena in C's order, so a thing that already
     // heads its new list links to itself as it does in C.
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let level = &mut world.level;
     let (x, y, flags) = {
         let thing = &mobjs[thing_id];
@@ -610,7 +610,7 @@ pub fn P_BlockThingsIterator(
         }
         // Read after the callback, as C does: it may have moved or
         // removed the object, whose links still name its old neighbour.
-        mobj = MOBJ_ARENA.borrow()[current].bnext;
+        mobj = world.mobjs[current].bnext;
     }
     true
 }
@@ -678,7 +678,7 @@ fn InterceptsOverrun(world: &mut World, num_intercepts: usize, intercept: interc
     let location = (num_intercepts - MAXINTERCEPTS_ORIGINAL - 1) as i32 * 12;
     let address = match intercept.hit {
         InterceptHit::Line(line) => (&raw const world.level.lines[line]).addr(),
-        InterceptHit::Thing(thing) => thing.address(),
+        InterceptHit::Thing(thing) => world.mobjs.address(thing),
     };
     InterceptsMemoryOverrun(world, location, intercept.frac);
     InterceptsMemoryOverrun(world, location + 4, intercept.isaline());
@@ -787,7 +787,7 @@ pub fn PIT_AddLineIntercepts(world: &mut World, ld: LineId) -> bool {
 /// Matches `PIT_AddThingIntercepts` in `p_maputl.c`.
 pub fn PIT_AddThingIntercepts(world: &mut World, thing_id: MobjId) -> bool {
     let (x, y, radius) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
         (thing.x, thing.y, thing.radius)
     };
@@ -997,10 +997,7 @@ mod tests {
         super::*,
         crate::engine::{
             map::{VertexId, line_t},
-            play::{
-                mobj::mobj_t,
-                tick::{P_InitThinkers, THINKER_TEST_LOCK, new_thinker},
-            },
+            play::{mobj::mobj_t, tick::new_thinker},
         },
     };
 
@@ -1064,22 +1061,17 @@ mod tests {
     /// it, as C does; the list itself no longer holds the removed thing.
     #[test]
     fn block_things_iterator_continues_after_removal_via_bnext() {
-        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
-        P_InitThinkers();
+        let mut world = World::new();
 
         // Three things at (0, 0) chained in the one cell of a 1x1 blockmap,
         // kept out of the sector lists, which the test level does not have.
-        let things: Vec<MobjId> = (0..3).map(|_| new_thinker::<mobj_t>()).collect();
-        {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
-            for (index, &thing) in things.iter().enumerate() {
-                let mobj = &mut mobjs[thing];
-                mobj.flags = MF_NOSECTOR;
-                mobj.bprev = index.checked_sub(1).map(|previous| things[previous]);
-                mobj.bnext = things.get(index + 1).copied();
-            }
+        let things: Vec<MobjId> = (0..3).map(|_| new_thinker::<mobj_t>(&mut world)).collect();
+        for (index, &thing) in things.iter().enumerate() {
+            let mobj = &mut world.mobjs[thing];
+            mobj.flags = MF_NOSECTOR;
+            mobj.bprev = index.checked_sub(1).map(|previous| things[previous]);
+            mobj.bnext = things.get(index + 1).copied();
         }
-        let mut world = World::new();
         world.level = LevelState {
             bmapwidth: 1,
             bmapheight: 1,
@@ -1092,15 +1084,15 @@ mod tests {
             visited.push(thing);
             if thing == things[1] {
                 P_UnsetThingPosition(world, thing);
-                MOBJ_ARENA.borrow_mut().free(thing);
+                world.mobjs.free(thing);
             }
             true
         });
 
         assert!(completed);
         assert_eq!(visited, things);
-        assert_eq!(MOBJ_ARENA.borrow()[things[0]].bnext, Some(things[2]));
-        assert_eq!(MOBJ_ARENA.borrow()[things[2]].bprev, Some(things[0]));
+        assert_eq!(world.mobjs[things[0]].bnext, Some(things[2]));
+        assert_eq!(world.mobjs[things[2]].bprev, Some(things[0]));
 
         // A callback returning `false` stops the walk at that thing.
         let mut visited = Vec::new();
@@ -1110,8 +1102,6 @@ mod tests {
         });
         assert!(!completed);
         assert_eq!(visited, [things[0]]);
-
-        P_InitThinkers();
     }
 
     /// The collected intercepts reach the callback nearest first, by value,
@@ -1170,10 +1160,9 @@ mod tests {
     /// after the vanilla array: the 131st lands on the line opening.
     #[test]
     fn intercepts_overrun_writes_the_emulated_variables() {
-        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
         let mut world = World::new();
         world.scratch.maputl.intercept_count = MAXINTERCEPTS_ORIGINAL + 2;
-        let thing = new_thinker::<mobj_t>();
+        let thing = new_thinker::<mobj_t>(&mut world);
         add_intercept(
             &mut world,
             intercept_t {
@@ -1184,7 +1173,10 @@ mod tests {
         // Entry 130 starts at byte 12: `lowfloor`, `openbottom`, `opentop`.
         assert_eq!(world.scratch.maputl.lowfloor, 0x1234);
         assert_eq!(world.scratch.maputl.openbottom, 0);
-        assert_eq!(world.scratch.maputl.opentop, thing.address() as i32);
+        assert_eq!(
+            world.scratch.maputl.opentop,
+            world.mobjs.address(thing) as i32
+        );
         assert_eq!(
             world.scratch.maputl.intercept_count,
             MAXINTERCEPTS_ORIGINAL + 3

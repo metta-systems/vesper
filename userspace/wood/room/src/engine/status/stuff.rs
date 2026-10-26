@@ -20,6 +20,7 @@ use std::ptr;
 use crate::{
     c_write,
     engine::{
+        arena::Arena,
         automap::automap_active,
         dehacked::DEH_String,
         doom::{
@@ -37,7 +38,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
             random::M_Random,
         },
-        play::{inter::P_GivePower, tick::MOBJ_ARENA},
+        play::{inter::P_GivePower, mobj::mobj_t},
         render_2d::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
@@ -692,7 +693,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 plyr.cheats ^= 2; // CF_GODMODE
                 if plyr.cheats & 2 != 0 {
                     if let Some(mo) = plyr.mo {
-                        MOBJ_ARENA.borrow_mut()[mo].health = 100;
+                        world.mobjs[mo].health = 100;
                     }
                     plyr.health = 100; // deh_god_mode_health
                     plyr.message = PlayerMessage::new(DEH_String(STSTR_DQDON));
@@ -781,8 +782,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
                 plyr.message = PlayerMessage::new(DEH_String(STSTR_CHOPPERS));
             } else if check_cheat(|status| &mut status.cheat_mypos, key) {
                 let (angle, x, y) = {
-                    let mobjs = MOBJ_ARENA.borrow();
-                    let mo = &mobjs[world.players[PlayerId::console()].mo()];
+                    let mo = &world.mobjs[world.players[PlayerId::console()].mo()];
                     (mo.angle, mo.x, mo.y)
                 };
                 world.players[player].message =
@@ -877,7 +877,7 @@ pub fn ST_calcPainOffset(status: &mut StatusState, health: i32) -> i32 {
 ///
 /// If the player is hurt by an attacker while it has no map object (its
 /// `mo` and the `attacker` are read when computing turn directions).
-pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
+pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<mobj_t>) {
     let health = plyr.health;
     let diffang: u32;
     let i: i32;
@@ -913,7 +913,6 @@ pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
             status.st_facecount = ST_TURNCOUNT;
             status.st_faceindex = ST_calcPainOffset(status, health) + ST_OUCHOFFSET;
         } else {
-            let mobjs = MOBJ_ARENA.borrow();
             let mo = &mobjs[plyr.mo()];
             let attacker = &mobjs[attacker];
             let badguyangle = R_PointToAngle2(mo.x, mo.y, attacker.x, attacker.y);
@@ -997,11 +996,13 @@ pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT) {
 /// counter, the frag total, and the face widget via `ST_updateFaceWidget`.
 /// Also decrements `st_msgcounter` and restores `st_chat` when it expires.
 ///
-/// # Safety
+/// Runs after `ST_createWidgets`, once per tic.
 ///
-/// Caller must ensure `ST_createWidgets` has run, and the player's `mo`
-/// and `attacker` must name map objects of the level.
-pub unsafe fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT) {
+/// # Panics
+///
+/// If the player is hurt by an attacker while it has no map object (see
+/// [`ST_updateFaceWidget`]).
+pub fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<mobj_t>) {
     // C points the ready-ammo widget at the ammo of the weapon ready now;
     // the weapon recorded here picks that ammo when the widget draws.
     status.w_ready.data = plyr.readyweapon;
@@ -1013,7 +1014,7 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT) {
         }
     }
 
-    ST_updateFaceWidget(status, plyr);
+    ST_updateFaceWidget(status, plyr, mobjs);
 
     status.st_notdeathmatch = if deathmatch() == 0 { 1 } else { 0 };
     status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
@@ -1055,19 +1056,20 @@ pub unsafe fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT) {
 /// Called once per tic by `G_Ticker` in `g_game.c`, with the world it
 /// borrowed for the level phase.
 ///
-/// # Safety
-///
 /// Mutates `st_clock`, `st_randomnumber`, and `st_oldhealth`, and indirectly
-/// touches every widget global via `ST_updateWidgets`. Caller must ensure
-/// `ST_Start` has been called, and the player's `mo` and `attacker` must
-/// name map objects of the level.
-pub unsafe fn ST_Ticker(world: &World) {
+/// touches every widget global via `ST_updateWidgets`; runs after
+/// `ST_Start`.
+///
+/// # Panics
+///
+/// As [`ST_updateWidgets`].
+pub fn ST_Ticker(world: &World) {
     let random_number = M_Random();
     let mut status = STATUS.borrow_mut();
     let plyr = &world.players[status.player()];
     status.st_clock = status.st_clock.wrapping_add(1);
     status.st_randomnumber = random_number;
-    ST_updateWidgets(&mut status, plyr);
+    ST_updateWidgets(&mut status, plyr, &world.mobjs);
     status.st_oldhealth = plyr.health;
 }
 

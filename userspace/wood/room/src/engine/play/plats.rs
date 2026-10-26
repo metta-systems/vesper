@@ -22,8 +22,8 @@ use crate::{
                 P_FindNextHighestFloor, P_FindSectorFromLineTag,
             },
             tick::{
-                P_AddThinker, P_RemoveThinker, PLAT_ARENA, PlatId, ThinkerId, ThinkerKind,
-                new_thinker, thinker_t,
+                P_AddThinker, P_RemoveThinker, PlatId, ThinkerId, ThinkerKind, new_thinker,
+                thinker_t,
             },
         },
         sound::S_StartSectorSound,
@@ -170,11 +170,11 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
     // The platform is copied out around each call that can run play code
     // (`T_MovePlane`), read afresh after it, and each change is written
     // back before the next such call, as C sees it through its pointer.
-    let plat = PLAT_ARENA.borrow()[plat_id];
+    let plat = world.thinkers.plats[plat_id];
     match plat.status {
         x if x == up => {
             let res = T_MovePlane(world, plat.sector, plat.speed, plat.high, plat.crush, 0, 1);
-            let plat = PLAT_ARENA.borrow()[plat_id];
+            let plat = world.thinkers.plats[plat_id];
 
             if (plat.kind == raiseAndChange || plat.kind == raiseToNearestAndChange)
                 && (world.leveltime & 7) == 0
@@ -183,10 +183,10 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             }
 
             if res == result_crushed && plat.crush == 0 {
-                set_plat_status(plat_id, plat.wait, down);
+                set_plat_status(world, plat_id, plat.wait, down);
                 S_StartSectorSound(world, plat.sector, Sfx::Pstart as i32);
             } else if res == result_pastdest {
-                set_plat_status(plat_id, plat.wait, waiting);
+                set_plat_status(world, plat_id, plat.wait, waiting);
                 S_StartSectorSound(world, plat.sector, Sfx::Pstop as i32);
 
                 match plat.kind {
@@ -205,14 +205,14 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
             let res = T_MovePlane(world, plat.sector, plat.speed, plat.low, 0, 0, -1);
 
             if res == result_pastdest {
-                let plat = PLAT_ARENA.borrow()[plat_id];
-                set_plat_status(plat_id, plat.wait, waiting);
+                let plat = world.thinkers.plats[plat_id];
+                set_plat_status(world, plat_id, plat.wait, waiting);
                 S_StartSectorSound(world, plat.sector, Sfx::Pstop as i32);
             }
         }
         x if x == waiting => {
             let sector = {
-                let mut plats = PLAT_ARENA.borrow_mut();
+                let plats = &mut world.thinkers.plats;
                 let plat = &mut plats[plat_id];
                 plat.count -= 1;
                 if plat.count != 0 {
@@ -233,9 +233,8 @@ pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
 }
 
 /// Set the platform's wait `count` and motion `status`.
-fn set_plat_status(plat_id: PlatId, count: i32, status: i32) {
-    let mut plats = PLAT_ARENA.borrow_mut();
-    let plat = &mut plats[plat_id];
+fn set_plat_status(world: &mut World, plat_id: PlatId, count: i32, status: i32) {
+    let plat = &mut world.thinkers.plats[plat_id];
     plat.count = count;
     plat.status = status;
 }
@@ -280,12 +279,12 @@ pub fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -
         }
 
         rtn = 1;
-        let plat_id = new_thinker::<plat_t>();
-        P_AddThinker(ThinkerId::Plat(plat_id));
+        let plat_id = new_thinker::<plat_t>(world);
+        P_AddThinker(world, ThinkerId::Plat(plat_id));
 
         // The platform is set up in a copy (the random draw needs `world`)
         // and stored before its sound starts.
-        let mut plat = PLAT_ARENA.borrow()[plat_id];
+        let mut plat = world.thinkers.plats[plat_id];
         let sound = {
             let level = &mut world.level;
             plat.kind = plattype;
@@ -357,7 +356,7 @@ pub fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -
                 _ => None,
             }
         };
-        PLAT_ARENA.borrow_mut()[plat_id] = plat;
+        world.thinkers.plats[plat_id] = plat;
         if let Some(sound) = sound {
             S_StartSectorSound(world, sec, sound as i32);
         }
@@ -374,7 +373,7 @@ pub fn EV_DoPlat(world: &mut World, line: &line_t, plattype: i32, amount: i32) -
 ///
 /// Corresponds to `P_ActivateInStasis` in `p_plats.c`.
 pub fn P_ActivateInStasis(world: &mut World, tag: i32) {
-    let mut plats = PLAT_ARENA.borrow_mut();
+    let plats = &mut world.thinkers.plats;
     for plat_id in world.active.plats.activeplats.into_iter().flatten() {
         let plat = &mut plats[plat_id];
         if plat.tag == tag && plat.status == in_stasis {
@@ -392,7 +391,7 @@ pub fn P_ActivateInStasis(world: &mut World, tag: i32) {
 ///
 /// Corresponds to `EV_StopPlat` in `p_plats.c`.
 pub fn EV_StopPlat(world: &mut World, line: &line_t) {
-    let mut plats = PLAT_ARENA.borrow_mut();
+    let plats = &mut world.thinkers.plats;
     for plat_id in world.active.plats.activeplats.into_iter().flatten() {
         let plat = &mut plats[plat_id];
         if plat.status != in_stasis && plat.tag == line.tag as i32 {
@@ -432,7 +431,7 @@ pub fn P_RemoveActivePlat(world: &mut World, plat_id: PlatId) {
     let World { level, active, .. } = world;
     for slot in active.plats.activeplats.iter_mut() {
         if *slot == Some(plat_id) {
-            let mut plats = PLAT_ARENA.borrow_mut();
+            let plats = &mut world.thinkers.plats;
             let plat = &mut plats[plat_id];
             level.sectors[plat.sector].specialdata = None;
             P_RemoveThinker(&mut plat.thinker);

@@ -69,7 +69,7 @@ use crate::{
             setup::LevelState,
             sight::P_CheckSight,
             switch::P_UseSpecialLine,
-            tick::{MOBJ_ARENA, ThinkerId, ThinkerKind, thinkers},
+            tick::{ThinkerId, ThinkerKind},
         },
         render_3d::main::R_PointToAngle2,
         sound::{S_StartNonPositionalSound, S_StartSound},
@@ -272,7 +272,7 @@ pub fn P_NoiseAlert(world: &mut World, target: MobjId, emmiter: MobjId) {
     let World { level, scratch, .. } = world;
     scratch.enemy.soundtarget = Some(target);
     scratch.validcount += 1;
-    let sector = level.subsectors[MOBJ_ARENA.borrow()[emmiter].subsector].sector;
+    let sector = level.subsectors[world.mobjs[emmiter].subsector].sector;
     P_RecursiveSound(scratch, level, sector, 0);
 }
 /// The target of `actor`, which C dereferences without a null check: the
@@ -292,14 +292,14 @@ fn target_of(actor: &mobj_t) -> MobjId {
 ///
 /// If the actor has no target.
 #[track_caller]
-fn current_target(actor_id: MobjId) -> MobjId {
-    target_of(&MOBJ_ARENA.borrow()[actor_id])
+fn current_target(world: &World, actor_id: MobjId) -> MobjId {
+    target_of(&world.mobjs[actor_id])
 }
 /// `true` if map object `actor_id` has a target now (C's
 /// `actor->target != NULL`).
 #[track_caller]
-fn has_target(actor_id: MobjId) -> bool {
-    MOBJ_ARENA.borrow()[actor_id].target.is_some()
+fn has_target(world: &World, actor_id: MobjId) -> bool {
+    world.mobjs[actor_id].target.is_some()
 }
 /// Returns `TRUE` when `actor`'s target is within melee striking range and line of sight.
 ///
@@ -309,7 +309,7 @@ fn has_target(actor_id: MobjId) -> bool {
 ///
 pub fn P_CheckMeleeRange(world: &mut World, actor_id: MobjId) -> Boolean {
     {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let actor = &mobjs[actor_id];
         let Some(target) = actor.target else {
             return Boolean::FALSE;
@@ -320,7 +320,7 @@ pub fn P_CheckMeleeRange(world: &mut World, actor_id: MobjId) -> Boolean {
             return Boolean::FALSE;
         }
     }
-    if P_CheckSight(world, actor_id, current_target(actor_id)) == 0 {
+    if P_CheckSight(world, actor_id, current_target(world, actor_id)) == 0 {
         return Boolean::FALSE;
     }
     Boolean::TRUE
@@ -342,10 +342,10 @@ pub fn P_CheckMeleeRange(world: &mut World, actor_id: MobjId) -> Boolean {
 pub fn P_CheckMissileRange(world: &mut World, actor_id: MobjId) -> Boolean {
     let mut dist: fixed_t;
 
-    if P_CheckSight(world, actor_id, current_target(actor_id)) == 0 {
+    if P_CheckSight(world, actor_id, current_target(world, actor_id)) == 0 {
         return Boolean::FALSE;
     }
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let actor = &mut mobjs[actor_id];
     if actor.flags & MF_JUSTHIT != 0 {
         actor.flags &= !(MF_JUSTHIT);
@@ -358,7 +358,6 @@ pub fn P_CheckMissileRange(world: &mut World, actor_id: MobjId) -> Boolean {
     let target = &mobjs[target_of(&mobjs[actor_id])];
     dist =
         (P_AproxDistance(actor_x - target.x, actor_y - target.y) as i32 - 64 * FRACUNIT) as fixed_t;
-    drop(mobjs);
     if actor_info.get().meleestate == 0 {
         dist -= 128 * FRACUNIT;
     }
@@ -416,7 +415,7 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
     let mut good: Boolean;
 
     let (tryx, tryy) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let actor = &mobjs[actor_id];
         if actor.movedir == DI_NODIR {
             return Boolean::FALSE;
@@ -434,7 +433,7 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
     // The move runs play code; the actor is read afresh after it.
     if try_ok.is_false() {
         {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             let actor = &mut mobjs[actor_id];
             let map = &world.scratch.map;
             if actor.flags & MF_FLOAT != 0 && map.floatok != 0 {
@@ -470,7 +469,7 @@ pub unsafe fn P_Move(world: &mut World, actor_id: MobjId) -> Boolean {
         }
         return good;
     }
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let actor = &mut mobjs[actor_id];
     actor.flags &= !(MF_INFLOAT);
     if actor.flags & MF_FLOAT == 0 {
@@ -492,7 +491,7 @@ pub unsafe fn P_TryWalk(world: &mut World, actor_id: MobjId) -> Boolean {
         return Boolean::FALSE;
     }
     let movecount = P_Random(world) & 15;
-    MOBJ_ARENA.borrow_mut()[actor_id].movecount = movecount;
+    world.mobjs[actor_id].movecount = movecount;
     Boolean::TRUE
 }
 /// Selects a new movement direction for `actor` based on the vector to its target.
@@ -517,9 +516,11 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
 
     // Each walk attempt runs play code, so the direction is written just
     // before it.
-    let set_movedir = |movedir: i32| MOBJ_ARENA.borrow_mut()[actor_id].movedir = movedir;
+    fn set_movedir(world: &mut World, actor_id: MobjId, movedir: i32) {
+        world.mobjs[actor_id].movedir = movedir;
+    }
     let (olddir, deltax, deltay): (dirtype_t, fixed_t, fixed_t) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let actor = &mobjs[actor_id];
         let Some(target) = actor.target else {
             i_error!("P_NewChaseDir: called with no target");
@@ -548,7 +549,7 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
     }
     if d[1] as u32 != DI_NODIR as u32 && d[2] as u32 != DI_NODIR as u32 {
         let movedir: i32 = diags[((((deltay < 0) as i32) << 1) + (deltax > 0) as i32) as usize];
-        set_movedir(movedir);
+        set_movedir(world, actor_id, movedir);
         if movedir != turnaround as i32 && P_TryWalk(world, actor_id).is_truthy() {
             return;
         }
@@ -565,19 +566,19 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
         d[2] = DI_NODIR;
     }
     if d[1] as u32 != DI_NODIR as u32 {
-        set_movedir(d[1]);
+        set_movedir(world, actor_id, d[1]);
         if P_TryWalk(world, actor_id).is_truthy() {
             return;
         }
     }
     if d[2] as u32 != DI_NODIR as u32 {
-        set_movedir(d[2]);
+        set_movedir(world, actor_id, d[2]);
         if P_TryWalk(world, actor_id).is_truthy() {
             return;
         }
     }
     if olddir as u32 != DI_NODIR as u32 {
-        set_movedir(olddir);
+        set_movedir(world, actor_id, olddir);
         if P_TryWalk(world, actor_id).is_truthy() {
             return;
         }
@@ -586,7 +587,7 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
         tdir = DI_EAST;
         while tdir <= DI_SOUTHEAST {
             if tdir != turnaround as i32 {
-                set_movedir(tdir);
+                set_movedir(world, actor_id, tdir);
                 if P_TryWalk(world, actor_id).is_truthy() {
                     return;
                 }
@@ -597,7 +598,7 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
         tdir = DI_SOUTHEAST;
         while tdir != DI_EAST - 1 {
             if tdir != turnaround as i32 {
-                set_movedir(tdir);
+                set_movedir(world, actor_id, tdir);
                 if P_TryWalk(world, actor_id).is_truthy() {
                     return;
                 }
@@ -606,12 +607,12 @@ pub unsafe fn P_NewChaseDir(world: &mut World, actor_id: MobjId) {
         }
     }
     if turnaround as u32 != DI_NODIR as u32 {
-        set_movedir(turnaround as i32);
+        set_movedir(world, actor_id, turnaround as i32);
         if P_TryWalk(world, actor_id).is_truthy() {
             return;
         }
     }
-    set_movedir(DI_NODIR);
+    set_movedir(world, actor_id, DI_NODIR);
 }
 /// Scans active players to find a visible target for `actor`; returns `TRUE` if one is found.
 ///
@@ -634,23 +635,23 @@ pub fn P_LookForPlayers(world: &mut World, actor_id: MobjId, allaround: Boolean)
 
     // The sight check runs no play code; `lastlook` is still read through
     // the arena at each use, as C reads it through its pointer.
-    let lastlook = || MOBJ_ARENA.borrow()[actor_id].lastlook;
+    let lastlook = |world: &World| world.mobjs[actor_id].lastlook;
     c = 0;
-    let stop: i32 = (lastlook() - 1) & 3;
+    let stop: i32 = (lastlook(world) - 1) & 3;
     loop {
         's_20: {
-            if world.session.in_game(lastlook() as usize) {
+            if world.session.in_game(lastlook(world) as usize) {
                 let c2rust_fresh1 = c;
                 c += 1;
-                if c2rust_fresh1 == 2 || lastlook() == stop {
+                if c2rust_fresh1 == 2 || lastlook(world) == stop {
                     return Boolean::FALSE;
                 }
-                let player = PlayerId::new(lastlook() as usize);
+                let player = PlayerId::new(lastlook(world) as usize);
                 if world.players[player].health > 0 {
                     let player_mo = world.players[player].mo();
                     let sight = P_CheckSight(world, actor_id, player_mo);
                     if sight != 0 {
-                        let mut mobjs = MOBJ_ARENA.borrow_mut();
+                        let mobjs = &mut world.mobjs;
                         if allaround.is_false() {
                             let (actor, player_mo) = (&mobjs[actor_id], &mobjs[player_mo]);
                             an = R_PointToAngle2(actor.x, actor.y, player_mo.x, player_mo.y)
@@ -669,7 +670,7 @@ pub fn P_LookForPlayers(world: &mut World, actor_id: MobjId, allaround: Boolean)
                 }
             }
         }
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let actor = &mut mobjs[actor_id];
         actor.lastlook = (actor.lastlook + 1) & 3;
     }
@@ -696,14 +697,14 @@ const JUNK_LINE: line_t = line_t {
 /// `true` if another map object of `mo`'s type is still alive: the thinker
 /// walk shared by `A_KeenDie` and `A_BossDeath` (C compares each mobj
 /// thinker's type and health).
-fn another_alive_of_same_kind(mo_id: MobjId) -> bool {
-    let mobjs = MOBJ_ARENA.borrow();
+fn another_alive_of_same_kind(world: &World, mo_id: MobjId) -> bool {
+    let mobjs = &world.mobjs;
     let kind = mobjs[mo_id].kind;
-    thinkers().any(|thinker| {
+    world.thinkers.list.iter().any(|&thinker| {
         let ThinkerId::Mobj(other_id) = thinker else {
             return false;
         };
-        if thinker.kind() != ThinkerKind::Mobj || other_id == mo_id {
+        if thinker.kind(world) != ThinkerKind::Mobj || other_id == mo_id {
             return false;
         }
         let other = &mobjs[other_id];
@@ -719,7 +720,7 @@ fn another_alive_of_same_kind(mo_id: MobjId) -> bool {
 pub fn A_KeenDie(world: &mut World, mo_id: MobjId) {
     let mut junk: line_t = JUNK_LINE;
     A_Fall(world, mo_id);
-    if another_alive_of_same_kind(mo_id) {
+    if another_alive_of_same_kind(world, mo_id) {
         return;
     }
     junk.tag = 666;
@@ -741,7 +742,7 @@ pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
     // `true` when the sector's sound target is seen (C's `goto seeyou`).
     let seen = 'seeyou: {
         let ambush = {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             let actor = &mut mobjs[actor_id];
             actor.threshold = 0;
             let targ: Option<MobjId> = world.level.subsector_sector(actor.subsector).soundtarget;
@@ -752,13 +753,13 @@ pub unsafe fn A_Look(world: &mut World, actor_id: MobjId) {
             actor.target = Some(targ);
             actor.flags & MF_AMBUSH != 0
         };
-        !ambush || P_CheckSight(world, actor_id, current_target(actor_id)) != 0
+        !ambush || P_CheckSight(world, actor_id, current_target(world, actor_id)) != 0
     };
     if !seen && P_LookForPlayers(world, actor_id, Boolean::FALSE).is_false() {
         return;
     }
     let (info, kind) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[actor_id].info, mobjs[actor_id].kind)
     };
     if info.get().seesound != Sfx::None {
@@ -801,7 +802,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     // read once; every other field is read afresh after each call that
     // runs play code.
     let (info, has_shootable_target, justattacked) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target_live = mobjs[actor_id].target.map(|target| {
             (
                 mobjs[target].health > 0,
@@ -859,22 +860,22 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
     if info.missilestate != 0
         && !(world.session.gameskill < sk_nightmare
             && world.session.fastparm == 0
-            && MOBJ_ARENA.borrow()[actor_id].movecount != 0)
+            && world.mobjs[actor_id].movecount != 0)
         && P_CheckMissileRange(world, actor_id).is_truthy()
     {
         P_SetMobjState(world, actor_id, info.missilestate as statenum_t);
-        MOBJ_ARENA.borrow_mut()[actor_id].flags |= MF_JUSTATTACKED;
+        world.mobjs[actor_id].flags |= MF_JUSTATTACKED;
         return;
     }
     if world.session.netgame != 0
-        && MOBJ_ARENA.borrow()[actor_id].threshold == 0
-        && P_CheckSight(world, actor_id, current_target(actor_id)) == 0
+        && world.mobjs[actor_id].threshold == 0
+        && P_CheckSight(world, actor_id, current_target(world, actor_id)) == 0
         && P_LookForPlayers(world, actor_id, Boolean::TRUE).is_truthy()
     {
         return;
     }
     let movecount = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let actor = &mut mobjs[actor_id];
         actor.movecount -= 1;
         actor.movecount
@@ -893,7 +894,7 @@ pub unsafe fn A_Chase(world: &mut World, actor_id: MobjId) {
 /// Returns immediately if `actor->target` is null.
 pub fn A_FaceTarget(world: &mut World, actor_id: MobjId) {
     let shadow = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let Some(target) = mobjs[actor_id].target else {
             return;
         };
@@ -906,7 +907,7 @@ pub fn A_FaceTarget(world: &mut World, actor_id: MobjId) {
     };
     if shadow {
         let spread = ((P_Random(world) - P_Random(world)) << 21) as angle_t;
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let actor = &mut mobjs[actor_id];
         actor.angle = actor.angle.wrapping_add(spread);
     }
@@ -922,11 +923,11 @@ pub fn A_FaceTarget(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_PosAttack(world: &mut World, actor_id: MobjId) {
     let mut angle: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    angle = MOBJ_ARENA.borrow()[actor_id].angle as i32;
+    angle = world.mobjs[actor_id].angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, angle as angle_t, MISSILERANGE) as i32;
     S_StartSound(world, actor_id, Sfx::Pistol as i32);
     angle = angle.wrapping_add((P_Random(world) - P_Random(world)) << 20);
@@ -955,12 +956,12 @@ pub unsafe fn A_SPosAttack(world: &mut World, actor_id: MobjId) {
 
     let mut damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     S_StartSound(world, actor_id, Sfx::Shotgn as i32);
     A_FaceTarget(world, actor_id);
-    let bangle: i32 = MOBJ_ARENA.borrow()[actor_id].angle as i32;
+    let bangle: i32 = world.mobjs[actor_id].angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
     i = 0;
     while i < 3 {
@@ -987,12 +988,12 @@ pub unsafe fn A_SPosAttack(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_CPosAttack(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     S_StartSound(world, actor_id, Sfx::Shotgn as i32);
     A_FaceTarget(world, actor_id);
-    let bangle: i32 = MOBJ_ARENA.borrow()[actor_id].angle as i32;
+    let bangle: i32 = world.mobjs[actor_id].angle as i32;
     let slope: i32 = P_AimLineAttack(world, actor_id, bangle as angle_t, MISSILERANGE) as i32;
     let angle: i32 = bangle.wrapping_add((P_Random(world) - P_Random(world)) << 20);
     let damage: i32 = (P_Random(world) % 5 + 1) * 3;
@@ -1029,13 +1030,13 @@ pub unsafe fn A_CPosRefire(world: &mut World, actor_id: MobjId) {
 /// Runs [`P_SetMobjState`] on `actor_id`.
 unsafe fn stop_firing_unless_target_seen(world: &mut World, actor_id: MobjId) {
     let target_dead = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         mobjs[actor_id]
             .target
             .is_none_or(|target| mobjs[target].health <= 0)
     };
-    if target_dead || P_CheckSight(world, actor_id, current_target(actor_id)) == 0 {
-        let seestate = MOBJ_ARENA.borrow()[actor_id].info.get().seestate;
+    if target_dead || P_CheckSight(world, actor_id, current_target(world, actor_id)) == 0 {
+        let seestate = world.mobjs[actor_id].info.get().seestate;
         P_SetMobjState(world, actor_id, seestate as statenum_t);
     }
 }
@@ -1060,11 +1061,16 @@ pub unsafe fn A_SpidRefire(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_BspiAttack(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    P_SpawnMissile(world, actor_id, current_target(actor_id), MT_ARACHPLAZ);
+    P_SpawnMissile(
+        world,
+        actor_id,
+        current_target(world, actor_id),
+        MT_ARACHPLAZ,
+    );
 }
 /// Attack action for the Imp: claw swipe in melee range, fireball at distance.
 ///
@@ -1077,7 +1083,7 @@ pub unsafe fn A_BspiAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_TroopAttack(world: &mut World, actor_id: MobjId) {
     let damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
@@ -1086,14 +1092,19 @@ pub unsafe fn A_TroopAttack(world: &mut World, actor_id: MobjId) {
         damage = (P_Random(world) % 8 + 1) * 3;
         P_DamageMobj(
             world,
-            current_target(actor_id),
+            current_target(world, actor_id),
             Some(actor_id),
             Some(actor_id),
             damage,
         );
         return;
     }
-    P_SpawnMissile(world, actor_id, current_target(actor_id), MT_TROOPSHOT);
+    P_SpawnMissile(
+        world,
+        actor_id,
+        current_target(world, actor_id),
+        MT_TROOPSHOT,
+    );
 }
 /// Attack action for the Demon (Sarg): melee-only bite dealing `(rnd%10+1)*4` damage (4-40).
 ///
@@ -1105,7 +1116,7 @@ pub unsafe fn A_TroopAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_SargAttack(world: &mut World, actor_id: MobjId) {
     let damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
@@ -1113,7 +1124,7 @@ pub unsafe fn A_SargAttack(world: &mut World, actor_id: MobjId) {
         damage = (P_Random(world) % 10 + 1) * 4;
         P_DamageMobj(
             world,
-            current_target(actor_id),
+            current_target(world, actor_id),
             Some(actor_id),
             Some(actor_id),
             damage,
@@ -1130,7 +1141,7 @@ pub unsafe fn A_SargAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_HeadAttack(world: &mut World, actor_id: MobjId) {
     let damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
@@ -1138,14 +1149,19 @@ pub unsafe fn A_HeadAttack(world: &mut World, actor_id: MobjId) {
         damage = (P_Random(world) % 6 + 1) * 10;
         P_DamageMobj(
             world,
-            current_target(actor_id),
+            current_target(world, actor_id),
             Some(actor_id),
             Some(actor_id),
             damage,
         );
         return;
     }
-    P_SpawnMissile(world, actor_id, current_target(actor_id), MT_HEADSHOT);
+    P_SpawnMissile(
+        world,
+        actor_id,
+        current_target(world, actor_id),
+        MT_HEADSHOT,
+    );
 }
 /// Attack action for the Cyberdemon: launches one `MT_ROCKET`.
 ///
@@ -1153,11 +1169,11 @@ pub unsafe fn A_HeadAttack(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_CyberAttack(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    P_SpawnMissile(world, actor_id, current_target(actor_id), MT_ROCKET);
+    P_SpawnMissile(world, actor_id, current_target(world, actor_id), MT_ROCKET);
 }
 /// Attack action for the Baron of Hell / Hell Knight: claw in melee, plasma ball at distance.
 ///
@@ -1170,7 +1186,7 @@ pub unsafe fn A_CyberAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_BruisAttack(world: &mut World, actor_id: MobjId) {
     let damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     if P_CheckMeleeRange(world, actor_id).is_truthy() {
@@ -1178,14 +1194,19 @@ pub unsafe fn A_BruisAttack(world: &mut World, actor_id: MobjId) {
         damage = (P_Random(world) % 8 + 1) * 10;
         P_DamageMobj(
             world,
-            current_target(actor_id),
+            current_target(world, actor_id),
             Some(actor_id),
             Some(actor_id),
             damage,
         );
         return;
     }
-    P_SpawnMissile(world, actor_id, current_target(actor_id), MT_BRUISERSHOT);
+    P_SpawnMissile(
+        world,
+        actor_id,
+        current_target(world, actor_id),
+        MT_BRUISERSHOT,
+    );
 }
 /// Attack action for the Revenant: launches a homing `MT_TRACER` missile.
 ///
@@ -1197,13 +1218,13 @@ pub unsafe fn A_BruisAttack(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_SkelMissile(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    MOBJ_ARENA.borrow_mut()[actor_id].z += 16 * FRACUNIT;
-    let mo_id = P_SpawnMissile(world, actor_id, current_target(actor_id), MT_TRACER);
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    world.mobjs[actor_id].z += 16 * FRACUNIT;
+    let mo_id = P_SpawnMissile(world, actor_id, current_target(world, actor_id), MT_TRACER);
+    let mobjs = &mut world.mobjs;
     mobjs[actor_id].z -= 16 * FRACUNIT;
     let actor_target = mobjs[actor_id].target;
     let mo = &mut mobjs[mo_id];
@@ -1236,19 +1257,19 @@ pub unsafe fn A_Tracer(world: &mut World, actor_id: MobjId) {
         return;
     }
     let (x, y, z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[actor_id].x, mobjs[actor_id].y, mobjs[actor_id].z)
     };
     P_SpawnPuff(world, x, y, z);
     // The puff's spawn runs play code; the actor is read afresh.
     let (x, y, z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let actor = &mobjs[actor_id];
         (actor.x - actor.momx, actor.y - actor.momy, actor.z)
     };
     let th_id = P_SpawnMobj(world, x, y, z, MT_SMOKE);
     let tic_spread = P_Random(world) & 3;
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let th = &mut mobjs[th_id];
     th.momz = FRACUNIT as fixed_t;
     th.tics -= tic_spread;
@@ -1303,7 +1324,7 @@ pub unsafe fn A_Tracer(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_SkelWhoosh(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
@@ -1319,7 +1340,7 @@ pub unsafe fn A_SkelWhoosh(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_SkelFist(world: &mut World, actor_id: MobjId) {
     let damage: i32;
 
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
@@ -1328,7 +1349,7 @@ pub unsafe fn A_SkelFist(world: &mut World, actor_id: MobjId) {
         S_StartSound(world, actor_id, Sfx::Skepch as i32);
         P_DamageMobj(
             world,
-            current_target(actor_id),
+            current_target(world, actor_id),
             Some(actor_id),
             Some(actor_id),
             damage,
@@ -1349,7 +1370,7 @@ pub unsafe fn A_SkelFist(world: &mut World, actor_id: MobjId) {
 /// [`P_CheckPosition`].
 pub unsafe fn PIT_VileCheck(world: &mut World, thing_id: MobjId) -> Boolean {
     let (x, y) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let thing = &mut mobjs[thing_id];
         if thing.flags & MF_CORPSE == 0 {
             return Boolean::TRUE;
@@ -1373,7 +1394,7 @@ pub unsafe fn PIT_VileCheck(world: &mut World, thing_id: MobjId) -> Boolean {
         (corpsehit.x, corpsehit.y)
     };
     let check: Boolean = Boolean::from_raw(P_CheckPosition(world, thing_id, x, y));
-    MOBJ_ARENA.borrow_mut()[thing_id].height >>= 2;
+    world.mobjs[thing_id].height >>= 2;
     if check.is_false() {
         return Boolean::TRUE;
     }
@@ -1405,7 +1426,7 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
     let temp: Option<MobjId>;
 
     let look_ahead = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let actor = &mobjs[actor_id];
         (actor.movedir != DI_NODIR).then(|| {
             let speed = actor.info.get().speed as fixed_t;
@@ -1441,17 +1462,17 @@ pub unsafe fn A_VileChase(world: &mut World, actor_id: MobjId) {
                         .corpsehit
                         .expect("the corpse search stopped without a corpse");
                     {
-                        let actor = &mut MOBJ_ARENA.borrow_mut()[actor_id];
+                        let actor = &mut world.mobjs[actor_id];
                         temp = actor.target;
                         actor.target = Some(corpsehit_id);
                     }
                     A_FaceTarget(world, actor_id);
-                    MOBJ_ARENA.borrow_mut()[actor_id].target = temp;
+                    world.mobjs[actor_id].target = temp;
                     P_SetMobjState(world, actor_id, S_VILE_HEAL1);
                     S_StartSound(world, corpsehit_id, Sfx::Slop as i32);
-                    let info = MOBJ_ARENA.borrow()[corpsehit_id].info.get();
+                    let info = world.mobjs[corpsehit_id].info.get();
                     P_SetMobjState(world, corpsehit_id, info.raisestate as statenum_t);
-                    let mut mobjs = MOBJ_ARENA.borrow_mut();
+                    let mobjs = &mut world.mobjs;
                     let corpsehit = &mut mobjs[corpsehit_id];
                     corpsehit.height <<= 2;
                     corpsehit.flags = info.flags;
@@ -1500,7 +1521,7 @@ pub unsafe fn A_FireCrackle(world: &mut World, actor_id: MobjId) {
 /// Uses `P_UnsetThingPosition`/`P_SetThingPosition` to maintain blockmap consistency.
 pub fn A_Fire(world: &mut World, actor_id: MobjId) {
     let (tracer, target) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[actor_id].tracer, mobjs[actor_id].target)
     };
     let Some(dest_id) = tracer else {
@@ -1512,7 +1533,7 @@ pub fn A_Fire(world: &mut World, actor_id: MobjId) {
     }
     P_UnsetThingPosition(world, actor_id);
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let dest = &mobjs[dest_id];
         let an = (dest.angle >> ANGLETOFINESHIFT) as usize;
         // `finecosine[an]`: the cosine table is the sine table a quarter
@@ -1536,25 +1557,21 @@ pub fn A_Fire(world: &mut World, actor_id: MobjId) {
 /// Note: the C source passes `actor->target->x` for both X and Y of `P_SpawnMobj`,
 /// which is a vanilla Doom bug (Y should be `actor->target->y`). This port
 /// faithfully reproduces the original behavior.
-///
-/// # Safety
-///
-/// `actor_id` must name a map object of the level.
-pub unsafe fn A_VileTarget(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+pub fn A_VileTarget(world: &mut World, actor_id: MobjId) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
     // FIXME: p_enemy.c passes `actor->target->x` for the Y argument instead of
     // `actor->target->y` - this is a vanilla Doom bug reproduced faithfully here.
     let (target_x, target_z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let target = &mobjs[target_of(&mobjs[actor_id])];
         (target.x, target.z)
     };
     let fog_id = P_SpawnMobj(world, target_x, target_x, target_z, MT_FIRE);
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         mobjs[actor_id].tracer = Some(fog_id);
         mobjs[fog_id].target = Some(actor_id);
         mobjs[fog_id].tracer = mobjs[actor_id].target;
@@ -1572,17 +1589,17 @@ pub unsafe fn A_VileTarget(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_VileAttack(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    if P_CheckSight(world, actor_id, current_target(actor_id)) == 0 {
+    if P_CheckSight(world, actor_id, current_target(world, actor_id)) == 0 {
         return;
     }
     S_StartSound(world, actor_id, Sfx::Barexp as i32);
     P_DamageMobj(
         world,
-        current_target(actor_id),
+        current_target(world, actor_id),
         Some(actor_id),
         Some(actor_id),
         20,
@@ -1590,7 +1607,7 @@ pub unsafe fn A_VileAttack(world: &mut World, actor_id: MobjId) {
     // Nothing from here on changes `actor->target`, so C's repeated reads
     // after the damage are one read here.
     let fire_id = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let target_id = target_of(&mobjs[actor_id]);
         let target = &mut mobjs[target_id];
         target.momz = (1000 * FRACUNIT / target.info.get().mass) as fixed_t;
@@ -1630,21 +1647,20 @@ pub unsafe fn A_FatRaise(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_FatAttack1(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     let target = {
-        let actor = &mut MOBJ_ARENA.borrow_mut()[actor_id];
+        let actor = &mut world.mobjs[actor_id];
         actor.angle = actor.angle.wrapping_add(FATSPREAD as angle_t);
         actor.target
     };
     let target = P_SubstNullMobj(world, target);
     P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
     let mo_id = P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
-    turn_missile(mo_id, FATSPREAD as angle_t);
+    turn_missile(world, mo_id, FATSPREAD as angle_t);
 }
 /// Turn missile `mo_id` by `turn` (wrapping) and point its momentum along
 /// the new angle at its type's speed: the second Mancubus fireball's
 /// spread.
-fn turn_missile(mo_id: MobjId, turn: angle_t) {
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
-    let mo = &mut mobjs[mo_id];
+fn turn_missile(world: &mut World, mo_id: MobjId, turn: angle_t) {
+    let mo = &mut world.mobjs[mo_id];
     mo.angle = mo.angle.wrapping_add(turn);
     let an = (mo.angle >> ANGLETOFINESHIFT) as usize;
     let speed = mo.info.get().speed as fixed_t;
@@ -1664,14 +1680,14 @@ fn turn_missile(mo_id: MobjId, turn: angle_t) {
 pub unsafe fn A_FatAttack2(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
     let target = {
-        let actor = &mut MOBJ_ARENA.borrow_mut()[actor_id];
+        let actor = &mut world.mobjs[actor_id];
         actor.angle = actor.angle.wrapping_sub(FATSPREAD as angle_t);
         actor.target
     };
     let target = P_SubstNullMobj(world, target);
     P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
     let mo_id = P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
-    turn_missile(mo_id, ((FATSPREAD * 2) as angle_t).wrapping_neg());
+    turn_missile(world, mo_id, ((FATSPREAD * 2) as angle_t).wrapping_neg());
 }
 /// Mancubus attack phase 3: two `MT_FATSHOT` fireballs spread symmetrically ±FATSPREAD/2.
 ///
@@ -1683,12 +1699,12 @@ pub unsafe fn A_FatAttack2(world: &mut World, actor_id: MobjId) {
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_FatAttack3(world: &mut World, actor_id: MobjId) {
     A_FaceTarget(world, actor_id);
-    let target = MOBJ_ARENA.borrow()[actor_id].target;
+    let target = world.mobjs[actor_id].target;
     let target = P_SubstNullMobj(world, target);
     let mo_id = P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
-    turn_missile(mo_id, ((FATSPREAD / 2) as angle_t).wrapping_neg());
+    turn_missile(world, mo_id, ((FATSPREAD / 2) as angle_t).wrapping_neg());
     let mo_id = P_SpawnMissile(world, actor_id, target, MT_FATSHOT);
-    turn_missile(mo_id, (FATSPREAD / 2) as angle_t);
+    turn_missile(world, mo_id, (FATSPREAD / 2) as angle_t);
 }
 /// Lost Soul charge attack: sets `MF_SKULLFLY` and launches the actor as a living missile.
 ///
@@ -1703,7 +1719,7 @@ pub unsafe fn A_SkullAttack(world: &mut World, actor_id: MobjId) {
     let mut dist: i32;
 
     let (dest_id, attacksound) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let actor = &mut mobjs[actor_id];
         let Some(dest_id) = actor.target else {
             return;
@@ -1713,7 +1729,7 @@ pub unsafe fn A_SkullAttack(world: &mut World, actor_id: MobjId) {
     };
     S_StartSound(world, actor_id, attacksound as i32);
     A_FaceTarget(world, actor_id);
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let actor = &mut mobjs[actor_id];
     let an = (actor.angle >> ANGLETOFINESHIFT) as usize;
     // `finecosine[an]`: the cosine table is the sine table a quarter turn
@@ -1743,11 +1759,11 @@ pub unsafe fn A_SkullAttack(world: &mut World, actor_id: MobjId) {
 /// `actor_id` must name a map object with valid `info`.
 pub unsafe fn A_PainShootSkull(world: &mut World, actor_id: MobjId, angle: angle_t) {
     let (x, y, z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let mut count: i32 = 0;
-        for thinker in thinkers() {
+        for &thinker in &world.thinkers.list {
             if let ThinkerId::Mobj(mobj) = thinker
-                && thinker.kind() == ThinkerKind::Mobj
+                && thinker.kind(world) == ThinkerKind::Mobj
                 && mobjs[mobj].kind as u32 == MT_SKULL as u32
             {
                 count += 1;
@@ -1770,7 +1786,7 @@ pub unsafe fn A_PainShootSkull(world: &mut World, actor_id: MobjId, angle: angle
     };
     let newmobj_id = P_SpawnMobj(world, x, y, z, MT_SKULL);
     let (newmobj_x, newmobj_y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[newmobj_id].x, mobjs[newmobj_id].y)
     };
     if P_TryMove(world, newmobj_id, newmobj_x, newmobj_y) == 0 {
@@ -1778,7 +1794,7 @@ pub unsafe fn A_PainShootSkull(world: &mut World, actor_id: MobjId, angle: angle
         return;
     }
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         mobjs[newmobj_id].target = mobjs[actor_id].target;
     }
     A_SkullAttack(world, newmobj_id);
@@ -1789,11 +1805,11 @@ pub unsafe fn A_PainShootSkull(world: &mut World, actor_id: MobjId, angle: angle
 ///
 /// `actor_id` must name a map object of the level.
 pub unsafe fn A_PainAttack(world: &mut World, actor_id: MobjId) {
-    if !has_target(actor_id) {
+    if !has_target(world, actor_id) {
         return;
     }
     A_FaceTarget(world, actor_id);
-    let angle = MOBJ_ARENA.borrow()[actor_id].angle;
+    let angle = world.mobjs[actor_id].angle;
     A_PainShootSkull(world, actor_id, angle);
 }
 /// Pain Elemental death: drops to the ground and spits three Lost Souls in cardinal directions.
@@ -1807,10 +1823,10 @@ pub unsafe fn A_PainAttack(world: &mut World, actor_id: MobjId) {
 pub unsafe fn A_PainDie(world: &mut World, actor_id: MobjId) {
     A_Fall(world, actor_id);
     // Each skull's spawn runs play code, so the angle is read afresh.
-    let angle = || MOBJ_ARENA.borrow()[actor_id].angle;
-    A_PainShootSkull(world, actor_id, angle().wrapping_add(ANG90 as angle_t));
-    A_PainShootSkull(world, actor_id, angle().wrapping_add(ANG180));
-    A_PainShootSkull(world, actor_id, angle().wrapping_add(ANG270));
+    let angle = |world: &World| world.mobjs[actor_id].angle;
+    A_PainShootSkull(world, actor_id, angle(world).wrapping_add(ANG90 as angle_t));
+    A_PainShootSkull(world, actor_id, angle(world).wrapping_add(ANG180));
+    A_PainShootSkull(world, actor_id, angle(world).wrapping_add(ANG270));
 }
 /// Plays the monster's death scream; randomises for multi-variant sound monsters.
 ///
@@ -1823,7 +1839,7 @@ pub unsafe fn A_PainDie(world: &mut World, actor_id: MobjId) {
 /// `actor_id` must name a map object with a valid `info`.
 pub unsafe fn A_Scream(world: &mut World, actor_id: MobjId) {
     let (info, kind) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[actor_id].info, mobjs[actor_id].kind)
     };
     let sound = match info.get().deathsound {
@@ -1852,14 +1868,14 @@ pub unsafe fn A_XScream(world: &mut World, actor_id: MobjId) {
 ///
 /// `actor_id` must name a map object with a valid `info`.
 pub unsafe fn A_Pain(world: &mut World, actor_id: MobjId) {
-    let painsound = MOBJ_ARENA.borrow()[actor_id].info.get().painsound;
+    let painsound = world.mobjs[actor_id].info.get().painsound;
     if painsound != Sfx::None {
         S_StartSound(world, actor_id, painsound as i32);
     }
 }
 /// Clears `MF_SOLID` so the falling corpse can be walked over.
-pub fn A_Fall(_world: &mut World, actor_id: MobjId) {
-    MOBJ_ARENA.borrow_mut()[actor_id].flags &= !(MF_SOLID);
+pub fn A_Fall(world: &mut World, actor_id: MobjId) {
+    world.mobjs[actor_id].flags &= !(MF_SOLID);
 }
 /// Triggers a 128-unit radius blast centred on `thingy`, sourced from `thingy->target`.
 ///
@@ -1871,7 +1887,7 @@ pub fn A_Fall(_world: &mut World, actor_id: MobjId) {
 /// `thingy` must name a map object of the level; its `target` may be `None`
 /// or stale (passed directly to `P_RadiusAttack`).
 pub unsafe fn A_Explode(world: &mut World, thingy: MobjId) {
-    let target = MOBJ_ARENA.borrow()[thingy].target;
+    let target = world.mobjs[thingy].target;
     P_RadiusAttack(world, thingy, target, 128);
 }
 /// Determines whether the death of a monster of type `motype` should trigger episode-end effects.
@@ -1916,7 +1932,7 @@ fn CheckBossEnd(session: &Session, motype: mobjtype_t) -> Boolean {
 pub fn A_BossDeath(world: &mut World, mo_id: MobjId) {
     // The type is set at spawn and never changes; the specials below
     // cannot change it either.
-    let kind = MOBJ_ARENA.borrow()[mo_id].kind;
+    let kind = world.mobjs[mo_id].kind;
     let mut junk: line_t = JUNK_LINE;
     let _i: i32 = 0;
     if gamemode() as u32 == commercial as u32 {
@@ -1939,7 +1955,7 @@ pub fn A_BossDeath(world: &mut World, mo_id: MobjId) {
     if i == MAXPLAYERS {
         return;
     }
-    if another_alive_of_same_kind(mo_id) {
+    if another_alive_of_same_kind(world, mo_id) {
         return;
     }
     if gamemode() as u32 == commercial as u32 {
@@ -2040,13 +2056,20 @@ pub unsafe fn A_CloseShotgun2(world: &mut World, player: PlayerId, psprite: usiz
 ///
 pub fn A_BrainAwake(world: &mut World, _mo: MobjId) {
     {
-        let enemy = &mut world.scratch.enemy;
+        // The spots are recorded in the scratch state while the thinker
+        // list and the map objects are read.
+        let World {
+            thinkers,
+            mobjs,
+            scratch,
+            ..
+        } = world;
+        let enemy = &mut scratch.enemy;
         enemy.numbraintargets = 0;
         enemy.braintargeton = 0;
-        let mobjs = MOBJ_ARENA.borrow();
-        for thinker in thinkers() {
+        for &thinker in &thinkers.list {
             if let ThinkerId::Mobj(mobj) = thinker
-                && thinker.kind() == ThinkerKind::Mobj
+                && mobjs[mobj].thinker.kind == ThinkerKind::Mobj
                 && mobjs[mobj].kind as u32 == MT_BOSSTARGET as u32
             {
                 let index = enemy.numbraintargets as usize;
@@ -2081,17 +2104,17 @@ pub unsafe fn A_BrainScream(world: &mut World, mo_id: MobjId) {
 
     // Each rocket's spawn and state change run play code, so the brain's
     // position is read afresh for every one, as C reads it.
-    let position = || {
-        let mobjs = MOBJ_ARENA.borrow();
+    let position = |world: &World| {
+        let mobjs = &world.mobjs;
         (mobjs[mo_id].x, mobjs[mo_id].y)
     };
-    x = position().0 - 196 * FRACUNIT;
-    while x < position().0 + 320 * FRACUNIT {
-        y = position().1 - 320 * FRACUNIT;
+    x = position(world).0 - 196 * FRACUNIT;
+    while x < position(world).0 + 320 * FRACUNIT {
+        y = position(world).1 - 320 * FRACUNIT;
         z = 128 + P_Random(world) * 2 * FRACUNIT;
         let th_id = P_SpawnMobj(world, x as fixed_t, y as fixed_t, z as fixed_t, MT_ROCKET);
         let momz = (P_Random(world) * 512) as fixed_t;
-        MOBJ_ARENA.borrow_mut()[th_id].momz = momz;
+        world.mobjs[th_id].momz = momz;
         P_SetMobjState(world, th_id, S_BRAINEXPLODE1);
         randomise_explosion_tics(world, th_id);
         x += FRACUNIT * 8;
@@ -2103,7 +2126,7 @@ pub unsafe fn A_BrainScream(world: &mut World, mo_id: MobjId) {
 /// `A_BrainExplode`).
 fn randomise_explosion_tics(world: &mut World, th_id: MobjId) {
     let tic_spread = P_Random(world) & 7;
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let th = &mut mobjs[th_id];
     th.tics -= tic_spread;
     if th.tics < 1 {
@@ -2123,7 +2146,7 @@ fn randomise_explosion_tics(world: &mut World, th_id: MobjId) {
 /// action pointer.
 pub unsafe fn A_BrainExplode(world: &mut World, mo_id: MobjId) {
     let (mo_x, mo_y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[mo_id].x, mobjs[mo_id].y)
     };
     let x: i32 = mo_x + (P_Random(world) - P_Random(world)) * 2048;
@@ -2131,7 +2154,7 @@ pub unsafe fn A_BrainExplode(world: &mut World, mo_id: MobjId) {
     let z: i32 = 128 + P_Random(world) * 2 * FRACUNIT;
     let th_id = P_SpawnMobj(world, x as fixed_t, y as fixed_t, z as fixed_t, MT_ROCKET);
     let momz = (P_Random(world) * 512) as fixed_t;
-    MOBJ_ARENA.borrow_mut()[th_id].momz = momz;
+    world.mobjs[th_id].momz = momz;
     P_SetMobjState(world, th_id, S_BRAINEXPLODE1);
     randomise_explosion_tics(world, th_id);
 }
@@ -2169,7 +2192,7 @@ pub unsafe fn A_BrainSpit(world: &mut World, mo_id: MobjId) {
     };
     let newmobj_id = P_SpawnMissile(world, mo_id, targ_id, MT_SPAWNSHOT);
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         mobjs[newmobj_id].target = Some(targ_id);
         let travel = mobjs[targ_id].y - mobjs[mo_id].y;
         let newmobj = &mut mobjs[newmobj_id];
@@ -2206,7 +2229,7 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
     let type_0: mobjtype_t;
 
     let target = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let mo = &mut mobjs[mo_id];
         mo.reactiontime -= 1;
         if mo.reactiontime != 0 {
@@ -2217,12 +2240,12 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
     let targ_id = P_SubstNullMobj(world, target);
     // The spot's position, read afresh after each spawn (which runs play
     // code), as C reads it through its pointer.
-    let targ_position = || {
-        let mobjs = MOBJ_ARENA.borrow();
+    let targ_position = |world: &World| {
+        let mobjs = &world.mobjs;
         let targ = &mobjs[targ_id];
         (targ.x, targ.y, targ.z)
     };
-    let (x, y, z) = targ_position();
+    let (x, y, z) = targ_position(world);
     let fog = P_SpawnMobj(world, x, y, z, MT_SPAWNFIRE);
     S_StartSound(world, fog, Sfx::Telept as i32);
     let r: i32 = P_Random(world);
@@ -2249,14 +2272,14 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
     } else {
         type_0 = MT_BRUISER;
     }
-    let (x, y, z) = targ_position();
+    let (x, y, z) = targ_position(world);
     let newmobj_id = P_SpawnMobj(world, x, y, z, type_0);
     if P_LookForPlayers(world, newmobj_id, Boolean::TRUE).is_truthy() {
-        let seestate = MOBJ_ARENA.borrow()[newmobj_id].info.get().seestate;
+        let seestate = world.mobjs[newmobj_id].info.get().seestate;
         P_SetMobjState(world, newmobj_id, seestate as statenum_t);
     }
     let (x, y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[newmobj_id].x, mobjs[newmobj_id].y)
     };
     P_TeleportMove(world, newmobj_id, x, y);
@@ -2273,7 +2296,7 @@ pub unsafe fn A_SpawnFly(world: &mut World, mo_id: MobjId) {
 /// action pointer.
 pub unsafe fn A_PlayerScream(world: &mut World, mo_id: MobjId) {
     let mut sound: i32 = Sfx::Pldeth as i32;
-    if gamemode() as u32 == commercial as u32 && MOBJ_ARENA.borrow()[mo_id].health < -50 {
+    if gamemode() as u32 == commercial as u32 && world.mobjs[mo_id].health < -50 {
         sound = Sfx::Pdiehi as i32;
     }
     S_StartSound(world, mo_id, sound);

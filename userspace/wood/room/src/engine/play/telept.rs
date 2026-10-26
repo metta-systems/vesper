@@ -25,7 +25,7 @@ use crate::engine::{
     play::{
         map::P_TeleportMove,
         mobj::P_SpawnMobj,
-        tick::{MOBJ_ARENA, ThinkerId, ThinkerKind, thinkers},
+        tick::{ThinkerId, ThinkerKind, thinker_at},
     },
     sound::{S_StartSound, info::Sfx},
     world::World,
@@ -58,7 +58,7 @@ use crate::engine::{
 /// be loaded.
 pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id: MobjId) -> i32 {
     // Don't teleport missiles
-    if MOBJ_ARENA.borrow()[thing_id].flags & MF_MISSILE != 0 {
+    if world.mobjs[thing_id].flags & MF_MISSILE != 0 {
         return 0;
     }
 
@@ -75,17 +75,20 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
             continue;
         }
 
-        for thinker in thinkers() {
+        // The walk reads one entry at a time: the teleport spawns fog.
+        let mut position = 0;
+        while let Some(thinker) = thinker_at(world, position) {
+            position += 1;
             // Not a mobj
             let ThinkerId::Mobj(marker_id) = thinker else {
                 continue;
             };
-            if thinker.kind() != ThinkerKind::Mobj {
+            if thinker.kind(world) != ThinkerKind::Mobj {
                 continue;
             }
 
             let (marker_kind, marker_subsector) = {
-                let mobjs = MOBJ_ARENA.borrow();
+                let mobjs = &world.mobjs;
                 (mobjs[marker_id].kind, mobjs[marker_id].subsector)
             };
 
@@ -101,7 +104,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
             }
 
             let (oldx, oldy, oldz, marker_x, marker_y) = {
-                let mobjs = MOBJ_ARENA.borrow();
+                let mobjs = &world.mobjs;
                 let thing = &mobjs[thing_id];
                 let marker = &mobjs[marker_id];
                 (thing.x, thing.y, thing.z, marker.x, marker.y)
@@ -113,7 +116,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
             }
 
             let (thing_z, thing_player) = {
-                let mut mobjs = MOBJ_ARENA.borrow_mut();
+                let mobjs = &mut world.mobjs;
                 let thing = &mut mobjs[thing_id];
                 // Final Doom quirk: don't set z
                 if gameversion() != EXE_FINAL {
@@ -137,7 +140,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
 
             // Spawn teleport fog at destination
             let (marker_x, marker_y, marker_angle, thing_z) = {
-                let mobjs = MOBJ_ARENA.borrow();
+                let mobjs = &world.mobjs;
                 let marker = &mobjs[marker_id];
                 (marker.x, marker.y, marker.angle, mobjs[thing_id].z)
             };
@@ -155,7 +158,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
                 S_StartSound(world, fog, Sfx::Telept as i32);
             }
 
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             let marker_angle = mobjs[marker_id].angle;
             let thing = &mut mobjs[thing_id];
             // Don't move for a bit

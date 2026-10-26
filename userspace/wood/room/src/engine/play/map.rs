@@ -38,7 +38,6 @@ use crate::{
             },
             mobj::MobjId,
             sight::P_CheckSight,
-            tick::MOBJ_ARENA,
         },
         render_3d::main::{R_PointInSubsector, R_PointToAngle2},
         wad::format::LinedefFlag,
@@ -395,7 +394,7 @@ fn start_position_check(
     y: fixed_t,
 ) -> [fixed_t; 4] {
     let (radius, flags) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[thing_id].radius, mobjs[thing_id].flags)
     };
     {
@@ -445,7 +444,7 @@ fn start_position_check(
 pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
     let (tmthing_id, tmx, tmy) = (tmthing(world), world.scratch.map.tmx, world.scratch.map.tmy);
     {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
         if thing.flags & MF_SHOOTABLE == 0 {
             return 1;
@@ -501,7 +500,7 @@ pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y:
 
     P_UnsetThingPosition(world, thing_id);
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let thing = &mut mobjs[thing_id];
         thing.floorz = world.scratch.map.tmfloorz;
         thing.ceilingz = world.scratch.map.tmceilingz;
@@ -551,7 +550,7 @@ pub fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
         return 0;
     }
     let (tmthing_flags, tmthing_player) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let tmthing = &mobjs[scratch.map.tmthing.expect("no position check running")];
         (tmthing.flags, tmthing.player)
     };
@@ -605,7 +604,7 @@ pub fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
 pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
     // Both objects are read before the first call that runs play code, and
     // every path returns right after it (the skull slam re-reads `tmthing`).
-    let mobjs = MOBJ_ARENA.borrow();
+    let mobjs = &world.mobjs;
     let thing = &mobjs[thing_id];
     if thing.flags & (MF_SOLID | MF_SPECIAL | MF_SHOOTABLE) == 0 {
         return 1;
@@ -630,14 +629,13 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
 
     // check for skulls slamming into things
     if tmthing_flags & MF_SKULLFLY != 0 {
-        drop(mobjs);
         let damage = ((P_Random(world) % 8) + 1) * tmthing_info.get().damage;
         P_DamageMobj(world, thing_id, Some(tmthing_id), Some(tmthing_id), damage);
         // The damage can run actions that check other objects' positions;
         // like C, the rest of the slam acts on whatever `tmthing` is now.
         let tmthing_id = self::tmthing(world);
         let spawnstate = {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             let tmthing = &mut mobjs[tmthing_id];
             tmthing.flags &= !MF_SKULLFLY;
             tmthing.momx = 0;
@@ -675,12 +673,10 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
         if thing_flags & MF_SHOOTABLE == 0 {
             return (thing_flags & MF_SOLID == 0) as u32;
         }
-        drop(mobjs);
         let damage = ((P_Random(world) % 8) + 1) * tmthing_info.get().damage;
         P_DamageMobj(world, thing_id, Some(tmthing_id), tmthing_target, damage);
         return 0;
     }
-    drop(mobjs);
 
     // check for special pickup
     if thing_flags & MF_SPECIAL != 0 {
@@ -714,7 +710,7 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
 pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let tmbbox = start_position_check(world, thing_id, x, y);
 
-    if MOBJ_ARENA.borrow()[thing_id].flags & MF_NOCLIP != 0 {
+    if world.mobjs[thing_id].flags & MF_NOCLIP != 0 {
         return 1;
     }
 
@@ -776,7 +772,7 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
     }
     // The check can run play code; the thing is read afresh after it.
     let (flags, height, z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
         (thing.flags, thing.height, thing.z)
     };
@@ -799,7 +795,7 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
 
     P_UnsetThingPosition(world, thing_id);
     let (oldx, oldy) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let thing = &mut mobjs[thing_id];
         let old_position = (thing.x, thing.y);
         thing.floorz = world.scratch.map.tmfloorz;
@@ -810,7 +806,7 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
     };
     P_SetThingPosition(world, thing_id);
 
-    if MOBJ_ARENA.borrow()[thing_id].flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
+    if world.mobjs[thing_id].flags & (MF_TELEPORT | MF_NOCLIP) == 0 {
         // A crossed special can move things (teleporters reset the list),
         // so the count is re-read before every pop, as in C.
         loop {
@@ -823,7 +819,7 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
                 map.spechit[map.numspechit as usize]
             };
             let (thing_x, thing_y) = {
-                let mobjs = MOBJ_ARENA.borrow();
+                let mobjs = &world.mobjs;
                 (mobjs[thing_id].x, mobjs[thing_id].y)
             };
             let (side, oldside, special) = {
@@ -858,12 +854,12 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
 /// sector-height propagation.
 pub unsafe fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
     let (onfloor, x, y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
         (thing.z == thing.floorz, thing.x, thing.y)
     };
     P_CheckPosition(world, thing_id, x, y);
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let thing = &mut mobjs[thing_id];
     thing.floorz = world.scratch.map.tmfloorz;
     thing.ceilingz = world.scratch.map.tmceilingz;
@@ -910,7 +906,7 @@ pub fn P_HitSlideLine(world: &mut World, ld: LineId) {
     }
     let (tmxmove, tmymove) = (map.tmxmove, map.tmymove);
     let (slidemo_x, slidemo_y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let slidemo = &mobjs[map.slidemo.expect("slide without a moving object")];
         (slidemo.x, slidemo.y)
     };
@@ -954,7 +950,7 @@ pub fn PTR_SlideTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     let World { level, scratch, .. } = world;
     let PlayScratch { map, maputl, .. } = scratch;
     let (slidemo_x, slidemo_y, slidemo_z, slidemo_height) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let slidemo = &mobjs[map.slidemo.expect("slide without a moving object")];
         (slidemo.x, slidemo.y, slidemo.z, slidemo.height)
     };
@@ -1001,16 +997,15 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
     let slide_traverse = |world: &mut World, intercept| PTR_SlideTraverse(world, intercept) != 0;
     // The object's position and momentum, read afresh after every move
     // (each runs play code), as C reads them through its pointer.
-    let position_and_momentum = || {
-        let mobjs = MOBJ_ARENA.borrow();
-        let mo = &mobjs[mo_id];
+    let position_and_momentum = |world: &World| {
+        let mo = &world.mobjs[mo_id];
         (mo.x, mo.y, mo.momx, mo.momy)
     };
     // The stairstep fallback: try the pure-y move, then the pure-x one.
     let stairstep = |world: &mut World| {
-        let (x, y, _, momy) = position_and_momentum();
+        let (x, y, _, momy) = position_and_momentum(world);
         if P_TryMove(world, mo_id, x, y + momy) == 0 {
-            let (x, y, momx, _) = position_and_momentum();
+            let (x, y, momx, _) = position_and_momentum(world);
             P_TryMove(world, mo_id, x + momx, y);
         }
     };
@@ -1022,8 +1017,8 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
             return;
         }
 
-        let (x, y, momx, momy) = position_and_momentum();
-        let radius = MOBJ_ARENA.borrow()[mo_id].radius;
+        let (x, y, momx, momy) = position_and_momentum(world);
+        let radius = world.mobjs[mo_id].radius;
         let (leadx, trailx) = if momx > 0 {
             (x + radius, x - radius)
         } else {
@@ -1094,7 +1089,7 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
             return;
         }
         // The move above may have run play code; the momentum is re-read.
-        let (_, _, momx, momy) = position_and_momentum();
+        let (_, _, momx, momy) = position_and_momentum(world);
         {
             let map = &mut world.scratch.map;
             map.tmxmove = FixedMul(momx, bestslidefrac);
@@ -1105,7 +1100,7 @@ pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
         P_HitSlideLine(world, bestslideline.expect("slide hit without a line"));
         let (tmxmove, tmymove) = (world.scratch.map.tmxmove, world.scratch.map.tmymove);
         let (x, y) = {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
+            let mobjs = &mut world.mobjs;
             let mo = &mut mobjs[mo_id];
             mo.momx = tmxmove;
             mo.momy = tmymove;
@@ -1185,7 +1180,7 @@ pub fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 {
         return 1;
     }
     let (th_flags, th_z, th_height) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let th = &mobjs[th_id];
         (th.flags, th.z, th.height)
     };
@@ -1315,7 +1310,7 @@ pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u3
         return 1;
     }
     let (th_flags, th_z, th_height) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let th = &mobjs[th_id];
         (th.flags, th.z, th.height)
     };
@@ -1407,7 +1402,7 @@ unsafe fn goto_hitline(world: &mut World, li: LineId, intercept: intercept_t) {
 pub fn P_AimLineAttack(world: &mut World, t1: MobjId, angle: u32, distance: fixed_t) -> fixed_t {
     let t1_id = P_SubstNullMobj(world, Some(t1));
     let (t1_x, t1_y, t1_z, t1_height) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let t1 = &mobjs[t1_id];
         (t1.x, t1.y, t1.z, t1.height)
     };
@@ -1464,7 +1459,7 @@ pub unsafe fn P_LineAttack(
     damage: i32,
 ) {
     let (t1_x, t1_y, t1_z, t1_height) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let t1 = &mobjs[t1_id];
         (t1.x, t1.y, t1.z, t1.height)
     };
@@ -1525,7 +1520,7 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 
         }
         let mut side = 0;
         let (usething_x, usething_y) = {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             (mobjs[usething_id].x, mobjs[usething_id].y)
         };
         if P_PointOnLineSide(&world.level, usething_x, usething_y, line) == 1 {
@@ -1551,7 +1546,7 @@ pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
     world.scratch.map.usething = Some(mo_id);
     let (angle, x1, y1) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let mo = &mobjs[mo_id];
         ((mo.angle >> ANGLETOFINESHIFT) as usize, mo.x, mo.y)
     };
@@ -1592,7 +1587,7 @@ pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
 /// [`P_DamageMobj`].
 pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
     let (thing_x, thing_y, thing_radius) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
         if thing.flags & MF_SHOOTABLE == 0 {
             return 1;
@@ -1613,7 +1608,7 @@ pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
         )
     };
     let (bombspot_x, bombspot_y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[bombspot_id].x, mobjs[bombspot_id].y)
     };
     let dx = (thing_x - bombspot_x).wrapping_abs();
@@ -1659,7 +1654,7 @@ pub unsafe fn P_RadiusAttack(
     damage: i32,
 ) {
     let (spot_x, spot_y) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[spot_id].x, mobjs[spot_id].y)
     };
     let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
@@ -1707,12 +1702,12 @@ pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
         return 1;
     }
     let (health, flags) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[thing_id].health, mobjs[thing_id].flags)
     };
     if health <= 0 {
         P_SetMobjState(world, thing_id, S_GIBS);
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let thing = &mut mobjs[thing_id];
         thing.flags &= !MF_SOLID;
         thing.height = 0;
@@ -1732,15 +1727,15 @@ pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
         P_DamageMobj(world, thing_id, None, None, 10);
         // The damage can move the thing; the blood goes where it is now.
         let (x, y, z) = {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             let thing = &mobjs[thing_id];
             (thing.x, thing.y, thing.z + thing.height / 2)
         };
         let mo = P_SpawnMobj(world, x, y, z, MT_BLOOD);
         let momx = (P_Random(world) - P_Random(world)) << 12;
-        MOBJ_ARENA.borrow_mut()[mo].momx = momx;
+        world.mobjs[mo].momx = momx;
         let momy = (P_Random(world) - P_Random(world)) << 12;
-        MOBJ_ARENA.borrow_mut()[mo].momy = momy;
+        world.mobjs[mo].momy = momy;
     }
     1
 }

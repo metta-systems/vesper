@@ -654,13 +654,17 @@ fn capture_snapshot(tic: usize) -> Snapshot {
     } else {
         0
     };
-    let p = WORLD.borrow().players[pidx];
-    let (mo_x, mo_y, mo_z, mo_angle) = match p.mo {
-        None => (0, 0, 0, 0),
-        Some(mo) => {
-            let mo = unsafe { &*mo.ptr() };
-            (mo.x, mo.y, mo.z, mo.angle)
-        }
+    let (p, mo_x, mo_y, mo_z, mo_angle) = {
+        let world = WORLD.borrow();
+        let p = world.players[pidx];
+        let (mo_x, mo_y, mo_z, mo_angle) = match p.mo {
+            None => (0, 0, 0, 0),
+            Some(mo) => {
+                let mo = &world.mobjs[mo];
+                (mo.x, mo.y, mo.z, mo.angle)
+            }
+        };
+        (p, mo_x, mo_y, mo_z, mo_angle)
     };
 
     Snapshot {

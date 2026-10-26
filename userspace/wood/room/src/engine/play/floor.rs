@@ -17,10 +17,7 @@ use crate::engine::{
             P_FindLowestFloorSurrounding, P_FindNextHighestFloor, P_FindSectorFromLineTag,
             getSector, getSide, twoSided,
         },
-        tick::{
-            FLOOR_ARENA, FloorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind,
-            new_thinker, thinker_t,
-        },
+        tick::{FloorId, P_RemoveThinker, ThinkerId, ThinkerKind, Thinkers, ZeroValid, thinker_t},
     },
     render_3d::data::texture_height,
     sound::{S_StartSectorSound, info::Sfx},
@@ -300,7 +297,7 @@ pub unsafe fn T_MovePlane(
 /// linked into the blockmap must be live (see [`T_MovePlane`]). Called
 /// exclusively by the thinker dispatcher from `P_RunThinkers`.
 pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
-    let floor = FLOOR_ARENA.borrow()[floor_id];
+    let floor = world.thinkers.floors[floor_id];
     let res = T_MovePlane(
         world,
         floor.sector,
@@ -312,7 +309,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
     );
     // `T_MovePlane` can run play code: read the floor afresh, as C does
     // through its pointer.
-    let floor_sector = FLOOR_ARENA.borrow()[floor_id].sector;
+    let floor_sector = world.thinkers.floors[floor_id].sector;
 
     if (world.leveltime & 7) == 0 {
         S_StartSectorSound(world, floor_sector, Sfx::Stnmov as i32);
@@ -320,7 +317,7 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
 
     if res == result_pastdest {
         {
-            let mut floors = FLOOR_ARENA.borrow_mut();
+            let floors = &mut world.thinkers.floors;
             let floor = &mut floors[floor_id];
             let sec = &mut world.level.sectors[floor.sector];
             sec.specialdata = None;
@@ -344,10 +341,15 @@ pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
 /// Make a zeroed floor mover, list it as a thinker and make it `sector`'s
 /// special (C's `Z_Malloc`, `P_AddThinker` and `sec->specialdata = floor`).
 ///
-/// The caller fills in the mover through the returned handle.
-pub fn add_floor_mover(level: &mut LevelState, sector: SectorId) -> FloorId {
-    let floor = new_thinker::<floormove_t>();
-    P_AddThinker(ThinkerId::Floor(floor));
+/// The caller fills in the mover through the returned handle; it holds the
+/// world's level and thinkers apart, so they are passed separately.
+pub fn add_floor_mover(
+    level: &mut LevelState,
+    thinkers: &mut Thinkers,
+    sector: SectorId,
+) -> FloorId {
+    let floor = thinkers.floors.insert(floormove_t::zeroed());
+    thinkers.list.push(ThinkerId::Floor(floor));
     level.sectors[sector].specialdata = Some(ThinkerId::Floor(floor));
     floor
 }
@@ -385,8 +387,8 @@ pub fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
         }
 
         rtn = 1;
-        let floor_id = add_floor_mover(level, sec);
-        let mut floors = FLOOR_ARENA.borrow_mut();
+        let floor_id = add_floor_mover(level, &mut world.thinkers, sec);
+        let floors = &mut world.thinkers.floors;
         let floor = &mut floors[floor_id];
 
         floor.thinker.kind = ThinkerKind::Floor;
@@ -523,10 +525,15 @@ pub fn EV_DoFloor(world: &mut World, line: &line_t, floortype: i32) -> i32 {
 
 /// Start one step of a staircase: a floor mover raising `sector` to
 /// `height` at `speed`.
-fn start_stair_step(level: &mut LevelState, sector: SectorId, speed: fixed_t, height: fixed_t) {
-    let floor_id = add_floor_mover(level, sector);
-    let mut floors = FLOOR_ARENA.borrow_mut();
-    let floor = &mut floors[floor_id];
+fn start_stair_step(
+    level: &mut LevelState,
+    thinkers: &mut Thinkers,
+    sector: SectorId,
+    speed: fixed_t,
+    height: fixed_t,
+) {
+    let floor_id = add_floor_mover(level, thinkers, sector);
+    let floor = &mut thinkers.floors[floor_id];
     floor.thinker.kind = ThinkerKind::Floor;
     floor.direction = 1;
     floor.sector = sector;
@@ -571,7 +578,7 @@ pub fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i32 {
         };
         let (floorheight, texture) = (level.sectors[sec].floorheight, level.sectors[sec].floorpic);
         let mut height: fixed_t = floorheight + stairsize;
-        start_stair_step(level, sec, speed, height);
+        start_stair_step(level, &mut world.thinkers, sec, speed, height);
 
         // Find next sector to raise
         loop {
@@ -606,7 +613,7 @@ pub fn EV_BuildStairs(world: &mut World, line: &line_t, stype: i32) -> i32 {
 
                 sec = tsec;
                 secnum = tsec.index() as i32;
-                start_stair_step(level, sec, speed, height);
+                start_stair_step(level, &mut world.thinkers, sec, speed, height);
                 ok = 1;
                 break;
             }
@@ -624,7 +631,6 @@ mod tests {
         super::*,
         crate::engine::{
             map::{LineId, VertexId, sector_t, slopetype_t},
-            play::tick::{P_InitThinkers, THINKER_TEST_LOCK},
             wad::format::LinedefFlag,
         },
         std::sync::Mutex,
@@ -679,7 +685,6 @@ mod tests {
     /// must move on from each new step, not only from the tagged sector.
     #[test]
     fn build_stairs_raises_every_step() {
-        let _thinker_guard = THINKER_TEST_LOCK.lock().unwrap();
         let step_sector = |tag: i16, lines: usize, linecount: i32| {
             let mut sector = sector_t::ZERO;
             sector.tag = tag;
@@ -708,9 +713,8 @@ mod tests {
         let mut trigger = step_line(0, 1);
         trigger.tag = 1;
 
-        P_InitThinkers();
         assert_eq!(EV_BuildStairs(&mut world, &trigger, stair_build8), 1);
-        let floors = FLOOR_ARENA.borrow();
+        let floors = &world.thinkers.floors;
         let destinations: Vec<fixed_t> = world
             .level
             .sectors
@@ -722,9 +726,6 @@ mod tests {
                 floors[floor].floordestheight
             })
             .collect();
-        drop(floors);
         assert_eq!(destinations, [8 * FRACUNIT, 16 * FRACUNIT, 24 * FRACUNIT]);
-
-        P_InitThinkers();
     }
 }

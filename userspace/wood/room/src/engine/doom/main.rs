@@ -815,7 +815,7 @@ pub fn doomgeneric_Tick() {
             } else {
                 None
             };
-            S_UpdateSounds(&world.level, mo);
+            S_UpdateSounds(&world, mo);
         }
 
         // Update display

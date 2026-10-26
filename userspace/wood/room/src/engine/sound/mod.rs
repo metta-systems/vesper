@@ -33,7 +33,7 @@ use crate::engine::{
         fixed::{FRACBITS, FRACUNIT, fixed_t},
         tables::{ANGLETOFINESHIFT, finesine},
     },
-    play::{mobj::MobjId, setup::LevelState, tick::MOBJ_ARENA},
+    play::mobj::MobjId,
     sound::info::{
         Mus, MusicInfo, NUMMUSIC, NUMSFX, S_InitSfxLinks, SfxInfo, music_table, sfx_table,
     },
@@ -100,15 +100,15 @@ impl SoundOrigin {
     /// Current map position of the origin.
     ///
     /// # Panics
-    /// If a wrapped sector does not belong to `level`.
-    fn position(self, level: &LevelState) -> (fixed_t, fixed_t) {
+    /// If a wrapped sector does not belong to the loaded level.
+    fn position(self, world: &World) -> (fixed_t, fixed_t) {
         match self {
             Self::Mobj(mobj) => {
-                let mobjs = MOBJ_ARENA.borrow();
-                (mobjs[mobj].x, mobjs[mobj].y)
+                let mobj = &world.mobjs[mobj];
+                (mobj.x, mobj.y)
             }
             Self::Sector(sector) => {
-                let soundorg = level.sectors[sector].soundorg;
+                let soundorg = world.level.sectors[sector].soundorg;
                 (soundorg.x, soundorg.y)
             }
         }
@@ -440,20 +440,19 @@ unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i3
 ///
 /// # Safety
 /// `vol` and `sep` must point at valid memory. A sector `source` must
-/// belong to `level`.
+/// belong to `world.level`.
 unsafe fn S_AdjustSoundParams(
-    level: &LevelState,
+    world: &World,
     listener: MobjId,
     source: SoundOrigin,
     vol: *mut i32,
     sep: *mut i32,
 ) -> i32 {
     let (listener_x, listener_y, listener_angle) = {
-        let mobjs = MOBJ_ARENA.borrow();
-        let listener = &mobjs[listener];
+        let listener = &world.mobjs[listener];
         (listener.x, listener.y, listener.angle)
     };
-    let (source_x, source_y) = source.position(level);
+    let (source_x, source_y) = source.position(world);
     let adx = listener_x.wrapping_sub(source_x).wrapping_abs();
     let ady = listener_y.wrapping_sub(source_y).wrapping_abs();
 
@@ -583,10 +582,10 @@ unsafe fn S_StartOriginSound(world: Option<&World>, origin: Option<SoundOrigin>,
             // C reads the listener without a check: a positional sound
             // plays only while the console player is in the level.
             let listener = listener.expect("player has no map object");
-            let level = &world.expect("positional sound without a world").level;
-            let rc = S_AdjustSoundParams(level, listener, source, &mut volume, &mut sep);
+            let world = world.expect("positional sound without a world");
+            let rc = S_AdjustSoundParams(world, listener, source, &mut volume, &mut sep);
 
-            if source.position(level) == SoundOrigin::Mobj(listener).position(level) {
+            if source.position(world) == SoundOrigin::Mobj(listener).position(world) {
                 sep = NORM_SEP;
             }
 
@@ -645,9 +644,9 @@ pub fn S_ResumeSound() {
 ///
 /// # Safety
 /// `listener` must be `Some` whenever a positional sound is playing, and
-/// every playing sound's origin must still be in `level`, the loaded level
+/// every playing sound's origin must still be in `world`, the loaded level
 /// (the contract of `S_StartSound` and `S_StartSectorSound`).
-pub unsafe fn S_UpdateSounds(level: &LevelState, listener: Option<MobjId>) {
+pub unsafe fn S_UpdateSounds(world: &World, listener: Option<MobjId>) {
     unsafe {
         I_UpdateSound();
 
@@ -682,7 +681,7 @@ pub unsafe fn S_UpdateSounds(level: &LevelState, listener: Option<MobjId>) {
                     {
                         let listener = listener.expect("positional sound without a listener");
                         let audible =
-                            S_AdjustSoundParams(level, listener, source, &mut volume, &mut sep);
+                            S_AdjustSoundParams(world, listener, source, &mut volume, &mut sep);
 
                         if audible == 0 {
                             S_StopChannel(cnum);
@@ -806,32 +805,33 @@ pub fn S_StopMusic() {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::engine::map::sector_t};
+    use {
+        super::*,
+        crate::engine::{map::sector_t, play::setup::LevelState},
+    };
 
     /// Map objects and sector origins report their own position and compare
     /// by identity.
     #[test]
     fn sound_origin_position_and_identity() {
-        let _thinker_lock = crate::engine::play::tick::THINKER_TEST_LOCK.lock().unwrap();
-        let mobj = crate::engine::play::tick::new_thinker::<crate::engine::play::mobj::mobj_t>();
-        {
-            let mut mobjs = MOBJ_ARENA.borrow_mut();
-            mobjs[mobj].x = 10 * FRACUNIT;
-            mobjs[mobj].y = -3 * FRACUNIT;
-        }
+        let mut world = World::new();
+        let mobj =
+            crate::engine::play::tick::new_thinker::<crate::engine::play::mobj::mobj_t>(&mut world);
+        world.mobjs[mobj].x = 10 * FRACUNIT;
+        world.mobjs[mobj].y = -3 * FRACUNIT;
         let mut sector = sector_t::ZERO;
         sector.soundorg.x = 7 * FRACUNIT;
         sector.soundorg.y = 8 * FRACUNIT;
 
         let mobj_origin = SoundOrigin::Mobj(mobj);
         let sector_sound_origin = SoundOrigin::Sector(SectorId::new(1));
-        let level = LevelState {
+        world.level = LevelState {
             sectors: vec![sector; 2],
             ..LevelState::new()
         };
-        assert_eq!(mobj_origin.position(&level), (10 * FRACUNIT, -3 * FRACUNIT));
+        assert_eq!(mobj_origin.position(&world), (10 * FRACUNIT, -3 * FRACUNIT));
         assert_eq!(
-            sector_sound_origin.position(&level),
+            sector_sound_origin.position(&world),
             (7 * FRACUNIT, 8 * FRACUNIT)
         );
 

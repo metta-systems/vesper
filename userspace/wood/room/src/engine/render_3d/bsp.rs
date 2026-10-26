@@ -246,7 +246,8 @@ static CHECKCOORD: [[i32; 4]; 12] = [
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    play::setup::LevelState,
+    arena::Arena,
+    play::{mobj::mobj_t, setup::LevelState},
     render_3d::{
         draw::DRAW,
         main::{R_PointOnSide, R_PointToAngle, VIEW},
@@ -868,7 +869,12 @@ pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
 /// `num` must be a subsector of `level` (the index is bounds-checked). The
 /// view state and the plane, opening and sprite buffers must be set up for
 /// the current frame.
-pub unsafe fn R_Subsector(level: &mut LevelState, validcount: i32, num: SubsectorId) {
+pub unsafe fn R_Subsector(
+    level: &mut LevelState,
+    mobjs: &Arena<mobj_t>,
+    validcount: i32,
+    num: SubsectorId,
+) {
     let viewz = {
         let mut view = VIEW.borrow_mut();
         view.sscount += 1;
@@ -904,7 +910,7 @@ pub unsafe fn R_Subsector(level: &mut LevelState, validcount: i32, num: Subsecto
         };
     PLANES.borrow_mut().ceilingplane = ceilingplane;
 
-    R_AddSprites(level, validcount, frontsector_id);
+    R_AddSprites(level, mobjs, validcount, frontsector_id);
 
     let firstline = sub.firstline as usize;
     for line in firstline..firstline + sub.numlines.max(0) as usize {
@@ -933,14 +939,20 @@ pub unsafe fn R_Subsector(level: &mut LevelState, validcount: i32, num: Subsecto
 /// Corresponds to `R_RenderBSPNode` in `r_bsp.c`.
 ///
 /// The caller borrows the world for the whole traversal and passes its
-/// level as `level` and the frame's sector stamp as `validcount`.
+/// level as `level`, its map objects as `mobjs` and the frame's sector
+/// stamp as `validcount`.
 ///
 /// # Safety
 /// `bspnum` must be either a node index into `level.nodes` or a value with
 /// the `NF_SUBSECTOR` flag set whose lower bits are a subsector index of
 /// `level`. The view position, the occlusion list and the plane, opening
 /// and sprite buffers must be initialized for the current frame.
-pub unsafe fn R_RenderBSPNode(level: &mut LevelState, validcount: i32, bspnum: i32) {
+pub unsafe fn R_RenderBSPNode(
+    level: &mut LevelState,
+    mobjs: &Arena<mobj_t>,
+    validcount: i32,
+    bspnum: i32,
+) {
     // Found a subsector?
     if (bspnum as u32) & NF_SUBSECTOR != 0 {
         let sub_num = if bspnum == -1 {
@@ -954,7 +966,7 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, validcount: i32, bspnum: i
             sub_num,
             bspnum as u32
         );
-        R_Subsector(level, validcount, SubsectorId::new(sub_num));
+        R_Subsector(level, mobjs, validcount, SubsectorId::new(sub_num));
         return;
     }
 
@@ -975,7 +987,7 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, validcount: i32, bspnum: i
         bsp.children[(side ^ 1) as usize] as u32,
     );
 
-    R_RenderBSPNode(level, validcount, bsp.children[side as usize] as i32);
+    R_RenderBSPNode(level, mobjs, validcount, bsp.children[side as usize] as i32);
 
     let back_visible = R_CheckBBox(&bsp.bbox[(side ^ 1) as usize]) != 0;
     let back_box = bsp.bbox[(side ^ 1) as usize];
@@ -990,7 +1002,12 @@ pub unsafe fn R_RenderBSPNode(level: &mut LevelState, validcount: i32, bspnum: i
         back_box[BBox::BOTTOM],
     );
     if back_visible {
-        R_RenderBSPNode(level, validcount, bsp.children[(side ^ 1) as usize] as i32);
+        R_RenderBSPNode(
+            level,
+            mobjs,
+            validcount,
+            bsp.children[(side ^ 1) as usize] as i32,
+        );
     }
 }
 

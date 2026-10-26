@@ -14,7 +14,7 @@ use crate::engine::math::fixed::FRACBITS;
 
 use crate::engine::{
     map::{NodeId, node_t},
-    play::{maputl::divline_t, mobj::MobjId, tick::MOBJ_ARENA},
+    play::{maputl::divline_t, mobj::MobjId},
     wad::format::LinedefFlag,
     world::World,
 };
@@ -396,7 +396,7 @@ pub fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
     let PlayScratch {
         sight, validcount, ..
     } = scratch;
-    let mobjs = MOBJ_ARENA.borrow();
+    let mobjs = &world.mobjs;
     let (t1, t2) = (&mobjs[t1], &mobjs[t2]);
     let s1 = level.subsectors[t1.subsector].sector.index() as i32;
     let s2 = level.subsectors[t2.subsector].sector.index() as i32;
@@ -423,7 +423,6 @@ pub fn P_CheckSight(world: &mut World, t1: MobjId, t2: MobjId) -> i32 {
     sight.t2y = t2.y;
     sight.strace.dx = t2.x - t1.x;
     sight.strace.dy = t2.y - t1.y;
-    drop(mobjs);
 
     let root_node = level.nodes.len() as i32 - 1;
     P_CrossBSPNode(sight, level, *validcount, root_node) as i32

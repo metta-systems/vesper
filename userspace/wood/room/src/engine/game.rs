@@ -731,9 +731,6 @@ use crate::engine::world::{Session, WORLD, World};
 /// Mobj lifecycle and spawn helpers from `p_mobj.c`.
 use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
 
-/// The map objects, read and written by handle.
-use crate::engine::play::tick::MOBJ_ARENA;
-
 /// Movement collision check used to validate respawn spots from `p_map.c`.
 use crate::engine::play::map::P_CheckPosition;
 
@@ -1664,7 +1661,7 @@ pub unsafe fn G_Ticker() {
                     );
                 }
                 if let Some(mo) = world.players[i].mo {
-                    game.consistancy[i][buf] = MOBJ_ARENA.borrow()[mo].x as u8;
+                    game.consistancy[i][buf] = world.mobjs[mo].x as u8;
                 } else {
                     game.consistancy[i][buf] = RANDOM.get().rndindex as u8;
                 }
@@ -1776,7 +1773,7 @@ pub fn G_PlayerFinishLevel(world: &mut World, player: i32) {
     p.fixedcolormap = 0;
     p.damagecount = 0;
     p.bonuscount = 0;
-    MOBJ_ARENA.borrow_mut()[p.mo()].flags &= !crate::engine::play::info::MF_SHADOW;
+    world.mobjs[p.mo()].flags &= !crate::engine::play::info::MF_SHADOW;
 }
 
 // ---------------------------------------------------------------------------
@@ -1852,7 +1849,7 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t)
     let Some(spawning_mo) = world.players[spawning_player].mo else {
         // First spawn of level, before corpses
         for i in 0..playernum as usize {
-            let mobjs = MOBJ_ARENA.borrow();
+            let mobjs = &world.mobjs;
             let mo = &mobjs[world.players[i].mo()];
             if mo.x == (mthing.x.get() as fixed_t) << 16
                 && mo.y == (mthing.y.get() as fixed_t) << 16
@@ -1983,7 +1980,7 @@ pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
         if let Some(mo) = world.players[playernum as usize].mo {
-            MOBJ_ARENA.borrow_mut()[mo].player = None;
+            world.mobjs[mo].player = None;
         }
 
         if deathmatch() != 0 {

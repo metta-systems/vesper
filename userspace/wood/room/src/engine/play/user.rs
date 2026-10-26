@@ -16,7 +16,7 @@ use crate::engine::{
         fixed::{FRACUNIT, FixedMul, fixed_t},
         tables::{ANG90, ANG180, ANGLETOFINESHIFT, FINEANGLES, finesine},
     },
-    play::{info::*, tick::MOBJ_ARENA},
+    play::info::*,
     world::World,
 };
 
@@ -155,7 +155,7 @@ use crate::engine::{
 ///
 /// If the player has not been spawned.
 pub fn P_Thrust(world: &mut World, player: PlayerId, angle: u32, move_: fixed_t) {
-    let mut mobjs = MOBJ_ARENA.borrow_mut();
+    let mobjs = &mut world.mobjs;
     let mo = &mut mobjs[world.players[player].mo()];
     let angle = (angle >> ANGLETOFINESHIFT) as usize;
     // `finecosine[angle]`: the cosine table is the sine table a quarter
@@ -178,7 +178,7 @@ pub fn P_Thrust(world: &mut World, player: PlayerId, angle: u32, move_: fixed_t)
 /// If the player has not been spawned.
 pub fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
     let player = &mut world.players[player_id];
-    let mobjs = MOBJ_ARENA.borrow();
+    let mobjs = &world.mobjs;
     let mo = &mobjs[player.mo()];
 
     // Regular movement bobbing
@@ -252,7 +252,7 @@ pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
     // `P_Thrust` only changes the momentum, so the angle and state read
     // here stay current until `P_SetMobjState`.
     let (angle, onground, state) = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let mo = &mut mobjs[mo_id];
         mo.angle = mo
             .angle
@@ -311,7 +311,7 @@ pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
 
     player.deltaviewheight = 0;
     world.scratch.user.onground = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[mo_id].z <= mobjs[mo_id].floorz) as i32
     };
     P_CalcHeight(world, player_id);
@@ -322,7 +322,7 @@ pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
     if let Some(attacker) = player.attacker
         && Some(attacker) != player.mo
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let (attacker_x, attacker_y) = (mobjs[attacker].x, mobjs[attacker].y);
         let mo = &mut mobjs[mo_id];
         angle = R_PointToAngle2(mo.x, mo.y, attacker_x, attacker_y);
@@ -378,7 +378,7 @@ pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     let mut newweapon: i32;
 
     {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let mo = &mut mobjs[mo_id];
         // Fixme: do this in the cheat code
         if player.cheats & CF_NOCLIP != 0 {
@@ -405,7 +405,7 @@ pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     // Move around.
     // Reactiontime is used to prevent movement for a bit after a teleport.
     let reacting = {
-        let mut mobjs = MOBJ_ARENA.borrow_mut();
+        let mobjs = &mut world.mobjs;
         let mo = &mut mobjs[mo_id];
         let reacting = mo.reactiontime != 0;
         if reacting {
@@ -418,7 +418,7 @@ pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     }
 
     P_CalcHeight(world, player_id);
-    let subsector = MOBJ_ARENA.borrow()[mo_id].subsector;
+    let subsector = world.mobjs[mo_id].subsector;
     if world.level.subsector_sector(subsector).special != 0 {
         P_PlayerInSpecialSector(world, player_id);
     }
@@ -485,7 +485,7 @@ pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     if player.powers[pw_invisibility] != 0 {
         player.powers[pw_invisibility] -= 1;
         if player.powers[pw_invisibility] == 0 {
-            MOBJ_ARENA.borrow_mut()[mo_id].flags &= !MF_SHADOW;
+            world.mobjs[mo_id].flags &= !MF_SHADOW;
         }
     }
 

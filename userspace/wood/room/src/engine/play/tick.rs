@@ -13,7 +13,6 @@ use crate::engine::{
     arena::{Arena, Handle, Pooled},
     doom::player::PlayerId,
     game::{demoplayback, paused},
-    global::Global,
     misc::menu::menu_active,
     play::{
         ceilng::{T_MoveCeiling, ceiling_t},
@@ -86,7 +85,7 @@ impl ThinkerKind {
 /// The thinker state embedded in every thinker-based game object.
 ///
 /// C's `thinker_t` also holds the list links; here the list is
-/// [`TickState::thinkers`], so only the think function remains.
+/// [`Thinkers::list`], so only the think function remains.
 #[derive(Clone, Copy)]
 pub struct thinker_t {
     /// What this thinker does each tic, or [`ThinkerKind::Removed`] once
@@ -126,24 +125,30 @@ pub unsafe trait ZeroValid: Sized {
     }
 }
 
-/// Put a zeroed `T` in its arena, as C's `Z_Malloc` of a thinker does; the
-/// caller fills it in and lists it with [`P_AddThinker`].
-pub fn new_thinker<T: Pooled + ZeroValid>() -> Handle<T> {
-    T::arena().borrow_mut().insert(T::zeroed())
+/// A thinker type and where its arena lives in the [`World`].
+pub trait ThinkerType: Pooled + ZeroValid {
+    /// The arena holding every object of this type.
+    fn arena_mut(world: &mut World) -> &mut Arena<Self>;
 }
 
-/// Declare the arena of each thinker type and its [`Pooled`] impl.
-macro_rules! thinker_arenas {
-    ($($arena:ident: $kind:ty),+ $(,)?) => {
-        $(
-            #[doc = concat!("Every `", stringify!($kind), "` of the current level.")]
-            pub static $arena: Global<Arena<$kind>> = Global::new(Arena::new());
+/// Put a zeroed `T` in its arena, as C's `Z_Malloc` of a thinker does; the
+/// caller fills it in and lists it with [`P_AddThinker`].
+pub fn new_thinker<T: ThinkerType>(world: &mut World) -> Handle<T> {
+    T::arena_mut(world).insert(T::zeroed())
+}
 
+/// Declare where the arena of each thinker type lives in the [`World`],
+/// and its [`Pooled`] impl.
+macro_rules! thinker_arenas {
+    ($($kind:ty => $($field:ident).+),+ $(,)?) => {
+        $(
             impl Pooled for $kind {
                 const NAME: &'static str = stringify!($kind);
+            }
 
-                fn arena() -> &'static Global<Arena<Self>> {
-                    &$arena
+            impl ThinkerType for $kind {
+                fn arena_mut(world: &mut World) -> &mut Arena<Self> {
+                    &mut world.$($field).+
                 }
             }
 
@@ -154,22 +159,22 @@ macro_rules! thinker_arenas {
         )+
 
         /// Free every object of every thinker type: the level is over.
-        fn clear_thinker_arenas() {
-            $($arena.borrow_mut().clear();)+
+        fn clear_thinker_arenas(world: &mut World) {
+            $(world.$($field).+.clear();)+
         }
     };
 }
 
 thinker_arenas!(
-    MOBJ_ARENA: mobj_t,
-    CEILING_ARENA: ceiling_t,
-    DOOR_ARENA: vldoor_t,
-    FLOOR_ARENA: floormove_t,
-    PLAT_ARENA: plat_t,
-    LIGHT_FLASH_ARENA: lightflash_t,
-    STROBE_ARENA: strobe_t,
-    GLOW_ARENA: glow_t,
-    FIRE_FLICKER_ARENA: fireflicker_t,
+    mobj_t => mobjs,
+    ceiling_t => thinkers.ceilings,
+    vldoor_t => thinkers.doors,
+    floormove_t => thinkers.floors,
+    plat_t => thinkers.plats,
+    lightflash_t => thinkers.light_flashes,
+    strobe_t => thinkers.strobes,
+    glow_t => thinkers.glows,
+    fireflicker_t => thinkers.fire_flickers,
 );
 
 /// A thinker in the thinker list: its type and its handle in that type's
@@ -197,92 +202,97 @@ pub enum ThinkerId {
 }
 
 impl ThinkerId {
-    /// Pointer to the object's embedded thinker state.
-    #[track_caller]
-    pub fn thinker(self) -> *mut thinker_t {
-        // SAFETY (all arms): field projection on an arena pointer, which is
-        // valid for the rest of the program; no reference is made.
-        unsafe {
-            match self {
-                ThinkerId::Mobj(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Ceiling(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Door(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Floor(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Plat(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::LightFlash(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Strobe(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::Glow(id) => &raw mut (*id.ptr()).thinker,
-                ThinkerId::FireFlicker(id) => &raw mut (*id.ptr()).thinker,
-            }
-        }
-    }
-
     /// The thinker's current kind.
     #[track_caller]
-    pub fn kind(self) -> ThinkerKind {
-        // SAFETY: a read through a valid arena pointer; no reference to the
-        // thinker state outlives this read.
-        unsafe { (*self.thinker()).kind }
+    pub fn kind(self, world: &World) -> ThinkerKind {
+        let thinkers = &world.thinkers;
+        match self {
+            ThinkerId::Mobj(id) => world.mobjs[id].thinker.kind,
+            ThinkerId::Ceiling(id) => thinkers.ceilings[id].thinker.kind,
+            ThinkerId::Door(id) => thinkers.doors[id].thinker.kind,
+            ThinkerId::Floor(id) => thinkers.floors[id].thinker.kind,
+            ThinkerId::Plat(id) => thinkers.plats[id].thinker.kind,
+            ThinkerId::LightFlash(id) => thinkers.light_flashes[id].thinker.kind,
+            ThinkerId::Strobe(id) => thinkers.strobes[id].thinker.kind,
+            ThinkerId::Glow(id) => thinkers.glows[id].thinker.kind,
+            ThinkerId::FireFlicker(id) => thinkers.fire_flickers[id].thinker.kind,
+        }
     }
 
     /// Free the object in its arena; its handles go stale.
-    fn free(self) {
+    fn free(self, world: &mut World) {
+        let thinkers = &mut world.thinkers;
         match self {
-            ThinkerId::Mobj(id) => MOBJ_ARENA.borrow_mut().free(id),
-            ThinkerId::Ceiling(id) => CEILING_ARENA.borrow_mut().free(id),
-            ThinkerId::Door(id) => DOOR_ARENA.borrow_mut().free(id),
-            ThinkerId::Floor(id) => FLOOR_ARENA.borrow_mut().free(id),
-            ThinkerId::Plat(id) => PLAT_ARENA.borrow_mut().free(id),
-            ThinkerId::LightFlash(id) => LIGHT_FLASH_ARENA.borrow_mut().free(id),
-            ThinkerId::Strobe(id) => STROBE_ARENA.borrow_mut().free(id),
-            ThinkerId::Glow(id) => GLOW_ARENA.borrow_mut().free(id),
-            ThinkerId::FireFlicker(id) => FIRE_FLICKER_ARENA.borrow_mut().free(id),
+            ThinkerId::Mobj(id) => world.mobjs.free(id),
+            ThinkerId::Ceiling(id) => thinkers.ceilings.free(id),
+            ThinkerId::Door(id) => thinkers.doors.free(id),
+            ThinkerId::Floor(id) => thinkers.floors.free(id),
+            ThinkerId::Plat(id) => thinkers.plats.free(id),
+            ThinkerId::LightFlash(id) => thinkers.light_flashes.free(id),
+            ThinkerId::Strobe(id) => thinkers.strobes.free(id),
+            ThinkerId::Glow(id) => thinkers.glows.free(id),
+            ThinkerId::FireFlicker(id) => thinkers.fire_flickers.free(id),
         }
     }
 }
 
-/// The thinker list (`p_tick.c` global; the level clock `leveltime` is in
-/// [`World`]).
-pub struct TickState {
+/// The thinker list and the arenas of the thinkers other than map objects
+/// (`p_tick.c`'s `thinkercap` and the zone blocks of the specials; the map
+/// objects are [`World::mobjs`], the level clock is [`World::leveltime`]).
+pub struct Thinkers {
     /// Every thinker in run order: C's circular list from `thinkercap.next`
     /// to `thinkercap.prev`. [`P_AddThinker`] appends; [`P_RunThinkers`]
     /// drops removed thinkers when it reaches them.
-    thinkers: Vec<ThinkerId>,
+    pub list: Vec<ThinkerId>,
+    /// Every moving ceiling of the level.
+    pub ceilings: Arena<ceiling_t>,
+    /// Every vertical door of the level.
+    pub doors: Arena<vldoor_t>,
+    /// Every moving floor of the level.
+    pub floors: Arena<floormove_t>,
+    /// Every platform of the level.
+    pub plats: Arena<plat_t>,
+    /// Every light flash of the level.
+    pub light_flashes: Arena<lightflash_t>,
+    /// Every strobing light of the level.
+    pub strobes: Arena<strobe_t>,
+    /// Every glowing light of the level.
+    pub glows: Arena<glow_t>,
+    /// Every fire flicker of the level.
+    pub fire_flickers: Arena<fireflicker_t>,
 }
 
-impl TickState {
+impl Thinkers {
     /// The state at program start: no thinkers.
     pub const fn new() -> Self {
         Self {
-            thinkers: Vec::new(),
+            list: Vec::new(),
+            ceilings: Arena::new(),
+            doors: Arena::new(),
+            floors: Arena::new(),
+            plats: Arena::new(),
+            light_flashes: Arena::new(),
+            strobes: Arena::new(),
+            glows: Arena::new(),
+            fire_flickers: Arena::new(),
         }
     }
 }
 
-impl Default for TickState {
+impl Default for Thinkers {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// The thinker list.
-pub static TICK: Global<TickState> = Global::new(TickState::new());
-
 /// The thinker at `position` in the list, if the list is that long.
 ///
-/// Walks of the list read one entry at a time, so the thinker can be acted
-/// on (spawning or removing others) without a borrow of the list.
-pub fn thinker_at(position: usize) -> Option<ThinkerId> {
-    TICK.borrow().thinkers.get(position).copied()
-}
-
-/// Iterate the thinker list in run order, as C's walks from
-/// `thinkercap.next` do.
-///
-/// Each step reads the list afresh, so thinkers appended during the walk
-/// are reached too.
-pub fn thinkers() -> impl Iterator<Item = ThinkerId> {
-    (0..).map_while(thinker_at)
+/// Walks of the list that act on the thinkers (spawning or removing others)
+/// read one entry at a time with it, holding no borrow of the world between
+/// steps; thinkers appended during such a walk are reached too, as with C's
+/// walks from `thinkercap.next`.
+pub fn thinker_at(world: &World, position: usize) -> Option<ThinkerId> {
+    world.thinkers.list.get(position).copied()
 }
 
 /// Empty the thinker list and free every thinker of the level.
@@ -290,9 +300,9 @@ pub fn thinkers() -> impl Iterator<Item = ThinkerId> {
 /// Must be called at the start of each level before any thinker is added.
 /// Corresponds to `P_InitThinkers` in `p_tick.c`; C's thinkers are freed with
 /// the level's zone memory just before it.
-pub fn P_InitThinkers() {
-    TICK.borrow_mut().thinkers.clear();
-    clear_thinker_arenas();
+pub fn P_InitThinkers(world: &mut World) {
+    world.thinkers.list.clear();
+    clear_thinker_arenas(world);
 }
 
 /// Append `thinker` to the end of the thinker list.
@@ -300,8 +310,8 @@ pub fn P_InitThinkers() {
 /// Corresponds to `P_AddThinker` in `p_tick.c`. The list owns the object
 /// from now on: it is freed in [`P_RunThinkers`] once it is marked
 /// [`ThinkerKind::Removed`].
-pub fn P_AddThinker(thinker: ThinkerId) {
-    TICK.borrow_mut().thinkers.push(thinker);
+pub fn P_AddThinker(world: &mut World, thinker: ThinkerId) {
+    world.thinkers.list.push(thinker);
 }
 
 /// Mark `thinker` for deferred removal by setting its kind to
@@ -330,7 +340,7 @@ pub fn P_RemoveThinker(thinker: &mut thinker_t) {
 /// state (a level is loaded).
 unsafe fn run_thinker(world: &mut World, thinker: ThinkerId) {
     unsafe {
-        match (thinker, thinker.kind()) {
+        match (thinker, thinker.kind(world)) {
             (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(world, id),
             (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(world, id),
             (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(world, id),
@@ -355,11 +365,12 @@ unsafe fn run_thinker(world: &mut World, thinker: ThinkerId) {
 /// as with C's linked list.
 fn run_thinker_list(world: &mut World, mut think: impl FnMut(&mut World, ThinkerId)) {
     let mut position = 0;
-    // `thinker_at` releases its borrow of the list before the body runs.
-    while let Some(thinker) = thinker_at(position) {
-        if thinker.kind().is_removed() {
-            TICK.borrow_mut().thinkers.remove(position);
-            thinker.free();
+    // `thinker_at` copies the entry out, so no borrow of the list is held
+    // while the thinker runs.
+    while let Some(thinker) = thinker_at(world, position) {
+        if thinker.kind(world).is_removed() {
+            world.thinkers.list.remove(position);
+            thinker.free(world);
         } else {
             think(world, thinker);
             position += 1;
@@ -422,17 +433,13 @@ pub fn P_Ticker(world: &mut World) {
     }
 }
 
-/// Serialises the tests that use the thinker list and arenas.
-#[cfg(test)]
-pub static THINKER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn globals_default() {
-        assert!(TickState::new().thinkers.is_empty());
+        assert!(Thinkers::new().list.is_empty());
         assert_eq!(World::new().leveltime, 0);
     }
 
@@ -457,23 +464,29 @@ mod tests {
     }
 
     /// A listed glow with the given light level, for telling thinkers apart.
-    fn add_glow(level: i32) -> GlowId {
-        let id = new_thinker::<glow_t>();
-        {
-            let mut glows = GLOW_ARENA.borrow_mut();
-            let glow = &mut glows[id];
-            glow.minlight = level;
-            glow.thinker.kind = ThinkerKind::Glow;
-        }
-        P_AddThinker(ThinkerId::Glow(id));
+    fn add_glow(world: &mut World, level: i32) -> GlowId {
+        let id = new_thinker::<glow_t>(world);
+        let glow = &mut world.thinkers.glows[id];
+        glow.minlight = level;
+        glow.thinker.kind = ThinkerKind::Glow;
+        P_AddThinker(world, ThinkerId::Glow(id));
         id
     }
 
-    fn glow_level(thinker: ThinkerId) -> i32 {
+    fn glow_level(world: &World, thinker: ThinkerId) -> i32 {
         let ThinkerId::Glow(id) = thinker else {
             panic!("{thinker:?} is not a glow");
         };
-        GLOW_ARENA.borrow()[id].minlight
+        world.thinkers.glows[id].minlight
+    }
+
+    fn levels(world: &World) -> Vec<i32> {
+        world
+            .thinkers
+            .list
+            .iter()
+            .map(|&thinker| glow_level(world, thinker))
+            .collect()
     }
 
     /// Thinkers run in insertion order; one removed ahead of the cursor is
@@ -481,58 +494,80 @@ mod tests {
     /// runs in the same walk, at the tail.
     #[test]
     fn walk_keeps_order_across_add_and_remove() {
-        let _guard = THINKER_TEST_LOCK.lock().unwrap();
-        P_InitThinkers();
-        let first = add_glow(1);
-        let second = add_glow(2);
-        let third = add_glow(3);
-
         let mut world = World::new();
+        let first = add_glow(&mut world, 1);
+        let second = add_glow(&mut world, 2);
+        let third = add_glow(&mut world, 3);
+
         let mut ran = Vec::new();
-        run_thinker_list(&mut world, |_world, thinker| {
-            let level = glow_level(thinker);
+        run_thinker_list(&mut world, |world, thinker| {
+            let level = glow_level(world, thinker);
             ran.push(level);
             if level == 1 {
                 // Remove the next thinker before the walk reaches it.
-                P_RemoveThinker(&mut GLOW_ARENA.borrow_mut()[second].thinker);
-                add_glow(4);
+                P_RemoveThinker(&mut world.thinkers.glows[second].thinker);
+                add_glow(world, 4);
             }
         });
         assert_eq!(ran, [1, 3, 4]);
-        assert!(first.is_live() && third.is_live());
-        assert!(!second.is_live(), "freed when the walk reached it");
-        let order: Vec<i32> = thinkers().map(glow_level).collect();
-        assert_eq!(order, [1, 3, 4]);
-        P_InitThinkers();
+        let glows = &world.thinkers.glows;
+        assert!(glows.is_live(first) && glows.is_live(third));
+        assert!(!glows.is_live(second), "freed when the walk reached it");
+        assert_eq!(levels(&world), [1, 3, 4]);
     }
 
     /// A removed thinker stays listed and readable until the walk frees it;
     /// after that its handle is stale but still reads the old data.
     #[test]
     fn deferred_removal_keeps_the_slot_readable() {
-        let _guard = THINKER_TEST_LOCK.lock().unwrap();
-        P_InitThinkers();
-        let glow = add_glow(5);
-        P_RemoveThinker(&mut GLOW_ARENA.borrow_mut()[glow].thinker);
-        assert!(glow.is_live(), "removal is deferred");
-        assert_eq!(thinkers().count(), 1);
-
         let mut world = World::new();
+        let glow = add_glow(&mut world, 5);
+        P_RemoveThinker(&mut world.thinkers.glows[glow].thinker);
+        assert!(world.thinkers.glows.is_live(glow), "removal is deferred");
+        assert_eq!(world.thinkers.list.len(), 1);
+
         run_thinker_list(&mut world, |_world, thinker| {
             panic!("{thinker:?} is removed and must not run")
         });
-        assert!(!glow.is_live());
-        assert_eq!(thinkers().count(), 0);
-        assert_eq!(GLOW_ARENA.borrow()[glow].minlight, 5);
-        P_InitThinkers();
+        assert!(!world.thinkers.glows.is_live(glow));
+        assert!(world.thinkers.list.is_empty());
+        assert_eq!(world.thinkers.glows[glow].minlight, 5);
+    }
+
+    /// The kind of each listed thinker is read from its own arena, map
+    /// objects included, and a removed map object is freed in
+    /// [`World::mobjs`].
+    #[test]
+    fn kind_reads_the_thinkers_own_arena() {
+        let mut world = World::new();
+        let mobj = new_thinker::<mobj_t>(&mut world);
+        world.mobjs[mobj].thinker.kind = ThinkerKind::Mobj;
+        P_AddThinker(&mut world, ThinkerId::Mobj(mobj));
+        let ceiling = new_thinker::<ceiling_t>(&mut world);
+        world.thinkers.ceilings[ceiling].thinker.kind = ThinkerKind::CeilingInStasis;
+        P_AddThinker(&mut world, ThinkerId::Ceiling(ceiling));
+        assert_eq!(ThinkerId::Mobj(mobj).kind(&world), ThinkerKind::Mobj);
+        assert_eq!(
+            ThinkerId::Ceiling(ceiling).kind(&world),
+            ThinkerKind::CeilingInStasis
+        );
+
+        P_RemoveThinker(&mut world.mobjs[mobj].thinker);
+        let mut ran = Vec::new();
+        run_thinker_list(&mut world, |_world, thinker| ran.push(thinker));
+        assert_eq!(ran, [ThinkerId::Ceiling(ceiling)]);
+        assert!(!world.mobjs.is_live(mobj));
+        assert!(world.thinkers.ceilings.is_live(ceiling));
     }
 
     #[test]
     fn init_empties_the_list_and_frees_the_level() {
-        let _guard = THINKER_TEST_LOCK.lock().unwrap();
-        let glow = add_glow(6);
-        P_InitThinkers();
-        assert_eq!(thinkers().count(), 0);
-        assert!(!glow.is_live());
+        let mut world = World::new();
+        let glow = add_glow(&mut world, 6);
+        let mobj = new_thinker::<mobj_t>(&mut world);
+        P_InitThinkers(&mut world);
+        assert!(world.thinkers.list.is_empty());
+        assert!(!world.thinkers.glows.is_live(glow));
+        assert!(!world.mobjs.is_live(mobj));
     }
 }

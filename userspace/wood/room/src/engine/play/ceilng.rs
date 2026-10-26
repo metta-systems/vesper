@@ -16,8 +16,8 @@ use crate::engine::{
         floor::T_MovePlane,
         spec::{P_FindHighestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            CEILING_ARENA, CeilingId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind,
-            new_thinker, thinker_t,
+            CeilingId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker,
+            thinker_t,
         },
     },
     sound::S_StartSectorSound,
@@ -156,7 +156,7 @@ impl Default for CeilingState {
 /// The ceiling's `sector` must belong to the current map, and every thing
 /// linked into the blockmap must be live (see `T_MovePlane`).
 pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
-    let ceiling = CEILING_ARENA.borrow()[ceiling_id];
+    let ceiling = world.thinkers.ceilings[ceiling_id];
     let res = T_MovePlane(
         world,
         ceiling.sector,
@@ -172,7 +172,7 @@ pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
     );
     // `T_MovePlane` can run play code: read the ceiling afresh, as C does
     // through its pointer.
-    let ceiling = CEILING_ARENA.borrow()[ceiling_id];
+    let ceiling = world.thinkers.ceilings[ceiling_id];
 
     if (world.leveltime & 7) == 0 {
         match ceiling.kind {
@@ -192,14 +192,14 @@ pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
                 S_StartSectorSound(world, ceiling.sector, Sfx::Pstop as i32);
             }
             x if x == fastCrushAndRaise || x == crushAndRaise => {
-                CEILING_ARENA.borrow_mut()[ceiling_id].direction = -1;
+                world.thinkers.ceilings[ceiling_id].direction = -1;
             }
             _ => {}
         }
     } else if res == result_crushed {
         match ceiling.kind {
             x if x == silentCrushAndRaise || x == crushAndRaise || x == lowerAndCrush => {
-                CEILING_ARENA.borrow_mut()[ceiling_id].speed = CEILSPEED / 8;
+                world.thinkers.ceilings[ceiling_id].speed = CEILSPEED / 8;
             }
             _ => {}
         }
@@ -246,11 +246,11 @@ pub fn EV_DoCeiling(world: &mut World, line: &line_t, ceilingtype: i32) -> i32 {
         }
 
         rtn = 1;
-        let ceiling_id = new_thinker::<ceiling_t>();
-        P_AddThinker(ThinkerId::Ceiling(ceiling_id));
+        let ceiling_id = new_thinker::<ceiling_t>(world);
+        P_AddThinker(world, ThinkerId::Ceiling(ceiling_id));
         {
             let level = &mut world.level;
-            let mut ceilings = CEILING_ARENA.borrow_mut();
+            let ceilings = &mut world.thinkers.ceilings;
             let ceiling = &mut ceilings[ceiling_id];
             level.sectors[sec].specialdata = Some(ThinkerId::Ceiling(ceiling_id));
             ceiling.thinker.kind = ThinkerKind::Ceiling;
@@ -326,7 +326,7 @@ pub fn P_RemoveActiveCeiling(world: &mut World, c: CeilingId) {
     let World { level, active, .. } = world;
     for slot in active.ceilings.activeceilings.iter_mut() {
         if *slot == Some(c) {
-            let mut ceilings = CEILING_ARENA.borrow_mut();
+            let ceilings = &mut world.thinkers.ceilings;
             let ceiling = &mut ceilings[c];
             level.sectors[ceiling.sector].specialdata = None;
             P_RemoveThinker(&mut ceiling.thinker);
@@ -345,7 +345,7 @@ pub fn P_RemoveActiveCeiling(world: &mut World, c: CeilingId) {
 /// Called by [`EV_DoCeiling`] for crusher types, and corresponds to
 /// `P_ActivateInStasisCeiling` in `p_ceilng.c`.
 pub fn P_ActivateInStasisCeiling(world: &mut World, line: &line_t) {
-    let mut ceilings = CEILING_ARENA.borrow_mut();
+    let ceilings = &mut world.thinkers.ceilings;
     for ceiling_id in world.active.ceilings.activeceilings.into_iter().flatten() {
         let ceiling = &mut ceilings[ceiling_id];
         if ceiling.tag == line.tag as i32 && ceiling.direction == 0 {
@@ -367,7 +367,7 @@ pub fn P_ActivateInStasisCeiling(world: &mut World, line: &line_t) {
 /// Corresponds to `EV_CeilingCrushStop` in `p_ceilng.c`.
 pub fn EV_CeilingCrushStop(world: &mut World, line: &line_t) -> i32 {
     let mut rtn: i32 = 0;
-    let mut ceilings = CEILING_ARENA.borrow_mut();
+    let ceilings = &mut world.thinkers.ceilings;
     for ceiling_id in world.active.ceilings.activeceilings.into_iter().flatten() {
         let ceiling = &mut ceilings[ceiling_id];
         if ceiling.tag == line.tag as i32 && ceiling.direction != 0 {

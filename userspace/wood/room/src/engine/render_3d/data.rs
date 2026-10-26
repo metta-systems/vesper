@@ -118,7 +118,7 @@ use crate::engine::{
     dehacked::DEH_String,
     game::demoplayback,
     interface::system::I_ConsoleStdout,
-    play::tick::{ThinkerId, ThinkerKind, thinkers},
+    play::tick::{ThinkerId, ThinkerKind},
     render_3d::{sky::SKY, things::SPRITES},
     wad::{
         W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
@@ -1188,11 +1188,11 @@ pub unsafe fn R_PrecacheLevel(world: &World) {
         *spritepresent.add(i) = 0;
     }
 
-    for thinker in thinkers() {
+    for &thinker in &world.thinkers.list {
         if let ThinkerId::Mobj(mobj) = thinker
-            && thinker.kind() == ThinkerKind::Mobj
+            && thinker.kind(world) == ThinkerKind::Mobj
         {
-            *spritepresent.add((*mobj.ptr()).sprite as usize) = 1;
+            *spritepresent.add(world.mobjs[mobj].sprite as usize) = 1;
         }
     }
 

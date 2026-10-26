@@ -957,7 +957,7 @@ pub fn P_SetupLevel(world: &mut World, episode: i32, map: i32, _playermask: i32,
         S_Start();
         Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
 
-        P_InitThinkers();
+        P_InitThinkers(world);
 
         // Find map name.
         let mut lumpname = [0u8; 9];

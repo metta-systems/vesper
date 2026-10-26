@@ -40,7 +40,7 @@ use crate::{
             plats::PlatState,
             setup::LevelState,
             switch::{MAXBUTTONS, button_t, start_button_sound},
-            tick::{FLOOR_ARENA, MOBJ_ARENA, ThinkerKind},
+            tick::ThinkerKind,
         },
         render_3d::data::{
             R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
@@ -635,7 +635,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
     let clear_special = |world: &mut World| world.level.lines[linenum].special = 0;
     // Nothing runs before the specials below that could change these.
     let (thing_player, thing_kind) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[thing].player, mobjs[thing].kind)
     };
 
@@ -941,7 +941,7 @@ pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, 
 pub fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
     let line_record = world.level.lines[line_id];
     let line = &line_record;
-    if MOBJ_ARENA.borrow()[thing].player.is_none() {
+    if world.mobjs[thing].player.is_none() {
         let mut ok = 0;
         if line.special as i32 == 46 {
             ok = 1
@@ -1001,7 +1001,7 @@ pub fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
 pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
     let (mo_subsector, mo_z) = {
-        let mobjs = MOBJ_ARENA.borrow();
+        let mobjs = &world.mobjs;
         (mobjs[mo_id].subsector, mobjs[mo_id].z)
     };
     let ironfeet = world.players[player].powers[pw_ironfeet];
@@ -1309,9 +1309,9 @@ pub fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
             };
 
             // Spawn rising slime
-            let floor_id = add_floor_mover(level, s2);
+            let floor_id = add_floor_mover(level, &mut world.thinkers, s2);
             {
-                let mut floors = FLOOR_ARENA.borrow_mut();
+                let floors = &mut world.thinkers.floors;
                 let floor = &mut floors[floor_id];
                 floor.thinker.kind = ThinkerKind::Floor;
                 floor.kind = donutRaise;
@@ -1325,8 +1325,8 @@ pub fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
             }
 
             // Spawn lowering donut-hole
-            let floor_id = add_floor_mover(level, s1);
-            let mut floors = FLOOR_ARENA.borrow_mut();
+            let floor_id = add_floor_mover(level, &mut world.thinkers, s1);
+            let floors = &mut world.thinkers.floors;
             let floor = &mut floors[floor_id];
             floor.thinker.kind = ThinkerKind::Floor;
             floor.kind = lowerFloor;

@@ -20,7 +20,6 @@ use crate::{
             lights::EV_LightTurnOn,
             mobj::MobjId,
             plats::EV_DoPlat,
-            tick::MOBJ_ARENA,
         },
         world::World,
     },
@@ -668,7 +667,7 @@ pub fn P_UseSpecialLine(world: &mut World, thing: MobjId, line_id: LineId, side:
     }
 
     // Switches that other things can activate.
-    if MOBJ_ARENA.borrow()[thing].player.is_none() {
+    if world.mobjs[thing].player.is_none() {
         // never open secret doors
         if line.flags & LinedefFlag::SECRET as i16 != 0 {
             return 0;

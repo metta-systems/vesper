@@ -18,8 +18,7 @@ use crate::engine::{
         mobj::MobjId,
         spec::{P_FindLowestCeilingSurrounding, P_FindSectorFromLineTag},
         tick::{
-            CEILING_ARENA, DOOR_ARENA, DoorId, FLOOR_ARENA, MOBJ_ARENA, P_AddThinker,
-            P_RemoveThinker, PLAT_ARENA, ThinkerId, ThinkerKind, new_thinker, thinker_t,
+            DoorId, P_AddThinker, P_RemoveThinker, ThinkerId, ThinkerKind, new_thinker, thinker_t,
         },
     },
     sound::{S_StartNonPositionalSound, S_StartSectorSound},
@@ -168,13 +167,13 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
     // The door is copied out around each call that can run play code
     // (`T_MovePlane`), read afresh after it, and each change is written
     // back before the next such call, as C sees it through its pointer.
-    let door = DOOR_ARENA.borrow()[door_id];
+    let door = world.thinkers.doors[door_id];
 
     match door.direction {
         0 => {
             // WAITING
             let sound = {
-                let mut doors = DOOR_ARENA.borrow_mut();
+                let doors = &mut world.thinkers.doors;
                 let door = &mut doors[door_id];
                 door.topcountdown -= 1;
                 if door.topcountdown != 0 {
@@ -203,7 +202,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
         2 => {
             // INITIAL WAIT
             let raised = {
-                let mut doors = DOOR_ARENA.borrow_mut();
+                let doors = &mut world.thinkers.doors;
                 let door = &mut doors[door_id];
                 door.topcountdown -= 1;
                 if door.topcountdown != 0 {
@@ -226,7 +225,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
             // DOWN
             let floorheight = world.level.sectors[door.sector].floorheight;
             let res = T_MovePlane(world, door.sector, door.speed, floorheight, 0, 1, -1);
-            let door = DOOR_ARENA.borrow()[door_id];
+            let door = world.thinkers.doors[door_id];
             if res == result_pastdest {
                 match door.kind {
                     x if x == vld_blazeRaise || x == vld_blazeClose => {
@@ -237,7 +236,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                         remove_door(world, door_id);
                     }
                     x if x == vld_close30ThenOpen => {
-                        let mut doors = DOOR_ARENA.borrow_mut();
+                        let doors = &mut world.thinkers.doors;
                         doors[door_id].direction = 0;
                         doors[door_id].topcountdown = TICRATE * 30;
                     }
@@ -249,7 +248,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
                         // DO NOT GO BACK UP!
                     }
                     _ => {
-                        DOOR_ARENA.borrow_mut()[door_id].direction = 1;
+                        world.thinkers.doors[door_id].direction = 1;
                         S_StartSectorSound(world, door.sector, Sfx::Doropn as i32);
                     }
                 }
@@ -259,10 +258,10 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
             // UP
             let res = T_MovePlane(world, door.sector, door.speed, door.topheight, 0, 1, 1);
             if res == result_pastdest {
-                let door = DOOR_ARENA.borrow()[door_id];
+                let door = world.thinkers.doors[door_id];
                 match door.kind {
                     x if x == vld_blazeRaise || x == vld_normal => {
-                        let mut doors = DOOR_ARENA.borrow_mut();
+                        let doors = &mut world.thinkers.doors;
                         doors[door_id].direction = 0;
                         doors[door_id].topcountdown = door.topwait;
                     }
@@ -279,7 +278,7 @@ pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
 
 /// Clear the door's sector special and mark the door for removal.
 fn remove_door(world: &mut World, door_id: DoorId) {
-    let mut doors = DOOR_ARENA.borrow_mut();
+    let doors = &mut world.thinkers.doors;
     let door = &mut doors[door_id];
     world.level.sectors[door.sector].specialdata = None;
     P_RemoveThinker(&mut door.thinker);
@@ -297,7 +296,7 @@ fn remove_door(world: &mut World, door_id: DoorId) {
 /// Lock-failure messages are routed through `DEH_String`, matching the C
 /// original so Dehacked patches can override them.
 pub fn EV_DoLockedDoor(world: &mut World, line: &line_t, kind: i32, thing: MobjId) -> i32 {
-    let Some(player) = MOBJ_ARENA.borrow()[thing].player else {
+    let Some(player) = world.mobjs[thing].player else {
         return 0;
     };
 
@@ -344,8 +343,8 @@ pub fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
         }
 
         rtn = 1;
-        let door_id = new_thinker::<vldoor_t>();
-        P_AddThinker(ThinkerId::Door(door_id));
+        let door_id = new_thinker::<vldoor_t>(world);
+        P_AddThinker(world, ThinkerId::Door(door_id));
         world.level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
 
         let (lowest_ceiling, ceilingheight) = {
@@ -357,7 +356,7 @@ pub fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
         };
         // The door's sound starts once it is set up.
         let sound = {
-            let mut doors = DOOR_ARENA.borrow_mut();
+            let doors = &mut world.thinkers.doors;
             let door = &mut doors[door_id];
             door.thinker.kind = ThinkerKind::Door;
             door.sector = sec;
@@ -419,12 +418,12 @@ pub fn EV_DoDoor(world: &mut World, line: &line_t, kind: i32) -> i32 {
 /// # Panics
 ///
 /// If `special` is a light, which no sector holds as its special data.
-fn special_door_direction(special: ThinkerId) -> i32 {
+fn special_door_direction(world: &World, special: ThinkerId) -> i32 {
     match special {
-        ThinkerId::Door(door) => DOOR_ARENA.borrow()[door].direction,
-        ThinkerId::Plat(plat) => PLAT_ARENA.borrow()[plat].count,
-        ThinkerId::Ceiling(ceiling) => CEILING_ARENA.borrow()[ceiling].speed,
-        ThinkerId::Floor(floor) => FLOOR_ARENA.borrow()[floor].door_direction_alias(),
+        ThinkerId::Door(door) => world.thinkers.doors[door].direction,
+        ThinkerId::Plat(plat) => world.thinkers.plats[plat].count,
+        ThinkerId::Ceiling(ceiling) => world.thinkers.ceilings[ceiling].speed,
+        ThinkerId::Floor(floor) => world.thinkers.floors[floor].door_direction_alias(),
         other => unreachable!("sector special data is {other:?}"),
     }
 }
@@ -434,13 +433,13 @@ fn special_door_direction(special: ThinkerId) -> i32 {
 /// # Panics
 ///
 /// Same as [`special_door_direction`].
-fn set_special_door_direction(special: ThinkerId, direction: i32) {
+fn set_special_door_direction(world: &mut World, special: ThinkerId, direction: i32) {
     match special {
-        ThinkerId::Door(door) => DOOR_ARENA.borrow_mut()[door].direction = direction,
-        ThinkerId::Plat(plat) => PLAT_ARENA.borrow_mut()[plat].count = direction,
-        ThinkerId::Ceiling(ceiling) => CEILING_ARENA.borrow_mut()[ceiling].speed = direction,
+        ThinkerId::Door(door) => world.thinkers.doors[door].direction = direction,
+        ThinkerId::Plat(plat) => world.thinkers.plats[plat].count = direction,
+        ThinkerId::Ceiling(ceiling) => world.thinkers.ceilings[ceiling].speed = direction,
         ThinkerId::Floor(floor) => {
-            FLOOR_ARENA.borrow_mut()[floor].set_door_direction_alias(direction);
+            world.thinkers.floors[floor].set_door_direction_alias(direction);
         }
         other => unreachable!("sector special data is {other:?}"),
     }
@@ -475,7 +474,7 @@ pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
         _ => None,
     };
     if let Some((card, skull)) = keys {
-        let Some(player) = MOBJ_ARENA.borrow()[thing].player else {
+        let Some(player) = world.mobjs[thing].player else {
             return;
         };
         if !has_key_or_complain(
@@ -497,21 +496,21 @@ pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
     if let Some(special) = special {
         match line.special as i32 {
             1 | 26 | 27 | 28 | 117 => {
-                if special_door_direction(special) == -1 {
-                    set_special_door_direction(special, 1);
+                if special_door_direction(world, special) == -1 {
+                    set_special_door_direction(world, special, 1);
                 } else {
-                    if MOBJ_ARENA.borrow()[thing].player.is_none() {
+                    if world.mobjs[thing].player.is_none() {
                         return;
                     }
-                    if special.kind() == ThinkerKind::Door {
-                        set_special_door_direction(special, -1);
+                    if special.kind(world) == ThinkerKind::Door {
+                        set_special_door_direction(world, special, -1);
                     } else if let ThinkerId::Plat(plat) = special
-                        && special.kind() == ThinkerKind::Plat
+                        && special.kind(world) == ThinkerKind::Plat
                     {
-                        PLAT_ARENA.borrow_mut()[plat].wait = -1;
+                        world.thinkers.plats[plat].wait = -1;
                     } else {
                         eprintln!("EV_VerticalDoor: Tried to close something that wasn't a door.");
-                        set_special_door_direction(special, -1);
+                        set_special_door_direction(world, special, -1);
                     }
                 }
                 return;
@@ -534,11 +533,11 @@ pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
     }
 
     // new door thinker
-    let door_id = new_thinker::<vldoor_t>();
-    P_AddThinker(ThinkerId::Door(door_id));
+    let door_id = new_thinker::<vldoor_t>(world);
+    P_AddThinker(world, ThinkerId::Door(door_id));
     let level = &mut world.level;
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
-    let mut doors = DOOR_ARENA.borrow_mut();
+    let doors = &mut world.thinkers.doors;
     let door = &mut doors[door_id];
     door.thinker.kind = ThinkerKind::Door;
     door.sector = sec;
@@ -580,9 +579,9 @@ pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
 ///
 /// If `sec` is not a sector of the current map.
 pub fn P_SpawnDoorCloseIn30(world: &mut World, sec: SectorId) {
-    let door_id = new_thinker::<vldoor_t>();
+    let door_id = new_thinker::<vldoor_t>(world);
 
-    P_AddThinker(ThinkerId::Door(door_id));
+    P_AddThinker(world, ThinkerId::Door(door_id));
 
     {
         let level = &mut world.level;
@@ -590,7 +589,7 @@ pub fn P_SpawnDoorCloseIn30(world: &mut World, sec: SectorId) {
         level.sectors[sec].special = 0;
     }
 
-    let mut doors = DOOR_ARENA.borrow_mut();
+    let doors = &mut world.thinkers.doors;
     let door = &mut doors[door_id];
     door.thinker.kind = ThinkerKind::Door;
     door.sector = sec;
@@ -610,15 +609,15 @@ pub fn P_SpawnDoorCloseIn30(world: &mut World, sec: SectorId) {
 ///
 /// If `sec` is not a sector of the current map.
 pub fn P_SpawnDoorRaiseIn5Mins(world: &mut World, sec: SectorId, _secnum: i32) {
-    let door_id = new_thinker::<vldoor_t>();
+    let door_id = new_thinker::<vldoor_t>(world);
 
-    P_AddThinker(ThinkerId::Door(door_id));
+    P_AddThinker(world, ThinkerId::Door(door_id));
 
     let level = &mut world.level;
     level.sectors[sec].specialdata = Some(ThinkerId::Door(door_id));
     level.sectors[sec].special = 0;
 
-    let mut doors = DOOR_ARENA.borrow_mut();
+    let doors = &mut world.thinkers.doors;
     let door = &mut doors[door_id];
     door.thinker.kind = ThinkerKind::Door;
     door.sector = sec;

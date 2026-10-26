@@ -12,8 +12,8 @@ use crate::engine::{
         setup::LevelState,
         spec::{P_FindMinSurroundingLight, P_FindSectorFromLineTag, getNextSector},
         tick::{
-            FIRE_FLICKER_ARENA, FireFlickerId, GLOW_ARENA, GlowId, LIGHT_FLASH_ARENA, LightFlashId,
-            P_AddThinker, STROBE_ARENA, StrobeId, ThinkerId, ThinkerKind, new_thinker, thinker_t,
+            FireFlickerId, GlowId, LightFlashId, P_AddThinker, StrobeId, ThinkerId, ThinkerKind,
+            new_thinker, thinker_t,
         },
     },
     world::World,
@@ -134,7 +134,7 @@ fn light_and_min_surrounding(level: &LevelState, sector: SectorId) -> (i32, i32)
 /// If the effect's `sector` is not a sector of the current map.
 pub fn T_FireFlicker(world: &mut World, flick_id: FireFlickerId) {
     let count = {
-        let mut flickers = FIRE_FLICKER_ARENA.borrow_mut();
+        let flickers = &mut world.thinkers.fire_flickers;
         flickers[flick_id].count -= 1;
         flickers[flick_id].count
     };
@@ -143,7 +143,7 @@ pub fn T_FireFlicker(world: &mut World, flick_id: FireFlickerId) {
     }
 
     let amount = (P_Random(world) & 3) * 16;
-    let mut flickers = FIRE_FLICKER_ARENA.borrow_mut();
+    let flickers = &mut world.thinkers.fire_flickers;
     let flick = &mut flickers[flick_id];
     let sec = &mut world.level.sectors[flick.sector];
 
@@ -167,12 +167,12 @@ pub fn T_FireFlicker(world: &mut World, flick_id: FireFlickerId) {
 pub fn P_SpawnFireFlicker(world: &mut World, sector: SectorId) {
     world.level.sectors[sector].special = 0;
 
-    let flick_id = new_thinker::<fireflicker_t>();
+    let flick_id = new_thinker::<fireflicker_t>(world);
 
-    P_AddThinker(ThinkerId::FireFlicker(flick_id));
+    P_AddThinker(world, ThinkerId::FireFlicker(flick_id));
 
     let (lightlevel, minlight) = light_and_min_surrounding(&world.level, sector);
-    let mut flickers = FIRE_FLICKER_ARENA.borrow_mut();
+    let flickers = &mut world.thinkers.fire_flickers;
     let flick = &mut flickers[flick_id];
     flick.thinker.kind = ThinkerKind::FireFlicker;
     flick.sector = sector;
@@ -193,7 +193,7 @@ pub fn P_SpawnFireFlicker(world: &mut World, sector: SectorId) {
 /// If the effect's `sector` is not a sector of the current map.
 pub fn T_LightFlash(world: &mut World, flash_id: LightFlashId) {
     let duration_mask = {
-        let mut flashes = LIGHT_FLASH_ARENA.borrow_mut();
+        let flashes = &mut world.thinkers.light_flashes;
         let flash = &mut flashes[flash_id];
         flash.count -= 1;
         if flash.count != 0 {
@@ -213,7 +213,7 @@ pub fn T_LightFlash(world: &mut World, flash_id: LightFlashId) {
         }
     };
     let count = (P_Random(world) & duration_mask) + 1;
-    LIGHT_FLASH_ARENA.borrow_mut()[flash_id].count = count;
+    world.thinkers.light_flashes[flash_id].count = count;
 }
 
 /// Allocate and initialise a random light-flash thinker for `sector`.
@@ -227,13 +227,13 @@ pub fn T_LightFlash(world: &mut World, flash_id: LightFlashId) {
 pub fn P_SpawnLightFlash(world: &mut World, sector: SectorId) {
     world.level.sectors[sector].special = 0;
 
-    let flash_id = new_thinker::<lightflash_t>();
+    let flash_id = new_thinker::<lightflash_t>(world);
 
-    P_AddThinker(ThinkerId::LightFlash(flash_id));
+    P_AddThinker(world, ThinkerId::LightFlash(flash_id));
 
     let (lightlevel, minlight) = light_and_min_surrounding(&world.level, sector);
     let maxtime = {
-        let mut flashes = LIGHT_FLASH_ARENA.borrow_mut();
+        let flashes = &mut world.thinkers.light_flashes;
         let flash = &mut flashes[flash_id];
         flash.thinker.kind = ThinkerKind::LightFlash;
         flash.sector = sector;
@@ -244,7 +244,7 @@ pub fn P_SpawnLightFlash(world: &mut World, sector: SectorId) {
         flash.maxtime
     };
     let count = (P_Random(world) & maxtime) + 1;
-    LIGHT_FLASH_ARENA.borrow_mut()[flash_id].count = count;
+    world.thinkers.light_flashes[flash_id].count = count;
 }
 
 /// Per-tic update for the strobe-flash effect.
@@ -259,7 +259,7 @@ pub fn P_SpawnLightFlash(world: &mut World, sector: SectorId) {
 ///
 /// If the effect's `sector` is not a sector of the current map.
 pub fn T_StrobeFlash(world: &mut World, flash_id: StrobeId) {
-    let mut strobes = STROBE_ARENA.borrow_mut();
+    let strobes = &mut world.thinkers.strobes;
     let flash = &mut strobes[flash_id];
     flash.count -= 1;
     if flash.count != 0 {
@@ -287,13 +287,13 @@ pub fn T_StrobeFlash(world: &mut World, flash_id: StrobeId) {
 ///
 /// If `sector` is not a sector of the current map.
 pub fn P_SpawnStrobeFlash(world: &mut World, sector: SectorId, fastOrSlow: i32, inSync: i32) {
-    let flash_id = new_thinker::<strobe_t>();
+    let flash_id = new_thinker::<strobe_t>(world);
 
-    P_AddThinker(ThinkerId::Strobe(flash_id));
+    P_AddThinker(world, ThinkerId::Strobe(flash_id));
 
     let (lightlevel, minlight) = light_and_min_surrounding(&world.level, sector);
     {
-        let mut strobes = STROBE_ARENA.borrow_mut();
+        let strobes = &mut world.thinkers.strobes;
         let flash = &mut strobes[flash_id];
         flash.sector = sector;
         flash.darktime = fastOrSlow;
@@ -314,7 +314,7 @@ pub fn P_SpawnStrobeFlash(world: &mut World, sector: SectorId, fastOrSlow: i32, 
     } else {
         1
     };
-    STROBE_ARENA.borrow_mut()[flash_id].count = count;
+    world.thinkers.strobes[flash_id].count = count;
 }
 
 /// Linedef-triggered event: start slow-strobe lighting on all tagged sectors.
@@ -401,7 +401,7 @@ pub fn EV_LightTurnOn(world: &mut World, line: &line_t, bright: i32) {
 ///
 /// If the effect's `sector` is not a sector of the current map.
 pub fn T_Glow(world: &mut World, glow_id: GlowId) {
-    let mut glows = GLOW_ARENA.borrow_mut();
+    let glows = &mut world.thinkers.glows;
     let glow = &mut glows[glow_id];
     let sec = &mut world.level.sectors[glow.sector];
     match glow.direction {
@@ -433,13 +433,13 @@ pub fn T_Glow(world: &mut World, glow_id: GlowId) {
 ///
 /// If `sector` is not a sector of the current map.
 pub fn P_SpawnGlowingLight(world: &mut World, sector: SectorId) {
-    let glow_id = new_thinker::<glow_t>();
+    let glow_id = new_thinker::<glow_t>(world);
 
-    P_AddThinker(ThinkerId::Glow(glow_id));
+    P_AddThinker(world, ThinkerId::Glow(glow_id));
 
     let (lightlevel, minlight) = light_and_min_surrounding(&world.level, sector);
     {
-        let mut glows = GLOW_ARENA.borrow_mut();
+        let glows = &mut world.thinkers.glows;
         let glow = &mut glows[glow_id];
         glow.sector = sector;
         glow.minlight = minlight;

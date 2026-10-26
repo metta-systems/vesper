@@ -15,6 +15,7 @@
 use {crate::i_error, std::ptr};
 
 use crate::engine::{
+    arena::Arena,
     doom::player::PspdefT,
     global::Global,
     map::SectorId,
@@ -710,12 +711,11 @@ pub unsafe fn R_DrawVisSprite(
 /// Called from `R_AddSprites`.
 ///
 /// # Safety
-/// - `thing` must be a valid, non-null `mobj_t` pointer.
 /// - `sprites`, `numsprites`, `spriteoffset`, `spritewidth`, and
 ///   `spritetopoffset` must all be initialised by `R_InitSprites` before this
 ///   function is called.
 /// - The view state and `spritelights` must be valid for the current frame.
-pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
+pub unsafe fn R_ProjectSprite(thing: &mobj_t) {
     let (sprites, spritelights) = {
         let sprite_state = SPRITES.borrow();
         (sprite_state.sprites, sprite_state.spritelights)
@@ -725,8 +725,8 @@ pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
     let view = VIEW.borrow();
 
     // Transform the origin point.
-    let tr_x = (*thing).x - view.viewx;
-    let tr_y = (*thing).y - view.viewy;
+    let tr_x = thing.x - view.viewx;
+    let tr_y = thing.y - view.viewy;
 
     let gxt = FixedMul(tr_x, view.viewcos);
     let gyt = -FixedMul(tr_y, view.viewsin);
@@ -752,28 +752,28 @@ pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
     // Decide which patch to use for sprite relative to player.
     #[cfg(feature = "rangecheck")]
     {
-        if (*thing).sprite as u32 >= SPRITES.borrow().numsprites as u32 {
-            i_error!("R_ProjectSprite: invalid sprite number {}", (*thing).sprite);
+        if thing.sprite as u32 >= SPRITES.borrow().numsprites as u32 {
+            i_error!("R_ProjectSprite: invalid sprite number {}", thing.sprite);
         }
     }
 
-    let sprdef = &*sprites.add((*thing).sprite as usize);
+    let sprdef = &*sprites.add(thing.sprite as usize);
     #[cfg(feature = "rangecheck")]
     {
-        if ((*thing).frame & FF_FRAMEMASK) >= sprdef.numframes {
+        if (thing.frame & FF_FRAMEMASK) >= sprdef.numframes {
             if sprdef.numframes == 0 {
                 return; // sprite lump not present in this WAD — skip silently
             }
             i_error!(
                 "R_ProjectSprite [THING]: invalid sprite frame {} : {}",
-                (*thing).sprite,
-                (*thing).frame
+                thing.sprite,
+                thing.frame
             );
         }
     }
     let sprframe = &*sprdef
         .spriteframes
-        .add(((*thing).frame & FF_FRAMEMASK) as usize);
+        .add((thing.frame & FF_FRAMEMASK) as usize);
 
     let (lump, flip): (i32, i32);
     if sprframe.rotate == 0 {
@@ -782,11 +782,8 @@ pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
         flip = sprframe.flip[0] as i32;
     } else {
         // Choose a different rotation based on player view.
-        let ang = R_PointToAngle((*thing).x, (*thing).y);
-        let rot = ((ang
-            .wrapping_sub((*thing).angle)
-            .wrapping_add((ANG45 / 2) * 9))
-            >> 29) as usize;
+        let ang = R_PointToAngle(thing.x, thing.y);
+        let rot = ((ang.wrapping_sub(thing.angle).wrapping_add((ANG45 / 2) * 9)) >> 29) as usize;
         lump = sprframe.lump[rot] as i32;
         flip = sprframe.flip[rot] as i32;
     }
@@ -810,12 +807,12 @@ pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
 
     // Store information in a vissprite.
     let vis = R_NewVisSprite();
-    (*vis).mobjflags = (*thing).flags;
+    (*vis).mobjflags = thing.flags;
     (*vis).scale = xscale << view.detailshift;
-    (*vis).gx = (*thing).x;
-    (*vis).gy = (*thing).y;
-    (*vis).gz = (*thing).z;
-    (*vis).gzt = (*thing).z + *data.spritetopoffset.add(lump as usize);
+    (*vis).gx = thing.x;
+    (*vis).gy = thing.y;
+    (*vis).gz = thing.z;
+    (*vis).gzt = thing.z + *data.spritetopoffset.add(lump as usize);
     (*vis).texturemid = (*vis).gzt - view.viewz;
     (*vis).x1 = if x1 < 0 { 0 } else { x1 };
     (*vis).x2 = if x2 >= viewwidth { viewwidth - 1 } else { x2 };
@@ -835,13 +832,13 @@ pub unsafe fn R_ProjectSprite(thing: *mut mobj_t) {
     (*vis).patch = lump;
 
     // Get light level.
-    if (*thing).flags & MF_SHADOW != 0 {
+    if thing.flags & MF_SHADOW != 0 {
         // Shadow draw.
         (*vis).colormap = ptr::null_mut();
     } else if !view.fixedcolormap.is_null() {
         // Fixed map.
         (*vis).colormap = view.fixedcolormap;
-    } else if (*thing).frame & FF_FULLBRIGHT != 0 {
+    } else if thing.frame & FF_FULLBRIGHT != 0 {
         // Full bright.
         (*vis).colormap = data.colormaps;
     } else {
@@ -878,16 +875,21 @@ fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
 /// Uses `sec.validcount` to skip sectors that were already processed this
 /// frame (a sector can appear in multiple subsectors). Sets `spritelights`
 /// from the sector's light level, then calls `R_ProjectSprite` for every
-/// thing in the sector's thing list. `level` and `validcount` (the frame's
-/// stamp, the world's `validcount`) come from the BSP traversal's borrow of
-/// the world.
+/// thing in the sector's thing list. `level`, `mobjs` and `validcount` (the
+/// frame's stamp, the world's `validcount`) come from the BSP traversal's
+/// borrow of the world.
 ///
 /// # Safety
-/// - `sec` must be a sector of `level` whose thing list links live map
-///   objects.
+/// - `sec` must be a sector of `level` whose thing list links map objects
+///   of `mobjs`.
 /// - `scalelight` and `extralight` must be initialised for the current
 ///   frame before this function is called.
-pub unsafe fn R_AddSprites(level: &mut LevelState, validcount: i32, sec: SectorId) {
+pub unsafe fn R_AddSprites(
+    level: &mut LevelState,
+    mobjs: &Arena<mobj_t>,
+    validcount: i32,
+    sec: SectorId,
+) {
     let sec = &mut level.sectors[sec];
 
     // BSP is traversed by subsector.
@@ -906,9 +908,9 @@ pub unsafe fn R_AddSprites(level: &mut LevelState, validcount: i32, sec: SectorI
     // Handle all things in sector.
     let mut thing = sec.thinglist;
     while let Some(current) = thing {
-        let current = current.ptr();
+        let current = &mobjs[current];
         R_ProjectSprite(current);
-        thing = (*current).snext;
+        thing = current.snext;
     }
 }
 
@@ -1083,8 +1085,8 @@ pub unsafe fn R_DrawPlayerSprites() {
     let (psprites, lightlevel) = {
         let world = WORLD.borrow();
         let player = &world.players[viewplayer];
-        let mo = player.mo().ptr();
-        let lightlevel = world.level.subsector_sector((*mo).subsector).lightlevel;
+        let mo = &world.mobjs[player.mo()];
+        let lightlevel = world.level.subsector_sector(mo.subsector).lightlevel;
         (player.psprites, lightlevel)
     };
     SPRITES.borrow_mut().spritelights = sprite_light_row(lightlevel, extralight);
@@ -1376,8 +1378,8 @@ mod tests {
         };
         // SAFETY: the sectors have no things to project.
         unsafe {
-            R_AddSprites(&mut level, 7, SectorId::new(1));
-            R_AddSprites(&mut level, 7, SectorId::new(1));
+            R_AddSprites(&mut level, &Arena::new(), 7, SectorId::new(1));
+            R_AddSprites(&mut level, &Arena::new(), 7, SectorId::new(1));
         }
         assert_eq!(level.sectors[1].validcount, 7);
         assert_eq!(level.sectors[0].validcount, 0);

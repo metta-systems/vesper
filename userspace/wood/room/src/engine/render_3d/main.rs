@@ -1020,14 +1020,18 @@ pub unsafe fn R_SetupFrame(player_id: PlayerId) {
     // Play does not run while a frame is drawn, so the view takes a copy.
     // The renderer borrows the world only for such reads until it takes
     // the world as a parameter; never across `NetUpdate`.
-    let player = WORLD.borrow().players[player_id];
+    let (player, mo_x, mo_y, mo_angle) = {
+        let world = WORLD.borrow();
+        let player = world.players[player_id];
+        let mo = &world.mobjs[player.mo()];
+        (player, mo.x, mo.y, mo.angle)
+    };
     let mut view = VIEW.borrow_mut();
 
     view.viewplayer = Some(player_id);
-    let mo = player.mo().ptr();
-    view.viewx = (*mo).x;
-    view.viewy = (*mo).y;
-    view.viewangle = (*mo).angle.wrapping_add(view.viewangleoffset as u32);
+    view.viewx = mo_x;
+    view.viewy = mo_y;
+    view.viewangle = mo_angle.wrapping_add(view.viewangleoffset as u32);
     view.extralight = player.extralight;
 
     view.viewz = player.viewz;
@@ -1086,12 +1090,18 @@ pub unsafe fn R_RenderPlayerView(player: PlayerId) {
     {
         // The traversal borrows the world once and hands down the level,
         // which it marks (automap "seen" line flags, sector sprite stamps),
-        // and the frame's `validcount` stamp. `NetUpdate` may run play, so
-        // the borrow ends before it.
+        // the map objects whose sprites it projects, and the frame's
+        // `validcount` stamp. `NetUpdate` may run play, so the borrow ends
+        // before it.
         let mut world = WORLD.borrow_mut();
-        let World { level, scratch, .. } = &mut *world;
+        let World {
+            level,
+            mobjs,
+            scratch,
+            ..
+        } = &mut *world;
         let root_node = level.nodes.len() as i32 - 1;
-        R_RenderBSPNode(level, scratch.validcount, root_node);
+        R_RenderBSPNode(level, mobjs, scratch.validcount, root_node);
     }
     NetUpdate();
     R_DrawPlanes();

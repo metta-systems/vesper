@@ -39,7 +39,7 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat},
             controls::{CONTROLS, ControlsState},
         },
-        play::{maputl::MAPBLOCKUNITS, setup::LevelState, tick::MOBJ_ARENA},
+        play::{maputl::MAPBLOCKUNITS, setup::LevelState},
         render_2d::{V_DrawPatch, V_MarkRect},
         status::stuff::ST_Responder,
         wad::{
@@ -943,8 +943,7 @@ fn AM_restoreScaleAndLoc(automap: &mut AutomapState, world: &World) {
         automap.m_x = automap.old_m_x;
         automap.m_y = automap.old_m_y;
     } else {
-        let mobjs = MOBJ_ARENA.borrow();
-        let mo = &mobjs[world.players[automap.player()].mo()];
+        let mo = &world.mobjs[world.players[automap.player()].mo()];
         automap.m_x = mo.x - automap.m_w / 2;
         automap.m_y = mo.y - automap.m_h / 2;
     }
@@ -1080,8 +1079,7 @@ fn AM_initVariables(automap: &mut AutomapState, world: &World) {
     automap.plr = Some(plr);
 
     {
-        let mobjs = MOBJ_ARENA.borrow();
-        let mo = &mobjs[world.players[plr].mo()];
+        let mo = &world.mobjs[world.players[plr].mo()];
         automap.m_x = mo.x - automap.m_w / 2;
         automap.m_y = mo.y - automap.m_h / 2;
     }
@@ -1447,8 +1445,7 @@ fn AM_changeWindowScale(automap: &mut AutomapState) {
 ///
 /// If the player has no map object.
 fn AM_doFollowPlayer(automap: &mut AutomapState, world: &World) {
-    let mobjs = MOBJ_ARENA.borrow();
-    let mo = &mobjs[world.players[automap.player()].mo()];
+    let mo = &world.mobjs[world.players[automap.player()].mo()];
     if automap.f_oldloc.x != mo.x || automap.f_oldloc.y != mo.y {
         automap.m_x = FTOM(automap, MTOF(automap, mo.x)) - automap.m_w / 2;
         automap.m_y = FTOM(automap, MTOF(automap, mo.y)) - automap.m_h / 2;
@@ -1490,11 +1487,10 @@ fn AM_updateLightLev(automap: &mut AutomapState) {
 /// borrowed for the level phase.
 /// C origin: `AM_Ticker` in am_map.c.
 ///
-/// # Safety
+/// # Panics
 ///
-/// The player's `mo` must name a map object of the level while the automap
-/// is active.
-pub unsafe fn AM_Ticker(world: &World) {
+/// If the automap follows a player that has no map object.
+pub fn AM_Ticker(world: &World) {
     let mut automap = AUTOMAP.borrow_mut();
     if automap.automapactive == 0 {
         return;
@@ -2009,8 +2005,7 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
 
     if netgame() == 0 {
         let (angle, x, y) = {
-            let mobjs = MOBJ_ARENA.borrow();
-            let mo = &mobjs[world.players[plr].mo()];
+            let mo = &world.mobjs[world.players[plr].mo()];
             (mo.angle, mo.x, mo.y)
         };
         let arrow: &[mline_t] = if automap.cheating != 0 {
@@ -2041,8 +2036,7 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
         }
 
         let (angle, x, y) = {
-            let mobjs = MOBJ_ARENA.borrow();
-            let mo = &mobjs[world.players[p].mo()];
+            let mo = &world.mobjs[world.players[p].mo()];
             (mo.angle, mo.x, mo.y)
         };
         AM_drawLineCharacter(automap, &PLAYER_ARROW, 0, angle, color, x, y);
@@ -2061,18 +2055,13 @@ unsafe fn AM_drawPlayers(automap: &mut AutomapState, world: &World) {
 ///
 /// The level must be loaded; thing linked lists must be properly
 /// terminated.
-unsafe fn AM_drawThings(
-    automap: &mut AutomapState,
-    level: &LevelState,
-    colors: i32,
-    _colorrange: i32,
-) {
+unsafe fn AM_drawThings(automap: &mut AutomapState, world: &World, colors: i32, _colorrange: i32) {
+    let level = &world.level;
     for sector in &level.sectors[..level.numsectors as usize] {
         let mut thing = sector.thinglist;
         while let Some(current) = thing {
             let (angle, x, y, snext) = {
-                let mobjs = MOBJ_ARENA.borrow();
-                let t = &mobjs[current];
+                let t = &world.mobjs[current];
                 (t.angle, t.x, t.y, t.snext)
             };
             let lightlev = automap.lightlev;
@@ -2163,7 +2152,7 @@ pub unsafe fn AM_Drawer() {
     AM_drawWalls(&mut automap, &world);
     AM_drawPlayers(&mut automap, &world);
     if automap.cheating == 2 {
-        AM_drawThings(&mut automap, &world.level, THINGCOLORS, THINGRANGE);
+        AM_drawThings(&mut automap, &world, THINGCOLORS, THINGRANGE);
     }
     AM_drawCrosshair(&automap, XHAIRCOLORS);
     AM_drawMarks(&automap);
