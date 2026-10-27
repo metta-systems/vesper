@@ -135,6 +135,27 @@ pub fn interrupts<'t>(
     (0..).map_while(move |index| interrupt(tree, node, index))
 }
 
+/// Every interrupt of `node` once, in order: an entry that repeats an earlier
+/// one (the same controller and specifier) is left out.
+///
+/// A node may list one line several times when several of its functions share
+/// it: the BCM2835 DMA node names GPU interrupt 27 for each of channels 11 to
+/// 14. A line can be issued as one `IRQHandler` only, so whoever issues a
+/// node's interrupts takes this list.
+pub fn distinct_interrupts<'t>(
+    tree: &'t DevTreeIndex<'_, '_>,
+    node: &'t Node<'_, '_, '_>,
+) -> impl Iterator<Item = Interrupt> + 't {
+    interrupts(tree, node)
+        .enumerate()
+        .filter(move |(index, candidate)| {
+            !interrupts(tree, node)
+                .take(*index)
+                .any(|earlier| earlier == *candidate)
+        })
+        .map(|(_index, interrupt)| interrupt)
+}
+
 /// Interrupt-controller nodes in `tree`, the root first, then the others
 /// for which `drives` holds, in device tree order: the order
 /// `IRQControl.Issue` numbers a component's controllers by.

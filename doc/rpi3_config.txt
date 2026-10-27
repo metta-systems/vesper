@@ -34,5 +34,8 @@ start_x=1
 # Video memory for compositor
 gpu_mem=128
 
+# Enable PWM overlay node
+dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+
 # Does nothing yet
 audio_pwm_mode=2

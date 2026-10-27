@@ -8,11 +8,15 @@
 //! - its register pages as page-sized device Untypeds carved out of the
 //!   device Untypeds handed out at boot, or, for a page several matched nodes
 //!   touch, a copy of one device Frame;
-//! - one `IRQHandler` per interrupt of the node, issued through the boot
+//! - one `IRQHandler` per interrupt line of the node, issued through the boot
 //!   `IRQControl` and bound to the driver's Notification and Thread, interrupt
-//!   *i* signalling bit *i*;
+//!   *i* signalling bit *i*; a line the node lists more than once (the DMA
+//!   node's line shared by channels 11 to 14) is issued once, at its first
+//!   position (`libdevicetree::interrupts::distinct_interrupts`);
 //! - the pins of the node's default pin state (`pinctrl-0`, see
 //!   `libdevicetree::brcm_pins`), which the driver sets up through `gpio_v1`;
+//! - for a DMA controller node, its `brcm,dma-channel-mask`: the channels the
+//!   firmware leaves to the ARM;
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -74,8 +78,8 @@ use {
         ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
-        DevTreeIndex, Node, brcm_pins, dma_address, find_compatible,
-        interrupts::{MAX_INTERRUPT_CELLS, interrupts},
+        DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
+        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
     libimage::{DriverImage, Link, Provider},
@@ -1024,10 +1028,12 @@ pub fn load_drivers(
             .carved_id()
             .unwrap_or_else(|error| panic!("🥾 Notification identity: {:?}", error.code()));
         let mut interrupt_count = 0;
+        // A line the node lists more than once (channels sharing it) is
+        // issued once, at its first position.
         for interrupt in instance
             .node
             .iter()
-            .flat_map(|node| interrupts(tree, node))
+            .flat_map(|node| distinct_interrupts(tree, node))
             .take(MAX_INTERRUPTS)
         {
             let Some(controller) = controllers.index_of(interrupt.controller) else {
@@ -1103,6 +1109,12 @@ pub fn load_drivers(
             pin_count += 1;
         }
         init.pin_count = pin_count as u64;
+        // ── A DMA controller's channels left to the ARM ─────────────────
+        init.dma_channel_mask = instance
+            .node
+            .as_ref()
+            .and_then(brcm_dma_channel_mask)
+            .map_or(0, u64::from);
         init.notification = move_to(
             builder,
             &mut self_table,

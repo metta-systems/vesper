@@ -14,9 +14,12 @@
 //! - the node's register pages: page-sized device Untypeds the driver carves
 //!   its device Frames from, or, for a page several drivers share, a copy of
 //!   one device Frame ([`map_device_pages`] does both);
-//! - one `IRQHandler` per interrupt of the node, every one bound to the
-//!   driver's Notification, interrupt *i* signalling bit *i*; each handler is
-//!   enabled by its first `Ack`;
+//! - one `IRQHandler` per interrupt line of the node (a line listed twice is
+//!   issued once, at its first position), every one bound to the driver's
+//!   Notification, interrupt *i* signalling bit *i*; each handler is enabled
+//!   by its first `Ack`;
+//! - for a DMA controller node, the channels it leaves to the ARM
+//!   (`brcm,dma-channel-mask`);
 //! - the Notification, a RAM Untyped (with its physical base and the address
 //!   the node's device reaches it at, for DMA buffers), the driver's Time, its
 //!   `AddressSpace` and its own table;
@@ -327,6 +330,9 @@ pub struct DriverInit {
     pub pin_count: u64,
     /// The node's default pin state, from its device tree pin group
     pub pins: [PinSetting; MAX_PINS],
+    /// The DMA channels a DMA controller node leaves to the ARM, one bit
+    /// per channel (`brcm,dma-channel-mask`); zero for every other node
+    pub dma_channel_mask: u64,
     /// The `VideoCore` memory a driver that asked for it holds: the memory the
     /// firmware allocates framebuffers in, outside every other Untyped
     pub video_count: u64,
@@ -419,6 +425,7 @@ impl DriverInit {
             function: 0,
             pull: NO_PULL,
         }; MAX_PINS],
+        dma_channel_mask: 0,
         video_count: 0,
         video: [VideoBlock {
             key: 0,
@@ -508,7 +515,8 @@ impl DriverInit {
         // SAFETY: mapped read-only by Kickstart at `base` for `len` bytes.
         Some(unsafe { core::slice::from_raw_parts(record.base as *const u8, len) })
     }
-    /// The node's interrupts, in device tree order.
+    /// The node's interrupts, in device tree order, each line once: a line
+    /// the node lists again later keeps only its first position.
     pub fn interrupts(&self) -> &[Interrupt] {
         &self.interrupts[..clamp(self.interrupt_count, MAX_INTERRUPTS)]
     }

@@ -1,0 +1,92 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The DMA controller of the BCM2835 (`brcm,bcm2835-dma`), served by the dma
+## component, the one holder of its register page and channel interrupts
+## (decision D1 of `doc/agentic/audio-design.md`). A client claims a DMA
+## channel, runs chains of control blocks on it and learns of their progress
+## through its io-channel's EventCount. Memory is named by its bus address,
+## the address the DMA controller reaches it at (`DriverInit::memory_bus` plus
+## the offset into the client's memory): the component trusts its clients
+## with that for now (B1a). The controller does not snoop the CPU caches: a
+## client cleans what the DMA reads (`Frame.CleanData`) before it starts it,
+## and cleans and invalidates what the DMA writes before it starts and
+## invalidates it again before reading it. Every transfer moves whole 32-bit
+## words. Prototype: edited in place.
+local interface dma_v1
+{
+    ## Each client shares an io-channel with the component, for its
+    ## EventCount: the component advances it by one for every control block
+    ## that finished on one of the client's DMA channels, a period of a ring
+    ## or a block of a copy. The io-channel's FIFOs carry nothing yet.
+    channel 1;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## component knows which DMA channels a caller claimed.
+    badged;
+
+    ## Every DMA channel the device tree grants the ARM
+    ## (`brcm,dma-channel-mask`) is claimed.
+    exception no_channel {}
+
+    ## The component knows no peripheral for `dreq`, or the DMA channel was
+    ## claimed for memory (DREQ 0) and has no peripheral to feed.
+    exception unknown_request { card32 dreq; }
+
+    ## The caller did not claim `dma_channel`.
+    exception not_owner { card32 dma_channel; }
+
+    ## `dma_channel` is running a chain; stop it first.
+    exception busy { card32 dma_channel; }
+
+    ## A length that is zero, not a multiple of four bytes or longer than the
+    ## DMA channel moves in one control block, an address that is not word
+    ## aligned or wraps, or more blocks than a chain holds (eight).
+    exception bad_transfer {}
+
+    ## Claim a DMA channel for the peripheral paced by `dreq`, the DMA request
+    ## line of BCM2835 ARM Peripherals section 4.2.1.3 (5 is PWM), or for
+    ## memory with `dreq` 0. Returns the DMA channel's number.
+    claim(card32 dreq)
+        returns (card32 dma_channel)
+        raises (no_channel, unknown_request);
+
+    ## Stop `dma_channel` if it runs and give it back.
+    release(card32 dma_channel)
+        raises (not_owner);
+
+    ## Copy `blocks` blocks of `block_bytes` bytes from `source` to
+    ## `destination`, both bus addresses, as one chain of control blocks,
+    ## unpaced: the bytes from `source` land at `destination` in order. Each
+    ## block raises the DMA channel's interrupt when it is done.
+    copy(card32 dma_channel, card32 source, card32 destination, card32 block_bytes, card32 blocks)
+        raises (not_owner, busy, bad_transfer);
+
+    ## Feed the DMA channel's peripheral from a ring of `periods` periods of
+    ## `period_bytes` bytes at bus address `ring`, paced by its DREQ, round
+    ## and round until `stop`. Each period raises the DMA channel's interrupt
+    ## when the peripheral has taken it; the client refills a period once the
+    ## DMA channel has left it.
+    start_ring(card32 dma_channel, card32 ring, card32 period_bytes, card32 periods)
+        raises (not_owner, busy, bad_transfer, unknown_request);
+
+    ## The control block `dma_channel` is on, from 0; the number of blocks of
+    ## its last chain once it has finished that chain or was stopped.
+    position(card32 dma_channel)
+        returns (card32 block)
+        raises (not_owner);
+
+    ## Stop the chain on `dma_channel`: pause it, let its writes complete and
+    ## reset it.
+    stop(card32 dma_channel)
+        raises (not_owner);
+
+    ## What went wrong on `dma_channel` since its last chain started: bit 0 a
+    ## read without its last flag, bit 1 a FIFO error, bit 2 a read error
+    ## (the DMA channel's `DEBUG` flags), bit 3 the DMA channel stopped on an
+    ## error (`CS.ERROR`).
+    errors(card32 dma_channel)
+        returns (card32 bits)
+        raises (not_owner);
+}

@@ -3,24 +3,35 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! audio-test: the clock manager component and the PWM audio driver, loaded
-//! by Kickstart (stage A1 of `doc/agentic/audio-implementation-plan.md`).
+//! audio-test: the clock manager component, the DMA controller component and
+//! the PWM audio driver, loaded by Kickstart (stages A1 and A2 of
+//! `doc/agentic/audio-implementation-plan.md`).
 //!
 //! The image bundles `cprman-bcm2835`, which serves `clock_v1` for the
-//! `brcm,bcm2835-cprman` node, `audio-pwm-bcm2835` for the `brcm,bcm2835-pwm`
+//! `brcm,bcm2835-cprman` node, `dma-bcm2835`, which serves `dma_v1` for the
+//! `brcm,bcm2835-dma` node, `audio-pwm-bcm2835` for the `brcm,bcm2835-pwm`
 //! node, the gpio component it routes the jack's pins through, and the PL011
 //! driver, whose serial channel the audio driver traces on. The PWM node is
-//! disabled in the stock device trees: `just test-audio` boots QEMU with the
-//! test tree that `targets/overlays/audio-test-pwm.dts` makes, and the board
-//! needs `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in `config.txt`.
+//! disabled in the stock device trees: `just test-audio` and `just test-dma`
+//! boot QEMU with the test tree that `targets/overlays/audio-test-pwm.dts`
+//! makes, and the board needs `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4`
+//! in `config.txt`.
+//!
+//! The boot Thread checks what Kickstart hands the DMA controller: its page,
+//! its channel mask and each of its interrupt lines once (the node lists the
+//! line of channels 11 to 14 four times).
 //!
 //! The audio driver sets the PWM clock to 100 MHz through `clock_v1` and reads
-//! it back. Under QEMU, which emulates the clock manager but not the PWM block,
-//! it then checks that `clock_v1` refuses an unknown clock and an unreachable
-//! rate; on the board it plays a 440 Hz test tone on the left, the right and
-//! both sides. Either way it signals the report Notification key the boot
-//! Thread installs at `REPORT_SLOT` of its table, and the boot Thread ends the
-//! QEMU run successfully. A failed check panics and fails the run instead.
+//! it back. Under QEMU, which emulates the clock manager and the DMA
+//! controller but not the PWM block, it then checks that `clock_v1` refuses an
+//! unknown clock and an unreachable rate, and copies memory through `dma_v1`
+//! with chains of linked control blocks, waiting for one completion per block
+//! (QEMU's DMA model runs a chain inside the write that starts it, so no ring
+//! runs there); on the board it plays a 440 Hz test tone on the left, the
+//! right and both sides by polling, then from a DMA ring, measuring the sample
+//! rate. Either way it signals the report Notification key the boot Thread
+//! installs at `REPORT_SLOT` of its table, and the boot Thread ends the QEMU
+//! run successfully. A failed check panics and fails the run instead.
 
 mod components {
     //! Bundled userspace components (generated from `image.toml`).
@@ -29,6 +40,9 @@ mod components {
 
 use {
     clock::clock_v1::TYPE_CODE as CLOCK_V1,
+    dma::dma_v1::{
+        CHANNEL_PAGES as DMA_CHANNEL_PAGES, FUNCTION_COUNT as DMA_V1_FUNCTIONS, TYPE_CODE as DMA_V1,
+    },
     driver_protocol::REPORT_SLOT,
     gpio::gpio_v1::TYPE_CODE as GPIO_V1,
     kickstart::{
@@ -69,6 +83,14 @@ const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 /// The jack's pins in the PWM node's pin group: GPIO40 and GPIO41 on ALT0
 /// (`brcm,function` 4), no pulls.
 const JACK_PINS: [(u32, u32, u32); 2] = [(40, 4, NO_PULL), (41, 4, NO_PULL)];
+
+/// The Raspberry Pi 3 tree's `brcm,dma-channel-mask`: channels 0, 2, 4, 5
+/// and 8 to 14.
+const DMA_CHANNEL_MASK: u64 = 0x7f35;
+
+/// The DMA node's interrupts once each line is issued once: `dma0` to
+/// `dma10`, the line `dma11` to `dma14` share, and `dma-shared-all`.
+const DMA_INTERRUPTS: usize = 13;
 
 /// Enabled nodes of the tree compatible with one of `compatible`.
 fn enabled_nodes(compatible: &[&str]) -> usize {
@@ -151,6 +173,8 @@ pub fn run() -> ! {
 
     // ── Driver loading ────────────────────────────────────────────────────
     let mut seen = 0;
+    let mut audio_channel = 0;
+    let mut dma_channel = 0;
     let started = load_drivers(
         nucleus,
         &builder,
@@ -158,6 +182,7 @@ pub fn run() -> ! {
         &[
             &components::AUDIO_DRIVER,
             &components::CPRMAN_DRIVER,
+            &components::DMA_DRIVER,
             &components::GPIO_DRIVER,
             &components::UART_DRIVER,
             &components::DISPATCHER_DRIVER,
@@ -188,7 +213,21 @@ pub fn run() -> ! {
                         .eq(0..1),
                     "set_function of gpio_v1"
                 );
-                assert_eq!(imports.len(), 4);
+                let dma = || imports.iter().filter(|record| record.type_code == DMA_V1);
+                assert!(
+                    dma()
+                        .map(|record| record.function)
+                        .eq(0..DMA_V1_FUNCTIONS as u64),
+                    "every function of dma_v1"
+                );
+                assert!(
+                    dma().all(|record| record.channel_base != 0
+                        && record.channel_base == dma().next().unwrap().channel_base
+                        && record.channel(DMA_CHANNEL_PAGES).is_some()),
+                    "the functions of dma_v1 share one io-channel"
+                );
+                assert_eq!(imports.len(), 4 + DMA_V1_FUNCTIONS);
+                audio_channel = dma().next().map_or(0, |record| record.channel_base);
                 assert!(
                     init.pins()
                         .iter()
@@ -207,6 +246,35 @@ pub fn run() -> ! {
                     .unwrap_or_else(|failure| {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
+            } else if name == components::DMA.name {
+                // The DMA controller: its page, the channel mask, each
+                // interrupt line once (the node lists line 27 four times),
+                // no imports, and the audio driver as its client.
+                assert_eq!(init.pages().len(), 1, "the DMA controller's page");
+                assert_eq!(init.dma_channel_mask, DMA_CHANNEL_MASK);
+                let interrupts = init.interrupts();
+                assert_eq!(
+                    interrupts.len(),
+                    DMA_INTERRUPTS,
+                    "dma0 to dma11, dma-shared-all"
+                );
+                for (index, interrupt) in interrupts.iter().enumerate() {
+                    assert!(
+                        interrupts[..index]
+                            .iter()
+                            .all(|earlier| earlier.line != interrupt.line),
+                        "interrupt line {} issued once",
+                        interrupt.line
+                    );
+                }
+                assert!(imports.is_empty());
+                assert_ne!(init.export_pool, 0, "the DMA controller serves calls");
+                let [area] = init.areas() else {
+                    panic!("one client, found {}", init.areas().len());
+                };
+                assert_ne!(area.channel_base, 0, "dma_v1 has an io-channel");
+                assert_ne!(area.channel_event, 0, "the io-channel has an EventCount");
+                dma_channel = area.channel_base;
             } else if name == components::CPRMAN.name {
                 // The clock manager: its two pages, no imports, and the audio
                 // driver as its client.
@@ -229,10 +297,14 @@ pub fn run() -> ! {
         },
     );
     assert_eq!(
-        started, 5,
-        "the audio driver, the clock manager, the gpio component, the PL011 and the root dispatcher"
+        started, 6,
+        "the audio driver, the clock manager, the DMA controller, the gpio component, the PL011 and the root dispatcher"
     );
-    assert_eq!(seen, 4);
+    assert_eq!(seen, 5);
+    assert_eq!(
+        audio_channel, dma_channel,
+        "the io-channel the audio driver shares with the DMA controller"
+    );
 
     // ── The audio driver reports once the clock is set and checked ────────
     let bits = NotificationKey::from_key(report)
@@ -240,7 +312,9 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("report Wait failed: {:?}", error.code()));
     assert_eq!(bits, 1);
 
-    semi::println!("audio-test: ✅ the PWM clock runs at 100 MHz through clock_v1");
+    semi::println!(
+        "audio-test: ✅ the PWM clock runs at 100 MHz through clock_v1, DMA chains run through dma_v1"
+    );
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_success()

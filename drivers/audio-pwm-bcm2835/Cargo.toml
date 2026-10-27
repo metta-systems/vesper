@@ -1,7 +1,7 @@
 [package]
 name = "audio-pwm-bcm2835"
 
-description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: for now a polled test tone, later PCM output through DMA."
+description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: for now a test tone, polled and from a DMA ring, later PCM output through audio_v1."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -30,6 +30,7 @@ libmmio = { workspace = true }
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
 clock-client = { workspace = true }
+dma-client = { workspace = true }
 driver-protocol = { workspace = true }
 gpio-client = { workspace = true }
 libdevice-driver = { workspace = true }

@@ -3,8 +3,10 @@
 #[cfg(test)]
 mod tests {
     use audio_pwm_bcm2835::{
-        Control, DmaConfig, PWM_CLOCK_HZ, RANGE, RegisterBlock, SINE, Side, Status, Tone,
-        clear_errors, clearing, fifo_stereo, frame, has_errors, sample_rate_millihertz, word,
+        Control, DmaConfig, MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ,
+        PWM_DREQ, PeriodContent, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status,
+        Tone, clear_errors, clearing, deviation_ppm, dma_feed, fifo_stereo, frame, has_errors,
+        measured_rate_millihertz, period_content, sample_rate_millihertz, word,
     };
 
     #[test]
@@ -123,5 +125,48 @@ mod tests {
             peak > i16::MAX / 4 - 300 && peak <= i16::MAX / 4,
             "a quarter of full scale"
         );
+    }
+
+    #[test]
+    fn the_dma_ring_is_four_pages_fed_by_dreq_5() {
+        assert_eq!(PWM_DREQ, 5);
+        assert_eq!(MEMORY_DREQ, 0);
+        assert_eq!(PERIOD_FRAMES, 512);
+        assert_eq!(PERIODS, 4);
+        assert_eq!(PERIOD_BYTES, 4096);
+        // §9.6 DMAC: ENAB 31, PANIC 15:8 = 7, DREQ 7:0 = 7.
+        assert_eq!(dma_feed().raw_value(), 0x8000_0707);
+    }
+
+    #[test]
+    fn the_ring_test_ramps_up_plays_ramps_down_then_goes_quiet() {
+        let contents: Vec<_> = (0..6).map(|index| period_content(index, 3)).collect();
+        assert_eq!(
+            contents,
+            [
+                PeriodContent::RampUp,
+                PeriodContent::Tone,
+                PeriodContent::Tone,
+                PeriodContent::Tone,
+                PeriodContent::RampDown,
+                PeriodContent::Off,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_measured_rate_is_checked_to_a_thousandth() {
+        let expected = sample_rate_millihertz(PWM_CLOCK_HZ, RANGE);
+        assert_eq!(expected, 44_091_710, "100 MHz / 2268");
+        // 430 periods of 512 frames in exactly the time they should take.
+        let frames = 430 * 512;
+        let elapsed_ns = frames * 1_000_000_000_000 / expected;
+        let measured = measured_rate_millihertz(frames, elapsed_ns);
+        assert!(deviation_ppm(measured, expected) < 2);
+        // A PLLD of 498 MHz instead of 500 shows up as 4000 ppm.
+        let slow = expected * 498 / 500;
+        assert_eq!(deviation_ppm(slow, expected), 4000);
+        assert!(deviation_ppm(slow, expected) > RATE_TOLERANCE_PPM);
+        assert_eq!(RATE_TOLERANCE_PPM, 1000, "0.1 %");
     }
 }

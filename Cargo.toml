@@ -58,6 +58,10 @@ members = [
   "drivers/cprman-bcm2835",
   "drivers/cprman-bcm2835/client",
   "drivers/cprman-bcm2835/server",
+  # DMA controller component and its dma_v1 interface crates
+  "drivers/dma-bcm2835",
+  "drivers/dma-bcm2835/client",
+  "drivers/dma-bcm2835/server",
   # PWM audio driver
   "drivers/audio-pwm-bcm2835",
   "kernel/tests/audio-test",
@@ -217,6 +221,8 @@ gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
 clock = { path = "drivers/cprman-bcm2835/server" }
 clock-client = { path = "drivers/cprman-bcm2835/client" }
+dma = { path = "drivers/dma-bcm2835/server" }
+dma-client = { path = "drivers/dma-bcm2835/client" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }

@@ -336,6 +336,7 @@ dependencies = [
  "bitbybit",
  "clock-client",
  "derive-mmio",
+ "dma-client",
  "driver-protocol",
  "gpio-client",
  "metta-meddle-runtime",
@@ -354,6 +355,7 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "clock",
+ "dma",
  "driver-protocol",
  "gpio",
  "kickstart",
@@ -1080,6 +1082,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "dma"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "dma-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "dma",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "dma-client"
+version = "0.0.1"
+dependencies = [
+ "dma",
+ "metta-meddle",
+ "metta-meddle-runtime",
 ]
 
 [[package]]

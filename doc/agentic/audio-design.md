@@ -1,8 +1,9 @@
 # Audio design (Raspberry Pi 3, PWM jack output with DMA)
 
-Status: D1 to D8 answered 2026-10-27 (section Decisions below); stage A1 (the `cprman`
-driver with `clock_v1` and a polled test tone) is built and checked in QEMU, its
-hardware check is pending. The one open decision (D9, music) is in
+Status: D1 to D8 answered 2026-10-27 (section Decisions below); stages A1 (the `cprman`
+driver with `clock_v1` and a polled test tone) and A2 (the `dma` driver with `dma_v1`,
+and the test tone from a DMA ring on the board) are built and checked in QEMU, their
+hardware checks are pending. The one open decision (D9, music) is in
 [audio-decisions.md](audio-decisions.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
 drafts until written; once written they are prototypes and are edited in place.
@@ -209,7 +210,10 @@ timer), so a wrong assumption shows up as a rate error.
   14 as Lite). A Lite channel is plenty for 353 KB/s of PWM words.
 - Interrupts ([P3]): channels 0 to 10 have their own lines (GPU interrupts 16 to 26);
   channels 11 to 14 share line 27; line 28 is "dma-shared-all". The node lists line 27
-  four times, which matters for Kickstart (see Risks).
+  four times; Kickstart issues a line the node repeats once, at its first position, so
+  the `dma` driver receives 13 interrupts: channels 0 to 10 at their own number, the
+  line of 11 to 14 at 11, `dma-shared-all` at 12 (never enabled: it would also fire for
+  the firmware's channels).
 - Control block (§4.2.1.1): eight words, 32-byte aligned: `TI`, `SOURCE_AD`, `DEST_AD`,
   `TXFR_LEN`, `STRIDE`, `NEXTCONBK`, two reserved. The channel is started by writing the
   block's bus address to `CONBLK_AD` and setting `CS.ACTIVE`. When a block finishes the
@@ -237,11 +241,12 @@ timer), so a wrong assumption shows up as a rate error.
 ### Completion: how the player learns a period finished
 
 Each period's control block has `INTEN`, so the channel raises its interrupt as it moves
-to the next block; the interrupt Thread clears `CS.INT` (write 1), reads `CONBLK_AD` to
-see which block is now playing, refills the periods behind it, cleans them and advances
-an EventCount for whoever waits. `INT_STATUS` gives all channels at once, for the
-shared line. Without an interrupt the same position can be polled from `CONBLK_AD` on a
-timer, which is the fallback if the interrupt wiring (Risks) is not ready.
+to the next block. The `dma` driver's interrupt Thread clears `CS.INT` (write 1), reads
+`CONBLK_AD` to see which block is now playing and advances the client's `dma_v1`
+EventCount by the periods finished; the client (the audio driver) waits on it, refills
+the periods behind the playing one and cleans them. `INT_STATUS` gives all channels at
+once, for the shared line. `dma_v1.position` reads the same position from `CONBLK_AD`
+without an interrupt.
 
 ## Doom's sound data and what the mixer must produce
 
@@ -291,14 +296,43 @@ The decided options are drawn; each box below names the decision it rests on.
   (`memory_bus` plus offset) without asking the kernel. Configures `RNG1 = RNG2`,
   `CTL = PWEN1|USEF1|PWEN2|USEF2` with `MSEN` per D4, `CLRF1` first, `DMAC = ENAB | PANIC 7 |
   DREQ 7`. Exports `audio_v1`.
-- **`dma` driver** (`drivers/dma-bcm2835`, new, D1). Binds to `brcm,bcm2835-dma`, the
-  only holder of the DMA page and of the channel interrupts. Hands out channels from
-  `brcm,dma-channel-mask`. For audio it builds a circular chain of control blocks over
-  buffers named by bus address, each `INTEN`, `TI = SRC_INC | DEST_DREQ | WAIT_RESP |
-  PERMAP(dreq)`, destination the peripheral FIFO, and reports progress. Because the
-  BCM2837 has no IOMMU, any DMA programmer can write all of RAM: the `dma` driver is in
-  the trusted base like the USB host controller; how narrow the authority handed to
-  clients is was D1: clients name memory by bus address for now (B1a).
+- **`dma` driver** (`drivers/dma-bcm2835`, D1, written in A2). Binds to
+  `brcm,bcm2835-dma`, the only holder of the DMA page and of the channel interrupts.
+  Because the BCM2837 has no IOMMU, any DMA programmer can write all of RAM: the `dma`
+  driver is in the trusted base like the USB host controller; clients name memory by
+  bus address for now (B1a). As written:
+  - *Channels.* Kickstart passes the node's `brcm,dma-channel-mask` in
+    `DriverInit::dma_channel_mask`; `claim` hands out the lowest granted, unclaimed
+    channel whose interrupt the driver holds, resets it (`CS.RESET`), clears its `DEBUG`
+    error flags, sets its `ENABLE` bit and reads `DEBUG.LITE`, which caps a block at
+    65 532 bytes (16-bit length, whole words) instead of 30 bits.
+  - *Control blocks* live in one page of the driver's own memory, eight 32-byte slots per
+    channel at 256 bytes × the channel's number. The driver writes a chain there,
+    cleans the slots (`Frame.CleanData`) and starts the channel by writing the first
+    slot's bus address (`memory_bus` plus its offset) to `CONBLK_AD` and `CS = ACTIVE |
+    WAIT_FOR_OUTSTANDING_WRITES`, priority 1, panic priority 15 (Circle's values,
+    secondary; the datasheet recommends none). A copy block is `INTEN | WAIT_RESP |
+    SRC_INC | DEST_INC`, unpaced (PERMAP 0); a ring period is `INTEN | WAIT_RESP |
+    DEST_DREQ | SRC_INC | NO_WIDE_BURSTS | PERMAP(dreq)` with the peripheral's fixed
+    FIFO address, and the last period links back to the first. Building and checking
+    the chains is the pure library (`src/lib.rs`, host tests `tests/dma.rs`).
+  - *Peripheral addresses* come from a table in the driver keyed by DREQ (5: PWM `FIF1`,
+    bus `0x7E20_C018`); a client never names one. DREQ 0 is memory. A client may claim
+    any DREQ of the table: the PWM node names no `dmas`, so limiting a client to the
+    DREQs its node names is a follow-up.
+  - *Interrupts and completions.* The driver's first Thread waits on its Notification,
+    takes a turn of the component's turnstile (calls take turns with it), reads
+    `INT_STATUS` and, for each channel it handed out with `INT` set, reads `CS` and
+    `CONBLK_AD`, clears `INT` and `END` (keeping `ACTIVE` while a ring runs), works out
+    from `CONBLK_AD` how many blocks finished since the last time, and advances the
+    owner's io-channel `EventCount` by that many. Counting from `CONBLK_AD` rather than
+    per interrupt survives a late interrupt and QEMU, which raises one interrupt for a
+    whole chain. It then acknowledges the handlers that delivered. A handler is first
+    enabled when a channel on its line is claimed, so the lines of the firmware's
+    channels stay masked. `INT_STATUS` tells channels 11 to 14 apart on their shared
+    line.
+  - *Stopping* pauses the channel (`ACTIVE` clear), waits up to 1 ms for its writes to be
+    answered, and resets it.
 - **`cprman` driver** (new, D2). Binds to `brcm,bcm2835-cprman`, exports `clock_v1`
   (`set_rate(clock, hz)`, `enable`, `disable`) for the clocks its clients' nodes name in
   `clocks` (`pwm` is `<&clocks 30>`), refusing others. Linked from the PWM node with
@@ -355,18 +389,41 @@ local interface audio_v1
 
 One word of return value and six argument words fit Meddle's limits.
 
-### `dma_v1` (draft, D1)
+### `dma_v1` (written in A2, D1)
 
-- `claim(dreq) returns (handle)`: a channel for the caller's peripheral. The `dma`
-  driver keeps a table from DREQ number to the FIFO bus address it may target (PWM
-  `0x7E20_C018`); the client never names a peripheral address, and a client is limited to
-  the DREQs its node names (`dmas` property, D1) or that the manifest grants.
-- `start_cyclic(handle, ring bus address, period bytes, periods)`: memory side named by
-  bus address. Checking that the range is RAM the caller owns needs either the lent
-  Frames (with `GRANT`, `Frame.GetAddress`) or trust in the caller; D1 chose trust in
-  the (driver) caller for now.
-- `position(handle) returns (period index)`, `stop(handle)`, and an EventCount the
-  `dma` driver advances per finished period.
+`drivers/dma-bcm2835/interfaces/dma_v1.if`, a prototype edited in place. It is `local`
+and `badged;` (the driver tells clients apart by the badge of their keys) and declares
+`channel 1;`: Kickstart provisions an io-channel per client, and the driver advances its
+`EventCount` by one for every finished control block on the client's channels (a period
+of a ring, a block of a copy); the io-channel's FIFOs carry nothing yet. The functions
+(`dma_channel` is the channel's number; `channel` is a Meddle keyword):
+
+- `claim(dreq) returns (dma_channel)`: a channel for the peripheral of `dreq` (5 is
+  PWM) or for memory (0); raises `no_channel` or `unknown_request`.
+- `copy(dma_channel, source, destination, block_bytes, blocks)`: a finite chain of up to
+  eight linked blocks, unpaced, each with its interrupt (QEMU tests, and the capture
+  mode of A3).
+- `start_ring(dma_channel, ring, period_bytes, periods)`: a circular chain of up to
+  eight periods into the channel's peripheral FIFO, paced by its DREQ; raises
+  `unknown_request` on a memory channel.
+- `position(dma_channel) returns (block)`: the block the channel is on, or the chain's
+  length once it has ended or was stopped.
+- `stop(dma_channel)`, `release(dma_channel)`, and `errors(dma_channel) returns (bits)`:
+  the `DEBUG` error flags (bits 0 to 2) and `CS.ERROR` (bit 3) since the chain started.
+- Every function raises `not_owner` for a channel the caller did not claim; `copy` and
+  `start_ring` raise `busy` while a chain runs and `bad_transfer` for a length that is
+  zero, not whole words or over the channel's limit, an unaligned or wrapping address,
+  or more than eight blocks.
+
+Coherency rules for clients (the controller does not snoop the CPU caches): clean what
+the DMA reads (`Frame.CleanData`) before starting the chain or, for a ring, before the
+period comes round again; clean and invalidate (`Frame.CleanInvalidateData`) what the
+DMA writes before starting, so no dirty line is written back over its bytes, and
+invalidate it again before reading it. Memory is named by its bus address,
+`DriverInit::memory_bus` plus the offset into the client's memory.
+
+Checking that a client's ranges are RAM it owns (lent Frames with `GRANT` and
+`Frame.GetAddress`, B1b) waits for an untrusted client.
 
 ## What QEMU can and cannot test
 
@@ -388,7 +445,11 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   `NEXTCONBK`, does 2D mode, sets `INT` and raises the channel interrupt when `INTEN` is
   set, and keeps `INT_STATUS` and `ENABLE`. Consequences: a **circular chain never ends
   and hangs the emulator**, so QEMU tests use finite chains; and a write to the PWM FIFO
-  address goes nowhere.
+  address goes nowhere. Seen while writing A2: QEMU stores a `DEBUG` write as it is
+  (the hardware clears the error flags written with 1), so the `dma` driver writes back
+  only the flags it read as set; and `DEBUG.LITE` reads 0 there, so every channel looks
+  like a full one. One interrupt covers a whole chain, which the driver's counting from
+  `CONBLK_AD` turns into one EventCount advance per block.
 - So in QEMU: memory-to-memory DMA tests (chains, interrupts, `INT_STATUS`, `CS.END`,
   error bits), clock register tests, all of the interface and io-channel path, and the
   mixer. The `audio` driver gets a test feature that points its chain at a RAM capture
@@ -415,16 +476,22 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
    writing `FIF1` while `STA.FULL1` is clear. Confirms pins, clock, range and the swap.
 2. The same tone from a DMA ring, with the period interrupt counted against the generic
    timer (`CNTVCT_EL0`) to measure the real sample rate, and `STA` checked for `WERR1`,
-   `GAPO1`, `GAPO2` and `BERR`.
+   `GAPO1`, `GAPO2` and `BERR`. Written in A2 as the second part of
+   `just boot-audio-test`: a ring of 4 periods of 512 frames in the audio driver's
+   memory, channel claimed for DREQ 5, one period of ramp up, 5 s of the tone on both
+   sides, one period of ramp down; the trace gives the measured rate and its distance
+   from 44 091.710 Hz in ppm, periods refilled late, the `STA` flags and `dma_v1.errors`.
 3. Underrun behaviour: stop feeding and listen for clicks; check the ramp.
 4. Wood effects.
 
 ## Risks
 
-- **Interrupts of the DMA node.** It lists 16 interrupts with line 27 four times
-  ([P3]); Kickstart issues one `IRQHandler` per listed interrupt (`DriverInit` holds at
-  most 16), and issuing the same line twice is untested and may fail. Kickstart needs to
-  merge duplicate lines, or the `dma` driver uses a channel with its own line.
+- **Interrupts of the DMA node** (resolved in A2). It lists 16 interrupts with line 27
+  four times ([P3]). Kickstart used to issue one `IRQHandler` per listed interrupt; the
+  second issue of a line failed with `IrqLineActive` and was skipped with a misleading
+  "taken" message. It now issues each line once, at its first position
+  (`libdevicetree::interrupts::distinct_interrupts`), and the `dma` driver maps channels
+  to interrupts by that order.
 - **Kickstart loads only enabled nodes.** The PWM node is disabled in both the repo's
   tree and the firmware's default. QEMU tests that load the driver need a tree with the
   node enabled (and must not touch the registers), D3.

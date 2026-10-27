@@ -3,10 +3,10 @@
 #[cfg(test)]
 mod tests {
     use vesper_devicetree::{
-        BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_pins, bus_cells,
-        dma_address, dump, find_compatible, interrupt_cells, interrupt_parent, interrupt_specifier,
-        is_compatible, is_enabled, is_interrupt_controller, linked_phandle, node_by_phandle,
-        phandle, property, reg, reg_cells, regions, translate,
+        BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_dma_channel_mask,
+        brcm_pins, bus_cells, dma_address, dump, find_compatible, interrupt_cells,
+        interrupt_parent, interrupt_specifier, is_compatible, is_enabled, is_interrupt_controller,
+        linked_phandle, node_by_phandle, phandle, property, reg, reg_cells, regions, translate,
     };
 
     /// A DTB blob copied into u32-aligned storage, as `DevTree` requires.
@@ -114,6 +114,20 @@ mod tests {
                 assert_eq!(dma_address(&mailbox, ram_size - 0x1000, 0x2000), None);
             });
         }
+    }
+
+    #[test]
+    fn dma_channel_masks_come_from_the_dma_node() {
+        with_index(RPI3, |index| {
+            let (dma, _) = find_compatible(index, &["brcm,bcm2835-dma"]).expect("DMA node");
+            assert_eq!(brcm_dma_channel_mask(&dma), Some(0x7f35));
+            let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("PL011");
+            assert_eq!(brcm_dma_channel_mask(&uart), None);
+        });
+        with_index(RPI4, |index| {
+            let (dma, _) = find_compatible(index, &["brcm,bcm2835-dma"]).expect("DMA node");
+            assert_eq!(brcm_dma_channel_mask(&dma), Some(0x07f5));
+        });
     }
 
     #[test]
@@ -438,8 +452,8 @@ mod tests {
     // ── Interrupt topology ──────────────────────────────────────────────
 
     use vesper_devicetree::interrupts::{
-        Interrupt, TimerInterrupt, generic_timer, interrupt, interrupt_controllers, interrupts,
-        root_interrupt_controller, timer_interrupt,
+        Interrupt, TimerInterrupt, distinct_interrupts, generic_timer, interrupt,
+        interrupt_controllers, interrupts, root_interrupt_controller, timer_interrupt,
     };
 
     fn phandle_of_compatible(index: &DevTreeIndex<'_, '_>, compatible: &str) -> u32 {
@@ -501,6 +515,28 @@ mod tests {
                 (uart_interrupt.controller, uart_interrupt.cells()),
                 (gic, &[0, 121, 4][..])
             );
+        });
+    }
+
+    #[test]
+    fn rpi3_dma_node_lists_its_shared_line_once_when_deduplicated() {
+        // The DMA node lists GPU interrupts 16 to 26 for channels 0 to 10,
+        // 27 four times (channels 11 to 14 share it) and 28 (dma-shared-all).
+        with_index(RPI3, |index| {
+            let (dma, _) = find_compatible(index, &["brcm,bcm2835-dma"]).expect("DMA node");
+            let armctrl = phandle_of_compatible(index, "brcm,bcm2836-armctrl-ic");
+            assert_eq!(interrupts(index, &dma).count(), 16);
+            let distinct: Vec<_> = distinct_interrupts(index, &dma).collect();
+            assert_eq!(distinct.len(), 13);
+            assert!(distinct.iter().all(|line| line.controller == armctrl));
+            let lines: Vec<_> = distinct.iter().map(|line| line.cells()[1]).collect();
+            assert_eq!(lines, (16..=28).collect::<Vec<_>>());
+            assert!(distinct.iter().all(|line| line.cells()[0] == 1));
+        });
+        // A node without repeats keeps every entry.
+        with_index(RPI3, |index| {
+            let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("PL011");
+            assert!(distinct_interrupts(index, &uart).eq(interrupts(index, &uart)));
         });
     }
 

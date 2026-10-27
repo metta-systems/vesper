@@ -8,3 +8,7 @@ uses clock_v1 via device clocks { set_rate, enable, rate }
 # The pins of the node's pin group (`pinctrl-0`, GPIO40 and GPIO41 on ALT0 with
 # the `pwm-2chan` overlay) are routed to the PWM block at start.
 uses gpio_v1 via device compatible "brcm,bcm2835-gpio" { set_function }
+# The DMA controller feeds the PWM FIFO from a ring in the driver's memory
+# (decision D1). The PWM node names no `dmas`, so the chain starts from the
+# controller's compatible string.
+uses dma_v1 via device compatible "brcm,bcm2835-dma" { claim, release, copy, start_ring, position, stop, errors }

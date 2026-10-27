@@ -286,3 +286,78 @@ impl Tone {
 pub fn sample_rate_millihertz(clock_hz: u32, range: u32) -> u64 {
     u64::from(clock_hz) * 1000 / u64::from(range.max(1))
 }
+
+/// The PWM block's DMA request line: "PWM DMA is mapped to DMA channel 5"
+/// (§9.5), DREQ 5 of the DMA controller (§4.2.1.3).
+pub const PWM_DREQ: u32 = 5;
+
+/// DREQ 0: an unpaced memory-to-memory transfer (§4.2.1.3).
+pub const MEMORY_DREQ: u32 = 0;
+
+/// Stereo frames of one period of the DMA ring (`doc/agentic/audio-design.md`,
+/// Scheduling: 4 periods of 512 frames, about 46 ms at 44.1 kHz).
+pub const PERIOD_FRAMES: usize = 512;
+
+/// Periods of the DMA ring.
+pub const PERIODS: usize = 4;
+
+/// Bytes of one period: two FIFO words per frame. One page.
+pub const PERIOD_BYTES: usize = PERIOD_FRAMES * 2 * size_of::<u32>();
+
+const _: () = assert!(PERIOD_BYTES == 4096, "a period is one page");
+
+/// `DMAC` for feeding the FIFO by DMA: requests while fewer than 7 of its 8
+/// words are queued, panic below 7 (§9.6, `DMAC`, which gives both as the
+/// reset values; Circle uses the same, secondary).
+#[must_use]
+pub fn dma_feed() -> DmaConfig {
+    DmaConfig::ZERO
+        .with_request_threshold(7)
+        .with_panic_threshold(7)
+        .with_enable(true)
+}
+
+/// What one period of the DMA test ring plays, by its number from the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeriodContent {
+    /// From no output up to silence (the mid level)
+    RampUp,
+    /// The test tone
+    Tone,
+    /// From silence down to no output
+    RampDown,
+    /// No output: every word 0
+    Off,
+}
+
+/// The content of period `index` of a test of `tone_periods` periods of tone
+/// between one period of ramp up and one of ramp down.
+#[must_use]
+pub const fn period_content(index: u64, tone_periods: u64) -> PeriodContent {
+    if index == 0 {
+        PeriodContent::RampUp
+    } else if index <= tone_periods {
+        PeriodContent::Tone
+    } else if index == tone_periods + 1 {
+        PeriodContent::RampDown
+    } else {
+        PeriodContent::Off
+    }
+}
+
+/// The rate `frames` frames in `elapsed_ns` nanoseconds give, in millihertz.
+#[must_use]
+pub fn measured_rate_millihertz(frames: u64, elapsed_ns: u64) -> u64 {
+    let rate = u128::from(frames) * 1_000_000_000_000 / u128::from(elapsed_ns.max(1));
+    u64::try_from(rate).unwrap_or(u64::MAX)
+}
+
+/// How far `measured` is from `expected`, in parts per million.
+#[must_use]
+pub fn deviation_ppm(measured: u64, expected: u64) -> u64 {
+    let difference = u128::from(measured.abs_diff(expected));
+    u64::try_from(difference * 1_000_000 / u128::from(expected.max(1))).unwrap_or(u64::MAX)
+}
+
+/// The A2 hardware exit: the measured rate within 0.1 % of the computed one.
+pub const RATE_TOLERANCE_PPM: u64 = 1000;

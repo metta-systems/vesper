@@ -1,7 +1,7 @@
 [package]
 name = "audio-test"
 
-description = "Vesper end-to-end test kernel: Kickstart loads the clock manager component and the PWM audio driver, which sets the PWM clock through clock_v1 and, on the board, plays a polled test tone through the headphone jack."
+description = "Vesper end-to-end test kernel: Kickstart loads the clock manager, the DMA controller component and the PWM audio driver, which sets the PWM clock through clock_v1, runs DMA chains through dma_v1 and, on the board, plays a test tone through the headphone jack, polled and from a DMA ring."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -33,6 +33,7 @@ qemu = [
 aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 clock = { workspace = true }
+dma = { workspace = true }
 driver-protocol = { workspace = true }
 gpio = { workspace = true }
 kickstart = { workspace = true }

@@ -332,6 +332,13 @@ pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u3
     property(node, property_name).and_then(|prop| prop.u32(0).ok())
 }
 
+/// The DMA channels a Broadcom DMA controller node (`brcm,bcm2835-dma`)
+/// leaves to the ARM, one bit per channel: its `brcm,dma-channel-mask`. The
+/// firmware may change it at boot, so it is read from the tree it hands over.
+pub fn brcm_dma_channel_mask(node: &Node<'_, '_, '_>) -> Option<u32> {
+    property(node, "brcm,dma-channel-mask").and_then(|prop| prop.u32(0).ok())
+}
+
 /// One pin of a Broadcom pin group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BrcmPin {

@@ -50,19 +50,47 @@ Done in QEMU (2026-10-27), hardware check pending:
 
 ## A2: DMA
 
-- `dma` driver for `brcm,bcm2835-dma` exporting `dma_v1` (D1): channel allocation from
-  `brcm,dma-channel-mask`, `LITE` read from `DEBUG`, control block building in a pure
-  library (host tests: `TI` bits, 32-byte alignment, `NEXTCONBK` ring, Lite length limit).
-- Kickstart: the DMA node lists line 27 four times; merge duplicate interrupt lines
-  before issuing `IRQHandler`s, or document that only channels with their own line are
-  used.
-- QEMU exit: a finite memory-to-memory chain (DREQ 0) copies the expected bytes, raises
-  the channel interrupt for each `INTEN` block, sets `INT_STATUS` and `CS.END`. No
-  circular chain in QEMU: its DMA model runs a chain to the end inside the starting
-  write, so a ring hangs it.
-- Hardware exit: the A1 tone played from a ring of 4 periods through `FIF1` with DREQ 5;
-  the period interrupt rate measured against `CNTVCT_EL0` is within 0.1 % of the
-  computed rate (this also checks the assumed 500 MHz PLLD).
+Done in QEMU (2026-10-27), hardware check pending:
+
+- `drivers/dma-bcm2835` for `brcm,bcm2835-dma` exports `dma_v1` (D1;
+  `interfaces/dma_v1.if`, design doc section `dma_v1`): `claim`, `release`, `copy`,
+  `start_ring`, `position`, `stop`, `errors`, and an io-channel per client whose
+  EventCount advances once per finished control block. Channels come from
+  `brcm,dma-channel-mask`, which Kickstart now passes in `DriverInit::dma_channel_mask`
+  (`libdevicetree::brcm_dma_channel_mask`), lowest first; `LITE` is read from `DEBUG`.
+  Control blocks live in a page of the driver's own memory, eight slots per channel,
+  cleaned before a channel loads them. The pure library has the typed `CS`, `TI` and
+  `DEBUG` registers and the chain building; host tests `tests/dma.rs` (`TI`/`CS`/`DEBUG`
+  bits, 32-byte alignment, linked and circular `NEXTCONBK`, Lite length limit, channel
+  mask allocation, the interrupt order, counting finished blocks from `CONBLK_AD`).
+- Kickstart issues each interrupt line of a node once, at its first position
+  (`libdevicetree::interrupts::distinct_interrupts`, host test on the rpi3 tree: the DMA
+  node's 16 entries give 13 lines, 27 once). Before, the repeated line was refused by
+  `IRQControl.Issue` (`IrqLineActive`) and skipped with a "taken" message.
+- `drivers/audio-pwm-bcm2835` imports `dma_v1` (through the controller's compatible
+  string: the PWM node names no `dmas`). Under `qemu` it copies half a page into the
+  other half with a chain of 4 linked blocks on channel 0, claims every other granted
+  channel (0, 2, 4, 5, 8 to 14, then `no_channel`), copies on channel 14 (the line 11 to
+  14 share), checks the bytes, one EventCount advance per block, `position` and `errors`,
+  and the refusals. On the board, after the A1 tone, it plays the tone on both sides for
+  5 s from a ring of 4 periods × 512 frames fed to `FIF1` by DREQ 5, refilling and
+  cleaning each period behind the DMA, and traces the period rate measured against
+  `CNTVCT_EL0`, its distance from 44 091.710 Hz, late refills, the `STA` flags and
+  `dma_v1.errors`. Host tests in `tests/pwm.rs` (ring constants, `DMAC`, period
+  sequence, rate tolerance).
+- QEMU exit passed: `just test-dma` (log in `target/dma-test.log`, the audio-test image;
+  in `just test`): the DMA driver gets mask `0x7f35` and 13 interrupt lines; channel 0's
+  interrupt shows `INT_STATUS 0x0001`, `END` and `INT` set, 4 blocks finished; channel
+  14's shows `INT_STATUS 0x4000` on the shared line; both copies arrive. `just
+  test-audio` still passes on the same image.
+
+- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): after
+  the polled rounds, the tone is heard from the DMA ring without gaps, and the trace says
+  the measured rate is "within 0.1 %" of 44 091.710 Hz (this also checks the assumed
+  500 MHz PLLD), with no late refills, no `WERR1`, `GAPO1`, `GAPO2` or `BERR`, and DMA
+  errors 0. Until then A2 stays here.
+- [ ] Follow-up: limit a client to the DREQs its node names (`dmas`) or its manifest
+  grants; today any client may claim any DREQ of the driver's table (memory and PWM).
 
 ## A3: audio driver and `audio_v1`
 
@@ -102,9 +130,11 @@ Done in QEMU (2026-10-27), hardware check pending:
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
   mixer).
-- QEMU tests per stage as above (`just test-audio` for A1); `just test-mailbox`, `just
-  test-driver`, `just test-wood` for regressions in shared code.
-- `just clippy-audio`: the audio crates with and without `qemu`, and their host tests.
+- QEMU tests per stage as above (`just test-audio` for A1, `just test-dma` for A2);
+  `just test-mailbox`, `just test-driver`, `just test-wood` for regressions in shared
+  code.
+- `just clippy-audio`: the audio crates (with the `dma` driver and its interface crates)
+  with and without `qemu`, and their host tests.
 - Hardware checks on the Pi 3 B per stage; QEMU cannot check pacing, rate, pops,
   levels or channel order.
 - `just fmt-check` and focused clippy on the touched crates.

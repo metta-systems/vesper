@@ -1,10 +1,12 @@
 # What audio-test bundles (see vesper-image-build): the clock manager component,
 # loaded by Kickstart for the `brcm,bcm2835-cprman` node, and the PWM audio
 # driver, loaded for the `brcm,bcm2835-pwm` node, which only the test tree
-# (`just test-audio`) or the board's `pwm-2chan` overlay enable. The audio
-# driver sets the PWM clock through the clock manager and routes the jack's
-# pins through the gpio component; it holds the PL011 driver's serial channel,
-# so on the board its trace shows on the UART.
+# (`just test-audio`) or the board's `pwm-2chan` overlay enable, and the DMA
+# controller component, loaded for the `brcm,bcm2835-dma` node. The audio
+# driver sets the PWM clock through the clock manager, routes the jack's pins
+# through the gpio component and runs DMA chains through the DMA component;
+# it holds the PL011 driver's serial channel, so on the board its trace shows
+# on the UART.
 
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
@@ -16,6 +18,13 @@ interfaces = "../../../drivers/gpio-bcm2835/interfaces"
 name = "cprman"
 binary = "cprman-bcm2835"
 interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component, loaded for the `brcm,bcm2835-dma` node: the
+# audio driver claims its channels through dma_v1.
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../../drivers/dma-bcm2835/interfaces"
 
 [[driver]]
 name = "audio"
