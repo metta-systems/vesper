@@ -10,7 +10,6 @@
 #![no_std]
 #![no_main]
 #![feature(decl_macro)]
-#![feature(allocator_api)]
 #![feature(format_args_nl)]
 #![feature(likely_unlikely)]
 #![feature(stmt_expr_attributes)]
@@ -20,7 +19,6 @@
 #![allow(unused)]
 #![allow(internal_features)]
 #![allow(linker_messages)]
-#![feature(ptr_internals)]
 #![feature(core_intrinsics)]
 
 use {

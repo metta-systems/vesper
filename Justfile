@@ -253,6 +253,47 @@ build-compositor-test-hw board='rpi3': (build-components board '' '') (_build-te
 boot-compositor-test: build-compositor-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
 
+# Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB; Wood's log is dropped, the compositor traces the routed input on the UART
+[group("hw")]
+build-wood-test-hw board='rpi3': (build-components board '' '') (build-wood board '' '') (_build-test-kernel 'wood-test' board '')
+
+# Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard (and a mouse to move focus between windows)
+[group("hw")]
+boot-wood-test: build-wood-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
+
+# Build Wood, the Room Doom engine's Vesper program, for the image configuration `board` +
+# `image_features`; only wood-test bundles it, so it is not one of `user_components`
+[private]
+build-wood board='rpi3' features='qemu' image_features=features: (_cross-build 'wood' board user_link features '' image_features)
+
+# Build the wood-test e2e kernel: compositor-test's components plus Wood, the Room Doom engine in a window of its own
+[group("test")]
+build-wood-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
+
+# Boot wood-test on raspi3b with the devices of test-compositor for `seconds`, save the screen and stop QEMU: the console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
+[group("test")]
+test-wood board='rpi3' seconds='60' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/wood-test.log"
+    screen="{{ target_root }}/wood-test.ppm"
+    monitor="{{ target_root }}/wood-test-monitor.sock"
+    rm -f "$log" "$screen" "$monitor"
+    {{ qemu }} -M raspi3b -display none -monitor "unix:$monitor,server,nowait" \
+      -chardev stdio,mux=on,id=char0,signal=off -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    sleep {{ seconds }}
+    printf 'screendump %s\n' "$screen" | nc -N -U "$monitor" > /dev/null
+    sleep 2
+    printf 'quit\n' | nc -N -U "$monitor" > /dev/null
+    wait "$qemu_pid"
+    grep -q "compositor: frame 1 drew the background: true" "$log" || { echo "wood-test: the background did not reach the framebuffer"; exit 1; }
+    grep -q "wood: INFO frame 1 presented: true" "$log" || { echo "wood-test: Wood presented no frame"; exit 1; }
+    echo "{{ ok_label }} Wood presented frames in its window; the screen is in $screen"
+
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
 [group("test")]
 build-mailbox-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'mailbox-test' board)
@@ -321,6 +362,12 @@ qemu: (build 'rpi3' 'qemu')
     @echo "🚜 .. on {{ rpi3_dtb }}"
     @rm -f qemu.log
     {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+
+# Build wood-test and run it in QEMU with a display window: the compositor's screen with the lava lamp and Wood playing Doom's demos; the console (serial and semihosting) goes to the terminal and qemu.log
+[group("emu")]
+qemu-wood features='qemu': (build-components 'rpi3' 'qemu' features) (build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features)
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
 
 # Build and run kernel in QEMU with GDB port
 [group("emu")]
@@ -679,7 +726,7 @@ _cross-clippy board='rpi3' features='':
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
 [group("maintenance")]
-clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
+clippy: (build 'rpi3' 'qemu') (build-components 'rpi3' 'qemu') (build-wood 'rpi3' 'qemu') (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') clippy-object-host clippy-platform-host clippy-meddle clippy-usb-host clippy-input-host clippy-compositor-host
 
 # Run shortened clippy (default features on both boards) and capability host-test linting
 [group("maintenance")]
@@ -718,6 +765,20 @@ _cross-clippy-usb board='rpi3' features='':
 # Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)
 [group("maintenance")]
 clippy-usb: (_cross-clippy-usb 'rpi3' '') (_cross-clippy-usb 'rpi3' 'qemu') clippy-usb-host
+
+# Cross-clippy only Wood (the Room engine's Vesper program) for a board with a feature set
+[private]
+_cross-clippy-wood board='rpi3' features='':
+    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      -p wood \
+      -- --deny warnings --allow deprecated
+
+# Lint just Wood: the target build with and without `qemu` (much shorter than `clippy`)
+[group("maintenance")]
+clippy-wood: (_cross-clippy-wood 'rpi3' '') (_cross-clippy-wood 'rpi3' 'qemu')
 
 # Lint the USB protocol host tests with their native host harness
 [private]

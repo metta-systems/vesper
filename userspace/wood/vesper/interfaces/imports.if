@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# Wood draws the game in a window of the compositor, a program in the same
+# image.
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, set_title, move_window }

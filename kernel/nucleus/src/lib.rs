@@ -8,12 +8,10 @@
 //! writes matches what the nucleus interprets.
 
 #![no_std]
-#![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(decl_macro)]
 #![feature(format_args_nl)]
 #![feature(likely_unlikely)]
-#![feature(ptr_internals)]
 #![feature(slice_ptr_get)]
 #![feature(stmt_expr_attributes)]
 #![deny(warnings)]

@@ -59,6 +59,7 @@ members = [
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
+  "kernel/tests/wood-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -130,7 +131,12 @@ members = [
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
   "userspace/tests/dispatch/child",
+  # Wood: the Room engine as a component
+  "userspace/wood/vesper",
 ]
+# Room is a workspace of its own (its host platform, tests and tools); Wood
+# links its engine library by path.
+exclude = ["userspace/wood/room"]
 resolver = "3"
 
 [workspace.package]
@@ -227,8 +233,12 @@ libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
+log = { version = "0.4", default-features = false }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
+rlsf = { version = "0.2", default-features = false }
+# The Room engine library (its own workspace, excluded above)
+room = { path = "userspace/wood/room", default-features = false }
 snafu = { version = "0.9", default-features = false }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }

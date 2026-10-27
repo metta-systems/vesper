@@ -1,0 +1,95 @@
+# What wood-test bundles (see vesper-image-build): everything compositor-test
+# does (the DWC2 host controller component, the USB core, the USB HID component,
+# the mailbox and fb components, the PL011 driver, the compositor, the shell's
+# lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
+# a window of its own, with the shareware IWAD as its resource.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+serial = true
+memory = 33554432
+
+# The shell's `draw` started by itself: a window of the compositor with the
+# shell's scene and the lava lamp, so the board shows a window to move the
+# cursor over. `memory` leaves room for the table the window's Frames are lent
+# into.
+[[component]]
+name = "draw_demo"
+binary = "draw-demo"
+interfaces = "../../../userspace/shell/demo-interfaces"
+active = true
+program = true
+memory = 131072
+resources = ["font"]
+
+# The 8x8 console font the scene's text is drawn with (see
+# kernel/kickstart/image.toml).
+[[resource]]
+name = "font"
+file = "../../kickstart/resources/font8x8.bin"
+
+# Wood: the Room engine, playing its demos (it has no input yet) in a 640x400
+# window of the compositor. `memory` is a 16 MiB RAM Untyped: 2 MiB for the
+# engine's stack, 12 MiB of heap for the engine's zone and tables, and the
+# table its window's Frames are lent into (see userspace/wood/vesper).
+[[component]]
+name = "wood"
+binary = "wood"
+interfaces = "../../../userspace/wood/vesper/interfaces"
+active = true
+program = true
+memory = 16777216
+resources = ["doom1_wad"]
+
+# The shareware Doom v1.9 IWAD (see userspace/wood/wad/README.md), which Wood
+# serves to the engine as `doom1.wad`.
+[[resource]]
+name = "doom1_wad"
+file = "../../../userspace/wood/wad/doom1.wad"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true
