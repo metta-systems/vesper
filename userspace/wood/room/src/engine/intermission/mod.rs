@@ -1120,11 +1120,9 @@ pub unsafe fn WI_End() {
 
 /// Enter the `NoState` phase: count down 10 tics then call `G_WorldDone`.
 ///
-/// # Safety
-///
 /// Mutates the intermission state fields `state`, `acceleratestage`, and
-/// `cnt`. Caller must ensure `WI_Start` has been invoked.
-unsafe fn WI_initNoState(wi: &mut IntermissionState) {
+/// `cnt`.
+fn WI_initNoState(wi: &mut IntermissionState) {
     wi.state = stateenum_t::NoState;
     wi.acceleratestage = 0;
     wi.cnt = 10;

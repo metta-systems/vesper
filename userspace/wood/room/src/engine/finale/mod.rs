@@ -709,18 +709,13 @@ pub fn F_StartFinale() {
 /// Returns 1 if the event was consumed, 0 otherwise.  All non-Cast stage
 /// events are ignored at this level.
 ///
-/// Called from C code in `g_game.c`.  C origin: `F_Responder` in f_finale.c.
-///
-/// # Safety
-/// `event` must be a valid, non-null pointer to an initialised `event_t`.
-pub unsafe fn F_Responder(event: *mut event_t) -> i32 {
-    unsafe {
-        let _ev = &*event;
-        if let FinaleStage::Cast = FINALE.borrow().stage {
-            return F_CastResponder(event);
-        }
-        0
+/// Called from `G_Responder` in `g_game.c`.  C origin: `F_Responder` in
+/// f_finale.c.
+pub fn F_Responder(event: &event_t) -> i32 {
+    if let FinaleStage::Cast = FINALE.borrow().stage {
+        return F_CastResponder(event);
     }
+    0
 }
 
 /// Advance the finale state machine by one game tick.
@@ -1002,33 +997,27 @@ fn goto_stopattack(finale: &mut FinaleState) {
 ///
 /// Called by [`F_Responder`] while in the Cast stage.
 /// C origin: `F_CastResponder` in f_finale.c.
-///
-/// # Safety
-/// `ev` must be a valid, non-null pointer to an initialised `event_t`.
-pub unsafe fn F_CastResponder(ev: *mut event_t) -> i32 {
-    unsafe {
-        let event = &*ev;
-        if event.kind != ev_keydown {
-            return 0;
-        }
-        let info = {
-            let mut finale = FINALE.borrow_mut();
-            if finale.castdeath != 0 {
-                return 1;
-            }
-            finale.castdeath = 1;
-            let info = cast_info(finale.castnum);
-            finale.caststate = StateNum::new(info.deathstate);
-            finale.casttics = finale.caststate.get().tics;
-            finale.castframes = 0;
-            finale.castattacking = 0;
-            info
-        };
-        if info.deathsound != Sfx::None {
-            S_StartNonPositionalSound(info.deathsound as i32);
-        }
-        1
+pub fn F_CastResponder(event: &event_t) -> i32 {
+    if event.kind != ev_keydown {
+        return 0;
     }
+    let info = {
+        let mut finale = FINALE.borrow_mut();
+        if finale.castdeath != 0 {
+            return 1;
+        }
+        finale.castdeath = 1;
+        let info = cast_info(finale.castnum);
+        finale.caststate = StateNum::new(info.deathstate);
+        finale.casttics = finale.caststate.get().tics;
+        finale.castframes = 0;
+        finale.castattacking = 0;
+        info
+    };
+    if info.deathsound != Sfx::None {
+        S_StartNonPositionalSound(info.deathsound as i32);
+    }
+    1
 }
 
 /// Compute the pixel width of `text` using the HUD font, then draw it

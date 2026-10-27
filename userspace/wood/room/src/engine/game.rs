@@ -1487,19 +1487,22 @@ pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
     }
 
     if gamestate == GS_LEVEL {
-        if HU_Responder(ev as *const event_t as *mut event_t) != 0 {
+        // The level responders write player messages and cheats into the
+        // world; they share this one borrow.
+        let mut world = WORLD.borrow_mut();
+        if HU_Responder(&mut world, ev) != 0 {
             return 1;
         }
-        if ST_Responder(ev as *const event_t as *mut event_t) != 0 {
+        if ST_Responder(&mut world, ev) != 0 {
             return 1;
         }
-        if AM_Responder(ev as *const event_t as *mut event_t) != 0 {
+        if AM_Responder(&mut world, ev) != 0 {
             return 1;
         }
     }
 
     // The level responders above may have changed the state.
-    if self::gamestate() == GS_FINALE && F_Responder(ev as *const event_t as *mut event_t) != 0 {
+    if self::gamestate() == GS_FINALE && F_Responder(ev) != 0 {
         return 1;
     }
 
@@ -2085,10 +2088,10 @@ pub unsafe fn G_DoCompleted() {
                 G_PlayerFinishLevel(&mut world, i as i32);
             }
         }
-    }
 
-    if automap_active() {
-        AM_Stop();
+        if automap_active() {
+            AM_Stop(&mut world);
+        }
     }
 
     let gamemap = gamemap();

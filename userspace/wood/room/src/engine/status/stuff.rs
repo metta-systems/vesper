@@ -20,7 +20,6 @@ use std::ptr;
 use crate::{
     c_write,
     engine::{
-        arena::Arena,
         automap::automap_active,
         dehacked::DEH_String,
         doom::{
@@ -38,19 +37,20 @@ use crate::{
             cheat::{cheatseq_t, cht_CheckCheat, cht_GetParam},
             random::M_Random,
         },
-        play::{inter::P_GivePower, mobj::mobj_t},
+        play::inter::P_GivePower,
         render_2d::{V_CopyRect, V_DrawPatch, V_RestoreBuffer, V_UseBuffer},
         render_3d::main::R_PointToAngle2,
         sound::S_ChangeMusic,
         status::lib::{
-            PatchTable, STlib_init, STlib_initBinIcon, STlib_initMultIcon, STlib_initNum,
+            PatchSet, STlib_init, STlib_initBinIcon, STlib_initMultIcon, STlib_initNum,
             STlib_initPercent, STlib_updateBinIcon, STlib_updateMultIcon, STlib_updateNum,
-            STlib_updatePercent, st_binicon_t, st_multicon_t, st_number_t, st_percent_t,
+            STlib_updatePercent, StatusGraphics, st_binicon_t, st_multicon_t, st_number_t,
+            st_percent_t,
         },
         wad::{
             W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch,
         },
-        world::{WORLD, World},
+        world::World,
         zone::{PU_CACHE, PU_STATIC, Z_Malloc},
     },
     types::Boolean,
@@ -325,10 +325,9 @@ const fn cheat(seq: &[u8], params: i32) -> cheatseq_t {
 
 /// Status bar state (C `st_stuff.c` and `st_lib.c` globals).
 ///
-/// The widgets keep raw pointers to the patch tables here, so those are
-/// taken through [`Global::as_ptr`]. The values and visibility flags the
-/// widgets show (player fields and fields here) are passed to the
-/// `STlib_update*` calls when they draw.
+/// The widgets name the patch tables in `graphics` they draw from, and the
+/// `STlib_update*` calls receive those graphics together with the values
+/// and visibility flags the widgets show (player fields and fields here).
 ///
 /// The patches are `'static` views of lumps cached at `PU_STATIC` by
 /// `ST_loadGraphics` (and `STlib_init` for `sttminus`); `None` is a patch
@@ -336,15 +335,10 @@ const fn cheat(seq: &[u8], params: i32) -> cheatseq_t {
 /// slots, and it must not run while the widgets, which copy some patches,
 /// still draw.
 pub struct StatusState {
-    /// Backing pixel buffer for the status bar, allocated in `ST_Init`.
-    ///
-    /// The buffer is `ST_WIDTH * ST_HEIGHT` bytes and is used by
-    /// `ST_refreshBackground` and the `st_lib` widgets to save and restore
-    /// the pixels beneath the bar.
-    pub(super) st_backing_screen: *mut u8,
-    /// The minus-sign patch (`STTMINUS`) used when rendering negative
-    /// numbers, loaded by `STlib_init` (C `sttminus` in `st_lib.c`).
-    pub(super) sttminus: Option<Patch<'static>>,
+    /// The backing screen, minus sign and patch tables the widgets draw
+    /// with (C `st_backing_screen`, `sttminus`, `tallnum`, `shortnum`,
+    /// `keys`, `faces` and `arms`).
+    pub(super) graphics: StatusGraphics,
     /// Cheat sequence for changing the playing music track (`idmus##`).
     ///
     /// Two parameter characters encode the track number.
@@ -417,26 +411,13 @@ pub struct StatusState {
     st_fragson: i32,
     /// The `STBAR` background patch.
     sbar: Option<Patch<'static>>,
-    /// Tall digit patches 0-9 (`STTNUM0`-`STTNUM9`), used for health,
-    /// armor, and ammo.
-    tallnum: [Option<Patch<'static>>; 10],
     /// Tall percent-sign patch (`STTPRCNT`).
     tallpercent: Option<Patch<'static>>,
-    /// Short digit patches 0-9 (`STYSNUM0`-`STYSNUM9`), used in the
-    /// per-ammo sidebar.
-    shortnum: [Option<Patch<'static>>; 10],
-    /// Key icon patches, one per `NUMCARDS` card type.
-    keys: [Option<Patch<'static>>; NUMCARDS],
-    /// All face patches in a flat array; indexed by `st_faceindex`.
-    faces: [Option<Patch<'static>>; ST_NUMFACES as usize],
     /// Network-game face-background patch (`STFB#` where `#` is the console
     /// player index).
     faceback: Option<Patch<'static>>,
     /// Arms-grid background patch (`STARMS`).
     armsbg: Option<Patch<'static>>,
-    /// Arms patches: `arms[weapon][0]` = dim `STGNUM#`, `arms[weapon][1]` =
-    /// bright short digit.
-    arms: [[Option<Patch<'static>>; 2]; 6],
     /// Ready-ammo number widget state.
     w_ready: st_number_t,
     /// Frag-count number widget state (deathmatch only).
@@ -501,8 +482,7 @@ impl StatusState {
     /// The state at program start: nothing loaded, status bar stopped.
     pub const fn new() -> Self {
         Self {
-            st_backing_screen: ptr::null_mut(),
-            sttminus: None,
+            graphics: StatusGraphics::new(),
             cheat_mus: cheat(b"idmus", 2),
             cheat_god: cheat(b"iddqd", 0),
             cheat_ammo: cheat(b"idkfa", 0),
@@ -536,14 +516,9 @@ impl StatusState {
             st_armson: 0,
             st_fragson: 0,
             sbar: None,
-            tallnum: [None; 10],
             tallpercent: None,
-            shortnum: [None; 10],
-            keys: [None; NUMCARDS],
-            faces: [None; ST_NUMFACES as usize],
             faceback: None,
             armsbg: None,
-            arms: [[None; 2]; 6],
             w_ready: st_number_t::EMPTY,
             w_frags: st_number_t::EMPTY,
             w_health: st_percent_t::EMPTY,
@@ -610,36 +585,34 @@ fn check_cheat(select: impl FnOnce(&mut StatusState) -> &mut cheatseq_t, key: u8
 ///
 /// # Safety
 ///
-/// Reads the global status-bar visibility flag `st_statusbaron` and the cached
-/// patches `sbar`/`faceback`, and writes to the backing screen buffer
-/// `st_backing_screen`. Caller must ensure `ST_Init` has loaded the patches
-/// and allocated the buffer, and that the video subsystem is ready.
-pub unsafe fn ST_refreshBackground() {
-    let (statusbaron, backing_screen, sbar, faceback) = {
-        let status = STATUS.borrow();
-        (
-            status.st_statusbaron,
-            status.st_backing_screen,
-            status.sbar,
-            status.faceback,
-        )
-    };
-    if statusbaron != 0 {
-        V_UseBuffer(backing_screen, (ST_WIDTH * ST_HEIGHT) as usize);
-        V_DrawPatch(
-            ST_X,
-            0,
-            sbar.expect("ST_refreshBackground before ST_loadGraphics"),
-        );
-        if netgame() != 0 {
+/// Reads the status-bar visibility flag `st_statusbaron` and the cached
+/// patches `sbar`/`faceback` of `status`, and writes to its backing screen
+/// buffer. Caller must ensure `ST_Init` has loaded the patches and
+/// allocated the buffer, and that the video subsystem is ready.
+pub unsafe fn ST_refreshBackground(status: &StatusState) {
+    if status.st_statusbaron != 0 {
+        let backing_screen = status.graphics.backing_screen;
+        unsafe {
+            V_UseBuffer(backing_screen, (ST_WIDTH * ST_HEIGHT) as usize);
             V_DrawPatch(
-                ST_FX,
+                ST_X,
                 0,
-                faceback.expect("ST_refreshBackground before ST_loadGraphics"),
+                status
+                    .sbar
+                    .expect("ST_refreshBackground before ST_loadGraphics"),
             );
+            if netgame() != 0 {
+                V_DrawPatch(
+                    ST_FX,
+                    0,
+                    status
+                        .faceback
+                        .expect("ST_refreshBackground before ST_loadGraphics"),
+                );
+            }
+            V_RestoreBuffer();
+            V_CopyRect(ST_X, 0, backing_screen, ST_WIDTH, ST_HEIGHT, ST_X, ST_Y);
         }
-        V_RestoreBuffer();
-        V_CopyRect(ST_X, 0, backing_screen, ST_WIDTH, ST_HEIGHT, ST_X, ST_Y);
     }
 }
 
@@ -650,21 +623,18 @@ pub unsafe fn ST_refreshBackground() {
 /// Handle status-bar-related input events: automap state changes and cheat codes.
 ///
 /// Returns 1 if the event was consumed, 0 otherwise. The C original
-/// (`ST_Responder` in `st_stuff.c`) is called by `G_Responder` in `g_game.c`.
+/// (`ST_Responder` in `st_stuff.c`) is called by `G_Responder` in `g_game.c`
+/// and by the automap's `AM_Start`/`AM_Stop`, with the world their callers
+/// hold; the cheats write the status bar player's state in `world`.
 ///
 /// Cheat codes are suppressed in network games and on the Nightmare skill level.
 /// The level-change cheat (`idclev`) is suppressed in network games regardless of
 /// skill.
 ///
-/// # Safety
-///
-/// Caller must ensure `ev` is a valid, non-null, properly aligned pointer to an
-/// initialised `event_t`. Reads and mutates the cheat sequences and the
-/// status-bar game state (`st_gamestate`, `st_firsttime`, etc.) in
-/// [`STATUS`].
-pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
-    let ev = &*ev;
-
+/// Reads and mutates the cheat sequences and the status-bar game state
+/// (`st_gamestate`, `st_firsttime`, etc.) in [`STATUS`]; runs after
+/// `ST_Start`.
+pub fn ST_Responder(world: &mut World, ev: &event_t) -> i32 {
     if ev.kind == 1 && (ev.data1 as u32 & 0xffff0000) == AM_MSGHEADER as u32 {
         // ev_keyup + automap message
         let mut status = STATUS.borrow_mut();
@@ -681,11 +651,7 @@ pub unsafe fn ST_Responder(ev: *mut event_t) -> i32 {
     } else if ev.kind == 0 {
         // ev_keydown
         let key = ev.data2 as u8;
-        // Responders run only in a level, after `ST_Start`, and outside any
-        // world borrow: the cheats borrow the world for this key.
         let player = STATUS.borrow().player();
-        let mut world_guard = WORLD.borrow_mut();
-        let world = &mut *world_guard;
         if netgame() == 0 && gameskill() != 4 {
             // sk_nightmare = 4
             let plyr = &mut world.players[player];
@@ -870,14 +836,16 @@ pub fn ST_calcPainOffset(status: &mut StatusState, health: i32) -> i32 {
 /// 6. God-mode / invulnerability face (priority 4).
 /// 7. Idle random straight face (priority 0, selected when `st_facecount` reaches 0).
 ///
-/// `plyr` is the status bar's player. Precondition: `oldweaponsowned`
-/// matches the snapshot from the previous call.
+/// Reads the status bar's player and its map objects in `world`.
+/// Precondition: `oldweaponsowned` matches the snapshot from the previous
+/// call.
 ///
 /// # Panics
 ///
 /// If the player is hurt by an attacker while it has no map object (its
 /// `mo` and the `attacker` are read when computing turn directions).
-pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<mobj_t>) {
+pub fn ST_updateFaceWidget(status: &mut StatusState, world: &World) {
+    let plyr = &world.players[status.player()];
     let health = plyr.health;
     let diffang: u32;
     let i: i32;
@@ -913,8 +881,8 @@ pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT, mobjs: &Are
             status.st_facecount = ST_TURNCOUNT;
             status.st_faceindex = ST_calcPainOffset(status, health) + ST_OUCHOFFSET;
         } else {
-            let mo = &mobjs[plyr.mo()];
-            let attacker = &mobjs[attacker];
+            let mo = &world.mobjs[plyr.mo()];
+            let attacker = &world.mobjs[attacker];
             let badguyangle = R_PointToAngle2(mo.x, mo.y, attacker.x, attacker.y);
             if badguyangle > mo.angle {
                 diffang = badguyangle - mo.angle;
@@ -987,8 +955,8 @@ pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT, mobjs: &Are
 // Widget update
 // ---------------------------------------------------------------------------
 
-/// Refresh the status-bar widget data and counters from the player state
-/// `plyr`.
+/// Refresh the status-bar widget data and counters from the state of the
+/// status bar's player in `world`.
 ///
 /// Called once per tic by `ST_Ticker`. Records the ready weapon, whose ammo
 /// the ready-ammo widget shows (the value 1994 for weapons with no ammo
@@ -1002,7 +970,8 @@ pub fn ST_updateFaceWidget(status: &mut StatusState, plyr: &PlayerT, mobjs: &Are
 ///
 /// If the player is hurt by an attacker while it has no map object (see
 /// [`ST_updateFaceWidget`]).
-pub fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<mobj_t>) {
+pub fn ST_updateWidgets(status: &mut StatusState, world: &World) {
+    let plyr = &world.players[status.player()];
     // C points the ready-ammo widget at the ammo of the weapon ready now;
     // the weapon recorded here picks that ammo when the widget draws.
     status.w_ready.data = plyr.readyweapon;
@@ -1014,7 +983,7 @@ pub fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<
         }
     }
 
-    ST_updateFaceWidget(status, plyr, mobjs);
+    ST_updateFaceWidget(status, world);
 
     status.st_notdeathmatch = if deathmatch() == 0 { 1 } else { 0 };
     status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
@@ -1066,11 +1035,10 @@ pub fn ST_updateWidgets(status: &mut StatusState, plyr: &PlayerT, mobjs: &Arena<
 pub fn ST_Ticker(world: &World) {
     let random_number = M_Random();
     let mut status = STATUS.borrow_mut();
-    let plyr = &world.players[status.player()];
     status.st_clock = status.st_clock.wrapping_add(1);
     status.st_randomnumber = random_number;
-    ST_updateWidgets(&mut status, plyr, &world.mobjs);
-    status.st_oldhealth = plyr.health;
+    ST_updateWidgets(&mut status, world);
+    status.st_oldhealth = world.players[status.player()].health;
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,10 +1060,10 @@ pub fn ST_Ticker(world: &World) {
 ///
 /// # Safety
 ///
-/// Mutates `st_palette`. Calls `W_CacheLumpNum`/`I_SetPalette` so the WAD
-/// subsystem and video backend must be initialised, and `lu_palette` must
-/// hold a valid lump number set up by `ST_loadData`.
-pub unsafe fn ST_doPaletteStuff(plyr: &PlayerT) {
+/// Mutates `status.st_palette`. Calls `W_CacheLumpNum`/`I_SetPalette` so
+/// the WAD subsystem and video backend must be initialised, and
+/// `lu_palette` must hold a valid lump number set up by `ST_loadData`.
+pub unsafe fn ST_doPaletteStuff(status: &mut StatusState, plyr: &PlayerT) {
     let mut palette: i32;
     let mut cnt = plyr.damagecount;
 
@@ -1132,14 +1100,10 @@ pub unsafe fn ST_doPaletteStuff(plyr: &PlayerT) {
         palette = RADIATIONPAL;
     }
 
-    let changed_palette_lump = {
-        let mut status = STATUS.borrow_mut();
-        let changed = palette != status.st_palette;
+    if palette != status.st_palette {
         status.st_palette = palette;
-        changed.then_some(status.lu_palette)
-    };
-    if let Some(lu_palette) = changed_palette_lump {
-        let pal = (W_CacheLumpNum(lu_palette, PU_CACHE) as *mut u8).add((palette * 768) as usize);
+        let pal =
+            (W_CacheLumpNum(status.lu_palette, PU_CACHE) as *mut u8).add((palette * 768) as usize);
         I_SetPalette(pal);
     }
 }
@@ -1147,19 +1111,6 @@ pub unsafe fn ST_doPaletteStuff(plyr: &PlayerT) {
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
-
-/// Run `update` on a copy of the widget `select` picks out of the status
-/// state, then store the copy back. The widget library reads the status state
-/// (backing screen, minus patch) while it draws, so the state is not
-/// borrowed during `update`.
-fn update_widget<Widget: Copy>(
-    select: impl Fn(&mut StatusState) -> &mut Widget,
-    update: impl FnOnce(&mut Widget),
-) {
-    let mut widget = *select(&mut STATUS.borrow_mut());
-    update(&mut widget);
-    *select(&mut STATUS.borrow_mut()) = widget;
-}
 
 /// Drive all st_lib widget update calls for a single frame, showing the
 /// values of the status bar's player `plyr` and of the status state.
@@ -1171,117 +1122,114 @@ fn update_widget<Widget: Copy>(
 /// # Safety
 ///
 /// Mutates `st_armson`/`st_fragson` and updates every `w_*` widget through
-/// the `STlib_update*` family. Caller must ensure `ST_createWidgets` has
-/// been called so the widgets' patch tables are set up.
-pub unsafe fn ST_drawWidgets(plyr: &PlayerT, refresh: i32) {
-    let status = {
-        let mut status = STATUS.borrow_mut();
-        status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
-            1
-        } else {
-            0
-        };
-        status.st_fragson = if deathmatch() != 0 && status.st_statusbaron != 0 {
-            1
-        } else {
-            0
-        };
-        // The values the widgets show: none of them changes while they draw.
-        StatusValues {
-            statusbaron: status.st_statusbaron != 0,
-            armson: status.st_armson != 0,
-            fragson: status.st_fragson != 0,
-            ready_weapon: status.w_ready.data,
-            largeammo: status.largeammo,
-            notdeathmatch: status.st_notdeathmatch,
-            faceindex: status.st_faceindex,
-            keyboxes: status.keyboxes,
-            fragscount: status.st_fragscount,
-        }
+/// the `STlib_update*` family, which erase from the backing screen: caller
+/// must ensure `ST_Init` allocated it and `ST_createWidgets` set up the
+/// widgets.
+pub unsafe fn ST_drawWidgets(status: &mut StatusState, plyr: &PlayerT, refresh: i32) {
+    status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
+        1
+    } else {
+        0
     };
+    status.st_fragson = if deathmatch() != 0 && status.st_statusbaron != 0 {
+        1
+    } else {
+        0
+    };
+    let statusbaron = status.st_statusbaron != 0;
+    let armson = status.st_armson != 0;
+    let fragson = status.st_fragson != 0;
+    let graphics = &status.graphics;
 
-    let ready_ammo = weaponinfo[status.ready_weapon as usize].ammo;
+    let ready_ammo = weaponinfo[status.w_ready.data as usize].ammo;
     let ready_value = if ready_ammo == 5 {
         // am_noammo
         status.largeammo
     } else {
         plyr.ammo[ready_ammo as usize]
     };
-    update_widget(
-        |status| &mut status.w_ready,
-        |widget| STlib_updateNum(widget, ready_value, status.statusbaron, refresh),
+    STlib_updateNum(
+        &mut status.w_ready,
+        graphics,
+        ready_value,
+        statusbaron,
+        refresh,
     );
 
     for i in 0..NUMAMMO {
-        update_widget(
-            |status| &mut status.w_ammo[i],
-            |widget| STlib_updateNum(widget, plyr.ammo[i], status.statusbaron, refresh),
+        STlib_updateNum(
+            &mut status.w_ammo[i],
+            graphics,
+            plyr.ammo[i],
+            statusbaron,
+            refresh,
         );
-        update_widget(
-            |status| &mut status.w_maxammo[i],
-            |widget| STlib_updateNum(widget, plyr.maxammo[i], status.statusbaron, refresh),
+        STlib_updateNum(
+            &mut status.w_maxammo[i],
+            graphics,
+            plyr.maxammo[i],
+            statusbaron,
+            refresh,
         );
     }
 
-    update_widget(
-        |status| &mut status.w_health,
-        |widget| STlib_updatePercent(widget, plyr.health, status.statusbaron, refresh),
+    STlib_updatePercent(
+        &mut status.w_health,
+        graphics,
+        plyr.health,
+        statusbaron,
+        refresh,
     );
-    update_widget(
-        |status| &mut status.w_armor,
-        |widget| STlib_updatePercent(widget, plyr.armorpoints, status.statusbaron, refresh),
+    STlib_updatePercent(
+        &mut status.w_armor,
+        graphics,
+        plyr.armorpoints,
+        statusbaron,
+        refresh,
     );
-    update_widget(
-        |status| &mut status.w_armsbg,
-        |widget| STlib_updateBinIcon(widget, status.notdeathmatch, status.statusbaron, refresh),
+    STlib_updateBinIcon(
+        &mut status.w_armsbg,
+        graphics,
+        status.st_notdeathmatch,
+        statusbaron,
+        refresh,
     );
 
     for i in 0..6 {
-        update_widget(
-            |status| &mut status.w_arms[i],
-            |widget| STlib_updateMultIcon(widget, plyr.weaponowned[i + 1], status.armson, refresh),
+        STlib_updateMultIcon(
+            &mut status.w_arms[i],
+            graphics,
+            plyr.weaponowned[i + 1],
+            armson,
+            refresh,
         );
     }
 
-    update_widget(
-        |status| &mut status.w_faces,
-        |widget| STlib_updateMultIcon(widget, status.faceindex, status.statusbaron, refresh),
+    STlib_updateMultIcon(
+        &mut status.w_faces,
+        graphics,
+        status.st_faceindex,
+        statusbaron,
+        refresh,
     );
 
     for i in 0..3 {
-        update_widget(
-            |status| &mut status.w_keyboxes[i],
-            |widget| STlib_updateMultIcon(widget, status.keyboxes[i], status.statusbaron, refresh),
+        STlib_updateMultIcon(
+            &mut status.w_keyboxes[i],
+            graphics,
+            status.keyboxes[i],
+            statusbaron,
+            refresh,
         );
     }
 
-    update_widget(
-        |status| &mut status.w_frags,
-        |widget| STlib_updateNum(widget, status.fragscount, status.fragson, refresh),
+    STlib_updateNum(
+        &mut status.w_frags,
+        graphics,
+        status.st_fragscount,
+        fragson,
+        refresh,
     );
-}
-
-/// The status-state values and visibility flags the widgets show in one
-/// frame (the C widgets' `num`/`inum`/`val`/`on` pointer targets).
-struct StatusValues {
-    /// Whether the bar is shown (`st_statusbaron`).
-    statusbaron: bool,
-    /// Whether the weapons-owned display is shown (`st_armson`).
-    armson: bool,
-    /// Whether the frag counter is shown (`st_fragson`).
-    fragson: bool,
-    /// The ready weapon recorded by the last `ST_updateWidgets`.
-    ready_weapon: i32,
-    /// The ready-ammo value for weapons without ammo (`largeammo`).
-    largeammo: i32,
-    /// Whether the arms background is shown (`st_notdeathmatch`).
-    notdeathmatch: i32,
-    /// The face to show (`st_faceindex`).
-    faceindex: i32,
-    /// The key icons to show (`keyboxes`).
-    keyboxes: [i32; 3],
-    /// The frag total (`st_fragscount`).
-    fragscount: i32,
 }
 
 /// Perform a full status-bar redraw of `plyr`: clear `st_firsttime`, refresh
@@ -1291,10 +1239,10 @@ struct StatusValues {
 ///
 /// Mutates `st_firsttime` and delegates to `ST_refreshBackground` and
 /// `ST_drawWidgets`, which require an initialised status bar.
-pub unsafe fn ST_doRefresh(plyr: &PlayerT) {
-    STATUS.borrow_mut().st_firsttime = 0;
-    ST_refreshBackground();
-    ST_drawWidgets(plyr, 1);
+pub unsafe fn ST_doRefresh(status: &mut StatusState, plyr: &PlayerT) {
+    status.st_firsttime = 0;
+    ST_refreshBackground(status);
+    ST_drawWidgets(status, plyr, 1);
 }
 
 /// Perform a differential redraw of `plyr`: only redraw widgets whose value
@@ -1304,8 +1252,8 @@ pub unsafe fn ST_doRefresh(plyr: &PlayerT) {
 ///
 /// Delegates to `ST_drawWidgets`; same invariants apply (widgets must have
 /// been created).
-pub unsafe fn ST_diffDraw(plyr: &PlayerT) {
-    ST_drawWidgets(plyr, 0);
+pub unsafe fn ST_diffDraw(status: &mut StatusState, plyr: &PlayerT) {
+    ST_drawWidgets(status, plyr, 0);
 }
 
 /// Draw the status bar for the current frame.
@@ -1316,8 +1264,8 @@ pub unsafe fn ST_diffDraw(plyr: &PlayerT) {
 /// it is hidden.
 ///
 /// Called once per frame by the main render loop (`D_Display` in `d_main.c`),
-/// outside any world borrow; reads the player through its own shared borrow
-/// of the world.
+/// with a shared borrow of the world it holds for this drawer; reads the
+/// status bar's player from `world`.
 ///
 /// # Safety
 ///
@@ -1325,29 +1273,25 @@ pub unsafe fn ST_diffDraw(plyr: &PlayerT) {
 /// `ST_doPaletteStuff`, `ST_doRefresh`, and `ST_diffDraw`. Caller must
 /// ensure the status-bar subsystem has been started (`ST_Start`) and the
 /// video backend is ready.
-pub unsafe fn ST_Drawer(fullscreen: Boolean, refresh: Boolean) {
+pub unsafe fn ST_Drawer(world: &World, fullscreen: Boolean, refresh: Boolean) {
     let automap_shown = automap_active();
-    let player = {
-        let mut status = STATUS.borrow_mut();
-        status.st_statusbaron = if fullscreen.is_false() || automap_shown {
-            1
-        } else {
-            0
-        };
-        status.st_firsttime = if status.st_firsttime != 0 || refresh.is_truthy() {
-            1
-        } else {
-            0
-        };
-        status.player()
-    };
-    let world = WORLD.borrow();
-    let plyr = &world.players[player];
-    ST_doPaletteStuff(plyr);
-    if STATUS.borrow().st_firsttime != 0 {
-        ST_doRefresh(plyr);
+    let mut status = STATUS.borrow_mut();
+    status.st_statusbaron = if fullscreen.is_false() || automap_shown {
+        1
     } else {
-        ST_diffDraw(plyr);
+        0
+    };
+    status.st_firsttime = if status.st_firsttime != 0 || refresh.is_truthy() {
+        1
+    } else {
+        0
+    };
+    let plyr = &world.players[status.player()];
+    ST_doPaletteStuff(&mut status, plyr);
+    if status.st_firsttime != 0 {
+        ST_doRefresh(&mut status, plyr);
+    } else {
+        ST_diffDraw(&mut status, plyr);
     }
 }
 
@@ -1376,28 +1320,30 @@ type LoadCallback = unsafe fn(&[u8], &mut Option<Patch<'static>>);
 /// the load variant is invoked.
 unsafe fn ST_loadUnloadGraphics(callback: LoadCallback) {
     let mut namebuf = [0u8; 9];
-    let mut status = STATUS.borrow_mut();
+    let mut status_guard = STATUS.borrow_mut();
+    let status = &mut *status_guard;
+    let graphics = &mut status.graphics;
 
     for i in 0..10i32 {
         c_write!(namebuf, "STTNUM{}", i);
-        callback(&namebuf, &mut status.tallnum[i as usize]);
+        callback(&namebuf, &mut graphics.tallnum[i as usize]);
         c_write!(namebuf, "STYSNUM{}", i);
-        callback(&namebuf, &mut status.shortnum[i as usize]);
+        callback(&namebuf, &mut graphics.shortnum[i as usize]);
     }
 
     callback(b"STTPRCNT", &mut status.tallpercent);
 
     for i in 0..NUMCARDS as i32 {
         c_write!(namebuf, "STKEYS{}", i);
-        callback(&namebuf, &mut status.keys[i as usize]);
+        callback(&namebuf, &mut graphics.keys[i as usize]);
     }
 
     callback(b"STARMS", &mut status.armsbg);
 
     for i in 0..6i32 {
         c_write!(namebuf, "STGNUM{}", i + 2);
-        callback(&namebuf, &mut status.arms[i as usize][0]);
-        status.arms[i as usize][1] = status.shortnum[(i + 2) as usize];
+        callback(&namebuf, &mut graphics.arms[i as usize][0]);
+        graphics.arms[i as usize][1] = graphics.shortnum[(i + 2) as usize];
     }
 
     c_write!(namebuf, "STFB{}", consoleplayer());
@@ -1409,29 +1355,29 @@ unsafe fn ST_loadUnloadGraphics(callback: LoadCallback) {
     for i in 0..ST_NUMPAINFACES {
         for j in 0..ST_NUMSTRAIGHTFACES {
             c_write!(namebuf, "STFST{}{}", i, j);
-            callback(&namebuf, &mut status.faces[facenum as usize]);
+            callback(&namebuf, &mut graphics.faces[facenum as usize]);
             facenum += 1;
         }
         c_write!(namebuf, "STFTR{}0", i);
-        callback(&namebuf, &mut status.faces[facenum as usize]);
+        callback(&namebuf, &mut graphics.faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFTL{}0", i);
-        callback(&namebuf, &mut status.faces[facenum as usize]);
+        callback(&namebuf, &mut graphics.faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFOUCH{}", i);
-        callback(&namebuf, &mut status.faces[facenum as usize]);
+        callback(&namebuf, &mut graphics.faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFEVL{}", i);
-        callback(&namebuf, &mut status.faces[facenum as usize]);
+        callback(&namebuf, &mut graphics.faces[facenum as usize]);
         facenum += 1;
         c_write!(namebuf, "STFKILL{}", i);
-        callback(&namebuf, &mut status.faces[facenum as usize]);
+        callback(&namebuf, &mut graphics.faces[facenum as usize]);
         facenum += 1;
     }
 
-    callback(b"STFGOD0", &mut status.faces[facenum as usize]);
+    callback(b"STFGOD0", &mut graphics.faces[facenum as usize]);
     facenum += 1;
-    callback(b"STFDEAD0", &mut status.faces[facenum as usize]);
+    callback(b"STFDEAD0", &mut graphics.faces[facenum as usize]);
 }
 
 /// Load callback: cache the named WAD lump at `PU_STATIC` and store its
@@ -1521,29 +1467,27 @@ pub unsafe fn ST_unloadData() {
 ///
 /// If `consoleplayer` is not a player slot.
 pub fn ST_initData(world: &World) {
-    {
-        let mut status = STATUS.borrow_mut();
-        status.st_firsttime = 1;
-        let player = PlayerId::console();
-        status.plyr = Some(player);
-        status.st_clock = 0;
-        status.st_chatstate = 0; // StartChatState
-        status.st_gamestate = 1; // FirstPersonState
-        status.st_statusbaron = 1;
-        status.st_oldchat = 0;
-        status.st_chat = 0;
-        status.st_cursoron = 0;
-        status.st_faceindex = 0;
-        status.st_palette = -1;
-        status.st_oldhealth = -1;
+    let mut status = STATUS.borrow_mut();
+    status.st_firsttime = 1;
+    let player = PlayerId::console();
+    status.plyr = Some(player);
+    status.st_clock = 0;
+    status.st_chatstate = 0; // StartChatState
+    status.st_gamestate = 1; // FirstPersonState
+    status.st_statusbaron = 1;
+    status.st_oldchat = 0;
+    status.st_chat = 0;
+    status.st_cursoron = 0;
+    status.st_faceindex = 0;
+    status.st_palette = -1;
+    status.st_oldhealth = -1;
 
-        status.oldweaponsowned = world.players[player].weaponowned;
-        for i in 0..3 {
-            status.keyboxes[i] = -1;
-        }
+    status.oldweaponsowned = world.players[player].weaponowned;
+    for i in 0..3 {
+        status.keyboxes[i] = -1;
     }
 
-    STlib_init();
+    STlib_init(&mut status.graphics);
 }
 
 /// Initialise and bind all status-bar widgets to their screen positions.
@@ -1556,83 +1500,79 @@ pub fn ST_initData(world: &World) {
 /// `plyr` is the status bar's player, whose ready weapon the ready-ammo
 /// widget starts with.
 ///
-/// # Safety
-///
-/// Initialises every `w_*` widget global with raw pointers to the cached
-/// patch tables. Caller must ensure `ST_initData` and `ST_loadGraphics` ran
-/// first so the patches are loaded.
-pub unsafe fn ST_createWidgets(plyr: &PlayerT) {
-    // The widgets keep pointers to the patch tables, so those point into the
-    // stable address of `STATUS`.
-    let status = STATUS.as_ptr();
-    let tallnum: PatchTable = &raw const (*status).tallnum;
-    let shortnum: PatchTable = &raw const (*status).shortnum;
-    let keys: PatchTable = &raw const (*status).keys;
-
+/// Initialises every `w_*` widget in `status` with the patch table it
+/// draws from. `ST_initData` and `ST_loadGraphics` run first so the
+/// patches are loaded before the widgets draw.
+pub fn ST_createWidgets(status: &mut StatusState, plyr: &PlayerT) {
     STlib_initNum(
-        &mut (*status).w_ready,
+        &mut status.w_ready,
         ST_AMMOX,
         ST_AMMOY,
-        tallnum,
+        PatchSet::TallNum,
         ST_AMMOWIDTH,
     );
-    (*status).w_ready.data = plyr.readyweapon;
+    status.w_ready.data = plyr.readyweapon;
 
     STlib_initPercent(
-        &mut (*status).w_health,
+        &mut status.w_health,
         ST_HEALTHX,
         ST_HEALTHY,
-        tallnum,
-        (*status).tallpercent,
+        PatchSet::TallNum,
+        status.tallpercent,
     );
 
-    STlib_initBinIcon(
-        &mut (*status).w_armsbg,
-        ST_ARMSBGX,
-        ST_ARMSBGY,
-        (*status).armsbg,
-    );
+    STlib_initBinIcon(&mut status.w_armsbg, ST_ARMSBGX, ST_ARMSBGY, status.armsbg);
 
     for i in 0..6 {
         let i_i = i as i32;
         STlib_initMultIcon(
-            &mut (*status).w_arms[i],
+            &mut status.w_arms[i],
             ST_ARMSX + (i_i % 3) * ST_ARMSXSPACE,
             ST_ARMSY + (i_i / 3) * ST_ARMSYSPACE,
-            &raw const (*status).arms[i] as PatchTable,
+            PatchSet::Arms(i),
         );
     }
 
     STlib_initNum(
-        &mut (*status).w_frags,
+        &mut status.w_frags,
         ST_FRAGSX,
         ST_FRAGSY,
-        tallnum,
+        PatchSet::TallNum,
         ST_FRAGSWIDTH,
     );
 
-    STlib_initMultIcon(
-        &mut (*status).w_faces,
-        ST_FACESX,
-        ST_FACESY,
-        &raw const (*status).faces as PatchTable,
-    );
+    STlib_initMultIcon(&mut status.w_faces, ST_FACESX, ST_FACESY, PatchSet::Faces);
 
     STlib_initPercent(
-        &mut (*status).w_armor,
+        &mut status.w_armor,
         ST_ARMORX,
         ST_ARMORY,
-        tallnum,
-        (*status).tallpercent,
+        PatchSet::TallNum,
+        status.tallpercent,
     );
 
-    STlib_initMultIcon(&mut (*status).w_keyboxes[0], ST_KEY0X, ST_KEY0Y, keys);
-    STlib_initMultIcon(&mut (*status).w_keyboxes[1], ST_KEY1X, ST_KEY1Y, keys);
-    STlib_initMultIcon(&mut (*status).w_keyboxes[2], ST_KEY2X, ST_KEY2Y, keys);
+    STlib_initMultIcon(
+        &mut status.w_keyboxes[0],
+        ST_KEY0X,
+        ST_KEY0Y,
+        PatchSet::Keys,
+    );
+    STlib_initMultIcon(
+        &mut status.w_keyboxes[1],
+        ST_KEY1X,
+        ST_KEY1Y,
+        PatchSet::Keys,
+    );
+    STlib_initMultIcon(
+        &mut status.w_keyboxes[2],
+        ST_KEY2X,
+        ST_KEY2Y,
+        PatchSet::Keys,
+    );
 
     for i in 0..NUMAMMO {
         STlib_initNum(
-            &mut (*status).w_ammo[i],
+            &mut status.w_ammo[i],
             match i {
                 0 => ST_AMMO0X,
                 1 => ST_AMMO1X,
@@ -1647,14 +1587,14 @@ pub unsafe fn ST_createWidgets(plyr: &PlayerT) {
                 3 => ST_AMMO3Y,
                 _ => unreachable!(),
             },
-            shortnum,
+            PatchSet::ShortNum,
             ST_AMMO0WIDTH,
         );
     }
 
     for i in 0..NUMAMMO {
         STlib_initNum(
-            &mut (*status).w_maxammo[i],
+            &mut status.w_maxammo[i],
             match i {
                 0 => ST_MAXAMMO0X,
                 1 => ST_MAXAMMO1X,
@@ -1669,7 +1609,7 @@ pub unsafe fn ST_createWidgets(plyr: &PlayerT) {
                 3 => ST_MAXAMMO3Y,
                 _ => unreachable!(),
             },
-            shortnum,
+            PatchSet::ShortNum,
             ST_MAXAMMO0WIDTH,
         );
     }
@@ -1683,17 +1623,18 @@ pub unsafe fn ST_createWidgets(plyr: &PlayerT) {
 ///
 /// # Safety
 ///
-/// Reads/mutates `st_stopped` and runs `ST_initData`/`ST_createWidgets`,
-/// which mutate every status-bar global and require the WAD subsystem
-/// to be initialised (see those functions' own safety contracts). Caller must
-/// ensure `ST_Init` has run once at startup.
+/// Reads/mutates `st_stopped`, may run `ST_Stop` (see its contract), and
+/// runs `ST_initData`/`ST_createWidgets`, which mutate every status-bar
+/// global and load `STTMINUS`. Caller must ensure `ST_Init` has run once at
+/// startup.
 pub unsafe fn ST_Start(world: &World) {
     if STATUS.borrow().st_stopped == 0 {
         ST_Stop();
     }
     ST_initData(world);
-    ST_createWidgets(&world.players[PlayerId::console()]);
-    STATUS.borrow_mut().st_stopped = 0;
+    let mut status = STATUS.borrow_mut();
+    ST_createWidgets(&mut status, &world.players[PlayerId::console()]);
+    status.st_stopped = 0;
 }
 
 /// Stop the status bar subsystem and restore the normal palette.
@@ -1734,7 +1675,7 @@ pub unsafe fn ST_Stop() {
 pub unsafe fn ST_Init() {
     ST_loadData();
     let backing_screen = Z_Malloc(ST_WIDTH * ST_HEIGHT, PU_STATIC, ptr::null_mut()) as *mut u8;
-    STATUS.borrow_mut().st_backing_screen = backing_screen;
+    STATUS.borrow_mut().graphics.backing_screen = backing_screen;
 }
 
 #[cfg(test)]
@@ -1760,6 +1701,34 @@ mod tests {
         // Health above 100 counts as 100.
         assert_eq!(pain_offset_at(&mut status, 200), 0);
         assert_eq!(status.pain_offset_health, 100);
+    }
+
+    /// The widget update reads the status bar's player out of the world it
+    /// is given: the ready weapon, the key boxes (a skull shows over its
+    /// card) and the face for its health.
+    #[test]
+    fn update_widgets_reads_player_from_world() {
+        let mut world = World::new();
+        let player = PlayerId::new(1);
+        {
+            let plyr = &mut world.players[player];
+            plyr.readyweapon = 3;
+            plyr.health = 50;
+            plyr.cards[0] = 1; // blue card
+            plyr.cards[4] = 1; // yellow skull
+        }
+        let mut status = StatusState::new();
+        status.plyr = Some(player);
+
+        ST_updateWidgets(&mut status, &world);
+
+        assert_eq!(status.w_ready.data, 3);
+        assert_eq!(status.keyboxes, [0, 4, -1]);
+        assert_eq!(status.priority, 0);
+        assert_eq!(
+            status.st_faceindex,
+            ST_FACESTRIDE * (((100 - 50) * ST_NUMPAINFACES) / 101)
+        );
     }
 
     /// A fresh state has every cheat sequence unread and the bar stopped.

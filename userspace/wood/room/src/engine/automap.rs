@@ -46,7 +46,7 @@ use crate::{
             W_ReleaseLumpName, cache_patch_name,
             format::{LinedefFlag, Patch},
         },
-        world::{WORLD, World},
+        world::World,
     },
 };
 
@@ -1091,12 +1091,13 @@ fn AM_initVariables(automap: &mut AutomapState, world: &World) {
     automap.old_m_h = automap.m_h;
 }
 
-/// Send the automap message `event` to the status bar.
+/// Send the automap message `event` to the status bar, passing on the
+/// caller's `world` for its cheat checks.
 ///
 /// Callers release their automap guard first: `ST_Responder` belongs to
 /// another subsystem.
-unsafe fn AM_notifyStatusBar(event: event_t) {
-    ST_Responder(&event as *const _ as *mut event_t);
+fn AM_notifyStatusBar(world: &mut World, event: event_t) {
+    ST_Responder(world, &event);
 }
 
 /// Load the ten `AMMNUM0`-`AMMNUM9` mark-point glyph patches from the WAD.
@@ -1175,14 +1176,13 @@ fn AM_LevelInit(automap: &mut AutomapState, level: &LevelState) {
 /// unloads the mark-point patches.  Sets `stopped = 1` so that a subsequent
 /// `AM_Start` will not call `AM_Stop` again.
 ///
-/// Called by C code in `g_game.c` and `am_map.c`.
+/// Called by `G_DoCompleted`, `P_KillMobj` and the automap itself, with
+/// the world they hold, which the status bar's responder receives.
 /// C origin: `AM_Stop` in am_map.c.
 ///
-/// # Safety
-///
-/// Must be called only when the automap was previously started; WAD must be
-/// loaded.
-pub unsafe fn AM_Stop() {
+/// Called only when the automap was previously started, so the mark-point
+/// lumps it releases are cached.
+pub fn AM_Stop(world: &mut World) {
     let st_notify = event_t {
         kind: 0,  // ev_keydown
         data1: 1, // ev_keyup
@@ -1192,7 +1192,7 @@ pub unsafe fn AM_Stop() {
     };
     AM_unloadPics(&mut AUTOMAP.borrow_mut());
     AUTOMAP.borrow_mut().automapactive = 0;
-    AM_notifyStatusBar(st_notify);
+    AM_notifyStatusBar(world, st_notify);
     AUTOMAP.borrow_mut().stopped = 1;
 }
 
@@ -1202,20 +1202,18 @@ pub unsafe fn AM_Stop() {
 /// Re-runs `AM_LevelInit` whenever the level or episode changes, then calls
 /// `AM_initVariables` and `AM_loadPics`.
 ///
-/// Called by C code in `g_game.c` and by [`AM_Responder`] when the toggle key
-/// is pressed.  C origin: `AM_Start` in am_map.c.
+/// Called by [`AM_Responder`] when the toggle key is pressed, with the
+/// world it was given.  C origin: `AM_Start` in am_map.c.
 ///
-/// # Safety
-///
-/// The game must be in an active level with valid map data loaded.
-pub unsafe fn AM_Start() {
+/// The game is in an active level: the console player's map object and
+/// the level's map data in `world` are read.
+pub fn AM_Start(world: &mut World) {
     if AUTOMAP.borrow().stopped == 0 {
-        AM_Stop();
+        AM_Stop(world);
     }
     {
         // Released before the status bar is notified: its responder
-        // borrows the world too.
-        let world = WORLD.borrow();
+        // belongs to another subsystem.
         let mut automap = AUTOMAP.borrow_mut();
         automap.stopped = 0;
         let (gamemap, gameepisode) = (gamemap(), gameepisode());
@@ -1224,15 +1222,18 @@ pub unsafe fn AM_Start() {
             automap.lastlevel = gamemap;
             automap.lastepisode = gameepisode;
         }
-        AM_initVariables(&mut automap, &world);
+        AM_initVariables(&mut automap, world);
     }
-    AM_notifyStatusBar(event_t {
-        kind: 1, // ev_keyup
-        data1: AM_MSGENTERED,
-        data2: 0,
-        data3: 0,
-        data4: 0,
-    });
+    AM_notifyStatusBar(
+        world,
+        event_t {
+            kind: 1, // ev_keyup
+            data1: AM_MSGENTERED,
+            data2: 0,
+            data3: 0,
+            data4: 0,
+        },
+    );
     AM_loadPics(&mut AUTOMAP.borrow_mut());
 }
 
@@ -1268,12 +1269,10 @@ fn AM_maxOutWindowScale(automap: &mut AutomapState) {
 ///
 /// Returns 1 if the event was consumed, 0 if it should be forwarded.
 ///
-/// Called from `g_game`.  C origin: `AM_Responder` in am_map.c.
-///
-/// # Safety
-///
-/// `ev` must be a valid pointer to an `event_t`.
-pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
+/// Called from `G_Responder` with the world it borrowed for the level
+/// responders; the messages and the status bar notifications use it.
+/// C origin: `AM_Responder` in am_map.c.
+pub fn AM_Responder(world: &mut World, ev: &event_t) -> i32 {
     let mut rc: i32 = 0;
     let ControlsState {
         key_map_north,
@@ -1292,16 +1291,16 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
     } = CONTROLS.get();
 
     if !automap_active() {
-        if (*ev).kind == 0 && (*ev).data1 == key_map_toggle {
+        if ev.kind == 0 && ev.data1 == key_map_toggle {
             // ev_keydown
-            AM_Start();
+            AM_Start(world);
             GAME.borrow_mut().viewactive = 0;
             rc = 1;
         }
-    } else if (*ev).kind == 0 {
+    } else if ev.kind == 0 {
         // ev_keydown
         rc = 1;
-        let key = (*ev).data1;
+        let key = ev.data1;
         let mut automap = AUTOMAP.borrow_mut();
 
         if key == key_map_east {
@@ -1338,7 +1337,7 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
             automap.bigstate = 0;
             GAME.borrow_mut().viewactive = 1;
             drop(automap);
-            AM_Stop();
+            AM_Stop(world);
             automap = AUTOMAP.borrow_mut();
         } else if key == key_map_maxzoom {
             automap.bigstate = !automap.bigstate;
@@ -1346,44 +1345,45 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
                 AM_saveScaleAndLoc(&mut automap);
                 AM_minOutWindowScale(&mut automap);
             } else {
-                AM_restoreScaleAndLoc(&mut automap, &WORLD.borrow());
+                AM_restoreScaleAndLoc(&mut automap, world);
             }
         } else if key == key_map_follow {
             automap.followplayer = !automap.followplayer;
             automap.f_oldloc.x = i32::MAX;
             if automap.followplayer != 0 {
-                set_player_message(&automap, DEH_String(AMSTR_FOLLOWON));
+                set_player_message(world, &automap, DEH_String(AMSTR_FOLLOWON));
             } else {
-                set_player_message(&automap, DEH_String(AMSTR_FOLLOWOFF));
+                set_player_message(world, &automap, DEH_String(AMSTR_FOLLOWOFF));
             }
         } else if key == key_map_grid {
             automap.grid = !automap.grid;
             if automap.grid != 0 {
-                set_player_message(&automap, DEH_String(AMSTR_GRIDON));
+                set_player_message(world, &automap, DEH_String(AMSTR_GRIDON));
             } else {
-                set_player_message(&automap, DEH_String(AMSTR_GRIDOFF));
+                set_player_message(world, &automap, DEH_String(AMSTR_GRIDOFF));
             }
         } else if key == key_map_mark {
             set_player_message(
+                world,
                 &automap,
                 format!("{} {}", DEH_String(AMSTR_MARKEDSPOT), automap.markpointnum),
             );
             AM_addMark(&mut automap);
         } else if key == key_map_clearmark {
             AM_clearMarks(&mut automap);
-            set_player_message(&automap, DEH_String(AMSTR_MARKSCLEARED));
+            set_player_message(world, &automap, DEH_String(AMSTR_MARKSCLEARED));
         } else {
             rc = 0;
         }
 
-        if deathmatch() == 0 && cht_CheckCheat(&mut automap.cheat_amap, (*ev).data2 as u8) != 0 {
+        if deathmatch() == 0 && cht_CheckCheat(&mut automap.cheat_amap, ev.data2 as u8) != 0 {
             rc = 0;
             automap.cheating = (automap.cheating + 1) % 3;
         }
-    } else if (*ev).kind == 1 {
+    } else if ev.kind == 1 {
         // ev_keyup
         rc = 0;
-        let key = (*ev).data1;
+        let key = ev.data1;
         let mut automap = AUTOMAP.borrow_mut();
 
         if key == key_map_east || key == key_map_west {
@@ -1403,11 +1403,9 @@ pub unsafe fn AM_Responder(ev: *mut event_t) -> i32 {
     rc
 }
 
-/// Set the HUD message of the player the automap shows. The responder runs
-/// outside any world borrow (and reaches the status bar's responder, which
-/// borrows the world itself), so this borrows the world just for the write.
-fn set_player_message(automap: &AutomapState, text: impl AsRef<[u8]>) {
-    WORLD.borrow_mut().players[automap.player()].set_message(text);
+/// Set the HUD message of the player the automap shows in `world`.
+fn set_player_message(world: &mut World, automap: &AutomapState, text: impl AsRef<[u8]>) {
+    world.players[automap.player()].set_message(text);
 }
 
 /// Apply the current zoom multipliers and clamp to the allowed scale range.
@@ -2130,29 +2128,28 @@ unsafe fn AM_drawCrosshair(automap: &AutomapState, color: i32) {
 /// `cheating == 2`), crosshair, and mark points, then marks the dirty
 /// rectangle via `V_MarkRect`.
 ///
-/// Called from `D_Display` once per frame, outside any world borrow; reads
-/// the players and the level through its own shared borrow of the world.
-/// C origin: `AM_Drawer` in am_map.c.
+/// Called from `D_Display` once per frame, with a shared borrow of the
+/// world it holds for this drawer; reads the players and the level from
+/// `world`. C origin: `AM_Drawer` in am_map.c.
 ///
 /// # Safety
 ///
 /// All automap state must be valid (automap must be active with a level
 /// loaded).
-pub unsafe fn AM_Drawer() {
+pub unsafe fn AM_Drawer(world: &World) {
     let mut automap = AUTOMAP.borrow_mut();
     if automap.automapactive == 0 {
         return;
     }
 
-    let world = WORLD.borrow();
     AM_clearFB(&automap, BACKGROUND);
     if automap.grid != 0 {
         AM_drawGrid(&mut automap, &world.level, GRIDCOLORS);
     }
-    AM_drawWalls(&mut automap, &world);
-    AM_drawPlayers(&mut automap, &world);
+    AM_drawWalls(&mut automap, world);
+    AM_drawPlayers(&mut automap, world);
     if automap.cheating == 2 {
-        AM_drawThings(&mut automap, &world, THINGCOLORS, THINGRANGE);
+        AM_drawThings(&mut automap, world, THINGCOLORS, THINGRANGE);
     }
     AM_drawCrosshair(&automap, XHAIRCOLORS);
     AM_drawMarks(&automap);

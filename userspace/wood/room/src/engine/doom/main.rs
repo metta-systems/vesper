@@ -596,8 +596,10 @@ pub fn D_Display() {
             if gametic() == 0 {
                 // Skip level rendering
             } else {
+                // The drawers read the world through a short shared borrow
+                // each; none of them reaches `NetUpdate`.
                 if automap_active() {
-                    AM_Drawer();
+                    AM_Drawer(&WORLD.borrow());
                 }
                 let (fullscreen, previous_inhelpscreens) = {
                     let main = DOOM_MAIN.borrow();
@@ -610,7 +612,11 @@ pub fn D_Display() {
                 if previous_inhelpscreens != 0 && MENU.borrow().inhelpscreens == 0 {
                     redrawsbar = true;
                 }
-                ST_Drawer(Boolean::from(viewheight == 200), Boolean::from(redrawsbar));
+                ST_Drawer(
+                    &WORLD.borrow(),
+                    Boolean::from(viewheight == 200),
+                    Boolean::from(redrawsbar),
+                );
                 DOOM_MAIN.borrow_mut().display_fullscreen = (viewheight == 200) as i32;
             }
         } else if gamestate == GS_INTERMISSION {

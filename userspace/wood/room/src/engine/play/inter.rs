@@ -1070,7 +1070,7 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
         world.mobjs[target_id].flags &= !MF_SOLID;
         P_DropWeapon(world, target_player);
         if target_player == world.session.console() && automap_active() {
-            AM_Stop();
+            AM_Stop(world);
         }
     }
 
