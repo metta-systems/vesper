@@ -54,6 +54,13 @@ members = [
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
   "drivers/gpio-bcm2835/server",
+  # Clock manager component and its clock_v1 interface crates
+  "drivers/cprman-bcm2835",
+  "drivers/cprman-bcm2835/client",
+  "drivers/cprman-bcm2835/server",
+  # PWM audio driver
+  "drivers/audio-pwm-bcm2835",
+  "kernel/tests/audio-test",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/usb-core-test",
@@ -208,6 +215,8 @@ block = { path = "drivers/sdhost-bcm2835/server" }
 block-client = { path = "drivers/sdhost-bcm2835/client" }
 gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
+clock = { path = "drivers/cprman-bcm2835/server" }
+clock-client = { path = "drivers/cprman-bcm2835/client" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }

@@ -1,36 +1,52 @@
 # Audio implementation plan
 
-Design: [audio-design.md](audio-design.md). Open decisions:
-[audio-decisions.md](audio-decisions.md). This file holds only open work; nothing in a
-stage starts until the decisions it lists are answered. Mark an item `- [x]` only after
-its exit check has passed.
-
-The plan follows the recommended options; a different answer changes the stages it
-blocks.
+Design: [audio-design.md](audio-design.md) (with the answered decisions D1 to D8). Open
+decisions: [audio-decisions.md](audio-decisions.md). This file holds only open work;
+nothing in a stage starts until the decisions it lists are answered. Mark an item `- [x]`
+only after its exit check has passed.
 
 ## Dependencies
 
-- D2, D3 and D4 block A1.
-- D1 blocks A2 and A3. D6 and D7 block A3.
-- D5 blocks A4; D8 decides whether A4 needs the isochronous scheduler on hardware.
-- D9 blocks A5.
+- D1 to D8 are answered (2026-10-27): A1 to A4 are unblocked. D8 (no special
+  scheduling) is revisited if A4 shows underruns on hardware.
+- D9 blocks A5; it is decided after A4.
 - Existing pieces used: `gpio_v1` (pins), `libs/io-channel` (transport), Meddle
   `channel N;` provisioning in Kickstart, `Frame.CleanData`, `DriverInit::memory_bus`.
 
 ## A1: clock and a polled test tone
 
-- `cprman` driver for `brcm,bcm2835-cprman` exporting `clock_v1` (`set_rate`, `enable`,
-  `disable`), with the `BUSY`/password sequence of the BCM2835 datasheet §6.3 (design doc, PWM clock); a pure library for the
-  divider and range math (host tests: the table in the design doc).
-- `audio` driver skeleton for `brcm,bcm2835-pwm`: pins from `pinctrl-0` through
-  `gpio_v1`, clock through `clock_v1`, `RNG1 = RNG2`, `CTL` for both channels on the
-  FIFO, a polled 440 Hz sine (left, right, both).
-- A device tree with the PWM node enabled for QEMU, and the `config.txt` overlay line for
-  the board (D3).
-- QEMU exit: a new `just test-clock` recipe sets the PWM clock on QEMU's CPRMAN model and reads back the
-  source and divider; the audio driver loads and does not touch the PWM registers.
-- Hardware exit: the tone is heard on the side it should be, `STA` shows no `WERR1`,
-  `BERR` or gaps while the FIFO is kept full.
+Done in QEMU (2026-10-27), hardware check pending:
+
+- `drivers/cprman-bcm2835` for `brcm,bcm2835-cprman` exports `clock_v1` (`set_rate`,
+  `enable`, `disable`, `rate`), serving the PWM clock (binding number 30) only. The
+  library picks the source and integer divisor (PLLD per 500 MHz or the 19.2 MHz
+  oscillator, within 0.1 %) and programs them with the sequence of §6.3 table 6-34;
+  host tests `tests/cprman.rs` (the design table's rates, the write sequence, `BUSY`
+  never written).
+- `drivers/audio-pwm-bcm2835` for `brcm,bcm2835-pwm` (a skeleton until A3): routes the
+  pins of its node's pin group through `gpio_v1`, sets the PWM clock to 100 MHz through
+  `clock_v1` (linked by the node's `clocks`) and reads it back; on the board it sets
+  `RNG1 = RNG2 = 2268`, both channels on the FIFO with `MSEN=0`, clears the FIFO and
+  plays a polled 440 Hz sine on the left, the right and both sides, three rounds,
+  traced on the UART with the underruns and `STA` errors of each side. Under `qemu` it
+  checks `clock_v1`'s refusals instead and never touches the PWM block. Host tests
+  `tests/pwm.rs`.
+- QEMU test tree: `targets/overlays/audio-test-pwm.dts`, applied to the rpi3 tree with
+  `fdtoverlay` by `just test-audio` (needs `dtc` and `fdtoverlay`). Board:
+  `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in `config.txt`; chainboot hands
+  the firmware's tree to the kernel unchanged.
+- Image `kernel/tests/audio-test` (gpio, cprman, audio with the serial channel, PL011,
+  root dispatcher). QEMU exit passed: `just test-audio` (log in
+  `target/audio-test.log`): the PWM clock reads back 100 MHz from PLLD per / 5, and an
+  unknown clock and an unreachable rate are refused.
+
+- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): the
+  tone is heard on the side the trace names, and every side traces "no underruns, no
+  errors" (no `WERR1`, `BERR` or FIFO underruns while it is kept full). Until then A1
+  stays here.
+- [ ] Follow-up: Kickstart passes the clock number of the `clocks` link (the cell after
+  the phandle), so `cprman` can refuse clocks the caller's node does not name; until
+  then it serves the PWM clock only and the audio driver names clock 30 itself.
 
 ## A2: DMA
 
@@ -86,8 +102,9 @@ blocks.
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
   mixer).
-- QEMU tests per stage as above; `just test-mailbox`, `just test-driver`, `just
-  test-wood` for regressions in shared code.
+- QEMU tests per stage as above (`just test-audio` for A1); `just test-mailbox`, `just
+  test-driver`, `just test-wood` for regressions in shared code.
+- `just clippy-audio`: the audio crates with and without `qemu`, and their host tests.
 - Hardware checks on the Pi 3 B per stage; QEMU cannot check pacing, rate, pops,
   levels or channel order.
 - `just fmt-check` and focused clippy on the touched crates.

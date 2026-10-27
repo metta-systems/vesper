@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: BlueOak-1.0.0
+//
+// The PWM node of the Raspberry Pi 3 enabled for the headphone jack, for the
+// QEMU audio test (`just test-audio`): the effect of the firmware's
+//
+//     dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+//
+// in `config.txt` on the board, with the overlay's parameters already applied
+// (Raspberry Pi kernel tree, `arch/arm/boot/dts/overlays/pwm-2chan-overlay.dts`):
+// a pin group of GPIO40 (PWM0) and GPIO41 (PWM1) on function 4 (ALT0 in the pin
+// controller's numbering), linked as the PWM node's default pin state, the
+// assigned PWM clock rate of 100 MHz, and the node enabled.
+//
+// `just test-audio` applies it to `targets/bcm2710-rpi-3-b-plus.dtb` with
+// `fdtoverlay`, the same way the firmware applies the board's overlay.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&gpio>;
+		__overlay__ {
+			pwm_pins: pwm_pins {
+				brcm,pins = <40 41>;
+				brcm,function = <4 4>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&pwm>;
+		__overlay__ {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pwm_pins>;
+			assigned-clock-rates = <100000000>;
+			status = "okay";
+		};
+	};
+};

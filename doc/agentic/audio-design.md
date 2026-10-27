@@ -1,9 +1,45 @@
 # Audio design (Raspberry Pi 3, PWM jack output with DMA)
 
-Status: research and design only, nothing is built. Open decisions are in
-[audio-decisions.md](audio-decisions.md) and are not assumed. Stages are in
+Status: D1 to D8 answered 2026-10-27 (section Decisions below); stage A1 (the `cprman`
+driver with `clock_v1` and a polled test tone) is built and checked in QEMU, its
+hardware check is pending. The one open decision (D9, music) is in
+[audio-decisions.md](audio-decisions.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
-drafts; once written they are prototypes and are edited in place.
+drafts until written; once written they are prototypes and are edited in place.
+
+## Decisions
+
+Answered by the maintainer on 2026-10-27, each with the option the decisions file
+recommended. The options that were weighed are summarised after each answer.
+
+- **D1. Who programs the DMA controller: a separate `dma` driver** for the
+  `brcm,bcm2835-dma` node exporting `dma_v1`, the sole holder of the DMA register page and
+  the channel interrupts. The audio driver names its ring by bus address for now (B1a);
+  lending Frames checked with `Frame.GetAddress` (B1b) comes when an untrusted client
+  needs DMA. Not chosen: the audio driver owning the DMA page itself; a `dma` driver
+  handing out one channel's registers (impossible, the channels share one page).
+- **D2. How the PWM clock is set: a `cprman` driver** for `brcm,bcm2835-cprman` exporting
+  `clock_v1`, linked from the PWM node's `clocks` property. Not chosen: a typed
+  `mailbox_v1.set_clock_rate` (undocumented whether the firmware programs the PWM clock);
+  the audio driver mapping the CPRMAN pages (every clock generator and PLL).
+- **D3. The audio driver binds to the PWM node** (`brcm,bcm2835-pwm`). On the board the
+  node is enabled with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in
+  `config.txt`; QEMU uses a test device tree with the node enabled. Not chosen: the
+  firmware audio node (no `reg`); a program with fixed addresses.
+- **D4. 44.1 kHz nominal from 100 MHz** (PLLD per / 5, integer divider), `RNG` 2268
+  (44 092 Hz, about 11 bits), `MSEN=0`. If 11 bits sound noisy on hardware, 250 MHz
+  (PLLD per / 2, `RNG` 5669) is the next thing to try. Not chosen: 22.05 kHz (audible
+  carrier); exact 44 100 Hz with a MASH divider (jitter).
+- **D5. Mixing in Wood's playback Thread**: a no_std mixer in Room, run by a second Wood
+  Thread; the driver is a plain PCM sink. A mixing service component stays future work.
+- **D6. An io-channel of signed 16-bit interleaved stereo** declared in `audio_v1`; the
+  driver copies and converts into its DMA ring. Not chosen: zero copy into the ring.
+- **D7. Underrun: mid-scale silence and a counter**; the DMA ring keeps running. Not
+  chosen: repeating the last period; stopping the DMA.
+- **D8. No special scheduling at first**: a ring of 4 periods and an ordinary Time
+  budget, underruns measured on hardware; the isochronous scheduler only if they show.
+- **D9. Music** is decided after the sound effects (A4); see
+  [audio-decisions.md](audio-decisions.md).
 
 Goal: sound effects (and later music) for Wood, the Room Doom port
 (`userspace/wood/README.md`, Phase 3: PWM DMA audio, SoundFont MIDI player, mixer,
@@ -124,7 +160,7 @@ Doom's 11 025 Hz effects are therefore upsampled by the mixer (×4 to 44.1 kHz),
 played at their native rate. An exact 44 100 Hz is possible with a fractional (MASH)
 divider, at the cost of the divider jitter §6.3 describes; a 0.02 % rate error is
 inaudible, and the mixer resamples to whatever rate the driver reports. Clock and rate
-are D4 in the decisions file.
+are D4: 100 MHz and `RNG` 2268.
 
 PLLD per = 500 MHz on the Pi 3 is from [S1] and Circle; the datasheet does not give PLL
 frequencies. Stage A2 measures the real rate (period interrupts against the generic
@@ -245,8 +281,7 @@ timer, which is the fallback if the interrupt wiring (Risks) is not ready.
                                     gpio (existing)
 ```
 
-The recommended options of the decisions file are drawn; each box below says which
-decision it depends on.
+The decided options are drawn; each box below names the decision it rests on.
 
 - **`audio` driver** (`drivers/audio-pwm-bcm2835`, new). Binds to the PWM node
   (`brcm,bcm2835-pwm`, D3). Owns the PWM register page. Sets its pins through
@@ -262,9 +297,8 @@ decision it depends on.
   buffers named by bus address, each `INTEN`, `TI = SRC_INC | DEST_DREQ | WAIT_RESP |
   PERMAP(dreq)`, destination the peripheral FIFO, and reports progress. Because the
   BCM2837 has no IOMMU, any DMA programmer can write all of RAM: the `dma` driver is in
-  the trusted base like the USB host controller, and the decision is about how narrow the
-  authority handed to clients is (D1 has the options, including the audio driver owning
-  the page itself).
+  the trusted base like the USB host controller; how narrow the authority handed to
+  clients is was D1: clients name memory by bus address for now (B1a).
 - **`cprman` driver** (new, D2). Binds to `brcm,bcm2835-cprman`, exports `clock_v1`
   (`set_rate(clock, hz)`, `enable`, `disable`) for the clocks its clients' nodes name in
   `clocks` (`pwm` is `<&clocks 30>`), refusing others. Linked from the PWM node with
@@ -321,7 +355,7 @@ local interface audio_v1
 
 One word of return value and six argument words fit Meddle's limits.
 
-### `dma_v1` (draft, if D1 is option B)
+### `dma_v1` (draft, D1)
 
 - `claim(dreq) returns (handle)`: a channel for the caller's peripheral. The `dma`
   driver keeps a table from DREQ number to the FIFO bus address it may target (PWM
@@ -329,7 +363,8 @@ One word of return value and six argument words fit Meddle's limits.
   the DREQs its node names (`dmas` property, D1) or that the manifest grants.
 - `start_cyclic(handle, ring bus address, period bytes, periods)`: memory side named by
   bus address. Checking that the range is RAM the caller owns needs either the lent
-  Frames (with `GRANT`, `Frame.GetAddress`) or trust in the caller; D1 has both.
+  Frames (with `GRANT`, `Frame.GetAddress`) or trust in the caller; D1 chose trust in
+  the (driver) caller for now.
 - `position(handle) returns (period index)`, `stop(handle)`, and an EventCount the
   `dma` driver advances per finished period.
 
@@ -364,9 +399,17 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
 ## Hardware testing
 
 The board is a Pi 3 B (memory: chainboot on hardware). The device tree on hardware is
-the firmware's, edited by `config.txt`; the PWM node is `status = "disabled"` by default
-and must be enabled (D3), for example with
-`dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4`. Order of tests:
+the firmware's, edited by `config.txt`, and chainboot passes it on to the kernel
+unchanged; the PWM node is `status = "disabled"` by default and is enabled (D3) with
+
+```
+dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+```
+
+in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on function 4
+(ALT0) and a 100 MHz assigned clock rate. QEMU tests use the same change made by
+`targets/overlays/audio-test-pwm.dts` (`just test-audio`). Order of tests (the first is
+`just boot-audio-test`):
 
 1. A test tone, polled: 440 Hz sine on the left only, then the right only, then both, by
    writing `FIF1` while `STA.FULL1` is clear. Confirms pins, clock, range and the swap.

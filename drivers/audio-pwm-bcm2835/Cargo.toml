@@ -1,0 +1,57 @@
+[package]
+name = "audio-pwm-bcm2835"
+
+description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: for now a polled test tone, later PCM output through DMA."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the register values and samples.
+host-tests = []
+# Under QEMU, which does not emulate the PWM block, the driver sets the clock
+# and checks it through clock_v1 but never touches the PWM registers.
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
+
+[dependencies]
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
+libmmio = { workspace = true }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+clock-client = { workspace = true }
+driver-protocol = { workspace = true }
+gpio-client = { workspace = true }
+libdevice-driver = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-trace = { workspace = true }
+libuser = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "audio-pwm-bcm2835"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "pwm"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

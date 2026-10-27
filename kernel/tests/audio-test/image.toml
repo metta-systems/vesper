@@ -1,0 +1,37 @@
+# What audio-test bundles (see vesper-image-build): the clock manager component,
+# loaded by Kickstart for the `brcm,bcm2835-cprman` node, and the PWM audio
+# driver, loaded for the `brcm,bcm2835-pwm` node, which only the test tree
+# (`just test-audio`) or the board's `pwm-2chan` overlay enable. The audio
+# driver sets the PWM clock through the clock manager and routes the jack's
+# pins through the gpio component; it holds the PL011 driver's serial channel,
+# so on the board its trace shows on the UART.
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+[[driver]]
+name = "audio"
+binary = "audio-pwm-bcm2835"
+interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
+serial = true
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

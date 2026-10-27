@@ -1,0 +1,10 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The PWM clock comes from the clock manager the node's `clocks` property
+# links to (`clocks = <&clocks 30>`, the PWM clock).
+uses clock_v1 via device clocks { set_rate, enable, rate }
+# The pins of the node's pin group (`pinctrl-0`, GPIO40 and GPIO41 on ALT0 with
+# the `pwm-2chan` overlay) are routed to the PWM block at start.
+uses gpio_v1 via device compatible "brcm,bcm2835-gpio" { set_function }
