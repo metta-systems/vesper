@@ -5,10 +5,11 @@
 //! floor/ceiling silhouettes from the BSP drawseg list, and drawing masked columns for
 //! both world sprites and player weapon (psprite) overlays.
 //!
-//! The C globals live in [`SpriteState`] ([`SPRITES`]) and, for the vissprite
-//! pool that is linked by raw pointers, [`VisSpriteState`] ([`VISSPRITES`]).
-//! The masked-column inputs (`mfloorclip`, `mceilingclip`, `spryscale`,
-//! `sprtopscreen`) are a [`MaskedColumnParams`] block passed by the caller.
+//! The C globals live in the renderer's [`SpriteState`] (`sprites`) and,
+//! for the vissprite pool that is linked by raw pointers, its
+//! [`VisSpriteState`] (`vissprites`). The masked-column inputs
+//! (`mfloorclip`, `mceilingclip`, `spryscale`, `sprtopscreen`) are a
+//! [`MaskedColumnParams`] block passed by the caller.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -17,14 +18,13 @@ use {crate::i_error, std::ptr};
 use crate::engine::{
     arena::Arena,
     doom::player::PspdefT,
-    global::Global,
     map::SectorId,
     math::{
         fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, fixed_t},
         tables::ANG45,
     },
     play::{info::*, mobj::mobj_t, setup::LevelState},
-    world::WORLD,
+    world::World,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,10 +157,10 @@ use crate::engine::{
     doom::stat::modifiedgame,
     misc::until_nul,
     render_3d::{
-        bsp::BSP,
-        data::RENDER_DATA,
-        draw::{ColumnFunction, ColumnParams, DRAW, DrawState},
-        main::{R_PointOnSegSide, R_PointToAngle, VIEW, scalelight_row},
+        RENDERER, Renderer,
+        data::RenderDataState,
+        draw::{ColumnFunction, ColumnParams, DrawState},
+        main::{R_PointOnSegSide, R_PointToAngle, ViewState, scalelight_row},
         segs::R_RenderMaskedSegRange,
     },
     wad::{W_GetNumForName, cache_patch_num, format::Column, lumpinfo},
@@ -171,7 +171,8 @@ use crate::engine::{
 // State defined by this module
 // ---------------------------------------------------------------------------
 
-/// Sprite state (C `r_things.c` globals other than the vissprite pool).
+/// Sprite state (C `r_things.c` globals other than the vissprite pool), the
+/// renderer's `sprites`.
 pub struct SpriteState {
     /// Scale applied to player weapon (psprite) columns this frame.
     pub pspritescale: fixed_t,
@@ -179,11 +180,11 @@ pub struct SpriteState {
     pub pspriteiscale: fixed_t,
     /// Pointer to the active light-table row for sprites this frame.
     pub spritelights: *const *mut u8,
-    /// Clipping array initialised to -1 for psprite bottom clipping.
-    /// Addressed through [`negonearray_ptr`].
+    /// Clipping array initialised to -1 for psprite bottom clipping. The
+    /// drawsegs and the psprite drawer point into it.
     pub negonearray: [i16; SCREENWIDTH],
     /// Clipping array initialised to viewheight for psprite top clipping.
-    /// Addressed through [`screenheightarray_ptr`].
+    /// The drawsegs and the psprite drawer point into it.
     pub screenheightarray: [i16; SCREENWIDTH],
     /// Pointer to the sprite definition table, `numsprites` entries.
     pub sprites: *mut spritedef_t,
@@ -225,31 +226,16 @@ impl Default for SpriteState {
     }
 }
 
-/// The sprite state.
-pub static SPRITES: Global<SpriteState> = Global::new(SpriteState::new());
-
-/// Stable address of `screenheightarray`, for drawseg and psprite clip pointers.
-pub fn screenheightarray_ptr() -> *mut i16 {
-    // Addresses the static's storage directly, so the pointer stays valid unguarded.
-    unsafe { (&raw mut (*SPRITES.as_ptr()).screenheightarray).cast() }
-}
-
-/// Stable address of `negonearray`, for drawseg and psprite clip pointers.
-pub fn negonearray_ptr() -> *mut i16 {
-    // Addresses the static's storage directly, so the pointer stays valid unguarded.
-    unsafe { (&raw mut (*SPRITES.as_ptr()).negonearray).cast() }
-}
-
 // ---------------------------------------------------------------------------
-// Module-local state
+// Vissprite pool
 // ---------------------------------------------------------------------------
 
-/// The per-frame vissprite pool and sprite clip scratch arrays.
+/// The per-frame vissprite pool and sprite clip scratch arrays, the
+/// renderer's `vissprites`.
 ///
-/// The sorted list links the pool entries, `vsprsortedhead` and
-/// `overflowsprite` by raw pointer, and `mfloorclip`/`mceilingclip` point
-/// into `clipbot`/`cliptop`, so those parts are addressed through
-/// [`Global::as_ptr`].
+/// The sorted list links the pool entries and `vsprsortedhead` by raw
+/// pointer, and `mfloorclip`/`mceilingclip` point into `clipbot`/`cliptop`;
+/// the masked phase derives those pointers from the renderer it is handed.
 pub struct VisSpriteState {
     /// Fixed-size pool of projected sprite records for the current frame.
     /// Accessed sequentially via `vissprite_p`; up to `MAXVISSPRITES` entries.
@@ -290,9 +276,6 @@ impl Default for VisSpriteState {
         Self::new()
     }
 }
-
-/// The vissprite pool.
-static VISSPRITES: Global<VisSpriteState> = Global::new(VisSpriteState::new());
 
 // ---------------------------------------------------------------------------
 // R_InstallSpriteLump
@@ -390,9 +373,13 @@ fn R_InstallSpriteLump(
 /// `W_GetNumForName` to respect WAD replacement ordering.
 ///
 /// # Safety
-/// `firstspritelump` and `lastspritelump` from `r_data` must already be
+/// `firstspritelump` and `lastspritelump` of `data` must already be
 /// initialised before this function is called.
-unsafe fn R_InitSpriteDefs(sprite_state: &mut SpriteState, namelist: &[&'static str]) {
+unsafe fn R_InitSpriteDefs(
+    sprite_state: &mut SpriteState,
+    data: &RenderDataState,
+    namelist: &[&'static str],
+) {
     sprite_state.numsprites = namelist.len() as i32;
 
     if sprite_state.numsprites == 0 {
@@ -405,10 +392,7 @@ unsafe fn R_InitSpriteDefs(sprite_state: &mut SpriteState, namelist: &[&'static 
         ptr::null_mut(),
     ) as *mut spritedef_t;
 
-    let (firstspritelump, lastspritelump) = {
-        let data = RENDER_DATA.borrow();
-        (data.firstspritelump, data.lastspritelump)
-    };
+    let (firstspritelump, lastspritelump) = (data.firstspritelump, data.lastspritelump);
     let start = firstspritelump - 1;
     let end = lastspritelump + 1;
 
@@ -512,11 +496,12 @@ unsafe fn R_InitSpriteDefs(sprite_state: &mut SpriteState, namelist: &[&'static 
 /// loading (`W_InitMultipleFiles`) has set up `firstspritelump` and
 /// `lastspritelump`.
 pub unsafe fn R_InitSprites(namelist: &[&'static str]) {
-    let mut sprite_state = SPRITES.borrow_mut();
+    let mut renderer = RENDERER.borrow_mut();
+    let Renderer { sprites, data, .. } = &mut *renderer;
     for i in 0..SCREENWIDTH {
-        sprite_state.negonearray[i] = -1;
+        sprites.negonearray[i] = -1;
     }
-    R_InitSpriteDefs(&mut sprite_state, namelist);
+    R_InitSpriteDefs(sprites, data, namelist);
 }
 
 // ---------------------------------------------------------------------------
@@ -526,35 +511,29 @@ pub unsafe fn R_InitSprites(namelist: &[&'static str]) {
 /// Reset the vissprite pool to empty at the start of each frame.
 ///
 /// Resets `vissprite_p` to the beginning of the `vissprites` array so that
-/// the next frame can overwrite all previous entries.
-/// # Safety
-/// Must be called once per frame before any call to `R_AddSprites` or
+/// the next frame can overwrite all previous entries. Called once per frame
+/// in the frame's setup phase, before any call to `R_AddSprites` or
 /// `R_ProjectSprite`.
-pub unsafe fn R_ClearSprites() {
-    VISSPRITES.borrow_mut().vissprite_p = 0;
+pub fn R_ClearSprites(pool: &mut VisSpriteState) {
+    pool.vissprite_p = 0;
 }
 
 // ---------------------------------------------------------------------------
 // R_NewVisSprite
 // ---------------------------------------------------------------------------
 
-/// Allocate the next vissprite slot from the pool and return a pointer to it.
+/// Allocate the next vissprite slot from the pool and return it.
 ///
 /// If the pool is full (`MAXVISSPRITES` entries already allocated this frame)
-/// returns a pointer to `overflowsprite` so the caller can write without
-/// crashing; the overflow record is silently discarded.
-/// # Safety
-/// Must only be called after `R_ClearSprites` has been called this frame.
-/// The returned pointer is valid until the next `R_ClearSprites` call.
-pub unsafe fn R_NewVisSprite() -> *mut vissprite_t {
-    let mut pool = VISSPRITES.borrow_mut();
-    // Addresses the static's storage directly: the sorted list links the pool by pointer.
-    let storage = VISSPRITES.as_ptr();
+/// returns `overflowsprite` so the caller can write without crashing; the
+/// overflow record is silently discarded. The slot belongs to the frame
+/// until the next `R_ClearSprites` call.
+pub fn R_NewVisSprite(pool: &mut VisSpriteState) -> &mut vissprite_t {
     if pool.vissprite_p == MAXVISSPRITES {
-        return &raw mut (*storage).overflowsprite;
+        return &mut pool.overflowsprite;
     }
     pool.vissprite_p += 1;
-    &raw mut (*storage).vissprites[pool.vissprite_p - 1]
+    &mut pool.vissprites[pool.vissprite_p - 1]
 }
 
 // ---------------------------------------------------------------------------
@@ -639,15 +618,14 @@ pub unsafe fn R_DrawMaskedColumn(
 /// - `mfloorclip` and `mceilingclip` must be valid arrays of at least
 ///   `SCREENWIDTH` elements.
 pub unsafe fn R_DrawVisSprite(
+    data: &RenderDataState,
+    view: &ViewState,
+    draw: &mut DrawState,
     vis: &vissprite_t,
     masked: &mut MaskedColumnParams,
     _x1: i32,
     _x2: i32,
 ) {
-    let data = RENDER_DATA.borrow();
-    let view = VIEW.borrow();
-    let mut draw = DRAW.borrow_mut();
-
     // Drawing the sprite allocates nothing from the zone, so the PU_CACHE
     // lump stays cached while the view is used.
     let patch = cache_patch_num(vis.patch + data.firstspritelump, PU_CACHE);
@@ -688,7 +666,7 @@ pub unsafe fn R_DrawVisSprite(
             patch.column(texturecolumn as usize),
             masked,
             &mut column,
-            &mut draw,
+            draw,
             draw_column,
         );
 
@@ -715,14 +693,17 @@ pub unsafe fn R_DrawVisSprite(
 ///   `spritetopoffset` must all be initialised by `R_InitSprites` before this
 ///   function is called.
 /// - The view state and `spritelights` must be valid for the current frame.
-pub unsafe fn R_ProjectSprite(thing: &mobj_t) {
-    let (sprites, spritelights) = {
-        let sprite_state = SPRITES.borrow();
-        (sprite_state.sprites, sprite_state.spritelights)
-    };
-    let viewwidth = DRAW.borrow().viewwidth;
-    let data = RENDER_DATA.borrow();
-    let view = VIEW.borrow();
+pub unsafe fn R_ProjectSprite(renderer: &mut Renderer, thing: &mobj_t) {
+    let Renderer {
+        sprites: sprite_state,
+        draw,
+        data,
+        view,
+        vissprites,
+        ..
+    } = renderer;
+    let (sprites, spritelights) = (sprite_state.sprites, sprite_state.spritelights);
+    let viewwidth = draw.viewwidth;
 
     // Transform the origin point.
     let tr_x = thing.x - view.viewx;
@@ -752,7 +733,7 @@ pub unsafe fn R_ProjectSprite(thing: &mobj_t) {
     // Decide which patch to use for sprite relative to player.
     #[cfg(feature = "rangecheck")]
     {
-        if thing.sprite as u32 >= SPRITES.borrow().numsprites as u32 {
+        if thing.sprite as u32 >= sprite_state.numsprites as u32 {
             i_error!("R_ProjectSprite: invalid sprite number {}", thing.sprite);
         }
     }
@@ -782,7 +763,7 @@ pub unsafe fn R_ProjectSprite(thing: &mobj_t) {
         flip = sprframe.flip[0] as i32;
     } else {
         // Choose a different rotation based on player view.
-        let ang = R_PointToAngle(thing.x, thing.y);
+        let ang = R_PointToAngle(view, thing.x, thing.y);
         let rot = ((ang.wrapping_sub(thing.angle).wrapping_add((ANG45 / 2) * 9)) >> 29) as usize;
         lump = sprframe.lump[rot] as i32;
         flip = sprframe.flip[rot] as i32;
@@ -806,62 +787,62 @@ pub unsafe fn R_ProjectSprite(thing: &mobj_t) {
     }
 
     // Store information in a vissprite.
-    let vis = R_NewVisSprite();
-    (*vis).mobjflags = thing.flags;
-    (*vis).scale = xscale << view.detailshift;
-    (*vis).gx = thing.x;
-    (*vis).gy = thing.y;
-    (*vis).gz = thing.z;
-    (*vis).gzt = thing.z + *data.spritetopoffset.add(lump as usize);
-    (*vis).texturemid = (*vis).gzt - view.viewz;
-    (*vis).x1 = if x1 < 0 { 0 } else { x1 };
-    (*vis).x2 = if x2 >= viewwidth { viewwidth - 1 } else { x2 };
+    let vis = R_NewVisSprite(vissprites);
+    vis.mobjflags = thing.flags;
+    vis.scale = xscale << view.detailshift;
+    vis.gx = thing.x;
+    vis.gy = thing.y;
+    vis.gz = thing.z;
+    vis.gzt = thing.z + *data.spritetopoffset.add(lump as usize);
+    vis.texturemid = vis.gzt - view.viewz;
+    vis.x1 = if x1 < 0 { 0 } else { x1 };
+    vis.x2 = if x2 >= viewwidth { viewwidth - 1 } else { x2 };
     let iscale = FixedDiv(FRACUNIT, xscale);
 
     if flip != 0 {
-        (*vis).startfrac = *data.spritewidth.add(lump as usize) - 1;
-        (*vis).xiscale = -iscale;
+        vis.startfrac = *data.spritewidth.add(lump as usize) - 1;
+        vis.xiscale = -iscale;
     } else {
-        (*vis).startfrac = 0;
-        (*vis).xiscale = iscale;
+        vis.startfrac = 0;
+        vis.xiscale = iscale;
     }
 
-    if (*vis).x1 > x1 {
-        (*vis).startfrac += (*vis).xiscale * ((*vis).x1 - x1);
+    if vis.x1 > x1 {
+        vis.startfrac += vis.xiscale * (vis.x1 - x1);
     }
-    (*vis).patch = lump;
+    vis.patch = lump;
 
     // Get light level.
     if thing.flags & MF_SHADOW != 0 {
         // Shadow draw.
-        (*vis).colormap = ptr::null_mut();
+        vis.colormap = ptr::null_mut();
     } else if !view.fixedcolormap.is_null() {
         // Fixed map.
-        (*vis).colormap = view.fixedcolormap;
+        vis.colormap = view.fixedcolormap;
     } else if thing.frame & FF_FULLBRIGHT != 0 {
         // Full bright.
-        (*vis).colormap = data.colormaps;
+        vis.colormap = data.colormaps;
     } else {
         // Diminished light.
         let mut index = (xscale >> (LIGHTSCALESHIFT - view.detailshift as u32)) as usize;
         if index >= MAXLIGHTSCALE {
             index = MAXLIGHTSCALE - 1;
         }
-        (*vis).colormap = *spritelights.add(index);
+        vis.colormap = *spritelights.add(index);
     }
 }
 
-/// The `scalelight` row for a sector light level plus `extralight`,
-/// clamped to the table.
-fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
+/// The `scalelight` row of `view` for a sector light level plus
+/// `extralight`, clamped to the table.
+fn sprite_light_row(view: &ViewState, lightlevel: i16, extralight: i32) -> *const *mut u8 {
     let lightnum = (lightlevel >> LIGHTSEGSHIFT as i16) as i32 + extralight;
 
     if lightnum < 0 {
-        scalelight_row(0)
+        scalelight_row(view, 0)
     } else if lightnum >= LIGHTLEVELS as i32 {
-        scalelight_row(LIGHTLEVELS - 1)
+        scalelight_row(view, LIGHTLEVELS - 1)
     } else {
-        scalelight_row(lightnum as usize)
+        scalelight_row(view, lightnum as usize)
     }
 }
 
@@ -885,6 +866,7 @@ fn sprite_light_row(lightlevel: i16, extralight: i32) -> *const *mut u8 {
 /// - `scalelight` and `extralight` must be initialised for the current
 ///   frame before this function is called.
 pub unsafe fn R_AddSprites(
+    renderer: &mut Renderer,
     level: &mut LevelState,
     mobjs: &Arena<mobj_t>,
     validcount: i32,
@@ -902,14 +884,14 @@ pub unsafe fn R_AddSprites(
     // Well, now it will be done.
     sec.validcount = validcount;
 
-    let extralight = VIEW.borrow().extralight;
-    SPRITES.borrow_mut().spritelights = sprite_light_row(sec.lightlevel, extralight);
+    let view = &renderer.view;
+    renderer.sprites.spritelights = sprite_light_row(view, sec.lightlevel, view.extralight);
 
     // Handle all things in sector.
     let mut thing = sec.thinglist;
     while let Some(current) = thing {
         let current = &mobjs[current];
-        R_ProjectSprite(current);
+        R_ProjectSprite(renderer, current);
         thing = current.snext;
     }
 }
@@ -926,13 +908,18 @@ pub unsafe fn R_AddSprites(
 /// A temporary stack-allocated `vissprite_t` (`avis`) is filled and passed
 /// directly to `R_DrawVisSprite`; it is never inserted into the vissprite pool.
 ///
-/// If the player carries the partial-invisibility power-up at a sufficient
-/// level the weapon is drawn with `fuzzcolfunc` (shadow effect).
+/// If the view player carries the partial-invisibility power-up
+/// (`invisibility` tics left) at a sufficient level the weapon is drawn
+/// with `fuzzcolfunc` (shadow effect).
 /// # Safety
 /// - `sprites`, `pspritescale`, `pspriteiscale`, `spritelights`, and the
 ///   clip pointers in `masked` must all be valid for the current frame.
-/// - `R_SetupFrame` must have set `viewplayer`.
-pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
+pub unsafe fn R_DrawPSprite(
+    renderer: &mut Renderer,
+    invisibility: i32,
+    psp: &PspdefT,
+    masked: &mut MaskedColumnParams,
+) {
     // Decide which patch to use.
     if psp.state.is_null() {
         return;
@@ -940,20 +927,24 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
 
     let state = psp.state.get();
 
-    let (sprites, spritelights, pspritescale, pspriteiscale) = {
-        let sprite_state = SPRITES.borrow();
-        (
-            sprite_state.sprites,
-            sprite_state.spritelights,
-            sprite_state.pspritescale,
-            sprite_state.pspriteiscale,
-        )
-    };
+    let Renderer {
+        sprites: sprite_state,
+        draw,
+        data,
+        view,
+        ..
+    } = renderer;
+    let (sprites, spritelights, pspritescale, pspriteiscale) = (
+        sprite_state.sprites,
+        sprite_state.spritelights,
+        sprite_state.pspritescale,
+        sprite_state.pspriteiscale,
+    );
 
     #[cfg(feature = "rangecheck")]
     {
         let sprite = state.sprite;
-        if sprite as u32 >= SPRITES.borrow().numsprites as u32 {
+        if sprite as u32 >= sprite_state.numsprites as u32 {
             i_error!("R_ProjectSprite: invalid sprite number {}", sprite);
         }
     }
@@ -976,25 +967,15 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
     let lump = sprframe.lump[0] as i32;
     let flip = sprframe.flip[0] as i32;
 
-    let viewwidth = DRAW.borrow().viewwidth;
-    let (centerxfrac, detailshift, viewplayer, fixedcolormap) = {
-        let view = VIEW.borrow();
-        (
-            view.centerxfrac,
-            view.detailshift,
-            view.player(),
-            view.fixedcolormap,
-        )
-    };
-    let (spriteoffset, spritewidth, spritetopoffset, colormaps) = {
-        let data = RENDER_DATA.borrow();
-        (
-            data.spriteoffset,
-            data.spritewidth,
-            data.spritetopoffset,
-            data.colormaps,
-        )
-    };
+    let viewwidth = draw.viewwidth;
+    let (centerxfrac, detailshift, fixedcolormap) =
+        (view.centerxfrac, view.detailshift, view.fixedcolormap);
+    let (spriteoffset, spritewidth, spritetopoffset, colormaps) = (
+        data.spriteoffset,
+        data.spritewidth,
+        data.spritetopoffset,
+        data.colormaps,
+    );
 
     // Calculate edges of the shape.
     let mut tx = psp.sx - 160 * FRACUNIT;
@@ -1038,7 +1019,6 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
 
     vis.patch = lump;
 
-    let invisibility = WORLD.borrow().players[viewplayer].powers[pw_invisibility];
     if invisibility > 4 * 32 || invisibility & 8 != 0 {
         // Shadow draw.
         vis.colormap = ptr::null_mut();
@@ -1053,7 +1033,7 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
         vis.colormap = *spritelights.add(MAXLIGHTSCALE - 1);
     }
 
-    R_DrawVisSprite(vis, masked, vis.x1, vis.x2);
+    R_DrawVisSprite(data, view, draw, vis, masked, vis.x1, vis.x2);
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,37 +1052,30 @@ pub unsafe fn R_DrawPSprite(psp: &PspdefT, masked: &mut MaskedColumnParams) {
 /// player is not looking through a camera or mirror).
 /// # Safety
 /// - `R_SetupFrame` must have set `viewplayer`, whose `mo` must name a map
-///   object of the level with a valid `subsector -> sector` chain.
+///   object of `world`'s level with a valid `subsector -> sector` chain.
 /// - `scalelight`, `extralight`, `screenheightarray`, and `negonearray` must
 ///   all be valid before this function is called.
-pub unsafe fn R_DrawPlayerSprites() {
-    let (viewplayer, extralight) = {
-        let view = VIEW.borrow();
-        (view.player(), view.extralight)
-    };
-    // Play does not run while a frame is drawn, so the renderer draws a
-    // copy of the psprites.
-    let (psprites, lightlevel) = {
-        let world = WORLD.borrow();
-        let player = &world.players[viewplayer];
-        let mo = &world.mobjs[player.mo()];
-        let lightlevel = world.level.subsector_sector(mo.subsector).lightlevel;
-        (player.psprites, lightlevel)
-    };
-    SPRITES.borrow_mut().spritelights = sprite_light_row(lightlevel, extralight);
+pub unsafe fn R_DrawPlayerSprites(world: &World, renderer: &mut Renderer) {
+    let player = &world.players[renderer.view.player()];
+    let mo = &world.mobjs[player.mo()];
+    let lightlevel = world.level.subsector_sector(mo.subsector).lightlevel;
+    let view = &renderer.view;
+    renderer.sprites.spritelights = sprite_light_row(view, lightlevel, view.extralight);
 
     // Clip to screen bounds.
+    let sprites = &mut renderer.sprites;
     let mut masked = MaskedColumnParams {
-        mfloorclip: screenheightarray_ptr(),
-        mceilingclip: negonearray_ptr(),
+        mfloorclip: sprites.screenheightarray.as_mut_ptr(),
+        mceilingclip: sprites.negonearray.as_mut_ptr(),
         spryscale: 0,
         sprtopscreen: 0,
     };
 
     // Add all active psprites.
-    for psp in &psprites {
+    let invisibility = player.powers[pw_invisibility];
+    for psp in &player.psprites {
         if !psp.state.is_null() {
-            R_DrawPSprite(psp, &mut masked);
+            R_DrawPSprite(renderer, invisibility, psp, &mut masked);
         }
     }
 }
@@ -1122,60 +1095,64 @@ pub unsafe fn R_DrawPlayerSprites() {
 /// After this call, `vsprsortedhead.next` is the farthest sprite and
 /// `vsprsortedhead.prev` is the closest; traversing `next` links draws
 /// sprites back-to-front.
-/// # Safety
-/// Must be called after all `R_ProjectSprite` calls for the frame and before
-/// `R_DrawMasked` iterates `vsprsortedhead`. Modifies the `next`/`prev`
-/// pointers of every vissprite in the pool.
-pub unsafe fn R_SortVisSprites() {
-    // The pool is linked through raw pointers, so it is worked on through `as_ptr`.
-    let pool = VISSPRITES.as_ptr();
-    let vissprites: *mut vissprite_t = (&raw mut (*pool).vissprites).cast();
-    let head: *mut vissprite_t = &raw mut (*pool).vsprsortedhead;
-    let count = (*pool).vissprite_p;
+/// Called after all `R_ProjectSprite` calls for the frame and before
+/// `R_DrawMasked` iterates `vsprsortedhead`. Rewrites the `next`/`prev`
+/// pointers of every vissprite in the pool; the links stay valid while the
+/// pool stays in place.
+pub fn R_SortVisSprites(pool: &mut VisSpriteState) {
+    let vissprites: *mut vissprite_t = pool.vissprites.as_mut_ptr();
+    let head: *mut vissprite_t = &raw mut pool.vsprsortedhead;
+    let count = pool.vissprite_p;
 
     let mut unsorted_node: vissprite_t = unsafe { std::mem::zeroed() };
     let unsorted: *mut vissprite_t = &raw mut unsorted_node;
-    (*unsorted).next = unsorted;
-    (*unsorted).prev = unsorted;
 
-    if count == 0 {
-        return;
-    }
+    // SAFETY: `count` is at most `MAXVISSPRITES`, and every pointer
+    // followed is one of the first `count` pool entries, the head or the
+    // local unsorted node, all linked here.
+    unsafe {
+        (*unsorted).next = unsorted;
+        (*unsorted).prev = unsorted;
 
-    for i in 0..count {
-        let ds = vissprites.add(i);
-        (*ds).next = ds.wrapping_add(1);
-        (*ds).prev = ds.wrapping_sub(1);
-    }
-
-    (*vissprites).prev = unsorted;
-    (*unsorted).next = vissprites;
-    (*vissprites.add(count - 1)).next = unsorted;
-    (*unsorted).prev = vissprites.add(count - 1);
-
-    // Pull the vissprites out by scale.
-    (*head).next = head;
-    (*head).prev = head;
-
-    for _ in 0..count {
-        let mut bestscale = i32::MAX;
-        let mut best = (*unsorted).next;
-
-        let mut ds = (*unsorted).next;
-        while ds != unsorted {
-            if (*ds).scale < bestscale {
-                bestscale = (*ds).scale;
-                best = ds;
-            }
-            ds = (*ds).next;
+        if count == 0 {
+            return;
         }
 
-        (*(*best).next).prev = (*best).prev;
-        (*(*best).prev).next = (*best).next;
-        (*best).next = head;
-        (*best).prev = (*head).prev;
-        (*(*head).prev).next = best;
-        (*head).prev = best;
+        for i in 0..count {
+            let ds = vissprites.add(i);
+            (*ds).next = ds.wrapping_add(1);
+            (*ds).prev = ds.wrapping_sub(1);
+        }
+
+        (*vissprites).prev = unsorted;
+        (*unsorted).next = vissprites;
+        (*vissprites.add(count - 1)).next = unsorted;
+        (*unsorted).prev = vissprites.add(count - 1);
+
+        // Pull the vissprites out by scale.
+        (*head).next = head;
+        (*head).prev = head;
+
+        for _ in 0..count {
+            let mut bestscale = i32::MAX;
+            let mut best = (*unsorted).next;
+
+            let mut ds = (*unsorted).next;
+            while ds != unsorted {
+                if (*ds).scale < bestscale {
+                    bestscale = (*ds).scale;
+                    best = ds;
+                }
+                ds = (*ds).next;
+            }
+
+            (*(*best).next).prev = (*best).prev;
+            (*(*best).prev).next = (*best).next;
+            (*best).next = head;
+            (*best).prev = (*head).prev;
+            (*(*head).prev).next = best;
+            (*head).prev = best;
+        }
     }
 }
 
@@ -1198,30 +1175,25 @@ pub unsafe fn R_SortVisSprites() {
 /// After all drawsegs are processed, unset clip values default to `viewheight`
 /// (bottom) and `-1` (top), then `R_DrawVisSprite` is called.
 /// # Safety
-/// - `spr` must be a valid `vissprite_t` pointer from the sorted list.
-/// - `ds_p` and `drawsegs` must be valid for the current frame.
+/// - `spr` must be a vissprite of the sorted list.
+/// - `ds_p` and `drawsegs` must be valid for the current frame, drawn from
+///   `level`.
 /// - `R_SortVisSprites` must have been called this frame before any calls to
 ///   this function.
-pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
-    let spr = *spr;
-    let viewheight = DRAW.borrow().viewheight;
-    let ds_p = BSP.borrow().ds_p;
-    let world = WORLD.borrow();
-    let level = &world.level;
+pub unsafe fn R_DrawSprite(renderer: &mut Renderer, level: &LevelState, spr: &vissprite_t) {
+    let viewheight = renderer.draw.viewheight;
+    let ds_p = renderer.bsp.ds_p;
 
     {
-        let mut pool = VISSPRITES.borrow_mut();
-        let pool = &mut *pool;
-        let (clipbot, cliptop) = (&mut pool.clipbot, &mut pool.cliptop);
-
+        let pool = &mut renderer.vissprites;
         for x in spr.x1..=spr.x2 {
-            clipbot[x as usize] = -2;
-            cliptop[x as usize] = -2;
+            pool.clipbot[x as usize] = -2;
+            pool.cliptop[x as usize] = -2;
         }
 
         // Scan drawsegs from end to start for obscuring segs.
         for index in (0..ds_p).rev() {
-            let ds = BSP.borrow().drawsegs[index];
+            let ds = renderer.bsp.drawsegs[index];
 
             // Determine if the drawseg obscures the sprite.
             if ds.x1 > spr.x2
@@ -1250,13 +1222,15 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
             {
                 // Masked mid texture?
                 if !ds.maskedtexturecol.is_null() {
-                    R_RenderMaskedSegRange(&ds, r1, r2);
+                    R_RenderMaskedSegRange(renderer, level, &ds, r1, r2);
                 }
                 // Seg is behind sprite.
                 continue;
             }
 
             // Clip this piece of the sprite.
+            let pool = &mut renderer.vissprites;
+            let (clipbot, cliptop) = (&mut pool.clipbot, &mut pool.cliptop);
             let mut silhouette = ds.silhouette;
 
             if spr.gz >= ds.bsilheight {
@@ -1292,32 +1266,38 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
 
         // All clipping has been performed, so draw the sprite.
         // Check for unclipped columns.
+        let pool = &mut renderer.vissprites;
         for x in spr.x1..=spr.x2 {
-            if clipbot[x as usize] == -2 {
-                clipbot[x as usize] = viewheight as i16;
+            if pool.clipbot[x as usize] == -2 {
+                pool.clipbot[x as usize] = viewheight as i16;
             }
-            if cliptop[x as usize] == -2 {
-                cliptop[x as usize] = -1;
+            if pool.cliptop[x as usize] == -2 {
+                pool.cliptop[x as usize] = -1;
             }
         }
     }
 
-    // Addresses the static's storage directly: the clip pointers outlive the borrow.
-    let pool = VISSPRITES.as_ptr();
+    let Renderer {
+        data,
+        view,
+        draw,
+        vissprites,
+        ..
+    } = renderer;
     let mut masked = MaskedColumnParams {
-        mfloorclip: (&raw mut (*pool).clipbot).cast(),
-        mceilingclip: (&raw mut (*pool).cliptop).cast(),
+        mfloorclip: vissprites.clipbot.as_mut_ptr(),
+        mceilingclip: vissprites.cliptop.as_mut_ptr(),
         spryscale: 0,
         sprtopscreen: 0,
     };
-    R_DrawVisSprite(&spr, &mut masked, spr.x1, spr.x2);
+    R_DrawVisSprite(data, view, draw, spr, &mut masked, spr.x1, spr.x2);
 }
 
 // ---------------------------------------------------------------------------
 // R_DrawMasked
 // ---------------------------------------------------------------------------
 
-/// Top-level masked rendering pass called at the end of each frame.
+/// The masked phase, the last of each frame.
 ///
 /// Performs four steps in order:
 /// 1. Sorts the vissprite pool back-to-front via `R_SortVisSprites`.
@@ -1328,36 +1308,37 @@ pub unsafe fn R_DrawSprite(spr: *mut vissprite_t) {
 ///    `viewangleoffset != 0`, i.e., in demo playback camera modes).
 ///
 /// # Safety
-/// Must be called after `R_RenderBSPNode` has filled the drawseg list and
-/// the vissprite pool for the current frame. All renderer state (`ds_p`,
-/// `drawsegs`, `viewangleoffset`, etc.) must be valid.
-pub unsafe fn R_DrawMasked() {
-    R_SortVisSprites();
+/// Must be called after the BSP phase has filled the drawseg list and the
+/// vissprite pool for the current frame from `world`. All renderer state
+/// (`ds_p`, `drawsegs`, `viewangleoffset`, etc.) must be valid.
+pub unsafe fn R_DrawMasked(world: &World, renderer: &mut Renderer) {
+    let level = &world.level;
+    R_SortVisSprites(&mut renderer.vissprites);
 
-    // The sorted list links the pool by raw pointer; see `R_SortVisSprites`.
-    let pool = VISSPRITES.as_ptr();
-    if (*pool).vissprite_p > 0 {
-        // Draw all vissprites back to front.
-        let head: *mut vissprite_t = &raw mut (*pool).vsprsortedhead;
+    if renderer.vissprites.vissprite_p > 0 {
+        // Draw all vissprites back to front, following the links the sort
+        // made; drawing a sprite leaves them alone.
+        let head: *mut vissprite_t = &raw mut renderer.vissprites.vsprsortedhead;
         let mut spr = (*head).next;
         while spr != head {
-            R_DrawSprite(spr);
-            spr = (*spr).next;
+            let sprite = *spr;
+            R_DrawSprite(renderer, level, &sprite);
+            spr = sprite.next;
         }
     }
 
     // Render any remaining masked mid textures.
-    let ds_p = BSP.borrow().ds_p;
+    let ds_p = renderer.bsp.ds_p;
     for index in (0..ds_p).rev() {
-        let ds = BSP.borrow().drawsegs[index];
+        let ds = renderer.bsp.drawsegs[index];
         if !ds.maskedtexturecol.is_null() {
-            R_RenderMaskedSegRange(&ds, ds.x1, ds.x2);
+            R_RenderMaskedSegRange(renderer, level, &ds, ds.x1, ds.x2);
         }
     }
 
     // Draw the psprites on top of everything.
-    if VIEW.borrow().viewangleoffset == 0 {
-        R_DrawPlayerSprites();
+    if renderer.view.viewangleoffset == 0 {
+        R_DrawPlayerSprites(world, renderer);
     }
 }
 
@@ -1376,44 +1357,51 @@ mod tests {
             sectors: vec![sector_t::ZERO; 2],
             ..LevelState::new()
         };
+        let mut renderer = Box::new(Renderer::new());
         // SAFETY: the sectors have no things to project.
         unsafe {
-            R_AddSprites(&mut level, &Arena::new(), 7, SectorId::new(1));
-            R_AddSprites(&mut level, &Arena::new(), 7, SectorId::new(1));
+            R_AddSprites(
+                &mut renderer,
+                &mut level,
+                &Arena::new(),
+                7,
+                SectorId::new(1),
+            );
+            R_AddSprites(
+                &mut renderer,
+                &mut level,
+                &Arena::new(),
+                7,
+                SectorId::new(1),
+            );
         }
         assert_eq!(level.sectors[1].validcount, 7);
         assert_eq!(level.sectors[0].validcount, 0);
-    }
-
-    /// Draw a vissprite into a fresh pool slot with the given scale.
-    unsafe fn push_vissprite(scale: i32) {
-        let vis = R_NewVisSprite();
-        (*vis).scale = scale;
     }
 
     /// `R_SortVisSprites` links the pool back to front (smallest scale
     /// first), keeping pool order between equal scales.
     #[test]
     fn sort_vissprites_orders_by_scale() {
-        unsafe {
-            R_ClearSprites();
-            for scale in [30, 10, 20, 10] {
-                push_vissprite(scale);
-            }
-            R_SortVisSprites();
+        let mut pool = Box::new(VisSpriteState::new());
+        R_ClearSprites(&mut pool);
+        for scale in [30, 10, 20, 10] {
+            R_NewVisSprite(&mut pool).scale = scale;
+        }
+        R_SortVisSprites(&mut pool);
 
-            let pool = VISSPRITES.as_ptr();
-            let base: *mut vissprite_t = (&raw mut (*pool).vissprites).cast();
-            let head: *mut vissprite_t = &raw mut (*pool).vsprsortedhead;
-            let mut order = Vec::new();
-            let mut spr = (*head).next;
+        let base: *const vissprite_t = pool.vissprites.as_ptr();
+        let head: *const vissprite_t = &raw const pool.vsprsortedhead;
+        let mut order = Vec::new();
+        // SAFETY: the sort linked the head and the four pool entries.
+        unsafe {
+            let mut spr: *const vissprite_t = (*head).next;
             while spr != head {
                 order.push(spr.offset_from(base));
                 spr = (*spr).next;
             }
-            assert_eq!(order, [1, 3, 2, 0]);
-            R_ClearSprites();
         }
+        assert_eq!(order, [1, 3, 2, 0]);
     }
 
     /// The sprite state starts with no sprite table and zeroed clip arrays.

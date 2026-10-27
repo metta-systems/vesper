@@ -24,7 +24,7 @@
 //!
 //! # Shared state
 //!
-//! The C globals live in [`RenderDataState`], held in [`RENDER_DATA`].  Most
+//! The C globals live in [`RenderDataState`], the renderer's `data`.  Most
 //! correspond to `extern` declarations in `r_state.h` and are read by several
 //! renderer and physics modules.  Exceptions: `lastflat` and `numflats` were
 //! only declared locally in `p_spec.c`, not in `r_state.h`.  The tables are
@@ -39,7 +39,6 @@ use {crate::i_error, std::ffi::c_void};
 use {std::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
-    global::Global,
     math::fixed::{FRACBITS, fixed_t},
     zone::{PU_CACHE, PU_STATIC},
 };
@@ -119,7 +118,7 @@ use crate::engine::{
     game::demoplayback,
     interface::system::I_ConsoleStdout,
     play::tick::{ThinkerId, ThinkerKind},
-    render_3d::{sky::SKY, things::SPRITES},
+    render_3d::RENDERER,
     wad::{
         W_CacheLumpName, W_CacheLumpNum, W_CheckNumForName, W_GetNumForName, W_LumpLength,
         W_LumpNameHash, W_ReleaseLumpName, cache_lump_bytes, cache_patch_num,
@@ -300,9 +299,6 @@ impl Default for RenderDataState {
     }
 }
 
-/// The renderer data state.
-pub static RENDER_DATA: Global<RenderDataState> = Global::new(RenderDataState::new());
-
 /// Height of wall texture `texture` in 16.16 fixed point (C
 /// `textureheight[texture]`).
 ///
@@ -311,7 +307,8 @@ pub static RENDER_DATA: Global<RenderDataState> = Global::new(RenderDataState::n
 /// If `texture` is not in `0..numtextures` (always so before
 /// `R_InitTextures` has run).
 pub fn texture_height(texture: usize) -> fixed_t {
-    let data = RENDER_DATA.borrow();
+    let renderer = RENDERER.borrow();
+    let data = &renderer.data;
     assert!(
         texture < data.numtextures as usize,
         "texture {texture} out of range (numtextures {})",
@@ -670,9 +667,7 @@ unsafe fn GenerateTextureHashTable(data: &mut RenderDataState) {
 ///
 /// - WAD must be fully loaded (`W_Init` must have been called).
 /// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitTextures() {
-    let mut data = RENDER_DATA.borrow_mut();
-
+pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
     let names = W_CacheLumpName(DEH_String(b"PNAMES"), PU_STATIC) as *mut i32;
     let nummappatches = LONG(*names);
     let name_p = names.add(1) as *mut u8;
@@ -851,7 +846,7 @@ pub unsafe fn R_InitTextures() {
     }
 
     for i in 0..numtextures as usize {
-        R_GenerateLookup(&data, i as i32);
+        R_GenerateLookup(data, i as i32);
     }
 
     data.texturetranslation = Z_Malloc(
@@ -863,7 +858,7 @@ pub unsafe fn R_InitTextures() {
         *data.texturetranslation.add(i) = i as i32;
     }
 
-    GenerateTextureHashTable(&mut data);
+    GenerateTextureHashTable(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -882,8 +877,7 @@ pub unsafe fn R_InitTextures() {
 ///
 /// - WAD must be fully loaded; `F_START` and `F_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitFlats() {
-    let mut data = RENDER_DATA.borrow_mut();
+pub unsafe fn R_InitFlats(data: &mut RenderDataState) {
     data.firstflat = W_GetNumForName(DEH_String(b"F_START")) + 1;
     data.lastflat = W_GetNumForName(DEH_String(b"F_END")) - 1;
     data.numflats = data.lastflat - data.firstflat + 1;
@@ -921,8 +915,7 @@ pub unsafe fn R_InitFlats() {
 ///
 /// - WAD must be fully loaded; `S_START` and `S_END` lumps must exist.
 /// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitSpriteLumps() {
-    let mut data = RENDER_DATA.borrow_mut();
+pub unsafe fn R_InitSpriteLumps(data: &mut RenderDataState) {
     data.firstspritelump = W_GetNumForName(DEH_String(b"S_START")) + 1;
     data.lastspritelump = W_GetNumForName(DEH_String(b"S_END")) - 1;
     data.numspritelumps = data.lastspritelump - data.firstspritelump + 1;
@@ -974,9 +967,9 @@ pub unsafe fn R_InitSpriteLumps() {
 ///
 /// - WAD must be fully loaded; the `COLORMAP` lump must exist.
 /// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitColormaps() {
+pub unsafe fn R_InitColormaps(data: &mut RenderDataState) {
     let lump = W_GetNumForName(DEH_String(b"COLORMAP"));
-    RENDER_DATA.borrow_mut().colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
+    data.colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,14 +993,14 @@ pub unsafe fn R_InitColormaps() {
 ///
 /// - All of the above preconditions apply.
 /// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitData() {
-    R_InitTextures();
+pub unsafe fn R_InitData(data: &mut RenderDataState) {
+    R_InitTextures(data);
     print!(".");
-    R_InitFlats();
+    R_InitFlats(data);
     print!(".");
-    R_InitSpriteLumps();
+    R_InitSpriteLumps(data);
     print!(".");
-    R_InitColormaps();
+    R_InitColormaps(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,7 +1026,7 @@ pub unsafe fn R_FlatNumForName(name: &[u8]) -> i32 {
             String::from_utf8_lossy(lump_name(name))
         );
     }
-    i - RENDER_DATA.borrow().firstflat
+    i - RENDERER.borrow().data.firstflat
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +1050,8 @@ pub unsafe fn R_CheckTextureNumForName(name: &[u8]) -> i32 {
         return 0;
     }
 
-    let data = RENDER_DATA.borrow();
+    let renderer = RENDERER.borrow();
+    let data = &renderer.data;
     let key = (W_LumpNameHash(name) % data.numtextures as u32) as usize;
     let mut texture = *data.textures_hashtable.add(key);
 
@@ -1126,7 +1120,9 @@ pub unsafe fn R_PrecacheLevel(world: &World) {
     let level = &world.level;
     let sectors = &level.sectors[..level.numsectors as usize];
     let sides = &level.sides[..];
-    let mut data = RENDER_DATA.borrow_mut();
+    let mut renderer = RENDERER.borrow_mut();
+    let renderer = &mut *renderer;
+    let data = &mut renderer.data;
     let numflats = data.numflats;
     let numtextures = data.numtextures;
 
@@ -1162,7 +1158,7 @@ pub unsafe fn R_PrecacheLevel(world: &World) {
         *texturepresent.add(side.midtexture as usize) = 1;
         *texturepresent.add(side.bottomtexture as usize) = 1;
     }
-    *texturepresent.add(SKY.borrow().skytexture as usize) = 1;
+    *texturepresent.add(renderer.sky.skytexture as usize) = 1;
 
     data.texturememory = 0;
     for i in 0..numtextures as usize {
@@ -1179,10 +1175,7 @@ pub unsafe fn R_PrecacheLevel(world: &World) {
     Z_Free(texturepresent as *mut c_void);
 
     // Precache sprites
-    let (numsprites, sprites) = {
-        let sprite_state = SPRITES.borrow();
-        (sprite_state.numsprites, sprite_state.sprites)
-    };
+    let (numsprites, sprites) = (renderer.sprites.numsprites, renderer.sprites.sprites);
     let spritepresent = Z_Malloc(numsprites, PU_STATIC, ptr::null_mut()) as *mut u8;
     for i in 0..numsprites as usize {
         *spritepresent.add(i) = 0;

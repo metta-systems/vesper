@@ -341,10 +341,20 @@ use crate::engine::misc::menu::{MENU, menu_active};
 use crate::engine::sound::{S_Init, S_StartMusic, S_UpdateSounds, SOUND, SoundState, info::Mus};
 
 // r_main.rs
-use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_Init, R_RenderPlayerView, VIEW};
+use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_Init, R_RenderBSP, R_SetupFrame};
+
+// the renderer context
+use crate::engine::render_3d::RENDERER;
+
+// r_bsp.rs, r_plane.rs, r_things.rs
+use crate::engine::render_3d::{
+    bsp::{R_ClearClipSegs, R_ClearDrawSegs},
+    plane::{R_ClearPlanes, R_DrawPlanes},
+    things::{R_ClearSprites, R_DrawMasked},
+};
 
 // r_draw.rs
-use crate::engine::render_3d::draw::{DRAW, R_DrawViewBorder, R_FillBackScreen};
+use crate::engine::render_3d::draw::{R_DrawViewBorder, R_FillBackScreen};
 
 // i_video.rs
 use crate::engine::interface::video::{VIDEO, screensaver_mode};
@@ -519,6 +529,41 @@ pub fn D_ProcessEvents() {
 // D_Display
 // ---------------------------------------------------------------------------
 
+/// Draw `player`'s 3D view (C `R_RenderPlayerView`).
+///
+/// Runs the renderer's phases: frame setup and clears, BSP traversal,
+/// planes, and masked objects (sprites, masked mid-textures, then the
+/// player's weapon). Each phase borrows the world and the renderer for its
+/// own duration: `&mut World` for setup (it advances `validcount`) and the
+/// BSP traversal (it marks automap lines and stamps sectors), `&World` for
+/// the masked phase, none for the planes. `NetUpdate` runs between phases,
+/// as in C, with no borrow held: it processes events, whose responders and
+/// cheats borrow the world mutably and may resize the view.
+fn render_player_view(player: PlayerId) {
+    // SAFETY: `D_Display` draws the level only once it is loaded and
+    // `displayplayer` is in the game, so its map object exists, and
+    // `R_Init` ran at startup. The phases run in C's order on one renderer.
+    unsafe {
+        {
+            let mut world = WORLD.borrow_mut();
+            let mut renderer = RENDERER.borrow_mut();
+            let renderer = &mut *renderer;
+            R_SetupFrame(&mut world, renderer, player);
+            R_ClearClipSegs(renderer);
+            R_ClearDrawSegs(&mut renderer.bsp);
+            R_ClearPlanes(renderer);
+            R_ClearSprites(&mut renderer.vissprites);
+        }
+        NetUpdate();
+        R_RenderBSP(&mut WORLD.borrow_mut(), &mut RENDERER.borrow_mut());
+        NetUpdate();
+        R_DrawPlanes(&mut RENDERER.borrow_mut());
+        NetUpdate();
+        R_DrawMasked(&WORLD.borrow(), &mut RENDERER.borrow_mut());
+        NetUpdate();
+    }
+}
+
 /// Draw current display, possibly wiping it from the previous frame.
 pub fn D_Display() {
     unsafe {
@@ -533,8 +578,8 @@ pub fn D_Display() {
         let mut redrawsbar = false;
 
         // Change the view size if needed
-        if VIEW.borrow().setsizeneeded.is_truthy() {
-            R_ExecuteSetViewSize();
+        if RENDERER.borrow().view.setsizeneeded.is_truthy() {
+            R_ExecuteSetViewSize(&mut RENDERER.borrow_mut());
             let mut main = DOOM_MAIN.borrow_mut();
             main.display_old_gamestate = -1; // force background redraw
             main.display_borderdrawcount = 3;
@@ -558,7 +603,7 @@ pub fn D_Display() {
                     let main = DOOM_MAIN.borrow();
                     (main.display_fullscreen, main.display_inhelpscreens)
                 };
-                let viewheight = DRAW.borrow().viewheight;
+                let viewheight = RENDERER.borrow().draw.viewheight;
                 if wipe || (viewheight != 200 && fullscreen != 0) {
                     redrawsbar = true;
                 }
@@ -583,7 +628,7 @@ pub fn D_Display() {
         if gamestate == GS_LEVEL && !automap_active() && gametic() != 0 {
             let dp = displayplayer() as usize;
             if dp < MAXPLAYERS {
-                R_RenderPlayerView(PlayerId::new(dp));
+                render_player_view(PlayerId::new(dp));
             }
             HU_Drawer();
         }
@@ -601,7 +646,10 @@ pub fn D_Display() {
         }
 
         // See if the border needs to be updated
-        if gamestate == GS_LEVEL && !automap_active() && DRAW.borrow().scaledviewwidth != 320 {
+        if gamestate == GS_LEVEL
+            && !automap_active()
+            && RENDERER.borrow().draw.scaledviewwidth != 320
+        {
             let border_needs_redraw = {
                 let mut main = DOOM_MAIN.borrow_mut();
                 if menu_active() || main.display_menuactive != 0 || main.display_viewactive == 0 {
@@ -642,7 +690,8 @@ pub fn D_Display() {
         // Draw pause pic
         if paused() != 0 {
             let (viewwindowx, viewwindowy, scaledviewwidth) = {
-                let draw = DRAW.borrow();
+                let renderer = RENDERER.borrow();
+                let draw = &renderer.draw;
                 (draw.viewwindowx, draw.viewwindowy, draw.scaledviewwidth)
             };
             let y = if automap_active() { 4 } else { viewwindowy + 4 };
@@ -867,7 +916,7 @@ pub fn D_DoomLoop() {
         I_EnableLoadingDisk();
 
         V_RestoreBuffer();
-        R_ExecuteSetViewSize();
+        R_ExecuteSetViewSize(&mut RENDERER.borrow_mut());
 
         D_StartGameLoop();
 

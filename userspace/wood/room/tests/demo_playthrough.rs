@@ -5,12 +5,15 @@
 //! and compares them against a frozen baseline.
 //!
 //! At tic [`GOLDEN_SAVE_TIC`] it also archives a save game in memory and
-//! compares its bytes with the golden save [`GOLDEN_SAVE_PATH`].
+//! compares its bytes with the golden save [`GOLDEN_SAVE_PATH`], and it
+//! hashes the pixels of every [`FRAME_HASH_INTERVAL`]th frame and compares
+//! the hashes with the golden list [`FRAME_HASHES_PATH`].
 //!
 //! Usage:
-//!   cargo test --test demo_playthrough        — compare vs BASELINE and the golden save
+//!   cargo test --test demo_playthrough        — compare vs BASELINE, the golden save and frame hashes
 //!   BLESS=1 cargo test --test demo_playthrough — print new BASELINE to stdout
 //!   BLESS_SAVE=1 cargo test --test demo_playthrough — rewrite the golden save
+//!   BLESS_FRAMES=1 cargo test --test demo_playthrough — rewrite the golden frame hashes
 
 #![allow(non_snake_case, non_upper_case_globals)]
 
@@ -18,7 +21,10 @@
 #[global_allocator]
 static ALLOC: room::dhat::Alloc = room::dhat::Alloc;
 
-use std::{cell::Cell, path::PathBuf};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+};
 
 // ---------------------------------------------------------------------------
 // Virtual clock and frame counter for the headless platform
@@ -27,6 +33,7 @@ use std::{cell::Cell, path::PathBuf};
 thread_local! {
     static VIRTUAL_MS: Cell<u32> = const { Cell::new(1000) };
     static FRAMES: Cell<u64> = const { Cell::new(0) };
+    static FRAME_HASHES: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
 }
 
 const TICK_MS: u32 = 1000 / 35;
@@ -48,14 +55,94 @@ fn frame_count() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Frame hashes
+// ---------------------------------------------------------------------------
+//
+// Frames 1350, 1932 and 4690 are not hashed: one to three of their pixels
+// (on screen rows 100, 166 and 115) differ between runs. With address space
+// randomization off (`setarch -R`) every frame matches across runs, so
+// those pixels take their colour from bytes whose value depends on the
+// address space layout.
+
+/// Every `FRAME_HASH_INTERVAL`th frame is hashed, except [`UNSTABLE_FRAMES`].
+const FRAME_HASH_INTERVAL: u64 = 50;
+
+/// Frames whose pixels differ between runs (see above).
+const UNSTABLE_FRAMES: &[u64] = &[1350, 1932, 4690];
+
+const FRAME_HASHES_PATH: &str = "tests/golden/demo_frame_hashes.txt";
+
+fn is_hashed_frame(frame: u64) -> bool {
+    frame.is_multiple_of(FRAME_HASH_INTERVAL) && !UNSTABLE_FRAMES.contains(&frame)
+}
+
+/// The FNV-1a hash of the pixels of a frame.
+fn frame_hash(frame: &[u32]) -> u64 {
+    frame.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &pixel| {
+        (hash ^ pixel as u64).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// The hashed frames, one `frame hash` line each.
+fn frame_hash_lines() -> String {
+    FRAME_HASHES.with(|hashes| {
+        hashes
+            .borrow()
+            .iter()
+            .map(|(frame, hash)| format!("{frame} {hash:016x}\n"))
+            .collect()
+    })
+}
+
+/// Compares the frame hashes with the golden list, or rewrites the golden
+/// list with `BLESS_FRAMES=1`.
+fn check_frame_hashes() {
+    let golden_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FRAME_HASHES_PATH);
+    let actual = frame_hash_lines();
+
+    if std::env::var("BLESS_FRAMES").is_ok() {
+        std::fs::write(&golden_path, &actual).unwrap();
+        panic!(
+            "BLESS_FRAMES mode: wrote {} ({} frames), re-run without BLESS_FRAMES=1",
+            golden_path.display(),
+            actual.lines().count()
+        );
+    }
+
+    let golden = std::fs::read_to_string(&golden_path).unwrap_or_else(|error| {
+        panic!(
+            "cannot read the golden frame hashes {}: {error}",
+            golden_path.display()
+        )
+    });
+    for (actual_line, golden_line) in actual.lines().zip(golden.lines()) {
+        assert_eq!(
+            actual_line, golden_line,
+            "frame hash differs (actual, golden: `frame hash`)"
+        );
+    }
+    assert_eq!(
+        actual.lines().count(),
+        golden.lines().count(),
+        "hashed frame count differs from {}",
+        golden_path.display()
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Headless platform: counts frames, runs on virtual time, silent
 // ---------------------------------------------------------------------------
 
 struct Headless;
 
 impl room::engine::platform::Platform for Headless {
-    fn draw_frame(&self, _frame: &[u32]) {
+    fn draw_frame(&self, frame: &[u32]) {
         note_frame();
+        let frame_number = frame_count();
+        if is_hashed_frame(frame_number) {
+            let hash = frame_hash(frame);
+            FRAME_HASHES.with(|hashes| hashes.borrow_mut().push((frame_number, hash)));
+        }
     }
 
     fn ticks_ms(&self) -> u32 {
@@ -947,6 +1034,8 @@ fn demo_playthrough() {
             access.kind, access.site, access.count
         );
     }
+
+    check_frame_hashes();
 
     if bless {
         println!("/* BLESS output — paste into BASELINE */");

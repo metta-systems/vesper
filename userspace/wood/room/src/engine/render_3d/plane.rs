@@ -12,9 +12,9 @@
 //! [`R_MapPlane`].  Sky columns are treated as a special case: they are drawn
 //! with `colfunc` rather than `spanfunc`.
 //!
-//! The C globals live in [`PlaneState`], held in [`PLANES`]; visplanes are
-//! addressed by index into its pool.  The `openings` scratch buffer is a
-//! separate static because the drawsegs keep raw pointers into it.
+//! The C globals live in [`PlaneState`], the renderer's `planes`; visplanes
+//! are addressed by index into its pool.  The `openings` scratch buffer is
+//! the renderer's `openings`, which the drawsegs keep raw pointers into.
 //!
 //! # Coordinate system
 //!
@@ -27,12 +27,9 @@
 use std::ptr;
 
 use crate::{
-    engine::{
-        global::Global,
-        math::{
-            fixed::{FixedDiv, FixedMul, fixed_t},
-            tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
-        },
+    engine::math::{
+        fixed::{FixedDiv, FixedMul, fixed_t},
+        tables::{self, ANG90, ANGLETOFINESHIFT, FINEMASK},
     },
     i_error,
 };
@@ -53,11 +50,11 @@ const SCREENHEIGHT: usize = crate::engine::interface::video::SCREENHEIGHT as usi
 /// aborts via [`i_error!`] when exceeded (see [`R_FindPlane`]).
 const MAXVISPLANES: usize = 128;
 
-/// Maximum number of `i16` slots in the [`OPENINGS`] array.
+/// Maximum number of `i16` slots in the renderer's `openings` array.
 ///
 /// Used as scratch space for sprite clipping arrays stored by
-/// [`R_StoreWallRange`] (in `r_segs`).  The C source comments this as `"?"`.
-const MAXOPENINGS: usize = SCREENWIDTH * 64;
+/// `R_StoreWallRange` (in `r_segs`).  The C source comments this as `"?"`.
+pub const MAXOPENINGS: usize = SCREENWIDTH * 64;
 
 /// Number of distinct light levels used by the colormap tables.
 const LIGHTLEVELS: usize = 16;
@@ -186,7 +183,8 @@ impl Default for visplane_t {
 // Plane state
 // ---------------------------------------------------------------------------
 
-/// Plane renderer state (C `r_plane.c` globals other than `openings`).
+/// Plane renderer state (C `r_plane.c` globals other than `openings`), the
+/// renderer's `planes`.
 pub struct PlaneState {
     /// Fixed-size pool of visplane accumulators for one frame.
     ///
@@ -215,10 +213,10 @@ pub struct PlaneState {
     ///
     /// Updated by `R_StoreWallRange` (in `r_segs`) via [`R_CheckPlane`].
     pub ceilingplane: Option<usize>,
-    /// Allocation watermark within [`OPENINGS`].
+    /// Allocation watermark within the renderer's `openings`.
     ///
     /// Advanced by `R_StoreWallRange` each time it allocates a clipping
-    /// sub-array.  Reset to the start of [`OPENINGS`] by [`R_ClearPlanes`].
+    /// sub-array.  Reset to the start of `openings` by [`R_ClearPlanes`].
     pub lastopening: *mut i16,
     /// Per-column floor clip (highest opaque pixel so far, inclusive).
     ///
@@ -316,28 +314,16 @@ impl Default for PlaneState {
     }
 }
 
-/// The plane renderer state.
-pub static PLANES: Global<PlaneState> = Global::new(PlaneState::new());
-
-/// Scratch buffer for sprite clipping arrays.
-///
-/// Slices within this buffer are handed out by `R_StoreWallRange` (in
-/// `r_segs`) through `lastopening` and later read by the sprite renderer
-/// through the drawsegs' pointers, so it is only addressed through
-/// [`Global::as_ptr`].
-static OPENINGS: Global<[i16; MAXOPENINGS]> = Global::new([0; MAXOPENINGS]);
-
 // ---------------------------------------------------------------------------
 // Imports from other modules
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
     render_3d::{
-        data::{R_GetColumn, RENDER_DATA},
-        draw::{ColumnParams, DRAW, DrawState, SpanParams},
-        main::{VIEW, ViewState, zlight_row},
-        sky::SKY,
-        things::SPRITES,
+        Renderer,
+        data::R_GetColumn,
+        draw::{ColumnParams, DrawState, SpanParams},
+        main::{ViewState, zlight_row},
     },
     wad::{W_CacheLumpNum, W_ReleaseLumpNum},
 };
@@ -448,19 +434,18 @@ pub fn R_MapPlane(
 /// texture-step scales from the current `viewangle`.
 ///
 /// Must be called exactly once per frame before any BSP traversal begins.
-pub fn R_ClearPlanes() {
-    let (viewwidth, viewheight) = {
-        let draw = DRAW.borrow();
-        (draw.viewwidth, draw.viewheight)
-    };
-    let (viewangle, centerxfrac) = {
-        let view = VIEW.borrow();
-        (view.viewangle, view.centerxfrac)
-    };
-    let mut planes = PLANES.borrow_mut();
+pub fn R_ClearPlanes(renderer: &mut Renderer) {
+    let Renderer {
+        draw,
+        view,
+        planes,
+        openings,
+        ..
+    } = renderer;
+    let (viewangle, centerxfrac) = (view.viewangle, view.centerxfrac);
 
-    let vw = viewwidth as usize;
-    let vh = viewheight as i16;
+    let vw = draw.viewwidth as usize;
+    let vh = draw.viewheight as i16;
 
     for i in 0..vw {
         planes.floorclip[i] = vh;
@@ -468,8 +453,9 @@ pub fn R_ClearPlanes() {
     }
 
     planes.lastvisplane = 0;
-    // Points into the static's storage: the drawsegs keep slices of it.
-    planes.lastopening = OPENINGS.as_ptr().cast();
+    // The drawsegs keep slices of the openings until the frame's masked
+    // phase.
+    planes.lastopening = openings.as_mut_ptr();
 
     // Reset cache heights
     for h in &mut planes.cachedheight[..200] {
@@ -502,10 +488,13 @@ pub fn R_ClearPlanes() {
 ///
 /// The returned index is valid for the current frame (until the next
 /// [`R_ClearPlanes`] call).
-pub fn R_FindPlane(height: fixed_t, picnum: i32, lightlevel: i32) -> usize {
-    let skyflatnum = SKY.borrow().skyflatnum;
-    let mut planes = PLANES.borrow_mut();
-
+pub fn R_FindPlane(
+    planes: &mut PlaneState,
+    skyflatnum: i32,
+    height: fixed_t,
+    picnum: i32,
+    lightlevel: i32,
+) -> usize {
     let mut h = height;
     let mut ll = lightlevel;
 
@@ -675,28 +664,28 @@ use crate::engine::zone::PU_STATIC;
 
 /// Rasterizes all accumulated visplanes into horizontal pixel spans.
 ///
-/// Called once per frame after BSP traversal is complete.  Iterates over every
-/// visplane in the pool up to `lastvisplane`.  Sky flats are drawn as
-/// vertical columns via `colfunc`; regular flats are drawn as horizontal
-/// spans via [`R_MakeSpans`] / [`R_MapPlane`] / `spanfunc`.  Borrows the
-/// renderer state once for the whole pass.
+/// Called once per frame after BSP traversal is complete, as the frame's
+/// plane phase.  Iterates over every visplane in the pool up to
+/// `lastvisplane`.  Sky flats are drawn as vertical columns via `colfunc`;
+/// regular flats are drawn as horizontal spans via [`R_MakeSpans`] /
+/// [`R_MapPlane`] / `spanfunc`.
 ///
-/// # Safety
-///
-/// The `W_CacheLumpNum` / `W_ReleaseLumpNum` calls must have access to a
-/// properly initialised WAD lump directory.
-pub fn R_DrawPlanes() {
+/// The `W_CacheLumpNum` / `W_ReleaseLumpNum` calls need the WAD lump
+/// directory, which is set up before any frame.
+pub fn R_DrawPlanes(renderer: &mut Renderer) {
     unsafe {
-        let (skyflatnum, skytexture, skytexturemid) = {
-            let sky = SKY.borrow();
-            (sky.skyflatnum, sky.skytexture, sky.skytexturemid)
-        };
-        let pspriteiscale = SPRITES.borrow().pspriteiscale;
-        let data = RENDER_DATA.borrow();
-        let view = VIEW.borrow();
-        let mut draw = DRAW.borrow_mut();
-        let mut planes = PLANES.borrow_mut();
-        let planes = &mut *planes;
+        let Renderer {
+            sky,
+            sprites,
+            data,
+            view,
+            draw,
+            planes,
+            ..
+        } = renderer;
+        let (skyflatnum, skytexture, skytexturemid) =
+            (sky.skyflatnum, sky.skytexture, sky.skytexturemid);
+        let pspriteiscale = sprites.pspriteiscale;
 
         let mut column = ColumnParams::new(view.centery, data.colormaps);
         let mut span = SpanParams::new();
@@ -725,8 +714,8 @@ pub fn R_DrawPlanes() {
                         let angle = view.viewangle.wrapping_add(view.xtoviewangle[x as usize])
                             >> ANGLETOSKYSHIFT;
                         column.dc_x = x;
-                        column.dc_source = R_GetColumn(&data, skytexture, angle as i32);
-                        (view.colfunc)(&mut column, &mut draw);
+                        column.dc_source = R_GetColumn(data, skytexture, angle as i32);
+                        (view.colfunc)(&mut column, draw);
                     }
                 }
                 continue;
@@ -753,7 +742,7 @@ pub fn R_DrawPlanes() {
             // a pointer into zlight[light]
             let light_usize = light as usize;
             if light_usize < LIGHTLEVELS {
-                planes.planezlight = zlight_row(light_usize) as *const *const lighttable_t;
+                planes.planezlight = zlight_row(view, light_usize) as *const *const lighttable_t;
             }
 
             // Set sentinel values at the visplane boundaries. The C code does
@@ -799,8 +788,8 @@ pub fn R_DrawPlanes() {
                 };
                 R_MakeSpans(
                     planes,
-                    &view,
-                    &draw,
+                    view,
+                    draw,
                     &mut span,
                     x,
                     t_top as i32,

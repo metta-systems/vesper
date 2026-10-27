@@ -18,9 +18,9 @@
 //! Transparent mid-textures (fences, windows) on two-sided lines are deferred
 //! and drawn by `R_RenderMaskedSegRange` after all opaque geometry is done.
 //!
-//! The C `rw_*` wall globals live in [`WallState`], held in [`WALL`].  Both
-//! entry points borrow the renderer state once per wall and pass it down, so
-//! the per-column loops take no borrows.
+//! The C `rw_*` wall globals live in [`WallState`], the renderer's `wall`.
+//! Both entry points split the renderer they are handed into its parts once
+//! per wall and pass those down to the per-column loops.
 //!
 //! # Coordinate system
 //!
@@ -33,7 +33,6 @@
 use std::ptr;
 
 use crate::engine::{
-    global::Global,
     map::{SectorId, SegId},
     math::{
         fixed::{FRACBITS, FixedMul, angle_t, fixed_t},
@@ -42,7 +41,6 @@ use crate::engine::{
     play::setup::LevelState,
     render_3d::bsp::drawseg_t,
     wad::format::LinedefFlag,
-    world::WORLD,
 };
 
 // ---------------------------------------------------------------------------
@@ -96,20 +94,19 @@ const MAXDRAWSEGS: usize = 256;
 // ---------------------------------------------------------------------------
 
 use crate::engine::render_3d::{
-    bsp::BSP,
-    data::{R_GetColumn, R_GetMaskedColumn, RENDER_DATA, RenderDataState},
-    draw::{ColumnParams, DRAW, DrawState},
-    main::{R_PointToDist, R_ScaleFromGlobalAngle, VIEW, ViewState, scalelight_row},
-    plane::{PLANES, PlaneState, R_CheckPlane},
-    sky::SKY,
-    things::{MaskedColumnParams, R_DrawMaskedColumn, negonearray_ptr, screenheightarray_ptr},
+    Renderer,
+    data::{R_GetColumn, R_GetMaskedColumn, RenderDataState},
+    draw::{ColumnParams, DrawState},
+    main::{R_PointToDist, R_ScaleFromGlobalAngle, ViewState, scalelight_row},
+    plane::{PlaneState, R_CheckPlane},
+    things::{MaskedColumnParams, R_DrawMaskedColumn},
 };
 
 // ---------------------------------------------------------------------------
 // State defined by this module
 // ---------------------------------------------------------------------------
 
-/// Wall-segment state (C `r_segs.c` globals).
+/// Wall-segment state (C `r_segs.c` globals), the renderer's `wall`.
 pub struct WallState {
     /// Non-zero when the current seg has at least one visible texture.
     ///
@@ -305,13 +302,11 @@ impl Default for WallState {
     }
 }
 
-/// The wall-segment state.
-pub static WALL: Global<WallState> = Global::new(WallState::new());
-
-/// The `scalelight` row for seg `curline` of `level` in `frontsector`,
-/// adjusted for the seg's orientation (fake contrast) and clamped to the
-/// table.
+/// The `scalelight` row of `view` for seg `curline` of `level` in
+/// `frontsector`, adjusted for the seg's orientation (fake contrast) and
+/// clamped to the table.
 fn wall_light_row(
+    view: &ViewState,
     level: &LevelState,
     frontsector: SectorId,
     curline: SegId,
@@ -329,11 +324,11 @@ fn wall_light_row(
     }
 
     if lightnum < 0 {
-        scalelight_row(0)
+        scalelight_row(view, 0)
     } else if lightnum >= LIGHTLEVELS as i32 {
-        scalelight_row(LIGHTLEVELS - 1)
+        scalelight_row(view, LIGHTLEVELS - 1)
     } else {
-        scalelight_row(lightnum as usize)
+        scalelight_row(view, lightnum as usize)
     }
 }
 
@@ -354,30 +349,34 @@ fn wall_light_row(
 /// `ds` must have been filled in by [`R_StoreWallRange`] during the current
 /// frame.  All pointer fields within `ds` (`maskedtexturecol`,
 /// `sprbottomclip`, `sprtopclip`) must still be valid, and `ds.curline` must
-/// be a two-sided seg of the loaded level.
-pub unsafe fn R_RenderMaskedSegRange(ds: &drawseg_t, x1: i32, x2: i32) {
-    let world = WORLD.borrow();
-    let level = &world.level;
-    let data = RENDER_DATA.borrow();
+/// be a two-sided seg of `level`, the level the frame was drawn from.
+pub unsafe fn R_RenderMaskedSegRange(
+    renderer: &mut Renderer,
+    level: &LevelState,
+    ds: &drawseg_t,
+    x1: i32,
+    x2: i32,
+) {
+    let Renderer {
+        bsp,
+        data,
+        view,
+        wall,
+        draw,
+        ..
+    } = renderer;
     let curline = ds.curline;
     let seg = &level.segs[curline];
     let sidedef = &level.sides[seg.sidedef];
     let texnum: i32 = *data.texturetranslation.add(sidedef.midtexture as usize);
 
-    {
-        let mut bsp = BSP.borrow_mut();
-        bsp.curline = curline;
-        bsp.frontsector = seg.frontsector;
-        bsp.backsector = seg.backsector;
-    }
+    bsp.curline = curline;
+    bsp.frontsector = seg.frontsector;
+    bsp.backsector = seg.backsector;
     let frontsector = &level.sectors[seg.frontsector];
     let backsector = &level.sectors[seg.backsector.expect("masked seg without back sector")];
 
-    let view = VIEW.borrow();
-    let mut wall = WALL.borrow_mut();
-    let mut draw = DRAW.borrow_mut();
-
-    wall.walllights = wall_light_row(level, seg.frontsector, curline, view.extralight);
+    wall.walllights = wall_light_row(view, level, seg.frontsector, curline, view.extralight);
 
     wall.maskedtexturecol = ds.maskedtexturecol;
     wall.rw_scalestep = ds.scalestep;
@@ -430,11 +429,11 @@ pub unsafe fn R_RenderMaskedSegRange(ds: &drawseg_t, x1: i32, x2: i32) {
             // Drawing the column allocates nothing from the zone, so the
             // cached lump or composite stays valid while it is used.
             let masked_column = R_GetMaskedColumn(
-                &data,
+                data,
                 texnum,
                 *maskedtexturecol.add(column.dc_x as usize) as i32,
             );
-            R_DrawMaskedColumn(masked_column, &masked, &mut column, &mut draw, view.colfunc);
+            R_DrawMaskedColumn(masked_column, &masked, &mut column, draw, view.colfunc);
 
             *maskedtexturecol.add(column.dc_x as usize) = i16::MAX;
         }
@@ -625,7 +624,8 @@ unsafe fn R_RenderSegLoop(
 /// selection, floor/ceiling mark decisions) and then delegates pixel output to
 /// `R_RenderSegLoop`.  After the loop it saves sprite-clipping arrays into
 /// the `openings` scratch buffer and advances `ds_p` to the next free
-/// [`drawseg_t`] slot.  Borrows the renderer state once for the whole wall.
+/// [`drawseg_t`] slot.  Splits the renderer into its parts once for the
+/// whole wall.
 ///
 /// A wall range is silently ignored if the [`drawseg_t`] pool
 /// (`drawsegs[MAXDRAWSEGS]`) is full; the C source does the same.
@@ -637,28 +637,37 @@ unsafe fn R_RenderSegLoop(
 ///
 /// `curline`, `frontsector`, and (for two-sided lines) `backsector` must be
 /// set by the BSP traversal before this call, and the renderer's plane and
-/// opening buffers must be set up for the frame.  The caller must hold no
-/// borrow of the renderer state.
+/// opening buffers must be set up for the frame.
 // FIXME: In R_StoreWallRange the Rust code computes `rw_scalestep` only when
 //        `stop > start`, leaving `rw_scalestep` at its value from the
 //        *previous* seg when `stop == start`.  The C source has the same
 //        behaviour, so this is intentional, but it means `ds_p->scalestep`
 //        may hold a stale value for single-column segs.
-pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
-    let mut bsp = BSP.borrow_mut();
-    let bsp = &mut *bsp;
+pub unsafe fn R_StoreWallRange(
+    renderer: &mut Renderer,
+    level: &mut LevelState,
+    start: i32,
+    stop: i32,
+) {
+    let Renderer {
+        bsp,
+        data,
+        view,
+        sky,
+        wall,
+        planes,
+        draw,
+        sprites,
+        ..
+    } = renderer;
     if bsp.ds_p == MAXDRAWSEGS {
         return;
     }
 
-    let data = RENDER_DATA.borrow();
-    let view = VIEW.borrow();
-    let skyflatnum = SKY.borrow().skyflatnum;
-    let mut wall = WALL.borrow_mut();
-    let wall = &mut *wall;
-    let mut planes = PLANES.borrow_mut();
-    let planes = &mut *planes;
-    let mut draw = DRAW.borrow_mut();
+    let skyflatnum = sky.skyflatnum;
+    // The drawsegs keep these clip arrays until the frame's masked phase.
+    let screenheightarray: *mut i16 = sprites.screenheightarray.as_mut_ptr();
+    let negonearray: *mut i16 = sprites.negonearray.as_mut_ptr();
 
     #[cfg(feature = "rangecheck")]
     {
@@ -691,7 +700,7 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
 
     let distangle = ANG90 - offsetangle;
     let v1 = level.vertexes[seg.v1];
-    let hyp = R_PointToDist(v1.x, v1.y);
+    let hyp = R_PointToDist(view, v1.x, v1.y);
     let sineval = tables::finesine[(distangle >> ANGLETOFINESHIFT) as usize];
     wall.rw_distance = FixedMul(hyp, sineval);
 
@@ -703,7 +712,7 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
 
     ds.scale1 = wall.rw_scale;
     wall.rw_scale = R_ScaleFromGlobalAngle(
-        &view,
+        view,
         wall,
         view.viewangle
             .wrapping_add(view.xtoviewangle[start as usize]),
@@ -712,7 +721,7 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
 
     if stop > start {
         ds.scale2 = R_ScaleFromGlobalAngle(
-            &view,
+            view,
             wall,
             view.viewangle
                 .wrapping_add(view.xtoviewangle[stop as usize]),
@@ -757,13 +766,13 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
         }
 
         if backsector.ceilingheight <= frontsector.floorheight {
-            ds.sprbottomclip = negonearray_ptr();
+            ds.sprbottomclip = negonearray;
             ds.bsilheight = i32::MAX;
             ds.silhouette |= SIL_BOTTOM;
         }
 
         if backsector.floorheight >= frontsector.ceilingheight {
-            ds.sprtopclip = screenheightarray_ptr();
+            ds.sprtopclip = screenheightarray;
             ds.tsilheight = i32::MIN;
             ds.silhouette |= SIL_TOP;
         }
@@ -846,8 +855,8 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
         wall.rw_midtexturemid += sidedef.rowoffset;
 
         ds.silhouette = SIL_BOTH;
-        ds.sprtopclip = screenheightarray_ptr();
-        ds.sprbottomclip = negonearray_ptr();
+        ds.sprtopclip = screenheightarray;
+        ds.sprbottomclip = negonearray;
         ds.bsilheight = i32::MAX;
         ds.tsilheight = i32::MIN;
     }
@@ -876,7 +885,8 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
             .wrapping_sub(wall.rw_normalangle);
 
         if view.fixedcolormap.is_null() {
-            wall.walllights = wall_light_row(level, bsp.frontsector, curline, view.extralight);
+            wall.walllights =
+                wall_light_row(view, level, bsp.frontsector, curline, view.extralight);
         }
     }
 
@@ -932,7 +942,7 @@ pub unsafe fn R_StoreWallRange(level: &mut LevelState, start: i32, stop: i32) {
         ));
     }
 
-    R_RenderSegLoop(wall, planes, &view, &mut draw, &data);
+    R_RenderSegLoop(wall, planes, view, draw, data);
 
     let rw_stopx = wall.rw_stopx;
     if ((ds.silhouette & SIL_TOP) != 0 || wall.maskedtexture != 0) && ds.sprtopclip.is_null() {

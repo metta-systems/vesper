@@ -5,21 +5,19 @@
 //! and maintains the solid-column occlusion list (`solidsegs`) so that
 //! already-covered screen columns are never redrawn.
 //!
-//! The C globals live in [`BspState`] ([`BSP`]) and, for the occlusion list
-//! that the clippers hold across their `R_StoreWallRange` calls,
-//! [`ClipSegsState`] ([`CLIP_SEGS`]). The recursion never holds a borrow of
-//! those across a call into the wall, plane or sprite renderers. The world
-//! is borrowed once for the whole traversal (by `R_RenderPlayerView`); its
-//! level is passed down as `&mut LevelState` (the walls mark their linedefs
-//! as seen and the sprite pass marks sectors as visited) together with the
-//! frame's `validcount`.
+//! The C globals live in the renderer's [`BspState`] (`bsp`) and, for the
+//! occlusion list, [`ClipSegsState`] (`clip_segs`). The traversal takes
+//! the renderer and, from the BSP phase's borrow of the world, the level as
+//! `&mut LevelState` (the walls mark their linedefs as seen and the sprite
+//! pass marks sectors as visited), the map objects and the frame's
+//! `validcount`. The clippers read the occlusion list afresh after each
+//! `R_StoreWallRange` call, which leaves it alone.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use std::ptr;
 
 use crate::engine::{
-    global::Global,
     map::{LineId, NodeId, SectorId, SegId, SideId, SubsectorId},
     math::{
         bbox::BBox,
@@ -124,7 +122,8 @@ struct cliprange_t {
 // State shared with r_segs, r_plane and r_things
 // ---------------------------------------------------------------------------
 
-/// BSP traversal state (C `r_bsp.c` globals other than the clip list).
+/// BSP traversal state (C `r_bsp.c` globals other than the clip list), the
+/// renderer's `bsp`.
 ///
 /// Before the first frame the geometry ids are 0; each is set by the
 /// traversal before it is read.
@@ -177,14 +176,8 @@ impl Default for BspState {
     }
 }
 
-/// The BSP traversal state.
-pub static BSP: Global<BspState> = Global::new(BspState::new());
-
-// ---------------------------------------------------------------------------
-// Module-local state
-// ---------------------------------------------------------------------------
-
-/// The solid-column occlusion list (C `solidsegs` and `newend`).
+/// The solid-column occlusion list (C `solidsegs` and `newend`), the
+/// renderer's `clip_segs`.
 pub struct ClipSegsState {
     /// Sorted array of solid screen-column ranges (clip list). Entries
     /// `[0..newend)` are valid; the first and last entries are permanent
@@ -211,9 +204,6 @@ impl Default for ClipSegsState {
         Self::new()
     }
 }
-
-/// The solid-column occlusion list.
-static CLIP_SEGS: Global<ClipSegsState> = Global::new(ClipSegsState::new());
 
 // checkcoord — 12 rows, only 11 initialised in C (rows 3 and 7 are {0})
 /// Lookup table that selects the two diagonal corners of a bounding box to
@@ -249,11 +239,10 @@ use crate::engine::{
     arena::Arena,
     play::{mobj::mobj_t, setup::LevelState},
     render_3d::{
-        draw::DRAW,
-        main::{R_PointOnSide, R_PointToAngle, VIEW},
-        plane::{PLANES, R_FindPlane},
-        segs::{R_StoreWallRange, WALL},
-        sky::SKY,
+        Renderer,
+        main::{R_PointOnSide, R_PointToAngle},
+        plane::R_FindPlane,
+        segs::R_StoreWallRange,
         things::R_AddSprites,
     },
 };
@@ -264,9 +253,10 @@ use crate::engine::{
 
 /// Resets the draw-seg write index to the beginning of `drawsegs`,
 /// discarding all draw-segs accumulated during the previous frame.
-/// Called once per frame by `R_RenderPlayerView` before BSP traversal begins.
-pub fn R_ClearDrawSegs() {
-    BSP.borrow_mut().ds_p = 0;
+/// Called once per frame in the frame's setup phase, before BSP traversal
+/// begins.
+pub fn R_ClearDrawSegs(bsp: &mut BspState) {
+    bsp.ds_p = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +267,12 @@ pub fn R_ClearDrawSegs() {
 /// entries that cover the off-screen left (`-0x7fffffff..-1`) and right
 /// (`viewwidth..0x7fffffff`) regions. Also advances the per-frame diagnostic
 /// counter used by trace logging.
-/// Called once per frame by `R_RenderPlayerView` before BSP traversal begins.
-pub fn R_ClearClipSegs() {
-    let viewwidth = DRAW.borrow().viewwidth;
+/// Called once per frame in the frame's setup phase, before BSP traversal
+/// begins.
+pub fn R_ClearClipSegs(renderer: &mut Renderer) {
+    let viewwidth = renderer.draw.viewwidth;
     {
-        let mut clip = CLIP_SEGS.borrow_mut();
+        let clip = &mut renderer.clip_segs;
         clip.solidsegs[0].first = -0x7fffffff;
         clip.solidsegs[0].last = -1;
         clip.solidsegs[1].first = viewwidth;
@@ -289,14 +280,14 @@ pub fn R_ClearClipSegs() {
         clip.newend = 2;
     }
 
-    // Diagnostic: frame marker. R_ClearClipSegs is called once per frame by
-    // R_RenderPlayerView before descending the BSP.
+    // Diagnostic: frame marker. R_ClearClipSegs is called once per frame
+    // before descending the BSP.
     let probe_frame = {
-        let mut bsp = BSP.borrow_mut();
+        let bsp = &mut renderer.bsp;
         bsp.probe_frame = bsp.probe_frame.wrapping_add(1);
         bsp.probe_frame
     };
-    let view = VIEW.borrow();
+    let view = &renderer.view;
     log::trace!(
         "=== FRAME {} === viewx={:#x} viewy={:#x} viewangle={:#x} viewwidth={}",
         probe_frame,
@@ -328,7 +319,12 @@ pub fn R_ClearClipSegs() {
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Mutates the clip list. `level` is the traversal's
 /// borrow of the level, handed on to `R_StoreWallRange`.
-pub unsafe fn R_ClipSolidWallSegment(level: &mut LevelState, first: i32, last: i32) {
+pub unsafe fn R_ClipSolidWallSegment(
+    renderer: &mut Renderer,
+    level: &mut LevelState,
+    first: i32,
+    last: i32,
+) {
     if first > last {
         log::debug!(
             "R_ClipSolidWallSegment INVALID: first={} > last={}",
@@ -336,83 +332,79 @@ pub unsafe fn R_ClipSolidWallSegment(level: &mut LevelState, first: i32, last: i
             last
         );
     }
-    // R_StoreWallRange does not touch the clip list, so the borrow is held
-    // across its calls.
-    let mut clip = CLIP_SEGS.borrow_mut();
-    let clip = &mut *clip;
-    let solidsegs = &mut clip.solidsegs;
-
+    // R_StoreWallRange does not touch the clip list, so the positions in it
+    // stay valid across its calls.
     let mut start = 0;
-    while solidsegs[start].last < first - 1 {
+    while renderer.clip_segs.solidsegs[start].last < first - 1 {
         start += 1;
     }
 
-    if first < solidsegs[start].first {
-        if last < solidsegs[start].first - 1 {
-            R_StoreWallRange(level, first, last);
+    let start_first = renderer.clip_segs.solidsegs[start].first;
+    if first < start_first {
+        if last < start_first - 1 {
+            R_StoreWallRange(renderer, level, first, last);
+            let clip = &mut renderer.clip_segs;
             let mut next = clip.newend;
             clip.newend = next + 1;
 
             while next != start {
-                solidsegs[next] = solidsegs[next - 1];
+                clip.solidsegs[next] = clip.solidsegs[next - 1];
                 next -= 1;
             }
-            solidsegs[next].first = first;
-            solidsegs[next].last = last;
+            clip.solidsegs[next].first = first;
+            clip.solidsegs[next].last = last;
             return;
         }
 
-        R_StoreWallRange(level, first, solidsegs[start].first - 1);
-        solidsegs[start].first = first;
+        R_StoreWallRange(renderer, level, first, start_first - 1);
+        renderer.clip_segs.solidsegs[start].first = first;
     }
 
-    if last <= solidsegs[start].last {
+    if last <= renderer.clip_segs.solidsegs[start].last {
         return;
     }
 
     let mut next = start;
     loop {
-        let next_plus_1 = next + 1;
-        if last < solidsegs[next_plus_1].first - 1 {
+        let (next_last, following_first) = {
+            let solidsegs = &renderer.clip_segs.solidsegs;
+            (solidsegs[next].last, solidsegs[next + 1].first)
+        };
+        if last < following_first - 1 {
             break;
         }
 
-        R_StoreWallRange(
-            level,
-            solidsegs[next].last + 1,
-            solidsegs[next_plus_1].first - 1,
-        );
+        R_StoreWallRange(renderer, level, next_last + 1, following_first - 1);
         next += 1;
 
-        if last <= solidsegs[next].last {
-            solidsegs[start].last = solidsegs[next].last;
+        let clip = &mut renderer.clip_segs;
+        if last <= clip.solidsegs[next].last {
+            clip.solidsegs[start].last = clip.solidsegs[next].last;
             // "goto crunch"
             if next == start {
                 return;
             }
-            // C: while (next++ != newend) { *++start = *next; }
-            loop {
-                let old_next = next;
-                next += 1;
-                if old_next == clip.newend {
-                    break;
-                }
-                start += 1;
-                solidsegs[start] = solidsegs[next];
-            }
-            clip.newend = start + 1;
+            crunch_clip_segs(clip, start, next);
             return;
         }
     }
 
-    R_StoreWallRange(level, solidsegs[next].last + 1, last);
-    solidsegs[start].last = last;
+    let next_last = renderer.clip_segs.solidsegs[next].last;
+    R_StoreWallRange(renderer, level, next_last + 1, last);
+    let clip = &mut renderer.clip_segs;
+    clip.solidsegs[start].last = last;
 
     // crunch:
     if next == start {
         return;
     }
+    crunch_clip_segs(clip, start, next);
+}
 
+/// The `crunch:` tail of C's `R_ClipSolidWallSegment`: removes the clip
+/// ranges after `start` up to `next`, which the range at `start` now
+/// covers, by moving the ranges after `next` down.
+fn crunch_clip_segs(clip: &mut ClipSegsState, mut start: usize, mut next: usize) {
     // C: while (next++ != newend) { *++start = *next; }
     loop {
         let old_next = next;
@@ -421,7 +413,7 @@ pub unsafe fn R_ClipSolidWallSegment(level: &mut LevelState, first: i32, last: i
             break;
         }
         start += 1;
-        solidsegs[start] = solidsegs[next];
+        clip.solidsegs[start] = clip.solidsegs[next];
     }
     clip.newend = start + 1;
 }
@@ -445,7 +437,12 @@ pub unsafe fn R_ClipSolidWallSegment(level: &mut LevelState, first: i32, last: i
 /// valid seg (a debug log is emitted if violated, but the function still runs
 /// to match C behavior). Reads the clip list without modifying it. `level`
 /// is the traversal's borrow of the level, handed on to `R_StoreWallRange`.
-pub unsafe fn R_ClipPassWallSegment(level: &mut LevelState, first: i32, last: i32) {
+pub unsafe fn R_ClipPassWallSegment(
+    renderer: &mut Renderer,
+    level: &mut LevelState,
+    first: i32,
+    last: i32,
+) {
     if first > last {
         log::debug!(
             "R_ClipPassWallSegment INVALID: first={} > last={}",
@@ -453,48 +450,46 @@ pub unsafe fn R_ClipPassWallSegment(level: &mut LevelState, first: i32, last: i3
             last
         );
     }
-    // R_StoreWallRange does not touch the clip list, so the borrow is held
-    // across its calls.
-    let clip = CLIP_SEGS.borrow();
-    let solidsegs = &clip.solidsegs;
-
+    // R_StoreWallRange does not touch the clip list, so the positions in it
+    // stay valid across its calls.
     let mut start = 0;
-    while solidsegs[start].last < first - 1 {
+    while renderer.clip_segs.solidsegs[start].last < first - 1 {
         start += 1;
     }
 
-    if first < solidsegs[start].first {
-        if last < solidsegs[start].first - 1 {
-            R_StoreWallRange(level, first, last);
+    let start_first = renderer.clip_segs.solidsegs[start].first;
+    if first < start_first {
+        if last < start_first - 1 {
+            R_StoreWallRange(renderer, level, first, last);
             return;
         }
 
-        R_StoreWallRange(level, first, solidsegs[start].first - 1);
+        R_StoreWallRange(renderer, level, first, start_first - 1);
     }
 
-    if last <= solidsegs[start].last {
+    if last <= renderer.clip_segs.solidsegs[start].last {
         return;
     }
 
     loop {
-        let start_plus_1 = start + 1;
-        if last < solidsegs[start_plus_1].first - 1 {
+        let (start_last, following_first) = {
+            let solidsegs = &renderer.clip_segs.solidsegs;
+            (solidsegs[start].last, solidsegs[start + 1].first)
+        };
+        if last < following_first - 1 {
             break;
         }
 
-        R_StoreWallRange(
-            level,
-            solidsegs[start].last + 1,
-            solidsegs[start_plus_1].first - 1,
-        );
+        R_StoreWallRange(renderer, level, start_last + 1, following_first - 1);
         start += 1;
 
-        if last <= solidsegs[start].last {
+        if last <= renderer.clip_segs.solidsegs[start].last {
             return;
         }
     }
 
-    R_StoreWallRange(level, solidsegs[start].last + 1, last);
+    let start_last = renderer.clip_segs.solidsegs[start].last;
+    R_StoreWallRange(renderer, level, start_last + 1, last);
 }
 
 // ---------------------------------------------------------------------------
@@ -522,22 +517,20 @@ pub unsafe fn R_ClipPassWallSegment(level: &mut LevelState, first: i32, last: i3
 /// `clipangle`, `viewangletox`) and `frontsector` must have been
 /// initialized before the current frame. Must be called only during BSP
 /// traversal (i.e. within [`R_Subsector`]).
-unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
+unsafe fn R_AddLine(renderer: &mut Renderer, level: &mut LevelState, line: SegId) {
     let (probe_frame, frontsector_id) = {
-        let mut bsp = BSP.borrow_mut();
+        let bsp = &mut renderer.bsp;
         bsp.curline = line;
         (bsp.probe_frame, bsp.frontsector)
     };
     let seg = level.segs[line];
 
+    let view = &renderer.view;
     let (v1, v2) = (level.vertexes[seg.v1], level.vertexes[seg.v2]);
-    let orig_angle1 = R_PointToAngle(v1.x, v1.y);
-    let orig_angle2 = R_PointToAngle(v2.x, v2.y);
+    let orig_angle1 = R_PointToAngle(view, v1.x, v1.y);
+    let orig_angle2 = R_PointToAngle(view, v2.x, v2.y);
 
-    let (viewangle, clipangle) = {
-        let view = VIEW.borrow();
-        (view.viewangle, view.clipangle)
-    };
+    let (viewangle, clipangle) = (view.viewangle, view.clipangle);
 
     let span = orig_angle1.wrapping_sub(orig_angle2);
 
@@ -552,7 +545,7 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
         return;
     }
 
-    WALL.borrow_mut().rw_angle1 = orig_angle1;
+    renderer.wall.rw_angle1 = orig_angle1;
     let mut angle1 = orig_angle1.wrapping_sub(viewangle);
     let mut angle2 = orig_angle2.wrapping_sub(viewangle);
 
@@ -599,7 +592,7 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
     let idx1 = ((angle1.wrapping_add(ANG90)) >> ANGLETOFINESHIFT) as usize;
     let idx2 = ((angle2.wrapping_add(ANG90)) >> ANGLETOFINESHIFT) as usize;
     let (x1, x2) = {
-        let view = VIEW.borrow();
+        let view = &renderer.view;
         (view.viewangletox[idx1], view.viewangletox[idx2])
     };
 
@@ -641,7 +634,7 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
         return;
     }
 
-    BSP.borrow_mut().backsector = seg.backsector;
+    renderer.bsp.backsector = seg.backsector;
 
     // Single sided line?
     let Some(backsector_id) = seg.backsector else {
@@ -653,7 +646,7 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
             x2,
             frontsector_id
         );
-        R_ClipSolidWallSegment(level, x1, x2 - 1);
+        R_ClipSolidWallSegment(renderer, level, x1, x2 - 1);
         return;
     };
 
@@ -725,9 +718,9 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
     };
 
     if solid {
-        R_ClipSolidWallSegment(level, x1, x2 - 1);
+        R_ClipSolidWallSegment(renderer, level, x1, x2 - 1);
     } else {
-        R_ClipPassWallSegment(level, x1, x2 - 1);
+        R_ClipPassWallSegment(renderer, level, x1, x2 - 1);
     }
 }
 
@@ -765,8 +758,8 @@ unsafe fn R_AddLine(level: &mut LevelState, line: SegId) {
 /// `BBox::TOP` etc. from `m_bbox.rs`). The view state (`viewx`, `viewy`,
 /// `viewangle`, `clipangle`, `viewangletox`) and `solidsegs` must have been
 /// initialized for the current frame.
-pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
-    let view = VIEW.borrow();
+pub fn R_CheckBBox(renderer: &Renderer, bspcoord: &[fixed_t; 4]) -> i32 {
+    let view = &renderer.view;
     let (viewx, viewy, viewangle, clipangle) =
         (view.viewx, view.viewy, view.viewangle, view.clipangle);
 
@@ -797,8 +790,8 @@ pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
     let x2 = bspcoord[cc[2] as usize];
     let y2 = bspcoord[cc[3] as usize];
 
-    let mut angle1 = R_PointToAngle(x1, y1).wrapping_sub(viewangle);
-    let mut angle2 = R_PointToAngle(x2, y2).wrapping_sub(viewangle);
+    let mut angle1 = R_PointToAngle(view, x1, y1).wrapping_sub(viewangle);
+    let mut angle2 = R_PointToAngle(view, x2, y2).wrapping_sub(viewangle);
 
     let span = angle1.wrapping_sub(angle2);
 
@@ -834,7 +827,7 @@ pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
     }
     let sx2 = sx2 - 1;
 
-    let clip = CLIP_SEGS.borrow();
+    let clip = &renderer.clip_segs;
     let mut start = 0;
     while clip.solidsegs[start].last < sx2 {
         start += 1;
@@ -870,24 +863,29 @@ pub fn R_CheckBBox(bspcoord: &[fixed_t; 4]) -> i32 {
 /// view state and the plane, opening and sprite buffers must be set up for
 /// the current frame.
 pub unsafe fn R_Subsector(
+    renderer: &mut Renderer,
     level: &mut LevelState,
     mobjs: &Arena<mobj_t>,
     validcount: i32,
     num: SubsectorId,
 ) {
     let viewz = {
-        let mut view = VIEW.borrow_mut();
+        let view = &mut renderer.view;
         view.sscount += 1;
         view.viewz
     };
 
     let sub = level.subsectors[num];
     let frontsector_id = sub.sector;
-    BSP.borrow_mut().frontsector = frontsector_id;
+    renderer.bsp.frontsector = frontsector_id;
     let frontsector = &level.sectors[frontsector_id];
+    let skyflatnum = renderer.sky.skyflatnum;
+    let planes = &mut renderer.planes;
 
     let floorplane = if frontsector.floorheight < viewz {
         Some(R_FindPlane(
+            planes,
+            skyflatnum,
             frontsector.floorheight,
             frontsector.floorpic as i32,
             frontsector.lightlevel as i32,
@@ -895,12 +893,13 @@ pub unsafe fn R_Subsector(
     } else {
         None
     };
-    PLANES.borrow_mut().floorplane = floorplane;
+    planes.floorplane = floorplane;
 
-    let skyflatnum = SKY.borrow().skyflatnum;
     let ceilingplane =
         if frontsector.ceilingheight > viewz || frontsector.ceilingpic as i32 == skyflatnum {
             Some(R_FindPlane(
+                planes,
+                skyflatnum,
                 frontsector.ceilingheight,
                 frontsector.ceilingpic as i32,
                 frontsector.lightlevel as i32,
@@ -908,13 +907,13 @@ pub unsafe fn R_Subsector(
         } else {
             None
         };
-    PLANES.borrow_mut().ceilingplane = ceilingplane;
+    planes.ceilingplane = ceilingplane;
 
-    R_AddSprites(level, mobjs, validcount, frontsector_id);
+    R_AddSprites(renderer, level, mobjs, validcount, frontsector_id);
 
     let firstline = sub.firstline as usize;
     for line in firstline..firstline + sub.numlines.max(0) as usize {
-        R_AddLine(level, SegId::new(line));
+        R_AddLine(renderer, level, SegId::new(line));
     }
 }
 
@@ -938,9 +937,9 @@ pub unsafe fn R_Subsector(
 ///
 /// Corresponds to `R_RenderBSPNode` in `r_bsp.c`.
 ///
-/// The caller borrows the world for the whole traversal and passes its
-/// level as `level`, its map objects as `mobjs` and the frame's sector
-/// stamp as `validcount`.
+/// The BSP phase (`R_RenderBSP`) borrows the world for the whole traversal
+/// and passes its level as `level`, its map objects as `mobjs` and the
+/// frame's sector stamp as `validcount`.
 ///
 /// # Safety
 /// `bspnum` must be either a node index into `level.nodes` or a value with
@@ -948,6 +947,7 @@ pub unsafe fn R_Subsector(
 /// `level`. The view position, the occlusion list and the plane, opening
 /// and sprite buffers must be initialized for the current frame.
 pub unsafe fn R_RenderBSPNode(
+    renderer: &mut Renderer,
     level: &mut LevelState,
     mobjs: &Arena<mobj_t>,
     validcount: i32,
@@ -962,38 +962,47 @@ pub unsafe fn R_RenderBSPNode(
         };
         log::trace!(
             "R_RenderBSPNode: frame={} leaf subsector={} (bspnum={:#x})",
-            BSP.borrow().probe_frame,
+            renderer.bsp.probe_frame,
             sub_num,
             bspnum as u32
         );
-        R_Subsector(level, mobjs, validcount, SubsectorId::new(sub_num));
+        R_Subsector(
+            renderer,
+            level,
+            mobjs,
+            validcount,
+            SubsectorId::new(sub_num),
+        );
         return;
     }
 
     let bsp = level.nodes[NodeId::new(bspnum as usize)];
 
-    let (viewx, viewy) = {
-        let view = VIEW.borrow();
-        (view.viewx, view.viewy)
-    };
+    let (viewx, viewy) = (renderer.view.viewx, renderer.view.viewy);
     let side = R_PointOnSide(viewx, viewy, &bsp);
 
     log::trace!(
         "R_RenderBSPNode: frame={} node={} side={} front_child={:#x} back_child={:#x}",
-        BSP.borrow().probe_frame,
+        renderer.bsp.probe_frame,
         bspnum,
         side,
         bsp.children[side as usize] as u32,
         bsp.children[(side ^ 1) as usize] as u32,
     );
 
-    R_RenderBSPNode(level, mobjs, validcount, bsp.children[side as usize] as i32);
+    R_RenderBSPNode(
+        renderer,
+        level,
+        mobjs,
+        validcount,
+        bsp.children[side as usize] as i32,
+    );
 
-    let back_visible = R_CheckBBox(&bsp.bbox[(side ^ 1) as usize]) != 0;
+    let back_visible = R_CheckBBox(renderer, &bsp.bbox[(side ^ 1) as usize]) != 0;
     let back_box = bsp.bbox[(side ^ 1) as usize];
     log::trace!(
         "R_RenderBSPNode: frame={} node={} back_visible={} back_bbox=[L={} R={} T={} B={}]",
-        BSP.borrow().probe_frame,
+        renderer.bsp.probe_frame,
         bspnum,
         back_visible,
         back_box[BBox::LEFT],
@@ -1003,6 +1012,7 @@ pub unsafe fn R_RenderBSPNode(
     );
     if back_visible {
         R_RenderBSPNode(
+            renderer,
             level,
             mobjs,
             validcount,

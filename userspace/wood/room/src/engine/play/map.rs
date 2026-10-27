@@ -143,7 +143,7 @@ use crate::engine::{
         spec::{P_CrossSpecialLine, P_ShootSpecialLine},
         switch::P_UseSpecialLine,
     },
-    render_3d::sky::SKY,
+    render_3d::RENDERER,
     sound::{S_StartSound, info::Sfx},
 };
 
@@ -1366,7 +1366,7 @@ unsafe fn goto_hitline(world: &mut World, li: LineId, intercept: intercept_t) {
     let x = trace.x + FixedMul(trace.dx, frac);
     let y = trace.y + FixedMul(trace.dy, frac);
     let z = shootz + FixedMul(aimslope, FixedMul(frac, attackrange));
-    let skyflatnum = SKY.borrow().skyflatnum;
+    let skyflatnum = RENDERER.borrow().sky.skyflatnum;
     {
         let level = &world.level;
         let line = &level.lines[li];

@@ -42,8 +42,9 @@ use crate::{
             switch::{MAXBUTTONS, button_t, start_button_sound},
             tick::ThinkerKind,
         },
-        render_3d::data::{
-            R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName, RENDER_DATA,
+        render_3d::{
+            RENDERER,
+            data::{R_CheckTextureNumForName, R_FlatNumForName, R_TextureNumForName},
         },
         wad::format::LinedefFlag,
         world::World,
@@ -1095,8 +1096,11 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
     }
 
     let (texturetranslation, flattranslation) = {
-        let data = RENDER_DATA.borrow();
-        (data.texturetranslation, data.flattranslation)
+        let renderer = RENDERER.borrow();
+        (
+            renderer.data.texturetranslation,
+            renderer.data.flattranslation,
+        )
     };
     let leveltime = world.leveltime;
     {
@@ -1215,7 +1219,7 @@ fn DonutOverrun(
             if let Some(value) = M_StrToInt(argument(p + 2)) {
                 spec.donut_floorpic = value;
             }
-            let numflats = RENDER_DATA.borrow().numflats;
+            let numflats = RENDERER.borrow().data.numflats;
             if spec.donut_floorpic >= numflats {
                 eprintln!(
                     "DonutOverrun: The second parameter for \"-donut\" switch should be greater than 0 and less than number of flats ({}). Using default value ({}) instead. ",

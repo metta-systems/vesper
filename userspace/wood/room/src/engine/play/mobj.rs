@@ -69,7 +69,7 @@ use crate::engine::{
     doom::stat::gameversion,
     game::G_PlayerReborn,
     play::map::{P_AimLineAttack, P_CheckPosition, P_SlideMove, P_TryMove},
-    render_3d::sky::SKY,
+    render_3d::RENDERER,
     status::stuff::ST_Start,
     world::World,
 };
@@ -342,7 +342,7 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
                 P_SlideMove(world, mo_id);
             } else if mo_flags & MF_MISSILE != 0 {
                 if let Some(line) = world.scratch.map.ceilingline {
-                    let skyflatnum = SKY.borrow().skyflatnum as i16;
+                    let skyflatnum = RENDERER.borrow().sky.skyflatnum as i16;
                     let hits_sky = {
                         let level = &world.level;
                         level.lines[line]

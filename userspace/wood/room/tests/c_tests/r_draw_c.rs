@@ -129,9 +129,11 @@ fn fuzzoffset_positive_count() {
 //   viewwindowy = (SCREENHEIGHT − SBARHEIGHT − height) >> 1   otherwise
 // ---------------------------------------------------------------------------
 
-/// The `(viewwindowx, viewwindowy)` offsets `R_InitBuffer` left in the draw state.
-fn view_window_offsets() -> (i32, i32) {
-    let draw_state = draw::DRAW.borrow();
+/// The `(viewwindowx, viewwindowy)` offsets `R_InitBuffer` leaves in a draw
+/// state for a `width` x `height` view.
+fn view_window_offsets(width: i32, height: i32) -> (i32, i32) {
+    let mut draw_state = Box::new(draw::DrawState::new());
+    draw::R_InitBuffer(&mut draw_state, width, height);
     (draw_state.viewwindowx, draw_state.viewwindowy)
 }
 
@@ -141,8 +143,7 @@ fn view_window_offsets() -> (i32, i32) {
 fn r_init_buffer_fullscreen_sets_zero_offsets() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Full-screen view: width == SCREENWIDTH → both offsets must be 0.
-    draw::R_InitBuffer(SCREENWIDTH, 168);
-    let (viewwindowx, viewwindowy) = view_window_offsets();
+    let (viewwindowx, viewwindowy) = view_window_offsets(SCREENWIDTH, 168);
     assert_eq!(
         viewwindowx, 0,
         "viewwindowx should be 0 for full-width view"
@@ -158,9 +159,8 @@ fn r_init_buffer_fullscreen_sets_zero_offsets() {
 fn r_init_buffer_windowed_sets_correct_x_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Windowed view 256 wide: viewwindowx = (320 − 256) >> 1 = 32.
-    draw::R_InitBuffer(256, 168);
     assert_eq!(
-        view_window_offsets().0,
+        view_window_offsets(256, 168).0,
         (SCREENWIDTH - 256) >> 1,
         "viewwindowx mismatch for width=256"
     );
@@ -171,10 +171,9 @@ fn r_init_buffer_windowed_sets_correct_x_offset() {
 fn r_init_buffer_windowed_height_sets_correct_y_offset() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     // Small window (200×100): viewwindowy = (200 − 32 − 100) >> 1 = 34.
-    draw::R_InitBuffer(200, 100);
     let want_y = (SCREENHEIGHT - draw::SBARHEIGHT - 100) >> 1;
     assert_eq!(
-        view_window_offsets().1,
+        view_window_offsets(200, 100).1,
         want_y,
         "viewwindowy mismatch for height=100"
     );
@@ -185,9 +184,8 @@ fn r_init_buffer_windowed_height_sets_correct_y_offset() {
 fn r_init_buffer_various_widths_x_formula() {
     let _guard = C_GLOBAL_LOCK.lock().unwrap();
     for &w in &[160_i32, 200, 256, 280, 304, 312] {
-        draw::R_InitBuffer(w, 100);
         let want = (SCREENWIDTH - w) >> 1;
-        let viewwindowx = view_window_offsets().0;
+        let viewwindowx = view_window_offsets(w, 100).0;
         assert_eq!(
             viewwindowx, want,
             "viewwindowx wrong for width={w}: got {viewwindowx}, want {want}"
@@ -204,9 +202,8 @@ fn r_init_buffer_various_heights_y_formula() {
     let w = 256;
     let playfield = SCREENHEIGHT - draw::SBARHEIGHT; // 168
     for &h in &[50_i32, 80, 100, 120, 140, 160, 168] {
-        draw::R_InitBuffer(w, h);
         let want = (playfield - h) >> 1;
-        let viewwindowy = view_window_offsets().1;
+        let viewwindowy = view_window_offsets(w, h).1;
         assert_eq!(
             viewwindowy, want,
             "viewwindowy wrong for height={h}: got {viewwindowy}, want {want}"

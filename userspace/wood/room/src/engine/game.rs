@@ -735,13 +735,14 @@ use crate::engine::play::mobj::{P_RemoveMobj, P_SpawnMobj, P_SpawnPlayer};
 use crate::engine::play::map::P_CheckPosition;
 
 /// 3D view sizing helpers and point-to-subsector lookup from `r_main.c`.
-use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_PointInSubsector, VIEW};
+use crate::engine::render_3d::main::{R_ExecuteSetViewSize, R_PointInSubsector};
 
 /// Texture/flat name resolution from `r_data.c`.
 use crate::engine::render_3d::data::{R_FlatNumForName, R_TextureNumForName};
 
-/// Sky-flat index and active sky texture id from `r_sky.c`.
-use crate::engine::render_3d::sky::SKY;
+/// The renderer context, which holds the view state and the sky-flat index
+/// and active sky texture id of `r_sky.c`.
+use crate::engine::render_3d::RENDERER;
 
 /// Status-bar back-screen painter from `r_draw.c`.
 use crate::engine::render_3d::draw::R_FillBackScreen;
@@ -1283,7 +1284,8 @@ pub fn copy_session_settings(session: &mut Session) {
 /// Mutates many engine globals (`gamestate`, `wipegamestate`, `levelstarttic`,
 /// the input rings, the players array).
 pub unsafe fn G_DoLoadLevel() {
-    SKY.borrow_mut().skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
+    let skyflatnum = R_FlatNumForName(DEH_String(b"F_SKY1"));
+    RENDERER.borrow_mut().sky.skyflatnum = skyflatnum;
 
     // Fix sky texture for Final Doom / Chex
     if gamemode() == commercial && (gameversion() == exe_final2 || gameversion() == exe_chex) {
@@ -1295,7 +1297,8 @@ pub unsafe fn G_DoLoadLevel() {
         } else {
             b"SKY3"
         };
-        SKY.borrow_mut().skytexture = R_TextureNumForName(DEH_String(skytexturename));
+        let skytexture = R_TextureNumForName(DEH_String(skytexturename));
+        RENDERER.borrow_mut().sky.skytexture = skytexture;
     }
 
     GAME.borrow_mut().levelstarttic = gametic();
@@ -2315,8 +2318,8 @@ pub unsafe fn G_DoLoadGame() {
 
     SAVEG.borrow_mut().save_stream = Cursor::default();
 
-    if VIEW.borrow().setsizeneeded.is_truthy() {
-        R_ExecuteSetViewSize();
+    if RENDERER.borrow().view.setsizeneeded.is_truthy() {
+        R_ExecuteSetViewSize(&mut RENDERER.borrow_mut());
     }
 
     R_FillBackScreen();
@@ -2556,7 +2559,8 @@ pub unsafe fn G_InitNew(skill: skill_t, episode: i32, map: i32) {
         }
     };
 
-    SKY.borrow_mut().skytexture = R_TextureNumForName(DEH_String(skytexturename));
+    let skytexture = R_TextureNumForName(DEH_String(skytexturename));
+    RENDERER.borrow_mut().sky.skytexture = skytexture;
 
     G_DoLoadLevel();
 }

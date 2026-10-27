@@ -6,9 +6,8 @@
 //!
 //! The C `dc_*` and `ds_*` globals are parameter blocks here: the caller
 //! fills a [`ColumnParams`] or [`SpanParams`] and passes it by reference,
-//! together with the [`DrawState`] it borrowed once for the whole wall,
-//! sprite or plane, so the per-column and per-row drawers touch no
-//! [`Global`].
+//! together with the renderer's [`DrawState`] for the whole wall, sprite or
+//! plane, so the per-column and per-row drawers touch no global.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -17,10 +16,10 @@ use std::{ffi::c_void, ptr};
 use crate::engine::{
     dehacked::DEH_String,
     doom::{mode::commercial, stat::gamemode},
-    global::Global,
     interface::video::{SCREENHEIGHT, SCREENWIDTH, video_buffer},
     math::fixed::FRACBITS,
     render_2d::{V_DrawPatch, V_MarkRect, V_RestoreBuffer, V_UseBuffer},
+    render_3d::RENDERER,
     wad::{W_CacheLumpName, cache_patch_name},
     zone::{PU_CACHE, Z_Free, Z_Malloc},
 };
@@ -59,7 +58,7 @@ pub const fuzzoffset: [i32; FUZZTABLE] = [
 // ---------------------------------------------------------------------------
 
 /// View-buffer state (C `r_draw.c` globals other than the `dc_*`/`ds_*`
-/// drawer parameters).
+/// drawer parameters), the renderer's `draw`.
 pub struct DrawState {
     /// Width of the current render viewport in pixels.
     pub viewwidth: i32,
@@ -110,9 +109,6 @@ impl Default for DrawState {
         Self::new()
     }
 }
-
-/// The view-buffer state.
-pub static DRAW: Global<DrawState> = Global::new(DrawState::new());
 
 // ---------------------------------------------------------------------------
 // Column-drawing parameters
@@ -634,10 +630,10 @@ pub fn R_DrawTranslatedColumnLow(params: &mut ColumnParams, draw: &mut DrawState
 /// brown ramp (`0x40`), and red ramp (`0x20`). All other palette entries are identity-mapped.
 ///
 /// Sets `translationtables` to the allocated block.
-pub fn R_InitTranslationTables() {
+pub fn R_InitTranslationTables(draw: &mut DrawState) {
     unsafe {
         let tt = Z_Malloc(256 * 3, 1, ptr::null_mut()) as *mut u8; // PU_STATIC = 1
-        DRAW.borrow_mut().translationtables = tt;
+        draw.translationtables = tt;
 
         for i in 0..256 {
             if (0x70..=0x7f).contains(&i) {
@@ -814,9 +810,8 @@ pub fn R_DrawSpanLow(params: &SpanParams, draw: &DrawState) {
 ///
 /// Must be called whenever the viewport dimensions change (e.g. when the player resizes
 /// the view window).
-pub fn R_InitBuffer(width: i32, height: i32) {
+pub fn R_InitBuffer(draw: &mut DrawState, width: i32, height: i32) {
     let screen = video_buffer();
-    let mut draw = DRAW.borrow_mut();
 
     // Handle resize, e.g. smaller view windows with border and/or status bar.
     draw.viewwindowx = (SCREENWIDTH - width) >> 1;
@@ -856,7 +851,8 @@ pub fn R_InitBuffer(width: i32, height: i32) {
 pub fn R_FillBackScreen() {
     unsafe {
         let (background_buffer, scaledviewwidth, viewheight, viewwindowx, viewwindowy) = {
-            let mut draw = DRAW.borrow_mut();
+            let mut renderer = RENDERER.borrow_mut();
+            let draw = &mut renderer.draw;
 
             // If we are running full screen, there is no need to do any of this,
             // and the background buffer can be freed if it was previously in use.
@@ -971,7 +967,12 @@ pub fn R_FillBackScreen() {
 /// Used by `R_DrawViewBorder` to blit the pre-rendered bezel regions from `background_buffer`
 /// into `I_VideoBuffer`. Does nothing if `background_buffer` is null (full-screen mode).
 pub fn R_VideoErase(ofs: u32, count: i32) {
-    let background_buffer = DRAW.borrow().background_buffer;
+    video_erase(&RENDERER.borrow().draw, ofs, count);
+}
+
+/// [`R_VideoErase`] from `draw`'s background buffer.
+fn video_erase(draw: &DrawState, ofs: u32, count: i32) {
+    let background_buffer = draw.background_buffer;
     unsafe {
         if !background_buffer.is_null() {
             ptr::copy_nonoverlapping(
@@ -996,10 +997,12 @@ pub fn R_VideoErase(ofs: u32, count: i32) {
 /// Returns immediately without doing anything if `scaledviewwidth == SCREENWIDTH`
 /// (full-screen viewport, no border to draw).
 pub fn R_DrawViewBorder() {
-    let (scaledviewwidth, viewheight) = {
-        let draw = DRAW.borrow();
-        (draw.scaledviewwidth, draw.viewheight)
-    };
+    draw_view_border(&RENDERER.borrow().draw);
+}
+
+/// [`R_DrawViewBorder`] for the view described by `draw`.
+fn draw_view_border(draw: &DrawState) {
+    let (scaledviewwidth, viewheight) = (draw.scaledviewwidth, draw.viewheight);
     if scaledviewwidth == SCREENWIDTH {
         return;
     }
@@ -1008,18 +1011,18 @@ pub fn R_DrawViewBorder() {
     let side = (SCREENWIDTH - scaledviewwidth) / 2;
 
     // copy top and one line of left side
-    R_VideoErase(0, top * SCREENWIDTH + side);
+    video_erase(draw, 0, top * SCREENWIDTH + side);
 
     // copy one line of right side and bottom
     let ofs = ((viewheight + top) * SCREENWIDTH - side) as u32;
-    R_VideoErase(ofs, top * SCREENWIDTH + side);
+    video_erase(draw, ofs, top * SCREENWIDTH + side);
 
     // copy sides using wraparound
     let mut ofs = ((top * SCREENWIDTH) + SCREENWIDTH - side) as u32;
     let side_doubled = side << 1;
 
     for _ in 1..viewheight {
-        R_VideoErase(ofs, side_doubled);
+        video_erase(draw, ofs, side_doubled);
         ofs += SCREENWIDTH as u32;
     }
 
@@ -1034,7 +1037,7 @@ pub fn R_DrawViewBorder() {
 mod tests {
     use {super::*, crate::engine::interface::video::VIDEO, std::sync::Mutex};
 
-    /// Serialises the tests that swap the video buffer or write [`DRAW`].
+    /// Serialises the tests that swap the video buffer.
     static LOCK: Mutex<()> = Mutex::new(());
 
     /// A draw state whose row and column tables address `framebuffer` as a
@@ -1067,10 +1070,10 @@ mod tests {
         let orig_buf = video_buffer();
         VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-        R_InitBuffer(SCREENWIDTH, 168);
+        let mut draw = Box::new(DrawState::new());
+        R_InitBuffer(&mut draw, SCREENWIDTH, 168);
 
         {
-            let draw = DRAW.borrow();
             assert_eq!(draw.viewwindowx, 0);
             assert_eq!(draw.viewwindowy, 0);
             for i in 0..SCREENWIDTH {
@@ -1098,10 +1101,10 @@ mod tests {
         let orig_buf = video_buffer();
         VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-        R_InitBuffer(256, 168);
+        let mut draw = Box::new(DrawState::new());
+        R_InitBuffer(&mut draw, 256, 168);
 
         {
-            let draw = DRAW.borrow();
             assert_eq!(draw.viewwindowx, (SCREENWIDTH - 256) >> 1); // 32
             assert_eq!(draw.viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 168) >> 1); // 0
             for i in 0..256 {
@@ -1120,10 +1123,10 @@ mod tests {
         let orig_buf = video_buffer();
         VIDEO.borrow_mut().video_buffer = fake_buf.as_mut_ptr();
 
-        R_InitBuffer(200, 100);
+        let mut draw = Box::new(DrawState::new());
+        R_InitBuffer(&mut draw, 200, 100);
 
         {
-            let draw = DRAW.borrow();
             assert_eq!(draw.viewwindowx, (SCREENWIDTH - 200) >> 1); // 60
             assert_eq!(draw.viewwindowy, (SCREENHEIGHT - SBARHEIGHT - 100) >> 1); // 34
             for i in 0..200 {
@@ -1148,16 +1151,16 @@ mod tests {
     /// leaves all other palette entries as identity mappings.
     #[test]
     fn init_translation_tables() {
-        let _g = LOCK.lock().unwrap();
         let _zone = crate::engine::zone::ZONE_TEST_LOCK.lock().unwrap();
         unsafe {
             // Initialize the zone allocator so Z_Malloc works.
             // It's fine to re-initialize in a unit test.
             crate::engine::zone::Z_Init();
 
-            R_InitTranslationTables();
+            let mut draw = Box::new(DrawState::new());
+            R_InitTranslationTables(&mut draw);
 
-            let tt = DRAW.borrow().translationtables;
+            let tt = draw.translationtables;
             for i in 0..256usize {
                 if i >= 0x70 && i <= 0x7f {
                     assert_eq!(
@@ -1184,7 +1187,6 @@ mod tests {
 
             // Clean up
             crate::engine::zone::Z_Free(tt as *mut c_void);
-            DRAW.borrow_mut().translationtables = ptr::null_mut();
         }
     }
 
@@ -1376,9 +1378,10 @@ mod tests {
 
         let orig_video = video_buffer();
         VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
-        DRAW.borrow_mut().background_buffer = bg.as_mut_ptr();
+        let mut draw = Box::new(DrawState::new());
+        draw.background_buffer = bg.as_mut_ptr();
 
-        R_VideoErase(100, 10);
+        video_erase(&draw, 100, 10);
 
         for i in 100..110 {
             assert_eq!(video[i as usize], bg[i as usize]);
@@ -1388,7 +1391,6 @@ mod tests {
         assert_eq!(video[110], 0);
 
         VIDEO.borrow_mut().video_buffer = orig_video;
-        DRAW.borrow_mut().background_buffer = ptr::null_mut();
     }
 
     /// Verifies that `R_VideoErase` is a no-op when `background_buffer` is null.
@@ -1398,9 +1400,9 @@ mod tests {
         let mut video = vec![0xCCu8; (SCREENWIDTH * SCREENHEIGHT) as usize];
         let orig_video = video_buffer();
         VIDEO.borrow_mut().video_buffer = video.as_mut_ptr();
-        DRAW.borrow_mut().background_buffer = ptr::null_mut();
+        let draw = Box::new(DrawState::new());
 
-        R_VideoErase(0, 10);
+        video_erase(&draw, 0, 10);
 
         for i in 0..10 {
             assert_eq!(video[i], 0xCC);
@@ -1417,10 +1419,10 @@ mod tests {
     /// viewport is full-screen (`scaledviewwidth == SCREENWIDTH`).
     #[test]
     fn draw_view_border_fullscreen_returns_early() {
-        let _g = LOCK.lock().unwrap();
-        DRAW.borrow_mut().scaledviewwidth = SCREENWIDTH;
+        let mut draw = Box::new(DrawState::new());
+        draw.scaledviewwidth = SCREENWIDTH;
         // Should return without doing anything (no panic)
-        R_DrawViewBorder();
+        draw_view_border(&draw);
     }
 
     /// Verifies the `top` and `side` geometry values computed inside `R_DrawViewBorder`

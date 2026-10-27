@@ -11,9 +11,9 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use crate::engine::{global::Global, math::fixed::FRACUNIT};
+use crate::engine::math::fixed::FRACUNIT;
 
-/// Sky state (C `r_sky.c` globals).
+/// Sky state (C `r_sky.c` globals), the renderer's `sky`.
 pub struct SkyState {
     /// WAD lump index of the sky flat (`F_SKY1`), filled in by `g_game.c`
     /// via `R_FlatNumForName(SKYFLATNAME)`.
@@ -53,9 +53,6 @@ impl Default for SkyState {
     }
 }
 
-/// The sky state.
-pub static SKY: Global<SkyState> = Global::new(SkyState::new());
-
 /// Reset sky-mapping state whenever the view size changes.
 ///
 /// Sets `skytexturemid` to `100 * FRACUNIT` (6553600), the fixed vertical
@@ -64,9 +61,9 @@ pub static SKY: Global<SkyState> = Global::new(SkyState::new());
 ///
 /// Called by `r_main.c` (`R_Init` -> `R_ExecuteSetViewSize`) whenever the
 /// view size is reconfigured.
-pub fn R_InitSkyMap() {
+pub fn R_InitSkyMap(sky: &mut SkyState) {
     // skyflatnum = R_FlatNumForName(SKYFLATNAME);   // done elsewhere
-    SKY.borrow_mut().skytexturemid = 100 * FRACUNIT;
+    sky.skytexturemid = 100 * FRACUNIT;
 }
 
 #[cfg(test)]
@@ -75,8 +72,9 @@ mod tests {
 
     #[test]
     fn init_sets_texturemid() {
-        R_InitSkyMap();
-        assert_eq!(SKY.borrow().skytexturemid, 100 * 65536);
+        let mut sky = SkyState::new();
+        R_InitSkyMap(&mut sky);
+        assert_eq!(sky.skytexturemid, 100 * 65536);
     }
 
     #[test]

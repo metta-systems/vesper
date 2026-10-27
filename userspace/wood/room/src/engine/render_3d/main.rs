@@ -1,9 +1,11 @@
 //! Renderer main loop, view setup, and BSP/geometry/trigonometry utilities.
 //!
 //! Rust port of `vendor/doomgeneric/r_main.c`. Hosts the renderer view state
-//! ([`ViewState`] in [`VIEW`]: viewport dimensions, view position/angle,
-//! light tables, column/span function pointers) and the per-frame entry
-//! point [`R_RenderPlayerView`].
+//! ([`ViewState`], the renderer's `view`: viewport dimensions, view
+//! position/angle, light tables, column/span function pointers) and the
+//! per-frame phases [`R_SetupFrame`] and [`R_RenderBSP`] that `D_Display`
+//! runs, with `R_DrawPlanes` and `R_DrawMasked`, as C's
+//! `R_RenderPlayerView`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -12,7 +14,6 @@ use std::ptr;
 use crate::{
     engine::{
         doom::player::PlayerId,
-        global::Global,
         interface::video::{SCREENHEIGHT as SCREENHEIGHT_IV, SCREENWIDTH as SCREENWIDTH_IV},
         map::{SegId, SubsectorId, node_t},
         math::{
@@ -21,7 +22,7 @@ use crate::{
             fixed::{FRACBITS, FRACUNIT, FixedDiv, FixedMul, angle_t, fixed_t},
             tables::{ANG90, ANG180, ANG270, ANGLETOFINESHIFT, SlopeDiv},
         },
-        world::{WORLD, World},
+        world::World,
     },
     types::Boolean,
 };
@@ -87,7 +88,7 @@ pub const linecount: i32 = 0;
 // State defined by this module
 // ---------------------------------------------------------------------------
 
-/// Renderer view state (C `r_main.c` globals).
+/// Renderer view state (C `r_main.c` globals), the renderer's `view`.
 pub struct ViewState {
     /// Additive angle offset applied to the player's map angle before rendering,
     /// used by the automap and demo-playback angle overrides. Zero during normal
@@ -302,28 +303,23 @@ impl Default for ViewState {
     }
 }
 
-/// The renderer view state.
-pub static VIEW: Global<ViewState> = Global::new(ViewState::new());
-
-/// Stable address of `scalelight[level]`, for the `walllights` and
-/// `spritelights` row pointers that outlive any borrow of [`VIEW`].
-pub fn scalelight_row(level: usize) -> *const *mut lighttable_t {
-    // Addresses the static's storage directly, so the row stays valid unguarded.
-    unsafe { (&raw const (*VIEW.as_ptr()).scalelight[level]).cast() }
+/// Address of `view.scalelight[level]`, for the `walllights` and
+/// `spritelights` row pointers, which stay valid while the renderer stays
+/// in place.
+pub fn scalelight_row(view: &ViewState, level: usize) -> *const *mut lighttable_t {
+    view.scalelight[level].as_ptr()
 }
 
-/// Stable address of `scalelightfixed`, the `walllights` row while a fixed
+/// Address of `view.scalelightfixed`, the `walllights` row while a fixed
 /// colormap is active.
-pub fn scalelightfixed_row() -> *const *mut lighttable_t {
-    // Addresses the static's storage directly, so the row stays valid unguarded.
-    unsafe { (&raw const (*VIEW.as_ptr()).scalelightfixed).cast() }
+pub fn scalelightfixed_row(view: &ViewState) -> *const *mut lighttable_t {
+    view.scalelightfixed.as_ptr()
 }
 
-/// Stable address of `zlight[level]`, for the plane renderer's
-/// `planezlight` row pointer.
-pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
-    // Addresses the static's storage directly, so the row stays valid unguarded.
-    unsafe { (&raw const (*VIEW.as_ptr()).zlight[level]).cast() }
+/// Address of `view.zlight[level]`, for the plane renderer's `planezlight`
+/// row pointer.
+pub fn zlight_row(view: &ViewState, level: usize) -> *const *mut lighttable_t {
+    view.zlight[level].as_ptr()
 }
 
 // ---------------------------------------------------------------------------
@@ -331,20 +327,20 @@ pub fn zlight_row(level: usize) -> *const *mut lighttable_t {
 // ---------------------------------------------------------------------------
 
 use crate::engine::{
-    doom::main_loop::NetUpdate,
     misc::menu::MENU,
     play::setup::LevelState,
     render_3d::{
-        bsp::{R_ClearClipSegs, R_ClearDrawSegs, R_RenderBSPNode},
-        data::{R_InitData, RENDER_DATA},
+        RENDERER, Renderer,
+        bsp::R_RenderBSPNode,
+        data::R_InitData,
         draw::{
-            ColumnFunction, DRAW, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn,
-            R_DrawFuzzColumnLow, R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn,
-            R_DrawTranslatedColumnLow, R_InitBuffer, R_InitTranslationTables, SpanFunction,
+            ColumnFunction, R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn, R_DrawFuzzColumnLow,
+            R_DrawSpan, R_DrawSpanLow, R_DrawTranslatedColumn, R_DrawTranslatedColumnLow,
+            R_InitBuffer, R_InitTranslationTables, SpanFunction,
         },
-        plane::{PLANES, R_ClearPlanes, R_DrawPlanes, R_InitPlanes},
-        segs::{WALL, WallState},
-        things::{R_ClearSprites, R_DrawMasked, SPRITES},
+        plane::R_InitPlanes,
+        segs::WallState,
+        sky::R_InitSkyMap,
     },
 };
 
@@ -538,14 +534,10 @@ fn point_to_angle_from_delta(mut dx: fixed_t, mut dy: fixed_t) -> angle_t {
 ///
 /// Equivalent to `R_PointToAngle` in `r_main.c`.
 ///
-/// Reads `viewx` and `viewy` from [`VIEW`], so the result is only
-/// meaningful once [`R_SetupFrame`] has set them.
-pub fn R_PointToAngle(x: fixed_t, y: fixed_t) -> angle_t {
-    let (viewx, viewy) = {
-        let view = VIEW.borrow();
-        (view.viewx, view.viewy)
-    };
-    point_to_angle_from_delta(x - viewx, y - viewy)
+/// Reads `viewx` and `viewy` from `view`, so the result is only meaningful
+/// once [`R_SetupFrame`] has set them.
+pub fn R_PointToAngle(view: &ViewState, x: fixed_t, y: fixed_t) -> angle_t {
+    point_to_angle_from_delta(x - view.viewx, y - view.viewy)
 }
 
 // ---------------------------------------------------------------------------
@@ -577,15 +569,11 @@ pub fn R_PointToAngle2(x1: fixed_t, y1: fixed_t, x2: fixed_t, y2: fixed_t) -> an
 ///
 /// Equivalent to `R_PointToDist` in `r_main.c`.
 ///
-/// Reads `viewx` and `viewy` from [`VIEW`], so the result is only
-/// meaningful once [`R_SetupFrame`] has set them.
-pub fn R_PointToDist(x: fixed_t, y: fixed_t) -> fixed_t {
-    let (viewx, viewy) = {
-        let view = VIEW.borrow();
-        (view.viewx, view.viewy)
-    };
-    let mut dx = (x - viewx).wrapping_abs();
-    let mut dy = (y - viewy).wrapping_abs();
+/// Reads `viewx` and `viewy` from `view`, so the result is only meaningful
+/// once [`R_SetupFrame`] has set them.
+pub fn R_PointToDist(view: &ViewState, x: fixed_t, y: fixed_t) -> fixed_t {
+    let mut dx = (x - view.viewx).wrapping_abs();
+    let mut dy = (y - view.viewy).wrapping_abs();
 
     if dy > dx {
         std::mem::swap(&mut dx, &mut dy);
@@ -674,16 +662,9 @@ pub fn R_InitTables() {
 /// pixels. After building both tables the function removes the sentinel
 /// `-1`/`viewwidth+1` values from `viewangletox` (fencepost cleanup).
 ///
-/// Called by [`R_ExecuteSetViewSize`] whenever the viewport is resized.
-///
-/// # Safety
-/// Reads and writes [`VIEW`] and reads `viewwidth`. Must be called after
-/// `viewwidth` and `centerxfrac` have been set by [`R_ExecuteSetViewSize`].
-pub unsafe fn R_InitTextureMapping() {
-    let viewwidth = DRAW.borrow().viewwidth;
-    let mut view = VIEW.borrow_mut();
-    let view = &mut *view;
-
+/// Called by [`R_ExecuteSetViewSize`] whenever the viewport is resized,
+/// after it has set `viewwidth` and `view.centerxfrac`.
+pub fn R_InitTextureMapping(view: &mut ViewState, viewwidth: i32) {
     // Use tangent table to generate viewangletox:
     //  viewangletox will give the next greatest x after the view angle.
     //
@@ -753,11 +734,9 @@ pub unsafe fn R_InitTextureMapping() {
 /// Equivalent to `R_InitLightTables` in `r_main.c`.
 ///
 /// # Safety
-/// Reads `colormaps` from `r_data`; that pointer must be non-null and point
-/// to `NUMCOLORMAPS * 256` valid bytes. Called during startup by [`R_Init`].
-pub unsafe fn R_InitLightTables() {
-    let colormaps = RENDER_DATA.borrow().colormaps;
-    let mut view = VIEW.borrow_mut();
+/// `colormaps` (the `r_data` table) must point to `NUMCOLORMAPS * 256`
+/// valid bytes. Called during startup by [`R_Init`].
+pub unsafe fn R_InitLightTables(view: &mut ViewState, colormaps: *mut u8) {
     for i in 0..LIGHTLEVELS {
         let startmap = (((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS) as i32;
         for j in 0..MAXLIGHTZ {
@@ -792,7 +771,11 @@ pub unsafe fn R_InitLightTables() {
 ///
 /// Equivalent to `R_SetViewSize` in `r_main.c`.
 pub fn R_SetViewSize(blocks: i32, detail: i32) {
-    let mut view = VIEW.borrow_mut();
+    set_view_size(&mut RENDERER.borrow_mut().view, blocks, detail);
+}
+
+/// [`R_SetViewSize`] on `view`.
+fn set_view_size(view: &mut ViewState, blocks: i32, detail: i32) {
     view.setsizeneeded = Boolean::TRUE;
     view.setblocks = blocks;
     view.setdetail = detail;
@@ -816,13 +799,18 @@ pub fn R_SetViewSize(blocks: i32, detail: i32) {
 /// Equivalent to `R_ExecuteSetViewSize` in `r_main.c`.
 ///
 /// # Safety
-/// Writes a large number of renderer state fields and calls several
-/// initialisation helpers. Must not be called while a frame render is in
-/// progress.
-pub unsafe fn R_ExecuteSetViewSize() {
+/// `R_Init` must have loaded the colormaps. Must not be called while a
+/// frame render is in progress (its rows and clip arrays are rewritten).
+pub unsafe fn R_ExecuteSetViewSize(renderer: &mut Renderer) {
+    let Renderer {
+        view,
+        draw,
+        sprites,
+        planes,
+        data,
+        ..
+    } = renderer;
     let (scaledviewwidth, viewheight, viewwidth, detailshift) = {
-        let mut view = VIEW.borrow_mut();
-        let mut draw = DRAW.borrow_mut();
         view.setsizeneeded = Boolean::FALSE;
 
         if view.setblocks == 11 {
@@ -862,12 +850,10 @@ pub unsafe fn R_ExecuteSetViewSize() {
         )
     };
 
-    R_InitBuffer(scaledviewwidth, viewheight);
-    R_InitTextureMapping();
+    R_InitBuffer(draw, scaledviewwidth, viewheight);
+    R_InitTextureMapping(view, viewwidth);
 
     {
-        let mut sprites = SPRITES.borrow_mut();
-
         // psprite scales
         sprites.pspritescale = FRACUNIT * viewwidth / SCREENWIDTH as i32;
         sprites.pspriteiscale = FRACUNIT * SCREENWIDTH as i32 / viewwidth;
@@ -878,12 +864,9 @@ pub unsafe fn R_ExecuteSetViewSize() {
         }
     }
 
-    let colormaps = RENDER_DATA.borrow().colormaps;
-    let mut view = VIEW.borrow_mut();
+    let colormaps = data.colormaps;
 
     {
-        let mut planes = PLANES.borrow_mut();
-
         // planes
         for i in 0..viewheight as usize {
             let mut dy = ((i as i32 - viewheight / 2) << FRACBITS) + FRACUNIT / 2;
@@ -933,29 +916,33 @@ pub unsafe fn R_ExecuteSetViewSize() {
 /// Equivalent to `R_Init` in `r_main.c`.
 ///
 /// # Safety
-/// Initialises global renderer state; must be called exactly once before any
-/// frame is rendered. Calls multiple unsafe initialisers internally.
+/// Initialises the renderer; must be called exactly once, after the WAD is
+/// loaded and before any frame is rendered. Calls multiple unsafe
+/// initialisers internally.
 pub unsafe fn R_Init() {
-    R_InitData();
+    let (screenblocks, detail_level) = {
+        let menu = MENU.borrow();
+        (menu.screenblocks, menu.detailLevel)
+    };
+    let mut renderer = RENDERER.borrow_mut();
+    let renderer = &mut *renderer;
+
+    R_InitData(&mut renderer.data);
     print!(".");
     R_InitPointToAngle();
     print!(".");
     R_InitTables();
     print!(".");
-    let (screenblocks, detail_level) = {
-        let menu = MENU.borrow();
-        (menu.screenblocks, menu.detailLevel)
-    };
-    R_SetViewSize(screenblocks, detail_level);
+    set_view_size(&mut renderer.view, screenblocks, detail_level);
     R_InitPlanes();
     print!(".");
-    R_InitLightTables();
+    R_InitLightTables(&mut renderer.view, renderer.data.colormaps);
     print!(".");
-    crate::engine::render_3d::sky::R_InitSkyMap();
-    R_InitTranslationTables();
+    R_InitSkyMap(&mut renderer.sky);
+    R_InitTranslationTables(&mut renderer.draw);
     print!(".");
 
-    VIEW.borrow_mut().framecount = 0;
+    renderer.view.framecount = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,28 +997,21 @@ pub fn R_PointInSubsector(level: &LevelState, x: fixed_t, y: fixed_t) -> Subsect
 /// `walllights` to it so that wall-lighting lookup code requires no
 /// special-case handling.
 ///
-/// Equivalent to `R_SetupFrame` in `r_main.c`.
+/// Equivalent to `R_SetupFrame` in `r_main.c`; the first phase of a frame.
 ///
 /// # Safety
-/// `player_id`'s `mo` must name a map object of the level. Reads and writes
-/// numerous renderer state fields.
-pub unsafe fn R_SetupFrame(player_id: PlayerId) {
-    let colormaps = RENDER_DATA.borrow().colormaps;
-    // Play does not run while a frame is drawn, so the view takes a copy.
-    // The renderer borrows the world only for such reads until it takes
-    // the world as a parameter; never across `NetUpdate`.
-    let (player, mo_x, mo_y, mo_angle) = {
-        let world = WORLD.borrow();
-        let player = world.players[player_id];
-        let mo = &world.mobjs[player.mo()];
-        (player, mo.x, mo.y, mo.angle)
-    };
-    let mut view = VIEW.borrow_mut();
+/// `player_id`'s `mo` must name a map object of `world`'s level, and
+/// `R_Init` must have loaded the colormaps.
+pub unsafe fn R_SetupFrame(world: &mut World, renderer: &mut Renderer, player_id: PlayerId) {
+    let colormaps = renderer.data.colormaps;
+    let player = &world.players[player_id];
+    let mo = &world.mobjs[player.mo()];
+    let view = &mut renderer.view;
 
     view.viewplayer = Some(player_id);
-    view.viewx = mo_x;
-    view.viewy = mo_y;
-    view.viewangle = mo_angle.wrapping_add(view.viewangleoffset as u32);
+    view.viewx = mo.x;
+    view.viewy = mo.y;
+    view.viewangle = mo.angle.wrapping_add(view.viewangleoffset as u32);
     view.extralight = player.extralight;
 
     view.viewz = player.viewz;
@@ -1051,63 +1031,40 @@ pub unsafe fn R_SetupFrame(player_id: PlayerId) {
         for i in 0..MAXLIGHTSCALE {
             view.scalelightfixed[i] = fixedcolormap;
         }
-        WALL.borrow_mut().walllights = scalelightfixed_row();
+        renderer.wall.walllights = scalelightfixed_row(view);
     } else {
         view.fixedcolormap = ptr::null_mut();
     }
 
     view.framecount += 1;
-    WORLD.borrow_mut().scratch.validcount += 1;
+    world.scratch.validcount += 1;
 }
 
 // ---------------------------------------------------------------------------
-// R_RenderPlayerView
+// R_RenderBSP
 // ---------------------------------------------------------------------------
 
-/// Top-level per-frame render entry point.
+/// The BSP phase of a frame (the `R_RenderBSPNode` call of C's
+/// `R_RenderPlayerView`): traverses the BSP tree of `world`'s level from
+/// its root node.
 ///
-/// Calls [`R_SetupFrame`] to prepare the view state, clears all renderer
-/// buffers (`R_ClearClipSegs`, `R_ClearDrawSegs`, `R_ClearPlanes`,
-/// `R_ClearSprites`), traverses the BSP tree via `R_RenderBSPNode`, then
-/// draws floors/ceilings (`R_DrawPlanes`) and masked objects
-/// (`R_DrawMasked`). `NetUpdate` is called between phases to keep network
-/// and demo state responsive on slow machines.
-///
-/// Equivalent to `R_RenderPlayerView` (`R_RenderView`) in `r_main.c`.
+/// The traversal marks the level (automap "seen" line flags, sector sprite
+/// stamps with the frame's `validcount`) and projects the sprites of its
+/// map objects.
 ///
 /// # Safety
-/// `player`'s `mo` must name a map object of the level. All renderer state
-/// and map data must have been loaded and initialised prior to this call.
-pub unsafe fn R_RenderPlayerView(player: PlayerId) {
-    R_SetupFrame(player);
-
-    R_ClearClipSegs();
-    R_ClearDrawSegs();
-    R_ClearPlanes();
-    R_ClearSprites();
-
-    NetUpdate();
-    {
-        // The traversal borrows the world once and hands down the level,
-        // which it marks (automap "seen" line flags, sector sprite stamps),
-        // the map objects whose sprites it projects, and the frame's
-        // `validcount` stamp. `NetUpdate` may run play, so the borrow ends
-        // before it.
-        let mut world = WORLD.borrow_mut();
-        let World {
-            level,
-            mobjs,
-            scratch,
-            ..
-        } = &mut *world;
-        let root_node = level.nodes.len() as i32 - 1;
-        R_RenderBSPNode(level, mobjs, scratch.validcount, root_node);
-    }
-    NetUpdate();
-    R_DrawPlanes();
-    NetUpdate();
-    R_DrawMasked();
-    NetUpdate();
+/// [`R_SetupFrame`] and the frame's clears (`R_ClearClipSegs`,
+/// `R_ClearDrawSegs`, `R_ClearPlanes`, `R_ClearSprites`) must have run on
+/// `renderer`, and the textures and sprites must be loaded.
+pub unsafe fn R_RenderBSP(world: &mut World, renderer: &mut Renderer) {
+    let World {
+        level,
+        mobjs,
+        scratch,
+        ..
+    } = world;
+    let root_node = level.nodes.len() as i32 - 1;
+    R_RenderBSPNode(renderer, level, mobjs, scratch.validcount, root_node);
 }
 
 // ---------------------------------------------------------------------------
@@ -1116,46 +1073,14 @@ pub unsafe fn R_RenderPlayerView(player: PlayerId) {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::engine::math::fixed::FixedDiv, std::sync::Mutex};
+    use {super::*, crate::engine::math::fixed::FixedDiv};
 
-    /// Process-wide guard serialising tests that read or write the view
-    /// position in [`VIEW`]. `cargo test` runs tests in parallel by default;
-    /// without this lock, two tests touching it could race and tear each
-    /// other's state.
-    static RENDER_GLOBALS_LOCK: Mutex<()> = Mutex::new(());
-
-    /// RAII guard that snapshots `viewx`/`viewy` on construction and
-    /// restores them on drop, so an assertion panic cannot leave the
-    /// view state perturbed for any subsequent test that happens to
-    /// acquire the lock.
-    struct ViewPosGuard {
-        saved_x: fixed_t,
-        saved_y: fixed_t,
-    }
-
-    impl ViewPosGuard {
-        fn new() -> Self {
-            let view = VIEW.borrow();
-            Self {
-                saved_x: view.viewx,
-                saved_y: view.viewy,
-            }
-        }
-    }
-
-    impl Drop for ViewPosGuard {
-        fn drop(&mut self) {
-            let mut view = VIEW.borrow_mut();
-            view.viewx = self.saved_x;
-            view.viewy = self.saved_y;
-        }
-    }
-
-    /// Set the view position in [`VIEW`].
-    fn set_view_position(x: fixed_t, y: fixed_t) {
-        let mut view = VIEW.borrow_mut();
+    /// A view state positioned at `(x, y)`.
+    fn view_at(x: fixed_t, y: fixed_t) -> Box<ViewState> {
+        let mut view = Box::new(ViewState::new());
         view.viewx = x;
         view.viewy = y;
+        view
     }
 
     /// The DBITS constant was once incorrectly set to 15 instead of
@@ -1184,11 +1109,9 @@ mod tests {
 
     #[test]
     fn r_point_to_dist_reasonable_values() {
-        let _g = RENDER_GLOBALS_LOCK.lock().unwrap();
-        let _vp = ViewPosGuard::new();
-        set_view_position(0, 0);
+        let view = view_at(0, 0);
         // Straight ahead: distance should be approximately FRACUNIT.
-        let dist_ahead = R_PointToDist(FRACUNIT, 0);
+        let dist_ahead = R_PointToDist(&view, FRACUNIT, 0);
         assert!(dist_ahead > 0, "distance straight ahead must be positive");
         assert!(
             (dist_ahead - FRACUNIT).abs() < FRACUNIT / 4,
@@ -1197,7 +1120,7 @@ mod tests {
         );
 
         // 45-degree diagonal: distance should be larger than straight ahead.
-        let dist_diag = R_PointToDist(FRACUNIT, FRACUNIT);
+        let dist_diag = R_PointToDist(&view, FRACUNIT, FRACUNIT);
         assert!(
             dist_diag > dist_ahead,
             "diagonal distance ({}) must exceed straight-ahead distance ({})",
@@ -1206,7 +1129,7 @@ mod tests {
         );
 
         // Same point: distance must be exactly zero.
-        let dist_zero = R_PointToDist(0, 0);
+        let dist_zero = R_PointToDist(&view, 0, 0);
         assert_eq!(dist_zero, 0, "distance to view position must be zero");
     }
 
@@ -1226,20 +1149,19 @@ mod tests {
     }
 
     /// R_PointToAngle2 used to set `viewx = x1; viewy = y1` and delegate to
-    /// R_PointToAngle, clobbering the view position. The refactored
-    /// implementation must compute the angle purely from the delta and leave
-    /// `viewx` / `viewy` untouched.
+    /// R_PointToAngle, clobbering the view position. It now computes the
+    /// angle from the delta alone, so R_PointToAngle is R_PointToAngle2
+    /// from the view position.
     #[test]
-    fn r_point_to_angle2_preserves_view_globals() {
-        let _g = RENDER_GLOBALS_LOCK.lock().unwrap();
-        let _vp = ViewPosGuard::new();
-        set_view_position(12345, -6789);
-
-        let _ = R_PointToAngle2(1000, 2000, 3000, 4000);
-
-        let view = VIEW.borrow();
-        assert_eq!(view.viewx, 12345, "R_PointToAngle2 must not modify viewx");
-        assert_eq!(view.viewy, -6789, "R_PointToAngle2 must not modify viewy");
+    fn r_point_to_angle_is_angle2_from_the_view_position() {
+        let view = view_at(12345, -6789);
+        for (x, y) in [(1000, 2000), (-3 * FRACUNIT, 4 * FRACUNIT), (12345, -6789)] {
+            assert_eq!(
+                R_PointToAngle(&view, x, y),
+                R_PointToAngle2(view.viewx, view.viewy, x, y),
+                "angle to ({x}, {y})"
+            );
+        }
     }
 
     /// R_PointToAngle2 must be translation-invariant: the angle from
@@ -1248,12 +1170,6 @@ mod tests {
     /// for nonzero source points.
     #[test]
     fn r_point_to_angle2_translation_invariant() {
-        // R_PointToAngle2 itself does not read viewx/viewy, but acquire
-        // the lock and restore guard anyway so this test never observes
-        // a torn state if a future change introduces a view-state read.
-        let _g = RENDER_GLOBALS_LOCK.lock().unwrap();
-        let _vp = ViewPosGuard::new();
-
         let cases: [(fixed_t, fixed_t); 8] = [
             (FRACUNIT, 0),
             (FRACUNIT, FRACUNIT),
