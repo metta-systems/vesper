@@ -1,0 +1,35 @@
+[package]
+name = "window-events"
+
+description = "window-events program: makes two windows of the compositor and checks that a scripted click, drag and key reach them on its event channel, exiting QEMU with the result."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+compositor-client = { workspace = true }
+libcompositor-core = { workspace = true }
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+vesper-input-event = { workspace = true }
+
+[[bin]]
+name = "window-events"
+test = false
+
+[lints]
+workspace = true

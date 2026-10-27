@@ -1,14 +1,15 @@
 # UI compositor implementation plan
 
 Design: `ui-compositor-design.md`. Open decisions: `ui-compositor-decisions.md`.
-Nothing here starts until the decisions it depends on are recorded. Input stages
-are in `input-implementation-plan.md`.
+Completed items: `ui-compositor-completed.md`. Nothing here starts until the
+decisions it depends on are recorded. Input stages are in
+`input-implementation-plan.md`.
 
 ## Dependencies
 
 - Q1 and Q2 (surface memory and granularity) block C3.
 - Q1 (surface memory) remains open; Q10 (input decisions) remains open.
-- Answered: Q2, Q3, Q4, Q5, Q6, Q7, Q8 (`uses device` and `uses component` forms, details open), Q9, Q11 (see `ui-compositor-decisions.md`).
+- Answered: Q2, Q3, Q4, Q5, Q6, Q7, Q8 (`uses device` and `uses component` forms, details open), Q9, Q11, Q12 (see `ui-compositor-decisions.md`).
 - Q8 (program exporters, H3): implemented in the Meddle parser, the image builder and Kickstart (2026-10-18). No import uses `via component` yet, so a compositor started as a program still needs its first `via component` import exercised by a test.
 - `input-decisions.md` D1 to D4 block the real event record used by C1 and C4.
 - `input-implementation-plan.md` INPUT1 supplied the event record (`libs/input-event`), and USB4 supplies the producer, for C5.
@@ -48,9 +49,10 @@ are in `input-implementation-plan.md`.
   draws into its surface; `just test-shell` checks the lamp through it, and
   `just test-compositor` checks that the background reaches the framebuffer. The
   production image now carries the USB stack, so the compositor takes the pointer
-  and keyboard there. Still open: events to clients (C4), checking the cursor
-  against injected pointer motion under QEMU, resizing and an overlay layer (C6),
-  and hardware checks of the display and the cursor.
+  and keyboard there. Events reach clients (C4, see `ui-compositor-completed.md`).
+  Still open: checking the cursor against injected pointer motion under QEMU,
+  resizing and an overlay layer (C6), and hardware checks of the display and the
+  cursor.
 
 ## C1: pure routing library
 
@@ -86,16 +88,6 @@ are in `input-implementation-plan.md`.
   commits each frame.
 - Exit: `just test-shell` still runs its command checks, with the lamp visible
   inside a window. The lamp report is printed from the first client's surface.
-
-## C4: per-client event channel and routing
-
-- One event channel per client (Q3), receive mode, drop-and-count on overflow
-  (Q11), `Dropped` and resync from state.
-- Routing from the C1 state machine with an injected loopback producer, for
-  example a test program that sends scripted pointer and key events.
-- Exit: a scripted sequence (click to focus, drag across windows, key to the
-  focused window) produces the expected events at the client, checked by a test
-  program that exits with a status.
 
 ## C5: real input
 

@@ -29,6 +29,7 @@ libuser = { workspace = true }
 log = { workspace = true }
 rlsf = { workspace = true }
 room = { workspace = true }
+vesper-input-event = { workspace = true }
 
 [[bin]]
 name = "wood"

@@ -8,14 +8,32 @@
 ## premultiplied ARGB (alpha in the highest byte, the color channels already
 ## multiplied by it), `width * 4` bytes to a row. The client maps the Frames
 ## where it likes in its surface window (`SURFACE_WINDOW_VA` of `libdevice-driver`),
-## draws, and tells the compositor which part changed with `commit`. Prototype:
-## edited in place.
+## draws, and tells the compositor which part changed with `commit`.
+##
+## Input reaches the client's windows on the io-channel the client shares with
+## the compositor, in receive mode: the client posts empty buffers of the
+## channel's data page, and the compositor returns each holding the 24-byte
+## records (see `libs/input-event`) of one routed input frame for the client's
+## windows, its length cut to them. For each window its records come together,
+## closed by a `Sync`, with the window's id in `subject`: `Key` for keyboard
+## keys (to the window with keyboard focus) and mouse buttons (to the window
+## the pointer's events go to), value 1 down and 0 up; `Abs` X and Y for the
+## pointer's position in the window, `Rel` wheel; `Enter` and `Leave` when the
+## pointer comes and goes; `Focus` with value 1 when the window gains keyboard
+## focus and 0 when it loses it. A new window gets the focus, and a click
+## moves it. A frame that finds no buffer posted, or one too small, is lost
+## whole, and the next one the client gets starts with a `Dropped` record
+## (`subject` 0): the client then rebuilds its state with `snapshot`.
+## Prototype: edited in place.
 local interface compositor_v1
 {
     ## The area the compositor tells each client apart by (the key a call comes
-    ## through carries the base of the client's area as its badge) and reads
-    ## window titles from.
+    ## through carries the base of the client's area as its badge), reads
+    ## window titles from and writes snapshots to.
     data 4096;
+
+    ## The io-channel input events travel on: a control page and one data page.
+    channel 1;
 
     ## Every function receives the badge of the key it was called through.
     badged;
@@ -43,7 +61,8 @@ local interface compositor_v1
     exception no_window {}
 
     ## The call did not come through a key the compositor gave a client, or the
-    ## title is not inside the client's area or longer than 64 bytes.
+    ## title is not inside the client's area or longer than 64 bytes, or the
+    ## stage of a snapshot is not inside it or too small for the snapshot.
     exception not_permitted {}
 
     ## The order of the color components in the pixels of the display, and so of
@@ -85,4 +104,15 @@ local interface compositor_v1
     ## Take the window away; its surface memory is not given back.
     destroy(card32 window)
         raises (no_window);
+
+    ## Write at the start of `stage` the records that rebuild what the
+    ## caller's windows were sent, as after a `Dropped` record: for the window
+    ## with keyboard focus a `Focus` with value 1 and a `Key` down for every
+    ## key held, for the window the pointer's events go to an `Enter`, the
+    ## pointer's position in it and a `Key` down for every button held, each
+    ## window's records closed by a `Sync`. None of them is written for a
+    ## window that has neither. Returns the bytes written, a multiple of 24.
+    snapshot(octet& stage)
+        returns (card32 length)
+        raises (not_permitted);
 }

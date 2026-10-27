@@ -26,7 +26,7 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'compositor dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client'
+user_components := 'compositor dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -271,9 +271,9 @@ build-wood board='rpi3' features='qemu' image_features=features: (_cross-build '
 [group("test")]
 build-wood-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
 
-# Boot wood-test on raspi3b with the devices of test-compositor for `seconds`, save the screen and stop QEMU: the console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
+# Boot wood-test on raspi3b with the devices of test-compositor, wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. The console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
 [group("test")]
-test-wood board='rpi3' seconds='60' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board)
+test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/wood-test.log"
@@ -285,14 +285,75 @@ test-wood board='rpi3' seconds='60' features=test_kernel_features config=(board 
       -device usb-hub,port=1 -device usb-kbd,port=1.1 \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-' + config + '.bin' }}" < /dev/null > "$log" &
     qemu_pid=$!
-    sleep {{ seconds }}
-    printf 'screendump %s\n' "$screen" | nc -N -U "$monitor" > /dev/null
+    monitor_command() { printf '%s\n' "$1" | nc -N -U "$monitor" > /dev/null; }
+    # The engine runs and the keyboard is the compositor's before keys are pressed.
+    for _ in $(seq {{ seconds }}); do
+      grep -q "wood: INFO the engine started" "$log" && grep -q "compositor: device 1:" "$log" && break
+      sleep 1
+    done
+    sleep 5
+    monitor_command "sendkey esc"
     sleep 2
-    printf 'quit\n' | nc -N -U "$monitor" > /dev/null
+    monitor_command "sendkey down"
+    sleep 3
+    monitor_command "screendump $screen"
+    sleep 2
+    monitor_command "quit"
     wait "$qemu_pid"
     grep -q "compositor: frame 1 drew the background: true" "$log" || { echo "wood-test: the background did not reach the framebuffer"; exit 1; }
     grep -q "wood: INFO frame 1 presented: true" "$log" || { echo "wood-test: Wood presented no frame"; exit 1; }
-    echo "{{ ok_label }} Wood presented frames in its window; the screen is in $screen"
+    grep -q "wood: INFO focus gained" "$log" || { echo "wood-test: Wood's window did not get the focus"; exit 1; }
+    grep -q "wood: INFO key 0x29 down: doom key 0x1b" "$log" || { echo "wood-test: Escape did not reach Wood"; exit 1; }
+    grep -q "wood: INFO key 0x51 down: doom key 0xaf" "$log" || { echo "wood-test: Down did not reach Wood"; exit 1; }
+    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; the screen is in $screen"
+
+# Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
+[group("test")]
+build-window-events-test board='rpi3': (build-components board 'qemu' test_kernel_features) (_build-test-kernel 'window-events-test' board)
+
+# Boot window-events-test on raspi3b with a USB keyboard and mouse behind a hub: once window-events has made its windows (B, the newest, has the focus), click on A, drag over B, release and type `a` through the QEMU monitor; window-events checks what each window received and ends the run with the result. The console goes to target/window-events-test.log
+[group("test")]
+test-window-events board='rpi3' seconds='120' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-window-events-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/window-events-test.log"
+    monitor="{{ target_root }}/window-events-test-monitor.sock"
+    rm -f "$log" "$monitor"
+    {{ qemu }} -M raspi3b -display none -monitor "unix:$monitor,server,nowait" \
+      -chardev stdio,mux=on,id=char0,signal=off -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -device usb-hub,port=1 -device usb-kbd,port=1.1 -device usb-mouse,port=1.2 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'window-events-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    monitor_command() { printf '%s\n' "$1" | nc -N -U "$monitor" > /dev/null; }
+    # The windows exist and the compositor has the keyboard and the mouse before the script runs.
+    for _ in $(seq {{ seconds }}); do
+      grep -q "window-events: windows" "$log" && grep -q "compositor: device 1:" "$log" && grep -q "compositor: device 2:" "$log" && break
+      sleep 1
+    done
+    sleep 1
+    # The pointer starts in the middle of the screen, inside A.
+    monitor_command "mouse_button 1"
+    sleep 1
+    monitor_command "mouse_move 300 0"
+    sleep 1
+    monitor_command "mouse_button 0"
+    sleep 1
+    monitor_command "sendkey a"
+    for _ in $(seq 60); do
+      kill -0 "$qemu_pid" 2> /dev/null || break
+      sleep 1
+    done
+    if kill -0 "$qemu_pid" 2> /dev/null; then
+      monitor_command "quit"
+      wait "$qemu_pid"
+      echo "window-events-test: window-events did not finish; see $log"
+      exit 1
+    fi
+    wait "$qemu_pid"
+    status=$?
+    grep -a "window-events: [✅❌]" "$log"
+    [ "$status" -eq 0 ] || { echo "window-events-test: failed with status $status; see $log"; exit 1; }
+    echo "{{ ok_label }} a new window took the focus, a click moved it, the drag stayed with the window pressed on and the key reached the focused window"
 
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
 [group("test")]
@@ -363,11 +424,11 @@ qemu: (build 'rpi3' 'qemu')
     @rm -f qemu.log
     {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
 
-# Build wood-test and run it in QEMU with a display window: the compositor's screen with the lava lamp and Wood playing Doom's demos; the console (serial and semihosting) goes to the terminal and qemu.log
+# Build wood-test and run it in QEMU with a display window: the compositor's screen with the lava lamp and Wood playing Doom's demos. Wood's window has the keyboard focus as the newest window; clicking a window (the USB mouse behind the hub; click into QEMU's window to grab the pointer, Ctrl-Alt-G releases it) moves the focus. The console (serial and semihosting) goes to the terminal and qemu.log
 [group("emu")]
 qemu-wood features='qemu': (build-components 'rpi3' 'qemu' features) (build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features)
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
 
 # Build and run kernel in QEMU with GDB port
 [group("emu")]

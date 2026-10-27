@@ -10,14 +10,17 @@
 
 //! `wood`: the Room Doom engine as a Vesper program. It carves its stack and
 //! heap from its RAM, asks the compositor for a 640x400 window, and runs the
-//! engine with the IWAD from its bundled resource (`doom1_wad`). With no
-//! input yet, the engine plays its demos in the window.
+//! engine with the IWAD from its bundled resource (`doom1_wad`). The engine
+//! plays its demos in the window until keys arrive: the keys the compositor
+//! routes to the window, which has the focus when it is new or clicked.
 
 #[cfg(target_os = "vesper")]
 extern crate alloc;
 
 #[cfg(target_os = "vesper")]
 mod heap;
+#[cfg(target_os = "vesper")]
+mod keyboard;
 #[cfg(target_os = "vesper")]
 mod logger;
 #[cfg(target_os = "vesper")]
@@ -30,6 +33,7 @@ mod program {
     use {
         crate::{
             heap::{self, ENGINE_STACK_TOP},
+            keyboard::Keyboard,
             logger,
             platform::{WAD_NAME, Wood},
             window::Window,
@@ -71,9 +75,10 @@ mod program {
                 }
             }
         };
+        let keyboard = Keyboard::open(&compositor);
         let window = Window::create(init, compositor, order, table_slot);
 
-        let wood: &'static Wood = Box::leak(Box::new(Wood::new(window, timer, wad)));
+        let wood: &'static Wood = Box::leak(Box::new(Wood::new(window, keyboard, timer, wad)));
         // SAFETY: the engine's stack Frame is mapped (`heap::carve`) and
         // nothing else uses it; this Thread never comes back to its own stack.
         unsafe {

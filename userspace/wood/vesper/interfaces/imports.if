@@ -3,5 +3,7 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 # Wood draws the game in a window of the compositor, a program in the same
-# image.
-uses compositor_v1 via component compositor { pixel_order, create_window, commit, set_title, move_window }
+# image, and reads the keys the compositor routes to that window on the
+# interface's io-channel, rebuilding them with `snapshot` after records were
+# dropped.
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, set_title, move_window, snapshot }

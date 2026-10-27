@@ -7,11 +7,12 @@
 //! - The one file is the IWAD, served from its bundled resource; there is
 //!   nowhere to keep a configuration or a saved game, so writes fail.
 //! - Quitting parks the Thread: the rest of the image keeps running.
+//! - Keys are the ones the compositor routes to the window ([`Keyboard`]).
 //!
-//! There is no input and no sound yet: the engine plays its demos.
+//! There is no sound yet.
 
 use {
-    crate::window::Window,
+    crate::{keyboard::Keyboard, window::Window},
     core::cell::Cell,
     libobject::EventCountKey,
     room::engine::platform::{FileHandle, Platform},
@@ -29,6 +30,7 @@ const NANOS_PER_MILLI: u64 = 1_000_000;
 /// Vesper, as the engine sees it.
 pub struct Wood {
     window: Window,
+    keyboard: Keyboard,
     /// Wood's own `EventCount`, which nothing advances: the sleep timer.
     timer: EventCountKey,
     /// The IWAD's bytes, mapped read-only.
@@ -40,9 +42,15 @@ pub struct Wood {
 }
 
 impl Wood {
-    pub fn new(window: Window, timer: EventCountKey, wad: &'static [u8]) -> Self {
+    pub fn new(
+        window: Window,
+        keyboard: Keyboard,
+        timer: EventCountKey,
+        wad: &'static [u8],
+    ) -> Self {
         Self {
             window,
+            keyboard,
             timer,
             wad,
             started_ns: libuser::clock::now_ns(),
@@ -94,6 +102,10 @@ impl Platform for Wood {
         ticks
     }
 
+    fn key(&self) -> Option<(bool, u8)> {
+        self.keyboard.next_key(&self.window)
+    }
+
     fn set_window_title(&self, title: &str) {
         self.window.set_title(title);
     }
@@ -136,7 +148,7 @@ impl Platform for Wood {
         #[cfg(feature = "qemu")]
         {
             log::info!("the engine quit with exit status {code}");
-            libuser::semihosting::exit(code as u32)
+            libuser::semihosting::exit(code.cast_unsigned())
         }
         // On hardware the rest of the system keeps running: park the thread.
         #[cfg(not(feature = "qemu"))]

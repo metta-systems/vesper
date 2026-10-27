@@ -1,7 +1,7 @@
 [package]
 name = "metta-compositor-core"
 
-description = "Pure compositor logic for Vesper: windows and their stacking order, hit-testing, and the router that turns an input producer's frames into per-window events with focus and an implicit pointer grab. No I/O."
+description = "Pure compositor logic for Vesper: windows and their stacking order, hit-testing, the router that turns an input producer's frames into per-window events with focus and an implicit pointer grab, and the per-client event channel that carries them. No device I/O."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -22,6 +22,7 @@ maintenance = { status = "experimental" }
 host-tests = []
 
 [dependencies]
+libio-channel = { workspace = true }
 vesper-input-event = { workspace = true }
 
 # Shared by the compositor and its tests; host tests bring their own harness.

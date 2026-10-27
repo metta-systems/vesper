@@ -5,6 +5,7 @@ use {
     crate::shared::{self, MAX_TITLE, State, Surface},
     compositor_server::compositor_v1::{CompositorV1, Exception, PixelOrder as WireOrder},
     libcompositor_core::{
+        router::Output,
         surface::{FRAME_BITS, FRAME_BYTES, frames},
         windows::{Rect, Window},
     },
@@ -15,12 +16,16 @@ use {
         FrameAttribute, FrameKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
         export::init_return_key, thread::ThreadReturnKey,
     },
+    vesper_input_event::record::{EVENT_SIZE, Event},
 };
 
 /// Where the first window of the compositor goes, and how far each next one
 /// is from the one before.
 const FIRST_WINDOW: i32 = 24;
 const WINDOW_STEP: i32 = 36;
+
+/// Records of a snapshot: as many as one frame of the router sends.
+const MAX_SNAPSHOT: usize = libcompositor_core::router::MAX_ROUTED;
 
 /// The compositor, as clients see it.
 pub struct Compositor;
@@ -134,6 +139,12 @@ impl CompositorV1 for Compositor {
             state.surfaces[slot] = None;
             return Err(Exception::TooManyWindows);
         }
+        // A new window gets the keyboard focus; the window that had it hears
+        // it lost it.
+        let stamp = libuser::clock::now_ns();
+        let mut out = Output::new();
+        state.router.focus_window(id, stamp, &mut out);
+        state.deliver(&out, stamp);
         shared::wake();
         Ok(id)
     }
@@ -236,6 +247,36 @@ impl CompositorV1 for Compositor {
         state.remove_window(window);
         shared::wake();
         Ok(())
+    }
+
+    fn snapshot(badge: u64, stage: StageRec) -> Result<u32, Exception> {
+        let client = client_of(badge).ok_or(Exception::NotPermitted)?;
+        let (_, exported) = shared::init()
+            .area_for_badge(badge)
+            .ok_or(Exception::NotPermitted)?;
+        let area = DataArea {
+            base: exported.base,
+            len: exported.len,
+        };
+        let mut records = [Event::sync(0, 0); MAX_SNAPSHOT];
+        let count = {
+            let mut turn = shared::enter();
+            shared::state(&mut turn)
+                .router
+                .snapshot(client, libuser::clock::now_ns(), &mut records)
+        };
+        let length = count * EVENT_SIZE;
+        if !area.contains(&stage) || stage.len < length as u64 {
+            return Err(Exception::NotPermitted);
+        }
+        let mut offset = stage.base - area.base;
+        for record in &records[..count] {
+            if !area.write_bytes(offset, &record.to_bytes()) {
+                return Err(Exception::NotPermitted);
+            }
+            offset += EVENT_SIZE as u64;
+        }
+        Ok(u32::try_from(length).unwrap_or(u32::MAX))
     }
 }
 

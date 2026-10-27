@@ -60,6 +60,7 @@ members = [
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
   "kernel/tests/wood-test",
+  "kernel/tests/window-events-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -121,6 +122,7 @@ members = [
   "userspace/tests/usb/client",
   "userspace/tests/sd/client",
   "userspace/tests/input/trace",
+  "userspace/tests/compositor/events",
   "userspace/gui/compositor",
   "userspace/gui/compositor/client",
   "userspace/gui/compositor/server",

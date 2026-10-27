@@ -9,9 +9,10 @@
 //! Room Doom engine, loaded by Kickstart.
 //!
 //! Wood asks the compositor for a 640x400 window, reads the shareware IWAD
-//! from its resource and runs the engine, which plays its demos (there is no
-//! input yet). Its log and a line per power-of-two frame go to the
-//! semihosting console under QEMU.
+//! from its resource and runs the engine, which plays its demos until keys
+//! arrive: the window is the newest, so it has the keyboard focus, and the
+//! compositor sends it the keyboard's keys on its event channel. Its log and a
+//! line per power-of-two frame go to the semihosting console under QEMU.
 //!
 //! As in compositor-test, the boot Thread installs the report Notification key
 //! at `REPORT_SLOT` of the compositor's table and the compositor signals it once
@@ -205,9 +206,10 @@ pub fn run() -> ! {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
             } else if name == components::WOOD.name {
-                // Wood: five functions of compositor_v1, a window to map its
-                // surface in, and the IWAD.
-                assert_eq!(imports.len(), 5, "five functions of compositor_v1");
+                // Wood: six functions of compositor_v1 and its event channel,
+                // a window to map its surface in, and the IWAD.
+                assert_eq!(imports.len(), 6, "six functions of compositor_v1");
+                assert!(imports.iter().all(|record| record.channel_event != 0));
                 assert_ne!(init.map_window.l2, 0, "a window to map the surface");
                 assert!(init.resource(0).is_some(), "the IWAD resource");
             }

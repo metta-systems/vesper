@@ -2271,6 +2271,7 @@ name = "metta-compositor-core"
 version = "0.0.1"
 dependencies = [
  "vesper-input-event",
+ "vesper-io-channel",
 ]
 
 [[package]]
@@ -5238,6 +5239,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
+name = "window-events"
+version = "0.0.1"
+dependencies = [
+ "compositor-client",
+ "metta-compositor-core",
+ "vesper-device-driver",
+ "vesper-input-event",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "window-events-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5572,6 +5610,7 @@ dependencies = [
  "rlsf",
  "room",
  "vesper-device-driver",
+ "vesper-input-event",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",

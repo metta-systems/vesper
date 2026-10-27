@@ -1,20 +1,24 @@
-//! What the compositor's Threads share: the windows, the router, the damage and
-//! the surfaces, behind one [`Turnstile`].
+//! What the compositor's Threads share: the windows, the router, the damage,
+//! the surfaces and the clients' event channels, behind one [`Turnstile`].
 //!
 //! The first Thread reads input and moves the pointer, the calls clients make
 //! change windows, and the frame Thread draws what is damaged. Each of them
 //! enters the turnstile for as long as it takes to change or copy the state,
-//! and none holds a turn while it draws.
+//! and none holds a turn while it draws. Events go to the clients' channels
+//! under a turn, so each channel has one producer at a time.
 
 use {
     core::cell::UnsafeCell,
     libcompositor_core::{
         cursor,
         damage::Damage,
+        events::{EventChannel, Outbox, client_records, data_area, deliver},
         router::{Output, Router},
         windows::{Rect, Window},
     },
-    libdevice_driver::{DriverInit, INIT_VA, SURFACE_SLOTS, Turn, Turnstile, driver_init},
+    libdevice_driver::{
+        DriverInit, INIT_VA, MAX_AREAS, SURFACE_SLOTS, Turn, Turnstile, driver_init,
+    },
     libframebuffer::Framebuffer,
     libgraphics::PixelOrder,
     libobject::{EventCountKey, RawKey},
@@ -66,6 +70,9 @@ pub struct State {
     pub framebuffer: Framebuffer,
     /// Where the pointer was when the screen last needed to know.
     pub cursor: (i32, i32),
+    /// What each client's event channel lost, by the client's position among
+    /// the areas.
+    pub outboxes: [Outbox; MAX_AREAS],
 }
 
 impl State {
@@ -91,6 +98,37 @@ impl State {
             height,
             framebuffer,
             cursor,
+            outboxes: [Outbox::new(); MAX_AREAS],
+        }
+    }
+
+    /// Send each client the events of `out` that go to its windows, on its
+    /// event channel; `stamp` marks a `Dropped` record. A client without a
+    /// buffer posted loses them (see `libcompositor_core::events`).
+    pub fn deliver(&mut self, out: &Output, stamp: u64) {
+        for (index, area) in init().areas().iter().enumerate() {
+            if area.channel_base == 0 || area.channel_event == 0 {
+                continue;
+            }
+            let Some(outbox) = self.outboxes.get_mut(index) else {
+                continue;
+            };
+            let client = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
+            let records = client_records(out.items(), self.router.windows(), client);
+            // SAFETY: Kickstart mapped the channel's control page read/write
+            // at `channel_base`, and its data page after it, for the
+            // compositor's lifetime.
+            unsafe {
+                let channel = EventChannel::at(area.channel_base);
+                deliver(
+                    channel,
+                    data_area(area.channel_base),
+                    EventCountKey::from_key(RawKey::from_wire(area.channel_event)),
+                    outbox,
+                    records,
+                    stamp,
+                );
+            }
         }
     }
 

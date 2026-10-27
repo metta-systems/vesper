@@ -66,7 +66,7 @@ resources = ["font"]
 name = "font"
 file = "../../kickstart/resources/font8x8.bin"
 
-# Wood: the Room engine, playing its demos (it has no input yet) in a 640x400
+# Wood: the Room engine, playing its demos until keys arrive, in a 640x400
 # window of the compositor. `memory` is a 16 MiB RAM Untyped: 2 MiB for the
 # engine's stack, 12 MiB of heap for the engine's zone and tables, and the
 # table its window's Frames are lent into (see userspace/wood/vesper).

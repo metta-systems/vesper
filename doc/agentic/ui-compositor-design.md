@@ -69,14 +69,22 @@ flowchart LR
   `compositor_v1` functions. The client Thread migrates into the compositor, so a
   commit needs no queue of its own. Compositor state is protected by one lock,
   because more than one compositor Thread may run.
-- **Server to client: io-channel in receive mode.** The client posts empty IO_Recs,
-  and the compositor fills them with whole event records and advances the client's
-  EventCount. Records are the `input-event` record from `input-design.md`, with
-  coordinates translated to window-local space and the window id in `subject`.
-  Window-level notifications
-  (`Focus`, `Enter`, `Leave`, `ResizeOffer`, `CloseRequest`) are kinds of the same
-  record. Overflow follows the input design: drop, emit `Dropped`, and resync
-  from state.
+- **Server to client: io-channel in receive mode.** `compositor_v1` declares
+  `channel 1;`, so Kickstart gives each client one channel (Q3): a control page,
+  a data page and an EventCount the compositor advances, as `input_v1` does for
+  its client. The client posts empty IO_Recs, and the compositor fills one with
+  the records a routed input frame sends to the client's windows and advances the
+  client's EventCount. Records are the `input-event` record from
+  `input-design.md`, with coordinates translated to window-local space and the
+  window id in `subject`; each window's records end with a `Sync`. Window-level
+  notifications (`Focus`, `Enter`, `Leave`, `ResizeOffer`, `CloseRequest`) are
+  kinds of the same record. Overflow (Q11): a delivery that finds no buffer, or
+  one too small, is dropped whole, the next one starts with `Dropped` (`subject`
+  0), and the client resyncs with `compositor_v1.snapshot`, which writes the
+  records that rebuild its focus, held keys and pointer. Deliveries happen under
+  the compositor's turn, so each channel has one producer at a time: the input
+  Thread after each frame, and `create_window` for the focus a new window takes.
+  Both ends live in `userspace/libs/compositor-core` (`events`).
 - **Surfaces.** Pixels are 32-bit, in the framebuffer's native order, which
   `fb_v1.pixel_order` reports. Surfaces are ARGB with premultiplied alpha, blended by the compositor. Surface pixels contain no
   pointers, so the compositor does not need the same virtual address in every
@@ -95,14 +103,18 @@ flowchart LR
   background, normal windows, overlay (panel) and cursor.
 - **Input routing.** The compositor is the router. It clamps the pointer to the
   display, keeps button and modifier state through the `input-event` state
-  tracker, and gives focus on click, raising the window. A press makes an
-  implicit grab: motion and release go to that window until all buttons are up.
+  tracker, and gives focus to a new window (Q12) and on click, raising the
+  window. A press makes an implicit grab: motion and release go to that window
+  until all buttons are up.
   Hover produces enter and leave events. Keyboard events go to the focused window
   as physical codes; modifier keys are ordinary `Key` records for the physical press and
   release, and the client tracks which modifiers are active. Keymaps and key repeat stay in the
   consumer, as `input-design.md` D6 proposes. Compositor chords (Alt-drag to move)
   are consumed before delivery. Hit-testing uses window rectangles. Pointer motion
-  is coalesced into one event per client per `Sync` frame.
+  is coalesced into one event per client per `Sync` frame. Wood
+  (`userspace/wood/vesper`) is the first client that reads the channel: it maps
+  keyboard usages to Doom keys and releases held keys on losing the focus or on
+  `Dropped`.
 - **Decorations.** A client-side library. Version 1 has none; Alt-drag moves
   windows.
 - **Shell.** `draw` creates a window. The lava thread draws into the surface and

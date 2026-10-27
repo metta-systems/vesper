@@ -175,6 +175,18 @@ recommended. This applies to the compositor's client event channels. It is input
 related, so `input-decisions.md` D5 for the input channel itself is still to be
 entered there.
 
+## Q12. Keyboard focus for a new window
+
+Keyboard focus moves only on a pointer button press, so a window created
+while the user types gets no keys until it is clicked.
+
+- **A. A new window gets the focus (and is on top) when it is created**; a click
+  still moves the focus. The window that had it receives a `Focus` record with
+  value 0, the new one a `Focus` with value 1.
+- **B. Focus moves only on a click**, as before.
+
+Answer (2026-10-27): A, a new window gets focus on creation; a click still moves focus.
+
 ## Future work
 
 - **Separate `inputd`-style router.** A multiplexer between input producers and

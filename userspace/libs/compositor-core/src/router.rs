@@ -5,7 +5,9 @@
 //! `Sync`). Pointer motion moves the pointer, which stays on the screen. The
 //! first button pressed focuses the window under the pointer (or none) and
 //! raises it, and that window holds an implicit grab: every pointer event goes
-//! to it until the last button is released. Keys go to the focused window.
+//! to it until the last button is released. A new window gets the focus when
+//! the compositor gives it one ([`Router::focus_window`]). Keys go to the
+//! focused window.
 //! What a window receives is rewritten for it: its id in `subject`, the pointer
 //! in its own coordinates, and `Enter`, `Leave` and `Focus` records when the
 //! pointer or the focus moves. Each window's events of a frame end with a
@@ -188,6 +190,76 @@ impl Router {
                 *slot = None;
             }
         }
+    }
+
+    /// Give keyboard focus to window `id`, as a new window gets it: the window
+    /// that had it receives a `Focus` with value 0 and `id` one with value 1,
+    /// each closed by a `Sync`, added to `out`. Nothing is sent when `id`
+    /// already has focus or is not one of the windows.
+    pub fn focus_window(&mut self, id: u32, stamp: u64, out: &mut Output) {
+        if self.windows.get(id).is_none() {
+            return;
+        }
+        let mut sent = Sent::new();
+        self.set_focus(Some(id), stamp, &mut sent);
+        self.flush(&sent, stamp, out);
+    }
+
+    /// Write into `into` the records that rebuild what the windows of
+    /// `client` were sent, for a client that lost records: for the window
+    /// with focus a `Focus` with value 1 and a `Key` down for every key held,
+    /// for the window the pointer's events go to an `Enter`, the pointer's
+    /// position in it and a `Key` down for every button held, each window's
+    /// records closed by a `Sync`. Returns how many were written; records past
+    /// `into` are left out.
+    pub fn snapshot(&self, client: u32, stamp: u64, into: &mut [Event]) -> usize {
+        let owned = |id: Option<u32>| {
+            id.filter(|&id| {
+                self.windows
+                    .get(id)
+                    .is_some_and(|window| window.client == client)
+            })
+        };
+        let mut sent = Sent::new();
+        if let Some(focused) = owned(self.focus) {
+            sent.push(focused, Event::new(stamp, focused, Kind::Focus, 0, 1));
+            for (_, state) in self.devices.iter().flatten() {
+                state.for_each_down(|held| {
+                    if page_of(held) != page::BUTTON {
+                        sent.push(
+                            focused,
+                            Event::new(stamp, focused, Kind::Key, held, KEY_DOWN),
+                        );
+                    }
+                });
+            }
+        }
+        if let Some(hovered) = owned(self.hover) {
+            sent.push(hovered, Event::new(stamp, hovered, Kind::Enter, 0, 0));
+            self.send_position(hovered, stamp, &mut sent);
+            for bit in 0..32_u16 {
+                if self.buttons & (1 << bit) != 0 {
+                    sent.push(
+                        hovered,
+                        Event::new(
+                            stamp,
+                            hovered,
+                            Kind::Key,
+                            code(page::BUTTON, bit + 1),
+                            KEY_DOWN,
+                        ),
+                    );
+                }
+            }
+        }
+        let mut out = Output::new();
+        let _overflowed = group(&sent, stamp, &mut out);
+        let mut count = 0;
+        for (slot, routed) in into.iter_mut().zip(out.items()) {
+            *slot = routed.event;
+            count += 1;
+        }
+        count
     }
 
     /// Fold one record of the producer into the router. A `Sync` ends the
@@ -453,28 +525,36 @@ impl Router {
     /// Write what was sent to `out`, each window's events together and ending
     /// with a `Sync`.
     fn flush(&mut self, sent: &Sent, stamp: u64, out: &mut Output) {
-        let mut done = [0_u32; MAX_ROUTED];
-        let mut windows = 0;
-        for first in sent.items() {
-            if done[..windows].contains(&first.window) {
-                continue;
-            }
-            done[windows] = first.window;
-            windows += 1;
-            for routed in sent.items().iter().filter(|r| r.window == first.window) {
-                if !out.push(*routed) {
-                    self.counters.overflowed += 1;
-                }
-            }
-            let closing = Routed {
-                window: first.window,
-                event: Event::sync(stamp, first.window),
-            };
-            if !out.push(closing) {
-                self.counters.overflowed += 1;
+        self.counters.overflowed += group(sent, stamp, out);
+    }
+}
+
+/// Write `sent` to `out`, each window's events together and ending with a
+/// `Sync`. Returns how many events did not fit.
+fn group(sent: &Sent, stamp: u64, out: &mut Output) -> u32 {
+    let mut overflowed = 0;
+    let mut done = [0_u32; MAX_ROUTED];
+    let mut windows = 0;
+    for first in sent.items() {
+        if done[..windows].contains(&first.window) {
+            continue;
+        }
+        done[windows] = first.window;
+        windows += 1;
+        for routed in sent.items().iter().filter(|r| r.window == first.window) {
+            if !out.push(*routed) {
+                overflowed += 1;
             }
         }
+        let closing = Routed {
+            window: first.window,
+            event: Event::sync(stamp, first.window),
+        };
+        if !out.push(closing) {
+            overflowed += 1;
+        }
     }
+    overflowed
 }
 
 /// `value + delta`, kept inside `0..size`.

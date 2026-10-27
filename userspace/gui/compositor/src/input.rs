@@ -2,10 +2,10 @@
 //! router.
 //!
 //! The compositor posts empty buffers on the `input_v1` io-channel, folds the
-//! records that come back into the router and traces what each window is to
-//! receive on the serial channel, so a person at a mouse and a keyboard sees
-//! the pointer, the focus, the implicit grab and the keys follow the routing
-//! rules.
+//! records that come back into the router, sends what each window is to
+//! receive to its client's event channel, and traces it on the serial
+//! channel, so a person at a mouse and a keyboard sees the pointer, the focus,
+//! the implicit grab and the keys follow the routing rules.
 //!
 //! A device the stream added before the compositor posted a buffer, and the
 //! records a `Dropped` marker says were lost, are recovered with the calls
@@ -113,7 +113,9 @@ fn resync(input: &Input<'_>, subject: u32, out: &mut Output) {
 }
 
 /// Read the input stream for good, if the compositor has one. Returns when it
-/// has none.
+/// has none. Its frame is its own, apart from `main`'s set-up: the router
+/// under it needs the stack.
+#[inline(never)]
 pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
     let Some(area) = client.data_area() else {
         trace!(trace, "compositor: no input producer");
@@ -203,19 +205,18 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
                 continue;
             };
             let length = usize::try_from(rec.len).unwrap_or(0).min(BUFFER_LEN);
-            let mut bytes = [0_u8; BUFFER_LEN];
-            for (offset, byte) in bytes[..length].iter_mut().enumerate() {
-                // SAFETY: the buffer lies in the channel's data page, mapped
-                // read/write; the producer gave it back.
-                *byte = unsafe {
-                    core::ptr::with_exposed_provenance::<u8>(
-                        usize::try_from(rec.base).unwrap_or(0) + offset,
-                    )
-                    .read_volatile()
-                };
-            }
-            for record in bytes[..length].chunks(EVENT_SIZE) {
-                let Ok(event) = Event::from_bytes(record) else {
+            let base = usize::try_from(rec.base).unwrap_or(0);
+            // Record by record, so the stack holds one of them, not the buffer.
+            for start in (0..length / EVENT_SIZE).map(|index| base + index * EVENT_SIZE) {
+                let mut record = [0_u8; EVENT_SIZE];
+                for (offset, byte) in record.iter_mut().enumerate() {
+                    // SAFETY: the buffer lies in the channel's data page,
+                    // mapped read/write; the producer gave it back.
+                    *byte = unsafe {
+                        core::ptr::with_exposed_provenance::<u8>(start + offset).read_volatile()
+                    };
+                }
+                let Ok(event) = Event::from_bytes(&record) else {
                     trace!(trace, "compositor: a bad record");
                     continue;
                 };
@@ -244,6 +245,10 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
                 }
                 if event.kind == Kind::Sync {
                     report(trace, &out);
+                    {
+                        let mut turn = shared::enter();
+                        shared::state(&mut turn).deliver(&out, event.timestamp);
+                    }
                     out.clear();
                 }
             }

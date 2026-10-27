@@ -1,0 +1,68 @@
+# What window-events-test bundles (see vesper-image-build): compositor-test's
+# DWC2 host controller component, USB core, USB HID component (it claims the
+# keyboard and the mouse), mailbox and fb components, PL011 driver and
+# compositor, which holds the serial channel and traces what it routes, plus
+# window-events, a client of the compositor that checks the events its windows
+# receive and ends the run with the result, and the root dispatcher.
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+serial = true
+memory = 33554432
+
+# Two windows, A and B, whose events the program checks. `memory` leaves room
+# for the table their surfaces' Frames are lent into.
+[[component]]
+name = "window_events"
+binary = "window-events"
+interfaces = "../../../userspace/tests/compositor/events/interfaces"
+active = true
+program = true
+memory = 131072
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

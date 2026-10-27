@@ -654,3 +654,294 @@ mod drawing {
         assert_eq!(display[0], 0);
     }
 }
+
+/// Host tests of focus on window creation, the client's state snapshot and the
+/// client event channel with its drop-newest policy.
+#[cfg(test)]
+mod client_events {
+    use {
+        compositor_core::{
+            events::{
+                BUFFER_BYTES, BUFFERS, EventChannel, Outbox, Receiver, client_records, data_area,
+                deliver,
+            },
+            router::{Output, Routed, Router},
+            windows::{Rect, Window},
+        },
+        libio_channel::NoEvent,
+        vesper_input_event::{
+            record::{EVENT_SIZE, Event, KEY_DOWN, KEY_UP, Kind},
+            usage::{code, generic_desktop, page},
+        },
+    };
+
+    const LEFT: u32 = 0x0009_0001;
+    const A: u32 = 0x0007_0004;
+
+    fn window(id: u32, client: u32, x: i32, y: i32) -> Window {
+        Window {
+            id,
+            client,
+            rect: Rect {
+                x,
+                y,
+                width: 100,
+                height: 100,
+            },
+        }
+    }
+
+    fn frame(router: &mut Router, events: &[Event]) -> Vec<Routed> {
+        let mut out = Output::new();
+        for event in events {
+            router.feed(event, &mut out);
+        }
+        router.feed(&Event::sync(5, 1), &mut out);
+        out.items().to_vec()
+    }
+
+    fn kinds(routed: &[Routed], window: u32) -> Vec<(Kind, u32, i32)> {
+        routed
+            .iter()
+            .filter(|r| r.window == window)
+            .map(|r| (r.event.kind, r.event.code, r.event.value))
+            .collect()
+    }
+
+    /// Pointer motion by `dx`, `dy`.
+    fn motion(dx: i32, dy: i32) -> [Event; 2] {
+        let axis =
+            |usage, value| Event::new(5, 1, Kind::Rel, code(page::GENERIC_DESKTOP, usage), value);
+        [axis(generic_desktop::X, dx), axis(generic_desktop::Y, dy)]
+    }
+
+    /// A router with the keyboard as device 1 and windows 1 (client 1, at
+    /// 0,0) and 2 (client 2, at 200,0) on a 400x300 screen.
+    fn router() -> Router {
+        let mut router = Router::new(400, 300);
+        let mut out = Output::new();
+        router.feed(&Event::new(0, 1, Kind::DeviceAdded, 0, 0), &mut out);
+        router.feed(&Event::sync(0, 1), &mut out);
+        assert!(router.windows_mut().add(window(1, 1, 0, 0)));
+        assert!(router.windows_mut().add(window(2, 2, 200, 0)));
+        router
+    }
+
+    #[test]
+    fn a_new_window_gets_the_focus() {
+        let mut router = router();
+        let mut out = Output::new();
+        router.focus_window(1, 7, &mut out);
+        assert_eq!(router.focus(), Some(1));
+        assert_eq!(
+            kinds(out.items(), 1),
+            [(Kind::Focus, 0, 1), (Kind::Sync, 0, 0)]
+        );
+        // The next window takes it: the old one hears it lost it.
+        out.clear();
+        router.focus_window(2, 8, &mut out);
+        assert_eq!(router.focus(), Some(2));
+        assert_eq!(
+            kinds(out.items(), 1),
+            [(Kind::Focus, 0, 0), (Kind::Sync, 0, 0)]
+        );
+        assert_eq!(
+            kinds(out.items(), 2),
+            [(Kind::Focus, 0, 1), (Kind::Sync, 0, 0)]
+        );
+        assert!(out.items().iter().all(|r| r.event.subject == r.window));
+        // Keys go to it.
+        let sent = frame(&mut router, &[Event::new(9, 1, Kind::Key, A, KEY_DOWN)]);
+        assert_eq!(
+            kinds(&sent, 2),
+            [(Kind::Key, A, KEY_DOWN), (Kind::Sync, 0, 0)]
+        );
+        // Focusing the focused window, or one that is not there, sends nothing.
+        out.clear();
+        router.focus_window(2, 10, &mut out);
+        router.focus_window(9, 10, &mut out);
+        assert!(out.items().is_empty());
+        assert_eq!(router.focus(), Some(2));
+    }
+
+    #[test]
+    fn a_click_still_moves_the_focus_from_a_new_window() {
+        let mut router = router();
+        let mut out = Output::new();
+        router.focus_window(2, 7, &mut out);
+        // The pointer starts at 200,150, outside both; go to window 1 and press.
+        frame(&mut router, &motion(-150, -100));
+        let sent = frame(&mut router, &[Event::new(5, 1, Kind::Key, LEFT, KEY_DOWN)]);
+        assert_eq!(router.focus(), Some(1));
+        assert_eq!(kinds(&sent, 2), [(Kind::Focus, 0, 0), (Kind::Sync, 0, 0)]);
+        assert_eq!(kinds(&sent, 1)[0], (Kind::Focus, 0, 1));
+    }
+
+    #[test]
+    fn a_snapshot_rebuilds_focus_keys_and_pointer_for_one_client() {
+        let mut router = router();
+        let mut out = Output::new();
+        router.focus_window(1, 7, &mut out);
+        // Into window 1 at 50,50, a key held and the left button held.
+        let [dx, dy] = motion(-150, -100);
+        frame(
+            &mut router,
+            &[
+                dx,
+                dy,
+                Event::new(5, 1, Kind::Key, A, KEY_DOWN),
+                Event::new(5, 1, Kind::Key, LEFT, KEY_DOWN),
+            ],
+        );
+        let mut records = [Event::sync(0, 0); 16];
+        let count = router.snapshot(1, 3, &mut records);
+        let got: Vec<(u32, Kind, u32, i32)> = records[..count]
+            .iter()
+            .map(|event| (event.subject, event.kind, event.code, event.value))
+            .collect();
+        let x = code(page::GENERIC_DESKTOP, generic_desktop::X);
+        let y = code(page::GENERIC_DESKTOP, generic_desktop::Y);
+        assert_eq!(
+            got,
+            [
+                (1, Kind::Focus, 0, 1),
+                (1, Kind::Key, A, KEY_DOWN),
+                (1, Kind::Enter, 0, 0),
+                (1, Kind::Abs, x, 50),
+                (1, Kind::Abs, y, 50),
+                (1, Kind::Key, LEFT, KEY_DOWN),
+                (1, Kind::Sync, 0, 0),
+            ]
+        );
+        // The other client has nothing to rebuild.
+        assert_eq!(router.snapshot(2, 3, &mut records), 0);
+        // Records past the slice are left out.
+        assert_eq!(router.snapshot(1, 3, &mut records[..2]), 2);
+    }
+
+    #[test]
+    fn a_client_receives_only_its_own_windows() {
+        let routed = [
+            Routed {
+                window: 1,
+                event: Event::new(1, 1, Kind::Focus, 0, 0),
+            },
+            Routed {
+                window: 1,
+                event: Event::sync(1, 1),
+            },
+            Routed {
+                window: 2,
+                event: Event::new(1, 2, Kind::Focus, 0, 1),
+            },
+            Routed {
+                window: 2,
+                event: Event::sync(1, 2),
+            },
+            // A window that went away gets nothing.
+            Routed {
+                window: 9,
+                event: Event::sync(1, 9),
+            },
+        ];
+        let records: Vec<Event> = client_records(&routed, router().windows(), 2).collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].kind, Kind::Focus);
+        assert_eq!(records[0].subject, 2);
+        assert_eq!(records[1].kind, Kind::Sync);
+    }
+
+    #[test]
+    fn an_outbox_drops_the_newest_and_marks_the_next_delivery() {
+        let mut outbox = Outbox::new();
+        // Two records fit a buffer of 1024 bytes, with no marker.
+        assert_eq!(outbox.admit(2, 2, Some(1024)), Some(None));
+        assert!(!outbox.missed());
+        // No buffer posted: dropped.
+        assert_eq!(outbox.admit(2, 3, None), None);
+        assert!(outbox.missed());
+        // A buffer too small for the delivery: dropped too.
+        assert_eq!(outbox.admit(2, 4, Some(24)), None);
+        assert_eq!(outbox.dropped(), 2);
+        // The next delivery that fits starts with one `Dropped`, stamped.
+        let marker = outbox.admit(2, 5, Some(1024)).unwrap().unwrap();
+        assert_eq!(
+            (marker.kind, marker.subject, marker.timestamp),
+            (Kind::Dropped, 0, 5)
+        );
+        assert!(!outbox.missed());
+        assert_eq!(outbox.admit(2, 6, Some(1024)), Some(None), "once");
+        // The marker counts toward the size: it must fit with the records.
+        assert_eq!(outbox.admit(2, 7, None), None);
+        assert_eq!(outbox.admit(2, 8, Some(2 * EVENT_SIZE as u64)), None);
+        assert_eq!(
+            outbox
+                .admit(2, 9, Some(3 * EVENT_SIZE as u64))
+                .map(|marker| marker.is_some()),
+            Some(true)
+        );
+        assert_eq!(outbox.dropped(), 4);
+    }
+
+    /// A control page and the data page after it, as Kickstart maps them.
+    #[repr(C, align(4096))]
+    struct Pages([u8; 8192]);
+
+    #[test]
+    fn deliveries_reach_the_receiver_and_a_full_channel_drops_the_newest() {
+        let pages = Box::new(Pages([0; 8192]));
+        let control = (&raw const pages.0).expose_provenance() as u64;
+        // SAFETY: the pages are zeroed, aligned and live until the end of the test.
+        let channel = unsafe { EventChannel::at(control) };
+        let data = data_area(control);
+        // SAFETY: the data page is readable for the receiver's life.
+        let mut receiver = unsafe { Receiver::new(channel, data, NoEvent) };
+        let mut outbox = Outbox::new();
+        let key = |stamp: u64, value: i32| {
+            [
+                Event::new(stamp, 1, Kind::Key, A, value),
+                Event::sync(stamp, 1),
+            ]
+        };
+        let send = |outbox: &mut Outbox, records: &[Event], stamp: u64| {
+            // SAFETY: the data page is mapped read/write.
+            unsafe {
+                deliver(
+                    channel,
+                    data,
+                    NoEvent,
+                    outbox,
+                    records.iter().copied(),
+                    stamp,
+                )
+            }
+        };
+        // Every posted buffer takes one delivery; the one after them is dropped.
+        for stamp in 0..BUFFERS {
+            assert!(send(&mut outbox, &key(stamp, KEY_DOWN), stamp));
+        }
+        assert!(!send(&mut outbox, &key(99, KEY_UP), 99));
+        assert_eq!(outbox.dropped(), 1);
+        // Nothing for a client is no delivery and loses nothing.
+        assert!(send(&mut outbox, &[], 100));
+        assert_eq!(outbox.dropped(), 1);
+
+        let delivered: Vec<(u64, Kind)> = core::iter::from_fn(|| receiver.next_event())
+            .map(|event| (event.timestamp, event.kind))
+            .collect();
+        let expected: Vec<(u64, Kind)> = (0..BUFFERS)
+            .flat_map(|stamp| [(stamp, Kind::Key), (stamp, Kind::Sync)])
+            .collect();
+        assert_eq!(delivered, expected, "the dropped delivery never arrives");
+
+        // The receiver posted its buffers again: the next delivery starts with
+        // `Dropped`, and the client resyncs from there.
+        assert!(send(&mut outbox, &key(101, KEY_UP), 101));
+        let kinds: Vec<Kind> = core::iter::from_fn(|| receiver.next_event())
+            .map(|event| event.kind)
+            .collect();
+        assert_eq!(kinds, [Kind::Dropped, Kind::Key, Kind::Sync]);
+        assert_eq!(receiver.rejected(), 0);
+        assert!(BUFFER_BYTES >= 3 * EVENT_SIZE as u64);
+    }
+}

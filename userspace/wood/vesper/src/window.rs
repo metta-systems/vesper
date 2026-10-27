@@ -18,6 +18,7 @@ use {
         UntypedKey,
     },
     room::engine::platform::{DOOMGENERIC_RESX, DOOMGENERIC_RESY},
+    vesper_input_event::record::{EVENT_SIZE, Event},
 };
 
 /// The window's size: the engine's frame, unscaled.
@@ -144,6 +145,37 @@ impl Window {
         {
             let _titled = self.compositor.set_title(self.id, stage);
         }
+    }
+
+    /// The records that rebuild what the compositor sent Wood's window
+    /// (`compositor_v1.snapshot`), into `into`. Returns how many were read;
+    /// none when the call fails.
+    pub fn snapshot(&self, into: &mut [Event]) -> usize {
+        let bytes = (into.len() * EVENT_SIZE) as u64;
+        let Some(area) = self.compositor.data_area() else {
+            return 0;
+        };
+        let Some(stage) = area.reference(0, bytes) else {
+            return 0;
+        };
+        let Ok(length) = self.compositor.snapshot(stage) else {
+            return 0;
+        };
+        let length = usize::try_from(length)
+            .unwrap_or(0)
+            .min(into.len() * EVENT_SIZE);
+        let mut record = [0_u8; EVENT_SIZE];
+        let mut count = 0;
+        for offset in (0..length).step_by(EVENT_SIZE) {
+            if !area.read_bytes(offset as u64, &mut record) {
+                break;
+            }
+            if let Ok(event) = Event::from_bytes(&record) {
+                into[count] = event;
+                count += 1;
+            }
+        }
+        count
     }
 
     /// Copy `frame` (`WIDTH` by `HEIGHT` pixels of `0x00RRGGBB`, as the
