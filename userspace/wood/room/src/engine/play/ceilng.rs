@@ -150,12 +150,7 @@ impl Default for CeilingState {
 /// reverse direction for that variant.
 ///
 /// Corresponds to `T_MoveCeiling` in `p_ceilng.c`.
-///
-/// # Safety
-///
-/// The ceiling's `sector` must belong to the current map, and every thing
-/// linked into the blockmap must be live (see `T_MovePlane`).
-pub unsafe fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
+pub fn T_MoveCeiling(world: &mut World, ceiling_id: CeilingId) {
     let ceiling = world.thinkers.ceilings[ceiling_id];
     let res = T_MovePlane(
         world,

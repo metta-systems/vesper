@@ -12,6 +12,9 @@
 //! is consulted in preference to the linear scan once present.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The lump directory and cache are raw zone pointers handled in C's
+// whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod checksum;
 pub mod file;

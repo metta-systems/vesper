@@ -141,12 +141,11 @@ impl Default for PsprState {
 ///
 /// Mirrors `P_SetPsprite` in `p_pspr.c`.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `player_id`'s `mo` must name a map object of the loaded level (the
-/// weapon actions read it). `position` must be in `0..NUMPSPRITES`.
-/// `stnum` must be a valid state index or `S_NULL` (0).
-pub unsafe fn P_SetPsprite(world: &mut World, player_id: PlayerId, position: i32, stnum: i32) {
+/// If `position` is not in `0..NUMPSPRITES`, or `stnum` is neither a state
+/// index nor `S_NULL` (0).
+pub fn P_SetPsprite(world: &mut World, player_id: PlayerId, position: i32, stnum: i32) {
     let position = position as usize;
 
     let mut stnum = stnum;
@@ -209,11 +208,7 @@ pub fn P_CalcSwing(world: &mut World, player: PlayerId) {
 
 /// Begin the raise animation for the pending weapon by setting the weapon
 /// psprite to its `upstate` and positioning it at `WEAPONBOTTOM`.
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_BringUpWeapon(world: &mut World, player_id: PlayerId) {
+pub fn P_BringUpWeapon(world: &mut World, player_id: PlayerId) {
     let pendingweapon = {
         let player = &mut world.players[player_id];
         if player.pendingweapon == wp_nochange {
@@ -238,11 +233,7 @@ pub unsafe fn P_BringUpWeapon(world: &mut World, player_id: PlayerId) {
 /// Return `1` if the player has enough ammo to fire the ready weapon, `0`
 /// otherwise.  When out of ammo, selects the next best weapon and begins
 /// lowering the current one.
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_CheckAmmo(world: &mut World, player_id: PlayerId) -> i32 {
+pub fn P_CheckAmmo(world: &mut World, player_id: PlayerId) -> i32 {
     let player = &mut world.players[player_id];
     let ammo = weaponinfo[player.readyweapon as usize].ammo;
 
@@ -309,11 +300,7 @@ pub unsafe fn P_CheckAmmo(world: &mut World, player_id: PlayerId) -> i32 {
 /// Check ammo and, if sufficient, put the player mobj into the attack state
 /// and transition the weapon psprite to its attack state.  Also alerts nearby
 /// monsters via `P_NoiseAlert`.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_FireWeapon(world: &mut World, player: PlayerId) {
+pub fn P_FireWeapon(world: &mut World, player: PlayerId) {
     if P_CheckAmmo(world, player) == 0 {
         return;
     }
@@ -327,24 +314,15 @@ pub unsafe fn P_FireWeapon(world: &mut World, player: PlayerId) {
 }
 
 /// Begin lowering the current weapon (called on player death or weapon switch).
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_DropWeapon(world: &mut World, player: PlayerId) {
+pub fn P_DropWeapon(world: &mut World, player: PlayerId) {
     let downstate = weaponinfo[world.players[player].readyweapon as usize].downstate;
     P_SetPsprite(world, player, 0, downstate);
 }
 
 /// Weapon action: idle state — bob the weapon, check for fire or weapon
 /// change, and return the player mobj to the walking state if it is still in
-/// an attack state.
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-/// `psprite` must be the weapon psprite slot.
-pub unsafe fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usize) {
+/// an attack state. `psprite` is the weapon psprite slot.
+pub fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usize) {
     let mo_id = world.players[player_id].mo();
 
     // Get out of attack state.
@@ -394,11 +372,7 @@ pub unsafe fn A_WeaponReady(world: &mut World, player_id: PlayerId, psprite: usi
 ///
 /// If the attack button is still held and no weapon change is pending, increment
 /// `refire` and call `P_FireWeapon`; otherwise reset `refire` and check ammo.
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_ReFire(world: &mut World, player_id: PlayerId, _psprite: usize) {
+pub fn A_ReFire(world: &mut World, player_id: PlayerId, _psprite: usize) {
     let player = &mut world.players[player_id];
     if player.cmd.buttons & BT_ATTACK != 0
         && player.pendingweapon == wp_nochange
@@ -416,24 +390,16 @@ pub unsafe fn A_ReFire(world: &mut World, player_id: PlayerId, _psprite: usize) 
 ///
 /// Used by the super shotgun after firing to ensure the player still has
 /// shells before returning to the ready state.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_CheckReload(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_CheckReload(world: &mut World, player: PlayerId, _psprite: usize) {
     P_CheckAmmo(world, player);
 }
 
 /// Weapon action: scroll the weapon psprite down by `LOWERSPEED` each tic.
 ///
 /// When the sprite reaches `WEAPONBOTTOM`, switches to the pending weapon
-/// (or parks the weapon off-screen if the player is dead).
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-/// `psprite` must be the weapon psprite slot.
-pub unsafe fn A_Lower(world: &mut World, player_id: PlayerId, psprite: usize) {
+/// (or parks the weapon off-screen if the player is dead). `psprite` is the
+/// weapon psprite slot.
+pub fn A_Lower(world: &mut World, player_id: PlayerId, psprite: usize) {
     let player = &mut world.players[player_id];
     player.psprites[psprite].sy += LOWERSPEED;
 
@@ -462,13 +428,8 @@ pub unsafe fn A_Lower(world: &mut World, player_id: PlayerId, psprite: usize) {
 /// Weapon action: scroll the weapon psprite up by `RAISESPEED` each tic.
 ///
 /// When the sprite reaches `WEAPONTOP`, transitions to the weapon's ready
-/// state.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-/// `psprite` must be the weapon psprite slot.
-pub unsafe fn A_Raise(world: &mut World, player: PlayerId, psprite: usize) {
+/// state. `psprite` is the weapon psprite slot.
+pub fn A_Raise(world: &mut World, player: PlayerId, psprite: usize) {
     let player_slot = &mut world.players[player];
     let psp = &mut player_slot.psprites[psprite];
     psp.sy -= RAISESPEED;
@@ -485,11 +446,7 @@ pub unsafe fn A_Raise(world: &mut World, player: PlayerId, psprite: usize) {
 
 /// Weapon action: set the player mobj to attack state 2 and activate the
 /// muzzle-flash psprite.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_GunFlash(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_GunFlash(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     P_SetMobjState(world, mo, S_PLAY_ATK2);
     let flashstate = weaponinfo[world.players[player].readyweapon as usize].flashstate;
@@ -500,11 +457,7 @@ pub unsafe fn A_GunFlash(world: &mut World, player: PlayerId, _psprite: usize) {
 ///
 /// Damage is 2-20 (×10 with Berserk).  If a target is hit, the player turns
 /// to face it.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
 
     let mut damage = ((P_Random(world) % 10) + 1) << 1;
@@ -531,11 +484,7 @@ pub unsafe fn A_Punch(world: &mut World, player: PlayerId, _psprite: usize) {
 ///
 /// Uses `MELEERANGE + 1` so the hit-puff does not skip the saw flash.  If
 /// a target is hit, the player's angle is guided toward it gradually.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_Saw(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_Saw(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo_id = world.players[player].mo();
 
     let damage = 2 * ((P_Random(world) % 10) + 1);
@@ -598,11 +547,7 @@ fn ready_weapon(player: &PlayerT) -> usize {
 }
 
 /// Weapon action: consume one rocket and spawn an `MT_ROCKET` projectile.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FireMissile(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FireMissile(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     DecreaseReadyAmmo(&mut world.players[player], 1);
     P_SpawnPlayerMissile(world, mo, MT_ROCKET);
@@ -610,11 +555,7 @@ pub unsafe fn A_FireMissile(world: &mut World, player: PlayerId, _psprite: usize
 
 /// Weapon action: consume `DEH_DEFAULT_BFG_CELLS_PER_SHOT` cells and spawn
 /// an `MT_BFG` projectile.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FireBFG(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FireBFG(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     DecreaseReadyAmmo(&mut world.players[player], DEH_DEFAULT_BFG_CELLS_PER_SHOT);
     P_SpawnPlayerMissile(world, mo, MT_BFG);
@@ -622,11 +563,7 @@ pub unsafe fn A_FireBFG(world: &mut World, player: PlayerId, _psprite: usize) {
 
 /// Weapon action: consume one cell, randomise the flash frame, and spawn an
 /// `MT_PLASMA` projectile.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FirePlasma(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FirePlasma(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     DecreaseReadyAmmo(&mut world.players[player], 1);
 
@@ -658,14 +595,8 @@ pub fn P_BulletSlope(world: &mut World, mo: MobjId) {
 
 /// Fire a single hitscan bullet from `mo`, using the pre-computed
 /// `bulletslope`.  If `accurate` is zero, a random horizontal spread is
-/// applied.
-///
-/// # Safety
-///
-/// `mo` must name an initialised map object of the level.
-/// `P_BulletSlope` must have been called before this function so that
-/// `bulletslope` is valid.
-pub unsafe fn P_GunShot(world: &mut World, mo: MobjId, accurate: i32) {
+/// applied. Call [`P_BulletSlope`] first so that `bulletslope` is current.
+pub fn P_GunShot(world: &mut World, mo: MobjId, accurate: i32) {
     let damage = 5 * ((P_Random(world) % 3) + 1);
     let mut angle = world.mobjs[mo].angle;
 
@@ -678,11 +609,7 @@ pub unsafe fn P_GunShot(world: &mut World, mo: MobjId, accurate: i32) {
 }
 
 /// Weapon action: fire the pistol (one accurate bullet, then spread on refire).
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FirePistol(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FirePistol(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     S_StartSound(world, mo, Sfx::Pistol as i32);
 
@@ -698,11 +625,7 @@ pub unsafe fn A_FirePistol(world: &mut World, player: PlayerId, _psprite: usize)
 }
 
 /// Weapon action: fire the shotgun (7 inaccurate pellets, 1 shell consumed).
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FireShotgun(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FireShotgun(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     S_StartSound(world, mo, Sfx::Shotgn as i32);
     P_SetMobjState(world, mo, S_PLAY_ATK2);
@@ -721,11 +644,7 @@ pub unsafe fn A_FireShotgun(world: &mut World, player: PlayerId, _psprite: usize
 
 /// Weapon action: fire the super shotgun (20 pellets with extra spread, 2
 /// shells consumed).
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_FireShotgun2(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_FireShotgun2(world: &mut World, player: PlayerId, _psprite: usize) {
     let mo = world.players[player].mo();
     S_StartSound(world, mo, Sfx::Dshtgn as i32);
     P_SetMobjState(world, mo, S_PLAY_ATK2);
@@ -748,13 +667,8 @@ pub unsafe fn A_FireShotgun2(world: &mut World, player: PlayerId, _psprite: usiz
 
 /// Weapon action: fire one chaingun bullet, alternating the flash frame
 /// between `S_CHAIN1` and `S_CHAIN2` to match the current psprite state.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.  `psprite`
-/// must be the weapon psprite slot, which must currently be in state
-/// `S_CHAIN1` or `S_CHAIN2`.
-pub unsafe fn A_FireCGun(world: &mut World, player: PlayerId, psprite: usize) {
+/// `psprite` is the weapon psprite slot, in state `S_CHAIN1` or `S_CHAIN2`.
+pub fn A_FireCGun(world: &mut World, player: PlayerId, psprite: usize) {
     let mo = world.players[player].mo();
     S_StartSound(world, mo, Sfx::Pistol as i32);
 
@@ -799,12 +713,9 @@ pub fn A_Light2(world: &mut World, player: PlayerId, _psprite: usize) {
 ///
 /// Iterates 40 evenly-spaced angles, aims from `mo->target` (the originating
 /// player), and spawns an `MT_EXTRABFG` explosion object on every hit target.
-///
-/// # Safety
-///
-/// `mo_id` must name a map object of the level; a missing `target` is
-/// replaced by the dummy object, as C's `P_AimLineAttack` does.
-pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
+/// A missing `target` is replaced by the dummy object, as C's
+/// `P_AimLineAttack` does.
+pub fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
     for i in 0..40 {
         // The ball is read afresh on each pass: aiming, spawning and
         // damaging run play code, as C reads it through its pointer.
@@ -841,22 +752,14 @@ pub unsafe fn A_BFGSpray(world: &mut World, mo_id: MobjId) {
 }
 
 /// Weapon action: play the BFG charging sound.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn A_BFGsound(world: &mut World, player: PlayerId, _psprite: usize) {
+pub fn A_BFGsound(world: &mut World, player: PlayerId, _psprite: usize) {
     S_StartSound(world, world.players[player].mo(), Sfx::Bfg as i32);
 }
 
 /// Initialise the player's psprite slots and begin raising the current weapon.
 ///
 /// Called at the start of each level for every active player.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_SetupPsprites(world: &mut World, player: PlayerId) {
+pub fn P_SetupPsprites(world: &mut World, player: PlayerId) {
     let player_slot = &mut world.players[player];
     for psprite in &mut player_slot.psprites {
         psprite.state = StateNum::NULL;
@@ -868,11 +771,7 @@ pub unsafe fn P_SetupPsprites(world: &mut World, player: PlayerId) {
 
 /// Advance the psprite state machine for all slots each tic and copy the
 /// weapon slot's position to the flash slot.
-///
-/// # Safety
-///
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_MovePsprites(world: &mut World, player_id: PlayerId) {
+pub fn P_MovePsprites(world: &mut World, player_id: PlayerId) {
     for position in 0..NUMPSPRITES {
         let psp = &mut world.players[player_id].psprites[position];
         let state = psp.state;

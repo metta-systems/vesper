@@ -9,6 +9,9 @@
 //! calls when space is tight. Tags below `PU_PURGELEVEL` are pinned.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The allocator walks its raw block list in C's whole-body `unsafe fn`
+// style; it is not yet split into blocks.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::{ffi::c_void, ptr};
 

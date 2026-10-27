@@ -210,11 +210,10 @@ impl Default for MobjState {
 ///
 /// Mirrors `P_SetMobjState` in `p_mobj.c`.
 ///
-/// # Safety
+/// # Panics
 ///
-/// `mobj_id` must name an initialised map object of the loaded level.
-/// `state` must be a valid state-table index or `S_NULL`.
-pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> i32 {
+/// If `state` is neither a state-table index nor `S_NULL`.
+pub fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> i32 {
     let mut state = state;
     loop {
         if state == S_NULL {
@@ -250,12 +249,8 @@ pub unsafe fn P_SetMobjState(world: &mut World, mobj_id: MobjId, state: i32) -> 
 
 /// Detonate a missile: zero its momentum, transition to its death state,
 /// randomise the initial tic count slightly, clear `MF_MISSILE`, and play the
-/// death sound.
-///
-/// # Safety
-///
-/// `mo_id` must name a map object of the loaded level with `MF_MISSILE` set.
-pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
+/// death sound. `mo_id` is a map object with `MF_MISSILE` set.
+pub fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
     let info = {
         let mobjs = &mut world.mobjs;
         let mo = &mut mobjs[mo_id];
@@ -283,11 +278,7 @@ pub unsafe fn P_ExplodeMissile(world: &mut World, mo_id: MobjId) {
 /// Apply one tic of XY momentum to `mo`, sub-stepping when the move exceeds
 /// `MAXMOVE / 2`.  Handles player sliding, missile explosion against walls
 /// and the sky, and floor friction / stopping.
-///
-/// # Safety
-///
-/// `mo_id` must name a map object that is part of the active thinker list.
-pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
+pub fn P_XYMovement(world: &mut World, mo_id: MobjId) {
     // The object is borrowed for each stretch of field work and read afresh
     // after each call that runs play code (moves, slides, state changes),
     // as C reads it through its pointer.
@@ -420,11 +411,7 @@ pub unsafe fn P_XYMovement(world: &mut World, mo_id: MobjId) {
 /// Handles player view-height smoothing on step-ups, floating-monster altitude
 /// tracking, gravity, floor and ceiling collisions, and Lost Soul bounce
 /// (with version-correct bug emulation for the original v1.9 desync).
-///
-/// # Safety
-///
-/// `mo_id` must name a map object that is part of the active thinker list.
-pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
+pub fn P_ZMovement(world: &mut World, mo_id: MobjId) {
     // The object is borrowed for its field work and released around the
     // landing sound and the missile explosions, which run play code.
     let mut mobjs = &mut world.mobjs;
@@ -514,13 +501,9 @@ pub unsafe fn P_ZMovement(world: &mut World, mo_id: MobjId) {
 ///
 /// Checks that the spawn point is unobstructed, spawns teleport fog at the
 /// old and new positions, spawns a fresh copy of the monster, and removes the
-/// old corpse.
-///
-/// # Safety
-///
-/// `mobj_id` must name a map object that has `MF_COUNTKILL` set and whose
-/// `spawnpoint` field is valid.
-pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
+/// old corpse. `mobj_id` is a monster (`MF_COUNTKILL`) with a valid
+/// `spawnpoint`.
+pub fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
     let spawnpoint = world.mobjs[mobj_id].spawnpoint;
     let x = (spawnpoint.x.get() as i32) << FRACBITS;
     let y = (spawnpoint.y.get() as i32) << FRACBITS;
@@ -572,11 +555,7 @@ pub unsafe fn P_NightmareRespawn(world: &mut World, mobj_id: MobjId) {
 /// Runs XY and Z movement, advances the state machine, and initiates
 /// Nightmare-mode respawn for eligible dead monsters.  Detects mid-tick
 /// removal via [`ThinkerKind::Removed`].
-///
-/// # Safety
-///
-/// `mobj_id` must name a map object that is currently in the thinker list.
-pub unsafe fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
+pub fn P_MobjThinker(world: &mut World, mobj_id: MobjId) {
     // The object is read afresh after each movement step, which runs play
     // code and may remove it.
     let moving = {
@@ -740,12 +719,8 @@ pub fn P_RemoveMobj(world: &mut World, mobj_id: MobjId) {
 /// the item has been gone for at least 30 seconds.
 ///
 /// Spawns an item-fog effect at the respawn location, then spawns the item
-/// itself and advances the queue tail.
-///
-/// # Safety
-///
-/// Must be called only during an active level tick.
-pub unsafe fn P_RespawnSpecials(world: &mut World) {
+/// itself and advances the queue tail. Runs during a level tick.
+pub fn P_RespawnSpecials(world: &mut World) {
     if world.session.deathmatch != 2 {
         return;
     }
@@ -807,11 +782,10 @@ pub unsafe fn P_RespawnSpecials(world: &mut World) {
 /// `mthing` is a copy of the start spot (C passes its address; the spot is
 /// only read).
 ///
-/// # Safety
+/// # Panics
 ///
-/// `mthing`'s `type` field must be in `0..=4`.  Must be called only during
-/// level load with zone memory active.
-pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: mapthing_t) {
+/// If `mthing`'s `type` field is not in `0..=MAXPLAYERS`.
+pub fn P_SpawnPlayer(world: &mut World, mthing: mapthing_t) {
     let thing_type = mthing.kind.get();
     if thing_type as i32 == 0 {
         return;
@@ -873,12 +847,10 @@ pub unsafe fn P_SpawnPlayer(world: &mut World, mthing: mapthing_t) {
 /// Calls `P_SpawnMobj` for all other thing types after looking up the
 /// `mobjinfo` entry by `doomednum`.
 ///
-/// # Safety
-///
-/// `mthing` must be a valid, non-null pointer to a `mapthing_t`.  Must be
-/// called during level load.
-pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
-    let mthing = &mut *mthing;
+/// `mthing` is a copy of the map thing (C passes its address; the thing is
+/// only read). Called during level load.
+pub fn P_SpawnMapThing(world: &mut World, mthing: mapthing_t) {
+    let mthing = &mthing;
     let thing_type = mthing.kind.get();
     let options = mthing.options.get();
     let mut i: usize;
@@ -991,11 +963,7 @@ pub unsafe fn P_SpawnMapThing(world: &mut World, mthing: *mut mapthing_t) {
 /// Spawn a bullet-puff visual effect at (`x`, `y`, `z`), randomising the Z
 /// slightly and the initial tic count.  Skips to the melee-contact frame
 /// (`S_PUFF3`) when the attack was at melee range so punches do not spark.
-///
-/// # Safety
-///
-/// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
+pub fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
     let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_PUFF);
     let tics_jitter = P_Random(world) & 3;
@@ -1018,11 +986,7 @@ pub unsafe fn P_SpawnPuff(world: &mut World, x: i32, y: i32, z: i32) {
 /// The initial state is chosen based on `damage`: heavy hits use the default
 /// `MT_BLOOD` spawn state, medium hits start at `S_BLOOD2`, and weak hits
 /// start at `S_BLOOD3` (smaller splat).
-///
-/// # Safety
-///
-/// Must be called during an active level tick with zone memory available.
-pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i32) {
+pub fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i32) {
     let z = z + ((P_Random(world) - P_Random(world)) << 10);
     let th_id = P_SpawnMobj(world, x, y, z, MT_BLOOD);
     let tics_jitter = P_Random(world) & 3;
@@ -1044,13 +1008,9 @@ pub unsafe fn P_SpawnBlood(world: &mut World, x: i32, y: i32, z: i32, damage: i3
 
 /// Validate a newly spawned missile: jitter its tic count, nudge it half a
 /// step forward along its trajectory, and explode it immediately if that
-/// initial position is blocked.
-///
-/// # Safety
-///
-/// `th_id` must name a map object with `MF_MISSILE` set and non-zero
-/// momentum.
-pub unsafe fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
+/// initial position is blocked. `th_id` is a missile (`MF_MISSILE`) with
+/// non-zero momentum.
+pub fn P_CheckMissileSpawn(world: &mut World, th_id: MobjId) {
     let tics_jitter = P_Random(world) & 3;
     let (x, y) = {
         let mobjs = &mut world.mobjs;
@@ -1108,18 +1068,9 @@ pub fn P_SubstNullMobj(world: &mut World, mobj: Option<MobjId>) -> MobjId {
 /// `dest`'s centre (with random spread if `dest` has `MF_SHADOW`).  Vertical
 /// momentum is computed from the Z distance divided by travel time.
 ///
-/// Returns the spawned missile.
-///
-/// # Safety
-///
-/// `source_id` and `dest_id` must name map objects of the loaded level.
-/// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnMissile(
-    world: &mut World,
-    source_id: MobjId,
-    dest_id: MobjId,
-    kind: i32,
-) -> MobjId {
+/// Returns the spawned missile. `kind` is a `mobjtype_t` index with
+/// `MF_MISSILE` in its flags.
+pub fn P_SpawnMissile(world: &mut World, source_id: MobjId, dest_id: MobjId, kind: i32) -> MobjId {
     // Spawning, the see sound and the random spread leave the source and
     // the destination where they are, so they are copied out once.
     let (source, dest) = {
@@ -1162,13 +1113,9 @@ pub unsafe fn P_SpawnMissile(
 
 /// Launch a projectile of type `kind` from the player's `source` mobj,
 /// auto-aiming within a 90-degree cone and then two additional angle offsets
-/// before giving up and firing straight ahead.
-///
-/// # Safety
-///
-/// `source_id` must name a player's map object.
-/// `kind` must be a valid `mobjtype_t` index with `MF_MISSILE` in its flags.
-pub unsafe fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i32) {
+/// before giving up and firing straight ahead. `source_id` is a player's map
+/// object and `kind` a `mobjtype_t` index with `MF_MISSILE` in its flags.
+pub fn P_SpawnPlayerMissile(world: &mut World, source_id: MobjId, kind: i32) {
     let mut an = world.mobjs[source_id].angle;
     let mut slope = P_AimLineAttack(world, source_id, an, 16 * 64 * FRACUNIT);
 
@@ -1291,9 +1238,8 @@ mod tests {
         let mut world = World::new();
         world.session.deathmatch = 1;
         for x in 0..12 {
-            let mut start = map_thing(11, x);
-            // SAFETY: start spots are only recorded; nothing is spawned.
-            unsafe { P_SpawnMapThing(&mut world, &raw mut start) };
+            // Start spots are only recorded; nothing is spawned.
+            P_SpawnMapThing(&mut world, map_thing(11, x));
         }
         assert_eq!(world.level.deathmatch_p, MAX_DEATHMATCH_STARTS);
         let recorded: Vec<i16> = world
@@ -1304,9 +1250,8 @@ mod tests {
             .collect();
         assert_eq!(recorded, (0..10).collect::<Vec<i16>>());
 
-        let mut second_player_start = map_thing(2, 77);
-        // SAFETY: in deathmatch the player start is only recorded.
-        unsafe { P_SpawnMapThing(&mut world, &raw mut second_player_start) };
+        // In deathmatch the player start is only recorded.
+        P_SpawnMapThing(&mut world, map_thing(2, 77));
         assert_eq!(world.level.playerstarts[1].x.get(), 77);
         assert_eq!(world.level.playerstarts[1].kind.get(), 2);
         assert_eq!(world.level.playerstarts[0].kind.get(), 0);

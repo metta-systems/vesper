@@ -32,18 +32,15 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {
-    crate::{
-        engine::{
-            doom::player::NUMCARDS,
-            render_2d::{V_CopyRect, V_DrawPatch},
-            status::stuff::ST_NUMFACES,
-            wad::{cache_patch_name, format::Patch},
-            zone::PU_STATIC,
-        },
-        i_error,
+use crate::{
+    engine::{
+        doom::player::NUMCARDS,
+        render_2d::{V_CopyRect, V_DrawPatch},
+        status::stuff::ST_NUMFACES,
+        wad::{cache_patch_name, format::Patch},
+        zone::PU_STATIC,
     },
-    std::ptr,
+    i_error,
 };
 
 /// Which of the status bar's patch tables a widget draws from, C
@@ -69,12 +66,13 @@ pub enum PatchSet {
 /// `ST_loadGraphics` (and [`STlib_init`] for `sttminus`); `None` is a patch
 /// not loaded.
 pub struct StatusGraphics {
-    /// Backing pixel buffer for the status bar, allocated in `ST_Init`.
+    /// Backing pixel buffer for the status bar, allocated in `ST_Init`
+    /// (empty before; C allocates it from the zone).
     ///
     /// The buffer is `ST_WIDTH * ST_HEIGHT` bytes and is used by
     /// `ST_refreshBackground` and the widgets to save and restore the
     /// pixels beneath the bar.
-    pub backing_screen: *mut u8,
+    pub backing_screen: Vec<u8>,
     /// The minus-sign patch (`STTMINUS`) used when rendering negative
     /// numbers, loaded by [`STlib_init`] (C `sttminus` in `st_lib.c`).
     pub sttminus: Option<Patch<'static>>,
@@ -97,7 +95,7 @@ impl StatusGraphics {
     /// The graphics at program start: no backing screen, nothing loaded.
     pub const fn new() -> Self {
         Self {
-            backing_screen: ptr::null_mut(),
+            backing_screen: Vec::new(),
             sttminus: None,
             tallnum: [None; 10],
             shortnum: [None; 10],
@@ -320,17 +318,9 @@ pub fn STlib_initNum(n: &mut st_number_t, x: i32, y: i32, pl: PatchSet, width: i
 /// Called by [`STlib_updateNum`].
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
-/// (`n->y - ST_Y < 0`).
-///
-/// # Safety
-/// `graphics.backing_screen` must be the status bar's backing buffer,
-/// allocated by `ST_Init`.
-pub unsafe fn STlib_drawNum(
-    n: &mut st_number_t,
-    graphics: &StatusGraphics,
-    num: i32,
-    _refresh: i32,
-) {
+/// (`n->y - ST_Y < 0`); panics too if `ST_Init` has not allocated the
+/// backing screen.
+pub fn STlib_drawNum(n: &mut st_number_t, graphics: &StatusGraphics, num: i32, _refresh: i32) {
     let mut numdigits = n.width;
 
     let digit_zero = graphics.patch(n.p, 0);
@@ -357,18 +347,15 @@ pub unsafe fn STlib_drawNum(
         i_error!("drawNum: n->y - ST_Y < 0");
     }
 
-    // SAFETY: the caller passes the allocated backing screen.
-    unsafe {
-        V_CopyRect(
-            x,
-            n.y - ST_Y,
-            graphics.backing_screen,
-            w * numdigits,
-            h,
-            x,
-            n.y,
-        );
-    }
+    V_CopyRect(
+        x,
+        n.y - ST_Y,
+        &graphics.backing_screen,
+        w * numdigits,
+        h,
+        x,
+        n.y,
+    );
 
     // if non-number, do not draw it
     if num == 1994 {
@@ -402,10 +389,7 @@ pub unsafe fn STlib_drawNum(
 /// Calls [`STlib_drawNum`] when `on`. In the C original this function
 /// also checked whether the value had changed before drawing; this port always
 /// redraws when visible (matching the `refresh` path).
-///
-/// # Safety
-/// As [`STlib_drawNum`].
-pub unsafe fn STlib_updateNum(
+pub fn STlib_updateNum(
     n: &mut st_number_t,
     graphics: &StatusGraphics,
     num: i32,
@@ -413,8 +397,7 @@ pub unsafe fn STlib_updateNum(
     refresh: i32,
 ) {
     if on {
-        // SAFETY: as this function's own contract.
-        unsafe { STlib_drawNum(n, graphics, num, refresh) };
+        STlib_drawNum(n, graphics, num, refresh);
     }
 }
 
@@ -439,10 +422,7 @@ pub fn STlib_initPercent(
 ///
 /// When `refresh != 0` and the widget is visible (`on`), draws the `%` patch
 /// at the number's position before delegating to [`STlib_updateNum`].
-///
-/// # Safety
-/// As [`STlib_drawNum`].
-pub unsafe fn STlib_updatePercent(
+pub fn STlib_updatePercent(
     per: &mut st_percent_t,
     graphics: &StatusGraphics,
     num: i32,
@@ -452,8 +432,7 @@ pub unsafe fn STlib_updatePercent(
     if refresh != 0 && on {
         V_DrawPatch(per.n.x, per.n.y, loaded_patch(per.p));
     }
-    // SAFETY: as this function's own contract.
-    unsafe { STlib_updateNum(&mut per.n, graphics, num, on, refresh) };
+    STlib_updateNum(&mut per.n, graphics, num, on, refresh);
 }
 
 /// Initialize a multi-icon widget.
@@ -482,10 +461,7 @@ pub fn STlib_initMultIcon(i: &mut st_multicon_t, x: i32, y: i32, il: PatchSet) {
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`) when erasing a previous icon.
-///
-/// # Safety
-/// As [`STlib_drawNum`].
-pub unsafe fn STlib_updateMultIcon(
+pub fn STlib_updateMultIcon(
     mi: &mut st_multicon_t,
     graphics: &StatusGraphics,
     inum: i32,
@@ -504,8 +480,7 @@ pub unsafe fn STlib_updateMultIcon(
                 i_error!("updateMultIcon: y - ST_Y < 0");
             }
 
-            // SAFETY: the caller passes the allocated backing screen.
-            unsafe { V_CopyRect(x, y - ST_Y, graphics.backing_screen, w, h, x, y) };
+            V_CopyRect(x, y - ST_Y, &graphics.backing_screen, w, h, x, y);
         }
         V_DrawPatch(mi.x, mi.y, graphics.patch(mi.p, inum));
         mi.oldinum = inum;
@@ -536,10 +511,7 @@ pub fn STlib_initBinIcon(b: &mut st_binicon_t, x: i32, y: i32, i: Option<Patch<'
 ///
 /// Panics via `i_error!` if the widget's Y position is above the status bar
 /// (`y - ST_Y < 0`).
-///
-/// # Safety
-/// As [`STlib_drawNum`].
-pub unsafe fn STlib_updateBinIcon(
+pub fn STlib_updateBinIcon(
     bi: &mut st_binicon_t,
     graphics: &StatusGraphics,
     val: i32,
@@ -560,8 +532,7 @@ pub unsafe fn STlib_updateBinIcon(
         if val != 0 {
             V_DrawPatch(bi.x, bi.y, p);
         } else {
-            // SAFETY: the caller passes the allocated backing screen.
-            unsafe { V_CopyRect(x, y - ST_Y, graphics.backing_screen, w, h, x, y) };
+            V_CopyRect(x, y - ST_Y, &graphics.backing_screen, w, h, x, y);
         }
 
         bi.oldval = val;
@@ -570,7 +541,7 @@ pub unsafe fn STlib_updateBinIcon(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, std::ptr};
 
     /// Each patch set names its own table in the status graphics, and each
     /// arms slot its own pair.

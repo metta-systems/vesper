@@ -331,6 +331,10 @@ use crate::engine::{
 ///
 /// Called once at map load time from C (p_spec.c `P_SpawnSpecials` via the
 /// game initialisation path).
+///
+/// # Safety
+///
+/// `R_InitTextures` must have run: the texture lookups read its tables.
 pub unsafe fn P_InitPicAnims() {
     // Each record is filled through the cursor; no guard on the state is
     // live while the lump lookups run.
@@ -342,33 +346,38 @@ pub unsafe fn P_InitPicAnims() {
         let startname = DEH_String(startname);
         let endname = DEH_String(endname);
 
-        if istexture != 0 {
-            if R_CheckTextureNumForName(startname) == -1 {
-                continue;
+        // SAFETY: the texture lookups need `R_InitTextures` (the caller's
+        // contract), and `lastanim` stays inside `anims`, which has a slot
+        // for every `ANIMDEFS` entry.
+        unsafe {
+            if istexture != 0 {
+                if R_CheckTextureNumForName(startname) == -1 {
+                    continue;
+                }
+                (*lastanim).picnum = R_TextureNumForName(endname);
+                (*lastanim).basepic = R_TextureNumForName(startname);
+            } else {
+                if W_CheckNumForName(startname) == -1 {
+                    continue;
+                }
+                (*lastanim).picnum = R_FlatNumForName(endname);
+                (*lastanim).basepic = R_FlatNumForName(startname);
             }
-            (*lastanim).picnum = R_TextureNumForName(endname);
-            (*lastanim).basepic = R_TextureNumForName(startname);
-        } else {
-            if W_CheckNumForName(startname) == -1 {
-                continue;
+
+            (*lastanim).istexture = istexture;
+            (*lastanim).numpics = (*lastanim).picnum - (*lastanim).basepic + 1;
+
+            if (*lastanim).numpics < 2 {
+                i_error!(
+                    "P_InitPicAnims: bad cycle from {} to {}",
+                    String::from_utf8_lossy(startname),
+                    String::from_utf8_lossy(endname)
+                );
             }
-            (*lastanim).picnum = R_FlatNumForName(endname);
-            (*lastanim).basepic = R_FlatNumForName(startname);
+
+            (*lastanim).speed = speed;
+            lastanim = lastanim.offset(1);
         }
-
-        (*lastanim).istexture = istexture;
-        (*lastanim).numpics = (*lastanim).picnum - (*lastanim).basepic + 1;
-
-        if (*lastanim).numpics < 2 {
-            i_error!(
-                "P_InitPicAnims: bad cycle from {} to {}",
-                String::from_utf8_lossy(startname),
-                String::from_utf8_lossy(endname)
-            );
-        }
-
-        (*lastanim).speed = speed;
-        lastanim = lastanim.offset(1);
     }
     SPEC.borrow_mut().lastanim = lastanim;
 }
@@ -628,7 +637,7 @@ pub fn P_FindMinSurroundingLight(level: &LevelState, sector: SectorId, max: i32)
 /// - `thing`: the map object that crossed the line.
 ///
 /// Called from `p_map.c` via C FFI.
-pub unsafe fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, thing: MobjId) {
+pub fn P_CrossSpecialLine(world: &mut World, linenum: LineId, side: i32, thing: MobjId) {
     // The line's record as the crossing found it; the actions read its tag
     // and sectors, and clearing the special writes the level's line.
     let line_record = world.level.lines[linenum];
@@ -994,12 +1003,7 @@ pub fn P_ShootSpecialLine(world: &mut World, thing: MobjId, line_id: LineId) {
 /// - `player`: the player being updated.
 ///
 /// Called from g_game.c / p_tick.c each game tic for every active player.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level (see
-/// `P_DamageMobj`).
-pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
+pub fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
     let (mo_subsector, mo_z) = {
         let mobjs = &world.mobjs;
@@ -1081,6 +1085,11 @@ pub unsafe fn P_PlayerInSpecialSector(world: &mut World, player: PlayerId) {
 ///    `buttonlist[i].where_`) and plays the switch sound.
 ///
 /// Called from p_tick.c `P_Ticker`.
+///
+/// # Safety
+///
+/// `R_InitTextures` and `R_InitFlats` must have allocated the translation
+/// tables written here.
 pub unsafe fn P_UpdateSpecials(world: &mut World) {
     let timer_expired = {
         let mut spec = SPEC.borrow_mut();
@@ -1109,17 +1118,24 @@ pub unsafe fn P_UpdateSpecials(world: &mut World) {
         let numanims = if spec.lastanim.is_null() {
             0
         } else {
-            spec.lastanim.offset_from(anims_base()) as usize
+            // SAFETY: `P_InitPicAnims` leaves `lastanim` inside or one past
+            // the `anims` array that `anims_base` starts.
+            unsafe { spec.lastanim.offset_from(anims_base()) as usize }
         };
         for anim in spec.anims.iter().take(numanims) {
             let base = anim.basepic;
             let numpics = anim.numpics;
             for i in base..base + numpics {
                 let pic = base + ((leveltime / anim.speed + i) % numpics);
-                if anim.istexture != 0 {
-                    *texturetranslation.offset(i as isize) = pic;
-                } else {
-                    *flattranslation.offset(i as isize) = pic;
+                // SAFETY: `R_InitTextures` / `R_InitFlats` allocated the
+                // translation tables for every texture and flat, and the
+                // cycle's pictures were looked up in them.
+                unsafe {
+                    if anim.istexture != 0 {
+                        *texturetranslation.offset(i as isize) = pic;
+                    } else {
+                        *flattranslation.offset(i as isize) = pic;
+                    }
                 }
             }
         }

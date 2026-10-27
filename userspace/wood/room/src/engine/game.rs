@@ -35,6 +35,10 @@
 //! `rndindex` cookie tracked by `m_random`; a mismatch raises `I_Error`.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The demo buffer is read and written through raw pointers, and the level
+// loads reach the zone and renderer tables, in C's whole-body `unsafe fn`
+// style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use {
     crate::engine::sound::info::Sfx,
@@ -56,7 +60,7 @@ use crate::engine::{
         player::{MAXPLAYERS, PlayerId, TiccmdT},
         stat::{gamemission, gamemode, gameversion},
     },
-    intermission::{wbplayerstruct_t, wbstartstruct_t},
+    intermission::wbstartstruct_t,
     math::tables::{finecosine, finesine, finetangent},
     misc::random::P_Random,
     play::inter::maxammo,
@@ -437,27 +441,7 @@ impl GameState {
             precache: 1, // true by default
             testcontrols: 0,
             testcontrols_mousespeed: 0,
-            wminfo: wbstartstruct_t {
-                epsd: 0,
-                didsecret: 0,
-                last: 0,
-                next: 0,
-                maxkills: 0,
-                maxitems: 0,
-                maxsecret: 0,
-                maxfrags: 0,
-                partime: 0,
-                pnum: 0,
-                plyr: [wbplayerstruct_t {
-                    in_: 0,
-                    skills: 0,
-                    sitems: 0,
-                    ssecret: 0,
-                    stime: 0,
-                    frags: [0; 4],
-                    score: 0,
-                }; MAXPLAYERS],
-            },
+            wminfo: wbstartstruct_t::EMPTY,
             consistancy: [[0; 128]; MAXPLAYERS],
             vanilla_savegame_limit: 1,
             vanilla_demo_limit: 1,
@@ -546,13 +530,6 @@ pub fn demoplayback() -> boolean {
 /// Whether monsters respawn (C `respawnmonsters`).
 pub fn respawnmonsters() -> boolean {
     GAME.borrow().respawnmonsters
-}
-
-/// Stable pointer to the intermission parameters (C `&wminfo`), which the
-/// intermission keeps while it runs.
-pub fn wminfo_ptr() -> *mut wbstartstruct_t {
-    // SAFETY: field projection on the stable state pointer, no reference made.
-    unsafe { &raw mut (*GAME.as_ptr()).wminfo }
 }
 
 /// Doom episode par times (episodes 1-3, maps 1-9), in seconds.
@@ -1423,12 +1400,7 @@ fn set_mouse_buttons(buttons_mask: u32) {
 /// * Otherwise routes by `event_t::kind`: keydown updates `gamekeydown`
 ///   (with `key_pause` setting `sendpause`), keyup clears it, mouse and
 ///   joystick events latch axes and buttons.
-///
-/// # Safety
-/// Dereferences `ev` and mutates the input latches; safe under the
-/// single-threaded engine convention.
-pub unsafe fn G_Responder(ev: *mut event_t) -> boolean {
-    let ev = &*ev;
+pub fn G_Responder(ev: &event_t) -> boolean {
     let ControlsState {
         key_spy,
         key_prevweapon,
@@ -1845,12 +1817,8 @@ pub fn G_PlayerReborn(world: &mut World, player: i32) {
 /// demos compatible.
 ///
 /// `mthing` is a copy of the spot (C passes its address; the spot is only
-/// read).
-///
-/// # Safety
-/// The earlier players' map objects must be live on a first spawn; reads
-/// and mutates the players and the session's body queue.
-pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t) -> boolean {
+/// read). Reads and mutates the players and the session's body queue.
+pub fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t) -> boolean {
     let spawning_player = playernum as usize;
     let Some(spawning_mo) = world.players[spawning_player].mo else {
         // First spawn of level, before corpses
@@ -1942,12 +1910,11 @@ pub unsafe fn G_CheckSpot(world: &mut World, playernum: i32, mthing: mapthing_t)
 /// Requires at least 4 deathmatch starts on the map (vanilla limit); raises
 /// `I_Error` otherwise. The chosen start has its `type` temporarily
 /// rewritten to `playernum + 1` so `P_SpawnPlayer` treats it as the player's
-/// own spawn.
+/// own spawn. The deathmatch start table is the one `P_SetupLevel` filled.
 ///
-/// # Safety
-/// `playernum` must be in `0..MAXPLAYERS` and the level's deathmatch start
-/// table must already be populated by `P_SetupLevel`.
-pub unsafe fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
+/// # Panics
+/// If `playernum` is not in `0..MAXPLAYERS`.
+pub fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
     let selections = world.level.deathmatch_p as i32;
     if selections < 4 {
         crate::i_error!("Only {} deathmatch spots, 4 required", selections);
@@ -1979,9 +1946,9 @@ pub unsafe fn G_DeathMatchSpawnPlayer(world: &mut World, playernum: i32) {
 /// players' starts (temporarily faking the `type` field so `P_SpawnPlayer`
 /// accepts them).
 ///
-/// # Safety
-/// `playernum` must be a valid player index.
-pub unsafe fn G_DoReborn(world: &mut World, playernum: i32) {
+/// # Panics
+/// If `playernum` is not a player index.
+pub fn G_DoReborn(world: &mut World, playernum: i32) {
     if netgame() == 0 {
         GAME.borrow_mut().gameaction = ga_loadlevel;
     } else {
@@ -2197,8 +2164,9 @@ pub unsafe fn G_DoCompleted() {
     }
     AUTOMAP.borrow_mut().automapactive = 0;
 
-    StatCopy(wminfo_ptr());
-    WI_Start(wminfo_ptr());
+    let wminfo = GAME.borrow().wminfo;
+    StatCopy(&wminfo);
+    WI_Start(&wminfo);
 }
 
 // ---------------------------------------------------------------------------
@@ -2210,11 +2178,9 @@ pub unsafe fn G_DoCompleted() {
 /// the appropriate "end of segment" maps (6, 11, 20, 30 - and 15/31 only via
 /// the secret exit).
 ///
-/// Runs from the intermission's ticker, which holds no world borrow.
-///
-/// # Safety
-/// Writes `gameaction`, `players[consoleplayer].didsecret`.
-pub unsafe fn G_WorldDone() {
+/// Runs from the intermission's ticker, which holds no world borrow. Writes
+/// `gameaction` and `players[consoleplayer].didsecret`.
+pub fn G_WorldDone() {
     let secretexit = {
         let mut game = GAME.borrow_mut();
         game.gameaction = ga_worlddone;
@@ -2358,10 +2324,7 @@ pub fn G_SaveGame(slot: i32, description: &[u8]) {
 ///
 /// The save is archived in memory by [`archive_save_game`], then written to
 /// the file opened at the start, which the C code wrote to directly.
-///
-/// # Safety
-/// Writes through the save stream held in [`SAVEG`].
-pub unsafe fn G_DoSaveGame() {
+pub fn G_DoSaveGame() {
     let mut recovery_savegame_file: Option<String> = None;
     let temp_savegame_file = P_TempSaveGameFile();
     let (savegameslot, savedescription) = {

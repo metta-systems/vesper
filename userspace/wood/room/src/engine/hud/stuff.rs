@@ -328,7 +328,7 @@ pub struct HudState {
     pub hu_font: Font,
     /// Non-zero while the chat input widget is active.
     ///
-    /// Used as the `on` pointer for `w_chat`; also read by the menu to
+    /// The visibility flag of `w_chat`; also read by the menu to
     /// decide whether the automap or chat owns the keyboard. Corresponds to
     /// `chat_on` in `hu_stuff.c`.
     pub chat_on: i32,
@@ -345,17 +345,16 @@ pub struct HudState {
     w_title: hu_textline_t,
     /// Chat input widget; visible only when `chat_on` is non-zero.
     w_chat: hu_itext_t,
-    /// Permanent zero used as the `on` pointer for `w_inputbuffer` widgets
-    /// so they are never rendered to the screen.
-    always_off: i32,
     /// Per-player chat destination byte: 1-4 target that player, 5 =
     /// broadcast.
     chat_dest: [u8; MAXPLAYERS],
     /// Hidden input buffer widgets that accumulate incoming chat keystrokes
     /// for each remote player before the message is confirmed with Enter.
+    /// They are never drawn (C gives them a permanent zero `always_off` as
+    /// their visibility flag).
     w_inputbuffer: [hu_itext_t; MAXPLAYERS],
     /// Non-zero while a player message is being displayed.
-    /// Used as the `on` pointer for `w_message`.
+    /// The visibility flag of `w_message`.
     message_on: i32,
     /// Non-zero when the current message must not be overridden by a
     /// non-critical new message. Set when a `message_dontfuckwithme` message
@@ -406,7 +405,6 @@ impl HudState {
             plr: None,
             w_title: hu_textline_t::EMPTY,
             w_chat: hu_itext_t::EMPTY,
-            always_off: 0,
             chat_dest: [0; MAXPLAYERS],
             w_inputbuffer: [hu_itext_t::EMPTY; MAXPLAYERS],
             message_on: 0,
@@ -494,92 +492,66 @@ pub fn HU_Stop() {
 ///
 /// Called from `G_DoLoadLevel` in `g_game.c` at the start of every level.
 pub fn HU_Start() {
-    unsafe {
-        if HUD.borrow().headsupactive {
-            HU_Stop();
-        }
-
-        let (font, font_h) = {
-            let mut hud = HUD.borrow_mut();
-            hud.plr = Some(PlayerId::console());
-            hud.message_on = 0;
-            hud.message_dontfuckwithme = 0;
-            hud.message_nottobefuckedwith = 0;
-            hud.chat_on = 0;
-
-            // compute font height for title/input placement
-            let font_h = hud.hu_font.first().map_or(0, |glyph| glyph.height());
-            (hud.hu_font, font_h)
-        };
-
-        // The widgets keep pointers to their `on` flags, so they all point
-        // into the stable address of `HUD`.
-        let hud_state = HUD.as_ptr();
-
-        // create the message widget
-        HUlib_initSText(
-            &raw mut (*hud_state).w_message,
-            HU_MSGX,
-            HU_MSGY,
-            HU_MSGHEIGHT,
-            font,
-            HU_FONTSTART as i32,
-            &raw mut (*hud_state).message_on,
-        );
-
-        let title_y = 167 - font_h;
-
-        // create the map title widget
-        HUlib_initTextLine(
-            &raw mut (*hud_state).w_title,
-            0,
-            title_y,
-            font,
-            HU_FONTSTART as i32,
-        );
-
-        let (gameepisode, gamemap) = (gameepisode(), gamemap());
-        let mut title = match logical_gamemission() {
-            doom::mode::doom => mapnames[((gameepisode - 1) * 9 + gamemap - 1) as usize],
-            doom::mode::doom2 => mapnames_commercial[(gamemap - 1) as usize],
-            doom::mode::pack_plut => mapnames_commercial[(gamemap - 1 + 32) as usize],
-            doom::mode::pack_tnt => mapnames_commercial[(gamemap - 1 + 64) as usize],
-            _ => "Unknown level",
-        };
-
-        if gameversion() == doom::mode::exe_chex {
-            title = mapnames[(gamemap - 1) as usize];
-        }
-
-        for &byte in DEH_String(title).as_bytes() {
-            HUlib_addCharToTextLine(&raw mut (*hud_state).w_title, byte);
-        }
-
-        // create the chat widget
-        let input_y = HU_MSGY + HU_MSGHEIGHT * (font_h + 1);
-        HUlib_initIText(
-            &raw mut (*hud_state).w_chat,
-            HU_MSGX,
-            input_y,
-            font,
-            HU_FONTSTART as i32,
-            &raw mut (*hud_state).chat_on,
-        );
-
-        // create the inputbuffer widgets
-        for i in 0..MAXPLAYERS {
-            HUlib_initIText(
-                &raw mut (*hud_state).w_inputbuffer[i],
-                0,
-                0,
-                &[],
-                0,
-                &raw mut (*hud_state).always_off,
-            );
-        }
-
-        HUD.borrow_mut().headsupactive = true;
+    if HUD.borrow().headsupactive {
+        HU_Stop();
     }
+
+    let (gameepisode, gamemap) = (gameepisode(), gamemap());
+    let mut title = match logical_gamemission() {
+        doom::mode::doom => mapnames[((gameepisode - 1) * 9 + gamemap - 1) as usize],
+        doom::mode::doom2 => mapnames_commercial[(gamemap - 1) as usize],
+        doom::mode::pack_plut => mapnames_commercial[(gamemap - 1 + 32) as usize],
+        doom::mode::pack_tnt => mapnames_commercial[(gamemap - 1 + 64) as usize],
+        _ => "Unknown level",
+    };
+
+    if gameversion() == doom::mode::exe_chex {
+        title = mapnames[(gamemap - 1) as usize];
+    }
+
+    // The widgets draw and erase nothing here, so the HUD stays borrowed
+    // while they are set up.
+    let mut hud = HUD.borrow_mut();
+    let hud = &mut *hud;
+    hud.plr = Some(PlayerId::console());
+    hud.message_on = 0;
+    hud.message_dontfuckwithme = 0;
+    hud.message_nottobefuckedwith = 0;
+    hud.chat_on = 0;
+
+    // compute font height for title/input placement
+    let font = hud.hu_font;
+    let font_h = font.first().map_or(0, |glyph| glyph.height());
+
+    // create the message widget
+    HUlib_initSText(
+        &mut hud.w_message,
+        HU_MSGX,
+        HU_MSGY,
+        HU_MSGHEIGHT,
+        font,
+        HU_FONTSTART as i32,
+    );
+
+    let title_y = 167 - font_h;
+
+    // create the map title widget
+    HUlib_initTextLine(&mut hud.w_title, 0, title_y, font, HU_FONTSTART as i32);
+
+    for &byte in DEH_String(title).as_bytes() {
+        HUlib_addCharToTextLine(&mut hud.w_title, byte);
+    }
+
+    // create the chat widget
+    let input_y = HU_MSGY + HU_MSGHEIGHT * (font_h + 1);
+    HUlib_initIText(&mut hud.w_chat, HU_MSGX, input_y, font, HU_FONTSTART as i32);
+
+    // create the inputbuffer widgets (never drawn, C's `always_off`)
+    for input in &mut hud.w_inputbuffer {
+        HUlib_initIText(input, 0, 0, &[], 0);
+    }
+
+    hud.headsupactive = true;
 }
 
 /// Render all visible HUD elements for the current frame.
@@ -588,13 +560,11 @@ pub fn HU_Start() {
 /// automap is active) the map title line. Called once per frame from the
 /// renderer after the view has been rendered.
 pub fn HU_Drawer() {
-    let hud_state = HUD.as_ptr();
-    unsafe {
-        HUlib_drawSText(&raw mut (*hud_state).w_message);
-        HUlib_drawIText(&raw mut (*hud_state).w_chat);
-        if automap_active() {
-            HUlib_drawTextLine(&raw mut (*hud_state).w_title, 0);
-        }
+    let hud = HUD.borrow();
+    HUlib_drawSText(&hud.w_message, hud.message_on != 0);
+    HUlib_drawIText(&hud.w_chat, hud.chat_on != 0);
+    if automap_active() {
+        HUlib_drawTextLine(&hud.w_title, 0);
     }
 }
 
@@ -604,12 +574,11 @@ pub fn HU_Drawer() {
 /// Called once per frame just before the view is rendered, so that old HUD
 /// graphics are removed before the new frame is drawn.
 pub fn HU_Erase() {
-    let hud_state = HUD.as_ptr();
-    unsafe {
-        HUlib_eraseSText(&raw mut (*hud_state).w_message);
-        HUlib_eraseIText(&raw mut (*hud_state).w_chat);
-        HUlib_eraseTextLine(&raw mut (*hud_state).w_title);
-    }
+    let mut hud = HUD.borrow_mut();
+    let hud = &mut *hud;
+    HUlib_eraseSText(&mut hud.w_message, hud.message_on != 0);
+    HUlib_eraseIText(&mut hud.w_chat, hud.chat_on != 0);
+    HUlib_eraseTextLine(&mut hud.w_title);
 }
 
 /// Advance the HUD state by one game tic.
@@ -627,91 +596,86 @@ pub fn HU_Erase() {
 /// Called from `G_Ticker` in `g_game.c` once per game tic, with the world
 /// it borrowed for the level phase.
 pub fn HU_Ticker(world: &mut World) {
-    let hud_state = HUD.as_ptr();
-    unsafe {
-        let (plr, message_dontfuckwithme, message_nottobefuckedwith) = {
-            let mut hud = HUD.borrow_mut();
-            // tick down message counter if message is up
-            if hud.message_counter != 0 {
-                hud.message_counter -= 1;
-                if hud.message_counter == 0 {
-                    hud.message_on = 0;
-                    hud.message_nottobefuckedwith = 0;
-                }
-            }
-            (
-                hud.player(),
-                hud.message_dontfuckwithme,
-                hud.message_nottobefuckedwith,
-            )
-        };
-
-        if MENU.borrow().showMessages != 0 || message_dontfuckwithme != 0 {
-            // display message if necessary
-            let message = world.players[plr].message;
-            if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0)
-            {
-                HUlib_addMessageToSText(&raw mut (*hud_state).w_message, None, message.as_bytes());
-                world.players[plr].message = PlayerMessage::NONE;
-                let mut hud = HUD.borrow_mut();
-                hud.message_on = 1;
-                hud.message_counter = HU_MSGTIMEOUT;
-                hud.message_nottobefuckedwith = hud.message_dontfuckwithme;
-                hud.message_dontfuckwithme = 0;
+    let (plr, message_dontfuckwithme, message_nottobefuckedwith) = {
+        let mut hud = HUD.borrow_mut();
+        // tick down message counter if message is up
+        if hud.message_counter != 0 {
+            hud.message_counter -= 1;
+            if hud.message_counter == 0 {
+                hud.message_on = 0;
+                hud.message_nottobefuckedwith = 0;
             }
         }
+        (
+            hud.player(),
+            hud.message_dontfuckwithme,
+            hud.message_nottobefuckedwith,
+        )
+    };
 
-        // check for incoming chat characters
-        if netgame() != 0 {
-            let consoleplayer = consoleplayer();
-            for i in 0..MAXPLAYERS {
-                if playeringame(i) == 0 {
-                    continue;
-                }
-                if i != consoleplayer as usize {
-                    let c = world.players[i].cmd.chatchar;
-                    if c != 0 {
-                        if c <= HU_BROADCAST as u8 {
-                            HUD.borrow_mut().chat_dest[i] = c;
-                        } else {
-                            let input = &raw mut (*hud_state).w_inputbuffer[i];
-                            let rc = HUlib_keyInIText(input, c);
-                            if rc != 0 && c == KEY_ENTER {
-                                let (chat_dest, line_len, line) = {
-                                    let hud = HUD.borrow();
-                                    let input_line = &hud.w_inputbuffer[i].l;
-                                    (
-                                        hud.chat_dest[i],
-                                        input_line.len,
-                                        until_nul(&input_line.l).to_vec(),
-                                    )
-                                };
-                                if line_len != 0
-                                    && (chat_dest == (consoleplayer + 1) as u8
-                                        || chat_dest == HU_BROADCAST as u8)
+    if MENU.borrow().showMessages != 0 || message_dontfuckwithme != 0 {
+        // display message if necessary
+        let message = world.players[plr].message;
+        if !message.is_none() && (message_nottobefuckedwith == 0 || message_dontfuckwithme != 0) {
+            let mut hud = HUD.borrow_mut();
+            HUlib_addMessageToSText(&mut hud.w_message, None, message.as_bytes());
+            world.players[plr].message = PlayerMessage::NONE;
+            hud.message_on = 1;
+            hud.message_counter = HU_MSGTIMEOUT;
+            hud.message_nottobefuckedwith = hud.message_dontfuckwithme;
+            hud.message_dontfuckwithme = 0;
+        }
+    }
+
+    // check for incoming chat characters
+    if netgame() != 0 {
+        let consoleplayer = consoleplayer();
+        for i in 0..MAXPLAYERS {
+            if playeringame(i) == 0 {
+                continue;
+            }
+            if i != consoleplayer as usize {
+                let c = world.players[i].cmd.chatchar;
+                if c != 0 {
+                    if c <= HU_BROADCAST as u8 {
+                        HUD.borrow_mut().chat_dest[i] = c;
+                    } else {
+                        let rc = HUlib_keyInIText(&mut HUD.borrow_mut().w_inputbuffer[i], c);
+                        if rc != 0 && c == KEY_ENTER {
+                            let (chat_dest, line_len, line) = {
+                                let hud = HUD.borrow();
+                                let input_line = &hud.w_inputbuffer[i].l;
+                                (
+                                    hud.chat_dest[i],
+                                    input_line.len,
+                                    until_nul(&input_line.l).to_vec(),
+                                )
+                            };
+                            if line_len != 0
+                                && (chat_dest == (consoleplayer + 1) as u8
+                                    || chat_dest == HU_BROADCAST as u8)
+                            {
                                 {
+                                    let mut hud = HUD.borrow_mut();
                                     HUlib_addMessageToSText(
-                                        &raw mut (*hud_state).w_message,
+                                        &mut hud.w_message,
                                         Some(DEH_String(player_names[i]).as_bytes()),
                                         &line,
                                     );
-                                    {
-                                        let mut hud = HUD.borrow_mut();
-                                        hud.message_nottobefuckedwith = 1;
-                                        hud.message_on = 1;
-                                        hud.message_counter = HU_MSGTIMEOUT;
-                                    }
-                                    if gamemode() == doom::mode::commercial {
-                                        S_StartNonPositionalSound(Sfx::Radio as i32);
-                                    } else {
-                                        S_StartNonPositionalSound(Sfx::Tink as i32);
-                                    }
+                                    hud.message_nottobefuckedwith = 1;
+                                    hud.message_on = 1;
+                                    hud.message_counter = HU_MSGTIMEOUT;
                                 }
-                                HUlib_resetIText(input);
+                                if gamemode() == doom::mode::commercial {
+                                    S_StartNonPositionalSound(Sfx::Radio as i32);
+                                } else {
+                                    S_StartNonPositionalSound(Sfx::Tink as i32);
+                                }
                             }
+                            HUlib_resetIText(&mut HUD.borrow_mut().w_inputbuffer[i]);
                         }
-                        world.players[i].cmd.chatchar = 0;
                     }
+                    world.players[i].cmd.chatchar = 0;
                 }
             }
         }
@@ -768,112 +732,115 @@ pub fn HU_dequeueChatChar() -> u8 {
 /// Called from `G_Responder` in `g_game.c`, with the world it borrowed for
 /// the level responders; the player messages it sets go into `world`.
 pub fn HU_Responder(world: &mut World, ev: &event_t) -> i32 {
-    let hud_state = HUD.as_ptr();
-    unsafe {
-        let mut numplayers = 0;
-        for i in 0..MAXPLAYERS {
-            if playeringame(i) != 0 {
-                numplayers += 1;
-            }
+    let mut numplayers = 0;
+    for i in 0..MAXPLAYERS {
+        if playeringame(i) != 0 {
+            numplayers += 1;
         }
-        let (netgame, consoleplayer) = (netgame(), consoleplayer());
-
-        if ev.data1 == KEY_RSHIFT as i32 {
-            return 0;
-        } else if ev.data1 == KEY_RALT as i32 || ev.data1 == KEY_LALT as i32 {
-            HUD.borrow_mut().altdown = ev.kind == 0; // ev_keydown
-            return 0;
-        }
-
-        if ev.kind != 0 {
-            // not ev_keydown
-            return 0;
-        }
-
-        let mut eatkey = false;
-        let (chat_on, altdown, plr) = {
-            let hud = HUD.borrow();
-            (hud.chat_on, hud.altdown, hud.player())
-        };
-
-        let ControlsState {
-            key_message_refresh,
-            key_multi_msg,
-            key_multi_msgplayer,
-            ..
-        } = CONTROLS.get();
-        if chat_on == 0 {
-            if ev.data1 == key_message_refresh {
-                let mut hud = HUD.borrow_mut();
-                hud.message_on = 1;
-                hud.message_counter = HU_MSGTIMEOUT;
-                eatkey = true;
-            } else if netgame != 0 && ev.data2 == key_multi_msg {
-                eatkey = true;
-                HUD.borrow_mut().chat_on = 1;
-                HUlib_resetIText(&raw mut (*hud_state).w_chat);
-                HU_queueChatChar(world, HU_BROADCAST as u8);
-            } else if netgame != 0 && numplayers > 2 {
-                for i in 0..MAXPLAYERS {
-                    if ev.data2 == key_multi_msgplayer[i] {
-                        if playeringame(i) != 0 && i != consoleplayer as usize {
-                            eatkey = true;
-                            HUD.borrow_mut().chat_on = 1;
-                            HUlib_resetIText(&raw mut (*hud_state).w_chat);
-                            HU_queueChatChar(world, (i + 1) as u8);
-                            break;
-                        } else if i == consoleplayer as usize {
-                            let num_nobrainers = {
-                                let mut hud = HUD.borrow_mut();
-                                hud.num_nobrainers += 1;
-                                hud.num_nobrainers
-                            };
-                            world.players[plr].set_message(DEH_String(match num_nobrainers {
-                                1..=2 => HUSTR_TALKTOSELF1,
-                                3..=5 => HUSTR_TALKTOSELF2,
-                                6..=8 => HUSTR_TALKTOSELF3,
-                                9..=31 => HUSTR_TALKTOSELF4,
-                                _ => HUSTR_TALKTOSELF5,
-                            }));
-                        }
-                    }
-                }
-            }
-        } else {
-            // send a macro
-            if altdown {
-                let c = (ev.data1 - b'0' as i32) as u8;
-                if c > 9 {
-                    return 0;
-                }
-                let macromessage = HUD.borrow().chat_macros[c as usize].clone();
-                let macromessage = macromessage.as_bytes();
-                HU_queueChatChar(world, KEY_ENTER);
-                for &byte in macromessage {
-                    HU_queueChatChar(world, byte);
-                }
-                HU_queueChatChar(world, KEY_ENTER);
-                HUD.borrow_mut().chat_on = 0;
-                world.players[plr].set_message(macromessage);
-                eatkey = true;
-            } else {
-                let c = ev.data2 as u8;
-                eatkey = HUlib_keyInIText(&raw mut (*hud_state).w_chat, c) != 0;
-                if eatkey {
-                    HU_queueChatChar(world, c);
-                }
-                if c == KEY_ENTER {
-                    let mut hud = HUD.borrow_mut();
-                    hud.chat_on = 0;
-                    if hud.w_chat.l.len != 0 {
-                        world.players[plr].set_message(until_nul(&hud.w_chat.l.l));
-                    }
-                } else if c == KEY_ESCAPE {
-                    HUD.borrow_mut().chat_on = 0;
-                }
-            }
-        }
-
-        if eatkey { 1 } else { 0 }
     }
+    let (netgame, consoleplayer) = (netgame(), consoleplayer());
+
+    if ev.data1 == KEY_RSHIFT as i32 {
+        return 0;
+    } else if ev.data1 == KEY_RALT as i32 || ev.data1 == KEY_LALT as i32 {
+        HUD.borrow_mut().altdown = ev.kind == 0; // ev_keydown
+        return 0;
+    }
+
+    if ev.kind != 0 {
+        // not ev_keydown
+        return 0;
+    }
+
+    let mut eatkey = false;
+    let (chat_on, altdown, plr) = {
+        let hud = HUD.borrow();
+        (hud.chat_on, hud.altdown, hud.player())
+    };
+
+    let ControlsState {
+        key_message_refresh,
+        key_multi_msg,
+        key_multi_msgplayer,
+        ..
+    } = CONTROLS.get();
+    if chat_on == 0 {
+        if ev.data1 == key_message_refresh {
+            let mut hud = HUD.borrow_mut();
+            hud.message_on = 1;
+            hud.message_counter = HU_MSGTIMEOUT;
+            eatkey = true;
+        } else if netgame != 0 && ev.data2 == key_multi_msg {
+            eatkey = true;
+            {
+                let mut hud = HUD.borrow_mut();
+                hud.chat_on = 1;
+                HUlib_resetIText(&mut hud.w_chat);
+            }
+            HU_queueChatChar(world, HU_BROADCAST as u8);
+        } else if netgame != 0 && numplayers > 2 {
+            for i in 0..MAXPLAYERS {
+                if ev.data2 == key_multi_msgplayer[i] {
+                    if playeringame(i) != 0 && i != consoleplayer as usize {
+                        eatkey = true;
+                        {
+                            let mut hud = HUD.borrow_mut();
+                            hud.chat_on = 1;
+                            HUlib_resetIText(&mut hud.w_chat);
+                        }
+                        HU_queueChatChar(world, (i + 1) as u8);
+                        break;
+                    } else if i == consoleplayer as usize {
+                        let num_nobrainers = {
+                            let mut hud = HUD.borrow_mut();
+                            hud.num_nobrainers += 1;
+                            hud.num_nobrainers
+                        };
+                        world.players[plr].set_message(DEH_String(match num_nobrainers {
+                            1..=2 => HUSTR_TALKTOSELF1,
+                            3..=5 => HUSTR_TALKTOSELF2,
+                            6..=8 => HUSTR_TALKTOSELF3,
+                            9..=31 => HUSTR_TALKTOSELF4,
+                            _ => HUSTR_TALKTOSELF5,
+                        }));
+                    }
+                }
+            }
+        }
+    } else {
+        // send a macro
+        if altdown {
+            let c = (ev.data1 - b'0' as i32) as u8;
+            if c > 9 {
+                return 0;
+            }
+            let macromessage = HUD.borrow().chat_macros[c as usize].clone();
+            let macromessage = macromessage.as_bytes();
+            HU_queueChatChar(world, KEY_ENTER);
+            for &byte in macromessage {
+                HU_queueChatChar(world, byte);
+            }
+            HU_queueChatChar(world, KEY_ENTER);
+            HUD.borrow_mut().chat_on = 0;
+            world.players[plr].set_message(macromessage);
+            eatkey = true;
+        } else {
+            let c = ev.data2 as u8;
+            eatkey = HUlib_keyInIText(&mut HUD.borrow_mut().w_chat, c) != 0;
+            if eatkey {
+                HU_queueChatChar(world, c);
+            }
+            if c == KEY_ENTER {
+                let mut hud = HUD.borrow_mut();
+                hud.chat_on = 0;
+                if hud.w_chat.l.len != 0 {
+                    world.players[plr].set_message(until_nul(&hud.w_chat.l.l));
+                }
+            } else if c == KEY_ESCAPE {
+                HUD.borrow_mut().chat_on = 0;
+            }
+        }
+    }
+
+    if eatkey { 1 } else { 0 }
 }

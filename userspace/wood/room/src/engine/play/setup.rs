@@ -408,8 +408,8 @@ pub fn P_LoadSubsectors(level: &mut LevelState, lump: i32) {
 pub fn P_LoadSectors(level: &mut LevelState, lump: i32) {
     // SAFETY: the lump view is used only before the lump is released.
     let map_sectors = unsafe { cache_lump_records::<mapsector_t>(lump) };
-    // SAFETY: `R_Init` has set up the flats at startup, before any level.
-    let flat_num = |name: &[u8]| unsafe { R_FlatNumForName(name) } as i16;
+    // `R_Init` has set up the flats at startup, before any level.
+    let flat_num = |name: &[u8]| R_FlatNumForName(name) as i16;
     let sectors: Vec<sector_t> = map_sectors
         .iter()
         .map(|ms| sector_t {
@@ -513,8 +513,7 @@ pub fn P_LoadThings(world: &mut World, lump: i32) {
                 break;
             }
 
-            let mut spawnthing = *mt;
-            P_SpawnMapThing(world, &raw mut spawnthing);
+            P_SpawnMapThing(world, *mt);
         }
 
         W_ReleaseLumpNum(lump);

@@ -12,6 +12,9 @@
 //! [`MaskedColumnParams`] block passed by the caller.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The sprite tables and masked column drawing go through raw pointers in
+// C's whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use {crate::i_error, std::ptr};
 

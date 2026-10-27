@@ -33,6 +33,9 @@
 //! so readers only need a shared borrow.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The texture, flat and sprite tables live in zone memory behind raw
+// pointers, built in C's whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use {crate::i_error, std::ffi::c_void};
 
@@ -961,13 +964,9 @@ pub unsafe fn R_InitSpriteLumps(data: &mut RenderDataState) {
 /// `colormaps + light_level * 256` to look up color remappings for a given
 /// lighting level.  The lump is tagged `PU_STATIC` and is never freed.
 ///
-/// Called by `R_InitData`.
-///
-/// # Safety
-///
-/// - WAD must be fully loaded; the `COLORMAP` lump must exist.
-/// - Must be called exactly once per process lifetime.
-pub unsafe fn R_InitColormaps(data: &mut RenderDataState) {
+/// Called by `R_InitData`, once the WAD is loaded; a missing `COLORMAP` lump
+/// aborts via `I_Error`.
+pub fn R_InitColormaps(data: &mut RenderDataState) {
     let lump = W_GetNumForName(DEH_String(b"COLORMAP"));
     data.colormaps = W_CacheLumpNum(lump, PU_STATIC) as *mut u8;
 }
@@ -1013,12 +1012,9 @@ pub unsafe fn R_InitData(data: &mut RenderDataState) {
 /// The returned value is suitable for use as an index into `flattranslation`.
 ///
 /// Called by `g_game.c` to resolve `SKYFLATNAME` into `skyflatnum`, and by
-/// various map-object and sector-setup code paths.
-///
-/// # Safety
-///
-/// `R_InitFlats` must have been called first.
-pub unsafe fn R_FlatNumForName(name: &[u8]) -> i32 {
+/// various map-object and sector-setup code paths. The index is only
+/// meaningful once `R_InitFlats` has set `firstflat`.
+pub fn R_FlatNumForName(name: &[u8]) -> i32 {
     let i = W_CheckNumForName(name);
     if i == -1 {
         i_error!(

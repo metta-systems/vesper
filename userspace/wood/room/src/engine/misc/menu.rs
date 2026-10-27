@@ -237,7 +237,7 @@ use crate::engine::{
     render_2d::V_DrawPatchDirect,
     render_3d::main::R_SetViewSize,
     sound::{S_SetMusicVolume, S_SetSfxVolume, S_StartNonPositionalSound, info::Sfx},
-    wad::{W_CacheLumpName, cache_patch_name},
+    wad::{W_GetNumForName, cache_lump_bytes, cache_patch_name},
 };
 
 /// Menu state (C `m_menu.c` globals other than the menu pages).
@@ -1382,10 +1382,7 @@ fn IsNullKey(key: i32) -> bool {
 ///
 /// Returns `Boolean::TRUE` if the event was consumed, `Boolean::FALSE` otherwise.
 /// Called by `G_Responder` in `g_game.c`.
-///
-/// # Safety
-/// `ev` must be a valid, non-null pointer to an initialised `event_t`.
-pub unsafe fn M_Responder(ev: *mut event_t) -> Boolean {
+pub fn M_Responder(ev: &event_t) -> Boolean {
     let ControlsState {
         joybmenu,
         key_menu_abort,
@@ -1414,437 +1411,443 @@ pub unsafe fn M_Responder(ev: *mut event_t) -> Boolean {
         ..
     } = CONTROLS.get();
 
-    unsafe {
-        let ev = &*ev;
+    // testcontrols mode
+    if GAME.borrow().testcontrols != 0 {
+        if ev.kind == EV_QUIT
+            || (ev.kind == EV_KEYDOWN
+                && (ev.data1 == key_menu_activate || ev.data1 == key_menu_quit))
+        {
+            I_Quit();
+            return Boolean::TRUE;
+        }
+        return Boolean::FALSE;
+    }
 
-        // testcontrols mode
-        if GAME.borrow().testcontrols != 0 {
-            if ev.kind == EV_QUIT
-                || (ev.kind == EV_KEYDOWN
-                    && (ev.data1 == key_menu_activate || ev.data1 == key_menu_quit))
+    // window close button
+    if ev.kind == EV_QUIT {
+        let (menuactive, message_to_print, message_routine) = {
+            let menu = MENU.borrow();
+            (menu.menuactive, menu.messageToPrint, menu.messageRoutine)
+        };
+        if menuactive != 0
+            && message_to_print != 0
+            && message_routine.map(|f| f as usize).unwrap_or(0)
+                == M_QuitResponse as *const () as usize
+        {
+            M_QuitResponse(key_menu_confirm);
+        } else {
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_QuitDOOM(0);
+        }
+        return Boolean::TRUE;
+    }
+
+    let mut ch: i32 = 0;
+    let mut key: i32 = -1;
+
+    let (mut joywait, mut mousewait) = {
+        let menu = MENU.borrow();
+        (menu.joywait, menu.mousewait)
+    };
+    if ev.kind == EV_JOYSTICK && joywait < I_GetTime() {
+        if ev.data3 < 0 {
+            key = key_menu_up;
+            joywait = I_GetTime() + 5;
+        } else if ev.data3 > 0 {
+            key = key_menu_down;
+            joywait = I_GetTime() + 5;
+        }
+        if ev.data2 < 0 {
+            key = key_menu_left;
+            joywait = I_GetTime() + 2;
+        } else if ev.data2 > 0 {
+            key = key_menu_right;
+            joywait = I_GetTime() + 2;
+        }
+        if ev.data1 & 1 != 0 {
+            key = key_menu_forward;
+            joywait = I_GetTime() + 5;
+        }
+        if ev.data1 & 2 != 0 {
+            key = key_menu_back;
+            joywait = I_GetTime() + 5;
+        }
+        if joybmenu >= 0 && (ev.data1 & (1 << joybmenu)) != 0 {
+            key = key_menu_activate;
+            joywait = I_GetTime() + 5;
+        }
+        MENU.borrow_mut().joywait = joywait;
+    } else if ev.kind == EV_MOUSE && mousewait < I_GetTime() {
+        let (mut mousey, mut lasty, mut mousex, mut lastx) = {
+            let menu = MENU.borrow();
+            (menu.mousey, menu.lasty, menu.mousex, menu.lastx)
+        };
+        mousey += ev.data3;
+        if mousey < lasty - 30 {
+            key = key_menu_down;
+            mousewait = I_GetTime() + 5;
+            lasty -= 30;
+            mousey = lasty;
+        } else if mousey > lasty + 30 {
+            key = key_menu_up;
+            mousewait = I_GetTime() + 5;
+            lasty += 30;
+            mousey = lasty;
+        }
+
+        mousex += ev.data2;
+        if mousex < lastx - 30 {
+            key = key_menu_left;
+            mousewait = I_GetTime() + 5;
+            lastx -= 30;
+            mousex = lastx;
+        } else if mousex > lastx + 30 {
+            key = key_menu_right;
+            mousewait = I_GetTime() + 5;
+            lastx += 30;
+            mousex = lastx;
+        }
+
+        if ev.data1 & 1 != 0 {
+            key = key_menu_forward;
+            mousewait = I_GetTime() + 15;
+        }
+        if ev.data1 & 2 != 0 {
+            key = key_menu_back;
+            mousewait = I_GetTime() + 15;
+        }
+
+        let mut menu = MENU.borrow_mut();
+        menu.mousewait = mousewait;
+        menu.mousey = mousey;
+        menu.lasty = lasty;
+        menu.mousex = mousex;
+        menu.lastx = lastx;
+    } else if ev.kind == EV_KEYDOWN {
+        key = ev.data1;
+        ch = ev.data2;
+    }
+
+    if key == -1 {
+        return Boolean::FALSE;
+    }
+
+    // Save Game string input
+    if MENU.borrow().saveStringEnter != 0 {
+        if key == KEY_BACKSPACE {
+            let mut menu = MENU.borrow_mut();
+            if menu.saveCharIndex > 0 {
+                menu.saveCharIndex -= 1;
+                let (slot, index) = (menu.saveSlot as usize, menu.saveCharIndex as usize);
+                menu.savegamestrings[slot][index] = 0;
+            }
+        } else if key == KEY_ESCAPE {
+            let mut menu = MENU.borrow_mut();
+            let menu = &mut *menu;
+            menu.saveStringEnter = 0;
+            M_StringCopy(
+                &mut menu.savegamestrings[menu.saveSlot as usize],
+                &menu.saveOldString,
+            );
+        } else if key == KEY_ENTER {
+            let (save_slot, description_start) = {
+                let mut menu = MENU.borrow_mut();
+                menu.saveStringEnter = 0;
+                (
+                    menu.saveSlot,
+                    menu.savegamestrings[menu.saveSlot as usize][0],
+                )
+            };
+            if description_start != 0 {
+                M_DoSave(save_slot);
+            }
+        } else {
+            if vanilla_keyboard_mapping != 0 {
+                ch = key;
+            }
+            if let Ok(byte) = u8::try_from(ch) {
+                ch = byte.to_ascii_uppercase() as i32;
+            }
+
+            if ch != b' ' as i32
+                && (ch - HU_FONTSTART < 0 || ch - HU_FONTSTART >= HU_FONTSIZE as i32)
             {
-                I_Quit();
                 return Boolean::TRUE;
             }
+
+            let (save_slot, save_char_index, description) = {
+                let menu = MENU.borrow();
+                (
+                    menu.saveSlot as usize,
+                    menu.saveCharIndex,
+                    menu.savegamestrings[menu.saveSlot as usize],
+                )
+            };
+            if (32..=127).contains(&ch)
+                && save_char_index < (SAVESTRINGSIZE as i32 - 1)
+                && M_StringWidth(until_nul(&description)) < (SAVESTRINGSIZE as i32 - 2) * 8
+            {
+                let mut menu = MENU.borrow_mut();
+                let index = save_char_index as usize;
+                menu.savegamestrings[save_slot][index] = ch as u8;
+                menu.saveCharIndex += 1;
+                menu.savegamestrings[save_slot][index + 1] = 0;
+            }
+        }
+        return Boolean::TRUE;
+    }
+
+    // Messages that need input
+    let (message_to_print, message_needs_input) = {
+        let menu = MENU.borrow();
+        (menu.messageToPrint, menu.messageNeedsInput)
+    };
+    if message_to_print != 0 {
+        if message_needs_input != 0
+            && key != b' ' as i32
+            && key != KEY_ESCAPE
+            && key != key_menu_confirm
+            && key != key_menu_abort
+        {
             return Boolean::FALSE;
         }
 
-        // window close button
-        if ev.kind == EV_QUIT {
-            let (menuactive, message_to_print, message_routine) = {
-                let menu = MENU.borrow();
-                (menu.menuactive, menu.messageToPrint, menu.messageRoutine)
-            };
-            if menuactive != 0
-                && message_to_print != 0
-                && message_routine.map(|f| f as usize).unwrap_or(0)
-                    == M_QuitResponse as *const () as usize
-            {
-                M_QuitResponse(key_menu_confirm);
-            } else {
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_QuitDOOM(0);
-            }
-            return Boolean::TRUE;
-        }
-
-        let mut ch: i32 = 0;
-        let mut key: i32 = -1;
-
-        let (mut joywait, mut mousewait) = {
-            let menu = MENU.borrow();
-            (menu.joywait, menu.mousewait)
-        };
-        if ev.kind == EV_JOYSTICK && joywait < I_GetTime() {
-            if ev.data3 < 0 {
-                key = key_menu_up;
-                joywait = I_GetTime() + 5;
-            } else if ev.data3 > 0 {
-                key = key_menu_down;
-                joywait = I_GetTime() + 5;
-            }
-            if ev.data2 < 0 {
-                key = key_menu_left;
-                joywait = I_GetTime() + 2;
-            } else if ev.data2 > 0 {
-                key = key_menu_right;
-                joywait = I_GetTime() + 2;
-            }
-            if ev.data1 & 1 != 0 {
-                key = key_menu_forward;
-                joywait = I_GetTime() + 5;
-            }
-            if ev.data1 & 2 != 0 {
-                key = key_menu_back;
-                joywait = I_GetTime() + 5;
-            }
-            if joybmenu >= 0 && (ev.data1 & (1 << joybmenu)) != 0 {
-                key = key_menu_activate;
-                joywait = I_GetTime() + 5;
-            }
-            MENU.borrow_mut().joywait = joywait;
-        } else if ev.kind == EV_MOUSE && mousewait < I_GetTime() {
-            let (mut mousey, mut lasty, mut mousex, mut lastx) = {
-                let menu = MENU.borrow();
-                (menu.mousey, menu.lasty, menu.mousex, menu.lastx)
-            };
-            mousey += ev.data3;
-            if mousey < lasty - 30 {
-                key = key_menu_down;
-                mousewait = I_GetTime() + 5;
-                lasty -= 30;
-                mousey = lasty;
-            } else if mousey > lasty + 30 {
-                key = key_menu_up;
-                mousewait = I_GetTime() + 5;
-                lasty += 30;
-                mousey = lasty;
-            }
-
-            mousex += ev.data2;
-            if mousex < lastx - 30 {
-                key = key_menu_left;
-                mousewait = I_GetTime() + 5;
-                lastx -= 30;
-                mousex = lastx;
-            } else if mousex > lastx + 30 {
-                key = key_menu_right;
-                mousewait = I_GetTime() + 5;
-                lastx += 30;
-                mousex = lastx;
-            }
-
-            if ev.data1 & 1 != 0 {
-                key = key_menu_forward;
-                mousewait = I_GetTime() + 15;
-            }
-            if ev.data1 & 2 != 0 {
-                key = key_menu_back;
-                mousewait = I_GetTime() + 15;
-            }
-
+        let message_routine = {
             let mut menu = MENU.borrow_mut();
-            menu.mousewait = mousewait;
-            menu.mousey = mousey;
-            menu.lasty = lasty;
-            menu.mousex = mousex;
-            menu.lastx = lastx;
-        } else if ev.kind == EV_KEYDOWN {
-            key = ev.data1;
-            ch = ev.data2;
-        }
-
-        if key == -1 {
-            return Boolean::FALSE;
-        }
-
-        // Save Game string input
-        if MENU.borrow().saveStringEnter != 0 {
-            if key == KEY_BACKSPACE {
-                let mut menu = MENU.borrow_mut();
-                if menu.saveCharIndex > 0 {
-                    menu.saveCharIndex -= 1;
-                    let (slot, index) = (menu.saveSlot as usize, menu.saveCharIndex as usize);
-                    menu.savegamestrings[slot][index] = 0;
-                }
-            } else if key == KEY_ESCAPE {
-                let mut menu = MENU.borrow_mut();
-                let menu = &mut *menu;
-                menu.saveStringEnter = 0;
-                M_StringCopy(
-                    &mut menu.savegamestrings[menu.saveSlot as usize],
-                    &menu.saveOldString,
-                );
-            } else if key == KEY_ENTER {
-                let (save_slot, description_start) = {
-                    let mut menu = MENU.borrow_mut();
-                    menu.saveStringEnter = 0;
-                    (
-                        menu.saveSlot,
-                        menu.savegamestrings[menu.saveSlot as usize][0],
-                    )
-                };
-                if description_start != 0 {
-                    M_DoSave(save_slot);
-                }
-            } else {
-                if vanilla_keyboard_mapping != 0 {
-                    ch = key;
-                }
-                if let Ok(byte) = u8::try_from(ch) {
-                    ch = byte.to_ascii_uppercase() as i32;
-                }
-
-                if ch != b' ' as i32
-                    && (ch - HU_FONTSTART < 0 || ch - HU_FONTSTART >= HU_FONTSIZE as i32)
-                {
-                    return Boolean::TRUE;
-                }
-
-                let (save_slot, save_char_index, description) = {
-                    let menu = MENU.borrow();
-                    (
-                        menu.saveSlot as usize,
-                        menu.saveCharIndex,
-                        menu.savegamestrings[menu.saveSlot as usize],
-                    )
-                };
-                if (32..=127).contains(&ch)
-                    && save_char_index < (SAVESTRINGSIZE as i32 - 1)
-                    && M_StringWidth(until_nul(&description)) < (SAVESTRINGSIZE as i32 - 2) * 8
-                {
-                    let mut menu = MENU.borrow_mut();
-                    let index = save_char_index as usize;
-                    menu.savegamestrings[save_slot][index] = ch as u8;
-                    menu.saveCharIndex += 1;
-                    menu.savegamestrings[save_slot][index + 1] = 0;
-                }
-            }
-            return Boolean::TRUE;
-        }
-
-        // Messages that need input
-        let (message_to_print, message_needs_input) = {
-            let menu = MENU.borrow();
-            (menu.messageToPrint, menu.messageNeedsInput)
+            menu.menuactive = menu.messageLastMenuActive;
+            menu.messageToPrint = 0;
+            menu.messageRoutine
         };
-        if message_to_print != 0 {
-            if message_needs_input != 0
-                && key != b' ' as i32
-                && key != KEY_ESCAPE
-                && key != key_menu_confirm
-                && key != key_menu_abort
-            {
+        if let Some(r) = message_routine {
+            r(key);
+        }
+        MENU.borrow_mut().menuactive = 0;
+        S_StartNonPositionalSound(Sfx::Swtchx as i32);
+        return Boolean::TRUE;
+    }
+
+    // Screenshot
+    let devparm = DOOM_MAIN.borrow().devparm;
+    if (devparm != 0 && key == key_menu_help) || (key != 0 && key == key_menu_screenshot) {
+        G_ScreenShot();
+        return Boolean::TRUE;
+    }
+
+    // F-Keys (when menu not active)
+    if !menu_active() {
+        if key == key_menu_decscreen {
+            if automap_active() || HUD.borrow().chat_on != 0 {
                 return Boolean::FALSE;
             }
-
-            let message_routine = {
+            M_SizeDisplay(0);
+            S_StartNonPositionalSound(Sfx::Stnmov as i32);
+            return Boolean::TRUE;
+        } else if key == key_menu_incscreen {
+            if automap_active() || HUD.borrow().chat_on != 0 {
+                return Boolean::FALSE;
+            }
+            M_SizeDisplay(1);
+            S_StartNonPositionalSound(Sfx::Stnmov as i32);
+            return Boolean::TRUE;
+        } else if key == key_menu_help {
+            M_StartControlPanel();
+            {
                 let mut menu = MENU.borrow_mut();
-                menu.menuactive = menu.messageLastMenuActive;
-                menu.messageToPrint = 0;
-                menu.messageRoutine
-            };
-            if let Some(r) = message_routine {
-                r(key);
-            }
-            MENU.borrow_mut().menuactive = 0;
-            S_StartNonPositionalSound(Sfx::Swtchx as i32);
-            return Boolean::TRUE;
-        }
-
-        // Screenshot
-        let devparm = DOOM_MAIN.borrow().devparm;
-        if (devparm != 0 && key == key_menu_help) || (key != 0 && key == key_menu_screenshot) {
-            G_ScreenShot();
-            return Boolean::TRUE;
-        }
-
-        // F-Keys (when menu not active)
-        if !menu_active() {
-            if key == key_menu_decscreen {
-                if automap_active() || HUD.borrow().chat_on != 0 {
-                    return Boolean::FALSE;
-                }
-                M_SizeDisplay(0);
-                S_StartNonPositionalSound(Sfx::Stnmov as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_incscreen {
-                if automap_active() || HUD.borrow().chat_on != 0 {
-                    return Boolean::FALSE;
-                }
-                M_SizeDisplay(1);
-                S_StartNonPositionalSound(Sfx::Stnmov as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_help {
-                M_StartControlPanel();
-                {
-                    let mut menu = MENU.borrow_mut();
-                    menu.currentMenu = if gamemode() == doom::mode::retail {
-                        page!(ReadDef2)
-                    } else {
-                        page!(ReadDef1)
-                    };
-                    menu.itemOn = 0;
-                }
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_save {
-                M_StartControlPanel();
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_SaveGame(0);
-                return Boolean::TRUE;
-            } else if key == key_menu_load {
-                M_StartControlPanel();
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_LoadGame(0);
-                return Boolean::TRUE;
-            } else if key == key_menu_volume {
-                M_StartControlPanel();
-                {
-                    let mut menu = MENU.borrow_mut();
-                    menu.currentMenu = page!(SoundDef);
-                    menu.itemOn = sfx_vol as i16;
-                }
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_detail {
-                M_ChangeDetail(0);
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_qsave {
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_QuickSave();
-                return Boolean::TRUE;
-            } else if key == key_menu_endgame {
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_EndGame(0);
-                return Boolean::TRUE;
-            } else if key == key_menu_messages {
-                M_ChangeMessages(0);
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                return Boolean::TRUE;
-            } else if key == key_menu_qload {
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_QuickLoad();
-                return Boolean::TRUE;
-            } else if key == key_menu_quit {
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                M_QuitDOOM(0);
-                return Boolean::TRUE;
-            } else if key == key_menu_gamma {
-                let usegamma = {
-                    let mut video = VIDEO.borrow_mut();
-                    video.usegamma += 1;
-                    if video.usegamma > 4 {
-                        video.usegamma = 0;
-                    }
-                    video.usegamma
+                menu.currentMenu = if gamemode() == doom::mode::retail {
+                    page!(ReadDef2)
+                } else {
+                    page!(ReadDef1)
                 };
-                M_Menu_SetPlayerMessage(gammamsg[usegamma as usize]);
-                I_SetPalette(W_CacheLumpName(b"PLAYPAL", 0) as *mut u8);
-                return Boolean::TRUE;
+                menu.itemOn = 0;
             }
-        }
-
-        // Pop-up menu?
-        if !menu_active() {
-            if key == key_menu_activate {
-                M_StartControlPanel();
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-                return Boolean::TRUE;
-            }
-            return Boolean::FALSE;
-        }
-
-        // Keys usable within menu. The page is reached through
-        // `currentMenu`; no guard is held while an item routine runs.
-        let (current_menu, mut item_on) = {
-            let menu = MENU.borrow();
-            (menu.currentMenu, menu.itemOn)
-        };
-        let item_status = |index: i16| (*(*current_menu).menuitems.offset(index as isize)).status;
-        let item_routine = |index: i16| (*(*current_menu).menuitems.offset(index as isize)).routine;
-        if key == key_menu_down {
-            loop {
-                if item_on + 1 > (*current_menu).numitems - 1 {
-                    item_on = 0;
-                } else {
-                    item_on += 1;
-                }
-                MENU.borrow_mut().itemOn = item_on;
-                S_StartNonPositionalSound(Sfx::Pstop as i32);
-                if item_status(item_on) != -1 {
-                    break;
-                }
-            }
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
             return Boolean::TRUE;
-        } else if key == key_menu_up {
-            loop {
-                if item_on == 0 {
-                    item_on = (*current_menu).numitems - 1;
-                } else {
-                    item_on -= 1;
-                }
-                MENU.borrow_mut().itemOn = item_on;
-                S_StartNonPositionalSound(Sfx::Pstop as i32);
-                if item_status(item_on) != -1 {
-                    break;
-                }
-            }
+        } else if key == key_menu_save {
+            M_StartControlPanel();
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_SaveGame(0);
             return Boolean::TRUE;
-        } else if key == key_menu_left {
-            if item_status(item_on) == 2
-                && let Some(routine) = item_routine(item_on)
+        } else if key == key_menu_load {
+            M_StartControlPanel();
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_LoadGame(0);
+            return Boolean::TRUE;
+        } else if key == key_menu_volume {
+            M_StartControlPanel();
             {
-                S_StartNonPositionalSound(Sfx::Stnmov as i32);
-                routine(0);
+                let mut menu = MENU.borrow_mut();
+                menu.currentMenu = page!(SoundDef);
+                menu.itemOn = sfx_vol as i16;
             }
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
             return Boolean::TRUE;
-        } else if key == key_menu_right {
-            if item_status(item_on) == 2
-                && let Some(routine) = item_routine(item_on)
-            {
-                S_StartNonPositionalSound(Sfx::Stnmov as i32);
-                routine(1);
-            }
+        } else if key == key_menu_detail {
+            M_ChangeDetail(0);
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
             return Boolean::TRUE;
-        } else if key == key_menu_forward {
-            let status = item_status(item_on);
-            if let Some(routine) = item_routine(item_on)
-                && status != 0
-            {
-                (*current_menu).lastOn = item_on;
-                if status == 2 {
-                    routine(1);
-                    S_StartNonPositionalSound(Sfx::Stnmov as i32);
-                } else {
-                    routine(item_on as i32);
-                    S_StartNonPositionalSound(Sfx::Pistol as i32);
+        } else if key == key_menu_qsave {
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_QuickSave();
+            return Boolean::TRUE;
+        } else if key == key_menu_endgame {
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_EndGame(0);
+            return Boolean::TRUE;
+        } else if key == key_menu_messages {
+            M_ChangeMessages(0);
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            return Boolean::TRUE;
+        } else if key == key_menu_qload {
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_QuickLoad();
+            return Boolean::TRUE;
+        } else if key == key_menu_quit {
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            M_QuitDOOM(0);
+            return Boolean::TRUE;
+        } else if key == key_menu_gamma {
+            let usegamma = {
+                let mut video = VIDEO.borrow_mut();
+                video.usegamma += 1;
+                if video.usegamma > 4 {
+                    video.usegamma = 0;
                 }
-            }
-            return Boolean::TRUE;
-        } else if key == key_menu_activate {
-            (*current_menu).lastOn = item_on;
-            M_ClearMenus();
-            S_StartNonPositionalSound(Sfx::Swtchx as i32);
-            return Boolean::TRUE;
-        } else if key == key_menu_back {
-            (*current_menu).lastOn = item_on;
-            let previous_menu = (*current_menu).prevMenu;
-            if !previous_menu.is_null() {
-                {
-                    let mut menu = MENU.borrow_mut();
-                    menu.currentMenu = previous_menu;
-                    menu.itemOn = (*previous_menu).lastOn;
-                }
-                S_StartNonPositionalSound(Sfx::Swtchn as i32);
-            }
+                video.usegamma
+            };
+            M_Menu_SetPlayerMessage(gammamsg[usegamma as usize]);
+            // SAFETY: the view is used before any further zone allocation
+            // could purge it.
+            I_SetPalette(unsafe { cache_lump_bytes(W_GetNumForName(b"PLAYPAL"), 0) });
             return Boolean::TRUE;
         }
-
-        // Keyboard shortcut
-        if ch != 0 || IsNullKey(key) {
-            let ch_u = ch as u8;
-            let item_alpha_key =
-                |index: i16| (*(*current_menu).menuitems.offset(index as isize)).alphaKey;
-            for i in (item_on + 1)..(*current_menu).numitems {
-                if item_alpha_key(i) == ch_u {
-                    MENU.borrow_mut().itemOn = i;
-                    S_StartNonPositionalSound(Sfx::Pstop as i32);
-                    return Boolean::TRUE;
-                }
-            }
-            for i in 0..=item_on {
-                if item_alpha_key(i) == ch_u {
-                    MENU.borrow_mut().itemOn = i;
-                    S_StartNonPositionalSound(Sfx::Pstop as i32);
-                    return Boolean::TRUE;
-                }
-            }
-        }
-
-        Boolean::FALSE
     }
+
+    // Pop-up menu?
+    if !menu_active() {
+        if key == key_menu_activate {
+            M_StartControlPanel();
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+            return Boolean::TRUE;
+        }
+        return Boolean::FALSE;
+    }
+
+    // Keys usable within menu. The page is reached through
+    // `currentMenu`; no guard is held while an item routine runs.
+    let (current_menu, mut item_on) = {
+        let menu = MENU.borrow();
+        (menu.currentMenu, menu.itemOn)
+    };
+    // SAFETY (every page access below): the menu is active, so
+    // `currentMenu` points at a page of the `MENU_PAGES` static (it and the
+    // `prevMenu` links are set from `page!`), whose `menuitems` hold
+    // `numitems` items, and `item_on` and the shortcut loops stay below
+    // `numitems`. Each access is a single read or write; no reference into
+    // the page is held while an item routine runs.
+    let numitems = unsafe { (*current_menu).numitems };
+    let item = |index: i16| unsafe { &*(*current_menu).menuitems.offset(index as isize) };
+    let item_status = |index: i16| item(index).status;
+    let item_routine = |index: i16| item(index).routine;
+    let set_last_on = |item_on: i16| unsafe { (*current_menu).lastOn = item_on };
+    if key == key_menu_down {
+        loop {
+            if item_on + 1 > numitems - 1 {
+                item_on = 0;
+            } else {
+                item_on += 1;
+            }
+            MENU.borrow_mut().itemOn = item_on;
+            S_StartNonPositionalSound(Sfx::Pstop as i32);
+            if item_status(item_on) != -1 {
+                break;
+            }
+        }
+        return Boolean::TRUE;
+    } else if key == key_menu_up {
+        loop {
+            if item_on == 0 {
+                item_on = numitems - 1;
+            } else {
+                item_on -= 1;
+            }
+            MENU.borrow_mut().itemOn = item_on;
+            S_StartNonPositionalSound(Sfx::Pstop as i32);
+            if item_status(item_on) != -1 {
+                break;
+            }
+        }
+        return Boolean::TRUE;
+    } else if key == key_menu_left {
+        if item_status(item_on) == 2
+            && let Some(routine) = item_routine(item_on)
+        {
+            S_StartNonPositionalSound(Sfx::Stnmov as i32);
+            routine(0);
+        }
+        return Boolean::TRUE;
+    } else if key == key_menu_right {
+        if item_status(item_on) == 2
+            && let Some(routine) = item_routine(item_on)
+        {
+            S_StartNonPositionalSound(Sfx::Stnmov as i32);
+            routine(1);
+        }
+        return Boolean::TRUE;
+    } else if key == key_menu_forward {
+        let status = item_status(item_on);
+        if let Some(routine) = item_routine(item_on)
+            && status != 0
+        {
+            set_last_on(item_on);
+            if status == 2 {
+                routine(1);
+                S_StartNonPositionalSound(Sfx::Stnmov as i32);
+            } else {
+                routine(item_on as i32);
+                S_StartNonPositionalSound(Sfx::Pistol as i32);
+            }
+        }
+        return Boolean::TRUE;
+    } else if key == key_menu_activate {
+        set_last_on(item_on);
+        M_ClearMenus();
+        S_StartNonPositionalSound(Sfx::Swtchx as i32);
+        return Boolean::TRUE;
+    } else if key == key_menu_back {
+        set_last_on(item_on);
+        let previous_menu = unsafe { (*current_menu).prevMenu };
+        if !previous_menu.is_null() {
+            {
+                let mut menu = MENU.borrow_mut();
+                menu.currentMenu = previous_menu;
+                menu.itemOn = unsafe { (*previous_menu).lastOn };
+            }
+            S_StartNonPositionalSound(Sfx::Swtchn as i32);
+        }
+        return Boolean::TRUE;
+    }
+
+    // Keyboard shortcut
+    if ch != 0 || IsNullKey(key) {
+        let ch_u = ch as u8;
+        let item_alpha_key = |index: i16| item(index).alphaKey;
+        for i in (item_on + 1)..numitems {
+            if item_alpha_key(i) == ch_u {
+                MENU.borrow_mut().itemOn = i;
+                S_StartNonPositionalSound(Sfx::Pstop as i32);
+                return Boolean::TRUE;
+            }
+        }
+        for i in 0..=item_on {
+            if item_alpha_key(i) == ch_u {
+                MENU.borrow_mut().itemOn = i;
+                S_StartNonPositionalSound(Sfx::Pstop as i32);
+                return Boolean::TRUE;
+            }
+        }
+    }
+
+    Boolean::FALSE
 }
 
 /// Open the main menu and set `currentMenu` to `MainDef`.

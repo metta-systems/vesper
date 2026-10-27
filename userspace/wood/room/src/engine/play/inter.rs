@@ -1024,12 +1024,8 @@ pub fn P_TouchSpecialThing(world: &mut World, special_id: MobjId, toucher_id: Mo
 /// If `target` is a player, the player enters `PST_DEAD`, the automap is
 /// stopped for the console player, and `P_DropWeapon` is called.
 ///
-/// # Safety
-///
-/// `target_id` must name a map object of the level. `source_id` may be
-/// `None` (environmental kill).  All global game-state statics must only be
-/// accessed from the game-logic thread.
-pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id: MobjId) {
+/// `source_id` is `None` for an environmental kill.
+pub fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id: MobjId) {
     // The target is read afresh after each call that runs play code
     // (`P_DropWeapon`, `P_SetMobjState`), as C reads it through its pointer.
     let (info, counts_kill, target_player) = {
@@ -1133,12 +1129,8 @@ pub unsafe fn P_KillMobj(world: &mut World, source_id: Option<MobjId>, target_id
 /// - On surviving hits a pain state may be entered and the monster's target
 ///   is updated to `source`.
 ///
-/// # Safety
-///
-/// `target_id` must name a map object of the level. `inflictor_id` and
-/// `source_id` may be `None`.  All global game-state statics must only be
-/// accessed from the game-logic thread.
-pub unsafe fn P_DamageMobj(
+/// `inflictor_id` and `source_id` may be `None`.
+pub fn P_DamageMobj(
     world: &mut World,
     target_id: MobjId,
     inflictor_id: Option<MobjId>,

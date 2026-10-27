@@ -241,10 +241,7 @@ pub fn P_CalcHeight(world: &mut World, player_id: PlayerId) {
 /// Also transitions the player mobj to the `S_PLAY_RUN1` state when moving.
 ///
 /// Corresponds to `P_MovePlayer` in `p_user.c`.
-///
-/// # Safety
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
+pub fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
     let player = &world.players[player_id];
     let mo_id = player.mo();
     let cmd = player.cmd;
@@ -289,10 +286,7 @@ pub unsafe fn P_MovePlayer(world: &mut World, player_id: PlayerId) {
 /// key transitions the player to `PST_REBORN`.
 ///
 /// Corresponds to `P_DeathThink` in `p_user.c`.
-///
-/// # Safety
-/// `player_id`'s `mo` must name a map object of the loaded level.
-pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
+pub fn P_DeathThink(world: &mut World, player_id: PlayerId) {
     let mo_id = world.players[player_id].mo();
     let angle: u32;
     let delta: u32;
@@ -368,11 +362,7 @@ pub unsafe fn P_DeathThink(world: &mut World, player_id: PlayerId) {
 /// - colormap selection for invulnerability and infrared.
 ///
 /// Corresponds to `P_PlayerThink` in `p_user.c`.
-///
-/// # Safety
-/// `player_id`'s `mo` must name a map object of the loaded level with a
-/// valid `subsector` chain.
-pub unsafe fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
+pub fn P_PlayerThink(world: &mut World, player_id: PlayerId) {
     let player = &mut world.players[player_id];
     let mo_id = player.mo();
     let mut newweapon: i32;

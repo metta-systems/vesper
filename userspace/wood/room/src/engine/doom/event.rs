@@ -70,8 +70,7 @@ const DEFAULT_EVENT: event_t = event_t {
 /// Event queue state (C `d_event.c` globals).
 pub struct EventState {
     /// Ring-buffer storage for pending events.  Indexed by `eventhead` and
-    /// `eventtail`. [`D_PopEvent`] hands out pointers into it, so it stays
-    /// in place inside [`EVENT`].
+    /// `eventtail`; [`D_PopEvent`] hands out copies of its slots.
     ///
     /// Corresponds to `static event_t events[MAXEVENTS]` in `d_event.c`.
     events: [event_t; MAXEVENTS],
@@ -121,34 +120,23 @@ pub fn D_PostEvent(ev: &event_t) {
     queue.eventhead = (head + 1) % MAXEVENTS;
 }
 
-/// Dequeue and return the oldest pending input event, or null if the queue is empty.
+/// Dequeue and return the oldest pending input event, or `None` if the queue
+/// is empty (`eventtail == eventhead`).
 ///
 /// Corresponds to `D_PopEvent` in `d_event.c`.  Each call to `D_DoomLoop`
 /// drains all available events via successive calls to this function, passing
 /// each to the chain of responders (`G_Responder`, `M_Responder`, etc.).
 ///
-/// Returns a mutable pointer into the internal ring-buffer slot.  The pointer
-/// remains valid until the next call to [`D_PostEvent`] that overwrites the
-/// same slot (i.e., after another full cycle of `MAXEVENTS` (64) posts).
-/// Returns `null_mut()` when no events are pending (`eventtail == eventhead`).
-///
-/// # Safety
-/// The returned pointer aliases internal mutable state.  Callers must not
-/// retain the pointer across subsequent calls to [`D_PostEvent`] that could
-/// recycle the same slot.
-pub fn D_PopEvent() -> *mut event_t {
-    let tail = {
-        let mut queue = EVENT.borrow_mut();
-        let tail = queue.eventtail;
-        if tail == queue.eventhead {
-            return std::ptr::null_mut();
-        }
-        queue.eventtail = (tail + 1) % MAXEVENTS;
-        tail
-    };
-    // The responders read the event through this pointer, so it is taken
-    // from the slot's stable address inside `EVENT`.
-    unsafe { &raw mut (*EVENT.as_ptr()).events[tail] }
+/// C returns a pointer into the ring-buffer slot; the responders only read
+/// the event, so this returns a copy of it.
+pub fn D_PopEvent() -> Option<event_t> {
+    let mut queue = EVENT.borrow_mut();
+    let tail = queue.eventtail;
+    if tail == queue.eventhead {
+        return None;
+    }
+    queue.eventtail = (tail + 1) % MAXEVENTS;
+    Some(queue.events[tail])
 }
 
 #[cfg(test)]
@@ -171,30 +159,26 @@ mod tests {
 
     #[test]
     fn post_then_pop_returns_same_values() {
-        unsafe {
-            let _queue = reset_queue();
-            let ev = event_t {
-                kind: 1,
-                data1: 42,
-                data2: 99,
-                data3: 0,
-                data4: 0,
-            };
-            D_PostEvent(&ev);
-            let result = D_PopEvent();
-            assert!(!result.is_null());
-            let result = &*result;
-            assert_eq!(result.kind, 1);
-            assert_eq!(result.data1, 42);
-            assert_eq!(result.data2, 99);
-            assert_eq!(D_PopEvent(), std::ptr::null_mut());
-        }
+        let _queue = reset_queue();
+        let ev = event_t {
+            kind: 1,
+            data1: 42,
+            data2: 99,
+            data3: 0,
+            data4: 0,
+        };
+        D_PostEvent(&ev);
+        let result = D_PopEvent().expect("the posted event");
+        assert_eq!(result.kind, 1);
+        assert_eq!(result.data1, 42);
+        assert_eq!(result.data2, 99);
+        assert!(D_PopEvent().is_none());
     }
 
     #[test]
-    fn pop_on_empty_returns_null() {
+    fn pop_on_empty_returns_none() {
         let _queue = reset_queue();
-        assert!(D_PopEvent().is_null());
+        assert!(D_PopEvent().is_none());
     }
 
     /// The queue starts empty, with both cursors at slot 0.
@@ -208,27 +192,24 @@ mod tests {
 
     #[test]
     fn wrap_around_at_maxevents() {
-        unsafe {
-            let _queue = reset_queue();
-            let max = MAXEVENTS - 1;
-            for i in 0..max {
-                let ev = event_t {
-                    kind: i as i32,
-                    data1: i as i32,
-                    data2: 0,
-                    data3: 0,
-                    data4: 0,
-                };
-                D_PostEvent(&ev);
-            }
-            assert_eq!(EVENT.borrow().eventhead, max);
-            for i in 0..max {
-                let result = D_PopEvent();
-                assert!(!result.is_null());
-                assert_eq!((*result).kind, i as i32);
-                assert_eq!((*result).data1, i as i32);
-            }
-            assert!(D_PopEvent().is_null());
+        let _queue = reset_queue();
+        let max = MAXEVENTS - 1;
+        for i in 0..max {
+            let ev = event_t {
+                kind: i as i32,
+                data1: i as i32,
+                data2: 0,
+                data3: 0,
+                data4: 0,
+            };
+            D_PostEvent(&ev);
         }
+        assert_eq!(EVENT.borrow().eventhead, max);
+        for i in 0..max {
+            let result = D_PopEvent().expect("a posted event");
+            assert_eq!(result.kind, i as i32);
+            assert_eq!(result.data1, i as i32);
+        }
+        assert!(D_PopEvent().is_none());
     }
 }

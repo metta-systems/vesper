@@ -884,10 +884,10 @@ pub enum StateAction {
     None,
     /// Map-object action, called with the world and the actor entering the
     /// state.
-    Mobj(unsafe fn(&mut World, MobjId)),
+    Mobj(fn(&mut World, MobjId)),
     /// Player-sprite (weapon) action, called with the world, the player and
     /// the index of the psprite entering the state (C `pspdef_t *psp`).
-    Weapon(unsafe fn(&mut World, PlayerId, usize)),
+    Weapon(fn(&mut World, PlayerId, usize)),
 }
 
 // Every action function referenced from [`STATES`]. The bodies live in

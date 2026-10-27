@@ -158,12 +158,8 @@ pub struct vldoor_t {
 ///   the `vld_close30ThenOpen` re-open delay.
 /// - `1` (moving up): calls `T_MovePlane`; parks at top or removes thinker when done.
 ///
-/// # Safety
-///
-/// The door's `sector` must belong to the current map, and every thing
-/// linked into the blockmap must be live (see `T_MovePlane`). Called
-/// exclusively by the thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+pub fn T_VerticalDoor(world: &mut World, door_id: DoorId) {
     // The door is copied out around each call that can run play code
     // (`T_MovePlane`), read afresh after it, and each change is written
     // back before the next such call, as C sees it through its pointer.

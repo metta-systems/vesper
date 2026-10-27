@@ -161,12 +161,7 @@ impl Default for PlatState {
 ///   is not.
 ///
 /// Corresponds to `T_PlatRaise` in `p_plats.c`.
-///
-/// # Safety
-///
-/// The platform's `sector` must belong to the current map, and every thing
-/// linked into the blockmap must be live (see [`T_MovePlane`]).
-pub unsafe fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
+pub fn T_PlatRaise(world: &mut World, plat_id: PlatId) {
     // The platform is copied out around each call that can run play code
     // (`T_MovePlane`), read afresh after it, and each change is written
     // back before the next such call, as C sees it through its pointer.

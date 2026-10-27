@@ -274,24 +274,29 @@ unsafe fn S_StopChannel(cnum: i32) {
         snd_channels,
         ..
     } = SOUND.get();
-    let c = &mut *channels.offset(cnum as isize);
+    // SAFETY: `channels` holds `snd_channels` entries and the caller passes
+    // `cnum` below that; a busy channel's `sfxinfo` points into the static
+    // `S_sfx` table.
+    unsafe {
+        let c = &mut *channels.offset(cnum as isize);
 
-    if !c.sfxinfo.is_null() {
-        if I_SoundIsPlaying(c.handle) != 0 {
-            I_StopSound(c.handle);
-        }
-
-        for i in 0..snd_channels {
-            if cnum != i
-                && !channels.offset(i as isize).is_null()
-                && (*channels.offset(i as isize)).sfxinfo == c.sfxinfo
-            {
-                break;
+        if !c.sfxinfo.is_null() {
+            if I_SoundIsPlaying(c.handle) != 0 {
+                I_StopSound(c.handle);
             }
-        }
 
-        (*c.sfxinfo).usefulness -= 1;
-        c.sfxinfo = std::ptr::null_mut();
+            for i in 0..snd_channels {
+                if cnum != i
+                    && !channels.offset(i as isize).is_null()
+                    && (*channels.offset(i as isize)).sfxinfo == c.sfxinfo
+                {
+                    break;
+                }
+            }
+
+            (*c.sfxinfo).usefulness -= 1;
+            c.sfxinfo = std::ptr::null_mut();
+        }
     }
 }
 
@@ -393,39 +398,45 @@ unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i3
     // `snd_channels` means "none found yet", as the C loop leaves `cnum`.
     let mut cnum: i32 = snd_channels;
 
-    for cnum_search in 0..snd_channels {
-        let ch = *channels.offset(cnum_search as isize);
-        if ch.sfxinfo.is_null() {
-            cnum = cnum_search;
-            break;
-        } else if origin.is_some() && ch.origin == origin {
-            S_StopChannel(cnum_search);
-            cnum = cnum_search;
-            break;
-        }
-    }
-
-    if cnum == snd_channels {
+    // SAFETY (whole body): `channels` holds `snd_channels` entries and every
+    // index below stays under it; `sfxinfo` and busy channels' `sfxinfo`
+    // point into the static `S_sfx` table (the caller's contract for
+    // `sfxinfo`).
+    unsafe {
         for cnum_search in 0..snd_channels {
             let ch = *channels.offset(cnum_search as isize);
-            if !ch.sfxinfo.is_null() && (*ch.sfxinfo).priority >= (*sfxinfo).priority {
+            if ch.sfxinfo.is_null() {
+                cnum = cnum_search;
+                break;
+            } else if origin.is_some() && ch.origin == origin {
+                S_StopChannel(cnum_search);
                 cnum = cnum_search;
                 break;
             }
         }
 
         if cnum == snd_channels {
-            return -1;
-        } else {
-            S_StopChannel(cnum);
+            for cnum_search in 0..snd_channels {
+                let ch = *channels.offset(cnum_search as isize);
+                if !ch.sfxinfo.is_null() && (*ch.sfxinfo).priority >= (*sfxinfo).priority {
+                    cnum = cnum_search;
+                    break;
+                }
+            }
+
+            if cnum == snd_channels {
+                return -1;
+            } else {
+                S_StopChannel(cnum);
+            }
         }
+
+        let c = &mut *channels.offset(cnum as isize);
+        c.sfxinfo = sfxinfo;
+        c.origin = origin;
+
+        cnum
     }
-
-    let c = &mut *channels.offset(cnum as isize);
-    c.sfxinfo = sfxinfo;
-    c.origin = origin;
-
-    cnum
 }
 
 /// Compute distance-attenuated volume and stereo separation for `source`
@@ -438,15 +449,14 @@ unsafe fn S_GetChannel(origin: Option<SoundOrigin>, sfxinfo: *mut SfxInfo) -> i3
 /// levels) the falloff bottoms out at 15 instead of 0 so the boss is always
 /// faintly audible.
 ///
-/// # Safety
-/// `vol` and `sep` must point at valid memory. A sector `source` must
-/// belong to `world.level`.
-unsafe fn S_AdjustSoundParams(
+/// # Panics
+/// If a sector `source` does not belong to `world.level`.
+fn S_AdjustSoundParams(
     world: &World,
     listener: MobjId,
     source: SoundOrigin,
-    vol: *mut i32,
-    sep: *mut i32,
+    vol: &mut i32,
+    sep: &mut i32,
 ) -> i32 {
     let (listener_x, listener_y, listener_angle) = {
         let listener = &world.mobjs[listener];
@@ -500,12 +510,10 @@ unsafe fn S_AdjustSoundParams(
 /// `S_StartSound` with a non-null origin; [`S_StartNonPositionalSound`]
 /// covers a null one). C origin: `S_StartSound` in `s_sound.c`.
 ///
-/// # Safety
-/// `origin` must stay in the level until its sound stops or the origin is
-/// stopped with `S_StopSound` (as `P_RemoveMobj` does): the channel keeps
-/// the handle and `S_UpdateSounds` reads the object's position every tic.
-/// No reference to `origin` or the console player's object may be live.
-pub unsafe fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
+/// The channel keeps the handle and `S_UpdateSounds` reads the object's
+/// position every tic, until the sound stops or the origin is stopped with
+/// `S_StopSound` (as `P_RemoveMobj` does).
+pub fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
     S_StartOriginSound(Some(world), Some(SoundOrigin::Mobj(origin)), sfx_id);
 }
 
@@ -513,9 +521,9 @@ pub unsafe fn S_StartSound(world: &World, origin: MobjId, sfx_id: i32) {
 /// map, so it plays centred at full SFX volume (menus, intermission, global
 /// boss sounds). C passes a null origin to `S_StartSound` for these.
 pub fn S_StartNonPositionalSound(sfx_id: i32) {
-    // SAFETY: no origin is stored or read for a non-positional sound, so
-    // the world (listener and level) is not read either.
-    unsafe { S_StartOriginSound(None, None, sfx_id) }
+    // No origin is stored or read for a non-positional sound, so the world
+    // (listener and level) is not read either.
+    S_StartOriginSound(None, None, sfx_id)
 }
 
 /// Start an SFX from `sector`'s sound origin (`sector_t::soundorg`) with id
@@ -525,9 +533,7 @@ pub fn S_StartNonPositionalSound(sfx_id: i32) {
 /// every tic; `S_Start` stops every channel when the next level starts, so
 /// the sector always belongs to the loaded level.
 pub fn S_StartSectorSound(world: &World, sector: SectorId, sfx_id: i32) {
-    // SAFETY: a sector origin stays valid for as long as its level is
-    // loaded, and its sound is stopped before the next level loads.
-    unsafe { S_StartOriginSound(Some(world), Some(SoundOrigin::Sector(sector)), sfx_id) }
+    S_StartOriginSound(Some(world), Some(SoundOrigin::Sector(sector)), sfx_id)
 }
 
 /// The listener positional sounds are heard from: the console player's
@@ -546,16 +552,21 @@ fn listener(world: &World) -> Option<MobjId> {
 /// forced to centre. The chosen sfx replaces any sound already playing on
 /// `origin`. C origin: `S_StartSound` in `s_sound.c`.
 ///
-/// # Safety
-/// The object `origin` wraps must stay live until its sound stops (see
-/// `S_StartSound`); the channel keeps it and `S_UpdateSounds` reads it.
-unsafe fn S_StartOriginSound(world: Option<&World>, origin: Option<SoundOrigin>, sfx_id: i32) {
+/// The channel keeps `origin` and `S_UpdateSounds` reads its position until
+/// the sound stops (see `S_StartSound`).
+fn S_StartOriginSound(world: Option<&World>, origin: Option<SoundOrigin>, sfx_id: i32) {
     let listener = world.and_then(listener);
+    // SAFETY: `sfx_id` is checked to index the static `S_sfx` table, whose
+    // `link`s point into the same table; `channels` holds `snd_channels`
+    // entries from `S_Init` (none before it), and `S_GetChannel` returns an
+    // index below `snd_channels` or -1.
     unsafe {
         let snd_SfxVolume = SOUND.get().snd_SfxVolume;
         let mut volume = snd_SfxVolume;
 
-        if sfx_id < 1 || sfx_id > NUMSFX as i32 {
+        // C checks `sfx_id > NUMSFX`, which lets the one-past-the-end id
+        // through; the table holds `NUMSFX` entries.
+        if sfx_id < 1 || sfx_id >= NUMSFX as i32 {
             // Bogus sound id - skip
             return;
         }
@@ -642,11 +653,15 @@ pub fn S_ResumeSound() {
 ///
 /// C origin: `S_UpdateSounds` in `s_sound.c`.
 ///
-/// # Safety
-/// `listener` must be `Some` whenever a positional sound is playing, and
-/// every playing sound's origin must still be in `world`, the loaded level
-/// (the contract of `S_StartSound` and `S_StartSectorSound`).
-pub unsafe fn S_UpdateSounds(world: &World, listener: Option<MobjId>) {
+/// Every playing sound's origin is read from `world`, the loaded level (see
+/// `S_StartSound` and `S_StartSectorSound`).
+///
+/// # Panics
+/// If `listener` is `None` while a positional sound is playing.
+pub fn S_UpdateSounds(world: &World, listener: Option<MobjId>) {
+    // SAFETY: `channels` holds `snd_channels` entries from `S_Init` (none
+    // before it), and a channel's `sfxinfo` is null or points into the
+    // static `S_sfx` table.
     unsafe {
         I_UpdateSound();
 

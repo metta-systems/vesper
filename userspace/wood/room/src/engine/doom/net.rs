@@ -29,6 +29,9 @@
 //!   `DEH_Checksum`), guarded by `#if ORIGCODE` in the vendor source.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The net glue fills settings and tic sets through raw pointers in C's
+// whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::engine::{
     doom::player::{MAXPLAYERS, PlayerId, TiccmdT},

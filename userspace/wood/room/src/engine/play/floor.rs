@@ -165,12 +165,7 @@ fn set_plane_height(
 /// - `result_ok` — moved without incident.
 /// - `result_crushed` — a thing was crushed; the plane may have been reversed.
 /// - `result_pastdest` — the plane reached `dest` this tic.
-///
-/// # Safety
-///
-/// `sector` must belong to the current map, and every thing linked into the
-/// blockmap must be live (see `P_ChangeSector`).
-pub unsafe fn T_MovePlane(
+pub fn T_MovePlane(
     world: &mut World,
     sector: SectorId,
     speed: fixed_t,
@@ -179,110 +174,108 @@ pub unsafe fn T_MovePlane(
     floorOrCeiling: i32,
     direction: i32,
 ) -> i32 {
-    unsafe {
-        match floorOrCeiling {
-            0 => {
-                // FLOOR
-                match direction {
-                    -1 => {
-                        // DOWN
-                        let lastpos = plane_height(&world.level, sector, 0);
-                        if lastpos - speed < dest {
-                            set_plane_height(&mut world.level, sector, 0, dest);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                set_plane_height(&mut world.level, sector, 0, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                            }
-                            return result_pastdest;
-                        } else {
-                            set_plane_height(&mut world.level, sector, 0, lastpos - speed);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                set_plane_height(&mut world.level, sector, 0, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                                return result_crushed;
-                            }
+    match floorOrCeiling {
+        0 => {
+            // FLOOR
+            match direction {
+                -1 => {
+                    // DOWN
+                    let lastpos = plane_height(&world.level, sector, 0);
+                    if lastpos - speed < dest {
+                        set_plane_height(&mut world.level, sector, 0, dest);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            set_plane_height(&mut world.level, sector, 0, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                        }
+                        return result_pastdest;
+                    } else {
+                        set_plane_height(&mut world.level, sector, 0, lastpos - speed);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            set_plane_height(&mut world.level, sector, 0, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                            return result_crushed;
                         }
                     }
-                    1 => {
-                        // UP
-                        let lastpos = plane_height(&world.level, sector, 0);
-                        if lastpos + speed > dest {
-                            set_plane_height(&mut world.level, sector, 0, dest);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                set_plane_height(&mut world.level, sector, 0, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                            }
-                            return result_pastdest;
-                        } else {
-                            set_plane_height(&mut world.level, sector, 0, lastpos + speed);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                if crush != 0 {
-                                    return result_crushed;
-                                }
-                                set_plane_height(&mut world.level, sector, 0, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                                return result_crushed;
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-            }
-            1 => {
-                // CEILING
-                match direction {
-                    -1 => {
-                        // DOWN
-                        let lastpos = plane_height(&world.level, sector, 1);
-                        if lastpos - speed < dest {
-                            set_plane_height(&mut world.level, sector, 1, dest);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                set_plane_height(&mut world.level, sector, 1, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                            }
-                            return result_pastdest;
-                        } else {
-                            set_plane_height(&mut world.level, sector, 1, lastpos - speed);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                if crush != 0 {
-                                    return result_crushed;
-                                }
-                                set_plane_height(&mut world.level, sector, 1, lastpos);
-                                P_ChangeSector(world, sector, crush);
+                1 => {
+                    // UP
+                    let lastpos = plane_height(&world.level, sector, 0);
+                    if lastpos + speed > dest {
+                        set_plane_height(&mut world.level, sector, 0, dest);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            set_plane_height(&mut world.level, sector, 0, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                        }
+                        return result_pastdest;
+                    } else {
+                        set_plane_height(&mut world.level, sector, 0, lastpos + speed);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            if crush != 0 {
                                 return result_crushed;
                             }
+                            set_plane_height(&mut world.level, sector, 0, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                            return result_crushed;
                         }
                     }
-                    1 => {
-                        // UP
-                        let lastpos = plane_height(&world.level, sector, 1);
-                        if lastpos + speed > dest {
-                            set_plane_height(&mut world.level, sector, 1, dest);
-                            let flag = P_ChangeSector(world, sector, crush);
-                            if flag != 0 {
-                                set_plane_height(&mut world.level, sector, 1, lastpos);
-                                P_ChangeSector(world, sector, crush);
-                            }
-                            return result_pastdest;
-                        } else {
-                            set_plane_height(&mut world.level, sector, 1, lastpos + speed);
-                            let _flag = P_ChangeSector(world, sector, crush);
-                            // The original C code has #if 0 here, so no crush check.
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
-            _ => {}
         }
-        result_ok
+        1 => {
+            // CEILING
+            match direction {
+                -1 => {
+                    // DOWN
+                    let lastpos = plane_height(&world.level, sector, 1);
+                    if lastpos - speed < dest {
+                        set_plane_height(&mut world.level, sector, 1, dest);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            set_plane_height(&mut world.level, sector, 1, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                        }
+                        return result_pastdest;
+                    } else {
+                        set_plane_height(&mut world.level, sector, 1, lastpos - speed);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            if crush != 0 {
+                                return result_crushed;
+                            }
+                            set_plane_height(&mut world.level, sector, 1, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                            return result_crushed;
+                        }
+                    }
+                }
+                1 => {
+                    // UP
+                    let lastpos = plane_height(&world.level, sector, 1);
+                    if lastpos + speed > dest {
+                        set_plane_height(&mut world.level, sector, 1, dest);
+                        let flag = P_ChangeSector(world, sector, crush);
+                        if flag != 0 {
+                            set_plane_height(&mut world.level, sector, 1, lastpos);
+                            P_ChangeSector(world, sector, crush);
+                        }
+                        return result_pastdest;
+                    } else {
+                        set_plane_height(&mut world.level, sector, 1, lastpos + speed);
+                        let _flag = P_ChangeSector(world, sector, crush);
+                        // The original C code has #if 0 here, so no crush check.
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
     }
+    result_ok
 }
 
 /// Per-tic update for a moving floor.
@@ -291,12 +284,8 @@ pub unsafe fn T_MovePlane(
 /// floor reaches `floordestheight` (`result_pastdest`), it applies any pending
 /// texture/special changes, removes the thinker, and plays `sfx_pstop`.
 ///
-/// # Safety
-///
-/// The mover's `sector` must belong to the current map, and every thing
-/// linked into the blockmap must be live (see [`T_MovePlane`]). Called
-/// exclusively by the thinker dispatcher from `P_RunThinkers`.
-pub unsafe fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
+/// Called exclusively by the thinker dispatcher from `P_RunThinkers`.
+pub fn T_MoveFloor(world: &mut World, floor_id: FloorId) {
     let floor = world.thinkers.floors[floor_id];
     let res = T_MovePlane(
         world,

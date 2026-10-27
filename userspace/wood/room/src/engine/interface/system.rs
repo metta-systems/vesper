@@ -101,12 +101,9 @@ pub static SYSTEM: Global<SystemState> = Global::new(SystemState::new());
 /// pointer to the freshly allocated block. If even `min_ram` cannot
 /// be allocated, the function calls `I_Error` (which never returns).
 ///
-/// # Safety
-///
-/// `size` must be a valid mutable pointer to a `i32`. The returned block
-/// is never freed: the zone lives for the whole run. Mirrors the static
-/// helper of the same name in `i_system.c`.
-unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) -> *mut u8 {
+/// The returned block is never freed: the zone lives for the whole run.
+/// Mirrors the static helper of the same name in `i_system.c`.
+fn AutoAllocMemory(size: &mut i32, mut default_ram: i32, min_ram: i32) -> *mut u8 {
     let mut zonemem: *mut u8 = ptr::null_mut();
 
     while zonemem.is_null() {
@@ -114,11 +111,18 @@ unsafe fn AutoAllocMemory(size: *mut i32, mut default_ram: i32, min_ram: i32) ->
             i_error!("Unable to allocate {} MiB of RAM for zone", default_ram);
         }
 
+        // C's `malloc(0)` for `-mb 0` handed out a useless block; `alloc`
+        // must not be asked for zero bytes.
+        if default_ram <= 0 {
+            i_error!("Unable to allocate {} MiB of RAM for zone", default_ram);
+        }
+
         *size = default_ram * 1024 * 1024;
         // `alloc` returns null on failure, as `malloc` did, so a smaller
         // size can be tried; 16 is malloc's alignment.
         let layout = std::alloc::Layout::from_size_align(*size as usize, 16).unwrap();
-        zonemem = std::alloc::alloc(layout);
+        // SAFETY: the layout is not zero-sized, as `default_ram` is positive.
+        zonemem = unsafe { std::alloc::alloc(layout) };
 
         if zonemem.is_null() {
             default_ram -= 1;
@@ -156,22 +160,20 @@ pub fn I_Tactile(_on: i32, _off: i32, _total: i32) {}
 /// Mirrors `I_ZoneBase` from `i_system.c`. Called once at startup from
 /// `Z_Init` in `z_zone.c`.
 pub fn I_ZoneBase(size: &mut i32) -> *mut u8 {
-    unsafe {
-        let mut default_ram = DEFAULT_RAM;
-        let mut min_ram = MIN_RAM;
+    let mut default_ram = DEFAULT_RAM;
+    let mut min_ram = MIN_RAM;
 
-        let p = M_CheckParmWithArgs("-mb", 1);
-        if p > 0 {
-            default_ram = atoi(argument(p + 1));
-            min_ram = default_ram;
-        }
-
-        let zonemem = AutoAllocMemory(size, default_ram, min_ram);
-
-        println!("zone memory: {zonemem:p}, {:x} allocated for zone", *size);
-
-        zonemem
+    let p = M_CheckParmWithArgs("-mb", 1);
+    if p > 0 {
+        default_ram = atoi(argument(p + 1));
+        min_ram = default_ram;
     }
+
+    let zonemem = AutoAllocMemory(size, default_ram, min_ram);
+
+    println!("zone memory: {zonemem:p}, {:x} allocated for zone", *size);
+
+    zonemem
 }
 
 /// Print a banner string centred in a 70-character column (35 leading

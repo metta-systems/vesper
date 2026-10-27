@@ -255,11 +255,14 @@ unsafe fn build_new_tic() -> bool {
 
     I_StartTic();
 
-    let iface = &*loop_interface;
-    iface.ProcessEvents.unwrap()();
+    // SAFETY (the table and its callbacks below): the caller guarantees that
+    // `D_RegisterLoopCallbacks` installed a live table with every callback
+    // set.
+    let iface = unsafe { &*loop_interface };
+    unsafe { iface.ProcessEvents.unwrap()() };
 
     // Always run the menu
-    iface.RunMenu.unwrap()();
+    unsafe { iface.RunMenu.unwrap()() };
 
     if drone != 0 {
         return false;
@@ -282,8 +285,9 @@ unsafe fn build_new_tic() -> bool {
         }
     }
 
-    let mut cmd = std::mem::zeroed::<TiccmdT>();
-    iface.BuildTiccmd.unwrap()(&mut cmd, maketic);
+    // SAFETY: `TiccmdT` is plain integer data, valid when zeroed.
+    let mut cmd = unsafe { std::mem::zeroed::<TiccmdT>() };
+    unsafe { iface.BuildTiccmd.unwrap()(&mut cmd, maketic) };
 
     let mut main_loop = MAIN_LOOP.borrow_mut();
     let slot = (maketic as usize) % BACKUPTICS;
@@ -523,7 +527,8 @@ fn players_in_game() -> bool {
 unsafe fn ticdup_squash(set: *mut TiccmdSetT) {
     const BT_SPECIAL: u8 = 128;
     for i in 0..NET_MAXPLAYERS {
-        let cmd = &mut (*set).cmds[i];
+        // SAFETY: the caller passes a valid, unaliased tic set.
+        let cmd = unsafe { &mut (*set).cmds[i] };
         cmd.chatchar = 0;
         if cmd.buttons & BT_SPECIAL != 0 {
             cmd.buttons = 0;
@@ -541,7 +546,8 @@ unsafe fn ticdup_squash(set: *mut TiccmdSetT) {
 unsafe fn single_player_clear(set: *mut TiccmdSetT) {
     for i in 0..NET_MAXPLAYERS {
         if i != LOCALPLAYER as usize {
-            (*set).ingame[i] = 0;
+            // SAFETY: the caller passes a valid, unaliased tic set.
+            unsafe { (*set).ingame[i] = 0 };
         }
     }
 }

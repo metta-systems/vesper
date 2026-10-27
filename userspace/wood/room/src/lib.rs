@@ -28,9 +28,14 @@
 //! - `clippy::needless_range_loop`, `clippy::explicit_counter_loop` - direct
 //!   index loops are kept where the originals were so the diff with C stays
 //!   minimal.
-//! - `unsafe_op_in_unsafe_fn` - the ported `unsafe fn`s keep C's style of one
-//!   unsafe body; wrapping each operation in its own `unsafe {}` block is
-//!   left for a separate pass.
+//!
+//! `unsafe_op_in_unsafe_fn` (on by default in edition 2024) is enforced
+//! crate-wide: an `unsafe fn` wraps its unsafe operations in `unsafe {}`
+//! blocks with `// SAFETY:` comments. The modules whose ported `unsafe fn`s
+//! still keep C's style of one unsafe body (the zone allocator, WAD cache,
+//! pixel scalers, renderer tables and drawers, automap, wipes, demo and net
+//! buffers, and the status bar and intermission lump loading) allow it at
+//! the top of the module, each with its reason.
 
 // TODO: Add `# Safety` documentation to all unsafe functions.
 #![allow(clippy::missing_safety_doc)]
@@ -44,9 +49,6 @@
 #![allow(unpredictable_function_pointer_comparisons)]
 // C-style indexed loops are kept where the original had them.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
-// Edition 2024 warns on unsafe operations in `unsafe fn` bodies without their
-// own `unsafe {}` block; the ported functions still use C's whole-body style.
-#![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod engine;
 pub mod types;

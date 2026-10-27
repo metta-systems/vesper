@@ -87,20 +87,16 @@ pub static STATDUMP: Global<StatdumpState> = Global::new(StatdumpState::new());
 /// is bumped. When the buffer is full or the flag is absent, the call
 /// is silently dropped.
 ///
-/// Called from `WI_Drawer` / `WI_Ticker` (via the intermission code)
-/// at the end of every level.
-///
-/// # Safety
-/// `stats` must be a valid, non-null pointer to an initialised
-/// `wbstartstruct_t`.
-pub unsafe fn StatCopy(stats: *const wbstartstruct_t) {
+/// Called from `G_DoCompleted` at the end of every level, just before
+/// `WI_Start`.
+pub fn StatCopy(stats: &wbstartstruct_t) {
     if !M_ParmExists("-statdump") {
         return;
     }
     let mut statdump = STATDUMP.borrow_mut();
     if statdump.num_captured_stats < MAX_CAPTURES as i32 {
         let slot = statdump.num_captured_stats as usize;
-        statdump.captured_stats[slot] = unsafe { *stats };
+        statdump.captured_stats[slot] = *stats;
         statdump.num_captured_stats += 1;
     }
 }

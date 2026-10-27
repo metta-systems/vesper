@@ -335,11 +335,14 @@ fn sha1_update(hd: &mut SHA1Context, inbuf: Option<&[u8]>) {
 ///   bytes that do not alias `hd`.
 /// * If `inbuf` is null, `inlen` is ignored.
 pub unsafe fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen: usize) {
-    let hd = &mut *hd;
+    // SAFETY: the caller passes a valid, initialised, unaliased context.
+    let hd = unsafe { &mut *hd };
     if inbuf.is_null() {
         sha1_update(hd, None);
     } else {
-        let slice = std::slice::from_raw_parts(inbuf, inlen);
+        // SAFETY: a non-null `inbuf` holds `inlen` readable bytes apart from
+        // `hd` (the caller's contract).
+        let slice = unsafe { std::slice::from_raw_parts(inbuf, inlen) };
         sha1_update(hd, Some(slice));
     }
 }
@@ -361,7 +364,8 @@ pub unsafe fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen: usize) {
 /// * `digest` must point to at least 20 writable bytes that do not alias
 ///   `hd`.
 pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
-    let hd = &mut *hd;
+    // SAFETY: the caller passes a valid, initialised, unaliased context.
+    let hd = unsafe { &mut *hd };
 
     sha1_update(hd, None);
 
@@ -432,7 +436,9 @@ pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
     hd.buf[18] = (hd.h4 >> 8) as u8;
     hd.buf[19] = hd.h4 as u8;
 
-    std::ptr::copy_nonoverlapping(hd.buf.as_ptr(), digest, 20);
+    // SAFETY: `digest` holds 20 writable bytes apart from `hd` (the caller's
+    // contract).
+    unsafe { std::ptr::copy_nonoverlapping(hd.buf.as_ptr(), digest, 20) };
 }
 
 /// Feeds a `u32` value into `context` in big-endian byte order.
@@ -446,7 +452,8 @@ pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
 /// previously initialised with `SHA1_Init`, valid for read and write for
 /// the duration of the call.
 pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: u32) {
-    let context = &mut *context;
+    // SAFETY: the caller passes a valid, initialised, unaliased context.
+    let context = unsafe { &mut *context };
     let buf = [
         ((val >> 24) & 0xff) as u8,
         ((val >> 16) & 0xff) as u8,
@@ -470,7 +477,8 @@ pub unsafe fn SHA1_UpdateInt32(context: *mut SHA1Context, val: u32) {
 /// previously initialised with `SHA1_Init`, valid for read and write for
 /// the duration of the call.
 pub unsafe fn SHA1_UpdateString(context: *mut SHA1Context, text: &[u8]) {
-    let context = &mut *context;
+    // SAFETY: the caller passes a valid, initialised, unaliased context.
+    let context = unsafe { &mut *context };
     sha1_update(context, Some(until_nul(text)));
     sha1_update(context, Some(&[0]));
 }

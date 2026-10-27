@@ -51,12 +51,7 @@ use crate::engine::{
 /// that hit the back of the line (`side == 1`) are rejected immediately.
 ///
 /// Corresponds to `EV_Teleport` in `p_telept.c`.
-///
-/// # Safety
-///
-/// `thing_id` must name a map object linked into the map, and a level must
-/// be loaded.
-pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id: MobjId) -> i32 {
+pub fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id: MobjId) -> i32 {
     // Don't teleport missiles
     if world.mobjs[thing_id].flags & MF_MISSILE != 0 {
         return 0;
@@ -110,8 +105,7 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
                 (thing.x, thing.y, thing.z, marker.x, marker.y)
             };
 
-            // SAFETY: the caller guarantees `thing_id` is linked into the map.
-            if unsafe { P_TeleportMove(world, thing_id, marker_x, marker_y) } == 0 {
+            if P_TeleportMove(world, thing_id, marker_x, marker_y) == 0 {
                 return 0;
             }
 
@@ -131,12 +125,8 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
             }
 
             // Spawn teleport fog at source
-            // SAFETY (both fogs): a level is loaded, and the fog is a map
-            // object of it that stays until its sound is over.
-            unsafe {
-                let fog = P_SpawnMobj(world, oldx, oldy, oldz, MT_TFOG);
-                S_StartSound(world, fog, Sfx::Telept as i32);
-            }
+            let fog = P_SpawnMobj(world, oldx, oldy, oldz, MT_TFOG);
+            S_StartSound(world, fog, Sfx::Telept as i32);
 
             // Spawn teleport fog at destination
             let (marker_x, marker_y, marker_angle, thing_z) = {
@@ -147,16 +137,14 @@ pub unsafe fn EV_Teleport(world: &mut World, line: &line_t, side: i32, thing_id:
             let an = (marker_angle >> ANGLETOFINESHIFT) as usize;
             // `finecosine[an]`: the cosine table is the sine table a quarter
             // turn on.
-            unsafe {
-                let fog = P_SpawnMobj(
-                    world,
-                    marker_x + 20 * finesine[an + FINEANGLES / 4],
-                    marker_y + 20 * finesine[an],
-                    thing_z,
-                    MT_TFOG,
-                );
-                S_StartSound(world, fog, Sfx::Telept as i32);
-            }
+            let fog = P_SpawnMobj(
+                world,
+                marker_x + 20 * finesine[an + FINEANGLES / 4],
+                marker_y + 20 * finesine[an],
+                thing_z,
+                MT_TFOG,
+            );
+            S_StartSound(world, fog, Sfx::Telept as i32);
 
             let mobjs = &mut world.mobjs;
             let marker_angle = mobjs[marker_id].angle;

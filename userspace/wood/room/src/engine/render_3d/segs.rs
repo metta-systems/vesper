@@ -29,6 +29,9 @@
 //! the view plane to a wall column (larger = closer).
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The wall drawers read texture columns and clip arrays through raw
+// pointers in C's whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::ptr;
 

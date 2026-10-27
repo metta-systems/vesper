@@ -14,8 +14,9 @@
 //!   as a macro) to keep the file self-contained.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
-use std::ptr;
+// The graphics load and unload run the unsafe lump callbacks in C's
+// whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
     c_write,
@@ -48,10 +49,10 @@ use crate::{
             st_percent_t,
         },
         wad::{
-            W_CacheLumpNum, W_GetNumForName, W_ReleaseLumpName, cache_patch_name, format::Patch,
+            W_GetNumForName, W_ReleaseLumpName, cache_lump_bytes, cache_patch_name, format::Patch,
         },
         world::World,
-        zone::{PU_CACHE, PU_STATIC, Z_Malloc},
+        zone::{PU_CACHE, PU_STATIC},
     },
     types::Boolean,
 };
@@ -583,36 +584,44 @@ fn check_cheat(select: impl FnOnce(&mut StatusState) -> &mut cheatseq_t, key: u8
 /// Only runs when `st_statusbaron` is set. In a network game the face-background
 /// patch (`STFB#`) is drawn on top of the bar before the copy.
 ///
-/// # Safety
+/// # Panics
 ///
-/// Reads the status-bar visibility flag `st_statusbaron` and the cached
-/// patches `sbar`/`faceback` of `status`, and writes to its backing screen
-/// buffer. Caller must ensure `ST_Init` has loaded the patches and
-/// allocated the buffer, and that the video subsystem is ready.
-pub unsafe fn ST_refreshBackground(status: &StatusState) {
+/// If `ST_Init` has not loaded the patches and allocated the backing
+/// buffer.
+pub fn ST_refreshBackground(status: &mut StatusState) {
     if status.st_statusbaron != 0 {
-        let backing_screen = status.graphics.backing_screen;
-        unsafe {
-            V_UseBuffer(backing_screen, (ST_WIDTH * ST_HEIGHT) as usize);
-            V_DrawPatch(
-                ST_X,
-                0,
-                status
-                    .sbar
-                    .expect("ST_refreshBackground before ST_loadGraphics"),
-            );
-            if netgame() != 0 {
-                V_DrawPatch(
-                    ST_FX,
-                    0,
-                    status
-                        .faceback
-                        .expect("ST_refreshBackground before ST_loadGraphics"),
-                );
-            }
-            V_RestoreBuffer();
-            V_CopyRect(ST_X, 0, backing_screen, ST_WIDTH, ST_HEIGHT, ST_X, ST_Y);
+        let sbar = status
+            .sbar
+            .expect("ST_refreshBackground before ST_loadGraphics");
+        let faceback = (netgame() != 0).then(|| {
+            status
+                .faceback
+                .expect("ST_refreshBackground before ST_loadGraphics")
+        });
+        let backing_screen = &mut status.graphics.backing_screen;
+        assert_eq!(
+            backing_screen.len(),
+            (ST_WIDTH * ST_HEIGHT) as usize,
+            "ST_refreshBackground before ST_Init"
+        );
+        // SAFETY: the backing screen is not otherwise used until
+        // `V_RestoreBuffer` below ends the redirect, and the patches drawn
+        // into it meanwhile are lumps, not this buffer.
+        unsafe { V_UseBuffer(backing_screen.as_mut_ptr(), backing_screen.len()) };
+        V_DrawPatch(ST_X, 0, sbar);
+        if let Some(faceback) = faceback {
+            V_DrawPatch(ST_FX, 0, faceback);
         }
+        V_RestoreBuffer();
+        V_CopyRect(
+            ST_X,
+            0,
+            &status.graphics.backing_screen,
+            ST_WIDTH,
+            ST_HEIGHT,
+            ST_X,
+            ST_Y,
+        );
     }
 }
 
@@ -1056,14 +1065,9 @@ pub fn ST_Ticker(world: &World) {
 /// In Chex Quest the red-damage palettes are replaced with `RADIATIONPAL` to
 /// avoid gore. Only calls `I_SetPalette` when the palette index changes.
 ///
-/// `plyr` is the status bar's player.
-///
-/// # Safety
-///
-/// Mutates `status.st_palette`. Calls `W_CacheLumpNum`/`I_SetPalette` so
-/// the WAD subsystem and video backend must be initialised, and
-/// `lu_palette` must hold a valid lump number set up by `ST_loadData`.
-pub unsafe fn ST_doPaletteStuff(status: &mut StatusState, plyr: &PlayerT) {
+/// `plyr` is the status bar's player. Reads the `PLAYPAL` lump that
+/// `ST_loadData` looked up into `lu_palette`.
+pub fn ST_doPaletteStuff(status: &mut StatusState, plyr: &PlayerT) {
     let mut palette: i32;
     let mut cnt = plyr.damagecount;
 
@@ -1102,9 +1106,10 @@ pub unsafe fn ST_doPaletteStuff(status: &mut StatusState, plyr: &PlayerT) {
 
     if palette != status.st_palette {
         status.st_palette = palette;
-        let pal =
-            (W_CacheLumpNum(status.lu_palette, PU_CACHE) as *mut u8).add((palette * 768) as usize);
-        I_SetPalette(pal);
+        // SAFETY: the `PU_CACHE` view is used before any further zone
+        // allocation could purge it.
+        let playpal = unsafe { cache_lump_bytes(status.lu_palette, PU_CACHE) };
+        I_SetPalette(&playpal[(palette * 768) as usize..]);
     }
 }
 
@@ -1119,13 +1124,9 @@ pub unsafe fn ST_doPaletteStuff(status: &mut StatusState, plyr: &PlayerT) {
 /// zero redraws only widgets whose value changed since last frame.
 /// Updates `st_armson` and `st_fragson` visibility flags before iterating.
 ///
-/// # Safety
-///
-/// Mutates `st_armson`/`st_fragson` and updates every `w_*` widget through
-/// the `STlib_update*` family, which erase from the backing screen: caller
-/// must ensure `ST_Init` allocated it and `ST_createWidgets` set up the
-/// widgets.
-pub unsafe fn ST_drawWidgets(status: &mut StatusState, plyr: &PlayerT, refresh: i32) {
+/// The `STlib_update*` family erases from the backing screen `ST_Init`
+/// allocated, into the widgets `ST_createWidgets` set up.
+pub fn ST_drawWidgets(status: &mut StatusState, plyr: &PlayerT, refresh: i32) {
     status.st_armson = if status.st_statusbaron != 0 && deathmatch() == 0 {
         1
     } else {
@@ -1234,12 +1235,7 @@ pub unsafe fn ST_drawWidgets(status: &mut StatusState, plyr: &PlayerT, refresh: 
 
 /// Perform a full status-bar redraw of `plyr`: clear `st_firsttime`, refresh
 /// the background, then redraw all widgets.
-///
-/// # Safety
-///
-/// Mutates `st_firsttime` and delegates to `ST_refreshBackground` and
-/// `ST_drawWidgets`, which require an initialised status bar.
-pub unsafe fn ST_doRefresh(status: &mut StatusState, plyr: &PlayerT) {
+pub fn ST_doRefresh(status: &mut StatusState, plyr: &PlayerT) {
     status.st_firsttime = 0;
     ST_refreshBackground(status);
     ST_drawWidgets(status, plyr, 1);
@@ -1247,12 +1243,7 @@ pub unsafe fn ST_doRefresh(status: &mut StatusState, plyr: &PlayerT) {
 
 /// Perform a differential redraw of `plyr`: only redraw widgets whose value
 /// changed.
-///
-/// # Safety
-///
-/// Delegates to `ST_drawWidgets`; same invariants apply (widgets must have
-/// been created).
-pub unsafe fn ST_diffDraw(status: &mut StatusState, plyr: &PlayerT) {
+pub fn ST_diffDraw(status: &mut StatusState, plyr: &PlayerT) {
     ST_drawWidgets(status, plyr, 0);
 }
 
@@ -1265,15 +1256,9 @@ pub unsafe fn ST_diffDraw(status: &mut StatusState, plyr: &PlayerT) {
 ///
 /// Called once per frame by the main render loop (`D_Display` in `d_main.c`),
 /// with a shared borrow of the world it holds for this drawer; reads the
-/// status bar's player from `world`.
-///
-/// # Safety
-///
-/// Mutates `st_statusbaron` and `st_firsttime` and dispatches to
-/// `ST_doPaletteStuff`, `ST_doRefresh`, and `ST_diffDraw`. Caller must
-/// ensure the status-bar subsystem has been started (`ST_Start`) and the
-/// video backend is ready.
-pub unsafe fn ST_Drawer(world: &World, fullscreen: Boolean, refresh: Boolean) {
+/// status bar's player from `world`. The status bar has been started
+/// (`ST_Start`).
+pub fn ST_Drawer(world: &World, fullscreen: Boolean, refresh: Boolean) {
     let automap_shown = automap_active();
     let mut status = STATUS.borrow_mut();
     status.st_statusbaron = if fullscreen.is_false() || automap_shown {
@@ -1619,15 +1604,8 @@ pub fn ST_createWidgets(status: &mut StatusState, plyr: &PlayerT) {
 ///
 /// Calls `ST_Stop` if already running, then re-initialises state, creates
 /// widgets, and clears `st_stopped`. Called from `P_SpawnPlayer` with the
-/// world the play code holds.
-///
-/// # Safety
-///
-/// Reads/mutates `st_stopped`, may run `ST_Stop` (see its contract), and
-/// runs `ST_initData`/`ST_createWidgets`, which mutate every status-bar
-/// global and load `STTMINUS`. Caller must ensure `ST_Init` has run once at
-/// startup.
-pub unsafe fn ST_Start(world: &World) {
+/// world the play code holds. `ST_Init` has run once at startup.
+pub fn ST_Start(world: &World) {
     if STATUS.borrow().st_stopped == 0 {
         ST_Stop();
     }
@@ -1641,14 +1619,9 @@ pub unsafe fn ST_Start(world: &World) {
 ///
 /// Resets the display palette to `PLAYPAL` index 0 and sets `st_stopped`.
 /// Safe to call when already stopped (guard at the top). Called from `G_WorldDone`
-/// and `ST_Start` in `g_game.c`.
-///
-/// # Safety
-///
-/// Reads/mutates `st_stopped` and calls `I_SetPalette` with the cached
-/// `lu_palette` lump. Caller must ensure `ST_loadData` has cached the
-/// palette lump and the video backend is ready.
-pub unsafe fn ST_Stop() {
+/// and `ST_Start` in `g_game.c`. Reads the `PLAYPAL` lump that
+/// `ST_loadData` looked up into `lu_palette`.
+pub fn ST_Stop() {
     let lu_palette = {
         let status = STATUS.borrow();
         if status.st_stopped != 0 {
@@ -1656,7 +1629,9 @@ pub unsafe fn ST_Stop() {
         }
         status.lu_palette
     };
-    I_SetPalette(W_CacheLumpNum(lu_palette, PU_CACHE) as *mut u8);
+    // SAFETY: the `PU_CACHE` view is used before any further zone
+    // allocation could purge it.
+    I_SetPalette(unsafe { cache_lump_bytes(lu_palette, PU_CACHE) });
     STATUS.borrow_mut().st_stopped = 1;
 }
 
@@ -1668,14 +1643,12 @@ pub unsafe fn ST_Stop() {
 ///
 /// # Safety
 ///
-/// Allocates `st_backing_screen` via `Z_Malloc` and runs `ST_loadData`,
-/// which mutates the cached patch pointers. Caller must ensure the WAD and
-/// zone-memory subsystems are initialised, and that this function is called
-/// exactly once.
+/// Runs `ST_loadData`, which caches the `'static` patches. Caller must
+/// ensure the WAD and zone-memory subsystems are initialised, and that this
+/// function is called exactly once.
 pub unsafe fn ST_Init() {
     ST_loadData();
-    let backing_screen = Z_Malloc(ST_WIDTH * ST_HEIGHT, PU_STATIC, ptr::null_mut()) as *mut u8;
-    STATUS.borrow_mut().graphics.backing_screen = backing_screen;
+    STATUS.borrow_mut().graphics.backing_screen = vec![0; (ST_WIDTH * ST_HEIGHT) as usize];
 }
 
 #[cfg(test)]

@@ -16,6 +16,9 @@
 //!   source.
 
 #![allow(non_snake_case)]
+// The wipes transform zone-allocated screen copies through raw pointers in
+// C's whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::c_void;
 

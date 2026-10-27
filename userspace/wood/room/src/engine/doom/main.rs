@@ -401,7 +401,9 @@ use crate::engine::doom::iwad::{D_FindIWAD, D_SaveGameIWADName};
 use crate::engine::zone::Z_Init;
 
 // w_main.rs
-use crate::engine::wad::{cache_patch_name, main::W_ParseCommandLine};
+use crate::engine::wad::{
+    W_GetNumForName, cache_lump_bytes, cache_patch_name, main::W_ParseCommandLine,
+};
 
 // v_video.rs
 use crate::engine::render_2d::{
@@ -505,23 +507,15 @@ fn first_byte(text: &str) -> i32 {
 
 /// Send all buffered events down the responder chain.
 pub fn D_ProcessEvents() {
-    unsafe {
-        // IF STORE DEMO, DO NOT ACCEPT INPUT
-        if DOOM_MAIN.borrow().storedemo != 0 {
-            return;
-        }
+    // IF STORE DEMO, DO NOT ACCEPT INPUT
+    if DOOM_MAIN.borrow().storedemo != 0 {
+        return;
+    }
 
-        while {
-            let ev = D_PopEvent();
-            if ev.is_null() {
-                false
-            } else {
-                if M_Responder(ev).is_false() {
-                    G_Responder(ev);
-                }
-                true
-            }
-        } {}
+    while let Some(ev) = D_PopEvent() {
+        if M_Responder(&ev).is_false() {
+            G_Responder(&ev);
+        }
     }
 }
 
@@ -642,7 +636,12 @@ pub fn D_Display() {
         // Set palette on state change (non-level states)
         let old_gamestate = DOOM_MAIN.borrow().display_old_gamestate;
         if gamestate != GS_LEVEL && gamestate != old_gamestate {
-            I_SetPalette(W_CacheLumpName(DEH_String(b"PLAYPAL"), PU_CACHE) as *mut byte);
+            // The `PU_CACHE` view is used before any further zone allocation
+            // could purge it.
+            I_SetPalette(cache_lump_bytes(
+                W_GetNumForName(DEH_String(b"PLAYPAL")),
+                PU_CACHE,
+            ));
         }
 
         // See if the border needs to be initially drawn
@@ -855,28 +854,26 @@ fn D_GrabMouseCallback() -> Boolean {
 ///
 /// Called by the doomgeneric platform layer once per video frame.
 pub fn doomgeneric_Tick() {
-    unsafe {
-        // Frame synchronous IO operations
-        I_StartFrame();
+    // Frame synchronous IO operations
+    I_StartFrame();
 
-        TryRunTics(); // will run at least one tic
+    TryRunTics(); // will run at least one tic
 
-        // Update positional sounds
-        {
-            let world = WORLD.borrow();
-            let console = consoleplayer();
-            let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
-                world.players[console as usize].mo
-            } else {
-                None
-            };
-            S_UpdateSounds(&world, mo);
-        }
+    // Update positional sounds
+    {
+        let world = WORLD.borrow();
+        let console = consoleplayer();
+        let mo = if console >= 0 && (console as usize) < MAXPLAYERS {
+            world.players[console as usize].mo
+        } else {
+            None
+        };
+        S_UpdateSounds(&world, mo);
+    }
 
-        // Update display
-        if VIDEO.borrow().screenvisible != 0 {
-            D_Display();
-        }
+    // Update display
+    if VIDEO.borrow().screenvisible != 0 {
+        D_Display();
     }
 }
 
@@ -1280,10 +1277,9 @@ fn PrintDehackedBanners() {
 /// Set `gameversion` from the `-gameversion` argument, or auto-detect it from `gamemode` and
 /// `gamemission`. Also adjusts `gamemode` / `gamemission` for version compatibility.
 ///
-/// # Safety
-///
-/// Reads and writes multiple game-state globals; must be called after `D_IdentifyVersion`.
-unsafe fn InitGameVersion() {
+/// Call after `D_IdentifyVersion`, which sets the `gamemode` and `gamemission`
+/// read here.
+fn InitGameVersion() {
     let p = M_CheckParmWithArgs("-gameversion", 1);
 
     if p > 0 {

@@ -17,6 +17,9 @@
 //! generic platform.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
+// The framebuffer conversion writes through raw zone pointers in C's
+// whole-body `unsafe fn` style.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use {
     crate::{
@@ -449,22 +452,23 @@ pub unsafe fn I_ReadScreen(scr: *mut u8) {
 /// gamma-correcting each component through `gammatable[usegamma]`
 /// and storing into `colors`. Mirrors `I_SetPalette` from `i_video.c`.
 ///
-/// # Safety
+/// `palette` starts at the palette to apply; bytes after the first
+/// `256 * 3` (the later PLAYPAL palettes) are ignored.
 ///
-/// `palette` must point to at least `256 * 3` readable bytes. The
-/// function trusts `usegamma` to index `gammatable` in range.
-pub unsafe fn I_SetPalette(palette: *mut u8) {
+/// # Panics
+///
+/// If `palette` is shorter than `256 * 3` bytes, or `usegamma` is out of
+/// range for `gammatable`.
+pub fn I_SetPalette(palette: &[u8]) {
+    assert!(palette.len() >= 256 * 3, "I_SetPalette: short palette");
     let mut video = VIDEO.borrow_mut();
     let gamma = &gammatable[video.usegamma as usize];
-    let mut p = palette;
-    for color in &mut video.colors {
+    let (rgb_triples, _) = palette.as_chunks::<3>();
+    for (color, &[red, green, blue]) in video.colors.iter_mut().zip(rgb_triples) {
         color.a = 0;
-        color.r = gamma[*p as usize];
-        p = p.add(1);
-        color.g = gamma[*p as usize];
-        p = p.add(1);
-        color.b = gamma[*p as usize];
-        p = p.add(1);
+        color.r = gamma[red as usize];
+        color.g = gamma[green as usize];
+        color.b = gamma[blue as usize];
     }
 }
 

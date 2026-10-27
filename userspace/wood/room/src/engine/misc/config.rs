@@ -636,12 +636,14 @@ fn parse_int_parameter(value: &str) -> i32 {
 /// `def.location` must have been bound by [`M_BindVariable`] to a memory
 /// cell of the matching type.
 unsafe fn set_variable(def: &mut Default, value: &str) {
+    // SAFETY (every write below): the caller guarantees `def.location` is a
+    // live cell of the type `def.ty` names.
     match def.ty {
         DefaultType::String => {
-            *(def.location as *mut Cow<'static, str>) = Cow::Owned(value.to_owned());
+            unsafe { *(def.location as *mut Cow<'static, str>) = Cow::Owned(value.to_owned()) };
         }
         DefaultType::Int | DefaultType::IntHex => {
-            *(def.location as *mut i32) = parse_int_parameter(value);
+            unsafe { *(def.location as *mut i32) = parse_int_parameter(value) };
         }
         DefaultType::Key => {
             let intparm = parse_int_parameter(value);
@@ -652,12 +654,12 @@ unsafe fn set_variable(def: &mut Default, value: &str) {
                 0
             };
             def.original_translated = translated;
-            *(def.location as *mut i32) = translated;
+            unsafe { *(def.location as *mut i32) = translated };
         }
         DefaultType::Float => {
             // shortcut: unlike `atof`, trailing non-number text yields 0.0;
             // write a prefix parser if a .cfg file ever needs it.
-            *(def.location as *mut f32) = value.trim().parse().unwrap_or(0.0);
+            unsafe { *(def.location as *mut f32) = value.trim().parse().unwrap_or(0.0) };
         }
     }
 }

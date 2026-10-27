@@ -267,10 +267,7 @@ pub fn D_TryFindWADByName(filename: &str) -> String {
 /// auto-scan path. Writes the identified mission to `*mission`.
 ///
 /// Called from `d_main.c`.
-///
-/// # Safety
-/// `mission` must be a valid, non-null pointer.
-pub unsafe fn D_FindIWAD(mask: i32, mission: *mut i32) -> Option<String> {
+pub fn D_FindIWAD(mask: i32, mission: &mut i32) -> Option<String> {
     let iwadparm = M_CheckParmWithArgs("-iwad", 1);
 
     if iwadparm != 0 {
@@ -286,7 +283,7 @@ pub unsafe fn D_FindIWAD(mask: i32, mission: *mut i32) -> Option<String> {
 
         IWAD_DIRS
             .iter()
-            .find_map(|dir| SearchDirectoryForIWAD(dir, mask, &mut *mission))
+            .find_map(|dir| SearchDirectoryForIWAD(dir, mask, mission))
     }
 }
 

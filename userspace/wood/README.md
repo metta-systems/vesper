@@ -15,7 +15,7 @@ requires:
 Phase 1:
 - allocate app memory +16Mb
 - init rlsf allocator there
-- declare it as `#[global_allocator]` - ? needs a wrapper most probably
+- declare it as `#[global_allocator]` - ? needs a custom wrapper most probably
 - create compositor window
 - load WAD from `[[resource]]` with memio
 - play autodemo
@@ -32,3 +32,18 @@ Phase 3:
 - Isochronous playback thread
 
 ? Try Hexen WAD.
+
+---
+
+## Unsafe removal
+
+Possible follow-ups:
+- Profile that speed-up.
+- Turn menu page pointers into indexes.
+- Use slices in SHA1/checksum.
+- Load the status bar and intermission graphics through typed handles instead of the unsafe callback tables.
+- Move the renderer's texture, flat and colormap tables into owned Vecs. That would free G_InitNew/G_DoLoadLevel.
+- Make sound channels a Vec.
+- Make the demo buffers a Vec with explicit overflow emulation.
+- Replace the module-level lint allows with commented blocks one module at a time.
+- Look at R_MapPlane and finecosine in plane.rs: they're safe functions whose docs still describe real-sounding preconditions. That's a possible soundness gap.

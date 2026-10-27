@@ -240,7 +240,9 @@ pub unsafe fn mem_fwrite(
         unsafe {
             std::ptr::copy_nonoverlapping(stream.buf, newbuf, stream.alloced);
         }
-        mem_free(stream.buf as *mut c_void);
+        // SAFETY: a write stream owns its `mem_malloc` buffer, replaced just
+        // below.
+        unsafe { mem_free(stream.buf as *mut c_void) };
         stream.buf = newbuf;
         stream.alloced = new_alloc;
     }
@@ -290,11 +292,15 @@ pub unsafe fn mem_get_buf(stream: *mut _MEMFILE, buf: *mut *mut c_void, buflen: 
 pub unsafe fn mem_fclose(stream: *mut _MEMFILE) {
     let stream = unsafe { &*stream };
 
-    if matches!(stream.mode, memfile_mode_t::MODE_WRITE) {
-        mem_free(stream.buf as *mut c_void);
-    }
+    // SAFETY: a write stream owns its `mem_malloc` buffer, and the stream
+    // itself came from `mem_malloc`; the caller does not use it again.
+    unsafe {
+        if matches!(stream.mode, memfile_mode_t::MODE_WRITE) {
+            mem_free(stream.buf as *mut c_void);
+        }
 
-    mem_free(stream as *const _MEMFILE as *mut c_void);
+        mem_free(stream as *const _MEMFILE as *mut c_void);
+    }
 }
 
 /// Returns the current read/write position, like `ftell`.

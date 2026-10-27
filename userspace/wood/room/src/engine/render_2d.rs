@@ -89,32 +89,45 @@ pub fn V_MarkRect(x: i32, y: i32, width: i32, height: i32) {
     }
 }
 
-/// # Safety
-/// `source` must be a `SCREENWIDTH`-wide screen buffer that holds the
-/// source rectangle, and the destination rectangle must fit the screen.
-pub unsafe fn V_CopyRect(
+/// Copy the `width` x `height` rectangle at (`srcx`, `srcy`) of `source`, a
+/// buffer of `SCREENWIDTH`-wide rows, to (`destx`, `desty`) of the
+/// destination buffer, and mark it dirty.
+///
+/// # Panics
+/// If either rectangle does not fit its buffer, or `source` overlaps the
+/// destination buffer.
+pub fn V_CopyRect(
     srcx: i32,
     srcy: i32,
-    source: *mut u8,
+    source: &[u8],
     width: i32,
     height: i32,
     destx: i32,
     desty: i32,
 ) {
-    unsafe {
-        V_MarkRect(destx, desty, width, height);
+    V_MarkRect(destx, desty, width, height);
 
-        let dest_screen = RENDER_2D.get().dest_screen;
-        let mut src = source.add((SCREENWIDTH * srcy + srcx) as usize);
-        let mut dest = dest_screen.add((SCREENWIDTH * desty + destx) as usize);
+    let render = RENDER_2D.get();
+    let destination_start = render.dest_screen as usize;
+    let destination_end = destination_start + render.dest_screen_length;
+    let source_range = source.as_ptr_range();
+    assert!(
+        source_range.end as usize <= destination_start
+            || destination_end <= source_range.start as usize,
+        "V_CopyRect: the source overlaps the destination buffer"
+    );
+    // SAFETY: the slice lives for this copy only, and `source`, the only
+    // other reference used meanwhile, does not overlap it.
+    let screen = unsafe { destination_screen(&render) };
 
-        let mut h = height;
-        while h > 0 {
-            ptr::copy_nonoverlapping(src, dest, width as usize);
-            src = src.add(SCREENWIDTH as usize);
-            dest = dest.add(SCREENWIDTH as usize);
-            h -= 1;
-        }
+    let width = width as usize;
+    let mut source_offset = (SCREENWIDTH * srcy + srcx) as usize;
+    let mut destination_offset = (SCREENWIDTH * desty + destx) as usize;
+    for _ in 0..height {
+        screen[destination_offset..destination_offset + width]
+            .copy_from_slice(&source[source_offset..source_offset + width]);
+        source_offset += SCREENWIDTH as usize;
+        destination_offset += SCREENWIDTH as usize;
     }
 }
 

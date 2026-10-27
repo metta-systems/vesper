@@ -56,15 +56,16 @@ unsafe fn checksum_add_lump(
     lump: &lumpinfo_t,
     open_wadfiles: &mut Vec<*mut wad_file_t>,
 ) {
-    // The 8-byte name, up to its NUL, as the C code copied it into a
-    // 9-byte buffer before hashing.
-    SHA1_UpdateString(sha1_context, &lump.name);
-    SHA1_UpdateInt32(
-        sha1_context,
-        get_file_number(lump.wad_file, open_wadfiles) as u32,
-    );
-    SHA1_UpdateInt32(sha1_context, lump.position as u32);
-    SHA1_UpdateInt32(sha1_context, lump.size as u32);
+    let file_number = get_file_number(lump.wad_file, open_wadfiles) as u32;
+    // SAFETY: the caller passes an initialised context.
+    unsafe {
+        // The 8-byte name, up to its NUL, as the C code copied it into a
+        // 9-byte buffer before hashing.
+        SHA1_UpdateString(sha1_context, &lump.name);
+        SHA1_UpdateInt32(sha1_context, file_number);
+        SHA1_UpdateInt32(sha1_context, lump.position as u32);
+        SHA1_UpdateInt32(sha1_context, lump.size as u32);
+    }
 }
 
 /// Compute a SHA-1 digest over the entire WAD directory and write it to
@@ -85,15 +86,22 @@ unsafe fn checksum_add_lump(
 /// initialised (i.e. `W_InitMultipleFiles` has run).
 pub unsafe fn W_Checksum(digest: *mut sha1_digest_t) {
     let mut sha1_context = std::mem::MaybeUninit::<SHA1Context>::uninit();
-    SHA1_Init(sha1_context.as_mut_ptr());
+    // SAFETY: `SHA1_Init` initialises the context in place.
+    unsafe { SHA1_Init(sha1_context.as_mut_ptr()) };
 
     let mut open_wadfiles: Vec<*mut wad_file_t> = Vec::new();
 
     let lumps = lumpinfo();
     for i in 0..W_NumLumps() {
-        let lump = &*lumps.add(i as usize);
-        checksum_add_lump(sha1_context.as_mut_ptr(), lump, &mut open_wadfiles);
+        // SAFETY: `lumpinfo` holds `numlumps` entries once the WAD is loaded
+        // (the caller's contract), and the context is initialised.
+        unsafe {
+            let lump = &*lumps.add(i as usize);
+            checksum_add_lump(sha1_context.as_mut_ptr(), lump, &mut open_wadfiles);
+        }
     }
 
-    SHA1_Final((*digest).as_mut_ptr(), sha1_context.as_mut_ptr());
+    // SAFETY: the caller passes a digest with room for the 20 bytes, and the
+    // context is initialised.
+    unsafe { SHA1_Final((*digest).as_mut_ptr(), sha1_context.as_mut_ptr()) };
 }

@@ -436,12 +436,9 @@ fn start_position_check(
 /// only when a non-boss monster would need to stomp something it is not
 /// allowed to stomp, aborting the teleport.
 ///
-/// # Safety
-///
-/// `tmthing` and `tmx` / `tmy` must have been set by the caller
-/// ([`P_TeleportMove`]) before this callback is invoked; the stomp runs
-/// [`P_DamageMobj`].
-pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
+/// Reads `tmthing` and `tmx` / `tmy`, which the caller ([`P_TeleportMove`])
+/// sets before the iteration; the stomp runs [`P_DamageMobj`].
+pub fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
     let (tmthing_id, tmx, tmy) = (tmthing(world), world.scratch.map.tmx, world.scratch.map.tmy);
     {
         let mobjs = &world.mobjs;
@@ -474,11 +471,9 @@ pub unsafe fn PIT_StompThing(world: &mut World, thing_id: MobjId) -> u32 {
 /// effects and spawn placement. Returns 1 on success, 0 if a non-boss
 /// monster cannot stomp the occupant.
 ///
-/// # Safety
-///
-/// `thing_id` must name a map object that is already linked into the map
-/// (sector list and blockmap). The stomps run [`P_DamageMobj`].
-pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+/// `thing_id` is expected to be linked into the map (sector list and
+/// blockmap). The stomps run [`P_DamageMobj`].
+pub fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let tmbbox = start_position_check(world, thing_id, x, y);
     let (bmaporgx, bmaporgy) = world.level.blockmap_origin();
 
@@ -489,8 +484,8 @@ pub unsafe fn P_TeleportMove(world: &mut World, thing_id: MobjId, x: fixed_t, y:
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            // SAFETY: the stomp parameters are set above.
-            if !P_BlockThingsIterator(world, bx, by, |world, thing| unsafe {
+            // The stomp parameters are set above.
+            if !P_BlockThingsIterator(world, bx, by, |world, thing| {
                 PIT_StompThing(world, thing) != 0
             }) {
                 return 0;
@@ -596,12 +591,10 @@ pub fn PIT_CheckLine(world: &mut World, ld: LineId) -> u32 {
 /// to continue blockmap iteration; returns 0 to stop (collision confirmed
 /// or skull charge resolved).
 ///
-/// # Safety
-///
-/// `tmthing`, `tmx`, `tmy`, and `tmflags` must have been set by
-/// [`P_CheckPosition`] before this callback is invoked; a hit runs
-/// [`P_DamageMobj`] or [`P_TouchSpecialThing`].
-pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
+/// Reads `tmthing`, `tmx`, `tmy`, and `tmflags`, which [`P_CheckPosition`]
+/// sets before the iteration; a hit runs [`P_DamageMobj`] or
+/// [`P_TouchSpecialThing`].
+pub fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
     // Both objects are read before the first call that runs play code, and
     // every path returns right after it (the skull slam re-reads `tmthing`).
     let mobjs = &world.mobjs;
@@ -701,13 +694,9 @@ pub unsafe fn PIT_CheckThing(world: &mut World, thing_id: MobjId) -> u32 {
 /// `numspechit` for the tested position. Things with `MF_PICKUP` may
 /// pick up items encountered during the sweep.
 ///
-/// Returns 1 if the position is unobstructed, 0 if blocked.
-///
-/// # Safety
-///
-/// `thing_id` must name a map object of the loaded level; touching things
+/// Returns 1 if the position is unobstructed, 0 if blocked. Touching things
 /// runs [`PIT_CheckThing`].
-pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+pub fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     let tmbbox = start_position_check(world, thing_id, x, y);
 
     if world.mobjs[thing_id].flags & MF_NOCLIP != 0 {
@@ -722,8 +711,8 @@ pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y
 
     for bx in xl..=xh {
         for by in yl..=yh {
-            // SAFETY: the check parameters are set above.
-            if !P_BlockThingsIterator(world, bx, by, |world, thing| unsafe {
+            // The check parameters are set above.
+            if !P_BlockThingsIterator(world, bx, by, |world, thing| {
                 PIT_CheckThing(world, thing) != 0
             }) {
                 return 0;
@@ -761,11 +750,9 @@ pub unsafe fn P_CheckPosition(world: &mut World, thing_id: MobjId, x: fixed_t, y
 ///
 /// Returns 1 on success, 0 if the move is blocked.
 ///
-/// # Safety
-///
-/// `thing_id` must name a map object that is already linked into the map;
-/// the move runs [`PIT_CheckThing`] and crossed line specials.
-pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
+/// `thing_id` is expected to be linked into the map; the move runs
+/// [`PIT_CheckThing`] and crossed line specials.
+pub fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixed_t) -> u32 {
     world.scratch.map.floatok = 0;
     if P_CheckPosition(world, thing_id, x, y) == 0 {
         return 0;
@@ -847,12 +834,9 @@ pub unsafe fn P_TryMove(world: &mut World, thing_id: MobjId, x: fixed_t, y: fixe
 /// pushed down if they would exceed the ceiling. Returns 0 if the thing no
 /// longer fits in the vertical gap (caller should crush or block the move).
 ///
-/// # Safety
-///
-/// `thing_id` must name a map object of the level; the check runs
-/// [`PIT_CheckThing`]. Called only from [`PIT_ChangeSector`] during
-/// sector-height propagation.
-pub unsafe fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
+/// The check runs [`PIT_CheckThing`]. Called only from [`PIT_ChangeSector`]
+/// during sector-height propagation.
+pub fn P_ThingHeightClip(world: &mut World, thing_id: MobjId) -> u32 {
     let (onfloor, x, y) = {
         let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
@@ -986,12 +970,7 @@ pub fn PTR_SlideTraverse(world: &mut World, intercept: intercept_t) -> u32 {
 /// [`P_HitSlideLine`] and calls [`P_TryMove`] again. Falls back to a
 /// "stairstep" (try pure-y then pure-x move) if no wall is found or after
 /// three retries to prevent infinite loops.
-///
-/// # Safety
-///
-/// `mo_id` must name a map object of the level; the moves run
-/// [`P_TryMove`].
-pub unsafe fn P_SlideMove(world: &mut World, mo_id: MobjId) {
+pub fn P_SlideMove(world: &mut World, mo_id: MobjId) {
     world.scratch.map.slidemo = Some(mo_id);
     let mut hitcount = 0;
     let slide_traverse = |world: &mut World, intercept| PTR_SlideTraverse(world, intercept) != 0;
@@ -1224,11 +1203,9 @@ pub fn PTR_AimTraverse(world: &mut World, intercept: intercept_t) -> u32 {
 ///
 /// Returns 1 to continue traversal, 0 to stop (shot consumed).
 ///
-/// # Safety
-///
-/// `shootthing`, `shootz`, `attackrange`, `aimslope`, and `la_damage` must
-/// be set before the traversal; a hit runs [`P_DamageMobj`].
-pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u32 {
+/// Reads `shootthing`, `shootz`, `attackrange`, `aimslope`, and `la_damage`,
+/// which are set before the traversal.
+pub fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     if let InterceptHit::Line(li) = intercept.hit {
         if world.level.lines[li].special != 0 {
             let shootthing = world
@@ -1351,12 +1328,9 @@ pub unsafe fn PTR_ShootTraverse(world: &mut World, intercept: intercept_t) -> u3
 /// z-fighting), skips spawning if the shot hit sky on the front sector or a
 /// sky-hack wall on the back sector.
 ///
-/// # Safety
-///
-/// `li` must be a linedef of the loaded level. `intercept` must be the
-/// intercept that triggered this call. `shootz`, `aimslope`, and
-/// `attackrange` must be current.
-unsafe fn goto_hitline(world: &mut World, li: LineId, intercept: intercept_t) {
+/// `intercept` is the intercept that triggered this call; `shootz`,
+/// `aimslope`, and `attackrange` are those of the current shot.
+fn goto_hitline(world: &mut World, li: LineId, intercept: intercept_t) {
     let (shootz, attackrange, aimslope) = {
         let map = &world.scratch.map;
         (map.shootz, map.attackrange, map.aimslope)
@@ -1445,12 +1419,7 @@ pub fn P_AimLineAttack(world: &mut World, t1: MobjId, angle: u32, distance: fixe
 /// Runs [`PTR_ShootTraverse`] along the ray. If `damage` is 0 the call is
 /// a pure trace that sets `linetarget` without dealing damage. Spawns
 /// puffs or blood at the impact point as a side effect.
-///
-/// # Safety
-///
-/// `t1_id` must name a map object of the level; a hit runs
-/// [`PTR_ShootTraverse`].
-pub unsafe fn P_LineAttack(
+pub fn P_LineAttack(
     world: &mut World,
     t1_id: MobjId,
     angle: u32,
@@ -1483,8 +1452,8 @@ pub unsafe fn P_LineAttack(
         x2,
         y2,
         PT_ADDLINES | PT_ADDTHINGS,
-        // SAFETY: the shot parameters are set above.
-        |world, intercept| unsafe { PTR_ShootTraverse(world, intercept) != 0 },
+        // The shot parameters are set above.
+        |world, intercept| PTR_ShootTraverse(world, intercept) != 0,
     );
 }
 
@@ -1501,10 +1470,9 @@ pub unsafe fn P_LineAttack(
 ///
 /// Returns 1 to continue traversal, 0 to stop.
 ///
-/// # Safety
-///
-/// `usething` must be set; a blocked use runs [`S_StartSound`].
-pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 {
+/// Reads `usething`, which [`P_UseLines`] sets; a blocked use runs
+/// [`S_StartSound`].
+pub fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 {
     let usething_id = world.scratch.map.usething.expect("use without a user");
     let InterceptHit::Line(line) = intercept.hit else {
         unreachable!("the use traversal collects only lines");
@@ -1537,12 +1505,7 @@ pub unsafe fn PTR_UseTraverse(world: &mut World, intercept: intercept_t) -> u32 
 /// Traces a ray of length `USERANGE` (64 map units) from the player's position using
 /// [`PTR_UseTraverse`]. The first special line within reach and in the
 /// correct orientation is activated.
-///
-/// # Safety
-///
-/// `player`'s `mo` must name a map object of the loaded level; the use runs
-/// [`PTR_UseTraverse`].
-pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
+pub fn P_UseLines(world: &mut World, player: PlayerId) {
     let mo_id = world.players[player].mo();
     world.scratch.map.usething = Some(mo_id);
     let (angle, x1, y1) = {
@@ -1554,17 +1517,10 @@ pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
     // turn on.
     let x2 = x1 + (USERANGE >> FRACBITS) * finesine[angle + FINEANGLES / 4];
     let y2 = y1 + (USERANGE >> FRACBITS) * finesine[angle];
-    // SAFETY: the traversal collects only lines, and `usething` is set
-    // above.
-    P_PathTraverse(
-        world,
-        x1,
-        y1,
-        x2,
-        y2,
-        PT_ADDLINES,
-        |world, intercept| unsafe { PTR_UseTraverse(world, intercept) != 0 },
-    );
+    // The traversal collects only lines, and `usething` is set above.
+    P_PathTraverse(world, x1, y1, x2, y2, PT_ADDLINES, |world, intercept| {
+        PTR_UseTraverse(world, intercept) != 0
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1580,12 +1536,10 @@ pub unsafe fn P_UseLines(world: &mut World, player: PlayerId) {
 ///
 /// Always returns 1 (continues blockmap iteration).
 ///
-/// # Safety
-///
-/// `bombspot`, `bombsource`, and `bombdamage` must be set by
-/// [`P_RadiusAttack`] before this callback is invoked; a hit runs
+/// Reads `bombspot`, `bombsource`, and `bombdamage`, which
+/// [`P_RadiusAttack`] sets before the iteration; a hit runs
 /// [`P_DamageMobj`].
-pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
+pub fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
     let (thing_x, thing_y, thing_radius) = {
         let mobjs = &world.mobjs;
         let thing = &mobjs[thing_id];
@@ -1641,18 +1595,9 @@ pub unsafe fn PIT_RadiusAttack(world: &mut World, thing_id: MobjId) -> u32 {
 /// take linearly decreasing damage.
 ///
 /// `source` is the creature credited with the kill (may differ from `spot`).
-///
-/// # Safety
-///
-/// `spot_id` must name a map object of the level; `source` may be `None`
-/// or stale (C passes the exploding object's `target`, which may be gone).
-/// The blast runs [`PIT_RadiusAttack`].
-pub unsafe fn P_RadiusAttack(
-    world: &mut World,
-    spot_id: MobjId,
-    source: Option<MobjId>,
-    damage: i32,
-) {
+/// It may be `None` or stale (C passes the exploding object's `target`,
+/// which may be gone). The blast runs [`PIT_RadiusAttack`].
+pub fn P_RadiusAttack(world: &mut World, spot_id: MobjId, source: Option<MobjId>, damage: i32) {
     let (spot_x, spot_y) = {
         let mobjs = &world.mobjs;
         (mobjs[spot_id].x, mobjs[spot_id].y)
@@ -1671,8 +1616,8 @@ pub unsafe fn P_RadiusAttack(
     }
     for y in yl..=yh {
         for x in xl..=xh {
-            // SAFETY: the blast parameters are set above.
-            P_BlockThingsIterator(world, x, y, |world, thing| unsafe {
+            // The blast parameters are set above.
+            P_BlockThingsIterator(world, x, y, |world, thing| {
                 PIT_RadiusAttack(world, thing) != 0
             });
         }
@@ -1693,11 +1638,9 @@ pub unsafe fn P_RadiusAttack(
 ///
 /// Always returns 1 to continue checking other things.
 ///
-/// # Safety
-///
-/// `crushchange` must be set by [`P_ChangeSector`] before iteration; the
-/// crush runs state changes, removal and [`P_DamageMobj`].
-pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
+/// Reads `crushchange`, which [`P_ChangeSector`] sets before the iteration;
+/// the crush runs state changes, removal and [`P_DamageMobj`].
+pub fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
     if P_ThingHeightClip(world, thing_id) != 0 {
         return 1;
     }
@@ -1745,20 +1688,16 @@ pub unsafe fn PIT_ChangeSector(world: &mut World, thing_id: MobjId) -> u32 {
 /// Re-checks height constraints for every thing in the blockmap cells that
 /// overlap `sector->blockbox`. Returns non-zero if any thing no longer fits
 /// (i.e. `nofit` was set). If `crunch` is zero and this returns non-zero,
-/// the caller should revert the sector height and call this again.
-///
-/// # Safety
-///
-/// `sector` must be a sector of the loaded level; the things that no longer
-/// fit run [`PIT_ChangeSector`].
-pub unsafe fn P_ChangeSector(world: &mut World, sector: SectorId, crunch: i32) -> i32 {
+/// the caller should revert the sector height and call this again. The
+/// things that no longer fit run [`PIT_ChangeSector`].
+pub fn P_ChangeSector(world: &mut World, sector: SectorId, crunch: i32) -> i32 {
     world.scratch.map.nofit = 0;
     world.scratch.map.crushchange = crunch;
     let blockbox = world.level.sectors[sector].blockbox;
     for x in blockbox[BBox::LEFT]..=blockbox[BBox::RIGHT] {
         for y in blockbox[BBox::BOTTOM]..=blockbox[BBox::TOP] {
-            // SAFETY: `crushchange` is set above.
-            P_BlockThingsIterator(world, x, y, |world, thing| unsafe {
+            // `crushchange` is set above.
+            P_BlockThingsIterator(world, x, y, |world, thing| {
                 PIT_ChangeSector(world, thing) != 0
             });
         }

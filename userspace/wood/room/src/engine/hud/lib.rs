@@ -10,11 +10,11 @@
 //! * [`hu_itext_t`] - a text-input widget with a protected left-margin prefix
 //!   (used for chat entry and cheat codes).
 //!
-//! Rust differences from C: `boolean` is `i32` (0/1).
+//! Rust differences from C: `boolean` is `i32` (0/1). The C widgets keep a
+//! pointer to their visibility flag (`boolean *on`); here the owner passes
+//! the flag's value to the draw and erase functions instead.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-
-use std::ptr;
 
 use crate::engine::wad::format::Patch;
 
@@ -87,7 +87,6 @@ impl hu_textline_t {
 /// # Invariants
 /// * `h <= HU_MAXLINES`.
 /// * `cl` is always in `0..h`.
-/// * `on` is a non-null pointer to a `i32` flag; 0 = hidden, non-zero = visible.
 #[derive(Clone, Copy)]
 pub struct hu_stext_t {
     /// Ring of text lines; only `l[0..h]` are used.
@@ -96,10 +95,9 @@ pub struct hu_stext_t {
     pub h: i32,
     /// Index of the current (most recently written) line in `l` (`s->cl` in C).
     pub cl: i32,
-    /// Pointer to the visibility flag; widget is drawn only when `*on != 0`.
-    pub on: *mut i32,
-    /// Cached value of `*on` from the previous frame, used to detect
-    /// transitions from visible to hidden so dirty flags can be set.
+    /// The visibility flag passed to the previous [`HUlib_eraseSText`], used
+    /// to detect transitions from visible to hidden so dirty flags can be
+    /// set.
     pub laston: i32,
 }
 
@@ -109,7 +107,6 @@ impl hu_stext_t {
         l: [hu_textline_t::EMPTY; HU_MAXLINES],
         h: 0,
         cl: 0,
-        on: ptr::null_mut(),
         laston: 0,
     };
 }
@@ -124,7 +121,6 @@ impl hu_stext_t {
 ///
 /// # Invariants
 /// * `lm <= l.len` at all times.
-/// * `on` must be a non-null pointer.
 #[derive(Clone, Copy)]
 pub struct hu_itext_t {
     /// The underlying text line that receives key input.
@@ -132,9 +128,8 @@ pub struct hu_itext_t {
     /// Left-margin character count: characters at indices `0..lm` are
     /// protected from deletion (`it->lm` in C).
     pub lm: i32,
-    /// Pointer to the visibility flag; widget is drawn only when `*on != 0`.
-    pub on: *mut i32,
-    /// Cached value of `*on` from the previous frame (see [`hu_stext_t::laston`]).
+    /// The visibility flag passed to the previous [`HUlib_eraseIText`] (see
+    /// [`hu_stext_t::laston`]).
     pub laston: i32,
 }
 
@@ -143,7 +138,6 @@ impl hu_itext_t {
     pub const EMPTY: Self = Self {
         l: hu_textline_t::EMPTY,
         lm: 0,
-        on: ptr::null_mut(),
         laston: 0,
     };
 }
@@ -163,34 +157,24 @@ pub fn HUlib_init() {}
 ///
 /// Sets `len` to 0, NUL-terminates `l[0]`, and sets `needsupdate` to 1.
 /// Called from `HU_Init`, `HUlib_addLineToSText`, and `HUlib_resetIText`.
-///
-/// # Safety
-/// `t` must be a valid non-null pointer.
-pub unsafe fn HUlib_clearTextLine(t: *mut hu_textline_t) {
-    unsafe {
-        (*t).len = 0;
-        (*t).l[0] = 0;
-        (*t).needsupdate = 1;
-    }
+pub fn HUlib_clearTextLine(t: &mut hu_textline_t) {
+    t.len = 0;
+    t.l[0] = 0;
+    t.needsupdate = 1;
 }
 
 /// Initialize a text line widget with its screen position and font.
 ///
 /// Sets the position (`x`, `y`), font pointer `f`, and start character `sc`,
-/// then calls [`HUlib_clearTextLine`] to zero the text buffer.
-///
-/// # Safety
-/// * `t` must be a valid non-null pointer.
-/// * `f` must hold the glyphs for `[sc, '_']` when drawing is later
-///   requested (drawing panics otherwise).
-pub unsafe fn HUlib_initTextLine(t: *mut hu_textline_t, x: i32, y: i32, f: Font, sc: i32) {
-    unsafe {
-        (*t).x = x;
-        (*t).y = y;
-        (*t).f = f;
-        (*t).sc = sc;
-        HUlib_clearTextLine(t);
-    }
+/// then calls [`HUlib_clearTextLine`] to zero the text buffer. `f` must hold
+/// the glyphs for `[sc, '_']` when the line is drawn (drawing panics
+/// otherwise).
+pub fn HUlib_initTextLine(t: &mut hu_textline_t, x: i32, y: i32, f: Font, sc: i32) {
+    t.x = x;
+    t.y = y;
+    t.f = f;
+    t.sc = sc;
+    HUlib_clearTextLine(t);
 }
 
 /// Append a character to a text line.
@@ -198,20 +182,15 @@ pub unsafe fn HUlib_initTextLine(t: *mut hu_textline_t, x: i32, y: i32, f: Font,
 /// Returns 1 (true) on success, 0 (false) if the line is already at
 /// `HU_MAXLINELENGTH` (80) characters. On success, sets `needsupdate` to 4.
 /// The buffer remains NUL-terminated after the call.
-///
-/// # Safety
-/// `t` must be a valid non-null pointer.
-pub unsafe fn HUlib_addCharToTextLine(t: *mut hu_textline_t, ch: u8) -> i32 {
-    unsafe {
-        if (*t).len == HU_MAXLINELENGTH as i32 {
-            0
-        } else {
-            (*t).l[(*t).len as usize] = ch;
-            (*t).len += 1;
-            (*t).l[(*t).len as usize] = 0;
-            (*t).needsupdate = 4;
-            1
-        }
+pub fn HUlib_addCharToTextLine(t: &mut hu_textline_t, ch: u8) -> i32 {
+    if t.len == HU_MAXLINELENGTH as i32 {
+        0
+    } else {
+        t.l[t.len as usize] = ch;
+        t.len += 1;
+        t.l[t.len as usize] = 0;
+        t.needsupdate = 4;
+        1
     }
 }
 
@@ -219,19 +198,14 @@ pub unsafe fn HUlib_addCharToTextLine(t: *mut hu_textline_t, ch: u8) -> i32 {
 ///
 /// Returns 1 (true) on success, 0 (false) if the line is already empty.
 /// On success, NUL-terminates the new end and sets `needsupdate` to 4.
-///
-/// # Safety
-/// `t` must be a valid non-null pointer.
-pub unsafe fn HUlib_delCharFromTextLine(t: *mut hu_textline_t) -> i32 {
-    unsafe {
-        if (*t).len == 0 {
-            0
-        } else {
-            (*t).len -= 1;
-            (*t).l[(*t).len as usize] = 0;
-            (*t).needsupdate = 4;
-            1
-        }
+pub fn HUlib_delCharFromTextLine(t: &mut hu_textline_t) -> i32 {
+    if t.len == 0 {
+        0
+    } else {
+        t.len -= 1;
+        t.l[t.len as usize] = 0;
+        t.needsupdate = 4;
+        1
     }
 }
 
@@ -247,39 +221,37 @@ pub unsafe fn HUlib_delCharFromTextLine(t: *mut hu_textline_t) -> i32 {
 ///
 /// Called from `HU_Drawer` and `HUlib_drawSText`/`HUlib_drawIText`.
 ///
-/// # Safety
-/// `l` must be a valid non-null pointer to a line whose font `f` holds the
-/// patches for `[sc, '_']`.
-pub unsafe fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
-    unsafe {
-        let mut x = (*l).x;
-        let f = (*l).f;
-        let sc = (*l).sc;
+/// # Panics
+/// If the line's font `f` lacks a patch for a drawn character in
+/// `[sc, '_']`.
+pub fn HUlib_drawTextLine(l: &hu_textline_t, drawcursor: i32) {
+    let mut x = l.x;
+    let f = l.f;
+    let sc = l.sc;
 
-        for i in 0..(*l).len as usize {
-            let c = (*l).l[i].to_ascii_uppercase();
-            if c != b' ' && c >= sc as u8 && c <= b'_' {
-                let patch = f[(c as i32 - sc) as usize];
-                let w = patch.width();
-                if x + w > SCREENWIDTH {
-                    break;
-                }
-                V_DrawPatchDirect(x, (*l).y, patch);
-                x += w;
-            } else {
-                x += 4;
-                if x >= SCREENWIDTH {
-                    break;
-                }
+    for i in 0..l.len as usize {
+        let c = l.l[i].to_ascii_uppercase();
+        if c != b' ' && c >= sc as u8 && c <= b'_' {
+            let patch = f[(c as i32 - sc) as usize];
+            let w = patch.width();
+            if x + w > SCREENWIDTH {
+                break;
+            }
+            V_DrawPatchDirect(x, l.y, patch);
+            x += w;
+        } else {
+            x += 4;
+            if x >= SCREENWIDTH {
+                break;
             }
         }
+    }
 
-        if drawcursor != 0 {
-            let cursor_patch = f[(b'_' as i32 - sc) as usize];
-            let cursor_w = cursor_patch.width();
-            if x + cursor_w <= SCREENWIDTH {
-                V_DrawPatchDirect(x, (*l).y, cursor_patch);
-            }
+    if drawcursor != 0 {
+        let cursor_patch = f[(b'_' as i32 - sc) as usize];
+        let cursor_w = cursor_patch.width();
+        if x + cursor_w <= SCREENWIDTH {
+            V_DrawPatchDirect(x, l.y, cursor_patch);
         }
     }
 }
@@ -296,69 +268,54 @@ pub unsafe fn HUlib_drawTextLine(l: *mut hu_textline_t, drawcursor: i32) {
 ///
 /// Called from `HU_Erase`, `HUlib_eraseSText`, and `HUlib_eraseIText`.
 ///
-/// # Safety
-/// `l` must be a valid non-null pointer to a line with a valid font `f`.
-pub unsafe fn HUlib_eraseTextLine(l: *mut hu_textline_t) {
-    unsafe {
-        let (viewwindowx, viewwindowy, viewwidth, viewheight) = {
-            let renderer = RENDERER.borrow();
-            let draw = &renderer.draw;
-            (
-                draw.viewwindowx,
-                draw.viewwindowy,
-                draw.viewwidth,
-                draw.viewheight,
-            )
-        };
-        if !automap_active() && viewwindowx != 0 && (*l).needsupdate != 0 {
-            let lh = (*l).f[0].height() + 1;
-            for y in (*l).y..(*l).y + lh {
-                let yoffset = y * SCREENWIDTH;
-                if y < viewwindowy || y >= viewwindowy + viewheight {
-                    R_VideoErase(yoffset as u32, SCREENWIDTH);
-                } else {
-                    R_VideoErase(yoffset as u32, viewwindowx);
-                    R_VideoErase((yoffset + viewwindowx + viewwidth) as u32, viewwindowx);
-                }
+/// # Panics
+/// If the line has to be erased and its font `f` is empty.
+pub fn HUlib_eraseTextLine(l: &mut hu_textline_t) {
+    let (viewwindowx, viewwindowy, viewwidth, viewheight) = {
+        let renderer = RENDERER.borrow();
+        let draw = &renderer.draw;
+        (
+            draw.viewwindowx,
+            draw.viewwindowy,
+            draw.viewwidth,
+            draw.viewheight,
+        )
+    };
+    if !automap_active() && viewwindowx != 0 && l.needsupdate != 0 {
+        let lh = l.f[0].height() + 1;
+        for y in l.y..l.y + lh {
+            let yoffset = y * SCREENWIDTH;
+            if y < viewwindowy || y >= viewwindowy + viewheight {
+                R_VideoErase(yoffset as u32, SCREENWIDTH);
+            } else {
+                R_VideoErase(yoffset as u32, viewwindowx);
+                R_VideoErase((yoffset + viewwindowx + viewwidth) as u32, viewwindowx);
             }
         }
+    }
 
-        if (*l).needsupdate != 0 {
-            (*l).needsupdate -= 1;
-        }
+    if l.needsupdate != 0 {
+        l.needsupdate -= 1;
     }
 }
 
 /// Initialize a scrolling text widget.
 ///
-/// Sets height `h`, visibility pointer `on`, resets the current-line index
-/// to 0, and initializes each of the `h` text lines. Lines are stacked
-/// upward: line 0 is at `y`, line 1 at `y - font_height - 1`, and so on.
+/// Sets height `h`, marks the widget as visible last frame (`laston`),
+/// resets the current-line index to 0, and initializes each of the `h` text
+/// lines. Lines are stacked upward: line 0 is at `y`, line 1 at
+/// `y - font_height - 1`, and so on.
 ///
-/// # Safety
-/// * `s` must be a valid non-null pointer.
-/// * `h <= HU_MAXLINES`.
-/// * `on` must be a valid non-null pointer for the widget's lifetime.
-///
-/// Panics if `font` is empty, as its height is read from the first glyph.
-pub unsafe fn HUlib_initSText(
-    s: *mut hu_stext_t,
-    x: i32,
-    y: i32,
-    h: i32,
-    font: Font,
-    startchar: i32,
-    on: *mut i32,
-) {
-    unsafe {
-        (*s).h = h;
-        (*s).on = on;
-        (*s).laston = 1;
-        (*s).cl = 0;
-        let font_h = font[0].height() + 1;
-        for i in 0..h as usize {
-            HUlib_initTextLine(&mut (*s).l[i], x, y - (i as i32) * font_h, font, startchar);
-        }
+/// # Panics
+/// If `font` is empty, as its height is read from the first glyph, or if
+/// `h > HU_MAXLINES`.
+pub fn HUlib_initSText(s: &mut hu_stext_t, x: i32, y: i32, h: i32, font: Font, startchar: i32) {
+    s.h = h;
+    s.laston = 1;
+    s.cl = 0;
+    let font_h = font[0].height() + 1;
+    for i in 0..h as usize {
+        HUlib_initTextLine(&mut s.l[i], x, y - (i as i32) * font_h, font, startchar);
     }
 }
 
@@ -366,20 +323,15 @@ pub unsafe fn HUlib_initSText(
 ///
 /// Increments `cl` modulo `h`, clears the new current text line, and sets
 /// `needsupdate` to 4 on every line so they are all redrawn.
-///
-/// # Safety
-/// `s` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_addLineToSText(s: *mut hu_stext_t) {
-    unsafe {
-        (*s).cl += 1;
-        if (*s).cl == (*s).h {
-            (*s).cl = 0;
-        }
-        HUlib_clearTextLine(&mut (*s).l[(*s).cl as usize]);
+pub fn HUlib_addLineToSText(s: &mut hu_stext_t) {
+    s.cl += 1;
+    if s.cl == s.h {
+        s.cl = 0;
+    }
+    HUlib_clearTextLine(&mut s.l[s.cl as usize]);
 
-        for i in 0..(*s).h as usize {
-            (*s).l[i].needsupdate = 4;
-        }
+    for i in 0..s.h as usize {
+        s.l[i].needsupdate = 4;
     }
 }
 
@@ -388,97 +340,64 @@ pub unsafe fn HUlib_addLineToSText(s: *mut hu_stext_t) {
 /// Calls [`HUlib_addLineToSText`] to advance the ring buffer, then appends
 /// each byte of `prefix` (if any) followed by each byte of `msg` to the
 /// current line using [`HUlib_addCharToTextLine`].
-///
-/// # Safety
-/// `s` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_addMessageToSText(s: *mut hu_stext_t, prefix: Option<&[u8]>, msg: &[u8]) {
-    unsafe {
-        HUlib_addLineToSText(s);
-        for &byte in prefix.unwrap_or_default().iter().chain(msg) {
-            HUlib_addCharToTextLine(&mut (*s).l[(*s).cl as usize], byte);
-        }
+pub fn HUlib_addMessageToSText(s: &mut hu_stext_t, prefix: Option<&[u8]>, msg: &[u8]) {
+    HUlib_addLineToSText(s);
+    for &byte in prefix.unwrap_or_default().iter().chain(msg) {
+        HUlib_addCharToTextLine(&mut s.l[s.cl as usize], byte);
     }
 }
 
 /// Render all lines of a scrolling text widget.
 ///
-/// Skips drawing if `*s.on == 0`. Otherwise iterates `h` lines in ring order
-/// (newest first) and calls [`HUlib_drawTextLine`] for each without a cursor.
-///
-/// # Safety
-/// `s` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_drawSText(s: *mut hu_stext_t) {
-    unsafe {
-        if *(*s).on == 0 {
-            return;
+/// Skips drawing unless the widget is visible (`on`, C `*s->on`). Otherwise
+/// iterates `h` lines in ring order (newest first) and calls
+/// [`HUlib_drawTextLine`] for each without a cursor.
+pub fn HUlib_drawSText(s: &hu_stext_t, on: bool) {
+    if !on {
+        return;
+    }
+    for i in 0..s.h as usize {
+        let mut idx = s.cl as isize - i as isize;
+        if idx < 0 {
+            idx += s.h as isize;
         }
-        for i in 0..(*s).h as usize {
-            let mut idx = (*s).cl as isize - i as isize;
-            if idx < 0 {
-                idx += (*s).h as isize;
-            }
-            HUlib_drawTextLine(&mut (*s).l[idx as usize], 0);
-        }
+        HUlib_drawTextLine(&s.l[idx as usize], 0);
     }
 }
 
 /// Erase all lines of a scrolling text widget and update the visibility cache.
 ///
 /// If the widget just transitioned from visible to hidden (`laston != 0` and
-/// `*on == 0`), marks every line dirty so they are erased from the screen.
-/// Then calls [`HUlib_eraseTextLine`] on each line and updates `laston`.
-///
-/// # Safety
-/// `s` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_eraseSText(s: *mut hu_stext_t) {
-    unsafe {
-        for i in 0..(*s).h as usize {
-            if (*s).laston != 0 && *(*s).on == 0 {
-                (*s).l[i].needsupdate = 4;
-            }
-            HUlib_eraseTextLine(&mut (*s).l[i]);
+/// not `on`), marks every line dirty so they are erased from the screen.
+/// Then calls [`HUlib_eraseTextLine`] on each line and records `on` in
+/// `laston`.
+pub fn HUlib_eraseSText(s: &mut hu_stext_t, on: bool) {
+    for i in 0..s.h as usize {
+        if s.laston != 0 && !on {
+            s.l[i].needsupdate = 4;
         }
-        (*s).laston = if *(*s).on != 0 { 1 } else { 0 };
+        HUlib_eraseTextLine(&mut s.l[i]);
     }
+    s.laston = if on { 1 } else { 0 };
 }
 
 /// Initialize a text-input widget.
 ///
-/// Zeroes the left margin (`lm = 0`), stores the visibility pointer, sets
-/// `laston = 1`, and initialises the underlying text line via
-/// [`HUlib_initTextLine`].
-///
-/// # Safety
-/// * `it` must be a valid non-null pointer.
-/// * `on` must be a valid non-null pointer for the widget's lifetime.
-pub unsafe fn HUlib_initIText(
-    it: *mut hu_itext_t,
-    x: i32,
-    y: i32,
-    font: Font,
-    startchar: i32,
-    on: *mut i32,
-) {
-    unsafe {
-        (*it).lm = 0;
-        (*it).on = on;
-        (*it).laston = 1;
-        HUlib_initTextLine(&mut (*it).l, x, y, font, startchar);
-    }
+/// Zeroes the left margin (`lm = 0`), sets `laston = 1`, and initialises the
+/// underlying text line via [`HUlib_initTextLine`].
+pub fn HUlib_initIText(it: &mut hu_itext_t, x: i32, y: i32, font: Font, startchar: i32) {
+    it.lm = 0;
+    it.laston = 1;
+    HUlib_initTextLine(&mut it.l, x, y, font, startchar);
 }
 
 /// Delete the last character from an input widget, respecting the left margin.
 ///
 /// Calls [`HUlib_delCharFromTextLine`] only when `l.len > lm`; characters
 /// within the protected prefix are never removed.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer.
-pub unsafe fn HUlib_delCharFromIText(it: *mut hu_itext_t) {
-    unsafe {
-        if (*it).l.len != (*it).lm {
-            HUlib_delCharFromTextLine(&mut (*it).l);
-        }
+pub fn HUlib_delCharFromIText(it: &mut hu_itext_t) {
+    if it.l.len != it.lm {
+        HUlib_delCharFromTextLine(&mut it.l);
     }
 }
 
@@ -487,14 +406,9 @@ pub unsafe fn HUlib_delCharFromIText(it: *mut hu_itext_t) {
 ///
 /// Repeatedly calls [`HUlib_delCharFromTextLine`] until `l.len == lm`,
 /// effectively clearing everything after the prefix.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer.
-pub unsafe fn HUlib_eraseLineFromIText(it: *mut hu_itext_t) {
-    unsafe {
-        while (*it).lm != (*it).l.len {
-            HUlib_delCharFromTextLine(&mut (*it).l);
-        }
+pub fn HUlib_eraseLineFromIText(it: &mut hu_itext_t) {
+    while it.lm != it.l.len {
+        HUlib_delCharFromTextLine(&mut it.l);
     }
 }
 
@@ -502,14 +416,9 @@ pub unsafe fn HUlib_eraseLineFromIText(it: *mut hu_itext_t) {
 ///
 /// Sets `lm` to 0 and calls [`HUlib_clearTextLine`], discarding both the
 /// prefix and any user input. Used at the start of a new chat session.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer.
-pub unsafe fn HUlib_resetIText(it: *mut hu_itext_t) {
-    unsafe {
-        (*it).lm = 0;
-        HUlib_clearTextLine(&mut (*it).l);
-    }
+pub fn HUlib_resetIText(it: &mut hu_itext_t) {
+    it.lm = 0;
+    HUlib_clearTextLine(&mut it.l);
 }
 
 /// Append a prefix string to an input widget and lock it as the left margin.
@@ -517,16 +426,11 @@ pub unsafe fn HUlib_resetIText(it: *mut hu_itext_t) {
 /// Appends each byte of `prefix` to the underlying text line, then sets
 /// `lm = l.len` so that subsequent delete operations cannot remove those
 /// characters.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer.
-pub unsafe fn HUlib_addPrefixToIText(it: *mut hu_itext_t, prefix: &[u8]) {
-    unsafe {
-        for &byte in prefix {
-            HUlib_addCharToTextLine(&mut (*it).l, byte);
-        }
-        (*it).lm = (*it).l.len;
+pub fn HUlib_addPrefixToIText(it: &mut hu_itext_t, prefix: &[u8]) {
+    for &byte in prefix {
+        HUlib_addCharToTextLine(&mut it.l, byte);
     }
+    it.lm = it.l.len;
 }
 
 /// Process a keypress for an input text widget.
@@ -538,55 +442,40 @@ pub unsafe fn HUlib_addPrefixToIText(it: *mut hu_itext_t, prefix: &[u8]) {
 /// * Any other value: returns 0 to signal the key was not consumed.
 ///
 /// Returns 1 if the key was consumed, 0 otherwise.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer.
-pub unsafe fn HUlib_keyInIText(it: *mut hu_itext_t, ch: u8) -> i32 {
-    unsafe {
-        let ch = ch.to_ascii_uppercase();
-        if (b' '..=b'_').contains(&ch) {
-            HUlib_addCharToTextLine(&mut (*it).l, ch);
-        } else if ch == crate::engine::interface::keys::KEY_BACKSPACE {
-            HUlib_delCharFromIText(it);
-        } else if ch != crate::engine::interface::keys::KEY_ENTER {
-            return 0;
-        }
-        1
+pub fn HUlib_keyInIText(it: &mut hu_itext_t, ch: u8) -> i32 {
+    let ch = ch.to_ascii_uppercase();
+    if (b' '..=b'_').contains(&ch) {
+        HUlib_addCharToTextLine(&mut it.l, ch);
+    } else if ch == crate::engine::interface::keys::KEY_BACKSPACE {
+        HUlib_delCharFromIText(it);
+    } else if ch != crate::engine::interface::keys::KEY_ENTER {
+        return 0;
     }
+    1
 }
 
 /// Render the input text widget, including the cursor glyph.
 ///
-/// Skips drawing if `*it.on == 0`. Otherwise delegates to
-/// [`HUlib_drawTextLine`] with `drawcursor = 1`.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_drawIText(it: *mut hu_itext_t) {
-    unsafe {
-        if *(*it).on == 0 {
-            return;
-        }
-        HUlib_drawTextLine(&mut (*it).l, 1);
+/// Skips drawing unless the widget is visible (`on`, C `*it->on`).
+/// Otherwise delegates to [`HUlib_drawTextLine`] with `drawcursor = 1`.
+pub fn HUlib_drawIText(it: &hu_itext_t, on: bool) {
+    if !on {
+        return;
     }
+    HUlib_drawTextLine(&it.l, 1);
 }
 
 /// Erase the input text widget from the screen and update the visibility cache.
 ///
 /// Marks the line dirty if the widget just became hidden (transition from
-/// `laston != 0` to `*on == 0`), then calls [`HUlib_eraseTextLine`] and
-/// updates `laston`.
-///
-/// # Safety
-/// `it` must be a valid non-null pointer to an initialised widget.
-pub unsafe fn HUlib_eraseIText(it: *mut hu_itext_t) {
-    unsafe {
-        if (*it).laston != 0 && *(*it).on == 0 {
-            (*it).l.needsupdate = 4;
-        }
-        HUlib_eraseTextLine(&mut (*it).l);
-        (*it).laston = if *(*it).on != 0 { 1 } else { 0 };
+/// `laston != 0` to not `on`), then calls [`HUlib_eraseTextLine`] and
+/// records `on` in `laston`.
+pub fn HUlib_eraseIText(it: &mut hu_itext_t, on: bool) {
+    if it.laston != 0 && !on {
+        it.l.needsupdate = 4;
     }
+    HUlib_eraseTextLine(&mut it.l);
+    it.laston = if on { 1 } else { 0 };
 }
 
 #[cfg(test)]
@@ -606,7 +495,7 @@ mod tests {
         tl.needsupdate = 0;
         tl.l[0] = b'X';
 
-        unsafe { HUlib_clearTextLine(&mut tl) };
+        HUlib_clearTextLine(&mut tl);
 
         assert_eq!(tl.len, 0, "len must be reset to 0");
         assert_eq!(tl.l[0], 0, "first char must be nul after clear");
@@ -616,10 +505,8 @@ mod tests {
     #[test]
     fn add_char_increments_len_and_nul_terminates() {
         let mut tl = make_textline();
-        let ret = unsafe {
-            HUlib_clearTextLine(&mut tl);
-            HUlib_addCharToTextLine(&mut tl, b'A')
-        };
+        HUlib_clearTextLine(&mut tl);
+        let ret = HUlib_addCharToTextLine(&mut tl, b'A');
 
         assert_eq!(ret, 1, "successful add must return 1");
         assert_eq!(tl.len, 1);
@@ -631,12 +518,10 @@ mod tests {
     #[test]
     fn add_multiple_chars_builds_string() {
         let mut tl = make_textline();
-        unsafe {
-            HUlib_clearTextLine(&mut tl);
+        HUlib_clearTextLine(&mut tl);
 
-            for ch in b"HI" {
-                HUlib_addCharToTextLine(&mut tl, *ch);
-            }
+        for ch in b"HI" {
+            HUlib_addCharToTextLine(&mut tl, *ch);
         }
         assert_eq!(tl.len, 2);
         assert_eq!(tl.l[0], b'H');
@@ -647,18 +532,16 @@ mod tests {
     #[test]
     fn add_char_at_max_capacity_returns_zero() {
         let mut tl = make_textline();
-        unsafe {
-            HUlib_clearTextLine(&mut tl);
+        HUlib_clearTextLine(&mut tl);
 
-            // Fill to HU_MAXLINELENGTH
-            for _ in 0..HU_MAXLINELENGTH {
-                HUlib_addCharToTextLine(&mut tl, b'X');
-            }
+        // Fill to HU_MAXLINELENGTH
+        for _ in 0..HU_MAXLINELENGTH {
+            HUlib_addCharToTextLine(&mut tl, b'X');
         }
         assert_eq!(tl.len, HU_MAXLINELENGTH as i32);
 
         // One more must be rejected
-        let ret = unsafe { HUlib_addCharToTextLine(&mut tl, b'Y') };
+        let ret = HUlib_addCharToTextLine(&mut tl, b'Y');
         assert_eq!(ret, 0, "add beyond max length must return 0");
         assert_eq!(tl.len, HU_MAXLINELENGTH as i32, "len must not change");
     }
@@ -666,13 +549,11 @@ mod tests {
     #[test]
     fn del_char_decrements_len_and_nul_terminates() {
         let mut tl = make_textline();
-        let ret = unsafe {
-            HUlib_clearTextLine(&mut tl);
-            HUlib_addCharToTextLine(&mut tl, b'A');
-            HUlib_addCharToTextLine(&mut tl, b'B');
+        HUlib_clearTextLine(&mut tl);
+        HUlib_addCharToTextLine(&mut tl, b'A');
+        HUlib_addCharToTextLine(&mut tl, b'B');
 
-            HUlib_delCharFromTextLine(&mut tl)
-        };
+        let ret = HUlib_delCharFromTextLine(&mut tl);
 
         assert_eq!(ret, 1, "successful delete must return 1");
         assert_eq!(tl.len, 1);
@@ -683,10 +564,8 @@ mod tests {
     #[test]
     fn del_char_on_empty_line_returns_zero() {
         let mut tl = make_textline();
-        let ret = unsafe {
-            HUlib_clearTextLine(&mut tl);
-            HUlib_delCharFromTextLine(&mut tl)
-        };
+        HUlib_clearTextLine(&mut tl);
+        let ret = HUlib_delCharFromTextLine(&mut tl);
         assert_eq!(ret, 0, "delete on empty line must return 0");
         assert_eq!(tl.len, 0, "len must stay 0");
     }
@@ -694,17 +573,13 @@ mod tests {
     /// HUlib_keyInIText with a printable character in [' ', '_'] must add it.
     #[test]
     fn key_in_itext_printable_adds_char() {
-        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            on: &mut on,
             laston: 0,
         };
-        let ret = unsafe {
-            HUlib_clearTextLine(&mut it.l);
-            HUlib_keyInIText(&mut it, b'a') // lowercase → uppercased to 'A'
-        };
+        HUlib_clearTextLine(&mut it.l);
+        let ret = HUlib_keyInIText(&mut it, b'a'); // lowercase → uppercased to 'A'
         assert_eq!(ret, 1);
         assert_eq!(it.l.len, 1);
         assert_eq!(it.l.l[0], b'A');
@@ -714,20 +589,16 @@ mod tests {
     #[test]
     fn key_in_itext_backspace_removes_char() {
         use crate::engine::interface::keys::KEY_BACKSPACE;
-        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            on: &mut on,
             laston: 0,
         };
-        unsafe {
-            HUlib_clearTextLine(&mut it.l);
-            HUlib_addCharToTextLine(&mut it.l, b'Z');
-        }
+        HUlib_clearTextLine(&mut it.l);
+        HUlib_addCharToTextLine(&mut it.l, b'Z');
         assert_eq!(it.l.len, 1);
 
-        let ret = unsafe { HUlib_keyInIText(&mut it, KEY_BACKSPACE) };
+        let ret = HUlib_keyInIText(&mut it, KEY_BACKSPACE);
         assert_eq!(ret, 1);
         assert_eq!(it.l.len, 0);
     }
@@ -735,18 +606,14 @@ mod tests {
     /// Characters outside [' ', '_'] (except Enter/Backspace) return 0.
     #[test]
     fn key_in_itext_unknown_key_returns_zero() {
-        let mut on: i32 = 1;
         let mut it = hu_itext_t {
             l: make_textline(),
             lm: 0,
-            on: &mut on,
             laston: 0,
         };
         // 0x01 is below ' ' (0x20) and is not Enter or Backspace
-        let ret = unsafe {
-            HUlib_clearTextLine(&mut it.l);
-            HUlib_keyInIText(&mut it, 0x01)
-        };
+        HUlib_clearTextLine(&mut it.l);
+        let ret = HUlib_keyInIText(&mut it, 0x01);
         assert_eq!(ret, 0, "unknown control char must return 0");
         assert_eq!(it.l.len, 0, "no char should be added");
     }

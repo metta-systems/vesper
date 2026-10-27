@@ -333,27 +333,20 @@ pub fn P_RemoveThinker(thinker: &mut thinker_t) {
 }
 
 /// Run the think function of one listed thinker, by kind.
-///
-/// # Safety
-///
-/// The thinker's think function must be sound to run in the current game
-/// state (a level is loaded).
-unsafe fn run_thinker(world: &mut World, thinker: ThinkerId) {
-    unsafe {
-        match (thinker, thinker.kind(world)) {
-            (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(world, id),
-            (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(world, id),
-            (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(world, id),
-            (ThinkerId::Floor(id), ThinkerKind::Floor) => T_MoveFloor(world, id),
-            (ThinkerId::Plat(id), ThinkerKind::Plat) => T_PlatRaise(world, id),
-            (ThinkerId::LightFlash(id), ThinkerKind::LightFlash) => T_LightFlash(world, id),
-            (ThinkerId::Strobe(id), ThinkerKind::Strobe) => T_StrobeFlash(world, id),
-            (ThinkerId::Glow(id), ThinkerKind::Glow) => T_Glow(world, id),
-            (ThinkerId::FireFlicker(id), ThinkerKind::FireFlicker) => T_FireFlicker(world, id),
-            // C's null function (stasis, not yet set) and removed thinkers
-            // do not think.
-            _ => {}
-        }
+fn run_thinker(world: &mut World, thinker: ThinkerId) {
+    match (thinker, thinker.kind(world)) {
+        (ThinkerId::Mobj(id), ThinkerKind::Mobj) => P_MobjThinker(world, id),
+        (ThinkerId::Ceiling(id), ThinkerKind::Ceiling) => T_MoveCeiling(world, id),
+        (ThinkerId::Door(id), ThinkerKind::Door) => T_VerticalDoor(world, id),
+        (ThinkerId::Floor(id), ThinkerKind::Floor) => T_MoveFloor(world, id),
+        (ThinkerId::Plat(id), ThinkerKind::Plat) => T_PlatRaise(world, id),
+        (ThinkerId::LightFlash(id), ThinkerKind::LightFlash) => T_LightFlash(world, id),
+        (ThinkerId::Strobe(id), ThinkerKind::Strobe) => T_StrobeFlash(world, id),
+        (ThinkerId::Glow(id), ThinkerKind::Glow) => T_Glow(world, id),
+        (ThinkerId::FireFlicker(id), ThinkerKind::FireFlicker) => T_FireFlicker(world, id),
+        // C's null function (stasis, not yet set) and removed thinkers
+        // do not think.
+        _ => {}
     }
 }
 
@@ -390,10 +383,7 @@ fn run_thinker_list(world: &mut World, mut think: impl FnMut(&mut World, Thinker
 ///
 /// Corresponds to `P_RunThinkers` in `p_tick.c`.
 pub fn P_RunThinkers(world: &mut World) {
-    // SAFETY: the ticker runs only while a level is loaded.
-    run_thinker_list(world, |world, thinker| unsafe {
-        run_thinker(world, thinker)
-    });
+    run_thinker_list(world, run_thinker);
 }
 
 /// Run one game tic: advance all players, thinkers, specials, and the level
