@@ -20,7 +20,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::borrow::Cow};
+use {
+    crate::engine::sound::info::Sfx,
+    alloc::{borrow::Cow, format, vec::Vec},
+};
 
 use crate::engine::{
     dehacked::DEH_String,

@@ -50,11 +50,8 @@
 
 use {
     crate::i_error,
-    std::{
-        collections::HashMap,
-        io::{Cursor, Read, Write},
-        ptr,
-    },
+    alloc::{collections::BTreeMap, format, string::String, vec::Vec},
+    core::ptr,
 };
 
 use crate::engine::{
@@ -103,15 +100,70 @@ pub const VERSIONSIZE: usize = 16;
 // Globals
 // ---------------------------------------------------------------------------
 
+/// A save game held in memory, read or written at a position, as C reads
+/// and writes the save file with `fread`/`fwrite`.
+#[derive(Default)]
+pub struct SaveStream {
+    /// The bytes of the save file.
+    bytes: Vec<u8>,
+    /// Offset of the next byte read or written.
+    position: usize,
+}
+
+impl SaveStream {
+    /// A stream over `bytes`, positioned at the start.
+    pub const fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    /// Offset of the next byte read or written (C `ftell`).
+    pub fn position(&self) -> usize {
+        self.position
+    }
+
+    /// Move to `position`.
+    pub fn set_position(&mut self, position: usize) {
+        self.position = position;
+    }
+
+    /// The bytes of the save file.
+    pub fn get_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The bytes of the save file, consuming the stream.
+    pub fn into_inner(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// The next byte, or `None` at the end of the stream.
+    fn read_byte(&mut self) -> Option<u8> {
+        let byte = *self.bytes.get(self.position)?;
+        self.position += 1;
+        Some(byte)
+    }
+
+    /// Write `byte` at the position, overwriting or extending the bytes.
+    fn write_byte(&mut self, byte: u8) {
+        if self.position >= self.bytes.len() {
+            self.bytes.resize(self.position, 0);
+            self.bytes.push(byte);
+        } else {
+            self.bytes[self.position] = byte;
+        }
+        self.position += 1;
+    }
+}
+
 /// The save stream and its bookkeeping (`p_saveg.c` globals).
 pub struct SaveGameState {
     /// The save game being read or written, held in memory.
     ///
     /// `G_DoLoadGame` fills it with the save file's bytes before unarchiving;
-    /// `G_DoSaveGame` archives into it and then writes its bytes to the file it
-    /// opened. Positions in it are file offsets, so padding is computed from
-    /// [`Cursor::position`] as the C code did with `ftell`.
-    pub save_stream: Cursor<Vec<u8>>,
+    /// `G_DoSaveGame` archives into it and then writes its bytes to the save
+    /// file. Positions in it are file offsets, so padding is computed from
+    /// [`SaveStream::position`] as the C code did with `ftell`.
+    pub save_stream: SaveStream,
     /// Running byte count of data written to the current save stream.
     /// Incremented by `saveg_write8`; read by `g_game.c` after saving completes.
     /// C origin: `savegamelength` in `p_saveg.c`.
@@ -134,7 +186,7 @@ impl SaveGameState {
     /// No save in progress: an empty stream, no bytes written, no error.
     pub const fn new() -> Self {
         Self {
-            save_stream: Cursor::new(Vec::new()),
+            save_stream: SaveStream::new(Vec::new()),
             savegamelength: 0,
             savegame_error: 0,
             saved_attackers: [None; MAXPLAYERS],
@@ -184,27 +236,24 @@ use crate::engine::{
 /// return `0` but do not double-set the flag. C origin: `saveg_read8`.
 fn saveg_read8() -> u8 {
     let mut saveg = SAVEG.borrow_mut();
-    let mut result = [0u8];
-    let n = saveg.save_stream.read(&mut result).unwrap_or(0);
-    if n < 1 && saveg.savegame_error == 0 {
+    let result = saveg.save_stream.read_byte();
+    if result.is_none() && saveg.savegame_error == 0 {
         saveg.savegame_error = 1;
     }
-    result[0]
+    result.unwrap_or(0)
 }
 
 /// Writes one byte to `save_stream` and increments `savegamelength`.
 ///
-/// Sets `savegame_error = 1` on the first short write.
+/// Writing to memory cannot fail, so unlike C (which sets `savegame_error`
+/// on a short `fwrite`) this never sets the error.
 ///
 /// Note: the C version does not increment `savegamelength` here; this port
 /// does so to avoid a separate accounting pass.
 /// C origin: `saveg_write8`.
 fn saveg_write8(value: u8) {
     let mut saveg = SAVEG.borrow_mut();
-    let n = saveg.save_stream.write(&[value]).unwrap_or(0);
-    if n < 1 && saveg.savegame_error == 0 {
-        saveg.savegame_error = 1;
-    }
+    saveg.save_stream.write_byte(value);
     saveg.savegamelength += 1;
 }
 
@@ -254,7 +303,7 @@ fn saveg_write32(value: u32) {
 fn saveg_write_address(address: u32) {
     {
         let mut saveg = SAVEG.borrow_mut();
-        let position = saveg.save_stream.position() as usize;
+        let position = saveg.save_stream.position();
         saveg.address_words.push(position);
     }
     saveg_write32(address);
@@ -481,7 +530,7 @@ fn saved_mobjs(world: &World) -> impl Iterator<Item = MobjId> {
 
 /// The save ordinal of each map object [`P_ArchiveThinkers`] writes: its
 /// 1-based position among the saved map objects, in thinker-list order.
-fn mobj_save_ordinals(world: &World) -> HashMap<MobjId, u32> {
+fn mobj_save_ordinals(world: &World) -> BTreeMap<MobjId, u32> {
     saved_mobjs(world).zip(1..).collect()
 }
 
@@ -491,7 +540,7 @@ fn mobj_save_ordinals(world: &World) -> HashMap<MobjId, u32> {
 /// A reference to an object that is not saved (removed and awaiting its
 /// free, or a stale handle to a freed one) is written as `0` too, so it
 /// loads as `None`.
-fn saved_mobj_ordinal(ordinals: &HashMap<MobjId, u32>, mobj: Option<MobjId>) -> u32 {
+fn saved_mobj_ordinal(ordinals: &BTreeMap<MobjId, u32>, mobj: Option<MobjId>) -> u32 {
     mobj.and_then(|mobj| ordinals.get(&mobj).copied())
         .unwrap_or(0)
 }
@@ -527,7 +576,7 @@ fn resolve_saved_references(world: &mut World, loaded_mobjs: &[(MobjId, SavedMob
         mo.tracer = mobj_for_saved_ordinal(&recreated, references.tracer);
     }
 
-    let saved_attackers = std::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
+    let saved_attackers = core::mem::take(&mut SAVEG.borrow_mut().saved_attackers);
     for (index, attacker) in saved_attackers.into_iter().enumerate() {
         if let Some(ordinal) = attacker {
             let attacker = mobj_for_saved_ordinal(&recreated, ordinal);
@@ -667,7 +716,7 @@ fn saveg_read_mobj_t(world: &mut World, mobj_id: MobjId) -> SavedMobjReferences 
 /// written as an index into `states`. `player` is written as a 1-based player
 /// index (0 for NULL).
 /// C origin: `saveg_write_mobj_t`.
-fn saveg_write_mobj_t(world: &World, mobj: MobjId, ordinals: &HashMap<MobjId, u32>) {
+fn saveg_write_mobj_t(world: &World, mobj: MobjId, ordinals: &BTreeMap<MobjId, u32>) {
     let level = &world.level;
     let mo = &world.mobjs[mobj];
 
@@ -940,7 +989,7 @@ fn saveg_read_player_t(s: &mut PlayerT) -> u32 {
 /// (see [`saved_mobj_ordinal`]); the `message` slot is written as `0`. All
 /// other fields mirror `saveg_read_player_t` in order.
 /// C origin: `saveg_write_player_t`.
-fn saveg_write_player_t(s: &PlayerT, ordinals: &HashMap<MobjId, u32>) {
+fn saveg_write_player_t(s: &PlayerT, ordinals: &BTreeMap<MobjId, u32>) {
     saveg_write32(saved_mobj_ordinal(ordinals, s.mo));
     saveg_write_enum(s.playerstate as u32);
     saveg_write_ticcmd_t(&s.cmd);
@@ -1454,7 +1503,7 @@ pub fn P_WriteSaveGameEOF() {
 pub fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSaveGame {
     {
         let mut saveg = SAVEG.borrow_mut();
-        saveg.save_stream = Cursor::default();
+        saveg.save_stream = SaveStream::default();
         saveg.savegame_error = 0;
         saveg.address_words.clear();
     }
@@ -1468,8 +1517,8 @@ pub fn archive_save_game(world: &World, description: &[u8]) -> ArchivedSaveGame 
 
     let mut saveg = SAVEG.borrow_mut();
     ArchivedSaveGame {
-        bytes: std::mem::take(&mut saveg.save_stream).into_inner(),
-        address_words: std::mem::take(&mut saveg.address_words),
+        bytes: core::mem::take(&mut saveg.save_stream).into_inner(),
+        address_words: core::mem::take(&mut saveg.address_words),
     }
 }
 
@@ -2108,7 +2157,7 @@ mod tests {
         let old_state = std::mem::replace(
             &mut *SAVEG.borrow_mut(),
             SaveGameState {
-                save_stream: Cursor::new(data.to_vec()),
+                save_stream: SaveStream::new(data.to_vec()),
                 ..SaveGameState::new()
             },
         );
@@ -2142,6 +2191,31 @@ mod tests {
             assert_eq!(saveg_read8(), 0);
             assert_eq!(SAVEG.borrow().savegame_error, 1);
         });
+    }
+
+    /// `SaveStream` writes as `std::io::Cursor<Vec<u8>>` did: over existing
+    /// bytes in place, past the end with zero fill, and reads stop at the
+    /// end.
+    #[test]
+    fn save_stream_writes_like_a_vec_cursor() {
+        let mut stream = SaveStream::new(vec![1, 2, 3]);
+        stream.set_position(1);
+        stream.write_byte(9);
+        assert_eq!(stream.get_ref(), &[1, 9, 3]);
+        stream.set_position(5);
+        stream.write_byte(7);
+        assert_eq!(stream.get_ref(), &[1, 9, 3, 0, 0, 7]);
+        assert_eq!(stream.position(), 6);
+        assert_eq!(stream.read_byte(), None);
+        stream.set_position(2);
+        assert_eq!(stream.read_byte(), Some(3));
+
+        let mut cursor = std::io::Cursor::new(vec![1u8, 2, 3]);
+        cursor.set_position(1);
+        std::io::Write::write_all(&mut cursor, &[9]).unwrap();
+        cursor.set_position(5);
+        std::io::Write::write_all(&mut cursor, &[7]).unwrap();
+        assert_eq!(stream.into_inner(), cursor.into_inner());
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! [`run`] drives the engine from the winit event loop (`app`) on [`Host`],
 //! the [`Platform`] implementation below; the sound and music it delegates
-//! to live in `audio`.
+//! to live in `audio`, its files, exit and error dialog in `system`.
 //!
 //! ## Global state
 //!
@@ -18,6 +18,7 @@ mod app;
 mod audio;
 mod gpu;
 pub mod keys;
+mod system;
 
 pub use app::run;
 
@@ -30,7 +31,7 @@ use std::{
 
 use winit::window::Window;
 
-use room::engine::platform::Platform;
+use room::engine::platform::{FileHandle, Platform};
 
 use gpu::GpuState;
 
@@ -176,5 +177,55 @@ impl Platform for Host {
 
     fn music_is_playing(&self) -> bool {
         audio::music_is_playing()
+    }
+
+    fn open(&self, path: &str) -> Option<FileHandle> {
+        system::open(path)
+    }
+
+    fn len(&self, file: FileHandle) -> u64 {
+        system::len(file)
+    }
+
+    fn read_at(&self, file: FileHandle, offset: u64, buffer: &mut [u8]) -> usize {
+        system::read_at(file, offset, buffer)
+    }
+
+    fn close(&self, file: FileHandle) {
+        system::close(file);
+    }
+
+    fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+        std::fs::read(path).ok()
+    }
+
+    fn write_file(&self, path: &str, data: &[u8]) -> bool {
+        std::fs::write(path, data).is_ok()
+    }
+
+    fn rename(&self, from: &str, to: &str) -> bool {
+        std::fs::rename(from, to).is_ok()
+    }
+
+    fn remove(&self, path: &str) -> bool {
+        std::fs::remove_file(path).is_ok()
+    }
+
+    fn exists(&self, path: &str) -> bool {
+        system::exists(path)
+    }
+
+    fn create_dir(&self, path: &str) -> bool {
+        std::fs::create_dir(path).is_ok()
+    }
+
+    /// Show a Zenity error dialog, when Zenity is installed.
+    fn error_box(&self, message: &str) {
+        system::error_box(message);
+    }
+
+    /// Flush the console and the log, then exit the process.
+    fn quit(&self, code: i32) -> ! {
+        system::quit(code)
     }
 }

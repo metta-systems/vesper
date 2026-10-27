@@ -1,96 +1,12 @@
 Engine code (room::engine, room::types) that needs more than
 core + alloc, i.e. what stops the engine building for Vesper.
 
-Scope: everything outside src/platform/, skipping #[cfg(test)] code.
-Found by searching the source for std-only paths and
-macros, and for calls to C library functions; a call made through a local
-alias or a function pointer would not show up.
-
-Format: file: function: what it uses.
-
-
-1. Rust std-only APIs
-=====================
-
-Console output (print!, println!, eprintln!, std::io::stdout):
-  src/engine/doom/iwad.rs: CheckDirectoryHasIWAD, D_FindIWAD: println!
-  src/engine/doom/main.rs: D_DoomLoop: eprintln!
-  src/engine/doom/main.rs: SetMissionForPackName, D_AddFile, InitGameVersion,
-    PrintGameVersion: println!
-  src/engine/doom/main.rs: PrintDehackedBanners, D_DoomMain: print!, println!
-  src/engine/doom/main.rs: D_Endoom: std::io::stdout, std::io::Write::flush
-  src/engine/game.rs: G_DoPlayDemo: print!
-  src/engine/interface/scale.rs: flush_stdout: std::io::stdout, std::io::Write::flush
-  src/engine/interface/scale.rs: i_init_stretch_tables, i_init_squash_table: print!,
-    println!
-  src/engine/interface/scale.rs: I_ResetScaleTables: println!
-  src/engine/interface/system.rs: I_ZoneBase, I_PrintBanner, I_PrintDivider: println!
-  src/engine/interface/system.rs: I_PrintStartupBanner: print!
-  src/engine/interface/system.rs: I_Error: eprintln!, std::io::stdout,
-    std::io::Write::flush
-  src/engine/misc/argv.rs: LoadResponseFile: print!, println!
-  src/engine/misc/config.rs: M_LoadDefaults, M_SetConfigDir, M_GetSaveGameDir:
-    println!
-  src/engine/misc/mod.rs: M_ExtractFileBase: eprintln!
-  src/engine/play/doors.rs: EV_VerticalDoor: eprintln!
-  src/engine/play/map.rs: SpechitOverrun: eprintln!
-  src/engine/play/setup.rs: PadRejectArray: eprintln!
-  src/engine/play/spec.rs: DonutOverrun, EV_DoDonut: eprintln!
-  src/engine/render_3d/data.rs: R_GenerateLookup: println!
-  src/engine/render_3d/data.rs: R_InitTextures, R_InitSpriteLumps, R_InitData: print!
-  src/engine/render_3d/main.rs: R_Init: print!
-  src/engine/wad/main.rs: W_ParseCommandLine: println!
-  src/engine/wad/mod.rs: W_AddFile: println!
-  src/engine/wad/mod.rs: W_ReadLump: eprintln!
-  src/engine/intermission/mod.rs: WI_drawOnLnode: print!
-  src/engine/zone.rs: Z_FreeTags, Z_CheckHeap, Z_CheckHeapQuiet,
-    Z_CheckHeapAfter: eprintln!
-  src/engine/zone.rs: Z_DumpHeap: println!
-
-Files (std::fs, std::io, std::path):
-  src/engine/game.rs: G_DoLoadGame: std::fs::read, std::io::Cursor
-  src/engine/game.rs: G_DoSaveGame: std::fs::File::create,
-    std::io::Write::write_all, std::io::Cursor, std::fs::remove_file,
-    std::fs::rename
-  src/engine/play/saveg.rs: save_stream (static), stream: std::io::Cursor
-  src/engine/play/saveg.rs: saveg_read8: std::io::Read::read
-  src/engine/play/saveg.rs: saveg_write8: std::io::Write::write
-  src/engine/play/saveg.rs: saveg_read_pad, saveg_write_pad: Cursor::position
-  src/engine/wad/file.rs: W_StdC_OpenFile: std::fs::File::open, File::metadata
-  src/engine/wad/file.rs: W_StdC_Read: std::io::Seek::seek, std::io::Read::read
-  src/engine/wad/file.rs: W_StdC_CloseFile: drops the std::fs::File
-  src/engine/misc/argv.rs: LoadResponseFile: std::fs::File::open,
-    std::io::Read::read_to_end
-  src/engine/misc/menu.rs: M_ReadSaveStrings: std::fs::File::open,
-    std::io::Read::read
-  src/engine/misc/mod.rs: M_MakeDirectory: std::fs::create_dir, std::path::Path
-  src/engine/misc/mod.rs: M_FileExists: std::fs::File::open, std::path::Path
-  src/engine/misc/mod.rs: M_WriteFile: std::fs::write, std::path::Path
-
-Processes:
-  src/engine/interface/system.rs: ZenityAvailable: std::process::Command, Stdio
-  src/engine/interface/system.rs: ZenityErrorBox: std::process::Command
-  src/engine/interface/system.rs: I_Error: std::process::exit
-  src/engine/doom/main.rs: D_Endoom: std::process::exit
-
-Only spelled through std (the same items exist in core or alloc; a path
-change is enough):
-  std::borrow::Cow (= alloc::borrow::Cow):
-    src/engine/game.rs, src/engine/hud/stuff.rs, src/engine/interface/sound.rs,
-    src/engine/misc/config.rs: module imports
-  std::format! (= alloc::format!):
-    src/engine/misc/mod.rs: macros c_write!, DEH_snprintf!, i_error!, used
-    throughout the engine
-  std::alloc::{alloc, alloc_zeroed, dealloc, Layout}, Box
-  (= alloc::alloc, alloc::boxed):
-    src/engine/interface/system.rs: AutoAllocMemory, I_AtExit
-    src/engine/wad/mod.rs: lumpinfo_layout, ExtendLumpInfo
-  std::ffi::c_void, std::ptr, std::mem, std::slice, std::cell, ...
-  (= core::*): everywhere
-
-
-2. C library calls (libc crate or extern "C" declarations)
-==========================================================
-
-None. The engine has no extern "C" declarations and does not depend on
-the libc crate.
+Nothing. The engine library is #![no_std] + alloc outside #[cfg(test)]
+(src/lib.rs) and reaches the OS only through the Platform trait
+(src/engine/platform.rs): files (WAD handles and whole-file helpers),
+quit and error_box. It logs through the `log` crate and allocates through
+`alloc` (the zone heap with alloc::alloc), served by each binary's
+#[global_allocator]. It has no extern "C" declarations and does not
+depend on the libc crate. `cargo check --lib --target
+aarch64-unknown-none-softfloat` proves it; std is used only by unit tests,
+tests/ and the binary's platforms in src/platform/.

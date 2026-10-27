@@ -9,6 +9,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
+use alloc::vec::Vec;
+
 use crate::engine::{
     arena::{Arena, Handle, Pooled},
     doom::player::PlayerId,
@@ -121,7 +123,7 @@ pub unsafe trait ZeroValid: Sized {
     /// The all-zero value.
     fn zeroed() -> Self {
         // SAFETY: guaranteed by the implementer.
-        unsafe { std::mem::zeroed() }
+        unsafe { core::mem::zeroed() }
     }
 }
 
@@ -437,7 +439,7 @@ mod tests {
     fn zeroed_kind_is_none() {
         // A zeroed thinker read before its kind is set must be the C null
         // function, not some other kind.
-        let zeroed: ThinkerKind = unsafe { std::mem::zeroed() };
+        let zeroed: ThinkerKind = unsafe { core::mem::zeroed() };
         assert_eq!(zeroed, ThinkerKind::None);
     }
 

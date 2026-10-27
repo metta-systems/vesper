@@ -169,7 +169,7 @@ impl MainLoopState {
     pub const fn new() -> Self {
         Self {
             // SAFETY: an all-zero `TiccmdSetT` is a valid empty tic set.
-            ticdata: unsafe { std::mem::zeroed() },
+            ticdata: unsafe { core::mem::zeroed() },
             maketic: 0,
             recvtic: 0,
             gametic: 0,
@@ -177,7 +177,7 @@ impl MainLoopState {
             skiptics: 0,
             ticdup: 0,
             new_sync: 0,
-            loop_interface: std::ptr::null(),
+            loop_interface: core::ptr::null(),
             local_playeringame: [0; NET_MAXPLAYERS],
             player_class: 0,
             lasttime: 0,
@@ -286,7 +286,7 @@ unsafe fn build_new_tic() -> bool {
     }
 
     // SAFETY: `TiccmdT` is plain integer data, valid when zeroed.
-    let mut cmd = unsafe { std::mem::zeroed::<TiccmdT>() };
+    let mut cmd = unsafe { core::mem::zeroed::<TiccmdT>() };
     unsafe { iface.BuildTiccmd.unwrap()(&mut cmd, maketic) };
 
     let mut main_loop = MAIN_LOOP.borrow_mut();

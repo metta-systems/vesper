@@ -37,9 +37,9 @@
 // pointers, built in C's whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use {crate::i_error, std::ffi::c_void};
+use {crate::i_error, alloc::string::String, core::ffi::c_void};
 
-use {std::ptr, zerocopy::FromBytes};
+use {core::ptr, zerocopy::FromBytes};
 
 use crate::engine::{
     math::fixed::{FRACBITS, fixed_t},
@@ -108,8 +108,8 @@ struct texture_t {
 
 // Nothing but tail padding follows `patches`.
 const _: () = assert!(
-    std::mem::size_of::<texture_t>() - std::mem::offset_of!(texture_t, patches)
-        < std::mem::size_of::<texpatch_t>() + std::mem::align_of::<texture_t>()
+    core::mem::size_of::<texture_t>() - core::mem::offset_of!(texture_t, patches)
+        < core::mem::size_of::<texpatch_t>() + core::mem::align_of::<texture_t>()
 );
 
 // ---------------------------------------------------------------------------
@@ -119,7 +119,6 @@ const _: () = assert!(
 use crate::engine::{
     dehacked::DEH_String,
     game::demoplayback,
-    interface::system::I_ConsoleStdout,
     play::tick::{ThinkerId, ThinkerKind},
     render_3d::RENDERER,
     wad::{
@@ -393,12 +392,12 @@ pub unsafe fn R_GenerateComposite(data: &RenderDataState, texnum: i32) {
     ) as *mut u8;
     // The block is PU_STATIC until the end, so later allocations (the patch
     // cache misses below) cannot purge it.
-    let composite = std::slice::from_raw_parts_mut(block, compositesize as usize);
+    let composite = core::slice::from_raw_parts_mut(block, compositesize as usize);
 
     let collump = *data.texturecolumnlump.add(texnum as usize);
     let colofs = *data.texturecolumnofs.add(texnum as usize);
     let patchcount = (*texture).patchcount as i32;
-    let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
+    let patches_base = core::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
     let texture_height = (*texture).height as usize;
 
     for i in 0..patchcount {
@@ -476,7 +475,7 @@ pub unsafe fn R_GenerateLookup(data: &RenderDataState, texnum: i32) {
         *collump.add(x as usize) = 0;
     }
 
-    let patches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
+    let patches_base = core::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
     for i in 0..(*texture).patchcount as i32 {
         let patch = patches_base.add(i as usize);
         // Used before the next patch's cache miss can purge it.
@@ -500,7 +499,7 @@ pub unsafe fn R_GenerateLookup(data: &RenderDataState, texnum: i32) {
     let compositesize = data.texturecompositesize.add(texnum as usize);
     for x in 0..width {
         if *patchcount.add(x as usize) == 0 {
-            println!(
+            log::warn!(
                 "R_GenerateLookup: column without a patch ({})",
                 String::from_utf8_lossy(lump_name(&(*texture).name))
             );
@@ -590,7 +589,7 @@ pub unsafe fn R_GetMaskedColumn<'a>(data: &RenderDataState, tex: i32, col: i32) 
         R_GenerateComposite(data, tex);
     }
 
-    let composite = std::slice::from_raw_parts(
+    let composite = core::slice::from_raw_parts(
         *data.texturecomposite.add(tex as usize),
         *data.texturecompositesize.add(tex as usize) as usize,
     );
@@ -619,7 +618,7 @@ pub unsafe fn R_GetMaskedColumn<'a>(data: &RenderDataState, tex: i32, col: i32) 
 unsafe fn GenerateTextureHashTable(data: &mut RenderDataState) {
     let numtextures = data.numtextures;
     data.textures_hashtable = Z_Malloc(
-        ((std::mem::size_of::<*mut texture_t>() * numtextures as usize) as i32) as i32,
+        ((core::mem::size_of::<*mut texture_t>() * numtextures as usize) as i32) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
@@ -636,7 +635,7 @@ unsafe fn GenerateTextureHashTable(data: &mut RenderDataState) {
         let mut rover = data.textures_hashtable.add(key);
 
         while !(*rover).is_null() {
-            rover = std::ptr::addr_of_mut!((**rover).next);
+            rover = core::ptr::addr_of_mut!((**rover).next);
         }
 
         (*tex).next = ptr::null_mut();
@@ -661,8 +660,10 @@ unsafe fn GenerateTextureHashTable(data: &mut RenderDataState) {
 ///    `p_spec.c` for animated textures).
 /// 6. Calls `GenerateTextureHashTable` to enable O(1) name lookup.
 ///
-/// Prints progress dots to stdout (if `I_ConsoleStdout` returns non-zero)
-/// using the classic Doom "filling-the-box" animation.
+/// The C source prints progress dots to stdout (if `I_ConsoleStdout`
+/// returns non-zero, which it never does) using the classic Doom
+/// "filling-the-box" animation; the port logs whole lines only, so it
+/// does not.
 ///
 /// Called by `R_InitData`, which is called by `r_main.c` (`R_Init`).
 ///
@@ -676,14 +677,14 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
     let name_p = names.add(1) as *mut u8;
 
     let patchlookup = Z_Malloc(
-        (nummappatches as usize * std::mem::size_of::<i32>()) as i32,
+        (nummappatches as usize * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
 
     for i in 0..nummappatches as usize {
         // PNAMES entries are 8-byte names, not NUL-terminated when full.
-        let name = std::slice::from_raw_parts(name_p.add(i * 8), 8);
+        let name = core::slice::from_raw_parts(name_p.add(i * 8), 8);
         *patchlookup.add(i) = W_CheckNumForName(name);
     }
     W_ReleaseLumpName(DEH_String(b"PNAMES"));
@@ -707,65 +708,46 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
     data.numtextures = numtextures;
 
     data.textures = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut texture_t>()) as i32,
+        (numtextures as usize * core::mem::size_of::<*mut texture_t>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut texture_t;
     data.texturecolumnlump = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut i16>()) as i32,
+        (numtextures as usize * core::mem::size_of::<*mut i16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut i16;
     data.texturecolumnofs = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut u16>()) as i32,
+        (numtextures as usize * core::mem::size_of::<*mut u16>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut u16;
     data.texturecomposite = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<*mut u8>()) as i32,
+        (numtextures as usize * core::mem::size_of::<*mut u8>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut *mut u8;
     data.texturecompositesize = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
+        (numtextures as usize * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
     data.texturewidthmask = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
+        (numtextures as usize * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
     data.textureheight = Z_Malloc(
-        (numtextures as usize * std::mem::size_of::<i32>()) as i32,
+        (numtextures as usize * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
-
-    let temp1 = W_GetNumForName(DEH_String(b"S_START"));
-    let temp2 = W_GetNumForName(DEH_String(b"S_END")) - 1;
-    let temp3 = ((temp2 - temp1 + 63) / 64) + ((numtextures + 63) / 64);
-
-    if I_ConsoleStdout() != 0 {
-        print!("[");
-        for _ in 0..temp3 + 9 {
-            print!(" ");
-        }
-        print!("]");
-        for _ in 0..temp3 + 10 {
-            print!("\x08");
-        }
-    }
 
     let mut maptex = maptex1;
     let mut maxoff = maxoff;
     let mut directory = directory;
 
     for i in 0..numtextures as usize {
-        if (i & 63) == 0 {
-            print!(".");
-        }
-
         if i == numtextures1 as usize {
             maptex = maptex2;
             maxoff = maxoff2;
@@ -780,7 +762,7 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
             i_error!("R_InitTextures: bad texture directory");
         }
 
-        let texture_lump = std::slice::from_raw_parts(maptex as *const u8, maxoff as usize);
+        let texture_lump = core::slice::from_raw_parts(maptex as *const u8, maxoff as usize);
         let Ok((mtexture, after_header)) = maptexture_t::ref_from_prefix(&texture_lump[offset..])
         else {
             i_error!(
@@ -797,8 +779,8 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
                 String::from_utf8_lossy(lump_name(&mtexture.name))
             );
         };
-        let texsize = std::mem::size_of::<texture_t>()
-            + std::mem::size_of::<texpatch_t>() * (patchcount as usize - 1);
+        let texsize = core::mem::size_of::<texture_t>()
+            + core::mem::size_of::<texpatch_t>() * (patchcount as usize - 1);
         let texture = Z_Malloc(texsize as i32, PU_STATIC, ptr::null_mut()) as *mut texture_t;
         *data.textures.add(i) = texture;
 
@@ -807,7 +789,7 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
         (*texture).patchcount = patchcount as i16;
         (*texture).name = mtexture.name;
 
-        let tpatches_base = std::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
+        let tpatches_base = core::ptr::addr_of!((*texture).patches) as *mut texpatch_t;
 
         for (j, mpatch) in mpatches.iter().enumerate() {
             let patch = tpatches_base.add(j);
@@ -824,12 +806,12 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
 
         let twidth = (*texture).width as i32;
         *data.texturecolumnlump.add(i) = Z_Malloc(
-            (twidth as usize * std::mem::size_of::<i16>()) as i32,
+            (twidth as usize * core::mem::size_of::<i16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
         ) as *mut i16;
         *data.texturecolumnofs.add(i) = Z_Malloc(
-            (twidth as usize * std::mem::size_of::<u16>()) as i32,
+            (twidth as usize * core::mem::size_of::<u16>()) as i32,
             PU_STATIC,
             ptr::null_mut(),
         ) as *mut u16;
@@ -853,7 +835,7 @@ pub unsafe fn R_InitTextures(data: &mut RenderDataState) {
     }
 
     data.texturetranslation = Z_Malloc(
-        ((numtextures as usize + 1) * std::mem::size_of::<i32>()) as i32,
+        ((numtextures as usize + 1) * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
@@ -886,7 +868,7 @@ pub unsafe fn R_InitFlats(data: &mut RenderDataState) {
     data.numflats = data.lastflat - data.firstflat + 1;
 
     data.flattranslation = Z_Malloc(
-        ((data.numflats as usize + 1) * std::mem::size_of::<i32>()) as i32,
+        ((data.numflats as usize + 1) * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
@@ -910,7 +892,8 @@ pub unsafe fn R_InitFlats(data: &mut RenderDataState) {
 ///
 /// Only the patch header is used (the [`Patch`](crate::engine::wad::format::Patch)
 /// view checks that the column table fits the lump); the pixel columns are
-/// read on demand during rendering.  Prints a progress dot every 64 lumps.
+/// read on demand during rendering. The C source prints a progress dot
+/// every 64 lumps; the port does not.
 ///
 /// Called by `R_InitData`.
 ///
@@ -925,26 +908,22 @@ pub unsafe fn R_InitSpriteLumps(data: &mut RenderDataState) {
 
     let numspritelumps = data.numspritelumps as usize;
     data.spritewidth = Z_Malloc(
-        (numspritelumps * std::mem::size_of::<i32>()) as i32,
+        (numspritelumps * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
     data.spriteoffset = Z_Malloc(
-        (numspritelumps * std::mem::size_of::<i32>()) as i32,
+        (numspritelumps * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
     data.spritetopoffset = Z_Malloc(
-        (numspritelumps * std::mem::size_of::<i32>()) as i32,
+        (numspritelumps * core::mem::size_of::<i32>()) as i32,
         PU_STATIC,
         ptr::null_mut(),
     ) as *mut i32;
 
     for i in 0..numspritelumps {
-        if (i & 63) == 0 {
-            print!(".");
-        }
-
         // Read at once, before the next sprite's cache miss can purge it.
         let patch = cache_patch_num(data.firstspritelump + i as i32, PU_CACHE);
         *data.spritewidth.add(i) = patch.width() << FRACBITS;
@@ -983,8 +962,9 @@ pub fn R_InitColormaps(data: &mut RenderDataState) {
 /// 3. `R_InitSpriteLumps` - sprite metrics.
 /// 4. `R_InitColormaps` - lighting tables.
 ///
-/// Prints a progress dot after each phase (in addition to the dots printed
-/// by the individual init functions).
+/// The C source prints a progress dot after each phase (and the individual
+/// init functions print more); the port logs whole lines only, so it does
+/// not.
 ///
 /// Called by `r_main.c` (`R_Init`) after the WAD has been loaded.
 ///
@@ -994,11 +974,8 @@ pub fn R_InitColormaps(data: &mut RenderDataState) {
 /// - Must be called exactly once per process lifetime.
 pub unsafe fn R_InitData(data: &mut RenderDataState) {
     R_InitTextures(data);
-    print!(".");
     R_InitFlats(data);
-    print!(".");
     R_InitSpriteLumps(data);
-    print!(".");
     R_InitColormaps(data);
 }
 
@@ -1163,7 +1140,7 @@ pub unsafe fn R_PrecacheLevel(world: &World) {
         }
         let texture = *data.textures.add(i);
         for j in 0..(*texture).patchcount as usize {
-            let lump = (*std::ptr::addr_of!((*texture).patches).add(j)).patch;
+            let lump = (*core::ptr::addr_of!((*texture).patches).add(j)).patch;
             data.texturememory += (*lumpinfo().add(lump as usize)).size;
             W_CacheLumpNum(lump, PU_CACHE);
         }

@@ -61,7 +61,7 @@ use {
         misc::argv::M_CheckParm,
         zone::{Z_Free, Z_Malloc},
     },
-    std::{ffi::c_void, ptr},
+    core::{ffi::c_void, ptr},
 };
 
 /// A screen scaling mode descriptor, matching `screen_mode_t` in `i_video.h`.
@@ -82,11 +82,6 @@ pub struct screen_mode_t {
 pub const SCREENWIDTH_4_3: i32 = 256;
 /// Screen height used by the "stretch" scale modes (SCREENHEIGHT_4_3 in i_video.h).
 pub const SCREENHEIGHT_4_3: i32 = 240;
-
-/// Flush the "Generating lookup tables.." progress prints.
-fn flush_stdout() {
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-}
 
 use crate::engine::{
     interface::video::{SCREENHEIGHT, SCREENWIDTH},
@@ -191,7 +186,7 @@ unsafe fn i_scale_1x(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
     let mut bufp = src_buffer.add((y1 * SCREENWIDTH + x1) as usize);
     let mut screenp = dest_buffer.add((y1 * dest_pitch + x1) as usize);
     for _ in y1..y2 {
-        std::ptr::copy_nonoverlapping(bufp, screenp, w);
+        core::ptr::copy_nonoverlapping(bufp, screenp, w);
         screenp = screenp.add(dest_pitch as usize);
         bufp = bufp.add(SCREENWIDTH as usize);
     }
@@ -433,7 +428,7 @@ unsafe fn generate_stretch_table(palette: *mut u8, pct: i32) -> *mut u8 {
 
 /// `init_mode` callback for every `mode_stretch_*` and the 1x/2x/4x/5x
 /// `mode_squash_*` modes. Lazily generates the 20/80 and 40/60 palette
-/// blend tables, printing a one-line progress message. No-op once the
+/// blend tables, logging a one-line progress message. No-op once the
 /// tables exist; `I_ResetScaleTables` must be called first to force
 /// regeneration after a palette switch.
 ///
@@ -444,15 +439,11 @@ unsafe fn i_init_stretch_tables(palette: *mut u8) {
     if !SCALE.get().stretch_tables[0].is_null() {
         return;
     }
-    print!("I_InitStretchTables: Generating lookup tables..");
-    flush_stdout();
+    log::info!("I_InitStretchTables: Generating lookup tables..");
     let twenty_eighty = generate_stretch_table(palette, 20);
     SCALE.borrow_mut().stretch_tables[0] = twenty_eighty;
-    print!("..");
-    flush_stdout();
     let forty_sixty = generate_stretch_table(palette, 40);
     SCALE.borrow_mut().stretch_tables[1] = forty_sixty;
-    println!();
 }
 
 /// `init_mode` callback for [`mode_squash_3x`] (800x600). Lazily
@@ -466,11 +457,9 @@ unsafe fn i_init_squash_table(palette: *mut u8) {
     if !SCALE.get().half_stretch_table.is_null() {
         return;
     }
-    print!("I_InitSquashTable: Generating lookup table..");
-    flush_stdout();
+    log::info!("I_InitSquashTable: Generating lookup table..");
     let half_stretch_table = generate_stretch_table(palette, 50);
     SCALE.borrow_mut().half_stretch_table = half_stretch_table;
-    println!();
 }
 
 /// Frees whichever blend tables are currently populated and regenerates
@@ -495,14 +484,14 @@ pub unsafe fn I_ResetScaleTables(palette: *mut u8) {
     if !stretch_tables[0].is_null() {
         Z_Free(stretch_tables[0] as *mut c_void);
         Z_Free(stretch_tables[1] as *mut c_void);
-        println!("I_ResetScaleTables: Regenerating lookup tables..");
+        log::info!("I_ResetScaleTables: Regenerating lookup tables..");
         let twenty_eighty = generate_stretch_table(palette, 20);
         let forty_sixty = generate_stretch_table(palette, 40);
         SCALE.borrow_mut().stretch_tables = [twenty_eighty, forty_sixty];
     }
     if !half_stretch_table.is_null() {
         Z_Free(half_stretch_table as *mut c_void);
-        println!("I_ResetScaleTables: Regenerating lookup table..");
+        log::info!("I_ResetScaleTables: Regenerating lookup table..");
         let half_stretch_table = generate_stretch_table(palette, 50);
         SCALE.borrow_mut().half_stretch_table = half_stretch_table;
     }
@@ -540,7 +529,7 @@ unsafe fn i_stretch_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
     let mut bufp = src_buffer;
     let mut screenp = dest_buffer;
     for _ in (0..SCREENHEIGHT).step_by(5) {
-        std::ptr::copy_nonoverlapping(bufp, screenp, SCREENWIDTH as usize);
+        core::ptr::copy_nonoverlapping(bufp, screenp, SCREENWIDTH as usize);
         screenp = screenp.add(dest_pitch as usize);
         write_blended_line_1x(
             screenp,
@@ -574,7 +563,7 @@ unsafe fn i_stretch_1x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
         );
         screenp = screenp.add(dest_pitch as usize);
         bufp = bufp.add(SCREENWIDTH as usize);
-        std::ptr::copy_nonoverlapping(bufp, screenp, SCREENWIDTH as usize);
+        core::ptr::copy_nonoverlapping(bufp, screenp, SCREENWIDTH as usize);
         screenp = screenp.add(dest_pitch as usize);
         bufp = bufp.add(SCREENWIDTH as usize);
     }
@@ -884,7 +873,7 @@ unsafe fn i_stretch_5x(_x1: i32, _y1: i32, _x2: i32, _y2: i32) -> i32 {
         let mut screenp = dest_buffer.add((2 * dest_pitch) as usize);
         let mut y = 0;
         while y < 1198 {
-            std::ptr::write_bytes(screenp, 0, 1600);
+            core::ptr::write_bytes(screenp, 0, 1600);
             screenp = screenp.add((dest_pitch * 3) as usize);
             y += 3;
         }

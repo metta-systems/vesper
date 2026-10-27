@@ -36,7 +36,8 @@ use {
         },
         i_error,
     },
-    std::{ffi::c_void, ptr},
+    alloc::{string::String, vec},
+    core::{ffi::c_void, ptr},
     zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, little_endian::I32},
 };
 
@@ -104,8 +105,8 @@ pub fn lumpinfo() -> *mut lumpinfo_t {
 /// Allocation layout of a `lumpinfo` array of `count` entries. At least
 /// one entry is reserved, because the allocator does not take zero-sized
 /// layouts.
-fn lumpinfo_layout(count: u32) -> std::alloc::Layout {
-    std::alloc::Layout::array::<lumpinfo_t>(count.max(1) as usize).unwrap()
+fn lumpinfo_layout(count: u32) -> alloc::alloc::Layout {
+    alloc::alloc::Layout::array::<lumpinfo_t>(count.max(1) as usize).unwrap()
 }
 
 /// Grow the global `lumpinfo` array to `newnumlumps` entries, copy
@@ -128,13 +129,13 @@ unsafe fn ExtendLumpInfo(newnumlumps: u32) {
     let WadState {
         lumpinfo, numlumps, ..
     } = WAD.get();
-    let newlumpinfo = std::alloc::alloc_zeroed(lumpinfo_layout(newnumlumps)) as *mut lumpinfo_t;
+    let newlumpinfo = alloc::alloc::alloc_zeroed(lumpinfo_layout(newnumlumps)) as *mut lumpinfo_t;
     if newlumpinfo.is_null() {
         i_error!("Couldn't realloc lumpinfo");
     }
 
     for i in 0..numlumps.min(newnumlumps) {
-        std::ptr::copy_nonoverlapping(lumpinfo.add(i as usize), newlumpinfo.add(i as usize), 1);
+        core::ptr::copy_nonoverlapping(lumpinfo.add(i as usize), newlumpinfo.add(i as usize), 1);
 
         if !(*newlumpinfo.add(i as usize)).cache.is_null() {
             Z_ChangeUser(
@@ -145,13 +146,13 @@ unsafe fn ExtendLumpInfo(newnumlumps: u32) {
 
         if !(*lumpinfo.add(i as usize)).next.is_null() {
             let nextlumpnum = ((*lumpinfo.add(i as usize)).next as usize - lumpinfo as usize)
-                / std::mem::size_of::<lumpinfo_t>();
+                / core::mem::size_of::<lumpinfo_t>();
             (*newlumpinfo.add(i as usize)).next = newlumpinfo.add(nextlumpnum);
         }
     }
 
     if !lumpinfo.is_null() {
-        std::alloc::dealloc(lumpinfo as *mut u8, lumpinfo_layout(numlumps));
+        alloc::alloc::dealloc(lumpinfo as *mut u8, lumpinfo_layout(numlumps));
     }
     let mut wad = WAD.borrow_mut();
     wad.lumpinfo = newlumpinfo;
@@ -203,7 +204,7 @@ pub fn W_AddFile(filename: &str) -> *mut wad_file_t {
     unsafe {
         let wad_file = W_OpenFile(filename);
         if wad_file.is_null() {
-            println!(" couldn't open {filename}");
+            log::warn!(" couldn't open {filename}");
             return ptr::null_mut();
         }
 
@@ -297,7 +298,7 @@ pub fn W_CheckNumForName(name: &[u8]) -> i32 {
             while !lump_p.is_null() {
                 if lump_names_equal(&(*lump_p).name, name) {
                     return (lump_p as usize - lumpinfo as usize) as i32
-                        / std::mem::size_of::<lumpinfo_t>() as i32;
+                        / core::mem::size_of::<lumpinfo_t>() as i32;
                 }
                 lump_p = (*lump_p).next;
             }
@@ -350,7 +351,7 @@ pub fn W_LumpLength(lump: u32) -> i32 {
 /// display a disk icon. If the underlying `W_Read` returns fewer
 /// bytes than requested, calls `I_Error`.
 ///
-/// Differs from the C source by also emitting a stderr diagnostic
+/// Differs from the C source by also logging an error
 /// when the actual read exceeds `lump.size` (a "shouldn't happen"
 /// defensive log, not present in `w_wad.c`).
 ///
@@ -373,7 +374,7 @@ pub unsafe fn W_ReadLump(lump: u32, dest: *mut c_void) {
             (*l).size as usize,
         );
         if c > (*l).size as usize {
-            eprintln!(
+            log::error!(
                 "[W_ReadLump] OVERFLOW: lump={}, requested={}, actually_read={}, lump.size={}",
                 lump,
                 (*l).size,
@@ -451,7 +452,7 @@ pub fn W_CacheLumpName(name: &[u8], tag: i32) -> *mut c_void {
 /// is released with `W_ReleaseLumpNum` or, at `PU_CACHE`, purged.
 pub unsafe fn cache_lump_bytes<'a>(lumpnum: i32, tag: i32) -> &'a [u8] {
     let data = W_CacheLumpNum(lumpnum, tag) as *const u8;
-    std::slice::from_raw_parts(data, W_LumpLength(lumpnum as u32) as usize)
+    core::slice::from_raw_parts(data, W_LumpLength(lumpnum as u32) as usize)
 }
 
 /// Cache lump `lumpnum` with `W_CacheLumpNum` and view it as a [`Patch`].
@@ -505,13 +506,13 @@ where
     Record: FromBytes + Immutable + KnownLayout,
 {
     let bytes = cache_lump_bytes(lumpnum, PU_STATIC);
-    let count = bytes.len() / std::mem::size_of::<Record>();
+    let count = bytes.len() / core::mem::size_of::<Record>();
     match <[Record]>::ref_from_prefix_with_elems(bytes, count) {
         Ok((records, _partial_record)) => records,
         Err(_) => i_error!(
             "cache_lump_records: lump {} is not an array of {}-byte records",
             lumpnum,
-            std::mem::size_of::<Record>()
+            core::mem::size_of::<Record>()
         ),
     }
 }
@@ -565,11 +566,11 @@ pub fn W_GenerateHashTable() {
 
         if numlumps > 0 {
             let lumphash = Z_Malloc(
-                (std::mem::size_of::<*mut lumpinfo_t>() * numlumps as usize) as i32,
+                (core::mem::size_of::<*mut lumpinfo_t>() * numlumps as usize) as i32,
                 PU_STATIC,
                 ptr::null_mut(),
             ) as *mut *mut lumpinfo_t;
-            std::ptr::write_bytes(lumphash, 0, numlumps as usize);
+            core::ptr::write_bytes(lumphash, 0, numlumps as usize);
 
             for i in 0..numlumps {
                 let hash = (W_LumpNameHash(&(*lumpinfo.add(i as usize)).name) % numlumps) as usize;
@@ -700,7 +701,7 @@ mod tests {
     /// the test harness).
     fn mapped_wad() -> wad_file_t {
         static SENTINEL: u8 = 0;
-        wad_file_t::mapped_for_test(std::ptr::addr_of!(SENTINEL).cast_mut())
+        wad_file_t::mapped_for_test(core::ptr::addr_of!(SENTINEL).cast_mut())
     }
 
     /// Build a minimal `lumpinfo_t` for tests: just the name, the

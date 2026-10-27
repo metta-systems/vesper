@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn size_matches_u32() {
-        assert_eq!(std::mem::size_of::<Boolean>(), std::mem::size_of::<u32>());
+        assert_eq!(core::mem::size_of::<Boolean>(), core::mem::size_of::<u32>());
     }
 
     #[test]

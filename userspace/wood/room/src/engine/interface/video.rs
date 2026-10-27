@@ -32,12 +32,12 @@ use {
         },
         i_error,
     },
-    std::ffi::c_void,
+    core::ffi::c_void,
 };
 
 use {
     crate::types::Boolean,
-    std::{mem, ptr},
+    core::{mem, ptr},
 };
 
 use crate::engine::zone::PU_STATIC;
@@ -433,7 +433,7 @@ pub unsafe fn I_FinishUpdate() {
     }
 
     let frame =
-        std::slice::from_raw_parts(screen_buffer, crate::engine::platform::DOOMGENERIC_PIXELS);
+        core::slice::from_raw_parts(screen_buffer, crate::engine::platform::DOOMGENERIC_PIXELS);
     crate::engine::platform::platform().draw_frame(frame);
 }
 
@@ -445,7 +445,7 @@ pub unsafe fn I_FinishUpdate() {
 /// `scr` must be writable for `SCREENWIDTH * SCREENHEIGHT` bytes.
 /// `I_VideoBuffer` must be initialised.
 pub unsafe fn I_ReadScreen(scr: *mut u8) {
-    std::ptr::copy(video_buffer(), scr, (SCREENWIDTH * SCREENHEIGHT) as usize);
+    core::ptr::copy(video_buffer(), scr, (SCREENWIDTH * SCREENHEIGHT) as usize);
 }
 
 /// Apply a new 768-byte (256 x R/G/B) PLAYPAL palette by

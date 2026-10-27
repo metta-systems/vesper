@@ -12,7 +12,7 @@
 // `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ptr;
+use core::ptr;
 
 use crate::{
     engine::{
@@ -579,7 +579,7 @@ pub fn R_PointToDist(view: &ViewState, x: fixed_t, y: fixed_t) -> fixed_t {
     let mut dy = (y - view.viewy).wrapping_abs();
 
     if dy > dx {
-        std::mem::swap(&mut dx, &mut dy);
+        core::mem::swap(&mut dx, &mut dy);
     }
 
     let frac = if dx != 0 { FixedDiv(dy, dx) } else { 0 };
@@ -913,8 +913,9 @@ pub unsafe fn R_ExecuteSetViewSize(renderer: &mut Renderer) {
 ///
 /// Calls, in order: `R_InitData`, `R_InitPointToAngle`, `R_InitTables`,
 /// `R_SetViewSize`, `R_InitPlanes`, `R_InitLightTables`, `R_InitSkyMap`,
-/// `R_InitTranslationTables`. Prints a `.` to stdout after each step as a
-/// startup progress indicator.
+/// `R_InitTranslationTables`. The C source prints a `.` after each step as
+/// a startup progress indicator; the port logs whole lines only, so it
+/// does not.
 ///
 /// Equivalent to `R_Init` in `r_main.c`.
 ///
@@ -931,19 +932,13 @@ pub unsafe fn R_Init() {
     let renderer = &mut *renderer;
 
     R_InitData(&mut renderer.data);
-    print!(".");
     R_InitPointToAngle();
-    print!(".");
     R_InitTables();
-    print!(".");
     set_view_size(&mut renderer.view, screenblocks, detail_level);
     R_InitPlanes();
-    print!(".");
     R_InitLightTables(&mut renderer.view, renderer.data.colormaps);
-    print!(".");
     R_InitSkyMap(&mut renderer.sky);
     R_InitTranslationTables(&mut renderer.draw);
-    print!(".");
 
     renderer.view.framecount = 0;
 }
@@ -1028,7 +1023,7 @@ pub unsafe fn R_SetupFrame(world: &mut World, renderer: &mut Renderer, player_id
 
     if player.fixedcolormap != 0 {
         view.fixedcolormap = colormaps
-            .add(player.fixedcolormap as usize * 256 * std::mem::size_of::<lighttable_t>());
+            .add(player.fixedcolormap as usize * 256 * core::mem::size_of::<lighttable_t>());
 
         let fixedcolormap = view.fixedcolormap;
         for i in 0..MAXLIGHTSCALE {

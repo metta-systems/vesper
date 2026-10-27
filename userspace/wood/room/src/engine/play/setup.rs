@@ -27,7 +27,10 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use {
+    alloc::{format, vec::Vec},
+    core::{ffi::c_void, ptr},
+};
 
 use {
     crate::engine::{
@@ -671,7 +674,7 @@ pub fn P_LoadBlockMap(level: &mut LevelState, lump: i32) {
     level.bmaporgy = (blockmaplump[1] as i32) << FRACBITS;
     level.bmapwidth = bmapwidth;
     level.bmapheight = bmapheight;
-    level.blocklinks = vec![None; bmapwidth as usize * bmapheight as usize];
+    level.blocklinks = alloc::vec![None; bmapwidth as usize * bmapheight as usize];
     level.blockmaplump = blockmaplump;
 }
 
@@ -745,7 +748,7 @@ pub fn P_GroupLines(level: &mut LevelState) -> i32 {
     }
 
     // Assign lines to sectors.
-    let mut linebuffer = vec![LineId::new(0); totallines as usize];
+    let mut linebuffer = alloc::vec![LineId::new(0); totallines as usize];
     for (index, line) in level.lines.iter().enumerate() {
         if let Some(frontsector) = line.frontsector {
             let sector = &mut level.sectors[frontsector];
@@ -843,7 +846,7 @@ pub fn P_GroupLines(level: &mut LevelState) -> i32 {
 /// `totallines` counted by `P_GroupLines`.
 fn PadRejectArray(array: &mut [u8], totallines: i32) {
     let rejectpad: [u32; 4] = [((totallines * 4 + 3) & !3) as u32 + 24, 0, 50, 0x1d4a11];
-    let padsize = std::mem::size_of_val(&rejectpad);
+    let padsize = core::mem::size_of_val(&rejectpad);
 
     for (i, dest) in array.iter_mut().take(padsize).enumerate() {
         let byte_num = i % 4;
@@ -851,7 +854,7 @@ fn PadRejectArray(array: &mut [u8], totallines: i32) {
     }
 
     if array.len() > padsize {
-        eprintln!(
+        log::warn!(
             "PadRejectArray: REJECT lump too short to pad! ({} > {})",
             array.len(),
             padsize

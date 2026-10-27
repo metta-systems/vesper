@@ -25,7 +25,21 @@ rangecheck = []
 # instead of the winit/wgpu/rodio host platform, to compile-check it on a host.
 platform-vesper = []
 
+# The engine library is `no_std` + `alloc` and uses only these.
 [dependencies]
+# Zero-copy views of the little-endian WAD on-disk records.
+zerocopy = { version = "0.8", features = ["derive"] }
+
+# Logging facade.
+log = "0.4"
+
+# Optional heap profiler (use with --features dhat-heap).
+dhat = { version = "0.3", optional = true }
+
+# The host platform of the `room` binary (src/platform/host). Bare-metal
+# targets and Vesper do not build it, so the library checks there without
+# these.
+[target.'cfg(not(any(target_os = "none", target_os = "vesper")))'.dependencies]
 # Cross-platform window creation and event handling.
 winit = "0.30"
 
@@ -38,12 +52,6 @@ pollster = "0.4"
 # Safe transmutation between byte slices and typed buffers.
 bytemuck = { version = "1", features = ["derive"] }
 
-# Zero-copy views of the little-endian WAD on-disk records.
-zerocopy = { version = "0.8", features = ["derive"] }
-
-# Logging facade.
-log = "0.4"
-
 # Cross-platform audio playback, used for SFX.
 rodio = "0.22"
 
@@ -52,9 +60,6 @@ rustysynth = "1"
 
 # Simple logger backed by stderr.
 env_logger = "0.11"
-
-# Optional heap profiler (use with --features dhat-heap).
-dhat = { version = "0.3", optional = true }
 
 [lints.rust]
 # Vesper's custom target sets `target_os = "vesper"` (src/platform/mod.rs).

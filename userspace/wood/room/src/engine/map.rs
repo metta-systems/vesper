@@ -13,7 +13,10 @@
 
 #![allow(non_camel_case_types)]
 
-use std::ops::{Index, IndexMut};
+use {
+    alloc::vec::Vec,
+    core::ops::{Index, IndexMut},
+};
 
 use crate::engine::{
     math::fixed::{angle_t, fixed_t},

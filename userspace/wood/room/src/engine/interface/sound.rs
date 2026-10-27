@@ -24,7 +24,8 @@ use {
         wad::{W_CacheLumpNum, W_CheckNumForName, W_LumpLength},
         zone::PU_CACHE,
     },
-    std::{borrow::Cow, ffi::c_void},
+    alloc::{borrow::Cow, boxed::Box, vec::Vec},
+    core::ffi::c_void,
 };
 
 use crate::types::Boolean;
@@ -208,7 +209,7 @@ pub unsafe fn I_StartSound(sfxinfo: *mut c_void, channel: i32, vol: i32, sep: i3
         if ptr.is_null() {
             return -1;
         }
-        let lump = std::slice::from_raw_parts(ptr as *const u8, lump_len as usize);
+        let lump = core::slice::from_raw_parts(ptr as *const u8, lump_len as usize);
         if platform().sound_start(lump, channel as usize, vol, sep) {
             channel
         } else {
@@ -280,13 +281,13 @@ pub fn I_ResumeSong() {
 /// conversion up front so the platform only ever plays MIDI.
 pub fn I_RegisterSong(data: &[u8]) -> *mut c_void {
     if data.is_empty() {
-        return std::ptr::null_mut();
+        return core::ptr::null_mut();
     }
     match mus2midi(data) {
         Some(midi_bytes) => Box::into_raw(Box::new(MusicHandle { midi_bytes })) as *mut c_void,
         None => {
             log::warn!("I_RegisterSong: MUS-to-MIDI conversion failed");
-            std::ptr::null_mut()
+            core::ptr::null_mut()
         }
     }
 }

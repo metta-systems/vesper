@@ -26,6 +26,8 @@ use std::{
     path::PathBuf,
 };
 
+use room::engine::platform::FileHandle;
+
 // ---------------------------------------------------------------------------
 // Virtual clock and frame counter for the headless platform
 // ---------------------------------------------------------------------------
@@ -130,12 +132,48 @@ fn check_frame_hashes() {
 }
 
 // ---------------------------------------------------------------------------
-// Headless platform: counts frames, runs on virtual time, silent
+// Headless platform: counts frames, runs on virtual time, silent, reads
+// files (the WAD) but writes none
 // ---------------------------------------------------------------------------
+
+thread_local! {
+    // The files `Headless::open` read, indexed by handle.
+    static OPEN_FILES: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
+}
 
 struct Headless;
 
 impl room::engine::platform::Platform for Headless {
+    fn exists(&self, path: &str) -> bool {
+        std::path::Path::new(path).exists()
+    }
+
+    /// Read the whole file into memory, as Vesper serves the WAD from a blob.
+    fn open(&self, path: &str) -> Option<FileHandle> {
+        let contents = std::fs::read(path).ok()?;
+        OPEN_FILES.with_borrow_mut(|files| {
+            files.push(contents);
+            Some(FileHandle(files.len() - 1))
+        })
+    }
+
+    fn len(&self, file: FileHandle) -> u64 {
+        OPEN_FILES.with_borrow(|files| files[file.0].len() as u64)
+    }
+
+    fn read_at(&self, file: FileHandle, offset: u64, buffer: &mut [u8]) -> usize {
+        OPEN_FILES.with_borrow(|files| {
+            let contents = files[file.0].get(offset as usize..).unwrap_or_default();
+            let count = contents.len().min(buffer.len());
+            buffer[..count].copy_from_slice(&contents[..count]);
+            count
+        })
+    }
+
+    fn close(&self, file: FileHandle) {
+        OPEN_FILES.with_borrow_mut(|files| files[file.0] = Vec::new());
+    }
+
     fn draw_frame(&self, frame: &[u32]) {
         note_frame();
         let frame_number = frame_count();

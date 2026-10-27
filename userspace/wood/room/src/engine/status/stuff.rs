@@ -18,6 +18,8 @@
 // whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use alloc::{format, vec};
+
 use crate::{
     c_write,
     engine::{

@@ -14,6 +14,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
+use alloc::format;
+
 use crate::engine::{
     global::Global,
     interface::keys::{

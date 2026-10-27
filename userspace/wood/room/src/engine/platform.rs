@@ -17,14 +17,20 @@
 //! Rust differences from C:
 //! - The C code allocates the screen buffer with `malloc` and never frees it
 //!   (intentional leak in a long-running process).  This port allocates via
-//!   `Vec<u32>` and uses `std::mem::forget` to produce the same intentional
+//!   `Vec<u32>` and uses `mem::forget` to produce the same intentional
 //!   leak, while using Rust allocation.
 //! - The platform callbacks are the methods of [`Platform`], installed by
 //!   [`doomgeneric_Create`], instead of functions the platform links in.
+//! - [`Platform`] also carries what the C engine took from the C library
+//!   and the OS: file access, exit and the error dialog, so the engine
+//!   needs only `core` and `alloc`.
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use std::ptr;
+use {
+    alloc::{string::String, vec::Vec},
+    core::ptr,
+};
 
 use super::{
     doom::main::D_DoomMain,
@@ -50,9 +56,12 @@ pub const DOOMGENERIC_PIXELS: usize = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
 /// What the engine needs from the platform it runs on.
 ///
 /// The first six methods are doomgeneric's `DG_*` callbacks; the sound and
-/// music methods replace the SDL mixer behind `i_sound`. Every method has a
-/// do-nothing default, so a platform implements only what it has: the
-/// default platform is silent, shows nothing and reads no input.
+/// music methods replace the SDL mixer behind `i_sound`; the file methods
+/// replace stdio (handles for the WAD, whole files for everything else);
+/// [`Platform::error_box`] and [`Platform::quit`] replace the error dialog
+/// and `exit`. Every method has a default, so a platform implements only
+/// what it has: the default platform is silent, shows nothing, reads no
+/// input, has no files and panics on quit.
 pub trait Platform {
     /// `DG_Init`: called once by [`doomgeneric_Create`], after the screen
     /// buffer is allocated and before the engine starts.
@@ -127,7 +136,76 @@ pub trait Platform {
     fn music_is_playing(&self) -> bool {
         false
     }
+
+    /// Open the file at `path` (a WAD) for [`Platform::read_at`]; `None` if
+    /// it does not exist or cannot be read.
+    fn open(&self, _path: &str) -> Option<FileHandle> {
+        None
+    }
+
+    /// The size in bytes of the open file `file`.
+    fn len(&self, _file: FileHandle) -> u64 {
+        0
+    }
+
+    /// Read up to `buffer.len()` bytes at `offset` of the open file `file`
+    /// into `buffer`, as `fread` does; the number of bytes read, short at
+    /// the end of the file or on an error.
+    fn read_at(&self, _file: FileHandle, _offset: u64, _buffer: &mut [u8]) -> usize {
+        0
+    }
+
+    /// Close the open file `file`; its handle is not used again.
+    fn close(&self, _file: FileHandle) {}
+
+    /// The contents of the file at `path`, or `None` if it cannot be read.
+    fn read_file(&self, _path: &str) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Create or truncate the file at `path` and write `data` to it; `true`
+    /// if all of it was written.
+    fn write_file(&self, _path: &str, _data: &[u8]) -> bool {
+        false
+    }
+
+    /// Rename the file `from` to `to`, replacing `to`; `true` on success.
+    fn rename(&self, _from: &str, _to: &str) -> bool {
+        false
+    }
+
+    /// Delete the file at `path`; `true` on success.
+    fn remove(&self, _path: &str) -> bool {
+        false
+    }
+
+    /// `true` if `path` names a readable file or a directory.
+    fn exists(&self, _path: &str) -> bool {
+        false
+    }
+
+    /// Create the directory `path` (not its parents); `true` on success.
+    fn create_dir(&self, _path: &str) -> bool {
+        false
+    }
+
+    /// Show `message`, the reason the engine is about to quit with an
+    /// error, where a user sees it (a dialog box), beyond the log.
+    fn error_box(&self, _message: &str) {}
+
+    /// End the program with exit status `code`.
+    ///
+    /// The default, for a platform with nowhere to exit to, panics with
+    /// the status, so a test or the platform's panic handler reports it.
+    fn quit(&self, code: i32) -> ! {
+        panic!("the engine quit with exit status {code}")
+    }
 }
+
+/// An open file of a [`Platform`], from [`Platform::open`]. The platform
+/// gives the number its meaning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileHandle(pub usize);
 
 /// The default platform: every [`Platform`] method keeps its do-nothing
 /// default. Used until [`doomgeneric_Create`] installs one, which is what
@@ -216,9 +294,9 @@ pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, args: Vec<Stri
     M_FindResponseFile();
 
     let total_pixels = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
-    let mut buffer = vec![0u32; total_pixels];
+    let mut buffer = alloc::vec![0u32; total_pixels];
     PLATFORM.borrow_mut().screen_buffer = buffer.as_mut_ptr();
-    std::mem::forget(buffer);
+    core::mem::forget(buffer);
 
     platform.init();
     D_DoomMain();

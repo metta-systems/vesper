@@ -33,7 +33,7 @@
 // pointers in C's whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ptr;
+use core::ptr;
 
 use crate::engine::{
     map::{SectorId, SegId},

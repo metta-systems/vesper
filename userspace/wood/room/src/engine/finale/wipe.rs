@@ -20,7 +20,7 @@
 // C's whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ffi::c_void;
+use core::ffi::c_void;
 
 use crate::engine::misc::random::M_Random;
 
@@ -72,10 +72,10 @@ impl WipeState {
     pub const fn new() -> Self {
         Self {
             go: 0,
-            scr_start: std::ptr::null_mut(),
-            scr_end: std::ptr::null_mut(),
-            scr: std::ptr::null_mut(),
-            column_y: std::ptr::null_mut(),
+            scr_start: core::ptr::null_mut(),
+            scr_end: core::ptr::null_mut(),
+            scr: core::ptr::null_mut(),
+            column_y: core::ptr::null_mut(),
         }
     }
 }
@@ -108,7 +108,7 @@ pub static WIPE: Global<WipeState> = Global::new(WipeState::new());
 /// `Z_Malloc` buffer.
 unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: i32, height: i32) {
     let total = (width * height) as usize;
-    let dest = Z_Malloc(total as i32 * 2, PU_STATIC, std::ptr::null_mut()) as *mut i16;
+    let dest = Z_Malloc(total as i32 * 2, PU_STATIC, core::ptr::null_mut()) as *mut i16;
 
     for y in 0..height {
         for x in 0..width {
@@ -116,7 +116,7 @@ unsafe fn wipe_shitty_col_major_xform(array: *mut i16, width: i32, height: i32) 
         }
     }
 
-    std::ptr::copy(dest, array, total);
+    core::ptr::copy(dest, array, total);
     Z_Free(dest as *mut c_void);
 }
 
@@ -136,7 +136,7 @@ unsafe fn wipe_init_color_xform(width: i32, height: i32, _ticks: i32) -> i32 {
         let wipe = WIPE.borrow();
         (wipe.scr_start, wipe.scr)
     };
-    std::ptr::copy(scr_start, scr, len);
+    core::ptr::copy(scr_start, scr, len);
     0
 }
 
@@ -216,15 +216,15 @@ unsafe fn wipe_init_melt(width: i32, height: i32, _ticks: i32) -> i32 {
         let wipe = WIPE.borrow();
         (wipe.scr_start, wipe.scr_end, wipe.scr)
     };
-    std::ptr::copy(scr_start, scr, len);
+    core::ptr::copy(scr_start, scr, len);
 
     wipe_shitty_col_major_xform(scr_start as *mut i16, width / 2, height);
     wipe_shitty_col_major_xform(scr_end as *mut i16, width / 2, height);
 
     let column_y = Z_Malloc(
-        width * std::mem::size_of::<i32>() as i32,
+        width * core::mem::size_of::<i32>() as i32,
         PU_STATIC,
-        std::ptr::null_mut(),
+        core::ptr::null_mut(),
     ) as *mut i32;
     WIPE.borrow_mut().column_y = column_y;
 
@@ -323,9 +323,9 @@ unsafe fn wipe_exit_melt(_width: i32, _height: i32, _ticks: i32) -> i32 {
     let (column_y, scr_start, scr_end) = {
         let mut wipe = WIPE.borrow_mut();
         let buffers = (wipe.column_y, wipe.scr_start, wipe.scr_end);
-        wipe.column_y = std::ptr::null_mut();
-        wipe.scr_start = std::ptr::null_mut();
-        wipe.scr_end = std::ptr::null_mut();
+        wipe.column_y = core::ptr::null_mut();
+        wipe.scr_start = core::ptr::null_mut();
+        wipe.scr_end = core::ptr::null_mut();
         buffers
     };
     Z_Free(column_y as *mut c_void);
@@ -365,8 +365,9 @@ const WIPES: [WipeFn; 6] = [
 /// Called by C code in `d_main.c` before the scene transition.
 /// C origin: `wipe_StartScreen` in f_wipe.c.
 pub fn wipe_StartScreen(_x: i32, _y: i32, _width: i32, _height: i32) -> i32 {
-    let scr_start =
-        unsafe { Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8 };
+    let scr_start = unsafe {
+        Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, core::ptr::null_mut()) as *mut u8
+    };
     WIPE.borrow_mut().scr_start = scr_start;
     unsafe { I_ReadScreen(scr_start) };
     0
@@ -384,8 +385,9 @@ pub fn wipe_StartScreen(_x: i32, _y: i32, _width: i32, _height: i32) -> i32 {
 /// Called by C code in `d_main.c` after drawing the new scene.
 /// C origin: `wipe_EndScreen` in f_wipe.c.
 pub fn wipe_EndScreen(x: i32, y: i32, width: i32, height: i32) -> i32 {
-    let scr_end =
-        unsafe { Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, std::ptr::null_mut()) as *mut u8 };
+    let scr_end = unsafe {
+        Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, core::ptr::null_mut()) as *mut u8
+    };
     let scr_start = {
         let mut wipe = WIPE.borrow_mut();
         wipe.scr_end = scr_end;

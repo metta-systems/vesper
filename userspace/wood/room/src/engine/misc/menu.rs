@@ -24,9 +24,12 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{io::Read, ptr};
+use {
+    alloc::{borrow::ToOwned, format, string::String},
+    core::ptr,
+};
 
-use crate::types::Boolean;
+use crate::{engine::platform::platform, types::Boolean};
 
 use crate::{
     engine::{
@@ -662,13 +665,14 @@ fn load_slot_origin() -> (i32, i32) {
 fn M_ReadSaveStrings() {
     for i in 0..load_end {
         let mut slot = MENU.borrow().savegamestrings[i];
-        let status = match std::fs::File::open(P_SaveGameFile(i as i32)) {
-            Ok(mut file) => {
+        let status = match platform().read_file(&P_SaveGameFile(i as i32)) {
+            Some(contents) => {
                 // Like the C `fread`, a short read is ignored.
-                let _ = file.read(&mut slot);
+                let length = contents.len().min(slot.len());
+                slot[..length].copy_from_slice(&contents[..length]);
                 1
             }
-            Err(_) => {
+            None => {
                 M_StringCopy(&mut slot, EMPTYSTRING);
                 0
             }

@@ -14,6 +14,15 @@
 //! The `room` binary (`src/main.rs`, with its platforms in `src/platform/`)
 //! and the regression tests in `tests/` consume this crate.
 //!
+//! The library is `no_std` and needs only `core` and `alloc`: files, exit
+//! and the error dialog come from the
+//! [`Platform`](engine::platform::Platform), and console output goes
+//! through the `log` crate, so it builds for Vesper as it does for a host.
+//! The engine allocates only through `alloc` (`Vec`, `Box` and, for the
+//! zone heap, `alloc::alloc`); the binary that links it provides the
+//! `#[global_allocator]` and, to see the log, a logger. Unit tests build it
+//! with `std`.
+//!
 //! # Crate-wide lints
 //!
 //! Several lints are intentionally relaxed because the codebase is mid-port:
@@ -37,6 +46,7 @@
 //! buffers, and the status bar and intermission lump loading) allow it at
 //! the top of the module, each with its reason.
 
+#![cfg_attr(not(test), no_std)]
 // TODO: Add `# Safety` documentation to all unsafe functions.
 #![allow(clippy::missing_safety_doc)]
 // This crate is a C-to-Rust port. Many ported symbols are not yet called;
@@ -49,6 +59,8 @@
 #![allow(unpredictable_function_pointer_comparisons)]
 // C-style indexed loops are kept where the original had them.
 #![allow(clippy::needless_range_loop, clippy::explicit_counter_loop)]
+
+extern crate alloc;
 
 pub mod engine;
 pub mod types;

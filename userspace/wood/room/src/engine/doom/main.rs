@@ -6,6 +6,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
+use alloc::{borrow::ToOwned, format, string::String};
+
 use crate::{
     engine::{
         doom,
@@ -19,6 +21,7 @@ use crate::{
             video::{I_StartFrame, SCREENHEIGHT, SCREENWIDTH},
         },
         misc::{atoi, config::M_SaveDefaults},
+        platform::platform,
         world::WORLD,
     },
     i_error,
@@ -29,8 +32,8 @@ use crate::{
 // String constants from d_englsh.h / dstrings.h
 // ---------------------------------------------------------------------------
 
-/// Message printed to stdout when `-devparm` is active.
-static D_DEVSTR: &str = "Development mode ON.\n";
+/// Message logged when `-devparm` is active.
+static D_DEVSTR: &str = "Development mode ON.";
 
 /// Multiplayer chat target key for the green player.
 const HUSTR_KEYGREEN: u8 = b'g';
@@ -888,7 +891,7 @@ pub fn D_DoomLoop() {
             let is_recording = GAME.borrow().demorecording;
             let is_playdemo = gameaction() == ga_playdemo;
             if is_recording != 0 || is_playdemo || netgame() != 0 {
-                eprintln!(
+                log::warn!(
                     " WARNING: You are playing using one of the Doom Classic\n\
                      IWAD files shipped with the Doom 3: BFG Edition. These are\n\
                      known to be incompatible with the regular IWAD files and\n\
@@ -1077,7 +1080,7 @@ fn GetGameName(gamename: &'static str) -> String {
         let deh_sub = DEH_String(banner);
 
         // Has been replaced?
-        if !std::ptr::eq(deh_sub, banner) {
+        if !core::ptr::eq(deh_sub, banner) {
             let version = G_VanillaVersionCode();
             let expanded =
                 deh_sub.replacen("%i.%i", &format!("{}.{}", version / 100, version % 100), 1);
@@ -1101,9 +1104,9 @@ fn SetMissionForPackName(pack_name: &[u8]) {
         }
     }
 
-    println!("Valid mission packs are:");
+    log::info!("Valid mission packs are:");
     for pack in &PACKS {
-        println!("\t{}", pack.name);
+        log::info!("\t{}", pack.name);
     }
 
     i_error!("Unknown mission pack name");
@@ -1224,11 +1227,11 @@ pub fn D_SetGameDescription() {
 // D_AddFile
 // ---------------------------------------------------------------------------
 
-/// Add a WAD file to the search path, printing its name to stdout.
+/// Add a WAD file to the search path, logging its name.
 ///
 /// Returns `true` if the file was opened successfully.
 fn D_AddFile(filename: &str) -> bool {
-    println!(" adding {filename}");
+    log::info!(" adding {filename}");
     let handle = W_AddFile(filename);
     !handle.is_null()
 }
@@ -1237,7 +1240,7 @@ fn D_AddFile(filename: &str) -> bool {
 // PrintDehackedBanners
 // ---------------------------------------------------------------------------
 
-/// Copyright notice strings that are printed when replaced by DEH patches.
+/// Copyright notice strings that are logged when replaced by DEH patches.
 const COPYRIGHT_BANNERS: [&str; 3] = [
     "===========================================================================\n\
 ATTENTION:  This version of DOOM has been modified.  If you would like to\n\
@@ -1254,18 +1257,14 @@ get a copy of the original game, call 1-800-IDGAMES or see the readme file.\n\
 ===========================================================================\n",
 ];
 
-/// Print any copyright banners that have been replaced by DEH patches.
+/// Log any copyright banners that have been replaced by DEH patches.
 fn PrintDehackedBanners() {
     for banner in COPYRIGHT_BANNERS {
         let deh_s = DEH_String(banner);
 
-        if !std::ptr::eq(deh_s, banner) {
-            print!("{deh_s}");
-
-            // Ensure modified banner ends in newline
-            if !deh_s.is_empty() && !deh_s.ends_with('\n') {
-                println!();
-            }
+        if !core::ptr::eq(deh_s, banner) {
+            // A log record ends its own line.
+            log::info!("{}", deh_s.strip_suffix('\n').unwrap_or(deh_s));
         }
     }
 }
@@ -1295,9 +1294,9 @@ fn InitGameVersion() {
         }
 
         if !found {
-            println!("Supported game versions:");
+            log::info!("Supported game versions:");
             for gv in &GAME_VERSIONS {
-                println!("\t{} ({})", gv.cmdline, gv.description);
+                log::info!("\t{} ({})", gv.cmdline, gv.description);
             }
 
             i_error!("Unknown game version");
@@ -1350,7 +1349,7 @@ pub fn PrintGameVersion() {
     let gameversion = gameversion();
     for gv in &GAME_VERSIONS {
         if gv.version == gameversion {
-            println!(
+            log::info!(
                 "Emulating the behavior of the '{}' executable.",
                 gv.description
             );
@@ -1385,9 +1384,7 @@ fn D_Endoom() {
     let endoom = W_CacheLumpName(DEH_String(b"ENDOOM"), PU_STATIC) as *mut u8;
     I_Endoom(endoom);
 
-    // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    std::process::exit(0);
+    platform().quit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,7 +1402,7 @@ pub fn D_DoomMain() {
         I_PrintBanner("Room");
 
         // Init zone memory
-        println!("Z_Init: Init zone memory allocation daemon.");
+        log::info!("Z_Init: Init zone memory allocation daemon.");
         Z_Init();
 
         // Check command-line flags
@@ -1429,7 +1426,7 @@ pub fn D_DoomMain() {
         }
 
         if devparm != 0 {
-            println!("{}", D_DEVSTR);
+            log::info!("{}", D_DEVSTR);
         }
 
         // Config directory
@@ -1445,7 +1442,7 @@ pub fn D_DoomMain() {
             }
             scale = scale.clamp(10, 400);
 
-            println!("turbo scale: {}%", scale);
+            log::info!("turbo scale: {}%", scale);
 
             let mut game = GAME.borrow_mut();
             game.forwardmove[0] = game.forwardmove[0] * scale / 100;
@@ -1455,11 +1452,11 @@ pub fn D_DoomMain() {
         }
 
         // Init subsystems
-        println!("V_Init: allocate screens.");
+        log::info!("V_Init: allocate screens.");
         V_Init();
 
         // Load configuration
-        println!("M_LoadDefaults: Load system defaults.");
+        log::info!("M_LoadDefaults: Load system defaults.");
         M_SetConfigFilenames("default.cfg", "doom.cfg");
         D_BindVariables();
         M_LoadDefaults();
@@ -1479,7 +1476,7 @@ pub fn D_DoomMain() {
 
         STAT.borrow_mut().modifiedgame = Boolean::FALSE;
 
-        println!("W_Init: Init WADfiles.");
+        log::info!("W_Init: Init WADfiles.");
         D_AddFile(&found_iwad);
 
         W_CheckCorrectIWAD(doom::mode::doom);
@@ -1490,7 +1487,7 @@ pub fn D_DoomMain() {
 
         // BFG Edition check
         if W_CheckNumForName(b"dmenupic") >= 0 {
-            println!("BFG Edition: Using workarounds as needed.");
+            log::info!("BFG Edition: Using workarounds as needed.");
             DOOM_MAIN.borrow_mut().bfgedition = 1;
 
             // BFG changes secret level names
@@ -1534,7 +1531,7 @@ pub fn D_DoomMain() {
                 demolumpname = arg.to_owned();
             }
 
-            println!("Playing demo {file}.");
+            log::info!("Playing demo {file}.");
         }
 
         // Note: G_CheckDemoStatus atexit registration is handled via the game flow.
@@ -1566,7 +1563,7 @@ pub fn D_DoomMain() {
 
         // Warning about modified sprites
         if W_CheckNumForName(b"SS_START") >= 0 || W_CheckNumForName(b"FF_END") >= 0 {
-            println!(
+            log::info!(
                 " WARNING: The loaded WAD file contains modified sprites or\n\
                  floor textures.  You may want to use the '-merge' command\n\
                  line option instead of '-file'."
@@ -1580,7 +1577,7 @@ pub fn D_DoomMain() {
 
         // Freedoom warning
         if W_CheckNumForName(b"FREEDOOM") >= 0 && W_CheckNumForName(b"FREEDM") < 0 {
-            println!(
+            log::info!(
                 " WARNING: You are playing using one of the Freedoom IWAD\n\
                  files, which might not work in this port. See this page\n\
                  for more information on how to play using Freedoom:\n\
@@ -1590,7 +1587,7 @@ pub fn D_DoomMain() {
         }
 
         // Initialize I subsystems
-        println!("I_Init: Setting up machine state.");
+        log::info!("I_Init: Setting up machine state.");
         I_CheckIsScreensaver();
         I_InitTimer();
         I_InitJoystick();
@@ -1672,17 +1669,16 @@ pub fn D_DoomMain() {
         }
 
         // Init remaining subsystems
-        println!("M_Init: Init miscellaneous info.");
+        log::info!("M_Init: Init miscellaneous info.");
         M_Init();
 
-        print!("R_Init: Init DOOM refresh daemon - ");
+        log::info!("R_Init: Init DOOM refresh daemon - ");
         R_Init();
-        println!();
 
-        println!("P_Init: Init Playloop state.");
+        log::info!("P_Init: Init Playloop state.");
         P_Init();
 
-        println!("S_Init: Setting up sound.");
+        log::info!("S_Init: Setting up sound.");
         let SoundState {
             sfxVolume,
             musicVolume,
@@ -1690,15 +1686,15 @@ pub fn D_DoomMain() {
         } = SOUND.get();
         S_Init(sfxVolume * 8, musicVolume * 8);
 
-        println!("D_CheckNetGame: Checking network game status.");
+        log::info!("D_CheckNetGame: Checking network game status.");
         D_CheckNetGame();
 
         PrintGameVersion();
 
-        println!("HU_Init: Setting up heads up display.");
+        log::info!("HU_Init: Setting up heads up display.");
         HU_Init();
 
-        println!("ST_Init: Init status bar.");
+        log::info!("ST_Init: Init status bar.");
         ST_Init();
 
         // Store demo check
@@ -1708,7 +1704,7 @@ pub fn D_DoomMain() {
 
         // -statdump
         if M_CheckParmWithArgs("-statdump", 1) > 0 {
-            println!("External statistics registered.");
+            log::info!("External statistics registered.");
         }
 
         // -record

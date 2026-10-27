@@ -15,7 +15,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut};
 
 use crate::engine::{
     play::{info::StateNum, mobj::MobjId},
@@ -332,7 +332,7 @@ mod tests {
     /// A zeroed message (as in a zeroed `PlayerT`) is no message.
     #[test]
     fn zeroed_message_is_none() {
-        let message: PlayerMessage = unsafe { std::mem::zeroed() };
+        let message: PlayerMessage = unsafe { core::mem::zeroed() };
         assert!(message.is_none());
         assert_eq!(message, PlayerMessage::NONE);
     }

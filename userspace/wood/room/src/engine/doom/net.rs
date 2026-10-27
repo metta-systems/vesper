@@ -168,7 +168,7 @@ impl NetState {
     /// No tic commands yet.
     pub const fn new() -> Self {
         Self {
-            netcmds: std::ptr::null_mut(),
+            netcmds: core::ptr::null_mut(),
         }
     }
 }
@@ -448,7 +448,7 @@ static DOOM_LOOP_INTERFACE: LoopInterfaceT = LoopInterfaceT {
 /// in `d_net.c`.
 pub fn D_ConnectNetGame() {
     unsafe {
-        let mut connect_data: NetConnectDataT = std::mem::zeroed();
+        let mut connect_data: NetConnectDataT = core::mem::zeroed();
         InitConnectData(&mut connect_data);
         let netgame = D_InitNetGame(&connect_data);
         GAME.borrow_mut().netgame = netgame;
@@ -480,9 +480,9 @@ pub fn D_CheckNetGame() {
 
         D_RegisterLoopCallbacks(&DOOM_LOOP_INTERFACE);
 
-        let mut settings: NetGameSettingsT = std::mem::zeroed();
+        let mut settings: NetGameSettingsT = core::mem::zeroed();
         SaveGameSettings(&mut settings);
-        D_StartNetGame(&mut settings, std::ptr::null());
+        D_StartNetGame(&mut settings, core::ptr::null());
         LoadGameSettings(&mut settings);
     }
 }

@@ -18,7 +18,7 @@
 #![allow(non_camel_case_types)]
 
 use {
-    std::mem::size_of,
+    core::mem::size_of,
     zerocopy::{
         FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
         little_endian::{I16, I32, U16},
@@ -380,8 +380,8 @@ pub enum PatchError {
     TruncatedColumnTable { width: usize, length: usize },
 }
 
-impl std::fmt::Display for PatchError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PatchError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
             PatchError::TruncatedHeader { length } => {
                 write!(formatter, "{length} bytes is too short for a patch header")

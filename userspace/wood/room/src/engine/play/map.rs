@@ -1750,7 +1750,7 @@ fn SpechitOverrun(map: &mut MapState, ld: LineId) {
             map.nofit = addr;
         }
         _ => {
-            eprintln!(
+            log::warn!(
                 "SpechitOverrun: Warning: unable to emulate an overrun where numspechit={}",
                 map.numspechit
             );

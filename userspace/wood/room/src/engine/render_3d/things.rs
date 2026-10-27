@@ -16,7 +16,7 @@
 // C's whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use {crate::i_error, std::ptr};
+use {crate::i_error, core::ptr};
 
 use crate::engine::{
     arena::Arena,
@@ -264,10 +264,10 @@ impl VisSpriteState {
     /// An empty pool.
     pub const fn new() -> Self {
         Self {
-            vissprites: unsafe { std::mem::zeroed() },
+            vissprites: unsafe { core::mem::zeroed() },
             vissprite_p: 0,
-            overflowsprite: unsafe { std::mem::zeroed() },
-            vsprsortedhead: unsafe { std::mem::zeroed() },
+            overflowsprite: unsafe { core::mem::zeroed() },
+            vsprsortedhead: unsafe { core::mem::zeroed() },
             clipbot: [0; SCREENWIDTH],
             cliptop: [0; SCREENWIDTH],
         }
@@ -390,7 +390,7 @@ unsafe fn R_InitSpriteDefs(
     }
 
     sprite_state.sprites = Z_Malloc(
-        (sprite_state.numsprites as usize * std::mem::size_of::<spritedef_t>()) as i32,
+        (sprite_state.numsprites as usize * core::mem::size_of::<spritedef_t>()) as i32,
         1, // PU_STATIC
         ptr::null_mut(),
     ) as *mut spritedef_t;
@@ -474,7 +474,7 @@ unsafe fn R_InitSpriteDefs(
         let spr = &mut *sprite_state.sprites.add(i as usize);
         spr.numframes = maxframe;
         spr.spriteframes = Z_Malloc(
-            (maxframe as usize * std::mem::size_of::<spriteframe_t>()) as i32,
+            (maxframe as usize * core::mem::size_of::<spriteframe_t>()) as i32,
             1, // PU_STATIC
             ptr::null_mut(),
         ) as *mut spriteframe_t;
@@ -999,7 +999,7 @@ pub unsafe fn R_DrawPSprite(
     }
 
     // Store information in a vissprite.
-    let mut avis: vissprite_t = unsafe { std::mem::zeroed() };
+    let mut avis: vissprite_t = unsafe { core::mem::zeroed() };
     let vis = &mut avis;
     vis.mobjflags = 0;
     vis.texturemid =
@@ -1107,7 +1107,7 @@ pub fn R_SortVisSprites(pool: &mut VisSpriteState) {
     let head: *mut vissprite_t = &raw mut pool.vsprsortedhead;
     let count = pool.vissprite_p;
 
-    let mut unsorted_node: vissprite_t = unsafe { std::mem::zeroed() };
+    let mut unsorted_node: vissprite_t = unsafe { core::mem::zeroed() };
     let unsorted: *mut vissprite_t = &raw mut unsorted_node;
 
     // SAFETY: `count` is at most `MAXVISSPRITES`, and every pointer

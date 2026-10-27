@@ -18,7 +18,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use {crate::engine::sound::info::Sfx, std::ptr};
+use {crate::engine::sound::info::Sfx, alloc::string::String, core::ptr};
 
 use crate::{
     engine::{
@@ -1237,9 +1237,10 @@ fn DonutOverrun(
             }
             let numflats = RENDERER.borrow().data.numflats;
             if spec.donut_floorpic >= numflats {
-                eprintln!(
+                log::warn!(
                     "DonutOverrun: The second parameter for \"-donut\" switch should be greater than 0 and less than number of flats ({}). Using default value ({}) instead. ",
-                    numflats, 0x16
+                    numflats,
+                    0x16
                 );
                 spec.donut_floorpic = 0x16;
             }
@@ -1301,7 +1302,7 @@ pub fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
         };
 
         let Some(s2) = s2 else {
-            eprintln!(
+            log::warn!(
                 "EV_DoDonut: linedef had no second sidedef! Unexpected behavior may occur in Vanilla Doom. "
             );
             break;
@@ -1317,7 +1318,7 @@ pub fn EV_DoDonut(world: &mut World, line: &line_t) -> i32 {
 
             let (s3_floorheight, s3_floorpic) = match s3 {
                 None => {
-                    eprintln!(
+                    log::warn!(
                         "EV_DoDonut: WARNING: emulating buffer overrun due to NULL back sector. Unexpected behavior may occur in Vanilla Doom."
                     );
                     let mut fh = 0;

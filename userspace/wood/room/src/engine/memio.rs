@@ -16,7 +16,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::ffi::c_void;
+use core::ffi::c_void;
 
 #[cfg(not(test))]
 use crate::engine::zone::{PU_STATIC, Z_Free, Z_Malloc};
@@ -69,8 +69,8 @@ pub struct _MEMFILE {
 /// `cargo test` work without bringing up the Doom zone allocator.
 #[cfg(test)]
 fn mem_malloc(size: usize) -> *mut c_void {
-    let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
-    unsafe { std::alloc::alloc(layout) as *mut c_void }
+    let layout = alloc::alloc::Layout::from_size_align(size, 1).unwrap();
+    unsafe { alloc::alloc::alloc(layout) as *mut c_void }
 }
 
 /// Test-only deallocator paired with the test-mode `mem_malloc`.
@@ -84,8 +84,8 @@ fn mem_malloc(size: usize) -> *mut c_void {
 #[cfg(test)]
 unsafe fn mem_free(ptr: *mut c_void) {
     if !ptr.is_null() {
-        let layout = std::alloc::Layout::from_size_align(1, 1).unwrap();
-        unsafe { std::alloc::dealloc(ptr as *mut u8, layout) };
+        let layout = alloc::alloc::Layout::from_size_align(1, 1).unwrap();
+        unsafe { alloc::alloc::dealloc(ptr as *mut u8, layout) };
     }
 }
 
@@ -93,7 +93,7 @@ unsafe fn mem_free(ptr: *mut c_void) {
 /// `PU_STATIC` priority, matching the C source's use of `Z_Malloc`.
 #[cfg(not(test))]
 fn mem_malloc(size: usize) -> *mut c_void {
-    unsafe { Z_Malloc(size as i32, PU_STATIC, std::ptr::null_mut()) }
+    unsafe { Z_Malloc(size as i32, PU_STATIC, core::ptr::null_mut()) }
 }
 
 /// Production deallocator: forwards to `Z_Free`, matching the C source.
@@ -108,8 +108,8 @@ unsafe fn mem_free(ptr: *mut c_void) {
 /// Test-only zero-initialised allocator.
 #[cfg(test)]
 fn mem_malloc_zero(size: usize) -> *mut c_void {
-    let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
-    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    let layout = alloc::alloc::Layout::from_size_align(size, 1).unwrap();
+    let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) };
     ptr as *mut c_void
 }
 
@@ -120,7 +120,7 @@ fn mem_malloc_zero(size: usize) -> *mut c_void {
 fn mem_malloc_zero(size: usize) -> *mut c_void {
     let ptr = mem_malloc(size);
     if !ptr.is_null() {
-        unsafe { std::ptr::write_bytes(ptr as *mut u8, 0, size) };
+        unsafe { core::ptr::write_bytes(ptr as *mut u8, 0, size) };
     }
     ptr
 }
@@ -135,7 +135,7 @@ fn mem_malloc_zero(size: usize) -> *mut c_void {
 /// until `mem_fclose` is called: the stream keeps the pointer and
 /// `mem_fread` reads through it.
 pub unsafe fn mem_fopen_read(buf: *mut c_void, buflen: usize) -> *mut _MEMFILE {
-    let file: *mut _MEMFILE = mem_malloc(std::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
+    let file: *mut _MEMFILE = mem_malloc(core::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
     unsafe {
         (*file).buf = buf as *mut u8;
         (*file).buflen = buflen;
@@ -177,7 +177,7 @@ pub unsafe fn mem_fread(
     }
 
     unsafe {
-        std::ptr::copy_nonoverlapping(
+        core::ptr::copy_nonoverlapping(
             stream.buf.add(stream.position as usize),
             buf as *mut u8,
             items * size,
@@ -195,7 +195,7 @@ pub unsafe fn mem_fread(
 /// Use `mem_get_buf` to obtain the final buffer pointer and length, and
 /// `mem_fclose` to release the allocation.
 pub fn mem_fopen_write() -> *mut _MEMFILE {
-    let file: *mut _MEMFILE = mem_malloc(std::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
+    let file: *mut _MEMFILE = mem_malloc(core::mem::size_of::<_MEMFILE>()) as *mut _MEMFILE;
     let initial_alloc = 1024usize;
     let buf = mem_malloc(initial_alloc) as *mut u8;
 
@@ -238,7 +238,7 @@ pub unsafe fn mem_fwrite(
         let new_alloc = stream.alloced * 2;
         let newbuf = mem_malloc(new_alloc) as *mut u8;
         unsafe {
-            std::ptr::copy_nonoverlapping(stream.buf, newbuf, stream.alloced);
+            core::ptr::copy_nonoverlapping(stream.buf, newbuf, stream.alloced);
         }
         // SAFETY: a write stream owns its `mem_malloc` buffer, replaced just
         // below.
@@ -248,7 +248,7 @@ pub unsafe fn mem_fwrite(
     }
 
     unsafe {
-        std::ptr::copy_nonoverlapping(
+        core::ptr::copy_nonoverlapping(
             ptr as *const u8,
             stream.buf.add(stream.position as usize),
             bytes,
@@ -362,7 +362,7 @@ mod tests {
 
             mem_fwrite(data.as_ptr() as *const c_void, 1, 4, write_file);
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
 
@@ -391,7 +391,7 @@ mod tests {
 
             mem_fwrite(data.as_ptr() as *const c_void, 1, 8, write_file);
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
 
@@ -469,7 +469,7 @@ mod tests {
             let data = [0u8; 8];
             mem_fwrite(data.as_ptr() as *const c_void, 1, 8, write_file);
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
 
@@ -494,7 +494,7 @@ mod tests {
             let data = [0u8; 4];
             mem_fwrite(data.as_ptr() as *const c_void, 1, 4, write_file);
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
 
@@ -521,7 +521,7 @@ mod tests {
             let items = mem_fwrite(data.as_ptr() as *const c_void, 1, data.len(), write_file);
             assert_eq!(items, data.len());
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
             assert_eq!(buflen, 2048);
@@ -546,7 +546,7 @@ mod tests {
             let data = [1u8, 2, 3, 4, 5]; // 5 bytes
             mem_fwrite(data.as_ptr() as *const c_void, 1, 5, write_file);
 
-            let mut buf_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_ptr: *mut c_void = core::ptr::null_mut();
             let mut buflen: usize = 0;
             mem_get_buf(write_file, &mut buf_ptr, &mut buflen);
 

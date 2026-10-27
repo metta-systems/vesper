@@ -42,14 +42,15 @@
 
 use {
     crate::engine::sound::info::Sfx,
-    std::{
-        borrow::Cow,
-        ffi::c_void,
-        io::{Cursor, Write},
+    alloc::{
+        borrow::{Cow, ToOwned},
+        format,
+        string::String,
     },
+    core::ffi::c_void,
 };
 
-use std::ptr;
+use core::ptr;
 
 use crate::engine::{
     doom::{
@@ -695,8 +696,11 @@ use crate::engine::doom::net::netcmds;
 use crate::engine::play::saveg::{
     P_ReadSaveGameEOF, P_ReadSaveGameHeader, P_SaveGameFile, P_TempSaveGameFile,
     P_UnArchivePlayers, P_UnArchiveSpecials, P_UnArchiveThinkers, P_UnArchiveWorld, SAVEG,
-    archive_save_game,
+    SaveStream, archive_save_game,
 };
+
+/// File access for save games.
+use crate::engine::platform::{Platform, platform};
 
 /// Top-level map loader from `p_setup.c`.
 use crate::engine::play::setup::P_SetupLevel;
@@ -986,7 +990,7 @@ pub unsafe fn G_BuildTiccmd(cmd: *mut TiccmdT, maketic: i32) {
     let mut input = GAME_INPUT.borrow_mut();
 
     let cmd = &mut *cmd;
-    *cmd = std::mem::zeroed();
+    *cmd = core::mem::zeroed();
 
     cmd.consistancy = consistancy;
 
@@ -1775,7 +1779,7 @@ pub fn G_PlayerReborn(world: &mut World, player: i32) {
     let secretcount = slot.secretcount;
 
     // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
-    *slot = unsafe { std::mem::zeroed() };
+    *slot = unsafe { core::mem::zeroed() };
 
     slot.frags = frags;
     slot.killcount = killcount;
@@ -2254,17 +2258,17 @@ pub unsafe fn G_DoLoadGame() {
         game.savename.clone()
     };
 
-    let Ok(contents) = std::fs::read(&savename) else {
+    let Some(contents) = platform().read_file(&savename) else {
         return;
     };
     {
         let mut saveg = SAVEG.borrow_mut();
-        saveg.save_stream = Cursor::new(contents);
+        saveg.save_stream = SaveStream::new(contents);
         saveg.savegame_error = 0;
     }
 
     if P_ReadSaveGameHeader(&mut WORLD.borrow_mut()) == 0 {
-        SAVEG.borrow_mut().save_stream = Cursor::default();
+        SAVEG.borrow_mut().save_stream = SaveStream::default();
         return;
     }
 
@@ -2285,7 +2289,7 @@ pub unsafe fn G_DoLoadGame() {
         I_Error("Bad savegame");
     }
 
-    SAVEG.borrow_mut().save_stream = Cursor::default();
+    SAVEG.borrow_mut().save_stream = SaveStream::default();
 
     if RENDERER.borrow().view.setsizeneeded.is_truthy() {
         R_ExecuteSetViewSize(&mut RENDERER.borrow_mut());
@@ -2314,18 +2318,19 @@ pub fn G_SaveGame(slot: i32, description: &[u8]) {
 /// Execute the deferred `ga_savegame` action.
 ///
 /// Writes to a temporary file first, then renames it over the real savegame
-/// path so a crash mid-save cannot destroy an older save. On
-/// `fopen`-failure, a recovery file in the temp directory is opened instead;
-/// if both fail, `I_Error` aborts the engine.
+/// path so a crash mid-save cannot destroy an older save. If the temporary
+/// file cannot be written, the save goes to a recovery file in the temp
+/// directory instead and `I_Error` reports where; if both fail, `I_Error`
+/// aborts the engine.
 ///
 /// When `vanilla_savegame_limit` is set, exceeding `SAVEGAMESIZE` raises
 /// `I_Error("Savegame buffer overrun")` to match the DOS limit; otherwise
 /// the save is allowed to grow.
 ///
-/// The save is archived in memory by [`archive_save_game`], then written to
-/// the file opened at the start, which the C code wrote to directly.
+/// The save is archived in memory by [`archive_save_game`], then written
+/// whole by the platform's [`write_file`](crate::engine::platform::Platform::write_file);
+/// the C code opened the file first and wrote to it directly.
 pub fn G_DoSaveGame() {
-    let mut recovery_savegame_file: Option<String> = None;
     let temp_savegame_file = P_TempSaveGameFile();
     let (savegameslot, savedescription) = {
         let input = GAME_INPUT.borrow();
@@ -2333,35 +2338,26 @@ pub fn G_DoSaveGame() {
     };
     let savegame_file = P_SaveGameFile(savegameslot);
 
-    let mut save_file = match std::fs::File::create(&temp_savegame_file) {
-        Ok(file) => file,
-        Err(_) => {
-            let recovery = M_TempFile("recovery.dsg");
-            let Ok(file) = std::fs::File::create(&recovery) else {
-                crate::i_error!(
-                    "Failed to open either '{}' or '{}' to write savegame.",
-                    temp_savegame_file,
-                    recovery,
-                );
-            };
-            recovery_savegame_file = Some(recovery);
-            file
-        }
-    };
-
     let saved = archive_save_game(&WORLD.borrow(), &savedescription);
 
     if GAME.borrow().vanilla_savegame_limit != 0 && saved.bytes.len() as u64 > SAVEGAMESIZE as u64 {
         I_Error("Savegame buffer overrun");
     }
 
-    // A failed write would have failed the C `fwrite`, which sets the flag.
-    if save_file.write_all(&saved.bytes).is_err() {
-        SAVEG.borrow_mut().savegame_error = 1;
-    }
-    drop(save_file);
-
-    if let Some(recovery) = recovery_savegame_file {
+    if !replace_save_file(
+        platform(),
+        &temp_savegame_file,
+        &savegame_file,
+        &saved.bytes,
+    ) {
+        let recovery = M_TempFile("recovery.dsg");
+        if !platform().write_file(&recovery, &saved.bytes) {
+            crate::i_error!(
+                "Failed to open either '{}' or '{}' to write savegame.",
+                temp_savegame_file,
+                recovery,
+            );
+        }
         crate::i_error!(
             "Failed to open savegame file '{}' for writing.\nBut your game has been saved to '{}' for recovery.",
             temp_savegame_file,
@@ -2369,16 +2365,30 @@ pub fn G_DoSaveGame() {
         );
     }
 
-    // Errors are ignored, as the C `remove`/`rename` results were.
-    let _ = std::fs::remove_file(&savegame_file);
-    let _ = std::fs::rename(&temp_savegame_file, &savegame_file);
-
     GAME.borrow_mut().gameaction = ga_nothing;
     M_StringCopy(&mut GAME_INPUT.borrow_mut().savedescription, b"");
 
     WORLD.borrow_mut().players[PlayerId::console()].set_message(DEH_String("game saved."));
 
     R_FillBackScreen();
+}
+
+/// Write the save `bytes` to `temp_savegame_file` on `platform`, then put
+/// it in place of `savegame_file`; `false`, leaving `savegame_file` alone,
+/// if the temporary file cannot be written.
+fn replace_save_file(
+    platform: &dyn Platform,
+    temp_savegame_file: &str,
+    savegame_file: &str,
+    bytes: &[u8],
+) -> bool {
+    if !platform.write_file(temp_savegame_file, bytes) {
+        return false;
+    }
+    // Errors are ignored, as the C `remove`/`rename` results were.
+    let _ = platform.remove(savegame_file);
+    let _ = platform.rename(temp_savegame_file, savegame_file);
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -2656,7 +2666,7 @@ unsafe fn increase_demo_buffer() {
     let new_length = current_length * 2;
     let new_demobuffer = Z_Malloc(new_length, PU_STATIC, ptr::null_mut()) as *mut byte;
     let new_demop = new_demobuffer.add(demo_p.offset_from(demobuffer) as usize);
-    std::ptr::copy_nonoverlapping(demobuffer, new_demobuffer, current_length as usize);
+    core::ptr::copy_nonoverlapping(demobuffer, new_demobuffer, current_length as usize);
     Z_Free(demobuffer as *mut c_void);
     let mut game = GAME.borrow_mut();
     game.demobuffer = new_demobuffer;
@@ -2906,7 +2916,7 @@ pub unsafe fn G_DoPlayDemo() {
         GAME.borrow_mut().longtics = 1;
     } else {
         // C code uses printf (not I_Error) here so demo playback continues
-        print!(
+        log::warn!(
             "Demo is from a different game version!\n\
             (read {}, should be {})\n\n\
             *** You may need to upgrade your version of Doom to v1.9. ***\n\
@@ -3066,7 +3076,7 @@ pub unsafe fn G_CheckDemoStatus() -> boolean {
         };
         M_WriteFile(
             &demoname,
-            std::slice::from_raw_parts(demobuffer, demo_p.offset_from(demobuffer) as usize),
+            core::slice::from_raw_parts(demobuffer, demo_p.offset_from(demobuffer) as usize),
         );
         Z_Free(demobuffer as *mut c_void);
         GAME.borrow_mut().demorecording = 0;
@@ -3093,7 +3103,104 @@ mod tests {
 
     /// Helper returning a freshly zeroed [`TiccmdT`] for test assembly.
     fn zeroed_cmd() -> TiccmdT {
-        unsafe { std::mem::zeroed() }
+        unsafe { core::mem::zeroed() }
+    }
+
+    // --- replace_save_file ---
+
+    /// A platform whose files live in memory; `writable` is false to make
+    /// every write fail.
+    struct MemoryFiles {
+        files: std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>,
+        writable: bool,
+    }
+
+    impl MemoryFiles {
+        fn new(writable: bool) -> Self {
+            Self {
+                files: std::sync::Mutex::default(),
+                writable,
+            }
+        }
+    }
+
+    impl Platform for MemoryFiles {
+        fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+            self.files.lock().unwrap().get(path).cloned()
+        }
+
+        fn write_file(&self, path: &str, data: &[u8]) -> bool {
+            if self.writable {
+                self.files
+                    .lock()
+                    .unwrap()
+                    .insert(path.to_owned(), data.to_vec());
+            }
+            self.writable
+        }
+
+        fn rename(&self, from: &str, to: &str) -> bool {
+            let mut files = self.files.lock().unwrap();
+            let Some(contents) = files.remove(from) else {
+                return false;
+            };
+            files.insert(to.to_owned(), contents);
+            true
+        }
+
+        fn remove(&self, path: &str) -> bool {
+            self.files.lock().unwrap().remove(path).is_some()
+        }
+    }
+
+    /// The Wood fixture save, as `G_DoSaveGame` would have archived it.
+    fn fixture_save() -> Vec<u8> {
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/saves/wood_109.dsg"
+        ))
+        .unwrap()
+    }
+
+    /// A save written through the platform replaces the old save byte for
+    /// byte, leaves no temporary file, and reads back as written.
+    #[test]
+    fn save_file_written_through_the_platform_round_trips() {
+        let platform = MemoryFiles::new(true);
+        platform.write_file("doomsav0.dsg", b"old save");
+        let save = fixture_save();
+
+        assert!(replace_save_file(
+            &platform,
+            "temp.dsg",
+            "doomsav0.dsg",
+            &save
+        ));
+
+        assert_eq!(platform.read_file("doomsav0.dsg"), Some(save.clone()));
+        assert_eq!(platform.read_file("temp.dsg"), None);
+    }
+
+    /// When the temporary file cannot be written the old save stays.
+    #[test]
+    fn failed_save_write_keeps_the_old_save() {
+        let platform = MemoryFiles::new(true);
+        platform.write_file("doomsav0.dsg", b"old save");
+        let platform = MemoryFiles {
+            writable: false,
+            ..platform
+        };
+
+        assert!(!replace_save_file(
+            &platform,
+            "temp.dsg",
+            "doomsav0.dsg",
+            &fixture_save()
+        ));
+        assert_eq!(
+            platform.read_file("doomsav0.dsg"),
+            Some(b"old save".to_vec())
+        );
     }
 
     // --- G_CmdChecksum ---
@@ -3364,7 +3471,7 @@ mod tests {
         let mut world = World::new();
         world.players[PlayerId::new(3)].health = 7;
         assert_eq!(world.players[3].health, 7);
-        assert!(std::ptr::eq(
+        assert!(core::ptr::eq(
             &world.players[PlayerId::new(2)],
             &world.players[2]
         ));

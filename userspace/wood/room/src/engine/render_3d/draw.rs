@@ -11,7 +11,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
-use std::{ffi::c_void, ptr};
+use core::{ffi::c_void, ptr};
 
 use crate::engine::{
     dehacked::DEH_String,

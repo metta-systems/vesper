@@ -22,7 +22,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use {crate::engine::global::Global, std::ffi::c_void};
+use {crate::engine::global::Global, core::ffi::c_void};
 
 /// Rust mirror of `sfxinfo_t` (`sounds.h`).
 ///
@@ -636,13 +636,13 @@ impl SfxInfo {
         SfxInfo {
             name,
             priority,
-            link: std::ptr::null_mut(),
+            link: core::ptr::null_mut(),
             pitch: -1,
             volume: -1,
             usefulness: 0,
             lumpnum: 0,
             numchannels: -1,
-            driver_data: std::ptr::null_mut(),
+            driver_data: core::ptr::null_mut(),
         }
     }
 
@@ -667,8 +667,8 @@ impl MusicInfo {
         MusicInfo {
             name: "",
             lumpnum: 0,
-            data: std::ptr::null_mut(),
-            handle: std::ptr::null_mut(),
+            data: core::ptr::null_mut(),
+            handle: core::ptr::null_mut(),
         }
     }
 
@@ -676,14 +676,14 @@ impl MusicInfo {
     /// by [`name`]), without its NUL.
     const fn new<const N: usize>(name: &'static [u8; N]) -> Self {
         let (text, _nul) = name.split_at(N - 1);
-        let Ok(name) = std::str::from_utf8(text) else {
+        let Ok(name) = core::str::from_utf8(text) else {
             panic!("music name is not UTF-8");
         };
         MusicInfo {
             name,
             lumpnum: 0,
-            data: std::ptr::null_mut(),
-            handle: std::ptr::null_mut(),
+            data: core::ptr::null_mut(),
+            handle: core::ptr::null_mut(),
         }
     }
 }

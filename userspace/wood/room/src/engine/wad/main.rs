@@ -42,7 +42,7 @@ pub fn W_ParseCommandLine() -> Boolean {
         modifiedgame = Boolean::TRUE;
         while idx < argument_count() && !argument(idx).starts_with('-') {
             let filename = D_TryFindWADByName(argument(idx));
-            println!(" adding {filename}");
+            log::info!(" adding {filename}");
             W_AddFile(&filename);
             idx += 1;
         }

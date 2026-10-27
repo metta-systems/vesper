@@ -23,7 +23,7 @@
 
 pub mod wipe;
 
-use {crate::engine::sound::info::Sfx, std::ptr};
+use {crate::engine::sound::info::Sfx, core::ptr};
 
 use crate::{
     DEH_snprintf,

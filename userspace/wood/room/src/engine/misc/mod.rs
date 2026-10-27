@@ -27,7 +27,15 @@ pub mod menu;
 pub mod random;
 pub mod sha1;
 
-use std::path::Path;
+use {
+    crate::engine::platform::platform,
+    alloc::{string::String, vec::Vec},
+};
+
+/// `alloc::format!`, for the exported macros below, so that they expand in
+/// crates that have no `alloc` in scope.
+#[doc(hidden)]
+pub use alloc::format;
 
 /// Unix directory separator character (C: `DIR_SEPARATOR = '/'`).
 const DIR_SEPARATOR: u8 = b'/';
@@ -36,17 +44,17 @@ const DIR_SEPARATOR: u8 = b'/';
 ///
 /// Errors are ignored, so calling on an already-existing directory is a
 /// no-op. Mirrors the Unix branch of the C `M_MakeDirectory`.
-pub fn M_MakeDirectory(path: impl AsRef<Path>) {
-    let _ = std::fs::create_dir(path);
+pub fn M_MakeDirectory(path: &str) {
+    let _ = platform().create_dir(path);
 }
 
 /// Returns `true` if `path` names a readable file or a directory.
 ///
 /// Matches the C original, which tries `fopen("r")` and also accepts the
-/// `EISDIR` failure.
-pub fn M_FileExists(path: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
-    std::fs::File::open(path).is_ok() || path.is_dir()
+/// `EISDIR` failure; the platform decides (see
+/// [`Platform::exists`](crate::engine::platform::Platform::exists)).
+pub fn M_FileExists(path: &str) -> bool {
+    platform().exists(path)
 }
 
 /// The part of a fixed text buffer before its first NUL (all of it if
@@ -61,8 +69,8 @@ pub fn until_nul(buffer: &[u8]) -> &[u8] {
 /// Write `data` to the file `path`, creating or truncating it.
 ///
 /// Returns `false` if the file could not be written in full.
-pub fn M_WriteFile(path: impl AsRef<Path>, data: &[u8]) -> bool {
-    std::fs::write(path, data).is_ok()
+pub fn M_WriteFile(path: &str, data: &[u8]) -> bool {
+    platform().write_file(path, data)
 }
 
 /// Returns the path `"/tmp/<name>"`.
@@ -138,8 +146,8 @@ fn parse_digits(text: &[u8], radix: u32) -> Option<i32> {
 /// The upper-cased 8.3 base name of `path` as a NUL-padded lump name.
 ///
 /// Takes the part after the final directory separator, up to the first
-/// `.`. Names longer than 8 characters are truncated with a warning on
-/// stderr.
+/// `.`. Names longer than 8 characters are truncated with a logged
+/// warning.
 pub fn M_ExtractFileBase(path: &[u8]) -> [u8; 8] {
     let filename = path
         .rsplit(|&byte| byte == DIR_SEPARATOR)
@@ -154,7 +162,7 @@ pub fn M_ExtractFileBase(path: &[u8]) -> [u8; 8] {
         *dest = source.to_ascii_uppercase();
     }
     if base.len() > lump_name.len() {
-        eprintln!(
+        log::warn!(
             "Warning: Truncated '{}.????????' lump name to '{}'.",
             String::from_utf8_lossy(filename),
             String::from_utf8_lossy(&lump_name)
@@ -187,7 +195,7 @@ pub fn M_StringCopy(dest: &mut [u8], src: &[u8]) -> bool {
 #[macro_export]
 macro_rules! c_write {
     ($buf:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
-        let s = ::std::format!($fmt $(, $arg)*);
+        let s = $crate::engine::misc::format!($fmt $(, $arg)*);
         $crate::engine::misc::write_c_buf(&mut $buf, &s)
     }};
 }
@@ -200,7 +208,7 @@ macro_rules! c_write {
 #[macro_export]
 macro_rules! DEH_snprintf {
     ($buf:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {{
-        let s = ::std::format!($fmt $(, $arg)*);
+        let s = $crate::engine::misc::format!($fmt $(, $arg)*);
         $crate::engine::misc::write_c_buf(&mut $buf, &s)
     }};
 }
@@ -210,7 +218,7 @@ macro_rules! DEH_snprintf {
 #[macro_export]
 macro_rules! i_error {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::engine::interface::system::I_Error(&::std::format!($fmt $(, $arg)*))
+        $crate::engine::interface::system::I_Error(&$crate::engine::misc::format!($fmt $(, $arg)*))
     };
 }
 

@@ -21,7 +21,7 @@
 pub mod info;
 pub mod mus2midi;
 
-use std::ffi::c_void;
+use {alloc::format, core::ffi::c_void};
 
 use crate::types::Boolean;
 
@@ -182,13 +182,13 @@ impl SoundState {
     /// The C defaults: no channels allocated, volumes at 8, no music.
     pub const fn new() -> Self {
         Self {
-            channels: std::ptr::null_mut(),
+            channels: core::ptr::null_mut(),
             sfxVolume: 8,
             musicVolume: 8,
             snd_channels: 8,
             snd_SfxVolume: 8,
             mus_paused: 0,
-            mus_playing: std::ptr::null_mut(),
+            mus_playing: core::ptr::null_mut(),
         }
     }
 }
@@ -224,14 +224,14 @@ pub fn S_Init(sfx_volume: i32, music_volume: i32) {
 
         let snd_channels = SOUND.get().snd_channels;
         let channels = Z_Malloc(
-            (snd_channels as usize * std::mem::size_of::<channel_t>()) as i32,
+            (snd_channels as usize * core::mem::size_of::<channel_t>()) as i32,
             PU_STATIC,
-            std::ptr::null_mut(),
+            core::ptr::null_mut(),
         ) as *mut channel_t;
 
         for i in 0..snd_channels {
             channels.offset(i as isize).write(channel_t {
-                sfxinfo: std::ptr::null_mut(),
+                sfxinfo: core::ptr::null_mut(),
                 origin: None,
                 handle: 0,
             });
@@ -295,7 +295,7 @@ unsafe fn S_StopChannel(cnum: i32) {
             }
 
             (*c.sfxinfo).usefulness -= 1;
-            c.sfxinfo = std::ptr::null_mut();
+            c.sfxinfo = core::ptr::null_mut();
         }
     }
 }
@@ -813,8 +813,8 @@ pub fn S_StopMusic() {
         // function unregisters it, right before clearing `mus_playing`.
         unsafe { I_UnRegisterSong(m.handle) };
         W_ReleaseLumpNum(m.lumpnum);
-        m.data = std::ptr::null_mut();
-        SOUND.borrow_mut().mus_playing = std::ptr::null_mut();
+        m.data = core::ptr::null_mut();
+        SOUND.borrow_mut().mus_playing = core::ptr::null_mut();
     }
 }
 
@@ -859,13 +859,13 @@ mod tests {
         SfxInfo {
             name: [0; 9],
             priority,
-            link: std::ptr::null_mut(),
+            link: core::ptr::null_mut(),
             pitch: -1,
             volume: -1,
             usefulness: 1,
             lumpnum: -1,
             numchannels: -1,
-            driver_data: std::ptr::null_mut(),
+            driver_data: core::ptr::null_mut(),
         }
     }
 

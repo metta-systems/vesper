@@ -108,7 +108,7 @@ pub const NUMMOBJTYPES: usize = 137;
 
 use {
     crate::engine::{global::Global, math::fixed::FRACUNIT},
-    std::ops::Index,
+    core::ops::Index,
 };
 
 // Sprite name indices
@@ -15296,7 +15296,7 @@ mod tests {
     /// table entries they were made from.
     #[test]
     fn table_indices_name_their_entries() {
-        let zeroed_psprite: PspdefT = unsafe { std::mem::zeroed() };
+        let zeroed_psprite: PspdefT = unsafe { core::mem::zeroed() };
         assert!(zeroed_psprite.state.is_null());
         assert_eq!(StateNum::default(), StateNum::NULL);
         assert_eq!(StateNum::NULL.number(), S_NULL);

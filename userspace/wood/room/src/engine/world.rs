@@ -68,7 +68,7 @@ impl World {
             mobjs: Arena::new(),
             thinkers: Thinkers::new(),
             // SAFETY: an all-zero `PlayerT` is a valid empty player slot.
-            players: unsafe { std::mem::zeroed() },
+            players: unsafe { core::mem::zeroed() },
             leveltime: 0,
             session: Session::new(),
             random: PlayRandom::new(),

@@ -3,10 +3,12 @@
 //! System interface: zone memory allocation, error handling, exit hooks,
 //! startup banners, and DOS memory-dump emulation for compatibility.
 //!
-//! The entry points keep the original C names. The Rust implementations use libc for
-//! the original printf/malloc behaviour and `std::process` for the
-//! Linux-only Zenity error dialog (the C source has Win32 / macOS /
-//! DJGPP variants which this port intentionally drops).
+//! The entry points keep the original C names. Where the C source calls
+//! `printf`, `malloc`, `exit` and its error dialogs (Zenity on Linux, with
+//! Win32 / macOS / DJGPP variants), the port logs through the `log` crate,
+//! takes the zone from the global allocator (`alloc::alloc`), and asks the
+//! [`Platform`](crate::engine::platform::Platform) to quit and to show the
+//! error.
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
@@ -18,8 +20,10 @@ use {
             argv::{M_CheckParmWithArgs, M_ParmExists, argument, argument_count},
             atoi,
         },
+        platform::platform,
     },
-    std::{ffi::c_void, ptr},
+    alloc::boxed::Box,
+    core::{ffi::c_void, ptr},
 };
 
 use crate::{i_error, types::Boolean};
@@ -95,7 +99,8 @@ impl Default for SystemState {
 pub static SYSTEM: Global<SystemState> = Global::new(SystemState::new());
 
 /// Allocate zone memory, shrinking the requested size by 1 MiB at a
-/// time until `malloc` succeeds or the size drops below `min_ram`.
+/// time until the global allocator (C: `malloc`) succeeds or the size
+/// drops below `min_ram`.
 ///
 /// Writes the chosen size in bytes through `size` and returns a
 /// pointer to the freshly allocated block. If even `min_ram` cannot
@@ -120,9 +125,9 @@ fn AutoAllocMemory(size: &mut i32, mut default_ram: i32, min_ram: i32) -> *mut u
         *size = default_ram * 1024 * 1024;
         // `alloc` returns null on failure, as `malloc` did, so a smaller
         // size can be tried; 16 is malloc's alignment.
-        let layout = std::alloc::Layout::from_size_align(*size as usize, 16).unwrap();
+        let layout = core::alloc::Layout::from_size_align(*size as usize, 16).unwrap();
         // SAFETY: the layout is not zero-sized, as `default_ram` is positive.
-        zonemem = unsafe { std::alloc::alloc(layout) };
+        zonemem = unsafe { alloc::alloc::alloc(layout) };
 
         if zonemem.is_null() {
             default_ram -= 1;
@@ -171,27 +176,27 @@ pub fn I_ZoneBase(size: &mut i32) -> *mut u8 {
 
     let zonemem = AutoAllocMemory(size, default_ram, min_ram);
 
-    println!("zone memory: {zonemem:p}, {:x} allocated for zone", *size);
+    log::info!("zone memory: {zonemem:p}, {:x} allocated for zone", *size);
 
     zonemem
 }
 
-/// Print a banner string centred in a 70-character column (35 leading
-/// spaces minus half the message length), followed by a newline.
+/// Log a banner string centred in a 70-character column (35 leading
+/// spaces minus half the message length).
 /// Mirrors `I_PrintBanner` from `i_system.c`.
 pub fn I_PrintBanner(msg: &str) {
     let spaces = (35 - msg.len() as i32 / 2).max(0) as usize;
-    println!("{:spaces$}{msg}", "");
+    log::info!("{:spaces$}{msg}", "");
 }
 
-/// Print a 75-character horizontal divider made of `=` followed by a
-/// newline. Mirrors `I_PrintDivider` from `i_system.c`. Used by the
-/// startup banner and a few menu screens.
+/// Log a 75-character horizontal divider made of `=`. Mirrors
+/// `I_PrintDivider` from `i_system.c`. Used by the startup banner and a
+/// few menu screens.
 pub fn I_PrintDivider() {
-    println!("{}", "=".repeat(75));
+    log::info!("{}", "=".repeat(75));
 }
 
-/// The licence notice printed by [`I_PrintStartupBanner`].
+/// The licence notice logged by [`I_PrintStartupBanner`].
 const STARTUP_NOTICE: &str =
     " Room, like Doom Generic, is free software, covered by the GNU General Public
  License.  There is NO warranty; not even for MERCHANTABILITY or FITNESS
@@ -199,7 +204,7 @@ const STARTUP_NOTICE: &str =
  copies under certain conditions. See the source for more information.
 ";
 
-/// Print the startup banner: a divider, the game description centred
+/// Log the startup banner: a divider, the game description centred
 /// between dividers, and the GPL copyright notice. Mirrors
 /// `I_PrintStartupBanner` from `i_system.c`, but substitutes the
 /// project name (the C source pulls it from `PACKAGE_NAME`).
@@ -207,7 +212,7 @@ pub fn I_PrintStartupBanner(gamedescription: &str) {
     I_PrintDivider();
     I_PrintBanner(gamedescription);
     I_PrintDivider();
-    print!("{STARTUP_NOTICE}");
+    log::info!("{}", STARTUP_NOTICE.trim_end());
     I_PrintDivider();
 }
 
@@ -224,7 +229,7 @@ pub fn I_ConsoleStdout() -> i32 {
 /// Walk the `exit_funcs` list and invoke every registered callback.
 ///
 /// Unlike the C version this does **not** call `SDL_Quit` or
-/// `std::process::exit`: the C source only does so when `ORIGCODE` is
+/// `exit`: the C source only does so when `ORIGCODE` is
 /// defined. The caller is expected to terminate after `I_Quit`
 /// returns. Mirrors `I_Quit` from `i_system.c`.
 pub fn I_Quit() {
@@ -238,50 +243,12 @@ pub fn I_Quit() {
     }
 }
 
-/// Probe whether the Zenity GUI dialog binary is available on this
-/// system by invoking `/usr/bin/zenity --help`.
-fn ZenityAvailable() -> bool {
-    std::process::Command::new("/usr/bin/zenity")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Display `message` in a native error dialog using Zenity. Returns 1
-/// if Zenity launched successfully and exited cleanly, 0 otherwise.
-///
-/// Unlike the C source's `EscapeShellString` + `system()` approach,
-/// this implementation passes the message as an argv element to
-/// `std::process::Command`, so no shell-escaping is required.
-fn ZenityErrorBox(message: &str) -> i32 {
-    if !ZenityAvailable() {
-        return 0;
-    }
-
-    let status = std::process::Command::new("/usr/bin/zenity")
-        .arg("--error")
-        .arg("--text")
-        .arg(message)
-        .status();
-
-    match status {
-        Ok(s) => {
-            if s.success() {
-                1
-            } else {
-                0
-            }
-        }
-        Err(_) => 0,
-    }
-}
-
-/// Fatal error handler: prints `msg` to stderr, runs all
-/// `run_on_error` exit callbacks, optionally pops up a GUI dialog,
-/// then terminates with exit code -1. Never returns.
+/// Fatal error handler: logs `msg` as an error, runs all
+/// `run_on_error` exit callbacks, optionally shows it in the platform's
+/// [`error_box`](crate::engine::platform::Platform::error_box) (C: the
+/// Zenity dialog), then has the platform
+/// [`quit`](crate::engine::platform::Platform::quit) with exit code -1.
+/// Never returns.
 ///
 /// Recursive calls are detected (via `already_quitting`) and trigger
 /// only a warning print before continuing; this matches the safety net
@@ -297,11 +264,10 @@ pub fn I_Error(msg: &str) -> ! {
         (already_quitting, system.exit_funcs)
     };
     if already_quitting {
-        eprintln!("Warning: recursive call to I_Error detected.");
+        log::warn!("Warning: recursive call to I_Error detected.");
     }
 
-    eprintln!("{msg}");
-    eprintln!();
+    log::error!("{msg}");
 
     unsafe {
         while !entry.is_null() {
@@ -310,16 +276,14 @@ pub fn I_Error(msg: &str) -> ! {
             }
             entry = (*entry).next;
         }
-
-        let exit_gui_popup = !M_ParmExists("-nogui");
-        if exit_gui_popup && I_ConsoleStdout() == 0 {
-            ZenityErrorBox(msg);
-        }
-
-        // C `exit` flushes stdio; `process::exit` skips Rust's stdout buffer.
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        std::process::exit(-1);
     }
+
+    let exit_gui_popup = !M_ParmExists("-nogui");
+    if exit_gui_popup && I_ConsoleStdout() == 0 {
+        platform().error_box(msg);
+    }
+
+    platform().quit(-1)
 }
 
 /// Length, in bytes, of the simulated low-memory dump exposed via

@@ -12,7 +12,8 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 use {
-    std::{mem::size_of, ptr},
+    alloc::{format, string::String, vec::Vec},
+    core::{mem::size_of, ptr},
     zerocopy::{IntoBytes, little_endian::U16},
 };
 
@@ -151,7 +152,7 @@ unsafe fn destination_screen<'a>(render: &Render2dState) -> &'a mut [u8] {
     // SAFETY: `V_UseBuffer` / `V_RestoreBuffer` record a buffer writable
     // for `dest_screen_length` bytes that outlives its use as destination;
     // the caller rules out other references into it.
-    unsafe { std::slice::from_raw_parts_mut(render.dest_screen, render.dest_screen_length) }
+    unsafe { core::slice::from_raw_parts_mut(render.dest_screen, render.dest_screen_length) }
 }
 
 /// Write one post's `pixels` into column `screen_x` of `screen` (rows
@@ -250,7 +251,7 @@ pub fn draw_column_to_video_buffer(x: i32, column: Column<'_>) {
     // SAFETY: `I_InitGraphics` allocates the video buffer as one screen,
     // and no other reference into it is live while this column is drawn.
     let screen =
-        unsafe { std::slice::from_raw_parts_mut(video, (SCREENWIDTH * SCREENHEIGHT) as usize) };
+        unsafe { core::slice::from_raw_parts_mut(video, (SCREENWIDTH * SCREENHEIGHT) as usize) };
     for post in column {
         draw_post(
             screen,
@@ -528,7 +529,7 @@ fn screenshot_filename(i: i32) -> String {
 pub fn V_ScreenShot() {
     let mut i = 0;
     while i <= 99 {
-        if !M_FileExists(screenshot_filename(i)) {
+        if !M_FileExists(&screenshot_filename(i)) {
             break;
         }
         i += 1;
@@ -542,8 +543,8 @@ pub fn V_ScreenShot() {
     // 768-byte palette; both outlive the call.
     let (screen, palette) = unsafe {
         (
-            std::slice::from_raw_parts(video_buffer(), (SCREENWIDTH * SCREENHEIGHT) as usize),
-            std::slice::from_raw_parts(W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *const u8, 768),
+            core::slice::from_raw_parts(video_buffer(), (SCREENWIDTH * SCREENHEIGHT) as usize),
+            core::slice::from_raw_parts(W_CacheLumpName(b"PLAYPAL", PU_CACHE) as *const u8, 768),
         )
     };
     WritePCXfile(

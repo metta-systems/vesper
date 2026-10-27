@@ -13,7 +13,7 @@
 // style; it is not yet split into blocks.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::{ffi::c_void, ptr};
+use core::{ffi::c_void, ptr};
 
 use crate::i_error;
 
@@ -44,7 +44,7 @@ const ZONEID: u32 = 0x1d4a11;
 const MINFRAGMENT: i32 = 64;
 /// Allocation alignment (pointer size, matching `MEM_ALIGN` in
 /// `z_zone.c`). Sizes passed to `Z_Malloc` are rounded up to this.
-const MEM_ALIGN: usize = std::mem::size_of::<*mut ()>();
+const MEM_ALIGN: usize = core::mem::size_of::<*mut ()>();
 
 /// Header that precedes every Zone allocation in memory. Matches
 /// `memblock_t` in `z_zone.c`; the `id` field carries `ZONEID` so
@@ -120,7 +120,7 @@ use crate::engine::{global::Global, interface::system::I_ZoneBase};
 /// - No outstanding pointers into `zone` may exist; this overwrites the
 ///   entire allocator state.
 unsafe fn Z_ClearZone(zone: *mut memzone_t) {
-    let block = (zone as *mut u8).add(std::mem::size_of::<memzone_t>()) as *mut memblock_t;
+    let block = (zone as *mut u8).add(core::mem::size_of::<memzone_t>()) as *mut memblock_t;
 
     (*zone).blocklist.next = block;
     (*zone).blocklist.prev = block;
@@ -131,7 +131,7 @@ unsafe fn Z_ClearZone(zone: *mut memzone_t) {
     (*block).prev = &mut (*zone).blocklist;
     (*block).next = &mut (*zone).blocklist;
     (*block).tag = PU_FREE;
-    (*block).size = (*zone).size - std::mem::size_of::<memzone_t>() as i32;
+    (*block).size = (*zone).size - core::mem::size_of::<memzone_t>() as i32;
 }
 
 /// Serializes the unit tests that re-initialise the zone with [`Z_Init`].
@@ -166,7 +166,7 @@ pub unsafe fn Z_Init() {
 ///   `ZONEID`. Mismatches call `I_Error`.
 /// - `mainzone` must be initialised (`Z_Init` ran).
 pub unsafe fn Z_Free(ptr: *mut c_void) {
-    let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
+    let block = (ptr as *mut u8).sub(core::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
         i_error!("Z_Free: freed a pointer without ZONEID");
@@ -234,7 +234,7 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
         panic!("Z_Malloc: mainzone is null!");
     }
     let size = (size + MEM_ALIGN as i32 - 1) & !(MEM_ALIGN as i32 - 1);
-    let size = size + std::mem::size_of::<memblock_t>() as i32;
+    let size = size + core::mem::size_of::<memblock_t>() as i32;
 
     let mut base = (*mainzone).rover;
     if base.is_null() {
@@ -267,7 +267,7 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
             } else {
                 base = (*base).prev;
                 let rover_ptr = rover as *mut u8;
-                Z_Free(rover_ptr.add(std::mem::size_of::<memblock_t>()) as *mut c_void);
+                Z_Free(rover_ptr.add(core::mem::size_of::<memblock_t>()) as *mut c_void);
                 base = (*base).next;
                 rover = (*base).next;
             }
@@ -301,13 +301,13 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
     (*base).user = user as *mut *mut c_void;
     (*base).tag = tag;
 
-    let result = (base as *mut u8).add(std::mem::size_of::<memblock_t>()) as *mut c_void;
+    let result = (base as *mut u8).add(core::mem::size_of::<memblock_t>()) as *mut c_void;
 
     // Zero the user data area using a byte-by-byte loop to avoid
     // memset writing past the end into the next block header.
     // (ptr::write_bytes / memset may use SIMD that overshoots on
     //  non-aligned sizes under ASan instrumentation.)
-    let user_size = size - std::mem::size_of::<memblock_t>() as i32;
+    let user_size = size - core::mem::size_of::<memblock_t>() as i32;
     let result_bytes = result as *mut u8;
     for i in 0..user_size as usize {
         *result_bytes.add(i) = 0;
@@ -327,7 +327,7 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
 /// whose tag falls in `[lowtag, hightag]`. Called during level shutdown
 /// to mass-release `PU_LEVEL` allocations.
 ///
-/// The Rust port adds a 2000-block walk cap and stderr trace
+/// The Rust port adds a 2000-block walk cap and a debug log
 /// (`[Z_FreeTags] ...`) not present in the C original; useful for
 /// catching list corruption when porting bugs creep in.
 ///
@@ -337,7 +337,7 @@ pub unsafe fn Z_Malloc(size: i32, tag: i32, user: *mut c_void) -> *mut c_void {
 ///   it is skipped by the tag-range check).
 pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
     let zone = main_zone();
-    let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
+    let sentinel = core::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
     let mut freed = 0;
     let mut walked = 0;
@@ -348,20 +348,23 @@ pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
 
         if (*block).tag != PU_FREE && (*block).tag >= lowtag && (*block).tag <= hightag {
             let block_ptr = block as *mut u8;
-            Z_Free(block_ptr.add(std::mem::size_of::<memblock_t>()) as *mut c_void);
+            Z_Free(block_ptr.add(core::mem::size_of::<memblock_t>()) as *mut c_void);
             freed += 1;
         }
 
         block = next;
     }
-    eprintln!(
+    log::debug!(
         "[Z_FreeTags] lowtag={} hightag={} walked={} freed={}",
-        lowtag, hightag, walked, freed
+        lowtag,
+        hightag,
+        walked,
+        freed
     );
 }
 
 /// `void Z_DumpHeap(int lowtag, int hightag)` — diagnostic dump of the
-/// Zone to stdout. Reports zone size/location, the tag range, and every
+/// Zone to the log. Reports zone size/location, the tag range, and every
 /// block whose tag is in `[lowtag, hightag]`, plus inline `ERROR:` lines
 /// for invariant violations (size/next mismatch, broken back link,
 /// consecutive free blocks).
@@ -370,15 +373,15 @@ pub unsafe fn Z_FreeTags(lowtag: i32, hightag: i32) {
 /// `mainzone` must be initialised.
 pub unsafe fn Z_DumpHeap(lowtag: i32, hightag: i32) {
     let zone = main_zone();
-    let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
+    let sentinel = core::ptr::addr_of_mut!((*zone).blocklist);
 
-    println!("zone size: {}  location: {:p}", (*zone).size, zone);
-    println!("tag range: {lowtag} to {hightag}");
+    log::info!("zone size: {}  location: {:p}", (*zone).size, zone);
+    log::info!("tag range: {lowtag} to {hightag}");
 
     let mut block = (*zone).blocklist.next;
     loop {
         if (*block).tag >= lowtag && (*block).tag <= hightag {
-            println!(
+            log::info!(
                 "block:{:p}    size:{:7}    user:{:p}    tag:{:3}",
                 block,
                 (*block).size,
@@ -392,15 +395,15 @@ pub unsafe fn Z_DumpHeap(lowtag: i32, hightag: i32) {
         }
 
         if (block as *mut u8).add((*block).size as usize) != (*block).next as *mut u8 {
-            println!("ERROR: block size does not touch the next block");
+            log::info!("ERROR: block size does not touch the next block");
         }
 
         if (*(*block).next).prev != block {
-            println!("ERROR: next block doesn't have proper back link");
+            log::info!("ERROR: next block doesn't have proper back link");
         }
 
         if (*block).tag == PU_FREE && (*(*block).next).tag == PU_FREE {
-            println!("ERROR: two consecutive free blocks");
+            log::info!("ERROR: two consecutive free blocks");
         }
 
         block = (*block).next;
@@ -412,7 +415,7 @@ pub unsafe fn Z_DumpHeap(lowtag: i32, hightag: i32) {
 /// back link, consecutive free blocks).
 ///
 /// First defers to `Z_CheckHeapQuiet` for a non-fatal pre-pass so that
-/// stderr diagnostics show up before the abort.
+/// logged diagnostics show up before the abort.
 ///
 /// # Safety
 /// - `mainzone` must be initialised. May call `I_Error` (does not
@@ -422,7 +425,7 @@ pub unsafe fn Z_CheckHeap() {
         // Already printed diagnostic info.
     }
     let zone = main_zone();
-    let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
+    let sentinel = core::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
 
     loop {
@@ -431,7 +434,7 @@ pub unsafe fn Z_CheckHeap() {
         }
 
         if (block as *mut u8).add((*block).size as usize) != (*block).next as *mut u8 {
-            eprintln!(
+            log::error!(
                 "Z_CheckHeap FAIL: block {:?} size={} next={:?} expected_next={:?}",
                 block,
                 (*block).size,
@@ -442,7 +445,7 @@ pub unsafe fn Z_CheckHeap() {
         }
 
         if (*(*block).next).prev != block {
-            eprintln!(
+            log::error!(
                 "Z_CheckHeap FAIL: block {:?} next={:?} next.prev={:?}",
                 block,
                 (*block).next,
@@ -474,7 +477,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
     if zone.is_null() {
         return true;
     }
-    let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
+    let sentinel = core::ptr::addr_of_mut!((*zone).blocklist);
     let mut block = (*zone).blocklist.next;
     let mut valid = true;
     let mut count = 0;
@@ -482,9 +485,10 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
     while block != sentinel && count < 2000 {
         let size = (*block).size;
         if size <= 0 || size > 10_000_000 {
-            eprintln!(
+            log::error!(
                 "Z_CheckHeapQuiet: block {:?} has invalid size {}",
-                block, size
+                block,
+                size
             );
             valid = false;
             break;
@@ -495,7 +499,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
         if (*block).next != sentinel {
             let expected_next = (block as *mut u8).add(size as usize) as *mut memblock_t;
             if (*block).next != expected_next {
-                eprintln!(
+                log::error!(
                     "Z_CheckHeapQuiet: block {:?} size={} next={:?} expected={:?}",
                     block,
                     size,
@@ -508,7 +512,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
 
         // Check prev link (works for all blocks including the last one whose next is sentinel)
         if !(*block).next.is_null() && (*(*block).next).prev != block {
-            eprintln!(
+            log::error!(
                 "Z_CheckHeapQuiet: block {:?} next={:?} next.prev={:?}",
                 block,
                 (*block).next,
@@ -519,7 +523,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
 
         // Check for consecutive free blocks (sentinel has tag=PU_STATIC, so skip it)
         if (*block).tag == PU_FREE && (*block).next != sentinel && (*(*block).next).tag == PU_FREE {
-            eprintln!(
+            log::error!(
                 "Z_CheckHeapQuiet: two consecutive free blocks at {:?} and {:?}",
                 block,
                 (*block).next
@@ -531,7 +535,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
         count += 1;
     }
     if count >= 2000 {
-        eprintln!("Z_CheckHeapQuiet: too many blocks, possible loop!");
+        log::error!("Z_CheckHeapQuiet: too many blocks, possible loop!");
         valid = false;
     }
     valid
@@ -546,7 +550,7 @@ pub unsafe fn Z_CheckHeapQuiet() -> bool {
 ///   (nothing to check) but otherwise the list must be quiescent.
 pub unsafe fn Z_CheckHeapAfter(name: &str) {
     if !Z_CheckHeapQuiet() {
-        eprintln!("*** Heap corruption detected after {} ***", name);
+        log::error!("*** Heap corruption detected after {} ***", name);
     }
 }
 
@@ -562,7 +566,7 @@ pub unsafe fn Z_CheckHeapAfter(name: &str) {
 /// `ptr` must be a live `Z_Malloc` return value (header must carry
 /// `ZONEID`); otherwise `I_Error` is called.
 pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: i32) {
-    let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
+    let block = (ptr as *mut u8).sub(core::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
         i_error!("Z_ChangeTag: block without a ZONEID!");
@@ -585,7 +589,7 @@ pub unsafe fn Z_ChangeTag2(ptr: *mut c_void, tag: i32) {
 /// - `user` must be a writable `*mut *mut c_void` whose storage will
 ///   outlive the block.
 pub unsafe fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
-    let block = (ptr as *mut u8).sub(std::mem::size_of::<memblock_t>()) as *mut memblock_t;
+    let block = (ptr as *mut u8).sub(core::mem::size_of::<memblock_t>()) as *mut memblock_t;
 
     if (*block).id as u32 != ZONEID {
         i_error!("Z_ChangeUser: Tried to change user for invalid block!");
@@ -604,7 +608,7 @@ pub unsafe fn Z_ChangeUser(ptr: *mut c_void, user: *mut *mut c_void) {
 /// - `mainzone` must be initialised.
 pub unsafe fn Z_FreeMemory() -> i32 {
     let zone = main_zone();
-    let sentinel = std::ptr::addr_of_mut!((*zone).blocklist);
+    let sentinel = core::ptr::addr_of_mut!((*zone).blocklist);
     let mut free: i32 = 0;
     let mut block = (*zone).blocklist.next;
 

@@ -25,7 +25,12 @@
 
 use {
     crate::{engine::global::Global, i_error},
-    std::{borrow::Cow, ffi::c_void, ptr},
+    alloc::{
+        borrow::{Cow, ToOwned},
+        format,
+        string::{String, ToString},
+    },
+    core::{ffi::c_void, ptr},
 };
 
 /// Type tag for a configuration variable.
@@ -142,7 +147,7 @@ impl ConfigState {
     }
 }
 
-impl std::default::Default for ConfigState {
+impl core::default::Default for ConfigState {
     fn default() -> Self {
         Self::new()
     }
@@ -692,8 +697,8 @@ pub fn M_SaveDefaultsAlternate(main: &str, extra: &str) {
     let (orig_main, orig_extra) = {
         let mut config = CONFIG.borrow_mut();
         (
-            std::mem::replace(&mut config.doom_defaults.filename, main.to_owned()),
-            std::mem::replace(&mut config.extra_defaults.filename, extra.to_owned()),
+            core::mem::replace(&mut config.doom_defaults.filename, main.to_owned()),
+            core::mem::replace(&mut config.extra_defaults.filename, extra.to_owned()),
         )
     };
     M_SaveDefaults();
@@ -717,18 +722,18 @@ pub fn M_LoadDefaults() {
     let i = M_CheckParmWithArgs("-config", 1);
     if i != 0 {
         config.doom_defaults.filename = argument(i + 1).to_owned();
-        println!("\tdefault file: {}", config.doom_defaults.filename);
+        log::info!("\tdefault file: {}", config.doom_defaults.filename);
     } else {
         config.doom_defaults.filename =
             format!("{}{}", config.configdir, config.default_main_config);
     }
 
-    println!("saving config in {}", config.doom_defaults.filename);
+    log::info!("saving config in {}", config.doom_defaults.filename);
 
     let i = M_CheckParmWithArgs("-extraconfig", 1);
     if i != 0 {
         config.extra_defaults.filename = argument(i + 1).to_owned();
-        println!(
+        log::info!(
             "        extra configuration file: {}",
             config.extra_defaults.filename
         );
@@ -822,7 +827,7 @@ const DEFAULT_CONFIG_DIR: &str = ".";
 /// Set the global `configdir` and create the directory if needed.
 ///
 /// `None` falls back to [`DEFAULT_CONFIG_DIR`]. A non-empty path is
-/// echoed to the console. The path is created (recursive parents are NOT
+/// logged. The path is created (recursive parents are NOT
 /// created - matches C semantics) via [`M_MakeDirectory`]. Mirrors C
 /// `M_SetConfigDir`.
 pub fn M_SetConfigDir(dir: Option<&str>) {
@@ -830,7 +835,7 @@ pub fn M_SetConfigDir(dir: Option<&str>) {
     CONFIG.borrow_mut().configdir = configdir.clone();
 
     if !configdir.is_empty() {
-        println!("Using {configdir} for configuration and saves");
+        log::info!("Using {configdir} for configuration and saves");
     }
 
     M_MakeDirectory(&configdir);
@@ -849,7 +854,7 @@ pub fn M_GetSaveGameDir(_iwadname: &str) -> String {
     }
     let savegamedir = format!("{configdir}/.savegame/");
     M_MakeDirectory(&savegamedir);
-    println!("Using {savegamedir} for savegames");
+    log::info!("Using {savegamedir} for savegames");
     savegamedir
 }
 

@@ -32,6 +32,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
+use alloc::vec::Vec;
+
 use crate::{
     engine::{
         doom::player::NUMCARDS,
@@ -541,7 +543,7 @@ pub fn STlib_updateBinIcon(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, std::ptr};
+    use {super::*, core::ptr};
 
     /// Each patch set names its own table in the status graphics, and each
     /// arms slot its own pair.

@@ -17,6 +17,8 @@ const MIDI_TEMPO: u32 = 500_000; // µs per beat (120 BPM) — yields 140 ticks/
 /// Hz, i.e. one MIDI tick equals one MUS tick.
 const MIDI_PPQ: u16 = 70; // ticks per beat; 1 tick = 1 MUS tick (1/140 s)
 
+use alloc::vec::Vec;
+
 /// Map a MUS channel number to its MIDI counterpart.
 ///
 /// MUS reserves channel 15 for percussion, which maps to MIDI channel 9

@@ -17,6 +17,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
+use alloc::{borrow::ToOwned, format, string::String};
+
 use crate::{
     engine::{
         doom,
@@ -179,7 +181,7 @@ fn CheckDirectoryHasIWAD(dir: &str, iwadname: &str) -> Option<String> {
         format!("{dir}/{iwadname}")
     };
 
-    println!("Trying IWAD file:{filename}");
+    log::info!("Trying IWAD file:{filename}");
 
     M_FileExists(&filename).then_some(filename)
 }
@@ -279,7 +281,7 @@ pub fn D_FindIWAD(mask: i32, mission: &mut i32) -> Option<String> {
         *mission = IdentifyIWADByName(&result, mask);
         Some(result)
     } else {
-        println!("-iwad not specified, trying a few iwad names");
+        log::info!("-iwad not specified, trying a few iwad names");
 
         IWAD_DIRS
             .iter()

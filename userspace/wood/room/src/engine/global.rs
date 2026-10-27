@@ -12,13 +12,13 @@
 //! binds settings by pointer, status bar widgets point into `players`)
 //! takes it from [`Global::as_ptr`].
 
-use std::{
+use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
 };
 
 #[cfg(debug_assertions)]
-use std::sync::atomic::{AtomicIsize, Ordering};
+use core::sync::atomic::{AtomicIsize, Ordering};
 
 /// Debug-build borrow count: `n > 0` shared borrows, `-1` one mutable borrow.
 #[cfg(debug_assertions)]

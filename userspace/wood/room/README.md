@@ -26,6 +26,11 @@ The port was done **module-by-module**:
    pure Rust, built on [winit](https://github.com/rust-windowing/winit)
    and [wgpu](https://github.com/gfx-rs/wgpu).
 
+The engine library is `no_std` + `alloc`: it reaches the OS only through the
+`Platform` trait (`src/engine/platform.rs`: frames, input, time, sound,
+files, quit, the error dialog) and logs through the `log` crate, so it also
+builds for bare-metal targets such as Vesper.
+
 The `lib_sources` list in `doomgeneric-sys/build.rs` is now empty — all engine
 subsystems (`r_draw`, `p_setup`, `z_zone`, `g_game`, `d_main`, and every other
 module) are native Rust.
@@ -50,9 +55,10 @@ room/
     ├── lib.rs               The engine library
     ├── platform/
     │   ├── mod.rs           Platform selection
-    │   ├── std.txt          Engine functions that still need std
+    │   ├── std.txt          Why the engine needs no std (it is no_std + alloc)
     │   ├── host/            winit + wgpu + rodio
     │   │   ├── mod.rs       The `Platform` impl: video, input, timer, audio calls
+    │   │   ├── system.rs    Files, exit and the Zenity error dialog
     │   │   ├── app.rs       winit ApplicationHandler, run()
     │   │   ├── gpu.rs       wgpu renderer (texture upload + fullscreen blit)
     │   │   ├── keys.rs      winit KeyCode → Doom key byte mapping

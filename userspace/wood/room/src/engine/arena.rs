@@ -29,13 +29,23 @@
 //! while the arena lives, so [`Arena::address`] of an object stays the same
 //! while other objects are spawned and removed, as a C pointer does.
 
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-    num::NonZeroU32,
-    ops::{Index, IndexMut},
-    panic::Location,
+use {
+    alloc::vec::Vec,
+    core::{
+        cmp::Ordering,
+        fmt,
+        hash::{Hash, Hasher},
+        marker::PhantomData,
+        num::NonZeroU32,
+        ops::{Index, IndexMut},
+        panic::Location,
+    },
+};
+
+#[cfg(debug_assertions)]
+use core::{
+    cell::UnsafeCell,
+    sync::atomic::{self, AtomicBool},
 };
 
 /// Slots per chunk; a chunk is allocated when the previous ones are full.
@@ -72,6 +82,19 @@ impl<T> PartialEq for Handle<T> {
 }
 
 impl<T> Eq for Handle<T> {}
+
+/// Handles order by slot, then generation, so they can key a `BTreeMap`.
+impl<T> Ord for Handle<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.index, self.generation).cmp(&(other.index, other.generation))
+    }
+}
+
+impl<T> PartialOrd for Handle<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl<T> Hash for Handle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -206,7 +229,7 @@ impl<T: 'static> Arena<T> {
     /// intercepts overrun emulation). It stays the same while the arena
     /// lives; a slot reused after [`Arena::clear`] has its old address.
     pub fn address(&self, handle: Handle<T>) -> usize {
-        std::ptr::from_ref(&self.slot(handle.index).value).addr()
+        core::ptr::from_ref(&self.slot(handle.index).value).addr()
     }
 }
 
@@ -282,28 +305,72 @@ pub struct StaleAccess {
     pub count: u64,
 }
 
+/// The stale accesses recorded so far, one entry per site, behind a spin
+/// lock: `core` has no mutex, and unit tests on several threads read
+/// through stale handles at once.
+#[cfg(debug_assertions)]
+struct StaleAccessLog {
+    /// Set while a thread uses `accesses`.
+    locked: AtomicBool,
+    /// The recorded accesses.
+    accesses: UnsafeCell<Vec<StaleAccess>>,
+}
+
+// SAFETY: `accesses` is reached only through `StaleAccessLog::with`, which
+// holds `locked` meanwhile.
+#[cfg(debug_assertions)]
+unsafe impl Sync for StaleAccessLog {}
+
+#[cfg(debug_assertions)]
+impl StaleAccessLog {
+    /// Run `action` on the recorded accesses, holding the lock.
+    fn with<R>(&self, action: impl FnOnce(&mut Vec<StaleAccess>) -> R) -> R {
+        while self
+            .locked
+            .compare_exchange_weak(
+                false,
+                true,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        // SAFETY: the lock is held, so no other reference to `accesses` lives.
+        let result = action(unsafe { &mut *self.accesses.get() });
+        self.locked.store(false, atomic::Ordering::Release);
+        result
+    }
+}
+
 /// Stale accesses recorded so far, one entry per site.
 #[cfg(debug_assertions)]
-static STALE_ACCESSES: std::sync::Mutex<Vec<StaleAccess>> = std::sync::Mutex::new(Vec::new());
+static STALE_ACCESSES: StaleAccessLog = StaleAccessLog {
+    locked: AtomicBool::new(false),
+    accesses: UnsafeCell::new(Vec::new()),
+};
 
 /// Count a stale access at `site`, logging the first one there.
 #[cfg(debug_assertions)]
 #[cold]
 #[inline(never)]
 fn record_stale_access(site: &'static Location<'static>, kind: &'static str) {
-    let mut accesses = STALE_ACCESSES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(access) = accesses.iter_mut().find(|access| access.site == site) {
-        access.count += 1;
-        return;
-    }
-    eprintln!("stale {kind} handle read at {site}");
-    accesses.push(StaleAccess {
-        site,
-        kind,
-        count: 1,
+    let first_at_site = STALE_ACCESSES.with(|accesses| {
+        if let Some(access) = accesses.iter_mut().find(|access| access.site == site) {
+            access.count += 1;
+            return false;
+        }
+        accesses.push(StaleAccess {
+            site,
+            kind,
+            count: 1,
+        });
+        true
     });
+    if first_at_site {
+        log::warn!("stale {kind} handle read at {site}");
+    }
 }
 
 /// Every place that has read a freed object through a stale handle, with
@@ -311,10 +378,7 @@ fn record_stale_access(site: &'static Location<'static>, kind: &'static str) {
 pub fn stale_accesses() -> Vec<StaleAccess> {
     #[cfg(debug_assertions)]
     {
-        STALE_ACCESSES
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        STALE_ACCESSES.with(|accesses| accesses.clone())
     }
     #[cfg(not(debug_assertions))]
     {

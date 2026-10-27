@@ -505,7 +505,7 @@ pub fn EV_VerticalDoor(world: &mut World, line_id: LineId, thing: MobjId) {
                     {
                         world.thinkers.plats[plat].wait = -1;
                     } else {
-                        eprintln!("EV_VerticalDoor: Tried to close something that wasn't a door.");
+                        log::warn!("EV_VerticalDoor: Tried to close something that wasn't a door.");
                         set_special_door_direction(world, special, -1);
                     }
                 }

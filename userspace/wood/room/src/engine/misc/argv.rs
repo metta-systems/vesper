@@ -9,8 +9,11 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use {
-    crate::{engine::global::Global, i_error},
-    std::io::Read,
+    crate::{
+        engine::{global::Global, platform::platform},
+        i_error,
+    },
+    alloc::{boxed::Box, string::String, vec::Vec},
 };
 
 /// Command-line state (C `m_argv.c` globals).
@@ -132,22 +135,20 @@ fn response_file_arguments(contents: &[u8]) -> Option<Vec<String>> {
 /// Load a response file (`@filename` on the command line) and splice its
 /// arguments into `myargv` in place of the response-file argument.
 ///
-/// Behaviour mirrors `LoadResponseFile` in `m_argv.c`: a missing file is
-/// reported and skipped; a read failure or an unclosed quote raises an
+/// Behaviour mirrors `LoadResponseFile` in `m_argv.c`: a missing or
+/// unreadable file is reported and skipped; an unclosed quote raises an
 /// `I_Error`.
 fn LoadResponseFile(argv_index: i32) {
     let response_filename = &argument(argv_index)[1..];
 
-    let Ok(mut handle) = std::fs::File::open(response_filename) else {
-        print!("\nNo such response file!");
+    // A file that opens but cannot be read in full is reported as missing,
+    // where C raised "Failed to read full contents".
+    let Some(contents) = platform().read_file(response_filename) else {
+        log::warn!("No such response file!");
         return;
     };
-    println!("Found response file {response_filename}!");
+    log::info!("Found response file {response_filename}!");
 
-    let mut contents = Vec::new();
-    if handle.read_to_end(&mut contents).is_err() {
-        i_error!("Failed to read full contents of '{response_filename}'");
-    }
     let Some(file_arguments) = response_file_arguments(&contents) else {
         i_error!("Quotes unclosed in response file '{response_filename}'");
     };

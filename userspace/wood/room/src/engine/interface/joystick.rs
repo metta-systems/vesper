@@ -12,6 +12,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
+use alloc::format;
+
 use crate::engine::global::Global;
 
 /// Number of virtual joystick buttons exposed to the config system. Must

@@ -24,7 +24,7 @@
 // whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ptr;
+use {alloc::format, core::ptr};
 
 use crate::{
     c_write,
@@ -1523,7 +1523,7 @@ pub fn AM_Ticker(world: &World) {
 ///
 /// `fb` must point to a buffer of at least `f_w * f_h` bytes.
 unsafe fn AM_clearFB(automap: &AutomapState, color: i32) {
-    std::ptr::write_bytes(
+    core::ptr::write_bytes(
         automap.fb,
         color as u8,
         (automap.f_w * automap.f_h) as usize,

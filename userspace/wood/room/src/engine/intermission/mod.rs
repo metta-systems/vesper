@@ -28,6 +28,8 @@
 
 pub mod statdump;
 
+use alloc::{vec, vec::Vec};
+
 use crate::engine::sound::info::Sfx;
 
 use crate::{
@@ -858,7 +860,7 @@ fn WI_drawEL(wi: &IntermissionState) {
 /// Draw the patch array `c` centred on the `n`-th level node of the current episode map.
 ///
 /// Tries each frame in `c` (indices 0 then 1) and draws the first that fits
-/// within the screen bounds. If neither fits, prints a diagnostic to stdout.
+/// within the screen bounds. If neither fits, logs a warning.
 /// The node is looked up in `LNODES` for the episode of `wbs`.
 ///
 /// # Panics
@@ -891,7 +893,7 @@ fn WI_drawOnLnode(wbs: &wbstartstruct_t, n: i32, c: &[Option<Patch<'static>>]) {
     if fits && i < 2 {
         V_DrawPatch(node.x, node.y, loaded(c[i]));
     } else {
-        print!("Could not place patch on level {}", n + 1);
+        log::warn!("Could not place patch on level {}", n + 1);
     }
 }
 

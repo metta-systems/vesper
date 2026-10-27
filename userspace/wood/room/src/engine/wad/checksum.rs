@@ -13,6 +13,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
+use alloc::vec::Vec;
+
 use crate::engine::{
     misc::sha1::{
         SHA1_Final, SHA1_Init, SHA1_UpdateInt32, SHA1_UpdateString, SHA1Context, sha1_digest_t,
@@ -85,7 +87,7 @@ unsafe fn checksum_add_lump(
 /// `SHA1_DIGEST_SIZE` bytes. The global `lumpinfo` and `numlumps` must be
 /// initialised (i.e. `W_InitMultipleFiles` has run).
 pub unsafe fn W_Checksum(digest: *mut sha1_digest_t) {
-    let mut sha1_context = std::mem::MaybeUninit::<SHA1Context>::uninit();
+    let mut sha1_context = core::mem::MaybeUninit::<SHA1Context>::uninit();
     // SAFETY: `SHA1_Init` initialises the context in place.
     unsafe { SHA1_Init(sha1_context.as_mut_ptr()) };
 

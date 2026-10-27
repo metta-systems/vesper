@@ -18,7 +18,7 @@
 // `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ptr;
+use core::ptr;
 
 use crate::engine::{
     map::{LineId, NodeId, SectorId, SegId, SideId, SubsectorId},

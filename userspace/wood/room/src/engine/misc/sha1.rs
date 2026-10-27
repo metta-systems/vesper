@@ -342,7 +342,7 @@ pub unsafe fn SHA1_Update(hd: *mut SHA1Context, inbuf: *mut u8, inlen: usize) {
     } else {
         // SAFETY: a non-null `inbuf` holds `inlen` readable bytes apart from
         // `hd` (the caller's contract).
-        let slice = unsafe { std::slice::from_raw_parts(inbuf, inlen) };
+        let slice = unsafe { core::slice::from_raw_parts(inbuf, inlen) };
         sha1_update(hd, Some(slice));
     }
 }
@@ -438,7 +438,7 @@ pub unsafe fn SHA1_Final(digest: *mut u8, hd: *mut SHA1Context) {
 
     // SAFETY: `digest` holds 20 writable bytes apart from `hd` (the caller's
     // contract).
-    unsafe { std::ptr::copy_nonoverlapping(hd.buf.as_ptr(), digest, 20) };
+    unsafe { core::ptr::copy_nonoverlapping(hd.buf.as_ptr(), digest, 20) };
 }
 
 /// Feeds a `u32` value into `context` in big-endian byte order.
@@ -493,7 +493,7 @@ mod tests {
     /// Zeroing first guarantees the staging `buf` is in a known state, which
     /// matters because `SHA1_Init` deliberately leaves it untouched.
     fn make_ctx() -> SHA1Context {
-        let mut ctx: SHA1Context = unsafe { std::mem::zeroed() };
+        let mut ctx: SHA1Context = unsafe { core::mem::zeroed() };
         unsafe { SHA1_Init(&mut ctx) };
         ctx
     }

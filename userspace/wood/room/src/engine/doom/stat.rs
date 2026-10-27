@@ -15,6 +15,8 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
+use alloc::string::String;
+
 use crate::{
     engine::{doom, global::Global},
     types::Boolean,
