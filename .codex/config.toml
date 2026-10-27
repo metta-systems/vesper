@@ -2,5 +2,5 @@
 command = "rust-mcp-filesystem"
 args = [
     "--allow-write",
-    "/Users/berkus/Projects/Metta/vesper",
+    "/home/berkus/Projects/Metta/vesper",
 ]
