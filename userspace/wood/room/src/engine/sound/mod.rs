@@ -19,6 +19,7 @@
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
 
 pub mod info;
+pub mod mixer;
 pub mod mus2midi;
 
 use {alloc::format, core::ffi::c_void};

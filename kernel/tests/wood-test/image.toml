@@ -2,7 +2,38 @@
 # does (the DWC2 host controller component, the USB core, the USB HID component,
 # the mailbox and fb components, the PL011 driver, the compositor, the shell's
 # lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
-# a window of its own, with the shareware IWAD as its resource.
+# a window of its own, with the shareware IWAD as its resource, and the drivers
+# of audio-test (the gpio component, the clock manager, the DMA controller and
+# the PWM audio driver) for Wood's sound effects.
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+# The clock manager, which sets the PWM clock for the audio driver.
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component: the audio driver claims a channel for its ring
+# (on the board) or its capture copies (under QEMU) through dma_v1.
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../../drivers/dma-bcm2835/interfaces"
+
+# The PWM audio driver, loaded for the `brcm,bcm2835-pwm` node, which only the
+# test tree (`just test-wood`) or the board's `pwm-2chan` overlay enable. Wood's
+# playback Thread is its client. The compositor holds the PL011's serial
+# channel, so the driver's trace shows on the semihosting console under QEMU
+# only.
+[[driver]]
+name = "audio"
+binary = "audio-pwm-bcm2835"
+interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
 
 [[driver]]
 name = "mailbox"

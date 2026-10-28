@@ -508,7 +508,12 @@ fn play(trace: &mut Trace, ring_pages: &DmaPages, output: &mut Output<'_>) {
             break;
         };
         for period in playback.ring.finished()..finished {
-            output.played(period, playback.contents[playback.ring.slot(period)]);
+            output.played(
+                trace,
+                ring_pages,
+                period,
+                playback.contents[playback.ring.slot(period)],
+            );
         }
         let refill = playback.ring.advance(finished);
         late += refill.late;
@@ -725,7 +730,14 @@ mod board {
 
         /// The DMA finished `period`: nothing to check on the board.
         #[expect(clippy::unused_self, reason = "the same calls as the capture's")]
-        pub fn played(&self, _period: u64, _content: super::Content) {}
+        pub fn played(
+            &self,
+            _trace: &mut Trace,
+            _ring: &DmaPages,
+            _period: u64,
+            _content: super::Content,
+        ) {
+        }
 
         /// The ring runs on by itself.
         #[expect(clippy::unused_self, reason = "the same calls as the capture's")]
@@ -790,7 +802,10 @@ mod emulated {
         audio_pwm_bcm2835::{
             MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ, PWM_DREQ, RANGE,
             sample_rate_millihertz,
-            stream::{expected_stream_period, ramp_down, ramp_up},
+            stream::{
+                expected_stream_period, is_audible, ramp_down, ramp_up, silent_frame,
+                starts_with_test_pattern,
+            },
         },
         libdevice_driver::DriverInit,
         libobject::EventCountKey,
@@ -1004,9 +1019,22 @@ mod emulated {
         ramp_up: u64,
         stream: u64,
         silent: u64,
+        /// Stream periods with a client frame that is not silence
+        audible: u64,
         client_frames: u64,
         ramp_down: u64,
         off: u64,
+    }
+
+    /// What the stream periods of a stream are checked against.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum StreamCheck {
+        /// The capture test's pattern, converted: the stream started with
+        /// it (`starts_with_test_pattern`)
+        Pattern,
+        /// What the stream filled the period with: any other client's
+        /// sound
+        AsFilled,
     }
 
     /// The output under QEMU: QEMU runs a DMA chain inside the write that
@@ -1015,9 +1043,12 @@ mod emulated {
     /// slot of a capture buffer, paced by the period's length; each copy's
     /// completion is the `EventCount` advance a period of the ring makes on
     /// the board. The captured words are checked against what the period
-    /// was filled with, and a period of the stream against the capture
-    /// test's pattern (`test_pattern`): the samples arrive converted, in
-    /// order, with silence where the client sent none.
+    /// was filled with: the ramps and silence as computed here, and a
+    /// period of the stream, when the stream started with the capture
+    /// test's pattern (`test_pattern`), against the pattern converted (the
+    /// samples arrive converted, in order, with silence where the client
+    /// sent none), and otherwise against the ring slot the copy came from,
+    /// counting the periods that are not silent.
     pub struct Capture<'dma> {
         dma: &'dma dma_v1::Client,
         channel: u32,
@@ -1028,6 +1059,8 @@ mod emulated {
         /// When period 0's copy started
         started_ns: u64,
         tally: Tally,
+        /// Decided at the stream's first period with client frames
+        check: Option<StreamCheck>,
     }
 
     /// Nanoseconds of one period at the output rate.
@@ -1052,6 +1085,7 @@ mod emulated {
                     base: 0,
                     started_ns: 0,
                     tally: Tally::default(),
+                    check: None,
                 },
                 next_slot,
             )
@@ -1077,6 +1111,7 @@ mod emulated {
                 panic!("audio: reading the DMA EventCount: {:?}", error.code())
             });
             self.tally = Tally::default();
+            self.check = None;
             self.started_ns = libuser::clock::now_ns();
             self.copy(ring, 0);
         }
@@ -1093,8 +1128,14 @@ mod emulated {
         }
 
         /// Check the capture of `period` against `content`, what its slot
-        /// was filled with.
-        pub fn played(&mut self, period: u64, content: Content) {
+        /// of `ring` was filled with.
+        pub fn played(
+            &mut self,
+            trace: &mut Trace,
+            ring: &DmaPages,
+            period: u64,
+            content: Content,
+        ) {
             let slot = usize::try_from(period % PERIODS as u64).expect("a slot");
             self.pages.discard(slot, 0, PERIOD_BYTES as u64);
             let mut expected = [[0_u32; 2]; PERIOD_FRAMES];
@@ -1104,11 +1145,42 @@ mod emulated {
                     self.tally.ramp_up += 1;
                 }
                 Content::Stream { first, frames } => {
-                    expected_stream_period(&mut expected, first, frames, RANGE);
+                    let filled = ring.frames(slot);
+                    if self.check.is_none() && frames > 0 {
+                        self.check = Some(
+                            if first == 0 && starts_with_test_pattern(filled, frames, RANGE) {
+                                StreamCheck::Pattern
+                            } else {
+                                StreamCheck::AsFilled
+                            },
+                        );
+                    }
+                    if self.check == Some(StreamCheck::Pattern) {
+                        expected_stream_period(&mut expected, first, frames, RANGE);
+                    } else {
+                        // The client's frames as the stream converted them,
+                        // then silence.
+                        let client_frames = frames.min(PERIOD_FRAMES);
+                        expected[..client_frames].copy_from_slice(&filled[..client_frames]);
+                        expected[client_frames..].fill(silent_frame(RANGE));
+                    }
                     self.tally.stream += 1;
                     self.tally.client_frames += frames as u64;
                     if frames < PERIOD_FRAMES {
                         self.tally.silent += 1;
+                    }
+                    if is_audible(&expected[..frames.min(PERIOD_FRAMES)], RANGE) {
+                        self.tally.audible += 1;
+                        if self.check == Some(StreamCheck::AsFilled)
+                            && self.tally.audible.is_power_of_two()
+                        {
+                            trace!(
+                                trace,
+                                "audio: capture: {} audible stream periods of {}",
+                                self.tally.audible,
+                                self.tally.stream
+                            );
+                        }
                     }
                 }
                 Content::RampDown { from } => {
@@ -1141,17 +1213,31 @@ mod emulated {
 
         pub fn stop(&mut self, trace: &mut Trace) {
             let tally = self.tally;
-            trace!(
-                trace,
-                "audio: capture checked: {} ramp up, {} stream periods with {} client frames of the pattern in order, {} of them silent at the end, {} ramp down, {} off; DMA errors {:#x}",
-                tally.ramp_up,
-                tally.stream,
-                tally.client_frames,
-                tally.silent,
-                tally.ramp_down,
-                tally.off,
-                self.dma.errors(self.channel).unwrap_or(u32::MAX)
-            );
+            let dma_errors = self.dma.errors(self.channel).unwrap_or(u32::MAX);
+            if self.check == Some(StreamCheck::Pattern) {
+                trace!(
+                    trace,
+                    "audio: capture checked: {} ramp up, {} stream periods with {} client frames of the pattern in order, {} of them silent at the end, {} ramp down, {} off; DMA errors {dma_errors:#x}",
+                    tally.ramp_up,
+                    tally.stream,
+                    tally.client_frames,
+                    tally.silent,
+                    tally.ramp_down,
+                    tally.off,
+                );
+            } else {
+                trace!(
+                    trace,
+                    "audio: capture checked: {} ramp up, {} stream periods with {} client frames as filled, {} audible, {} of them silent at the end, {} ramp down, {} off; DMA errors {dma_errors:#x}",
+                    tally.ramp_up,
+                    tally.stream,
+                    tally.client_frames,
+                    tally.audible,
+                    tally.silent,
+                    tally.ramp_down,
+                    tally.off,
+                );
+            }
         }
     }
 }

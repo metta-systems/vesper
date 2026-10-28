@@ -1,9 +1,10 @@
 # Audio design (Raspberry Pi 3, PWM jack output with DMA)
 
 Status: D1 to D8 answered 2026-10-27 (section Decisions below); stages A1 (the `cprman`
-driver with `clock_v1`), A2 (the `dma` driver with `dma_v1`) and A3 (the audio driver
-serving `audio_v1` from a DMA ring, with a test client) are built and checked in QEMU,
-their hardware checks are pending. The one open decision (D9, music) is in
+driver with `clock_v1`), A2 (the `dma` driver with `dma_v1`), A3 (the audio driver
+serving `audio_v1` from a DMA ring, with a test client) and A4 (Wood's sound effects,
+mixed by Room's mixer on a playback Thread) are built and checked in QEMU, their
+hardware checks are pending. The one open decision (D9, music) is in
 [audio-decisions.md](audio-decisions.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
 drafts until written; once written they are prototypes and are edited in place.
@@ -258,9 +259,13 @@ without an interrupt.
 - Eight logical channels (`Platform::sound_start(lump, channel 0..8, vol 0..=127, sep 0..=254)`,
   `sound_stop`, `sound_update`, `sound_is_playing` in
   `userspace/wood/room/src/engine/platform.rs`). Pan law from `gains_from`:
-  `left = vol·(254 − sep)/(127·254)`, `right = vol·sep/(127·254)`. (The platform comment
-  says 128 is centred, `gains_from` uses 127; a room detail to settle when the mixer is
-  ported.)
+  `left = vol·(254 − sep)/(127·254)`, `right = vol·sep/(127·254)`. Settled in A4: the
+  engine centres a sound at 128 (`NORM_SEP` of `s_sound.c`, `128 − swing·sin`, 32 to
+  224); the law, Chocolate Doom's `i_sdlsound.c` one, is symmetric about 127, so a
+  centred sound plays at 126 : 128 (0.14 dB). Vanilla's own mixer (linuxdoom
+  `i_sound.c`, `sep + 1` against `257 − sep`, squared) is symmetric about 127.5 and
+  also plays 128 a little right (0.746 : 0.75). The mixer keeps the law unshifted, so
+  host and Vesper pan alike (`mixer::CENTRE_SEPARATION`).
 - Music: the host renders the MIDI the engine converts from MUS with `rustysynth` and an
   SF2 SoundFont (`platform/host/audio/music.rs`). That crate uses `std`; Room itself is
   `no_std` with `alloc` now. Music is a later stage (D9).
@@ -357,7 +362,33 @@ The decided options are drawn; each box below names the decision it rests on.
   lock-free table; the playback Thread waits on the channel EventCount and keeps two or
   three buffers queued. The mixer is pure `no_std` code in Room, shared with nothing
   platform-specific, so it is host-testable and could also replace the rodio voice path
-  on the host later.
+  on the host later. As written in A4:
+  - *Mixer* (`room::engine::sound::mixer`). `Mixer` holds eight voices, each a sound,
+    a 32.32 position and step (`step = rate·2³²·1000 / output mHz`, 0.250 04 for
+    11 025 Hz at 44 091.71 Hz) and two 16.16 gains (`gains`, the law above); a frame is
+    each voice's sample interpolated linearly between its two neighbours, times its
+    gains, summed in 32 bits and clipped to 16. A voice ends when its position leaves
+    the last sample. Lumps are read as the host reads them (`dmx_samples`: no format
+    check, the 16 padding bytes at each end played).
+  - *Sharing* (`SharedVoices`). The engine's lump lives in its zone cache and may be
+    purged, so `start` copies each distinct sound once into a `SoundBank` (atomic
+    pointers, never freed; 55 lumps, 535 kB in the shareware IWAD) and stores the
+    channel's levels, then its command word (a sequence number and the sound's bank
+    index), with release. `Mixer::mix_shared` loads each command with acquire, starts
+    or stops voices whose sequence changed, applies the current levels to the rest,
+    mixes, and stores the sequence of every idle voice as "finished".
+    `is_playing` is a command with a sound whose sequence is not finished, so it is
+    true from `start` on, false from `stop` on, and false one buffer after the sound
+    ran out. No lock, no wait on the game Thread.
+  - *Playback Thread* (Wood's `sound.rs`). A further Thread of the program
+    (`driver_threads!`), on the 16 KiB stack Kickstart gives it; the mixer writes
+    straight into the io-channel's data pages. It waits on Wood's `EventCount` for
+    `sound_init`, then calls `rate` and `open` (it is the only Thread calling
+    `audio_v1`, whose import area serves one Thread at a time) and answers; on a
+    missing driver or `busy` it logs once and the engine runs silent. It keeps 4 buffers
+    of 512 frames (46 ms) queued: each packet back is mixed into and put again. On
+    `sound_shutdown` it stops refilling, calls `close` right after the last packet, takes
+    the rest back and answers again.
 - **Scheduling** (D8). Ring depth covers scheduling jitter: 4 periods of 512 frames is
   about 46 ms at 44.1 kHz, more than a Doom tic (28.6 ms). The isochronous scheduler in
   the Future work of [capabilities-decisions.md](capabilities-decisions.md) is not needed
@@ -495,7 +526,12 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   After each copy the driver invalidates the capture slot and compares it word by word
   with what the period was filled with: the ramps, and for stream periods the capture
   test's pattern (`stream::test_pattern`, which the test client sends) converted, from the
-  stream position the period started at, then silence. So the end-to-end test
+  stream position the period started at, then silence. The pattern check is the
+  client's to ask for (A4): a stream whose first period starts with 16 frames of the
+  pattern (`stream::starts_with_test_pattern`) is checked against it; any other stream,
+  such as Wood's mixed effects, is checked against the ring slot each period was copied
+  from, then silence, and its periods that are not silent are counted and traced at
+  powers of two (`stream::is_audible`; `just test-wood` asserts them). So the end-to-end test
   (`just test-audio`) checks that the client's samples reach "the FIFO" converted, right
   first, in order, through the DMA and the cache maintenance. Everything about pacing,
   the real rate, pops, levels and left/right needs the board.
@@ -524,7 +560,12 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
    from 44 091.710 Hz in ppm ("within 0.1 %"), the underruns and late periods, the `STA`
    flags (`WERR1`, `RERR1`, `GAPO1`, `GAPO2`, `BERR`) and `dma_v1.errors`.
 2. Underrun behaviour: stop feeding and listen for clicks; check the ramps.
-3. Wood effects.
+3. Wood effects (since A4): `just boot-wood-test` with the same overlay line in
+   `config.txt` and headphones in the jack. The demos fire weapons and open doors:
+   each effect should be heard, panned with its source (a sound on the player's left
+   in the left ear), without clicks at starts and ends. Without the overlay the image boots and Wood runs
+   silent. The underrun count is not visible on the board yet (Wood logs on
+   semihosting only, and the compositor holds the UART).
 
 ## Risks
 

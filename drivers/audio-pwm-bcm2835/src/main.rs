@@ -34,7 +34,9 @@
 //! end), so under the `qemu` feature the driver checks `clock_v1` and
 //! `dma_v1` at start, never touches the PWM registers, and plays each period
 //! by a one-block `dma_v1.copy` into a capture buffer, paced at the period's
-//! length, checking the captured words against the capture test's pattern.
+//! length, checking the captured words against what filled the period: the
+//! capture test's pattern for a stream that starts with it, the ring's own
+//! words (and how many periods are not silent) for any other client.
 
 #[cfg(target_os = "vesper")]
 mod component;

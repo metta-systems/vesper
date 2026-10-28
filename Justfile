@@ -323,11 +323,11 @@ build-compositor-test-hw board='rpi3': (build-components board '' '') (_build-te
 boot-compositor-test: build-compositor-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
 
-# Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB; Wood's log is dropped, the compositor traces the routed input on the UART
+# Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects through the PWM audio driver on the headphone jack; Wood's log is dropped, the compositor traces the routed input on the UART
 [group("hw")]
 build-wood-test-hw board='rpi3': (build-components board '' '') (build-wood board '' '') (_build-test-kernel 'wood-test' board '')
 
-# Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard (and a mouse to move focus between windows)
+# Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads and Wood plays Doom's sound effects (without it Wood runs silent)
 [group("hw")]
 boot-wood-test: build-wood-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
@@ -341,9 +341,9 @@ build-wood board='rpi3' features='qemu' image_features=features: (_cross-build '
 [group("test")]
 build-wood-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
 
-# Boot wood-test on raspi3b with the devices of test-compositor, wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. The console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
+# Boot wood-test on raspi3b with the devices of test-compositor and the audio test tree (`_audio-test-dtb`, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. Wood's playback Thread streams the demo's mixed sound effects through audio_v1; the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
 [group("test")]
-test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board)
+test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board) _audio-test-dtb
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/wood-test.log"
@@ -353,7 +353,7 @@ test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board 
     {{ qemu }} -M raspi3b -display none -monitor "unix:$monitor,server,nowait" \
       -chardev stdio,mux=on,id=char0,signal=off -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0 \
       -device usb-hub,port=1 -device usb-kbd,port=1.1 \
-      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-' + config + '.bin' }}" < /dev/null > "$log" &
+      -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-' + config + '.bin' }}" < /dev/null > "$log" &
     qemu_pid=$!
     monitor_command() { printf '%s\n' "$1" | nc -N -U "$monitor" > /dev/null; }
     # The engine runs and the keyboard is the compositor's before keys are pressed.
@@ -375,7 +375,14 @@ test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board 
     grep -q "wood: INFO focus gained" "$log" || { echo "wood-test: Wood's window did not get the focus"; exit 1; }
     grep -q "wood: INFO key 0x29 down: doom key 0x1b" "$log" || { echo "wood-test: Escape did not reach Wood"; exit 1; }
     grep -q "wood: INFO key 0x51 down: doom key 0xaf" "$log" || { echo "wood-test: Down did not reach Wood"; exit 1; }
-    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; the screen is in $screen"
+    grep -a "wood: INFO audio: \|audio: open for\|audio: capture: " "$log" | tail -4
+    grep -q "wood: INFO audio: open at 44091.710 Hz" "$log" || { echo "wood-test: Wood did not open the audio output"; exit 1; }
+    grep -q "audio: open for client 0: a ramp up, then its packets" "$log" || { echo "wood-test: the audio driver did not start Wood's stream"; exit 1; }
+    grep -q "wood: INFO audio: [0-9]* buffers mixed, [1-9][0-9]* with sound" "$log" || { echo "wood-test: Wood mixed no sound effect"; exit 1; }
+    grep -q "audio: capture: [1-9][0-9]* audible stream periods of" "$log" || { echo "wood-test: no sound effect reached the capture buffer"; exit 1; }
+    audible=$(grep -a -o "audio: capture: [0-9]* audible stream periods of [0-9]*" "$log" | tail -1 | cut -d' ' -f3,8)
+    underruns=$(grep -a -o "with sound, [0-9]* underruns" "$log" | tail -1 | cut -d' ' -f3)
+    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, $underruns underruns); the screen is in $screen"
 
 # Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
 [group("test")]
@@ -494,11 +501,11 @@ qemu: (build 'rpi3' 'qemu')
     @rm -f qemu.log
     {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
 
-# Build wood-test and run it in QEMU with a display window: the compositor's screen with the lava lamp and Wood playing Doom's demos. Wood's window has the keyboard focus as the newest window; clicking a window (the USB mouse behind the hub; click into QEMU's window to grab the pointer, Ctrl-Alt-G releases it) moves the focus. The console (serial and semihosting) goes to the terminal and qemu.log
+# Build wood-test and run it in QEMU with a display window and the audio test tree: the compositor's screen with the lava lamp and Wood playing Doom's demos, its sound effects going to the audio driver's capture buffer (QEMU has no PWM to hear them on). Wood's window has the keyboard focus as the newest window; clicking a window (the USB mouse behind the hub; click into QEMU's window to grab the pointer, Ctrl-Alt-G releases it) moves the focus. The console (serial and semihosting) goes to the terminal and qemu.log
 [group("emu")]
-qemu-wood features='qemu': (build-components 'rpi3' 'qemu' features) (build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features)
+qemu-wood features='qemu': (build-components 'rpi3' 'qemu' features) (build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features) _audio-test-dtb
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
 
 # Build and run kernel in QEMU with GDB port
 [group("emu")]

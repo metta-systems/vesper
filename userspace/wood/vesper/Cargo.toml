@@ -19,9 +19,13 @@ default = []
 qemu = ["libuser/qemu"]
 
 [target.'cfg(target_os = "vesper")'.dependencies]
+audio-client = { workspace = true }
+# The audio_v1 io-channel's layout.
+audio-pwm-bcm2835 = { workspace = true }
 compositor-client = { workspace = true }
 libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }

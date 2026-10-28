@@ -21,7 +21,8 @@ host-tests = []
 # Under QEMU, which does not emulate the PWM block and cannot run a DMA ring,
 # the driver checks clock_v1 and dma_v1, never touches the PWM registers, and
 # plays each period of the ring by a DMA copy into a capture buffer, which it
-# checks against the capture test's pattern.
+# checks against the capture test's pattern when the stream starts with it,
+# and against the ring's words for any other client.
 qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]

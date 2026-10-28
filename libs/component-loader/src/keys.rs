@@ -7,17 +7,18 @@
 
 use libobject::{KeySlot, RawKey};
 
-/// The boot Thread's `KeyTable` capacity exponent: 1024 entries, for the
+/// The boot Thread's `KeyTable` capacity exponent: 2048 entries, for the
 /// well-known bootstrap slots, the boot test's Retype destinations and the
 /// slots Kickstart takes while loading every driver and program (it never
-/// reuses a deleted one).
-pub const BOOT_TABLE_SIZE_BITS: u8 = 10;
+/// reuses a deleted one). wood-test, the largest image, takes about 1230:
+/// each exporting driver's stack pool alone is 64 Frames.
+pub const BOOT_TABLE_SIZE_BITS: u8 = 11;
 
 /// The boot table's guard:
 /// Kickstart picks a nonzero value so every hand-constructed boot key
-/// exercises the guard machinery. It fits the 22 guard bits left in a
-/// 1024-entry table's table-relative address.
-pub const BOOT_TABLE_GUARD: u32 = 0x20_FFEE;
+/// exercises the guard machinery. It fits the 21 guard bits left in a
+/// 2048-entry table's table-relative address.
+pub const BOOT_TABLE_GUARD: u32 = 0x18_FFEE;
 
 /// The slot half of a key in a table with `guard` (the guard packed above
 /// the bare `index`).

@@ -37,6 +37,10 @@ use {
 
 /// `AddressSpace.CreateInvocation` with full-width operands, including slots
 /// the typed wrapper cannot represent.
+/// A slot half past the boot table's slots: guard 1 above index 76, which
+/// no table with the boot table's size and guard answers to.
+const PAST_BOOT_TABLE: KeySlot = KeySlot((1 << BOOT_TABLE_SIZE_BITS) + 76);
+
 fn create_invocation_raw(address_space: RawKey, args: [u64; 6]) -> (u64, u64, u64) {
     address_space_raw(address_space, 3, args)
 }
@@ -231,7 +235,7 @@ pub fn run() {
     // from userspace. Once authority/live identity are established, zero
     // wins over a stale pool and destination readiness.
     let table_len_before_zero = before_rejections.count;
-    for slot in [KeySlot(62), KeySlot(63), KeySlot(1100)] {
+    for slot in [KeySlot(62), KeySlot(63), PAST_BOOT_TABLE] {
         for pool in [pool, StackPoolHandle::new(15, 0xFFFF)] {
             assert!(matches!(
                 boot_as.create_invocation(0, &self_table, slot, pool),
@@ -512,8 +516,8 @@ pub fn run() {
         Err(CapError::SlotOccupied(KeySlot(62)))
     ));
     assert!(matches!(
-        boot_as.create_invocation(0x5678, &self_table, KeySlot(1100), pool),
-        Err(CapError::InvalidSlot(KeySlot(1100)))
+        boot_as.create_invocation(0x5678, &self_table, PAST_BOOT_TABLE, pool),
+        Err(CapError::InvalidSlot(PAST_BOOT_TABLE))
     ));
     assert_eq!(
         create_invocation_raw(
@@ -1139,7 +1143,8 @@ pub fn run() {
     }
     // A window beyond the exporter's table is refused at construction, like
     // an out-of-range slot.
-    for (first, count) in [(1023, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
+    let last_slot = (1 << BOOT_TABLE_SIZE_BITS) - 1;
+    for (first, count) in [(last_slot, 2), (u32::MAX, 2), (WINDOW_FIRST, u32::MAX)] {
         assert!(
             matches!(
                 AddressSpaceKey::from_key(bounce_as_key).create_invocation_with_window(

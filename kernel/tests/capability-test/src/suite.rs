@@ -26,9 +26,9 @@ use {
 };
 
 /// The guard for the tables this suite carves at runtime: distinct from the
-/// boot table's guard so cross-table key confusion is exercised. Fits the 22
-/// guard bits of a 1024-entry table's table-relative address.
-const TEST_TABLE_GUARD: u32 = 0x2E_ED42;
+/// boot table's guard so cross-table key confusion is exercised. Fits the 21
+/// guard bits of a 2048-entry table's table-relative address.
+const TEST_TABLE_GUARD: u32 = 0x1E_ED42;
 
 /// The slot half of a key in one of the suite's runtime-carved tables.
 fn test_slot(index: u32) -> KeySlot {

@@ -7,7 +7,7 @@ only after its exit check has passed.
 
 ## Dependencies
 
-- D1 to D8 are answered (2026-10-27): A1 to A4 are unblocked. D8 (no special
+- D1 to D8 are answered (2026-10-27): A1 to A4 are built. D8 (no special
   scheduling) is revisited if A4 shows underruns on hardware.
 - D9 blocks A5; it is decided after A4.
 - Existing pieces used: `gpio_v1` (pins), `libs/io-channel` (transport), Meddle
@@ -136,17 +136,63 @@ Done in QEMU (2026-10-28), hardware check pending:
 
 ## A4: Wood sound effects
 
-- Room: a `no_std` mixer (DMX decode, eight voices, fixed-point resampling to the
-  reported rate, `gains_from` panning, clipping), with host tests on synthetic lumps.
-  Settle the centre value of `sep` (127 or 128).
-- Wood: a playback Thread waiting on the `audio_v1` channel EventCount, the game Thread
-  updating voices lock-free; `Platform::sound_init`, `sound_start`, `sound_stop`,
-  `sound_update`, `sound_is_playing` in `userspace/wood/vesper/src/platform.rs`; the
-  `audio_v1` import in Wood's `imports.if`; the driver in the wood-test image.
-- QEMU exit: `just test-wood` sees mixed, non-silent buffers reach the capture buffer
-  when the demo plays sounds.
-- Hardware exit: Doom's effects heard during a demo; underruns counted and reported. If
-  they are not zero under load, D8 option B comes into play.
+Done in QEMU (2026-10-28), hardware check pending:
+
+- Room: `room::engine::sound::mixer` (`no_std`, `userspace/wood/room/src/engine/sound/
+  mixer.rs`): `dmx_samples` reads a DMX lump as the host's `decode_doom_sfx` does;
+  `Mixer` plays eight voices, each stepped through its sound in 32.32 fixed point at
+  the lump's rate over the output rate, linearly interpolated, with the gains of
+  `gains` (the host's `gains_from` law in 16.16 fixed point), summed in 32 bits and
+  clipped to s16 stereo. `SharedVoices` is the lock-free hand-over: per channel a
+  command word (sequence number and sound), a levels word and a "finished" word, and a
+  `SoundBank` that keeps one copy of each distinct sound for good (the engine's lumps
+  live in its purgeable zone cache). The centre of `sep` is settled: the engine centres
+  at 128 (`NORM_SEP`), the pan law stays Chocolate Doom's, symmetric about 127, so a
+  centred sound plays at 126 : 128 (0.14 dB), as vanilla's linuxdoom mixer also leans
+  right at 128 (`CENTRE_SEPARATION`). Host tests in the module (14: header, the rate
+  ratio, a sound's length at the output rate, interpolation, the pan law against the
+  host formula, volume, mixing and clipping, a voice's end, the bank, start, update,
+  stop, restart and finish through `SharedVoices`); `cd userspace/wood/room && just
+  test` passes (the demo playthrough, golden save and frame hashes included) and the
+  library builds for `aarch64-unknown-none-softfloat`.
+- Wood (`userspace/wood/vesper/src/sound.rs`): the platform's `sound_init` releases the
+  playback Thread (`driver_threads!`, started by Kickstart, 16 KiB stack; the mixer
+  writes straight into the channel's data pages) through Wood's `EventCount` and waits
+  for its answer; that Thread alone calls `audio_v1`: `rate`, `open`, then it keeps four
+  buffers of 512 frames queued, mixing the next into each one that comes back. No driver
+  or `busy` (or no io-channel) logs once and the engine runs silent. `sound_shutdown`
+  has it stop refilling and `close` right after the last packet, and waits for it.
+  `sound_start`, `sound_stop`, `sound_update` and `sound_is_playing` only touch
+  `SharedVoices`. Music stays silent (D9). Wood logs the buffers mixed, those with
+  sound and the driver's underrun count at powers of two.
+- wood-test: the gpio, cprman, dma and audio drivers (the compositor keeps the serial
+  channel, so the audio driver traces on semihosting only); Wood imports `audio_v1`;
+  `just test-wood` and `just qemu-wood` boot the audio test tree (`_audio-test-dtb`).
+  The boot thread expects Wood's four `audio_v1` imports only when the PWM node is
+  enabled, so a board without the overlay boots with Wood silent. Capacity: the image
+  has 14 instances (`MAX_DRIVER_INSTANCES` raised from 12 to 16) and takes about 1230
+  boot-table slots (each exporter's stack pool is 64 Frames), so the boot table has
+  2048 entries (`BOOT_TABLE_SIZE_BITS` 11, 21-bit guards: the boot and test table
+  guards changed). The alternative was 8 instead of 16 export stacks per exporter.
+- The driver's capture check is opt-in by the client: a stream that starts with 16
+  frames of `test_pattern` (`starts_with_test_pattern`) is checked against the pattern
+  as before (`just test-audio` unchanged); any other stream's periods are checked
+  against the ring slot they were copied from and counted when not silent
+  (`is_audible`), traced at powers of two. Ramps and silence are always checked. Host
+  tests in `tests/stream.rs`.
+- QEMU exit passed: `just test-wood` (log in `target/wood-test.log`): Wood opens the
+  output at 44 091.710 Hz, the driver starts its stream, the demo's effects reach the
+  capture ("audio: capture: 512 audible stream periods of 1129", "wood: INFO audio:
+  1126 buffers mixed, 512 with sound, 0 underruns"); the key checks pass as before.
+  `just test-audio` and `just test-dma` still pass.
+
+- [ ] Hardware exit (`just boot-wood-test` on the Pi 3 B with the overlay line in
+  `config.txt` and headphones in the jack): Doom's effects heard during the demos, in
+  the right places left and right, without clicks. The underrun count cannot be read
+  there yet: Wood's log is semihosting only, and the audio driver's trace waits in its
+  backlog because the compositor holds the UART; reporting it (for example through the
+  compositor's serial channel) is open. If underruns show under load, D8 option B comes
+  into play.
 
 ## A5: music (later)
 

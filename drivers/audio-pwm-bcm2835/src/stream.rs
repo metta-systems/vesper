@@ -420,3 +420,27 @@ pub fn expected_stream_period(
     }
     period[client_frames..].fill(silent_frame(range));
 }
+
+/// Frames of [`test_pattern`] a stream starts with to ask for the capture
+/// check against the pattern.
+pub const PATTERN_SIGNATURE_FRAMES: usize = 16;
+
+/// Whether `period`, the stream's first with client frames (`client_frames`
+/// of them, from stream position 0), starts with [`PATTERN_SIGNATURE_FRAMES`]
+/// frames of [`test_pattern`] converted: the capture test's client asks for
+/// the pattern check this way. Any other stream (silence, a game's mixed
+/// sound) is checked only as the driver filled it.
+#[must_use]
+pub fn starts_with_test_pattern(period: &[[u32; 2]], client_frames: usize, range: u32) -> bool {
+    client_frames >= PATTERN_SIGNATURE_FRAMES
+        && period.len() >= PATTERN_SIGNATURE_FRAMES
+        && (0..PATTERN_SIGNATURE_FRAMES)
+            .all(|position| period[position] == fifo_frame(test_pattern(position as u64), range))
+}
+
+/// Whether any of `frames` is not silent.
+#[must_use]
+pub fn is_audible(frames: &[[u32; 2]], range: u32) -> bool {
+    let silence = silent_frame(range);
+    frames.iter().any(|&frame| frame != silence)
+}

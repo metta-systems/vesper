@@ -2,17 +2,23 @@
 //!
 //! - Frames go to the compositor's window ([`Window`]).
 //! - Time is the monotonic counter EL0 reads (`libuser::clock`); a sleep is
-//!   a timed wait on Wood's own `EventCount`, which nothing advances, so the
-//!   other programs run meanwhile.
+//!   a timed wait on Wood's own `EventCount` for a count it never reaches,
+//!   so the other programs run meanwhile.
 //! - The one file is the IWAD, served from its bundled resource; there is
 //!   nowhere to keep a configuration or a saved game, so writes fail.
 //! - Quitting parks the Thread: the rest of the image keeps running.
 //! - Keys are the ones the compositor routes to the window ([`Keyboard`]).
-//!
-//! There is no sound yet.
+//! - Sound effects go to the voices Wood's playback Thread mixes and streams
+//!   to the audio driver ([`sound`](crate::sound)); the sound methods only
+//!   change voice state. There is no music yet: its methods keep their
+//!   silent defaults.
 
 use {
-    crate::{keyboard::Keyboard, window::Window},
+    crate::{
+        keyboard::Keyboard,
+        sound::{self, VOICES},
+        window::Window,
+    },
     core::cell::Cell,
     libobject::EventCountKey,
     room::engine::platform::{FileHandle, Platform},
@@ -31,7 +37,8 @@ const NANOS_PER_MILLI: u64 = 1_000_000;
 pub struct Wood {
     window: Window,
     keyboard: Keyboard,
-    /// Wood's own `EventCount`, which nothing advances: the sleep timer.
+    /// Wood's own `EventCount`: the sleep timer, and the hand-over to the
+    /// playback Thread.
     timer: EventCountKey,
     /// The IWAD's bytes, mapped read-only.
     wad: &'static [u8],
@@ -108,6 +115,30 @@ impl Platform for Wood {
 
     fn set_window_title(&self, title: &str) {
         self.window.set_title(title);
+    }
+
+    fn sound_init(&self) -> bool {
+        sound::start(&self.timer)
+    }
+
+    fn sound_shutdown(&self) {
+        sound::shut_down(&self.timer);
+    }
+
+    fn sound_start(&self, lump: &[u8], channel: usize, vol: i32, sep: i32) -> bool {
+        sound::is_playing() && VOICES.start(channel, lump, vol, sep)
+    }
+
+    fn sound_stop(&self, channel: usize) {
+        VOICES.stop(channel);
+    }
+
+    fn sound_update(&self, channel: usize, vol: i32, sep: i32) {
+        VOICES.update(channel, vol, sep);
+    }
+
+    fn sound_is_playing(&self, channel: usize) -> bool {
+        VOICES.is_playing(channel)
     }
 
     fn open(&self, path: &str) -> Option<FileHandle> {

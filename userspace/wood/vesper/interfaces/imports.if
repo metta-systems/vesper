@@ -7,3 +7,9 @@
 # interface's io-channel, rebuilding them with `snapshot` after records were
 # dropped.
 uses compositor_v1 via component compositor { pixel_order, create_window, commit, set_title, move_window, snapshot }
+# Wood's playback Thread streams the mixed sound effects to the PWM audio
+# driver on the interface's io-channel. Wood has no device tree node, so the
+# chain starts from the node found by its compatible string; an image without
+# the driver (or a tree with the PWM node disabled) leaves it unlinked, and
+# Wood runs silent.
+uses audio_v1 via device compatible "brcm,bcm2835-pwm" { rate, open, close, underruns }

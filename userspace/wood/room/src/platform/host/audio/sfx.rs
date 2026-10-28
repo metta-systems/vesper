@@ -54,8 +54,14 @@ pub(crate) fn decode_doom_sfx(data: &[u8]) -> Option<(u32, Vec<f32>)> {
 /// Convert Doom's `(volume, separation)` pair into linear left/right gains.
 ///
 /// `vol` is clamped to `0..=127` (Doom's volume range) and `sep` to `0..=254`
-/// (Doom's stereo separation: 0 = hard left, 127 = centre, 254 = hard right).
+/// (Doom's stereo separation: 0 = hard left, 254 = hard right).
 /// The result is a pair `(left, right)` where each gain is in `[0.0, 1.0]`.
+///
+/// This is Chocolate Doom's pan law (`i_sdlsound.c`), symmetric about 127;
+/// the engine centres a sound at 128 (`NORM_SEP`), which plays one step
+/// right of even (126 : 128), as vanilla's own mixer also leans right there.
+/// The no_std mixer uses the same law in fixed point; see
+/// `room::engine::sound::mixer::CENTRE_SEPARATION`.
 pub(crate) fn gains_from(vol: i32, sep: i32) -> (f32, f32) {
     let v = vol.clamp(0, 127) as f32;
     let s = sep.clamp(0, 254) as f32;

@@ -117,7 +117,7 @@ const SURFACE_INTERFACE: &str = "compositor_v1";
 const SERIAL_COMPATIBLE: &str = "arm,pl011";
 
 /// Most driver instances one boot loads.
-pub const MAX_DRIVER_INSTANCES: usize = 12;
+pub const MAX_DRIVER_INSTANCES: usize = 16;
 
 /// Pages of each driver's stack.
 const STACK_PAGES: u32 = 4;

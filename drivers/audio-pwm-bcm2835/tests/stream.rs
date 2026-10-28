@@ -8,8 +8,9 @@ mod tests {
         audio_pwm_bcm2835::{
             PERIOD_FRAMES, PERIODS, RANGE,
             stream::{
-                AudioChannel, FRAME_BYTES, Fill, Queue, Refill, Ring, Stream, admits, decode_frame,
-                encode_frame, expected_stream_period, fifo_frame, ramp_down, ramp_up, silent_frame,
+                AudioChannel, FRAME_BYTES, Fill, PATTERN_SIGNATURE_FRAMES, Queue, Refill, Ring,
+                Stream, admits, decode_frame, encode_frame, expected_stream_period, fifo_frame,
+                is_audible, ramp_down, ramp_up, silent_frame, starts_with_test_pattern,
                 test_pattern,
             },
             word,
@@ -423,5 +424,44 @@ mod tests {
     #[test]
     fn the_channel_fits_its_control_page() {
         assert!(size_of::<AudioChannel>() <= 4096);
+    }
+
+    #[test]
+    fn a_stream_asks_for_the_pattern_check_by_starting_with_it() {
+        let mut period = [[0_u32; 2]; PERIOD_FRAMES];
+        expected_stream_period(&mut period, 0, PERIOD_FRAMES, RANGE);
+        assert!(starts_with_test_pattern(&period, PERIOD_FRAMES, RANGE));
+        assert!(starts_with_test_pattern(
+            &period,
+            PATTERN_SIGNATURE_FRAMES,
+            RANGE
+        ));
+        assert!(
+            !starts_with_test_pattern(&period, PATTERN_SIGNATURE_FRAMES - 1, RANGE),
+            "too few client frames to tell"
+        );
+
+        // Silence, as a game's first buffer is, is no pattern; nor is the
+        // pattern from a later position, or with one frame wrong.
+        let mut silence = [[0_u32; 2]; PERIOD_FRAMES];
+        expected_stream_period(&mut silence, 0, 0, RANGE);
+        assert!(!starts_with_test_pattern(&silence, PERIOD_FRAMES, RANGE));
+        let mut later = [[0_u32; 2]; PERIOD_FRAMES];
+        expected_stream_period(&mut later, 1, PERIOD_FRAMES, RANGE);
+        assert!(!starts_with_test_pattern(&later, PERIOD_FRAMES, RANGE));
+        let mut wrong = period;
+        wrong[PATTERN_SIGNATURE_FRAMES - 1][0] ^= 1;
+        assert!(!starts_with_test_pattern(&wrong, PERIOD_FRAMES, RANGE));
+    }
+
+    #[test]
+    fn audible_is_any_frame_not_silent() {
+        let mut frames = [silent_frame(RANGE); 8];
+        assert!(!is_audible(&frames, RANGE));
+        assert!(!is_audible(&[], RANGE));
+        frames[7] = fifo_frame([1, 0], RANGE);
+        assert!(!is_audible(&frames, RANGE), "below one step of the range");
+        frames[7] = fifo_frame([0, 64], RANGE);
+        assert!(is_audible(&frames, RANGE));
     }
 }

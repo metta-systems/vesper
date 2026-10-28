@@ -13,6 +13,8 @@
 //! engine with the IWAD from its bundled resource (`doom1_wad`). The engine
 //! plays its demos in the window until keys arrive: the keys the compositor
 //! routes to the window, which has the focus when it is new or clicked.
+//! Its sound effects play through the PWM audio driver when the image has
+//! one, mixed on a second Thread (`sound`).
 
 #[cfg(target_os = "vesper")]
 extern crate alloc;
@@ -25,6 +27,8 @@ mod keyboard;
 mod logger;
 #[cfg(target_os = "vesper")]
 mod platform;
+#[cfg(target_os = "vesper")]
+mod sound;
 #[cfg(target_os = "vesper")]
 mod window;
 
@@ -65,7 +69,8 @@ mod program {
         log::info!("{WAD_NAME}: {} bytes", wad.len());
 
         let compositor = CompositorClient::new(CompositorBindings::from_imports(init.imports()));
-        // The component's own EventCount, which nothing advances: a timer.
+        // The component's own EventCount: awaiting a count it never reaches
+        // is a timer (the sound hand-over advances it, see `sound`).
         let timer = EventCountKey::from_key(RawKey::from_wire(init.event_count));
         let order = loop {
             match compositor.pixel_order() {

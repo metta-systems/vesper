@@ -5750,6 +5750,8 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "wood"
 version = "0.0.1"
 dependencies = [
+ "audio-client",
+ "audio-pwm-bcm2835",
  "compositor-client",
  "log",
  "metta-compositor-core",
@@ -5757,6 +5759,7 @@ dependencies = [
  "room",
  "vesper-device-driver",
  "vesper-input-event",
+ "vesper-io-channel",
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",

@@ -6,13 +6,20 @@
 //! wood-test: compositor-test's components (the DWC2 host controller component,
 //! the PL011 driver, the mailbox and fb components, the USB core, the USB HID
 //! component, the compositor and the shell's lava-lamp window) plus Wood, the
-//! Room Doom engine, loaded by Kickstart.
+//! Room Doom engine, and audio-test's drivers (the gpio component, the clock
+//! manager, the DMA controller and the PWM audio driver), loaded by Kickstart.
 //!
 //! Wood asks the compositor for a 640x400 window, reads the shareware IWAD
 //! from its resource and runs the engine, which plays its demos until keys
 //! arrive: the window is the newest, so it has the keyboard focus, and the
 //! compositor sends it the keyboard's keys on its event channel. Its log and a
-//! line per power-of-two frame go to the semihosting console under QEMU.
+//! line per power-of-two frame go to the semihosting console under QEMU. Its
+//! playback Thread streams the mixed sound effects to the audio driver through
+//! `audio_v1`, when the PWM node is enabled: `just test-wood` boots the test
+//! tree `targets/overlays/audio-test-pwm.dts` makes, where the driver captures
+//! the stream by DMA copies; the board needs
+//! `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in `config.txt`.
+//! Without the node Wood runs silent.
 //!
 //! As in compositor-test, the boot Thread installs the report Notification key
 //! at `REPORT_SLOT` of the compositor's table and the compositor signals it once
@@ -120,6 +127,20 @@ pub fn run() -> ! {
         })
         .count();
     assert_eq!(expected, INSTANCES, "the board device tree changed");
+    // The PWM node is enabled by the test tree (`just test-wood`) or the
+    // board's `pwm-2chan` overlay; without it no audio driver loads and Wood
+    // runs silent.
+    let audio_nodes = tree
+        .nodes()
+        .filter(|node| is_enabled(node))
+        .filter(|node| {
+            components::AUDIO_DRIVER
+                .compatible
+                .iter()
+                .any(|compatible| is_compatible(node, compatible))
+        })
+        .count();
+    semi::println!("wood-test: {audio_nodes} enabled PWM node for the audio driver");
 
     let report = untyped
         .retype(
@@ -153,6 +174,10 @@ pub fn run() -> ! {
             &components::COMPOSITOR_DRIVER,
             &components::DRAW_DEMO_DRIVER,
             &components::WOOD_DRIVER,
+            &components::GPIO_DRIVER,
+            &components::CPRMAN_DRIVER,
+            &components::DMA_DRIVER,
+            &components::AUDIO_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
         &mut slots,
@@ -207,11 +232,25 @@ pub fn run() -> ! {
                     });
             } else if name == components::WOOD.name {
                 // Wood: six functions of compositor_v1 and its event channel,
-                // a window to map its surface in, and the IWAD.
-                assert_eq!(imports.len(), 6, "six functions of compositor_v1");
+                // the four of audio_v1 and their io-channel when the audio
+                // driver loaded, a window to map its surface in, and the IWAD.
+                assert_eq!(
+                    imports.len(),
+                    6 + 4 * audio_nodes,
+                    "six functions of compositor_v1, four of audio_v1"
+                );
                 assert!(imports.iter().all(|record| record.channel_event != 0));
                 assert_ne!(init.map_window.l2, 0, "a window to map the surface");
                 assert!(init.resource(0).is_some(), "the IWAD resource");
+            } else if name == components::AUDIO.name {
+                // The audio driver: Wood is its one client, on an io-channel.
+                let [area] = init.areas() else {
+                    panic!(
+                        "Wood is the one client of audio_v1, found {}",
+                        init.areas().len()
+                    );
+                };
+                assert_ne!(area.channel_event, 0, "audio_v1 has an io-channel");
             }
             assert_ne!(
                 init.return_key, 0,
@@ -229,10 +268,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 9,
-        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, wood and the root dispatcher"
+        INSTANCES + 12 + audio_nodes,
+        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, wood, gpio, the clock manager, the DMA controller, the audio driver (with a PWM node) and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 8);
+    assert_eq!(seen, INSTANCES + 11 + audio_nodes);
 
     // ── The compositor reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)
