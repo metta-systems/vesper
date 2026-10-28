@@ -4,9 +4,10 @@
 # (`just test-audio`) or the board's `pwm-2chan` overlay enable, and the DMA
 # controller component, loaded for the `brcm,bcm2835-dma` node. The audio
 # driver sets the PWM clock through the clock manager, routes the jack's pins
-# through the gpio component and runs DMA chains through the DMA component;
+# through the gpio component and runs its DMA ring through the DMA component;
 # it holds the PL011 driver's serial channel, so on the board its trace shows
-# on the UART.
+# on the UART. The test client is a program that streams to it through
+# audio_v1.
 
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
@@ -35,6 +36,16 @@ serial = true
 [[driver]]
 name = "uart"
 binary = "uart-pl011"
+
+# The test client: a program (Kickstart starts it at boot, without a device
+# tree node) importing audio_v1 through the PWM node's compatible string. A
+# tone on the board, the capture test under QEMU.
+[[component]]
+name = "client"
+binary = "audio-test-client"
+interfaces = "../../../userspace/tests/audio/tone/interfaces"
+active = true
+program = true
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.

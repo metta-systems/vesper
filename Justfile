@@ -29,7 +29,7 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -201,7 +201,7 @@ _audio-test-dtb:
     dtc -q -@ -I dts -O dtb -o "{{ target_root / 'audio-test-pwm.dtbo' }}" "{{ justfile_directory() / 'targets/overlays/audio-test-pwm.dts' }}"
     fdtoverlay -i "{{ rpi3_dtb }}" -o "{{ audio_test_dtb }}" "{{ target_root / 'audio-test-pwm.dtbo' }}"
 
-# Boot audio-test on raspi3b with the audio test tree: the audio driver sets the PWM clock to 100 MHz through the clock manager component and reads it back, and clock_v1 refuses an unknown clock and an unreachable rate. QEMU emulates the clock manager but not the PWM block, so the driver plays no tone here (`just boot-audio-test` does, on the board). The console goes to target/audio-test.log
+# Boot audio-test on raspi3b with the audio test tree: the audio driver sets the PWM clock to 100 MHz through the clock manager component and reads it back, and clock_v1 refuses an unknown clock and an unreachable rate; then the test client runs the capture test through audio_v1: QEMU has no PWM block and cannot run a DMA ring, so the driver plays each period by a DMA copy into a capture buffer and checks the captured words against the client's pattern (converted, in order, silence and underruns once the client stops), and packets come back in order (`just boot-audio-test` plays a tone on the board). The console goes to target/audio-test.log
 [group("test")]
 test-audio board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-audio-test board) _audio-test-dtb
     #!/usr/bin/env bash
@@ -212,11 +212,19 @@ test-audio board='rpi3' features=test_kernel_features config=(board + '-' + repl
       -chardev stdio,mux=on,id=char0,signal=off -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0 \
       -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'audio-test-' + config + '.bin' }}" < /dev/null > "$log"
     status=$?
-    grep -a "cprman: \|audio: \|audio-test: ✅" "$log"
+    grep -a "cprman: \|audio: \|audio-test: " "$log"
     [ "$status" -eq 0 ] || { echo "audio-test: failed with status $status; see $log"; exit 1; }
-    grep -q "audio: PWM clock set to 100000000 Hz, reads back 100000000 Hz" "$log" || { echo "audio-test: the PWM clock did not read back 100 MHz; see $log"; exit 1; }
-    grep -q "audio: clock_v1 refused clock 31 and 48000000 Hz" "$log" || { echo "audio-test: clock_v1 did not refuse; see $log"; exit 1; }
-    echo "{{ ok_label }} the PWM clock runs at 100 MHz from PLLD through clock_v1"
+    expect() { grep -q "$1" "$log" || { echo "audio-test: $2; see $log"; exit 1; }; }
+    expect "audio: PWM clock set to 100000000 Hz, reads back 100000000 Hz" "the PWM clock did not read back 100 MHz"
+    expect "audio: clock_v1 refused clock 31 and 48000000 Hz" "clock_v1 did not refuse"
+    expect "audio-test: 7 packets back in order, 3072 frames taken, the refused one empty" "the first stream's packets did not come back in order"
+    expect "audio: capture checked: 1 ramp up, [0-9]* stream periods with 3072 client frames of the pattern in order, [1-9][0-9]* of them silent at the end, 1 ramp down, [0-9]* off; DMA errors 0x0" "the captured words of the first stream are not the client's frames converted"
+    expect "audio: closed after [0-9]* periods: 3072 client frames, [1-9][0-9]* underruns" "no underruns were counted after the client stopped"
+    expect "audio-test: the client stopped sending: [1-9][0-9]* underruns counted, closed" "the client did not see the underruns"
+    expect "audio: capture checked: 1 ramp up, 4 stream periods with 2048 client frames of the pattern in order, 0 of them silent at the end, 1 ramp down" "close did not play out the queued frames"
+    expect "audio: closed after 6 periods: 2048 client frames, 0 underruns" "the end of a stream counted as an underrun"
+    expect "audio-test: closed at once: 4 packets back in order, 2048 frames played out, no underruns" "the packets queued at close did not come back whole"
+    echo "{{ ok_label }} the PWM clock runs at 100 MHz from PLLD through clock_v1; PCM streams through audio_v1 into the capture buffer converted and in order, with underruns counted"
 
 # Boot audio-test on raspi3b for its DMA checks: Kickstart hands the DMA controller component each interrupt line once, the audio driver copies memory through dma_v1 with chains of linked control blocks on the first channel and on one sharing line 27, one completion per block, and dma_v1 refuses what it must. QEMU's DMA model runs a chain inside the write that starts it, so no ring runs here (`just boot-audio-test` plays one on the board). The console goes to target/dma-test.log
 [group("test")]
@@ -240,11 +248,11 @@ test-dma board='rpi3' features=test_kernel_features config=(board + '-' + replac
     expect "audio: dma_v1 refused" "dma_v1 did not refuse"
     echo "{{ ok_label }} DMA chains copy memory, one completion per control block, on own and shared interrupt lines"
 
-# Build audio-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the audio driver plays the test tone, polled and from a DMA ring, and traces it on the UART
+# Build audio-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the test client streams a tone through audio_v1 to the audio driver's DMA ring, which traces each stream on the UART
 [group("hw")]
 build-audio-test-hw board='rpi3': (build-components board '' '') (_build-test-kernel 'audio-test' board '')
 
-# Build audio-test for the Raspberry Pi 3 and boot it via chainofcommand: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, a 440 Hz tone plays on the left, the right and both sides of the headphone jack, three rounds, polled, then on both sides for 5 s from a DMA ring with the measured sample rate, traced on the UART
+# Build audio-test for the Raspberry Pi 3 and boot it via chainofcommand: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the test client plays a 440 Hz tone through audio_v1 on the left side of the headphone jack for 3 s, the right for 3 s, both for 3 s, then both for a minute, 0.7 s apart; the audio driver traces on the UART, at each close, the measured sample rate, the underruns, late periods, the PWM's STA flags and the DMA errors
 [group("hw")]
 boot-audio-test: build-audio-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'audio-test-rpi3.bin' }}"
@@ -804,7 +812,7 @@ test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vespe
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
 [group("test")]
-test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'gpio-bcm2835' 'gpio')(_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
+test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'gpio-bcm2835' 'gpio')(_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 [group("test")]
@@ -868,7 +876,7 @@ clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 
 
 # Lint the boot-platform host tests
 [private]
-clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'gpio-bcm2835' 'gpio')(_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
+clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'gpio-bcm2835' 'gpio')(_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 [private]
@@ -903,19 +911,19 @@ _cross-clippy-wood board='rpi3' features='':
 [group("maintenance")]
 clippy-wood: (_cross-clippy-wood 'rpi3' '') (_cross-clippy-wood 'rpi3' 'qemu')
 
-# Cross-clippy only the audio crates (the clock manager component, the PWM audio driver and their interface crates) for a board with a feature set
+# Cross-clippy only the audio crates (the clock manager, DMA and PWM audio components, their interface crates and the audio test client) for a board with a feature set
 [private]
 _cross-clippy-audio board='rpi3' features='':
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      -p cprman-bcm2835 -p clock -p clock-client -p dma-bcm2835 -p dma -p dma-client -p audio-pwm-bcm2835 \
+      -p cprman-bcm2835 -p clock -p clock-client -p dma-bcm2835 -p dma -p dma-client -p audio-pwm-bcm2835 -p audio -p audio-client -p audio-test-client \
       -- --deny warnings --allow deprecated
 
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 [group("maintenance")]
-clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm')
+clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
 # Lint the USB protocol host tests with their native host harness
 [private]

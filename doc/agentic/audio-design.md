@@ -1,9 +1,9 @@
 # Audio design (Raspberry Pi 3, PWM jack output with DMA)
 
 Status: D1 to D8 answered 2026-10-27 (section Decisions below); stages A1 (the `cprman`
-driver with `clock_v1` and a polled test tone) and A2 (the `dma` driver with `dma_v1`,
-and the test tone from a DMA ring on the board) are built and checked in QEMU, their
-hardware checks are pending. The one open decision (D9, music) is in
+driver with `clock_v1`), A2 (the `dma` driver with `dma_v1`) and A3 (the audio driver
+serving `audio_v1` from a DMA ring, with a test client) are built and checked in QEMU,
+their hardware checks are pending. The one open decision (D9, music) is in
 [audio-decisions.md](audio-decisions.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
 drafts until written; once written they are prototypes and are edited in place.
@@ -288,14 +288,15 @@ without an interrupt.
 
 The decided options are drawn; each box below names the decision it rests on.
 
-- **`audio` driver** (`drivers/audio-pwm-bcm2835`, new). Binds to the PWM node
+- **`audio` driver** (`drivers/audio-pwm-bcm2835`, written in A3). Binds to the PWM node
   (`brcm,bcm2835-pwm`, D3). Owns the PWM register page. Sets its pins through
   `gpio_v1` from the node's `pinctrl-0` (as `sdhost-bcm2835` does; Kickstart passes the
   pins in `DriverInit::pins`). Gets the PWM clock through `clock_v1` (D2). Owns the ring
   memory, carved from its own `DriverInit.memory`, so it knows each period's bus address
   (`memory_bus` plus offset) without asking the kernel. Configures `RNG1 = RNG2`,
   `CTL = PWEN1|USEF1|PWEN2|USEF2` with `MSEN` per D4, `CLRF1` first, `DMAC = ENAB | PANIC 7 |
-  DREQ 7`. Exports `audio_v1`.
+  DREQ 7`. Exports `audio_v1` (section `audio_v1` below: its threading, refill path and
+  open/close behaviour as written).
 - **`dma` driver** (`drivers/dma-bcm2835`, D1, written in A2). Binds to
   `brcm,bcm2835-dma`, the only holder of the DMA page and of the channel interrupts.
   Because the BCM2837 has no IOMMU, any DMA programmer can write all of RAM: the `dma`
@@ -343,11 +344,12 @@ The decided options are drawn; each box below names the decision it rests on.
   when the driver has copied it into the ring. The driver is paced by the DMA, not by
   the client: at each period interrupt it takes as many queued bytes as the period needs
   and completes the packets it emptied, advancing the channel EventCount the client
-  waits on. The interface declares the channel (`channel N;`), and Kickstart provisions
-  it per client, as for `input_v1`.
-- **Underrun** (D7). A period with no client data is filled with mid-scale silence and an
-  underrun counter goes up; the ring never stops while the output is open. Start and stop
-  ramp from 0 to `RNG/2` over a few milliseconds to avoid the turn-on pop.
+  waits on. The interface declares the channel (`channel 4;`), and Kickstart provisions
+  it per client, as for `input_v1`. As written in A3: section `audio_v1`.
+- **Underrun** (D7). A period with too few client frames is filled up with mid-scale
+  silence and an underrun counter goes up; the ring never stops while the output is open.
+  Opening ramps from 0 to `RNG/2` over one period, closing from the last frame to 0 over
+  one period, against the turn-on pop.
 - **Mixing** (D5). In Wood, in a second Thread (the README's "isochronous playback
   thread"): eight voices of 8-bit DMX data, a fixed-point step resampler (11 025 Hz to the
   reported rate), `gains_from` panning, 32-bit accumulation, clipping to 16 bits. The game
@@ -361,33 +363,66 @@ The decided options are drawn; each box below names the decision it rests on.
   the Future work of [capabilities-decisions.md](capabilities-decisions.md) is not needed
   to start; underrun counts on hardware decide whether it is.
 
-### `audio_v1` (draft)
+### `audio_v1` (written in A3)
 
-```
-## PCM output through the jack. The client posts full buffers of signed 16-bit
-## interleaved stereo frames (left first) on the io-channel in transmit mode; each
-## packet comes back once the driver has copied it into the DMA ring.
-local interface audio_v1
-{
-    ## The channel the samples travel on: a control page and four data pages.
-    channel 4;
+`drivers/audio-pwm-bcm2835/interfaces/audio_v1.if`, a prototype edited in place: `local`,
+`badged;` (the driver tells clients and their io-channels apart by the badge of their
+keys) and `channel 4;` (a control page and four data pages, 4096 frames, per client).
 
-    exception busy {}            ## another client has the output open
-    exception not_running {}
+- `rate() returns (card32 millihertz)`: 44 091 710 (100 MHz / 2268).
+- `open() raises (busy)`: the caller gets the output; `busy` while another client has
+  it, or it is still closing. Resets the underrun count.
+- `close() raises (not_open)`: plays out what the caller queued, ramps down, stops;
+  returns once the output is off and every packet is back. `not_open` for a caller that
+  does not have the output open.
+- `underruns() returns (card32 periods)`: periods since the last `open` that were filled
+  up with silence, counted from the first packet after `open` until `close`.
 
-    ## The output rate in millihertz (44 091 711 for 100 MHz / 2268).
-    rate() returns (card32 millihertz);
+Channel semantics (transmit mode). A packet names 1 to 8 buffers of the data pages, each
+a whole number of 4-byte frames (left then right, signed 16-bit little-endian) at a
+4-byte aligned address; the driver refuses anything else by handing the packet back at
+once with every record cut to 0 bytes. The client puts packets and never rings the
+driver: the refill Thread looks at the submit FIFO once per period. A packet comes back
+on the completion FIFO, with the channel's EventCount advanced, once the driver copied
+its last frame into the ring, so a packet back is a buffer free to refill; records are
+cut to the bytes taken (whole, except what `close` cuts off). Latency from a packet's
+completion to its sound is at most the ring, four periods (46 ms). The control page's
+FIFOs have 64 slots each (`stream::CHANNEL_SLOTS`): 32 single-buffer packets in flight.
 
-    ## Start the output (ramp to silence, start DMA); stop it (ramp down).
-    open() raises (busy);
-    close() raises (not_running);
+Threading. One Thread, the driver's first, is the refill Thread; it alone touches the
+PWM block, the ring and `dma_v1`. The `audio_v1` calls run on their callers' Threads (PPC)
+and only hand requests over through atomics and two driver-private EventCounts: `open`
+claims the output (compare-and-swap of the owner) and advances a doorbell the refill
+Thread sleeps on while the output is closed; `close` sets a closing flag and waits on a
+"closed" EventCount the refill Thread advances once the output is off. While the output
+is open the refill Thread sleeps on `dma_v1`'s EventCount only (one advance per finished
+period), and sees `close` at the next period, within 12 ms. No Turnstile is needed:
+nothing the calls touch is shared beyond those atomics.
 
-    ## Periods filled with silence because no samples were queued, since open.
-    underruns() returns (card32 count);
-}
-```
+Refill path (`src/stream.rs`, host tests `tests/stream.rs`). The ring is 4 periods of 512
+frames, one page each. At `open` every slot is filled: period 0 ramps from 0 up to
+`RNG/2`, periods 1 to 3 come from the client's queue; then the PWM is set up and
+`dma_v1.start_ring` started (§9.6: channels stopped, `RNG1 = RNG2`, `CLRF1`, `DMAC`, then
+`PWEN`/`USEF`). When the EventCount says `n` periods finished in all, `stream::Ring`
+names the periods to write: the slots the DMA left take the periods after the ones
+already written, never the slot playing; if the DMA came round to a slot first, the
+periods it replayed are counted late. Each period is filled by `Stream::fill`: packets in
+order, records in order, each frame converted to `[word(right), word(left)]` with
+`word = ((s + 32768) · RNG) >> 16` (0 for -32768, `RNG/2` for 0, `RNG - 1` for 32767),
+then `CleanData` on the slot. Too few frames: the rest of the period is silence (`RNG/2`)
+and, once a packet has come since `open`, it counts as an underrun (D7).
 
-One word of return value and six argument words fit Meddle's limits.
+Open and close. `close` does not cut the stream: the refill Thread keeps taking the
+queued packets (`Stream::drain`, the end of the stream is no underrun), at most 8 periods
+(the frames the data pages hold, so a client that keeps sending cannot hold `close`
+forever; packets after that come back cut). The first period that finds nothing queued
+gets the ramp from the last frame's words down to 0, the periods after it zeros; once
+the DMA has finished the ramp the driver stops the channel (`dma_v1.stop`), the PWM
+channels and `DMAC`, hands back anything put meanwhile, and traces the stream (frames,
+underruns, late periods, packets back; on the board the rate measured from the period
+completions against `CNTVCT_EL0`, the `STA` flags and `dma_v1.errors`). A client that
+wants its tail played closes right after its last packet; one that waits for every
+packet first leaves a silent period behind it, which counts as an underrun.
 
 ### `dma_v1` (written in A2, D1)
 
@@ -452,9 +487,17 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   `CONBLK_AD` turns into one EventCount advance per block.
 - So in QEMU: memory-to-memory DMA tests (chains, interrupts, `INT_STATUS`, `CS.END`,
   error bits), clock register tests, all of the interface and io-channel path, and the
-  mixer. The `audio` driver gets a test feature that points its chain at a RAM capture
-  buffer instead of `FIF1` and runs it finite, so an end-to-end test can check that the
-  words reaching "the FIFO" are the client's samples converted. Everything about pacing,
+  mixer. As written in A3, the `audio` driver under `qemu` replaces the ring by a
+  capture: each period is played by a one-block `dma_v1.copy` from its ring slot into
+  the same slot of a 4-page capture buffer, started at the period's nominal time (11.6 ms
+  apart, so the stream runs at about the real pace), and the copy's completion is the
+  EventCount advance a ring period makes on the board; the same refill code then runs.
+  After each copy the driver invalidates the capture slot and compares it word by word
+  with what the period was filled with: the ramps, and for stream periods the capture
+  test's pattern (`stream::test_pattern`, which the test client sends) converted, from the
+  stream position the period started at, then silence. So the end-to-end test
+  (`just test-audio`) checks that the client's samples reach "the FIFO" converted, right
+  first, in order, through the DMA and the cache maintenance. Everything about pacing,
   the real rate, pops, levels and left/right needs the board.
 
 ## Hardware testing
@@ -469,20 +512,19 @@ dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
 
 in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on function 4
 (ALT0) and a 100 MHz assigned clock rate. QEMU tests use the same change made by
-`targets/overlays/audio-test-pwm.dts` (`just test-audio`). Order of tests (the first is
-`just boot-audio-test`):
+`targets/overlays/audio-test-pwm.dts` (`just test-audio`). Order of tests:
 
-1. A test tone, polled: 440 Hz sine on the left only, then the right only, then both, by
-   writing `FIF1` while `STA.FULL1` is clear. Confirms pins, clock, range and the swap.
-2. The same tone from a DMA ring, with the period interrupt counted against the generic
-   timer (`CNTVCT_EL0`) to measure the real sample rate, and `STA` checked for `WERR1`,
-   `GAPO1`, `GAPO2` and `BERR`. Written in A2 as the second part of
-   `just boot-audio-test`: a ring of 4 periods of 512 frames in the audio driver's
-   memory, channel claimed for DREQ 5, one period of ramp up, 5 s of the tone on both
-   sides, one period of ramp down; the trace gives the measured rate and its distance
-   from 44 091.710 Hz in ppm, periods refilled late, the `STA` flags and `dma_v1.errors`.
-3. Underrun behaviour: stop feeding and listen for clicks; check the ramp.
-4. Wood effects.
+1. `just boot-audio-test` (since A3; the polled tone of A1 and the driver's own ring
+   tone of A2 were replaced by it): the test client (`userspace/tests/audio/tone`)
+   streams a 440 Hz sine at a quarter of full scale through `audio_v1`: 3 s on the left
+   only, 3 s on the right only, 3 s on both, then 60 s on both, each its own
+   `open`/`close`, 0.7 s apart. Confirms pins, clock, range and the swap (by ear: the
+   order is fixed), and the DMA ring: at each close the driver traces the rate measured
+   from the period completions against the generic timer (`CNTVCT_EL0`) and its distance
+   from 44 091.710 Hz in ppm ("within 0.1 %"), the underruns and late periods, the `STA`
+   flags (`WERR1`, `RERR1`, `GAPO1`, `GAPO2`, `BERR`) and `dma_v1.errors`.
+2. Underrun behaviour: stop feeding and listen for clicks; check the ramps.
+3. Wood effects.
 
 ## Risks
 

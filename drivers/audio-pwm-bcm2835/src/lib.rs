@@ -1,8 +1,8 @@
 #![no_std]
 
 //! The PWM block of the BCM2835 (`brcm,bcm2835-pwm`) as the Raspberry Pi 3's
-//! headphone jack: its registers, the FIFO words of a stereo frame and a test
-//! tone.
+//! headphone jack: its registers, the FIFO words of a stereo frame, the PCM
+//! stream of `audio_v1` that fills the DMA ring ([`stream`]) and a test tone.
 //!
 //! Resources: BCM2835 ARM Peripherals, chapter 9: §9.6 (register map, `CTL`,
 //! `STA` and `DMAC` fields), §9.4 (PWM mode with `MSEN` 0 or 1), §9.1 (one
@@ -15,6 +15,8 @@
 //! `AUD_PWM1` to `AUDIO_L` and `AUD_PWM0` to `AUDIO_R`
 //! (`doc/agentic/audio-design.md`, The jack). A frame is therefore written
 //! right first.
+
+pub mod stream;
 
 use {bitbybit::bitfield, derive_mmio::Mmio, libmmio::assert_register_offsets};
 
@@ -203,16 +205,14 @@ pub enum Side {
     Both,
 }
 
-/// The two FIFO words of a frame playing `sample` on `side` and silence on the
-/// other: channel 1 (right) first, channel 2 (left) second.
+/// The client frame `[left, right]` playing `sample` on `side` and silence on
+/// the other.
 #[must_use]
-pub fn frame(side: Side, sample: i16, range: u32) -> [u32; 2] {
-    let tone = word(sample, range);
-    let silence = word(0, range);
+pub const fn side_frame(side: Side, sample: i16) -> [i16; 2] {
     match side {
-        Side::Left => [silence, tone],
-        Side::Right => [tone, silence],
-        Side::Both => [tone, tone],
+        Side::Left => [sample, 0],
+        Side::Right => [0, sample],
+        Side::Both => [sample, sample],
     }
 }
 
@@ -317,34 +317,6 @@ pub fn dma_feed() -> DmaConfig {
         .with_enable(true)
 }
 
-/// What one period of the DMA test ring plays, by its number from the start.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PeriodContent {
-    /// From no output up to silence (the mid level)
-    RampUp,
-    /// The test tone
-    Tone,
-    /// From silence down to no output
-    RampDown,
-    /// No output: every word 0
-    Off,
-}
-
-/// The content of period `index` of a test of `tone_periods` periods of tone
-/// between one period of ramp up and one of ramp down.
-#[must_use]
-pub const fn period_content(index: u64, tone_periods: u64) -> PeriodContent {
-    if index == 0 {
-        PeriodContent::RampUp
-    } else if index <= tone_periods {
-        PeriodContent::Tone
-    } else if index == tone_periods + 1 {
-        PeriodContent::RampDown
-    } else {
-        PeriodContent::Off
-    }
-}
-
 /// The rate `frames` frames in `elapsed_ns` nanoseconds give, in millihertz.
 #[must_use]
 pub fn measured_rate_millihertz(frames: u64, elapsed_ns: u64) -> u64 {
@@ -359,5 +331,6 @@ pub fn deviation_ppm(measured: u64, expected: u64) -> u64 {
     u64::try_from(difference * 1_000_000 / u128::from(expected.max(1))).unwrap_or(u64::MAX)
 }
 
-/// The A2 hardware exit: the measured rate within 0.1 % of the computed one.
+/// The hardware check of the ring's pace: the measured rate within 0.1 % of
+/// the computed one.
 pub const RATE_TOLERANCE_PPM: u64 = 1000;

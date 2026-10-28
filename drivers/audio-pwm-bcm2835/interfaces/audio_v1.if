@@ -1,0 +1,67 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## PCM output through the Raspberry Pi's headphone jack: the PWM block fed by a
+## DMA ring in the audio driver's memory (`doc/agentic/audio-design.md`).
+##
+## The samples travel over the io-channel in transmit mode: the client puts
+## packets of full buffers of the channel's data pages on it, each buffer
+## signed 16-bit stereo frames, left then right, little-endian, at the rate
+## `rate` reports; every record a whole number of 4-byte frames at a 4-byte
+## aligned address. While the output is open the driver takes the packets in
+## the order they were put, one period of the ring at a time, converts their
+## frames into the PWM's FIFO words, and hands each packet back on the
+## channel, advancing its EventCount, once it copied the packet's last frame
+## into the ring: a packet back is a buffer free to refill. The driver looks
+## at the channel once per period on its own, so the client never rings it.
+## A period that finds too few frames queued is filled up with silence and
+## counted as an underrun; the output keeps running. A packet with a record
+## outside the data pages or not a whole number of aligned frames comes back
+## at once, unplayed. A packet comes back with each record's length cut to
+## the bytes the driver took: whole, except for what `close` cuts off.
+## Prototype: edited in place.
+local interface audio_v1
+{
+    ## The io-channel the samples travel on: a control page and four data
+    ## pages (4096 frames).
+    channel 4;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## driver tells clients, and their io-channels, apart by it.
+    badged;
+
+    ## Another client has the output open, or it is still closing.
+    exception busy {}
+
+    ## The caller does not have the output open.
+    exception not_open {}
+
+    ## The output's frame rate in millihertz: 44 091 710 (the 100 MHz PWM clock
+    ## over a range of 2268 clock cycles per sample).
+    rate()
+        returns (card32 millihertz);
+
+    ## Open the output for the caller: the driver ramps it from off up to
+    ## silence over one period (about 12 ms), then plays the caller's packets
+    ## from its io-channel. Packets put before the call play right after the
+    ## ramp. Resets the underrun count.
+    open()
+        raises (busy);
+
+    ## Close the caller's output once what it queued has played: the driver
+    ## takes the queued packets as before, without counting the end of them as
+    ## an underrun, then ramps from the last frame down to off over one period
+    ## and stops. It plays out at most the frames the data pages hold (eight
+    ## periods); packets a client keeps putting after that come back cut to
+    ## the bytes taken. Returns when the output is off and every packet is
+    ## back.
+    close()
+        raises (not_open);
+
+    ## Periods since the last `open` that found too few frames queued and were
+    ## filled up with silence; counted from the first packet after `open`
+    ## until `close`.
+    underruns()
+        returns (card32 periods);
+}

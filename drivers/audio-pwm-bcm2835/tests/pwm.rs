@@ -4,9 +4,9 @@
 mod tests {
     use audio_pwm_bcm2835::{
         Control, DmaConfig, MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ,
-        PWM_DREQ, PeriodContent, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status,
-        Tone, clear_errors, clearing, deviation_ppm, dma_feed, fifo_stereo, frame, has_errors,
-        measured_rate_millihertz, period_content, sample_rate_millihertz, word,
+        PWM_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status, Tone, clear_errors,
+        clearing, deviation_ppm, dma_feed, fifo_stereo, has_errors, measured_rate_millihertz,
+        sample_rate_millihertz, side_frame, word,
     };
 
     #[test]
@@ -85,12 +85,10 @@ mod tests {
     }
 
     #[test]
-    fn frames_put_right_first_and_silence_on_the_muted_side() {
-        let silence = RANGE / 2;
-        let loud = word(i16::MAX, RANGE);
-        assert_eq!(frame(Side::Left, i16::MAX, RANGE), [silence, loud]);
-        assert_eq!(frame(Side::Right, i16::MAX, RANGE), [loud, silence]);
-        assert_eq!(frame(Side::Both, i16::MAX, RANGE), [loud, loud]);
+    fn side_frames_put_silence_on_the_muted_side() {
+        assert_eq!(side_frame(Side::Left, i16::MAX), [i16::MAX, 0]);
+        assert_eq!(side_frame(Side::Right, i16::MAX), [0, i16::MAX]);
+        assert_eq!(side_frame(Side::Both, i16::MIN), [i16::MIN, i16::MIN]);
     }
 
     #[test]
@@ -136,22 +134,6 @@ mod tests {
         assert_eq!(PERIOD_BYTES, 4096);
         // §9.6 DMAC: ENAB 31, PANIC 15:8 = 7, DREQ 7:0 = 7.
         assert_eq!(dma_feed().raw_value(), 0x8000_0707);
-    }
-
-    #[test]
-    fn the_ring_test_ramps_up_plays_ramps_down_then_goes_quiet() {
-        let contents: Vec<_> = (0..6).map(|index| period_content(index, 3)).collect();
-        assert_eq!(
-            contents,
-            [
-                PeriodContent::RampUp,
-                PeriodContent::Tone,
-                PeriodContent::Tone,
-                PeriodContent::Tone,
-                PeriodContent::RampDown,
-                PeriodContent::Off,
-            ]
-        );
     }
 
     #[test]

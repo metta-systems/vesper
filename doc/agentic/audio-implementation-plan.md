@@ -28,9 +28,9 @@ Done in QEMU (2026-10-27), hardware check pending:
   `clock_v1` (linked by the node's `clocks`) and reads it back; on the board it sets
   `RNG1 = RNG2 = 2268`, both channels on the FIFO with `MSEN=0`, clears the FIFO and
   plays a polled 440 Hz sine on the left, the right and both sides, three rounds,
-  traced on the UART with the underruns and `STA` errors of each side. Under `qemu` it
-  checks `clock_v1`'s refusals instead and never touches the PWM block. Host tests
-  `tests/pwm.rs`.
+  traced on the UART with the underruns and `STA` errors of each side (replaced in A3 by
+  the `audio_v1` test client). Under `qemu` it checks `clock_v1`'s refusals instead and
+  never touches the PWM block. Host tests `tests/pwm.rs`.
 - QEMU test tree: `targets/overlays/audio-test-pwm.dts`, applied to the rpi3 tree with
   `fdtoverlay` by `just test-audio` (needs `dtc` and `fdtoverlay`). Board:
   `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in `config.txt`; chainboot hands
@@ -40,10 +40,10 @@ Done in QEMU (2026-10-27), hardware check pending:
   `target/audio-test.log`): the PWM clock reads back 100 MHz from PLLD per / 5, and an
   unknown clock and an unreachable rate are refused.
 
-- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): the
-  tone is heard on the side the trace names, and every side traces "no underruns, no
-  errors" (no `WERR1`, `BERR` or FIFO underruns while it is kept full). Until then A1
-  stays here.
+- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): since
+  A3 the polled tone is replaced by the `audio_v1` test client, so this is checked with
+  A3's hardware exit: the tone is heard on the left, then the right, then both (pins,
+  clock, range and the swap). Until then A1 stays here.
 - [ ] Follow-up: Kickstart passes the clock number of the `clocks` link (the cell after
   the phandle), so `cprman` can refuse clocks the caller's node does not name; until
   then it serves the PWM clock only and the audio driver names clock 30 itself.
@@ -76,35 +76,63 @@ Done in QEMU (2026-10-27), hardware check pending:
   5 s from a ring of 4 periods × 512 frames fed to `FIF1` by DREQ 5, refilling and
   cleaning each period behind the DMA, and traces the period rate measured against
   `CNTVCT_EL0`, its distance from 44 091.710 Hz, late refills, the `STA` flags and
-  `dma_v1.errors`. Host tests in `tests/pwm.rs` (ring constants, `DMAC`, period
-  sequence, rate tolerance).
+  `dma_v1.errors` (in A3 the ring became the `audio_v1` output, which traces the same
+  at each close). Host tests in `tests/pwm.rs` (ring constants, `DMAC`, rate
+  tolerance).
 - QEMU exit passed: `just test-dma` (log in `target/dma-test.log`, the audio-test image;
   in `just test`): the DMA driver gets mask `0x7f35` and 13 interrupt lines; channel 0's
   interrupt shows `INT_STATUS 0x0001`, `END` and `INT` set, 4 blocks finished; channel
   14's shows `INT_STATUS 0x4000` on the shared line; both copies arrive. `just
   test-audio` still passes on the same image.
 
-- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): after
-  the polled rounds, the tone is heard from the DMA ring without gaps, and the trace says
-  the measured rate is "within 0.1 %" of 44 091.710 Hz (this also checks the assumed
-  500 MHz PLLD), with no late refills, no `WERR1`, `GAPO1`, `GAPO2` or `BERR`, and DMA
-  errors 0. Until then A2 stays here.
+- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): since
+  A3 the driver's own ring tone is replaced by the `audio_v1` test client, which plays
+  from the same ring; checked with A3's hardware exit: the tone is heard without gaps,
+  and each close traces a measured rate "within 0.1 %" of 44 091.710 Hz (this also
+  checks the assumed 500 MHz PLLD), no late periods, no `WERR1`, `GAPO1`, `GAPO2` or
+  `BERR`, and DMA errors 0. Until then A2 stays here.
 - [ ] Follow-up: limit a client to the DREQs its node names (`dmas`) or its manifest
   grants; today any client may claim any DREQ of the driver's table (memory and PWM).
 
 ## A3: audio driver and `audio_v1`
 
-- Write `audio_v1.if` (draft in the design doc): `channel`, `rate`, `open`, `close`,
-  `underruns`.
-- The ring in the driver's own memory, `CleanData` per period, the s16-to-FIFO-word
-  conversion with the left/right swap, silence on underrun (D7), the open/close ramp.
-- A capture test mode: the chain targets a RAM buffer instead of `FIF1` and runs finite,
-  so QEMU can check the words.
-- QEMU exit: a test client submits known samples; the captured words equal the
-  converted samples in the right order, packets come back, the EventCount advances, an
-  underrun is counted when the client stops.
-- Hardware exit: a test client's tone through the interface with no gaps or clicks for
-  a minute; underrun count zero.
+Done in QEMU (2026-10-28), hardware check pending:
+
+- `drivers/audio-pwm-bcm2835/interfaces/audio_v1.if` (crates `audio`, `audio-client`):
+  `badged;`, `channel 4;`, `rate`, `open` (`busy`), `close` (`not_open`), `underruns`.
+  Design doc section `audio_v1` has the channel semantics, the threading (one refill
+  Thread; the calls hand over through atomics, a doorbell and a "closed" EventCount),
+  the refill path and open/close (a period of ramp up; `close` plays out what is queued,
+  at most 8 periods, then a period of ramp down from the last frame, and stops).
+- The driver keeps the PWM and clock set-up, claims a DMA channel for DREQ 5 at start
+  and runs a ring of 4 periods × 512 frames in its own memory while a client has the
+  output open, refilling each period `dma_v1`'s EventCount reports finished, converting
+  s16 stereo into FIFO words right first (range 2268), cleaning it, silence and an
+  underrun count when too few frames are queued (D7). The pure part is
+  `src/stream.rs` (`Stream`, `Ring`, conversion, ramps, the capture pattern); host tests
+  `tests/stream.rs` (scaling and clipping, little-endian frames, channel order, packets
+  in order across records and periods, completion timing, refusals, underrun counting,
+  draining, cutting at close, ramps, the ring's refill and late counting). The A1 polled
+  tone and the A2 ring tone are gone from the driver: the test client replaces them.
+- Test client `userspace/tests/audio/tone` (`audio-test-client`, a program in the
+  audio-test image importing `audio_v1`): on the board a 440 Hz tone, 3 s left, 3 s
+  right, 3 s both, 60 s both; under `qemu` the capture test.
+- Capture mode (`qemu`): each period is played by a one-block `dma_v1.copy` into a
+  capture buffer, paced at the period's length; the driver checks every captured period
+  against what filled it, stream periods against the client's pattern.
+- QEMU exit passed: `just test-audio` (log in `target/audio-test.log`; in `just test`):
+  the first stream (6 buffers of the pattern and a refused one, queued before `open`)
+  gives "1 ramp up, 8 stream periods with 3072 client frames of the pattern in order, 2
+  of them silent at the end, 1 ramp down", 7 packets back in order (the refused one
+  empty), 2 underruns counted once the client stopped; the second (4 buffers, `open`
+  then `close` at once) plays out 2048 frames with 0 underruns, every packet back whole;
+  `busy` and `not_open` refused. `just test-dma` still passes on the same image.
+
+- [ ] Hardware exit (`just boot-audio-test` on the Pi 3 B with the overlay line): the
+  tone is heard left, then right, then both, then both for a minute with no gaps or
+  clicks (open and close included), and every close traces 0 underruns, 0 late, no
+  `STA` errors, DMA errors 0 and a rate "within 0.1 %". This also completes the hardware
+  exits of A1 and A2.
 
 ## A4: Wood sound effects
 
@@ -130,11 +158,13 @@ Done in QEMU (2026-10-27), hardware check pending:
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
   mixer).
-- QEMU tests per stage as above (`just test-audio` for A1, `just test-dma` for A2);
+- QEMU tests per stage as above (`just test-audio` for A1 and A3, `just test-dma` for
+  A2);
   `just test-mailbox`, `just test-driver`, `just test-wood` for regressions in shared
   code.
-- `just clippy-audio`: the audio crates (with the `dma` driver and its interface crates)
-  with and without `qemu`, and their host tests.
+- `just clippy-audio`: the audio crates (with the `dma` driver, the interface crates and
+  the audio test client) with and without `qemu`, and their host tests (`pwm`,
+  `stream`).
 - Hardware checks on the Pi 3 B per stage; QEMU cannot check pacing, rate, pops,
   levels or channel order.
 - `just fmt-check` and focused clippy on the touched crates.

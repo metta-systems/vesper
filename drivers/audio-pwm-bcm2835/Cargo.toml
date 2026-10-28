@@ -1,7 +1,7 @@
 [package]
 name = "audio-pwm-bcm2835"
 
-description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: for now a test tone, polled and from a DMA ring, later PCM output through audio_v1."
+description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: PCM output through audio_v1, from a DMA ring in its own memory."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -16,22 +16,25 @@ publish = false
 
 [features]
 default = []
-# Opt in to standard host integration tests of the register values and samples.
+# Opt in to standard host integration tests of the register values, samples and stream.
 host-tests = []
-# Under QEMU, which does not emulate the PWM block, the driver sets the clock
-# and checks it through clock_v1 but never touches the PWM registers.
+# Under QEMU, which does not emulate the PWM block and cannot run a DMA ring,
+# the driver checks clock_v1 and dma_v1, never touches the PWM registers, and
+# plays each period of the ring by a DMA copy into a capture buffer, which it
+# checks against the capture test's pattern.
 qemu = ["libserial-trace/qemu", "libuser/qemu"]
 
 [dependencies]
 bitbybit = { workspace = true }
 derive-mmio = { workspace = true }
+libio-channel = { workspace = true }
 libmmio = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
+audio = { workspace = true }
 clock-client = { workspace = true }
 dma-client = { workspace = true }
-driver-protocol = { workspace = true }
 gpio-client = { workspace = true }
 libdevice-driver = { workspace = true }
 libmeddle-runtime = { workspace = true }
@@ -52,6 +55,10 @@ test = false
 
 [[test]]
 name = "pwm"
+required-features = ["host-tests"]
+
+[[test]]
+name = "stream"
 required-features = ["host-tests"]
 
 [lints]

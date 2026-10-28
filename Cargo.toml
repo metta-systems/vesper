@@ -62,8 +62,10 @@ members = [
   "drivers/dma-bcm2835",
   "drivers/dma-bcm2835/client",
   "drivers/dma-bcm2835/server",
-  # PWM audio driver
+  # PWM audio driver and its audio_v1 interface crates
   "drivers/audio-pwm-bcm2835",
+  "drivers/audio-pwm-bcm2835/client",
+  "drivers/audio-pwm-bcm2835/server",
   "kernel/tests/audio-test",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
@@ -132,6 +134,7 @@ members = [
   "userspace/tests/mailbox/client",
   "userspace/tests/usb/client",
   "userspace/tests/sd/client",
+  "userspace/tests/audio/tone",
   "userspace/tests/input/trace",
   "userspace/tests/compositor/events",
   "userspace/gui/compositor",
@@ -223,6 +226,9 @@ clock = { path = "drivers/cprman-bcm2835/server" }
 clock-client = { path = "drivers/cprman-bcm2835/client" }
 dma = { path = "drivers/dma-bcm2835/server" }
 dma-client = { path = "drivers/dma-bcm2835/client" }
+audio = { path = "drivers/audio-pwm-bcm2835/server" }
+audio-client = { path = "drivers/audio-pwm-bcm2835/client" }
+audio-pwm-bcm2835 = { path = "drivers/audio-pwm-bcm2835" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }
