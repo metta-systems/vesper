@@ -10,16 +10,18 @@
 //! - Keys are the ones the compositor routes to the window ([`Keyboard`]).
 //! - Sound effects go to the voices Wood's playback Thread mixes and streams
 //!   to the audio driver ([`sound`](crate::sound)); the sound methods only
-//!   change voice state. There is no music yet: its methods keep their
-//!   silent defaults.
+//!   change voice state.
+//! - Music goes to the MIDI synthesiser component: the music methods only
+//!   queue commands, which the playback Thread sends ([`music`](crate::music)).
 
 use {
     crate::{
         keyboard::Keyboard,
+        music::{COMMANDS, MusicCommand, PLAYING},
         sound::{self, VOICES},
         window::Window,
     },
-    core::cell::Cell,
+    core::{cell::Cell, sync::atomic::Ordering},
     libobject::EventCountKey,
     room::engine::platform::{FileHandle, Platform},
 };
@@ -139,6 +141,33 @@ impl Platform for Wood {
 
     fn sound_is_playing(&self, channel: usize) -> bool {
         VOICES.is_playing(channel)
+    }
+
+    fn music_play(&self, midi: &[u8], looping: bool) {
+        COMMANDS.push(MusicCommand::Play(midi.to_vec(), looping));
+        PLAYING.store(sound::is_playing(), Ordering::Release);
+    }
+
+    fn music_stop(&self) {
+        COMMANDS.push(MusicCommand::Stop);
+        PLAYING.store(false, Ordering::Release);
+    }
+
+    fn music_pause(&self) {
+        COMMANDS.push(MusicCommand::Pause);
+    }
+
+    fn music_resume(&self) {
+        COMMANDS.push(MusicCommand::Resume);
+    }
+
+    fn music_set_volume(&self, volume: i32) {
+        let volume = u8::try_from(volume.clamp(0, 127)).unwrap_or(127);
+        COMMANDS.push(MusicCommand::Volume(volume));
+    }
+
+    fn music_is_playing(&self) -> bool {
+        PLAYING.load(Ordering::Acquire)
     }
 
     fn open(&self, path: &str) -> Option<FileHandle> {

@@ -173,6 +173,7 @@ pub fn run() -> ! {
             &components::USB_HID_DRIVER,
             &components::COMPOSITOR_DRIVER,
             &components::DRAW_DEMO_DRIVER,
+            &components::MIDI_SYNTH_DRIVER,
             &components::WOOD_DRIVER,
             &components::GPIO_DRIVER,
             &components::CPRMAN_DRIVER,
@@ -230,14 +231,27 @@ pub fn run() -> ! {
                     .unwrap_or_else(|failure| {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
+            } else if name == components::MIDI_SYNTH.name {
+                // The MIDI synthesiser: no imports, its SoundFont, and Wood
+                // as its one client, on an io-channel.
+                assert!(imports.is_empty());
+                assert!(init.resource(0).is_some(), "the SoundFont resource");
+                let [area] = init.areas() else {
+                    panic!(
+                        "Wood is the one client of midi_synth_v1, found {}",
+                        init.areas().len()
+                    );
+                };
+                assert_ne!(area.channel_event, 0, "midi_synth_v1 has an io-channel");
             } else if name == components::WOOD.name {
                 // Wood: six functions of compositor_v1 and its event channel,
                 // the four of audio_v1 and their io-channel when the audio
-                // driver loaded, a window to map its surface in, and the IWAD.
+                // driver loaded, the five of midi_synth_v1 and their
+                // io-channel, a window to map its surface in, and the IWAD.
                 assert_eq!(
                     imports.len(),
-                    6 + 4 * audio_nodes,
-                    "six functions of compositor_v1, four of audio_v1"
+                    6 + 4 * audio_nodes + 5,
+                    "six functions of compositor_v1, four of audio_v1, five of midi_synth_v1"
                 );
                 assert!(imports.iter().all(|record| record.channel_event != 0));
                 assert_ne!(init.map_window.l2, 0, "a window to map the surface");
@@ -268,10 +282,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 12 + audio_nodes,
-        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, wood, gpio, the clock manager, the DMA controller, the audio driver (with a PWM node) and the root dispatcher"
+        INSTANCES + 13 + audio_nodes,
+        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, the MIDI synthesiser, wood, gpio, the clock manager, the DMA controller, the audio driver (with a PWM node) and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 11 + audio_nodes);
+    assert_eq!(seen, INSTANCES + 12 + audio_nodes);
 
     // ── The compositor reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)

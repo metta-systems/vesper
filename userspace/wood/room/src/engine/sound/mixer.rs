@@ -470,14 +470,23 @@ impl<'sounds> Mixer<'sounds> {
     /// right]`. Returns how many voices played in this buffer; a voice
     /// that runs out ends, and the rest of its frames are silent.
     pub fn mix(&mut self, frames: &mut [[i16; 2]]) -> usize {
+        frames.fill([0, 0]);
+        self.mix_onto(frames)
+    }
+
+    /// Mix every voice onto `frames`, adding to what they hold (music
+    /// rendered elsewhere, for example): each frame becomes its own samples
+    /// plus the voices' samples times their gains, clipped to 16 bits once.
+    /// Returns how many voices played in this buffer, as [`mix`](Self::mix).
+    pub fn mix_onto(&mut self, frames: &mut [[i16; 2]]) -> usize {
         let playing = self
             .voices
             .iter()
             .filter(|voice| voice.sound.is_some())
             .count();
         for frame in frames.iter_mut() {
-            let mut left = 0_i32;
-            let mut right = 0_i32;
+            let mut left = i32::from(frame[0]);
+            let mut right = i32::from(frame[1]);
             for voice in self.voices.iter_mut().filter(|voice| voice.sound.is_some()) {
                 if let Some(sample) = voice.next_sample() {
                     left += (sample * voice.gains[0]) >> GAIN_BITS;
@@ -495,6 +504,18 @@ impl<'sounds> Mixer<'sounds> {
     /// channel, then [`mix`](Self::mix), then report each voice that has
     /// nothing left to play as finished. Playback Thread only.
     pub fn mix_shared(&mut self, shared: &'sounds SharedVoices, frames: &mut [[i16; 2]]) -> usize {
+        frames.fill([0, 0]);
+        self.mix_shared_onto(shared, frames)
+    }
+
+    /// [`mix_shared`](Self::mix_shared), adding onto what `frames` hold as
+    /// [`mix_onto`](Self::mix_onto) does: Wood's playback Thread mixes the
+    /// effects on top of the music. Playback Thread only.
+    pub fn mix_shared_onto(
+        &mut self,
+        shared: &'sounds SharedVoices,
+        frames: &mut [[i16; 2]],
+    ) -> usize {
         for (voice, channel) in shared.channels.iter().enumerate() {
             let command = channel.command.load(Ordering::Acquire);
             let (volume, separation) = unpack_levels(channel.levels.load(Ordering::Relaxed));
@@ -511,7 +532,7 @@ impl<'sounds> Mixer<'sounds> {
                 self.set_levels(voice, volume, separation);
             }
         }
-        let playing = self.mix(frames);
+        let playing = self.mix_onto(frames);
         for (voice, channel) in shared.channels.iter().enumerate() {
             if !self.is_playing(voice) {
                 channel
@@ -702,6 +723,33 @@ mod tests {
         mixer.start(5, &low, 127, 254);
         mixer.mix(&mut frames);
         assert_eq!(frames, [[0, i16::MIN]; 2], "clipped low");
+    }
+
+    #[test]
+    fn voices_mix_onto_what_the_frames_hold() {
+        let quiet = constant(11025, 160, 100); // +8192
+        let loud = constant(11025, 255, 100); // +32512
+        let mut mixer = Mixer::new(OUTPUT_MILLIHERTZ);
+        mixer.start(0, &quiet, 127, 0);
+        // Music already in the frames: the voice adds to it.
+        let mut frames = [[1000_i16, -2000]; 2];
+        assert_eq!(mixer.mix_onto(&mut frames), 1);
+        assert_eq!(frames, [[9192, -2000]; 2]);
+        // The sum is clipped once, not the music and the voice apart.
+        mixer.start(1, &loud, 127, 0);
+        let mut frames = [[-20_000_i16, 0]; 2];
+        mixer.mix_onto(&mut frames);
+        assert_eq!(frames, [[20_704, 0]; 2]);
+        let mut frames = [[10_000_i16, 0]; 2];
+        mixer.mix_onto(&mut frames);
+        assert_eq!(frames, [[i16::MAX, 0]; 2], "clipped high");
+        // `mix` ignores what the frames held.
+        let mut frames = [[10_000_i16, 7]; 2];
+        mixer.mix(&mut frames);
+        assert_eq!(frames, [[i16::MAX, 0]; 2]);
+        mixer.stop(1);
+        mixer.mix(&mut frames);
+        assert_eq!(frames, [[8192, 0]; 2]);
     }
 
     #[test]

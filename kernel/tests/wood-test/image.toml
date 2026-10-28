@@ -4,7 +4,8 @@
 # lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
 # a window of its own, with the shareware IWAD as its resource, and the drivers
 # of audio-test (the gpio component, the clock manager, the DMA controller and
-# the PWM audio driver) for Wood's sound effects.
+# the PWM audio driver) for Wood's sound effects, and the MIDI synthesiser
+# component with its SoundFont for Wood's music.
 
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
@@ -115,6 +116,25 @@ resources = ["doom1_wad"]
 [[resource]]
 name = "doom1_wad"
 file = "../../../userspace/wood/wad/doom1.wad"
+
+# The MIDI synthesiser: Wood's music. Wood's playback Thread sends it the
+# engine's songs and pulls each period's rendered frames on midi_synth_v1's
+# io-channel. `memory` is a 4 MiB RAM Untyped for its 2 MiB heap (the bank's
+# zones and the song); the SoundFont stays in its resource mapping.
+[[component]]
+name = "midi_synth"
+binary = "midi-synth"
+interfaces = "../../../userspace/wood/midi-synth/interfaces"
+active = true
+program = true
+memory = 4194304
+resources = ["soundfont"]
+
+# The SC-55 SoundFont trimmed to the shareware IWAD's music (audio decision
+# D9.4): a build artifact, written by `just wood-soundfont` before the image.
+[[resource]]
+name = "soundfont"
+file = "../../../target/wood/sc55-doom1.sf2"
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.

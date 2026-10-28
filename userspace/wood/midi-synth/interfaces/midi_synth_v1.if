@@ -1,0 +1,75 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## A General MIDI synthesiser: Standard MIDI Files in, rendered sound out
+## (`doc/agentic/audio-design.md`, decisions D9 and D10). The synthesiser plays
+## a SoundFont bundled with it, at the audio output's rate, `rate`.
+##
+## Both directions travel on the interface's io-channel (xbufs): the client
+## submits packets naming buffers of the channel's data pages, the synthesiser
+## handles them in the order they were put and hands each one back. A packet's
+## value word says what it is; its low byte is the command:
+##
+## - 1, song: its records hold bytes of a Standard MIDI File, which the
+##   synthesiser appends to the song it is collecting. Bit 8 starts a new song
+##   (the bytes collected so far are dropped), bit 9 ends it: the song replaces
+##   what played and plays from its start, looping when bit 10 is set too. A
+##   song too large for the data pages travels in several packets.
+## - 2, render: its records are empty buffers, which come back holding the next
+##   frames of the music, signed 16-bit stereo, left then right, little-endian,
+##   each record cut to the whole frames it holds (silence when nothing plays).
+## - 3, stop: the song ends, its notes fade.
+## - 4, pause and 5, resume: while paused, rendered frames are silent and the
+##   song holds its place.
+## - 6, volume: bits 8 to 15 are the music volume, 0 to 127 (127 at start).
+##
+## A command without data still names one record (an empty one will do). Bits
+## 16 and up are the client's own, handed back unchanged with the packet. A
+## packet with a record outside the data pages, or of an unknown command,
+## comes back unhandled with its records emptied.
+##
+## The synthesiser handles packets during `service` only, on the caller's
+## Thread: a client puts its packets, calls `service`, and finds them all back
+## when it returns. Prototype: edited in place.
+local interface midi_synth_v1
+{
+    ## The io-channel: a control page and sixteen data pages, room for four
+    ## periods of rendered frames and the rest for song bytes.
+    channel 16;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## synthesiser tells its clients apart by it.
+    badged;
+
+    ## Another client holds the synthesiser.
+    exception busy {}
+
+    ## The caller does not hold the synthesiser.
+    exception not_open {}
+
+    ## The rate the synthesiser renders at in millihertz: 44 091 710, the audio
+    ## driver's (100 MHz over 2268).
+    rate()
+        returns (card32 millihertz);
+
+    ## Take the synthesiser for the caller: nothing plays, the volume is full.
+    open()
+        raises (busy);
+
+    ## Give the synthesiser back; what played stops at once.
+    close()
+        raises (not_open);
+
+    ## Handle every packet the caller put on its io-channel, in order, and hand
+    ## each one back. Returns the number of packets handled.
+    service()
+        returns (card32 handled)
+        raises (not_open);
+
+    ## Whether a song plays: 1 from the end of its last song packet until it
+    ## ends or is stopped (a looping song plays until stopped), else 0.
+    playing()
+        returns (card32 playing)
+        raises (not_open);
+}

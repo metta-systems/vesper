@@ -21,7 +21,9 @@ pub const CHANNELS: usize = 16;
 /// The General MIDI percussion channel (channel 10, numbered from 0).
 pub const PERCUSSION_CHANNEL: u8 = 9;
 
-/// Frames rendered per block: the envelope and gains step once per block.
+/// Frames of a block: the envelope and gains step once per block, on a grid
+/// counted from the synthesiser's reset, so how the frames are split into
+/// render calls does not change the output.
 pub const BLOCK_FRAMES: usize = 64;
 
 /// Frames over which a voice cut by its exclusive class fades.
@@ -41,6 +43,8 @@ pub struct Synth<'a> {
     serial: u64,
     /// Master volume in Q16 (65 536 is full).
     master_volume: u32,
+    /// Frames since the last point of the block grid.
+    grid_phase: usize,
 }
 
 impl<'a> Synth<'a> {
@@ -54,6 +58,7 @@ impl<'a> Synth<'a> {
             voices: [None; POLYPHONY],
             serial: 0,
             master_volume: 1 << 16,
+            grid_phase: 0,
         };
         synth.reset();
         synth
@@ -91,6 +96,7 @@ impl<'a> Synth<'a> {
     /// Silence every voice and put every channel back to power-on.
     pub fn reset(&mut self) {
         self.voices = [None; POLYPHONY];
+        self.grid_phase = 0;
         self.channels = array::from_fn(|_| Channel::new());
         for channel in 0..CHANNELS {
             self.program_change(u8::try_from(channel).unwrap_or(0), 0);
@@ -238,31 +244,38 @@ impl<'a> Synth<'a> {
 
     /// Render `out.len() / 2` frames and add them (interleaved stereo, master
     /// volume applied, not clipped) to `out`.
-    pub fn mix(&mut self, out: &mut [i32]) {
+    pub fn mix(&mut self, mut out: &mut [i32]) {
         let mut block = [0_i32; 2 * BLOCK_FRAMES];
-        for chunk in out.chunks_mut(2 * BLOCK_FRAMES) {
-            let frames = chunk.len() / 2;
+        while out.len() >= 2 {
+            let frames = self.frames_to_boundary().min(out.len() / 2);
+            let (chunk, rest) = out.split_at_mut(2 * frames);
             let block = &mut block[..2 * frames];
-            block.fill(0);
             self.render_voices(block);
             for (sample, &rendered) in chunk.iter_mut().zip(block.iter()) {
                 *sample += self.scale(rendered);
             }
+            out = rest;
         }
     }
 
     /// Render `out.len() / 2` frames into `out` (interleaved stereo s16).
-    pub fn render(&mut self, out: &mut [i16]) {
+    pub fn render(&mut self, mut out: &mut [i16]) {
         let mut block = [0_i32; 2 * BLOCK_FRAMES];
-        for chunk in out.chunks_mut(2 * BLOCK_FRAMES) {
-            let frames = chunk.len() / 2;
+        while out.len() >= 2 {
+            let frames = self.frames_to_boundary().min(out.len() / 2);
+            let (chunk, rest) = out.split_at_mut(2 * frames);
             let block = &mut block[..2 * frames];
-            block.fill(0);
             self.render_voices(block);
             for (sample, &rendered) in chunk.iter_mut().zip(block.iter()) {
                 *sample = clip(self.scale(rendered));
             }
+            out = rest;
         }
+    }
+
+    /// Frames from now to the next point of the block grid.
+    fn frames_to_boundary(&self) -> usize {
+        BLOCK_FRAMES - self.grid_phase
     }
 
     #[expect(
@@ -273,19 +286,30 @@ impl<'a> Synth<'a> {
         ((i64::from(rendered) * i64::from(self.master_volume)) >> (16 + MASTER_SHIFT)) as i32
     }
 
-    /// Render every voice into `block` (at most [`BLOCK_FRAMES`] frames) and
-    /// free the voices that finished.
+    /// Render every voice into `block` (zeroed first; at most the frames to
+    /// the next grid point) and free the voices that finished.
     fn render_voices(&mut self, block: &mut [i32]) {
-        let frames = u32::try_from(block.len() / 2).unwrap_or(0);
+        block.fill(0);
+        let frames = block.len() / 2;
+        let until_boundary = u32::try_from(self.frames_to_boundary()).unwrap_or(0);
+        let count = u32::try_from(frames).unwrap_or(0);
         for slot in &mut self.voices {
             if let Some(voice) = slot {
                 let channel = &self.channels[usize::from(voice.channel) % CHANNELS];
-                voice.render(self.bank.font(), channel, self.rate, block, frames);
+                voice.render(
+                    self.bank.font(),
+                    channel,
+                    self.rate,
+                    block,
+                    count,
+                    until_boundary,
+                );
                 if voice.is_finished() {
                     *slot = None;
                 }
             }
         }
+        self.grid_phase = (self.grid_phase + frames) % BLOCK_FRAMES;
     }
 }
 

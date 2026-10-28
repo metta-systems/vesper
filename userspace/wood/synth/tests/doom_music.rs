@@ -230,10 +230,10 @@ mod tests {
     #[test]
     fn golden_renders() {
         let golden = [
-            // Recorded 2026-10-28.
-            ("D_E1M1", 0xd58a_e0b3_b486_ce67_u64, 853),
+            // Recorded 2026-10-28, with the block grid kept from the reset.
+            ("D_E1M1", 0xcdda_6c33_f05c_3732_u64, 853),
             // Seven seconds long: the loop restarts within the ten.
-            ("D_INTRO", 0xce65_a2de_16f0_2611_u64, 862),
+            ("D_INTRO", 0x7406_7a95_8e5d_d608_u64, 862),
         ];
         let rendered: Vec<(&str, u64, usize)> = golden
             .iter()

@@ -14,7 +14,8 @@
 //! plays its demos in the window until keys arrive: the keys the compositor
 //! routes to the window, which has the focus when it is new or clicked.
 //! Its sound effects play through the PWM audio driver when the image has
-//! one, mixed on a second Thread (`sound`).
+//! one, mixed on a second Thread (`sound`) on top of the music the MIDI
+//! synthesiser component renders (`music`).
 
 #[cfg(target_os = "vesper")]
 extern crate alloc;
@@ -25,6 +26,8 @@ mod heap;
 mod keyboard;
 #[cfg(target_os = "vesper")]
 mod logger;
+#[cfg(target_os = "vesper")]
+mod music;
 #[cfg(target_os = "vesper")]
 mod platform;
 #[cfg(target_os = "vesper")]

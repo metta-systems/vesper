@@ -2443,6 +2443,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "midi-synth"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle-runtime",
+ "midi-synth-server",
+ "rlsf",
+ "room",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-trace",
+ "vesper-user-runtime",
+ "wood-synth",
+]
+
+[[package]]
+name = "midi-synth-client"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+ "midi-synth-server",
+]
+
+[[package]]
+name = "midi-synth-server"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "minijinja"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5765,6 +5799,9 @@ dependencies = [
  "compositor-client",
  "log",
  "metta-compositor-core",
+ "metta-meddle-runtime",
+ "midi-synth",
+ "midi-synth-client",
  "rlsf",
  "room",
  "vesper-device-driver",

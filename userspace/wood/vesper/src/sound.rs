@@ -1,7 +1,8 @@
-//! Wood's sound effects: the engine's voices mixed by Room's no_std mixer
-//! (`room::engine::sound::mixer`) on a playback Thread of Wood's own, and
-//! streamed to the PWM audio driver through `audio_v1` (decision D5 of
-//! `doc/agentic/audio-design.md`). There is no music yet (D9).
+//! Wood's sound: the engine's voices mixed by Room's no_std mixer
+//! (`room::engine::sound::mixer`) on a playback Thread of Wood's own, on top
+//! of the music the MIDI synthesiser component renders for each period
+//! ([`music`](crate::music)), and streamed to the PWM audio driver through
+//! `audio_v1` (decisions D5 and D10 of `doc/agentic/audio-design.md`).
 //!
 //! The two Threads share [`VOICES`] and nothing else of the engine: the game
 //! Thread, through Wood's [`Platform`](room::engine::platform::Platform)
@@ -29,6 +30,7 @@
 //! into the channel's data pages.
 
 use {
+    crate::music::{COMMANDS, Music, PLAYING},
     audio_client::audio_v1::{Bindings, Client, Error, Exception},
     audio_pwm_bcm2835::stream::{CHANNEL_SLOTS, FRAME_BYTES, channel_at},
     core::sync::atomic::{AtomicBool, AtomicU8, Ordering},
@@ -116,6 +118,9 @@ fn playback(init_va: u64) -> ! {
         let client = Client::new(Bindings::from_imports(init.imports()));
         match Output::open(&client) {
             Ok(mut output) => {
+                output.music = Music::open(init, output.rate_millihertz)
+                    .inspect_err(|reason| log::warn!("music: {reason}; music stays silent"))
+                    .ok();
                 STATE.store(STATE_PLAYING, Ordering::Release);
                 answer(&hand_over);
                 output.play(&client);
@@ -184,6 +189,10 @@ struct Output {
     completions: Completions<'static>,
     pages: DataPages,
     mixer: Mixer<'static>,
+    /// The output's rate in millihertz
+    rate_millihertz: u32,
+    /// The MIDI synthesiser, when the image has one
+    music: Option<Music>,
     /// Buffers mixed, and those of them with a voice playing
     mixed: u64,
     audible: u64,
@@ -226,14 +235,26 @@ impl Output {
                 base: area.data.base,
             },
             mixer: Mixer::new(rate_millihertz),
+            rate_millihertz,
+            music: None,
             mixed: 0,
             audible: 0,
         })
     }
 
-    /// Mix the voices into buffer `index` and queue it.
+    /// Pull the music into buffer `index`, mix the voices on top and queue
+    /// it.
     fn refill(&mut self, client: &Client, index: u64) {
-        let playing = self.mixer.mix_shared(&VOICES, self.pages.frames(index));
+        let frames = self.pages.frames(index);
+        if let Some(music) = &mut self.music {
+            music.fill(frames);
+        } else {
+            frames.fill([0, 0]);
+            // Nobody plays the songs: drop what the engine asked for.
+            drop(COMMANDS.take());
+            PLAYING.store(false, Ordering::Release);
+        }
+        let playing = self.mixer.mix_shared_onto(&VOICES, frames);
         let record = self.pages.record(index);
         let packet = Packet::new(index, &[record]).expect("one record");
         if self.submit.put(&packet).is_err() {
@@ -281,6 +302,9 @@ impl Output {
         }
         if client.close().is_err() {
             log::warn!("audio: closing the output failed");
+        }
+        if let Some(music) = self.music.take() {
+            music.close();
         }
         // `close` returns once every packet is back.
         while outstanding > 0 {

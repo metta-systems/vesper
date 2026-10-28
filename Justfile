@@ -75,6 +75,10 @@ rpi3_qemu_artifacts := target_root / rpi3_qemu / target
 rpi4_hw_artifacts   := target_root / rpi4_hw / target
 # The SC-55 bank trimmed to the shareware IWAD's music (`wood-soundfont`, audio decision D9.4)
 wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
+# `bytes:looping:hash` of the songs `test-wood` hears first (the title's D_INTROA once, the
+# first demo's D_E1M5 looping, at volume 64): the hash of their first 64 rendered periods as
+# the MIDI synthesiser logs it and its host test computes it (midi-synth tests/session.rs)
+wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14be'
 
 chainboot_serial := '/dev/cu.usbserial-019586E3'
 chainboot_baud   := '115200'
@@ -334,16 +338,17 @@ build-wood-test-hw board='rpi3': (build-components board '' '') (build-wood boar
 boot-wood-test: build-wood-test-hw chainofcommand
     target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
 
-# Build Wood, the Room Doom engine's Vesper program, for the image configuration `board` +
-# `image_features`; only wood-test bundles it, so it is not one of `user_components`
+# Build Wood, the Room Doom engine's Vesper program, and the MIDI synthesiser component that plays
+# its music, with the trimmed SoundFont it bundles, for the image configuration `board` +
+# `image_features`; only wood-test bundles them, so they are not in `user_components`
 [private]
-build-wood board='rpi3' features='qemu' image_features=features: (_cross-build 'wood' board user_link features '' image_features)
+build-wood board='rpi3' features='qemu' image_features=features: wood-soundfont (_cross-build 'wood midi-synth' board user_link features '' image_features)
 
 # Build the wood-test e2e kernel: compositor-test's components plus Wood, the Room Doom engine in a window of its own
 [group("test")]
 build-wood-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
 
-# Boot wood-test on raspi3b with the devices of test-compositor and the audio test tree (`_audio-test-dtb`, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. Wood's playback Thread streams the demo's mixed sound effects through audio_v1; the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
+# Boot wood-test on raspi3b with the devices of test-compositor and the audio test tree (`_audio-test-dtb`, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The console (serial and semihosting) goes to target/wood-test.log, the screen to target/wood-test.ppm
 [group("test")]
 test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board) _audio-test-dtb
     #!/usr/bin/env bash
@@ -384,7 +389,22 @@ test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board 
     grep -q "audio: capture: [1-9][0-9]* audible stream periods of" "$log" || { echo "wood-test: no sound effect reached the capture buffer"; exit 1; }
     audible=$(grep -a -o "audio: capture: [0-9]* audible stream periods of [0-9]*" "$log" | tail -1 | cut -d' ' -f3,8)
     underruns=$(grep -a -o "with sound, [0-9]* underruns" "$log" | tail -1 | cut -d' ' -f3)
-    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, $underruns underruns); the screen is in $screen"
+    # Music: the synthesiser loaded its SoundFont, Wood took it, the title song's first
+    # periods hash as the host test computes them (`start_hashes_of_the_first_songs` in
+    # userspace/wood/midi-synth/tests/session.rs), and nearly every period is audible.
+    grep -a "midi-synth: \|wood: INFO music: " "$log" | tail -4
+    grep -q "midi-synth: ready at 44091710 mHz" "$log" || { echo "wood-test: the MIDI synthesiser did not start"; exit 1; }
+    grep -q "wood: INFO music: the MIDI synthesiser plays at 44091710 mHz" "$log" || { echo "wood-test: Wood did not take the MIDI synthesiser"; exit 1; }
+    for expected in {{ wood_music_hashes }}; do
+      bytes=${expected%%:*}; rest=${expected#*:}; looping=${rest%%:*}; hash=${rest#*:}
+      line=$(grep -a -o "midi-synth: song of $bytes bytes (looping $looping, volume 64): first 64 periods hash 0x[0-9a-f]*, [0-9]* audible" "$log" | head -1)
+      [ -n "$line" ] || { echo "wood-test: no start hash for the song of $bytes bytes"; exit 1; }
+      [ "$(echo "$line" | grep -o '0x[0-9a-f]*')" = "$hash" ] || { echo "wood-test: the song of $bytes bytes rendered differently from the host: $line"; exit 1; }
+    done
+    music=$(grep -a -o "music: [0-9]* periods pulled, [0-9]* with sound" "$log" | tail -1 | cut -d' ' -f2,5)
+    [ -n "$music" ] && [ $(( ${music#* } * 10 )) -ge $(( ${music% *} * 9 )) ] || { echo "wood-test: too few music periods with sound: $music"; exit 1; }
+    [ $(( ${audible% *} * 10 )) -ge $(( ${audible#* } * 9 )) ] || { echo "wood-test: too few audible stream periods: $audible"; exit 1; }
+    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its music and sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, ${music#* } of ${music% *} music periods with sound, the songs' first periods as on the host, $underruns underruns); the screen is in $screen"
 
 # Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
 [group("test")]
@@ -934,17 +954,20 @@ _cross-clippy-audio board='rpi3' features='':
 [group("maintenance")]
 clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
-# Lint Wood's music synthesiser: the library for the target, its host tests, and the bank-trimming tool
+# Lint Wood's music synthesiser: the library and the MIDI synthesiser component (with and without `qemu`) for the target, their host tests, and the bank-trimming tool
 [group("maintenance")]
-clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music')
+clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music') (_host-clippy 'midi-synth' 'session')
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
-    cargo clippy {{ target_json }} {{ rust_std }} -p wood-synth \
+    cargo clippy {{ target_json }} {{ rust_std }} -p wood-synth -p midi-synth -p midi-synth-server -p midi-synth-client \
+      -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth --features qemu \
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -- --deny warnings --allow deprecated
 
-# Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only); the core library is checked too, to show the pattern finds them
+# Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only): the wood-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
 [group("maintenance")]
-synth-no-float:
+synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
     #!/usr/bin/env bash
     set -euo pipefail
     # A dev build of its own: its core keeps the float code that shows the
@@ -962,10 +985,15 @@ synth-no-float:
     found=$(calls "$artifacts/libwood_synth.rlib")
     if [ -n "$found" ]; then echo "wood-synth calls soft-float routines:"; echo "$found"; exit 1; fi
     echo "wood-synth: no soft-float calls"
+    # The linked component: LTO keeps a soft-float routine only if something calls it.
+    component="{{ target_root / 'rpi3' + profile_suffix / target / image_profile / 'midi-synth' }}"
+    linked=$(rust-nm "$component" | awk '{print $NF}' | grep -E "$pattern" | sort -u || true)
+    if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
+    echo "midi-synth component: no soft-float routines linked"
 
-# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth); and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes test-wood checks)
 [group("test")]
-test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music')
+test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music') (_host-test 'midi-synth' 'session')
 
 # Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
 [group("tools")]

@@ -15,8 +15,10 @@ only after its exit check has passed.
   and the board checks come later.
 - D9 is answered (2026-10-28): an integer SoundFont synthesiser (A), in a separate music
   component (D9.1 b), the SC-55 trimmed by a host tool (D9.4 b), at the output rate
-  (D9.5 a), the host keeping `rustysynth` (D9.6 a); D9.2 and D9.3 do not apply. A5b is
-  built. D10 (how the music component's output reaches the jack) blocks A5c.
+  (D9.5 a), the host keeping `rustysynth` (D9.6 a); D9.2 and D9.3 do not apply. D10 is
+  answered the same day: the component exports `midi_synth_v1`, whose io-channel
+  carries MIDI one way and rendered audio the other; Wood pulls, mixes and stays the one
+  `audio_v1` client. A5b and A5c are built (host tests and QEMU).
 - Existing pieces used: `gpio_v1` (pins), `libs/io-channel` (transport), Meddle
   `channel N;` provisioning in Kickstart, `Frame.CleanData`, `DriverInit::memory_bus`.
 
@@ -170,7 +172,7 @@ Done in QEMU (2026-10-28), hardware check pending:
   or `busy` (or no io-channel) logs once and the engine runs silent. `sound_shutdown`
   has it stop refilling and `close` right after the last packet, and waits for it.
   `sound_start`, `sound_stop`, `sound_update` and `sound_is_playing` only touch
-  `SharedVoices`. Music stays silent (D9). Wood logs the buffers mixed, those with
+  `SharedVoices`. Music came later, in A5c. Wood logs the buffers mixed, those with
   sound and the driver's underrun count at powers of two.
 - wood-test: the gpio, cprman, dma and audio drivers (the compositor keeps the serial
   channel, so the audio driver traces on semihosting only); Wood imports `audio_v1`;
@@ -203,17 +205,19 @@ Done in QEMU (2026-10-28), hardware check pending:
 
 ## A5: music
 
-D9 answered 2026-10-28 (design doc, section Decisions): an integer SoundFont
-synthesiser (`wood-synth`) in a separate music component, the SC-55 trimmed per IWAD,
-rendered at the output rate; the host keeps `rustysynth`. A5c waits for D10.
+D9 and D10 answered 2026-10-28 (design doc, section Decisions): an integer SoundFont
+synthesiser (`wood-synth`) in a separate component exporting `midi_synth_v1`, the SC-55
+trimmed per IWAD, rendered at the output rate; Wood pulls the rendered music and mixes
+it with the effects; the host keeps `rustysynth`.
 
 ### A5a: measure the budget on the board
 
-- The music component (or, before it exists, the audio test client linking
-  `wood-synth`) logs the ARM clock (`mailbox_v1.get_clock_rate`, ARM clock) and times a
+- The MIDI synthesiser component logs the ARM clock (`mailbox_v1.get_clock_rate`, ARM clock) and times a
   fixed render workload per 512-frame buffer against `CNTVCT_EL0`: `wood-synth` holding
   24 voices of the trimmed bank, rendered into a scratch buffer, while the effects play
-  as in A4.
+  as in A4. Wood already logs the time each `service` call takes (the render of one
+  period plus the call), at powers of two of the periods with music; under QEMU that is
+  130 to 300 µs, which says nothing about the board.
 - Needs the board (unavailable for now) and a way to read the result there (Wood's log
   is semihosting only; the open "report through the compositor's serial channel" item of
   A4, or the audio test image's UART).
@@ -245,31 +249,44 @@ synthesiser as built (A5b)".
   loading it, golden hashes of the first 10 s of `D_E1M1` and `D_INTRO` at the output
   rate, loudness against `rustysynth` (correlation 0.88 to 0.96, within 2.5 dB). `just
   synth-no-float` and `just clippy-wood-synth` pass.
+- Board status of A5 as a whole: nothing of A5 has run on the board yet.
 
-### A5c: the music component, `music_v1` and mixing in Wood
+### A5c: the MIDI synthesiser component, `midi_synth_v1` and mixing in Wood
 
-**Blocked on D10** ([audio-decisions.md](audio-decisions.md)). As recommended there
-(a), pending the answer:
+Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
+"`midi_synth_v1` and the synthesiser component".
 
-- `userspace/wood/music`: a program component linking `wood-synth`, the trimmed bank as
-  its `[[resource]]` (built by `just wood-soundfont` before the image), the bank parsed
-  at start (about 70 KiB of heap). It exports `music_v1`: `play` (the MIDI bytes, which
-  exceed a call's data: in the channel's data pages or a lent Frame, settled with the
-  interface), `stop`, `pause`, `resume`, `set_volume`, `is_playing`, and an io-channel
-  of rendered periods (512 frames of s16 stereo) refilled as Wood returns them.
-- Wood: the playback Thread takes one music period per buffer (silence and a count when
-  none is ready), adds the effect voices on top with one clip (A4's mixer gains a
-  "mix onto" entry), and sends the result to `audio_v1` as now. The engine's `music_*`
-  hooks hand over to the playback Thread through atomics, as `SharedVoices` does, which
-  makes the `music_v1` calls, so the engine Thread never waits on another component.
-- Wood and the music component log, at powers of two, periods with music, periods
-  missing, and the render time per period.
-- `just synth-no-float`'s check run on the music component's ELF as well.
-- Exit (QEMU): `just test-wood` shows music from the title screen on (`D_INTRO`) and
-  through the demos: nearly every captured period audible (asserted against the periods
-  played), a hash of the first rendered seconds equal to a host-test value for the same
-  song, looping flag and length, no missing music periods and no underruns; `just
-  test-audio` and `just test-dma` still pass.
+- `userspace/wood/midi-synth` (component `midi-synth`, instance `midi_synth`):
+  `interfaces/midi_synth_v1.if` (crates `midi-synth-server`, `midi-synth-client`):
+  `badged;`, `channel 16;`, `rate`, `open` (`busy`), `close` (`not_open`), `service`
+  (`not_open`), `playing`. The io-channel carries both directions: song packets (MIDI
+  bytes, several for a large song) from Wood, render packets that come back holding the
+  next frames, and stop, pause, resume and volume packets, in one ordered FIFO; the
+  synthesiser handles them during `service`, on Wood's Thread. The pure part (protocol,
+  data page layout, `Session` over `wood-synth`, the start hash) is the crate's library,
+  host-tested in `tests/session.rs`; the component carves a 2 MiB heap, loads the
+  SoundFont resource and exports the interface.
+- Wood: `src/music.rs`. The `music_*` platform methods queue commands (a spin-locked
+  queue; the MIDI bytes copied into Wood's heap); the playback Thread sends them, then a
+  render packet, calls `service` once per period, copies the rendered period into the
+  audio buffer and mixes the effects on top with Room's new `Mixer::mix_shared_onto` (one
+  clip, host test `voices_mix_onto_what_the_frames_hold`). `music_is_playing` follows the
+  synthesiser's `playing`, asked every 32 periods. Without the synthesiser the music is
+  silence and the commands are dropped.
+- `wood-synth` change found on the way: the envelope and gain ramps move on a grid of 64
+  frames counted from the reset, so the output no longer depends on how frames are split
+  into render calls (host test `output_is_independent_of_the_render_split`; the A5b
+  golden hashes were re-recorded).
+- Image: `kernel/tests/wood-test/image.toml` bundles `midi_synth` (4 MiB RAM) with the
+  `soundfont` resource `target/wood/sc55-doom1.sf2`; `build-wood` builds the component
+  and runs `just wood-soundfont` first; the test kernel loads it (15 instances of 16).
+- QEMU exit passed: `just test-wood` (log in `target/wood-test.log`): the synthesiser
+  loads the 4 299 638-byte SoundFont, Wood takes it at 44 091 710 mHz, the title's
+  `D_INTROA` (878 bytes of MIDI) and the first demo's `D_E1M5` (13 101 bytes, looping)
+  play at volume 64, the first 64 periods of each hash as the host test computes them
+  (`wood_music_hashes`), 1 024 of 1 035 periods pulled have music (the first 11 before
+  the title song), 1 024 of 1 038 captured stream periods are audible, 0 underruns.
+  `just synth-no-float` finds no soft-float routine in the linked component.
 
 ### A5d: hardware
 
@@ -290,8 +307,11 @@ synthesiser as built (A5b)".
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
   mixer, the music synthesiser: `just test-wood-synth`).
-- `just clippy-wood-synth` (the synthesiser for the target and its host tests, the
-  trimming tool) and `just synth-no-float` (no soft-float routine in the target build).
+- `just clippy-wood-synth` (the synthesiser and the MIDI synthesiser component for the
+  target, with and without `qemu`, their host tests, the trimming tool; the known
+  `metta-meddle` `map_unwrap_or` breakage stops it until fixed) and `just
+  synth-no-float` (no soft-float routine in the library or the linked component).
+- `just test-wood` for the music end to end in QEMU.
 - QEMU tests per stage as above (`just test-audio` for A1 and A3, `just test-dma` for
   A2);
   `just test-mailbox`, `just test-driver`, `just test-wood` for regressions in shared

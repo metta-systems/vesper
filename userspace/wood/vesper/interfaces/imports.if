@@ -13,3 +13,8 @@ uses compositor_v1 via component compositor { pixel_order, create_window, commit
 # the driver (or a tree with the PWM node disabled) leaves it unlinked, and
 # Wood runs silent.
 uses audio_v1 via device compatible "brcm,bcm2835-pwm" { rate, open, close, underruns }
+# The playback Thread sends the engine's songs to the MIDI synthesiser, a
+# program in the same image, and pulls each period's rendered music back on
+# the interface's io-channel, mixing the sound effects on top. An image
+# without the synthesiser leaves it unlinked, and the music stays silent.
+uses midi_synth_v1 via component midi_synth { rate, open, close, service, playing }

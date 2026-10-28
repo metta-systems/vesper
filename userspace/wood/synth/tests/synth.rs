@@ -451,6 +451,45 @@ mod tests {
         assert_eq!(synth.channel(0).bend, 0);
     }
 
+    /// The output does not depend on how the frames are split into render
+    /// calls: the envelope and gains move on a grid of blocks from the reset.
+    #[test]
+    fn output_is_independent_of_the_render_split() {
+        let font = envelope_font();
+        let midi = midi_file(
+            70,
+            &[
+                (3, vec![0x90, 60, 100]),
+                (40, vec![0xb0, 7, 64]),
+                (7, vec![0xe0, 0, 0x50]),
+                (30, vec![0x80, 60, 0]),
+            ],
+            100,
+        );
+        let song = Song::parse(&midi).unwrap();
+        let frames = 60_000;
+        let render_in = |pieces: &[usize]| {
+            let mut sequencer = Sequencer::new(Synth::new(Bank::new(&font).unwrap(), OUTPUT_RATE));
+            sequencer.play(song.clone(), false);
+            let mut out = vec![0_i16; 2 * frames];
+            let mut done = 0;
+            for &piece in pieces.iter().cycle() {
+                if done == frames {
+                    break;
+                }
+                let count = piece.min(frames - done);
+                sequencer.render(&mut out[2 * done..2 * (done + count)]);
+                done += count;
+            }
+            out
+        };
+        let whole = render_in(&[frames]);
+        assert!(whole.iter().any(|&sample| sample != 0));
+        assert_eq!(render_in(&[512]), whole);
+        assert_eq!(render_in(&[1]), whole);
+        assert_eq!(render_in(&[37, 100, 3]), whole);
+    }
+
     #[test]
     fn exclusive_class_and_polyphony() {
         let font = soundfont(

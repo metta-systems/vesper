@@ -78,9 +78,16 @@ pub struct Voice {
     /// Pan from the generators, -500 to 500.
     pan: i32,
     envelope: Envelope,
-    /// Gains reached at the end of the previous block, Q16.
+    /// Gains reached so far, Q16.
     left_gain: i32,
     right_gain: i32,
+    /// The ramp under way: its end values, the step per frame and the
+    /// frames left to it (zero: start a new ramp).
+    target_left: i32,
+    target_right: i32,
+    left_delta: i32,
+    right_delta: i32,
+    ramp_left: u32,
 }
 
 /// Generator value `operator` of the start's zones.
@@ -192,6 +199,11 @@ impl Voice {
             envelope,
             left_gain: 0,
             right_gain: 0,
+            target_left: 0,
+            target_right: 0,
+            left_delta: 0,
+            right_delta: 0,
+            ramp_left: 0,
         }
     }
 
@@ -229,11 +241,41 @@ impl Voice {
         }
     }
 
-    /// Add `frames` frames of this voice into `out` (interleaved stereo, at
-    /// least `2 * frames` long), with `channel`'s volume, pan and bend.
+    /// Start a gain ramp of `segment` frames: advance the envelope by them
+    /// and aim the gains at the level they reach, with `channel`'s volume
+    /// and pan.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_possible_wrap,
+        reason = "gains are at most 2^16"
+    )]
+    fn start_ramp(&mut self, channel: &Channel, segment: u32) {
+        self.envelope.advance(segment);
+        let attenuation = self.attenuation + channel.attenuation();
+        let level = if attenuation >= SILENT_CENTIBELS {
+            0
+        } else {
+            (u64::from(self.envelope.gain()) * u64::from(attenuation_gain(attenuation << 16))) >> 16
+        };
+        let (pan_left, pan_right) = pan_gains(self.pan + channel.pan_offset());
+        self.target_left = ((level * u64::from(pan_left)) >> 15) as i32;
+        self.target_right = ((level * u64::from(pan_right)) >> 15) as i32;
+        let count = segment.max(1) as i32;
+        self.left_delta = (self.target_left - self.left_gain) / count;
+        self.right_delta = (self.target_right - self.right_gain) / count;
+        self.ramp_left = segment.max(1);
+    }
+
+    /// Add `frames` frames of this voice into `out` (interleaved stereo, at
+    /// least `2 * frames` long), with `channel`'s volume, pan and bend.
+    ///
+    /// The envelope and the gains move on a grid of blocks the synthesiser
+    /// keeps from its first frame: `until_boundary` frames are left to the
+    /// next grid point (at least `frames`). A ramp starts at a grid point (or
+    /// at the voice's first frame) and runs to the next, however the frames
+    /// are split into calls, so the output does not depend on the split.
+    #[expect(
+        clippy::cast_possible_truncation,
         reason = "positions stay below 2^32 points, mixed values within i32"
     )]
     pub fn render(
@@ -243,6 +285,7 @@ impl Voice {
         rate: Rate,
         out: &mut [i32],
         frames: u32,
+        until_boundary: u32,
     ) {
         if self.is_finished() {
             return;
@@ -252,20 +295,11 @@ impl Voice {
             self.step = phase_step(self.sample_rate, self.pitch_cents + bend, rate);
             self.step_bend = bend;
         }
-
-        self.envelope.advance(frames);
-        let attenuation = self.attenuation + channel.attenuation();
-        let level = if attenuation >= SILENT_CENTIBELS {
-            0
-        } else {
-            (u64::from(self.envelope.gain()) * u64::from(attenuation_gain(attenuation << 16))) >> 16
-        };
-        let (pan_left, pan_right) = pan_gains(self.pan + channel.pan_offset());
-        let target_left = ((level * u64::from(pan_left)) >> 15) as i32;
-        let target_right = ((level * u64::from(pan_right)) >> 15) as i32;
-        let count = frames.max(1) as i32;
-        let left_delta = (target_left - self.left_gain) / count;
-        let right_delta = (target_right - self.right_gain) / count;
+        if self.ramp_left == 0 {
+            self.start_ramp(channel, until_boundary);
+        }
+        let left_delta = self.left_delta;
+        let right_delta = self.right_delta;
         let mut left_gain = self.left_gain;
         let mut right_gain = self.right_gain;
 
@@ -303,7 +337,14 @@ impl Voice {
                 }
             }
         }
-        self.left_gain = target_left;
-        self.right_gain = target_right;
+        self.ramp_left = self.ramp_left.saturating_sub(frames);
+        if self.ramp_left == 0 {
+            // Land exactly on the target, whatever the deltas rounded away.
+            self.left_gain = self.target_left;
+            self.right_gain = self.target_right;
+        } else {
+            self.left_gain = left_gain;
+            self.right_gain = right_gain;
+        }
     }
 }

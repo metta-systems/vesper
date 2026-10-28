@@ -152,6 +152,10 @@ members = [
   # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
   "userspace/wood/synth",
   "userspace/wood/tools/sf2-trim",
+  # The MIDI synthesiser component and its midi_synth_v1 interface crates
+  "userspace/wood/midi-synth",
+  "userspace/wood/midi-synth/client",
+  "userspace/wood/midi-synth/server",
 ]
 # Room is a workspace of its own (its host platform, tests and tools); Wood
 # links its engine library by path.
@@ -267,6 +271,9 @@ rlsf = { version = "0.2", default-features = false }
 room = { path = "userspace/wood/room", default-features = false }
 snafu = { version = "0.9", default-features = false }
 wood-synth = { path = "userspace/wood/synth" }
+midi-synth = { path = "userspace/wood/midi-synth" }
+midi-synth-client = { path = "userspace/wood/midi-synth/client" }
+midi-synth-server = { path = "userspace/wood/midi-synth/server" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
