@@ -1961,6 +1961,7 @@ dependencies = [
  "rustysynth",
  "wgpu",
  "winit",
+ "wood-synth",
  "zerocopy",
 ]
 
@@ -3380,6 +3381,10 @@ dependencies = [
  "unicode-xid",
  "wasmparser",
 ]
+
+[[package]]
+name = "wood-synth"
+version = "0.0.1"
 
 [[package]]
 name = "x11-dl"

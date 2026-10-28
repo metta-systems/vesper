@@ -1,0 +1,41 @@
+[package]
+name = "wood-synth"
+
+description = "Integer SoundFont 2 wavetable synthesiser and Standard MIDI File sequencer for Wood's music on Vesper: no_std + alloc, no floating point."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+build = "build.rs"
+
+[features]
+default = []
+# Opt in to the host integration tests (they read the IWAD and the SC-55 bank
+# from the repository and compare against rustysynth).
+host-tests = []
+
+[dev-dependencies]
+# Room's MUS to MIDI converter makes the test songs, as it does in the game.
+room = { workspace = true }
+# The host's synthesiser, as the reference for the trimmed bank and the loose
+# similarity check.
+rustysynth = { workspace = true }
+seahash = { workspace = true }
+
+[[test]]
+name = "synth"
+required-features = ["host-tests"]
+
+[[test]]
+name = "doom_music"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

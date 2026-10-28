@@ -24,6 +24,10 @@ rangecheck = []
 # Build the binary with the placeholder Vesper platform (src/platform/vesper)
 # instead of the winit/wgpu/rodio host platform, to compile-check it on a host.
 platform-vesper = []
+# Render the host's music with Vesper's integer synthesiser (wood-synth)
+# instead of rustysynth, for listening checks and comparisons; rustysynth stays
+# the default (Vesper audio decision D9.6). `cargo run --features wood-synth`.
+wood-synth = ["dep:wood-synth"]
 
 # The engine library is `no_std` + `alloc` and uses only these.
 [dependencies]
@@ -57,6 +61,9 @@ rodio = "0.22"
 
 # Pure-Rust SF2 soundfont synthesizer, used for Doom music playback.
 rustysynth = "1"
+
+# Vesper's integer SoundFont synthesiser, opt-in (feature `wood-synth`).
+wood-synth = { path = "../synth", optional = true }
 
 # Simple logger backed by stderr.
 env_logger = "0.11"

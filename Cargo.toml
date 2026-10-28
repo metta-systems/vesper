@@ -149,6 +149,9 @@ members = [
   "userspace/tests/dispatch/child",
   # Wood: the Room engine as a component
   "userspace/wood/vesper",
+  # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
+  "userspace/wood/synth",
+  "userspace/wood/tools/sf2-trim",
 ]
 # Room is a workspace of its own (its host platform, tests and tools); Wood
 # links its engine library by path.
@@ -263,6 +266,7 @@ rlsf = { version = "0.2", default-features = false }
 # The Room engine library (its own workspace, excluded above)
 room = { path = "userspace/wood/room", default-features = false }
 snafu = { version = "0.9", default-features = false }
+wood-synth = { path = "userspace/wood/synth" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
@@ -274,6 +278,8 @@ argh = { version = "0.1" }
 bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
+# The host's music synthesiser (Room's), the reference for wood-synth's tests
+rustysynth = { version = "1" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
 tokio = { version = "1.53", features = ["full"] }

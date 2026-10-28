@@ -73,6 +73,8 @@ chainboot_rpi4_elf      := rpi4_hw_artifacts / image_profile / 'chainboot'
 # `target/<config>/<triple>`, where a configuration's ELFs live under `<profile>/`
 rpi3_qemu_artifacts := target_root / rpi3_qemu / target
 rpi4_hw_artifacts   := target_root / rpi4_hw / target
+# The SC-55 bank trimmed to the shareware IWAD's music (`wood-soundfont`, audio decision D9.4)
+wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 
 chainboot_serial := '/dev/cu.usbserial-019586E3'
 chainboot_baud   := '115200'
@@ -652,11 +654,11 @@ alias t := test
 test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (build-privileged 'rpi3' 'qemu') (build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wood-synth
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wood-synth
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 [private]
@@ -803,7 +805,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host
+test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host test-wood-synth
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -859,7 +861,7 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim \
       -- --deny warnings --allow deprecated
 
 # Run embedded clippy checks (all feature combos) and capability host-test linting
@@ -931,6 +933,46 @@ _cross-clippy-audio board='rpi3' features='':
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 [group("maintenance")]
 clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
+
+# Lint Wood's music synthesiser: the library for the target, its host tests, and the bank-trimming tool
+[group("maintenance")]
+clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music')
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    cargo clippy {{ target_json }} {{ rust_std }} -p wood-synth \
+      -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -- --deny warnings --allow deprecated
+
+# Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only); the core library is checked too, to show the pattern finds them
+[group("maintenance")]
+synth-no-float:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A dev build of its own: its core keeps the float code that shows the
+    # pattern works (a release core with LTO references none).
+    export CARGO_TARGET_DIR="{{ target_root / 'synth-no-float' }}"
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+      cargo build {{ target_json }} {{ rust_std }} -p wood-synth
+    artifacts="$CARGO_TARGET_DIR/{{ target }}/debug"
+    pattern='^__(add|sub|mul|div|neg|pow)[sdt]f[23]$|^__(fix|fixuns)[sdt]f[sdt]i$|^__float(un)?[sdt]i[sdt]f$|^__(extend|trunc)[sdt]f[sdt]f2$|^__(eq|ne|lt|le|gt|ge|un|cmp)[sdt]f2$|^__powi[sdt]f2$'
+    calls() { rust-nm --undefined-only "$1" 2>/dev/null | awk '{print $2}' | grep -E "$pattern" | sort -u || true; }
+    core=$(ls "$artifacts"/build/core/*/out/libcore-*.rlib | head -1)
+    control=$(calls "$core" | wc -l)
+    echo "core (control): $control soft-float routines referenced"
+    if [ "$control" -eq 0 ]; then echo "the control found none: the check is not working"; exit 1; fi
+    found=$(calls "$artifacts/libwood_synth.rlib")
+    if [ -n "$found" ]; then echo "wood-synth calls soft-float routines:"; echo "$found"; exit 1; fi
+    echo "wood-synth: no soft-float calls"
+
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
+[group("test")]
+test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music')
+
+# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
+[group("tools")]
+wood-soundfont:
+    cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad \
+      --soundfont "userspace/wood/room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2" \
+      --output "{{ wood_soundfont }}"
 
 # Lint the USB protocol host tests with their native host harness
 [private]

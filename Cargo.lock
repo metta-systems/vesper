@@ -3790,6 +3790,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf2-trim"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "argh",
+ "room",
+ "wood-synth",
+]
+
+[[package]]
 name = "shell"
 version = "0.0.1"
 dependencies = [
@@ -5763,6 +5773,15 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
+]
+
+[[package]]
+name = "wood-synth"
+version = "0.0.1"
+dependencies = [
+ "room",
+ "rustysynth",
+ "seahash",
 ]
 
 [[package]]

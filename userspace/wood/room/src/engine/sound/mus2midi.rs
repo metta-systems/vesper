@@ -96,7 +96,7 @@ fn read_delay(score: &[u8], pos: &mut usize) -> Option<u32> {
 ///
 /// The converter emits a tempo meta-event at the start of the track so the
 /// output's wall-clock playback rate matches MUS's native 140 Hz tick rate.
-pub(crate) fn mus2midi(data: &[u8]) -> Option<Vec<u8>> {
+pub fn mus2midi(data: &[u8]) -> Option<Vec<u8>> {
     if data.len() < 17 || &data[0..4] != MUS_MAGIC {
         return None;
     }

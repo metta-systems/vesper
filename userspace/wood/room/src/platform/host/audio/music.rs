@@ -166,6 +166,10 @@ pub(crate) struct MusicState {
     player: Option<Player>,
     /// Shared volume gain (`f32` bits) read by every active [`MusicSource`].
     volume: Arc<AtomicU32>,
+    /// The same SoundFont for Vesper's integer synthesiser (feature
+    /// `wood-synth`), which then renders the music instead of rustysynth.
+    #[cfg(feature = "wood-synth")]
+    wood_bank: Option<wood_synth::Bank<'static>>,
 }
 
 /// Public lifecycle and control API for music playback.
@@ -177,6 +181,29 @@ impl MusicState {
             sound_font: None,
             player: None,
             volume: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            #[cfg(feature = "wood-synth")]
+            wood_bank: None,
+        }
+    }
+
+    /// Load the SoundFont at `path` for Vesper's synthesiser. Its sample
+    /// data is read in place, so the file's bytes live for the rest of the
+    /// process.
+    #[cfg(feature = "wood-synth")]
+    fn load_wood_bank(&mut self, path: &std::path::Path) {
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        match wood_synth::Bank::new(bytes) {
+            Ok(bank) => {
+                log::info!("Music renders with wood-synth (Vesper's integer synthesiser)");
+                self.wood_bank = Some(bank);
+            }
+            Err(e) => log::warn!(
+                "wood-synth: soundfont parse error ({}): {e:?}",
+                path.display()
+            ),
         }
     }
 
@@ -194,6 +221,8 @@ impl MusicState {
                     Ok(sf) => {
                         log::info!("Soundfont loaded: {}", path.display());
                         self.sound_font = Some(Arc::new(sf));
+                        #[cfg(feature = "wood-synth")]
+                        self.load_wood_bank(path);
                     }
                     Err(e) => log::warn!("Soundfont parse error ({}): {e}", path.display()),
                 }
@@ -209,6 +238,20 @@ impl MusicState {
     /// stopping playback before the new one is appended).  Returns silently
     /// if no SoundFont is loaded or if the MIDI bytes are invalid.
     pub(crate) fn play(&mut self, midi_bytes: &[u8], looping: bool, mixer: &rodio::mixer::Mixer) {
+        #[cfg(feature = "wood-synth")]
+        if let Some(bank) = self.wood_bank.as_ref() {
+            let Some(source) =
+                wood::WoodMusicSource::new(bank, midi_bytes, looping, Arc::clone(&self.volume))
+            else {
+                log::warn!("DG_MusicPlay: wood-synth could not read the MIDI");
+                return;
+            };
+            self.player = None;
+            let player = Player::connect_new(mixer);
+            player.append(source);
+            self.player = Some(player);
+            return;
+        }
         let Some(sf) = self.sound_font.as_ref() else {
             return;
         };
@@ -255,5 +298,97 @@ impl MusicState {
     /// Report whether a player is active and still has samples to play.
     pub(crate) fn is_playing(&self) -> bool {
         self.player.as_ref().is_some_and(|p| !p.empty())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WoodMusicSource — the same songs through Vesper's integer synthesiser
+// ---------------------------------------------------------------------------
+
+/// Music rendered by `wood-synth`, Vesper's integer SoundFont synthesiser, for
+/// listening checks and comparison with rustysynth on the host (feature
+/// `wood-synth`; rustysynth stays the host's renderer otherwise).
+#[cfg(feature = "wood-synth")]
+mod wood {
+    use {
+        super::{BLOCK_SIZE, SAMPLE_RATE},
+        rodio::Source,
+        std::{
+            sync::{
+                Arc,
+                atomic::{AtomicU32, Ordering},
+            },
+            time::Duration,
+        },
+        wood_synth::{Bank, Rate, Sequencer, Song, Synth},
+    };
+
+    /// A `rodio::Source` rendering a song with `wood-synth` in blocks of
+    /// [`BLOCK_SIZE`] frames of interleaved s16, scaled by the shared volume.
+    pub(crate) struct WoodMusicSource {
+        sequencer: Sequencer<'static>,
+        block: Vec<i16>,
+        pos: usize,
+        finished: bool,
+        volume: Arc<AtomicU32>,
+    }
+
+    impl WoodMusicSource {
+        /// Start `midi_bytes` on a synthesiser over `bank`; `None` if the
+        /// MIDI file cannot be read.
+        pub(crate) fn new(
+            bank: &Bank<'static>,
+            midi_bytes: &[u8],
+            looping: bool,
+            volume: Arc<AtomicU32>,
+        ) -> Option<Self> {
+            let song = Song::parse(midi_bytes).ok()?;
+            let rate = Rate::hz(SAMPLE_RATE as u32);
+            let mut sequencer = Sequencer::new(Synth::new(bank.clone(), rate));
+            sequencer.play(song, looping);
+            Some(Self {
+                sequencer,
+                block: vec![0; BLOCK_SIZE * 2],
+                pos: BLOCK_SIZE * 2,
+                finished: false,
+                volume,
+            })
+        }
+    }
+
+    impl Iterator for WoodMusicSource {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<f32> {
+            if self.pos >= self.block.len() {
+                if self.finished {
+                    return None;
+                }
+                self.sequencer.render(&mut self.block);
+                self.pos = 0;
+                if !self.sequencer.is_playing() && self.sequencer.synth().active_voices() == 0 {
+                    self.finished = true;
+                }
+            }
+            let gain = f32::from_bits(self.volume.load(Ordering::Relaxed));
+            let sample = f32::from(self.block[self.pos]) / 32_768.0 * gain;
+            self.pos += 1;
+            Some(sample)
+        }
+    }
+
+    impl Source for WoodMusicSource {
+        fn current_span_len(&self) -> Option<usize> {
+            None
+        }
+        fn channels(&self) -> rodio::ChannelCount {
+            std::num::NonZero::new(2u16).unwrap()
+        }
+        fn sample_rate(&self) -> rodio::SampleRate {
+            std::num::NonZero::new(SAMPLE_RATE as u32).unwrap()
+        }
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
     }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "sf2-trim"
+
+description = "Host tool: trims a SoundFont to the programs and percussion notes an IWAD's music plays, for Wood's music on Vesper (audio decision D9.4)."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true }
+argh = { workspace = true }
+# Room's MUS to MIDI converter, as the game uses it.
+room = { workspace = true }
+wood-synth = { workspace = true }
+
+[lints]
+workspace = true

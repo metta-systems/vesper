@@ -4,15 +4,20 @@ Status: D1 to D8 answered 2026-10-27 (section Decisions below); stages A1 (the `
 driver with `clock_v1`), A2 (the `dma` driver with `dma_v1`), A3 (the audio driver
 serving `audio_v1` from a DMA ring, with a test client) and A4 (Wood's sound effects,
 mixed by Room's mixer on a playback Thread) are built and checked in QEMU, their
-hardware checks are pending. The one open decision (D9, music) is in
+hardware checks are pending; the maintainer reported on 2026-10-28 that sound output
+on the board worked (the detailed hardware exits are not yet re-run). D9 (music) was
+answered on 2026-10-28 (section Decisions); its research is section Music below, and
+stage A5b (the synthesiser crate and the bank-trimming tool, host-tested) is built. The
+open decision D10 (how the music component's output reaches the jack) is in
 [audio-decisions.md](audio-decisions.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
 drafts until written; once written they are prototypes and are edited in place.
 
 ## Decisions
 
-Answered by the maintainer on 2026-10-27, each with the option the decisions file
-recommended. The options that were weighed are summarised after each answer.
+D1 to D8 were answered by the maintainer on 2026-10-27, each with the option the
+decisions file recommended; D9 on 2026-10-28, partly against the recommendations. The
+options that were weighed are summarised after each answer.
 
 - **D1. Who programs the DMA controller: a separate `dma` driver** for the
   `brcm,bcm2835-dma` node exporting `dma_v1`, the sole holder of the DMA register page and
@@ -40,8 +45,29 @@ recommended. The options that were weighed are summarised after each answer.
   chosen: repeating the last period; stopping the DMA.
 - **D8. No special scheduling at first**: a ring of 4 periods and an ordinary Time
   budget, underruns measured on hardware; the isochronous scheduler only if they show.
-- **D9. Music** is decided after the sound effects (A4); see
-  [audio-decisions.md](audio-decisions.md).
+- **D9. Music: an integer SoundFont wavetable synthesiser** (answered 2026-10-28,
+  option A; the research is section Music below). New `no_std` code with no floating
+  point, rendering General MIDI from the Standard MIDI Files Room's `mus2midi` makes.
+  Not chosen: OPL emulation with the IWAD's `GENMIDI` (B, the recommendation), music
+  pre-rendered on the host (C), hardware floating point for Wood (D), no music (E).
+  Its sub-decisions:
+  - **D9.1. A separate music component**, not Wood's playback Thread (option b, against
+    the recommendation a). How its output reaches the jack, given that `audio_v1` takes
+    one client, is open (D10 in [audio-decisions.md](audio-decisions.md)).
+  - **D9.2 and D9.3** (OPL engine, chip mode) do not apply: no OPL engine is built.
+  - **D9.4. The SC-55 v1.2b bank trimmed by a host tool** to the programs and drum
+    notes the bundled IWAD's MUS tracks use (option b); a build artifact under
+    `target/`, rebuilt per IWAD. Not chosen: the whole file (a), GeneralUser GS (c).
+  - **D9.5. Rendered at the full output rate**, 44 091.71 Hz (option a). Not chosen:
+    half rate interpolated up (b).
+  - **D9.6. The renderer is per platform**: the host keeps `rustysynth` (with the
+    SC-55) as its production renderer, the new synthesiser is for Vesper only (option
+    a). So the synthesiser is not part of Room's engine: it is its own `no_std` crate
+    on the Vesper side (`userspace/wood/synth`, `wood-synth`), used by the music
+    component; Room's `mus2midi` stays the source of the MIDI. Clarified the same day:
+    the new synthesiser may be plugged into Room's host build for testing (listening
+    checks, comparison with `rustysynth`) behind an opt-in switch, `rustysynth` staying
+    the default (Room's `wood-synth` feature).
 
 Goal: sound effects (and later music) for Wood, the Room Doom port
 (`userspace/wood/README.md`, Phase 3: PWM DMA audio, SoundFont MIDI player, mixer,
@@ -268,7 +294,8 @@ without an interrupt.
   host and Vesper pan alike (`mixer::CENTRE_SEPARATION`).
 - Music: the host renders the MIDI the engine converts from MUS with `rustysynth` and an
   SF2 SoundFont (`platform/host/audio/music.rs`). That crate uses `std`; Room itself is
-  `no_std` with `alloc` now. Music is a later stage (D9).
+  `no_std` with `alloc` now. On Vesper, music is stage A5: Vesper's own integer
+  synthesiser in a music component (D9; section Music below).
 - What reaches the hardware: interleaved stereo FIFO words, each a value 0..`RNG`,
   right first. The mixer should not know that. The proposal: clients send signed 16-bit
   interleaved stereo at the rate the driver reports, and the driver converts while
@@ -491,6 +518,379 @@ invalidate it again before reading it. Memory is named by its bus address,
 Checking that a client's ranges are RAM it owns (lent Frames with `GRANT` and
 `Frame.GetAddress`, B1b) waits for an untrusted client.
 
+## Music (stage A5, research for D9)
+
+Research for D9, written 2026-10-28 before it was answered (the answer, option 2 as a
+separate component, is in section Decisions; what was built is subsection "The
+synthesiser as built (A5b)" below). Sources for this section are listed at its end
+([M1] to [M12]); sizes and counts marked "measured" were taken from the files in the
+repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
+
+### What there is to play
+
+- **The engine side** (`room/src/engine/interface/sound.rs`). `I_RegisterSong` converts
+  the MUS lump to a Standard MIDI File (`room::engine::sound::mus2midi`: one track, 70
+  ticks per quarter at 500 000 µs, so one MIDI tick is one MUS tick, 1/140 s; MUS channel
+  15 becomes MIDI channel 9). `I_PlaySong` hands the bytes to `Platform::music_play(midi,
+  looping)`, borrowed for the call ("the platform copies what it needs"). The other
+  hooks are `music_init`, `music_stop`, `music_pause`, `music_resume`,
+  `music_set_volume(0..=127)` and `music_is_playing`; on Vesper they are the silent
+  defaults of `room/src/engine/platform.rs`.
+- **The host** renders the MIDI with `rustysynth` 1 (MIT, `std`, `f32`) and the Roland
+  SC-55 SoundFont v1.2b at 44 100 Hz in blocks of 512 frames
+  (`room/src/platform/host/audio/music.rs`), through rodio.
+- **The shareware IWAD's music** (measured, `userspace/wood/wad/doom1.wad`): 13 MUS
+  lumps, 262 429 bytes. Played once through, they last 1 789 s (29.8 min): `D_E1M1` 96 s,
+  `D_E1M2` 155 s, `D_E1M3` 272 s, `D_E1M4` 171 s, `D_E1M5` 164 s, `D_E1M6` 84 s,
+  `D_E1M7` 151 s, `D_E1M8` 152 s, `D_E1M9` 137 s, `D_INTER` 201 s, `D_VICTOR` 192 s,
+  `D_INTRO` and `D_INTROA` 7 s each. At most 15 notes sound at once (key-on without
+  key-off, `D_INTRO`; 6 to 12 in the level tracks). Together the tracks use 37 melodic
+  programs and 23 percussion notes (the MUS headers' instrument lists: 0, 6, 7, 10, 11,
+  15, 18, 29 to 34, 37, 38, 40 to 42, 44 to 48, 51, 52, 62, 63, 81, 82, 92, 94, 102,
+  108, 117 to 120; drums 35, 36, 38, 40 to 53, 55, 57, 59, 75, 80, 81).
+- **The instrument data the original game used**: the IWAD's `GENMIDI` lump (11 908
+  bytes, header `#OPL_II#`, 128 melodic and 47 percussion OPL2 instruments with names,
+  some two-voice) and `DMXGUS` (5 342 bytes, the Gravis Ultrasound patch map). Vanilla
+  Doom played music through the DMX library on an OPL2/OPL3 (AdLib, Sound Blaster),
+  a GUS or a General MIDI device; the OPL path with GENMIDI is the sound most players
+  know.
+- **Looping and tempo.** A MUS song has one fixed tempo (140 ticks/s) and loops from
+  its start, so a song is a flat, fixed timeline: any sequencer only needs "events at
+  tick N" and a restart. At the output rate a tick is 44 091.71 / 140 = 314.94 frames.
+
+### Constraints that shape the options
+
+- **Integer-only execution** (capabilities contract, "FP/SIMD", line 734): components
+  build soft-float, `CPACR_EL1` traps FP/SIMD at EL0 and EL1, no FP state is saved. An
+  `f32` operation compiles to a `compiler-builtins` call (tens of cycles each).
+- **CPU.** The Pi 3 B's Cortex-A53 runs at 600 to 1 200 MHz (`arm_freq` 1 200,
+  `arm_freq_min` 600 in the `config.txt` defaults [M11]; Vesper does not set the ARM clock
+  through the mailbox, so which of the two the board runs at under Vesper is unmeasured
+  and must be checked before any budget is trusted). The kernel is single-core: the
+  engine Thread (35 tics/s, plus rendering), Wood's playback Thread, the compositor and
+  the drivers share one core.
+- **Image size and boot time.** The per-component archive limit of 2 047 pages is
+  lifted (Kickstart gives archive tables their own 14-bit guards, archives up to 2^18
+  pages, about 1 GiB), so a large resource is possible. What a resource still costs: the
+  boot image grows by its size; on the board chainboot sends the image over the PL011
+  at 115 200 baud, 11 520 bytes/s (8N1), so every MiB adds about 91 s to each boot
+  (the 9.9 MiB SC-55 file adds about 15 minutes; the image is about 5 MB today, about 7
+  minutes); and the image is loaded into RAM beside the boot Untyped (128 MiB).
+  Resources reach a component as mapped pages of the image (`ResourceRecord`
+  base and length in Kickstart's `DriverInit`), not as copies in its memory, so they do
+  not use Wood's 16 MiB (12 MiB heap, 2 MiB engine stack); state parsed from them does.
+- **The playback Thread** (A4) already mixes 4 buffers of 512 frames (11.6 ms each)
+  ahead; a music renderer that fills the same buffers has 11.6 ms of wall time per
+  buffer, shared with everything else on the core.
+
+### Option 1: OPL emulation with GENMIDI (what vanilla Doom did)
+
+- **How Chocolate Doom does it.** `src/i_oplmusic.c` [M1] (GPL-2.0-or-later) loads the
+  `GENMIDI` lump, reads a MIDI file (`src/midifile.c`, Chocolate Doom also converts MUS
+  to MIDI first) and drives an OPL chip: 9 voices in OPL2 mode, 18 in OPL3 mode
+  (`num_opl_voices`), DMX's voice allocation and its quirks per driver version
+  (`opl_drv_ver`, default `opl_doom_1_9`), fixed-pitch and two-voice instruments
+  (`GENMIDI_FLAG_FIXED`, `GENMIDI_FLAG_2VOICE`), percussion from the 47 GENMIDI drum
+  instruments. Timing goes through OPL timer callbacks in microseconds (`OPL_SetCallback`,
+  `us = nticks · us_per_beat / ticks_per_beat`) that the SDL backend (`opl/opl_sdl.c`)
+  advances by the samples it renders, so the music clock is the audio clock. Its only
+  floating point is `OPL_AdjustCallbacks((float) us_per_beat / tempo)` on a tempo
+  change, which MUS songs never have (one tempo meta event at the start).
+- **The emulator.** Chocolate Doom now vendors **Nuked-OPL3 1.8 in the "fast" fork**
+  (`opl/opl3.c`, `opl3.h`, `wf_rom.h`; LGPL-2.1-or-later; "bit-exact
+  performance-optimized fork", [M2], [M3]); earlier releases used DOSBox's DBOPL
+  (GPL-2.0). Nuked-OPL3 is a cycle-accurate integer emulation (log-sine and exponent
+  ROM tables, integer envelope and phase generators); its only floating point is the
+  `OPL_SIN` table of the optional stereo extension (`OPL_ENABLE_STEREOEXT`, off by
+  default). The chip runs at its native rate, 49 716 Hz; `OPL3_GenerateResampled`
+  turns that into any output rate with an integer linear interpolation (`rateratio`,
+  `RSM_FRAC` 10). The chip state is one `opl3_chip` (18 channels, 36 slots, a 1 024-entry
+  write buffer), a few tens of KiB; the tables 16 KiB.
+- **Rust ports** (crates.io, checked 2026-10-28; none of their code was built or run):
+  - `nuked-opl3` 0.1.0 [M4] (LGPL-2.1-or-later): a pure-Rust port of Nuked-OPL3 with the
+    fast fork's optimisations, "bit-identical output to the C reference". The chip core
+    (`src/core.rs`) is integer (its one `f64` is the stereo-extension sine); the crate
+    uses `std` paths (`std::mem`, `std::marker`) and its `Opl3Device` wrapper keeps
+    timers in `f64`, so a `no_std` use needs the core with `std::` changed to `core::`
+    (a small patch or a vendored copy) and without the wrapper.
+  - `oplon` 1.0.0 [M5] (MIT): "no_std, integer-only" clean-room OPL2/OPL3 core, no heap,
+    `forbid(unsafe_code)`, ROM tables generated at compile time, 4-point cubic
+    resampling to the output rate. Not bit-exact: its author reports a median spectral
+    cosine of about 0.99 against Nuked-OPL3 and DBOPL driven with Doom VGM register
+    streams, levels within a few tenths of a dB.
+  - `opl-emu` 0.4.2 (GPL-3.0, incompatible with Room's GPL-2.0-only licence, uses
+    `libm`), `opl-audio` 0.1.0 (MIT/Apache, its own MIDI-to-OPL renderer and OPL2 core,
+    `f32` in places), `opl3-rs` (LGPL, C bindings): not suitable as they are.
+  - No Rust port of `i_oplmusic.c` was found; the GENMIDI voice allocator (1 906 lines
+    of C, plus 838 in `midifile.c`, much of it reusable as a simple single-track SMF
+    reader since `mus2midi` writes one track) is the part to port, into Room (GPL-2.0;
+    the source is GPL-2.0-or-later).
+- **CPU (estimate).** The fast fork's README [M3] reports, on an unnamed x86-64 at
+  GCC `-O2`, 2.7 s to render a dense 3.5-minute VGM (upstream 4.3 s): about 260 ns per
+  native sample, 1.3 % of that core in real time. A Cortex-A53 (in-order, dual issue)
+  at 1.2 GHz is assumed 5 to 10 times slower per sample on this branchy integer code
+  than a current desktop core: about 6 % to 13 % of the core for an OPL3 at 49 716 Hz,
+  twice that at 600 MHz. Doom's tracks are lighter than a dense VGM (at most 15 notes,
+  9 voices in OPL2 mode) and the fork skips silent slots, so the real figure should sit
+  at the low end; it is the first thing A5 measures on the board. Resampling to
+  44 091.71 Hz adds one interpolation per frame. (A host benchmark of the vendored
+  C was not run for this research.)
+- **Size.** `GENMIDI` is already in the IWAD (no new resource, no boot time); the code
+  is the emulator (`opl3.c` 1 938 lines of C; the Rust `core.rs` of `nuked-opl3` 1 518
+  lines) and the allocator. Licences: Nuked-OPL3 LGPL-2.1-or-later may be used under
+  the GPL-2.0 (LGPL 2.1 section 3), `oplon` MIT.
+- **Fidelity.** Authentic: this is the music of a DOS Doom on a Sound Blaster
+  (OPL2, or OPL3 with `opl3` mode as in Chocolate Doom's `-opl3`). It is a different
+  sound from the host build's SC-55 rendering.
+
+### Option 2: integer SoundFont wavetable synthesiser
+
+- **Existing crates.** No integer or `no_std` SoundFont synthesiser was found.
+  `rustysynth` 1.3.8 [M6] (MIT, the host's) is `f32` with `std` (`io::Read`, `Arc`)
+  and has per-voice biquad filters, LFOs, modulation envelopes, chorus and reverb;
+  `rustysynth-ext`, `magnetite_midi` (MIT, 503 `f32`/`f64` uses), `xsynth-core`
+  (LGPL-3.0), `oxisynth` (FluidSynth port), `tsf` (TinySoundFont bindings, C, float),
+  `fluidlite` (C, float) are all floating point. The `soundfont` crate (MIT) only
+  parses SF2.
+- **rustysynth on soft-float** (estimate): about 20 float operations per voice per
+  frame (interpolation, filter, envelope, panning) plus about 50 per frame for reverb and
+  chorus; at 16 voices about 370 soft-float calls per frame, at an assumed 15 to 40
+  cycles each 5 500 to 15 000 cycles per frame, 240 M to 650 M cycles per second at
+  44 091.71 Hz: 20 % to over 50 % of the core at 1.2 GHz, and it still needs a `no_std`
+  port. Not viable.
+- **An integer synthesiser written for Room** (`no_std`, beside the A4 mixer): per voice
+  a 32.32 sample position and step (from key, root key, tuning and pitch bend through a
+  cent-to-ratio table), linear interpolation of 16-bit samples with the SF2 loop
+  points, the volume envelope (delay, attack, hold, decay, sustain, release) stepped in
+  integer per block of frames, velocity and channel volume/expression as integer
+  attenuation (centibel table), panning with the A4 gain law; a General MIDI
+  sequencer for the SMF that `mus2midi` produces. Left out at first: the low-pass
+  filter (or a cheap one-pole integer filter), modulation envelope, vibrato/tremolo
+  LFOs, chorus and reverb. Estimated 25 to 40 cycles per voice per frame: at 24 voices
+  (notes plus release tails) about 26 M to 42 M cycles per second, 2 % to 4 % of the core
+  at 1.2 GHz; half that rendering at 22 045.85 Hz (half the output rate) and
+  interpolating up. The work is a new synthesiser of about 1 500 to 2 500 lines and its
+  host tests; its sound is close to but not the same as the host's (no filter, no
+  effects), and comparable against `rustysynth` on the host.
+- **The SoundFont** (measured with a throwaway SF2 walker over `pdta`/`shdr`):
+  - SC-55 v1.2b: 10 386 170 bytes, 10 234 772 of them sample data, 137 presets, 682
+    samples. Bank 0 with the standard drum kit uses 8.6 MB of samples. The 37 programs
+    and 23 drum notes of the shareware tracks use 223 samples, 4.26 MB: a trimmed SF2
+    built on the host (a build-time tool) would be about 4.3 MB, about 6.5 minutes of
+    chainboot; the full file about 15 minutes. Licence: **none declared** upstream; the
+    samples are Roland's ("use and redistribution ... may be subject to Roland's terms",
+    `room/soundfonts/SC55Soundfont-1.2b/README.md`). Bundling it into a Vesper image that
+    is published is a redistribution question for the maintainer.
+  - GeneralUser GS 2.0.3 [M7]: 32 319 396 bytes, licence allows bundling and
+    modification in software ("Please feel free to use it in your software projects, and
+    to modify the SoundFont bank"); trimmed to Doom's programs it would be far smaller
+    (not measured).
+  - Samples could be stored as 8-bit (half the size, audible noise floor) or kept
+    16-bit; a trimmed bank also needs re-trimming for a registered or Doom II IWAD,
+    whose tracks use other programs (only the full bank avoids that).
+- **Memory.** Samples are read in place from the mapped resource; parsed presets,
+  instruments and zones are well under 1 MiB of Wood's heap.
+
+### Option 3: pre-rendered music
+
+Render every track once on the host (rustysynth and the SC-55, the host's exact sound)
+into a resource and play it back as one more mixer voice. Playback is trivial integer
+code (an ADPCM decoder is about 100 lines), the CPU cost is negligible, and pause,
+resume, volume and looping are a position and a gain. The cost is size, for the 1 789 s
+of the shareware tracks (computed):
+
+| Format | Bytes/s | Shareware total | Chainboot time added |
+|---|---|---|---|
+| s16 stereo, 22 050 Hz | 88 200 | 158 MB | over 3.8 h |
+| IMA ADPCM stereo, 22 050 Hz | 22 050 | 39.5 MB | 57 min |
+| IMA ADPCM mono, 22 050 Hz | 11 025 | 19.7 MB | 29 min |
+| IMA ADPCM mono, 11 025 Hz | 5 513 | 9.9 MB | 14 min |
+
+Better codecs (Vorbis through the integer Tremor decoder, C) would reach about 7 MB at
+32 kbit/s, at the cost of a C dependency. Every IWAD needs its own rendering, made on
+the host from that IWAD at build time; the SC-55 licence question applies to the
+rendered audio as well. Fidelity is the host's, minus the codec.
+
+### Option 4: allow floating point in this component
+
+Run `rustysynth` (after a `no_std` port) with hardware FP. What the kernel would need:
+FP/SIMD state per Thread (32 × 128-bit V registers plus `FPCR`/`FPSR`, 528 bytes) saved
+and restored on switches, eagerly or lazily by trapping the first use with
+`CPACR_EL1.FPEN`; a per-Thread or per-AddressSpace "FP allowed" attribute set at
+creation (state in an existing object, but a contract change); Wood (with Room) built for
+a hard-float target while the kernel stays soft-float. The contract's integer-only rule
+and the minimal-kernel-API rule both argue against it; the float cost would still be
+about 10 % to 25 % of the core by the operation counts above at native speed. Listed for
+completeness; not recommended unless the maintainer wants hardware FP for other reasons.
+
+### Option 5: placement and timing (applies to options 1 to 3)
+
+- **Where the synthesiser runs.** (a) In Wood's playback Thread, rendering music into
+  the same 512-frame buffer before the effect voices are added: no new component, one
+  clock, one `audio_v1` client. (b) A separate `music` component: `audio_v1` takes one
+  client (`busy`), so it would need either a mixing service or to hand rendered buffers
+  to Wood, adding a hop for no gain while Wood is the only player. (a) fits D5.
+- **Hand-over from the engine.** As `SharedVoices` does for effects: `music_play` copies
+  the MIDI bytes (largest shareware song: `D_E1M8`, 59 535 bytes of MUS) into a buffer
+  of Wood's heap and publishes it with a sequence number; stop, pause, resume and volume
+  are atomic words; `music_is_playing` reads a "finished" word. The engine Thread never
+  waits.
+- **Timing from the audio clock.** The sequencer advances by frames rendered (314.94
+  frames per tick, a fixed-point accumulator), as Chocolate Doom's OPL callbacks
+  advance by samples rendered: no drift against the output, no dependence on the
+  engine's 35 tics/s, and a deterministic render that host tests can hash.
+- **Output rate.** Option 1 runs the chip at 49 716 Hz and interpolates to 44 091.71 Hz
+  (or, cheaper, renders at the output rate directly with `oplon`, which resamples
+  internally). Option 2 can render at the output rate or at half of it and interpolate.
+
+### The synthesiser as built (A5b)
+
+Built 2026-10-28 after D9 (option 2; D9.4 b, D9.5 a, D9.6 a); host-tested only, not yet
+run on Vesper (that is A5c) or on the board (A5a, A5d).
+
+- **Where.** `userspace/wood/synth`, crate `wood-synth` in the Vesper workspace
+  (`no_std` + `alloc`, no dependencies), for the music component (D9.1). Not in Room: the
+  host keeps `rustysynth` (D9.6). Room's `mus2midi` (now `pub`) stays the MIDI source.
+- **Modules.** `sf2` reads the SoundFont in place (RIFF `sfbk`, `INFO`, `sdta/smpl`, the
+  nine `pdta` arrays, index checks; records decoded on access, sample points read from
+  the file's bytes, so on Vesper from the mapped resource). `bank` resolves presets and
+  instruments into zones at load: the global zone under each local zone (a local
+  generator replaces it), key and velocity ranges, and at note-on the voice value of a
+  generator is the instrument zone's (or the default) plus the preset zone's offset for
+  the generators presets may offset (SoundFont 2.04 sections 8.5, 9.4). `channel` holds
+  the MIDI state: program and bank select (applied at program change; channel 10 plays
+  bank 128), volume (CC 7), expression (CC 11), pan (CC 10), pitch bend with its range
+  (registered parameter 0 through CC 101/100/6/38), sustain (CC 64), reset all
+  controllers (CC 121), all sound off (CC 120), all notes off (CC 123, and 124 to 127).
+  `voice` plays one sample; `envelope` is the volume envelope; `synth` holds 16 channels
+  and the voices; `smf` and `sequencer` play a MIDI file; `trim` is D9.4's trimming.
+- **Fixed point.** Sample positions and steps are 32.32 (absolute sample-point indices),
+  interpolation is linear with 15 bits of fraction. The output rate is the exact fraction
+  100 000 000 / 2268 Hz (`OUTPUT_RATE`), so the step is `sample_rate * 2268 / 10^8 *
+  2^(cents/1200)` in integer arithmetic. Pitch in cents is `(key - root) * scaleTuning +
+  coarseTune * 100 + fineTune + the sample's correction + the channel's bend`; the step
+  is recomputed only when the bend changes. Levels are attenuations in centibels (Q16 in
+  the envelope); gains are Q16, pan gains Q15. Each block of 64 frames advances the
+  envelope once and ramps the left and right gains linearly to the block's end value
+  (no zipper noise); voices sum in 32 bits, then a master gain (volume 0 to 127, and the
+  half of `rustysynth`'s default master volume) and one clip to s16. `render` writes
+  interleaved s16; `mix` adds into an i32 buffer unclipped (for mixing with Wood's
+  effects, A5c).
+- **Tables** (generated by `build.rs` on the build host; the library only indexes and
+  interpolates them, about 11 KiB of read-only data): `2^(c/1200)` for one octave of cents
+  in Q2.30 (1 200 entries, used for pitch steps and timecents), linear gain of 0 to 960
+  centibels in Q16 (961), the concave curve `400 log10(127/v)` centibels for velocity,
+  volume and expression (128, the SoundFont default modulators' curve), constant-power
+  pan in Q15 (1 001).
+- **Levels and envelope.** `initialAttenuation` counts 0.4 of its value (as in EMU
+  hardware, FluidSynth and `rustysynth`). Delay, attack (linear in amplitude), hold
+  (scaled by `keynumToVolEnvHold`), decay (scaled by `keynumToVolEnvDecay`) to the
+  sustain level, release; decay and release fall linearly in centibels, 800 cB over the
+  stage's time, the slope `rustysynth` uses (`exp(-9.226 t / time)`). Times are clamped
+  to -12 000 to 8 000 timecents. A voice ends when its release reaches 96 dB, when a
+  non-looping sample runs out, or when it decays to a sustain level of 96 dB.
+- **Loops.** `sampleModes` 0 plays once, 1 loops for as long as the voice sounds, 3
+  loops until release and then plays on to the sample's end; the address offset
+  generators (fine and coarse) move start, end and loop points.
+- **Voices.** 32 (`POLYPHONY`; the shareware tracks hold at most 15 notes). A note-on
+  starts one voice per matching (preset zone, instrument zone) pair; when all are busy it
+  takes, in order, a released voice before a held one, then the quietest, then the
+  oldest. A new voice with an exclusive class cuts the channel's voices of that class
+  over 64 frames (the hi-hats).
+- **Sequencer.** Standard MIDI Files of format 0 and 1 with ticks-per-quarter division
+  (SMPTE refused), running status, tempo meta events, the tracks merged by tick (ties in
+  track order), sysex and other meta events skipped. Time is 32.32 frames from the song's
+  start: an event at tick `t` falls at `segment_start + (t - segment_tick) *
+  frames_per_tick`, with `frames_per_tick = rate * tempo / (division * 10^6)` (314.94 for
+  `mus2midi`'s 70 ticks per quarter at 500 000 µs and the output rate), and is handled
+  before the first frame at or after it. At the end tick a looping song restarts with
+  the fraction past the end kept (no drift), the notes released; a non-looping one stops
+  and its notes ring out. `pause` renders silence and holds everything; `stop` releases.
+- **Left out** (documented in the crate): the low-pass filter (`initialFilterFc` and `Q`
+  are ignored, so some instruments sound brighter than on the host), the modulation
+  envelope, the vibrato and modulation LFOs, the files' modulator lists (only the default
+  velocity, volume, expression, pan and pitch-wheel behaviour is built in, CC 1
+  modulation is ignored), chorus and reverb (CC 91/93 ignored), 24-bit `sm24` data, ROM
+  samples.
+- **No floating point.** `#![deny(clippy::float_arithmetic)]` in the crate; the host
+  test `library_source_has_no_floating_point` fails on any `f32`/`f64` or float literal
+  in `src/`; `just synth-no-float` builds the crate for the Vesper target and fails if
+  its object code references a soft-float routine (`__addsf3`, `__divdf3`, `__floatsisf`,
+  comparisons and conversions), checking the pattern against the core library, which
+  references 14 of them. The check is on the library's own code; the music component's
+  ELF (A5c) should be checked the same way.
+- **The trimmed bank** (D9.4): `just wood-soundfont` runs the host tool
+  `userspace/wood/tools/sf2-trim` (`sf2-trim`): it reads the IWAD's 13 MUS lumps,
+  converts them with `mus2midi`, collects the melodic programs and percussion notes the
+  note-ons sound (37 programs and 23 drum notes, the lists of section "What there is to
+  play"), keeps the presets those resolve to (as the synthesiser resolves them), the
+  percussion preset cut to the zones of the notes used, and the instruments, samples
+  and sample data that remain, and writes `target/wood/sc55-doom1.sf2` (a build
+  artifact, not committed): 4 299 638 bytes (4 262 322 of sample data), 38 of 137
+  presets, 51 of 188 instruments, 223 of 682 samples, 88 preset and 422 instrument
+  zones. At 11 520 bytes/s that is about 6.2 minutes of chainboot. The file is a valid
+  SoundFont 2 (`INFO` copied, terminal records, 46 zero points after each sample);
+  `rustysynth` loads it. Parsed, its zones take about 70 KiB of heap.
+- **Compared with `rustysynth`** (host test, same trimmed bank, 44 100 Hz, 20 s, loudness
+  of each 100 ms window in dB): correlation 0.94 (`D_E1M1`), 0.96 (`D_E1M2`), 0.88
+  (`D_INTER`); overall level 1.4 to 2.5 dB below `rustysynth`. The first 10 s of
+  `D_E1M1` peak at 7 600 (about -12.7 dBFS), so there is headroom for the effects on top.
+- **On the host, opt-in** (D9.6 clarification): Room's feature `wood-synth`
+  (`cd userspace/wood/room && cargo run --release --features wood-synth -- -iwad
+  ../wad/doom1.wad`) renders the host's music with this synthesiser instead of
+  `rustysynth`, from the same SoundFont the host loads, for listening checks; the
+  default build is unchanged.
+- **Not measured yet:** the CPU cost on the Cortex-A53 (A5a).
+
+### Testing (all options)
+
+- Host tests in Room: render the first seconds of `D_E1M1` (and a percussion-heavy
+  track) and compare against a golden hash; for option 1 with `nuked-opl3`, against the
+  C reference register by register (bit-exact) or, for `oplon`, by envelope correlation;
+  for option 2, level and spectrum checks against `rustysynth` on the host; the
+  sequencer's event timing against the MUS ticks.
+- QEMU: the audio driver's capture mode already counts audible stream periods
+  (`stream::is_audible`); with music, the title screen (`D_INTRO`) and the demos make
+  nearly every period audible, which `just test-wood` can assert (for example "audible
+  stream periods" close to the periods played), and Wood can log a hash of the first
+  rendered seconds to compare with the host test's golden value.
+- Hardware: the render time per buffer against the generic timer (`CNTVCT_EL0`),
+  logged as a share of the buffer's 11.6 ms, and the underrun count, at the ARM clock the
+  board actually runs.
+
+### Music sources
+
+- **[M1]** Chocolate Doom, `src/i_oplmusic.c` and `src/midifile.c` (GPL-2.0-or-later),
+  <https://github.com/chocolate-doom/chocolate-doom/blob/master/src/i_oplmusic.c>.
+- **[M2]** Chocolate Doom, `opl/opl3.c`, `opl/opl3.h`, `opl/opl_sdl.c`,
+  `opl/Makefile.am` (Nuked-OPL3 1.8-fast.3, upstream commit `cfedb09`),
+  <https://github.com/chocolate-doom/chocolate-doom/tree/master/opl>.
+- **[M3]** Nuked-OPL3-fast README (benchmarks against upstream),
+  <https://github.com/tgies/Nuked-OPL3-fast>; upstream Nuked-OPL3,
+  <https://github.com/nukeykt/Nuked-OPL3>.
+- **[M4]** `nuked-opl3` 0.1.0, <https://crates.io/crates/nuked-opl3>,
+  <https://github.com/tgies/nuked-opl3-rs>.
+- **[M5]** `oplon` 1.0.0, <https://crates.io/crates/oplon>,
+  <https://codeberg.org/sbechet/oplon>.
+- **[M6]** `rustysynth` 1.3.8, <https://crates.io/crates/rustysynth>; other crates
+  checked: `opl-emu` (<https://github.com/Ragnaroek/opl-emu>), `opl-audio`, `opl3-rs`,
+  `xsynth-core`, `magnetite_midi`, `soundfont`, `tsf`, `fluidlite` (crates.io search,
+  2026-10-28).
+- **[M7]** GeneralUser GS 2.0.3, <https://github.com/mrbumpy409/GeneralUser-GS>
+  (`documentation/LICENSE.txt`).
+- **[M8]** SC-55 SoundFont v1.2b, <https://github.com/GuihongWang/SC55Soundfont>, and
+  `userspace/wood/room/soundfonts/SC55Soundfont-1.2b/README.md`.
+- **[M9]** The SoundFont 2.04 specification (sections 7 and 8: `pdta` records,
+  generators, the volume envelope), E-mu Systems / Creative Technology, 1996.
+- **[M10]** The MUS format as `room/src/engine/sound/mus2midi.rs` reads it; the
+  header's instrument list (melodic 0 to 127, percussion 135 to 181 for notes 35 to 81)
+  is what the program and drum counts above were taken from.
+- **[M11]** Raspberry Pi documentation, `config.txt`, overclocking options (defaults
+  table: Pi 3 `arm_freq` 1 200, `arm_freq_min` 600),
+  <https://www.raspberrypi.com/documentation/computers/config_txt.html>.
+- **[M12]** Measurements on files in the repository (2026-10-28): `doom1.wad` lumps and
+  song lengths, SC-55 sample use per program, Wood's segments (about 765 KiB loaded).
+
 ## What QEMU can and cannot test
 
 Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]):
@@ -589,6 +989,8 @@ in `config.txt`, which also gives the node a pin group of GPIO40 and GPIO41 on f
   fewer than three periods leaves no margin for the interrupt latency.
 - **Turn-on pop.** Enabling PWM steps the output from 0 to the mid level. The ramp
   reduces it; whether the coupling capacitor still thumps is checked by ear.
-- **Music cost.** A SoundFont synthesiser at 44.1 kHz on a Cortex-A53 at 1.2 GHz, in
-  floating point, is the heaviest part of the plan; rendering music at 22 050 Hz and
-  upsampling halves it. Measured in the music stage.
+- **Music cost.** Execution is integer-only, so a floating-point SoundFont synthesiser
+  (`rustysynth`) runs on soft-float at an estimated 20 % to over 50 % of the core and is
+  ruled out; the integer options are estimated at 2 % to 4 % (wavetable) and 6 % to 13 %
+  (OPL3 emulation) of the core at 1.2 GHz, twice that at 600 MHz (section Music). The
+  ARM clock under Vesper is unmeasured; both are measured on the board in A5.

@@ -129,11 +129,12 @@ const FIRST_DRIVER_SLOT: u32 = 5;
 /// Guard of the first driver instance's table; later instances count up.
 const FIRST_DRIVER_GUARD: u32 = 0x0D_0000;
 
-/// Set in a component table's guard to make its archive table's guard. A key
-/// holds the guard above `size_bits` slot bits in 32 bits, so this lowest
-/// free bit above the 20-bit driver guards (21-bit archive guards) lets an
-/// archive have 2^11 slots: about 8 MiB of segments and resources.
-const ARCHIVE_GUARD_MARK: u32 = 0x10_0000;
+/// Guard of the first driver instance's archive table; later instances count
+/// up. A key holds the guard above `size_bits` slot bits in 32 bits, so this
+/// 14-bit guard leaves an archive up to 2^18 slots (the KeyTable limit is
+/// 2^20): segments and resources up to 1 GiB, which the 32-bit key would
+/// not allow with archive guards derived from the 20-bit driver guards.
+const FIRST_ARCHIVE_GUARD: u32 = 0x3A00;
 
 /// The boot keys driver loading draws on.
 #[derive(Clone, Copy)]
@@ -781,7 +782,8 @@ pub fn load_drivers(
         let name = instance.name();
         let guard = FIRST_DRIVER_GUARD + u32::try_from(number).unwrap_or(0);
         let component = builder.component(guard, slots);
-        builder.load_component(&component, image, guard ^ ARCHIVE_GUARD_MARK, slots);
+        let archive_guard = FIRST_ARCHIVE_GUARD + u32::try_from(number).unwrap_or(0);
+        builder.load_component(&component, image, archive_guard, slots);
         let mut stacks = builder.stack_region(&component, STACK_REGION, slots);
         let stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);
         assert!(

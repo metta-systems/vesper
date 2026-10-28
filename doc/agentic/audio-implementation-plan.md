@@ -1,6 +1,6 @@
 # Audio implementation plan
 
-Design: [audio-design.md](audio-design.md) (with the answered decisions D1 to D8). Open
+Design: [audio-design.md](audio-design.md) (with the answered decisions D1 to D9). Open
 decisions: [audio-decisions.md](audio-decisions.md). This file holds only open work;
 nothing in a stage starts until the decisions it lists are answered. Mark an item `- [x]`
 only after its exit check has passed.
@@ -9,7 +9,14 @@ only after its exit check has passed.
 
 - D1 to D8 are answered (2026-10-27): A1 to A4 are built. D8 (no special
   scheduling) is revisited if A4 shows underruns on hardware.
-- D9 blocks A5; it is decided after A4.
+- Board status: the maintainer reported sound output on the board worked, 2026-10-28;
+  detailed hardware exits not yet re-run (the checkboxes of A1 to A4 below stay open).
+  The board is unavailable for now: work continues blind, with host tests and QEMU,
+  and the board checks come later.
+- D9 is answered (2026-10-28): an integer SoundFont synthesiser (A), in a separate music
+  component (D9.1 b), the SC-55 trimmed by a host tool (D9.4 b), at the output rate
+  (D9.5 a), the host keeping `rustysynth` (D9.6 a); D9.2 and D9.3 do not apply. A5b is
+  built. D10 (how the music component's output reaches the jack) blocks A5c.
 - Existing pieces used: `gpio_v1` (pins), `libs/io-channel` (transport), Meddle
   `channel N;` provisioning in Kickstart, `Frame.CleanData`, `DriverInit::memory_bus`.
 
@@ -194,16 +201,97 @@ Done in QEMU (2026-10-28), hardware check pending:
   compositor's serial channel) is open. If underruns show under load, D8 option B comes
   into play.
 
-## A5: music (later)
+## A5: music
 
-- Per D9: the synthesiser, the SoundFont or instrument resource, music voices in the
-  mixer, `music_*` platform methods. Measure the render cost per second of audio.
-- Exit: E1M1 music plays with effects on hardware without underruns.
+D9 answered 2026-10-28 (design doc, section Decisions): an integer SoundFont
+synthesiser (`wood-synth`) in a separate music component, the SC-55 trimmed per IWAD,
+rendered at the output rate; the host keeps `rustysynth`. A5c waits for D10.
+
+### A5a: measure the budget on the board
+
+- The music component (or, before it exists, the audio test client linking
+  `wood-synth`) logs the ARM clock (`mailbox_v1.get_clock_rate`, ARM clock) and times a
+  fixed render workload per 512-frame buffer against `CNTVCT_EL0`: `wood-synth` holding
+  24 voices of the trimmed bank, rendered into a scratch buffer, while the effects play
+  as in A4.
+- Needs the board (unavailable for now) and a way to read the result there (Wood's log
+  is semihosting only; the open "report through the compositor's serial channel" item of
+  A4, or the audio test image's UART).
+- Exit: the render share of a buffer's 11.6 ms and the ARM clock are recorded in the
+  design doc; it fits with margin (below a quarter of the core at the clock measured), or
+  D9.5 (half rate) is revisited with the number.
+
+### A5b: the synthesiser and the trimmed bank (host-tested)
+
+Done on the host (2026-10-28); runs on Vesper from A5c on. Design doc section "The
+synthesiser as built (A5b)".
+
+- `userspace/wood/synth` (`wood-synth`, `no_std` + `alloc`, in the Vesper workspace):
+  SoundFont reader in place, zones with merged generators, 16 MIDI channels, 32 voices
+  with 32.32 linear-interpolated playback, the loop modes, the volume envelope,
+  velocity/volume/expression/pan/bend/sustain, exclusive classes, voice stealing, the
+  MIDI file sequencer clocked by frames with looping and pause; tables from `build.rs`;
+  no filter, LFOs, modulation envelope, modulators, chorus or reverb yet.
+- `userspace/wood/tools/sf2-trim` and `just wood-soundfont`: the SC-55 trimmed to the
+  shareware music into `target/wood/sc55-doom1.sf2` (4 299 638 bytes: 38 presets, 51
+  instruments, 223 samples; 37 programs and 23 drum notes).
+- Room: `mus2midi` is `pub`; the opt-in feature `wood-synth` renders the host's music
+  with the new synthesiser (default stays `rustysynth`).
+- Exits passed: `just test-wood-synth` (in `just test-host`): tables, zone selection,
+  preset offsets, envelope stages, pitch (440 Hz at its root, octaves, bend and its
+  range), loop modes, controllers, exclusive class and polyphony, event frames with a
+  tempo change and across loops, pause, the MIDI reader, no float in the source; on the
+  shareware data, the programs and drums found, the trimmed file's validity, `rustysynth`
+  loading it, golden hashes of the first 10 s of `D_E1M1` and `D_INTRO` at the output
+  rate, loudness against `rustysynth` (correlation 0.88 to 0.96, within 2.5 dB). `just
+  synth-no-float` and `just clippy-wood-synth` pass.
+
+### A5c: the music component, `music_v1` and mixing in Wood
+
+**Blocked on D10** ([audio-decisions.md](audio-decisions.md)). As recommended there
+(a), pending the answer:
+
+- `userspace/wood/music`: a program component linking `wood-synth`, the trimmed bank as
+  its `[[resource]]` (built by `just wood-soundfont` before the image), the bank parsed
+  at start (about 70 KiB of heap). It exports `music_v1`: `play` (the MIDI bytes, which
+  exceed a call's data: in the channel's data pages or a lent Frame, settled with the
+  interface), `stop`, `pause`, `resume`, `set_volume`, `is_playing`, and an io-channel
+  of rendered periods (512 frames of s16 stereo) refilled as Wood returns them.
+- Wood: the playback Thread takes one music period per buffer (silence and a count when
+  none is ready), adds the effect voices on top with one clip (A4's mixer gains a
+  "mix onto" entry), and sends the result to `audio_v1` as now. The engine's `music_*`
+  hooks hand over to the playback Thread through atomics, as `SharedVoices` does, which
+  makes the `music_v1` calls, so the engine Thread never waits on another component.
+- Wood and the music component log, at powers of two, periods with music, periods
+  missing, and the render time per period.
+- `just synth-no-float`'s check run on the music component's ELF as well.
+- Exit (QEMU): `just test-wood` shows music from the title screen on (`D_INTRO`) and
+  through the demos: nearly every captured period audible (asserted against the periods
+  played), a hash of the first rendered seconds equal to a host-test value for the same
+  song, looping flag and length, no missing music periods and no underruns; `just
+  test-audio` and `just test-dma` still pass.
+
+### A5d: hardware
+
+- [ ] Hardware exit (`just boot-wood-test` on the Pi 3 B with the overlay line and
+  headphones): the title music, then the demos' level music with the effects on top, no
+  clicks or dropouts, the music looping; the render share per buffer as measured in A5a
+  and no underruns (read as decided in A5a).
+
+### A5e: follow-ups (not needed for the exit)
+
+- A cheap integer low-pass filter (`initialFilterFc`) if listening shows the brighter
+  instruments matter; the modulation envelope and vibrato LFO likewise.
+- A registered or Doom II IWAD: `just wood-soundfont` with that IWAD (the tool takes
+  `--wad`); GeneralUser GS trimmed the same way if images are to be published (D9.4 c).
+- Listening comparison on the host with Room's `wood-synth` feature.
 
 ## Verification
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
-  mixer).
+  mixer, the music synthesiser: `just test-wood-synth`).
+- `just clippy-wood-synth` (the synthesiser for the target and its host tests, the
+  trimming tool) and `just synth-no-float` (no soft-float routine in the target build).
 - QEMU tests per stage as above (`just test-audio` for A1 and A3, `just test-dma` for
   A2);
   `just test-mailbox`, `just test-driver`, `just test-wood` for regressions in shared
