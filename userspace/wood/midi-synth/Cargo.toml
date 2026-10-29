@@ -29,6 +29,7 @@ wood-synth = { workspace = true }
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]
 libdevice-driver = { workspace = true }
+libheap = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
@@ -36,7 +37,6 @@ libprint = { workspace = true }
 libserial-trace = { workspace = true }
 libuser = { workspace = true }
 midi-synth-server = { workspace = true }
-rlsf = { workspace = true }
 
 [dev-dependencies]
 # Room's MUS to MIDI converter makes the test songs, as the game does.

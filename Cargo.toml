@@ -163,6 +163,7 @@ members = [
   "userspace/log-server",
   "userspace/log-server/client",
   "userspace/log-server/server",
+  "libs/heap",
   "libs/log-client",
 ]
 # Room is a workspace of its own (its host platform, tests and tools); Wood
@@ -286,6 +287,7 @@ midi-synth-server = { path = "userspace/wood/midi-synth/server" }
 log-server = { path = "userspace/log-server" }
 log-interface = { path = "userspace/log-server/server" }
 log-interface-client = { path = "userspace/log-server/client" }
+libheap = { path = "libs/heap", package = "vesper-heap" }
 liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }

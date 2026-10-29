@@ -1,0 +1,28 @@
+[package]
+name = "vesper-heap"
+
+description = "A program's heap: 2 MiB Frames carved from its RAM Untyped and mapped, and a TLSF global allocator over them."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[dependencies]
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+rlsf = { workspace = true }
+
+[lib]
+name = "libheap"
+test = false
+harness = false
+
+[lints]
+workspace = true

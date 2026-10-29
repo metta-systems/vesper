@@ -25,6 +25,7 @@ audio-pwm-bcm2835 = { workspace = true }
 compositor-client = { workspace = true }
 libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }
+libheap = { workspace = true }
 libio-channel = { workspace = true }
 # The engine's log, to the log server.
 liblog-client = { workspace = true }
@@ -37,7 +38,6 @@ midi-synth = { workspace = true }
 midi-synth-client = { workspace = true }
 libuser = { workspace = true }
 log = { workspace = true }
-rlsf = { workspace = true }
 room = { workspace = true }
 vesper-input-event = { workspace = true }
 

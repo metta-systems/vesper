@@ -37,6 +37,7 @@ audio-client = { workspace = true }
 audio-pwm-bcm2835 = { workspace = true }
 driver-protocol = { workspace = true }
 libdevice-driver = { workspace = true }
+libheap = { workspace = true }
 libio-channel = { workspace = true }
 # The program's log, to the log server.
 liblog-client = { workspace = true }
@@ -47,7 +48,6 @@ log = { workspace = true }
 # The ARM and core clocks, logged at start.
 mailbox-client = { workspace = true }
 midi-synth-client = { workspace = true }
-rlsf = { workspace = true }
 
 [dev-dependencies]
 # Room's MUS to MIDI converter makes the test song, as `just wood-midi` does.

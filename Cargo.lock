@@ -2486,9 +2486,9 @@ dependencies = [
  "metta-meddle-runtime",
  "midi-synth",
  "midi-synth-client",
- "rlsf",
  "room",
  "vesper-device-driver",
+ "vesper-heap",
  "vesper-io-channel",
  "vesper-log-client",
  "vesper-objects",
@@ -2502,9 +2502,9 @@ version = "0.0.1"
 dependencies = [
  "metta-meddle-runtime",
  "midi-synth-server",
- "rlsf",
  "room",
  "vesper-device-driver",
+ "vesper-heap",
  "vesper-io-channel",
  "vesper-objects",
  "vesper-print",
@@ -4893,6 +4893,15 @@ name = "vesper-graphics"
 version = "0.0.1"
 
 [[package]]
+name = "vesper-heap"
+version = "0.0.1"
+dependencies = [
+ "rlsf",
+ "vesper-device-driver",
+ "vesper-objects",
+]
+
+[[package]]
 name = "vesper-image"
 version = "0.0.1"
 
@@ -5902,9 +5911,9 @@ dependencies = [
  "metta-meddle-runtime",
  "midi-synth",
  "midi-synth-client",
- "rlsf",
  "room",
  "vesper-device-driver",
+ "vesper-heap",
  "vesper-input-event",
  "vesper-io-channel",
  "vesper-log-client",
