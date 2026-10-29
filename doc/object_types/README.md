@@ -45,6 +45,79 @@ Indices 12–126 are unassigned.
 
 Indices 7–127 are unassigned. Invoking a kind that is not implemented fails with `UnsupportedCoreType` or `UnsupportedArchType`.
 
+### Kinds by function
+
+The kinds grouped by what they are for. ⓐ marks an architecture kind; ● marks a kind that [`Untyped.Retype`](core/untyped.md#retype) creates. The others come from an operation on another kind (an Invocation from [`AddressSpace.CreateInvocation`](arch/address_space.md#createinvocation), an IRQHandler from [`IRQControl.Issue`](core/irq_control.md#issue)), are handed out at boot (the ASIDPool), or are not implemented. Dotted arrows are the operation that relates two kinds of a group.
+
+```mermaid
+flowchart TB
+    untyped["Untyped ●<br/>Retype creates the kinds marked ●"]
+
+    subgraph domain["Protection domain"]
+        address_space["AddressSpace ⓐ ●"]
+        page_table["PageTable ⓐ ●"]
+        frame["Frame ⓐ ●"]
+        key_table["KeyTable ●"]
+        asid_pool["ASIDPool ⓐ"]
+        asid_control["ASIDControl ⓐ"]
+        asid_pool -.->|Assign| address_space
+        address_space --- page_table
+        page_table --- frame
+        address_space --- key_table
+    end
+
+    subgraph execution["Execution"]
+        thread["Thread ●"]
+        invocation["Invocation<br/>call into another domain"]
+        thread -.->|Call| invocation
+    end
+
+    subgraph scheduling["Time and scheduling"]
+        scheduler["Scheduler ●"]
+        time["Time ●<br/>budget"]
+        scheduler -.->|ConfigureThread| time
+    end
+
+    subgraph events["Signalling and waiting"]
+        notification["Notification ●"]
+        event_count["EventCount ●"]
+        wait_set["WaitSet ●"]
+        wait_set -.->|waits on| notification
+        wait_set -.->|waits on| event_count
+    end
+
+    subgraph devices["Interrupts and devices"]
+        irq_control["IRQControl"]
+        irq_handler["IRQHandler"]
+        io_space["IOSpace ⓐ"]
+        io_port["IOPort ⓐ"]
+        irq_control -.->|Issue| irq_handler
+    end
+
+    subgraph other["Other"]
+        null["Null"]
+        debug_console["DebugConsole<br/>debug kernels"]
+    end
+
+    untyped --> domain
+    untyped --> execution
+    untyped --> scheduling
+    untyped --> events
+    domain ~~~ devices
+    events ~~~ other
+
+    classDef kind fill:#e3ecf7,stroke:#3b5f8f
+    classDef root fill:#fdf3dc,stroke:#a07a20
+    class untyped root
+    class address_space,page_table,frame,key_table,asid_pool,asid_control,thread,invocation,scheduler,time,notification,event_count,wait_set,irq_control,irq_handler,io_space,io_port,null,debug_console kind
+```
+
+- **Protection domain:** an AddressSpace binds a KeyTable (the keys a Thread in it resolves) and a PageTable tree that maps Frames; an ASID from an ASIDPool lets it be activated.
+- **Execution:** a Thread runs in one AddressSpace at a time; calling an Invocation runs it in the exporter's AddressSpace until it returns.
+- **Time and scheduling:** a Scheduler configures, starts and dispatches Threads, each charged to its Time budget.
+- **Signalling and waiting:** Notifications carry bits, EventCounts a monotonic count; a WaitSet waits on several of either at once.
+- **Interrupts and devices:** IRQControl issues an IRQHandler per interrupt line, which signals a Notification.
+
 ## Invocation model
 
 ### Registers
