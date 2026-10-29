@@ -59,6 +59,12 @@ const RATE_WINDOW: Duration = Duration::from_secs(1);
 /// than the initial one mean the target restarted and talks at the initial rate.
 const RESTART_GARBAGE: usize = 8;
 
+/// How long the line may stay silent at a rate other than the initial one
+/// before the host goes back to the initial rate: a restart whose output did
+/// not read as garbage, or a target reset before chainofcommand started
+/// listening, leaves chainboot beaconing at the initial rate unheard.
+const SILENCE_FALLBACK: Duration = Duration::from_secs(30);
+
 /// The target's answer: its first `length` characters.
 ///
 /// What comes after them in the same chunk is the target going on ("OK" is
@@ -578,6 +584,8 @@ where
     // The rate the line is at, and the watch for a restart while it is not the initial one.
     let mut line_rate = rates.initial;
     let mut restart_watch = RestartWatch::default();
+    // When the line last carried anything, for the silence fallback.
+    let mut last_heard = tokio::time::Instant::now();
 
     let mut event_reader = EventStream::new();
 
@@ -599,7 +607,22 @@ where
                 }
             }
 
+            // Silent too long at another rate: the target may be beaconing at the initial one.
+            () = tokio::time::sleep_until(last_heard + SILENCE_FALLBACK),
+                if line_rate != rates.initial && upload.is_none() => {
+                to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
+                execute!(w, style::Print(format!(
+                    "\r\n⏩ Nothing heard at {line_rate} baud for {} s, the target restarted? Back to {} baud\r\n",
+                    SILENCE_FALLBACK.as_secs(),
+                    rates.initial
+                )))?;
+                w.flush()?;
+                line_rate = rates.initial;
+                restart_watch = RestartWatch::default();
+            }
+
             Some(received) = from_serial.recv() => { // returns Vec<char>
+                last_heard = tokio::time::Instant::now();
                 if let Ok(received) = received {
                     // While an upload is in flight, hand bytes to the protocol task.
                     // If the task already finished (receiver dropped), fall through to
