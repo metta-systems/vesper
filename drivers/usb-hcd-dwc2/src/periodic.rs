@@ -219,7 +219,22 @@ impl Poller {
             .map(|entry| entry.due_ms.saturating_sub(now_ms))
             .min()
     }
+
+    /// Milliseconds the poller Thread sleeps after a pass at `now_ms`: until
+    /// the next pipe is due, and at least [`MIN_PARK_MS`] even when one is
+    /// due already, so a pass that ran late cannot keep the Thread from
+    /// blocking. `None` without any pipe (sleep until the schedule changes).
+    #[must_use]
+    pub fn park_ms(&self, now_ms: u64) -> Option<u64> {
+        self.wait_ms(now_ms).map(|wait| wait.max(MIN_PARK_MS))
+    }
 }
+
+/// Shortest sleep of the poller Thread between passes, in milliseconds: one
+/// full-speed frame (USB 2.0 §5.7.3: a full- or low-speed interrupt endpoint
+/// is polled at most once a frame), and the pipes' intervals are whole
+/// milliseconds.
+pub const MIN_PARK_MS: u64 = 1;
 
 impl Default for Poller {
     fn default() -> Self {

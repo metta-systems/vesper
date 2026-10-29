@@ -497,7 +497,9 @@ Done 2026-10-29, after the maintainer's answers (recorded with D8 in
   starvation guard for this round". The root dispatcher now runs the highest
   runnable priority level first and round-robins within a level; Wood's playback
   Thread is declared high (`driver_threads!(playback => Priority::HIGH)`). The
-  slice stays 10 ms. The rule is in the
+  slice stays 10 ms. The guard was added later the same day ("add starvation
+  guard too"): a raised Thread that runs a whole slice without blocking is
+  dispatched as a normal one until it blocks. The rule is in the
   [Time contract](capabilities-contract.md#time-and-userspace-scheduling).
 - **Proposal 2.** "yep": Wood queues its first buffers, with the music, before
   `open`, then answers the game Thread.

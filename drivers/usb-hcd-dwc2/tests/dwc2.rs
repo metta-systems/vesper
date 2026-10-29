@@ -398,8 +398,8 @@ mod tests {
     mod periodic {
         use {
             usb_hcd_dwc2::periodic::{
-                MAX_INTERVAL_MS, PERIODIC_BUDGET_US, Polled, Poller, ScheduleError, is_pollable,
-                transaction_us,
+                MAX_INTERVAL_MS, MIN_PARK_MS, PERIODIC_BUDGET_US, Polled, Poller, ScheduleError,
+                is_pollable, transaction_us,
             },
             vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed},
         };
@@ -450,6 +450,27 @@ mod tests {
             poller.polled(3, 1000, Polled::Nothing);
             assert_eq!(poller.due(1001), None);
             assert_eq!(poller.due(1002), Some((3, false)));
+        }
+
+        #[test]
+        fn the_poller_always_parks_after_a_pass() {
+            // A pass that ran so long every pipe is due again still ends in
+            // a sleep: the poller never loops back without blocking.
+            let mut poller = Poller::new();
+            assert_eq!(poller.park_ms(0), None, "no pipes: sleep until woken");
+            poller.schedule(1, 1, 14, 0).unwrap();
+            poller.schedule(2, 8, 14, 0).unwrap();
+            assert_eq!(poller.wait_ms(500), Some(0));
+            assert_eq!(poller.park_ms(500), Some(MIN_PARK_MS));
+            // One pass at 500: each due pipe at most once, polled late.
+            let mut passes = 0;
+            while let Some((handle, _)) = poller.due(500) {
+                poller.polled(handle, 520, Polled::Nothing);
+                passes += 1;
+            }
+            assert_eq!(passes, 2, "each pipe once per pass");
+            assert_eq!(poller.park_ms(520), Some(1));
+            assert_eq!(poller.park_ms(510), Some(11));
         }
 
         #[test]

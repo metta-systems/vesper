@@ -28,6 +28,19 @@ the serial trace; see [usb-completed.md](usb-completed.md).
   pipe. It needs the core's pipes shared with the exports' Threads, which today live on
   the enumeration Thread; a valid claim raises `not_permitted` until then.
 - [ ] Teardown of in-flight transfers when a device is unplugged.
+- [ ] The LAN9514's Ethernet function (hub port 1, address 2, high speed, no split)
+  failed `SET_CONFIGURATION` on the board in `boot-wood-test`: the status stage (a
+  zero-length IN) was retried for the whole 1 s budget and ended `halted xacterr`
+  (`usb-hcd-dwc2: control to device 2 held the channel 1000 ms`), although it
+  configured in earlier `boot-usb-core-test` runs. Not reproduced. `channel_outcome`
+  retries a NAK and a transaction error alike, so the trace does not say which the
+  earlier attempts met; a device must finish a no-data request's status stage within
+  50 ms (USB 2.0 §9.2.6.4), so 1 s of NAKs is a device fault, and 1 s of transaction
+  errors (no valid handshake) means the device stopped answering. To check on the
+  board: whether the earlier attempts NAKed or met transaction errors (count each in
+  the trace), and whether it recurs now that the controller's pauses park instead of
+  spinning. Not chosen yet: cutting the status stage's retry budget to the spec's
+  50 ms.
 - [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
   (`kernel/kickstart/image.toml`) with the shell, which holds the serial channel the
   trace uses; only one program gets a serial channel today.

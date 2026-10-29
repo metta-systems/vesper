@@ -61,6 +61,13 @@ options that were weighed are summarised after each answer.
       the main app and the audio?". The input path's Threads (the DWC2 component's,
       `usb-hid`'s, the compositor's input Thread) run at `Priority::INPUT`, below
       the playback Thread's `Priority::HIGH`, which stays the highest.
+    - *Starvation guard* (same day, after `boot-wood-test` froze the board: a
+      spinning input Thread starved the audio driver, and the DMA ring replayed
+      its last buffers): "delay_ms(1) should just park the thread until 1ms
+      passes, not busy wait / add starvation guard too". This reverses "no
+      starvation guard for this round": a raised Thread that runs a whole slice
+      without blocking is dispatched as a normal one until it blocks, so the
+      playback Thread keeps its precedence only while it blocks every period.
     - *Wood queues its first buffers before it opens the output*: "yep".
     - *Queue depth*: "8 buffers might be good". Wood and midi-test's player keep 8
       buffers (93 ms) queued, the four data pages of `audio_v1`'s channel; effects

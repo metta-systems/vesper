@@ -40,7 +40,11 @@
 //! pipe is due again an interval later. Each interrupt transaction is placed in
 //! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`). Both Threads run at
 //! input priority (`libdevice_driver::Priority::INPUT`), ahead of the CPU-bound
-//! programs; they block between interrupts and polls.
+//! programs; they block between interrupts and polls. Nothing here waits
+//! milliseconds by spinning: a pause parks the Thread on a timed wait
+//! (`delay_ms`), and a register wait spins for at most 250 µs before it
+//! parks between checks (`wait_until`). The poller makes one pass over the
+//! due pipes per wake and then sleeps at least a millisecond.
 //!
 //! A pipe is the set of `pipe_v1` Invocation keys `open_pipe` installs in the
 //! table the caller lends, badged with the pipe's handle: holding a key is the
@@ -92,7 +96,7 @@ mod component {
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
-            periodic::{Polled, Poller, ScheduleError, is_pollable, transaction_us},
+            periodic::{MAX_POLLED, Polled, Poller, ScheduleError, is_pollable, transaction_us},
             pipes::{Config, Pipe, PipeError, PipeTable, Route},
             regs::{
                 Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
@@ -122,7 +126,9 @@ mod component {
     // and run ahead of the normal Threads: a split poll's complete split must
     // follow its start split within a few microframes (USB 2.0 §11.18.4), and
     // each phase wakes the interrupt Thread, then the poller. Both block
-    // between interrupts and polls and do little work each time.
+    // between interrupts and polls and do little work each time; the root
+    // dispatcher's starvation guard runs either as a normal Thread if it ever
+    // uses a whole slice without blocking.
     entry_priority!(Priority::INPUT);
     driver_threads!(poller_main => Priority::INPUT);
 
@@ -184,24 +190,52 @@ mod component {
         ticks.saturating_mul(1_000_000_000) / counter_frequency()
     }
 
-    /// Spin for `milliseconds`.
+    /// Park the calling Thread for `milliseconds`: a timed wait on the
+    /// component's own `EventCount` (`DriverInit::event_count`) for a count it
+    /// never reaches; the component advances it once, to say it is ready. Any
+    /// Thread that reaches this can sleep on it: the interrupt Thread, the
+    /// poller, and a client's Thread inside an exported call, which runs in
+    /// this component's `AddressSpace` and table. The nucleus arms its one-shot
+    /// timer for the wait's deadline, so a 1 ms sleep ends on time.
     fn delay_ms(milliseconds: u32) {
-        let end = ticks() + ticks_per_ms() * u64::from(milliseconds);
-        while ticks() < end {
-            core::hint::spin_loop();
-        }
+        EventCountKey::from_key(RawKey::from_wire(init().event_count))
+            .sleep(u64::from(milliseconds.max(1)) * 1_000_000)
+            .unwrap_or_else(|error| panic!("usb-hcd-dwc2: sleep failed: {:?}", error.code()));
     }
 
-    /// Whether `done` held within `milliseconds`.
+    /// How long [`wait_until`] spins before it parks: two high-speed
+    /// microframes of 125 µs (USB 2.0 §8.4.3.1). The controller settles a
+    /// register bit in that time when nothing is wrong: a channel disabled
+    /// with `HCCHARn.ChDis` and `ChEna` raises `HCINTn.ChHltd` once its
+    /// current transaction ends (the `DWC_otg` `HCCHARn` and `HCINTn` register
+    /// descriptions), and the root port's bus is high speed, where a
+    /// transaction fits in a microframe. The bound is our own choice: a wait
+    /// still not done after it parks instead of spinning on.
+    const SPIN_US: u64 = 250;
+
+    /// Whether `done` held within `milliseconds`: checked in a tight spin for
+    /// [`SPIN_US`], then once a millisecond with the Thread parked in between,
+    /// so a wait that takes milliseconds (a device connecting, a port enabling
+    /// after reset, a channel that does not halt) leaves the CPU to other
+    /// Threads.
     fn wait_until(milliseconds: u64, mut done: impl FnMut() -> bool) -> bool {
-        let end = ticks() + ticks_per_ms() * milliseconds;
-        while !done() {
-            if ticks() >= end {
+        let start = ticks();
+        let end = start + ticks_per_ms() * milliseconds;
+        let spin_end = start + (counter_frequency() * SPIN_US).div_ceil(1_000_000);
+        loop {
+            if done() {
+                return true;
+            }
+            let now = ticks();
+            if now >= end {
                 return false;
             }
-            core::hint::spin_loop();
+            if now < spin_end {
+                core::hint::spin_loop();
+            } else {
+                delay_ms(1);
+            }
         }
-        true
     }
 
     /// Count one more event on `counter`; returns the count and whether this
@@ -702,6 +736,8 @@ mod component {
                         if now_ms() >= deadline {
                             return Err(PipeException::TransferFailed { status });
                         }
+                        // Parked, so a device that NAKs for the whole retry
+                        // budget does not keep the CPU from other Threads.
                         delay_ms(1);
                     }
                 }
@@ -813,6 +849,13 @@ mod component {
                             self.halt(index, target);
                         }
                         // NAKs do not count against the restarts, so time bounds them.
+                        // The pause parks the Thread: it lies between a finished
+                        // transaction and the next start split, which nothing times.
+                        // The window that is timed, from a start split to its
+                        // complete splits (USB 2.0 §11.18.4), has no pause: a
+                        // complete split (and one repeated after NYET) is issued
+                        // as soon as the interrupt Thread reports the previous
+                        // phase.
                         if event == Event::Nak {
                             if now_ms() >= deadline {
                                 return Err(PipeException::TransferFailed {
@@ -1563,10 +1606,17 @@ mod component {
     /// have sent and the hub dropped, for the trace's back-off.
     static LOST_SPLITS: AtomicU32 = AtomicU32::new(0);
 
-    /// Poll the first pipe that is due and has a buffer to fill, if any; the
-    /// milliseconds until the next pipe is due, if any pipe is polled.
+    /// One pass over the pipes due at `now`: each is polled at most once (a
+    /// polled or skipped pipe is next due after `now`), and a pipe without a
+    /// buffer to fill is skipped. Returns how long the poller sleeps after
+    /// the pass ([`Poller::park_ms`]): at least a millisecond, so a pass
+    /// that ran late never loops straight into the next.
     fn poll_due(hcd: &mut Hcd, now: u64) -> Option<u64> {
-        while let Some((handle, data1)) = hcd.poller.due(now) {
+        let mut passes = 0;
+        while passes < MAX_POLLED
+            && let Some((handle, data1)) = hcd.poller.due(now)
+        {
+            passes += 1;
             let Ok(&pipe) = hcd.pipes.get(handle) else {
                 hcd.poller.remove(handle);
                 continue;
@@ -1594,14 +1644,14 @@ mod component {
             match polled {
                 Ok(Some(bytes)) => {
                     deliver(pipe.owner, handle, bytes);
-                    hcd.poller.polled(handle, now, Polled::Data);
+                    hcd.poller.polled(handle, now_ms(), Polled::Data);
                 }
                 // A stall stops the polls until `clear_halt`.
                 Err(PipeException::Stalled) => {
                     note!("usb-hcd-dwc2: pipe {handle} stalled, polls stop");
                     hcd.poller.remove(handle);
                 }
-                Ok(None) => hcd.poller.polled(handle, now, Polled::Nothing),
+                Ok(None) => hcd.poller.polled(handle, now_ms(), Polled::Nothing),
                 Err(error) => {
                     // The 1st, 2nd, 4th, 8th... failure, so a dead endpoint cannot
                     // flood the trace.
@@ -1615,16 +1665,16 @@ mod component {
                             "usb-hcd-dwc2: poll of pipe {handle} failed ({failures} so far): {error:?} status {status:#010x}"
                         );
                     }
-                    hcd.poller.polled(handle, now, Polled::Nothing);
+                    hcd.poller.polled(handle, now_ms(), Polled::Nothing);
                 }
             }
-            break;
         }
-        hcd.poller.wait_ms(now_ms())
+        hcd.poller.park_ms(now_ms())
     }
 
-    /// The poller Thread: poll the interrupt pipes when they are due, and
-    /// sleep until the next is due or the schedule changes.
+    /// The poller Thread: one pass over the interrupt pipes that are due,
+    /// then sleep until the next is due (at least a millisecond) or the
+    /// schedule changes.
     fn poller_main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
         let init = unsafe { driver_init(init_va) };
@@ -1637,8 +1687,9 @@ mod component {
                 let mut turn = TURNSTILE.enter(init);
                 poll_due(hcd(&mut turn), now_ms())
             };
+            // Never zero: `park_ms` is at least a millisecond.
             let timeout = wait.map_or(EventCountKey::WAIT_INFINITE, |milliseconds| {
-                milliseconds.saturating_mul(1_000_000).max(1)
+                milliseconds.saturating_mul(1_000_000)
             });
             match wake.await_ge(seen + 1, timeout) {
                 Ok(count) => seen = count,

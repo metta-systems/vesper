@@ -23,7 +23,7 @@ Finished: see [`scheduling-completed.md`](scheduling-completed.md#phase-10--reti
 
 ## Root dispatcher priorities (done)
 
-Thread priority in the root dispatcher, and the input level between normal and high (maintainer decisions, 2026-10-29; the rule is in the [contract](capabilities-contract.md#time-and-userspace-scheduling)). Finished: see [`scheduling-completed.md`](scheduling-completed.md#root-dispatcher-priorities).
+Thread priority in the root dispatcher, the input level between normal and high, and the starvation guard (maintainer decisions, 2026-10-29; the rule is in the [contract](capabilities-contract.md#time-and-userspace-scheduling)). Finished: see [`scheduling-completed.md`](scheduling-completed.md#root-dispatcher-priorities).
 
 ## Phase 11 — Multicore
 

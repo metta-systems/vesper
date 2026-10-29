@@ -15,7 +15,11 @@
 //! further Threads (`driver_threads!`): two normal Threads spin, and a
 //! high-priority Thread sleeps briefly again and again; each time it wakes the
 //! dispatcher must run it at once, ahead of the spinners, rather than after a
-//! spinner's 10 ms slice. Its first Thread reports only once that passed.
+//! spinner's 10 ms slice. An input-priority Thread then spins too, and must
+//! not keep the normal spinners off the CPU: the root dispatcher's starvation
+//! guard runs it as a normal Thread once it used a slice without blocking,
+//! while the high Thread keeps waking on time. Its first Thread reports only
+//! once both checks passed.
 
 use {
     core::{
@@ -80,15 +84,25 @@ impl EchoV1 for Echo {
 
 driver_echo::echo_v1_export!(Echo);
 
-driver_threads!(urgent => Priority::HIGH, spinner, spinner);
+driver_threads!(urgent => Priority::HIGH, spinner, spinner, hog => Priority::INPUT);
 
-/// The count of the probe's `EventCount` the urgent Thread advances it to
-/// once the priority check passed.
-const PRIORITY_CHECKED: u64 = 1;
+/// The count of the probe's `EventCount` once the priority check and the
+/// starvation check passed: each advances it by one.
+const PRIORITY_CHECKED: u64 = 2;
 
-/// Spinners spinning, and whether the check is over.
+/// Spinners spinning, and whether the priority check is over.
 static SPINNING: AtomicU32 = AtomicU32::new(0);
 static CHECKED: AtomicBool = AtomicBool::new(false);
+/// Whether the input Thread spins, whether a normal spinner ran while it
+/// did, and whether the starvation check is over.
+static HOGGING: AtomicBool = AtomicBool::new(false);
+static NORMAL_RAN: AtomicBool = AtomicBool::new(false);
+static HOG_CHECKED: AtomicBool = AtomicBool::new(false);
+
+/// How long the spinning input Thread may keep the normal spinners waiting:
+/// it is demoted after one 10 ms slice, then takes turns with them. Without
+/// the guard they never run again.
+const MAX_HOG_NS: u64 = 100_000_000;
 
 /// Sleeps of the urgent Thread, and how long each is.
 const SLEEPS: u32 = 30;
@@ -107,17 +121,57 @@ fn park(init: &DriverInit) -> ! {
     }
 }
 
-/// A normal Thread of the PL011 instance that is always runnable until the
-/// priority check is over.
+/// A normal Thread of the PL011 instance that is always runnable until both
+/// checks are over, and notes when it runs while the input Thread spins.
 fn spinner(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
     let init = unsafe { driver_init(init_va) };
     if init.compatible_index == PL011 {
         SPINNING.fetch_add(1, Ordering::AcqRel);
-        while !CHECKED.load(Ordering::Acquire) {
+        while !(CHECKED.load(Ordering::Acquire) && HOG_CHECKED.load(Ordering::Acquire)) {
+            if HOGGING.load(Ordering::Acquire) {
+                NORMAL_RAN.store(true, Ordering::Release);
+            }
             core::hint::spin_loop();
         }
     }
+    park(init)
+}
+
+/// The input-priority Thread of the PL011 instance: once both spinners spin,
+/// spin without blocking until a normal spinner has run, and check that took
+/// at most [`MAX_HOG_NS`].
+fn hog(init_va: u64) -> ! {
+    // SAFETY: Kickstart passes the init page's address in x0.
+    let init = unsafe { driver_init(init_va) };
+    if init.compatible_index != PL011 {
+        park(init);
+    }
+    let timer = EventCountKey::from_key(RawKey::from_wire(init.event_count));
+    while SPINNING.load(Ordering::Acquire) < 2 {
+        timer
+            .sleep(1_000_000)
+            .unwrap_or_else(|error| panic!("hog: sleep failed: {:?}", error.code()));
+    }
+    let started = libuser::clock::now_ns();
+    HOGGING.store(true, Ordering::Release);
+    while !NORMAL_RAN.load(Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
+    let waited_ns = libuser::clock::now_ns().saturating_sub(started);
+    HOGGING.store(false, Ordering::Release);
+    semi::println!(
+        "driver-probe: a normal Thread ran {} us after an input Thread started spinning",
+        waited_ns / 1000
+    );
+    assert!(
+        waited_ns <= MAX_HOG_NS,
+        "the normal Threads waited {waited_ns} ns behind a spinning input Thread"
+    );
+    HOG_CHECKED.store(true, Ordering::Release);
+    timer
+        .advance(1)
+        .unwrap_or_else(|error| panic!("hog: report failed: {:?}", error.code()));
     park(init)
 }
 
@@ -155,7 +209,7 @@ fn urgent(init_va: u64) -> ! {
         "the high-priority Thread woke {latest_ns} ns late: the spinners ran first"
     );
     timer
-        .advance(PRIORITY_CHECKED)
+        .advance(1)
         .unwrap_or_else(|error| panic!("urgent: report failed: {:?}", error.code()));
     park(init)
 }

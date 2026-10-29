@@ -875,7 +875,7 @@ test-dispatch: (_run-test-kernel 'dispatch-test' 'build-dispatch-test')
 [group("test")]
 test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' 'build-dispatch-test rpi4' 'rpi4')
 
-# Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time; the PL011 probe's high-priority Thread must wake on time beside two spinning normal Threads (the root dispatcher's priorities)
+# Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time; the PL011 probe's high-priority Thread must wake on time beside two spinning normal Threads (the root dispatcher's priorities), and a spinning input Thread must not keep them off the CPU (the starvation guard)
 [group("test")]
 test-driver: (_run-test-kernel 'driver-test' 'build-driver-test')
 
@@ -1100,7 +1100,7 @@ clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') (_ho
 [group("test")]
 test-log-host: (_host-test 'log-server' 'protocol')
 
-# Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, no starvation guard
+# Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
 [group("test")]
 test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
 
