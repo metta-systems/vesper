@@ -1,113 +1,207 @@
 # The wood-test hardware image
 
-What `just build-wood-test-hw` bundles (`kernel/tests/wood-test/image.toml`) and
-how the parts are wired. An arrow goes from the importer to the exporter and is
-labelled with the interface (`imports.if`). An interface marked *channel* also
-carries an io-channel: Kickstart gives the importer a control page, data pages and
-an EventCount. Kickstart loads everything and makes the connections at boot. The
-root dispatcher then runs every program's Threads.
+What `just build-wood-test-hw` bundles (`kernel/tests/wood-test/image.toml`) and how
+the parts are wired, in three diagrams sized for one slide each: the display and
+input path, the sound and log path, and the interfaces between all components.
+Arrows go from the importer to the exporter and are labelled with the interface
+(`imports.if`):
 
-The hardware image is built without `qemu`, so:
+- thick arrows (and ⇄ on slide 3): an interface with an io-channel (Kickstart gives
+  the importer a control page, data pages and an EventCount);
+- thin arrows: calls only;
+- dotted lines: a log line channel (`log_v1`) or a bundled resource.
 
-- the audio driver streams through a circular DMA ring;
-- Wood's log is dropped;
-- the compositor traces routed input on the UART.
+Kickstart loads everything and makes the connections at boot; the root dispatcher
+then runs every program's Threads, high-priority ones first (only Wood's playback
+Thread is high).
 
-The audio driver loads only when `config.txt` has
-`dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4`. Without it Wood runs silent.
+## Slide 1: display and input
 
 ```mermaid
 flowchart LR
-    subgraph hardware["BCM2837 (Raspberry Pi 3 B)"]
-        hw_usb["DWC2 USB OTG"]
-        hw_mbox["VideoCore mailbox"]
-        hw_fb["framebuffer"]
-        hw_uart["PL011 UART"]
-        hw_gpio["GPIO 40/41"]
-        hw_cprman["CPRMAN (PWM clock)"]
-        hw_dma["DMA controller"]
-        hw_pwm["PWM → headphone jack"]
-    end
-
-    subgraph drivers["Drivers (bound to device-tree nodes)"]
-        usb["usb<br/>usb-hcd-dwc2"]
-        mailbox["mailbox"]
-        fb["fb"]
-        uart["uart<br/>uart-pl011"]
-        gpio["gpio<br/>gpio-bcm2835"]
-        cprman["cprman<br/>cprman-bcm2835"]
-        dma["dma<br/>dma-bcm2835"]
-        audio["audio<br/>audio-pwm-bcm2835"]
-    end
-
-    subgraph programs["Components"]
-        usb_core["usb_core<br/>usb-core"]
-        usb_hid["usb_hid<br/>usb-hid"]
-        compositor["compositor"]
-        draw_demo["draw_demo<br/>(lava lamp window)"]
+    subgraph programs["Programs"]
+        direction TB
         wood["wood<br/>Room Doom engine"]
-        midi_synth["midi_synth<br/>midi-synth"]
-        dispatcher["dispatcher<br/>root-dispatcher"]
+        lamp["draw_demo<br/>lava lamp"]
     end
 
-    subgraph resources["Resources"]
-        font[("font<br/>font8x8.bin")]
-        wad[("doom1_wad<br/>doom1.wad")]
-        soundfont[("soundfont<br/>sc55-doom1.sf2")]
+    compositor["compositor"]
+
+    subgraph input["USB input"]
+        direction TB
+        usb_hid["usb_hid"]
+        usb_core["usb_core"]
     end
 
-    %% Input: keyboard and mouse over USB
-    usb_core -->|"usb_hcd_v1 (channel)"| usb
-    usb_hid -->|"usb_v1"| usb_core
-    usb_hid -->|"usb_hcd_v1 (channel)"| usb
-    usb -->|"mailbox_v1: set_power_state"| mailbox
+    subgraph drivers["Drivers"]
+        direction TB
+        usb["usb<br/>DWC2 host"]
+        fb["fb"]
+        mailbox["mailbox"]
+    end
 
-    %% Display
-    compositor -->|"input_v1 (channel)"| usb_hid
-    compositor -->|"fb_v1"| fb
-    compositor -->|"serial channel"| uart
-    fb -->|"mailbox_v1: property"| mailbox
-    draw_demo -->|"compositor_v1"| compositor
-    wood -->|"compositor_v1 (channel: window events)"| compositor
+    subgraph hardware["BCM2837"]
+        direction TB
+        hw_usb["USB port<br/>keyboard, mouse"]
+        hw_videocore["VideoCore<br/>firmware, HDMI"]
+    end
 
-    %% Sound
-    wood -->|"midi_synth_v1 (channel: MIDI in, frames out)"| midi_synth
-    wood -->|"audio_v1 (channel: s16 stereo)"| audio
-    audio -->|"clock_v1"| cprman
-    audio -->|"gpio_v1: set_function"| gpio
-    audio -->|"dma_v1 (channel: ring)"| dma
-
-    %% Bundled data
-    draw_demo -.-> font
-    wood -.-> wad
-    midi_synth -.-> soundfont
-
-    %% Devices each driver owns
+    wood ==>|compositor_v1| compositor
+    lamp ==>|compositor_v1| compositor
+    compositor ==>|input_v1| usb_hid
+    compositor -->|fb_v1| fb
+    usb_hid -->|usb_v1| usb_core
+    usb_hid ==>|usb_hcd_v1| usb
+    usb_core ==>|usb_hcd_v1| usb
+    usb -->|mailbox_v1| mailbox
+    fb -->|mailbox_v1| mailbox
     usb --- hw_usb
-    mailbox --- hw_mbox
-    fb --- hw_fb
-    uart --- hw_uart
-    gpio --- hw_gpio
-    cprman --- hw_cprman
-    dma --- hw_dma
-    audio --- hw_pwm
+    mailbox --- hw_videocore
+
+    classDef program fill:#e3f1e3,stroke:#3b7d3b
+    classDef driver fill:#e3ecf7,stroke:#3b5f8f
+    classDef device fill:#eeeeee,stroke:#777777
+    class wood,lamp,compositor,usb_hid,usb_core program
+    class usb,fb,mailbox driver
+    class hw_usb,hw_videocore device
 ```
 
-## Notes
+- Wood and the lamp each own a window: frames go into the window's surface, and
+  `commit` tells the compositor what changed. The compositor composes on its own
+  33 ms timer into the framebuffer `fb` set up through the firmware.
+- `usb_hid` turns keyboard and mouse reports into input events. The compositor
+  routes them to the focused window and sends focus changes on the window's
+  event channel. Wood's window takes the focus when it opens; the lamp stops
+  animating while unfocused.
 
-- **Wood's threads.** The engine Thread draws frames and reads keys from the
-  compositor. Its `music_*` and `sound_*` methods only queue work. Each period,
-  Wood's playback Thread:
-  1. sends the queued MIDI commands to `midi_synth`;
-  2. pulls one rendered period, which `midi_synth` renders inside the `service`
-     call;
-  3. mixes the sound effects on top;
-  4. queues the result on `audio_v1`.
-- **The audio path.**
-  - The audio driver converts the s16 frames to PWM words in its DMA ring.
-  - `dma` alone holds the DMA controller's page.
-  - `cprman` sets PWM clock 30 to 100 MHz (PLLD/5).
-- **Input.** `usb_hid` reads reports over interrupt pipes. The compositor
-  routes them to the focused window, Wood's or the lava lamp's.
-- **The dispatcher** is bound last. It schedules the Threads of every component
-  above.
+## Slide 2: sound, music and logs
+
+```mermaid
+flowchart LR
+    wad[("doom1.wad")]
+    wood["wood<br/>engine + playback ★"]
+    soundfont[("sc55-doom1.sf2")]
+    midi_synth["midi_synth"]
+    audio["audio<br/>PWM audio"]
+    dma["dma"]
+    cprman["cprman"]
+    gpio["gpio"]
+    jack["PWM → headphone jack"]
+    mailbox["mailbox"]
+
+    clients(["compositor, wood, midi_synth,<br/>audio, usb, usb_core, usb_hid"])
+    log_server["log_server"]
+    uart["uart<br/>PL011"]
+    serial["serial port"]
+
+    wad -.- wood
+    wood ==>|midi_synth_v1| midi_synth
+    midi_synth -.- soundfont
+    wood ==>|audio_v1| audio
+    wood -->|mailbox_v1 clock| mailbox
+    audio ==>|dma_v1| dma
+    audio -->|clock_v1| cprman
+    audio -->|gpio_v1| gpio
+    audio --- jack
+
+    clients -.->|log_v1| log_server
+    log_server ==>|serial| uart
+    uart --- serial
+
+    classDef program fill:#e3f1e3,stroke:#3b7d3b
+    classDef driver fill:#e3ecf7,stroke:#3b5f8f
+    classDef device fill:#eeeeee,stroke:#777777
+    classDef data fill:#fdf3dc,stroke:#a07a20
+    class wood,midi_synth,log_server,clients program
+    class audio,dma,cprman,gpio,mailbox,uart driver
+    class jack,serial device
+    class wad,soundfont data
+```
+
+- ★ Wood's playback Thread runs at high priority. Each 11.6 ms period it sends the
+  queued MIDI commands to `midi_synth`, pulls one rendered period (the synthesiser
+  renders inside the `service` call), mixes the sound effects on top and queues
+  the result on `audio_v1`, keeping 8 buffers (93 ms) ahead of the driver.
+- The audio driver converts the frames to PWM words in a 4-period DMA ring; `dma`
+  alone holds the DMA controller, `cprman` sets the PWM clock to 100 MHz and
+  `gpio` routes pins 40 and 41 to the jack. It loads only when `config.txt` has
+  `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4`; without it Wood runs silent.
+- `log_server` is the only holder of the serial port. Its clients never wait: a
+  line that finds no free buffer is dropped and counted, and the next line shows
+  `(N dropped)`.
+
+## Slide 3: interfaces
+
+Which component depends on which, through which Meddle interface (`.if`): each arrow
+goes from the importer to the exporter. ⇄ marks an interface with an io-channel, ●
+a `log_v1` client of `log_server` (drawn once, so the log edges do not cross the
+rest). Applications are green, services amber, drivers blue.
+
+```mermaid
+flowchart TB
+    wood["wood ●"]
+    lamp["draw_demo"]
+    compositor["compositor ●"]
+    midi_synth["midi_synth ●"]
+    usb_hid["usb_hid ●"]
+    usb_core["usb_core ●"]
+    usb["usb ●"]
+    fb["fb"]
+    audio["audio ●"]
+    dma["dma"]
+    cprman["cprman"]
+    gpio["gpio"]
+    mailbox["mailbox"]
+    log_server["log_server"]
+    clients(["● log clients"])
+
+    wood -->|compositor_v1 ⇄| compositor
+    lamp -->|compositor_v1 ⇄| compositor
+    wood -->|midi_synth_v1 ⇄| midi_synth
+    wood -->|audio_v1 ⇄| audio
+    wood -->|mailbox_v1| mailbox
+    compositor -->|input_v1 ⇄| usb_hid
+    compositor -->|fb_v1| fb
+    usb_hid -->|usb_v1| usb_core
+    usb_hid -->|usb_hcd_v1 ⇄| usb
+    usb_core -->|usb_hcd_v1 ⇄| usb
+    usb -->|mailbox_v1| mailbox
+    fb -->|mailbox_v1| mailbox
+    audio -->|dma_v1 ⇄| dma
+    audio -->|clock_v1| cprman
+    audio -->|gpio_v1| gpio
+    clients -.->|log_v1 ⇄| log_server
+
+    classDef app fill:#e3f1e3,stroke:#3b7d3b
+    classDef service fill:#fdf3dc,stroke:#a07a20
+    classDef driver fill:#e3ecf7,stroke:#3b5f8f
+    classDef note fill:#ffffff,stroke:#999999,stroke-dasharray: 3 3
+    class wood,lamp app
+    class compositor,midi_synth,usb_hid,usb_core,log_server service
+    class usb,fb,audio,dma,cprman,gpio,mailbox driver
+    class clients note
+```
+
+`pipe_v1` is not drawn: nobody imports it. `usb_hcd_v1.open_pipe` installs its keys
+in the caller's table. `usb_core` opens pipes for enumeration; `usb_hid` gets its
+interrupt pipe's parameters from `usb_v1.interrupt_pipe` and opens the pipe itself,
+so the reports travel on its own channel.
+
+| Interface | File | Exporter | Importers in wood-test |
+|---|---|---|---|
+| `compositor_v1` ⇄ | `userspace/gui/compositor/interfaces/` | compositor | wood, draw_demo |
+| `midi_synth_v1` ⇄ | `userspace/wood/midi-synth/interfaces/` | midi_synth | wood |
+| `audio_v1` ⇄ | `drivers/audio-pwm-bcm2835/interfaces/` | audio | wood |
+| `log_v1` ⇄ | `userspace/log-server/interfaces/` | log_server | wood, compositor, midi_synth, audio, usb, usb_core, usb_hid |
+| `input_v1` ⇄ | `drivers/usb-hid/interfaces/` | usb_hid | compositor |
+| `usb_v1` | `drivers/usb/interfaces/` | usb_core | usb_hid |
+| `usb_hcd_v1` ⇄ | `drivers/usb-hcd-dwc2/interfaces/` | usb | usb_core, usb_hid |
+| `pipe_v1` | `drivers/usb-hcd-dwc2/interfaces/` | usb | keys from `open_pipe` |
+| `fb_v1` | `drivers/fb/interfaces/` | fb | compositor |
+| `dma_v1` ⇄ | `drivers/dma-bcm2835/interfaces/` | dma | audio |
+| `clock_v1` | `drivers/cprman-bcm2835/interfaces/` | cprman | audio |
+| `gpio_v1` | `drivers/gpio-bcm2835/interfaces/` | gpio | audio |
+| `mailbox_v1` | `drivers/mailbox/interfaces/` | mailbox | wood, fb, usb |
+
+The serial port is not an interface: Kickstart attaches `log_server` (`serial = true`)
+to the PL011 driver's serial channel directly.
