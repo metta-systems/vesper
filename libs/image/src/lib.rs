@@ -231,6 +231,9 @@ pub struct DriverImage {
     /// Whether the program is the root dispatcher (`dispatcher = true`): the
     /// Scheduler binds its Thread rather than the loader starting it
     pub dispatcher: bool,
+    /// The priority level the root dispatcher gives the Thread at the
+    /// component's entry (`libdevice_driver::Priority`)
+    pub priority: u8,
     /// The further Threads each instance runs besides the one at the
     /// component's entry
     pub threads: &'static [ThreadImage],

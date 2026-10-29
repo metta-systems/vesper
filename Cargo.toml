@@ -74,6 +74,7 @@ members = [
   "kernel/tests/compositor-test",
   "kernel/tests/wood-test",
   "kernel/tests/midi-test",
+  "kernel/tests/log-test",
   "kernel/tests/window-events-test",
   # Libraries
   "libs/address",
@@ -138,6 +139,7 @@ members = [
   "userspace/tests/sd/client",
   "userspace/tests/audio/tone",
   "userspace/tests/audio/midi-player",
+  "userspace/tests/log/probe",
   "userspace/tests/input/trace",
   "userspace/tests/compositor/events",
   "userspace/gui/compositor",

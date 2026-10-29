@@ -2245,6 +2245,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "log-probe"
+version = "0.0.1"
+dependencies = [
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "log-server"
 version = "0.0.1"
 dependencies = [
@@ -2255,6 +2266,28 @@ dependencies = [
  "vesper-print",
  "vesper-serial-channel",
  "vesper-user-runtime",
+]
+
+[[package]]
+name = "log-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]
@@ -4988,6 +5021,7 @@ dependencies = [
  "log-server",
  "vesper-device-driver",
  "vesper-io-channel",
+ "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
 ]

@@ -5,7 +5,10 @@ Decisions). Stage L-A (the
 log server in wood-test with the compositor, Wood, the MIDI synthesiser and the audio
 driver as clients, and Wood's music summary) is built and checked in QEMU; the board
 check is pending. In L-B the three USB components became clients too (section USB log
-volume). No logging question is open
+volume). Stage L-D, panic and fault reports, was taken up on 2026-10-29 ("keep 32k
+stacks, add panic reporting through the serial console too"); the `PANICKED:` and
+`FAULT:` lines are built and checked in QEMU (section Panics and faults). No logging
+question is open
 ([logging-decisions.md](logging-decisions.md)); stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
 `log_v1` is a prototype interface and is edited in place.
 
@@ -87,11 +90,12 @@ question to the maintainer.
   unprefixed passthrough client.
 - **L8. Early output and panics:** Kickstart wires every channel before any Thread
   starts, so a client's first lines wait in its channel until the server runs (up to
-  32 lines). Panics stay on the semihosting console (`userspace/runtime`) for now; a
-  best-effort panic line through the log channel is a later stage (L-D). The nucleus
-  and Kickstart stay semihosting-only. Not chosen: a polled direct-UART fallback in
-  components (breaks the one-owner rule); a kernel log object such as Fuchsia's
-  debuglog (minimal kernel API).
+  32 lines). A component's panic and its Threads' faults go through its own log channel,
+  best effort, besides the semihosting console: stage L-D, in scope since the
+  maintainer's 2026-10-29 request ("add panic reporting through the serial console
+  too"; section Panics and faults). The nucleus and Kickstart stay semihosting-only.
+  Not chosen: a polled direct-UART fallback in components (breaks the one-owner rule);
+  a kernel log object such as Fuchsia's debuglog (minimal kernel API).
 - **L9. QEMU: both semihosting and serial.** `liblog-client`'s `Logger` and
   `libserial-trace` keep printing on the semihosting console under `qemu`, so every
   recipe's checks hold; `just test-wood` sends the UART to its own file
@@ -113,8 +117,7 @@ question to the maintainer.
   (answered 2026-10-29: the console adapter presenting a serial-compatible byte
   channel, [input-design.md](input-design.md)) turns the events back into the shell's
   bytes. Not chosen: two UARTs
-  (b); an output-only serial port (c). Panic output (L-D) is set aside for now by the
-  maintainer ("ignore panic for now").
+  (b); an output-only serial port (c).
 
 ## Current state before the log server
 
@@ -181,7 +184,7 @@ No new kernel kind or operation is needed for any option here.
    1.5 Mbaud is 150 000 bytes/s. Periodic diagnostics must be summaries, not a line
    per 11.6 ms period.
 7. Early lines are kept until the server runs.
-8. Panics reach the UART when the log path works (later stage).
+8. Panics and faults reach the UART when the log path works.
 9. Lines of one client stay in order.
 10. QEMU recipes keep working.
 11. An image whose shell reads the serial port keeps working.
@@ -307,6 +310,82 @@ refill max 8881 µs of 11 612 µs: the averages fit, the maxima are QEMU's sched
 jitter. On the board the same line shows whether the synthesiser's render fits the
 period at the ARM clock it runs at.
 
+### Panics and faults (L-D)
+
+A component's last words go to the UART through its own `log_v1` channel. Seen on
+the board: wood-test lost its USB keyboard because `usb-core`'s Thread overflowed its
+stack; the kernel's fault message went to semihosting only and the Thread just
+stopped.
+
+**Panics.** The EL0 panic handler (`userspace/runtime`) prints `EL0 PANICKED: …` on the
+semihosting console as before, then calls a reporter a linked library registered with
+`libuser::set_panic_reporter`, then exits QEMU (`qemu`) or halts. The runtime cannot
+depend on `liblog_client` (the client depends on the runtime), so the hook is one
+function pointer: `liblog_client` registers its reporter when it finds the component's
+channel (the first line sent, or a fault). The reporter sends
+`PANICKED: <component>: <message> at <file>:<line>` at level Error. Safeguards:
+
+- **Never blocks unbounded:** `send` never waits; the line is retried 4 times 5 ms
+  apart while another Thread holds the channel's try-lock, then the Thread gives the
+  server up to 100 ms (5 ms sleeps on the channel's `EventCount`, which the server
+  never advances) to take every buffer back, then 50 ms for the UART driver. Without a
+  sleep key it spins on the clock for the same times.
+- **Re-entrancy:** a flag set by the first panic; a panic while reporting (a message
+  whose formatting panics, a logger left broken) or a second Thread's panic halts
+  without a report (and prints `EL0 PANICKED again, not reported` under QEMU).
+- **Inside the logger:** a panic in `send` leaves the try-lock held, so the report
+  finds it busy and is dropped; it never touches the channel's state.
+- **Small stack:** the line is formatted straight into a channel buffer (`LineWriter`,
+  256 bytes, cut beyond); no extra buffer.
+- **No log channel:** no reporter is registered; the panic behaves as before.
+
+Under QEMU the panic still ends the run with `exit_failure`, after the bounded wait.
+
+**Faults.** The kernel delivers a fault (data or instruction abort, alignment fault,
+undefined instruction, a failed Return…) by making the faulting Thread call the
+Invocation at its `AddressSpace`'s `KeySlot::FAULT_HANDLER`
+([Thread, Fault delivery](../object_types/core/thread.md#fault-delivery)); with no
+handler the Thread is parked as `Faulted` and the nucleus prints on semihosting
+only. Kickstart installed no handler, so every component fault was silent on the board.
+No kernel change was needed (option a/b of the request: an existing userspace path):
+
+- `liblog_client` exports the handler, `vesper_fault_entry`
+  (`libdevice_driver::FAULT_HANDLER_EXPORT`, a `ppc_export!` whose `.exports` record is
+  kept in every image that links the crate). Kickstart (`kernel/kickstart/src/drivers.rs`)
+  creates an Invocation of it at the component's `FAULT_HANDLER` slot, on a one-stack
+  pool of 16 KiB in the component's stack region, for every component whose image has
+  the export. Driver tables now fill from slot 17 (`FIRST_DRIVER_SLOT`), past the
+  well-known slots up to `FAULT_HANDLER`.
+- The handler runs on the faulting Thread, on that stack (so a Thread that overflowed
+  its stack still has one), logs the line and returns `FaultAction::Terminate`: the
+  Thread is parked as `Faulted`, as an unhandled fault was.
+- The init record (`DriverInit`) carries the component's manifest name and each
+  Thread's stack (`thread_stacks`, bottom and top), so the line names both;
+  `MAX_IMPORTS` went from 32 to 28 to keep the record in its page (Wood, the largest
+  importer, has 17).
+- The line, built by `log_server::report::FaultReport` (host-tested):
+  `FAULT: <component> thread <n>: <cause> at pc 0x…, far 0x…, sp 0x…, esr 0x…`. A data
+  abort with a translation fault whose address lies in the stack region
+  (`STACK_REGION`, 2 MiB, every non-stack page unmapped) is `stack overflow (guard
+  page)`; the Thread is the one whose guard page holds the address, else the one whose
+  stack holds SP; SP on none of them is `in an export call` (a client's call running
+  on the export pool). Other causes come from `ESR_EL1.EC`.
+- Under QEMU the handler prints the line on semihosting too; the kernel's own `⚠️
+  fault` line stays.
+
+What the maintainer sees on the board, for example:
+
+```
+[     3.141592] E FAULT: usb_core thread 0: stack overflow (guard page) at pc 0x40a1c4, far 0x30000ff0, sp 0x30000ff0, esr 0x92000047
+[     5.000000] E PANICKED: compositor: index out of bounds: the len is 4 but the index is 4 at userspace/gui/compositor/src/input.rs:120
+```
+
+Limits: a frame larger than the 4 KiB guard can jump over it into the stack below and
+corrupt it silently (no stack probes on this target); a fault inside the fault handler,
+or a second fault while the handler runs, stays unhandled and silent; a component that
+does not link `liblog_client` gets no handler. `just test-log` checks both lines (a
+probe whose second Thread overflows its stack and whose first Thread panics).
+
 ### Interactions and limits
 
 - **Kickstart limits.** `MAX_AREAS` (8 data areas per exporter) caps the log server at 8
@@ -320,11 +399,13 @@ period at the ARM clock it runs at.
 - **Stack depth.** `usb-core`'s Thread overflowed the 16 KiB stack Kickstart gave
   every Thread once it traced to the log channel under QEMU (the hub loop with an
   enumeration inlined takes 7.7 KiB, the semihosting `println!` buffer 4 KiB): driver
-  Threads now get 32 KiB (`STACK_PAGES` in `kernel/kickstart/src/drivers.rs`), and
+  Threads now get 32 KiB (`STACK_PAGES` in `kernel/kickstart/src/drivers.rs`; approved
+  by the maintainer on 2026-10-29: "keep 32k stacks"), and
   `libserial-trace` prints to semihosting, sends to the serial channel and keeps
   backlog lines in separate non-inlined functions, so a trace line's stack is the
   larger of those paths, not their sum. Tracing from deep call chains must still keep
-  frames small.
+  frames small. On the board an overflow was silent until L-D: the fault report
+  (section Panics and faults) now names it.
 - **libserial-trace relays.** The backlog and the `trace(octet&)` exports of `input_v1`,
   `usb_v1` and `usb_hcd_v1` exist because one component held the UART; they go once
   every component has its own channel (L-B).
@@ -337,6 +418,7 @@ period at the ARM clock it runs at.
 | compositor-test, window-events-test | compositor | none (the compositor's and the USB components' imports are unlinked) |
 | audio-test | audio driver | none (unlinked) |
 | usb-core-test, usb-hid-test, usb-test | `usb_core` / `input_trace` / none | none (the USB components' imports are unlinked) |
+| log-test | `log_server` | `log_probe` (overflows a stack, panics) |
 | production (`kernel/kickstart/image.toml`) | shell | none (the compositor's and the USB components' imports are unlinked) |
 
 ### Gaps

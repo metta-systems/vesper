@@ -13,7 +13,8 @@ has passed.
 - L11 (console input) is answered (2026-10-29): received bytes go into the input
   events, and input decision D8 (2026-10-29, a) turns them back into the shell's
   bytes through the console adapter (input stage INPUT3).
-- L-D (panics) is set aside by the maintainer for now.
+- L-D (panics, and faults) is in scope since 2026-10-29 ("keep 32k stacks, add panic
+  reporting through the serial console too").
 - Board: L-A's hardware exit is pending.
 
 ## L-A: the log server in wood-test, first clients, music diagnostics
@@ -96,7 +97,8 @@ Depends on L-A's hardware exit only for confidence; no open decision.
   imports stay unlinked there, as in kernel/kickstart, compositor-test and
   window-events-test. The volume policy is in the design doc (section USB log
   volume). Kickstart's driver Thread stacks went from 16 to 32 KiB (`STACK_PAGES`):
-  `usb-core` overflowed 16 KiB under QEMU once its trace went to the log channel.
+  `usb-core` overflowed 16 KiB under QEMU once its trace went to the log channel; the
+  maintainer approved the 32 KiB stacks on 2026-10-29 ("keep 32k stacks").
   Checked: `just test-wood` (the UART file holds the controller's bring-up and port
   reset, a device the core enumerated and `usb-hid: serving a Keyboard`; 38 USB
   lines in a 12.5 s run, 33 of them in the first 0.76 s, 0 dropped); test-usb, test-usb-core, test-usb-hid,
@@ -125,13 +127,32 @@ Depends on L-A's hardware exit only for confidence; no open decision.
   RX item above.
 - [ ] Hardware exits of the L-B images on the Pi 3 B.
 
-## L-D: panics and early output
+## L-D: panics, faults and early output
 
-Set aside by the maintainer for now.
+In scope since 2026-10-29 (the maintainer: "keep 32k stacks, add panic reporting
+through the serial console too"). Design: section Panics and faults.
 
-- [ ] The EL0 panic handler (`userspace/runtime`) puts `PANICKED: …` on the
-  component's log channel (best effort: `liblog_client::send`, which never waits)
-  before halting; check with a component made to panic in a test image.
+- [x] The EL0 panic handler (`userspace/runtime`) puts `PANICKED: <component>:
+  <message> at <file>:<line>` on the component's log channel through the reporter
+  `liblog_client` registers (`libuser::set_panic_reporter`), best effort and bounded
+  (retries, then up to 100 ms for the server and 50 ms for the UART), with a
+  re-entrancy flag; components without a channel behave as before. Checked by
+  `just test-log` (log-test: `log_probe`'s first Thread panics; the UART file holds
+  the line with the `E` level).
+- [x] Faults: `liblog_client` exports the fault handler (`vesper_fault_entry`);
+  Kickstart installs it at `FAULT_HANDLER` with a stack of its own for every image that
+  exports it; the init record names the component and its Threads' stacks
+  (`MAX_IMPORTS` 32 to 28 to fit); the handler logs `FAULT: <component> thread <n>:
+  <cause> …`, naming a guard-page hit `stack overflow (guard page)`, and terminates
+  the Thread. Checked by `just test-log` (`log_probe`'s second Thread overflows its
+  stack: `FAULT: log_probe thread 1: stack overflow (guard page)` on the UART) and
+  `just test-log-host` (`FaultReport`: 3 tests). Regressions: test-wood, test-midi,
+  test-audio, test-window-events, test-usb, test-usb-core, test-usb-hid (by hand,
+  logs in `target/panic-*.log`); `just build-wood-test-hw`; clippy of the log crates
+  (`just clippy-log`, now with `log-probe`), `vesper-device-driver`,
+  `vesper-user-runtime`, Kickstart, log-test and wood-test with and without `qemu`.
+- [ ] Board: a `FAULT:` or `PANICKED:` line on the Pi 3 B's UART (the next boot of
+  wood-test that hits one; nothing forces one there).
 - [ ] A line from the log server when a client's channel shows a malformed packet or
   a large drop count, so a misbehaving client is named.
 
@@ -141,5 +162,6 @@ Set aside by the maintainer for now.
 |---|---|
 | `just test-log-host` | the log protocol library |
 | `just test-wood` | the log server in QEMU, its clients' lines on the UART file, Wood's music |
+| `just test-log` | a probe's stack overflow and panic reach the UART as `FAULT:` and `PANICKED:` lines |
 | `just build-wood-test-hw` | the board image builds |
 | `just clippy-log` | the log crates' lint, allowing the known `libmeddle` breakage |

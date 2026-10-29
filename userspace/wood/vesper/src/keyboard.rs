@@ -148,7 +148,7 @@ impl Keyboard {
     fn handle(&self, event: &Event, window: &Window) {
         match event.kind {
             Kind::Key if page_of(event.code) == page::KEYBOARD => {
-                self.key(usage_of(event.code), event.value);
+                self.key(usage_of(event.code), event.value, event.timestamp);
             }
             Kind::Focus => {
                 log::info!("focus {}", if event.value == 0 { "lost" } else { "gained" });
@@ -172,8 +172,9 @@ impl Keyboard {
     }
 
     /// Follow keyboard usage `key` going to `value`, and queue its Doom key
-    /// when it changed.
-    fn key(&self, key: u16, value: i32) {
+    /// when it changed. `stamp` is when the USB HID component decoded it (0:
+    /// a release Wood or the compositor made up), for the trace.
+    fn key(&self, key: u16, value: i32, stamp: u64) {
         let pressed = match value {
             KEY_DOWN => true,
             KEY_UP => false,
@@ -197,10 +198,14 @@ impl Keyboard {
         let traced = self.traced.get();
         if traced < KEYS_TRACED {
             self.traced.set(traced + 1);
-            log::info!(
-                "key {key:#04x} {}: doom key {doom:#04x}",
-                if pressed { "down" } else { "up" }
-            );
+            let state = if pressed { "down" } else { "up" };
+            if stamp == 0 {
+                log::info!("key {key:#04x} {state}: doom key {doom:#04x}");
+            } else {
+                // The engine reads keys once a tic: this is when it got the key.
+                let age_us = libuser::clock::now_ns().saturating_sub(stamp) / 1000;
+                log::info!("key {key:#04x} {state}: doom key {doom:#04x}, {age_us} us after usb-hid");
+            }
         }
         self.pending.borrow_mut().push_back((pressed, doom));
     }
@@ -210,7 +215,7 @@ impl Keyboard {
         let held: [bool; 256] = *self.held.borrow();
         for (key, _) in held.iter().enumerate().filter(|(_, held)| **held) {
             if let Ok(key) = u16::try_from(key) {
-                self.key(key, KEY_UP);
+                self.key(key, KEY_UP, 0);
             }
         }
     }

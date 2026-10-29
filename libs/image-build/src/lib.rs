@@ -68,6 +68,9 @@ pub struct ElfImage {
     pub driver_compatible: Vec<String>,
     /// The further Threads from a driver's `.driver_threads` section
     pub driver_threads: Vec<DriverThread>,
+    /// The `libdevice_driver::Priority` level of the first Thread, from the
+    /// `.entry_priority` section (`entry_priority!`); 0, normal, without one
+    pub entry_priority: u8,
 }
 
 /// One further Thread a driver declares (`libdevice_driver::driver_threads!`).
@@ -107,6 +110,7 @@ impl ElfImage {
         let mut exports = Vec::new();
         let mut driver_compatible = Vec::new();
         let mut driver_threads = Vec::new();
+        let mut entry_priority = 0;
         for header in &elf.section_headers {
             let Some(name) = elf.shdr_strtab.get_at(header.sh_name) else {
                 continue;
@@ -122,6 +126,13 @@ impl ElfImage {
             }
             if name == ".driver_threads" {
                 driver_threads = parse_threads(&content(), path);
+                continue;
+            }
+            if name == ".entry_priority" {
+                let [level] = content()[..] else {
+                    panic!("{}: malformed .entry_priority section", path.display());
+                };
+                entry_priority = level;
                 continue;
             }
             if name == ".exports" {
@@ -166,6 +177,7 @@ impl ElfImage {
             exports,
             driver_compatible,
             driver_threads,
+            entry_priority,
         }
     }
 
@@ -1048,7 +1060,8 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static <NAME>: libimage::ComponentImage`, plus
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
-/// the strings of its `.driver_compatible` section, the entries and
+/// the strings of its `.driver_compatible` section, its first Thread's
+/// priority (`.entry_priority`), the entries and
 /// priorities of its `.driver_threads` section, its `budget_ns` and its
 /// `memory` size, all listed in
 /// `pub static DRIVERS: &[&DriverImage]`, followed by the programs: a
@@ -1130,6 +1143,7 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
         video_memory => settings.video_memory,
         serial => settings.serial,
         dispatcher => settings.dispatcher,
+        priority => image.entry_priority,
         threads => image
             .driver_threads
             .iter()

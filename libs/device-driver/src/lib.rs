@@ -34,9 +34,14 @@
 //!
 //! A driver that needs more Threads than its interrupt Thread declares their
 //! entries with [`driver_threads!`], each with a [`Priority`] for the root
-//! dispatcher. Kickstart starts each on its own stack and Time with the init
-//! page's address in `x0`, alongside the first one; only the first Thread
-//! receives the interrupts.
+//! dispatcher; [`entry_priority!`] sets the first Thread's. Kickstart starts
+//! each on its own stack and Time with the init page's address in `x0`,
+//! alongside the first one; only the first Thread receives the interrupts.
+//!
+//! The record also carries the component's manifest name and its Threads'
+//! stacks, for reports. A component whose image exports
+//! [`FAULT_HANDLER_EXPORT`] gets an Invocation of it at
+//! `KeySlot::FAULT_HANDLER`, on a stack pool of its own.
 mod masters;
 
 pub use masters::{InstallError, Masters};
@@ -83,8 +88,9 @@ pub const MAX_FURTHER_THREADS: usize = 4;
 /// one. The kernel knows nothing of it: Kickstart hands it to the root
 /// dispatcher (`DispatchInit::priorities`).
 ///
-/// There is no starvation guard: a high-priority Thread that never blocks
-/// keeps every normal one from running.
+/// There is no starvation guard: a Thread above normal that never blocks
+/// keeps every Thread below it from running. Every Thread above normal must
+/// block most of the time and do little work each time it wakes.
 #[repr(transparent)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Priority(pub u8);
@@ -92,9 +98,30 @@ pub struct Priority(pub u8);
 impl Priority {
     /// Every Thread's priority unless it declares another.
     pub const NORMAL: Self = Self(0);
-    /// Runs ahead of every normal Thread: for a Thread with a deadline, such
-    /// as an audio playback Thread, that blocks most of the time.
-    pub const HIGH: Self = Self(1);
+    /// Runs ahead of every normal Thread, behind every high one: for the
+    /// cheap Threads on the path of a key from the USB controller to the
+    /// focused window (the controller's interrupt and poller Threads, the HID
+    /// component, the compositor's input Thread), so a key is not kept
+    /// waiting behind CPU-bound programs.
+    pub const INPUT: Self = Self(1);
+    /// Runs ahead of every other Thread: for a Thread with a deadline, such
+    /// as an audio playback Thread.
+    pub const HIGH: Self = Self(2);
+}
+
+/// Name of the one-byte section holding the [`Priority`] of a component's
+/// first Thread, the one Kickstart starts at the component's entry.
+pub const ENTRY_PRIORITY_SECTION: &str = ".entry_priority";
+
+/// Declare the [`Priority`] of the component's first Thread (normal when
+/// not declared): `entry_priority!(Priority::INPUT)`.
+#[macro_export]
+macro_rules! entry_priority {
+    ($priority:expr) => {
+        #[cfg_attr(target_os = "vesper", unsafe(link_section = ".entry_priority"))]
+        #[used]
+        static ENTRY_PRIORITY: $crate::Priority = $priority;
+    };
 }
 
 /// One entry of the [`THREADS_SECTION`]: a further Thread's entry and its
@@ -154,6 +181,26 @@ pub const MAX_RESOURCES: usize = 4;
 pub const INIT_VA: u64 = 0x2000_0000;
 /// The 2 MiB span holding the driver's guarded stack.
 pub const STACK_REGION: u64 = 0x3000_0000;
+/// Bytes of [`STACK_REGION`]: every page of it that is not a stack is
+/// unmapped, a guard.
+pub const STACK_REGION_BYTES: u64 = 0x20_0000;
+
+/// The export Kickstart installs as a component's fault handler
+/// (`KeySlot::FAULT_HANDLER`) when the image has one (`liblog_client`'s,
+/// which reports the fault on the log channel).
+pub const FAULT_HANDLER_EXPORT: &str = "vesper_fault_entry";
+
+/// Bytes of [`DriverInit::name`].
+pub const NAME_BYTES: usize = 32;
+
+/// One Thread's mapped stack, `[bottom, top)`, with an unmapped guard page
+/// right below `bottom`; both zero for no Thread.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StackSpan {
+    pub bottom: u64,
+    pub top: u64,
+}
 /// The 2 MiB span where a driver maps its device pages: its L3 table is
 /// installed, so only Frames need mapping there.
 pub const DEVICE_WINDOW_VA: u64 = 0x3800_0000;
@@ -197,8 +244,9 @@ pub const NO_BUS_ADDRESS: u64 = u64::MAX;
 /// Most `VideoCore` memory blocks one driver receives.
 pub const MAX_VIDEO_BLOCKS: usize = 8;
 
-/// Most functions of other components one driver imports.
-pub const MAX_IMPORTS: usize = 32;
+/// Most functions of other components one driver imports (Wood, the most,
+/// imports 17); 28 keeps the record within its page.
+pub const MAX_IMPORTS: usize = 28;
 
 /// Most interrupts of one node: one Notification bit each.
 pub const MAX_INTERRUPTS: usize = 16;
@@ -421,6 +469,11 @@ pub struct DriverInit {
     pub resources: [ResourceRecord; MAX_RESOURCES],
     /// The Scheduler and records of the root dispatcher
     pub dispatch: DispatchInit,
+    /// The component's manifest name, NUL-padded (cut at [`NAME_BYTES`])
+    pub name: [u8; NAME_BYTES],
+    /// The stack of each Thread Kickstart starts: the first Thread's, then
+    /// the further Threads' in declaration order
+    pub thread_stacks: [StackSpan; 1 + MAX_FURTHER_THREADS],
 }
 
 /// The page tables Kickstart provisions for mapping a framebuffer at
@@ -531,7 +584,36 @@ impl DriverInit {
             first_thread_key_slot: 0,
             priorities: [Priority::NORMAL; MAX_DISPATCHED_THREADS],
         },
+        name: [0; NAME_BYTES],
+        thread_stacks: [StackSpan { bottom: 0, top: 0 }; 1 + MAX_FURTHER_THREADS],
     };
+
+    /// The component's manifest name ("?" if it is not UTF-8).
+    pub fn name(&self) -> &str {
+        let len = self
+            .name
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(NAME_BYTES);
+        core::str::from_utf8(&self.name[..len]).unwrap_or("?")
+    }
+
+    /// Record `name`, cut at [`NAME_BYTES`].
+    pub fn set_name(&mut self, name: &str) {
+        let len = name.len().min(NAME_BYTES);
+        self.name = [0; NAME_BYTES];
+        self.name[..len].copy_from_slice(&name.as_bytes()[..len]);
+    }
+
+    /// The stacks of the Threads Kickstart started, by Thread number (0 is
+    /// the first Thread).
+    pub fn thread_stacks(&self) -> impl Iterator<Item = (usize, StackSpan)> + '_ {
+        self.thread_stacks
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, span)| span.top != 0)
+    }
 
     /// The node's register ranges.
     pub fn regions(&self) -> &[Region] {

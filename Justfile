@@ -487,6 +487,38 @@ test-midi board='rpi3' features=test_kernel_features config=(board + '-' + repla
     done
     echo "{{ ok_label }} the player played D_E1M1 through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
 
+# Build log-test's programs: the probe and the log server, for the image configuration `board` + `image_features`; only log-test bundles the probe, so it is not in `user_components`
+[private]
+build-log-probe board='rpi3' features='qemu' image_features=features: (_cross-build 'log-probe log-server' board user_link features '' image_features)
+
+# Build the log-test e2e kernel: the PL011 driver, the log server and a probe whose Threads overflow a stack and panic
+[group("test")]
+build-log-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
+
+# Boot log-test: the probe's second Thread overflows its stack and its fault handler (liblog_client's, installed by Kickstart) logs `FAULT: log_probe thread 1: stack overflow (guard page)`; then its first Thread panics and the panic handler logs `PANICKED: log_probe: made to panic on purpose at …`, which ends the run. Both lines must reach the UART through the log server. The semihosting console goes to target/log-test.log, the UART to target/log-test-serial.log
+[group("test")]
+test-log board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-log-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/log-test.log"
+    serial="{{ target_root }}/log-test-serial.log"
+    rm -f "$log" "$serial"
+    timeout 120 {{ qemu }} -M raspi3b -display none -monitor none \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'log-test-' + config + '.bin' }}" < /dev/null > "$log"
+    status=$?
+    grep -a "log-test: \|log-probe: \|FAULT: \|PANICKED" "$log" | tail -12
+    cat "$serial"
+    # The panic ends the run with a failure exit; a timeout (124) means it never came.
+    [ "$status" -ne 124 ] || { echo "log-test: timed out; see $log"; exit 1; }
+    grep -a -q "log-test: ✅ the probe has its fault handler" "$log" || { echo "log-test: the probe's fault handler was not installed; see $log"; exit 1; }
+    grep -a -q "EL0 PANICKED: panicked at userspace/tests/log/probe/src/main.rs" "$log" || { echo "log-test: no panic on the semihosting console; see $log"; exit 1; }
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] '
+    for expected in "I log-server: 1 clients, serial output attached" "I log-probe: ready" "E FAULT: log_probe thread 1: stack overflow (guard page) at pc 0x[0-9a-f]*, far 0x[0-9a-f]*, sp 0x[0-9a-f]*, esr 0x[0-9a-f]*" "E PANICKED: log_probe: made to panic on purpose at userspace/tests/log/probe/src/main.rs:[0-9]*"; do
+      grep -a -q "${prefix}${expected}" "$serial" || { echo "log-test: the UART got no line \"$expected\" from the log server"; exit 1; }
+    done
+    echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
+
 # Build midi-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the player plays Doom's D_E1M1 through the MIDI synthesiser and the PWM audio driver on the headphone jack, looping, for good, and the log server writes the player's, the synthesiser's and the audio driver's lines on the UART
 [group("hw")]
 build-midi-test-hw board='rpi3': (build-components board '' '') (build-midi-player board '' '') (_build-test-kernel 'midi-test' board '')
@@ -1044,14 +1076,14 @@ _cross-clippy-audio board='rpi3' features='':
 [group("maintenance")]
 clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
-# Cross-clippy only the log crates (the log server component, its log_v1 interface crates, the client library and libserial-trace, which sends through it) for a board with a feature set
+# Cross-clippy only the log crates (the log server component, its log_v1 interface crates, the client library, libserial-trace, which sends through it, and log-test's probe) for a board with a feature set
 [private]
 _cross-clippy-log board='rpi3' features='':
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      -p log-server -p log-interface -p log-interface-client -p vesper-log-client -p vesper-serial-trace \
+      -p log-server -p log-interface -p log-interface-client -p vesper-log-client -p vesper-serial-trace -p log-probe \
       -- --deny warnings --allow deprecated --allow clippy::map_unwrap_or --allow clippy::doc_markdown
 
 # Lint just the log crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)

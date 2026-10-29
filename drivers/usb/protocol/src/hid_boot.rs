@@ -13,8 +13,14 @@ pub const MOUSE_REPORT_MIN_LENGTH: usize = 3;
 
 /// Usage in a key slot that means "no key".
 pub const NO_KEY: u8 = 0x00;
-/// Usage in every key slot when more keys are down than the report holds.
+/// Usage in every key slot when more keys are down than the report holds
+/// (`ErrorRollOver`, HID Usage Tables 1.5 §10).
 pub const ROLL_OVER: u8 = 0x01;
+/// Usage in every key slot of a keyboard whose self-test failed (`POSTFail`).
+pub const POST_FAIL: u8 = 0x02;
+/// Usage in every key slot of a keyboard in an undefined error state
+/// (`ErrorUndefined`).
+pub const ERROR_UNDEFINED: u8 = 0x03;
 
 /// Left mouse button bit in the mouse report.
 pub const BUTTON_LEFT: u8 = 0x01;
@@ -31,6 +37,10 @@ pub enum ReportError {
     /// The keyboard reports more keys than it can hold. The report is
     /// ignored, so the key state stays what it was.
     RollOver,
+    /// The keyboard reports an error state (`POSTFail`, `ErrorUndefined`)
+    /// in its key slots. The report is ignored like a roll-over: its slots
+    /// hold no keys, so taking it would release every key held.
+    KeyboardError,
 }
 
 /// A decoded boot keyboard report.
@@ -53,6 +63,9 @@ impl KeyboardReport {
         };
         if keys.contains(&ROLL_OVER) {
             return Err(ReportError::RollOver);
+        }
+        if keys.contains(&POST_FAIL) || keys.contains(&ERROR_UNDEFINED) {
+            return Err(ReportError::KeyboardError);
         }
         Ok(Self {
             modifiers: *modifiers,

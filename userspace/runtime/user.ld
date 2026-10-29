@@ -7,8 +7,9 @@
  * base. Every segment starts on a page so the loader can map the bundled
  * pages in place as Frames with per-segment permissions; .bss is allocated
  * separately. .exports holds the PPC export records, .driver_compatible a
- * driver's compatible strings and .driver_threads the entries of its further
- * Threads, all read by vesper-image-build.
+ * driver's compatible strings, .driver_threads the entries of its further
+ * Threads and .entry_priority its first Thread's priority, all read by
+ * vesper-image-build.
  */
 
 ENTRY(_start)
@@ -56,6 +57,12 @@ SECTIONS
     .driver_threads : ALIGN(8)
     {
         KEEP(*(.driver_threads))
+    }
+
+    /* The priority level of a component's first Thread, one byte */
+    .entry_priority :
+    {
+        KEEP(*(.entry_priority))
     }
 
     /DISCARD/ :

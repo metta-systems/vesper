@@ -13,7 +13,8 @@
 //! every frame time while something is damaged (the frame Thread, `frame`).
 //! The first Thread reads the USB HID component's input stream, if there is
 //! one, folds it into the router and sends each client the events of its
-//! windows on the client's event channel (`input`); calls from clients enter the
+//! windows on the client's event channel (`input`), at input priority
+//! (`libdevice_driver::Priority::INPUT`); calls from clients enter the
 //! compositor on their own stacks (`export`). The state they share is behind a
 //! turnstile (`shared`).
 
@@ -36,6 +37,11 @@ use {
 };
 
 libuser::entry!(main);
+
+// The first Thread routes the input: it blocks between producer frames and
+// does little for each, so it runs ahead of the CPU-bound programs. Drawing is
+// the frame Thread's, which stays normal.
+libdevice_driver::entry_priority!(libdevice_driver::Priority::INPUT);
 
 /// The mode the display is set to.
 const WIDTH: u32 = 1024;

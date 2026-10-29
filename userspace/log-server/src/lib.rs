@@ -10,7 +10,11 @@
 //! - [`LineWriter`], which formats a line into a buffer and cuts what does not
 //!   fit;
 //! - [`format_line`], the server's output line: timestamp, level, the
-//!   client's drop count, the text with control bytes replaced, and `\r\n`.
+//!   client's drop count, the text with control bytes replaced, and `\r\n`;
+//! - [`report::FaultReport`], the `FAULT:` line a client's fault handler
+//!   logs.
+
+pub mod report;
 
 use core::fmt;
 

@@ -102,6 +102,157 @@ mod tests {
         );
     }
 
+    /// The key events (code, value) a sequence of boot reports decodes to,
+    /// the reports one after the other, as a keyboard sends them.
+    fn key_changes(reports: &[[u8; 8]]) -> Vec<(u32, i32)> {
+        let mut decoder = KeyboardDecoder::new();
+        let mut changes = Vec::new();
+        for report in reports {
+            for event in keyboard_events(&mut decoder, *report) {
+                match event.kind {
+                    Kind::Key => changes.push((event.code, event.value)),
+                    Kind::Sync => {}
+                    other => panic!("a keyboard report decoded to {other:?}"),
+                }
+            }
+        }
+        changes
+    }
+
+    const UP: u32 = 0x0007_0052;
+    const RIGHT_ARROW: u32 = 0x0007_004F;
+    const SPACE: u32 = 0x0007_002C;
+
+    #[test]
+    fn fast_taps_give_every_press_and_release() {
+        // Up tapped three times, each report in its own poll: no press or
+        // release is collapsed, however short the tap.
+        let held = [0, 0, 0x52, 0, 0, 0, 0, 0];
+        let none = [0; 8];
+        assert_eq!(
+            key_changes(&[held, none, held, none, held, none]),
+            [
+                (UP, KEY_DOWN),
+                (UP, KEY_UP),
+                (UP, KEY_DOWN),
+                (UP, KEY_UP),
+                (UP, KEY_DOWN),
+                (UP, KEY_UP),
+            ]
+        );
+    }
+
+    #[test]
+    fn overlapping_keys_go_down_and_up_on_their_own() {
+        // Up, then Right while Up is held (the keyboard appends it), then Up
+        // released while Right is held (Right moves to the first slot), then
+        // Right released.
+        assert_eq!(
+            key_changes(&[
+                [0, 0, 0x52, 0, 0, 0, 0, 0],
+                [0, 0, 0x52, 0x4F, 0, 0, 0, 0],
+                [0, 0, 0x4F, 0, 0, 0, 0, 0],
+                [0; 8],
+            ]),
+            [
+                (UP, KEY_DOWN),
+                (RIGHT_ARROW, KEY_DOWN),
+                (UP, KEY_UP),
+                (RIGHT_ARROW, KEY_UP),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_held_key_survives_another_key_and_a_modifier_coming_and_going() {
+        // Up held throughout; Space tapped, then Ctrl (fire) tapped.
+        let ctrl = code(page::KEYBOARD, keyboard::LEFT_CTRL);
+        assert_eq!(
+            key_changes(&[
+                [0, 0, 0x52, 0, 0, 0, 0, 0],
+                [0, 0, 0x52, 0x2C, 0, 0, 0, 0],
+                [0, 0, 0x52, 0, 0, 0, 0, 0],
+                [0x01, 0, 0x52, 0, 0, 0, 0, 0],
+                [0, 0, 0x52, 0, 0, 0, 0, 0],
+                [0; 8],
+            ]),
+            [
+                (UP, KEY_DOWN),
+                (SPACE, KEY_DOWN),
+                (SPACE, KEY_UP),
+                (ctrl, KEY_DOWN),
+                (ctrl, KEY_UP),
+                (UP, KEY_UP),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_idle_rate_repeats_of_a_held_key_add_nothing() {
+        // With an idle rate the keyboard sends its state again while nothing
+        // changes: Up held for three idle periods is one press, one release.
+        let held = [0, 0, 0x52, 0, 0, 0, 0, 0];
+        assert_eq!(
+            key_changes(&[held, held, held, held, [0; 8], [0; 8]]),
+            [(UP, KEY_DOWN), (UP, KEY_UP)]
+        );
+    }
+
+    #[test]
+    fn a_repeated_state_after_a_lost_release_releases_the_key() {
+        // The release of Up was lost on the way; the keyboard's next idle
+        // report, nothing held, releases it.
+        let mut decoder = KeyboardDecoder::new();
+        keyboard_events(&mut decoder, [0, 0, 0x52, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            keyboard_events(&mut decoder, [0; 8]),
+            [key(UP, KEY_UP), Event::sync(TIME, 1)]
+        );
+    }
+
+    #[test]
+    fn rollover_and_error_reports_keep_the_held_keys() {
+        // Up held, then the keyboard reports a phantom state (too many keys,
+        // or an error) in every slot: nothing changes, and the next real
+        // report is diffed against Up held.
+        let mut decoder = KeyboardDecoder::new();
+        keyboard_events(&mut decoder, [0, 0, 0x52, 0, 0, 0, 0, 0]);
+        for (usage, error) in [
+            (1, ReportError::RollOver),
+            (2, ReportError::KeyboardError),
+            (3, ReportError::KeyboardError),
+        ] {
+            let mut frame = Frame::new();
+            assert_eq!(
+                decoder.decode(&[0, 0, usage, usage, usage, usage, usage, usage], TIME, 1, &mut frame),
+                Err(error)
+            );
+            assert!(frame.is_empty());
+        }
+        assert_eq!(
+            keyboard_events(&mut decoder, [0, 0, 0x52, 0x4F, 0, 0, 0, 0]),
+            [key(RIGHT_ARROW, KEY_DOWN), Event::sync(TIME, 1)]
+        );
+    }
+
+    #[test]
+    fn a_duplicated_usage_is_one_key() {
+        // A keyboard that lists a usage twice still holds one key: one press,
+        // and its release is followed once by the state tracker.
+        let mut devices = Devices::new();
+        let subject = devices
+            .add(DeviceKind::Keyboard, 7, keyboard_descriptor(1, 2))
+            .unwrap();
+        let mut frame = Frame::new();
+        devices
+            .report(7, &[0, 0, 0x52, 0x52, 0, 0, 0, 0], TIME, &mut frame)
+            .unwrap();
+        assert!(devices.get(subject).unwrap().state().is_down(UP));
+        frame.clear();
+        devices.report(7, &[0; 8], TIME, &mut frame).unwrap();
+        assert!(!devices.get(subject).unwrap().state().is_down(UP));
+    }
+
     #[test]
     fn a_mouse_report_becomes_buttons_movement_and_a_sync() {
         let mut decoder = MouseDecoder::new();

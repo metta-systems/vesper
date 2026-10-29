@@ -5,8 +5,10 @@
 mod tests {
     use root_dispatcher::Rounds;
 
+    // The levels of `libdevice_driver::Priority`.
     const NORMAL: u8 = 0;
-    const HIGH: u8 = 1;
+    const INPUT: u8 = 1;
+    const HIGH: u8 = 2;
 
     /// Choose among `levels` (slot `s` at index `s - 1`; `None`: not
     /// runnable); the chosen slot.
@@ -78,6 +80,29 @@ mod tests {
         assert_eq!(pick(&mut rounds, &normal_only), Some(3));
         assert_eq!(pick(&mut rounds, &normal_only), Some(5));
         assert_eq!(pick(&mut rounds, &normal_only), Some(1));
+    }
+
+    #[test]
+    fn input_runs_between_normal_and_high() {
+        // A woken input Thread runs ahead of the busy normal ones, and the
+        // playback Thread ahead of it; with the playback Thread blocked, the
+        // input Threads take turns ahead of the normal ones.
+        let mut rounds = Rounds::new(5);
+        let all = [
+            Some(NORMAL),
+            Some(INPUT),
+            Some(HIGH),
+            Some(INPUT),
+            Some(NORMAL),
+        ];
+        assert_eq!(pick(&mut rounds, &all), Some(3));
+        let without_high = [Some(NORMAL), Some(INPUT), None, Some(INPUT), Some(NORMAL)];
+        assert_eq!(pick(&mut rounds, &without_high), Some(2));
+        assert_eq!(pick(&mut rounds, &without_high), Some(4));
+        assert_eq!(pick(&mut rounds, &without_high), Some(2));
+        let normal_only = [Some(NORMAL), None, None, None, Some(NORMAL)];
+        assert_eq!(pick(&mut rounds, &normal_only), Some(1));
+        assert_eq!(pick(&mut rounds, &normal_only), Some(5));
     }
 
     #[test]

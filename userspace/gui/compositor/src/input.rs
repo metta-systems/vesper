@@ -149,6 +149,7 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
         known: [false; MAX_SUBJECT as usize + 1],
     };
     let mut out = Output::new();
+    let mut losses = Losses::default();
     let mut reported = false;
     let mut seen = 0;
     let mut quiet_looks = 0_u32;
@@ -245,10 +246,20 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
                 }
                 if event.kind == Kind::Sync {
                     report(trace, &out);
-                    {
+                    let lost = {
                         let mut turn = shared::enter();
-                        shared::state(&mut turn).deliver(&out, event.timestamp);
-                    }
+                        let state = shared::state(&mut turn);
+                        state.deliver(&out, event.timestamp);
+                        Losses {
+                            dropped: state
+                                .outboxes
+                                .iter()
+                                .map(|outbox| outbox.dropped())
+                                .fold(0, u32::saturating_add),
+                            overflowed: state.router.counters().overflowed,
+                        }
+                    };
+                    losses.trace(trace, lost);
                     out.clear();
                 }
             }
@@ -266,24 +277,73 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
     }
 }
 
-/// Trace what the windows are to receive for one producer frame.
+/// What was lost on the way to the windows so far: deliveries the clients'
+/// event channels dropped (each then starts with `Dropped`), and records past
+/// what the router's frame holds.
+#[derive(Clone, Copy, Default)]
+struct Losses {
+    dropped: u32,
+    overflowed: u32,
+}
+
+impl Losses {
+    /// Trace the counts that reached a power of two since the last look, so
+    /// a client that stops reading adds a line per doubling.
+    fn trace(&mut self, trace: &mut Trace, now: Self) {
+        let doubled = |before: u32, after: u32| {
+            after > before && (before == 0 || after.ilog2() > before.ilog2())
+        };
+        if doubled(self.dropped, now.dropped) {
+            trace!(
+                trace,
+                "compositor: a window's event channel had no buffer posted, deliveries dropped ({} so far)",
+                now.dropped
+            );
+        }
+        if doubled(self.overflowed, now.overflowed) {
+            trace!(
+                trace,
+                "compositor: records past what a routed frame holds were lost ({} so far)",
+                now.overflowed
+            );
+        }
+        *self = now;
+    }
+}
+
+/// Trace what the windows are to receive for one producer frame, with how
+/// long ago the producer stamped each event.
 fn report(trace: &mut Trace, out: &Output) {
     if out.items().is_empty() {
         return;
     }
+    let now = libuser::clock::now_ns();
     for routed in out.items() {
         let event = routed.event;
         if event.kind == Kind::Sync {
             continue;
         }
-        trace!(
-            trace,
-            "compositor: window {}: {:?} code {:#010x} value {}",
-            routed.window,
-            event.kind,
-            event.code,
-            event.value
-        );
+        // A record the router made itself (a resync's release) has no stamp.
+        if event.timestamp == 0 {
+            trace!(
+                trace,
+                "compositor: window {}: {:?} code {:#010x} value {}",
+                routed.window,
+                event.kind,
+                event.code,
+                event.value
+            );
+        } else {
+            trace!(
+                trace,
+                "compositor: window {}: {:?} code {:#010x} value {} ({} us after usb-hid)",
+                routed.window,
+                event.kind,
+                event.code,
+                event.value,
+                now.saturating_sub(event.timestamp) / 1000
+            );
+        }
     }
     let (pointer, hover, focus) = {
         let mut turn = shared::enter();

@@ -285,25 +285,42 @@ impl Router {
     /// Replace the state of device `subject` with the keys and axes of a
     /// snapshot (the records `input_v1.snapshot` returns) and clear the stale
     /// mark. Held buttons and keys that the snapshot no longer holds are
-    /// released.
+    /// released, and those it holds that were not held are pressed: the
+    /// records lost in between may have pressed a key that is still down.
     pub fn resync(&mut self, subject: u32, snapshot: &[Event], out: &mut Output) {
         let mut state = State::new();
         for event in snapshot {
             let _tracked = state.apply(event);
         }
-        // Release what the old state held and the snapshot does not.
-        let mut held = [0_u32; 64];
+        let old = self
+            .devices
+            .iter()
+            .flatten()
+            .find(|d| d.0 == subject)
+            .map(|d| d.1);
+        let mut changed = [(0_u32, KEY_UP); 64];
         let mut count = 0;
-        if let Some((_, old)) = self.devices.iter().flatten().find(|d| d.0 == subject) {
+        let mut push = |code, value| {
+            if let Some(slot) = changed.get_mut(count) {
+                *slot = (code, value);
+                count += 1;
+            }
+        };
+        // Releases first, as a report lists them.
+        if let Some(old) = &old {
             old.for_each_down(|code| {
-                if !state.is_down(code) && count < held.len() {
-                    held[count] = code;
-                    count += 1;
+                if !state.is_down(code) {
+                    push(code, KEY_UP);
                 }
             });
         }
-        for &released in &held[..count] {
-            self.queue(Event::new(0, subject, Kind::Key, released, KEY_UP));
+        state.for_each_down(|code| {
+            if !old.as_ref().is_some_and(|old| old.is_down(code)) {
+                push(code, KEY_DOWN);
+            }
+        });
+        for &(code, value) in &changed[..count] {
+            self.queue(Event::new(0, subject, Kind::Key, code, value));
         }
         self.finish_frame(out);
         if let Some(slot) = self.devices.iter_mut().flatten().find(|d| d.0 == subject) {

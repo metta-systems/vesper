@@ -11,14 +11,23 @@
 //! It serves the boot keyboard and the boot mouse. For each it asks the USB
 //! core to claim the interface (`usb_v1.claim_interface`, retried while none is
 //! attached), learns how to open the interface's interrupt-IN pipe
-//! (`usb_v1.interrupt_pipe`), puts the device in boot protocol with no idle
-//! reports over a control pipe of its own, and opens the interrupt pipe on the
-//! host controller (`usb_hcd_v1.open_pipe`, `pipe_v1.configure`). The reports
+//! (`usb_v1.interrupt_pipe`), puts the device in boot protocol over a control
+//! pipe of its own, with an idle rate (`Set_Idle`, HID 1.11 §7.2.4) that has
+//! the keyboard send its state again every `KEYBOARD_IDLE_4MS` times 4 ms
+//! while nothing changes (the mouse reports only changes), and opens the
+//! interrupt pipe on the host controller (`usb_hcd_v1.open_pipe`,
+//! `pipe_v1.configure`). A keyboard report lost on the way (a split
+//! transaction the hub dropped) would otherwise leave a key down, or up, until
+//! the next change; the repeated state puts it right. The reports
 //! arrive on the io-channel the controller shares with this component, in
 //! buffers it posted; each is decoded into input events and published, in one
 //! frame, on the channel of every client of `input_v1` that posted a buffer.
 //! A client that posted none misses the frame, and the next frame it gets
 //! starts with a `Dropped` record.
+//!
+//! The component's one Thread runs at input priority
+//! (`libdevice_driver::Priority::INPUT`), ahead of the CPU-bound programs: it
+//! blocks between reports and does little work for each.
 //!
 //! The claims are polled: a device that went away is noticed within
 //! `RECHECK_MS`, its pipe closed, its claim released and a `DeviceRemoved`
@@ -36,7 +45,8 @@
 /// device served or gone, and failures. Nothing is traced per report. The
 /// claim is retried every `RECHECK_MS`, so a wait for a device and a set-up
 /// that keeps failing are traced the 1st, 2nd, 4th, 8th... time with their
-/// count.
+/// count; so are reports that did not decode and frames a client of
+/// `input_v1` missed.
 #[cfg(target_os = "vesper")]
 macro_rules! note {
     ($($argument:tt)*) => {
@@ -50,7 +60,8 @@ mod component {
         core::cell::UnsafeCell,
         input::input_v1::{Exception, InputV1},
         libdevice_driver::{
-            DriverInit, ExportedArea, INIT_VA, MAX_AREAS, Turn, Turnstile, driver_init,
+            DriverInit, ExportedArea, INIT_VA, MAX_AREAS, Priority, Turn, Turnstile, driver_init,
+            entry_priority,
         },
         libio_channel::{Consumer, Cursor, IoRec, NoEvent, Packet, Producer},
         libmeddle_runtime::{DataArea, IoRec as StageRec},
@@ -86,9 +97,17 @@ mod component {
 
     libuser::entry!(main);
 
+    entry_priority!(Priority::INPUT);
+
     /// Milliseconds between two looks for devices to claim and for devices that
     /// went away.
     const RECHECK_MS: u64 = 250;
+    /// The keyboard's idle rate, in 4 ms units: it sends its state again every
+    /// 100 ms while nothing changes, so a lost report is put right within
+    /// 100 ms (two, if the loss also cost the next report its DATA PID).
+    /// HID 1.11 §7.2.4 recommends 500 ms; repeating the same state changes
+    /// nothing here, and a stuck key should not run for half a second.
+    const KEYBOARD_IDLE_4MS: u8 = 25;
     /// Empty buffers kept posted on the controller's channel.
     const BUFFERS: u64 = 4;
     /// Bytes of each: a boot report is at most a handful.
@@ -242,6 +261,10 @@ mod component {
         /// claims that failed, by kind, for the trace's back-off.
         waits: [u32; 2],
         failures: [u32; 2],
+        /// Reports that did not decode, and frames a client missed, for the
+        /// trace's back-off.
+        bad_reports: u32,
+        missed_frames: u32,
     }
 
     /// Count one more on `counter`; the count when this one is traced (the
@@ -378,7 +401,7 @@ mod component {
             );
             let speed = hcd_speed(params.speed);
             let address = u32::from(params.device);
-            // Boot protocol and no idle reports, over a control pipe that is
+            // Boot protocol and the idle rate, over a control pipe that is
             // closed again.
             let control = self
                 .pipes
@@ -403,12 +426,22 @@ mod component {
                 report!("usb-hid: the {kind:?}'s control pipe was refused");
                 Err(())
             };
-            // Set_Idle is optional for a boot mouse (HID 1.11 Appendix G): a refusal
-            // is only traced.
+            // The keyboard repeats its state every `KEYBOARD_IDLE_4MS`; a mouse
+            // reports only changes, as its reports carry motion (HID 1.11
+            // §7.2.4 recommends an infinite idle rate for it). Set_Idle is
+            // optional for a boot mouse (HID 1.11 Appendix G): a refusal is
+            // only traced. A keyboard that refuses it reports only changes.
+            let idle_4ms = match kind {
+                DeviceKind::Keyboard => KEYBOARD_IDLE_4MS,
+                DeviceKind::Mouse => 0,
+            };
             if protocol.is_ok()
-                && let Err(error) =
-                    self.pipes
-                        .control(&control, set_idle(params.interface, 0, 0), &[], &mut [])
+                && let Err(error) = self.pipes.control(
+                    &control,
+                    set_idle(params.interface, idle_4ms, 0),
+                    &[],
+                    &mut [],
+                )
             {
                 report!("usb-hid: the {kind:?} refused SET_IDLE: {error:?}");
             }
@@ -550,8 +583,17 @@ mod component {
                         &mut frame,
                     )
                 };
-                if matches!(decoded, Ok(Some(_))) && !frame.is_empty() {
-                    self.publish(&frame);
+                match decoded {
+                    Ok(Some(_)) if !frame.is_empty() => self.publish(&frame),
+                    Ok(_) => {}
+                    Err(error) => {
+                        if let Some(count) = counted(&mut self.bad_reports) {
+                            note!(
+                                "usb-hid: a report of {length} bytes on pipe {} was not decoded ({count} so far): {error:?}",
+                                packet.value()
+                            );
+                        }
+                    }
                 }
                 if let Some(again) = Packet::new(0, &[buffer]) {
                     let _posted = self.buffers.put(&again);
@@ -573,6 +615,11 @@ mod component {
                 if area.channel_base != 0 {
                     let delivered = deliver(area, frame, self.missed[index]);
                     self.missed[index] = !delivered;
+                    if !delivered && let Some(count) = counted(&mut self.missed_frames) {
+                        note!(
+                            "usb-hid: client {index} of input_v1 had no buffer posted and missed a frame ({count} so far); it gets Dropped next"
+                        );
+                    }
                 }
             }
         }
@@ -694,6 +741,8 @@ mod component {
             active: [const { None }; MAX_DEVICES],
             waits: [0; 2],
             failures: [0; 2],
+            bad_reports: 0,
+            missed_frames: 0,
         };
         service.post_buffers();
         let mut seen = 0;

@@ -384,6 +384,35 @@ mod tests {
     }
 
     #[test]
+    fn a_resync_presses_a_key_pressed_in_the_lost_records() {
+        const UP: u32 = 0x0007_0052;
+        let mut router = router();
+        let mut out = Output::new();
+        router.feed(&Event::new(1, 1, Kind::DeviceAdded, 0, 0), &mut out);
+        router.feed(&sync(), &mut out);
+        move_to(&mut router, 20, 20);
+        // Window 1 has the focus; A is held when records are lost.
+        frame(&mut router, &[key(LEFT, KEY_DOWN)]);
+        frame(&mut router, &[key(LEFT, KEY_UP)]);
+        frame(&mut router, &[key(A, KEY_DOWN)]);
+        router.feed(&Event::new(2, 0, Kind::Dropped, 0, 0), &mut out);
+        // Up went down in the lost records and is still held; A stays held.
+        out.clear();
+        router.resync(1, &[key(A, KEY_DOWN), key(UP, KEY_DOWN), sync()], &mut out);
+        assert_eq!(
+            kinds(out.items(), 1),
+            [(Kind::Key, UP, KEY_DOWN), (Kind::Sync, 0, 0)],
+            "the held key the window never saw go down is pressed, A is not pressed again"
+        );
+        // Its release reaches the window as usual.
+        let sent = frame(&mut router, &[key(UP, KEY_UP)]);
+        assert_eq!(
+            kinds(&sent, 1),
+            [(Kind::Key, UP, KEY_UP), (Kind::Sync, 0, 0)]
+        );
+    }
+
+    #[test]
     fn a_window_that_went_away_gets_nothing_and_loses_focus() {
         let mut router = router();
         move_to(&mut router, 20, 20);

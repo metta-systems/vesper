@@ -9,10 +9,21 @@
 //! there at EL0, with one initial argument word. This crate also supplies the
 //! panic handler and the default `vesper_thread_return_fault` handler that
 //! `ppc_export!` adapters call when a Return is rejected.
+//!
+//! The panic handler prints on the semihosting console (under `qemu`), then
+//! calls the reporter a linked library registered with
+//! [`set_panic_reporter`] (`liblog_client` puts a `PANICKED:` line on the
+//! component's log channel), then exits QEMU or halts.
 
 pub mod clock;
 
-use {core::panic::PanicInfo, libqemu::semihosting as semi};
+use {
+    core::{
+        panic::PanicInfo,
+        sync::atomic::{AtomicBool, AtomicPtr, Ordering},
+    },
+    libqemu::semihosting as semi,
+};
 
 pub use libqemu::semihosting;
 
@@ -36,11 +47,38 @@ pub fn halt() -> ! {
     }
 }
 
+/// What reports a panic besides the semihosting console, as a
+/// `fn(&PanicInfo)`; null for nothing. A library the component links sets it
+/// (`liblog_client` once it finds the component's log channel): this crate
+/// cannot depend on it.
+static PANIC_REPORTER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Set by the first panic: a panic while reporting (a message whose
+/// formatting panics, a logger left broken) or a second Thread's panic is
+/// not reported again.
+static PANICKING: AtomicBool = AtomicBool::new(false);
+
+/// Have `reporter` called with the component's first panic, before the Thread
+/// stops. It must never wait unbounded; a panic inside it stops the Thread
+/// without a report.
+pub fn set_panic_reporter(reporter: fn(&PanicInfo<'_>)) {
+    PANIC_REPORTER.store(reporter as *mut (), Ordering::Release);
+}
+
 #[panic_handler]
-// Without `qemu`, semihosting printing compiles away and `info` is unused.
-#[cfg_attr(not(feature = "qemu"), allow(unused_variables))]
 fn panic(info: &PanicInfo) -> ! {
-    semi::println!("EL0 PANICKED: {info}");
+    if PANICKING.swap(true, Ordering::AcqRel) {
+        semi::println!("EL0 PANICKED again, not reported: {info}");
+    } else {
+        semi::println!("EL0 PANICKED: {info}");
+        let reporter = PANIC_REPORTER.load(Ordering::Acquire);
+        if !reporter.is_null() {
+            // SAFETY: only `set_panic_reporter` stores a non-null value, and
+            // it stores a `fn(&PanicInfo)`.
+            let reporter = unsafe { core::mem::transmute::<*mut (), fn(&PanicInfo<'_>)>(reporter) };
+            reporter(info);
+        }
+    }
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             semi::exit_failure()

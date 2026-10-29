@@ -71,8 +71,8 @@ mod component {
         },
         libdevice_driver::{
             DEVICE_WINDOW_VA, DriverInit, ExportedArea, INIT_VA, MAX_DEVICE_PAGES, Masters,
-            NO_BUS_ADDRESS, Turn, Turnstile, device_address, driver_compatible, driver_init,
-            driver_threads, map_device_pages,
+            NO_BUS_ADDRESS, Priority, Turn, Turnstile, device_address, driver_compatible,
+            driver_init, driver_threads, entry_priority, map_device_pages,
         },
         libio_channel::{Cursor, NoEvent, Packet},
         libobject::{
@@ -116,8 +116,13 @@ mod component {
     driver_compatible!("brcm,bcm2708-usb");
 
     // The poller Thread polls the interrupt pipes while the first Thread
-    // services the controller's interrupt.
-    driver_threads!(poller_main);
+    // services the controller's interrupt. Both are on the path of every key
+    // and run ahead of the normal Threads: a split poll's complete split must
+    // follow its start split within a few microframes (USB 2.0 §11.18.4), and
+    // each phase wakes the interrupt Thread, then the poller. Both block
+    // between interrupts and polls and do little work each time.
+    entry_priority!(Priority::INPUT);
+    driver_threads!(poller_main => Priority::INPUT);
 
     /// Host channel that runs every control transfer.
     const CHANNEL: usize = 0;
@@ -779,7 +784,27 @@ mod component {
                     Phase::Complete if event == Event::NotYet => not_yet += 1,
                     Phase::Complete => {}
                 }
-                match sequence.next(event) {
+                let step = sequence.next(event);
+                if phase == Phase::Complete
+                    && step == Step::Issue(Phase::Start)
+                    && matches!(target.kind, UsbKind::Interrupt)
+                {
+                    // A periodic complete split that did not get the result
+                    // starts over. The hub keeps a periodic result only for
+                    // the microframes right after its start split (USB 2.0
+                    // §11.18.4, §11.18.6), and it has already given the
+                    // device its handshake: a report the device sent is lost,
+                    // and the next one may come with the other DATA PID.
+                    let (count, report) = counted(&LOST_SPLITS);
+                    if report {
+                        note!(
+                            "usb-hcd-dwc2: complete split of device {} endpoint {} restarted ({count} so far), a report may be lost: events {status:#010x} after {not_yet} NYETs",
+                            target.device_address,
+                            target.endpoint
+                        );
+                    }
+                }
+                match step {
                     Step::Issue(_) => {
                         // A run that ended on its own left the channel halted.
                         if !ChannelInterrupts::new_with_raw_value(status).halted() {
@@ -1532,6 +1557,9 @@ mod component {
     static SLOW_POLLS: AtomicU32 = AtomicU32::new(0);
     static SLOW_CONTROLS: AtomicU32 = AtomicU32::new(0);
     static HALT_FAILURES: AtomicU32 = AtomicU32::new(0);
+    /// Periodic complete splits started over, each a report the device may
+    /// have sent and the hub dropped, for the trace's back-off.
+    static LOST_SPLITS: AtomicU32 = AtomicU32::new(0);
 
     /// Poll the first pipe that is due and has a buffer to fill, if any; the
     /// milliseconds until the next pipe is due, if any pipe is polled.

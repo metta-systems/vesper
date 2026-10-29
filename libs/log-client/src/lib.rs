@@ -21,20 +21,43 @@
 //! Under `qemu` the logger and the macro print every line on the
 //! semihosting console as well, as before the log server existed; [`send`]
 //! does not.
+//!
+//! The component's last words go here too (`doc/agentic/logging-design.md`,
+//! section Panics and faults):
+//!
+//! - once the channel is found, the runtime's panic handler reports through
+//!   it: `PANICKED: <component>: <message> at <file>:<line>`;
+//! - the crate exports the component's fault handler ([`FAULT_HANDLER_EXPORT`],
+//!   installed by Kickstart), which logs `FAULT: <component> thread <n>: …`
+//!   for a fault of any of its Threads, a stack overflow included, and stops
+//!   the Thread.
+//!
+//! Both wait a bounded time for the log server to take the line, since the
+//! Thread never runs again.
+//!
+//! [`FAULT_HANDLER_EXPORT`]: libdevice_driver::FAULT_HANDLER_EXPORT
 
 pub use log_server::Level;
 use {
     core::{
         cell::UnsafeCell,
         fmt::{self, Write},
-        sync::atomic::{AtomicBool, AtomicU32, Ordering},
+        panic::PanicInfo,
+        sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
-    libdevice_driver::{INIT_VA, driver_init},
+    libdevice_driver::{INIT_VA, STACK_REGION, STACK_REGION_BYTES, driver_init},
     libio_channel::{Consumer, NoEvent, Packet, Producer},
+    libobject::{
+        EventCountKey, RawKey,
+        export::{self, PpcResult},
+        fault::FaultAction,
+        ppc_export,
+        thread::ThreadReturnKey,
+    },
     log_interface_client::log_v1::{Bindings, CHANNEL_PAGES as DECLARED_PAGES, Client},
     log_server::{
         BUFFERS, CHANNEL_PAGES, CHANNEL_SLOTS, FreeBuffers, Header, LINE_BYTES, LINE_LEN,
-        LineWriter, buffer_of, buffer_record, channel_at,
+        LineWriter, buffer_of, buffer_record, channel_at, report::FaultReport,
     },
 };
 
@@ -69,6 +92,8 @@ impl Channel {
         // good, shared with the log server only.
         let channel = unsafe { channel_at(area.control) };
         let (submit, returns) = channel.client(NoEvent, NoEvent);
+        PAUSE_EVENT.store(area.event, Ordering::Relaxed);
+        libuser::set_panic_reporter(report_panic);
         Some(Self {
             client,
             submit,
@@ -133,6 +158,12 @@ impl Channel {
         }
         self.dropped = 0;
         true
+    }
+
+    /// Whether the server gave every buffer back: it has taken every line.
+    fn all_returned(&mut self) -> bool {
+        self.reclaim();
+        self.free.count() as usize == BUFFERS
     }
 }
 
@@ -212,6 +243,150 @@ pub fn send(level: Option<Level>, arguments: fmt::Arguments<'_>) -> Sent {
     }
     sent
 }
+
+// ── Last words: a panic or a fault ──────────────────────────────────────
+
+/// The channel's `EventCount` (`RECV`), which the log server never advances:
+/// waiting on it with a timeout is a sleep. Zero until the channel is found.
+static PAUSE_EVENT: AtomicU64 = AtomicU64::new(0);
+
+/// How often a last line retries a channel another Thread is sending on.
+const LAST_LINE_TRIES: u32 = 4;
+/// The wait between those tries and between looks at the returned buffers.
+const LAST_LINE_PAUSE_NS: u64 = 5_000_000;
+/// How many looks the server gets to take the line: 100 ms in all.
+const LAST_LINE_LOOKS: u32 = 20;
+/// Once the server took the line, the time the UART driver gets to send it
+/// (a 256-byte line takes 22 ms at 115 200 baud) before the Thread stops;
+/// under QEMU the panic then ends the run.
+const LAST_LINE_DRAIN_NS: u64 = 50_000_000;
+
+/// Let other Threads run for `ns`: a wait on [`PAUSE_EVENT`] that only its
+/// timeout ends, or, without one, a spin on the clock.
+fn pause(ns: u64) {
+    let event = PAUSE_EVENT.load(Ordering::Relaxed);
+    if event != 0
+        && EventCountKey::from_key(RawKey::from_wire(event))
+            .sleep(ns)
+            .is_ok()
+    {
+        return;
+    }
+    let deadline = libuser::clock::now_ns().saturating_add(ns);
+    while libuser::clock::now_ns() < deadline {
+        core::hint::spin_loop();
+    }
+}
+
+/// Send the line a Thread logs before it stops for good, and give the log
+/// server a bounded time to take it: [`send`], retried a few times while
+/// another Thread holds the channel, then up to 100 ms until every buffer
+/// has come back, then 50 ms for the UART. A panic inside [`send`] on this
+/// Thread leaves the channel held: the line is dropped, never waited for.
+fn send_last_line(arguments: fmt::Arguments<'_>) -> Sent {
+    let mut sent = send(Some(Level::Error), arguments);
+    for _ in 1..LAST_LINE_TRIES {
+        if sent != Sent::Dropped {
+            break;
+        }
+        pause(LAST_LINE_PAUSE_NS);
+        sent = send(Some(Level::Error), arguments);
+    }
+    if sent != Sent::Put {
+        return sent;
+    }
+    for _ in 0..LAST_LINE_LOOKS {
+        pause(LAST_LINE_PAUSE_NS);
+        if SHARED.busy.swap(true, Ordering::Acquire) {
+            continue;
+        }
+        // SAFETY: `busy` is held, so this is the only reference.
+        let state = unsafe { &mut *SHARED.state.get() };
+        let returned = match state {
+            State::Attached(Some(channel)) => channel.all_returned(),
+            State::Attached(None) | State::Unattached => true,
+        };
+        SHARED.busy.store(false, Ordering::Release);
+        if returned {
+            // The server wrote the line into a serial buffer; give the UART
+            // driver time to send it.
+            pause(LAST_LINE_DRAIN_NS);
+            break;
+        }
+    }
+    sent
+}
+
+/// The component's manifest name, from its init record.
+fn component_name() -> &'static str {
+    // SAFETY: Kickstart maps every component's init record at `INIT_VA`.
+    unsafe { driver_init(INIT_VA) }.name()
+}
+
+/// The runtime's panic reporter (`libuser::set_panic_reporter`), set once the
+/// channel is found: `PANICKED: <component>: <message> at <file>:<line>`.
+/// The line is formatted straight into a channel buffer (cut at 256 bytes).
+fn report_panic(info: &PanicInfo<'_>) {
+    let name = component_name();
+    let message = info.message();
+    match info.location() {
+        Some(location) => send_last_line(format_args!(
+            "PANICKED: {name}: {message} at {}:{}",
+            location.file(),
+            location.line()
+        )),
+        None => send_last_line(format_args!("PANICKED: {name}: {message}")),
+    };
+}
+
+/// The component's fault handler, which Kickstart installs at
+/// `KeySlot::FAULT_HANDLER` (`libdevice_driver::FAULT_HANDLER_EXPORT`). It runs
+/// on the faulting Thread, on a stack of its own, logs the `FAULT:` line
+/// (on the semihosting console too, under QEMU) and stops the Thread.
+extern "C" fn fault_body(
+    _lent_key: u64,
+    _badge: u64,
+    kind: u64,
+    syndrome: u64,
+    fault_address: u64,
+    pc: u64,
+    sp: u64,
+    _depth: u64,
+) -> PpcResult {
+    // SAFETY: Kickstart installs this handler only in components it loaded,
+    // with their init record at `INIT_VA`.
+    let init = unsafe { driver_init(INIT_VA) };
+    export::init_return_key(&ThreadReturnKey::from_key(RawKey::from_wire(
+        init.return_key,
+    )));
+    let mut thread_stacks = [(0, 0); 1 + libdevice_driver::MAX_FURTHER_THREADS];
+    for (number, span) in init.thread_stacks() {
+        if let Some(record) = thread_stacks.get_mut(number) {
+            *record = (span.bottom, span.top);
+        }
+    }
+    let report = FaultReport {
+        component: init.name(),
+        kind,
+        syndrome,
+        fault_address,
+        pc,
+        sp,
+        thread_stacks: &thread_stacks,
+        stack_region: (STACK_REGION, STACK_REGION + STACK_REGION_BYTES),
+    };
+    libuser::semihosting::println!("{report}");
+    send_last_line(format_args!("{report}"));
+    PpcResult {
+        r0: FaultAction::Terminate as u64,
+        r1: 0,
+    }
+}
+
+ppc_export!(
+    /// The fault handler's entry (`libdevice_driver::FAULT_HANDLER_EXPORT`).
+    pub fn vesper_fault_entry => fault_body
+);
 
 /// A line at `level` on the semihosting console (under QEMU) and the log
 /// channel.

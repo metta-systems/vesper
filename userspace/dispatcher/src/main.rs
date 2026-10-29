@@ -10,8 +10,9 @@
 //! `DriverInit::dispatch`). The policy is fixed priority with round-robin
 //! within a level ([`root_dispatcher::Rounds`]): take the next Thread of the
 //! highest level whose record says it can run and dispatch it for one slice.
-//! There is no starvation guard: a runnable high-priority Thread always runs
-//! before every normal one. A Thread that blocks, uses up its budget or its
+//! There is no starvation guard: a runnable Thread always runs before every
+//! Thread of a lower level (normal, input, high: see
+//! `libdevice_driver::Priority`). A Thread that blocks, uses up its budget or its
 //! slice, or exits activates the dispatcher, and so does a Thread becoming
 //! runnable or a budget arriving, so a woken Thread is not left waiting for
 //! the slice of the one running, and a woken high-priority Thread runs at

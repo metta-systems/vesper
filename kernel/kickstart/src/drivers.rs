@@ -25,13 +25,17 @@
 //!   budget of its manifest entry, and one Thread configured on
 //!   that Time and started at the driver's entry with the init page's address
 //!   in `x0`;
-//! - an `EventCount` for the driver's own Threads.
+//! - an `EventCount` for the driver's own Threads;
+//! - its manifest name and its Threads' stacks, for reports;
+//! - when its image exports `FAULT_HANDLER_EXPORT` (`liblog_client` does),
+//!   an Invocation of it at the table's `FAULT_HANDLER` slot, on a one-stack
+//!   pool of its own, so the kernel delivers the component's faults to it.
 //!
 //! Each further Thread the driver declares (`driver_threads!`) gets its own
 //! stack and a Time with the same budget, and starts at its
 //! entry with the init page's address in `x0`, right after the first. The
-//! root dispatcher receives the priority each declares (the first Thread is
-//! normal); the kernel never sees it.
+//! root dispatcher receives the priority each declares (the first Thread's
+//! with `entry_priority!`, normal without it); the kernel never sees it.
 //!
 //! Once every instance is loaded, Kickstart wires their imports: for each
 //! function a driver's `interfaces/imports.if` uses, it follows the `via`
@@ -74,10 +78,11 @@ use {
     },
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
-        FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS,
-        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESOURCES,
-        MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED, PinSetting,
-        Priority, Region, ResourceRecord, STACK_REGION, VideoBlock,
+        FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
+        MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS,
+        MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL,
+        PAGE_FRAME, PAGE_UNTYPED, PinSetting, Priority, Region, ResourceRecord, STACK_REGION,
+        StackSpan, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
@@ -121,14 +126,19 @@ const SERIAL_COMPATIBLE: &str = "arm,pl011";
 /// Most driver instances one boot loads.
 pub const MAX_DRIVER_INSTANCES: usize = 16;
 
-/// Pages of each driver Thread's stack: 32 KiB. `usb-core`'s Thread runs the
-/// hub loop, an enumeration (its descriptor buffers), a trace line and the log
-/// channel's send in one chain, which overflowed 16 KiB under QEMU.
+/// Pages of each driver Thread's stack: 32 KiB (approved by the maintainer).
+/// `usb-core`'s Thread runs the hub loop, an enumeration (its descriptor
+/// buffers), a trace line and the log channel's send in one chain, which
+/// overflowed 16 KiB under QEMU.
 const STACK_PAGES: u32 = 8;
 
+/// Pages of the one stack a component's fault handler runs on: 16 KiB, room
+/// for a log line and its semihosting copy under QEMU.
+const FAULT_STACK_PAGES: u32 = 4;
+
 /// First slot of a driver's table Kickstart fills: the slots below are the
-/// well-known ones every component table has.
-const FIRST_DRIVER_SLOT: u32 = 5;
+/// well-known ones every component table has, up to `FAULT_HANDLER`.
+const FIRST_DRIVER_SLOT: u32 = KeySlot::FAULT_HANDLER.0 + 1;
 
 /// Guard of the first driver instance's table; later instances count up.
 const FIRST_DRIVER_GUARD: u32 = 0x0D_0000;
@@ -808,9 +818,38 @@ pub fn load_drivers(
             "🥾 driver {} declares too many Threads",
             image.name
         );
-        let mut further_stack_tops = [0; MAX_FURTHER_THREADS];
-        for top in further_stack_tops.iter_mut().take(driver.threads.len()) {
-            *top = builder.user_stack(&mut stacks, STACK_PAGES, slots).top;
+        // Each Thread's stack, the first Thread's first, for the init record.
+        let mut thread_stacks = [StackSpan::default(); 1 + MAX_FURTHER_THREADS];
+        thread_stacks[0] = StackSpan {
+            bottom: stack.bottom,
+            top: stack.top,
+        };
+        for span in thread_stacks.iter_mut().skip(1).take(driver.threads.len()) {
+            let further = builder.user_stack(&mut stacks, STACK_PAGES, slots);
+            *span = StackSpan {
+                bottom: further.bottom,
+                top: further.top,
+            };
+        }
+        // A component with a fault handler export gets it at its table's
+        // `FAULT_HANDLER` slot, on a stack of its own: a Thread that overflowed
+        // its stack still has one to report on.
+        if let Some(fault_entry) = image.export(FAULT_HANDLER_EXPORT) {
+            let fault_pool = builder.stack_pool(&mut stacks, FAULT_STACK_PAGES, 1, slots);
+            AddressSpaceKey::from_key(component.address_space_key)
+                .create_invocation(
+                    fault_entry,
+                    &component.table(),
+                    KeySlot::FAULT_HANDLER,
+                    fault_pool,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "🥾 {}: fault handler CreateInvocation failed: {:?}",
+                        image.name,
+                        error.code()
+                    )
+                });
         }
         let init_page =
             builder.private_pages(component.address_space_key, component.l2, INIT_VA, 1, slots);
@@ -827,6 +866,8 @@ pub fn load_drivers(
             slot
         };
         let mut init = DriverInit::EMPTY;
+        init.set_name(image.name);
+        init.thread_stacks = thread_stacks;
         init.address_space = component
             .local_key(KeySlot::SELF_ADDRESS_SPACE.0, 1)
             .to_wire();
@@ -1021,12 +1062,12 @@ pub fn load_drivers(
         let (thread, time) =
             configure_thread(image.entry.expect("a driver has an entry"), stack.top);
         let mut further_threads = [None; MAX_FURTHER_THREADS];
-        for ((record, declared), &stack_top) in further_threads
+        for ((record, declared), span) in further_threads
             .iter_mut()
             .zip(driver.threads)
-            .zip(&further_stack_tops)
+            .zip(&thread_stacks[1..])
         {
-            *record = Some(configure_thread(declared.entry, stack_top).0);
+            *record = Some(configure_thread(declared.entry, span.top).0);
         }
         let notification = retype(ObjectType::NOTIFICATION);
         let event_count = retype(ObjectType::EVENT_COUNT);
@@ -1599,8 +1640,9 @@ pub fn load_drivers(
             init: &init,
             first_free_slot,
         });
-        // The first Thread is normal; the further ones as they declare.
-        let priorities = core::iter::once(Priority::NORMAL).chain(
+        // Each Thread as it declares: the first with `entry_priority!`, the
+        // further ones with `driver_threads!`.
+        let priorities = core::iter::once(Priority(instance.driver.priority)).chain(
             instance
                 .driver
                 .threads
