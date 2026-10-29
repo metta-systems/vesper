@@ -15,8 +15,11 @@ use {
     core::cmp::min,
 };
 
-/// Complete splits tried after one start split before the transaction is
-/// started again: the hub may need several microframes for the device.
+/// Complete splits of a poll answered NYET before the poll is started again,
+/// when the complete splits are not placed by microframe (the controller's
+/// interrupt Thread places them, see `microframe`, and ends the window with
+/// [`Event::Missed`] instead). A non-periodic transaction is never started
+/// again after NYET.
 pub const MAX_NYET: u32 = 4;
 
 /// Times a transaction is started again (the hub or device answered NAK, or a
@@ -45,20 +48,32 @@ pub enum Event {
     Nak,
     /// The device answered with a STALL.
     Stalled,
-    /// A transaction error, a split that started too late, or a toggle error.
+    /// A transaction error, a split that started too late, a toggle error, or
+    /// a halt without a reason the phase can give.
     Error,
     /// A bus error that cannot be recovered from.
     Failed,
+    /// The complete splits of a periodic transaction ran out of their window
+    /// (USB 2.0 §11.18.4: microframes `Y+1` to `Y+3`) without the result; the
+    /// translator has dropped it (§11.18.6).
+    Missed,
 }
 
 /// What a channel's interrupts say about a run of `phase`, or `None` while
-/// nothing decisive happened. A STALL outranks the other events, a bus error
-/// outranks a result, and a result outranks a retry.
+/// the channel has not halted. In DMA mode the controller halts the channel
+/// after every start and complete split and `HCINTn` holds the reason (see
+/// `regs::halt_event_mask`); only an AHB error is decisive before the halt.
+/// A STALL outranks the other events, a bus error outranks a result, and a
+/// result outranks a retry.
 #[must_use]
 pub fn event_of(phase: Phase, interrupts: ChannelInterrupts) -> Option<Event> {
-    if interrupts.stall() {
+    if interrupts.ahb_error() {
+        Some(Event::Failed)
+    } else if !interrupts.halted() {
+        None
+    } else if interrupts.stall() {
         Some(Event::Stalled)
-    } else if interrupts.ahb_error() || interrupts.babble() {
+    } else if interrupts.babble() {
         Some(Event::Failed)
     } else if interrupts.transfer_complete() && phase == Phase::Complete {
         Some(Event::Done)
@@ -74,7 +89,7 @@ pub fn event_of(phase: Phase, interrupts: ChannelInterrupts) -> Option<Event> {
     } else if interrupts.ack() && phase == Phase::Start {
         Some(Event::Accepted)
     } else {
-        None
+        Some(Event::Error)
     }
 }
 
@@ -133,6 +148,12 @@ impl Sequence {
         self.restarts
     }
 
+    /// Complete splits answered NYET since the last start split.
+    #[must_use]
+    pub const fn not_yet(&self) -> u32 {
+        self.not_yet
+    }
+
     /// The phase to run now.
     #[must_use]
     pub const fn phase(&self) -> Phase {
@@ -169,6 +190,15 @@ impl Sequence {
                 self.phase = Phase::Start;
                 self.not_yet = 0;
                 Step::Issue(Phase::Start)
+            }
+            // A non-periodic transaction stays in the translator's buffer until
+            // a complete split collects it (USB 2.0 §11.17.1): NYET only says it
+            // has not finished on the full- or low-speed bus yet. Starting it
+            // over would hand the translator a second copy while it holds the
+            // first. The caller bounds how long it keeps asking.
+            (Phase::Complete, Event::NotYet) if !self.poll => {
+                self.not_yet += 1;
+                Step::Issue(Phase::Complete)
             }
             (Phase::Complete, Event::NotYet) => {
                 self.not_yet += 1;

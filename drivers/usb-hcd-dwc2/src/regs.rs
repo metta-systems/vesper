@@ -524,6 +524,46 @@ pub fn transfer_size(bytes: u32, packets: u16, pid: Pid) -> TransferSize {
         .with_pid(pid)
 }
 
+/// Everything a run of a host channel programs, composed from scratch for
+/// every run so nothing of the channel's last run carries over: a channel
+/// that ran a split for a device behind a hub runs a high-speed transfer
+/// next with `HCSPLTn` written to zero, and the device address, endpoint,
+/// direction, type, packet size, multi-count, `OddFrm`, PID and packet count
+/// all come from the run's own target (the `DWC_otg` databook's channel
+/// initialisation: program `HCINTMSKn`, `HCTSIZn`, `HCDMAn`, `HCSPLTn`, then
+/// `HCCHARn` with `ChEna`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelProgram {
+    /// `HCCHARn`, with `ChEna` set: written last, it starts the channel.
+    pub characteristics: Characteristics,
+    pub split: Split,
+    pub transfer_size: TransferSize,
+}
+
+/// The program of one run to `target`: a start split, or a complete split
+/// (`complete_split`) for a target behind a hub, `bytes` in `packets` packets
+/// from `pid`. A periodic (interrupt) run goes in an odd (micro)frame if
+/// `odd_frame`; `OddFrm` is clear for every other kind.
+#[must_use]
+pub fn channel_program(
+    target: Target,
+    complete_split: bool,
+    pid: Pid,
+    bytes: u32,
+    packets: u16,
+    odd_frame: bool,
+) -> ChannelProgram {
+    let periodic = matches!(
+        target.kind,
+        TransferKind::Interrupt | TransferKind::Isochronous
+    );
+    ChannelProgram {
+        characteristics: characteristics(target, true).with_odd_frame(periodic && odd_frame),
+        split: split_control(target, complete_split),
+        transfer_size: transfer_size(bytes, packets, pid),
+    }
+}
+
 /// What a channel interrupt means for the transfer in progress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelOutcome {
@@ -539,22 +579,33 @@ pub enum ChannelOutcome {
     Failed,
 }
 
-/// The outcome of `interrupts`, or `None` when no event is pending. A STALL
-/// outranks the other events, and a bus error outranks a retry.
+/// The outcome of a non-periodic transfer to a device on the root port, or
+/// `None` while the channel has not halted.
+///
+/// In DMA mode the controller retries a non-periodic transaction answered
+/// NAK or NYET itself and retries a transaction error up to three times; it
+/// halts the channel only when the transfer completes or cannot go on, and
+/// the events in `HCINTn` then say why (the `DWC_otg` databook's DMA-mode host
+/// programming model: the application unmasks `ChHltd` and reads `HCINTn` at
+/// the halt). A NAK seen before the transfer completed is one of those
+/// retries, so a completed transfer outranks it. A STALL outranks everything,
+/// and a bus error the result. Only an AHB error is decisive before the halt.
 #[must_use]
 pub fn channel_outcome(interrupts: ChannelInterrupts) -> Option<ChannelOutcome> {
-    if interrupts.stall() {
-        Some(ChannelOutcome::Stalled)
-    } else if interrupts.ahb_error() || interrupts.babble() {
+    if interrupts.ahb_error() {
         Some(ChannelOutcome::Failed)
-    } else if interrupts.nak() || interrupts.transaction_error() || interrupts.data_toggle_error() {
-        Some(ChannelOutcome::Retry)
+    } else if !interrupts.halted() {
+        None
+    } else if interrupts.stall() {
+        Some(ChannelOutcome::Stalled)
+    } else if interrupts.babble() {
+        Some(ChannelOutcome::Failed)
     } else if interrupts.transfer_complete() {
         Some(ChannelOutcome::Complete)
-    } else if interrupts.halted() {
-        Some(ChannelOutcome::Halted)
+    } else if interrupts.nak() || interrupts.transaction_error() || interrupts.data_toggle_error() {
+        Some(ChannelOutcome::Retry)
     } else {
-        None
+        Some(ChannelOutcome::Halted)
     }
 }
 
@@ -623,8 +674,10 @@ pub const fn host_channel_bit(index: usize) -> u32 {
     1 << index
 }
 
-/// The channel events a transfer waits for: every bit [`channel_outcome`]
-/// reads. Unmasked only while a transfer is armed.
+/// The channel events a poll of an interrupt endpoint on the root port waits
+/// for: every bit [`poll_outcome`] reads but the frame overrun. A NAK ends a
+/// poll: the controller halts a periodic channel answered NAK, and the poll
+/// is due again an interval later. Unmasked only while a poll is armed.
 #[must_use]
 pub fn channel_event_mask() -> ChannelInterrupts {
     ChannelInterrupts::ZERO
@@ -638,13 +691,133 @@ pub fn channel_event_mask() -> ChannelInterrupts {
         .with_data_toggle_error(true)
 }
 
-/// The channel events a split transaction waits for: those of
-/// [`channel_event_mask`] plus the hub's ACK of a start split, its NYET, and a
-/// split that started too late in its microframe.
+/// The channel events a non-periodic transfer and every split transaction
+/// wait for: the halt, and an AHB error. In DMA mode the controller halts the
+/// channel when a transfer ends and after each start or complete split, and
+/// `HCINTn` then holds the reason (ACK, NYET, NAK, STALL, transaction error...);
+/// the `DWC_otg` databook has the application unmask only `ChHltd` in DMA mode.
+/// Interrupting on a NAK instead would halt a channel the controller is still
+/// retrying.
 #[must_use]
-pub fn split_event_mask() -> ChannelInterrupts {
-    channel_event_mask()
-        .with_ack(true)
-        .with_nyet(true)
-        .with_frame_overrun(true)
+pub fn halt_event_mask() -> ChannelInterrupts {
+    ChannelInterrupts::ZERO
+        .with_halted(true)
+        .with_ahb_error(true)
+}
+
+/// How many channel runs of one transfer or poll ended with each event, for
+/// the trace of a failure: which event dominates.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EventCounts {
+    /// Channel runs counted.
+    pub runs: u32,
+    pub nak: u32,
+    pub nyet: u32,
+    pub transaction_error: u32,
+    pub stall: u32,
+    pub babble: u32,
+    pub data_toggle_error: u32,
+    pub frame_overrun: u32,
+    pub ahb_error: u32,
+}
+
+impl EventCounts {
+    /// No runs counted.
+    pub const ZERO: Self = Self {
+        runs: 0,
+        nak: 0,
+        nyet: 0,
+        transaction_error: 0,
+        stall: 0,
+        babble: 0,
+        data_toggle_error: 0,
+        frame_overrun: 0,
+        ahb_error: 0,
+    };
+
+    /// Count one channel run that ended with `events`. A run that saw an
+    /// event more than once (the controller's own NAK retries) counts it once.
+    pub fn add(&mut self, events: ChannelInterrupts) {
+        self.runs = self.runs.saturating_add(1);
+        self.nak = self.nak.saturating_add(u32::from(events.nak()));
+        self.nyet = self.nyet.saturating_add(u32::from(events.nyet()));
+        self.transaction_error = self
+            .transaction_error
+            .saturating_add(u32::from(events.transaction_error()));
+        self.stall = self.stall.saturating_add(u32::from(events.stall()));
+        self.babble = self.babble.saturating_add(u32::from(events.babble()));
+        self.data_toggle_error = self
+            .data_toggle_error
+            .saturating_add(u32::from(events.data_toggle_error()));
+        self.frame_overrun = self
+            .frame_overrun
+            .saturating_add(u32::from(events.frame_overrun()));
+        self.ahb_error = self.ahb_error.saturating_add(u32::from(events.ahb_error()));
+    }
+
+    /// Count `count` complete splits answered NYET that the interrupt Thread
+    /// issued again without a run of its own being counted here.
+    pub const fn add_nyets(&mut self, count: u32) {
+        self.nyet = self.nyet.saturating_add(count);
+        self.runs = self.runs.saturating_add(count);
+    }
+
+    /// Add the counts of `other`.
+    pub const fn merge(&mut self, other: &Self) {
+        self.runs = self.runs.saturating_add(other.runs);
+        self.nak = self.nak.saturating_add(other.nak);
+        self.nyet = self.nyet.saturating_add(other.nyet);
+        self.transaction_error = self
+            .transaction_error
+            .saturating_add(other.transaction_error);
+        self.stall = self.stall.saturating_add(other.stall);
+        self.babble = self.babble.saturating_add(other.babble);
+        self.data_toggle_error = self
+            .data_toggle_error
+            .saturating_add(other.data_toggle_error);
+        self.frame_overrun = self.frame_overrun.saturating_add(other.frame_overrun);
+        self.ahb_error = self.ahb_error.saturating_add(other.ahb_error);
+    }
+
+    /// The name of the event counted most often, `None` without any: the
+    /// cause a failure line leads with.
+    #[must_use]
+    pub fn dominant(&self) -> Option<&'static str> {
+        let counted = [
+            (self.nak, "nak"),
+            (self.nyet, "nyet"),
+            (self.transaction_error, "xacterr"),
+            (self.stall, "stall"),
+            (self.babble, "babble"),
+            (self.data_toggle_error, "datatgl"),
+            (self.frame_overrun, "frmovrun"),
+            (self.ahb_error, "ahberr"),
+        ];
+        let mut best: Option<(u32, &'static str)> = None;
+        for (count, name) in counted {
+            if count > 0 && best.is_none_or(|(most, _)| count > most) {
+                best = Some((count, name));
+            }
+        }
+        best.map(|(_, name)| name)
+    }
+}
+
+impl core::fmt::Display for EventCounts {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            formatter,
+            "{} runs: nak {} nyet {} xacterr {} stall {} babble {} datatgl {} frmovrun {} ahberr {} (most: {})",
+            self.runs,
+            self.nak,
+            self.nyet,
+            self.transaction_error,
+            self.stall,
+            self.babble,
+            self.data_toggle_error,
+            self.frame_overrun,
+            self.ahb_error,
+            self.dominant().unwrap_or("none")
+        )
+    }
 }

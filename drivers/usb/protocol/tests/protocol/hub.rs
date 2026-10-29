@@ -155,10 +155,18 @@ fn a_port_that_gave_up_takes_the_next_device_after_the_unplugging() {
         port.next(PortEvent::Delayed),
         PortAction::Enumerate { speed: Speed::Low }
     );
+    // The port is disabled before it gives up, so the device cannot answer
+    // at an address while the next device takes it.
     assert_eq!(
         port.next(PortEvent::Enumerated { ok: false }),
-        PortAction::Failed
+        PortAction::Disable
     );
+    assert!(
+        port.holds_default_address(),
+        "until disabled, the device may answer at address 0"
+    );
+    assert_eq!(port.next(PortEvent::Done), PortAction::Failed);
+    assert!(!port.holds_default_address());
     // Still plugged in: look again later.
     assert_eq!(port.next(PortEvent::Delayed), PortAction::PollStatus);
     let plugged = status(POWER | CONNECTED | LOW_SPEED, 0);
@@ -422,9 +430,130 @@ fn over_current_and_a_reset_that_leaves_the_port_disabled_fail_the_port() {
     port.next(PortEvent::Delayed);
     assert_eq!(
         port.next(PortEvent::Enumerated { ok: false }),
-        PortAction::Failed
+        PortAction::Disable
     );
+    assert!(!port.failed(), "not until the port is disabled");
+    assert_eq!(port.next(PortEvent::Done), PortAction::Failed);
     assert!(port.failed());
+}
+
+#[test]
+fn the_port_of_a_failed_device_is_disabled_with_clear_feature_port_enable() {
+    // USB 2.0 §11.24.2.2: ClearPortFeature(PORT_ENABLE), recipient other.
+    let setup = clear_port_feature(4, PORT_ENABLE);
+    assert_eq!(setup.request_type, 0x23);
+    assert_eq!(setup.request, REQUEST_CLEAR_FEATURE);
+    assert_eq!(setup.value, 1);
+    assert_eq!(setup.index, 4);
+    assert_eq!(setup.length, 0);
+}
+
+#[test]
+fn a_reset_reports_the_speed_from_the_port_status_bits() {
+    // §11.24.2.7.1: bit 9 low speed, bit 10 high speed, neither full speed.
+    let high = status(POWER | CONNECTED | ENABLED | HIGH_SPEED, RESET_CHANGED);
+    assert_eq!(high.speed(), Speed::High);
+    let full = status(POWER | CONNECTED | ENABLED, RESET_CHANGED);
+    assert_eq!(full.speed(), Speed::Full);
+    let low = status(POWER | CONNECTED | ENABLED | LOW_SPEED, RESET_CHANGED);
+    assert_eq!(low.speed(), Speed::Low);
+    // The port machine enumerates at the speed of the status that ended the reset.
+    let mut port = port_at_reset();
+    port.next(PortEvent::Done);
+    port.next(PortEvent::Delayed);
+    assert_eq!(
+        port.next(PortEvent::Status(high)),
+        PortAction::ClearChange {
+            feature: C_PORT_RESET
+        }
+    );
+    assert_eq!(
+        port.next(PortEvent::Done),
+        PortAction::Wait {
+            milliseconds: RESET_RECOVERY_MS
+        },
+        "TRSTRCY: 10 ms before the first transaction (§9.2.6.2)"
+    );
+    assert_eq!(
+        port.next(PortEvent::Delayed),
+        PortAction::Enumerate { speed: Speed::High }
+    );
+    assert_eq!(RESET_RECOVERY_MS, 10);
+}
+
+#[test]
+fn a_low_speed_keyboard_behind_a_keyboard_hub_uses_the_inner_hubs_translator() {
+    // The Raspberry Pi 3: root port -> LAN9514 (address 1, high speed) ->
+    // port 4: the keyboard's own hub (address 3, high speed) -> port 1: the
+    // keyboard (low speed).
+    let lan9514 = 1;
+    let keyboard_hub = 3;
+    // The keyboard's hub is high speed on a high-speed hub: no split.
+    let inner_route = translator_route(lan9514, Speed::High, None, 4, Speed::High);
+    assert_eq!(inner_route, None);
+    // The keyboard goes through its own hub's translator, not the LAN9514's.
+    assert_eq!(
+        translator_route(keyboard_hub, Speed::High, inner_route, 1, Speed::Low),
+        Some(TranslatorRoute {
+            hub_address: keyboard_hub,
+            hub_port: 1
+        })
+    );
+    // A mouse on the keyboard's hub, likewise.
+    assert_eq!(
+        translator_route(keyboard_hub, Speed::High, inner_route, 2, Speed::Low),
+        Some(TranslatorRoute {
+            hub_address: keyboard_hub,
+            hub_port: 2
+        })
+    );
+    // A mouse straight on the LAN9514 goes through the LAN9514's translator.
+    assert_eq!(
+        translator_route(lan9514, Speed::High, None, 2, Speed::Low),
+        Some(TranslatorRoute {
+            hub_address: lan9514,
+            hub_port: 2
+        })
+    );
+    // A keyboard hub that came up at full speed on LAN9514 port 4 is reached
+    // through the LAN9514's translator, and so is every device behind it.
+    let full_speed_hub_route = translator_route(lan9514, Speed::High, None, 4, Speed::Full);
+    assert_eq!(
+        full_speed_hub_route,
+        Some(TranslatorRoute {
+            hub_address: lan9514,
+            hub_port: 4
+        })
+    );
+    assert_eq!(
+        translator_route(
+            keyboard_hub,
+            Speed::Full,
+            full_speed_hub_route,
+            1,
+            Speed::Low
+        ),
+        full_speed_hub_route
+    );
+}
+
+#[test]
+fn the_device_protocol_names_the_translators_and_the_characteristics_the_think_time() {
+    // USB 2.0 §11.23.1: bDeviceProtocol 0, 1 and 2.
+    assert_eq!(Translators::of(Speed::High, 0), Translators::None);
+    assert_eq!(Translators::of(Speed::High, 1), Translators::Single);
+    assert_eq!(Translators::of(Speed::High, 2), Translators::Multiple);
+    assert_eq!(Translators::of(Speed::High, 7), Translators::Unknown(7));
+    assert_eq!(
+        Translators::of(Speed::Full, 2),
+        Translators::None,
+        "a high-speed hub running at full speed translates nothing"
+    );
+    // §11.23.2.1: wHubCharacteristics bits 5 and 6.
+    assert_eq!(think_time_bits(0x0000), 8);
+    assert_eq!(think_time_bits(0x0020), 16);
+    assert_eq!(think_time_bits(0x0040), 24);
+    assert_eq!(think_time_bits(0x00e0), 32);
 }
 
 #[test]

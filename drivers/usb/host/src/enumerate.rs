@@ -8,7 +8,7 @@ use {
         usb_hcd_v1::Speed as HcdSpeed,
     },
     vesper_usb_protocol::{
-        enumeration::{Enumerator, Event, Failure, Speed, Step},
+        enumeration::{Enumerator, Event, Failure, Speed, Step, default_max_packet0},
         setup::{DESCRIPTOR_CONFIGURATION, DESCRIPTOR_DEVICE, REQUEST_SET_ADDRESS, SetupPacket},
     },
 };
@@ -136,6 +136,9 @@ pub fn enumerate(
             Step::ResetPort => match reset() {
                 Ok(reset_speed) => {
                     speed = reset_speed;
+                    // The first descriptor read runs at the speed's packet
+                    // size: a high-speed device's endpoint 0 takes 64 bytes.
+                    max_packet = default_max_packet0(speed);
                     enumerator.next(Event::PortReset(speed))
                 }
                 Err(error) => break Err(error),

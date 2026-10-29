@@ -32,15 +32,23 @@ the serial trace; see [usb-completed.md](usb-completed.md).
   failed `SET_CONFIGURATION` on the board in `boot-wood-test`: the status stage (a
   zero-length IN) was retried for the whole 1 s budget and ended `halted xacterr`
   (`usb-hcd-dwc2: control to device 2 held the channel 1000 ms`), although it
-  configured in earlier `boot-usb-core-test` runs. Not reproduced. `channel_outcome`
-  retries a NAK and a transaction error alike, so the trace does not say which the
-  earlier attempts met; a device must finish a no-data request's status stage within
-  50 ms (USB 2.0 §9.2.6.4), so 1 s of NAKs is a device fault, and 1 s of transaction
-  errors (no valid handshake) means the device stopped answering. To check on the
-  board: whether the earlier attempts NAKed or met transaction errors (count each in
-  the trace), and whether it recurs now that the controller's pauses park instead of
-  spinning. Not chosen yet: cutting the status stage's retry budget to the spec's
-  50 ms.
+  configured in earlier `boot-usb-core-test` runs. Not reproduced. A device must
+  finish a no-data request's status stage within 50 ms (USB 2.0 §9.2.6.4). Found
+  since (2026-10-29, see [usb-completed.md](usb-completed.md)): the driver unmasked
+  NAK and halted the channel at the first NAK interrupt of a high-speed status
+  stage while the controller, in DMA mode, was still retrying it; it now waits for
+  the halt. The failure line now counts the runs that ended in NAK and in XactErr.
+  To check on the board: whether it recurs, and which count dominates. Not chosen
+  yet: cutting the status stage's retry budget to the spec's 50 ms.
+- [ ] Verify the 2026-10-29 triage on the board (`just boot-usb-hid-test`, then
+  `just boot-wood-test`), in each topology: mouse straight on a LAN9514 port,
+  keyboard (its own high-speed hub) on a LAN9514 port, mouse on the keyboard's
+  hub. Expected: no `complete split ... restarted` lines at steady state (or few,
+  with the last complete split 2 to 4 microframes after the start split), the
+  keyboard's hub's first `GET_DESCRIPTOR` answering, and any failed enumeration
+  followed by `disabled after the failed enumeration`. Open on hardware only: the
+  databook's DMA-mode NAK retry for non-periodic channels and the `OddFrm`
+  targeting are untested in QEMU, whose controller has no translator.
 - [ ] Bring `usb-core` and the controller into the Raspberry Pi 3 boot image
   (`kernel/kickstart/image.toml`) with the shell, which holds the serial channel the
   trace uses; only one program gets a serial channel today.
@@ -53,8 +61,10 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 - [ ] Interrupt-IN on the Raspberry Pi 3 works through split polls (see
   [usb-completed.md](usb-completed.md)); still open: the periodic transmit FIFO
   (`HPTXFSIZ`), polls and control transfers sharing the one host channel (a control
-  transfer NAKed for the whole retry budget still holds it for a second), and an
-  unsplit interrupt device on the board.
+  transfer the device answers NAK for the whole retry budget still holds it for a
+  second), and an unsplit interrupt device on the board. Multi-TT operation of a
+  protocol-2 hub (alternate setting 1, USB 2.0 §11.23.1) is not selected; every
+  split through such a hub shares one translator.
 - [ ] `hid`: frames missed while `input-trace` has no buffer posted show as `Dropped`;
   a second keyboard or mouse (one of each is claimed), `usb_v1.control` instead of its
   own control pipe, and the keyboard's real `max_packet0` for its setup requests (it

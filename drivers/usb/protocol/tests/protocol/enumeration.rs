@@ -183,3 +183,12 @@ fn reply_that_is_not_a_device_descriptor_is_bad_length() {
         Step::Failed(Failure::Descriptor(ParseError::BadLength))
     );
 }
+
+#[test]
+fn endpoint_zero_starts_at_the_packet_size_its_speed_allows() {
+    // USB 2.0 §5.5.3: high speed 64 only, low speed 8 only, full speed 8 to
+    // 64 (8 until bMaxPacketSize0 is read).
+    assert_eq!(default_max_packet0(Speed::High), 64);
+    assert_eq!(default_max_packet0(Speed::Low), 8);
+    assert_eq!(default_max_packet0(Speed::Full), 8);
+}

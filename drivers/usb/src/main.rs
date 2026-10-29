@@ -65,9 +65,10 @@ mod component {
             descriptor::{self, Descriptor},
             enumeration::{Speed, interval_ms},
             hub::{
-                CLASS_HUB, HubDescriptor, MAX_HUB_DESCRIPTOR, PORT_POWER, PORT_RESET, Port,
-                PortAction, PortEvent, PortStatus, clear_port_feature, get_hub_descriptor,
-                get_port_status, set_port_feature,
+                C_PORT_RESET, CLASS_HUB, HubDescriptor, MAX_HUB_DESCRIPTOR, PORT_ENABLE,
+                PORT_POWER, PORT_RESET, Port, PortAction, PortEvent, PortStatus, TranslatorRoute,
+                Translators, clear_port_feature, get_hub_descriptor, get_port_status,
+                set_port_feature, think_time_bits, translator_route,
             },
             report_channel::{ReportChannel, SLOTS, data_area as report_data_area},
             setup::SetupPacket,
@@ -276,6 +277,8 @@ mod component {
         reports: Option<Reports>,
         /// Hub requests that failed, for the trace's back-off.
         hub_failures: u32,
+        /// Port resets that finished, for the trace's back-off.
+        resets_done: u32,
     }
 
     /// The client side of the controller's report channel.
@@ -324,6 +327,11 @@ mod component {
         event: PortEvent,
         /// Whether the port is driven at all.
         active: bool,
+        /// The address a device that failed to enumerate may have taken
+        /// before it failed: it goes back to the pool only once the port is
+        /// disabled, so no later device is given an address a stray device
+        /// still answers at.
+        failed_address: Option<u8>,
     }
 
     /// A hub the core drives: what its transfers need, its control pipe and
@@ -457,6 +465,23 @@ mod component {
                 trace,
                 "usb-core: {place}: control {bytes:02x?} failed: {error:?}"
             ),
+        }
+    }
+
+    /// The translator a device's split transactions go through, for the
+    /// trace: ` behind the translator of hub 1 port 2` or nothing.
+    struct Behind(Option<Route>);
+
+    impl core::fmt::Display for Behind {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self.0 {
+                Some(route) => write!(
+                    formatter,
+                    " behind the translator of hub {} port {}",
+                    route.hub_address, route.hub_port
+                ),
+                None => Ok(()),
+            }
         }
     }
 
@@ -737,13 +762,21 @@ mod component {
                 self.pipes.close(&control);
                 return None;
             };
+            let device_protocol = match descriptor::walk(&hub.device).next() {
+                Some(Ok(Descriptor::Device(device))) => device.protocol,
+                _ => 0,
+            };
             trace!(
                 self.trace,
-                "usb-core: hub at address {}: {} ports, power good after {} ms, characteristics {:#06x}",
+                "usb-core: hub at address {} ({} speed{}): {} ports, power good after {} ms, characteristics {:#06x}, device protocol {device_protocol} ({:?} transaction translators, think time {} FS bits)",
                 hub.address,
+                speed_name(hub.speed),
+                Behind(route),
                 descriptor.ports,
                 descriptor.power_on_to_good_ms,
-                descriptor.characteristics
+                descriptor.characteristics,
+                Translators::of(hub.speed, device_protocol),
+                think_time_bits(descriptor.characteristics)
             );
             let ports = usize::from(descriptor.ports).min(MAX_PORTS);
             if usize::from(descriptor.ports) > MAX_PORTS {
@@ -765,6 +798,7 @@ mod component {
                     wake_ns: 0,
                     event: PortEvent::Start,
                     active: index < ports,
+                    failed_address: None,
                 }),
                 ports,
             })
@@ -1112,6 +1146,11 @@ mod component {
                         }
                     },
                     PortAction::ClearChange { feature } => {
+                        if feature == C_PORT_RESET
+                            && let PortEvent::Status(status) = event
+                        {
+                            self.trace_reset_done(hub.address, number, status);
+                        }
                         let setup = clear_port_feature(number, feature);
                         if self.hub_request(control, setup, &mut []).is_none()
                             && let Some(count) = self.hub_failure()
@@ -1138,8 +1177,32 @@ mod component {
                         PortEvent::Done
                     }
                     PortAction::Enumerate { speed } => {
-                        let ok = self.enumerate_behind(hub, number, speed, effects);
-                        PortEvent::Enumerated { ok }
+                        let result = self.enumerate_behind(hub, number, speed, effects);
+                        if let Err(address) = result {
+                            slot.failed_address = address;
+                        }
+                        PortEvent::Enumerated { ok: result.is_ok() }
+                    }
+                    PortAction::Disable => {
+                        let setup = clear_port_feature(number, PORT_ENABLE);
+                        let disabled = self.hub_request(control, setup, &mut []).is_some();
+                        match slot.failed_address.take() {
+                            Some(address) if disabled => {
+                                self.addresses.release(address);
+                                trace!(
+                                    self.trace,
+                                    "usb-core: hub {} port {number}: disabled after the failed enumeration, address {address} free again",
+                                    hub.address
+                                );
+                            }
+                            Some(address) => trace!(
+                                self.trace,
+                                "usb-core: hub {} port {number}: could not be disabled after the failed enumeration; address {address} stays taken",
+                                hub.address
+                            ),
+                            None => {}
+                        }
+                        PortEvent::Done
                     }
                     PortAction::Teardown => {
                         let removed = self.devices.remove_port(hub.address, number);
@@ -1172,6 +1235,29 @@ mod component {
             }
         }
 
+        /// Trace the raw port status and change words a finished reset left
+        /// (USB 2.0 §11.24.2.7: `wPortStatus` bit 1 enabled, bit 9 low speed,
+        /// bit 10 high speed; `wPortChange` bit 4 reset done), and the speed
+        /// they decode to: the 1st, 2nd, 4th, 8th... reset.
+        fn trace_reset_done(&mut self, hub: u8, number: u8, status: PortStatus) {
+            self.resets_done = self.resets_done.wrapping_add(1);
+            if self.resets_done.is_power_of_two() {
+                trace!(
+                    self.trace,
+                    "usb-core: hub {hub} port {number}: reset done ({} so far): port status {:#06x} change {:#06x}: {} speed, {}",
+                    self.resets_done,
+                    status.status,
+                    status.change,
+                    speed_name(status.speed()),
+                    if status.enabled() {
+                        "enabled"
+                    } else {
+                        "not enabled"
+                    }
+                );
+            }
+        }
+
         /// `SET_FEATURE` on a port; a failure is traced.
         fn set_feature(&mut self, control: &Pipe, number: u8, feature: u16, what: &str) {
             let setup = set_port_feature(number, feature);
@@ -1188,31 +1274,43 @@ mod component {
         /// Enumerate the device behind port `number` of `hub`, which is reset
         /// and runs at `speed`. A low- or full-speed device behind a
         /// high-speed hub is reached with split transactions.
+        ///
+        /// # Errors
+        ///
+        /// The address the device was to take when it failed to enumerate: it
+        /// may have taken it before failing, so the caller frees it only once
+        /// the port is disabled. `None` when no address was left.
         fn enumerate_behind(
             &mut self,
             hub: HubInfo,
             number: u8,
             speed: Speed,
             effects: &mut Effects,
-        ) -> bool {
+        ) -> Result<(), Option<u8>> {
             let Some(address) = self.addresses.take() else {
                 trace!(
                     self.trace,
                     "usb-core: hub {} port {number}: no device address left", hub.address
                 );
-                return false;
+                return Err(None);
             };
-            // The transaction translator of a high-speed hub serves the low- and
-            // full-speed devices behind it; those behind a low- or full-speed hub
-            // go through the translator that hub itself goes through.
-            let route = if hub.speed == Speed::High {
-                (speed != Speed::High).then_some(Route {
-                    hub_address: hub.address,
-                    hub_port: number,
-                })
-            } else {
-                hub.route
-            };
+            // The transaction translator of the nearest high-speed hub serves a
+            // low- or full-speed device (USB 2.0 §11.14).
+            let route = translator_route(
+                hub.address,
+                hub.speed,
+                hub.route.map(|route| TranslatorRoute {
+                    hub_address: route.hub_address,
+                    hub_port: route.hub_port,
+                }),
+                number,
+                speed,
+            )
+            .map(|route| Route {
+                hub_address: route.hub_address,
+                hub_port: route.hub_port,
+            });
+            let started = now_ns();
             trace!(
                 self.trace,
                 "usb-core: hub {} port {number}: enumerating a {} speed device as address {address}{}",
@@ -1259,16 +1357,16 @@ mod component {
                     if is_hub {
                         effects.started = self.start_hub(&device, route);
                     }
-                    true
+                    Ok(())
                 }
                 Err(error) => {
                     trace!(
                         self.trace,
-                        "usb-core: hub {} port {number}: enumeration failed: {error:?}",
-                        hub.address
+                        "usb-core: hub {} port {number}: enumeration failed after {} ms: {error:?}",
+                        hub.address,
+                        (now_ns() - started) / 1_000_000
                     );
-                    self.addresses.release(address);
-                    false
+                    Err(Some(address))
                 }
             }
         }
@@ -1331,6 +1429,7 @@ mod component {
             devices: DeviceTable::new(),
             reports: Reports::new(&client),
             hub_failures: 0,
+            resets_done: 0,
         };
         core.wait_for_root_device();
         let Some(root) = core.enumerate_root() else {

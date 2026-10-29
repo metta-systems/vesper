@@ -21,10 +21,44 @@ prototypes and are edited in place. Open decisions are in
   Thread: it waits on the IRQ Notification, reads `HAINT`, clears the events of
   the transfer channel, accumulates them in an atomic while a transfer is armed,
   advances a `completions` EventCount and acknowledges the line. A transfer arms the
-  channel with its events unmasked, then sleeps on `completions` with the remaining
-  deadline (500 ms), so a missing interrupt ends it with `transfer_failed`. Port
-  events stay masked. `GINTSTS.CurMod` is 1 in host mode, and the component waits
-  for that bit.
+  channel, then sleeps on `completions` with the remaining deadline (500 ms), so a
+  missing interrupt ends it with `transfer_failed`. Port events stay masked.
+  `GINTSTS.CurMod` is 1 in host mode, and the component waits for that bit.
+- Interrupt masks follow the databook's DMA mode (2026-10-29): a non-periodic run
+  and every split phase unmask only `ChHltd` and `AHBErr`
+  (`regs::halt_event_mask`) and read the reason from `HCINTn` at the halt. The
+  controller retries a NAKed non-periodic transaction itself, so a NAK bit on a
+  completed transfer is not a failure (`channel_outcome`); before, the driver
+  halted the channel at the first NAK interrupt while the controller was still
+  retrying. A poll of a root-port interrupt endpoint keeps NAK unmasked (a
+  periodic NAK halts the channel anyway). `halt` leaves a channel that already
+  halted alone instead of setting `ChEna` with `ChDis` on it.
+- Every channel run is composed from scratch (`regs::channel_program`):
+  `HCSPLTn` (zero without a route), `HCTSIZn` (bytes, packet count, PID),
+  `HCDMAn`, then `HCCHARn` (address, endpoint, direction, type, packet size,
+  EC/MC 1, `OddFrm` only for periodic runs) with `ChEna`, so no split state or
+  `OddFrm` carries into the next run. Data toggles: SETUP DATA0, data stage
+  from DATA1, status DATA1; interrupt pipes keep their toggle in `Poller`.
+- Periodic split polls (USB 2.0 §11.18.4, §11.18.6): the start split goes in
+  microframe 0 to 4 of a frame (`microframe::start_split_target`), and the
+  complete splits 2, 3 and 4 microframes after it (`Y+1`..`Y+3`). The interrupt
+  Thread issues them itself at the halt of the run before (`SplitEngine` in
+  `main.rs`: after the start split's ACK, and after each NYET while the window
+  lasts), aimed at the next microframe through `HFNUM` and `HCCHARn.OddFrm`,
+  spinning at most a microframe when the next one is too early; the poller wakes
+  only for the answer or a missed window (`split::Event::Missed`, the poll starts
+  over). Before, the poller issued each complete split one Thread hop after the
+  halt, as soon as it could, and a fixed four NYETs ended the window, whatever
+  microframes they fell in. Non-periodic split control transfers have no window
+  (§11.17.1): a NYET is followed by another complete split until the 1 s budget
+  ends, never by a new start split.
+- Failure traces (rate-limited 1st, 2nd, 4th, 8th...): a failed control transfer
+  names the setup bytes, device, speed, route, stage, duration and the count of
+  channel runs that ended with each of NAK, NYET, XactErr, STALL, babble,
+  DataTglErr, FrmOvrun and AHBErr (`regs::EventCounts`, with the one that
+  dominates); a failed poll adds the counts of that poll and of the pipe's
+  failed polls; a restarted periodic complete split names the start split's
+  microframe and the distance to its last complete split.
 - Kickstart caps a node at `MAX_DEVICE_PAGES` (32). The serial channel's control
   page sits at `0x3802_0000`, above the register pages.
 - `drivers/usb-hcd-dwc2` resets the root port and serves `usb_hcd_v1` for control
@@ -46,7 +80,18 @@ prototypes and are edited in place. Open decisions are in
   8, 16, 32 or 64; interrupt and bulk pipes raise `not_permitted`.
 - `set_route` stores the route, and `control` on a routed pipe runs each packet as a
   split transaction: a start split, then complete splits until the hub has the
-  result (`split::Sequence`). A high-speed pipe cannot be routed.
+  result (`split::Sequence`). A high-speed pipe cannot be routed. The route is the
+  nearest high-speed hub upstream of the device and that hub's port
+  (`hub::translator_route`, USB 2.0 §11.14): a low-speed keyboard behind the
+  high-speed hub inside the keyboard goes through that hub's translator, not the
+  LAN9514's. Multi-TT hubs run single-TT (alternate setting 0, §11.23.1).
+- `usb-core` disables a hub port whose device failed to enumerate
+  (`ClearPortFeature(PORT_ENABLE)`, `hub::PortAction::Disable`, §11.5.1.4) and
+  only then returns the address the device was to take to the pool. Before, a
+  failed device stayed on an enabled port at address 0 or at the address it took
+  before failing, while the pool handed that address to the next device: two
+  devices answered the same tokens. A high-speed device's endpoint 0 is opened
+  with 64-byte packets from the first read (§5.5.3).
 - `drivers/usb/protocol` has the setup packet, descriptor walker, enumeration state
   machine and HID boot-report decoder. The state machine has no retry and no
   timeout; the caller supplies delays and port resets as steps. Keyboard decoding

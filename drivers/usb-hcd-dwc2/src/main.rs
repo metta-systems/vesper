@@ -38,7 +38,12 @@
 //! IN transaction on the same host channel, under the same turnstile as the
 //! calls, and returns the report in the buffer. A NAK is not an error, and the
 //! pipe is due again an interval later. Each interrupt transaction is placed in
-//! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`). Both Threads run at
+//! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`). A poll through a
+//! hub's transaction translator starts its start split early in a frame, and
+//! the interrupt Thread issues its complete splits itself as each run halts,
+//! in the microframes USB 2.0 §11.18.4 allots them (`SplitEngine`). Every
+//! non-periodic run and every split phase interrupts only at the channel's
+//! halt, as the databook's DMA mode has it (`regs::halt_event_mask`). Both Threads run at
 //! input priority (`libdevice_driver::Priority::INPUT`), ahead of the CPU-bound
 //! programs; they block between interrupts and polls. Nothing here waits
 //! milliseconds by spinning: a pause parks the Thread on a timed wait
@@ -96,14 +101,19 @@ mod component {
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
+            microframe::{
+                CompleteSplitSlot, FRAME_NUMBER_MASK, between, complete_split_slot, is_odd,
+                next as next_microframe, start_split_ran, start_split_target,
+            },
             periodic::{MAX_POLLED, Polled, Poller, ScheduleError, is_pollable, transaction_us},
-            pipes::{Config, Pipe, PipeError, PipeTable, Route},
+            pipes::{Config, MAX_PIPES, Pipe, PipeError, PipeTable, Route},
             regs::{
-                Channel, ChannelInterrupts, ChannelOutcome, GLOBAL_HOST_CHANNEL, MmioChannel,
-                MmioRegisterBlock, Pid, PollOutcome, RegisterBlock, RxFifoSize, Split, SplitRoute,
-                Target, TxFifoSize, channel_event_mask, channel_offset, channel_outcome,
-                characteristics, host_channel_bit, poll_outcome, port_speed, port_status_bits,
-                port_with_reset_and_power, split_control, split_event_mask, transfer_size,
+                Channel, ChannelInterrupts, ChannelOutcome, ChannelProgram, Characteristics,
+                EventCounts, GLOBAL_HOST_CHANNEL, MmioChannel, MmioRegisterBlock, Pid, PollOutcome,
+                RegisterBlock, RxFifoSize, Split, SplitRoute, Target, TransferSize, TxFifoSize,
+                channel_event_mask, channel_offset, channel_outcome, channel_program,
+                characteristics, halt_event_mask, host_channel_bit, poll_outcome, port_speed,
+                port_status_bits, port_with_reset_and_power,
             },
             split::{
                 Event, Phase, Sequence, Step, event_of, failure_status, next_pid, packet_bytes,
@@ -125,7 +135,7 @@ mod component {
     // services the controller's interrupt. Both are on the path of every key
     // and run ahead of the normal Threads: a split poll's complete split must
     // follow its start split within a few microframes (USB 2.0 §11.18.4), and
-    // each phase wakes the interrupt Thread, then the poller. Both block
+    // the interrupt Thread issues it at the halt of the run before. Both block
     // between interrupts and polls and do little work each time; the root
     // dispatcher's starvation guard runs either as a normal Thread if it ever
     // uses a whole slice without blocking.
@@ -346,6 +356,9 @@ mod component {
         /// Counts the interrupts the interrupt Thread has serviced; a transfer
         /// sleeps on it.
         completions: EventCountKey,
+        /// What the channel runs of the current control transfer or poll
+        /// ended with, for the trace of a failure.
+        events: EventCounts,
     }
 
     impl Controller<'_> {
@@ -497,13 +510,24 @@ mod component {
             }
         }
 
-        /// Halt host channel `index` and wait until it has.
+        /// Halt host channel `index` and wait until it has. A channel that is
+        /// not enabled any more (it halted by itself, which is how every run
+        /// ends in DMA mode) is only quiesced: setting `ChEna` with `ChDis` on
+        /// it would start it again (the `DWC_otg` databook's `HCCHARn`: the
+        /// pair halts a channel that is running).
         fn halt(&mut self, index: usize, target: Target) {
+            // The interrupt Thread stops placing complete splits first, so it
+            // cannot start the channel again behind the halt.
+            ENGINE.cancel();
             let mut channel = channel(self.base, index);
             // Nothing the halt raises is of interest: the interrupt Thread stops
             // recording, and the channel stops raising.
             ARMED.store(false, Ordering::Release);
             channel.write_interrupt_mask(ChannelInterrupts::ZERO);
+            if !channel.read_characteristics().enable() {
+                channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
+                return;
+            }
             channel.write_characteristics(characteristics(target, true).with_disable(true));
             // shortcut: a channel that does not halt is left as it is, since a
             // panic here would hold the turnstile for good; reset the channel
@@ -564,48 +588,70 @@ mod component {
             }
         }
 
-        /// Program host channel `index` for `attempt` and start it. Returns the
-        /// number of interrupts counted so far: the next one may be the
-        /// attempt's, see [`Self::wait_event`].
-        fn start_attempt(&mut self, index: usize, attempt: &Attempt) -> u64 {
+        /// The (micro)frame number `HFNUM` reads now.
+        fn frame_number(&self) -> u32 {
+            self.registers.read_frame_number() & FRAME_NUMBER_MASK
+        }
+
+        /// The bus address of the DMA page's byte at `offset`.
+        fn dma_address(&self, offset: u64) -> u32 {
+            self.dma_bus
+                .wrapping_add(u32::try_from(offset).unwrap_or(u32::MAX))
+        }
+
+        /// Program host channel `index` with `program`, its data at
+        /// `dma_address`, raising the events in `mask`, and start it. Every
+        /// register of the run is written, so nothing of the channel's last
+        /// run carries over (see `ChannelProgram`). Returns the number of
+        /// interrupts counted so far: the next one may be the run's, see
+        /// [`Self::wait_event`].
+        fn start_program(
+            &mut self,
+            index: usize,
+            program: ChannelProgram,
+            dma_address: u32,
+            mask: ChannelInterrupts,
+        ) -> u64 {
             let mut channel = channel(self.base, index);
-            let dma_address = self
-                .dma_bus
-                .wrapping_add(u32::try_from(attempt.offset).unwrap_or(u32::MAX));
             // Quiesce the channel, then arm the interrupt Thread to record its
-            // events for this attempt only.
+            // events for this run only.
             channel.write_interrupt_mask(ChannelInterrupts::ZERO);
             channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
             STATUS.store(0, Ordering::Release);
-            channel.write_split(attempt.split);
+            channel.write_split(program.split);
             channel.write_dma_address(dma_address);
-            channel.write_transfer_size(transfer_size(
-                u32::try_from(attempt.bytes).unwrap_or(u32::MAX),
-                attempt.packets,
-                attempt.pid,
-            ));
+            channel.write_transfer_size(program.transfer_size);
             // Interrupts the interrupt Thread has counted so far; the next one
-            // may belong to this attempt.
+            // may belong to this run.
             let seen = INTERRUPTS.load(Ordering::Acquire);
             ARMED.store(true, Ordering::Release);
-            channel.write_interrupt_mask(if attempt.split.enable() {
-                split_event_mask()
-            } else {
-                channel_event_mask()
-            });
-            // A periodic transfer runs in the (micro)frame parity `HCCHAR.OddFrm`
-            // names (periodic transfers only); the next one is asked for.
-            let next_is_odd = self.registers.read_frame_number() & 1 == 0;
-            channel.write_characteristics(
-                characteristics(attempt.target, true)
-                    .with_odd_frame(attempt.target.kind == UsbKind::Interrupt && next_is_odd),
-            );
+            channel.write_interrupt_mask(mask);
+            channel.write_characteristics(program.characteristics);
             seen
+        }
+
+        /// The microframe a periodic start split goes in: the next one, once
+        /// it is early enough in its frame (`microframe::start_split_target`).
+        /// Spins at most four microframes, the most it can take; a frame
+        /// counter that does not move gets the next microframe anyway.
+        fn start_split_microframe(&self) -> u32 {
+            let limit = ticks() + (counter_frequency() * 4 * MICROFRAME_US).div_ceil(1_000_000);
+            loop {
+                let now = self.frame_number();
+                if let Some(target) = start_split_target(now) {
+                    return target;
+                }
+                if ticks() >= limit {
+                    return next_microframe(now);
+                }
+                core::hint::spin_loop();
+            }
         }
 
         /// Sleep until the interrupt Thread has recorded events `interpret`
         /// reads as an outcome, or the transfer's deadline passes (the channel is
-        /// halted then). Returns the outcome with the events recorded.
+        /// halted then). Returns the outcome with the events recorded, which
+        /// are counted in `self.events` either way.
         fn wait_event<Outcome>(
             &mut self,
             index: usize,
@@ -619,6 +665,7 @@ mod component {
                     ChannelInterrupts::new_with_raw_value(STATUS.load(Ordering::Acquire));
                 let status = interrupts.raw_value();
                 if let Some(outcome) = interpret(interrupts) {
+                    self.events.add(interrupts);
                     return Ok((outcome, status));
                 }
                 // Sleep until the interrupt Thread counts another interrupt or
@@ -626,6 +673,7 @@ mod component {
                 let now = ticks();
                 if now >= deadline {
                     self.halt(index, target);
+                    self.events.add(interrupts);
                     return Err(PipeException::TransferFailed { status });
                 }
                 match self
@@ -635,6 +683,7 @@ mod component {
                     Ok(count) => seen = count,
                     Err(CapError::TimedOut { .. }) => {
                         self.halt(index, target);
+                        self.events.add(interrupts);
                         return Err(PipeException::TransferFailed { status });
                     }
                     Err(error) => {
@@ -706,17 +755,20 @@ mod component {
                 u32::from(target.max_packet),
             ))
             .unwrap_or(u16::MAX);
-            let attempt = Attempt {
+            let program = channel_program(
                 target,
-                split: Split::ZERO,
+                false,
                 pid,
-                offset,
-                bytes,
+                u32::try_from(bytes).unwrap_or(u32::MAX),
                 packets,
-            };
+                false,
+            );
+            let dma_address = self.dma_address(offset);
             let deadline = now_ms() + RETRY_MS;
             loop {
-                let seen = self.start_attempt(index, &attempt);
+                // In DMA mode the controller retries NAKs itself and halts the
+                // channel when the transfer ends: only the halt is waited for.
+                let seen = self.start_program(index, program, dma_address, halt_event_mask());
                 let (outcome, status) = self.wait_event(index, target, seen, channel_outcome)?;
                 match outcome {
                     ChannelOutcome::Complete => {
@@ -760,10 +812,7 @@ mod component {
             loop {
                 let chunk = packet_bytes(bytes - moved, target.max_packet);
                 let at = offset + u64::try_from(moved).unwrap_or(u64::MAX);
-                let done = self
-                    .run_split_packet(index, target, pid, at, chunk, Sequence::new())?
-                    // Only a poll ends with no data.
-                    .ok_or(PipeException::TransferFailed { status: 0 })?;
+                let done = self.run_split_packet(index, target, pid, at, chunk)?;
                 moved += done;
                 pid = next_pid(pid);
                 if moved >= bytes || (target.input && done < usize::from(target.max_packet)) {
@@ -772,11 +821,16 @@ mod component {
             }
         }
 
-        /// One packet through the hub's transaction translator: a start split,
-        /// then complete splits until the hub has the result (see
-        /// `split::Sequence`). Returns the bytes of the packet that moved, or
-        /// `None` for a poll (`sequence` made by `Sequence::poll`) the device
-        /// answered with a NAK.
+        /// One packet of a non-periodic (control) transfer through the hub's
+        /// transaction translator: a start split, then complete splits until
+        /// the hub has the result (see `split::Sequence`). Returns the bytes of
+        /// the packet that moved.
+        ///
+        /// Non-periodic splits have no microframe window: the translator keeps
+        /// the result until a complete split collects it (USB 2.0 §11.17.1), so
+        /// each phase is issued from this Thread when the last one halted, a
+        /// NYET is followed by another complete split, and only time bounds
+        /// the NAKs and NYETs.
         fn run_split_packet(
             &mut self,
             index: usize,
@@ -784,30 +838,32 @@ mod component {
             pid: Pid,
             offset: u64,
             bytes: usize,
-            mut sequence: Sequence,
-        ) -> Result<Option<usize>, PipeException> {
+        ) -> Result<usize, PipeException> {
+            let mut sequence = Sequence::new();
             // What the last start split ended with and how often a complete split
             // was answered NYET, for the failure status.
             let mut start_events = 0;
             let mut not_yet = 0;
             let deadline = now_ms() + RETRY_MS;
+            let dma_address = self.dma_address(offset);
             loop {
                 let phase = sequence.phase();
-                let attempt = Attempt {
-                    target,
-                    split: split_control(target, phase == Phase::Complete),
-                    pid,
-                    offset,
-                    // The complete split of an OUT or SETUP carries no data (USB 2.0
-                    // §11.17.2, Figure 11-53).
-                    bytes: if phase == Phase::Complete && !target.input {
-                        0
-                    } else {
-                        bytes
-                    },
-                    packets: 1,
+                // The complete split of an OUT or SETUP carries no data (USB 2.0
+                // §11.17.2, Figure 11-53).
+                let run_bytes = if phase == Phase::Complete && !target.input {
+                    0
+                } else {
+                    bytes
                 };
-                let seen = self.start_attempt(index, &attempt);
+                let program = channel_program(
+                    target,
+                    phase == Phase::Complete,
+                    pid,
+                    u32::try_from(run_bytes).unwrap_or(u32::MAX),
+                    1,
+                    false,
+                );
+                let seen = self.start_program(index, program, dma_address, halt_event_mask());
                 let (event, status) = self
                     .wait_event(index, target, seen, |events| event_of(phase, events))
                     .map_err(|error| match error {
@@ -823,71 +879,131 @@ mod component {
                     Phase::Complete => {}
                 }
                 let step = sequence.next(event);
-                if phase == Phase::Complete
-                    && step == Step::Issue(Phase::Start)
-                    && matches!(target.kind, UsbKind::Interrupt)
-                {
+                let failed = PipeException::TransferFailed {
+                    status: failure_status(status, phase)
+                        | split_history(start_events, not_yet, sequence.restarts()),
+                };
+                match step {
+                    Step::Issue(_) => {
+                        // NAKs and NYETs do not count against the restarts, so
+                        // time bounds them. After a NAK the pause parks the
+                        // Thread before the next start split.
+                        if matches!(event, Event::Nak | Event::NotYet) && now_ms() >= deadline {
+                            return Err(failed);
+                        }
+                        if event == Event::Nak {
+                            delay_ms(1);
+                        }
+                    }
+                    Step::Done => {
+                        let remaining = Self::finish_channel(index, self.base);
+                        return Ok(bytes.saturating_sub(remaining));
+                    }
+                    // A NAK of a transfer that is not a poll starts it over
+                    // (above); a poll does not come here.
+                    Step::NoData => return Err(failed),
+                    // The status says which phase met the STALL and what else
+                    // the channel saw, which a bare `Stalled` would hide.
+                    Step::Stalled | Step::Failed => {
+                        self.halt(index, target);
+                        return Err(failed);
+                    }
+                }
+            }
+        }
+
+        /// One poll of an interrupt-IN endpoint behind a high-speed hub: a
+        /// start split in an early microframe of a frame, then complete splits
+        /// that the interrupt Thread issues itself as each run halts
+        /// ([`SplitEngine`]), aimed by `HFNUM` at the microframes USB 2.0
+        /// §11.18.4 allots them (2 to 4 after the start split, see
+        /// `microframe`). This Thread wakes only when the transaction has an
+        /// answer: data, a NAK (no report), a STALL, an error, or the window
+        /// passed. Returns the bytes of the report, or `None` without one.
+        fn run_periodic_split(
+            &mut self,
+            target: Target,
+            pid: Pid,
+            bytes: usize,
+        ) -> Result<Option<usize>, PipeException> {
+            let mut sequence = Sequence::poll();
+            let dma_address = self.dma_address(DATA_OFFSET);
+            let length = u32::try_from(bytes).unwrap_or(u32::MAX);
+            let complete = channel_program(target, true, pid, length, 1, false);
+            loop {
+                let aimed = self.start_split_microframe();
+                let start = channel_program(target, false, pid, length, 1, is_odd(aimed));
+                ENGINE.arm(complete, dma_address, aimed);
+                let seen = self.start_program(CHANNEL, start, dma_address, halt_event_mask());
+                let waited =
+                    self.wait_event(CHANNEL, target, seen, |_| ENGINE.done().then_some(()));
+                let report = ENGINE.report();
+                self.events.add_nyets(report.not_yet);
+                let phase = report.phase;
+                let status = match waited {
+                    Ok(((), status)) => status,
+                    Err(PipeException::TransferFailed { status }) => {
+                        return Err(PipeException::TransferFailed {
+                            status: failure_status(status, phase)
+                                | split_history(0, report.not_yet, sequence.restarts()),
+                        });
+                    }
+                    Err(other) => return Err(other),
+                };
+                let event = if report.missed {
+                    Event::Missed
+                } else {
+                    event_of(phase, ChannelInterrupts::new_with_raw_value(status))
+                        .unwrap_or(Event::Error)
+                };
+                // The interrupt Thread ran the start split and its acceptance
+                // itself: bring the sequence to the complete-split phase it
+                // reached, or a result would read as a start split's error.
+                if phase == Phase::Complete && sequence.phase() == Phase::Start {
+                    let _accepted = sequence.next(Event::Accepted);
+                }
+                let step = sequence.next(event);
+                if phase == Phase::Complete && step == Step::Issue(Phase::Start) {
                     // A periodic complete split that did not get the result
                     // starts over. The hub keeps a periodic result only for
                     // the microframes right after its start split (USB 2.0
                     // §11.18.4, §11.18.6), and it has already given the
                     // device its handshake: a report the device sent is lost,
                     // and the next one may come with the other DATA PID.
-                    let (count, report) = counted(&LOST_SPLITS);
-                    if report {
+                    let (count, traced) = counted(&LOST_SPLITS);
+                    if traced {
                         note!(
-                            "usb-hcd-dwc2: complete split of device {} endpoint {} restarted ({count} so far), a report may be lost: events {status:#010x} after {not_yet} NYETs",
+                            "usb-hcd-dwc2: complete split of device {} endpoint {} restarted ({count} so far), a report may be lost: {event:?}, events {status:#010x} after {} NYETs; start split in microframe {} (of 8), last complete split {} microframes after it{}; this poll {}",
                             target.device_address,
-                            target.endpoint
+                            target.endpoint,
+                            report.not_yet,
+                            report.start % 8,
+                            between(report.start, report.last_complete),
+                            if report.early_waits > 0 {
+                                " (waited for a too-early microframe)"
+                            } else {
+                                ""
+                            },
+                            self.events
                         );
                     }
                 }
                 match step {
-                    Step::Issue(_) => {
-                        // A run that ended on its own left the channel halted.
-                        if !ChannelInterrupts::new_with_raw_value(status).halted() {
-                            self.halt(index, target);
-                        }
-                        // NAKs do not count against the restarts, so time bounds them.
-                        // The pause parks the Thread: it lies between a finished
-                        // transaction and the next start split, which nothing times.
-                        // The window that is timed, from a start split to its
-                        // complete splits (USB 2.0 §11.18.4), has no pause: a
-                        // complete split (and one repeated after NYET) is issued
-                        // as soon as the interrupt Thread reports the previous
-                        // phase.
-                        if event == Event::Nak {
-                            if now_ms() >= deadline {
-                                return Err(PipeException::TransferFailed {
-                                    status: failure_status(status, phase)
-                                        | split_history(start_events, not_yet, sequence.restarts()),
-                                });
-                            }
-                            delay_ms(1);
-                        }
-                    }
+                    // The channel halted at the end of the last run.
+                    Step::Issue(_) => {}
                     Step::Done => {
-                        let remaining = Self::finish_channel(index, self.base);
+                        let remaining = Self::finish_channel(CHANNEL, self.base);
                         return Ok(Some(bytes.saturating_sub(remaining)));
                     }
                     Step::NoData => {
-                        self.halt(index, target);
+                        Self::finish_channel(CHANNEL, self.base);
                         return Ok(None);
                     }
-                    Step::Stalled => {
-                        self.halt(index, target);
-                        // The status says which phase met the STALL and what else
-                        // the channel saw, which a bare `Stalled` would hide.
+                    Step::Stalled | Step::Failed => {
+                        self.halt(CHANNEL, target);
                         return Err(PipeException::TransferFailed {
                             status: failure_status(status, phase)
-                                | split_history(start_events, not_yet, sequence.restarts()),
-                        });
-                    }
-                    Step::Failed => {
-                        self.halt(index, target);
-                        return Err(PipeException::TransferFailed {
-                            status: failure_status(status, phase)
-                                | split_history(start_events, not_yet, sequence.restarts()),
+                                | split_history(0, report.not_yet, sequence.restarts()),
                         });
                     }
                 }
@@ -925,7 +1041,7 @@ mod component {
             // The controller writes the page behind the CPU's back.
             self.maintain(false, DATA_OFFSET, DATA_OFFSET + length);
             let moved = if target.split.is_some() {
-                self.run_split_packet(CHANNEL, target, pid, DATA_OFFSET, bytes, Sequence::poll())?
+                self.run_periodic_split(target, pid, bytes)?
             } else {
                 self.poll_whole(target, pid, bytes)?
             };
@@ -946,15 +1062,18 @@ mod component {
             pid: Pid,
             bytes: usize,
         ) -> Result<Option<usize>, PipeException> {
-            let attempt = Attempt {
+            // The transaction goes in the next (micro)frame: `HCCHARn.OddFrm`
+            // names its parity.
+            let program = channel_program(
                 target,
-                split: Split::ZERO,
+                false,
                 pid,
-                offset: DATA_OFFSET,
-                bytes,
-                packets: 1,
-            };
-            let seen = self.start_attempt(CHANNEL, &attempt);
+                u32::try_from(bytes).unwrap_or(u32::MAX),
+                1,
+                is_odd(next_microframe(self.frame_number())),
+            );
+            let dma_address = self.dma_address(DATA_OFFSET);
+            let seen = self.start_program(CHANNEL, program, dma_address, channel_event_mask());
             let (outcome, status) = self.wait_event(CHANNEL, target, seen, poll_outcome)?;
             match outcome {
                 PollOutcome::Data => {
@@ -1025,13 +1144,37 @@ mod component {
             stage: usize,
         ) -> Result<usize, PipeException> {
             let mut failed_stage = 0;
-            self.control_stages(pipe, max_packet, area, offset, stage, &mut failed_stage)
+            self.events = EventCounts::ZERO;
+            let started = now_ms();
+            let result = self
+                .control_stages(pipe, max_packet, area, offset, stage, &mut failed_stage)
                 .map_err(|error| match error {
                     PipeException::TransferFailed { status } => PipeException::TransferFailed {
                         status: (status & !(3 << 26)) | (failed_stage << 26) | (1 << 11),
                     },
                     other => other,
-                })
+                });
+            if let Err(error) = result
+                && !matches!(error, PipeException::NotPermitted | PipeException::NoDevice)
+            {
+                // The 1st, 2nd, 4th, 8th... failed control transfer: which
+                // stage, how long, and what the channel's runs ended with.
+                let (count, traced) = counted(&CONTROL_FAILURES);
+                if traced {
+                    let mut setup = [0_u8; control::SETUP_BYTES];
+                    let _read = area.read_bytes(offset, &mut setup);
+                    note!(
+                        "usb-hcd-dwc2: control {setup:02x?} to device {} ({:?} speed{}) failed ({count} so far) in the {} stage after {} ms: {error:?}; {}",
+                        pipe.device_address,
+                        pipe.speed,
+                        Hops(pipe.route),
+                        STAGE_NAMES[usize::try_from(failed_stage).unwrap_or(0) & 3],
+                        now_ms() - started,
+                        self.events
+                    );
+                }
+            }
+            result
         }
 
         /// The stages of [`control`](Self::control); `failed_stage` is the stage
@@ -1117,17 +1260,260 @@ mod component {
         }
     }
 
-    /// One run of a host channel: what to send or receive, and how.
-    struct Attempt {
-        target: Target,
-        /// The split control; disabled for a device on the root port.
-        split: Split,
-        pid: Pid,
-        /// Offset in the DMA page of the packets' bytes.
-        offset: u64,
-        bytes: usize,
-        packets: u16,
+    /// The stages of a control transfer, by the number a failure status
+    /// carries in bits 26 and 27.
+    const STAGE_NAMES: [&str; 4] = ["setup", "data in", "data out", "status"];
+
+    /// A pipe's route, for the trace: `, split via hub 1 port 2` or nothing.
+    struct Hops(Option<Route>);
+
+    impl core::fmt::Display for Hops {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self.0 {
+                Some(route) => write!(
+                    formatter,
+                    ", split via hub {} port {}",
+                    route.hub_address, route.hub_port
+                ),
+                None => Ok(()),
+            }
+        }
     }
+
+    /// Phases of the periodic split transaction the interrupt Thread carries
+    /// ([`SplitEngine::state`]).
+    const ENGINE_IDLE: u32 = 0;
+    const ENGINE_START: u32 = 1;
+    const ENGINE_COMPLETE: u32 = 2;
+    const ENGINE_DONE: u32 = 3;
+
+    /// Microseconds in a high-speed microframe (USB 2.0 §8.4.3.1).
+    const MICROFRAME_US: u64 = 125;
+
+    /// What the interrupt Thread reports about a periodic split transaction
+    /// once it has an answer.
+    struct EngineReport {
+        /// The phase whose run gave the answer.
+        phase: Phase,
+        /// Whether the complete-split window passed without the result.
+        missed: bool,
+        /// Complete splits answered NYET.
+        not_yet: u32,
+        /// The microframe the start split ran in, and the one the last complete
+        /// split was aimed at.
+        start: u32,
+        last_complete: u32,
+        /// Whether a complete split waited for a microframe that was too early.
+        early_waits: u32,
+    }
+
+    /// A periodic split transaction carried by the interrupt Thread from the
+    /// halt of its start split through its complete splits, so a complete
+    /// split goes out from the first context that sees the previous run halt,
+    /// with no Thread hop between (USB 2.0 §11.18.4 gives it microframes, not
+    /// milliseconds). The poller arms it with the complete split's registers
+    /// and starts the start split; the interrupt Thread, at each halt, either
+    /// programs the next complete split (after the start split's ACK, after a
+    /// NYET while the window lasts) aimed by `HFNUM` and `HCCHARn.OddFrm`, or
+    /// marks the transaction done and wakes the poller. A halt of the channel
+    /// cancels it first ([`SplitEngine::cancel`]).
+    struct SplitEngine {
+        /// `ENGINE_IDLE`, `ENGINE_START`, `ENGINE_COMPLETE` or `ENGINE_DONE`.
+        state: AtomicU32,
+        /// Set while the interrupt Thread programs the channel.
+        busy: AtomicBool,
+        /// The complete split's `HCCHARn` (with `ChEna`, without `OddFrm`),
+        /// `HCSPLTn`, `HCTSIZn` and `HCDMAn`.
+        characteristics: AtomicU32,
+        split: AtomicU32,
+        transfer_size: AtomicU32,
+        dma_address: AtomicU32,
+        /// The microframe the start split was aimed at, then the one it ran in.
+        start: AtomicU32,
+        /// The microframe the last complete split was aimed at.
+        last_complete: AtomicU32,
+        not_yet: AtomicU32,
+        /// The state whose run gave the answer.
+        ended_in: AtomicU32,
+        missed: AtomicBool,
+        early_waits: AtomicU32,
+    }
+
+    impl SplitEngine {
+        const fn new() -> Self {
+            Self {
+                state: AtomicU32::new(ENGINE_IDLE),
+                busy: AtomicBool::new(false),
+                characteristics: AtomicU32::new(0),
+                split: AtomicU32::new(0),
+                transfer_size: AtomicU32::new(0),
+                dma_address: AtomicU32::new(0),
+                start: AtomicU32::new(0),
+                last_complete: AtomicU32::new(0),
+                not_yet: AtomicU32::new(0),
+                ended_in: AtomicU32::new(ENGINE_START),
+                missed: AtomicBool::new(false),
+                early_waits: AtomicU32::new(0),
+            }
+        }
+
+        /// Arm for a start split aimed at microframe `aimed`, whose complete
+        /// splits run `complete` with their data at `dma_address`. Called
+        /// before the start split is started.
+        fn arm(&self, complete: ChannelProgram, dma_address: u32, aimed: u32) {
+            self.characteristics
+                .store(complete.characteristics.raw_value(), Ordering::Relaxed);
+            self.split
+                .store(complete.split.raw_value(), Ordering::Relaxed);
+            self.transfer_size
+                .store(complete.transfer_size.raw_value(), Ordering::Relaxed);
+            self.dma_address.store(dma_address, Ordering::Relaxed);
+            self.start.store(aimed, Ordering::Relaxed);
+            self.last_complete.store(aimed, Ordering::Relaxed);
+            self.not_yet.store(0, Ordering::Relaxed);
+            self.ended_in.store(ENGINE_START, Ordering::Relaxed);
+            self.missed.store(false, Ordering::Relaxed);
+            self.early_waits.store(0, Ordering::Relaxed);
+            self.state.store(ENGINE_START, Ordering::Release);
+        }
+
+        /// Whether a transaction is in flight.
+        fn active(&self) -> bool {
+            matches!(
+                self.state.load(Ordering::Acquire),
+                ENGINE_START | ENGINE_COMPLETE
+            )
+        }
+
+        /// Whether the transaction has its answer.
+        fn done(&self) -> bool {
+            self.state.load(Ordering::Acquire) == ENGINE_DONE
+        }
+
+        /// Stop carrying the transaction, and wait for a channel program the
+        /// interrupt Thread is writing to be written, so the caller's halt
+        /// comes after it.
+        fn cancel(&self) {
+            self.state.store(ENGINE_IDLE, Ordering::SeqCst);
+            if self.busy.load(Ordering::SeqCst) {
+                let _written = wait_until(1, || !self.busy.load(Ordering::SeqCst));
+            }
+        }
+
+        /// The answer, for the poller once [`done`](Self::done).
+        fn report(&self) -> EngineReport {
+            EngineReport {
+                phase: if self.ended_in.load(Ordering::Acquire) == ENGINE_COMPLETE {
+                    Phase::Complete
+                } else {
+                    Phase::Start
+                },
+                missed: self.missed.load(Ordering::Acquire),
+                not_yet: self.not_yet.load(Ordering::Acquire),
+                start: self.start.load(Ordering::Acquire),
+                last_complete: self.last_complete.load(Ordering::Acquire),
+                early_waits: self.early_waits.load(Ordering::Acquire),
+            }
+        }
+
+        /// The interrupt Thread saw the channel halt with `events`: issue the
+        /// next complete split if the transaction wants one now. Returns
+        /// whether it did; otherwise the caller records the events and calls
+        /// [`finish`](Self::finish).
+        fn continue_split(
+            &self,
+            base: usize,
+            frame_number: impl Fn() -> u32,
+            events: ChannelInterrupts,
+        ) -> bool {
+            let state = self.state.load(Ordering::Acquire);
+            let phase = match state {
+                ENGINE_START => Phase::Start,
+                ENGINE_COMPLETE => Phase::Complete,
+                _ => return false,
+            };
+            let start = match (phase, event_of(phase, events)) {
+                (Phase::Start, Some(Event::Accepted)) => {
+                    let ran = start_split_ran(self.start.load(Ordering::Relaxed), frame_number());
+                    self.start.store(ran, Ordering::Relaxed);
+                    ran
+                }
+                (Phase::Complete, Some(Event::NotYet)) => {
+                    self.not_yet.fetch_add(1, Ordering::Relaxed);
+                    self.start.load(Ordering::Relaxed)
+                }
+                _ => return false,
+            };
+            // Wait out a microframe that is too early; the start split ran
+            // in the current one, so this spins less than a microframe. A
+            // counter that does not move in two counts as a missed window.
+            let spin_end = ticks() + (counter_frequency() * 2 * MICROFRAME_US).div_ceil(1_000_000);
+            let mut waited = false;
+            let target = loop {
+                match complete_split_slot(start, frame_number()) {
+                    CompleteSplitSlot::Issue { target } => break Some(target),
+                    CompleteSplitSlot::TooEarly if ticks() < spin_end => {
+                        if !waited {
+                            waited = true;
+                            self.early_waits.fetch_add(1, Ordering::Relaxed);
+                        }
+                        core::hint::spin_loop();
+                    }
+                    CompleteSplitSlot::Missed | CompleteSplitSlot::TooEarly => break None,
+                }
+            };
+            let Some(target) = target else {
+                self.missed.store(true, Ordering::Release);
+                return false;
+            };
+            self.busy.store(true, Ordering::SeqCst);
+            // A halt cancelled the transaction meanwhile: leave the channel be.
+            if self
+                .state
+                .compare_exchange(state, ENGINE_COMPLETE, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                self.busy.store(false, Ordering::SeqCst);
+                return false;
+            }
+            STATUS.store(0, Ordering::Release);
+            let mut transfer = channel(base, CHANNEL);
+            transfer.write_split(Split::new_with_raw_value(
+                self.split.load(Ordering::Relaxed),
+            ));
+            transfer.write_dma_address(self.dma_address.load(Ordering::Relaxed));
+            transfer.write_transfer_size(TransferSize::new_with_raw_value(
+                self.transfer_size.load(Ordering::Relaxed),
+            ));
+            transfer.write_characteristics(
+                Characteristics::new_with_raw_value(self.characteristics.load(Ordering::Relaxed))
+                    .with_odd_frame(is_odd(target)),
+            );
+            self.last_complete.store(target, Ordering::Relaxed);
+            self.busy.store(false, Ordering::SeqCst);
+            true
+        }
+
+        /// The transaction has its answer, which the caller has recorded in
+        /// `STATUS`: mark it done for the poller.
+        fn finish(&self) {
+            let state = self.state.load(Ordering::Acquire);
+            if matches!(state, ENGINE_START | ENGINE_COMPLETE) {
+                // Before the state, so a poller that sees it done reads the
+                // phase too. A cancel in between only leaves it unread.
+                self.ended_in.store(state, Ordering::Release);
+                let _cancelled = self.state.compare_exchange(
+                    state,
+                    ENGINE_DONE,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
+            }
+        }
+    }
+
+    /// The periodic split transaction in flight, if any.
+    static ENGINE: SplitEngine = SplitEngine::new();
 
     /// What the calls share, used only while holding a turn.
     struct Hcd {
@@ -1138,6 +1524,9 @@ mod component {
         pipes: PipeTable,
         /// The interrupt pipes the poller Thread polls.
         poller: Poller,
+        /// What the runs of each pipe's failed polls ended with, by the pipe's
+        /// table slot, for the trace: which event dominates on a pipe.
+        poll_failures: [EventCounts; MAX_PIPES],
         /// The keys of `pipe_v1` each client gets for a pipe.
         masters: Masters<{ pipe_v1::FUNCTION_COUNT }>,
     }
@@ -1321,6 +1710,12 @@ mod component {
                     owner: client,
                 })
                 .map_err(|_full| Exception::Busy)?;
+            if let Some(counts) = hcd
+                .poll_failures
+                .get_mut(usize::try_from(handle & 0xffff).unwrap_or(usize::MAX))
+            {
+                *counts = EventCounts::ZERO;
+            }
             // The pipe's keys carry its handle as their badge. A pipe whose keys
             // could not be installed or reported is closed again; keys already
             // installed fail on the closed handle.
@@ -1605,6 +2000,8 @@ mod component {
     /// Periodic complete splits started over, each a report the device may
     /// have sent and the hub dropped, for the trace's back-off.
     static LOST_SPLITS: AtomicU32 = AtomicU32::new(0);
+    /// Control transfers that failed, for the trace's back-off.
+    static CONTROL_FAILURES: AtomicU32 = AtomicU32::new(0);
 
     /// One pass over the pipes due at `now`: each is polled at most once (a
     /// polled or skipped pipe is next due after `now`), and a pipe without a
@@ -1631,6 +2028,7 @@ mod component {
                 continue;
             }
             let started = now_ms();
+            hcd.controller.events = EventCounts::ZERO;
             let polled = hcd.controller.poll(&pipe, config, data1);
             let took = now_ms() - started;
             if took > SLOW_MS {
@@ -1653,6 +2051,9 @@ mod component {
                 }
                 Ok(None) => hcd.poller.polled(handle, now_ms(), Polled::Nothing),
                 Err(error) => {
+                    let slot = usize::try_from(handle & 0xffff).unwrap_or(0) % MAX_PIPES;
+                    let this_poll = hcd.controller.events;
+                    hcd.poll_failures[slot].merge(&this_poll);
                     // The 1st, 2nd, 4th, 8th... failure, so a dead endpoint cannot
                     // flood the trace.
                     let (failures, report) = counted(&POLL_FAILURES);
@@ -1662,7 +2063,11 @@ mod component {
                             _ => 0,
                         };
                         note!(
-                            "usb-hcd-dwc2: poll of pipe {handle} failed ({failures} so far): {error:?} status {status:#010x}"
+                            "usb-hcd-dwc2: poll of pipe {handle} (device {} endpoint {}{}) failed ({failures} so far): {error:?} status {status:#010x}; this poll {this_poll}; the pipe's failed polls {}",
+                            pipe.device_address,
+                            pipe.endpoint,
+                            Hops(pipe.route),
+                            hcd.poll_failures[slot]
                         );
                     }
                     hcd.poller.polled(handle, now_ms(), Polled::Nothing);
@@ -1763,6 +2168,7 @@ mod component {
             dma,
             dma_bus,
             completions: EventCountKey::from_key(completions_key),
+            events: EventCounts::ZERO,
         };
         let core_id = controller.registers.read_core_id();
         let failed = controller.init_core().err();
@@ -1824,6 +2230,7 @@ mod component {
                 failed,
                 pipes: PipeTable::new(),
                 poller: Poller::new(),
+                poll_failures: [EventCounts::ZERO; MAX_PIPES],
                 masters,
             });
         }
@@ -1875,7 +2282,24 @@ mod component {
                 // raises the line again.
                 transfer.write_interrupt(events);
                 if ARMED.load(Ordering::Acquire) {
+                    // A periodic split's next complete split goes out from
+                    // here, at the halt of the run before it; the poller
+                    // sleeps on until the transaction has its answer.
+                    if ENGINE.active()
+                        && events.halted()
+                        && ENGINE.continue_split(
+                            base,
+                            || service_registers.read_frame_number() & FRAME_NUMBER_MASK,
+                            events,
+                        )
+                    {
+                        acknowledge();
+                        continue;
+                    }
                     STATUS.fetch_or(events.raw_value(), Ordering::AcqRel);
+                    if events.halted() || events.ahb_error() {
+                        ENGINE.finish();
+                    }
                 }
             }
             // Counted even when nothing was recorded, so a sleeping transfer

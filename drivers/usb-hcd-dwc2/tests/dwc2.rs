@@ -12,6 +12,11 @@ mod tests {
         arbitrary_int::u4,
         usb_hcd_dwc2::{
             control,
+            microframe::{
+                self, CompleteSplitSlot, FIRST_COMPLETE_SPLIT, FRAME_NUMBER_MASK,
+                LAST_COMPLETE_SPLIT, between, complete_split_slot, start_split_ran,
+                start_split_target,
+            },
             pipes::{Config, ConfigError, MAX_PIPES, Pipe, PipeError, PipeTable, Route},
             regs::*,
             split::{
@@ -154,21 +159,63 @@ mod tests {
     fn nak_and_transaction_errors_retry_and_babble_fails() {
         let nak = ChannelInterrupts::ZERO.with_nak(true).with_halted(true);
         assert_eq!(channel_outcome(nak), Some(ChannelOutcome::Retry));
-        let transaction = ChannelInterrupts::ZERO.with_transaction_error(true);
+        let transaction = ChannelInterrupts::ZERO
+            .with_transaction_error(true)
+            .with_halted(true);
         assert_eq!(channel_outcome(transaction), Some(ChannelOutcome::Retry));
-        let babble = ChannelInterrupts::ZERO.with_babble(true);
+        let babble = ChannelInterrupts::ZERO.with_babble(true).with_halted(true);
         assert_eq!(channel_outcome(babble), Some(ChannelOutcome::Failed));
+        // An AHB error is decisive before the halt.
         let ahb = ChannelInterrupts::ZERO.with_ahb_error(true);
         assert_eq!(channel_outcome(ahb), Some(ChannelOutcome::Failed));
     }
 
     #[test]
     fn completion_and_halts_are_outcomes_and_nothing_pending_is_none() {
-        let complete = ChannelInterrupts::ZERO.with_transfer_complete(true);
+        let complete = ChannelInterrupts::ZERO
+            .with_transfer_complete(true)
+            .with_halted(true);
         assert_eq!(channel_outcome(complete), Some(ChannelOutcome::Complete));
         let halted = ChannelInterrupts::ZERO.with_halted(true);
         assert_eq!(channel_outcome(halted), Some(ChannelOutcome::Halted));
         assert_eq!(channel_outcome(ChannelInterrupts::ZERO), None);
+    }
+
+    #[test]
+    fn a_non_periodic_transfer_waits_for_the_halt_and_a_nak_on_the_way_is_no_failure() {
+        // In DMA mode the controller retries a NAK itself; the bit stays set
+        // in HCINT while the channel keeps running.
+        let retrying = ChannelInterrupts::ZERO.with_nak(true);
+        assert_eq!(channel_outcome(retrying), None, "still running");
+        let errors_so_far = ChannelInterrupts::ZERO.with_transaction_error(true);
+        assert_eq!(channel_outcome(errors_so_far), None, "still running");
+        // It completed after NAKs: the data moved.
+        let completed_after_naks = ChannelInterrupts::ZERO
+            .with_nak(true)
+            .with_ack(true)
+            .with_transfer_complete(true)
+            .with_halted(true);
+        assert_eq!(
+            channel_outcome(completed_after_naks),
+            Some(ChannelOutcome::Complete)
+        );
+        // A STALL still outranks a completion.
+        let stalled = completed_after_naks.with_stall(true);
+        assert_eq!(channel_outcome(stalled), Some(ChannelOutcome::Stalled));
+    }
+
+    #[test]
+    fn the_halt_event_mask_is_the_halt_and_the_bus_error_only() {
+        assert_eq!(halt_event_mask().raw_value(), (1 << 1) | (1 << 2));
+        for bit in 0..32 {
+            let single = ChannelInterrupts::new_with_raw_value(1 << bit);
+            let in_mask = halt_event_mask().raw_value() & (1 << bit) != 0;
+            assert_eq!(
+                channel_outcome(single).is_some(),
+                in_mask,
+                "bit {bit}: a non-periodic transfer acts only on the masked events"
+            );
+        }
     }
 
     #[test]
@@ -212,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn the_channel_event_mask_is_exactly_the_bits_the_outcome_reads() {
+    fn the_poll_event_mask_is_the_bits_the_poll_outcome_reads() {
         let mask = channel_event_mask();
         // Complete 0, halted 1, AHB error 2, stall 3, NAK 4, transaction error 7,
         // babble 8, data toggle error 10.
@@ -220,10 +267,12 @@ mod tests {
         for bit in 0..32 {
             let single = ChannelInterrupts::new_with_raw_value(1 << bit);
             let in_mask = mask.raw_value() & (1 << bit) != 0;
+            // A frame overrun is read along with the halt it comes with.
+            let read_with_the_halt = bit == 9;
             assert_eq!(
-                channel_outcome(single).is_some(),
-                in_mask,
-                "bit {bit}: the outcome reads it exactly when the mask lets it through"
+                poll_outcome(single).is_some(),
+                in_mask || read_with_the_halt,
+                "bit {bit}: the poll reads it exactly when the mask lets it through"
             );
         }
     }
@@ -630,15 +679,27 @@ mod tests {
     }
 
     #[test]
-    fn the_split_event_mask_adds_exactly_the_split_events() {
-        let plain = channel_event_mask();
-        let split = split_event_mask();
+    fn a_split_phase_is_read_only_at_its_halt() {
+        // ACK, NYET and NAK are reasons the halt gives; without the halt the
+        // channel is not done and must not be programmed again.
+        for reason in [
+            events(|e| e.with_ack(true)),
+            events(|e| e.with_nyet(true)),
+            events(|e| e.with_nak(true)),
+        ] {
+            assert_eq!(event_of(Phase::Start, reason), None);
+            assert_eq!(event_of(Phase::Complete, reason), None);
+        }
+        // A halt without a reason the phase can give starts the packet over.
         assert_eq!(
-            split.raw_value() & !plain.raw_value(),
-            (1 << 5) | (1 << 6) | (1 << 9),
-            "ACK, NYET and frame overrun"
+            event_of(Phase::Complete, events(|e| e.with_halted(true))),
+            Some(Event::Error)
         );
-        assert_eq!(split.raw_value() & plain.raw_value(), plain.raw_value());
+        assert_eq!(
+            event_of(Phase::Start, events(|e| e.with_ahb_error(true))),
+            Some(Event::Failed),
+            "a bus error is decisive before the halt"
+        );
     }
 
     fn events(configure: impl FnOnce(ChannelInterrupts) -> ChannelInterrupts) -> ChannelInterrupts {
@@ -647,16 +708,13 @@ mod tests {
 
     #[test]
     fn channel_events_read_as_split_events_by_phase() {
-        let start = |e: ChannelInterrupts| event_of(Phase::Start, e);
-        let complete = |e: ChannelInterrupts| event_of(Phase::Complete, e);
-        assert_eq!(start(ChannelInterrupts::ZERO), None);
+        // Every run of a split phase is read at its halt.
+        let start = |e: ChannelInterrupts| event_of(Phase::Start, e.with_halted(true));
+        let complete = |e: ChannelInterrupts| event_of(Phase::Complete, e.with_halted(true));
+        assert_eq!(event_of(Phase::Start, ChannelInterrupts::ZERO), None);
         assert_eq!(start(events(|e| e.with_ack(true))), Some(Event::Accepted));
-        assert_eq!(
-            start(events(|e| e.with_ack(true).with_halted(true))),
-            Some(Event::Accepted)
-        );
         // An ACK of a complete split alone is not a result.
-        assert_eq!(complete(events(|e| e.with_ack(true))), None);
+        assert_eq!(complete(events(|e| e.with_ack(true))), Some(Event::Error));
         assert_eq!(
             complete(events(|e| e.with_transfer_complete(true).with_ack(true))),
             Some(Event::Done)
@@ -682,7 +740,10 @@ mod tests {
             Some(Event::Failed)
         );
         // A completed transfer of a start split is not a result.
-        assert_eq!(start(events(|e| e.with_transfer_complete(true))), None);
+        assert_eq!(
+            start(events(|e| e.with_transfer_complete(true))),
+            Some(Event::Error)
+        );
     }
 
     #[test]
@@ -695,8 +756,45 @@ mod tests {
     }
 
     #[test]
-    fn nyet_repeats_the_complete_split_then_starts_over() {
+    fn a_poll_result_needs_the_sequence_in_its_complete_phase() {
+        // The board's poll result: transfer complete, ACK and halted (0x23).
+        let result = event_of(
+            Phase::Complete,
+            events(|e| {
+                e.with_transfer_complete(true)
+                    .with_ack(true)
+                    .with_halted(true)
+            }),
+        );
+        assert_eq!(result, Some(Event::Done));
+        // Read by a sequence still in its start phase, the result is an error
+        // and the poll starts over: the report is lost. The interrupt Thread
+        // runs the start split, so `run_periodic_split` first brings the
+        // sequence to the complete phase with `Accepted`.
+        let mut stale = Sequence::poll();
+        assert_eq!(stale.next(Event::Done), Step::Issue(Phase::Start));
+        let mut advanced = Sequence::poll();
+        advanced.next(Event::Accepted);
+        assert_eq!(advanced.next(Event::Done), Step::Done);
+    }
+
+    #[test]
+    fn a_non_periodic_complete_split_is_repeated_after_every_nyet() {
+        // USB 2.0 §11.17.1: the translator keeps a non-periodic result until
+        // a complete split collects it; starting over would hand it a copy.
         let mut sequence = Sequence::new();
+        sequence.next(Event::Accepted);
+        for _ in 0..MAX_NYET * 10 {
+            assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Complete));
+        }
+        assert_eq!(sequence.not_yet(), MAX_NYET * 10);
+        assert_eq!(sequence.restarts(), 0);
+        assert_eq!(sequence.next(Event::Done), Step::Done);
+    }
+
+    #[test]
+    fn a_poll_repeats_the_complete_split_then_starts_over() {
+        let mut sequence = Sequence::poll();
         sequence.next(Event::Accepted);
         for _ in 0..MAX_NYET {
             assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Complete));
@@ -710,6 +808,17 @@ mod tests {
         sequence.next(Event::Accepted);
         assert_eq!(sequence.next(Event::NotYet), Step::Issue(Phase::Complete));
         assert_eq!(sequence.next(Event::Done), Step::Done);
+    }
+
+    #[test]
+    fn a_missed_complete_split_window_starts_the_poll_over_until_given_up() {
+        let mut sequence = Sequence::poll();
+        for _ in 0..MAX_RESTARTS {
+            assert_eq!(sequence.next(Event::Accepted), Step::Issue(Phase::Complete));
+            assert_eq!(sequence.next(Event::Missed), Step::Issue(Phase::Start));
+        }
+        sequence.next(Event::Accepted);
+        assert_eq!(sequence.next(Event::Missed), Step::Failed);
     }
 
     #[test]
@@ -776,5 +885,212 @@ mod tests {
         assert_eq!(complete, events | STATUS_SPLIT | STATUS_COMPLETE);
         // The marker bits are above every channel event bit.
         assert!(events < STATUS_COMPLETE);
+    }
+
+    fn high_speed_hub_status(device_address: u8) -> Target {
+        Target {
+            device_address,
+            endpoint: 1,
+            input: true,
+            low_speed: false,
+            kind: TransferKind::Interrupt,
+            max_packet: 1,
+            split: None,
+        }
+    }
+
+    #[test]
+    fn a_run_after_a_split_carries_none_of_the_split_into_a_high_speed_transfer() {
+        // A complete split of a low-speed mouse poll behind hub 1 port 2...
+        let mouse = Target {
+            device_address: 2,
+            endpoint: 1,
+            input: true,
+            low_speed: true,
+            kind: TransferKind::Interrupt,
+            max_packet: 4,
+            split: Some(SplitRoute {
+                hub_address: 1,
+                hub_port: 2,
+            }),
+        };
+        let split_run = channel_program(mouse, true, Pid::Data1, 4, 1, true);
+        assert!(split_run.split.enable() && split_run.split.complete_split());
+        assert!(split_run.characteristics.low_speed());
+        assert!(split_run.characteristics.odd_frame());
+        // ...then the first descriptor read of a high-speed hub at address 0:
+        // every field comes from the new target, nothing from the split.
+        let hub = Target {
+            device_address: 0,
+            endpoint: 0,
+            input: true,
+            low_speed: false,
+            kind: TransferKind::Control,
+            max_packet: 64,
+            split: None,
+        };
+        let run = channel_program(hub, false, Pid::Data1, 8, 1, true);
+        assert_eq!(run.split, Split::ZERO, "HCSPLT written with SplitEna clear");
+        let characteristics = run.characteristics;
+        assert_eq!(characteristics.device_address().value(), 0);
+        assert_eq!(characteristics.endpoint().value(), 0);
+        assert!(characteristics.input());
+        assert!(!characteristics.low_speed());
+        assert_eq!(characteristics.kind(), EndpointKind::Control);
+        assert_eq!(characteristics.max_packet().value(), 64);
+        assert_eq!(characteristics.transactions().value(), 1, "EC/MC is one");
+        assert!(
+            !characteristics.odd_frame(),
+            "OddFrm is for periodic runs only"
+        );
+        assert!(characteristics.enable() && !characteristics.disable());
+        assert_eq!(run.transfer_size.pid(), Pid::Data1);
+        assert_eq!(run.transfer_size.packets().value(), 1);
+        assert_eq!(run.transfer_size.bytes().value(), 8);
+        // A high-speed interrupt endpoint keeps the parity it is given.
+        let status = channel_program(high_speed_hub_status(3), false, Pid::Data0, 1, 1, true);
+        assert_eq!(status.split, Split::ZERO);
+        assert!(status.characteristics.odd_frame());
+        assert_eq!(status.characteristics.kind(), EndpointKind::Interrupt);
+    }
+
+    #[test]
+    fn a_split_program_names_the_translator_hub_and_port_and_its_phase() {
+        let start = channel_program(behind_a_hub(4, 3), false, Pid::Setup, 8, 1, false);
+        assert_eq!(start.split.hub_address().value(), 4);
+        assert_eq!(start.split.port_address().value(), 3);
+        assert_eq!(start.split.position(), TransactionPosition::Middle);
+        assert!(start.split.enable() && !start.split.complete_split());
+        let complete = channel_program(behind_a_hub(4, 3), true, Pid::Setup, 0, 1, false);
+        assert!(complete.split.complete_split());
+        assert_eq!(complete.transfer_size.bytes().value(), 0);
+        assert_eq!(complete.transfer_size.pid(), Pid::Setup);
+    }
+
+    #[test]
+    fn microframes_wrap_with_the_frame_counter() {
+        assert_eq!(microframe::advance(FRAME_NUMBER_MASK, 1), 0);
+        assert_eq!(microframe::advance(10, 3), 13);
+        assert_eq!(microframe::between(FRAME_NUMBER_MASK, 1), 2);
+        assert_eq!(microframe::between(5, 9), 4);
+        assert!(microframe::is_odd(3) && !microframe::is_odd(4));
+    }
+
+    #[test]
+    fn a_periodic_start_split_goes_early_in_a_frame() {
+        // Microframes 0 to 4 of a frame take a start split; the next one is
+        // aimed at, so `now` is one before.
+        for now in [7_u32, 8, 9, 10, 11] {
+            assert_eq!(start_split_target(now), Some(now + 1), "now {now}");
+        }
+        for now in [12_u32, 13, 14] {
+            assert_eq!(
+                start_split_target(now),
+                None,
+                "now {now}: microframe 5 to 7"
+            );
+        }
+        // Across the counter's wrap: microframe 0 of frame 0.
+        assert_eq!(start_split_target(FRAME_NUMBER_MASK), Some(0));
+    }
+
+    #[test]
+    fn complete_splits_go_two_to_four_microframes_after_the_start_split() {
+        let start = 16;
+        // USB 2.0 §11.18.4: start split in Y-1, complete splits in Y+1..Y+3.
+        assert_eq!(
+            complete_split_slot(start, start),
+            CompleteSplitSlot::TooEarly,
+            "the next microframe is Y: the translator is still running it"
+        );
+        for now in [17_u32, 18, 19] {
+            assert_eq!(
+                complete_split_slot(start, now),
+                CompleteSplitSlot::Issue { target: now + 1 }
+            );
+        }
+        assert_eq!(complete_split_slot(start, 20), CompleteSplitSlot::Missed);
+        assert_eq!(complete_split_slot(start, 40), CompleteSplitSlot::Missed);
+        // A read that raced the counter and reads before the start split.
+        assert_eq!(
+            complete_split_slot(start, start - 1),
+            CompleteSplitSlot::TooEarly
+        );
+        // Across the wrap.
+        assert_eq!(
+            complete_split_slot(FRAME_NUMBER_MASK, 0),
+            CompleteSplitSlot::Issue { target: 1 }
+        );
+        assert_eq!(
+            between(FIRST_COMPLETE_SPLIT, LAST_COMPLETE_SPLIT),
+            2,
+            "three complete splits"
+        );
+    }
+
+    #[test]
+    fn the_start_split_ran_in_the_latest_microframe_of_its_parity() {
+        // Aimed at 9 (odd), seen at 9: it ran in 9.
+        assert_eq!(start_split_ran(9, 9), 9);
+        // Seen at 10: still 9, the interrupt came a microframe late.
+        assert_eq!(start_split_ran(9, 10), 9);
+        // Seen at 11: it ran late, in 11 (the next odd microframe).
+        assert_eq!(start_split_ran(9, 11), 11);
+        // Seen before it was aimed at (a racing read): the aimed microframe.
+        assert_eq!(start_split_ran(9, 8), 9);
+        // Across the wrap.
+        assert_eq!(start_split_ran(FRAME_NUMBER_MASK, 0), FRAME_NUMBER_MASK);
+    }
+
+    #[test]
+    fn event_counts_name_the_event_that_dominates() {
+        let mut counts = EventCounts::ZERO;
+        assert_eq!(counts.dominant(), None);
+        let nyet = events(|e| e.with_nyet(true).with_halted(true));
+        let error = events(|e| e.with_transaction_error(true).with_halted(true));
+        counts.add(nyet);
+        counts.add(error);
+        counts.add(error);
+        counts.add(events(|e| {
+            e.with_nak(true).with_ack(true).with_transfer_complete(true)
+        }));
+        assert_eq!(counts.runs, 4);
+        assert_eq!(counts.nyet, 1);
+        assert_eq!(counts.transaction_error, 2);
+        assert_eq!(counts.nak, 1);
+        assert_eq!(counts.dominant(), Some("xacterr"));
+        counts.add_nyets(5);
+        assert_eq!(counts.nyet, 6);
+        assert_eq!(counts.runs, 9);
+        assert_eq!(counts.dominant(), Some("nyet"));
+        let mut total = EventCounts::ZERO;
+        total.merge(&counts);
+        total.merge(&counts);
+        assert_eq!(total.nyet, 12);
+        assert_eq!(total.runs, 18);
+        let line = std::format!("{total}");
+        assert!(
+            line.contains("nyet 12") && line.contains("(most: nyet)"),
+            "{line}"
+        );
+        // Babble, stall, toggle, overrun and bus errors each count apart.
+        let mut each = EventCounts::ZERO;
+        each.add(events(|e| {
+            e.with_babble(true)
+                .with_stall(true)
+                .with_data_toggle_error(true)
+                .with_frame_overrun(true)
+                .with_ahb_error(true)
+        }));
+        assert_eq!(
+            (
+                each.babble,
+                each.stall,
+                each.data_toggle_error,
+                each.frame_overrun,
+                each.ahb_error
+            ),
+            (1, 1, 1, 1, 1)
+        );
     }
 }

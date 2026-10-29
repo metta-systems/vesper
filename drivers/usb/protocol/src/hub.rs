@@ -290,6 +290,12 @@ pub enum PortAction {
     /// The device is gone: release what it held, then report
     /// [`PortEvent::Done`].
     Teardown,
+    /// `CLEAR_FEATURE(PORT_ENABLE)`, then report [`PortEvent::Done`]: the
+    /// device failed to enumerate, and a disabled port carries no traffic to
+    /// it (USB 2.0 §11.5.1.4, §11.24.2.2), so it cannot answer at address 0
+    /// or at an address it took before failing while later devices take
+    /// those addresses.
+    Disable,
     /// The port cannot be used (over-current, or a reset that left it
     /// disabled).
     Failed,
@@ -314,6 +320,8 @@ enum PortState {
     Enumerating,
     Enumerated,
     TearingDown,
+    /// The device did not enumerate: its port is being disabled.
+    Disabling,
     /// The device did not enumerate: the port waits for it to be unplugged.
     Failed,
     /// The port is over-current and stays off.
@@ -366,9 +374,10 @@ impl Port {
     }
 
     /// Whether the device behind the port may still answer at address 0: the
-    /// port is being reset, or its device is not yet given an address. Only one
-    /// port of a hub may be in that state at a time, or the devices all answer
-    /// the same requests and corrupt each other's transfers.
+    /// port is being reset, its device is not yet given an address, or it
+    /// failed to enumerate and its port is not disabled yet. Only one port on
+    /// the bus may be in that state at a time, or the devices all answer the
+    /// same requests and corrupt each other's transfers (USB 2.0 §9.1.2).
     #[must_use]
     pub const fn holds_default_address(&self) -> bool {
         matches!(
@@ -377,6 +386,7 @@ impl Port {
                 | PortState::ClearingReset { .. }
                 | PortState::Recovering { .. }
                 | PortState::Enumerating
+                | PortState::Disabling
         )
     }
 
@@ -468,6 +478,10 @@ impl Port {
                 Self::poll_later()
             }
             (PortState::Enumerating, PortEvent::Enumerated { ok: false }) => {
+                self.state = PortState::Disabling;
+                PortAction::Disable
+            }
+            (PortState::Disabling, PortEvent::Done) => {
                 self.state = PortState::Failed;
                 PortAction::Failed
             }
@@ -570,5 +584,85 @@ impl Port {
         PortAction::Wait {
             milliseconds: RESET_POLL_MS,
         }
+    }
+}
+
+/// The transaction translators of a hub, from its device descriptor's
+/// `bDeviceProtocol` (USB 2.0 §11.23.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Translators {
+    /// A full-speed hub (protocol 0), or a high-speed hub running at full
+    /// speed: no translator.
+    None,
+    /// A high-speed hub with one translator for all its ports (protocol 1).
+    Single,
+    /// A high-speed hub with one translator per port (protocol 2). It runs
+    /// as a single-translator hub until the host selects the interface's
+    /// alternate setting 1 (§11.23.1); the host here never does, so its
+    /// splits all go through one translator.
+    Multiple,
+    /// A protocol value the specification does not define.
+    Unknown(u8),
+}
+
+impl Translators {
+    /// The translators of a hub that runs at `speed` and whose device
+    /// descriptor names `device_protocol`.
+    #[must_use]
+    pub const fn of(speed: Speed, device_protocol: u8) -> Self {
+        match (speed, device_protocol) {
+            (Speed::Low | Speed::Full, _) | (Speed::High, 0) => Self::None,
+            (Speed::High, 1) => Self::Single,
+            (Speed::High, 2) => Self::Multiple,
+            (Speed::High, other) => Self::Unknown(other),
+        }
+    }
+}
+
+/// The TT think time of a hub, in full-speed bit times: how long its
+/// translator may take between two full- or low-speed transactions, from
+/// bits 5 and 6 of `wHubCharacteristics` (USB 2.0 §11.23.2.1: 8, 16, 24 or 32).
+#[must_use]
+pub fn think_time_bits(characteristics: u16) -> u32 {
+    ((u32::from(characteristics >> 5) & 3) + 1) * 8
+}
+
+/// The hub port whose transaction translator a low- or full-speed device is
+/// reached through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TranslatorRoute {
+    /// The address of the high-speed hub with the translator.
+    pub hub_address: u8,
+    /// The port of that hub the device, or the full-speed hub it sits behind,
+    /// is plugged into.
+    pub hub_port: u8,
+}
+
+/// The translator route of a device running at `device_speed` on port `port`
+/// of the hub at `hub_address`, which runs at `hub_speed` and whose own
+/// traffic takes `hub_route`.
+///
+/// The translator is in the nearest high-speed hub upstream of a low- or
+/// full-speed device (USB 2.0 §11.14): a high-speed hub's own port for a
+/// device on it, and the route of a full-speed hub for every device behind
+/// that hub. A high-speed device behind high-speed hubs, a hub inside a
+/// keyboard behind the Raspberry Pi's LAN9514 for one, needs no translator;
+/// a low-speed keyboard behind that inner hub is reached through the inner
+/// hub's translator, not the LAN9514's.
+#[must_use]
+pub const fn translator_route(
+    hub_address: u8,
+    hub_speed: Speed,
+    hub_route: Option<TranslatorRoute>,
+    port: u8,
+    device_speed: Speed,
+) -> Option<TranslatorRoute> {
+    match (hub_speed, device_speed) {
+        (Speed::High, Speed::High) => None,
+        (Speed::High, Speed::Low | Speed::Full) => Some(TranslatorRoute {
+            hub_address,
+            hub_port: port,
+        }),
+        (Speed::Low | Speed::Full, _) => hub_route,
     }
 }

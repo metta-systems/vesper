@@ -54,6 +54,18 @@ pub fn interval_ms(speed: Speed, b_interval: u8) -> u32 {
     milliseconds.clamp(1, 255)
 }
 
+/// The control packet size a device's endpoint 0 is opened with before its
+/// device descriptor says (USB 2.0 §5.5.3): a high-speed device's is always
+/// 64 bytes, a low-speed device's always 8, and a full-speed device's is one
+/// of 8, 16, 32 or 64, so 8 until `bMaxPacketSize0` is read.
+#[must_use]
+pub const fn default_max_packet0(speed: Speed) -> u16 {
+    match speed {
+        Speed::High => 64,
+        Speed::Low | Speed::Full => 8,
+    }
+}
+
 /// Why enumeration failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
