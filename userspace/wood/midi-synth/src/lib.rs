@@ -178,6 +178,72 @@ pub struct StartHash {
     pub audible_periods: u32,
 }
 
+/// What a client's `service` calls over a stretch of periods took and did,
+/// for its periodic summary line (Wood's playback Thread, the MIDI test's
+/// player).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ServiceWindow {
+    pub calls: u64,
+    pub total_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    /// Packets the synthesiser handled
+    pub handled: u64,
+    /// Calls that failed
+    pub failed: u64,
+    /// Periods pulled, and those with sound
+    pub periods: u64,
+    pub audible: u64,
+}
+
+impl ServiceWindow {
+    /// No calls yet.
+    pub const EMPTY: Self = Self {
+        calls: 0,
+        total_ns: 0,
+        min_ns: u64::MAX,
+        max_ns: 0,
+        handled: 0,
+        failed: 0,
+        periods: 0,
+        audible: 0,
+    };
+
+    /// Count a `service` call that took `elapsed_ns` and handled `handled`
+    /// packets (`None`: it failed).
+    pub fn record_call(&mut self, elapsed_ns: u64, handled: Option<u32>) {
+        match handled {
+            Some(handled) => self.handled += u64::from(handled),
+            None => self.failed += 1,
+        }
+        self.calls += 1;
+        self.total_ns += elapsed_ns;
+        self.min_ns = self.min_ns.min(elapsed_ns);
+        self.max_ns = self.max_ns.max(elapsed_ns);
+    }
+
+    /// Count a period pulled, `audible` if it had sound.
+    pub fn record_period(&mut self, audible: bool) {
+        self.periods += 1;
+        self.audible += u64::from(audible);
+    }
+
+    /// Average nanoseconds per call.
+    #[must_use]
+    pub const fn average_ns(&self) -> u64 {
+        match self.total_ns.checked_div(self.calls) {
+            Some(average) => average,
+            None => 0,
+        }
+    }
+
+    /// The shortest call, 0 without calls.
+    #[must_use]
+    pub const fn shortest_ns(&self) -> u64 {
+        if self.calls == 0 { 0 } else { self.min_ns }
+    }
+}
+
 /// What [`Session::handle`] did with a packet.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Handled {
@@ -207,6 +273,9 @@ pub struct Session<'bank> {
     period_audible: bool,
     started: Option<(usize, bool, u8)>,
     finished_hash: Option<StartHash>,
+    /// The most voices sounding at the end of a rendered block since
+    /// [`Session::take_peak_voices`] last ran.
+    peak_voices: usize,
 }
 
 impl<'bank> Session<'bank> {
@@ -223,6 +292,7 @@ impl<'bank> Session<'bank> {
             period_audible: false,
             started: None,
             finished_hash: None,
+            peak_voices: 0,
         }
     }
 
@@ -238,6 +308,7 @@ impl<'bank> Session<'bank> {
         self.started = None;
         self.finished_hash = None;
         self.hashed_frames = HASH_FRAMES;
+        self.peak_voices = 0;
     }
 
     /// Whether a song plays.
@@ -250,6 +321,12 @@ impl<'bank> Session<'bank> {
     /// [`HASH_FRAMES`] frames were rendered; taken once.
     pub const fn take_start_hash(&mut self) -> Option<StartHash> {
         self.finished_hash.take()
+    }
+
+    /// The most voices that sounded at once (sampled after each block of up
+    /// to 128 frames) since the last call; starts a new count.
+    pub const fn take_peak_voices(&mut self) -> usize {
+        core::mem::replace(&mut self.peak_voices, 0)
     }
 
     /// Handle `packet`, whose records `area` must hold, reading and writing
@@ -333,6 +410,9 @@ impl<'bank> Session<'bank> {
                 let count = usize::try_from((frames - done).min(128)).unwrap_or(128);
                 let block = &mut block[..2 * count];
                 self.sequencer.render(block);
+                self.peak_voices = self
+                    .peak_voices
+                    .max(self.sequencer.synth().active_voices());
                 let bytes = &mut bytes[..4 * count];
                 for (pair, sample) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(block.iter()) {
                     *pair = sample.to_le_bytes();

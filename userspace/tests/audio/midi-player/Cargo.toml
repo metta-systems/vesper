@@ -1,0 +1,71 @@
+[package]
+name = "midi-player"
+
+description = "midi-test program: plays one song (Doom's D_E1M1) through the MIDI synthesiser component and the PWM audio driver, looping, and logs how the synthesiser keeps up: service times, levels, voices, underruns and the song position."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+# Opt in to the host tests of the library (they read the IWAD from the
+# repository).
+host-tests = []
+# Under QEMU the program plays a bounded number of periods, closes and reports;
+# its log shows on the semihosting console too.
+qemu = ["libuser/qemu", "liblog-client/qemu"]
+
+[dependencies]
+# The midi_synth_v1 packet protocol, the data pages' layout and the service
+# summary.
+midi-synth = { workspace = true }
+# The song's parser and the sequencer's timing, for the start-up lines and the
+# position.
+wood-synth = { workspace = true }
+
+# The program itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+audio-client = { workspace = true }
+# The audio_v1 io-channel's layout.
+audio-pwm-bcm2835 = { workspace = true }
+driver-protocol = { workspace = true }
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+# The program's log, to the log server.
+liblog-client = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+libuser = { workspace = true }
+log = { workspace = true }
+# The ARM and core clocks, logged at start.
+mailbox-client = { workspace = true }
+midi-synth-client = { workspace = true }
+rlsf = { workspace = true }
+
+[dev-dependencies]
+# Room's MUS to MIDI converter makes the test song, as `just wood-midi` does.
+room = { workspace = true }
+
+[lib]
+name = "midi_player"
+test = false
+harness = false
+
+[[bin]]
+name = "midi-player"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "song"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

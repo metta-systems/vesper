@@ -2475,6 +2475,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "midi-player"
+version = "0.0.1"
+dependencies = [
+ "audio-client",
+ "audio-pwm-bcm2835",
+ "driver-protocol",
+ "log",
+ "mailbox-client",
+ "metta-meddle-runtime",
+ "midi-synth",
+ "midi-synth-client",
+ "rlsf",
+ "room",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-user-runtime",
+ "wood-synth",
+]
+
+[[package]]
 name = "midi-synth"
 version = "0.0.1"
 dependencies = [
@@ -2506,6 +2528,33 @@ version = "0.0.1"
 dependencies = [
  "metta-meddle",
  "metta-meddle-runtime",
+]
+
+[[package]]
+name = "midi-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "audio",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "midi-synth-server",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]

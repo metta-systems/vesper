@@ -273,6 +273,13 @@ impl MidiSynthV1 for Synthesiser {
             .with(|session| u32::from(session.playing()))
             .unwrap_or(0))
     }
+
+    fn voices(badge: u64) -> Result<u32, Exception> {
+        owner(badge)?;
+        Ok(SHARED
+            .with(|session| u32::try_from(session.take_peak_voices()).unwrap_or(u32::MAX))
+            .unwrap_or(0))
+    }
 }
 
 midi_synth_server::midi_synth_v1_export!(Synthesiser);

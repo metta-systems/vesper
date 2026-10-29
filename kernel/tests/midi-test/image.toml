@@ -1,0 +1,103 @@
+# What midi-test bundles (see vesper-image-build): Wood's music path and
+# nothing else. The drivers of audio-test (the gpio component, the clock
+# manager, the DMA controller and the PWM audio driver), the mailbox component
+# (the player logs the ARM and core clocks through it), the PL011 driver, the
+# log server holding its serial channel, the MIDI synthesiser with its
+# SoundFont, and the player program with its song. No Wood, no sound effects,
+# no compositor, no USB: an image to debug the music on the board.
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+# The clock manager, which sets the PWM clock for the audio driver.
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component: the audio driver claims a channel for its ring
+# (on the board) or its capture copies (under QEMU) through dma_v1.
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../../drivers/dma-bcm2835/interfaces"
+
+# The PWM audio driver, loaded for the `brcm,bcm2835-pwm` node, which only the
+# test tree (`just test-midi`) or the board's `pwm-2chan` overlay enable. The
+# player is its client. Its trace goes to the log server.
+[[driver]]
+name = "audio"
+binary = "audio-pwm-bcm2835"
+interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
+
+# The mailbox component: the player asks it for the ARM and core clocks.
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The log server: the one holder of the PL011's serial channel. The player,
+# the MIDI synthesiser and the audio driver import its log_v1 and put their
+# lines on its io-channel, never waiting; it writes them to the UART with a
+# timestamp and level, dropping and counting what the UART cannot keep up
+# with.
+[[component]]
+name = "log_server"
+binary = "log-server"
+interfaces = "../../../userspace/log-server/interfaces"
+active = true
+program = true
+serial = true
+
+# The MIDI synthesiser, as in wood-test: the player sends it the song and
+# pulls each period's rendered frames on midi_synth_v1's io-channel. `memory`
+# is a 4 MiB RAM Untyped for its 2 MiB heap.
+[[component]]
+name = "midi_synth"
+binary = "midi-synth"
+interfaces = "../../../userspace/wood/midi-synth/interfaces"
+active = true
+program = true
+memory = 4194304
+resources = ["soundfont"]
+
+# The SC-55 SoundFont trimmed to the shareware IWAD's music (audio decision
+# D9.4): a build artifact, written by `just wood-soundfont` before the image.
+[[resource]]
+name = "soundfont"
+file = "../../../target/wood/sc55-doom1.sf2"
+
+# The player: plays the song through the synthesiser and the audio driver,
+# looping, and logs how it goes. `memory` is a 4 MiB RAM Untyped for its 2 MiB
+# heap (the parsed song, for its start-up lines).
+[[component]]
+name = "player"
+binary = "midi-player"
+interfaces = "../../../userspace/tests/audio/midi-player/interfaces"
+active = true
+program = true
+memory = 4194304
+resources = ["song"]
+
+# Doom's E1M1 music as a Standard MIDI File, converted from the shareware
+# IWAD's MUS lump by Room's mus2midi as the game does: a build artifact,
+# written by `just wood-midi` before the image.
+[[resource]]
+name = "song"
+file = "../../../target/wood/d_e1m1.mid"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

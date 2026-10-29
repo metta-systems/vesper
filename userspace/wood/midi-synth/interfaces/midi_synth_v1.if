@@ -72,4 +72,10 @@ local interface midi_synth_v1
     playing()
         returns (card32 playing)
         raises (not_open);
+
+    ## The most voices that sounded at once (of 32) in the frames rendered
+    ## since the caller last asked: how hard the song works the synthesiser.
+    voices()
+        returns (card32 peak)
+        raises (not_open);
 }

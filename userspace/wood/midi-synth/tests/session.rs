@@ -294,6 +294,37 @@ mod tests {
         );
     }
 
+    /// The start hash of the song `just test-midi` plays: `D_E1M1` (as
+    /// `just wood-midi` exports it, 23 329 bytes), looping, at the MIDI test
+    /// player's volume, 64 (`MUSIC_VOLUME` in
+    /// userspace/tests/audio/midi-player). `just test-midi` checks the
+    /// synthesiser's log line against it (`midi_test_hash` in the Justfile);
+    /// change both together, and only for an intended change of the output.
+    #[test]
+    fn start_hash_of_the_midi_test_song() {
+        assert_eq!(song("D_E1M1").len(), 23_329);
+        let (hash, audible) = reference_hash("D_E1M1", true, 64);
+        println!("D_E1M1 looping true volume 64: {hash:#018x}, {audible} audible");
+        assert_eq!((hash, audible), (0x4366_085f_6c41_6218, 64));
+    }
+
+    /// The peak voice count `voices` reports: none before a song, some while
+    /// it plays, and the count starts over at each question.
+    #[test]
+    fn peak_voices_follow_the_song() {
+        let mut session = session();
+        let mut pages = Pages::new();
+        render(&mut session, &mut pages, 0);
+        assert_eq!(session.take_peak_voices(), 0);
+        send_song(&mut session, &mut pages, song("D_E1M1"), true, 60_000);
+        for index in 0..64 {
+            render(&mut session, &mut pages, index % 4);
+        }
+        let peak = session.take_peak_voices();
+        assert!((1..=32).contains(&peak), "{peak} voices");
+        assert_eq!(session.take_peak_voices(), 0);
+    }
+
     #[test]
     fn controls_pause_volume_and_stop() {
         let mut session = session();

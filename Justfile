@@ -79,6 +79,11 @@ wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 # first demo's D_E1M5 looping, at volume 64): the hash of their first 64 rendered periods as
 # the MIDI synthesiser logs it and its host test computes it (midi-synth tests/session.rs)
 wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14be'
+# Doom's E1M1 music as a Standard MIDI File, the song midi-test plays (`wood-midi`)
+wood_midi           := target_root / 'wood' / 'd_e1m1.mid'
+# `bytes:looping:hash` of the song `test-midi` plays (D_E1M1 looping, at volume 64), as above
+# (`start_hash_of_the_midi_test_song` in midi-synth tests/session.rs)
+midi_test_hash      := '23329:true:0x4366085f6c416218'
 
 chainboot_serial := '/dev/cu.usbserial-019586E3'
 chainboot_baud   := '115200'
@@ -419,6 +424,73 @@ test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board 
     dropped=0
     for count in $(grep -a -o "([0-9]* dropped)" "$serial" | tr -dc '0-9\n'); do dropped=$(( dropped + count )); done
     echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its music and sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, ${music#* } of ${music% *} music periods with sound, the songs' first periods as on the host, $underruns underruns); the log server wrote the compositor's, Wood's, the synthesiser's and the audio driver's lines to the UART ($dropped dropped); the screen is in $screen"
+
+# Build midi-test's programs: the player, the MIDI synthesiser and the log server, with the trimmed SoundFont and the song they bundle, for the image configuration `board` + `image_features`; only midi-test bundles the player, so it is not in `user_components`
+[private]
+build-midi-player board='rpi3' features='qemu' image_features=features: wood-soundfont wood-midi (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
+
+# Build the midi-test e2e kernel: the MIDI synthesiser, a player program with Doom's D_E1M1, audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
+[group("test")]
+build-midi-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
+
+# Boot midi-test on raspi3b with the audio test tree (`_audio-test-dtb`, the PWM node enabled): the player sends D_E1M1 to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
+[group("test")]
+test-midi board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-midi-test board) _audio-test-dtb
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/midi-test.log"
+    serial="{{ target_root }}/midi-test-serial.log"
+    rm -f "$log" "$serial"
+    timeout 600 {{ qemu }} -M raspi3b -display none -monitor none \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'midi-test-' + config + '.bin' }}" < /dev/null > "$log"
+    status=$?
+    grep -a "midi-test: \|midi-player: \|midi-synth: \|audio: open for\|audio: closed\|audio: capture checked" "$log" | grep -v "midi-test: .* on " | tail -40
+    [ "$status" -eq 0 ] || { echo "midi-test: failed with status $status; see $log"; exit 1; }
+    expect() { grep -a -q "$1" "$log" || { echo "midi-test: $2; see $log"; exit 1; }; }
+    expect "midi-synth: ready at 44091710 mHz" "the MIDI synthesiser did not start"
+    expect "midi-player: INFO song: 23329 bytes, division 70 ticks per quarter, tempo 500000 us per quarter (120 bpm)" "the player did not read its song"
+    expect "midi-player: INFO song: first notes: ch" "the player did not log the first notes"
+    expect "midi-synth: a song of 23329 bytes plays" "the synthesiser did not take the song"
+    expect "midi-player: INFO the synthesiser handled [1-9][0-9]* song packets; playing true at volume 64" "the synthesiser does not play the song"
+    expect "audio: open for client 0: a ramp up, then its packets" "the audio driver did not start the stream"
+    expect "midi-player: INFO music: summary of 256 periods: service min/avg/max" "no music summary"
+    expect "midi-player: INFO music: level peak [1-9][0-9]* rms [1-9][0-9]* of 32767; voices peak [1-9][0-9]* of 32" "no level and voices line"
+    expect "midi-player: INFO position: pass 0, tick [1-9][0-9]* of 13440" "no position line"
+    # The song's first periods hash as the host test computes them
+    # (`start_hash_of_the_midi_test_song` in userspace/wood/midi-synth/tests/session.rs).
+    midi_hash="{{ midi_test_hash }}"
+    bytes=${midi_hash%%:*}
+    rest=${midi_hash#*:}; looping=${rest%%:*}; hash=${rest#*:}
+    line=$(grep -a -o "midi-synth: song of $bytes bytes (looping $looping, volume 64): first 64 periods hash 0x[0-9a-f]*, [0-9]* audible" "$log" | head -1)
+    [ -n "$line" ] || { echo "midi-test: no start hash for the song"; exit 1; }
+    [ "$(echo "$line" | grep -o '0x[0-9a-f]*')" = "$hash" ] || { echo "midi-test: the song rendered differently from the host: $line"; exit 1; }
+    # Nearly every period has sound, every one reached the capture, none late.
+    closed=$(grep -a -o "midi-player: INFO closed after [0-9]* periods, [0-9]* with sound, [0-9]* underruns" "$log" | tail -1)
+    [ -n "$closed" ] || { echo "midi-test: the player did not close"; exit 1; }
+    periods=$(echo "$closed" | cut -d' ' -f5); sounding=$(echo "$closed" | cut -d' ' -f7); underruns=$(echo "$closed" | cut -d' ' -f10)
+    [ $(( sounding * 10 )) -ge $(( periods * 9 )) ] || { echo "midi-test: too few periods with sound: $closed"; exit 1; }
+    [ "$underruns" -eq 0 ] || { echo "midi-test: underruns: $closed"; exit 1; }
+    expect "audio: closed after [0-9]* periods: [0-9]* client frames, 0 underruns" "the audio driver counted underruns"
+    capture=$(grep -a -o "audio: capture checked: 1 ramp up, [0-9]* stream periods with [0-9]* client frames as filled, [0-9]* audible" "$log" | tail -1)
+    [ -n "$capture" ] || { echo "midi-test: the capture was not checked"; exit 1; }
+    stream=$(echo "$capture" | cut -d' ' -f7); audible=$(echo "$capture" | cut -d' ' -f16)
+    [ $(( audible * 10 )) -ge $(( stream * 9 )) ] || { echo "midi-test: too few audible stream periods: $capture"; exit 1; }
+    # The log server wrote every client's lines to the UART, each with its prefix.
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
+    for expected in "log-server: 3 clients, serial output attached" "midi-synth: ready at 44091710 mHz" "midi-player: music: summary of 256 periods" "audio: open for client 0"; do
+      grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "midi-test: the UART got no line \"$expected\" from the log server"; exit 1; }
+    done
+    echo "{{ ok_label }} the player played D_E1M1 through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
+
+# Build midi-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the player plays Doom's D_E1M1 through the MIDI synthesiser and the PWM audio driver on the headphone jack, looping, for good, and the log server writes the player's, the synthesiser's and the audio driver's lines on the UART
+[group("hw")]
+build-midi-test-hw board='rpi3': (build-components board '' '') (build-midi-player board '' '') (_build-test-kernel 'midi-test' board '')
+
+# Build midi-test for the Raspberry Pi 3 and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000 boot-midi-test`): with headphones in the jack and `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the player plays Doom's E1M1 music, looping, at volume 64, and nothing else runs. The UART shows the song's timing and first notes, the ARM and core clocks, and every 256 periods (about 3 s) the music summary (`service` min/avg/max against the period, packets, periods with sound, playing, the longest refill, underruns), the level (peak and RMS), the synthesiser's peak voice count and the song position
+[group("hw")]
+boot-midi-test: build-midi-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-rpi3.bin' }}"
 
 # Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
 [group("test")]
@@ -986,16 +1058,16 @@ clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') (_ho
 [group("test")]
 test-log-host: (_host-test 'log-server' 'protocol')
 
-# Lint Wood's music synthesiser: the library and the MIDI synthesiser component (with and without `qemu`) for the target, their host tests, and the bank-trimming tool
+# Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, and the bank-trimming and song-export tool
 [group("maintenance")]
-clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music') (_host-clippy 'midi-synth' 'session')
+clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
-    cargo clippy {{ target_json }} {{ rust_std }} -p wood-synth -p midi-synth -p midi-synth-server -p midi-synth-client \
+    cargo clippy {{ target_json }} {{ rust_std }} -p wood-synth -p midi-synth -p midi-synth-server -p midi-synth-client -p midi-player \
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
-    cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth --features qemu \
+    cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth -p midi-player --features qemu \
       -- --deny warnings --allow deprecated
-    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim --all-targets -- --deny warnings --allow deprecated
 
 # Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only): the wood-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
 [group("maintenance")]
@@ -1023,9 +1095,10 @@ synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
     if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
     echo "midi-synth component: no soft-float routines linked"
 
-# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth); and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes test-wood checks)
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth); and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes test-wood and test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); and the song export of sf2-trim
 [group("test")]
-test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music') (_host-test 'midi-synth' 'session')
+test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
+    cargo test -p sf2-trim
 
 # Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
 [group("tools")]
@@ -1033,6 +1106,11 @@ wood-soundfont:
     cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad \
       --soundfont "userspace/wood/room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2" \
       --output "{{ wood_soundfont }}"
+
+# Export Doom's E1M1 music from the shareware IWAD as a Standard MIDI File, converted by Room's mus2midi as the game does, into target/wood/d_e1m1.mid (the song midi-test plays)
+[group("tools")]
+wood-midi:
+    cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad --song D_E1M1 --midi "{{ wood_midi }}"
 
 # Lint the USB protocol host tests with their native host harness
 [private]

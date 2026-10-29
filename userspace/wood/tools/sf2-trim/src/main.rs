@@ -6,11 +6,17 @@
 //! instruments, samples and sample data those need
 //! (`wood_synth::trim::trim`). The result is a build artifact (under
 //! `target/`), rebuilt per IWAD: `just wood-soundfont`.
+//!
+//! With `--song` and `--midi` it writes one song's MIDI file instead, converted
+//! the same way (`just wood-midi`, for the MIDI test image).
 
 use {
     anyhow::{Context, Result, bail, ensure},
     argh::FromArgs,
-    std::{fs, path::PathBuf},
+    std::{
+        fs,
+        path::{Path, PathBuf},
+    },
     wood_synth::{
         Song,
         sf2::SoundFont,
@@ -18,7 +24,8 @@ use {
     },
 };
 
-/// Trim a SoundFont to the programs and percussion notes an IWAD's music uses.
+/// Trim a SoundFont to the programs and percussion notes an IWAD's music uses,
+/// or export one of its songs as a Standard MIDI File.
 #[derive(FromArgs)]
 struct Arguments {
     /// the IWAD whose MUS lumps are read
@@ -26,10 +33,40 @@ struct Arguments {
     wad: PathBuf,
     /// the SoundFont 2 file to trim
     #[argh(option)]
-    soundfont: PathBuf,
+    soundfont: Option<PathBuf>,
     /// where to write the trimmed SoundFont
     #[argh(option)]
-    output: PathBuf,
+    output: Option<PathBuf>,
+    /// the MUS lump to export as MIDI instead of trimming (e.g. `D_E1M1`)
+    #[argh(option)]
+    song: Option<String>,
+    /// where to write the exported song's MIDI file
+    #[argh(option)]
+    midi: Option<PathBuf>,
+}
+
+/// The MIDI file of the IWAD's song `name`, converted with Room's `mus2midi`
+/// as the game converts it.
+fn song_midi(wad: &[u8], name: &str) -> Result<Vec<u8>> {
+    let lumps = music_lumps(wad)?;
+    let (_, mus) = lumps
+        .iter()
+        .find(|(lump, _)| lump.eq_ignore_ascii_case(name))
+        .with_context(|| format!("no MUS lump {name}"))?;
+    let midi = room::engine::sound::mus2midi::mus2midi(mus)
+        .with_context(|| format!("{name}: MUS conversion failed"))?;
+    if let Err(error) = Song::parse(&midi) {
+        bail!("{name}: {error:?}");
+    }
+    Ok(midi)
+}
+
+/// Write `bytes` to `path`, making its directory.
+fn write_output(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
 }
 
 /// The MUS lumps of a WAD: name and bytes.
@@ -73,11 +110,24 @@ fn main() -> Result<()> {
     let arguments: Arguments = argh::from_env();
     let wad =
         fs::read(&arguments.wad).with_context(|| format!("reading {}", arguments.wad.display()))?;
-    let source = fs::read(&arguments.soundfont)
-        .with_context(|| format!("reading {}", arguments.soundfont.display()))?;
+    match (arguments.song, arguments.midi) {
+        (Some(name), Some(midi_path)) => {
+            let midi = song_midi(&wad, &name)?;
+            write_output(&midi_path, &midi)?;
+            println!("{name}: {} bytes of MIDI: {}", midi.len(), midi_path.display());
+            return Ok(());
+        }
+        (None, None) => {}
+        _ => bail!("--song and --midi go together"),
+    }
+    let (Some(soundfont), Some(output)) = (arguments.soundfont, arguments.output) else {
+        bail!("trimming needs --soundfont and --output");
+    };
+    let source =
+        fs::read(&soundfont).with_context(|| format!("reading {}", soundfont.display()))?;
     let font = match SoundFont::parse(&source) {
         Ok(font) => font,
-        Err(error) => bail!("{}: {error:?}", arguments.soundfont.display()),
+        Err(error) => bail!("{}: {error:?}", soundfont.display()),
     };
 
     let mut usage = Usage::default();
@@ -92,11 +142,7 @@ fn main() -> Result<()> {
         usage.add_song(&song);
     }
     let trimmed = trim(&font, &usage);
-    if let Some(parent) = arguments.output.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&arguments.output, &trimmed.bytes)
-        .with_context(|| format!("writing {}", arguments.output.display()))?;
+    write_output(&output, &trimmed.bytes)?;
 
     let programs: Vec<String> = usage
         .melodic
@@ -141,7 +187,47 @@ fn main() -> Result<()> {
         trimmed.bytes.len(),
         SoundFont::parse(&trimmed.bytes).map_or(0, |trimmed| trimmed.sample_data.len()),
         source.len(),
-        arguments.output.display()
+        output.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::{music_lumps, song_midi},
+        std::{fs, path::Path},
+        wood_synth::Song,
+    };
+
+    fn wad() -> Vec<u8> {
+        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wad/doom1.wad")).unwrap()
+    }
+
+    /// The exported song is the MUS lump through Room's `mus2midi`, byte for
+    /// byte, as the midi-synth session tests make it: the start hash
+    /// `just test-midi` checks holds for the file the image bundles.
+    #[test]
+    fn exports_e1m1_as_the_game_converts_it() {
+        let wad = wad();
+        let midi = song_midi(&wad, "D_E1M1").unwrap();
+        let lumps = music_lumps(&wad).unwrap();
+        let (_, mus) = lumps.iter().find(|(name, _)| name == "D_E1M1").unwrap();
+        assert_eq!(
+            midi,
+            room::engine::sound::mus2midi::mus2midi(mus).unwrap()
+        );
+        assert!(midi.starts_with(b"MThd"));
+        let song = Song::parse(&midi).unwrap();
+        assert_eq!(song.division, 70, "one tick per MUS tick at 120 bpm");
+        assert!(!song.events.is_empty());
+        // Names match without regard to case, as WAD lump names do.
+        assert_eq!(song_midi(&wad, "d_e1m1").unwrap(), midi);
+    }
+
+    #[test]
+    fn refuses_a_missing_song() {
+        let error = song_midi(&wad(), "D_NOSUCH").unwrap_err();
+        assert_eq!(error.to_string(), "no MUS lump D_NOSUCH");
+    }
 }
