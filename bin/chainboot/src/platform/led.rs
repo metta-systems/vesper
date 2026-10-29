@@ -9,8 +9,9 @@
 //!
 //! The firmware answers a request a little later. While a kernel arrives over the
 //! UART the core cannot spare the time to wait for that: the receive FIFO holds
-//! sixteen bytes, 1.4 ms at 115200 baud. So a request can be started and left
-//! unanswered, and the next one reaps the answer first.
+//! sixteen bytes, 1.4 ms at 115200 baud and 80 us at 2 Mbaud. So a request can be
+//! started and left unanswered, and the next one reaps the answer first; a flip
+//! asked for before then is skipped.
 
 use {
     super::{

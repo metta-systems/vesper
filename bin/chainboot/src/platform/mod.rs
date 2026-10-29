@@ -175,3 +175,14 @@ pub fn init() -> Result<Bringup, &'static str> {
     libconsole::console::register_console(&UART);
     Ok(bringup)
 }
+
+/// Switch the UART, running at `clock` Hz, to `baud_rate` once what was written
+/// has left the line.
+///
+/// # Errors
+///
+/// If the rate is out of range or the transmitter does not drain; the UART then
+/// stays at its rate.
+pub fn set_uart_rate(clock: u32, baud_rate: u32) -> Result<(), &'static str> {
+    UART.set_baud_rate(clock, baud_rate)
+}

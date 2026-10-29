@@ -618,6 +618,7 @@ dependencies = [
  "derive-mmio",
  "seahash",
  "tock-registers",
+ "vesper-chainboot-protocol",
  "vesper-console",
  "vesper-locking",
  "vesper-log",
@@ -643,6 +644,7 @@ dependencies = [
  "tokio",
  "tokio-serial",
  "tokio-stream",
+ "vesper-chainboot-protocol",
 ]
 
 [[package]]
@@ -4746,6 +4748,10 @@ dependencies = [
  "tock-registers",
  "vesper-cpu",
 ]
+
+[[package]]
+name = "vesper-chainboot-protocol"
+version = "0.0.1"
 
 [[package]]
 name = "vesper-console"

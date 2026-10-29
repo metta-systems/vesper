@@ -1,0 +1,35 @@
+[package]
+name = "vesper-chainboot-protocol"
+
+description = "The wire protocol between chainboot and chainofcommand: the beacon, the rate request and its answers, PL011 divisors and rate checks, the waiting times. Pure, no I/O."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Shared by chainboot (bare metal) and chainofcommand (host); host tests bring their own harness.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "chainboot_protocol"
+path = "tests/chainboot_protocol/main.rs"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

@@ -82,6 +82,10 @@ wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14
 
 chainboot_serial := '/dev/cu.usbserial-019586E3'
 chainboot_baud   := '115200'
+# The rate chainofcommand asks chainboot to load the kernel at, and the console stays at
+# (e.g. `just chainboot_load_baud=2000000 boot-wood-test`); empty loads at `chainboot_baud`
+chainboot_load_baud := ''
+chainofcommand_args := chainboot_serial + ' ' + chainboot_baud + (if chainboot_load_baud != '' { ' --load-baud ' + chainboot_load_baud } else { '' })
 
 # QEMU option fragments
 # Console, monitor and semihosting wiring shared by every QEMU run
@@ -261,7 +265,7 @@ build-audio-test-hw board='rpi3': (build-components board '' '') (_build-test-ke
 # Build audio-test for the Raspberry Pi 3 and boot it via chainofcommand: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the test client plays a 440 Hz tone through audio_v1 on the left side of the headphone jack for 3 s, the right for 3 s, both for 3 s, then both for a minute, 0.7 s apart; the audio driver traces on the UART, at each close, the measured sample rate, the underruns, late periods, the PWM's STA flags and the DMA errors
 [group("hw")]
 boot-audio-test: build-audio-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'audio-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'audio-test-rpi3.bin' }}"
 
 # Build the usb-core-test e2e kernel (the DWC2 component, the PL011 driver and the USB core, loaded by Kickstart)
 [group("test")]
@@ -280,7 +284,7 @@ build-usb-core-test-hw board='rpi3': (build-components board '' '') (_build-test
 # Build usb-core-test for the Raspberry Pi 3 and boot it via chainofcommand: `usb-core`'s trace appears on the UART
 [group("hw")]
 boot-usb-core-test: build-usb-core-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'usb-core-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-core-test-rpi3.bin' }}"
 
 # Build the usb-hid-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the input-trace program)
 [group("test")]
@@ -305,7 +309,7 @@ build-usb-hid-test-hw board='rpi3': (build-components board '' '') (_build-test-
 # Build usb-hid-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard and press keys, `input-trace` prints the events on the UART
 [group("hw")]
 boot-usb-hid-test: build-usb-hid-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
 
 # Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
 [group("test")]
@@ -327,7 +331,7 @@ build-compositor-test-hw board='rpi3': (build-components board '' '') (_build-te
 # Build compositor-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a mouse and a keyboard, the compositor traces the routed input on the UART
 [group("hw")]
 boot-compositor-test: build-compositor-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects through the PWM audio driver on the headphone jack; Wood's log is dropped, the compositor traces the routed input on the UART
 [group("hw")]
@@ -336,7 +340,7 @@ build-wood-test-hw board='rpi3': (build-components board '' '') (build-wood boar
 # Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads and Wood plays Doom's sound effects (without it Wood runs silent)
 [group("hw")]
 boot-wood-test: build-wood-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
 
 # Build Wood, the Room Doom engine's Vesper program, and the MIDI synthesiser component that plays
 # its music, with the trimmed SoundFont it bundles, for the image configuration `board` +
@@ -645,12 +649,12 @@ cb-eject board='rpi4': (build-chainboot board)
 # Build and boot via chainofcommand
 [group("hw")]
 boot: build chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ kernel_rpi4_bin }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi4_bin }}"
 
 # Build and boot in qemu via chainofcommand
 [group("emu")]
 boot-qemu: (build 'rpi3' 'qemu') chainofcommand
-    target/debug/chainofcommand {{ chainboot_serial }} {{ chainboot_baud }} --kernel "{{ kernel_rpi3_qemu_bin }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi3_qemu_bin }}"
 
 # === Openocd ===
 
@@ -825,7 +829,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host test-wood-synth
+test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host test-wood-synth (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -1014,11 +1018,11 @@ clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
 [private]
 clippy-compositor-host: (_host-clippy 'metta-compositor-core' 'compositor_core')
 
-# Clippy for the host tools (chainofcommand, vesper-image-build)
+# Clippy for the host tools (chainofcommand and its protocol crate's host tests, vesper-image-build)
 [private]
-_clippy-coc:
+_clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
-    cargo clippy -p chainofcommand -- --deny warnings --allow deprecated
+    cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
 
 # Build and disassemble kernel
 [group("debug")]

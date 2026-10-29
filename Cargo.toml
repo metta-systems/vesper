@@ -79,6 +79,7 @@ members = [
   "libs/alloc",
   "libs/block-channel",
   "libs/boot",
+  "libs/chainboot-protocol",
   "libs/component-loader",
   "userspace/libs/compositor-core",
   "userspace/libs/framebuffer",
@@ -203,7 +204,8 @@ mailbox-impl = { path = "drivers/mailbox" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
 libcompositor-core = { path = "userspace/libs/compositor-core", package = "metta-compositor-core" }
-libconsole = { path = "libs/console", package = "vesper-console" }
+libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
+libconsole ={ path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }

@@ -15,9 +15,15 @@ mod platform;
 use {
     aarch64_cpu::asm::barrier,
     core::{hash::Hasher, time::Duration},
+    libchainboot_protocol::{
+        BEACON, BOOT_BAUD_RATE, BOOT_RATE_WAIT, FAST_RATE_WAIT, Opening, RATE_ACCEPTED,
+        RATE_REFUSED, RateRefusal, SWITCH_SETTLE, Wait, decode_rate_request_body, opening,
+        validate_rate,
+    },
     libconsole::console::console,
     liblog::{print, println},
     libqemu::semihosting as semi,
+    platform::led::Blinker,
     seahash::SeaHasher,
 };
 
@@ -64,19 +70,121 @@ const LOGO: &str = r"
 /// How often the LED flips while chainboot waits for the host.
 const BLINK_PERIOD: Duration = Duration::from_millis(250);
 
-/// After how many bytes of the kernel the LED flips.
-const BLINK_BYTES: u64 = 4096;
+/// How often the LED flips while the kernel arrives: ten times as fast as while
+/// waiting, so a load is told from a wait at a glance, at any rate.
+const TRANSFER_BLINK_PERIOD: Duration = Duration::from_millis(25);
 
-fn read_u64(first: Option<u8>) -> u64 {
-    let mut val: u64 = u64::from(first.or_else(|| Some(console().read_byte())).unwrap());
-    val |= u64::from(console().read_byte()) << 8;
-    val |= u64::from(console().read_byte()) << 16;
-    val |= u64::from(console().read_byte()) << 24;
-    val |= u64::from(console().read_byte()) << 32;
-    val |= u64::from(console().read_byte()) << 40;
-    val |= u64::from(console().read_byte()) << 48;
-    val |= u64::from(console().read_byte()) << 56;
-    val
+/// After how many bytes of the kernel the LED's period is looked at. Reading the
+/// time for every byte would slow the receive loop; 64 bytes take 5.6 ms at
+/// 115200 baud and 0.32 ms at 2 Mbaud, well inside the period. A flip never
+/// waits for the firmware: while it has not answered the flip before, the flip
+/// is skipped (`led::Blinker::toggle`).
+const TRANSFER_BLINK_CHECK_BYTES: u64 = 64;
+
+/// How long it is since `start`, in uptime.
+fn since(start: Duration) -> Duration {
+    libtime::time::time_manager()
+        .uptime()
+        .checked_sub(start)
+        .expect("uptime must not go backwards")
+}
+
+/// The next `N` bytes from the host; the first is `first` when it has been read
+/// already.
+fn read_bytes<const N: usize>(first: Option<u8>) -> [u8; N] {
+    let mut bytes = [0; N];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = match (index, first) {
+            (0, Some(first)) => first,
+            _ => console().read_byte(),
+        };
+    }
+    bytes
+}
+
+/// Beacon and wait for the host as `wait` says, blinking the LED. Returns the
+/// host's first byte, or `None` when `wait` gives up.
+fn wait_for_host(wait: Wait, led: &mut Blinker) -> Option<u8> {
+    let started = libtime::time::time_manager().uptime();
+    let mut beacon_count: u64 = 0;
+    loop {
+        if wait.gives_up(since(started)) {
+            return None;
+        }
+        beacon_count = beacon_count.saturating_add(1);
+        let uptime = libtime::time::time_manager().uptime();
+        #[cfg(not(feature = "qemu"))]
+        let _: Duration = uptime;
+        semi::println!(
+            "⏪ Beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
+            uptime.as_secs(),
+            uptime.subsec_millis()
+        );
+
+        for byte in BEACON {
+            console().write_byte(byte);
+        }
+        console().flush();
+
+        let beaconed = libtime::time::time_manager().uptime();
+        while since(beaconed) < wait.beacon_period {
+            if let Some(b) = console().read_byte_nonblocking() {
+                let now = libtime::time::time_manager().uptime();
+                #[cfg(not(feature = "qemu"))]
+                let _: Duration = now;
+                semi::println!(
+                    "⏪ Host byte 0x{b:02x} received at {}.{:03}s",
+                    now.as_secs(),
+                    now.subsec_millis()
+                );
+                return Some(b);
+            }
+            led.tick(BLINK_PERIOD);
+            libtime::time::time_manager().spin_for(Duration::from_millis(10));
+        }
+
+        let waited = since(beaconed);
+        #[cfg(not(feature = "qemu"))]
+        let _: Duration = waited;
+        semi::println!(
+            "⏪ No host data after {}.{:03}s, retrying beacon",
+            waited.as_secs(),
+            waited.subsec_millis()
+        );
+    }
+}
+
+/// Read the rest of a rate request, whose magic has been read, and answer it at
+/// the rate the UART is at; on accepting, switch the UART, running at `clock`
+/// Hz, and give the host [`SWITCH_SETTLE`] to switch too. Returns the new rate
+/// when it switched.
+fn answer_rate_request(clock: u32) -> Option<u32> {
+    let request = decode_rate_request_body(read_bytes(None))
+        .ok_or(RateRefusal::Garbled)
+        .and_then(|rate| validate_rate(clock, rate).map(|_divisors| rate));
+    let rate = match request {
+        Ok(rate) => rate,
+        Err(refusal) => {
+            println!("{RATE_REFUSED}\n⏪ Staying at the rate: {refusal}");
+            return None;
+        }
+    };
+    print!("{RATE_ACCEPTED}");
+    // The answer leaves the line at the old rate before the switch.
+    match platform::set_uart_rate(clock, rate) {
+        Ok(()) => {
+            libtime::time::time_manager().spin_for(SWITCH_SETTLE);
+            semi::println!("⏪ Switched to {rate} baud");
+            Some(rate)
+        }
+        Err(why) => {
+            // Only the transmitter not draining fails here: nobody hears it.
+            #[cfg(not(feature = "qemu"))]
+            let _: &str = why;
+            semi::println!("⏪ Accepted {rate} baud but stayed: {why}");
+            None
+        }
+    }
 }
 
 /// The main function running after the early init.
@@ -115,70 +223,61 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
 
     let kernel_addr: *mut u8 = platform::KERNEL_LOAD_ADDRESS as *mut u8;
 
-    // The LED shows what chainboot is doing: it blinks while waiting for the host
-    // and while the kernel arrives, and goes off before the kernel runs.
-    let mut led = platform::led::Blinker::new();
+    // The LED shows what chainboot is doing: it blinks slowly while waiting for
+    // the host, fast while the kernel arrives, and goes off before the kernel runs.
+    let mut led = Blinker::new();
+
+    let clock = bringup.uart_clock.rate;
+    // The rate the UART is at, and whether the host has just been told it may
+    // switch to it (see the protocol crate's documentation).
+    let mut uart_rate = BOOT_BAUD_RATE;
+    let mut rate_just_accepted = false;
 
     loop {
         console().flush();
 
-        // Read the binary's size.
+        // Every wait that does not follow an accepted rate request is at the boot
+        // rate: after a failed load, or when the host did not show up at the new
+        // rate. The host goes back on the answer it just read, or has gone back.
+        if !rate_just_accepted && uart_rate != BOOT_BAUD_RATE {
+            match platform::set_uart_rate(clock, BOOT_BAUD_RATE) {
+                Ok(()) => {
+                    uart_rate = BOOT_BAUD_RATE;
+                    libtime::time::time_manager().spin_for(SWITCH_SETTLE);
+                }
+                Err(why) => {
+                    // Only the transmitter not draining fails here: nobody hears it.
+                    #[cfg(not(feature = "qemu"))]
+                    let _: &str = why;
+                    semi::println!("⏪ Could not go back to {BOOT_BAUD_RATE} baud: {why}");
+                }
+            }
+        }
+        let wait = if rate_just_accepted {
+            FAST_RATE_WAIT
+        } else {
+            BOOT_RATE_WAIT
+        };
+        rate_just_accepted = false;
+
+        // Read the binary's size, or a rate request.
         // While waiting, periodically emit sync beacons so a late-attaching host can still catch us.
         console().clear_rx();
-
-        let mut beacon_count: u64 = 0;
-        let first = 'wait_for_first: loop {
-            beacon_count = beacon_count.saturating_add(1);
-            let uptime = libtime::time::time_manager().uptime();
-            #[cfg(not(feature = "qemu"))]
-            let _: Duration = uptime;
-            semi::println!(
-                "⏪ Beacon #{beacon_count} at {}.{:03}s (sending ^C^C^C)",
-                uptime.as_secs(),
-                uptime.subsec_millis()
-            );
-
-            for _ in 0..3 {
-                console().write_byte(3_u8);
-            }
-            console().flush();
-
-            let start = libtime::time::time_manager().uptime();
-            while libtime::time::time_manager()
-                .uptime()
-                .checked_sub(start)
-                .expect("uptime must not go backwards")
-                < Duration::from_secs(5)
-            {
-                if let Some(b) = console().read_byte_nonblocking() {
-                    let now = libtime::time::time_manager().uptime();
-                    #[cfg(not(feature = "qemu"))]
-                    let _: Duration = now;
-                    semi::println!(
-                        "⏪ Host byte 0x{b:02x} received at {}.{:03}s",
-                        now.as_secs(),
-                        now.subsec_millis()
-                    );
-                    break 'wait_for_first b;
-                }
-                led.tick(BLINK_PERIOD);
-                libtime::time::time_manager().spin_for(Duration::from_millis(10));
-            }
-
-            let waited = libtime::time::time_manager()
-                .uptime()
-                .checked_sub(start)
-                .expect("uptime must not go backwards");
-            #[cfg(not(feature = "qemu"))]
-            let _: Duration = waited;
-            semi::println!(
-                "⏪ No host data after {}.{:03}s, retrying beacon",
-                waited.as_secs(),
-                waited.subsec_millis()
-            );
+        let Some(first) = wait_for_host(wait, &mut led) else {
+            semi::println!("⏪ No host at {uart_rate} baud, back to {BOOT_BAUD_RATE}");
+            continue;
         };
 
-        let size = read_u64(Some(first));
+        let size = match opening(read_bytes(Some(first))) {
+            Opening::Size(size) => size,
+            Opening::RateRequest => {
+                if let Some(rate) = answer_rate_request(clock) {
+                    uart_rate = rate;
+                    rate_just_accepted = true;
+                }
+                continue;
+            }
+        };
 
         // Check the size to fit RAM
         if size > max_kernel_size {
@@ -198,8 +297,8 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
         // Read the kernel byte by byte.
         for i in 0..size {
             let val = console().read_byte();
-            if i % BLINK_BYTES == 0 {
-                led.toggle();
+            if i % TRANSFER_BLINK_CHECK_BYTES == 0 {
+                led.tick(TRANSFER_BLINK_PERIOD);
             }
             // SAFETY: Writing things can be unsafe.
             unsafe {
@@ -217,7 +316,7 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
         }
 
         // Read the binary's checksum.
-        let checksum = read_u64(None);
+        let checksum = u64::from_le_bytes(read_bytes(None));
 
         let valid = hasher.finish() == checksum;
         if !valid {
@@ -229,6 +328,12 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
         print!("OK");
         break;
     }
+
+    // The kernel stays at the rate the boot loader set: the UART is left at
+    // `uart_rate`, the rate the load ran at, and Vesper's UART driver keeps the
+    // divisors it finds. chainofcommand stays at that rate for the console
+    // (`send_kernel` there).
+    semi::println!("⏪ Handing over at {uart_rate} baud");
 
     if let Err(why) = platform::led::set(false) {
         println!("The LED stays as it is: {why}");

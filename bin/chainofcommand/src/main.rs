@@ -10,21 +10,27 @@ use {
         tty::IsTty,
     },
     futures::{Stream, future::FutureExt},
+    libchainboot_protocol::{
+        BEACON, HOST_FAST_BEACON_TIMEOUT, RATE_ACCEPTED, RateAnswer, encode_rate_request,
+        rate_answer,
+    },
     seahash::SeaHasher,
     std::{
+        collections::VecDeque,
         fmt::Formatter,
         fs::File,
         hash::Hasher,
-        io::{BufRead, BufReader},
+        io::Read,
         path::Path,
-        time::Duration,
+        sync::Arc,
+        time::{Duration, Instant},
     },
     tokio::{
         io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
         net::TcpStream,
-        sync::mpsc,
+        sync::{Notify, mpsc},
     },
-    tokio_serial::{SerialPortBuilderExt, SerialStream},
+    tokio_serial::{SerialPort, SerialPortBuilderExt, SerialStream},
     tokio_stream::StreamExt,
 };
 
@@ -36,54 +42,315 @@ trait FramedStream = Stream<Item = Result<Message, anyhow::Error>> + Unpin;
 type Sender = mpsc::Sender<Result<Message>>;
 type Receiver = mpsc::Receiver<Result<Message>>;
 
-/// Wait for the target to answer `m`.
+/// How long the host waits for chainboot's answer to a rate request.
+const RATE_ANSWER_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How much of the kernel goes to the serial line at a time, so that the
+/// progress line can follow.
+const SEND_CHUNK: usize = 4096;
+
+/// How often the progress line is redrawn, at most.
+const PROGRESS_REDRAW: Duration = Duration::from_millis(100);
+
+/// Over how long the transfer rate on the progress line is measured.
+const RATE_WINDOW: Duration = Duration::from_secs(1);
+
+/// How many garbage characters, with no newline between them, at a rate other
+/// than the initial one mean the target restarted and talks at the initial rate.
+const RESTART_GARBAGE: usize = 8;
+
+/// The target's answer: its first `length` characters.
 ///
-/// Only the first characters of the pattern's length are the answer. What comes
-/// after them in the same chunk is the target going on ("OK" is followed by its
-/// next message at once), not a wrong answer. Every chunk is passed on to the
-/// console as it arrives, the answer and the rest alike.
-async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Result<()> {
-    // Accumulate chunks until we have enough chars for the pattern.
+/// What comes after them in the same chunk is the target going on ("OK" is
+/// followed by its next message at once), not part of the answer. Every chunk
+/// is passed on to the console as it arrives, the answer and the rest alike.
+async fn receive_answer(
+    to_console2: &Sender,
+    from_serial: &mut Receiver,
+    length: usize,
+) -> Result<String> {
+    // Accumulate chunks until we have enough chars for the answer.
     // Chunk boundaries are arbitrary (TCP/serial coalescing): "OK" may arrive
     // as one chunk or split across several, and may have more behind it, so we
     // can't pull one chunk per char.
-    let mut s = String::new();
-    let want = m.chars().count();
-    while s.chars().count() < want {
-        // to_console2
-        //     .send(Ok(Message::Text(format!(
-        //         "\r\n[expect {m:?}: waiting, have {s:?}]"
-        //     ))))
-        //     .await?;
-
-        let next_char = from_serial.recv().await;
-
-        let Some(Ok(c)) = next_char else {
+    let mut answer = String::new();
+    while answer.chars().count() < length {
+        let Some(Ok(chunk)) = from_serial.recv().await else {
             return Err(anyhow!(
-                "Failed to receive expected value {m:?}: got empty buf (accumulated {s:?})"
+                "Failed to receive an answer: got empty buf (accumulated {answer:?})"
             ));
         };
 
-        match c {
+        match chunk {
             Message::Text(payload) => {
-                // to_console2
-                //     .send(Ok(Message::Text(format!(
-                //         "\r\n[expect {m:?}: got chunk {payload:?}]",
-                //     ))))
-                //     .await?;
-                s.push_str(&payload);
+                answer.push_str(&payload);
                 to_console2.send(Ok(Message::Text(payload))).await?;
             }
-            Message::Binary(_) => unreachable!(),
+            Message::Binary(_) | Message::SetRate(_) | Message::Written(_) => unreachable!(),
         }
     }
-    if !s.starts_with(m) {
-        return Err(anyhow!("Failed to receive expected value {m:?}: got {s:?}"));
+    Ok(answer)
+}
+
+/// Wait for the target to answer `m`.
+///
+/// Only the first characters of the pattern's length are the answer: see
+/// [`receive_answer`].
+async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Result<()> {
+    let answer = receive_answer(to_console2, from_serial, m.chars().count())
+        .await
+        .map_err(|error| anyhow!("Failed to receive expected value {m:?}: {error}"))?;
+    if !answer.starts_with(m) {
+        return Err(anyhow!(
+            "Failed to receive expected value {m:?}: got {answer:?}"
+        ));
     }
-    // to_console2
-    //     .send(Ok(Message::Text(format!("\r\n[expect {m:?}: matched]"))))
-    //     .await?;
     Ok(())
+}
+
+/// Wait until chainboot's beacon, three `^C` in a row, arrives. Anything else
+/// is the line settling at a new rate and is dropped.
+async fn wait_for_beacon(from_serial: &mut Receiver) -> Result<()> {
+    let mut run = 0;
+    loop {
+        let Some(Ok(Message::Text(chunk))) = from_serial.recv().await else {
+            return Err(anyhow!("The serial line closed while waiting for a beacon"));
+        };
+        for character in chunk.chars() {
+            if character == char::from(BEACON[0]) {
+                run += 1;
+                if run == BEACON.len() {
+                    return Ok(());
+                }
+            } else {
+                run = 0;
+            }
+        }
+    }
+}
+
+/// Ask chainboot for `rate` (see the protocol crate's documentation) and switch
+/// the host when it accepts. Returns whether both are at `rate`, chainboot's
+/// beacon heard there. When not, chainboot waits at the boot rate again, and
+/// the host has to go back to it.
+async fn switch_rate(
+    to_console2: &Sender,
+    to_serial: &Sender,
+    from_serial: &mut Receiver,
+    rate: u32,
+) -> Result<bool> {
+    to_console2
+        .send(Ok(Message::Text(format!("⏩ Asking for {rate} baud .. "))))
+        .await?;
+    to_serial
+        .send(Ok(Message::Binary(Bytes::copy_from_slice(
+            &encode_rate_request(rate),
+        ))))
+        .await?;
+
+    let Ok(answer) = tokio::time::timeout(
+        RATE_ANSWER_TIMEOUT,
+        receive_answer(to_console2, from_serial, RATE_ACCEPTED.len()),
+    )
+    .await
+    else {
+        to_console2
+            .send(Ok(Message::Text("no answer\r\n".into())))
+            .await?;
+        return Ok(false);
+    };
+    match rate_answer(&answer?) {
+        RateAnswer::Accepted => {}
+        RateAnswer::Refused => {
+            to_console2
+                .send(Ok(Message::Text(format!(
+                    "\r\n⏩ chainboot refused {rate} baud\r\n"
+                ))))
+                .await?;
+            return Ok(false);
+        }
+        RateAnswer::NotUnderstood => {
+            to_console2
+                .send(Ok(Message::Text(
+                    "\r\n⏩ chainboot does not know rate requests\r\n".into(),
+                )))
+                .await?;
+            return Ok(false);
+        }
+    }
+
+    to_serial.send(Ok(Message::SetRate(rate))).await?;
+    if let Ok(beacon) =
+        tokio::time::timeout(HOST_FAST_BEACON_TIMEOUT, wait_for_beacon(from_serial)).await
+    {
+        beacon?;
+        to_console2
+            .send(Ok(Message::Text(format!(
+                "\r\n⏩ Loading at {rate} baud\r\n"
+            ))))
+            .await?;
+        Ok(true)
+    } else {
+        to_console2
+            .send(Ok(Message::Text(format!(
+                "\r\n⏩ No beacon at {rate} baud within {} s\r\n",
+                HOST_FAST_BEACON_TIMEOUT.as_secs()
+            ))))
+            .await?;
+        Ok(false)
+    }
+}
+
+/// The transfer rate over the last [`RATE_WINDOW`], from samples of how much
+/// was sent by when.
+#[derive(Debug, Default)]
+struct RateWindow {
+    samples: VecDeque<(Duration, u64)>,
+}
+
+impl RateWindow {
+    /// `sent` bytes in all were sent `at` after the start.
+    fn record(&mut self, at: Duration, sent: u64) {
+        self.samples.push_back((at, sent));
+        // Keep the newest sample at least a window old as the base.
+        while self
+            .samples
+            .get(1)
+            .is_some_and(|(second_at, _)| at.saturating_sub(*second_at) >= RATE_WINDOW)
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    /// The rate in bits per second, once two samples are some time apart.
+    fn bits_per_second(&self) -> Option<u64> {
+        let (first_at, first_sent) = self.samples.front()?;
+        let (last_at, last_sent) = self.samples.back()?;
+        let span = last_at.saturating_sub(*first_at).as_micros();
+        if span == 0 {
+            return None;
+        }
+        u64::try_from(u128::from(last_sent - first_sent) * 8 * 1_000_000 / span).ok()
+    }
+}
+
+/// `seconds` as m:ss.
+fn minutes_and_seconds(seconds: u64) -> String {
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// The progress line while the kernel is sent: `sent` of `total` bytes at
+/// `bits_per_second`, if known yet, with `frame` of the hourglass.
+fn progress_line(frame: char, sent: u64, total: u64, bits_per_second: Option<u64>) -> String {
+    let percent = (u128::from(sent) * 100)
+        .checked_div(u128::from(total))
+        .unwrap_or(100);
+    let (rate, left) = match bits_per_second.filter(|rate| *rate > 0) {
+        Some(rate) => (
+            format!("{} Kbps", rate / 1000),
+            minutes_and_seconds((total.saturating_sub(sent) * 8).div_ceil(rate)),
+        ),
+        None => ("- Kbps".to_owned(), "-:--".to_owned()),
+    };
+    format!("{frame} {percent:3}% {sent}/{total} bytes, {rate}, {left} left")
+}
+
+/// The progress line's last state: `total` bytes sent in `elapsed`.
+fn finished_line(total: u64, elapsed: Duration) -> String {
+    let average = u128::from(total) * 8 * 1_000_000 / elapsed.as_micros().max(1);
+    format!(
+        "✅ 100% {total}/{total} bytes in {}, {} Kbps average",
+        minutes_and_seconds(elapsed.as_secs()),
+        average / 1000
+    )
+}
+
+/// Send the size, the kernel and its checksum, with chainboot's answers, at the
+/// rate the line is at. The kernel goes in [`SEND_CHUNK`] pieces, each waited
+/// for until it is written to the line, and a progress line follows it.
+async fn send_image(
+    to_console2: &Sender,
+    to_serial: &Sender,
+    from_serial: &mut Receiver,
+    mut kernel_file: File,
+    kernel_size: u64,
+) -> Result<()> {
+    to_console2
+        .send(Ok(Message::Text("⏩ Sending image size .. ".into())))
+        .await?;
+    to_serial
+        .send(Ok(Message::Binary(Bytes::copy_from_slice(
+            &kernel_size.to_le_bytes(),
+        ))))
+        .await?;
+
+    // Wait for OK response
+    expect(to_console2, from_serial, "OK").await?;
+
+    to_console2
+        .send(Ok(Message::Text("\r\n⏩ Sending kernel image\r\n".into())))
+        .await?;
+
+    let mut hasher = SeaHasher::new();
+    let mut chunk = vec![0; SEND_CHUNK];
+    let started = Instant::now();
+    let mut rate_window = RateWindow::default();
+    rate_window.record(Duration::ZERO, 0);
+    let mut drawn: Option<Duration> = None;
+    let mut hourglass_step = 0_usize;
+    let mut sent: u64 = 0;
+    loop {
+        let length = kernel_file.read(&mut chunk)?;
+        if length == 0 {
+            break;
+        }
+        hasher.write(&chunk[..length]);
+        let written = Arc::new(Notify::new());
+        to_serial
+            .send(Ok(Message::Binary(Bytes::copy_from_slice(
+                &chunk[..length],
+            ))))
+            .await?;
+        to_serial
+            .send(Ok(Message::Written(Arc::clone(&written))))
+            .await?;
+        written.notified().await;
+        sent += u64::try_from(length)?;
+
+        let now = started.elapsed();
+        rate_window.record(now, sent);
+        if drawn.is_none_or(|drawn_at| now.saturating_sub(drawn_at) >= PROGRESS_REDRAW) {
+            drawn = Some(now);
+            let line = progress_line(
+                animated(&mut hourglass_step),
+                sent,
+                kernel_size,
+                rate_window.bits_per_second(),
+            );
+            to_console2
+                .send(Ok(Message::Text(format!("\r{line}\x1b[K"))))
+                .await?;
+        }
+    }
+    let line = finished_line(sent, started.elapsed());
+    to_console2
+        .send(Ok(Message::Text(format!("\r{line}\x1b[K\r\n"))))
+        .await?;
+    let hashed_value: u64 = hasher.finish();
+
+    to_console2
+        .send(Ok(Message::Text(format!(
+            "⏩ Sending image checksum {hashed_value:x} .. "
+        ))))
+        .await?;
+
+    to_serial
+        .send(Ok(Message::Binary(Bytes::copy_from_slice(
+            &hashed_value.to_le_bytes(),
+        ))))
+        .await?;
+
+    expect(to_console2, from_serial, "OK").await
 }
 
 async fn load_kernel<P>(to_console2: &Sender, kernel: P) -> Result<(File, u64)>
@@ -108,72 +375,112 @@ where
     Ok((kernel_file, kernel_size))
 }
 
+/// The rates the host uses.
+#[derive(Clone, Copy, Debug)]
+struct Rates {
+    /// The rate the port opens at, chainboot's boot rate.
+    initial: u32,
+    /// The rate to ask chainboot to load at, if any.
+    load: Option<u32>,
+}
+
+/// How an upload ended, when nothing went wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Upload {
+    /// The kernel runs, and the line is at `line_rate`.
+    Loaded { line_rate: u32 },
+    /// Chainboot did not take the load rate; it waits at the boot rate again.
+    FellBack,
+}
+
 async fn send_kernel<P: ThePath>(
     to_console2: Sender,
     to_serial: Sender,
     mut from_serial: Receiver,
     kernel: P,
-) -> Result<()> {
+    rates: Rates,
+) -> Result<Upload> {
     let (kernel_file, kernel_size) = load_kernel(&to_console2, kernel).await?;
 
-    to_console2
-        .send(Ok(Message::Text("⏩ Sending image size .. ".into())))
-        .await?;
-    to_serial
-        .send(Ok(Message::Binary(Bytes::copy_from_slice(
-            &kernel_size.to_le_bytes(),
-        ))))
-        .await?;
-
-    // Wait for OK response
-    expect(&to_console2, &mut from_serial, "OK").await?;
-
-    to_console2
-        .send(Ok(Message::Text("\r\n⏩ Sending kernel image\r\n".into())))
-        .await?;
-    let to_console2 = &to_console2;
-    let to_serial = &to_serial;
-
-    let mut hasher = SeaHasher::new();
-    let mut reader = BufReader::with_capacity(1, kernel_file);
-    loop {
-        let length = {
-            let buf = reader.fill_buf()?;
-            to_serial
-                .send(Ok(Message::Binary(Bytes::copy_from_slice(buf))))
-                .await?;
-            hasher.write(buf);
-            buf.len()
-        };
-        if length == 0 {
-            break;
+    let mut line_rate = rates.initial;
+    if let Some(load_rate) = rates.load {
+        if !switch_rate(&to_console2, &to_serial, &mut from_serial, load_rate).await? {
+            return Ok(Upload::FellBack);
         }
-        reader.consume(length);
+        line_rate = load_rate;
     }
-    let hashed_value: u64 = hasher.finish();
 
-    to_console2
-        .send(Ok(Message::Text(format!(
-            "⏩ Sending image checksum {hashed_value:x} .. "
-        ))))
-        .await?;
+    send_image(
+        &to_console2,
+        &to_serial,
+        &mut from_serial,
+        kernel_file,
+        kernel_size,
+    )
+    .await?;
 
-    to_serial
-        .send(Ok(Message::Binary(Bytes::copy_from_slice(
-            &hashed_value.to_le_bytes(),
-        ))))
-        .await?;
+    // The kernel stays at the rate the boot loader set (chainboot's
+    // `kernel_main`), so the console stays at the rate the load ran at.
+    Ok(Upload::Loaded { line_rate })
+}
 
-    expect(to_console2, &mut from_serial, "OK").await?;
+/// Watches what arrives at a rate other than the initial one for chainboot
+/// talking at the boot rate after the target restarted. Read too fast, each of
+/// its characters comes as a NUL (the line held low for longer than a frame is
+/// a break) or as bytes that are not text, and no newline among them.
+#[derive(Debug, Default)]
+struct RestartWatch {
+    garbage_run: usize,
+}
 
-    Ok(())
+impl RestartWatch {
+    /// Whether `text`, which arrived, makes it look like a restart.
+    fn observe(&mut self, text: &str) -> bool {
+        for character in text.chars() {
+            match character {
+                '\0' | char::REPLACEMENT_CHARACTER => self.garbage_run += 1,
+                '\n' => self.garbage_run = 0,
+                _ => {}
+            }
+            if self.garbage_run >= RESTART_GARBAGE {
+                self.garbage_run = 0;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // Async reading using Tokio: https://fasterthanli.me/articles/a-terminal-case-of-linux
 
+/// A line whose rate can be changed. A serial port's can; QEMU's TCP and PTY
+/// lines carry bytes at any rate, so for them it is nothing to do.
+trait RateControl {
+    fn set_rate(&mut self, rate: u32) -> Result<()>;
+}
+
+impl RateControl for SerialStream {
+    fn set_rate(&mut self, rate: u32) -> Result<()> {
+        self.set_baud_rate(rate)?;
+        Ok(())
+    }
+}
+
+impl RateControl for TcpStream {
+    fn set_rate(&mut self, _rate: u32) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl RateControl for tokio::fs::File {
+    fn set_rate(&mut self, _rate: u32) -> Result<()> {
+        Ok(())
+    }
+}
+
 async fn serial_loop<T>(mut port: T, to_console: Sender, mut from_console: Receiver) -> Result<()>
 where
-    T: AsyncRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite + RateControl + Unpin,
 {
     let mut buf = [0; 256];
     loop {
@@ -187,6 +494,11 @@ where
                         port.write_all(s.as_bytes()).await?;
                     },
                     Message::Binary(b) => port.write_all(b.as_ref()).await?,
+                    Message::SetRate(rate) => port.set_rate(rate)?,
+                    Message::Written(written) => {
+                        port.flush().await?;
+                        written.notify_one();
+                    }
                 }
              }
 
@@ -219,10 +531,15 @@ where
 // Always send Binary() to serial
 // Convert Text() to bytes and send in serial_loop
 // Receive and convert bytes to Text() in serial_loop
+// SetRate() and Written() only go to serial_loop.
 #[derive(Clone, Debug)]
 enum Message {
     Binary(Bytes),
     Text(String),
+    /// Switch the line to this rate, after what was sent before.
+    SetRate(u32),
+    /// Notified once what was sent before is written to the line.
+    Written(Arc<Notify>),
 }
 
 impl std::fmt::Display for Message {
@@ -235,6 +552,8 @@ impl std::fmt::Display for Message {
                 Ok(())
             }
             Message::Text(s) => write!(f, "{s}"),
+            Message::SetRate(rate) => write!(f, "[rate {rate}]"),
+            Message::Written(_) => write!(f, "[written]"),
         }
     }
 }
@@ -245,6 +564,7 @@ async fn console_loop<P>(
     to_serial: Sender,
     mut from_serial: Receiver,
     kernel: P,
+    rates: Rates,
 ) -> Result<()>
 where
     P: ThePath,
@@ -253,6 +573,12 @@ where
 
     let mut breaks = 0;
 
+    // The rate to load at, until it fails once; then loads run at the initial rate.
+    let mut load_rate = rates.load;
+    // The rate the line is at, and the watch for a restart while it is not the initial one.
+    let mut line_rate = rates.initial;
+    let mut restart_watch = RestartWatch::default();
+
     let mut event_reader = EventStream::new();
 
     // Protocol channel: while an upload task is running, serial bytes are
@@ -260,7 +586,7 @@ where
     // target's replies without starving the select loop's other branches.
     let (mut to_proto, from_proto) = mpsc::channel::<Result<Message>>(256);
     let mut from_proto = Some(from_proto);
-    let mut upload: Option<tokio::task::JoinHandle<Result<()>>> = None;
+    let mut upload: Option<tokio::task::JoinHandle<Result<Upload>>> = None;
 
     loop {
         tokio::select! {
@@ -287,6 +613,17 @@ where
                     };
                     // execute!(w, style::Print(format!("⏩ Received {} bytes from serial\r\n", received.len())))?;
 
+                    // After a restart chainboot beacons at the initial rate: go back to it to hear it.
+                    if line_rate != rates.initial && restart_watch.observe(&received) {
+                        to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
+                        execute!(w, style::Print(format!(
+                            "\r\n⏩ Garbage at {line_rate} baud, the target restarted? Back to {} baud\r\n",
+                            rates.initial
+                        )))?;
+                        w.flush()?;
+                        line_rate = rates.initial;
+                    }
+
                     for x in received.chars() {
                         if x == 0x3 as char {
                             // execute!(w, style::Print("⏩ Received a BREAK\r\n"))?;
@@ -303,6 +640,7 @@ where
                                     to_serial.clone(),
                                     from_proto.take().expect("proto receiver already taken"),
                                     kernel.clone(),
+                                    Rates { initial: rates.initial, load: load_rate },
                                 ));
                                 upload = Some(handle);
                             }
@@ -325,18 +663,30 @@ where
                 let (tx, rx) = mpsc::channel::<Result<Message>>(256);
                 to_proto = tx;
                 from_proto = Some(rx);
-                match result {
-                    Ok(Ok(())) => {
-                        to_console2.send(Ok(Message::Text("🦀 Send successful, pass-through\r\n".into()))).await?;
+                if let Ok(Ok(Upload::Loaded { line_rate: loaded_at })) = result {
+                    line_rate = loaded_at;
+                    restart_watch = RestartWatch::default();
+                    to_console2.send(Ok(Message::Text(format!("🦀 Send successful, pass-through at {loaded_at} baud\r\n")))).await?;
+                } else {
+                    // Chainboot waits at the boot rate again after anything else: so does the host.
+                    to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
+                    line_rate = rates.initial;
+                    match result {
+                        Ok(Err(e)) => {
+                            execute!(w, style::Print(format!("\r\n\r\n❌ Upload failed: {e:?}\r\n")))?;
+                        }
+                        Err(join_err) => {
+                            execute!(w, style::Print(format!("\r\n\r\n❌ Upload task panicked: {join_err:?}\r\n")))?;
+                        }
+                        Ok(Ok(_fell_back)) => {}
                     }
-                    Ok(Err(e)) => {
-                        execute!(w, style::Print(format!("\r\n\r\n❌ Upload failed: {e:?}\r\n")))?;
-                        w.flush()?;
+                    if let Some(rate) = load_rate.take() {
+                        execute!(w, style::Print(format!(
+                            "\r\n⏩ Not loading at {rate} baud again: loads run at {} baud from now on\r\n",
+                            rates.initial
+                        )))?;
                     }
-                    Err(join_err) => {
-                        execute!(w, style::Print(format!("\r\n\r\n❌ Upload task panicked: {join_err:?}\r\n")))?;
-                        w.flush()?;
-                    }
+                    w.flush()?;
                 }
             }
 
@@ -365,9 +715,9 @@ where
     }
 }
 
-async fn main_loop<T, P>(port: T, kernel: P) -> Result<()>
+async fn main_loop<T, P>(port: T, kernel: P, rates: Rates) -> Result<()>
 where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    T: AsyncRead + AsyncWrite + RateControl + Unpin + Send + 'static,
     P: ThePath,
 {
     // read from serial -> to_console==>from_serial -> output to console
@@ -385,7 +735,15 @@ where
     let (to_serial, from_console) = mpsc::channel(256);
 
     tokio::spawn(serial_loop(port, to_console.clone(), from_console));
-    console_loop(to_console2, from_internal, to_serial, from_serial, kernel).await
+    console_loop(
+        to_console2,
+        from_internal,
+        to_serial,
+        from_serial,
+        kernel,
+        rates,
+    )
+    .await
 
     // TODO: framed
 
@@ -441,8 +799,11 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 
 // 1. connect to given serial port, e.g. /dev/ttyUSB23234
 // 2. Await for \3\3\3 start signal, meanwhile pass-through all traffic to console
-// 3. send selected kernel binary with checksum to the target
-// 4. go to 2
+// 3. with --load-baud, ask chainboot for that rate and switch to it
+// 4. send selected kernel binary with checksum to the target
+// 5. stay at the rate the load ran at for the console; on garbage there, which is
+//    chainboot restarted at the initial rate, go back to the initial rate
+// 6. go to 2
 
 /// `ChainOfCommand` - command chainboot protocol
 ///
@@ -452,9 +813,13 @@ struct Args {
     /// device path to a serial port, e.g. /dev/ttyUSB0
     #[argh(option, short = 'p')]
     port: Option<String>,
-    /// baud rate to connect at
+    /// baud rate to connect at, chainboot's boot rate (115200)
     #[argh(option, short = 'b')]
     baud: Option<u32>,
+    /// baud rate to ask chainboot to load the kernel at; the console stays at it
+    /// afterwards. Without it the load runs at the connect rate
+    #[argh(option)]
+    load_baud: Option<u32>,
     /// path of the binary kernel image to send
     #[argh(option, short = 'k')]
     kernel: Option<String>,
@@ -463,8 +828,15 @@ struct Args {
     positional: Vec<String>,
 }
 
+/// What the arguments come to.
+struct Settings {
+    port: String,
+    rates: Rates,
+    kernel: String,
+}
+
 impl Args {
-    fn resolve(self) -> anyhow::Result<(String, u32, String)> {
+    fn resolve(self) -> anyhow::Result<Settings> {
         let pos = |index: usize| self.positional.get(index).cloned();
 
         let port = self
@@ -484,7 +856,17 @@ impl Args {
             .kernel
             .or_else(|| pos(2))
             .unwrap_or_else(|| String::from("kernel8.img"));
-        Ok((port, baud, kernel))
+        if self.load_baud == Some(0) {
+            return Err(anyhow::anyhow!("invalid load baud rate: 0"));
+        }
+        Ok(Settings {
+            port,
+            rates: Rates {
+                initial: baud,
+                load: self.load_baud,
+            },
+            kernel,
+        })
     }
 }
 
@@ -507,7 +889,12 @@ enum OpenedPort {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Args = argh::from_env();
-    let (port, baud, kernel) = args.resolve()?;
+    let Settings {
+        port,
+        rates,
+        kernel,
+    } = args.resolve()?;
+    let baud = rates.initial;
 
     // Check that STDIN is a proper tty
     assert!(std::io::stdin().is_tty(), "Must have a TTY for stdin"); // TODO: relax this requirement
@@ -584,8 +971,9 @@ async fn main() -> Result<()> {
                         execute!(
                             stdout,
                             cursor::RestorePosition,
+                            terminal::Clear(terminal::ClearType::UntilNewLine),
                             style::Print(format!(
-                                "{} Waiting for serial port {port}\r",
+                                "{} Waiting for serial port {port} ({e})\r",
                                 animated(&mut serial_step)
                             ))
                         )?;
@@ -655,9 +1043,9 @@ async fn main() -> Result<()> {
         // Input from serial should pass through to STDOUT
 
         let loop_result = match opened_port {
-            OpenedPort::Serial(port) => main_loop(port, kernel.clone()).await,
-            OpenedPort::Raw(port) => main_loop(port, kernel.clone()).await,
-            OpenedPort::Tcp(port) => main_loop(port, kernel.clone()).await,
+            OpenedPort::Serial(port) => main_loop(port, kernel.clone(), rates).await,
+            OpenedPort::Raw(port) => main_loop(port, kernel.clone(), rates).await,
+            OpenedPort::Tcp(port) => main_loop(port, kernel.clone(), rates).await,
         };
 
         if let Err(e) = loop_result {
@@ -777,5 +1165,182 @@ mod tests {
         drop(line);
         let (to_console, _console) = mpsc::channel(16);
         assert!(expect(&to_console, &mut from_serial, "OK").await.is_err());
+    }
+
+    /// What went to the serial line: the bytes, and the rates it was switched to.
+    fn sent_to_serial(line: &mut Receiver) -> (Vec<u8>, Vec<u32>) {
+        let mut bytes = Vec::new();
+        let mut rates = Vec::new();
+        while let Ok(Ok(message)) = line.try_recv() {
+            match message {
+                Message::Binary(chunk) => bytes.extend_from_slice(&chunk),
+                Message::SetRate(rate) => rates.push(rate),
+                Message::Text(_) | Message::Written(_) => {}
+            }
+        }
+        (bytes, rates)
+    }
+
+    #[tokio::test]
+    async fn an_accepted_rate_switches_and_waits_for_the_beacon() {
+        let (_line, mut from_serial) = serial(&["BAUD OK", "\u{fffd}\0", "\u{3}\u{3}", "\u{3}"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+            .await
+            .expect("no line errors");
+        assert!(switched);
+        let (bytes, rates) = sent_to_serial(&mut serial_line);
+        assert_eq!(bytes, encode_rate_request(2_000_000));
+        assert_eq!(rates, [2_000_000]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_rate_does_not_switch() {
+        let (_line, mut from_serial) =
+            serial(&["BAUD NO\r\n⏪ Staying at the rate: 4000000 baud is out of range"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 4_000_000)
+            .await
+            .expect("no line errors");
+        assert!(!switched);
+        assert!(sent_to_serial(&mut serial_line).1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_older_chainboot_does_not_switch() {
+        let (_line, mut from_serial) = serial(&["ERR ❌ Kernel image too big (over 1 bytes)"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+            .await
+            .expect("no line errors");
+        assert!(!switched);
+        assert!(sent_to_serial(&mut serial_line).1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_beacon_at_the_new_rate_gives_up() {
+        // Takes HOST_FAST_BEACON_TIMEOUT of real time.
+        let (_line, mut from_serial) = serial(&["BAUD OK"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let started = Instant::now();
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+            .await
+            .expect("no line errors");
+        assert!(!switched);
+        assert!(started.elapsed() >= HOST_FAST_BEACON_TIMEOUT);
+        // The host switched and gives up; the console loop takes it back.
+        assert_eq!(sent_to_serial(&mut serial_line).1, [2_000_000]);
+    }
+
+    #[test]
+    fn the_progress_line_says_how_far_how_fast_and_how_long() {
+        // 2 Mbit/s with 1_000_000 bytes to go: 4 s.
+        assert_eq!(
+            progress_line('⏳', 1_000_000, 2_000_000, Some(2_000_000)),
+            "⏳  50% 1000000/2000000 bytes, 2000 Kbps, 0:04 left"
+        );
+        // 115200 baud with 5 MB to go: 347.2 s, rounded up.
+        assert_eq!(
+            progress_line('⌛', 0, 5_000_000, Some(115_200)),
+            "⌛   0% 0/5000000 bytes, 115 Kbps, 5:48 left"
+        );
+        assert_eq!(
+            progress_line('⏳', 4096, 8192, None),
+            "⏳  50% 4096/8192 bytes, - Kbps, -:-- left"
+        );
+        assert_eq!(
+            progress_line('⏳', 0, 0, Some(0)),
+            "⏳ 100% 0/0 bytes, - Kbps, -:-- left"
+        );
+    }
+
+    #[test]
+    fn the_finished_line_says_the_average() {
+        assert_eq!(
+            finished_line(5_000_000, Duration::from_secs(25)),
+            "✅ 100% 5000000/5000000 bytes in 0:25, 1600 Kbps average"
+        );
+        assert_eq!(
+            finished_line(0, Duration::ZERO),
+            "✅ 100% 0/0 bytes in 0:00, 0 Kbps average"
+        );
+    }
+
+    #[test]
+    fn minutes_and_seconds_pad_the_seconds() {
+        assert_eq!(minutes_and_seconds(0), "0:00");
+        assert_eq!(minutes_and_seconds(59), "0:59");
+        assert_eq!(minutes_and_seconds(61), "1:01");
+        assert_eq!(minutes_and_seconds(3600), "60:00");
+    }
+
+    #[test]
+    fn the_rate_is_measured_over_the_last_second() {
+        let mut window = RateWindow::default();
+        assert_eq!(window.bits_per_second(), None);
+        window.record(Duration::ZERO, 0);
+        assert_eq!(window.bits_per_second(), None);
+        // A fast start: 100 KB in the first 100 ms.
+        window.record(Duration::from_millis(100), 100_000);
+        assert_eq!(window.bits_per_second(), Some(8_000_000));
+        // Then 25 KB every 100 ms, 2 Mbit/s, for two seconds.
+        for tenth in 2..=21 {
+            window.record(
+                Duration::from_millis(100 * tenth),
+                100_000 + 25_000 * (tenth - 1),
+            );
+        }
+        // The fast start is out of the window.
+        assert_eq!(window.bits_per_second(), Some(2_000_000));
+        assert!(window.samples.len() <= 12);
+    }
+
+    #[test]
+    fn garbage_without_newlines_is_a_restart() {
+        let mut watch = RestartWatch::default();
+        assert!(!watch.observe("Vesper console at 2000000 baud\r\n"));
+        assert!(!watch.observe("\0\0\u{fffd}\0"));
+        assert!(watch.observe("\0\u{fffd}\0\0"));
+        // It starts over after saying so.
+        assert!(!watch.observe("\0"));
+    }
+
+    #[test]
+    fn a_newline_clears_the_garbage() {
+        let mut watch = RestartWatch::default();
+        for _ in 0..10 {
+            assert!(!watch.observe("\u{fffd}\u{fffd}\u{fffd} split characters\r\n"));
+        }
+    }
+
+    #[test]
+    fn load_baud_is_optional() {
+        let args = Args {
+            port: None,
+            baud: None,
+            load_baud: None,
+            kernel: None,
+            positional: vec!["/dev/ttyUSB0".into()],
+        };
+        let settings = args.resolve().expect("valid");
+        assert_eq!(settings.port, "/dev/ttyUSB0");
+        assert_eq!(settings.rates.initial, 115_200);
+        assert_eq!(settings.rates.load, None);
+
+        let args = Args {
+            port: None,
+            baud: None,
+            load_baud: Some(2_000_000),
+            kernel: Some("wood.bin".into()),
+            positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
+        };
+        let settings = args.resolve().expect("valid");
+        assert_eq!(settings.rates.initial, 115_200);
+        assert_eq!(settings.rates.load, Some(2_000_000));
+        assert_eq!(settings.kernel, "wood.bin");
     }
 }

@@ -27,6 +27,7 @@ aarch64-cpu = { workspace = true }
 arbitrary-int = { workspace = true }
 bitbybit = { workspace = true }
 derive-mmio = { workspace = true }
+libchainboot-protocol = { workspace = true }
 libconsole = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
