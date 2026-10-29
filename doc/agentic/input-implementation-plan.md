@@ -11,7 +11,8 @@ need a producer only for hardware checks.
 
 ## Dependencies
 
-- D5 blocks INPUT2, D6 and D8 block INPUT3, and D10 blocks INPUT4. See [input-decisions.md](input-decisions.md).
+- D5 blocks INPUT2, D6 blocks INPUT3 (D8 is answered: the console adapter), and D10
+  blocks INPUT4. See [input-decisions.md](input-decisions.md).
 - The clock is settled in [capabilities-contract.md](capabilities-contract.md): the
   monotonic physical counter in nanoseconds.
 - The io-channel (`libs/io-channel`) carries the records.

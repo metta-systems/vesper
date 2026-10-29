@@ -9,6 +9,10 @@
 # on the UART. The test client is a program that streams to it through
 # audio_v1.
 
+# The audio driver imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
 name = "gpio"

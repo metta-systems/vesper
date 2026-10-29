@@ -24,6 +24,7 @@ use {
     libio_channel::{Consumer, IoRec, NoEvent, Packet, Producer},
     libmeddle_runtime::PAGE_BYTES,
     libobject::{EventCountKey, RawKey},
+    mailbox_client::mailbox_v1::{Bindings as MailboxBindings, Client as MailboxClient, Clock},
     midi_synth::{
         CHANNEL_SLOTS, Command, PERIOD_BYTES, PERIOD_FRAMES, RENDER_AREA_BYTES, SONG_FIRST,
         SONG_LAST, SONG_LOOPING, channel_at, volume_value,
@@ -111,11 +112,73 @@ pub struct Music {
     songs: u64,
     /// Nanoseconds the last `service` took
     last_service_ns: u64,
+    /// The `service` calls since the last [`Music::take_window`]
+    window: ServiceWindow,
+}
+
+/// What the `service` calls of a stretch of periods took and did, for the
+/// playback Thread's periodic summary line.
+#[derive(Clone, Copy)]
+pub struct ServiceWindow {
+    pub calls: u64,
+    pub total_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+    /// Packets the synthesiser handled
+    pub handled: u64,
+    /// Calls that failed
+    pub failed: u64,
+    /// Periods pulled, and those with sound
+    pub periods: u64,
+    pub audible: u64,
+}
+
+impl ServiceWindow {
+    const EMPTY: Self = Self {
+        calls: 0,
+        total_ns: 0,
+        min_ns: u64::MAX,
+        max_ns: 0,
+        handled: 0,
+        failed: 0,
+        periods: 0,
+        audible: 0,
+    };
+
+    /// Average nanoseconds per call.
+    pub const fn average_ns(&self) -> u64 {
+        match self.total_ns.checked_div(self.calls) {
+            Some(average) => average,
+            None => 0,
+        }
+    }
+
+    /// The shortest call, 0 without calls.
+    pub const fn shortest_ns(&self) -> u64 {
+        if self.calls == 0 { 0 } else { self.min_ns }
+    }
+}
+
+/// Log the ARM and core clocks the firmware runs at, if the image lets Wood
+/// ask the mailbox: the synthesiser's render time per period depends on them.
+fn log_clocks(init: &DriverInit) {
+    let mailbox = MailboxClient::new(MailboxBindings::from_imports(init.imports()));
+    let megahertz = |clock: Clock| {
+        mailbox
+            .get_clock_rate(clock)
+            .map_or(0, |hertz| hertz / 1_000_000)
+    };
+    log::info!(
+        "music: ARM clock {} MHz, core clock {} MHz (0: unknown)",
+        megahertz(Clock::Arm),
+        megahertz(Clock::Core)
+    );
 }
 
 impl Music {
     /// Take the synthesiser, if the image has one; why not otherwise.
     pub fn open(init: &DriverInit, audio_millihertz: u32) -> Result<Self, &'static str> {
+        log_clocks(init);
         let client = Client::new(Bindings::from_imports(init.imports()));
         let rate = client.rate().map_err(|error| match error {
             Error::NotGranted => "no MIDI synthesiser in the image",
@@ -151,7 +214,13 @@ impl Music {
             audible: 0,
             songs: 0,
             last_service_ns: 0,
+            window: ServiceWindow::EMPTY,
         })
+    }
+
+    /// What happened since the last call, starting a new window.
+    pub fn take_window(&mut self) -> ServiceWindow {
+        core::mem::replace(&mut self.window, ServiceWindow::EMPTY)
     }
 
     /// Bytes of the song area, after the render buffers.
@@ -173,10 +242,19 @@ impl Music {
     /// the render buffer's frames, if a render packet came back.
     fn service(&mut self) -> Option<u64> {
         let started = libuser::clock::now_ns();
-        if self.client.service().is_err() {
-            log::warn!("music: service failed");
+        match self.client.service() {
+            Ok(handled) => self.window.handled += u64::from(handled),
+            Err(_error) => {
+                self.window.failed += 1;
+                log::warn!("music: service failed");
+            }
         }
         self.last_service_ns = libuser::clock::now_ns().saturating_sub(started);
+        let window = &mut self.window;
+        window.calls += 1;
+        window.total_ns += self.last_service_ns;
+        window.min_ns = window.min_ns.min(self.last_service_ns);
+        window.max_ns = window.max_ns.max(self.last_service_ns);
         let mut rendered = None;
         while let Ok(Some(back)) = self.completions.get() {
             if Command::of(back.value()) == Some(Command::Render) {
@@ -278,8 +356,10 @@ impl Music {
         frames[rendered..].fill([0, 0]);
 
         self.periods += 1;
+        self.window.periods += 1;
         if frames[..rendered].iter().any(|&frame| frame != [0, 0]) {
             self.audible += 1;
+            self.window.audible += 1;
             if self.audible.is_power_of_two() {
                 self.report();
             }

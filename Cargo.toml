@@ -157,6 +157,11 @@ members = [
   "userspace/wood/midi-synth",
   "userspace/wood/midi-synth/client",
   "userspace/wood/midi-synth/server",
+  # The log server component, its log_v1 interface crates and the client library
+  "userspace/log-server",
+  "userspace/log-server/client",
+  "userspace/log-server/server",
+  "libs/log-client",
 ]
 # Room is a workspace of its own (its host platform, tests and tools); Wood
 # links its engine library by path.
@@ -276,6 +281,10 @@ wood-synth = { path = "userspace/wood/synth" }
 midi-synth = { path = "userspace/wood/midi-synth" }
 midi-synth-client = { path = "userspace/wood/midi-synth/client" }
 midi-synth-server = { path = "userspace/wood/midi-synth/server" }
+log-server = { path = "userspace/log-server" }
+log-interface = { path = "userspace/log-server/server" }
+log-interface-client = { path = "userspace/log-server/client" }
+liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }

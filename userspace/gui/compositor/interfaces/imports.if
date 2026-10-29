@@ -10,3 +10,8 @@
 # granted and the compositor runs without input.
 uses fb_v1 via device compatible "brcm,bcm2708-fb" { configure, address, size, pixel_order, frames }
 uses input_v1 via component usb_hid { descriptor, snapshot }
+# In an image with the log server (wood-test), the compositor's trace goes to it
+# on the interface's io-channel instead of the serial channel, which the log
+# server holds; elsewhere the import stays unlinked and the compositor holds the
+# serial channel itself (`serial = true`).
+uses log_v1 via component log_server { flush }

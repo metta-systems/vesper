@@ -8,6 +8,10 @@
 # programs (components with `program = true`): Kickstart starts them at boot,
 # without a device tree node.
 
+# The compositor imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 [[driver]]
 name = "mailbox"
 binary = "mailbox"

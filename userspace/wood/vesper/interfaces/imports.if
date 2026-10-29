@@ -18,3 +18,11 @@ uses audio_v1 via device compatible "brcm,bcm2835-pwm" { rate, open, close, unde
 # the interface's io-channel, mixing the sound effects on top. An image
 # without the synthesiser leaves it unlinked, and the music stays silent.
 uses midi_synth_v1 via component midi_synth { rate, open, close, service, playing }
+# The engine's log goes to the log server, the program holding the UART, on
+# the interface's io-channel; neither Thread ever waits for it. An image
+# without the log server leaves it unlinked, and the log shows on the
+# semihosting console under QEMU only.
+uses log_v1 via component log_server { flush }
+# The ARM and core clocks, logged when the music starts: the synthesiser's
+# render time per period means little without them.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_clock_rate }

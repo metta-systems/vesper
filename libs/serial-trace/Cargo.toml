@@ -17,6 +17,7 @@ publish = false
 [dependencies]
 libdevice-driver = { workspace = true }
 libio-channel = { workspace = true }
+liblog-client = { workspace = true }
 libobject = { workspace = true }
 libserial-channel = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().

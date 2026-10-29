@@ -1,6 +1,10 @@
 # What kickstart embeds (see vesper-image-build). `binary` is the cargo
 # binary name, built with the nucleus linker script.
 
+# The compositor imports the log server's log_v1, which this image does not
+# bundle (the shell holds the serial channel): the import stays unlinked.
+interfaces = ["../../userspace/log-server/interfaces"]
+
 [nucleus]
 binary = "nucleus"
 

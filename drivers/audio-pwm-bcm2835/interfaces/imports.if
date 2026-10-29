@@ -12,3 +12,7 @@ uses gpio_v1 via device compatible "brcm,bcm2835-gpio" { set_function }
 # (decision D1). The PWM node names no `dmas`, so the chain starts from the
 # controller's compatible string.
 uses dma_v1 via device compatible "brcm,bcm2835-dma" { claim, release, copy, start_ring, position, stop, errors }
+# In an image with the log server (wood-test), the driver's trace goes to it on
+# the interface's io-channel; elsewhere the import stays unlinked and the trace
+# uses the serial channel (audio-test) or the backlog.
+uses log_v1 via component log_server { flush }

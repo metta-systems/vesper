@@ -197,11 +197,10 @@ Done in QEMU (2026-10-28), hardware check pending:
 
 - [ ] Hardware exit (`just boot-wood-test` on the Pi 3 B with the overlay line in
   `config.txt` and headphones in the jack): Doom's effects heard during the demos, in
-  the right places left and right, without clicks. The underrun count cannot be read
-  there yet: Wood's log is semihosting only, and the audio driver's trace waits in its
-  backlog because the compositor holds the UART; reporting it (for example through the
-  compositor's serial channel) is open. If underruns show under load, D8 option B comes
-  into play.
+  the right places left and right, without clicks. The underrun count reaches the UART
+  through the log server ([logging-implementation-plan.md](logging-implementation-plan.md),
+  L-A): Wood's `music: summary` line every 256 periods and the `audio: … underruns`
+  reports. If underruns show under load, D8 option B comes into play.
 
 ## A5: music
 
@@ -218,9 +217,9 @@ it with the effects; the host keeps `rustysynth`.
   as in A4. Wood already logs the time each `service` call takes (the render of one
   period plus the call), at powers of two of the periods with music; under QEMU that is
   130 to 300 µs, which says nothing about the board.
-- Needs the board (unavailable for now) and a way to read the result there (Wood's log
-  is semihosting only; the open "report through the compositor's serial channel" item of
-  A4, or the audio test image's UART).
+- Needs the board (unavailable for now). Reading the result there works since the log
+  server (logging L-A): wood-test logs the ARM and core clocks at music start and the
+  `service` time min/avg/max every 256 periods on the UART.
 - Exit: the render share of a buffer's 11.6 ms and the ARM clock are recorded in the
   design doc; it fits with margin (below a quarter of the core at the clock measured), or
   D9.5 (half rate) is revisited with the number.

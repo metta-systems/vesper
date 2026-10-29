@@ -5,6 +5,10 @@
 # window-events, a client of the compositor that checks the events its windows
 # receive and ends the run with the result, and the root dispatcher.
 
+# The compositor imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 [[driver]]
 name = "mailbox"
 binary = "mailbox"

@@ -2228,6 +2228,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "log-interface"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "log-interface-client"
+version = "0.0.1"
+dependencies = [
+ "log-interface",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "log-server"
+version = "0.0.1"
+dependencies = [
+ "log-interface",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-channel",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "logos"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4891,6 +4921,19 @@ name = "vesper-log"
 version = "0.0.1"
 
 [[package]]
+name = "vesper-log-client"
+version = "0.0.1"
+dependencies = [
+ "log",
+ "log-interface-client",
+ "log-server",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "vesper-machine"
 version = "0.0.1"
 dependencies = [
@@ -4969,6 +5012,7 @@ version = "0.0.1"
 dependencies = [
  "vesper-device-driver",
  "vesper-io-channel",
+ "vesper-log-client",
  "vesper-objects",
  "vesper-print",
  "vesper-serial-channel",
@@ -5804,6 +5848,7 @@ dependencies = [
  "audio-pwm-bcm2835",
  "compositor-client",
  "log",
+ "mailbox-client",
  "metta-compositor-core",
  "metta-meddle-runtime",
  "midi-synth",
@@ -5813,8 +5858,8 @@ dependencies = [
  "vesper-device-driver",
  "vesper-input-event",
  "vesper-io-channel",
+ "vesper-log-client",
  "vesper-objects",
- "vesper-print",
  "vesper-user-runtime",
 ]
 

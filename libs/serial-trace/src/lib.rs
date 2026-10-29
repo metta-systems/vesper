@@ -2,11 +2,16 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! Progress lines for the people bringing a program up: on the serial channel
-//! when the component has one (`serial = true` in its manifest entry), and on
-//! the semihosting console under QEMU. A component without a serial channel
-//! keeps its lines in a backlog that it hands to the program holding the serial
-//! channel through an export of its own ([`drain`]).
+//! Progress lines for the people bringing a program up, on the semihosting
+//! console under QEMU and, in order of preference:
+//!
+//! - on the component's log channel when it imports `log_v1` and the image
+//!   has a log server (`liblog-client`): never waits, a line that finds no
+//!   buffer free is dropped and counted;
+//! - on the serial channel when the component has one (`serial = true` in its
+//!   manifest entry): waits for the driver to send each line;
+//! - otherwise in a backlog that the component hands to the program holding
+//!   the serial channel through an export of its own ([`drain`]).
 
 use {
     core::{
@@ -16,6 +21,7 @@ use {
     },
     libdevice_driver::DriverInit,
     libio_channel::{Consumer, IoRec, Packet, Producer},
+    liblog_client::{Level, Sent},
     libobject::{EventCountKey, RawKey},
     libserial_channel::{CONTROL_VA, DATA_AREA_VA, SLOTS, SerialChannel},
     libuser::semihosting as semi,
@@ -154,11 +160,13 @@ pub fn drain(out: &mut [u8]) -> usize {
     count
 }
 
-/// One line on the semihosting console and in the backlog, for a component
-/// without a serial channel.
+/// One line on the semihosting console, and on the log channel or else in the
+/// backlog, for a component without a serial channel.
 pub fn note(arguments: fmt::Arguments<'_>) {
     semi::println!("{arguments}");
-    keep(arguments);
+    if liblog_client::send(Some(Level::Info), arguments) == Sent::NoChannel {
+        keep(arguments);
+    }
 }
 
 fn keep(arguments: fmt::Arguments<'_>) {
@@ -187,6 +195,9 @@ impl Trace {
     /// Emit one line.
     pub fn line(&mut self, arguments: fmt::Arguments<'_>) {
         semi::println!("{arguments}");
+        if liblog_client::send(Some(Level::Info), arguments) != Sent::NoChannel {
+            return;
+        }
         let Some(serial) = &mut self.serial else {
             keep(arguments);
             return;

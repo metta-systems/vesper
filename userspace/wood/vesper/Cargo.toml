@@ -15,8 +15,8 @@ version = { workspace = true }
 
 [features]
 default = []
-# The engine's log and the frame trace on the semihosting console.
-qemu = ["libuser/qemu"]
+# The engine's log and the frame trace on the semihosting console too.
+qemu = ["libuser/qemu", "liblog-client/qemu"]
 
 [target.'cfg(target_os = "vesper")'.dependencies]
 audio-client = { workspace = true }
@@ -26,13 +26,15 @@ compositor-client = { workspace = true }
 libcompositor-core = { workspace = true }
 libdevice-driver = { workspace = true }
 libio-channel = { workspace = true }
+# The engine's log, to the log server.
+liblog-client = { workspace = true }
+# The ARM and core clocks, logged when the music starts.
+mailbox-client = { workspace = true }
 libmeddle-runtime = { workspace = true }
 libobject = { workspace = true }
 # The midi_synth_v1 packet protocol and the data pages' layout.
 midi-synth = { workspace = true }
 midi-synth-client = { workspace = true }
-# libqemu's semihosting print macros expand to ::libprint::format_cstr().
-libprint = { workspace = true }
 libuser = { workspace = true }
 log = { workspace = true }
 rlsf = { workspace = true }

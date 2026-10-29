@@ -1,0 +1,38 @@
+[package]
+name = "vesper-log-client"
+
+description = "Log lines to the log server over a log_v1 io-channel, never waiting: a log::Log implementation, a println-style macro and the call libserial-trace sends through."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+# Every line on the semihosting console too, under QEMU.
+qemu = ["libuser/qemu"]
+
+[dependencies]
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+log = { workspace = true }
+log-interface-client = { workspace = true }
+# The channel's layout and the line header.
+log-server = { workspace = true }
+
+[lib]
+name = "liblog_client"
+test = false
+harness = false
+
+[lints]
+workspace = true

@@ -4,8 +4,10 @@
 # lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
 # a window of its own, with the shareware IWAD as its resource, and the drivers
 # of audio-test (the gpio component, the clock manager, the DMA controller and
-# the PWM audio driver) for Wood's sound effects, and the MIDI synthesiser
-# component with its SoundFont for Wood's music.
+# the PWM audio driver) for Wood's sound effects, the MIDI synthesiser
+# component with its SoundFont for Wood's music, and the log server, which
+# holds the PL011's serial channel and writes the lines of the compositor,
+# Wood, the synthesiser and the audio driver to the UART.
 
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
@@ -28,9 +30,7 @@ interfaces = "../../../drivers/dma-bcm2835/interfaces"
 
 # The PWM audio driver, loaded for the `brcm,bcm2835-pwm` node, which only the
 # test tree (`just test-wood`) or the board's `pwm-2chan` overlay enable. Wood's
-# playback Thread is its client. The compositor holds the PL011's serial
-# channel, so the driver's trace shows on the semihosting console under QEMU
-# only.
+# playback Thread is its client. Its trace goes to the log server.
 [[driver]]
 name = "audio"
 binary = "audio-pwm-bcm2835"
@@ -76,8 +76,20 @@ binary = "compositor"
 interfaces = "../../../userspace/gui/compositor/interfaces"
 active = true
 program = true
-serial = true
 memory = 33554432
+
+# The log server: the one holder of the PL011's serial channel. The
+# compositor, Wood, the MIDI synthesiser and the audio driver import its log_v1
+# and put their lines on its io-channel, never waiting; it writes them to the
+# UART with a timestamp and level, dropping and counting what the UART cannot
+# keep up with.
+[[component]]
+name = "log_server"
+binary = "log-server"
+interfaces = "../../../userspace/log-server/interfaces"
+active = true
+program = true
+serial = true
 
 # The shell's `draw` started by itself: a window of the compositor with the
 # shell's scene and the lava lamp, so the board shows a window to move the

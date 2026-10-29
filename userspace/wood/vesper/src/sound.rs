@@ -196,7 +196,16 @@ struct Output {
     /// Buffers mixed, and those of them with a voice playing
     mixed: u64,
     audible: u64,
+    /// The longest refill (music and mixing) since the last summary
+    refill_max_ns: u64,
+    /// The driver's underrun count at the last summary
+    summary_underruns: u32,
 }
+
+/// Buffers between two summary lines (about 3 s): the music's `service`
+/// times, what the synthesiser handled, the longest refill and the
+/// underruns. One line per summary keeps the log far below even 115 200 baud.
+const SUMMARY_BUFFERS: u64 = 256;
 
 impl Output {
     /// Ask the driver for its rate and open the output; why not, if it
@@ -239,12 +248,46 @@ impl Output {
             music: None,
             mixed: 0,
             audible: 0,
+            refill_max_ns: 0,
+            summary_underruns: 0,
         })
+    }
+
+    /// Log what the last [`SUMMARY_BUFFERS`] buffers took: the line to read
+    /// when the music sounds wrong on the board. Never waits on the log.
+    fn summary(&mut self, client: &Client) {
+        let underruns = client.underruns().unwrap_or(u32::MAX);
+        let new_underruns = underruns.wrapping_sub(self.summary_underruns);
+        self.summary_underruns = underruns;
+        let refill_max_us = core::mem::take(&mut self.refill_max_ns) / 1000;
+        let period_us =
+            BUFFER_FRAMES as u64 * 1_000_000_000 / u64::from(self.rate_millihertz.max(1));
+        match &mut self.music {
+            Some(music) => {
+                let window = music.take_window();
+                log::info!(
+                    "music: summary of {} periods: service min/avg/max {}/{}/{} us over {} calls ({} failed), {} packets handled, {} periods with sound, playing {}; refill max {refill_max_us} us of a {period_us} us period; underruns {underruns} (+{new_underruns})",
+                    window.periods,
+                    window.shortest_ns() / 1000,
+                    window.average_ns() / 1000,
+                    window.max_ns / 1000,
+                    window.calls,
+                    window.failed,
+                    window.handled,
+                    window.audible,
+                    PLAYING.load(Ordering::Acquire)
+                );
+            }
+            None => log::info!(
+                "audio: summary of {SUMMARY_BUFFERS} buffers: no music; refill max {refill_max_us} us of a {period_us} us period; underruns {underruns} (+{new_underruns})"
+            ),
+        }
     }
 
     /// Pull the music into buffer `index`, mix the voices on top and queue
     /// it.
     fn refill(&mut self, client: &Client, index: u64) {
+        let started = libuser::clock::now_ns();
         let frames = self.pages.frames(index);
         if let Some(music) = &mut self.music {
             music.fill(frames);
@@ -260,7 +303,13 @@ impl Output {
         if self.submit.put(&packet).is_err() {
             log::warn!("audio: the io-channel is full");
         }
+        self.refill_max_ns = self
+            .refill_max_ns
+            .max(libuser::clock::now_ns().saturating_sub(started));
         self.mixed += 1;
+        if self.mixed.is_multiple_of(SUMMARY_BUFFERS) {
+            self.summary(client);
+        }
         if playing != 0 {
             self.audible += 1;
             if self.audible.is_power_of_two() {

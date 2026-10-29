@@ -903,6 +903,27 @@ fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
         .collect()
 }
 
+/// The manifest's top-level `interfaces`, relative to the manifest at `path`:
+/// directories searched for the interfaces the image's components import
+/// from an exporter the image does not bundle. Such an import stays unlinked
+/// at boot (the component's call reports it not granted); a component that
+/// can live without the exporter (the log server, for one) imports it in
+/// every image this way.
+fn searched_interface_directories(path: &Path, table: &toml::Table) -> Vec<PathBuf> {
+    table
+        .get("interfaces")
+        .and_then(toml::Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .map(|directory| {
+            let directory = directory
+                .as_str()
+                .unwrap_or_else(|| panic!("{}: `interfaces` lists directories", path.display()));
+            path.parent().unwrap_or(Path::new(".")).join(directory)
+        })
+        .collect()
+}
+
 /// The `interfaces` directory of a manifest `entry`, relative to the
 /// manifest at `path`.
 fn interface_directory(path: &Path, entry: &toml::Value) -> Option<PathBuf> {
@@ -1031,6 +1052,7 @@ pub fn bundle_components(manifest: &str) {
         .iter()
         .chain(driver_entries.iter().map(|driver| &driver.component))
         .filter_map(|entry| entry.interfaces.clone())
+        .chain(searched_interface_directories(&manifest_path, &table))
         .collect();
     let mut programs = Vec::new();
     for component in &components {

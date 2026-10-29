@@ -1,0 +1,51 @@
+[package]
+name = "log-server"
+
+description = "The log server component: the one holder of the PL011's serial channel, writing the lines its clients put on their log_v1 io-channels; the library holds what both sides agree on."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# The host tests (`just test-log-host`) need nothing extra; the feature keeps
+# them on the shared `_host-test` recipe.
+host-tests = []
+# The server's own lines on the semihosting console under QEMU.
+qemu = ["libuser/qemu"]
+
+[dependencies]
+libio-channel = { workspace = true }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-channel = { workspace = true }
+libuser = { workspace = true }
+log-interface = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "log-server"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "protocol"
+
+[lints]
+workspace = true

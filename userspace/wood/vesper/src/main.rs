@@ -5,8 +5,6 @@
 
 // Host builds compile this binary natively too; it is only an empty `main` there.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// libqemu's semihosting `println!` (the engine's log under QEMU) expands to it.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! `wood`: the Room Doom engine as a Vesper program. It carves its stack and
 //! heap from its RAM, asks the compositor for a 640x400 window, and runs the

@@ -1,0 +1,34 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## Log lines to the serial output, served by the log server component, the one
+## holder of the PL011's serial channel (`doc/agentic/logging-design.md`).
+##
+## The lines travel on the interface's io-channel in transmit mode: the client
+## owns the channel's data pages as 256-byte buffers, writes one line into a
+## free buffer (without its line end) and puts a packet of one record naming
+## it. The packet's value word is the line's header: its level, its timestamp,
+## whether it was cut and how many lines the client dropped before it (the
+## `log-server` crate encodes it). The server writes each line to the UART with
+## a timestamp and level prefix, in the order the client put them, and hands
+## the packet back: a packet back is a buffer free to reuse. Nobody waits on
+## the channel's EventCount: the client takes packets back when it next logs.
+## A packet with a record outside the data pages comes back unwritten.
+##
+## A client never waits for the log: with no buffer free, it drops the line and
+## counts it. Prototype: edited in place.
+local interface log_v1
+{
+    ## The io-channel the lines travel on: a control page and two data pages
+    ## (32 lines in flight).
+    channel 2;
+
+    ## Every function receives the badge of the key it was called through.
+    badged;
+
+    ## Tell the server lines were put: it looks at every client's channel
+    ## soon after. Never waits; the server also looks on its own every few
+    ## milliseconds, so a line put without a `flush` is written too.
+    flush();
+}

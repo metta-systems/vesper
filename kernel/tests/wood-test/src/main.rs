@@ -12,8 +12,11 @@
 //! Wood asks the compositor for a 640x400 window, reads the shareware IWAD
 //! from its resource and runs the engine, which plays its demos until keys
 //! arrive: the window is the newest, so it has the keyboard focus, and the
-//! compositor sends it the keyboard's keys on its event channel. Its log and a
-//! line per power-of-two frame go to the semihosting console under QEMU. Its
+//! compositor sends it the keyboard's keys on its event channel. The log
+//! server holds the PL011's serial channel: Wood's log (with a line per
+//! power-of-two frame and a music summary every 256 periods), the
+//! compositor's, the synthesiser's and the audio driver's trace reach the UART
+//! through it, and the semihosting console as well under QEMU. Its
 //! playback Thread streams the mixed sound effects to the audio driver through
 //! `audio_v1`, when the PWM node is enabled: `just test-wood` boots the test
 //! tree `targets/overlays/audio-test-pwm.dts` makes, where the driver captures
@@ -179,6 +182,7 @@ pub fn run() -> ! {
             &components::CPRMAN_DRIVER,
             &components::DMA_DRIVER,
             &components::AUDIO_DRIVER,
+            &components::LOG_SERVER_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
         &mut slots,
@@ -214,10 +218,15 @@ pub fn run() -> ! {
                 assert_ne!(init.areas()[0].channel_event, 0);
             } else if name == components::COMPOSITOR.name {
                 // The compositor: the five functions of fb_v1, the two of
-                // input_v1 and the serial channel; the report key goes in its
-                // table only.
-                assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
-                assert_eq!(imports.len(), 7, "five of fb_v1, descriptor and snapshot");
+                // input_v1 and `flush` of log_v1, without a serial channel
+                // (the log server holds it); the report key goes in its table
+                // only.
+                assert_eq!(init.serial.transmit_submitted, 0, "no serial channel");
+                assert_eq!(
+                    imports.len(),
+                    8,
+                    "five of fb_v1, descriptor and snapshot, flush"
+                );
                 assert!(imports.iter().any(|record| record.channel_event != 0));
                 assert_ne!(init.map_window.l2, 0, "a window to map the framebuffer");
                 assert!(init.map_window.tables.iter().all(|&table| table != 0));
@@ -232,9 +241,10 @@ pub fn run() -> ! {
                         panic!("report grant failed: {:?}", failure.error.code())
                     });
             } else if name == components::MIDI_SYNTH.name {
-                // The MIDI synthesiser: no imports, its SoundFont, and Wood
-                // as its one client, on an io-channel.
-                assert!(imports.is_empty());
+                // The MIDI synthesiser: `flush` of log_v1 with its io-channel,
+                // its SoundFont, and Wood as its one client, on an io-channel.
+                assert_eq!(imports.len(), 1, "flush of log_v1");
+                assert_ne!(imports[0].channel_event, 0, "log_v1 has an io-channel");
                 assert!(init.resource(0).is_some(), "the SoundFont resource");
                 let [area] = init.areas() else {
                     panic!(
@@ -247,13 +257,22 @@ pub fn run() -> ! {
                 // Wood: six functions of compositor_v1 and its event channel,
                 // the four of audio_v1 and their io-channel when the audio
                 // driver loaded, the five of midi_synth_v1 and their
-                // io-channel, a window to map its surface in, and the IWAD.
+                // io-channel, `flush` of log_v1 and its io-channel,
+                // `get_clock_rate` of mailbox_v1 (a data area, no channel), a
+                // window to map its surface in, and the IWAD.
                 assert_eq!(
                     imports.len(),
-                    6 + 4 * audio_nodes + 5,
-                    "six functions of compositor_v1, four of audio_v1, five of midi_synth_v1"
+                    6 + 4 * audio_nodes + 5 + 1 + 1,
+                    "six functions of compositor_v1, four of audio_v1, five of midi_synth_v1, flush, get_clock_rate"
                 );
-                assert!(imports.iter().all(|record| record.channel_event != 0));
+                assert_eq!(
+                    imports
+                        .iter()
+                        .filter(|record| record.channel_event == 0)
+                        .count(),
+                    1,
+                    "every import but the mailbox's has an io-channel"
+                );
                 assert_ne!(init.map_window.l2, 0, "a window to map the surface");
                 assert!(init.resource(0).is_some(), "the IWAD resource");
             } else if name == components::AUDIO.name {
@@ -265,6 +284,18 @@ pub fn run() -> ! {
                     );
                 };
                 assert_ne!(area.channel_event, 0, "audio_v1 has an io-channel");
+            } else if name == components::LOG_SERVER.name {
+                // The log server: the serial channel, and the compositor, the
+                // synthesiser, Wood and the audio driver (with a PWM node) as
+                // its clients, each on an io-channel.
+                assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
+                assert!(imports.is_empty());
+                assert_eq!(
+                    init.areas().len(),
+                    3 + audio_nodes,
+                    "the compositor, the synthesiser, Wood and the audio driver"
+                );
+                assert!(init.areas().iter().all(|area| area.channel_event != 0));
             }
             assert_ne!(
                 init.return_key, 0,
@@ -282,10 +313,10 @@ pub fn run() -> ! {
     );
     assert_eq!(
         started,
-        INSTANCES + 13 + audio_nodes,
-        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, the MIDI synthesiser, wood, gpio, the clock manager, the DMA controller, the audio driver (with a PWM node) and the root dispatcher"
+        INSTANCES + 14 + audio_nodes,
+        "the controller, the PL011, the mailbox, fb, usb-core, usb-hid, the compositor, draw-demo, the MIDI synthesiser, wood, gpio, the clock manager, the DMA controller, the audio driver (with a PWM node), the log server and the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES + 12 + audio_nodes);
+    assert_eq!(seen, INSTANCES + 13 + audio_nodes);
 
     // ── The compositor reports once it has read the keyboard through input_v1 ──
     let bits = NotificationKey::from_key(report)
