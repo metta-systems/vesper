@@ -1,0 +1,254 @@
+---
+title: Wood
+format:
+  revealjs:
+    theme: [dark, custom.scss]
+    mermaid:
+      theme: dark
+---
+
+![](wood.png)
+
+# OS architecture
+
+- microkernel
+- capabilities
+- single syscall
+- userspace scheduler
+- all "servers" in userspace
+
+# Capabilities
+
+```{mermaid}
+flowchart TB
+    untyped["Untyped ●"]
+
+    subgraph domain["Protection domain"]
+        address_space["AddressSpace ⓐ ●"]
+        page_table["PageTable ⓐ ●"]
+        frame["Frame ⓐ ●"]
+        key_table["KeyTable ●"]
+        asid_pool["ASIDPool ⓐ"]
+        asid_control["ASIDControl ⓐ"]
+        asid_pool -.->|Assign| address_space
+        address_space --- page_table
+        page_table --- frame
+        address_space --- key_table
+    end
+
+    untyped --> domain
+```
+
+# Capabilities
+
+```{mermaid}
+flowchart TB
+    untyped["Untyped ●"]
+
+    subgraph execution["Execution"]
+        thread["Thread ●"]
+        invocation["Invocation"]
+        thread -.->|Call| invocation
+    end
+
+    untyped --> execution
+```
+
+# Capabilities
+
+```{mermaid}
+flowchart TB
+    untyped["Untyped ●"]
+
+    subgraph scheduling["Time and scheduling"]
+        scheduler["Scheduler ●"]
+        time["Time ●"]
+        scheduler -.->|ConfigureThread| time
+    end
+
+    untyped --> scheduling
+```
+
+# Capabilities
+
+```{mermaid}
+flowchart TB
+    untyped["Untyped ●"]
+
+    subgraph events["Signalling and waiting"]
+        notification["Notification ●"]
+        event_count["EventCount ●"]
+        wait_set["WaitSet ●"]
+        wait_set -.->|waits on| notification
+        wait_set -.->|waits on| event_count
+    end
+    untyped --> events
+```
+
+# Capabilities
+
+```{mermaid}
+flowchart TB
+    subgraph devices["Interrupts and devices"]
+        irq_control["IRQControl"]
+        irq_handler["IRQHandler"]
+        io_space["IOSpace ⓐ"]
+        io_port["IOPort ⓐ"]
+        irq_control -.->|Issue| irq_handler
+    end
+
+    subgraph other["Other"]
+        null["Null"]
+        debug_console["DebugConsole"]
+    end
+```
+
+# RPi3 hardware
+
+- mailbox
+- fb
+- uart
+- usb
+- gpio
+- clock
+- dma
+
+# Components architecture
+
+- idl
+  - meddler
+- wiring up
+- xbufs
+
+# IDL (exports)
+
+```
+local interface log_v1
+{
+    ## The io-channel the lines travel on: a control page and two data pages
+    ## (32 lines in flight).
+    channel 2;
+
+    ## Every function receives the badge of the key it was called through.
+    badged;
+
+    ## Tell the server lines were put: it looks at every client's channel
+    ## soon after. Never waits; the server also looks on its own every few
+    ## milliseconds, so a line put without a `flush` is written too.
+    flush();
+}
+```
+
+# IDL (imports)
+
+```
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_led }
+uses power_v1 via device compatible "brcm,bcm2835-pm" { reset }
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy, snapshot }
+```
+
+# Interfaces
+
+```{mermaid}
+flowchart TB
+    wood["wood ●"]
+    compositor["compositor ●"]
+    midi_synth["midi_synth ●"]
+    usb_hid["usb_hid ●"]
+    usb_core["usb_core ●"]
+    usb["usb ●"]
+    fb["fb"]
+    audio["audio ●"]
+    dma["dma"]
+    cprman["cprman"]
+    gpio["gpio"]
+    mailbox["mailbox"]
+
+    wood -->|compositor_v1 ⇄| compositor
+    wood -->|midi_synth_v1 ⇄| midi_synth
+    wood -->|audio_v1 ⇄| audio
+    wood -->|mailbox_v1| mailbox
+    compositor -->|input_v1 ⇄| usb_hid
+    compositor -->|fb_v1| fb
+    usb_hid -->|usb_v1| usb_core
+    usb_hid -->|usb_hcd_v1 ⇄| usb
+    usb_core -->|usb_hcd_v1 ⇄| usb
+    usb -->|mailbox_v1| mailbox
+    fb -->|mailbox_v1| mailbox
+    audio -->|dma_v1 ⇄| dma
+    audio -->|clock_v1| cprman
+    audio -->|gpio_v1| gpio
+
+    subgraph logs
+        log_server["log_server"]
+        clients(["● log clients"])
+        clients -.->|log_v1 ⇄| log_server
+    end
+```
+
+# Support components
+
+- heap - rlsf-based allocation
+- audio - sample playback and mixing
+- midi_synth - MIDI playback
+- dispatcher - called by kernel timer tick
+- compositor - windows and input events
+- usb/usb-core/usb-hid - USB stack
+- log_server - logging
+
+# Tooling
+
+- if_lsp - LSP for interface files
+- chainboot - chain bootloader for rpi
+- chainofcommand - control plain for chain boot
+
+# Wood
+
+doom-generic ported to Rust - "Room"
+then Room rewritten to more idiomatic rust (no ptr(), almost no unsafe)
+platform code extracted into a trait
+
+# Platform
+
+```
+pub trait Platform {
+    fn init(&self) {}
+    fn draw_frame(&self, _frame: &[u32]) {}
+    fn draw_in_place(&self, _draw: &mut dyn FnMut(&mut [u32], usize)) -> bool {
+    fn finish_pixel(&self, red: u8, green: u8, blue: u8) -> u32 {
+    fn sleep_ms(&self, _ms: u32) {}
+    fn ticks_ms(&self) -> u32 {
+    fn key(&self) -> Option<(bool, u8)> {
+    fn set_window_title(&self, _title: &str) {}
+    fn sound_init(&self) -> bool {
+    fn sound_shutdown(&self) {}
+    fn sound_start(&self, _lump: &[u8], _channel: usize, _vol: i32, _sep: i32) -> bool {
+    fn sound_stop(&self, _channel: usize) {}
+    fn sound_update(&self, _channel: usize, _vol: i32, _sep: i32) {}
+    fn sound_is_playing(&self, _channel: usize) -> bool {
+    fn music_init(&self) {}
+    fn music_play(&self, _midi: &[u8], _looping: bool) {}
+    fn music_stop(&self) {}
+    fn music_pause(&self) {}
+    fn music_resume(&self) {}
+    fn music_set_volume(&self, _volume: i32) {}
+    fn music_is_playing(&self) -> bool {
+    fn open(&self, _path: &str) -> Option<FileHandle> {
+    fn len(&self, _file: FileHandle) -> u64 {
+    fn read_at(&self, _file: FileHandle, _offset: u64, _buffer: &mut [u8]) -> usize {
+    fn close(&self, _file: FileHandle) {}
+    fn read_file(&self, _path: &str) -> Option<Vec<u8>> {
+    fn write_file(&self, _path: &str, _data: &[u8]) -> bool {
+    fn rename(&self, _from: &str, _to: &str) -> bool {
+    fn remove(&self, _path: &str) -> bool {
+    fn exists(&self, _path: &str) -> bool {
+    fn create_dir(&self, _path: &str) -> bool {
+    fn error_box(&self, _message: &str) {}
+    fn quit(&self, code: i32) -> ! {
+}
+```
+
+# Future
+
+- iso scheduler
+- live kernel upgrade

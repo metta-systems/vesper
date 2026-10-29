@@ -1,0 +1,52 @@
+// Yaru Primary Brand Colors
+$ubuntu-orange: #E95420;
+$ubuntu-aubergine: #77216f;
+
+// Accent Colors (Yaru Palette)
+$accent-color: $ubuntu-orange;
+$accent-bg-color: $ubuntu-orange;
+$accent-fg-color: #ffffff;
+$secondary-accent: #77216f;
+
+// Background & Surface Neutrals (Dark Variant Base)
+$yaru-dark-bg: #303030;
+$yaru-dark-header: #2c2c2c;
+$yaru-dark-card: #383838;
+$yaru-dark-text: #eeeeee;
+$yaru-dark-secondary-text: #999999;
+
+// Background & Surface Neutrals (Light Variant Base)
+$yaru-light-bg: #f7f7f7;
+$yaru-light-header: #ffffff;
+$yaru-light-card: #ffffff;
+$yaru-light-text: #333333;
+$yaru-light-secondary-text: #666666;
+
+// Semantic / Feedback Colors
+$yaru-success: #388a34;
+$yaru-warning: #f57900;
+$yaru-error: #cc0000;
+
+// Border and Divider Tokens
+$yaru-border-dark: rgba(255, 255, 255, 0.08);
+$yaru-border-light: rgba(0, 0, 0, 0.08);
+
+/*-- scss:defaults --*/
+
+$body-bg: $yaru-dark-bg;
+$body-color: $yaru-dark-text;
+$link-color: #89b4fa;
+$presentation-heading-color: $ubuntu-orange;
+$code-block-bg: #181825;
+
+/* Mermaid */
+$mermaid-bg-color: #181825; /* Diagram background */
+$mermaid-edge-color: $accent-fg-color; /* Edges and connections */
+$mermaid-node-bg-color: $accent-bg-color; /* Node fill */
+$mermaid-node-fg-color: $yaru-dark-text; /* Node text/foreground */
+$mermaid-fg-color: $yaru-dark-text; /* General diagram foreground */
+$mermaid-fg-color--lighter: $yaru-dark-text; /* Lighter foreground */
+$mermaid-fg-color--lightest: $yaru-dark-text; /* Lightest foreground */
+$mermaid-font-family: "Ubuntu Sans"; /* Diagram font */
+$mermaid-label-bg-color: $accent-bg-color; /* Edge label background */
+$mermaid-label-fg-color: $accent-fg-color; /* Edge label foreground */

@@ -7,3 +7,5 @@ kernel8*
 .gdb_history
 qemu.log
 .worktrees/
+userspace/wood/preso/preso_files/
+userspace/wood/preso/preso.html
