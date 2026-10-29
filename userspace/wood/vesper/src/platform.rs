@@ -1,6 +1,7 @@
 //! What the engine gets from Vesper: Wood's [`Platform`].
 //!
-//! - Frames go to the compositor's window ([`Window`]).
+//! - The engine draws its frames straight into the compositor's window
+//!   ([`Window`]), in the display's pixel order; Wood commits them.
 //! - Time is the monotonic counter EL0 reads (`libuser::clock`); a sleep is
 //!   a timed wait on Wood's own `EventCount` for a count it never reaches,
 //!   so the other programs run meanwhile.
@@ -23,7 +24,10 @@ use {
     },
     core::{cell::Cell, sync::atomic::Ordering},
     libobject::EventCountKey,
-    room::engine::platform::{FileHandle, Platform},
+    room::engine::{
+        doom::main_loop::gametic,
+        platform::{FileHandle, Platform},
+    },
 };
 
 /// The name the IWAD is opened by (the engine is started with `-iwad`
@@ -76,21 +80,23 @@ fn is_wad(path: &str) -> bool {
 }
 
 impl Platform for Wood {
-    fn draw_frame(&self, frame: &[u32]) {
-        let presented = self.window.present(frame);
+    fn draw_in_place(&self, draw: &mut dyn FnMut(&mut [u32], usize)) -> bool {
+        let presented = self.window.draw(draw);
         let count = self.frames.get().wrapping_add(1);
         self.frames.set(count);
         if count.is_power_of_two() {
-            // Changing sums show the picture changing. (A plain rotate and
-            // xor cancels out: the engine doubles every row.)
-            let sum = frame.iter().fold(0_u32, |sum, &pixel| {
-                sum.wrapping_mul(31).wrapping_add(pixel)
-            });
             log::info!(
-                "frame {count} presented: {}, sum {sum:#010x}",
-                presented.is_ok()
+                "frame {count} presented: {}, sum {:#010x}, tic {}",
+                presented.is_ok(),
+                self.window.checksum(),
+                gametic()
             );
         }
+        true
+    }
+
+    fn finish_pixel(&self, red: u8, green: u8, blue: u8) -> u32 {
+        self.window.pixel(red, green, blue)
     }
 
     fn sleep_ms(&self, ms: u32) {

@@ -76,8 +76,8 @@ use {
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
         FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS,
         MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESOURCES,
-        MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED,
-        PinSetting, Priority, Region, ResourceRecord, STACK_REGION, VideoBlock,
+        MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED, PinSetting,
+        Priority, Region, ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,

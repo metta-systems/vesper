@@ -99,8 +99,10 @@ pub struct VideoState {
     /// learnt from the first frame.
     lends_buffer: bool,
     /// For a platform that lends its buffer: the palette-indexed frame it
-    /// shows, to skip presenting the same picture again.
-    presented: Vec<u8>,
+    /// shows ([`picture_words`]), to skip presenting the same picture
+    /// again. Empty when the picture is not aligned for words: nothing is
+    /// skipped then.
+    presented: Vec<u64>,
     /// `finished` changed since the last presented frame.
     palette_changed: bool,
 }
@@ -158,6 +160,27 @@ pub const mouse_threshold: i32 = 10;
 /// Non-zero to enable mouse input. Always 0 in this port. Mirrors
 /// `usemouse`.
 pub const usemouse: i32 = 0;
+
+/// The palette-indexed picture `source` as eight-byte words, to compare
+/// pictures quickly; `None` if `source` is not aligned for them. (The
+/// `memcmp` a byte-slice comparison calls is a byte loop on the bare-metal
+/// targets, and under strict alignment so is reading a byte array as a
+/// `u64`.)
+fn picture_words(source: &[u8]) -> Option<&[u64]> {
+    // SAFETY: every bit pattern is a valid `u64`.
+    let (head, words, tail) = unsafe { source.align_to::<u64>() };
+    (head.is_empty() && tail.is_empty()).then_some(words)
+}
+
+/// Whether the pictures `left` and `right` ([`picture_words`]) are the
+/// same, compared word by word rather than through `memcmp`.
+fn same_words(left: &[u64], right: &[u64]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left_word, right_word)| left_word == right_word)
+}
 
 /// The largest scale at which the 320x200 frame fits the platform's frame.
 const fn fitting_scale() -> usize {
@@ -327,15 +350,16 @@ pub unsafe fn I_FinishUpdate() {
     // SAFETY: `I_InitGraphics` allocated `SCREEN_PIXELS` bytes there; the
     // conversion below only reads them.
     let source = unsafe { slice::from_raw_parts(video_buffer(), SCREEN_PIXELS) };
+    let words = picture_words(source).unwrap_or_default();
     let platform = platform();
     {
         let mut video = VIDEO.borrow_mut();
         if video.lends_buffer {
-            if !video.palette_changed && video.presented == source {
+            if !video.palette_changed && !words.is_empty() && same_words(&video.presented, words) {
                 return;
             }
             video.presented.clear();
-            video.presented.extend_from_slice(source);
+            video.presented.extend_from_slice(words);
         }
         video.palette_changed = false;
     }
@@ -350,7 +374,7 @@ pub unsafe fn I_FinishUpdate() {
         let mut video = VIDEO.borrow_mut();
         if !video.lends_buffer {
             video.lends_buffer = true;
-            video.presented.extend_from_slice(source);
+            video.presented.extend_from_slice(words);
         }
         return;
     }
@@ -578,7 +602,9 @@ mod tests {
                 assert_eq!(pixel, palette[index], "pixel ({column}, {row})");
             }
             assert!(
-                line[DOOMGENERIC_RESX..].iter().all(|&pixel| pixel == untouched),
+                line[DOOMGENERIC_RESX..]
+                    .iter()
+                    .all(|&pixel| pixel == untouched),
                 "padding of row {row}"
             );
         }
@@ -609,6 +635,30 @@ mod tests {
         }
     }
 
+    /// An aligned picture reads as words, a misaligned one does not, and
+    /// `same_words` finds a change in any byte and a length difference.
+    #[test]
+    fn picture_words_compare_every_byte() {
+        let picture: Vec<u8> = (0..SCREEN_PIXELS).map(|position| position as u8).collect();
+        let mut aligned = vec![0_u64; SCREEN_PIXELS / 8 + 1];
+        // SAFETY: a `u64` buffer used as bytes; any byte values are valid.
+        let (_, aligned_bytes, _) = unsafe { aligned.align_to_mut::<u8>() };
+        aligned_bytes[..SCREEN_PIXELS].copy_from_slice(&picture);
+        let words = picture_words(&aligned_bytes[..SCREEN_PIXELS]).expect("aligned");
+        assert_eq!(words.len(), SCREEN_PIXELS / 8);
+        assert!(picture_words(&aligned_bytes[1..=SCREEN_PIXELS]).is_none());
+
+        let same = words.to_vec();
+        assert!(same_words(words, &same));
+        for position in [0, 7, 8, SCREEN_PIXELS - 1] {
+            let mut changed = same.clone();
+            changed[position / 8] ^= 1 << (position % 8 * 8);
+            assert!(!same_words(words, &changed), "byte {position}");
+        }
+        assert!(!same_words(words, &same[1..]));
+        assert!(!same_words(&[], words));
+    }
+
     /// The default fits Doom's frame twice into 640x400.
     #[test]
     fn fitting_scale_is_two() {
@@ -625,9 +675,8 @@ mod tests {
         let mut palette = [0_u8; 256 * 3];
         palette[3..6].copy_from_slice(&[0x12, 0x34, 0x56]);
         let gamma = &gammatable[VIDEO.borrow().usegamma as usize];
-        let expected = u32::from(gamma[0x12]) << 16
-            | u32::from(gamma[0x34]) << 8
-            | u32::from(gamma[0x56]);
+        let expected =
+            u32::from(gamma[0x12]) << 16 | u32::from(gamma[0x34]) << 8 | u32::from(gamma[0x56]);
 
         VIDEO.borrow_mut().palette_changed = false;
         VIDEO.borrow_mut().finished = [1; 256];

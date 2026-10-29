@@ -52,7 +52,8 @@ interfaces = "../../drivers/fb/interfaces"
 video_memory = true
 
 # The root dispatcher: the EL0 program that decides which Thread of the root
-# Scheduler runs, round-robin. Kickstart does not start it: once every other
+# Scheduler runs, by priority and round-robin within a priority. Kickstart
+# does not start it: once every other
 # program and driver is loaded it shares the record table with it and binds
 # its Thread with `Scheduler.BindDispatcher` (`dispatcher = true`).
 [[component]]

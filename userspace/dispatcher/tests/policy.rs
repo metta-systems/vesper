@@ -62,7 +62,13 @@ mod tests {
         // Two high Threads take turns; the normal ones' turn is not disturbed
         // by the high ones running in between.
         let mut rounds = Rounds::new(5);
-        let all = [Some(NORMAL), Some(HIGH), Some(NORMAL), Some(HIGH), Some(NORMAL)];
+        let all = [
+            Some(NORMAL),
+            Some(HIGH),
+            Some(NORMAL),
+            Some(HIGH),
+            Some(NORMAL),
+        ];
         let normal_only = [Some(NORMAL), None, Some(NORMAL), None, Some(NORMAL)];
         assert_eq!(pick(&mut rounds, &normal_only), Some(1));
         assert_eq!(pick(&mut rounds, &all), Some(2));
@@ -78,7 +84,10 @@ mod tests {
     fn more_levels_order_by_value() {
         // Levels above high work without any change: the highest wins.
         let mut rounds = Rounds::new(3);
-        assert_eq!(pick(&mut rounds, &[Some(HIGH), Some(7), Some(255)]), Some(3));
+        assert_eq!(
+            pick(&mut rounds, &[Some(HIGH), Some(7), Some(255)]),
+            Some(3)
+        );
         assert_eq!(pick(&mut rounds, &[Some(HIGH), Some(7), None]), Some(2));
     }
 }

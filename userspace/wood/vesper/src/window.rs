@@ -10,10 +10,10 @@
 //! surface when it composes the window.
 
 use {
-    core::sync::atomic::{Ordering, fence},
     compositor_client::compositor_v1::{
         Client as CompositorClient, Error as CompositorError, PixelOrder,
     },
+    core::sync::atomic::{Ordering, fence},
     libcompositor_core::surface::{FRAME_BYTES, frames, pitch_bytes},
     libdevice_driver::{DriverInit, SURFACE_WINDOW_VA, local_key},
     libobject::{
@@ -204,7 +204,8 @@ impl Window {
         // least `HEIGHT` rows of `pitch_pixels`, for Wood alone to write;
         // only this engine Thread uses it, and no other reference to it
         // lives while `draw` runs.
-        let pixels = unsafe { core::slice::from_raw_parts_mut(self.surface, self.surface_pixels()) };
+        let pixels =
+            unsafe { core::slice::from_raw_parts_mut(self.surface, self.surface_pixels()) };
         draw(pixels, self.pitch_pixels);
         // The frame's stores come before the commit that has the compositor
         // read them.

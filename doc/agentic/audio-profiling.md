@@ -6,7 +6,9 @@ maintainer's (Pi 3 B, at 600 MHz, and at 1200 MHz with `force_turbo=1`). The
 profile itself added only the `profile_render` benchmark and the
 `just profile-synth` recipe. Proposal 4, the voice-loop rewrite, has since been
 done; its before and after numbers are in [Proposal 4: done](#proposal-4-done).
-The sections before it describe the code as it was before that change.
+Proposals 1 (as playback priority), 2, 3 and 5 followed the maintainer's answers
+of the same day: see [Scheduling, start-up and mixer: done](#scheduling-start-up-and-mixer-done).
+The sections before them describe the code as it was before those changes.
 
 ## Summary
 
@@ -485,8 +487,57 @@ The workload is the same and deterministic: 512 periods of D_E1M1, with
 Not done: the `memcpy` (the component's data page and voice copies) is in
 `midi-synth`, outside this change.
 
+## Scheduling, start-up and mixer: done
+
+Done 2026-10-29, after the maintainer's answers (recorded with D8 in
+[audio-design.md](audio-design.md)):
+
+- **Proposal 1, as playback priority.** "declare priority with the thread, two
+  levels should be enough for now, keep room for extending in the future, no
+  starvation guard for this round". The root dispatcher now runs the highest
+  runnable priority level first and round-robins within a level; Wood's playback
+  Thread is declared high (`driver_threads!(playback => Priority::HIGH)`). The
+  slice stays 10 ms. The rule is in the
+  [Time contract](capabilities-contract.md#time-and-userspace-scheduling).
+- **Proposal 2.** "yep": Wood queues its first buffers, with the music, before
+  `open`, then answers the game Thread.
+- **Proposal 3.** "8 buffers might be good": Wood and midi-test's player keep 8
+  buffers (93 ms) queued, the channel's four data pages.
+- **Proposal 5.** "yes": `Mixer::mix_onto` is voice-major in runs of 64 frames and
+  returns at once when no effect plays. `voice_major_mix_is_bit_exact` compares it
+  with the frame-major mix; the music hashes of `test-wood` held.
+- **Also:** draw-demo's lava lamp sleeps on the compositor's events while its
+  window is unfocused, so in `wood-test` it no longer competes with Wood.
+
+### Numbers (QEMU `wood-test`, the four music summaries of one run, in ms)
+
+| run | `service` max | refill max | underruns |
+|---|---|---|---:|
+| before (round-robin, 4 buffers, open before filling) | 18.6, 18.1, 15.0, 15.5 | 18.7, 18.7, 20.7, 15.7 | 0 |
+| everything below, but the playback Thread normal | 11.0, 7.4, 1.2, 9.0 | 15.1, 7.4, 9.2, 9.5 | 0 |
+| after, run 1 | 3.7, 1.1, 0.41, 0.38 | 5.95, 1.23, 0.45, 0.44 | 0 |
+| after, run 2 | 1.7, 0.65, 0.52, 0.50 | 3.2, 1.0, 0.70, 0.62 | 0 |
+
+- The "before" run predates proposal 4 too, so its averages are higher for that
+  reason as well; the control run (normal priority, everything else as after)
+  isolates the priority: the stalls of up to a slice come back without it.
+- The first summary of each run covers start-up (the engine's `R_Init`, USB
+  enumeration, the busiest log), where the remaining few milliseconds are.
+- `driver-test` checks the priority on its own: a high Thread sleeping 2 ms beside
+  two spinning normal Threads wakes at most 0.7 ms late, and 10.4 ms late when
+  declared normal.
+- Not measured: the board. The next board run should show the steady-state
+  maxima near the synthesiser's own cost (about 1 ms at 600 MHz).
+
 ## Files
 
+- `userspace/dispatcher/src/{lib,main}.rs`, `tests/policy.rs`: the priority policy;
+  `libs/device-driver` (`Priority`, `driver_threads!`, `DispatchInit::priorities`),
+  `libs/image-build`, `libs/image`, `kernel/kickstart/src/drivers.rs`: the priority's
+  path; `userspace/tests/driver/probe`: its QEMU check.
+- `userspace/wood/vesper/src/sound.rs`: priority, pre-fill, 8 buffers;
+  `userspace/wood/room/src/engine/sound/mixer.rs`: proposal 5;
+  `userspace/shell/src/display.rs`: the lamp's pause.
 - `userspace/wood/synth/src/voice.rs`, `sf2.rs` and `synth.rs`: proposal 4.
 - `userspace/wood/synth/tests/doom_music.rs`: `profile_render` (ignored test),
   `unaligned_bank_renders_the_same`.

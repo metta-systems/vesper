@@ -350,7 +350,9 @@ impl Focus {
         else {
             return;
         };
-        let length = usize::try_from(length).unwrap_or(0).min(records.len() * EVENT_SIZE);
+        let length = usize::try_from(length)
+            .unwrap_or(0)
+            .min(records.len() * EVENT_SIZE);
         let mut record = [0_u8; EVENT_SIZE];
         let mut count = 0;
         for offset in (0..length).step_by(EVENT_SIZE) {

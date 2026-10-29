@@ -786,7 +786,11 @@ mod tests {
         for frame in frames.iter_mut() {
             let mut left = i32::from(frame[0]);
             let mut right = i32::from(frame[1]);
-            for voice in mixer.voices.iter_mut().filter(|voice| voice.sound.is_some()) {
+            for voice in mixer
+                .voices
+                .iter_mut()
+                .filter(|voice| voice.sound.is_some())
+            {
                 if let Some(sample) = voice.next_sample() {
                     left += (sample * voice.gains[0]) >> GAIN_BITS;
                     right += (sample * voice.gains[1]) >> GAIN_BITS;

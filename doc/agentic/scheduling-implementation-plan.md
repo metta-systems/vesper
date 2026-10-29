@@ -21,6 +21,10 @@ The decisions and finished items are in [`scheduling-completed.md`](scheduling-c
 
 Finished: see [`scheduling-completed.md`](scheduling-completed.md#phase-10--retire-the-kernel-queue).
 
+## Root dispatcher priorities (done)
+
+Thread priority in the root dispatcher (maintainer decision, 2026-10-29; the rule is in the [contract](capabilities-contract.md#time-and-userspace-scheduling)). Finished: see [`scheduling-completed.md`](scheduling-completed.md#root-dispatcher-priorities).
+
 ## Phase 11 — Multicore
 
 **Gated behind future kernel multicore work (maintainer decision, 2026-10-18). Nothing here is addressed now:** the kernel runs on one CPU, secondary-core bring-up is in no phase of this plan, and the questions below stay open in D5 until that work is scheduled.

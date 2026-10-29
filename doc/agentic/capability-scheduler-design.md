@@ -2189,3 +2189,11 @@ That activation mechanism can coexist with `Scheduler.Wait`: the wait operation 
 **So yes, this is the right foundation. But I'd describe the architecture as three independent mechanisms: authoritative state, event notification, and scheduler activation.**
 
 That separation is what gives you the flexibility to implement everything from simple round-robin through MuQSS to hierarchical EDF without turning notifications themselves into an implicit kernel scheduling policy.
+
+---
+
+## 8. The root dispatcher's first priority policy (2026-10-29)
+
+The first policy that needed more than round-robin shows the split above at work. The root dispatcher (`userspace/dispatcher`) dispatched round-robin with a 10 ms slice, and a woken or preempted Thread went to the back of the round. With three CPU-bound peers (Wood's engine, the compositor, the lava lamp), Wood's audio playback Thread, which works about 1 ms per 11.6 ms period, waited 20–30 ms after each preemption ([audio-profiling.md](audio-profiling.md)).
+
+The fix is entirely userspace: fixed priority in the root dispatcher, declared with each Thread and carried by Kickstart, round-robin within a level. The kernel already reported the wakeup as an activation (`THREAD_RUNNABLE`); only the decision changed. Two levels are enough now, the level is a byte so more fit later, and there is deliberately no starvation guard yet: a high-priority Thread is expected to block most of the time. The selected rule is in the [contract](capabilities-contract.md#time-and-userspace-scheduling) (root dispatcher policy); the work item is in [`scheduling-completed.md`](scheduling-completed.md).

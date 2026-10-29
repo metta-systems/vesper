@@ -53,4 +53,28 @@ fn quit(&self, code: i32) -> !;
 takes its block from the global allocator (`alloc::alloc` in
 `AutoAllocMemory`). The host implements the file methods with `std::fs`,
 `error_box` with Zenity and `quit` with `std::process::exit`
-(`src/platform/host/system.rs`); the Vesper placeholder keeps the defaults.
+(`src/platform/host/system.rs`). Vesper's Wood (`../vesper`) serves the
+IWAD from its bundled resource and has no other files.
+
+## Frames (2026-10-29)
+
+Two methods let a platform take frames without a copy:
+
+```rust
+fn draw_in_place(&self, draw: &mut dyn FnMut(&mut [u32], usize)) -> bool;
+fn finish_pixel(&self, red: u8, green: u8, blue: u8) -> u32;
+```
+
+`finish_pixel` makes the pixel the platform shows for a colour (its channel
+order and alpha); `I_SetPalette` asks it for the 256 palette colours and the
+frame conversion only looks them up. `draw_in_place` lends the buffer the
+platform shows: it calls `draw` with the pixels and the pitch (pixels per
+row, at least 640), then presents. Doomgeneric's `DG_ScreenBuffer` is gone;
+`i_video` keeps a buffer of its own only for a platform whose
+`draw_in_place` returns `false` (the default), and passes that to
+`draw_frame` as before. The defaults (`0x00RRGGBB`, no lent buffer) keep the
+host and the demo test's frame hashes unchanged. A platform that lends its
+buffer keeps showing the last frame, so `I_FinishUpdate` skips a frame
+whose palette-indexed picture and palette equal the last one presented;
+`draw_frame` platforms still get every frame. Wood lends its compositor
+surface (`../vesper/src/window.rs`).

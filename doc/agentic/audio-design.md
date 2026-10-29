@@ -47,6 +47,19 @@ options that were weighed are summarised after each answer.
   chosen: repeating the last period; stopping the DMA.
 - **D8. No special scheduling at first**: a ring of 4 periods and an ordinary Time
   budget, underruns measured on hardware; the isochronous scheduler only if they show.
+  - **Follow-up (answered 2026-10-29)** after the board showed 20–31 ms stalls of the
+    playback Thread ([audio-profiling.md](audio-profiling.md)), all three with the
+    maintainer's words:
+    - *Thread priority in the root dispatcher*: "declare priority with the thread, two
+      levels should be enough for now, keep room for extending in the future, no
+      starvation guard for this round". Wood's playback Thread is declared high
+      priority (`driver_threads!(playback => Priority::HIGH)`); the rule is in the
+      [Time contract](capabilities-contract.md#time-and-userspace-scheduling). Still
+      no isochronous scheduler and no special Time budget.
+    - *Wood queues its first buffers before it opens the output*: "yep".
+    - *Queue depth*: "8 buffers might be good". Wood and midi-test's player keep 8
+      buffers (93 ms) queued, the four data pages of `audio_v1`'s channel; effects
+      reach the jack within about 150 ms instead of 100 ms.
 - **D9. Music: an integer SoundFont wavetable synthesiser** (answered 2026-10-28,
   option A; the research is section Music below). New `no_std` code with no floating
   point, rendering General MIDI from the Standard MIDI Files Room's `mus2midi` makes.
@@ -420,18 +433,21 @@ The decided options are drawn; each box below names the decision it rests on.
     true from `start` on, false from `stop` on, and false one buffer after the sound
     ran out. No lock, no wait on the game Thread.
   - *Playback Thread* (Wood's `sound.rs`). A further Thread of the program
-    (`driver_threads!`), on the 16 KiB stack Kickstart gives it; the mixer writes
-    straight into the io-channel's data pages. It waits on Wood's `EventCount` for
-    `sound_init`, then calls `rate` and `open` (it is the only Thread calling
-    `audio_v1`, whose import area serves one Thread at a time) and answers; on a
-    missing driver or `busy` it logs once and the engine runs silent. It keeps 4 buffers
-    of 512 frames (46 ms) queued: each packet back is mixed into and put again. On
+    (`driver_threads!`, high priority), on the 16 KiB stack Kickstart gives it; the
+    mixer writes straight into the io-channel's data pages. It waits on Wood's
+    `EventCount` for `sound_init`, then calls `rate`, takes the MIDI synthesiser,
+    queues its first 8 buffers and only then calls `open` (it is the only Thread calling
+    `audio_v1`, whose import area serves one Thread at a time), and answers; on a
+    missing driver or `busy` it logs once and the engine runs silent. It keeps 8 buffers
+    of 512 frames (93 ms) queued: each packet back is mixed into and put again. On
     `sound_shutdown` it stops refilling, calls `close` right after the last packet, takes
     the rest back and answers again.
-- **Scheduling** (D8). Ring depth covers scheduling jitter: 4 periods of 512 frames is
-  about 46 ms at 44.1 kHz, more than a Doom tic (28.6 ms). The isochronous scheduler in
-  the Future work of [capabilities-decisions.md](capabilities-decisions.md) is not needed
-  to start; underrun counts on hardware decide whether it is.
+- **Scheduling** (D8 and its follow-up). The driver's ring of 4 periods (46 ms) and
+  Wood's queue of 8 buffers (93 ms) cover scheduling jitter. The root dispatcher runs the
+  playback Thread at high priority, so a buffer coming back wakes it ahead of the
+  engine, the compositor and the lava lamp instead of after their 10 ms slices. The
+  isochronous scheduler in the Future work of
+  [capabilities-decisions.md](capabilities-decisions.md) is still not needed.
 
 ### `audio_v1` (written in A3)
 
@@ -591,7 +607,7 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
   Resources reach a component as mapped pages of the image (`ResourceRecord`
   base and length in Kickstart's `DriverInit`), not as copies in its memory, so they do
   not use Wood's 16 MiB (12 MiB heap, 2 MiB engine stack); state parsed from them does.
-- **The playback Thread** (A4) already mixes 4 buffers of 512 frames (11.6 ms each)
+- **The playback Thread** (A4) already mixes 8 buffers of 512 frames (11.6 ms each)
   ahead; a music renderer that fills the same buffers has 11.6 ms of wall time per
   buffer, shared with everything else on the core.
 

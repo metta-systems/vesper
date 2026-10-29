@@ -51,9 +51,11 @@ impl Rounds {
             };
             let start = self.next[usize::from(level)];
             let distance = (slot + slot_count - start) % slot_count;
-            let better = best.as_ref().is_none_or(|&(best_level, best_distance, ..)| {
-                level > best_level || (level == best_level && distance < best_distance)
-            });
+            let better = best
+                .as_ref()
+                .is_none_or(|&(best_level, best_distance, ..)| {
+                    level > best_level || (level == best_level && distance < best_distance)
+                });
             if better {
                 best = Some((level, distance, slot, seen));
             }

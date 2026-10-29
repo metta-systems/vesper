@@ -8,8 +8,9 @@
 //!
 //! Each frame, the workflow is:
 //!
-//! 1. **Upload** – `DG_ScreenBuffer` (raw BGRA8 pixels) is written into a
-//!    wgpu [`Texture`] via [`Queue::write_texture`].
+//! 1. **Upload** – the frame `I_FinishUpdate` passes to `Host::draw_frame`
+//!    (raw BGRA8 pixels) is written into a wgpu [`Texture`] via
+//!    [`Queue::write_texture`].
 //! 2. **Render** – A single fullscreen-quad draw call samples the texture and
 //!    outputs to the swapchain surface.
 //!
@@ -18,8 +19,8 @@
 //!
 //! ## Pixel format
 //!
-//! The Doom engine's `I_FinishUpdate` function (in `i_video.c`) writes pixels
-//! in BGRA byte order:
+//! The host keeps `Platform::finish_pixel`'s default, `0x00RRGGBB`, so the
+//! engine's `I_FinishUpdate` writes pixels in BGRA byte order:
 //!
 //! | Byte offset | Channel |
 //! |-------------|---------|
