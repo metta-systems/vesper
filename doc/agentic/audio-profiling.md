@@ -529,6 +529,84 @@ Done 2026-10-29, after the maintainer's answers (recorded with D8 in
 - Not measured: the board. The next board run should show the steady-state
   maxima near the synthesiser's own cost (about 1 ms at 600 MHz).
 
+## Wood's frame path: done
+
+Done 2026-10-29, on the maintainer's instruction to implement all five
+changes and measure the fifth. Before, `I_FinishUpdate` (29.6 %) and Wood's
+`draw_frame` (20.3 %) took half of `wood-test`; the renderer took about 5 %.
+
+What changed:
+
+1. **The engine draws into the compositor's surface.** Room's `Platform`
+   gained `draw_in_place(&mut dyn FnMut(&mut [u32], usize)) -> bool`: the
+   platform calls the closure with its buffer and pitch, then presents. Wood
+   lends its surface and commits after a `fence(Release)`; the per-pixel
+   copy loop and its `write_volatile` are gone. The default returns `false`,
+   and the engine keeps a buffer of its own for `draw_frame`, as before
+   (the host and the demo test are unchanged; `DG_ScreenBuffer` is gone).
+2. **Finished-pixel palette.** `Platform::finish_pixel(r, g, b) -> u32`
+   (default `0x00RRGGBB`) is asked only in `I_SetPalette`, for 256 entries.
+   Wood's answer has the display's channel order and `OPAQUE` folded in. The
+   dead `-gfxmode rgb565` path is removed (nothing passed it; its 16-bit
+   pixels never matched a 32-bit `draw_frame`).
+3. **Aligned word stores.** `convert_frame` writes a `&mut [u32]`; the 2x
+   loop is `ldrb`, `ldr w`, **`stp w10, w10`** per source pixel (7
+   instructions per two pixels), where the old loop stored each pixel with
+   four `strb` under `+strict-align`. The conversion has no `unsafe`.
+4. **Doubled rows copied.** Each source line is converted once and the next
+   row filled with `copy_from_slice` (`memcpy`).
+5. **Unchanged frames skipped.** On a platform that lends its buffer,
+   `I_FinishUpdate` returns early when the palette-indexed picture and the
+   finished palette equal the last presented ones (a word-by-word compare
+   against a 64 KB copy; the target's `memcmp` is a byte loop and cost 3 %
+   of the run in a first version).
+
+Why Wood drew twice per tic: Room's `TryRunTics` keeps doomgeneric's wait
+loop, which calls `NetUpdate` (building the next tic) and then returns
+without running it as soon as the clock passed the entry tic (`I_GetTime() /
+ticdup - entertic > 0`, "the menu is still running"). Waiting for the next tic
+therefore always ends in one `D_Display` with no new tic, and the tic runs on
+the next call. Chocolate Doom later guarded that check with "still no tics";
+the port stays faithful to doomgeneric, and the skip makes the extra frame
+cost a compare instead of a conversion and a commit.
+
+### Numbers (QEMU `wood-test`, 150 s, no keys, `libhotpc.so`)
+
+The other components changed between the runs (the lava lamp now pauses when
+it loses the focus to Wood), so the shares of the whole run are not
+comparable; Wood's own counts per tic are. The A/B row differs from "after"
+only in the skip being disabled.
+
+| run | Wood instructions | per tic | `I_FinishUpdate` calls | frames presented (per s) | compositor | lava lamp |
+|---|---:|---:|---:|---:|---:|---:|
+| before | 88.0 G (56.8 %) | 17.0 M | 10 203 | 10 203 (≈ 69) | 38.0 G (24.6 %) | 15.0 G (9.7 %) |
+| after, skip disabled (items 1–4) | 18.5 G (27.4 %) | 3.57 M | 10 383 | 10 383 (≈ 70) | 33.6 G (49.7 %) | 8 M |
+| after (items 1–5) | 15.5 G (23.2 %) | 2.99 M | 10 404 | 5 980 (≈ 40) | 35.1 G (52.6 %) | 8 M |
+
+All three ran 5 187–5 195 tics (35 per second).
+
+- **Per presented frame** the path went from 7.56 M instructions
+  (`I_FinishUpdate` 4.49 M + `draw_frame` 3.08 M) to about 0.80 M: 456 k in
+  `convert_frame`, about 290 k in `memcpy` (the doubled rows and the 64 KB
+  copy of the picture), 22 k per call in `I_FinishUpdate` itself (mostly the
+  compare).
+- **Item 5's measured effect:** 43 % of the frames are skipped (4 424 of
+  10 404), Wood's instructions drop by 16 % (18.5 → 15.5 G, 3.57 → 2.99 M
+  per tic), and commits to the compositor drop from 10 385 to 5 982. The
+  compositor's work does **not** drop (33.6 → 35.1 G, within run-to-run
+  noise): it composes on its fixed 33 ms timer while there is damage, so
+  commits above 30 per second never cost it a composition.
+- Of the 5 980 presented frames, about 1 000 came without a new tic but with
+  a changed picture: the wipes' melt frames (the first wipe alone is 31) and
+  others not identified.
+- **Visible change:** none expected; a skipped frame is identical by
+  construction, and the compositor shows at most 30 per second. The
+  `test-wood` screen dump shows the menu over the demo with the right
+  colours.
+- Item 4 is not the cheapest form: the row copy costs about 290 k per frame
+  through the target's `memcpy`, while a second `stp` to the next row in the
+  conversion loop would cost about 64 k.
+
 ## Files
 
 - `userspace/dispatcher/src/{lib,main}.rs`, `tests/policy.rs`: the priority policy;
