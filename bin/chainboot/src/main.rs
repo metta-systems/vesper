@@ -70,9 +70,9 @@ const LOGO: &str = r"
 /// How often the LED flips while chainboot waits for the host.
 const BLINK_PERIOD: Duration = Duration::from_millis(250);
 
-/// How often the LED flips while the kernel arrives: ten times as fast as while
-/// waiting, so a load is told from a wait at a glance, at any rate.
-const TRANSFER_BLINK_PERIOD: Duration = Duration::from_millis(25);
+/// How often the LED flips while the kernel arrives: about three times as fast
+/// as while waiting, so a load is told from a wait at a glance, at any rate.
+const TRANSFER_BLINK_PERIOD: Duration = Duration::from_millis(80);
 
 /// After how many bytes of the kernel the LED's period is looked at. Reading the
 /// time for every byte would slow the receive loop; 64 bytes take 5.6 ms at
