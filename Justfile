@@ -85,11 +85,12 @@ wood_midi           := target_root / 'wood' / 'd_e1m1.mid'
 # (`start_hash_of_the_midi_test_song` in midi-synth tests/session.rs)
 midi_test_hash      := '23329:true:0x4366085f6c416218'
 
-chainboot_serial := '/dev/cu.usbserial-019586E3'
-chainboot_baud   := '115200'
+chainboot_serial    := '/dev/ttyUSB0' # '/dev/cu.usbserial-019586E3'
+chainboot_baud      := '115200'
 # The rate chainofcommand asks chainboot to load the kernel at, and the console stays at
 # (e.g. `just chainboot_load_baud=2000000 boot-wood-test`); empty loads at `chainboot_baud`
-chainboot_load_baud := ''
+chainboot_load_baud := '1500000'
+
 chainofcommand_args := chainboot_serial + ' ' + chainboot_baud + (if chainboot_load_baud != '' { ' --load-baud ' + chainboot_load_baud } else { '' })
 
 # QEMU option fragments
