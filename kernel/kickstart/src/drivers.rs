@@ -121,8 +121,10 @@ const SERIAL_COMPATIBLE: &str = "arm,pl011";
 /// Most driver instances one boot loads.
 pub const MAX_DRIVER_INSTANCES: usize = 16;
 
-/// Pages of each driver's stack.
-const STACK_PAGES: u32 = 4;
+/// Pages of each driver Thread's stack: 32 KiB. `usb-core`'s Thread runs the
+/// hub loop, an enumeration (its descriptor buffers), a trace line and the log
+/// channel's send in one chain, which overflowed 16 KiB under QEMU.
+const STACK_PAGES: u32 = 8;
 
 /// First slot of a driver's table Kickstart fills: the slots below are the
 /// well-known ones every component table has.

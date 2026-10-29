@@ -15,8 +15,9 @@
 //! compositor sends it the keyboard's keys on its event channel. The log
 //! server holds the PL011's serial channel: Wood's log (with a line per
 //! power-of-two frame and a music summary every 256 periods), the
-//! compositor's, the synthesiser's and the audio driver's trace reach the UART
-//! through it, and the semihosting console as well under QEMU. Its
+//! compositor's, the synthesiser's, the audio driver's and the three USB
+//! components' trace reach the UART through it, and the semihosting console as
+//! well under QEMU. Its
 //! playback Thread streams the mixed sound effects to the audio driver through
 //! `audio_v1`, when the PWM node is enabled: `just test-wood` boots the test
 //! tree `targets/overlays/audio-test-pwm.dts` makes, where the driver captures
@@ -191,11 +192,20 @@ pub fn run() -> ! {
             let name = loaded.driver.component.name;
             let imports = init.imports();
             if name == components::USB.name {
-                // The controller: registers, one import (the mailbox, to power
-                // its domain), and a client each for usb-core and usb-hid, each
-                // with a data area and a channel.
+                // The controller: registers, two imports (the mailbox, to
+                // power its domain, and `flush` of log_v1 with its
+                // io-channel), and a client each for usb-core and usb-hid,
+                // each with a data area and a channel.
                 assert!(!init.pages().is_empty());
-                assert_eq!(imports.len(), 1, "set_power_state of mailbox_v1");
+                assert_eq!(imports.len(), 2, "set_power_state of mailbox_v1, flush");
+                assert_eq!(
+                    imports
+                        .iter()
+                        .filter(|record| record.channel_event != 0)
+                        .count(),
+                    1,
+                    "log_v1 has an io-channel"
+                );
                 assert_eq!(init.areas().len(), 2, "usb-core and usb-hid");
                 assert!(init.areas().iter().all(|area| area.channel_event != 0));
             } else if name == components::UART.name {
@@ -203,16 +213,20 @@ pub fn run() -> ! {
                 assert!(!init.pages().is_empty());
                 assert!(imports.is_empty());
             } else if name == components::USB_CORE.name {
-                // usb-core: the functions of `usb_hcd_v1` it uses, and usb_v1
-                // served to usb-hid.
+                // usb-core: the functions of `usb_hcd_v1` it uses and `flush`
+                // of log_v1, and usb_v1 served to usb-hid.
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 4, "the four functions of usb_hcd_v1");
+                assert_eq!(imports.len(), 5, "the four functions of usb_hcd_v1, flush");
                 assert_eq!(init.areas().len(), 1, "usb-hid is its client");
             } else if name == components::USB_HID.name {
                 // usb-hid: usb_v1 from the core, one function of usb_hcd_v1,
-                // and the compositor as its only client.
+                // `flush` of log_v1, and the compositor as its only client.
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 4, "three of usb_v1 and one of usb_hcd_v1");
+                assert_eq!(
+                    imports.len(),
+                    5,
+                    "three of usb_v1, one of usb_hcd_v1, flush"
+                );
                 assert_eq!(init.areas().len(), 1, "the compositor is its client");
                 assert_ne!(init.areas()[0].channel_base, 0);
                 assert_ne!(init.areas()[0].channel_event, 0);
@@ -286,15 +300,17 @@ pub fn run() -> ! {
                 assert_ne!(area.channel_event, 0, "audio_v1 has an io-channel");
             } else if name == components::LOG_SERVER.name {
                 // The log server: the serial channel, and the compositor, the
-                // synthesiser, Wood and the audio driver (with a PWM node) as
-                // its clients, each on an io-channel.
+                // synthesiser, Wood, the three USB components and the audio
+                // driver (with a PWM node) as its clients, each on an
+                // io-channel: at most `MAX_AREAS` (8).
                 assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
                 assert!(imports.is_empty());
                 assert_eq!(
                     init.areas().len(),
-                    3 + audio_nodes,
-                    "the compositor, the synthesiser, Wood and the audio driver"
+                    6 + audio_nodes,
+                    "the compositor, the synthesiser, Wood, usb, usb_core, usb_hid and the audio driver"
                 );
+                assert!(init.areas().len() <= libdevice_driver::MAX_AREAS);
                 assert!(init.areas().iter().all(|area| area.channel_event != 0));
             }
             assert_ne!(

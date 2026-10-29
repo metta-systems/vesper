@@ -6,6 +6,10 @@
 # core, the HID component and input-trace are programs (components with
 # `program = true`): Kickstart starts them at boot, without a device tree node.
 
+# The controller, the core and the HID component import the log server's
+# log_v1, which this image does not bundle: the imports stay unlinked.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 # The mailbox component, through which the controller's power domain is switched on.
 [[driver]]
 name = "mailbox"

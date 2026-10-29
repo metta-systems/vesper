@@ -87,11 +87,27 @@ Exit checks:
 Depends on L-A's hardware exit only for confidence; no open decision.
 
 - [ ] Raise `MAX_AREAS` in `libs/device-driver` (and the init page layout checks) so the
-  log server can serve every component of wood-test (13 or more).
-- [ ] Add the `log_v1` import to `usb_core`, `usb_hid`, `usb-hcd-dwc2`, mailbox, fb,
-  gpio, cprman, dma and `draw_demo`; add the log server to compositor-test,
-  window-events-test, audio-test, usb-core-test and usb-hid-test (each recipe's
-  serial-file check as in `test-wood`).
+  log server can serve every component of wood-test (13 or more). With the USB
+  components wood-test's log server has 7 clients of the 8 (the wood-test kernel
+  checks the count against `MAX_AREAS`); the next client needs the raise.
+- [x] The USB components are clients (2026-10-29): `usb-hcd-dwc2`, `usb_core` and
+  `usb_hid` import `log_v1` (`interfaces/imports.if`); usb-core-test, usb-hid-test and
+  usb-test list the log server's interface directory (top-level `interfaces`) so the
+  imports stay unlinked there, as in kernel/kickstart, compositor-test and
+  window-events-test. The volume policy is in the design doc (section USB log
+  volume). Kickstart's driver Thread stacks went from 16 to 32 KiB (`STACK_PAGES`):
+  `usb-core` overflowed 16 KiB under QEMU once its trace went to the log channel.
+  Checked: `just test-wood` (the UART file holds the controller's bring-up and port
+  reset, a device the core enumerated and `usb-hid: serving a Keyboard`; 38 USB
+  lines in a 12.5 s run, 33 of them in the first 0.76 s, 0 dropped); test-usb, test-usb-core, test-usb-hid,
+  test-compositor, test-shell (all run by hand, logs in `target/usbclient-*.log`),
+  test-window-events, test-audio, test-midi, test-dispatch, test-driver, test-mailbox,
+  test-uart; `just build-wood-test-hw`; clippy of the USB crates, `libserial-trace`,
+  Kickstart and the wood-test kernel with and without `qemu`; `just clippy-log`,
+  `just clippy-usb-host`. Board: pending (L-C).
+- [ ] Add the `log_v1` import to mailbox, fb, gpio, cprman, dma and `draw_demo`; add
+  the log server to compositor-test, window-events-test, audio-test, usb-core-test and
+  usb-hid-test (each recipe's serial-file check as in `test-wood`).
 - [ ] Remove `libserial-trace`'s backlog, `drain` and the `trace(octet&)` exports of
   `input_v1`, `usb_v1` and `usb_hcd_v1`, and the relays in `input_trace` and
   `usb_core` (no backwards compatibility; the interfaces are prototypes and are edited

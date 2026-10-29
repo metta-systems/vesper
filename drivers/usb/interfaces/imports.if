@@ -10,3 +10,8 @@ uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
 {
     reset_port, port_status, open_pipe, trace
 }
+# In an image with the log server (wood-test), the core's trace goes to it on
+# the interface's io-channel; elsewhere the import stays unlinked and the core
+# traces on the serial channel when it holds it (usb-core-test), or into its
+# backlog.
+uses log_v1 via component log_server { flush }

@@ -7,7 +7,8 @@
 # the PWM audio driver) for Wood's sound effects, the MIDI synthesiser
 # component with its SoundFont for Wood's music, and the log server, which
 # holds the PL011's serial channel and writes the lines of the compositor,
-# Wood, the synthesiser and the audio driver to the UART.
+# Wood, the synthesiser, the audio driver and the three USB components to the
+# UART.
 
 # The gpio component, through which the audio driver routes the jack's pins.
 [[driver]]
@@ -79,10 +80,11 @@ program = true
 memory = 33554432
 
 # The log server: the one holder of the PL011's serial channel. The
-# compositor, Wood, the MIDI synthesiser and the audio driver import its log_v1
-# and put their lines on its io-channel, never waiting; it writes them to the
-# UART with a timestamp and level, dropping and counting what the UART cannot
-# keep up with.
+# compositor, Wood, the MIDI synthesiser, the audio driver, the USB controller,
+# the USB core and the USB HID component import its log_v1 (7 of the 8 clients
+# an exporter can serve) and put their lines on its io-channel, never waiting;
+# it writes them to the UART with a timestamp and level, dropping and counting
+# what the UART cannot keep up with.
 [[component]]
 name = "log_server"
 binary = "log-server"

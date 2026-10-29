@@ -4,7 +4,8 @@ Status: decisions L1 to L10 answered on 2026-10-28 and L11 on 2026-10-29 (sectio
 Decisions). Stage L-A (the
 log server in wood-test with the compositor, Wood, the MIDI synthesiser and the audio
 driver as clients, and Wood's music summary) is built and checked in QEMU; the board
-check is pending. No logging question is open
+check is pending. In L-B the three USB components became clients too (section USB log
+volume). No logging question is open
 ([logging-decisions.md](logging-decisions.md)); stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
 `log_v1` is a prototype interface and is edited in place.
 
@@ -253,6 +254,39 @@ The server's export `flush` only advances its `EventCount`.
   `log_v1`; its `note` lines (including those written during `service` on Wood's
   playback Thread) go to its own channel.
 - **Audio driver:** imports `log_v1` too; its `Trace` lines reach the UART.
+- **USB components (L-B):** `usb` (`drivers/usb-hcd-dwc2`), `usb_core` (`drivers/usb`)
+  and `usb_hid` (`drivers/usb-hid`) import `log_v1`; their `note`/`Trace` lines reach
+  the UART, and the controller's backlog relay through `usb_core` finds nothing left.
+
+### USB log volume
+
+The maintainer: "all three, not too spammy though - i don't want usb debug output to
+overwhelm the timings". The policy is a boot-time trail and a quiet steady state:
+
+- **Traced once per event:** the controller's power-domain answer, core id and core
+  reset (or the bring-up step that timed out), root port power and connect time
+  (`usb-hcd-dwc2: …`); the root port's first status and connect, each port reset's
+  outcome with the port register; each control transfer of an enumeration with its
+  setup packet and bytes moved or its failure decoded (stage, channel events), and
+  the device found (speed, address, class, ids); hub descriptors, Status Change
+  pipes, each interrupt pipe scheduled, each HID claim with its pipe parameters,
+  the device served, devices gone (`usb-core: …`, `usb-hid: …`).
+- **Never traced:** a transfer, poll, report or interrupt that went as expected;
+  ports at rest; key presses.
+- **Back-off, the existing `is_power_of_two()` style:** whatever repeats is traced the
+  1st, 2nd, 4th, 8th… time with its running count: poll failures, polls and control
+  transfers that held the channel past 20 ms, channels that did not halt, failed hub
+  requests (port status, set/clear feature), failed HID claims and set-ups (retried
+  every 250 ms), and the waits for a root device and for a keyboard or mouse to claim
+  (at 1, 2, 4, 8… seconds).
+- **Levels:** `Trace` and `note` send everything at Info; there is no Debug-only line,
+  since nothing per transfer is traced at all.
+
+In `just test-wood` (a keyboard behind a hub) the three components write 38 lines in a
+12.5 s run: 33 in the first 0.76 s (bring-up and the enumeration of the hub and the
+keyboard), then only the back-off lines (`no Mouse yet` at 1, 2, 4 and 8 s, one slow
+poll): 5 lines in the remaining 11.7 s, about 0.4 a second and falling, none for the
+keys.
 
 ### Music diagnostics (Wood)
 
@@ -276,15 +310,21 @@ period at the ARM clock it runs at.
 ### Interactions and limits
 
 - **Kickstart limits.** `MAX_AREAS` (8 data areas per exporter) caps the log server at 8
-  clients; wood-test uses 4. Migrating the USB components and the rest needs it raised
+  clients; wood-test uses 7 (with the USB components). Migrating the rest needs it raised
   (an `ExportedArea` is 32 bytes of the init page). Each channel takes 3 pages of the
   2 MiB data window shared by all pairs.
 - **PL011 interrupt load at high baud.** At 1.5 Mbaud an 8-byte transmit burst drains
   in 53 µs: up to about 19 000 transmit interrupts per second while the log is busy;
   worth measuring before trusting timing measured at that rate. The FIFO level
   (`IFLS`) is the knob.
-- **Stack depth.** `usb-core`'s Thread runs close to its 16 KiB stack; tracing from deep
-  call chains must keep frames small.
+- **Stack depth.** `usb-core`'s Thread overflowed the 16 KiB stack Kickstart gave
+  every Thread once it traced to the log channel under QEMU (the hub loop with an
+  enumeration inlined takes 7.7 KiB, the semihosting `println!` buffer 4 KiB): driver
+  Threads now get 32 KiB (`STACK_PAGES` in `kernel/kickstart/src/drivers.rs`), and
+  `libserial-trace` prints to semihosting, sends to the serial channel and keeps
+  backlog lines in separate non-inlined functions, so a trace line's stack is the
+  larger of those paths, not their sum. Tracing from deep call chains must still keep
+  frames small.
 - **libserial-trace relays.** The backlog and the `trace(octet&)` exports of `input_v1`,
   `usb_v1` and `usb_hcd_v1` exist because one component held the UART; they go once
   every component has its own channel (L-B).
@@ -293,11 +333,11 @@ period at the ARM clock it runs at.
 
 | Image | Serial holder | Log clients |
 |---|---|---|
-| wood-test | `log_server` | compositor, Wood, midi_synth, audio driver |
-| compositor-test, window-events-test | compositor | none (the compositor's import is unlinked) |
+| wood-test | `log_server` | compositor, Wood, midi_synth, audio driver, usb, usb_core, usb_hid |
+| compositor-test, window-events-test | compositor | none (the compositor's and the USB components' imports are unlinked) |
 | audio-test | audio driver | none (unlinked) |
-| usb-core-test, usb-hid-test | `usb_core` / `input_trace` | none |
-| production (`kernel/kickstart/image.toml`) | shell | none (the compositor's import is unlinked) |
+| usb-core-test, usb-hid-test, usb-test | `usb_core` / `input_trace` / none | none (the USB components' imports are unlinked) |
+| production (`kernel/kickstart/image.toml`) | shell | none (the compositor's and the USB components' imports are unlinked) |
 
 ### Gaps
 

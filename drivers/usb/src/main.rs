@@ -19,9 +19,14 @@
 //! pipe is polled. A low- or full-speed device behind a high-speed hub is reached with
 //! split transactions: its pipes carry the hub and port as their route.
 //!
-//! Progress is traced on the serial channel when the component has one
-//! (`serial = true` in its manifest entry), and on the semihosting console
-//! under QEMU.
+//! Progress is traced on the log channel when the image has a log server, else
+//! on the serial channel when the component has one (`serial = true` in its
+//! manifest entry), and on the semihosting console under QEMU. What is traced:
+//! the root port's first status and the wait for a device, each enumeration's
+//! control transfers and outcome, each device and hub found, Status Change
+//! pipes, port resets, devices gone, and failures. Nothing is traced while the
+//! ports rest; a hub request that keeps failing is traced the 1st, 2nd, 4th,
+//! 8th... time with its count.
 //!
 //! `usb_v1` serves claims: every interface of an enumerated device is offered,
 //! `claim_interface` takes one by its class codes (or raises `not_ready` while
@@ -269,6 +274,8 @@ mod component {
         /// The controller's report channel, where the hubs' Status Change pipes
         /// report; without it the ports are looked at on a timer.
         reports: Option<Reports>,
+        /// Hub requests that failed, for the trace's back-off.
+        hub_failures: u32,
     }
 
     /// The client side of the controller's report channel.
@@ -475,12 +482,47 @@ mod component {
             sleep_ms(self.init, milliseconds);
         }
 
-        /// Wait until a device is attached to the root port.
+        /// Count one more failed hub request; the count when this one is
+        /// traced (the 1st, 2nd, 4th, 8th...), so a request that fails on every
+        /// poll adds a line per doubling.
+        fn hub_failure(&mut self) -> Option<u32> {
+            self.hub_failures = self.hub_failures.wrapping_add(1);
+            self.hub_failures
+                .is_power_of_two()
+                .then_some(self.hub_failures)
+        }
+
+        /// Wait until a device is attached to the root port. The first status
+        /// is traced, then the wait at 1, 2, 4, 8... seconds.
         fn wait_for_root_device(&mut self) {
+            let mut looks: u32 = 0;
             loop {
-                match self.client.port_status(0) {
-                    Ok(bits) if bits & 1 != 0 => return,
-                    Ok(_) => self.sleep(ROOT_POLL_MS),
+                let status = self.client.port_status(0);
+                if looks == 0
+                    && let Ok(bits) = status
+                {
+                    trace!(self.trace, "usb-core: root port status {bits:#x}");
+                }
+                looks = looks.wrapping_add(1);
+                match status {
+                    Ok(bits) if bits & 1 != 0 => {
+                        trace!(
+                            self.trace,
+                            "usb-core: root port: device connected (status {bits:#x}), enumerating"
+                        );
+                        return;
+                    }
+                    Ok(bits) => {
+                        let waited_ms = looks.saturating_mul(ROOT_POLL_MS);
+                        if waited_ms % 1000 == 0 && (waited_ms / 1000).is_power_of_two() {
+                            trace!(
+                                self.trace,
+                                "usb-core: root port: no device yet after {} s (status {bits:#x})",
+                                waited_ms / 1000
+                            );
+                        }
+                        self.sleep(ROOT_POLL_MS);
+                    }
                     Err(error) => {
                         trace!(
                             self.trace,
@@ -612,14 +654,21 @@ mod component {
             {
                 Ok(4) => Some(PortStatus::from_bytes(reply)),
                 Ok(moved) => {
-                    trace!(
-                        self.trace,
-                        "usb-core: port {port}: no status ({moved} bytes)"
-                    );
+                    if let Some(count) = self.hub_failure() {
+                        trace!(
+                            self.trace,
+                            "usb-core: port {port}: no status ({moved} bytes; {count} hub request failures so far)"
+                        );
+                    }
                     None
                 }
                 Err(error) => {
-                    trace!(self.trace, "usb-core: port {port}: no status: {error:?}");
+                    if let Some(count) = self.hub_failure() {
+                        trace!(
+                            self.trace,
+                            "usb-core: port {port}: no status: {error:?} ({count} hub request failures so far)"
+                        );
+                    }
                     None
                 }
             }
@@ -1064,10 +1113,12 @@ mod component {
                     },
                     PortAction::ClearChange { feature } => {
                         let setup = clear_port_feature(number, feature);
-                        if self.hub_request(control, setup, &mut []).is_none() {
+                        if self.hub_request(control, setup, &mut []).is_none()
+                            && let Some(count) = self.hub_failure()
+                        {
                             trace!(
                                 self.trace,
-                                "usb-core: port {number}: clearing {feature} failed"
+                                "usb-core: port {number}: clearing {feature} failed ({count} hub request failures so far)"
                             );
                         }
                         PortEvent::Done
@@ -1124,8 +1175,13 @@ mod component {
         /// `SET_FEATURE` on a port; a failure is traced.
         fn set_feature(&mut self, control: &Pipe, number: u8, feature: u16, what: &str) {
             let setup = set_port_feature(number, feature);
-            if self.hub_request(control, setup, &mut []).is_none() {
-                trace!(self.trace, "usb-core: port {number}: {what} failed");
+            if self.hub_request(control, setup, &mut []).is_none()
+                && let Some(count) = self.hub_failure()
+            {
+                trace!(
+                    self.trace,
+                    "usb-core: port {number}: {what} failed ({count} hub request failures so far)"
+                );
             }
         }
 
@@ -1274,6 +1330,7 @@ mod component {
             addresses: AddressPool::new(),
             devices: DeviceTable::new(),
             reports: Reports::new(&client),
+            hub_failures: 0,
         };
         core.wait_for_root_device();
         let Some(root) = core.enumerate_root() else {

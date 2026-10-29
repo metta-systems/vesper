@@ -14,3 +14,7 @@ uses usb_hcd_v1 via device compatible "brcm,bcm2708-usb"
 {
     open_pipe
 }
+# In an image with the log server (wood-test), the driver's trace goes to it on
+# the interface's io-channel; elsewhere the import stays unlinked and the lines
+# wait in the backlog `input_v1.trace` drains.
+uses log_v1 via component log_server { flush }

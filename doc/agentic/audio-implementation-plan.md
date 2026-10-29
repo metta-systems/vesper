@@ -165,7 +165,7 @@ Done in QEMU (2026-10-28), hardware check pending:
   test` passes (the demo playthrough, golden save and frame hashes included) and the
   library builds for `aarch64-unknown-none-softfloat`.
 - Wood (`userspace/wood/vesper/src/sound.rs`): the platform's `sound_init` releases the
-  playback Thread (`driver_threads!`, started by Kickstart, 16 KiB stack; the mixer
+  playback Thread (`driver_threads!`, started by Kickstart, 32 KiB stack; the mixer
   writes straight into the channel's data pages) through Wood's `EventCount` and waits
   for its answer; that Thread alone calls `audio_v1`: `rate`, `open`, then it keeps four
   buffers of 512 frames queued, mixing the next into each one that comes back. No driver

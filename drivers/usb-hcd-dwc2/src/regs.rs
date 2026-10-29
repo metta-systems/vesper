@@ -359,7 +359,14 @@ pub struct RegisterBlock {
     rx_fifo_size: RxFifoSize,
     /// Non-periodic transmit FIFO start address and depth, in words.
     tx_fifo_size: TxFifoSize,
-    _reserved1: [u32; 245],
+    _reserved1: [u32; 5],
+    /// Synopsys core id (`GSNPSID`): `0x4f54` in the top half and the core's
+    /// release below it (`0x4f54280a` on the Raspberry Pi 3). Anything else
+    /// means the register page does not answer, as when the controller's power
+    /// domain is off.
+    #[mmio(PureRead)]
+    core_id: u32,
+    _reserved1b: [u32; 239],
     /// Host configuration.
     host_config: u32,
     _host_frame_interval: u32,
@@ -406,6 +413,7 @@ assert_register_offsets!(RegisterBlock, 0x500, {
     rx_status_pop: 0x020,
     rx_fifo_size: 0x024,
     tx_fifo_size: 0x028,
+    core_id: 0x040,
     host_config: 0x400,
     frame_number: 0x408,
     host_channel_interrupt: 0x414,

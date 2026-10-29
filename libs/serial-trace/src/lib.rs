@@ -163,12 +163,30 @@ pub fn drain(out: &mut [u8]) -> usize {
 /// One line on the semihosting console, and on the log channel or else in the
 /// backlog, for a component without a serial channel.
 pub fn note(arguments: fmt::Arguments<'_>) {
-    semi::println!("{arguments}");
+    print_semihosting(arguments);
     if liblog_client::send(Some(Level::Info), arguments) == Sent::NoChannel {
         keep(arguments);
     }
 }
 
+/// The line on the semihosting console (under QEMU; nothing otherwise).
+///
+/// Never inlined, nor are [`keep`] and [`send_serial`]: `println!` formats into
+/// a 4 KiB buffer on the stack, which inlined into [`Trace::line`] or [`note`]
+/// sat in one frame with the log channel's send and the serial line's buffer.
+/// Apart, each path takes its own stack only while it runs; `usb-core`'s 16
+/// KiB stack overflowed in wood-test with them together.
+#[inline(never)]
+#[cfg_attr(
+    not(feature = "qemu"),
+    expect(unused_variables, reason = "semihosting prints nothing on the board")
+)]
+fn print_semihosting(arguments: fmt::Arguments<'_>) {
+    semi::println!("{arguments}");
+}
+
+/// The line in the backlog.
+#[inline(never)]
 fn keep(arguments: fmt::Arguments<'_>) {
     let mut line = Line {
         bytes: [0; LINE_BYTES + 2],
@@ -194,26 +212,29 @@ impl Trace {
 
     /// Emit one line.
     pub fn line(&mut self, arguments: fmt::Arguments<'_>) {
-        semi::println!("{arguments}");
+        print_semihosting(arguments);
         if liblog_client::send(Some(Level::Info), arguments) != Sent::NoChannel {
             return;
         }
-        let Some(serial) = &mut self.serial else {
-            keep(arguments);
-            return;
-        };
-        {
-            let mut line = Line {
-                bytes: [0; LINE_BYTES + 2],
-                len: 0,
-            };
-            // Writing to a `Line` cannot fail.
-            let _written = line.write_fmt(arguments);
-            line.bytes[line.len] = b'\r';
-            line.bytes[line.len + 1] = b'\n';
-            serial.send(&line.bytes[..line.len + 2]);
+        match &mut self.serial {
+            Some(serial) => send_serial(serial, arguments),
+            None => keep(arguments),
         }
     }
+}
+
+/// The line on the serial channel, waiting until it is sent.
+#[inline(never)]
+fn send_serial(serial: &mut SerialLog, arguments: fmt::Arguments<'_>) {
+    let mut line = Line {
+        bytes: [0; LINE_BYTES + 2],
+        len: 0,
+    };
+    // Writing to a `Line` cannot fail.
+    let _written = line.write_fmt(arguments);
+    line.bytes[line.len] = b'\r';
+    line.bytes[line.len + 1] = b'\n';
+    serial.send(&line.bytes[..line.len + 2]);
 }
 
 /// `trace!(trace, "text {value}")`: emit one line.

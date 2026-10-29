@@ -45,8 +45,15 @@
 //! right to use the pipe. The component keeps one master key per client and
 //! function (see `libdevice_driver::Masters`) and derives the badged copies.
 
-/// `note!("text {value}")`: one trace line, on the semihosting console and in
-/// the backlog `usb_hcd_v1.trace` drains.
+/// `note!("text {value}")`: one trace line, on the semihosting console and on
+/// the log channel when the image has a log server, else in the backlog
+/// `usb_hcd_v1.trace` drains.
+///
+/// What is traced: the bring-up (power domain, core reset, root port power),
+/// each root port reset, each interrupt pipe scheduled, and failures. Nothing
+/// is traced per transfer or per poll; repeating failures and slow transfers
+/// are traced the 1st, 2nd, 4th, 8th... time with their count (see
+/// `counted`), so a dead device cannot flood the log.
 #[cfg(target_os = "vesper")]
 macro_rules! note {
     ($($argument:tt)*) => {
@@ -188,6 +195,14 @@ mod component {
             core::hint::spin_loop();
         }
         true
+    }
+
+    /// Count one more event on `counter`; returns the count and whether this
+    /// one is traced: the 1st, 2nd, 4th, 8th..., so an event that keeps
+    /// repeating adds a line per doubling, not one per retry.
+    fn counted(counter: &AtomicU32) -> (u32, bool) {
+        let count = counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        (count, count.is_power_of_two())
     }
 
     /// A step of the controller's bring-up. Its number is what
@@ -351,19 +366,43 @@ mod component {
             Ok(())
         }
 
+        /// Milliseconds the root port waits for a device after power-up.
+        const CONNECT_MS: u64 = 3000;
+
         /// Power the root port and give a device time to connect. A hub behind
         /// the port (the Raspberry Pi's) takes seconds to come up; a device that
-        /// connects later shows in `port_status`.
+        /// connects later shows in `port_status`. Traces whether one connected.
         fn power_port(&mut self) {
             let port = self.registers.read_port();
             self.registers
                 .write_port(port_with_reset_and_power(port, false, true));
-            wait_until(3000, || self.registers.read_port().connected());
+            let started = now_ms();
+            let connected = wait_until(Self::CONNECT_MS, || self.registers.read_port().connected());
+            let port = self.registers.read_port().raw_value();
+            if connected {
+                note!(
+                    "usb-hcd-dwc2: root port powered, device connected after {} ms (port {port:#010x})",
+                    now_ms() - started
+                );
+            } else {
+                note!(
+                    "usb-hcd-dwc2: root port powered, nothing connected within {} ms (port {port:#010x})",
+                    Self::CONNECT_MS
+                );
+            }
         }
 
         /// Reset the root port `port` and report the speed of the device on it.
+        /// The outcome is traced with the port register.
         fn reset_port(&mut self, port: u32) -> Result<Speed, Exception> {
-            if port != ROOT_PORT || !self.registers.read_port().connected() {
+            if port != ROOT_PORT {
+                return Err(Exception::NoDevice);
+            }
+            if !self.registers.read_port().connected() {
+                note!(
+                    "usb-hcd-dwc2: port reset: no device connected (port {:#010x})",
+                    self.registers.read_port().raw_value()
+                );
                 return Err(Exception::NoDevice);
             }
             // USB 2.0 §7.1.7.5: hold reset for at least 50 ms.
@@ -376,6 +415,10 @@ mod component {
             self.registers
                 .write_port(port_with_reset_and_power(control, false, true));
             if !wait_until(100, || self.registers.read_port().enabled()) {
+                note!(
+                    "usb-hcd-dwc2: port reset: not enabled within 100 ms (port {:#010x})",
+                    self.registers.read_port().raw_value()
+                );
                 return Err(Exception::NoDevice);
             }
 
@@ -383,7 +426,19 @@ mod component {
             let control = self.registers.read_port();
             self.registers
                 .write_port(control.without_events().with_enable_changed(true));
-            match port_speed(self.registers.read_port()) {
+            let status = self.registers.read_port();
+            let found = port_speed(status);
+            match found {
+                Some(speed) => note!(
+                    "usb-hcd-dwc2: port reset: enabled, {speed:?} speed (port {:#010x})",
+                    status.raw_value()
+                ),
+                None => note!(
+                    "usb-hcd-dwc2: port reset: enabled, reserved speed bits (port {:#010x})",
+                    status.raw_value()
+                ),
+            }
+            match found {
                 Some(UsbSpeed::Low) => Ok(Speed::Low),
                 Some(UsbSpeed::Full) => Ok(Speed::Full),
                 Some(UsbSpeed::High) => Ok(Speed::High),
@@ -413,12 +468,15 @@ mod component {
             // panic here would hold the turnstile for good; reset the channel
             // instead once the case is seen.
             if !wait_until(10, || channel.read_interrupt().halted()) {
-                note!(
-                    "usb-hcd-dwc2: channel {index} did not halt: characteristics {:#010x} split {:#010x} events {:#010x}",
-                    channel.read_characteristics().raw_value(),
-                    channel.read_split().raw_value(),
-                    channel.read_interrupt().raw_value()
-                );
+                let (count, report) = counted(&HALT_FAILURES);
+                if report {
+                    note!(
+                        "usb-hcd-dwc2: channel {index} did not halt ({count} so far): characteristics {:#010x} split {:#010x} events {:#010x}",
+                        channel.read_characteristics().raw_value(),
+                        channel.read_split().raw_value(),
+                        channel.read_interrupt().raw_value()
+                    );
+                }
             }
             channel.write_interrupt(ChannelInterrupts::new_with_raw_value(u32::MAX));
         }
@@ -1258,6 +1316,17 @@ mod component {
             hcd.pipes.get_mut(handle).map_err(pipe_error)?.config = Some(config);
             drop(turn);
             wake_poller();
+            if kind == UsbKind::Interrupt {
+                note!(
+                    "usb-hcd-dwc2: pipe {handle}: polling endpoint {} of device {} ({:?} speed{}) every {} ms, {} bytes",
+                    pipe.endpoint,
+                    pipe.device_address,
+                    pipe.speed,
+                    if pipe.route.is_some() { ", split" } else { "" },
+                    config.interval_ms,
+                    config.max_packet
+                );
+            }
             Ok(())
         }
 
@@ -1364,10 +1433,13 @@ mod component {
             // The channel is shared with the polls: a long transfer delays them.
             let took = now_ms() - started;
             if took > SLOW_MS {
-                note!(
-                    "usb-hcd-dwc2: control to device {} held the channel {took} ms: {result:?}",
-                    pipe.device_address
-                );
+                let (count, report) = counted(&SLOW_CONTROLS);
+                if report {
+                    note!(
+                        "usb-hcd-dwc2: control to device {} held the channel {took} ms ({count} slow so far): {result:?}",
+                        pipe.device_address
+                    );
+                }
             }
             result.map(|moved| u32::try_from(moved).unwrap_or(u32::MAX))
         }
@@ -1455,6 +1527,11 @@ mod component {
 
     /// Polls that failed, for the trace's back-off.
     static POLL_FAILURES: AtomicU32 = AtomicU32::new(0);
+    /// Polls and control transfers that held the channel past `SLOW_MS`, and
+    /// channels that did not halt, for the trace's back-off.
+    static SLOW_POLLS: AtomicU32 = AtomicU32::new(0);
+    static SLOW_CONTROLS: AtomicU32 = AtomicU32::new(0);
+    static HALT_FAILURES: AtomicU32 = AtomicU32::new(0);
 
     /// Poll the first pipe that is due and has a buffer to fill, if any; the
     /// milliseconds until the next pipe is due, if any pipe is polled.
@@ -1477,7 +1554,12 @@ mod component {
             let polled = hcd.controller.poll(&pipe, config, data1);
             let took = now_ms() - started;
             if took > SLOW_MS {
-                note!("usb-hcd-dwc2: poll of pipe {handle} held the channel {took} ms: {polled:?}");
+                let (count, report) = counted(&SLOW_POLLS);
+                if report {
+                    note!(
+                        "usb-hcd-dwc2: poll of pipe {handle} held the channel {took} ms ({count} slow so far): {polled:?}"
+                    );
+                }
             }
             match polled {
                 Ok(Some(bytes)) => {
@@ -1493,8 +1575,8 @@ mod component {
                 Err(error) => {
                     // The 1st, 2nd, 4th, 8th... failure, so a dead endpoint cannot
                     // flood the trace.
-                    let failures = POLL_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
-                    if failures.is_power_of_two() {
+                    let (failures, report) = counted(&POLL_FAILURES);
+                    if report {
                         let status = match error {
                             PipeException::TransferFailed { status } => status,
                             _ => 0,
@@ -1539,12 +1621,16 @@ mod component {
     /// Ask the firmware to power the controller's domain. The controller, and
     /// the hub behind it on the Raspberry Pi, are dead until it does.
     ///
-    /// The answer is not checked: QEMU does not implement the request and echoes
+    /// The answer is only traced: QEMU does not implement the request and echoes
     /// it back, which the mailbox reads as a missing device. A domain that stays
-    /// off shows as a controller that never times in `init_core`.
+    /// off shows as a core id other than `0x4f54…` and a bring-up step that
+    /// times out in `init_core`.
     fn power_domain(init: &DriverInit) {
         let mailbox = Client::new(Bindings::from_imports(init.imports()));
-        let _answer = mailbox.set_power_state(Device::UsbHcd, true);
+        match mailbox.set_power_state(Device::UsbHcd, true) {
+            Ok(on) => note!("usb-hcd-dwc2: power domain requested on, firmware says on: {on}"),
+            Err(error) => note!("usb-hcd-dwc2: power domain request failed: {error:?}"),
+        }
     }
 
     /// Set up the controller and the turnstile, then service the controller's
@@ -1597,9 +1683,17 @@ mod component {
             dma_bus,
             completions: EventCountKey::from_key(completions_key),
         };
+        let core_id = controller.registers.read_core_id();
         let failed = controller.init_core().err();
-        if failed.is_none() {
-            controller.power_port();
+        match failed {
+            None => {
+                note!("usb-hcd-dwc2: core {core_id:#010x} reset, host mode, DMA on");
+                controller.power_port();
+            }
+            Some(step) => note!(
+                "usb-hcd-dwc2: core {core_id:#010x} bring-up timed out at {step:?} (step {}): every call raises controller_failed",
+                step as u32
+            ),
         }
 
         // The masters of the pipe keys sit in the slots after the DMA frame,

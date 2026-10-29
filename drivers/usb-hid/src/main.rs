@@ -28,8 +28,15 @@
 //! clients. They share the device table with the Thread that publishes
 //! events, under a `Turnstile`.
 
-/// `note!("text {value}")`: one trace line, on the semihosting console and in
-/// the backlog `input_v1.trace` drains.
+/// `note!("text {value}")`: one trace line, on the semihosting console and on
+/// the log channel when the image has a log server, else in the backlog
+/// `input_v1.trace` drains.
+///
+/// What is traced: each claim with its interrupt pipe's parameters, the
+/// device served or gone, and failures. Nothing is traced per report. The
+/// claim is retried every `RECHECK_MS`, so a wait for a device and a set-up
+/// that keeps failing are traced the 1st, 2nd, 4th, 8th... time with their
+/// count.
 #[cfg(target_os = "vesper")]
 macro_rules! note {
     ($($argument:tt)*) => {
@@ -231,6 +238,17 @@ mod component {
         /// Clients that missed a frame since their last delivery, by area index.
         missed: [bool; MAX_AREAS],
         active: [Option<Active>; MAX_DEVICES],
+        /// Claims refused because nothing of the kind is attached yet, and
+        /// claims that failed, by kind, for the trace's back-off.
+        waits: [u32; 2],
+        failures: [u32; 2],
+    }
+
+    /// Count one more on `counter`; the count when this one is traced (the
+    /// 1st, 2nd, 4th, 8th...).
+    fn counted(counter: &mut u32) -> Option<u32> {
+        *counter = counter.wrapping_add(1);
+        counter.is_power_of_two().then_some(*counter)
     }
 
     fn hcd_speed(speed: Speed) -> HcdSpeed {
@@ -274,20 +292,47 @@ mod component {
 
         /// Try to claim and set up a device of `kind`.
         fn attach(&mut self, kind: DeviceKind) {
-            let claim =
-                match self
-                    .usb
-                    .claim_interface(CLASS_HID, SUBCLASS_BOOT, Self::protocol(kind))
-                {
-                    Ok(claim) => claim,
-                    Err(UsbError::Exception(UsbException::NotReady)) => return,
-                    Err(error) => {
-                        note!("usb-hid: claiming a {kind:?} failed: {error:?}");
-                        return;
+            let which = match kind {
+                DeviceKind::Keyboard => 0,
+                DeviceKind::Mouse => 1,
+            };
+            let claim = match self.usb.claim_interface(
+                CLASS_HID,
+                SUBCLASS_BOOT,
+                Self::protocol(kind),
+            ) {
+                Ok(claim) => claim,
+                Err(UsbError::Exception(UsbException::NotReady)) => {
+                    // Waited for at 1, 2, 4, 8... seconds.
+                    let ticks_per_second = 1000 / RECHECK_MS;
+                    if let Some(waits) = counted(&mut self.waits[which])
+                        && u64::from(waits) >= ticks_per_second
+                    {
+                        note!(
+                            "usb-hid: the USB core offers no {kind:?} yet ({} s)",
+                            u64::from(waits) / ticks_per_second
+                        );
                     }
-                };
-            let Some(active) = self.set_up(kind, claim) else {
+                    return;
+                }
+                Err(error) => {
+                    if let Some(count) = counted(&mut self.failures[which]) {
+                        note!(
+                            "usb-hid: claiming a {kind:?} failed ({count} failures so far): {error:?}"
+                        );
+                    }
+                    return;
+                }
+            };
+            // The set-up's own lines follow the same back-off: a device that
+            // refuses it is claimed again every `RECHECK_MS`.
+            let report = (self.failures[which].wrapping_add(1)).is_power_of_two();
+            let Some(active) = self.set_up(kind, claim, report) else {
                 let _released = self.usb.release(claim);
+                let count = counted(&mut self.failures[which]);
+                if let Some(count) = count {
+                    note!("usb-hid: setting up the {kind:?} failed ({count} failures so far)");
+                }
                 return;
             };
             let subject = active.subject;
@@ -295,13 +340,42 @@ mod component {
                 *slot = Some(active);
             }
             self.publish_one(Event::new(now_ns(), subject, Kind::DeviceAdded, 0, 0));
-            note!("usb-hid: serving a {kind:?} as device {subject}");
+            note!(
+                "usb-hid: serving a {kind:?} as device {subject} ({} failures before)",
+                self.failures[which]
+            );
         }
 
         /// Boot protocol and the interrupt pipe for the claim `claim` of a
-        /// `kind`.
-        fn set_up(&mut self, kind: DeviceKind, claim: u32) -> Option<Active> {
-            let params = self.pipe_params(claim)?;
+        /// `kind`. Its lines are traced only when `report`.
+        fn set_up(&mut self, kind: DeviceKind, claim: u32, report: bool) -> Option<Active> {
+            macro_rules! report {
+                ($($argument:tt)*) => {
+                    if report {
+                        note!($($argument)*);
+                    }
+                };
+            }
+            let Some(params) = self.pipe_params(claim) else {
+                report!("usb-hid: claim {claim} of a {kind:?}: no interrupt pipe parameters");
+                return None;
+            };
+            report!(
+                "usb-hid: claimed a {kind:?} (claim {claim}): {:04x}:{:04x} at address {} interface {}, endpoint {:#04x}, {:?} speed{}, {} bytes, interval {}",
+                params.vendor,
+                params.product,
+                params.device,
+                params.interface,
+                params.endpoint,
+                params.speed,
+                if params.route.is_some() {
+                    " behind a hub's translator"
+                } else {
+                    ""
+                },
+                params.max_packet,
+                params.interval
+            );
             let speed = hcd_speed(params.speed);
             let address = u32::from(params.device);
             // Boot protocol and no idle reports, over a control pipe that is
@@ -310,7 +384,7 @@ mod component {
                 .pipes
                 .open_unconfigured(address, 0, speed)
                 .map_err(|error| {
-                    note!("usb-hid: no control pipe: {error:?}");
+                    report!("usb-hid: no control pipe: {error:?}");
                 })
                 .ok()?;
             let configured = route(&control, params.route)
@@ -322,8 +396,11 @@ mod component {
                 self.pipes
                     .control(&control, set_protocol(params.interface, true), &[], &mut [])
                     .map(|_moved| ())
-                    .map_err(|error| note!("usb-hid: the {kind:?} refused SET_PROTOCOL: {error:?}"))
+                    .map_err(|error| {
+                        report!("usb-hid: the {kind:?} refused SET_PROTOCOL: {error:?}");
+                    })
             } else {
+                report!("usb-hid: the {kind:?}'s control pipe was refused");
                 Err(())
             };
             // Set_Idle is optional for a boot mouse (HID 1.11 Appendix G): a refusal
@@ -333,11 +410,11 @@ mod component {
                     self.pipes
                         .control(&control, set_idle(params.interface, 0, 0), &[], &mut [])
             {
-                note!("usb-hid: the {kind:?} refused SET_IDLE: {error:?}");
+                report!("usb-hid: the {kind:?} refused SET_IDLE: {error:?}");
             }
             self.pipes.close(&control);
             if protocol.is_err() {
-                note!("usb-hid: the {kind:?} did not accept boot protocol");
+                report!("usb-hid: the {kind:?} did not accept boot protocol");
                 return None;
             }
 
@@ -345,7 +422,7 @@ mod component {
                 .pipes
                 .open_unconfigured(address, u32::from(params.endpoint), speed)
                 .map_err(|error| {
-                    note!("usb-hid: no interrupt pipe: {error:?}");
+                    report!("usb-hid: no interrupt pipe: {error:?}");
                 })
                 .ok()?;
             let polled = route(&pipe, params.route)
@@ -358,7 +435,7 @@ mod component {
                     )
                     .is_ok();
             if !polled {
-                note!("usb-hid: the interrupt pipe was refused");
+                report!("usb-hid: the {kind:?}'s interrupt pipe was refused");
                 self.pipes.close(&pipe);
                 return None;
             }
@@ -615,6 +692,8 @@ mod component {
             report_data,
             missed: [false; MAX_AREAS],
             active: [const { None }; MAX_DEVICES],
+            waits: [0; 2],
+            failures: [0; 2],
         };
         service.post_buffers();
         let mut seen = 0;

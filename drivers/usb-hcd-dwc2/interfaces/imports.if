@@ -5,3 +5,7 @@
 # The host controller's power domain is switched on through the firmware's
 # mailbox, found by the firmware node's compatible string.
 uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { set_power_state }
+# In an image with the log server (wood-test), the controller's trace goes to
+# it on the interface's io-channel; elsewhere the import stays unlinked and the
+# lines wait in the backlog `usb_hcd_v1.trace` drains.
+uses log_v1 via component log_server { flush }

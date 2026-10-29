@@ -28,7 +28,7 @@
 //! Wood's `EventCount` doubles as the engine's sleep timer: a sleep awaits a
 //! count it never reaches, so these advances do not cut sleeps short.
 //!
-//! The Thread runs on the 16 KiB stack Kickstart gives every Thread of a
+//! The Thread runs on the 32 KiB stack Kickstart gives every Thread of a
 //! program: the mixer's state is a few hundred bytes, and it mixes straight
 //! into the channel's data pages.
 

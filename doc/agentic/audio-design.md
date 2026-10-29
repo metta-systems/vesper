@@ -433,7 +433,7 @@ The decided options are drawn; each box below names the decision it rests on.
     true from `start` on, false from `stop` on, and false one buffer after the sound
     ran out. No lock, no wait on the game Thread.
   - *Playback Thread* (Wood's `sound.rs`). A further Thread of the program
-    (`driver_threads!`, high priority), on the 16 KiB stack Kickstart gives it; the
+    (`driver_threads!`, high priority), on the 32 KiB stack Kickstart gives it; the
     mixer writes straight into the io-channel's data pages. It waits on Wood's
     `EventCount` for `sound_init`, then calls `rate`, takes the MIDI synthesiser,
     queues its first 8 buffers and only then calls `open` (it is the only Thread calling
