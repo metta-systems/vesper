@@ -223,10 +223,8 @@ mod tests {
             (3, ReportError::KeyboardError),
         ] {
             let mut frame = Frame::new();
-            assert_eq!(
-                decoder.decode(&[0, 0, usage, usage, usage, usage, usage, usage], TIME, 1, &mut frame),
-                Err(error)
-            );
+            let report = [0, 0, usage, usage, usage, usage, usage, usage];
+            assert_eq!(decoder.decode(&report, TIME, 1, &mut frame), Err(error));
             assert!(frame.is_empty());
         }
         assert_eq!(
@@ -238,7 +236,11 @@ mod tests {
     #[test]
     fn a_duplicated_usage_is_one_key() {
         // A keyboard that lists a usage twice still holds one key: one press,
-        // and its release is followed once by the state tracker.
+        // one release.
+        assert_eq!(
+            key_changes(&[[0, 0, 0x52, 0x52, 0, 0, 0, 0], [0; 8]]),
+            [(UP, KEY_DOWN), (UP, KEY_UP)]
+        );
         let mut devices = Devices::new();
         let subject = devices
             .add(DeviceKind::Keyboard, 7, keyboard_descriptor(1, 2))

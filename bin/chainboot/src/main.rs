@@ -17,8 +17,8 @@ use {
     core::{hash::Hasher, time::Duration},
     libchainboot_protocol::{
         BEACON, BOOT_BAUD_RATE, BOOT_RATE_WAIT, FAST_RATE_WAIT, Opening, RATE_ACCEPTED,
-        RATE_REFUSED, RateRefusal, SWITCH_SETTLE, Wait, decode_rate_request_body, opening,
-        validate_rate,
+        RATE_REFUSED, RateRefusal, SWITCH_SETTLE, Wait, decode_rate_request_body,
+        handoff_registers, opening, validate_rate,
     },
     libconsole::console::console,
     liblog::{print, println},
@@ -332,8 +332,10 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
     // The kernel stays at the rate the boot loader set: the UART is left at
     // `uart_rate`, the rate the load ran at, and Vesper's UART driver keeps the
     // divisors it finds. chainofcommand stays at that rate for the console
-    // (`send_kernel` there).
+    // (`send_kernel` there). The handoff in x1 and x2 tells Kickstart so, and it
+    // skips its own console negotiation (the protocol crate's "The handoff").
     semi::println!("⏪ Handing over at {uart_rate} baud");
+    let [handoff_magic, handoff_rate] = handoff_registers(uart_rate);
 
     if let Err(why) = platform::led::set(false) {
         println!("The LED stays as it is: {why}");
@@ -349,15 +351,16 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
     #[cfg(feature = "mmu")]
     platform::mmu::disable();
 
-    // Use black magic to create a function pointer.
-    // SAFETY: We're getting to safety soon!
-    let kernel: fn(u32) -> ! = unsafe { core::mem::transmute(kernel_addr) };
+    // The kernel's entry takes the DTB in x0 and the handoff in x1 and x2.
+    // SAFETY: the kernel image was received and checked at `kernel_addr`, where
+    // its entry is.
+    let kernel: extern "C" fn(u64, u64, u64) -> ! = unsafe { core::mem::transmute(kernel_addr) };
 
     // Force everything to complete before we jump.
     barrier::isb(barrier::SY);
 
     // Jump to loaded kernel!
-    kernel(dtb)
+    kernel(u64::from(dtb), handoff_magic, handoff_rate)
 }
 
 #[panic_handler]

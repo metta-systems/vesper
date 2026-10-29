@@ -35,7 +35,10 @@ aarch64-cpu = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
 libboot = { workspace = true }
+libboot-uart = { workspace = true }
+libchainboot-protocol = { workspace = true }
 libcomponent-loader = { workspace = true }
+libconsole = { workspace = true }
 libcpu = { workspace = true }
 libdevice-driver = { workspace = true }
 libserial-channel = { workspace = true }
@@ -52,6 +55,7 @@ libmapping = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 libobject = { workspace = true }
+libtime = { workspace = true }
 nucleus = { workspace = true }
 snafu = { workspace = true }
 

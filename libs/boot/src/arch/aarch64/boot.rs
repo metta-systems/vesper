@@ -13,13 +13,31 @@
 
 use {
     aarch64_cpu::registers::*,
-    core::arch::global_asm,
+    core::{
+        arch::global_asm,
+        sync::atomic::{AtomicU64, Ordering},
+    },
     libcpu::endless_sleep,
     tock_registers::interfaces::{Readable, Writeable},
 };
 
 /// The core that boots; the others park.
 pub const BOOT_CORE_ID: u64 = 0;
+
+/// `x1` and `x2` at the kernel's entry. Written once, by plain stores, before
+/// anything reads them: the MMU is off, where an atomic read-modify-write never
+/// completes on the board.
+static LOADER_REGISTERS: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+
+/// `x1` and `x2` as the loader left them at the kernel's entry: zero from the
+/// firmware's stub and QEMU's boot code (the arm64 boot protocol reserves them),
+/// chainboot's handoff from chainboot (`libchainboot_protocol::kept_rate`).
+#[must_use]
+pub fn loader_registers() -> [u64; 2] {
+    LOADER_REGISTERS
+        .each_ref()
+        .map(|register| register.load(Ordering::Relaxed))
+}
 
 /// Type check the user-supplied entry function.
 #[macro_export]
@@ -60,9 +78,13 @@ global_asm!(
 /// We assume that no statics are accessed before transition to this fn.
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.boot")]
-pub unsafe extern "C" fn _startup_in_rust(dtb: u32) -> ! {
+pub unsafe extern "C" fn _startup_in_rust(dtb: u32, loader_x1: u64, loader_x2: u64) -> ! {
     // On entry, w0 should contain the dtb address.
     // For non-primary cores it contains 0.
+
+    // BSS is zeroed: keep what the loader left in x1 and x2 for later.
+    LOADER_REGISTERS[0].store(loader_x1, Ordering::Relaxed);
+    LOADER_REGISTERS[1].store(loader_x2, Ordering::Relaxed);
 
     // Can't match values with dots in names in match, so use intermediate consts.
     #[cfg(feature = "qemu")]

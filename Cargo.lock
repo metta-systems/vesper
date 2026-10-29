@@ -615,16 +615,14 @@ dependencies = [
  "aarch64-cpu",
  "arbitrary-int",
  "bitbybit",
- "derive-mmio",
  "seahash",
  "tock-registers",
+ "vesper-boot-uart",
  "vesper-chainboot-protocol",
  "vesper-console",
  "vesper-locking",
  "vesper-log",
  "vesper-machine",
- "vesper-mmio",
- "vesper-primitives",
  "vesper-print",
  "vesper-qemu",
  "vesper-tests",
@@ -2137,6 +2135,9 @@ dependencies = [
  "snafu",
  "vesper-address",
  "vesper-boot",
+ "vesper-boot-uart",
+ "vesper-chainboot-protocol",
+ "vesper-console",
  "vesper-cpu",
  "vesper-device-driver",
  "vesper-devicetree",
@@ -2152,6 +2153,7 @@ dependencies = [
  "vesper-print",
  "vesper-qemu",
  "vesper-serial-channel",
+ "vesper-time",
 ]
 
 [[package]]
@@ -4860,6 +4862,22 @@ dependencies = [
  "aarch64-cpu",
  "tock-registers",
  "vesper-cpu",
+]
+
+[[package]]
+name = "vesper-boot-uart"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "vesper-chainboot-protocol",
+ "vesper-console",
+ "vesper-locking",
+ "vesper-mmio",
+ "vesper-primitives",
+ "vesper-time",
 ]
 
 [[package]]

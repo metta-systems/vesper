@@ -88,7 +88,8 @@ midi_test_hash      := '23329:true:0x4366085f6c416218'
 chainboot_serial    := '/dev/ttyUSB0' # '/dev/cu.usbserial-019586E3'
 chainboot_baud      := '115200'
 # The rate chainofcommand asks chainboot to load the kernel at, and the console stays at
-# (e.g. `just chainboot_load_baud=2000000 boot-wood-test`); empty loads at `chainboot_baud`
+# (e.g. `just chainboot_load_baud=2000000 boot-wood-test`); empty loads at `chainboot_baud`.
+# It also asks Kickstart's console for it when the kernel boots from the SD card (`just console`)
 chainboot_load_baud := '1500000'
 
 chainofcommand_args := chainboot_serial + ' ' + chainboot_baud + (if chainboot_load_baud != '' { ' --load-baud ' + chainboot_load_baud } else { '' })
@@ -627,6 +628,11 @@ chainofcommand:
     @echo "Run 'just boot' to boot via coc"
 
 alias coc := chainofcommand
+
+# Be the console of a kernel booted from the SD card, without chainboot (e.g. wood-test-rpi3.bin copied as the SD card's kernel8.img): start this, then power the board on. Kickstart offers a faster console for 1.5 s at boot and chainofcommand asks for `chainboot_load_baud`; it sends no kernel when chainboot asks for one
+[group("hw")]
+console: chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --console
 
 # === Meddler (host tool) ===
 

@@ -7,9 +7,9 @@
  * http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183g/DDI0183G_uart_pl011_r1p5_trm.pdf
  */
 
-//! The PL011 UART chainboot talks to its host over: polled, 8N1, with the FIFOs
-//! on and every interrupt masked. It starts at 115200 baud and switches to the
-//! rate the host asks for ([`Pl011::set_baud_rate`]).
+//! The PL011 UART chainboot and Kickstart's early console talk to the host over:
+//! polled, 8N1, with the FIFOs on and every interrupt masked. It starts at 115200
+//! baud and switches to the rate the host asks for ([`Pl011::set_baud_rate`]).
 
 use {
     arbitrary_int::{u6, u11},
@@ -32,8 +32,9 @@ use {
 const SPIN_LIMIT: u32 = 1_000_000;
 
 /// The transmitter did not drain in time, so it is not running (a UART whose
-/// clock is stopped never sends). Chainboot then carries on without a console, so
-/// that the LED can still say it is alive, instead of waiting for ever.
+/// clock is stopped never sends). Its user then carries on without a console
+/// (chainboot so that the LED can still say it is alive) instead of waiting for
+/// ever.
 static TRANSMITTER_DEAD: AtomicBool = AtomicBool::new(false);
 
 /// Look at `busy` until it stops holding; `false` when it still held after
@@ -268,7 +269,7 @@ impl Pl011 {
 
             write_divisors_and_frame(registers, integer, fraction);
 
-            // Chainboot polls: no interrupts, no DMA.
+            // Polled: no interrupts, no DMA.
             registers.write_interrupt_mask(InterruptSources::ZERO);
             registers.write_dma_control(
                 DmaControl::ZERO
@@ -289,7 +290,7 @@ impl Pl011 {
     /// character, flush the transmit FIFO by clearing FEN in `UARTLCR_H`,
     /// reprogram, enable. Before that the transmit FIFO is let empty and BUSY clear, so the
     /// last answer at the old rate reaches the host whole. A character arriving
-    /// meanwhile is lost; the host sends nothing until chainboot beacons.
+    /// meanwhile is lost; the host sends nothing until the board beacons.
     ///
     /// # Errors
     ///

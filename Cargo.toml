@@ -81,6 +81,7 @@ members = [
   "libs/alloc",
   "libs/block-channel",
   "libs/boot",
+  "libs/boot-uart",
   "libs/chainboot-protocol",
   "libs/component-loader",
   "userspace/libs/compositor-core",
@@ -200,6 +201,7 @@ libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libblock-channel = { path = "libs/block-channel", package = "vesper-block-channel" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
+libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
 vesper-input-event = { path = "libs/input-event" }
 vesper-usb-protocol = { path = "drivers/usb/protocol" }

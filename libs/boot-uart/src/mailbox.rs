@@ -9,12 +9,12 @@
 //! <https://github.com/raspberrypi/firmware/wiki/Mailboxes> and
 //! <https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface>
 //!
-//! Chainboot runs with the MMU off, so a buffer's physical address is its address,
-//! and nothing caches it. Every wait is bounded: a firmware that does not answer
-//! must not stop the boot.
+//! Its users run with the MMU off, or chainboot on a flat map with the data cache
+//! off, so a buffer's physical address is its address, and nothing caches it.
+//! Every wait is bounded: a firmware that does not answer must not stop the boot.
 
 use {
-    super::PERIPHERALS,
+    crate::PERIPHERALS,
     aarch64_cpu::asm::barrier,
     arbitrary_int::{u4, u28},
     bitbybit::bitfield,
@@ -112,7 +112,7 @@ const VALUE_BYTES: u32 = 8;
 const _: () = assert!(SIZE as usize == size_of::<[u32; WORDS]>());
 
 /// A message with one tag. The value buffer has room for two words, enough for
-/// every tag chainboot sends, for the request and for the answer.
+/// every tag sent here, for the request and for the answer.
 #[repr(C, align(16))]
 pub struct Message {
     words: [u32; WORDS],
@@ -175,7 +175,7 @@ pub fn wait_until(mut done: impl FnMut() -> bool) -> bool {
 /// The mailbox. There is one core and nobody else uses it, so the handle is made
 /// where it is used.
 fn mailbox() -> MmioRegisterBlock<'static> {
-    // SAFETY: `BASE` is the mailbox's address; chainboot runs on one core with the
+    // SAFETY: `BASE` is the mailbox's address; its users run on one core with the
     // MMU off, and the mailbox is used from one place at a time.
     unsafe { RegisterBlock::new_mmio(ptr::with_exposed_provenance_mut(BASE)) }
 }

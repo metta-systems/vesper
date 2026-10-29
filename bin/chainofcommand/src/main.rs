@@ -11,7 +11,8 @@ use {
     },
     futures::{Stream, future::FutureExt},
     libchainboot_protocol::{
-        BEACON, HOST_FAST_BEACON_TIMEOUT, RATE_ACCEPTED, RateAnswer, encode_rate_request,
+        BEACON, CONSOLE_ACK, CONSOLE_BEACON, HOST_CONSOLE_CONFIRM_TIMEOUT,
+        HOST_FAST_BEACON_TIMEOUT, RATE_ACCEPTED, RateAnswer, Run, encode_rate_request,
         rate_answer,
     },
     seahash::SeaHasher,
@@ -114,36 +115,66 @@ async fn expect(to_console2: &Sender, from_serial: &mut Receiver, m: &str) -> Re
     Ok(())
 }
 
-/// Wait until chainboot's beacon, three `^C` in a row, arrives. Anything else
-/// is the line settling at a new rate and is dropped.
-async fn wait_for_beacon(from_serial: &mut Receiver) -> Result<()> {
-    let mut run = 0;
+/// The byte a received character stands for, for watching for a beacon: only
+/// ASCII characters are beacon bytes.
+fn beacon_byte(character: char) -> u8 {
+    u8::try_from(character)
+        .ok()
+        .filter(u8::is_ascii)
+        .unwrap_or(u8::MAX)
+}
+
+/// Wait until `beacon` arrives. Anything else is the line settling at a new rate
+/// and is dropped.
+async fn wait_for_beacon(from_serial: &mut Receiver, beacon: [u8; 3]) -> Result<()> {
+    let mut run = Run::of(beacon);
     loop {
         let Some(Ok(Message::Text(chunk))) = from_serial.recv().await else {
             return Err(anyhow!("The serial line closed while waiting for a beacon"));
         };
-        for character in chunk.chars() {
-            if character == char::from(BEACON[0]) {
-                run += 1;
-                if run == BEACON.len() {
-                    return Ok(());
-                }
-            } else {
-                run = 0;
-            }
+        if chunk.chars().any(|character| run.push(beacon_byte(character))) {
+            return Ok(());
         }
     }
 }
 
-/// Ask chainboot for `rate` (see the protocol crate's documentation) and switch
-/// the host when it accepts. Returns whether both are at `rate`, chainboot's
-/// beacon heard there. When not, chainboot waits at the boot rate again, and
-/// the host has to go back to it.
+/// What the target does once it accepted a rate: the beacon it sends at the new
+/// rate, how long the host waits for it, what the host answers it with, and what
+/// the rate is for.
+#[derive(Clone, Copy, Debug)]
+struct AtNewRate {
+    beacon: [u8; 3],
+    timeout: Duration,
+    answer: &'static [u8],
+    purpose: &'static str,
+}
+
+/// Chainboot beacons for the load at the new rate; the size answers it.
+const CHAINBOOT_LOAD: AtNewRate = AtNewRate {
+    beacon: BEACON,
+    timeout: HOST_FAST_BEACON_TIMEOUT,
+    answer: &[],
+    purpose: "Loading",
+};
+
+/// Kickstart beacons for [`CONSOLE_ACK`] at the new rate.
+const KICKSTART_CONSOLE: AtNewRate = AtNewRate {
+    beacon: CONSOLE_BEACON,
+    timeout: HOST_CONSOLE_CONFIRM_TIMEOUT,
+    answer: &CONSOLE_ACK,
+    purpose: "Console",
+};
+
+/// Ask the target for `rate` (see the protocol crate's documentation) and switch
+/// the host when it accepts. Returns whether both are at `rate`, the target's
+/// beacon heard there (and answered, for the console). When not, the target goes
+/// back to the boot rate, and the host has to go back to it.
 async fn switch_rate(
     to_console2: &Sender,
     to_serial: &Sender,
     from_serial: &mut Receiver,
     rate: u32,
+    at_new_rate: AtNewRate,
 ) -> Result<bool> {
     to_console2
         .send(Ok(Message::Text(format!("⏩ Asking for {rate} baud .. "))))
@@ -170,7 +201,7 @@ async fn switch_rate(
         RateAnswer::Refused => {
             to_console2
                 .send(Ok(Message::Text(format!(
-                    "\r\n⏩ chainboot refused {rate} baud\r\n"
+                    "\r\n⏩ The target refused {rate} baud\r\n"
                 ))))
                 .await?;
             return Ok(false);
@@ -178,7 +209,7 @@ async fn switch_rate(
         RateAnswer::NotUnderstood => {
             to_console2
                 .send(Ok(Message::Text(
-                    "\r\n⏩ chainboot does not know rate requests\r\n".into(),
+                    "\r\n⏩ The target does not know rate requests\r\n".into(),
                 )))
                 .await?;
             return Ok(false);
@@ -186,25 +217,57 @@ async fn switch_rate(
     }
 
     to_serial.send(Ok(Message::SetRate(rate))).await?;
-    if let Ok(beacon) =
-        tokio::time::timeout(HOST_FAST_BEACON_TIMEOUT, wait_for_beacon(from_serial)).await
+    if let Ok(beacon) = tokio::time::timeout(
+        at_new_rate.timeout,
+        wait_for_beacon(from_serial, at_new_rate.beacon),
+    )
+    .await
     {
         beacon?;
+        if !at_new_rate.answer.is_empty() {
+            to_serial
+                .send(Ok(Message::Binary(Bytes::from_static(at_new_rate.answer))))
+                .await?;
+        }
         to_console2
             .send(Ok(Message::Text(format!(
-                "\r\n⏩ Loading at {rate} baud\r\n"
+                "\r\n⏩ {} at {rate} baud\r\n",
+                at_new_rate.purpose
             ))))
             .await?;
         Ok(true)
     } else {
         to_console2
             .send(Ok(Message::Text(format!(
-                "\r\n⏩ No beacon at {rate} baud within {} s\r\n",
-                HOST_FAST_BEACON_TIMEOUT.as_secs()
+                "\r\n⏩ No beacon at {rate} baud within {} ms\r\n",
+                at_new_rate.timeout.as_millis()
             ))))
             .await?;
         Ok(false)
     }
+}
+
+/// Answer Kickstart's console beacon (the protocol crate's "The console
+/// negotiation"): ask for `rate`, switch, and confirm it at the new rate.
+async fn negotiate_console(
+    to_console2: Sender,
+    to_serial: Sender,
+    mut from_serial: Receiver,
+    rate: u32,
+) -> Result<Upload> {
+    let switched = switch_rate(
+        &to_console2,
+        &to_serial,
+        &mut from_serial,
+        rate,
+        KICKSTART_CONSOLE,
+    )
+    .await?;
+    Ok(if switched {
+        Upload::Console { line_rate: rate }
+    } else {
+        Upload::ConsoleStayed
+    })
 }
 
 /// The transfer rate over the last [`RATE_WINDOW`], from samples of how much
@@ -390,13 +453,17 @@ struct Rates {
     load: Option<u32>,
 }
 
-/// How an upload ended, when nothing went wrong.
+/// How an upload, or the console negotiation, ended when nothing went wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Upload {
     /// The kernel runs, and the line is at `line_rate`.
     Loaded { line_rate: u32 },
     /// Chainboot did not take the load rate; it waits at the boot rate again.
     FellBack,
+    /// Kickstart's console runs at `line_rate`.
+    Console { line_rate: u32 },
+    /// Kickstart's console stays at the boot rate, or went back to it.
+    ConsoleStayed,
 }
 
 async fn send_kernel<P: ThePath>(
@@ -410,7 +477,15 @@ async fn send_kernel<P: ThePath>(
 
     let mut line_rate = rates.initial;
     if let Some(load_rate) = rates.load {
-        if !switch_rate(&to_console2, &to_serial, &mut from_serial, load_rate).await? {
+        if !switch_rate(
+            &to_console2,
+            &to_serial,
+            &mut from_serial,
+            load_rate,
+            CHAINBOOT_LOAD,
+        )
+        .await?
+        {
             return Ok(Upload::FellBack);
         }
         line_rate = load_rate;
@@ -569,7 +644,7 @@ async fn console_loop<P>(
     mut from_internal: Receiver,
     to_serial: Sender,
     mut from_serial: Receiver,
-    kernel: P,
+    kernel: Option<P>,
     rates: Rates,
 ) -> Result<()>
 where
@@ -578,6 +653,10 @@ where
     let mut w = std::io::stdout();
 
     let mut breaks = 0;
+    // Kickstart's console beacon; it is not printed.
+    let mut console_beacon = Run::of(CONSOLE_BEACON);
+    // Whether console mode said once that it sends no kernel.
+    let mut told_no_kernel = false;
 
     // The rate to load at, until it fails once; then loads run at the initial rate.
     let mut load_rate = rates.load;
@@ -648,6 +727,25 @@ where
                     }
 
                     for x in received.chars() {
+                        if x == char::from(CONSOLE_BEACON[0]) {
+                            // Kickstart offers a faster console: ask for the load rate
+                            // when the line is at the initial one.
+                            if console_beacon.push(CONSOLE_BEACON[0])
+                                && upload.is_none()
+                                && line_rate == rates.initial
+                                && let Some(rate) = load_rate
+                            {
+                                let handle = tokio::spawn(negotiate_console(
+                                    to_console2.clone(),
+                                    to_serial.clone(),
+                                    from_proto.take().expect("proto receiver already taken"),
+                                    rate,
+                                ));
+                                upload = Some(handle);
+                            }
+                            continue;
+                        }
+                        console_beacon = Run::of(CONSOLE_BEACON);
                         if x == 0x3 as char {
                             // execute!(w, style::Print("⏩ Received a BREAK\r\n"))?;
                             breaks += 1;
@@ -656,13 +754,23 @@ where
                                 // execute!(w, style::Print("⏩ Received 3 BREAKs\r\n"))?;
                                 w.flush()?;
                                 breaks = 0;
+                                let Some(kernel) = kernel.clone() else {
+                                    if !told_no_kernel {
+                                        told_no_kernel = true;
+                                        execute!(w, style::Print(
+                                            "\r\n⏩ Chainboot asks for a kernel; console mode sends none (use --kernel)\r\n"
+                                        ))?;
+                                        w.flush()?;
+                                    }
+                                    continue;
+                                };
                                 // Spawn the upload so this loop keeps polling
                                 // from_internal (status messages) and stdin.
                                 let handle = tokio::spawn(send_kernel(
                                     to_console2.clone(),
                                     to_serial.clone(),
                                     from_proto.take().expect("proto receiver already taken"),
-                                    kernel.clone(),
+                                    kernel,
                                     Rates { initial: rates.initial, load: load_rate },
                                 ));
                                 upload = Some(handle);
@@ -690,6 +798,15 @@ where
                     line_rate = loaded_at;
                     restart_watch = RestartWatch::default();
                     to_console2.send(Ok(Message::Text(format!("🦀 Send successful, pass-through at {loaded_at} baud\r\n")))).await?;
+                } else if let Ok(Ok(Upload::Console { line_rate: console_at })) = result {
+                    line_rate = console_at;
+                    restart_watch = RestartWatch::default();
+                    to_console2.send(Ok(Message::Text(format!("🦀 Kickstart's console, pass-through at {console_at} baud\r\n")))).await?;
+                } else if let Ok(Ok(Upload::ConsoleStayed)) = result {
+                    // Kickstart is at the boot rate, or goes back to it: so does the host.
+                    // The load rate stays for the next boot.
+                    to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
+                    line_rate = rates.initial;
                 } else {
                     // Chainboot waits at the boot rate again after anything else: so does the host.
                     to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
@@ -738,7 +855,7 @@ where
     }
 }
 
-async fn main_loop<T, P>(port: T, kernel: P, rates: Rates) -> Result<()>
+async fn main_loop<T, P>(port: T, kernel: Option<P>, rates: Rates) -> Result<()>
 where
     T: AsyncRead + AsyncWrite + RateControl + Unpin + Send + 'static,
     P: ThePath,
@@ -827,10 +944,13 @@ fn handle_key_event(key_event: KeyEvent) -> Option<Bytes> {
 // 5. stay at the rate the load ran at for the console; on garbage there, which is
 //    chainboot restarted at the initial rate, go back to the initial rate
 // 6. go to 2
+// Meanwhile, on Kickstart's console beacon (a kernel booted from the SD card), ask
+// it for the --load-baud rate too, and stay at it for the console.
 
 /// `ChainOfCommand` - command chainboot protocol
 ///
-/// Use to send freshly built kernel to chainboot-compatible boot loader.
+/// Use to send freshly built kernel to chainboot-compatible boot loader, or, with
+/// --console, as the console of a kernel booted from the SD card.
 #[derive(argh::FromArgs)]
 struct Args {
     /// device path to a serial port, e.g. /dev/ttyUSB0
@@ -839,13 +959,18 @@ struct Args {
     /// baud rate to connect at, chainboot's boot rate (115200)
     #[argh(option, short = 'b')]
     baud: Option<u32>,
-    /// baud rate to ask chainboot to load the kernel at; the console stays at it
-    /// afterwards. Without it the load runs at the connect rate
+    /// baud rate to ask chainboot to load the kernel at, and Kickstart to run its
+    /// console at when it boots without chainboot; the console stays at it
+    /// afterwards. Without it everything runs at the connect rate
     #[argh(option)]
     load_baud: Option<u32>,
     /// path of the binary kernel image to send
     #[argh(option, short = 'k')]
     kernel: Option<String>,
+    /// console only: send no kernel when chainboot asks for one (for a kernel
+    /// booted from the SD card)
+    #[argh(switch)]
+    console: bool,
     /// positional form: <port> [baud] [kernel]
     #[argh(positional)]
     positional: Vec<String>,
@@ -855,7 +980,8 @@ struct Args {
 struct Settings {
     port: String,
     rates: Rates,
-    kernel: String,
+    /// The kernel to send, none in console mode.
+    kernel: Option<String>,
 }
 
 impl Args {
@@ -875,10 +1001,11 @@ impl Args {
                 None => 115200,
             },
         };
-        let kernel = self
-            .kernel
-            .or_else(|| pos(2))
-            .unwrap_or_else(|| String::from("kernel8.img"));
+        let kernel = self.kernel.or_else(|| pos(2));
+        if self.console && kernel.is_some() {
+            return Err(anyhow::anyhow!("console mode sends no kernel"));
+        }
+        let kernel = (!self.console).then(|| kernel.unwrap_or_else(|| String::from("kernel8.img")));
         if self.load_baud == Some(0) {
             return Err(anyhow::anyhow!("invalid load baud rate: 0"));
         }
@@ -1209,7 +1336,7 @@ mod tests {
         let (_line, mut from_serial) = serial(&["BAUD OK", "\u{fffd}\0", "\u{3}\u{3}", "\u{3}"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
             .await
             .expect("no line errors");
         assert!(switched);
@@ -1224,7 +1351,7 @@ mod tests {
             serial(&["BAUD NO\r\n⏪ Staying at the rate: 4000000 baud is out of range"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 4_000_000)
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 4_000_000, CHAINBOOT_LOAD)
             .await
             .expect("no line errors");
         assert!(!switched);
@@ -1236,7 +1363,7 @@ mod tests {
         let (_line, mut from_serial) = serial(&["ERR ❌ Kernel image too big (over 1 bytes)"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
             .await
             .expect("no line errors");
         assert!(!switched);
@@ -1250,7 +1377,7 @@ mod tests {
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
         let started = Instant::now();
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000)
+        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
             .await
             .expect("no line errors");
         assert!(!switched);
@@ -1347,23 +1474,106 @@ mod tests {
             baud: None,
             load_baud: None,
             kernel: None,
+            console: false,
             positional: vec!["/dev/ttyUSB0".into()],
         };
         let settings = args.resolve().expect("valid");
         assert_eq!(settings.port, "/dev/ttyUSB0");
         assert_eq!(settings.rates.initial, 115_200);
         assert_eq!(settings.rates.load, None);
+        assert_eq!(settings.kernel.as_deref(), Some("kernel8.img"));
 
         let args = Args {
             port: None,
             baud: None,
             load_baud: Some(2_000_000),
             kernel: Some("wood.bin".into()),
+            console: false,
             positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
         };
         let settings = args.resolve().expect("valid");
         assert_eq!(settings.rates.initial, 115_200);
         assert_eq!(settings.rates.load, Some(2_000_000));
-        assert_eq!(settings.kernel, "wood.bin");
+        assert_eq!(settings.kernel.as_deref(), Some("wood.bin"));
+    }
+
+    #[test]
+    fn console_mode_sends_no_kernel() {
+        let args = Args {
+            port: None,
+            baud: None,
+            load_baud: Some(1_500_000),
+            kernel: None,
+            console: true,
+            positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
+        };
+        let settings = args.resolve().expect("valid");
+        assert_eq!(settings.kernel, None);
+        assert_eq!(settings.rates.load, Some(1_500_000));
+
+        let args = Args {
+            port: None,
+            baud: None,
+            load_baud: None,
+            kernel: Some("wood.bin".into()),
+            console: true,
+            positional: vec!["/dev/ttyUSB0".into()],
+        };
+        assert!(args.resolve().is_err());
+    }
+
+    #[tokio::test]
+    async fn the_console_rate_is_confirmed_with_an_ack() {
+        let (_line, from_serial) = serial(&["BAUD OK", "\u{fffd}\0", "\u{2}\u{2}", "\u{2}"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let outcome = negotiate_console(to_console, to_serial, from_serial, 1_500_000)
+            .await
+            .expect("no line errors");
+        assert_eq!(outcome, Upload::Console { line_rate: 1_500_000 });
+        let (bytes, rates) = sent_to_serial(&mut serial_line);
+        let mut expected = encode_rate_request(1_500_000).to_vec();
+        expected.extend_from_slice(&CONSOLE_ACK);
+        assert_eq!(bytes, expected);
+        assert_eq!(rates, [1_500_000]);
+    }
+
+    #[tokio::test]
+    async fn a_load_beacon_does_not_confirm_the_console() {
+        // Takes HOST_CONSOLE_CONFIRM_TIMEOUT of real time.
+        let (_line, from_serial) = serial(&["BAUD OK", "\u{3}\u{3}\u{3}"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let started = Instant::now();
+        let outcome = negotiate_console(to_console, to_serial, from_serial, 1_500_000)
+            .await
+            .expect("no line errors");
+        assert_eq!(outcome, Upload::ConsoleStayed);
+        assert!(started.elapsed() >= HOST_CONSOLE_CONFIRM_TIMEOUT);
+        // The host switched, sent no ACK, and the console loop takes it back.
+        let (bytes, rates) = sent_to_serial(&mut serial_line);
+        assert_eq!(bytes, encode_rate_request(1_500_000));
+        assert_eq!(rates, [1_500_000]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_console_rate_stays() {
+        let (_line, from_serial) =
+            serial(&["BAUD NO\r\n🥾 Staying at the rate: 4000000 baud is out of range"]);
+        let (to_console, _console) = mpsc::channel(16);
+        let (to_serial, mut serial_line) = mpsc::channel(16);
+        let outcome = negotiate_console(to_console, to_serial, from_serial, 4_000_000)
+            .await
+            .expect("no line errors");
+        assert_eq!(outcome, Upload::ConsoleStayed);
+        assert!(sent_to_serial(&mut serial_line).1.is_empty());
+    }
+
+    #[test]
+    fn only_ascii_characters_are_beacon_bytes() {
+        assert_eq!(beacon_byte('\u{2}'), 2);
+        assert_eq!(beacon_byte('\u{3}'), 3);
+        assert_eq!(beacon_byte(char::REPLACEMENT_CHARACTER), u8::MAX);
+        assert_eq!(beacon_byte('\u{82}'), u8::MAX);
     }
 }

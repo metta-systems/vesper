@@ -204,7 +204,9 @@ impl Keyboard {
             } else {
                 // The engine reads keys once a tic: this is when it got the key.
                 let age_us = libuser::clock::now_ns().saturating_sub(stamp) / 1000;
-                log::info!("key {key:#04x} {state}: doom key {doom:#04x}, {age_us} us after usb-hid");
+                log::info!(
+                    "key {key:#04x} {state}: doom key {doom:#04x}, {age_us} us after usb-hid"
+                );
             }
         }
         self.pending.borrow_mut().push_back((pressed, doom));

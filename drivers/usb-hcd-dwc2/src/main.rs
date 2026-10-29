@@ -38,7 +38,9 @@
 //! IN transaction on the same host channel, under the same turnstile as the
 //! calls, and returns the report in the buffer. A NAK is not an error, and the
 //! pipe is due again an interval later. Each interrupt transaction is placed in
-//! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`).
+//! the next (micro)frame (`HCCHAR.OddFrm` from `HFNUM`). Both Threads run at
+//! input priority (`libdevice_driver::Priority::INPUT`), ahead of the CPU-bound
+//! programs; they block between interrupts and polls.
 //!
 //! A pipe is the set of `pipe_v1` Invocation keys `open_pipe` installs in the
 //! table the caller lends, badged with the pipe's handle: holding a key is the

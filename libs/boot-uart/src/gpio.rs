@@ -5,7 +5,7 @@
  * Original code distributed under MIT, additional changes are under BlueOak-1.0.0
  */
 
-//! The GPIO block, as far as chainboot needs it: routing the PL011 to the header
+//! The GPIO block, as far as booting needs it: routing the PL011 to the header
 //! pins 14 (TXD0) and 15 (RXD0) with their pull-ups on.
 //!
 //! <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>

@@ -53,14 +53,16 @@
 /// Dissection of various RPi core boot stubs is available
 /// [here](https://leiradel.github.io/2019/01/20/Raspberry-Pi-Stubs.html).
 ///
-/// x0 contains DTB address on entry, preserve it until the call to Rust.
+/// x0 contains DTB address on entry, x1 and x2 what the loader leaves the
+/// kernel (zero from the firmware, chainboot's handoff from chainboot): preserve
+/// all three until the call to Rust, which takes them as its arguments.
 //------------------------------------------------------------------------------
 _boot_cores:
     // Only proceed on the boot core. Park it otherwise.
-    mrs x1, MPIDR_EL1
-    and x1, x1, {CONST_CORE_ID_MASK}
-    mov x2, {CONST_BOOT_CORE_ID}
-    cmp x1, x2
+    mrs x9, MPIDR_EL1
+    and x9, x9, {CONST_CORE_ID_MASK}
+    mov x10, {CONST_BOOT_CORE_ID}
+    cmp x9, x10
     b.ne .L_parking_loop
 
     // If execution reaches here, it is the boot core.
@@ -68,19 +70,19 @@ _boot_cores:
     // Initialize BSS - prepare to fearlessly call into Rust code.
     // Assumptions: BSS start is u128-aligned, BSS end is u128-aligned.
     // __BSS_START and __BSS_END are defined in the linker script
-    ADR_REL x1, __BSS_START // must be physical address!!!1
-    ADR_REL x2, __BSS_END   // must be physical address!!!1
+    ADR_REL x9, __BSS_START // must be physical address!!!1
+    ADR_REL x10, __BSS_END  // must be physical address!!!1
 .L__bss_init_loop:
-    cmp x1, x2
+    cmp x9, x10
     b.eq .L_setup_stack
-    stp xzr, xzr, [x1], #16
+    stp xzr, xzr, [x9], #16
     b .L__bss_init_loop
 
 .L_setup_stack:
-    ADR_ABS x1, __STACK_TOP
-    mov sp, x1
+    ADR_ABS x9, __STACK_TOP
+    mov sp, x9
 
-    // On entry, x0 contains DTB address
+    // x0: the DTB address; x1, x2: the loader's handoff
     bl _startup_in_rust
 
 .L_parking_loop:

@@ -56,6 +56,11 @@ options that were weighed are summarised after each answer.
       priority (`driver_threads!(playback => Priority::HIGH)`); the rule is in the
       [Time contract](capabilities-contract.md#time-and-userspace-scheduling). Still
       no isochronous scheduler and no special Time budget.
+    - *Input between the program and audio* (same day, after keys felt sluggish and
+      some were lost on the board): "the usb is probably in need of priority between
+      the main app and the audio?". The input path's Threads (the DWC2 component's,
+      `usb-hid`'s, the compositor's input Thread) run at `Priority::INPUT`, below
+      the playback Thread's `Priority::HIGH`, which stays the highest.
     - *Wood queues its first buffers before it opens the output*: "yep".
     - *Queue depth*: "8 buffers might be good". Wood and midi-test's player keep 8
       buffers (93 ms) queued, the four data pages of `audio_v1`'s channel; effects

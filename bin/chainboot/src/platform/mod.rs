@@ -6,17 +6,15 @@
 //! The hardware chainboot needs to talk to its host: the PL011 UART on header pins
 //! 14 and 15, polled, the firmware mailbox that tells the UART's clock and
 //! switches the LED, and a few facts about the board. Nothing here is a driver
-//! framework: [`init`] does what bring-up takes, once.
-//!
-//! See <https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#peripheral-addresses>
-//! for where the peripherals sit.
+//! framework: [`init`] does what bring-up takes, once. The UART, its pins and the
+//! mailbox are `libboot_uart`'s, which Kickstart's early console shares.
 
-pub mod gpio;
 pub mod led;
-pub mod mailbox;
 #[cfg(feature = "mmu")]
 pub mod mmu;
-pub mod pl011;
+
+pub use libboot_uart::{GPIO_BASE, gpio, mailbox, pl011};
+use libboot_uart::{DEFAULT_UART_CLOCK, PL011_BASE};
 
 #[cfg(not(any(board_rpi3, board_rpi4)))]
 compile_error!("No platform selected - specify TARGET_BOARD in configuration");
@@ -79,18 +77,6 @@ pub fn mmu_state() -> &'static str {
 /// Where the firmware loads chainboot's kernel to be run from: the kernel is
 /// received here and jumped to.
 pub const KERNEL_LOAD_ADDRESS: u64 = 0x8_0000;
-
-/// ARM-side physical address of the peripherals.
-#[cfg(board_rpi3)]
-const PERIPHERALS: usize = 0x3f00_0000;
-#[cfg(board_rpi4)]
-const PERIPHERALS: usize = 0xfe00_0000;
-
-const GPIO_BASE: usize = PERIPHERALS + 0x20_0000;
-const PL011_BASE: usize = PERIPHERALS + 0x20_1000;
-
-/// The UART clock the firmware sets up by default, when it does not tell.
-const DEFAULT_UART_CLOCK: u32 = 48_000_000;
 
 // SAFETY: the PL011 is at this address on every board chainboot is built for, the
 // MMU is off so the address is the physical one, and nothing else uses the UART.

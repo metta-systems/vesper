@@ -101,16 +101,21 @@ pub fn for_each_change(
             });
         }
     }
-    for &usage in previous.keys.iter().filter(|&&usage| usage != NO_KEY) {
-        if !current.keys.contains(&usage) {
+    // A usage listed twice in one report is one key: only its first slot
+    // counts.
+    let first = |keys: &[u8; 6], index: usize| {
+        keys[index] != NO_KEY && !keys[..index].contains(&keys[index])
+    };
+    for (index, &usage) in previous.keys.iter().enumerate() {
+        if first(&previous.keys, index) && !current.keys.contains(&usage) {
             emit(KeyChange::Key {
                 usage,
                 pressed: false,
             });
         }
     }
-    for &usage in current.keys.iter().filter(|&&usage| usage != NO_KEY) {
-        if !previous.keys.contains(&usage) {
+    for (index, &usage) in current.keys.iter().enumerate() {
+        if first(&current.keys, index) && !previous.keys.contains(&usage) {
             emit(KeyChange::Key {
                 usage,
                 pressed: true,
@@ -170,9 +175,10 @@ pub const fn set_protocol(interface: u8, boot: bool) -> crate::setup::SetupPacke
     }
 }
 
-/// HID `SET_IDLE` to `interface`: the device reports a changed state only when
-/// `duration_4ms` is zero, else also every `duration_4ms` times 4 ms.
-/// `report_id` zero applies to all reports.
+/// HID `SET_IDLE` to `interface` (HID 1.11 §7.2.4): the device reports a
+/// changed state only when `duration_4ms` is zero, else also every
+/// `duration_4ms` times 4 ms while nothing changes. `report_id` zero applies
+/// to all reports.
 #[must_use]
 pub const fn set_idle(interface: u8, duration_4ms: u8, report_id: u8) -> crate::setup::SetupPacket {
     crate::setup::SetupPacket {

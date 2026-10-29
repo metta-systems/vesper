@@ -16,7 +16,7 @@ use {
     crate::shared::{self, wake},
     driver_protocol::report_key,
     input_client::input_v1::{Client, Error, Exception},
-    libcompositor_core::router::Output,
+    libcompositor_core::{events::Outbox, router::Output},
     libdevice_driver::DriverInit,
     libio_channel::{IoRec, NoEvent, Packet},
     libmeddle_runtime::DataArea,
@@ -254,7 +254,7 @@ pub fn run(init: &DriverInit, trace: &mut Trace, client: &Client) {
                             dropped: state
                                 .outboxes
                                 .iter()
-                                .map(|outbox| outbox.dropped())
+                                .map(Outbox::dropped)
                                 .fold(0, u32::saturating_add),
                             overflowed: state.router.counters().overflowed,
                         }

@@ -50,6 +50,46 @@
 //!
 //! After a load that succeeds, chainboot jumps to the kernel at the rate the load
 //! ran at, and the host stays at it for the console.
+//!
+//! # The handoff
+//!
+//! At the jump chainboot leaves [`handoff_registers`] in `x1` and `x2`:
+//! [`HANDOFF_MAGIC`] and the rate the UART is at. The firmware's stub and QEMU's
+//! boot code enter a kernel with both zero (the arm64 boot protocol reserves them),
+//! so a kernel that finds the magic ([`kept_rate`]) knows chainboot set the UART
+//! up and negotiated its rate with the host: it keeps the UART as it is and skips
+//! the console negotiation below. Kickstart reads them through `libboot`'s
+//! `loader_registers`.
+//!
+//! # The console negotiation
+//!
+//! A kernel started without chainboot (from the SD card) sets the UART up at
+//! [`BOOT_BAUD_RATE`] itself and offers the host a faster console:
+//!
+//! 1. It sends [`CONSOLE_BEACON`] every [`CONSOLE_WAIT`] beacon period, for
+//!    [`CONSOLE_WAIT`]'s limit, 1.5 s, listening between beacons.
+//! 2. A host that wants a faster console answers a beacon with the rate request
+//!    above, all thirteen bytes in one go: the kernel takes a gap of more than
+//!    [`CONSOLE_REQUEST_GAP`] between two of them, or eight bytes that are not
+//!    [`RATE_REQUEST_MAGIC`], as noise, drops them and goes on beaconing.
+//! 3. The kernel answers as chainboot does, at [`BOOT_BAUD_RATE`]:
+//!    [`RATE_REFUSED`] and the reason on a line, after which both stay at
+//!    [`BOOT_BAUD_RATE`] and the kernel boots on; or [`RATE_ACCEPTED`], after
+//!    which it lets the answer leave the line, switches, waits [`SWITCH_SETTLE`]
+//!    and sends [`CONSOLE_BEACON`] at the new rate as [`CONSOLE_CONFIRM_WAIT`]
+//!    says.
+//! 4. The host switches when it reads [`RATE_ACCEPTED`], and answers the first
+//!    [`CONSOLE_BEACON`] it hears at the new rate with [`CONSOLE_ACK`]. Both stay
+//!    at the new rate from then on.
+//! 5. A kernel that hears no [`CONSOLE_ACK`] within [`CONSOLE_CONFIRM_WAIT`] goes
+//!    back to [`BOOT_BAUD_RATE`] and boots on; the host gives up after
+//!    [`HOST_CONSOLE_CONFIRM_TIMEOUT`], before the kernel does, and goes back too.
+//!
+//! When nobody answers, the kernel boots on at [`BOOT_BAUD_RATE`] after the 1.5 s
+//! window. [`CONSOLE_BEACON`] holds no `^C`: a chainofcommand that does not know
+//! it counts no [`BEACON`] in it, prints its three invisible `^B` and stays at its
+//! rate, and so does a plain terminal. The rate request and its answers are the
+//! ones chainboot uses, so the host reuses its code for both.
 
 #![no_std]
 
@@ -136,6 +176,107 @@ const _: () = assert!(
             None => u128::MAX,
         }
 );
+
+/// What chainboot leaves in `x1` at the jump to the kernel: `BAUDKEEP` in ASCII.
+pub const HANDOFF_MAGIC: u64 = u64::from_le_bytes(*b"BAUDKEEP");
+
+/// What chainboot leaves in `x1` and `x2` at the jump to the kernel, the UART at
+/// `rate` baud.
+#[must_use]
+pub fn handoff_registers(rate: u32) -> [u64; 2] {
+    [HANDOFF_MAGIC, u64::from(rate)]
+}
+
+/// The rate chainboot left the UART at, when `x1` and `x2` at the kernel's entry
+/// are its handoff; `None` for anything else, such as the zeros the firmware
+/// leaves.
+#[must_use]
+pub fn kept_rate(registers: [u64; 2]) -> Option<u32> {
+    let [magic, rate] = registers;
+    if magic != HANDOFF_MAGIC {
+        return None;
+    }
+    u32::try_from(rate).ok().filter(|rate| *rate != 0)
+}
+
+/// What a kernel started without chainboot sends while it offers the host a
+/// faster console: three `^B`.
+pub const CONSOLE_BEACON: [u8; 3] = [2; 3];
+
+/// What the host answers the first [`CONSOLE_BEACON`] it hears at the new rate
+/// with: three `^F` (ASCII ACK).
+pub const CONSOLE_ACK: [u8; 3] = [6; 3];
+
+// An older host counts `^C` runs only: the console beacon must hold none.
+const _: () = assert!(CONSOLE_BEACON[0] != BEACON[0] && CONSOLE_ACK[0] != BEACON[0]);
+
+/// Offering the console at [`BOOT_BAUD_RATE`]: a beacon every quarter second, for
+/// a second and a half.
+pub const CONSOLE_WAIT: Wait = Wait {
+    beacon_period: Duration::from_millis(250),
+    give_up_after: Some(Duration::from_millis(1_500)),
+};
+
+/// Waiting for [`CONSOLE_ACK`] at a rate just accepted: a beacon every tenth of a
+/// second, for a second, then back to [`BOOT_BAUD_RATE`].
+pub const CONSOLE_CONFIRM_WAIT: Wait = Wait {
+    beacon_period: Duration::from_millis(100),
+    give_up_after: Some(Duration::from_secs(1)),
+};
+
+/// How long the host waits for [`CONSOLE_BEACON`] at the new rate before it goes
+/// back to [`BOOT_BAUD_RATE`]. The kernel listens for [`CONSOLE_ACK`] until
+/// [`SWITCH_SETTLE`] and [`CONSOLE_CONFIRM_WAIT`]'s limit after it switched; the
+/// host's last [`CONSOLE_ACK`] goes out a beacon period before that.
+pub const HOST_CONSOLE_CONFIRM_TIMEOUT: Duration = Duration::from_millis(800);
+
+const _: () = assert!(
+    HOST_CONSOLE_CONFIRM_TIMEOUT.as_millis() + CONSOLE_CONFIRM_WAIT.beacon_period.as_millis()
+        <= SWITCH_SETTLE.as_millis()
+            + match CONSOLE_CONFIRM_WAIT.give_up_after {
+                Some(limit) => limit.as_millis(),
+                None => u128::MAX,
+            }
+);
+
+/// The longest gap the kernel takes between two bytes of a rate request during
+/// the console negotiation. The host sends the thirteen bytes in one write, 1.1 ms
+/// at [`BOOT_BAUD_RATE`]; a USB serial adapter may hold them back some 16 ms.
+pub const CONSOLE_REQUEST_GAP: Duration = Duration::from_millis(50);
+
+/// Counts a run of one byte, such as [`BEACON`], [`CONSOLE_BEACON`] or
+/// [`CONSOLE_ACK`], in what arrives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Run<const LENGTH: usize> {
+    byte: u8,
+    count: usize,
+}
+
+impl<const LENGTH: usize> Run<LENGTH> {
+    /// Watch for `pattern`, `LENGTH` times the same byte.
+    #[must_use]
+    pub const fn of(pattern: [u8; LENGTH]) -> Self {
+        Self {
+            byte: pattern[0],
+            count: 0,
+        }
+    }
+
+    /// Whether `byte`, which arrived, ends a run. The count starts over then, and
+    /// at any other byte.
+    pub fn push(&mut self, byte: u8) -> bool {
+        if byte != self.byte {
+            self.count = 0;
+            return false;
+        }
+        self.count += 1;
+        if self.count == LENGTH {
+            self.count = 0;
+            return true;
+        }
+        false
+    }
+}
 
 /// How a load starts: the first eight bytes from the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

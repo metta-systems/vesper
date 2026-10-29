@@ -1,0 +1,38 @@
+[package]
+name = "vesper-boot-uart"
+
+description = "The PL011 on header pins 14 and 15 before any driver runs: GPIO routing, the UART clock from the firmware mailbox, a polled PL011. Shared by chainboot and Kickstart's early console; both run it with the MMU off."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
+libchainboot-protocol = { workspace = true }
+libconsole = { workspace = true }
+liblocking = { workspace = true }
+libmmio = { workspace = true }
+libprimitives = { workspace = true }
+libtime = { workspace = true }
+
+# Exercised on the board and in QEMU through chainboot and the Kickstart images.
+[lib]
+test = false
+harness = false
+
+[lints]
+workspace = true

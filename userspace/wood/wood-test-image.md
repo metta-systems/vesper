@@ -12,8 +12,11 @@ Arrows go from the importer to the exporter and are labelled with the interface
 - dotted lines: a log line channel (`log_v1`) or a bundled resource.
 
 Kickstart loads everything and makes the connections at boot; the root dispatcher
-then runs every program's Threads, high-priority ones first (only Wood's playback
-Thread is high).
+then runs every program's Threads, the highest priority first: Wood's playback
+Thread is high; the Threads a key crosses (both of `usb`'s, `usb_hid`'s and the
+compositor's input Thread) are input, below it and above every other Thread. They
+must block most of the time and do little each time they wake, since no
+starvation guard stops them.
 
 ## Slide 1: display and input
 
@@ -71,7 +74,7 @@ flowchart LR
   33 ms timer into the framebuffer `fb` set up through the firmware.
 - `usb_hid` turns keyboard and mouse reports into input events. The compositor
   routes them to the focused window and sends focus changes on the window's
-  event channel. Wood's window takes the focus when it opens; the lamp stops
+  event channel. Wood reads its keys once per game tic. Wood's window takes the focus when it opens; the lamp stops
   animating while unfocused.
 
 ## Slide 2: sound, music and logs

@@ -20,6 +20,7 @@ mod boot_info;
 pub mod bootstrap;
 pub mod device_tree;
 pub mod drivers;
+pub mod early_console;
 mod el_switch;
 mod embed;
 mod loader;
@@ -96,20 +97,22 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     #[cfg(feature = "jtag")]
     libmachine::debug::jtag::wait_debugger();
 
-    semi::println!("🥾 started");
+    // ─────────────────────────────────────────────────────────────────────
+    // Initialize early UART for debug output
+    // ─────────────────────────────────────────────────────────────────────
+
+    // The PL011 at its physical address, the MMU off: kept as chainboot left it,
+    // or set up and its rate negotiated with the host (`early_console`). It is
+    // handed over before the MMU goes on.
+    let console = early_console::start(libboot::arch::aarch64::boot::loader_registers());
+    crate::early_println!("🥾 started");
+    crate::early_println!("🥾 Early console at {console}");
 
     // unsafe {
     //     BOOT_INFO.dtb_phys = PhysAddr::new(dtb_phys);
     // }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Initialize early UART for debug output
-    // ─────────────────────────────────────────────────────────────────────
-
-    // Hardcoded UART address for early boot (RPi4: 0xFE201000)
-    // Will be properly mapped later
-    // early_uart_init(0xFE20_1000);
-    semi::println!("🥾 DTB at physical {:#016x}", dtb_ptr as u64);
+    crate::early_println!("🥾 DTB at physical {:#016x}", dtb_ptr as u64);
 
     // ─────────────────────────────────────────────────────────────────────
     // Start bump allocator
@@ -140,7 +143,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     let device_tree = unsafe { device_tree::index(dtb_ptr, &mut allocator) };
 
     if let Some(board_name) = device_tree.model() {
-        semi::println!("🥾 Running on {board_name}");
+        crate::early_println!("🥾 Running on {board_name}");
     }
 
     // libdevicetree::dump(&device_tree, &mut writer).expect("oof");
@@ -161,7 +164,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     let mut total_memory = 0;
 
     for region in device_tree.memory() {
-        semi::println!(
+        crate::early_println!(
             "🌴 Memory {} KiB at offset {}",
             region.size / 1024,
             region.start
@@ -398,10 +401,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // PHASE 1: Load kernel
     // ═══════════════════════════════════════════════════════════════
 
-    semi::println!("🥾 Load nucleus");
+    crate::early_println!("🥾 Load nucleus");
 
     let kernel_layout = loader::load_kernel(&mut allocator).expect("🥾 Failed to load nucleus");
-    semi::println!("🥾 Loaded nucleus image");
+    crate::early_println!("🥾 Loaded nucleus image");
 
     // ═══════════════════════════════════════════════════════════════
     // PHASE 2: Set up page tables
@@ -472,7 +475,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         el1_stack_size,
     )
     .expect("🥾 Failed to create kernel mapping");
-    semi::println!("🥾 Higher-half mapped the nucleus");
+    crate::early_println!("🥾 Higher-half mapped the nucleus");
 
     if let Some(plan) = &irqchip_plan {
         let handoff = privileged::load(plan, &mut mmu_setup)
@@ -523,6 +526,11 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     semi::println!("📕 Kernel mapping tables filled in as ? for kernel, as ? for phys memory");
 
     print_my_sp();
+
+    // The UART is not mapped once the MMU is on: the early console ends here, and
+    // the `uart-pl011` driver component owns the UART from its start.
+    crate::early_println!("🥾 MMU on, dropping to EL1: the early console ends here");
+    early_console::hand_over();
 
     // SAFETY: Only the boot core is active at EL2 using SP_EL2. The boot image
     // and its low stack are identity-mapped; vectors and the distinct persistent
