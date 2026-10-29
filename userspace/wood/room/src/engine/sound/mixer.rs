@@ -478,22 +478,42 @@ impl<'sounds> Mixer<'sounds> {
     /// rendered elsewhere, for example): each frame becomes its own samples
     /// plus the voices' samples times their gains, clipped to 16 bits once.
     /// Returns how many voices played in this buffer, as [`mix`](Self::mix).
+    ///
+    /// The mix is voice-major: for each run of [`MIX_RUN`] frames, each
+    /// playing voice adds its whole run into 32-bit sums, and the sums are
+    /// clipped once after the last voice. The integer sums are those of a
+    /// frame-by-frame mix, so the output is the same bit for bit. With no
+    /// voice playing the frames are left as they are, which is what the mix
+    /// would write back.
     pub fn mix_onto(&mut self, frames: &mut [[i16; 2]]) -> usize {
         let playing = self
             .voices
             .iter()
             .filter(|voice| voice.sound.is_some())
             .count();
-        for frame in frames.iter_mut() {
-            let mut left = i32::from(frame[0]);
-            let mut right = i32::from(frame[1]);
+        if playing == 0 {
+            return 0;
+        }
+        let mut sums = [[0_i32; 2]; MIX_RUN];
+        for run in frames.chunks_mut(MIX_RUN) {
+            let sums = &mut sums[..run.len()];
+            for (sum, frame) in sums.iter_mut().zip(run.iter()) {
+                *sum = [i32::from(frame[0]), i32::from(frame[1])];
+            }
             for voice in self.voices.iter_mut().filter(|voice| voice.sound.is_some()) {
-                if let Some(sample) = voice.next_sample() {
-                    left += (sample * voice.gains[0]) >> GAIN_BITS;
-                    right += (sample * voice.gains[1]) >> GAIN_BITS;
+                let [left_gain, right_gain] = voice.gains;
+                for sum in sums.iter_mut() {
+                    // A voice that runs out stays silent for the rest.
+                    let Some(sample) = voice.next_sample() else {
+                        break;
+                    };
+                    sum[0] += (sample * left_gain) >> GAIN_BITS;
+                    sum[1] += (sample * right_gain) >> GAIN_BITS;
                 }
             }
-            *frame = [clip(left), clip(right)];
+            for (frame, sum) in run.iter_mut().zip(sums.iter()) {
+                *frame = [clip(sum[0]), clip(sum[1])];
+            }
         }
         playing
     }
@@ -543,6 +563,9 @@ impl<'sounds> Mixer<'sounds> {
         playing
     }
 }
+
+/// Frames [`Mixer::mix_onto`] sums at a time, on the stack (512 bytes).
+const MIX_RUN: usize = 64;
 
 /// `sample` clipped to signed 16 bits.
 fn clip(sample: i32) -> i16 {
@@ -750,6 +773,80 @@ mod tests {
         mixer.stop(1);
         mixer.mix(&mut frames);
         assert_eq!(frames, [[8192, 0]; 2]);
+    }
+
+    /// The frame-by-frame mix `mix_onto` replaced: each frame sums every
+    /// playing voice's next sample, then clips.
+    fn mix_onto_frame_major(mixer: &mut Mixer<'_>, frames: &mut [[i16; 2]]) -> usize {
+        let playing = mixer
+            .voices
+            .iter()
+            .filter(|voice| voice.sound.is_some())
+            .count();
+        for frame in frames.iter_mut() {
+            let mut left = i32::from(frame[0]);
+            let mut right = i32::from(frame[1]);
+            for voice in mixer.voices.iter_mut().filter(|voice| voice.sound.is_some()) {
+                if let Some(sample) = voice.next_sample() {
+                    left += (sample * voice.gains[0]) >> GAIN_BITS;
+                    right += (sample * voice.gains[1]) >> GAIN_BITS;
+                }
+            }
+            *frame = [clip(left), clip(right)];
+        }
+        playing
+    }
+
+    #[test]
+    fn voice_major_mix_is_bit_exact() {
+        // Sounds of different rates, lengths and shapes; some end inside a
+        // run, some clip with the music under them.
+        let ramp: Vec<u8> = (0..=255).cycle().take(3000).collect();
+        let saw: Vec<u8> = (0..700).map(|index| (index * 37 % 256) as u8).collect();
+        let sounds = [
+            Sound::decode(&lump(11025, &ramp)).unwrap(),
+            Sound::decode(&lump(22050, &saw)).unwrap(),
+            constant(11025, 255, 30),
+            constant(8000, 3, 129),
+            Sound::decode(&lump(44100, &saw[..65])).unwrap(),
+        ];
+        let music = |index: usize| {
+            let value = (index as i32 * 2731 % 65_536) - 32_768;
+            [value as i16, (-value / 2) as i16]
+        };
+        for &length in &[1_usize, 63, 64, 65, 127, 512, 700] {
+            let mut voice_major = Mixer::new(OUTPUT_MILLIHERTZ);
+            let mut frame_major = Mixer::new(OUTPUT_MILLIHERTZ);
+            for (voice, sound) in sounds.iter().enumerate() {
+                let volume = 127 - voice as i32 * 20;
+                let separation = voice as i32 * 60;
+                voice_major.start(voice, sound, volume, separation);
+                frame_major.start(voice, sound, volume, separation);
+            }
+            let mut offset = 0;
+            // Several buffers in a row, until every voice ran out.
+            for _ in 0..40 {
+                let mut expected: Vec<[i16; 2]> = (offset..offset + length).map(music).collect();
+                let mut mixed = expected.clone();
+                assert_eq!(
+                    voice_major.mix_onto(&mut mixed),
+                    mix_onto_frame_major(&mut frame_major, &mut expected)
+                );
+                assert_eq!(mixed, expected, "{length} frames from {offset}");
+                for voice in 0..VOICES {
+                    assert_eq!(voice_major.is_playing(voice), frame_major.is_playing(voice));
+                }
+                offset += length;
+            }
+        }
+    }
+
+    #[test]
+    fn no_voice_leaves_the_frames_as_they_are() {
+        let mut mixer = Mixer::new(OUTPUT_MILLIHERTZ);
+        let mut frames = [[i16::MIN, i16::MAX], [12, -34]];
+        assert_eq!(mixer.mix_onto(&mut frames), 0);
+        assert_eq!(frames, [[i16::MIN, i16::MAX], [12, -34]]);
     }
 
     #[test]

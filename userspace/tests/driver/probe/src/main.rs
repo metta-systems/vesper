@@ -10,16 +10,28 @@
 //! driver-test installed. It also exports `echo_v1` to the probe instances
 //! whose nodes link to its node. Any failure panics, which
 //! ends the QEMU run with a failure.
+//!
+//! The PL011 instance also checks the root dispatcher's priorities with its
+//! further Threads (`driver_threads!`): two normal Threads spin, and a
+//! high-priority Thread sleeps briefly again and again; each time it wakes the
+//! dispatcher must run it at once, ahead of the spinners, rather than after a
+//! spinner's 10 ms slice. Its first Thread reports only once that passed.
 
 use {
-    core::ptr::read_volatile,
+    core::{
+        ptr::read_volatile,
+        sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    },
     driver_echo::echo_v1::{EchoV1, Exception},
     driver_echo_client::echo_v1::{self, Bindings, Client, Error},
     driver_protocol::{AUX, AUX_UART, PL011, report_key},
-    libdevice_driver::{INIT_VA, device_address, driver_compatible, driver_init, map_device_pages},
+    libdevice_driver::{
+        DriverInit, INIT_VA, Priority, device_address, driver_compatible, driver_init,
+        driver_threads, map_device_pages,
+    },
     libobject::{
-        FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights,
-        UntypedKey, export::init_return_key, thread::ThreadReturnKey,
+        EventCountKey, FrameKey, IrqHandlerKey, KeyTableKey, NotificationKey, ObjectType, RawKey,
+        Rights, UntypedKey, export::init_return_key, thread::ThreadReturnKey,
     },
     libuser::semihosting as semi,
 };
@@ -67,6 +79,86 @@ impl EchoV1 for Echo {
 }
 
 driver_echo::echo_v1_export!(Echo);
+
+driver_threads!(urgent => Priority::HIGH, spinner, spinner);
+
+/// The count of the probe's `EventCount` the urgent Thread advances it to
+/// once the priority check passed.
+const PRIORITY_CHECKED: u64 = 1;
+
+/// Spinners spinning, and whether the check is over.
+static SPINNING: AtomicU32 = AtomicU32::new(0);
+static CHECKED: AtomicBool = AtomicBool::new(false);
+
+/// Sleeps of the urgent Thread, and how long each is.
+const SLEEPS: u32 = 30;
+const SLEEP_NS: u64 = 2_000_000;
+
+/// How late the urgent Thread may wake: half the root dispatcher's 10 ms
+/// slice. Without priorities a spinner's slice often comes first, about
+/// 10 ms.
+const MAX_LATE_NS: u64 = 5_000_000;
+
+/// Block for good on the probe's `EventCount`, which never reaches the target.
+fn park(init: &DriverInit) -> ! {
+    let parked = EventCountKey::from_key(RawKey::from_wire(init.event_count));
+    loop {
+        let _never = parked.await_ge(u64::MAX, EventCountKey::WAIT_INFINITE);
+    }
+}
+
+/// A normal Thread of the PL011 instance that is always runnable until the
+/// priority check is over.
+fn spinner(init_va: u64) -> ! {
+    // SAFETY: Kickstart passes the init page's address in x0.
+    let init = unsafe { driver_init(init_va) };
+    if init.compatible_index == PL011 {
+        SPINNING.fetch_add(1, Ordering::AcqRel);
+        while !CHECKED.load(Ordering::Acquire) {
+            core::hint::spin_loop();
+        }
+    }
+    park(init)
+}
+
+/// The high-priority Thread of the PL011 instance: once both spinners spin,
+/// sleep [`SLEEPS`] times and check it woke within [`MAX_LATE_NS`] each time.
+fn urgent(init_va: u64) -> ! {
+    // SAFETY: Kickstart passes the init page's address in x0.
+    let init = unsafe { driver_init(init_va) };
+    if init.compatible_index != PL011 {
+        park(init);
+    }
+    let timer = EventCountKey::from_key(RawKey::from_wire(init.event_count));
+    let sleep = || {
+        timer
+            .sleep(SLEEP_NS)
+            .unwrap_or_else(|error| panic!("urgent: sleep failed: {:?}", error.code()));
+    };
+    while SPINNING.load(Ordering::Acquire) < 2 {
+        sleep();
+    }
+    let mut latest_ns = 0;
+    for _ in 0..SLEEPS {
+        let asleep = libuser::clock::now_ns();
+        sleep();
+        let late_ns = libuser::clock::now_ns().saturating_sub(asleep + SLEEP_NS);
+        latest_ns = latest_ns.max(late_ns);
+    }
+    CHECKED.store(true, Ordering::Release);
+    semi::println!(
+        "driver-probe: the high-priority Thread woke at most {} us late beside two spinning Threads",
+        latest_ns / 1000
+    );
+    assert!(
+        latest_ns <= MAX_LATE_NS,
+        "the high-priority Thread woke {latest_ns} ns late: the spinners ran first"
+    );
+    timer
+        .advance(PRIORITY_CHECKED)
+        .unwrap_or_else(|error| panic!("urgent: report failed: {:?}", error.code()));
+    park(init)
+}
 
 fn main(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
@@ -163,6 +255,13 @@ fn main(init_va: u64) -> ! {
         assert_eq!(echo.frame_base(&lendable), Ok(own_base));
     } else {
         assert_eq!(echo.identify(), Err(Error::NotGranted));
+    }
+
+    // The priority check runs beside these checks; report after it passed.
+    if init.compatible_index == PL011 {
+        EventCountKey::from_key(RawKey::from_wire(init.event_count))
+            .await_ge(PRIORITY_CHECKED, EventCountKey::WAIT_INFINITE)
+            .unwrap_or_else(|error| panic!("priority check wait failed: {:?}", error.code()));
     }
 
     semi::println!(

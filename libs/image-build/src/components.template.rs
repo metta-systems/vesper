@@ -3,7 +3,7 @@
 #[allow(unused)]
 use libimage::{
     ComponentImage, DriverImage, Export, Import, InterfaceExport, Link, LoadableSection,
-    Permissions, Provider, ResourceMapping, SectionMeta,
+    Permissions, Provider, ResourceMapping, SectionMeta, ThreadImage,
 };
 
 /// Page-aligned storage for one component segment.
@@ -66,7 +66,7 @@ pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     video_memory: {{component.driver.video_memory | bool}},
     serial: {{component.driver.serial | bool}},
     dispatcher: {{component.driver.dispatcher | bool}},
-    threads: &[{% for entry in component.driver.threads %}{{entry | hex}}{% if not loop.last %}, {% endif %}{% endfor %}],
+    threads: &[{% for thread in component.driver.threads %}ThreadImage { entry: {{thread.entry | hex}}, priority: {{thread.priority}} }{% if not loop.last %}, {% endif %}{% endfor %}],
 };
 {% endif %}
 {% endfor %}

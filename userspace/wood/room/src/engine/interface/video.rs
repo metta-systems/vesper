@@ -1,23 +1,28 @@
 //! Rust port of vendor/doomgeneric/i_video.c.
 //!
 //! Video output shim: allocates the palette-indexed `I_VideoBuffer`,
-//! expands it through the gamma-corrected palette into BGRA
-//! `DG_ScreenBuffer` on `I_FinishUpdate`, and forwards calls to the
-//! platform layer.
+//! expands it through the palette into the platform's frame on
+//! `I_FinishUpdate`, and forwards calls to the platform layer.
 //!
 //! The C source supports two compile-time paths: an 8-bit `CMAP256`
-//! direct-blit and a 16/32-bit framebuffer path. Only the latter is
-//! ported here. The C globals live in [`VideoState`], held in the
-//! [`VIDEO`] global. Its `screen_info` (C `s_Fb`) tracks pixel layout chosen at
-//! init time via `-gfxmode rgba8888|rgb565`; `cmap_to_fb` /
-//! `cmap_to_rgb565` perform the conversion from palette indices to
-//! the chosen format. Many of the stub entry points
-//! (`I_BeginRead`, `I_BindVideoVariables`, ...) exist purely to
-//! satisfy the engine's call sites without doing any work on the
-//! generic platform.
+//! direct-blit and a 16/32-bit framebuffer path chosen with `-gfxmode
+//! rgba8888|rgb565`. This port keeps one 32-bit path whose pixel layout
+//! the platform decides ([`Platform::finish_pixel`]): `I_SetPalette`
+//! turns the palette into 256 finished pixels, and [`convert_frame`]
+//! only looks them up. The frame goes straight into the platform's own
+//! buffer when it lends one ([`Platform::draw_in_place`]), else into a
+//! buffer kept here for [`Platform::draw_frame`]. The C globals live in
+//! [`VideoState`], held in the [`VIDEO`] global. Many of the stub entry
+//! points (`I_BeginRead`, `I_BindVideoVariables`, ...) exist purely to
+//! satisfy the engine's call sites without doing any work on the generic
+//! platform.
+//!
+//! [`Platform::finish_pixel`]: crate::engine::platform::Platform::finish_pixel
+//! [`Platform::draw_in_place`]: crate::engine::platform::Platform::draw_in_place
+//! [`Platform::draw_frame`]: crate::engine::platform::Platform::draw_frame
 
 #![allow(non_upper_case_globals, non_snake_case, non_camel_case_types)]
-// The framebuffer conversion writes through raw zone pointers in C's
+// `I_InitGraphics` and `I_ShutdownGraphics` call the zone allocator in C's
 // whole-body `unsafe fn` style.
 #![allow(unsafe_op_in_unsafe_fn)]
 
@@ -28,16 +33,13 @@ use {
             interface::input::{I_GetEvent, I_InitInput},
             math::tables::gammatable,
             misc::argv::{M_CheckParmWithArgs, argument},
+            platform::{DOOMGENERIC_PIXELS, DOOMGENERIC_RESX, DOOMGENERIC_RESY, platform},
             zone::{Z_Free, Z_Malloc},
         },
-        i_error,
+        types::Boolean,
     },
-    core::ffi::c_void,
-};
-
-use {
-    crate::types::Boolean,
-    core::{mem, ptr},
+    alloc::vec::Vec,
+    core::{ffi::c_void, mem, ptr, slice},
 };
 
 use crate::engine::zone::PU_STATIC;
@@ -50,48 +52,18 @@ pub const SCREENWIDTH: i32 = 320;
 /// Doom's logical screen height in palette-indexed pixels.
 pub const SCREENHEIGHT: i32 = 200;
 
+/// The palette-indexed frame's size in pixels.
+const SCREEN_PIXELS: usize = (SCREENWIDTH * SCREENHEIGHT) as usize;
+
 /// One gamma-corrected palette entry. Mirrors `struct color` in
-/// `i_video.c`; the channels are read by name and packed into
-/// framebuffer pixels by `cmap_to_fb` / `cmap_to_rgb565`.
+/// `i_video.c`; `I_SetPalette` turns each into a finished pixel and
+/// `I_GetPaletteIndex` searches them.
 #[derive(Clone, Copy)]
 struct Color {
     b: u8,
     g: u8,
     r: u8,
     a: u8,
-}
-
-/// Bit-field descriptor for one colour channel inside the
-/// framebuffer pixel layout. Mirrors `struct FB_BitField` in
-/// `i_video.c`.
-struct FB_BitField {
-    /// Bit position of the channel's least-significant bit within a pixel.
-    offset: u32,
-    /// Number of bits the channel occupies.
-    length: u32,
-}
-
-/// Framebuffer layout descriptor populated by `I_InitGraphics`.
-/// Mirrors `struct FB_ScreenInfo` in `i_video.c`.
-struct FB_ScreenInfo {
-    /// Visible framebuffer width in pixels.
-    xres: u32,
-    /// Visible framebuffer height in pixels.
-    yres: u32,
-    /// Allocated framebuffer width (>= `xres`).
-    xres_virtual: u32,
-    /// Allocated framebuffer height (>= `yres`).
-    yres_virtual: u32,
-    /// Pixel size in bits. Only 16 and 32 are supported.
-    bits_per_pixel: u32,
-    /// Red channel position and width.
-    red: FB_BitField,
-    /// Green channel position and width.
-    green: FB_BitField,
-    /// Blue channel position and width.
-    blue: FB_BitField,
-    /// Alpha / transparency channel position and width.
-    transp: FB_BitField,
 }
 
 /// Video state (C `i_video.c` globals).
@@ -107,27 +79,35 @@ pub struct VideoState {
     /// Bound via `m_config` (in the C source).
     pub usegamma: i32,
     /// Integer upscaling factor used by `I_FinishUpdate` to enlarge the
-    /// 320x200 Doom buffer to fit the framebuffer. Picked automatically
-    /// in `I_InitGraphics` or overridden with `-scaling <n>`. Mirrors
-    /// `fb_scaling`.
-    fb_scaling: i32,
+    /// 320x200 Doom buffer to fit the frame, at least 1. Picked
+    /// automatically in `I_InitGraphics` or overridden with `-scaling
+    /// <n>`. Mirrors `fb_scaling`.
+    fb_scaling: usize,
     /// Active 256-entry gamma-corrected palette. Filled from the WAD
-    /// PLAYPAL by `I_SetPalette` and consumed by `cmap_to_fb` /
-    /// `cmap_to_rgb565`. Mirrors the C `colors[256]` static array.
+    /// PLAYPAL by `I_SetPalette`. Mirrors the C `colors[256]` static array.
     colors: [Color; 256],
-    /// Active framebuffer layout. Initialised by `I_InitGraphics`,
-    /// consumed by `cmap_to_fb` / `I_FinishUpdate`. Mirrors the C file
-    /// static `s_Fb`.
-    screen_info: FB_ScreenInfo,
+    /// `colors` as the platform's finished pixels
+    /// ([`Platform::finish_pixel`](crate::engine::platform::Platform::finish_pixel)),
+    /// rebuilt by `I_SetPalette`; the frame conversion only looks them up.
+    /// Replaces the C `s_Fb` pixel layout.
+    finished: [u32; 256],
+    /// The frame for a platform that lends no buffer, allocated at its
+    /// first frame. Replaces doomgeneric's `DG_ScreenBuffer`.
+    frame: Vec<u32>,
+    /// Whether the platform lends its buffer
+    /// ([`Platform::draw_in_place`](crate::engine::platform::Platform::draw_in_place)),
+    /// learnt from the first frame.
+    lends_buffer: bool,
+    /// For a platform that lends its buffer: the palette-indexed frame it
+    /// shows, to skip presenting the same picture again.
+    presented: Vec<u8>,
+    /// `finished` changed since the last presented frame.
+    palette_changed: bool,
 }
 
 impl VideoState {
     /// The state before `I_InitGraphics`: no buffer, black palette.
     pub const fn new() -> Self {
-        const NO_BITS: FB_BitField = FB_BitField {
-            offset: 0,
-            length: 0,
-        };
         Self {
             video_buffer: ptr::null_mut(),
             screenvisible: 0,
@@ -139,17 +119,11 @@ impl VideoState {
                 r: 0,
                 a: 0,
             }; 256],
-            screen_info: FB_ScreenInfo {
-                xres: 0,
-                yres: 0,
-                xres_virtual: 0,
-                yres_virtual: 0,
-                bits_per_pixel: 0,
-                red: NO_BITS,
-                green: NO_BITS,
-                blue: NO_BITS,
-                transp: NO_BITS,
-            },
+            finished: [0; 256],
+            frame: Vec::new(),
+            lends_buffer: false,
+            presented: Vec::new(),
+            palette_changed: true,
         }
     }
 }
@@ -185,140 +159,88 @@ pub const mouse_threshold: i32 = 10;
 /// `usemouse`.
 pub const usemouse: i32 = 0;
 
-/// Convert `in_pixels` palette indices at `inp` into framebuffer
-/// pixels at `out`, picking 16-bpp (delegates to `cmap_to_rgb565`)
-/// or 32-bpp packing based on `screen_info.bits_per_pixel`. Honours
-/// `fb_scaling` by writing each pixel that many times.
-///
-/// # Safety
-///
-/// `inp` must be readable for `in_pixels` bytes. `out` must be
-/// writable for `in_pixels * fb_scaling * (bpp/8)` bytes.
-unsafe fn cmap_to_fb(video: &VideoState, out: *mut u8, inp: *mut u8, in_pixels: i32) {
-    let screen_info = &video.screen_info;
-    let bpp = screen_info.bits_per_pixel;
-
-    if bpp == 16 {
-        cmap_to_rgb565(video, out, inp, in_pixels);
-        return;
-    }
-
-    // FIXME: C i_video.c calls I_Error for any bpp other than 16/32.
-    // This port silently treats any non-16 value as 32-bpp, which
-    // would write garbage rather than crashing if `bits_per_pixel`
-    // is corrupted.
-    if bpp != 32 {
-        // For safety, default to 32bpp path
-    }
-
-    let mut out_ptr = out;
-    let mut inp_ptr = inp;
-
-    for _ in 0..in_pixels {
-        let idx = *inp_ptr as usize;
-        let c = video.colors[idx];
-
-        let pix = ((c.r as u32) << screen_info.red.offset)
-            | ((c.g as u32) << screen_info.green.offset)
-            | ((c.b as u32) << screen_info.blue.offset);
-
-        for _ in 0..video.fb_scaling {
-            (out_ptr as *mut u32).write_unaligned(pix);
-            out_ptr = out_ptr.add(4);
-        }
-
-        inp_ptr = inp_ptr.add(1);
+/// The largest scale at which the 320x200 frame fits the platform's frame.
+const fn fitting_scale() -> usize {
+    let horizontal = DOOMGENERIC_RESX / SCREENWIDTH as usize;
+    let vertical = DOOMGENERIC_RESY / SCREENHEIGHT as usize;
+    if horizontal < vertical {
+        horizontal
+    } else {
+        vertical
     }
 }
 
-/// Convert `in_pixels` palette indices at `inp` into RGB565
-/// little-endian pixels at `out`. Each output pixel is written
-/// `fb_scaling` times.
+/// Expand the palette-indexed `source` frame ([`SCREENWIDTH`] by
+/// [`SCREENHEIGHT`]) through `palette` (finished pixels) into `pixels`,
+/// whose rows are `pitch` pixels apart: each source pixel becomes
+/// `scaling` by `scaling` pixels, centred in the [`DOOMGENERIC_RESX`] by
+/// [`DOOMGENERIC_RESY`] frame. Mirrors the loops of `I_FinishUpdate` and
+/// `cmap_to_fb` in `i_video.c`, except that each source line is converted
+/// once and its first output row copied into the other `scaling - 1`.
 ///
-/// # Safety
+/// Pixels outside the scaled picture are left as they are.
 ///
-/// Same preconditions as `cmap_to_fb` (with 2-byte pixels).
-unsafe fn cmap_to_rgb565(video: &VideoState, out: *mut u8, inp: *mut u8, in_pixels: i32) {
-    let mut out_ptr = out as *mut u16;
-    let mut inp_ptr = inp;
-
-    for _ in 0..in_pixels {
-        let idx = *inp_ptr as usize;
-        let c = video.colors[idx];
-
-        let p = (((c.r as u16) & 0xF8) << 8) | (((c.g as u16) & 0xFC) << 3) | ((c.b as u16) >> 3);
-
-        for _ in 0..video.fb_scaling {
-            *out_ptr = p;
-            out_ptr = out_ptr.add(1);
-        }
-
-        inp_ptr = inp_ptr.add(1);
-    }
-}
-
-/// Initialise the video subsystem: pick the framebuffer pixel layout
-/// (`-gfxmode rgba8888|rgb565`, default rgba8888), compute the
-/// integer scaling factor (`-scaling <n>` or auto-fit), allocate the
-/// 320x200 palette buffer, mark the screen visible, and start input.
+/// # Panics
 ///
-/// Mirrors `I_InitGraphics` from `i_video.c`. The Rust version
-/// reads `-scaling` digits manually (no `atoi`) and skips the C
-/// `printf` diagnostics.
-///
-/// # Safety
-///
-/// Sets the video state (`screen_info`, `video_buffer`, `fb_scaling`,
-/// `screenvisible`) and calls back into the zone
-/// allocator. Must be called exactly once at startup before any
-/// other I_* graphics function.
-pub unsafe fn I_InitGraphics() {
-    let mut screen_info = mem::zeroed::<FB_ScreenInfo>();
-    screen_info.xres = crate::engine::platform::DOOMGENERIC_RESX as u32;
-    screen_info.yres = crate::engine::platform::DOOMGENERIC_RESY as u32;
-    screen_info.xres_virtual = screen_info.xres;
-    screen_info.yres_virtual = screen_info.yres;
+/// If `source` is shorter than a frame, or `pixels` is too short for the
+/// scaled picture at `pitch`.
+fn convert_frame(
+    source: &[u8],
+    palette: &[u32; 256],
+    scaling: usize,
+    pixels: &mut [u32],
+    pitch: usize,
+) {
+    let source_width = SCREENWIDTH as usize;
+    let row_pixels = source_width * scaling;
+    let left = DOOMGENERIC_RESX.saturating_sub(row_pixels) / 2;
+    let top = DOOMGENERIC_RESY.saturating_sub(SCREENHEIGHT as usize * scaling) / 2;
 
-    // Default to rgba8888
-    screen_info.bits_per_pixel = 32;
-    screen_info.blue.length = 8;
-    screen_info.green.length = 8;
-    screen_info.red.length = 8;
-    screen_info.transp.length = 8;
-    screen_info.blue.offset = 0;
-    screen_info.green.offset = 8;
-    screen_info.red.offset = 16;
-    screen_info.transp.offset = 24;
-
-    // Check for -gfxmode arg
-    let gfxmodeparm = M_CheckParmWithArgs("-gfxmode", 1);
-    if gfxmodeparm != 0 {
-        let mode = argument(gfxmodeparm + 1);
-        if mode == "rgba8888" {
-            screen_info.bits_per_pixel = 32;
-            screen_info.blue.length = 8;
-            screen_info.green.length = 8;
-            screen_info.red.length = 8;
-            screen_info.transp.length = 8;
-            screen_info.blue.offset = 0;
-            screen_info.green.offset = 8;
-            screen_info.red.offset = 16;
-            screen_info.transp.offset = 24;
-        } else if mode == "rgb565" {
-            screen_info.bits_per_pixel = 16;
-            screen_info.blue.length = 5;
-            screen_info.green.length = 6;
-            screen_info.red.length = 5;
-            screen_info.transp.length = 0;
-            screen_info.blue.offset = 11;
-            screen_info.green.offset = 5;
-            screen_info.red.offset = 0;
-            screen_info.transp.offset = 16;
+    for (source_row, line) in source[..SCREEN_PIXELS]
+        .chunks_exact(source_width)
+        .enumerate()
+    {
+        let row_start = (top + source_row * scaling) * pitch + left;
+        let (converted, below) = pixels.split_at_mut(row_start + row_pixels);
+        let converted = &mut converted[row_start..];
+        // Doom's own 2x (640x400 from 320x200) gets a pair store per pixel.
+        if scaling == 2 {
+            let (pairs, _) = converted.as_chunks_mut::<2>();
+            for (pair, &index) in pairs.iter_mut().zip(line) {
+                *pair = [palette[usize::from(index)]; 2];
+            }
         } else {
-            i_error!("Unknown gfxmode value: {mode}\n");
+            for (run, &index) in converted.chunks_exact_mut(scaling).zip(line) {
+                run.fill(palette[usize::from(index)]);
+            }
+        }
+        // `below` starts where the converted row ends, so the k-th copy
+        // starts `k * pitch - row_pixels` into it.
+        for copy in 1..scaling {
+            let copy_start = copy * pitch - row_pixels;
+            below[copy_start..copy_start + row_pixels].copy_from_slice(converted);
         }
     }
+}
 
+/// Initialise the video subsystem: compute the integer scaling factor
+/// (`-scaling <n>` or auto-fit), allocate the 320x200 palette buffer,
+/// mark the screen visible, and start input.
+///
+/// Mirrors `I_InitGraphics` from `i_video.c`. The Rust version reads
+/// `-scaling` digits manually (no `atoi`), keeps the factor between 1 and
+/// the largest that fits (C writes past the frame for a larger one),
+/// skips the C `printf` diagnostics, and has no `-gfxmode`: the platform
+/// decides the pixel layout ([`Platform::finish_pixel`]).
+///
+/// [`Platform::finish_pixel`]: crate::engine::platform::Platform::finish_pixel
+///
+/// # Safety
+///
+/// Sets the video state (`video_buffer`, `fb_scaling`, `screenvisible`)
+/// and calls back into the zone allocator. Must be called exactly once at
+/// startup before any other I_* graphics function.
+pub unsafe fn I_InitGraphics() {
     // Auto-scaling factor
     let scale_parm = M_CheckParmWithArgs("-scaling", 1);
     let fb_scaling = if scale_parm != 0 {
@@ -326,11 +248,14 @@ pub unsafe fn I_InitGraphics() {
         argument(scale_parm + 1)
             .bytes()
             .take_while(u8::is_ascii_digit)
-            .fold(0, |scaling, digit| scaling * 10 + i32::from(digit - b'0'))
+            .fold(0_usize, |scaling, digit| {
+                scaling
+                    .saturating_mul(10)
+                    .saturating_add(usize::from(digit - b'0'))
+            })
+            .clamp(1, fitting_scale())
     } else {
-        let x_scale = (screen_info.xres / SCREENWIDTH as u32) as i32;
-        let y_scale = (screen_info.yres / SCREENHEIGHT as u32) as i32;
-        x_scale.min(y_scale)
+        fitting_scale()
     };
 
     // Allocate video buffer
@@ -338,7 +263,6 @@ pub unsafe fn I_InitGraphics() {
 
     {
         let mut video = VIDEO.borrow_mut();
-        video.screen_info = screen_info;
         video.fb_scaling = fb_scaling;
         video.video_buffer = video_buffer;
         video.screenvisible = 1;
@@ -379,62 +303,73 @@ pub fn I_UpdateNoBlit() {}
 /// Blit and present one frame.
 ///
 /// Converts the 320x200 palette buffer at `I_VideoBuffer` into the
-/// final framebuffer at `DG_ScreenBuffer`, centring it inside the
-/// configured `screen_info.xres x screen_info.yres` window with `x_offset` and
-/// `y_offset` padding bytes per row, repeating each Doom scanline
-/// `fb_scaling` times to upscale. After the conversion, the platform
-/// callback `DG_DrawFrame` is invoked to present.
+/// platform's frame ([`convert_frame`]): straight into the buffer the
+/// platform lends ([`Platform::draw_in_place`]), or into this module's
+/// own buffer, which then goes to `DG_DrawFrame`
+/// ([`Platform::draw_frame`]).
 ///
-/// The padding math saturates at zero (`.max(0)`) so a framebuffer
-/// smaller than the scaled image still produces a valid pointer
-/// arithmetic - corresponding C code performs unsigned subtraction
-/// and would wrap around in that case.
+/// A platform that lends its buffer still shows the last frame, so when
+/// neither the palette-indexed picture nor the palette changed since then
+/// there is nothing to do and the frame is skipped. That happens when
+/// `TryRunTics` returns without running a tic (it gives up waiting once
+/// the clock reaches the next tic, so the menu stays live) and on screens
+/// that stand still, such as the title page. A platform that takes
+/// frames through `DG_DrawFrame` gets every frame, as in C.
+///
+/// [`Platform::draw_in_place`]: crate::engine::platform::Platform::draw_in_place
+/// [`Platform::draw_frame`]: crate::engine::platform::Platform::draw_frame
 ///
 /// # Safety
 ///
-/// Reads `SCREENWIDTH * SCREENHEIGHT` bytes from `I_VideoBuffer` and
-/// writes a region of `DG_ScreenBuffer` whose extent depends on the
-/// framebuffer geometry. Caller must ensure both pointers are valid
-/// and the framebuffer is large enough for the configured layout.
+/// Reads `SCREENWIDTH * SCREENHEIGHT` bytes from `I_VideoBuffer`, which
+/// `I_InitGraphics` must have allocated.
 pub unsafe fn I_FinishUpdate() {
-    let screen_buffer = crate::engine::platform::screen_buffer();
+    // SAFETY: `I_InitGraphics` allocated `SCREEN_PIXELS` bytes there; the
+    // conversion below only reads them.
+    let source = unsafe { slice::from_raw_parts(video_buffer(), SCREEN_PIXELS) };
+    let platform = platform();
     {
-        let video = VIDEO.borrow();
-        let screen_info = &video.screen_info;
-        let fb_scaling = video.fb_scaling;
-        let bytes_per_pixel = screen_info.bits_per_pixel as i32 / 8;
-        let y_offset = (((screen_info.yres as i32 - (SCREENHEIGHT * fb_scaling)) * bytes_per_pixel)
-            / 2)
-        .max(0) as u32;
-        let x_offset = (((screen_info.xres as i32 - (SCREENWIDTH * fb_scaling)) * bytes_per_pixel)
-            / 2)
-        .max(0) as u32;
-        let x_offset_end = ((screen_info.xres as i32 - (SCREENWIDTH * fb_scaling))
-            * bytes_per_pixel
-            - x_offset as i32)
-            .max(0) as u32;
-
-        let mut line_in = video.video_buffer;
-        let screen_ptr = screen_buffer as *mut u8;
-        let mut line_out = screen_ptr.add(y_offset as usize + x_offset as usize);
-
-        for _ in 0..SCREENHEIGHT as usize {
-            for _i in 0..fb_scaling {
-                line_out = line_out.add(x_offset as usize);
-
-                cmap_to_fb(&video, line_out, line_in, SCREENWIDTH);
-
-                line_out = line_out.add(
-                    (SCREENWIDTH * fb_scaling * bytes_per_pixel) as usize + x_offset_end as usize,
-                );
+        let mut video = VIDEO.borrow_mut();
+        if video.lends_buffer {
+            if !video.palette_changed && video.presented == source {
+                return;
             }
-            line_in = line_in.add(SCREENWIDTH as usize);
+            video.presented.clear();
+            video.presented.extend_from_slice(source);
         }
+        video.palette_changed = false;
     }
 
-    let frame =
-        core::slice::from_raw_parts(screen_buffer, crate::engine::platform::DOOMGENERIC_PIXELS);
-    crate::engine::platform::platform().draw_frame(frame);
+    let lent = {
+        let video = VIDEO.borrow();
+        platform.draw_in_place(&mut |pixels, pitch| {
+            convert_frame(source, &video.finished, video.fb_scaling, pixels, pitch);
+        })
+    };
+    if lent {
+        let mut video = VIDEO.borrow_mut();
+        if !video.lends_buffer {
+            video.lends_buffer = true;
+            video.presented.extend_from_slice(source);
+        }
+        return;
+    }
+
+    // The platform's `draw_frame` gets the frame without the state borrowed.
+    let mut frame = mem::take(&mut VIDEO.borrow_mut().frame);
+    frame.resize(DOOMGENERIC_PIXELS, 0);
+    {
+        let video = VIDEO.borrow();
+        convert_frame(
+            source,
+            &video.finished,
+            video.fb_scaling,
+            &mut frame,
+            DOOMGENERIC_RESX,
+        );
+    }
+    platform.draw_frame(&frame);
+    VIDEO.borrow_mut().frame = frame;
 }
 
 /// Copy the entire palette-indexed screen buffer into `scr`. Used by
@@ -450,7 +385,10 @@ pub unsafe fn I_ReadScreen(scr: *mut u8) {
 
 /// Apply a new 768-byte (256 x R/G/B) PLAYPAL palette by
 /// gamma-correcting each component through `gammatable[usegamma]`
-/// and storing into `colors`. Mirrors `I_SetPalette` from `i_video.c`.
+/// and storing into `colors`, then turning each colour into the
+/// platform's finished pixel
+/// ([`Platform::finish_pixel`](crate::engine::platform::Platform::finish_pixel))
+/// for the frame conversion. Mirrors `I_SetPalette` from `i_video.c`.
 ///
 /// `palette` starts at the palette to apply; bytes after the first
 /// `256 * 3` (the later PLAYPAL palettes) are ignored.
@@ -461,6 +399,7 @@ pub unsafe fn I_ReadScreen(scr: *mut u8) {
 /// range for `gammatable`.
 pub fn I_SetPalette(palette: &[u8]) {
     assert!(palette.len() >= 256 * 3, "I_SetPalette: short palette");
+    let platform = platform();
     let mut video = VIDEO.borrow_mut();
     let gamma = &gammatable[video.usegamma as usize];
     let (rgb_triples, _) = palette.as_chunks::<3>();
@@ -469,6 +408,12 @@ pub fn I_SetPalette(palette: &[u8]) {
         color.r = gamma[red as usize];
         color.g = gamma[green as usize];
         color.b = gamma[blue as usize];
+    }
+    let colors = video.colors;
+    let finished = colors.map(|color| platform.finish_pixel(color.r, color.g, color.b));
+    if finished != video.finished {
+        video.finished = finished;
+        video.palette_changed = true;
     }
 }
 
@@ -600,6 +545,101 @@ mod tests {
         assert_eq!(video.screenvisible, 0);
         assert_eq!(video.usegamma, 0);
         assert_eq!(video.fb_scaling, 1);
+        assert!(video.frame.is_empty());
+        assert!(!video.lends_buffer);
+    }
+
+    /// A source frame whose pixel at (column, row) has palette index
+    /// `(column + row) % 256`, and a palette whose pixel for index `i` is
+    /// `0xff00_0000 | i`, so every output pixel names its source.
+    fn numbered_frame() -> (Vec<u8>, [u32; 256]) {
+        let width = SCREENWIDTH as usize;
+        let source = (0..SCREEN_PIXELS)
+            .map(|position| ((position % width + position / width) % 256) as u8)
+            .collect();
+        let palette = core::array::from_fn(|index| 0xff00_0000 | index as u32);
+        (source, palette)
+    }
+
+    /// At Doom's 2x every source pixel covers a 2 by 2 block, rows land
+    /// `pitch` apart, and the pixels past each row's end stay untouched.
+    #[test]
+    fn convert_frame_doubles_into_a_wider_pitch() {
+        let (source, palette) = numbered_frame();
+        let pitch = DOOMGENERIC_RESX + 16;
+        let untouched = 0x5555_5555;
+        let mut pixels = vec![untouched; pitch * DOOMGENERIC_RESY];
+        convert_frame(&source, &palette, 2, &mut pixels, pitch);
+
+        for row in 0..DOOMGENERIC_RESY {
+            let line = &pixels[row * pitch..(row + 1) * pitch];
+            for (column, &pixel) in line[..DOOMGENERIC_RESX].iter().enumerate() {
+                let index = (column / 2 + row / 2) % 256;
+                assert_eq!(pixel, palette[index], "pixel ({column}, {row})");
+            }
+            assert!(
+                line[DOOMGENERIC_RESX..].iter().all(|&pixel| pixel == untouched),
+                "padding of row {row}"
+            );
+        }
+    }
+
+    /// At 1x the picture is centred and the border is left alone.
+    #[test]
+    fn convert_frame_centres_an_unscaled_picture() {
+        let (source, palette) = numbered_frame();
+        let untouched = 0x5555_5555;
+        let mut pixels = vec![untouched; DOOMGENERIC_PIXELS];
+        convert_frame(&source, &palette, 1, &mut pixels, DOOMGENERIC_RESX);
+
+        let left = (DOOMGENERIC_RESX - SCREENWIDTH as usize) / 2;
+        let top = (DOOMGENERIC_RESY - SCREENHEIGHT as usize) / 2;
+        for row in 0..DOOMGENERIC_RESY {
+            for column in 0..DOOMGENERIC_RESX {
+                let pixel = pixels[row * DOOMGENERIC_RESX + column];
+                let inside = (left..left + SCREENWIDTH as usize).contains(&column)
+                    && (top..top + SCREENHEIGHT as usize).contains(&row);
+                let expected = if inside {
+                    palette[(column - left + row - top) % 256]
+                } else {
+                    untouched
+                };
+                assert_eq!(pixel, expected, "pixel ({column}, {row})");
+            }
+        }
+    }
+
+    /// The default fits Doom's frame twice into 640x400.
+    #[test]
+    fn fitting_scale_is_two() {
+        assert_eq!(fitting_scale(), 2);
+    }
+
+    /// `I_SetPalette` keeps the platform's finished pixels (the default
+    /// platform's `0x00RRGGBB`) and marks the palette changed only when
+    /// they differ.
+    #[test]
+    fn set_palette_finishes_pixels() {
+        let _guard = PaletteGuard::acquire();
+        let saved_finished = VIDEO.borrow().finished;
+        let mut palette = [0_u8; 256 * 3];
+        palette[3..6].copy_from_slice(&[0x12, 0x34, 0x56]);
+        let gamma = &gammatable[VIDEO.borrow().usegamma as usize];
+        let expected = u32::from(gamma[0x12]) << 16
+            | u32::from(gamma[0x34]) << 8
+            | u32::from(gamma[0x56]);
+
+        VIDEO.borrow_mut().palette_changed = false;
+        VIDEO.borrow_mut().finished = [1; 256];
+        I_SetPalette(&palette);
+        assert_eq!(VIDEO.borrow().finished[1], expected);
+        assert!(VIDEO.borrow().palette_changed);
+
+        VIDEO.borrow_mut().palette_changed = false;
+        I_SetPalette(&palette);
+        assert!(!VIDEO.borrow().palette_changed, "same palette again");
+
+        VIDEO.borrow_mut().finished = saved_finished;
     }
 
     #[test]

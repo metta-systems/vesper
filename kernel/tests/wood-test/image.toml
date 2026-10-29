@@ -93,7 +93,9 @@ serial = true
 
 # The shell's `draw` started by itself: a window of the compositor with the
 # shell's scene and the lava lamp, so the board shows a window to move the
-# cursor over. `memory` leaves room for the table the window's Frames are lent
+# cursor over. The lamp animates only while its window has the focus: Wood's
+# window, made later, takes it, so the lamp stays paused until a click gives
+# it back. `memory` leaves room for the table the window's Frames are lent
 # into.
 [[component]]
 name = "draw_demo"

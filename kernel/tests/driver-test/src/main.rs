@@ -24,6 +24,10 @@
 //! manager. The boot Thread checks each init record's Return key and import
 //! records; the probes check the calls, an exception included.
 //!
+//! The probes run under the root dispatcher, which also checks its
+//! priorities: the PL011 probe's high-priority Thread must wake on time
+//! beside two spinning normal Threads (`driver-probe`) before it reports.
+//!
 //! In-guest assertions and the QEMU semihosting exit status are the result
 //! (`just test-driver`, `just test-driver-rpi4`).
 

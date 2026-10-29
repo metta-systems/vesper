@@ -204,7 +204,11 @@ mod tests {
     }
 
     fn render(midi: &[u8], rate: Rate, seconds: u32) -> Vec<i16> {
-        let bank = Bank::new(&data().trimmed).unwrap();
+        render_with(&data().trimmed, midi, rate, seconds)
+    }
+
+    fn render_with(font: &[u8], midi: &[u8], rate: Rate, seconds: u32) -> Vec<i16> {
+        let bank = Bank::new(font).unwrap();
         let mut sequencer = Sequencer::new(Synth::new(bank, rate));
         sequencer.play(Song::parse(midi).unwrap(), true);
         let frames = u64::from(rate.numerator) * u64::from(seconds) / u64::from(rate.denominator);
@@ -257,6 +261,82 @@ mod tests {
             println!("{name}: {hash:#018x}");
         }
         assert_eq!(rendered, golden);
+    }
+
+    /// The voices read an aligned bank's points as `i16` in runs, and a bank
+    /// at an odd address byte by byte, one frame at a time: both render the
+    /// same, bit for bit.
+    #[test]
+    fn unaligned_bank_renders_the_same() {
+        let trimmed = &data().trimmed;
+        assert!(SoundFont::parse(trimmed).unwrap().points.is_some());
+        let mut shifted = vec![0_u8; trimmed.len() + 2];
+        let offset = usize::from(shifted.as_ptr().addr() % 2 == 0);
+        shifted[offset..offset + trimmed.len()].copy_from_slice(trimmed);
+        let unaligned = &shifted[offset..offset + trimmed.len()];
+        assert!(SoundFont::parse(unaligned).unwrap().points.is_none());
+        for name in ["D_E1M1", "D_INTRO"] {
+            let fast = render_with(trimmed, song(name), OUTPUT_RATE, 4);
+            let slow = render_with(unaligned, song(name), OUTPUT_RATE, 4);
+            assert!(fast == slow, "{name}: the fast path differs");
+        }
+    }
+
+    /// Render timing for the audio profile (doc/agentic/audio-profiling.md):
+    /// every song for 60 s at the output rate in 512-frame periods, with the
+    /// voices sounding at each period. Run it in release mode with
+    /// `just profile-synth`; it asserts nothing.
+    #[test]
+    #[ignore = "a benchmark: run with `just profile-synth`"]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "frame and voice counts are far below 2^52"
+    )]
+    fn profile_render() {
+        const PERIOD_FRAMES: usize = 512;
+        const SECONDS: u64 = 60;
+        let bank = Bank::new(&data().trimmed).unwrap();
+        let frames =
+            u64::from(OUTPUT_RATE.numerator) * SECONDS / u64::from(OUTPUT_RATE.denominator);
+        let periods = usize::try_from(frames).unwrap() / PERIOD_FRAMES;
+        let mut period_buffer = vec![0_i16; PERIOD_FRAMES * 2];
+        let mut all_voice_frames = 0_u64;
+        let mut all_nanoseconds = 0_u128;
+        println!(
+            "song      periods  ns/frame  ns/voice-frame  mean voices  max voices  worst period us"
+        );
+        for (name, midi) in &data().songs {
+            let mut sequencer = Sequencer::new(Synth::new(bank.clone(), OUTPUT_RATE));
+            sequencer.play(Song::parse(midi).unwrap(), true);
+            let mut voice_frames = 0_u64;
+            let mut max_voices = 0;
+            let mut worst_period = std::time::Duration::ZERO;
+            let started = std::time::Instant::now();
+            for _ in 0..periods {
+                let voices = sequencer.synth().active_voices();
+                max_voices = max_voices.max(voices);
+                voice_frames += u64::try_from(voices * PERIOD_FRAMES).unwrap();
+                let period_started = std::time::Instant::now();
+                sequencer.render(&mut period_buffer);
+                worst_period = worst_period.max(period_started.elapsed());
+                std::hint::black_box(&period_buffer);
+            }
+            let elapsed = started.elapsed().as_nanos();
+            all_voice_frames += voice_frames;
+            all_nanoseconds += elapsed;
+            let rendered_frames = (periods * PERIOD_FRAMES) as f64;
+            println!(
+                "{name:9} {periods:7}  {:8.1}  {:14.2}  {:11.2}  {max_voices:10}  {:15}",
+                elapsed as f64 / rendered_frames,
+                elapsed as f64 / voice_frames.max(1) as f64,
+                voice_frames as f64 / rendered_frames,
+                worst_period.as_micros(),
+            );
+        }
+        println!(
+            "all songs: {:.2} ns per voice-frame (voices counted at each period's start)",
+            all_nanoseconds as f64 / all_voice_frames.max(1) as f64
+        );
     }
 
     /// Loose similarity to the host's rustysynth (no filter, effects or

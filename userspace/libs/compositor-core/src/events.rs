@@ -16,6 +16,7 @@ use {
     crate::{router::Routed, windows::Windows},
     libio_channel::{
         Channel, Consumer, Cursor, DataArea, Event as Signal, IoRec, NoEvent, Packet, Producer,
+        WaitError,
     },
     vesper_input_event::record::{EVENT_SIZE, Event, Kind},
 };
@@ -214,7 +215,9 @@ pub unsafe fn deliver<Completed: Signal>(
 }
 
 /// The client's end: it keeps the data page's buffers posted and hands out
-/// the records that come back, one at a time, without blocking.
+/// the records that come back, one at a time, without blocking
+/// ([`next_event`](Self::next_event)) or sleeping until one comes
+/// ([`wait_event`](Self::wait_event)).
 pub struct Receiver<'channel, Completed: Signal> {
     buffers: Producer<'channel, SLOTS, NoEvent>,
     completed: Consumer<'channel, SLOTS, Completed>,
@@ -275,6 +278,23 @@ impl<'channel, Completed: Signal> Receiver<'channel, Completed> {
         let event = self.pending[self.next];
         self.next += 1;
         Some(event)
+    }
+
+    /// The next record, sleeping on the channel's `EventCount` until a
+    /// delivery arrives; for a client with nothing to do until its windows'
+    /// events change.
+    ///
+    /// # Errors
+    ///
+    /// The channel is corrupt, or awaiting the `EventCount` failed.
+    pub fn wait_event(&mut self) -> Result<Event, WaitError<Completed::Error>> {
+        loop {
+            if let Some(event) = self.next_event() {
+                return Ok(event);
+            }
+            let packet = self.completed.wait()?;
+            self.take(&packet);
+        }
     }
 
     /// Copy the records of a returned buffer and post it again.

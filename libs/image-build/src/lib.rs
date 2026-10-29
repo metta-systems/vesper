@@ -66,8 +66,17 @@ pub struct ElfImage {
     /// Device tree `compatible` strings from a driver's `.driver_compatible`
     /// section (empty for other components)
     pub driver_compatible: Vec<String>,
-    /// Entry addresses from a driver's `.driver_threads` section
-    pub driver_threads: Vec<u64>,
+    /// The further Threads from a driver's `.driver_threads` section
+    pub driver_threads: Vec<DriverThread>,
+}
+
+/// One further Thread a driver declares (`libdevice_driver::driver_threads!`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriverThread {
+    /// The entry's address
+    pub entry: u64,
+    /// The `libdevice_driver::Priority` level
+    pub priority: u8,
 }
 
 impl ElfImage {
@@ -112,7 +121,7 @@ impl ElfImage {
                 continue;
             }
             if name == ".driver_threads" {
-                driver_threads = parse_addresses(&content(), path);
+                driver_threads = parse_threads(&content(), path);
                 continue;
             }
             if name == ".exports" {
@@ -182,17 +191,25 @@ fn parse_strings(content: &[u8], path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The little-endian addresses of a section such as `.driver_threads`.
-fn parse_addresses(content: &[u8], path: &Path) -> Vec<u64> {
-    let (addresses, rest) = content.as_chunks::<8>();
+/// The records of a driver's `.driver_threads` section
+/// (`libdevice_driver::ThreadDeclaration`): 16 bytes each, the entry's
+/// little-endian address, then the priority level, then zeroes.
+fn parse_threads(content: &[u8], path: &Path) -> Vec<DriverThread> {
+    let (records, rest) = content.as_chunks::<16>();
     assert!(
         rest.is_empty(),
-        "{}: malformed address table",
+        "{}: malformed .driver_threads section",
         path.display()
     );
-    addresses
+    records
         .iter()
-        .map(|bytes| u64::from_le_bytes(*bytes))
+        .map(|record| {
+            let (entry, tail) = record.split_first_chunk::<8>().expect("16 bytes");
+            DriverThread {
+                entry: u64::from_le_bytes(*entry),
+                priority: tail[0],
+            }
+        })
         .collect()
 }
 
@@ -1031,8 +1048,8 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static <NAME>: libimage::ComponentImage`, plus
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
-/// the strings of its `.driver_compatible` section, the entries of its
-/// `.driver_threads` section, its `budget_ns` and its
+/// the strings of its `.driver_compatible` section, the entries and
+/// priorities of its `.driver_threads` section, its `budget_ns` and its
 /// `memory` size, all listed in
 /// `pub static DRIVERS: &[&DriverImage]`, followed by the programs: a
 /// `[[component]]` entry with `program = true` (and `budget_ns`, `memory`,
@@ -1113,7 +1130,11 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
         video_memory => settings.video_memory,
         serial => settings.serial,
         dispatcher => settings.dispatcher,
-        threads => &image.driver_threads,
+        threads => image
+            .driver_threads
+            .iter()
+            .map(|thread| context! { entry => thread.entry, priority => thread.priority })
+            .collect::<Vec<Value>>(),
     }
 }
 

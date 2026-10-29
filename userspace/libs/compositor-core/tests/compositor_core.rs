@@ -668,7 +668,7 @@ mod client_events {
             router::{Output, Routed, Router},
             windows::{Rect, Window},
         },
-        libio_channel::NoEvent,
+        libio_channel::{NoEvent, Unwaitable, WaitError},
         vesper_input_event::{
             record::{EVENT_SIZE, Event, KEY_DOWN, KEY_UP, Kind},
             usage::{code, generic_desktop, page},
@@ -943,5 +943,32 @@ mod client_events {
         assert_eq!(kinds, [Kind::Dropped, Kind::Key, Kind::Sync]);
         assert_eq!(receiver.rejected(), 0);
         assert!(BUFFER_BYTES >= 3 * EVENT_SIZE as u64);
+    }
+
+    #[test]
+    fn waiting_returns_what_arrived_and_sleeps_only_on_nothing() {
+        let pages = Box::new(Pages([0; 8192]));
+        let control = (&raw const pages.0).expose_provenance() as u64;
+        // SAFETY: the pages are zeroed, aligned and live until the end of the test.
+        let channel = unsafe { EventChannel::at(control) };
+        let data = data_area(control);
+        // SAFETY: the data page is readable for the receiver's life.
+        let mut receiver = unsafe { Receiver::new(channel, data, NoEvent) };
+        let mut outbox = Outbox::new();
+        let focus = [Event::new(1, 1, Kind::Focus, 0, 0), Event::sync(1, 1)];
+        // SAFETY: the data page is mapped read/write.
+        assert!(unsafe { deliver(channel, data, NoEvent, &mut outbox, focus.into_iter(), 1) });
+        let first = receiver.wait_event().expect("a delivery is there");
+        assert_eq!((first.kind, first.value), (Kind::Focus, 0));
+        assert_eq!(
+            receiver.wait_event().map(|event| event.kind),
+            Ok(Kind::Sync)
+        );
+        // With nothing delivered it sleeps on the EventCount, which `NoEvent`
+        // refuses.
+        assert_eq!(
+            receiver.wait_event().map(|event| event.kind),
+            Err(WaitError::Event(Unwaitable))
+        );
     }
 }

@@ -9,16 +9,16 @@
 //! port's sound and music hooks; the engine calls these instead of talking to
 //! the OS directly.
 //!
-//! This module covers the library side: it owns the shared frame-buffer
-//! pointer ([`screen_buffer`], in [`PlatformState`]) and implements [`doomgeneric_Create`], which
-//! records the platform, allocates that buffer, stores the command-line
-//! arguments, and launches the main engine entry point.
+//! This module covers the library side: it holds the installed platform (in
+//! [`PlatformState`]) and implements [`doomgeneric_Create`], which records
+//! the platform, stores the command-line arguments, and launches the main
+//! engine entry point.
 //!
 //! Rust differences from C:
-//! - The C code allocates the screen buffer with `malloc` and never frees it
-//!   (intentional leak in a long-running process).  This port allocates via
-//!   `Vec<u32>` and uses `mem::forget` to produce the same intentional
-//!   leak, while using Rust allocation.
+//! - The C code allocates `DG_ScreenBuffer` here with `malloc`. This port
+//!   has no such global: a platform can lend the engine the buffer it shows
+//!   ([`Platform::draw_in_place`]), and `i_video` keeps its own buffer only
+//!   for a platform that does not.
 //! - The platform callbacks are the methods of [`Platform`], installed by
 //!   [`doomgeneric_Create`], instead of functions the platform links in.
 //! - [`Platform`] also carries what the C engine took from the C library
@@ -27,10 +27,7 @@
 
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use {
-    alloc::{string::String, vec::Vec},
-    core::ptr,
-};
+use alloc::{string::String, vec::Vec};
 
 use super::{
     doom::main::D_DoomMain,
@@ -50,7 +47,7 @@ pub const DOOMGENERIC_RESY: usize = 400;
 
 /// Total pixel count for one complete frame (`RESX * RESY`).
 ///
-/// Convenience constant used when allocating or iterating over [`screen_buffer`].
+/// The size of the frame [`Platform::draw_frame`] receives.
 pub const DOOMGENERIC_PIXELS: usize = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
 
 /// What the engine needs from the platform it runs on.
@@ -63,14 +60,41 @@ pub const DOOMGENERIC_PIXELS: usize = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
 /// what it has: the default platform is silent, shows nothing, reads no
 /// input, has no files and panics on quit.
 pub trait Platform {
-    /// `DG_Init`: called once by [`doomgeneric_Create`], after the screen
-    /// buffer is allocated and before the engine starts.
+    /// `DG_Init`: called once by [`doomgeneric_Create`], before the engine
+    /// starts.
     fn init(&self) {}
 
     /// `DG_DrawFrame`: present `frame`, [`DOOMGENERIC_PIXELS`] pixels of
-    /// [`DOOMGENERIC_RESX`] per row, as the renderer wrote them into
-    /// [`screen_buffer`].
+    /// [`DOOMGENERIC_RESX`] per row, made by [`Platform::finish_pixel`].
+    /// Called for every frame the engine finishes, unless
+    /// [`Platform::draw_in_place`] takes the frames.
     fn draw_frame(&self, _frame: &[u32]) {}
+
+    /// Present a frame drawn straight into the buffer the platform shows:
+    /// call `draw` once with that buffer and its pitch (pixels from one row
+    /// to the next, at least [`DOOMGENERIC_RESX`]; the buffer holds
+    /// [`DOOMGENERIC_RESY`] such rows), then show it. `draw` writes
+    /// pixels made by [`Platform::finish_pixel`] into the
+    /// [`DOOMGENERIC_RESX`] by [`DOOMGENERIC_RESY`] frame and leaves any
+    /// pixels past a row's end alone.
+    ///
+    /// Returns `false`, without calling `draw`, when the platform has no
+    /// such buffer (the default); the engine then draws into a buffer of
+    /// its own and calls [`Platform::draw_frame`] with it. A platform that
+    /// returns `true` must keep showing the last frame: the engine does not
+    /// call again while the picture stays the same.
+    fn draw_in_place(&self, _draw: &mut dyn FnMut(&mut [u32], usize)) -> bool {
+        false
+    }
+
+    /// The pixel the platform shows for the colour `red`, `green`, `blue`.
+    /// The engine asks only when its palette changes and keeps the 256
+    /// answers, so the pixel order and any alpha are the platform's
+    /// choice. The default is `0x00RRGGBB` (BGRA bytes in little-endian
+    /// memory).
+    fn finish_pixel(&self, red: u8, green: u8, blue: u8) -> u32 {
+        u32::from(red) << 16 | u32::from(green) << 8 | u32::from(blue)
+    }
 
     /// `DG_SleepMs`: sleep for `ms` milliseconds.
     fn sleep_ms(&self, _ms: u32) {}
@@ -217,30 +241,14 @@ impl Platform for Silent {}
 /// Platform state (C `doomgeneric.c` globals).
 #[derive(Clone, Copy)]
 pub struct PlatformState {
-    /// Shared frame-buffer pointer written by the renderer and read by the
-    /// platform backend.
-    ///
-    /// Corresponds to `pixel_t *DG_ScreenBuffer` in `doomgeneric.c`.  After
-    /// [`doomgeneric_Create`] runs, this points to a heap-allocated array of
-    /// [`DOOMGENERIC_PIXELS`] `u32` values (RGBA8 or BGRA8 depending on the
-    /// build).  The renderer (`R_DrawColumn`, `R_DrawSpan`, etc.) writes
-    /// pixels into this buffer each frame; the platform backend reads from it
-    /// inside `DG_DrawFrame` to upload the frame to the display.
-    ///
-    /// Initialised to `null`; valid only after [`doomgeneric_Create`] has
-    /// been called.
-    screen_buffer: *mut u32,
     /// The platform [`doomgeneric_Create`] installed.
     platform: Option<&'static dyn Platform>,
 }
 
 impl PlatformState {
-    /// No platform and no screen buffer yet.
+    /// No platform yet.
     pub const fn new() -> Self {
-        Self {
-            screen_buffer: ptr::null_mut(),
-            platform: None,
-        }
+        Self { platform: None }
     }
 }
 
@@ -259,12 +267,6 @@ pub fn platform() -> &'static dyn Platform {
     PLATFORM.get().platform.unwrap_or(&Silent)
 }
 
-/// `DG_ScreenBuffer`: the [`DOOMGENERIC_PIXELS`]-pixel frame buffer, null
-/// before [`doomgeneric_Create`].
-pub fn screen_buffer() -> *mut u32 {
-    PLATFORM.get().screen_buffer
-}
-
 /// Initialise the Doom engine on `platform` and enter the main game loop.
 ///
 /// Corresponds to `doomgeneric_Create` in `doomgeneric.c`.  This is the
@@ -276,27 +278,19 @@ pub fn screen_buffer() -> *mut u32 {
 /// 2. Store `args` (program name first) in `myargv` so `M_Arg*` functions
 ///    work.
 /// 3. Call `M_FindResponseFile` to expand any `@file` arguments.
-/// 4. Allocate the screen buffer ([`DOOMGENERIC_PIXELS`] × 4 bytes) via
-///    `Vec` and intentionally leak it so the lifetime matches the C `malloc`
-///    version.
-/// 5. Call [`Platform::init`] so the platform backend can create its
+/// 4. Call [`Platform::init`] so the platform backend can create its
 ///    window/context.
-/// 6. Call `D_DoomMain`, which never returns under normal operation.
+/// 5. Call `D_DoomMain`, which never returns under normal operation.
 ///
 /// # Safety
 /// This function must be called exactly once; calling it a second time
-/// would leak the first screen buffer and overwrite `myargv`.
+/// would overwrite `myargv` and restart the engine over its live state.
 pub unsafe fn doomgeneric_Create(platform: &'static dyn Platform, args: Vec<String>) {
     PLATFORM.borrow_mut().platform = Some(platform);
 
     set_arguments(args);
 
     M_FindResponseFile();
-
-    let total_pixels = DOOMGENERIC_RESX * DOOMGENERIC_RESY;
-    let mut buffer = alloc::vec![0u32; total_pixels];
-    PLATFORM.borrow_mut().screen_buffer = buffer.as_mut_ptr();
-    core::mem::forget(buffer);
 
     platform.init();
     D_DoomMain();
@@ -307,9 +301,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_dg_screenbuffer_is_null_init() {
+    fn test_platform_state_starts_empty() {
         let state = PlatformState::new();
-        assert!(state.screen_buffer.is_null());
         assert!(state.platform.is_none());
+    }
+
+    /// The default pixel is `0x00RRGGBB`, what the host's BGRA texture and
+    /// the demo test's frame hashes expect.
+    #[test]
+    fn default_finish_pixel_is_xrgb() {
+        assert_eq!(Silent.finish_pixel(0x12, 0x34, 0x56), 0x0012_3456);
+    }
+
+    /// The default platform lends no buffer and never calls `draw`.
+    #[test]
+    fn default_draw_in_place_declines() {
+        let mut called = false;
+        assert!(!Silent.draw_in_place(&mut |_pixels, _pitch| called = true));
+        assert!(!called);
     }
 }

@@ -10,8 +10,9 @@
 
 //! `draw-demo`: the shell's `draw` without the shell. It asks the compositor for
 //! a window as soon as it starts, paints the shell's scene in it and leaves the
-//! lava lamp animating, for an image whose serial channel belongs to someone
-//! else (the compositor test image).
+//! lava lamp animating while the window has the keyboard focus (paused, asleep
+//! on the compositor's events, while another window has it), for an image whose
+//! serial channel belongs to someone else (the compositor test image).
 
 #[cfg(target_os = "vesper")]
 #[path = "display.rs"]

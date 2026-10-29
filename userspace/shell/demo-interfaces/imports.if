@@ -2,5 +2,7 @@
 # SPDX-License-Identifier: BlueOak-1.0.0
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
-# `draw-demo`: the functions of the compositor the shell's `draw` calls.
-uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy }
+# `draw-demo`: the functions of the compositor the shell's `draw` calls. The
+# lava lamp follows the window's focus on the interface's io-channel, and asks
+# `snapshot` for it when it starts and after records were dropped.
+uses compositor_v1 via component compositor { pixel_order, create_window, commit, move_window, raise, destroy, snapshot }

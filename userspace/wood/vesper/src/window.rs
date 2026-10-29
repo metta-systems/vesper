@@ -1,13 +1,16 @@
 //! Wood's window: a window of the compositor the size of the engine's frame,
-//! and the copy of each frame into it.
+//! which the engine draws its frames straight into.
 //!
 //! As the shell's `draw` does, Wood asks the compositor for the window
 //! (`compositor_v1.create_window`), lending a table for the Frames of its
-//! surface, and maps them in its surface window (`SURFACE_WINDOW_VA`). Each
-//! frame the engine draws is copied in, converted to the display's pixel
-//! order and made opaque, and committed whole.
+//! surface, and maps them in its surface window (`SURFACE_WINDOW_VA`). The
+//! engine writes each frame into the surface with ordinary stores, in the
+//! display's pixel order and opaque ([`Window::pixel`]), and Wood commits
+//! it whole; the compositor deals with its write-combining mapping of the
+//! surface when it composes the window.
 
 use {
+    core::sync::atomic::{Ordering, fence},
     compositor_client::compositor_v1::{
         Client as CompositorClient, Error as CompositorError, PixelOrder,
     },
@@ -55,8 +58,8 @@ fn capability_failed<Value>(step: &'static str) -> impl FnOnce(CapError) -> Valu
 pub struct Window {
     compositor: CompositorClient,
     id: u32,
-    /// Whether the display's pixels have red in the low byte (the engine
-    /// writes it in the third).
+    /// Whether the display's pixels have red in the low byte (else in the
+    /// third, with blue low).
     red_low: bool,
     surface: *mut u32,
     pitch_pixels: usize,
@@ -178,26 +181,48 @@ impl Window {
         count
     }
 
-    /// Copy `frame` (`WIDTH` by `HEIGHT` pixels of `0x00RRGGBB`, as the
-    /// engine draws them) into the surface and tell the compositor.
-    pub fn present(&self, frame: &[u32]) -> Result<(), CompositorError> {
-        let width = WIDTH as usize;
-        for (row, line) in frame.chunks_exact(width).take(HEIGHT as usize).enumerate() {
-            for (column, &pixel) in line.iter().enumerate() {
-                let pixel = if self.red_low {
-                    (pixel & 0x0000_ff00) | (pixel >> 16 & 0xff) | (pixel & 0xff) << 16
-                } else {
-                    pixel
-                };
-                // SAFETY: (column, row) is inside the WIDTH by HEIGHT surface,
-                // mapped read/write at `surface` by `create`.
-                unsafe {
-                    self.surface
-                        .add(row * self.pitch_pixels + column)
-                        .write_volatile(pixel | OPAQUE);
-                }
-            }
-        }
+    /// The opaque surface pixel for the colour `red`, `green`, `blue`, in
+    /// the display's order.
+    pub fn pixel(&self, red: u8, green: u8, blue: u8) -> u32 {
+        let (low, high) = if self.red_low {
+            (red, blue)
+        } else {
+            (blue, red)
+        };
+        OPAQUE | u32::from(high) << 16 | u32::from(green) << 8 | u32::from(low)
+    }
+
+    /// The surface's pixel count: `HEIGHT` rows of `pitch_pixels`.
+    fn surface_pixels(&self) -> usize {
+        self.pitch_pixels * HEIGHT as usize
+    }
+
+    /// Let `draw` write a frame into the surface (its pixels and pitch in
+    /// pixels, `HEIGHT` rows of at least `WIDTH`), then commit it whole.
+    pub fn draw(&self, draw: &mut dyn FnMut(&mut [u32], usize)) -> Result<(), CompositorError> {
+        // SAFETY: `create` mapped the surface read/write at `surface`, at
+        // least `HEIGHT` rows of `pitch_pixels`, for Wood alone to write;
+        // only this engine Thread uses it, and no other reference to it
+        // lives while `draw` runs.
+        let pixels = unsafe { core::slice::from_raw_parts_mut(self.surface, self.surface_pixels()) };
+        draw(pixels, self.pitch_pixels);
+        // The frame's stores come before the commit that has the compositor
+        // read them.
+        fence(Ordering::Release);
         self.compositor.commit(self.id, 0, 0, WIDTH, HEIGHT)
+    }
+
+    /// A checksum of the picture in the surface; changing sums show the
+    /// picture changing. Reads the whole surface: for rare diagnostics.
+    pub fn checksum(&self) -> u32 {
+        // SAFETY: as in `draw`; nothing writes the surface meanwhile.
+        let pixels = unsafe { core::slice::from_raw_parts(self.surface, self.surface_pixels()) };
+        // (A plain rotate and xor cancels out: the engine doubles every row.)
+        pixels
+            .chunks_exact(self.pitch_pixels)
+            .flat_map(|row| &row[..WIDTH as usize])
+            .fold(0_u32, |sum, &pixel| {
+                sum.wrapping_mul(31).wrapping_add(pixel)
+            })
     }
 }

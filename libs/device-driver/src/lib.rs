@@ -33,9 +33,10 @@
 //!   (one per instance it calls).
 //!
 //! A driver that needs more Threads than its interrupt Thread declares their
-//! entries with [`driver_threads!`]. Kickstart starts each on its own stack
-//! and Time with the init page's address in `x0`, alongside the first one;
-//! only the first Thread receives the interrupts.
+//! entries with [`driver_threads!`], each with a [`Priority`] for the root
+//! dispatcher. Kickstart starts each on its own stack and Time with the init
+//! page's address in `x0`, alongside the first one; only the first Thread
+//! receives the interrupts.
 mod masters;
 
 pub use masters::{InstallError, Masters};
@@ -75,19 +76,63 @@ pub const THREADS_SECTION: &str = ".driver_threads";
 /// Most Threads of one driver besides the first.
 pub const MAX_FURTHER_THREADS: usize = 4;
 
+/// A Thread's scheduling priority, which the root dispatcher follows: it
+/// always runs a runnable Thread of the highest level, and takes turns
+/// between the Threads of one level. A level is one byte, so levels can be
+/// added between and above these without changing any record that carries
+/// one. The kernel knows nothing of it: Kickstart hands it to the root
+/// dispatcher (`DispatchInit::priorities`).
+///
+/// There is no starvation guard: a high-priority Thread that never blocks
+/// keeps every normal one from running.
+#[repr(transparent)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Priority(pub u8);
+
+impl Priority {
+    /// Every Thread's priority unless it declares another.
+    pub const NORMAL: Self = Self(0);
+    /// Runs ahead of every normal Thread: for a Thread with a deadline, such
+    /// as an audio playback Thread, that blocks most of the time.
+    pub const HIGH: Self = Self(1);
+}
+
+/// One entry of the [`THREADS_SECTION`]: a further Thread's entry and its
+/// priority, 16 bytes, the priority in the byte after the entry.
+#[repr(C)]
+pub struct ThreadDeclaration {
+    pub entry: extern "C" fn(u64) -> !,
+    pub priority: Priority,
+    /// Zero
+    pub reserved: [u8; 7],
+}
+
+const _: () = assert!(size_of::<ThreadDeclaration>() == 16);
+
 /// Declare the entries of the driver's further Threads, each a
 /// `fn(u64) -> !` receiving the init page's address like the first Thread's
-/// entry.
+/// entry, optionally followed by `=>` and its [`Priority`] (normal when
+/// left out): `driver_threads!(playback => Priority::HIGH, worker)`.
 #[macro_export]
 macro_rules! driver_threads {
-    ($($entry:path),+ $(,)?) => {
+    (@priority) => {
+        $crate::Priority::NORMAL
+    };
+    (@priority $priority:expr) => {
+        $priority
+    };
+    ($($entry:path $(=> $priority:expr)?),+ $(,)?) => {
         #[cfg_attr(target_os = "vesper", unsafe(link_section = ".driver_threads"))]
         #[used]
-        static DRIVER_THREADS: [extern "C" fn(u64) -> !; [$(stringify!($entry)),+].len()] = [$({
+        static DRIVER_THREADS: [$crate::ThreadDeclaration; [$(stringify!($entry)),+].len()] = [$({
             extern "C" fn thread_entry(init_va: u64) -> ! {
                 $entry(init_va)
             }
-            thread_entry
+            $crate::ThreadDeclaration {
+                entry: thread_entry,
+                priority: $crate::driver_threads!(@priority $($priority)?),
+                reserved: [0; 7],
+            }
         }),+];
         const _: () = assert!(DRIVER_THREADS.len() <= $crate::MAX_FURTHER_THREADS);
     };
@@ -272,13 +317,17 @@ pub struct SerialKeys {
     pub receive_completed: u64,
 }
 
+/// Most Threads the root dispatcher can be handed ([`DispatchInit`]).
+pub const MAX_DISPATCHED_THREADS: usize = 80;
+
 /// What the root dispatcher needs to find the Threads it dispatches; zero in
 /// every other component. The Scheduler's record table is mapped read-only at
 /// `records`; the record in slot `s` (1 up to `slot_count`) belongs to the
 /// Thread whose key (first incarnation) is at slot `first_thread_key_slot + s`
-/// of the dispatcher's table.
+/// of the dispatcher's table, and whose [`Priority`] level is
+/// `priorities[s - 1]`.
 #[repr(C)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DispatchInit {
     /// The root Scheduler (`WRITE`)
     pub scheduler: u64,
@@ -289,6 +338,19 @@ pub struct DispatchInit {
     /// Highest record slot in use
     pub slot_count: u64,
     pub first_thread_key_slot: u64,
+    /// Each slot's priority level, from slot 1 on
+    pub priorities: [Priority; MAX_DISPATCHED_THREADS],
+}
+
+impl DispatchInit {
+    /// The priority of the Thread whose record is in `slot` (normal for a
+    /// slot beyond the table).
+    pub fn priority(&self, slot: usize) -> Priority {
+        slot.checked_sub(1)
+            .and_then(|index| self.priorities.get(index))
+            .copied()
+            .unwrap_or(Priority::NORMAL)
+    }
 }
 
 #[repr(C)]
@@ -467,6 +529,7 @@ impl DriverInit {
             stride: 0,
             slot_count: 0,
             first_thread_key_slot: 0,
+            priorities: [Priority::NORMAL; MAX_DISPATCHED_THREADS],
         },
     };
 

@@ -359,7 +359,7 @@ build-wood board='rpi3' features='qemu' image_features=features: wood-soundfont 
 [group("test")]
 build-wood-test board='rpi3': (build-components board 'qemu' test_kernel_features) (build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
 
-# Boot wood-test on raspi3b with the devices of test-compositor and the audio test tree (`_audio-test-dtb`, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The log server holds the UART: the lines of the compositor, Wood, the synthesiser and the audio driver must reach it with its timestamp and level prefix, and Wood's music summary must appear. The semihosting console goes to target/wood-test.log, the UART to target/wood-test-serial.log, the screen to target/wood-test.ppm
+# Boot wood-test on raspi3b with the devices of test-compositor and the audio test tree (`_audio-test-dtb`, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it, and draw-demo's lava lamp, whose window lost the focus to it, must pause. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The log server holds the UART: the lines of the compositor, Wood, the synthesiser and the audio driver must reach it with its timestamp and level prefix, and Wood's music summary must appear. The semihosting console goes to target/wood-test.log, the UART to target/wood-test-serial.log, the screen to target/wood-test.ppm
 [group("test")]
 test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (build-wood-test board) _audio-test-dtb
     #!/usr/bin/env bash
@@ -392,6 +392,8 @@ test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board 
     grep -q "compositor: frame 1 drew the background: true" "$log" || { echo "wood-test: the background did not reach the framebuffer"; exit 1; }
     grep -q "wood: INFO frame 1 presented: true" "$log" || { echo "wood-test: Wood presented no frame"; exit 1; }
     grep -q "wood: INFO focus gained" "$log" || { echo "wood-test: Wood's window did not get the focus"; exit 1; }
+    grep -q "lamp: paused after frame [0-9]*, unfocused" "$log" || { echo "wood-test: the lava lamp kept animating without the focus"; exit 1; }
+    ! grep -q "lamp: resumed" "$log" || { echo "wood-test: the lava lamp resumed while Wood had the focus"; exit 1; }
     grep -q "wood: INFO key 0x29 down: doom key 0x1b" "$log" || { echo "wood-test: Escape did not reach Wood"; exit 1; }
     grep -q "wood: INFO key 0x51 down: doom key 0xaf" "$log" || { echo "wood-test: Down did not reach Wood"; exit 1; }
     grep -a "wood: INFO audio: \|audio: open for\|audio: capture: " "$log" | tail -4
@@ -834,7 +836,7 @@ test-dispatch: (_run-test-kernel 'dispatch-test' 'build-dispatch-test')
 [group("test")]
 test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' 'build-dispatch-test rpi4' 'rpi4')
 
-# Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time
+# Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time; the PL011 probe's high-priority Thread must wake on time beside two spinning normal Threads (the root dispatcher's priorities)
 [group("test")]
 test-driver: (_run-test-kernel 'driver-test' 'build-driver-test')
 
@@ -912,7 +914,7 @@ test-chainboot:
 
 # Run capability, boot-platform and host tool tests natively
 [group("test")]
-test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host test-wood-synth (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
+test-host: test-object-host test-platform-host test-meddle test-usb-host test-input-host test-compositor-host test-dispatcher-host test-wood-synth (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
@@ -1059,6 +1061,10 @@ clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') (_ho
 [group("test")]
 test-log-host: (_host-test 'log-server' 'protocol')
 
+# Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, no starvation guard
+[group("test")]
+test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
+
 # Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, and the bank-trimming and song-export tool
 [group("maintenance")]
 clippy-wood-synth: (_host-clippy 'wood-synth' 'synth') (_host-clippy 'wood-synth' 'doom_music') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
@@ -1100,6 +1106,12 @@ synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
 [group("test")]
 test-wood-synth: (_host-test 'wood-synth' 'synth') (_host-test 'wood-synth' 'doom_music') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
     cargo test -p sf2-trim
+
+# Time the synthesiser on the host in release mode: every shareware song for 60 s in 512-frame periods, ns per frame and per voice-frame (doc/agentic/audio-profiling.md)
+[group("test")]
+profile-synth:
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo test --release -p wood-synth --features=host-tests --test doom_music -- --ignored --nocapture --test-threads=1 profile_render
 
 # Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
 [group("tools")]

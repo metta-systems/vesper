@@ -29,7 +29,9 @@
 //!
 //! Each further Thread the driver declares (`driver_threads!`) gets its own
 //! stack and a Time with the same budget, and starts at its
-//! entry with the init page's address in `x0`, right after the first.
+//! entry with the init page's address in `x0`, right after the first. The
+//! root dispatcher receives the priority each declares (the first Thread is
+//! normal); the kernel never sees it.
 //!
 //! Once every instance is loaded, Kickstart wires their imports: for each
 //! function a driver's `interfaces/imports.if` uses, it follows the `via`
@@ -72,10 +74,10 @@ use {
     },
     libdevice_driver::{
         DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
-        FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_FURTHER_THREADS,
-        MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS,
-        MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED, PinSetting, Region,
-        ResourceRecord, STACK_REGION, VideoBlock,
+        FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS,
+        MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESOURCES,
+        MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL, PAGE_FRAME, PAGE_UNTYPED,
+        PinSetting, Priority, Region, ResourceRecord, STACK_REGION, VideoBlock,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
@@ -634,6 +636,15 @@ const RECORDS_PER_FRAME: u32 = 4096 / RECORD_STRIDE;
 /// Most Threads the root dispatcher manages: every driver instance's Threads.
 const MAX_MANAGED_THREADS: usize = MAX_DRIVER_INSTANCES * (1 + MAX_FURTHER_THREADS);
 
+const _: () = assert!(MAX_MANAGED_THREADS <= MAX_DISPATCHED_THREADS);
+
+/// A Thread the root dispatcher dispatches, and its priority.
+#[derive(Clone, Copy)]
+struct ManagedThread {
+    thread: RawKey,
+    priority: Priority,
+}
+
 /// Slot of the dispatcher's table where the key of the Thread whose record is
 /// in slot `s` sits at `FIRST_THREAD_KEY_SLOT + s`.
 const FIRST_THREAD_KEY_SLOT: u32 = 256;
@@ -642,16 +653,17 @@ const FIRST_THREAD_KEY_SLOT: u32 = 256;
 ///
 /// The Scheduler's record table is shared first: records for `managed` in
 /// slots 1 up, in Frames mapped read-only in the dispatcher's
-/// `AddressSpace`. The dispatcher receives the Scheduler and one key to each
-/// managed Thread, and where all of that is (`DriverInit::dispatch`). Binding
-/// starts it and takes the managed Threads off the kernel's queue.
+/// `AddressSpace`. The dispatcher receives the Scheduler, one key to each
+/// managed Thread and each one's priority, and where all of that is
+/// (`DriverInit::dispatch`). Binding starts it and takes the managed Threads
+/// off the kernel's queue.
 fn bind_root_dispatcher(
     builder: &Builder<'_>,
     root_scheduler: &SchedulerKey,
     scheduler_key: RawKey,
     slots: &mut SlotCursor,
     dispatcher: &mut Prepared<'_>,
-    managed: &[Option<RawKey>],
+    managed: &[Option<ManagedThread>],
 ) {
     let slot_count = u32::try_from(managed.len()).expect("a few managed Threads");
     let frames = (slot_count + 1).div_ceil(RECORDS_PER_FRAME);
@@ -680,13 +692,15 @@ fn bind_root_dispatcher(
             )
             .unwrap_or_else(|error| panic!("🥾 ShareRegion failed: {:?}", error.code()));
     }
-    for (slot, thread) in (1..).zip(managed.iter().flatten()) {
+    let mut priorities = [Priority::NORMAL; MAX_DISPATCHED_THREADS];
+    for ((slot, managed), priority) in (1..).zip(managed.iter().flatten()).zip(&mut priorities) {
+        *priority = managed.priority;
         root_scheduler
-            .assign_record(*thread, slot)
+            .assign_record(managed.thread, slot)
             .unwrap_or_else(|error| panic!("🥾 AssignRecord failed: {:?}", error.code()));
         let local = grant(
             component,
-            builder.entry(*thread),
+            builder.entry(managed.thread),
             FIRST_THREAD_KEY_SLOT + slot,
         );
         assert_eq!(
@@ -706,6 +720,7 @@ fn bind_root_dispatcher(
             stride: u64::from(RECORD_STRIDE),
             slot_count: u64::from(slot_count),
             first_thread_key_slot: u64::from(FIRST_THREAD_KEY_SLOT),
+            priorities,
         };
     });
     root_scheduler
@@ -1004,12 +1019,12 @@ pub fn load_drivers(
         let (thread, time) =
             configure_thread(image.entry.expect("a driver has an entry"), stack.top);
         let mut further_threads = [None; MAX_FURTHER_THREADS];
-        for ((record, &entry), &stack_top) in further_threads
+        for ((record, declared), &stack_top) in further_threads
             .iter_mut()
             .zip(driver.threads)
             .zip(&further_stack_tops)
         {
-            *record = Some(configure_thread(entry, stack_top).0);
+            *record = Some(configure_thread(declared.entry, stack_top).0);
         }
         let notification = retype(ObjectType::NOTIFICATION);
         let event_count = retype(ObjectType::EVENT_COUNT);
@@ -1582,13 +1597,22 @@ pub fn load_drivers(
             init: &init,
             first_free_slot,
         });
-        for thread in
-            core::iter::once(loaded.thread).chain(loaded.further_threads.into_iter().flatten())
+        // The first Thread is normal; the further ones as they declare.
+        let priorities = core::iter::once(Priority::NORMAL).chain(
+            instance
+                .driver
+                .threads
+                .iter()
+                .map(|declared| Priority(declared.priority)),
+        );
+        for (thread, priority) in core::iter::once(loaded.thread)
+            .chain(loaded.further_threads.into_iter().flatten())
+            .zip(priorities)
         {
             root_scheduler
                 .start_thread(thread)
                 .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
-            managed[managed_count] = Some(thread);
+            managed[managed_count] = Some(ManagedThread { thread, priority });
             managed_count += 1;
         }
         started += 1;
@@ -1606,7 +1630,10 @@ pub fn load_drivers(
                 .expect("the boot Thread exists")
                 .scheduler = Some(root);
             nucleus.join_scheduler(boot, root);
-            managed[managed_count] = Some(keys.boot_thread);
+            managed[managed_count] = Some(ManagedThread {
+                thread: keys.boot_thread,
+                priority: Priority::NORMAL,
+            });
             managed_count += 1;
         }
         let loaded = prepared[number].as_mut().expect("a loaded dispatcher");

@@ -10,7 +10,9 @@
 //! changed. After the first, it releases the extra Thread (`driver_threads!`),
 //! which waits on the component's `EventCount` and then draws the lava lamp
 //! continuously, a frame every few tens of milliseconds, while the prompt stays
-//! available.
+//! available. The lamp animates only while the window has the keyboard focus:
+//! it follows the compositor's events on the client's event channel, and while
+//! another window has the focus it sleeps on that channel and draws nothing.
 
 use {
     compositor_client::compositor_v1::{
@@ -18,7 +20,10 @@ use {
         PixelOrder as WireOrder,
     },
     core::sync::atomic::{AtomicU64, Ordering},
-    libcompositor_core::surface::{FRAME_BYTES, frames, pitch_bytes},
+    libcompositor_core::{
+        events::{EventChannel, Receiver, data_area},
+        surface::{FRAME_BYTES, frames, pitch_bytes},
+    },
     libdevice_driver::{DriverInit, SURFACE_WINDOW_VA, driver_init, local_key},
     libgraphics::{Color, Font, Lava, Painter, PixelOrder, Surface},
     libobject::{
@@ -26,6 +31,7 @@ use {
         RawKey, Rights, UntypedKey,
     },
     shell::Failure,
+    vesper_input_event::record::{EVENT_SIZE, Event, Kind},
 };
 
 /// The size of the window `draw` asks for. A surface is whole 2 MiB Frames and
@@ -293,16 +299,121 @@ fn paint(screen: &mut Screen, order: PixelOrder, font: &Font<'_>) {
         .and_then(|()| painter.text(170, 70, "BLUE", font, Color::blue()));
 }
 
+/// Whether the window has the keyboard focus, followed from the events the
+/// compositor sends on the client's event channel (`compositor_v1`'s
+/// io-channel): the lamp animates only while it has.
+struct Focus {
+    /// The client end of the event channel, if the compositor gave one
+    receiver: Option<Receiver<'static, EventCountKey>>,
+    focused: bool,
+}
+
+impl Focus {
+    /// Post the event channel's buffers, then ask the compositor's
+    /// `snapshot` whether the window has the focus now: the focus it got when
+    /// it was made came before any buffer was posted. Without a channel the
+    /// window counts as focused, and the lamp never pauses.
+    fn open(compositor: &CompositorClient) -> Self {
+        let receiver = compositor
+            .channel()
+            .filter(|area| area.event != 0)
+            .map(|area| {
+                // SAFETY: Kickstart mapped the channel's control page and data
+                // page read/write for the component's lifetime.
+                let channel = unsafe { EventChannel::at(area.control) };
+                let completed = EventCountKey::from_key(RawKey::from_wire(area.event));
+                // SAFETY: as above, the data page stays mapped.
+                unsafe { Receiver::new(channel, data_area(area.control), completed) }
+            });
+        let mut focus = Self {
+            receiver,
+            focused: true,
+        };
+        if focus.receiver.is_some() {
+            focus.resync(compositor);
+        }
+        focus
+    }
+
+    /// Rebuild the focus from the compositor's `snapshot`: it lists a `Focus`
+    /// record only for the focused window. A failed call leaves the lamp
+    /// animating.
+    fn resync(&mut self, compositor: &CompositorClient) {
+        let mut records = [Event::sync(0, 0); SNAPSHOT_RECORDS];
+        let bytes = (SNAPSHOT_RECORDS * EVENT_SIZE) as u64;
+        let Some(area) = compositor.data_area() else {
+            return;
+        };
+        let Some(length) = area
+            .reference(0, bytes)
+            .and_then(|stage| compositor.snapshot(stage).ok())
+        else {
+            return;
+        };
+        let length = usize::try_from(length).unwrap_or(0).min(records.len() * EVENT_SIZE);
+        let mut record = [0_u8; EVENT_SIZE];
+        let mut count = 0;
+        for offset in (0..length).step_by(EVENT_SIZE) {
+            if !area.read_bytes(offset as u64, &mut record) {
+                break;
+            }
+            if let Ok(event) = Event::from_bytes(&record) {
+                records[count] = event;
+                count += 1;
+            }
+        }
+        self.focused = records[..count]
+            .iter()
+            .any(|event| event.kind == Kind::Focus && event.value != 0);
+    }
+
+    /// Follow one record of the channel.
+    fn handle(&mut self, event: &Event, compositor: &CompositorClient) {
+        match event.kind {
+            Kind::Focus if event.subject == window_id() => self.focused = event.value != 0,
+            Kind::Dropped => self.resync(compositor),
+            _ => {}
+        }
+    }
+
+    /// Follow what arrived, without waiting.
+    fn follow(&mut self, compositor: &CompositorClient) {
+        while let Some(event) = self.receiver.as_mut().and_then(Receiver::next_event) {
+            self.handle(&event, compositor);
+        }
+    }
+
+    /// Sleep on the event channel until the window has the focus again.
+    fn wait_for_focus(&mut self, compositor: &CompositorClient) {
+        while !self.focused {
+            let Some(receiver) = self.receiver.as_mut() else {
+                return;
+            };
+            match receiver.wait_event() {
+                Ok(event) => self.handle(&event, compositor),
+                // Waiting cannot work: animate rather than stop for good.
+                Err(_) => self.focused = true,
+            }
+        }
+    }
+}
+
+/// Records a snapshot may hold: the focus, the keys and buttons held, the
+/// pointer and the `Sync`s.
+const SNAPSHOT_RECORDS: usize = 32;
+
 libdevice_driver::driver_threads!(lamp);
 
 /// The shell's second Thread: once `draw` has released it, animate the lava
-/// lamp beside the static scene, for good.
+/// lamp beside the static scene while the window has the keyboard focus, and
+/// sleep on the compositor's events while it has not.
 fn lamp(init_va: u64) -> ! {
     // SAFETY: Kickstart passes the init page's address in x0.
     let init = unsafe { driver_init(init_va) };
     let announce = EventCountKey::from_key(RawKey::from_wire(init.event_count));
     if announce.await_ge(1, EventCountKey::WAIT_INFINITE).is_ok() {
         let compositor = CompositorClient::new(CompositorBindings::from_imports(init.imports()));
+        let mut focus = Focus::open(&compositor);
         let mut screen = mapped_screen();
         let mut painter = Painter::new(&mut screen, order());
         #[cfg(feature = "qemu")]
@@ -311,6 +422,13 @@ fn lamp(init_va: u64) -> ! {
         let mut frames = 0_u32;
         let mut lava = Lava::new(LAMP_COLUMNS, LAMP_ROWS, LAMP_CELL, 0x5eed_1a7a);
         loop {
+            if !focus.focused {
+                #[cfg(feature = "qemu")]
+                libuser::semihosting::println!("lamp: paused after frame {frames}, unfocused");
+                focus.wait_for_focus(&compositor);
+                #[cfg(feature = "qemu")]
+                libuser::semihosting::println!("lamp: resumed, focused");
+            }
             lava.step();
             lava.draw(&mut painter, LAMP_X, LAMP_Y);
             // Tell the compositor the lamp's rectangle changed.
@@ -342,6 +460,7 @@ fn lamp(init_va: u64) -> ! {
             }
             // The count never reaches this target: the wait is the frame timer.
             let _timed_out = announce.await_ge(u64::MAX, FRAME_NS);
+            focus.follow(&compositor);
         }
     }
     let park = NotificationKey::from_key(RawKey::from_wire(init.notification));

@@ -308,6 +308,16 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 - A registered or Doom II IWAD: `just wood-soundfont` with that IWAD (the tool takes
   `--wad`); GeneralUser GS trimmed the same way if images are to be published (D9.4 c).
 - Listening comparison on the host with Room's `wood-synth` feature.
+- Performance: see [audio-profiling.md](audio-profiling.md) (2026-10-29) for the
+  profile and the ranked proposals.
+  - The synthesiser costs about 25 aarch64 instructions per voice-frame (61 before
+    proposal 4).
+  - Wood's 20–31 ms service maxima are round-robin preemption: a 10 ms
+    `SLICE_NS` and three CPU-bound peers. They are not render work.
+  - The proposals include Wood pre-filling its queue before `open`, a deeper
+    queue, dispatcher changes (a D8 revisit), and a bit-exact voice-loop rewrite.
+  - Done 2026-10-29: proposal 4, the bit-exact voice-loop rewrite (55.7 → 21.6 aarch64
+    instructions per voice-frame, the synthesiser −45 % on `midi-test`, hashes unchanged).
 
 ## Verification
 

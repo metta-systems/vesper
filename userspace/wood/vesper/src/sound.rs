@@ -9,18 +9,21 @@
 //! sound methods, only stores and loads its atomics, and never waits on
 //! audio; the playback Thread mixes them into the io-channel's buffers.
 //!
-//! The playback Thread ([`playback`], declared with `driver_threads!`) is
-//! the only one calling `audio_v1`. Kickstart starts it at boot; it waits
-//! on Wood's `EventCount` until the engine's `sound_init` releases it
-//! ([`RELEASED`]), then asks the driver for its rate and opens the output.
-//! It answers ([`ANSWERED`]) with [`STATE`]: playing, or silent when the
-//! image has no audio driver or another client has the output (logged
-//! once). While it plays it keeps [`QUEUED_BUFFERS`] buffers of
-//! [`BUFFER_FRAMES`] frames queued: it waits for a packet to come back on
-//! the channel (a buffer free), mixes the next buffer into it and puts it
-//! back. At `sound_shutdown` it stops refilling, closes the output right
-//! after the last packet (`close` plays out what is queued), and answers
-//! [`CLOSED`].
+//! The playback Thread ([`playback`], declared with `driver_threads!` at
+//! high priority, so the root dispatcher runs it as soon as a buffer comes
+//! back, ahead of the engine, the compositor and the lava lamp) is the only
+//! one calling `audio_v1`. Kickstart starts it at boot; it waits on Wood's
+//! `EventCount` until the engine's `sound_init` releases it ([`RELEASED`]),
+//! then asks the driver for its rate, takes the MIDI synthesiser, queues the
+//! first [`QUEUED_BUFFERS`] buffers and only then opens the output, so the
+//! driver starts on a full queue (as midi-test's player does). It answers
+//! ([`ANSWERED`]) with [`STATE`]: playing, or silent when the image has no
+//! audio driver or another client has the output (logged once). While it
+//! plays it keeps [`QUEUED_BUFFERS`] buffers of [`BUFFER_FRAMES`] frames
+//! queued: it waits for a packet to come back on the channel (a buffer
+//! free), mixes the next buffer into it and puts it back. At
+//! `sound_shutdown` it stops refilling, closes the output right after the
+//! last packet (`close` plays out what is queued), and answers [`CLOSED`].
 //!
 //! Wood's `EventCount` doubles as the engine's sleep timer: a sleep awaits a
 //! count it never reaches, so these advances do not cut sleeps short.
@@ -71,10 +74,13 @@ const CLOSE_TIMEOUT_NS: u64 = 1_000_000_000;
 const BUFFER_FRAMES: usize = 512;
 /// Bytes of one buffer.
 const BUFFER_BYTES: u64 = BUFFER_FRAMES as u64 * FRAME_BYTES;
-/// Buffers kept queued: 46 ms of sound ahead of the driver's ring, which
-/// holds as much again. A sound starts reaching the jack within about
-/// 100 ms of the engine starting it.
-const QUEUED_BUFFERS: u64 = 4;
+/// Buffers kept queued: 93 ms of sound ahead of the driver's ring, which
+/// holds 46 ms more. That is the slack the playback Thread has when it is
+/// late to refill; it covers several 10 ms dispatcher slices of the other
+/// Threads with margin. The cost is latency: a sound starts reaching the
+/// jack within about 150 ms of the engine starting it. The eight buffers
+/// fill the channel's four data pages (`channel 4;` in `audio_v1`).
+const QUEUED_BUFFERS: u64 = 8;
 
 /// Release the playback Thread and wait for it to open the output; `true`
 /// when it plays. Game Thread, from `sound_init`.
@@ -103,7 +109,7 @@ pub fn shut_down(hand_over: &EventCountKey) {
     }
 }
 
-libdevice_driver::driver_threads!(playback);
+libdevice_driver::driver_threads!(playback => libdevice_driver::Priority::HIGH);
 
 /// Wood's playback Thread: once `sound_init` releases it, open the output
 /// and keep it fed with the mixed voices until `sound_shutdown`.
@@ -116,11 +122,14 @@ fn playback(init_va: u64) -> ! {
         .is_ok()
     {
         let client = Client::new(Bindings::from_imports(init.imports()));
-        match Output::open(&client) {
+        // The music first, so that the first buffers carry it.
+        match Output::new(&client).and_then(|mut output| {
+            output.music = Music::open(init, output.rate_millihertz)
+                .inspect_err(|reason| log::warn!("music: {reason}; music stays silent"))
+                .ok();
+            output.start(&client).map(|()| output)
+        }) {
             Ok(mut output) => {
-                output.music = Music::open(init, output.rate_millihertz)
-                    .inspect_err(|reason| log::warn!("music: {reason}; music stays silent"))
-                    .ok();
                 STATE.store(STATE_PLAYING, Ordering::Release);
                 answer(&hand_over);
                 output.play(&client);
@@ -208,9 +217,10 @@ struct Output {
 const SUMMARY_BUFFERS: u64 = 256;
 
 impl Output {
-    /// Ask the driver for its rate and open the output; why not, if it
-    /// cannot be.
-    fn open(client: &Client) -> Result<Self, &'static str> {
+    /// Ask the driver for its rate and take the io-channel (the output opens
+    /// once the first buffers are queued, [`start`](Self::start)); why not,
+    /// if it cannot be.
+    fn new(client: &Client) -> Result<Self, &'static str> {
         let rate_millihertz = client.rate().map_err(|error| match error {
             Error::NotGranted => "no audio driver in the image",
             _ => "the audio driver did not answer",
@@ -221,21 +231,12 @@ impl Output {
         if area.event == 0 || area.data.len < QUEUED_BUFFERS * BUFFER_BYTES {
             return Err("the io-channel to the audio driver is too small");
         }
-        client.open().map_err(|error| match error {
-            Error::Exception(Exception::Busy) => "another client has the audio output",
-            _ => "opening the audio output failed",
-        })?;
         // SAFETY: Kickstart mapped the channel's control page read/write
         // for good, shared with the driver only.
         let channel = unsafe { channel_at(area.control) };
         let (submit, completions) = channel.client(
             NoEvent,
             EventCountKey::from_key(RawKey::from_wire(area.event)),
-        );
-        log::info!(
-            "audio: open at {}.{:03} Hz, {QUEUED_BUFFERS} buffers of {BUFFER_FRAMES} frames queued",
-            rate_millihertz / 1000,
-            rate_millihertz % 1000
         );
         Ok(Self {
             submit,
@@ -251,6 +252,31 @@ impl Output {
             refill_max_ns: 0,
             summary_underruns: 0,
         })
+    }
+
+    /// Queue the first [`QUEUED_BUFFERS`] buffers, then open the output: the
+    /// driver starts on a full queue, so the stream does not begin counting
+    /// underruns with one buffer queued while the engine starts up. On
+    /// failure the MIDI synthesiser is let go.
+    fn start(&mut self, client: &Client) -> Result<(), &'static str> {
+        for index in 0..QUEUED_BUFFERS {
+            self.refill(client, index);
+        }
+        if let Err(error) = client.open() {
+            if let Some(music) = self.music.take() {
+                music.close();
+            }
+            return Err(match error {
+                Error::Exception(Exception::Busy) => "another client has the audio output",
+                _ => "opening the audio output failed",
+            });
+        }
+        log::info!(
+            "audio: open at {}.{:03} Hz, {QUEUED_BUFFERS} buffers of {BUFFER_FRAMES} frames queued",
+            self.rate_millihertz / 1000,
+            self.rate_millihertz % 1000
+        );
+        Ok(())
     }
 
     /// Log what the last [`SUMMARY_BUFFERS`] buffers took: the line to read
@@ -330,12 +356,10 @@ impl Output {
         );
     }
 
-    /// Keep the queue full until `sound_shutdown`, then close the output
-    /// after the last packet and take back every packet.
+    /// Keep the queue [`start`](Self::start) filled full until
+    /// `sound_shutdown`, then close the output after the last packet and
+    /// take back every packet.
     fn play(&mut self, client: &Client) {
-        for index in 0..QUEUED_BUFFERS {
-            self.refill(client, index);
-        }
         let mut outstanding = QUEUED_BUFFERS;
         loop {
             let Ok(back) = self.completions.wait() else {

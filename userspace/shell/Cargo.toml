@@ -33,6 +33,7 @@ libserial-channel = { workspace = true }
 libuser = { workspace = true }
 mailbox-client = { workspace = true }
 power-client = { workspace = true }
+vesper-input-event = { workspace = true }
 
 [lib]
 test = false
