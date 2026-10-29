@@ -12,8 +12,7 @@ use {
     futures::{Stream, future::FutureExt},
     libchainboot_protocol::{
         BEACON, CONSOLE_ACK, CONSOLE_BEACON, HOST_CONSOLE_CONFIRM_TIMEOUT,
-        HOST_FAST_BEACON_TIMEOUT, RATE_ACCEPTED, RateAnswer, Run, encode_rate_request,
-        rate_answer,
+        HOST_FAST_BEACON_TIMEOUT, RATE_ACCEPTED, RateAnswer, Run, encode_rate_request, rate_answer,
     },
     seahash::SeaHasher,
     std::{
@@ -132,7 +131,10 @@ async fn wait_for_beacon(from_serial: &mut Receiver, beacon: [u8; 3]) -> Result<
         let Some(Ok(Message::Text(chunk))) = from_serial.recv().await else {
             return Err(anyhow!("The serial line closed while waiting for a beacon"));
         };
-        if chunk.chars().any(|character| run.push(beacon_byte(character))) {
+        if chunk
+            .chars()
+            .any(|character| run.push(beacon_byte(character)))
+        {
             return Ok(());
         }
     }
@@ -252,13 +254,13 @@ async fn switch_rate(
 async fn negotiate_console(
     to_console2: Sender,
     to_serial: Sender,
-    mut from_serial: Receiver,
+    from_serial: &mut Receiver,
     rate: u32,
 ) -> Result<Upload> {
     let switched = switch_rate(
         &to_console2,
         &to_serial,
-        &mut from_serial,
+        from_serial,
         rate,
         KICKSTART_CONSOLE,
     )
@@ -469,7 +471,7 @@ enum Upload {
 async fn send_kernel<P: ThePath>(
     to_console2: Sender,
     to_serial: Sender,
-    mut from_serial: Receiver,
+    from_serial: &mut Receiver,
     kernel: P,
     rates: Rates,
 ) -> Result<Upload> {
@@ -480,7 +482,7 @@ async fn send_kernel<P: ThePath>(
         if !switch_rate(
             &to_console2,
             &to_serial,
-            &mut from_serial,
+            from_serial,
             load_rate,
             CHAINBOOT_LOAD,
         )
@@ -494,7 +496,7 @@ async fn send_kernel<P: ThePath>(
     send_image(
         &to_console2,
         &to_serial,
-        &mut from_serial,
+        from_serial,
         kernel_file,
         kernel_size,
     )
@@ -670,10 +672,12 @@ where
 
     // Protocol channel: while an upload task is running, serial bytes are
     // routed here instead of being printed, so send_kernel can await the
-    // target's replies without starving the select loop's other branches.
+    // target's replies without starving the select loop's other branches. The
+    // task hands the channel back when it ends: what arrived after its last read
+    // is the target going on, and goes to the console.
     let (mut to_proto, from_proto) = mpsc::channel::<Result<Message>>(256);
     let mut from_proto = Some(from_proto);
-    let mut upload: Option<tokio::task::JoinHandle<Result<Upload>>> = None;
+    let mut upload: Option<tokio::task::JoinHandle<(Result<Upload>, Receiver)>> = None;
 
     loop {
         tokio::select! {
@@ -703,9 +707,10 @@ where
             Some(received) = from_serial.recv() => { // returns Vec<char>
                 last_heard = tokio::time::Instant::now();
                 if let Ok(received) = received {
-                    // While an upload is in flight, hand bytes to the protocol task.
-                    // If the task already finished (receiver dropped), fall through to
-                    // pass-through printing instead of failing with "channel closed".
+                    // While an upload is in flight, hand bytes to the protocol task;
+                    // what it did not read is printed when it ends. If the task
+                    // panicked (receiver dropped), fall through to pass-through
+                    // printing instead of failing with "channel closed".
                     if upload.is_some() && to_proto.send(Ok(received.clone())).await.is_ok() {
                         continue;
                     }
@@ -735,13 +740,12 @@ where
                                 && line_rate == rates.initial
                                 && let Some(rate) = load_rate
                             {
-                                let handle = tokio::spawn(negotiate_console(
-                                    to_console2.clone(),
-                                    to_serial.clone(),
-                                    from_proto.take().expect("proto receiver already taken"),
-                                    rate,
-                                ));
-                                upload = Some(handle);
+                                let mut protocol_line = from_proto.take().expect("proto receiver already taken");
+                                let (to_console2, to_serial) = (to_console2.clone(), to_serial.clone());
+                                upload = Some(tokio::spawn(async move {
+                                    let outcome = negotiate_console(to_console2, to_serial, &mut protocol_line, rate).await;
+                                    (outcome, protocol_line)
+                                }));
                             }
                             continue;
                         }
@@ -766,14 +770,13 @@ where
                                 };
                                 // Spawn the upload so this loop keeps polling
                                 // from_internal (status messages) and stdin.
-                                let handle = tokio::spawn(send_kernel(
-                                    to_console2.clone(),
-                                    to_serial.clone(),
-                                    from_proto.take().expect("proto receiver already taken"),
-                                    kernel,
-                                    Rates { initial: rates.initial, load: load_rate },
-                                ));
-                                upload = Some(handle);
+                                let mut protocol_line = from_proto.take().expect("proto receiver already taken");
+                                let (to_console2, to_serial) = (to_console2.clone(), to_serial.clone());
+                                let rates = Rates { initial: rates.initial, load: load_rate };
+                                upload = Some(tokio::spawn(async move {
+                                    let outcome = send_kernel(to_console2, to_serial, &mut protocol_line, kernel, rates).await;
+                                    (outcome, protocol_line)
+                                }));
                             }
                         } else {
                             while breaks > 0 {
@@ -788,12 +791,26 @@ where
                 }
             }
 
-            Some(result) = async { match &mut upload { Some(h) => Some(h.await), None => None } } => {
+            Some(joined) = async { match &mut upload { Some(h) => Some(h.await), None => None } } => {
                 upload = None;
-                // The task consumed from_proto; recreate the channel for the next round.
-                let (tx, rx) = mpsc::channel::<Result<Message>>(256);
-                to_proto = tx;
-                from_proto = Some(rx);
+                let result = match joined {
+                    Ok((outcome, mut protocol_line)) => {
+                        // What arrived after the task's last read: the target going on.
+                        while let Ok(Ok(Message::Text(text))) = protocol_line.try_recv() {
+                            execute!(w, style::Print(text))?;
+                        }
+                        w.flush()?;
+                        from_proto = Some(protocol_line);
+                        Ok(outcome)
+                    }
+                    Err(join_error) => {
+                        // The task took the channel with it; make one for the next round.
+                        let (tx, rx) = mpsc::channel::<Result<Message>>(256);
+                        to_proto = tx;
+                        from_proto = Some(rx);
+                        Err(join_error)
+                    }
+                };
                 if let Ok(Ok(Upload::Loaded { line_rate: loaded_at })) = result {
                     line_rate = loaded_at;
                     restart_watch = RestartWatch::default();
@@ -1336,9 +1353,15 @@ mod tests {
         let (_line, mut from_serial) = serial(&["BAUD OK", "\u{fffd}\0", "\u{3}\u{3}", "\u{3}"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
-            .await
-            .expect("no line errors");
+        let switched = switch_rate(
+            &to_console,
+            &to_serial,
+            &mut from_serial,
+            2_000_000,
+            CHAINBOOT_LOAD,
+        )
+        .await
+        .expect("no line errors");
         assert!(switched);
         let (bytes, rates) = sent_to_serial(&mut serial_line);
         assert_eq!(bytes, encode_rate_request(2_000_000));
@@ -1351,9 +1374,15 @@ mod tests {
             serial(&["BAUD NO\r\n⏪ Staying at the rate: 4000000 baud is out of range"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 4_000_000, CHAINBOOT_LOAD)
-            .await
-            .expect("no line errors");
+        let switched = switch_rate(
+            &to_console,
+            &to_serial,
+            &mut from_serial,
+            4_000_000,
+            CHAINBOOT_LOAD,
+        )
+        .await
+        .expect("no line errors");
         assert!(!switched);
         assert!(sent_to_serial(&mut serial_line).1.is_empty());
     }
@@ -1363,9 +1392,15 @@ mod tests {
         let (_line, mut from_serial) = serial(&["ERR ❌ Kernel image too big (over 1 bytes)"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
-            .await
-            .expect("no line errors");
+        let switched = switch_rate(
+            &to_console,
+            &to_serial,
+            &mut from_serial,
+            2_000_000,
+            CHAINBOOT_LOAD,
+        )
+        .await
+        .expect("no line errors");
         assert!(!switched);
         assert!(sent_to_serial(&mut serial_line).1.is_empty());
     }
@@ -1377,9 +1412,15 @@ mod tests {
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
         let started = Instant::now();
-        let switched = switch_rate(&to_console, &to_serial, &mut from_serial, 2_000_000, CHAINBOOT_LOAD)
-            .await
-            .expect("no line errors");
+        let switched = switch_rate(
+            &to_console,
+            &to_serial,
+            &mut from_serial,
+            2_000_000,
+            CHAINBOOT_LOAD,
+        )
+        .await
+        .expect("no line errors");
         assert!(!switched);
         assert!(started.elapsed() >= HOST_FAST_BEACON_TIMEOUT);
         // The host switched and gives up; the console loop takes it back.
@@ -1524,13 +1565,29 @@ mod tests {
 
     #[tokio::test]
     async fn the_console_rate_is_confirmed_with_an_ack() {
-        let (_line, from_serial) = serial(&["BAUD OK", "\u{fffd}\0", "\u{2}\u{2}", "\u{2}"]);
+        let (_line, mut from_serial) = serial(&[
+            "BAUD OK",
+            "\u{fffd}\0",
+            "\u{2}\u{2}",
+            "\u{2}",
+            "🥾 started\r\n",
+        ]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let outcome = negotiate_console(to_console, to_serial, from_serial, 1_500_000)
+        let outcome = negotiate_console(to_console, to_serial, &mut from_serial, 1_500_000)
             .await
             .expect("no line errors");
-        assert_eq!(outcome, Upload::Console { line_rate: 1_500_000 });
+        assert_eq!(
+            outcome,
+            Upload::Console {
+                line_rate: 1_500_000
+            }
+        );
+        // Kickstart's lines after the beacon stay on the line for the console.
+        assert!(matches!(
+            from_serial.try_recv(),
+            Ok(Ok(Message::Text(text))) if text == "🥾 started\r\n"
+        ));
         let (bytes, rates) = sent_to_serial(&mut serial_line);
         let mut expected = encode_rate_request(1_500_000).to_vec();
         expected.extend_from_slice(&CONSOLE_ACK);
@@ -1541,11 +1598,11 @@ mod tests {
     #[tokio::test]
     async fn a_load_beacon_does_not_confirm_the_console() {
         // Takes HOST_CONSOLE_CONFIRM_TIMEOUT of real time.
-        let (_line, from_serial) = serial(&["BAUD OK", "\u{3}\u{3}\u{3}"]);
+        let (_line, mut from_serial) = serial(&["BAUD OK", "\u{3}\u{3}\u{3}"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
         let started = Instant::now();
-        let outcome = negotiate_console(to_console, to_serial, from_serial, 1_500_000)
+        let outcome = negotiate_console(to_console, to_serial, &mut from_serial, 1_500_000)
             .await
             .expect("no line errors");
         assert_eq!(outcome, Upload::ConsoleStayed);
@@ -1558,11 +1615,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_console_rate_stays() {
-        let (_line, from_serial) =
+        let (_line, mut from_serial) =
             serial(&["BAUD NO\r\n🥾 Staying at the rate: 4000000 baud is out of range"]);
         let (to_console, _console) = mpsc::channel(16);
         let (to_serial, mut serial_line) = mpsc::channel(16);
-        let outcome = negotiate_console(to_console, to_serial, from_serial, 4_000_000)
+        let outcome = negotiate_console(to_console, to_serial, &mut from_serial, 4_000_000)
             .await
             .expect("no line errors");
         assert_eq!(outcome, Upload::ConsoleStayed);

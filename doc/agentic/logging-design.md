@@ -1,6 +1,6 @@
 # Logging design (several components, one PL011)
 
-Status: decisions L1 to L10 answered on 2026-10-28 and L11 on 2026-10-29 (section
+Status: decisions L1 to L10 answered on 2026-10-28 and L11 and L12 on 2026-10-29 (section
 Decisions). Stage L-A (the
 log server in wood-test with the compositor, Wood, the MIDI synthesiser and the audio
 driver as clients, and Wood's music summary) is built and checked in QEMU; the board
@@ -118,6 +118,37 @@ question to the maintainer.
   channel, [input-design.md](input-design.md)) turns the events back into the shell's
   bytes. Not chosen: two UARTs
   (b); an output-only serial port (c).
+- **L12. Serial console at boot: c, negotiate the rate at boot as chainboot does;
+  Kickstart prints its early lines on the UART.** Answered 2026-10-29. Goal: an image
+  booted from the SD card (no chainboot) still has a working serial console.
+  Kickstart sets the PL011 up itself first thing at EL2 (MMU off): GPIO 14/15 to ALT0
+  (the maintainer's `config.txt` has `dtoverlay=disable-bt`, Kickstart routes the pins
+  anyway, as chainboot does), the UART clock from the mailbox, 115 200 8N1 with
+  FIFOs. It then offers a faster console for 1.5 s: the console beacon (`^B^B^B`),
+  answered by chainofcommand with chainboot's rate request for `--load-baud`, the
+  same answers, a switch with `SWITCH_SETTLE`, and a confirmation at the new rate
+  (`^F^F^F` back from the host) or a fall back to 115 200 (protocol in
+  `libs/chainboot-protocol`, "The console negotiation"). Nobody answering costs the
+  1.5 s and leaves 115 200. Kickstart's early boot lines go to the UART as well as
+  semihosting (`kernel/kickstart/src/early_console.rs`), until just before the MMU
+  goes on and Kickstart drops to EL1, where the UART is not mapped: the
+  `uart-pl011` driver is the one owner from its start and keeps the divisors, so the
+  negotiated rate carries to the log server. This narrows L8's "Kickstart stays
+  semihosting-only" to Kickstart's EL1 part.
+  - **Chainboot detection: a handoff.** Chainboot jumps to the kernel with
+    `x1 = BAUDKEEP` (ASCII, little-endian) and `x2` = the rate; `libboot` keeps both
+    (`loader_registers`), and Kickstart then uses the UART as chainboot left it and
+    skips the negotiation (the earlier decision: the kernel stays at the rate the boot
+    loader set). The firmware's stub and QEMU leave both zero. Not chosen: sniffing
+    PL011 UARTCR.UARTEN and the divisors, which cannot tell chainboot's negotiated rate
+    from the firmware's `enable_uart=1` at 115 200, which must still negotiate.
+  - **Host side:** chainofcommand reacts to the console beacon in every mode, asking
+    for `--load-baud` (no separate option); `--console` sends no kernel, and
+    `just console` runs it that way for a board booted from the SD card.
+  - Not chosen: (a) keep the rate the UART has, or default to 115 200 (a board booted
+    from the SD card is stuck at 115 200, or at whatever the firmware left); (b) a
+    fixed rate chosen at build time (the host must match it by hand, and a rate the
+    line cannot carry loses the console with no way back).
 
 ## Current state before the log server
 

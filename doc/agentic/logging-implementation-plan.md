@@ -156,6 +156,35 @@ through the serial console too"). Design: section Panics and faults.
 - [ ] A line from the log server when a client's channel shows a malformed packet or
   a large drop count, so a misbehaving client is named.
 
+## L-E: serial console at boot (L12)
+
+Decision L12 (2026-10-29): Kickstart sets the PL011 up, negotiates the rate as
+chainboot does unless chainboot handed over, and prints its early lines on the UART.
+
+- [x] Protocol (`libs/chainboot-protocol`): the console beacon `^B^B^B`, the ACK
+  `^F^F^F`, `CONSOLE_WAIT` (a beacon every 250 ms for 1.5 s), `CONSOLE_CONFIRM_WAIT`,
+  `HOST_CONSOLE_CONFIRM_TIMEOUT`, `CONSOLE_REQUEST_GAP`, the chainboot handoff
+  (`HANDOFF_MAGIC`, `handoff_registers`, `kept_rate`) and `Run`; host tests in
+  `tests/chainboot_protocol/console.rs` (encoding, an older host ignoring the beacon,
+  timing).
+- [x] `libs/boot-uart` (`vesper-boot-uart`): chainboot's GPIO, mailbox and PL011 code,
+  shared by chainboot and Kickstart. `libboot` keeps `x1` and `x2` at entry
+  (`loader_registers`); chainboot passes its handoff there at the jump.
+- [x] Kickstart's early console (`kernel/kickstart/src/early_console.rs`): bring-up,
+  the handoff check, the negotiation, early lines on UART and semihosting, handed over
+  before the MMU goes on.
+- [x] chainofcommand answers the console beacon with `--load-baud`; `--console` sends
+  no kernel (`just console`). What arrives after a protocol exchange's last read is
+  printed (it was dropped, which lost Kickstart's first lines after a load). Host
+  tests: `cargo test -p chainofcommand`.
+- [x] QEMU, by hand (logs in `target/kserial-*.log`): the production image with
+  chainofcommand over TCP negotiates 187 500 baud (QEMU's UART clock is 3 MHz, so
+  1 500 000 is refused, which checks the refusal); chainboot loading it at 187 500
+  hands over and Kickstart keeps the rate; with no host Kickstart stays at 115 200.
+  `just test-wood` passes with the early lines ahead of the log server's.
+- [ ] Board: wood-test from the SD card with `just console`, and through
+  `just boot-wood-test` (handoff), on the Pi 3 B.
+
 ## Verification commands
 
 | Command | What it checks |

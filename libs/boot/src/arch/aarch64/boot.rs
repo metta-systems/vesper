@@ -82,14 +82,14 @@ pub unsafe extern "C" fn _startup_in_rust(dtb: u32, loader_x1: u64, loader_x2: u
     // On entry, w0 should contain the dtb address.
     // For non-primary cores it contains 0.
 
-    // BSS is zeroed: keep what the loader left in x1 and x2 for later.
-    LOADER_REGISTERS[0].store(loader_x1, Ordering::Relaxed);
-    LOADER_REGISTERS[1].store(loader_x2, Ordering::Relaxed);
-
     // Can't match values with dots in names in match, so use intermediate consts.
     #[cfg(feature = "qemu")]
     const EL3: u64 = CurrentEL::EL::EL3.value;
     const EL2: u64 = CurrentEL::EL::EL2.value;
+
+    // BSS is zeroed: keep what the loader left in x1 and x2 for later.
+    LOADER_REGISTERS[0].store(loader_x1, Ordering::Relaxed);
+    LOADER_REGISTERS[1].store(loader_x2, Ordering::Relaxed);
 
     // Enable timer counter registers for EL1 - FIXME can be done later after reset
     CNTHCTL_EL2.write(CNTHCTL_EL2::EL1PCEN::SET + CNTHCTL_EL2::EL1PCTEN::SET);

@@ -19,8 +19,9 @@
 //! interrupt Thread reads the data and status registers and clears
 //! interrupts, the transmit Thread writes the data register.
 //!
-//! The baud rate and the UART clock stay as the firmware set them: the
-//! driver rewrites only the line control, which latches the divisors
+//! The baud rate and the UART clock stay as the boot set them (chainboot,
+//! or Kickstart's early console, which negotiates the rate with the host):
+//! the driver rewrites only the line control, which latches the divisors
 //! already in place.
 //!
 //! Resources: the PL011 Technical Reference Manual (Arm DDI 0183), the

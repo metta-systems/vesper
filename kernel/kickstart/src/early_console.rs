@@ -32,10 +32,10 @@ use {
     },
     libboot_uart::{DEFAULT_UART_CLOCK, GPIO_BASE, PL011_BASE, gpio, mailbox, pl011::Pl011},
     libchainboot_protocol::{
-        BOOT_BAUD_RATE, CONSOLE_ACK, CONSOLE_BEACON, CONSOLE_CONFIRM_WAIT,
-        CONSOLE_REQUEST_GAP, CONSOLE_WAIT, Opening, RATE_ACCEPTED, RATE_REFUSED,
-        RATE_REQUEST_BODY_LENGTH, RATE_REQUEST_MAGIC, RateRefusal, Run, SWITCH_SETTLE,
-        decode_rate_request_body, kept_rate, opening, validate_rate,
+        BOOT_BAUD_RATE, CONSOLE_ACK, CONSOLE_BEACON, CONSOLE_CONFIRM_WAIT, CONSOLE_REQUEST_GAP,
+        CONSOLE_WAIT, Opening, RATE_ACCEPTED, RATE_REFUSED, RATE_REQUEST_BODY_LENGTH,
+        RATE_REQUEST_MAGIC, RateRefusal, Run, SWITCH_SETTLE, decode_rate_request_body, kept_rate,
+        opening, validate_rate,
     },
     libconsole::{SerialOps, console::interface::Write},
     libqemu::semihosting as semi,
@@ -77,8 +77,13 @@ impl fmt::Display for Console {
         match self {
             Self::Kept { rate } => write!(formatter, "{rate} baud, as chainboot left it"),
             Self::Negotiated { rate } => write!(formatter, "{rate} baud, as the host asked"),
-            Self::NoHost => write!(formatter, "{BOOT_BAUD_RATE} baud, no host asked for another"),
-            Self::Refused(refusal) => write!(formatter, "{BOOT_BAUD_RATE} baud, refused: {refusal}"),
+            Self::NoHost => write!(
+                formatter,
+                "{BOOT_BAUD_RATE} baud, no host asked for another"
+            ),
+            Self::Refused(refusal) => {
+                write!(formatter, "{BOOT_BAUD_RATE} baud, refused: {refusal}")
+            }
             Self::NotConfirmed { rate } => write!(
                 formatter,
                 "{BOOT_BAUD_RATE} baud, the host did not confirm {rate} baud"
@@ -171,7 +176,9 @@ fn negotiate(clock: u32) -> Console {
     let rate = match request.and_then(|rate| validate_rate(clock, rate).map(|_divisors| rate)) {
         Ok(rate) => rate,
         Err(refusal) => {
-            print_line(format_args!("{RATE_REFUSED}\n🥾 Staying at the rate: {refusal}"));
+            print_line(format_args!(
+                "{RATE_REFUSED}\n🥾 Staying at the rate: {refusal}"
+            ));
             return Console::Refused(refusal);
         }
     };
@@ -262,7 +269,10 @@ fn confirmed() -> bool {
         send(&CONSOLE_BEACON);
         let beaconed = time_manager().uptime();
         while since(beaconed) < CONSOLE_CONFIRM_WAIT.beacon_period {
-            if UART.read_byte_nonblocking().is_some_and(|byte| ack.push(byte)) {
+            if UART
+                .read_byte_nonblocking()
+                .is_some_and(|byte| ack.push(byte))
+            {
                 return true;
             }
         }

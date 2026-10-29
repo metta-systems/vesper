@@ -131,7 +131,9 @@ fn the_host_hears_several_beacons_at_the_new_rate_and_gives_up_first() {
     // host's last ACK leaves a beacon period before that.
     let kernel_listens_until = SWITCH_SETTLE + CONSOLE_CONFIRM_WAIT.give_up_after.unwrap();
     assert_eq!(kernel_listens_until, millis(1_100));
-    assert!(HOST_CONSOLE_CONFIRM_TIMEOUT + CONSOLE_CONFIRM_WAIT.beacon_period <= kernel_listens_until);
+    assert!(
+        HOST_CONSOLE_CONFIRM_TIMEOUT + CONSOLE_CONFIRM_WAIT.beacon_period <= kernel_listens_until
+    );
 }
 
 #[test]

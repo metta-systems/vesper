@@ -13,8 +13,8 @@ pub mod led;
 #[cfg(feature = "mmu")]
 pub mod mmu;
 
-pub use libboot_uart::{GPIO_BASE, gpio, mailbox, pl011};
 use libboot_uart::{DEFAULT_UART_CLOCK, PL011_BASE};
+pub use libboot_uart::{GPIO_BASE, gpio, mailbox, pl011};
 
 #[cfg(not(any(board_rpi3, board_rpi4)))]
 compile_error!("No platform selected - specify TARGET_BOARD in configuration");
