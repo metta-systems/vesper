@@ -1,0 +1,6 @@
+[mcp_servers.filesystem]
+command = "sh"
+args = [
+    "-c",
+    "exec rust-mcp-filesystem --allow-write \"$HOME/Projects/Metta/vesper\""
+]
