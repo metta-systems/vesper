@@ -30,6 +30,7 @@ jobs:
       - name: "Checkout Repository"
         uses: actions/checkout@v6.0.2
       - uses: "./.github/shared/setup"
+      - uses: "./.github/shared/build-deps"
       - run: just clippy
 
   test:
@@ -45,6 +46,7 @@ jobs:
       - name: "Checkout Repository"
         uses: actions/checkout@v6.0.2
       - uses: "./.github/shared/setup"
+      - uses: "./.github/shared/build-deps"
       - uses: "./.github/shared/qemu"
       - name: "Build kernel"
         run: just build

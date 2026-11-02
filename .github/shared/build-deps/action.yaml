@@ -1,0 +1,10 @@
+name: "Build deps"
+description: "Install build dependencies for particular platform"
+runs:
+  using: "composite"
+  steps:
+    - name: Install ALSA (Linux)
+      if: runner.os == 'Linux'
+      shell: "bash"
+      run: |
+        sudo apt-get install -y libasound2-dev
