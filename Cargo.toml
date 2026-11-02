@@ -20,9 +20,11 @@ members = [
   "libs/mapping",
   "libs/memory",
   "libs/mmio",
+  "libs/object",
   "libs/primitives",
   "libs/print",
   "libs/qemu",
+  "libs/syscall",
   "libs/test",
   "libs/time",
 ]
@@ -67,9 +69,11 @@ libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
+libobject = { path = "libs/object", package = "vesper-objects" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 num = { version = "0.4", default-features = false }
