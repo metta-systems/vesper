@@ -16,14 +16,19 @@ init_link       := 'linker/kickstart.ld'
 user_link       := 'userspace/runtime/user.ld'
 test_link       := 'linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
+privileged_link := 'linker/privileged.ld'
 
 fixed_rustflags := '-D warnings -Z macro-backtrace'
+# Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
+pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 # Device tests run in QEMU (rpi3) with the test linker script
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fp-probe hello'
+user_components := 'endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fp-probe hello irq-receiver preempt-reader preempt-spinner'
+# Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
+privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -118,13 +123,16 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
 
 # === Kernel (nucleus + kickstart -> kernel-<config>.bin) ===
 
+# Build the privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
+_build-privileged board='rpi4' image_features='': (_cross-build privileged_components board privileged_link '' pie_rustflags image_features)
+
 # Build kernel (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
 [group("build")]
 build board='rpi4' features='': (_build-kernel board features)
 
 alias b := build
 
-_build-kernel board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kickstart' board init_link features)
+_build-kernel board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_cross-build 'kickstart' board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'kickstart' }}" "{{ images_dir / 'kernel-' + config + '.bin' }}"
     @# TODO: print final binary size!
@@ -136,10 +144,10 @@ _build-components board='rpi3' features='qemu' image_features=features: (_cross-
 
 # === E2E test kernels (Kickstart images with test programs) ===
 
-# Build one Kickstart-based e2e test kernel: the nucleus, then `crate` linked
-# as the init image, then its raw binary.
+# Build one Kickstart-based e2e test kernel: the nucleus, the privileged
+# components, then `crate` linked as the init image, then its raw binary.
 # Kernels bundling userspace components build them first (_build-endpoint-test …).
-_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_cross-build crate board init_link features)
+_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_cross-build crate board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
     @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
@@ -164,6 +172,12 @@ _build-endpoint-test board='rpi3' features='qemu': (_build-components board feat
 
 # Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
 _build-fp-trap-test board='rpi3': (_build-components board 'qemu' 'qemu,fp_trap_test') (_build-test-kernel 'fp-trap-test' board 'qemu,fp_trap_test')
+
+# Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
+_build-preempt-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
+
+# Build the irq-test e2e kernel (interrupt delivery to an EL0 receiver Thread)
+_build-irq-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'irq-test' board)
 
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
 _build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
@@ -386,12 +400,12 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-endpoint _test-fp-trap _test-fault
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-irq _test-irq-rpi4 _test-endpoint _test-fp-trap _test-fault
 
 alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
-_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu')
+_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
@@ -426,6 +440,18 @@ _test-sync: (_run-test-kernel 'sync-test')
 
 # Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
 _test-memory: (_run-test-kernel 'memory-test')
+
+# Boot preempt-test: interrupt-controller component, kernel timer tick and round-robin preemption of Threads that never yield
+_test-preempt: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi3' test_kernel_features qemu_icount_opts)
+
+# Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
+_test-preempt-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
+
+# Boot irq-test: IRQControl.Issue, IRQHandler binding and Ack, repeated virtual-timer interrupts delivered to an EL0 receiver Thread
+_test-irq: (_run-test-kernel 'irq-test' '_build-irq-test')
+
+# Boot irq-test on the Raspberry Pi 4 machine: the same checks through the GICv2 component
+_test-irq-rpi4: (_run-test-kernel 'irq-test' '_build-irq-test rpi4' 'rpi4')
 
 # Boot endpoint-test: client, endpoint and server AddressSpaces rendezvous through PPC
 _test-endpoint: (_run-test-kernel 'endpoint-test' '_build-endpoint-test' 'rpi3' 'qemu')
@@ -470,8 +496,8 @@ _host-test package test features='host-tests':
 _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Run the boot-platform tests natively: device tree helpers against the board
-# DTBs in targets/, privileged-image loading
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters')
+# DTBs in targets/, privileged-image loading, interrupt-controller register logic
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -515,7 +541,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
@@ -533,7 +559,7 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
+_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test 'rpi3') (_build-irq-test 'rpi3') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
@@ -545,7 +571,7 @@ _audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_b
     failed=0
     # fp-probe executes an FP/SIMD instruction on purpose.
     user_components="{{ replace(user_components, 'fp-probe', '') }}"
-    for image in nucleus kickstart capability-test memory-test sync-test ppc-test endpoint-test fault-test ${user_components}; do
+    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test endpoint-test fault-test ${user_components}; do
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"

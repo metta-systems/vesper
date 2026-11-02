@@ -9,9 +9,14 @@ members = [
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
+  "kernel/tests/irq-test",
+  "kernel/tests/preempt-test",
   "bin/chainboot",
   "bin/chainofcommand",
   "bin/meddler",
+  # Privileged components
+  "drivers/irqchip-bcm2836",
+  "drivers/irqchip-gicv2",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -60,6 +65,10 @@ members = [
   "userspace/tests/fp-trap/probe",
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
+  "userspace/tests/irq/protocol",
+  "userspace/tests/irq/receiver",
+  "userspace/tests/preempt/spinner",
+  "userspace/tests/preempt/reader",
 ]
 resolver = "3"
 
@@ -78,6 +87,7 @@ version = "0.0.1"
 #========
 # target
 #========
+arm-gic = { version = "0.10", default-features = false }
 aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
 arbitrary-int = { version = "2.2", default-features = false }
 bitbybit  = { version = "2.0" }
@@ -94,6 +104,7 @@ libcomponent-loader = { path = "libs/component-loader", package = "metta-compone
 endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
 fault-protocol = { path = "userspace/tests/fault/protocol" }
 fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
+irq-protocol = { path = "userspace/tests/irq/protocol" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
