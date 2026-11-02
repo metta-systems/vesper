@@ -3,6 +3,7 @@ members = [
   "kernel/nucleus",
   "bin/chainboot",
   "bin/chainofcommand",
+  "bin/meddler",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -22,6 +23,8 @@ members = [
   "libs/log",
   "libs/machine",
   "libs/mapping",
+  "libs/meddle",
+  "libs/meddle-runtime",
   "libs/memory",
   "libs/mmio",
   "libs/object",
@@ -76,6 +79,8 @@ liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+libmeddle = { path = "libs/meddle", package = "metta-meddle" }
+libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
@@ -106,6 +111,17 @@ tokio = { version = "1.53", features = ["full"] }
 tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
 # tokio-util = { version = "0.7", features = ["codec", "io"] }
+#==========
+# build.rs
+#==========
+# Meddle IDL front end and Rust emitter (libs/meddle)
+ariadne = { version = "0.6" }
+chumsky = { version = "0.13" }
+logos = { version = "0.16" }
+prettyplease = { version = "0.3" }
+proc-macro2 = { version = "1.0" }
+quote = { version = "1.0" }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
 #=======
 # mixed
 #=======

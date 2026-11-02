@@ -1,0 +1,18 @@
+[package]
+name = "meddler"
+
+description = "Meddle interface compiler: checks .if files and prints the Rust interface and client code generated from them."
+
+authors = { workspace = true }
+categories = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+argh = { workspace = true }
+libmeddle = { workspace = true }
+
+[lints]
+workspace = true

@@ -149,6 +149,11 @@ chainofcommand:
 
 alias coc := chainofcommand
 
+# Build the Meddle interface compiler (target/debug/meddler)
+[group("tools")]
+meddler:
+    @cargo build -p meddler
+
 # === QEMU runners ===
 
 # Build and run chainboot in QEMU
@@ -260,11 +265,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler --exclude=chainboot
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=chainboot --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -300,11 +305,11 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The capability ABI, the boot platform, the IO channels,
+# The capability ABI, the boot platform, drivers' logic, Meddle,
 # chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -317,6 +322,10 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/
 _test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel')
+# Run the Meddle interface compiler tests and the generated code's runtime tests natively
+_test-meddle: (_host-test 'metta-meddle-runtime' 'words')
+    cargo test -p metta-meddle
+
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
@@ -329,7 +338,7 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand \
+      --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
@@ -340,7 +349,7 @@ clippy: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3
 _clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-object-host _clippy-platform-host _clippy-coc
+_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
@@ -353,6 +362,10 @@ _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy
 
 # Lint the boot-platform host tests
 _clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel')
+# Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
+_clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
+    cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
+
 # Clippy for the host tools (chainofcommand and its protocol crate's host tests)
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
