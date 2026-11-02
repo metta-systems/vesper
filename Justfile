@@ -26,11 +26,11 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 uart-pl011 usb-hcd-dwc2 usb-test-client'
+user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher uart-pl011 usb-hcd-dwc2'
+driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher uart-pl011 usb-core usb-hcd-dwc2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -204,6 +204,9 @@ _build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-ke
 # Build the usb-test e2e kernel (the DWC2 host controller component, loaded by Kickstart)
 _build-usb-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-test' board)
 
+# Build the usb-core-test e2e kernel (the DWC2 component, the PL011 driver and the USB core, loaded by Kickstart)
+_build-usb-core-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-core-test' board)
+
 # Build the sd-test e2e kernel (the SDHOST component and a program reading and writing the card through block_v1)
 _build-sd-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sd-test' board)
 
@@ -214,6 +217,13 @@ _build-log-probe board='rpi3' features='qemu' image_features=features: (_cross-b
 _build-log-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
 
 # === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
+
+# Build usb-core-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `usb-core` traces on the UART
+_build-usb-core-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'usb-core-test' board '')
+
+# Build usb-core-test for the Raspberry Pi 3 and boot it via chainofcommand: `usb-core`'s trace appears on the UART
+_boot-usb-core-test: _build-usb-core-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-core-test-rpi3.bin' }}"
 
 # === Chainboot ===
 
@@ -431,7 +441,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-sd _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-sd _test-log
 
 alias t := test
 
@@ -522,6 +532,11 @@ _test-usb board='rpi3' features=test_kernel_features config=(board + '-' + repla
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
 
+# Boot usb-core-test on raspi3b with a hub on the root port and a keyboard behind it: the USB core enumerates both
+_test-usb-core board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-core-test board)
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-core-test-' + config + '.bin' }}"
+
 # Boot sd-test on raspi3b with a fresh 4 MiB card image whose blocks 0, 5, 6 and 8191 start with a marker: the program reads them, writes a block back and checks the request rules
 _test-sd board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-sd-test board)
     #!/usr/bin/env bash
@@ -602,7 +617,7 @@ _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
     cargo test -p metta-meddle
 
 # Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
-_test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2')
+_test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2') (_host-test 'usb-core' 'usb_core')
 
 # Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
 _test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
@@ -655,7 +670,7 @@ _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
 # Lint the USB protocol host tests with their native host harness
-_clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2')
+_clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-core' 'usb_core')
 
 # Lint the log server's host tests with their native host harness
 _clippy-log-host: (_host-clippy 'log-server' 'protocol')
@@ -665,13 +680,13 @@ _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
 
-# Cross-clippy only the USB stack crates (controller, host library) for a board with a feature set
+# Cross-clippy only the USB stack crates (controller, core, host library) for a board with a feature set
 _cross-clippy-usb board='rpi3' features='':
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      -p usb-hcd-dwc2 -p vesper-usb-host -p vesper-usb-protocol \
+      -p usb-hcd-dwc2 -p usb-core -p vesper-usb-host -p vesper-usb-protocol \
       -- --deny warnings --allow deprecated
 
 # Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)

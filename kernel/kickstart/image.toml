@@ -1,7 +1,7 @@
 # What kickstart embeds (see vesper-image-build). `binary` is the cargo
 # binary name, built with the nucleus linker script.
 
-# The USB host controller imports
+# The USB components (the controller and the core) import
 # the log server's log_v1, which this image does not bundle: the imports stay
 # unlinked.
 interfaces = ["../../userspace/log-server/interfaces"]
@@ -65,8 +65,16 @@ program = true
 dispatcher = true
 
 # The DWC2 USB host controller, loaded once per enabled `brcm,bcm2708-usb`
-# node.
+# node, and the USB core above it, a program without a device tree node: the
+# core enumerates devices.
 [[driver]]
 name = "usb"
 binary = "usb-hcd-dwc2"
 interfaces = "../../drivers/usb-hcd-dwc2/interfaces"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../drivers/usb/interfaces"
+active = true
+program = true

@@ -1,0 +1,82 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The USB core (enumeration, descriptors, hubs) for class drivers: a driver
+## claims an interface by its class codes and then talks to that interface on
+## its own. The core is off the data path: after a claim, interrupt and bulk
+## data go straight from the host controller to the claimant, and this
+## interface carries control transfers only. Prototype: edited in place.
+local interface usb_v1
+{
+    ## Control transfers on a claimed interface are staged in the claimant's data
+    ## area, with the same layout as `usb_hcd_v1.control`.
+    data 4096;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## core knows its caller from the key, and a claim is its claimant's alone.
+    badged;
+
+    ## No claim with that handle exists, it was released, or it is not yours.
+    exception no_claim {}
+
+    ## No unclaimed interface with those class codes is attached yet.
+    exception not_ready {}
+
+    ## The claimed device was unplugged; the claim is gone.
+    exception device_gone {}
+
+    ## The device answered a control transfer with a STALL.
+    exception stalled {}
+
+    ## The control transfer failed on the bus; `status` is the controller's status.
+    exception transfer_failed { card32 status; }
+
+    ## The controller is busy with another exclusive operation.
+    exception busy {}
+
+    ## The request is not allowed for this claim.
+    exception not_permitted {}
+
+    ## Claim an unclaimed interface of an attached device whose class, subclass
+    ## and protocol match; returns the claim's handle. The call never waits: if
+    ## no such interface is attached it raises `not_ready` and the claimant
+    ## tries again later, so a class driver can start before its device.
+    ## `busy` means the core cannot hold another claim.
+    claim_interface(card32 class_code, card32 subclass, card32 protocol)
+        returns (card32 claim)
+        raises (not_ready, busy);
+
+    ## Release a claim. The interface can be claimed again if its device is
+    ## still attached.
+    release(card32 claim)
+        raises (no_claim);
+
+    ## What the claimant needs to open the claimed interface's interrupt-IN pipe
+    ## itself with `usb_hcd_v1.open_pipe`: fourteen bytes written at the start of
+    ## `stage` in the claimant's data area (device address, endpoint address,
+    ## speed, interval, packet size, the hub and port of the transaction
+    ## translator route if there is one, the interface number for class
+    ## requests, and the device's vendor and product ids; see
+    ## `usb_core::claims::PipeParams`).
+    ## The reports then travel on the claimant's own channel and the core has no
+    ## other part in the data path.
+    interrupt_pipe(card32 claim, octet& stage)
+        raises (no_claim, device_gone, not_permitted);
+
+    ## Run a control transfer on the claimed interface's device, such as a HID
+    ## class request. `stage` has the same layout as `usb_hcd_v1.control`.
+    ## Implementation status: not served yet; a valid claim raises
+    ## `not_permitted`.
+    control(card32 claim, octet& stage)
+        returns (card32 transferred)
+        raises (no_claim, device_gone, stalled, transfer_failed, busy, not_permitted);
+
+    ## The trace lines `usb-core` kept since the last call, for the program that
+    ## holds the serial channel when `usb-core` has none: as many as fit `text`,
+    ## each ending in a line feed. Returns the bytes written; lines that did not
+    ## fit the core's backlog are lost.
+    trace(octet& text)
+        returns (card32 bytes)
+        raises (not_permitted);
+}

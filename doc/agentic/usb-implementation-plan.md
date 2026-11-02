@@ -81,7 +81,7 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 - `just _test-usb-host`: protocol and DWC2 host tests.
 - `just _clippy-usb-host`: host lint for the same crates.
 - `just _test-usb`: end-to-end root hub enumeration and pipe rules through `usb_hcd_v1` in QEMU.
-- `just test-usb-core`: `usb-core` enumerating the hub and a keyboard behind it in QEMU.
+- `just _test-usb-core`: `usb-core` enumerating the hub and a keyboard behind it in QEMU.
 - `just _test-meddle`: `DataArea` byte access (`libs/meddle-runtime`).
 - `just _test-device`, `just _test-uart`, `just _test-driver`, `just _test-mailbox`: regression for shared
   changes.
