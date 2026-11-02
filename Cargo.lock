@@ -114,18 +114,18 @@ dependencies = [
  "aarch64-cpu",
  "arbitrary-int",
  "bitbybit",
- "libboot-uart",
- "libchainboot-protocol",
- "libconsole",
- "liblocking",
- "liblog",
- "libmachine",
- "libprint",
- "libqemu",
- "libtest",
- "libtime",
  "seahash",
  "tock-registers",
+ "vesper-boot-uart",
+ "vesper-chainboot-protocol",
+ "vesper-console",
+ "vesper-locking",
+ "vesper-log",
+ "vesper-machine",
+ "vesper-print",
+ "vesper-qemu",
+ "vesper-tests",
+ "vesper-time",
 ]
 
 [[package]]
@@ -137,11 +137,11 @@ dependencies = [
  "bytes",
  "crossterm",
  "futures",
- "libchainboot-protocol",
  "seahash",
  "tokio",
  "tokio-serial",
  "tokio-stream",
+ "vesper-chainboot-protocol",
 ]
 
 [[package]]
@@ -358,171 +358,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libaddress"
-version = "0.0.1"
-dependencies = [
- "arbitrary-int",
- "bitbybit",
- "libboot",
- "libconsole",
- "liblog",
- "libqemu",
- "libtest",
- "num",
- "usize_conversions",
-]
-
-[[package]]
-name = "libboot"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "libcpu",
- "tock-registers",
-]
-
-[[package]]
-name = "libboot-uart"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "arbitrary-int",
- "bitbybit",
- "derive-mmio",
- "libchainboot-protocol",
- "libconsole",
- "liblocking",
- "libmmio",
- "libprimitives",
- "libtime",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
-
-[[package]]
-name = "libchainboot-protocol"
-version = "0.0.1"
-
-[[package]]
-name = "libconsole"
-version = "0.0.1"
-dependencies = [
- "liblocking",
- "liblog",
- "libprint",
- "libqemu",
-]
-
-[[package]]
-name = "libcpu"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
-]
-
-[[package]]
-name = "libexception"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "libboot",
- "libconsole",
- "liblocal-irq",
- "liblog",
- "libqemu",
- "libtest",
- "tock-registers",
-]
-
-[[package]]
-name = "libkernel-state"
-version = "0.0.1"
-
-[[package]]
-name = "liblocal-irq"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "liblog",
- "tock-registers",
-]
-
-[[package]]
-name = "liblocking"
-version = "0.0.1"
-dependencies = [
- "libboot",
- "libconsole",
- "libkernel-state",
- "liblocal-irq",
- "liblog",
- "libqemu",
- "libtest",
-]
-
-[[package]]
-name = "liblog"
-version = "0.0.1"
-
-[[package]]
-name = "libmachine"
-version = "0.0.1"
-dependencies = [
- "libcpu",
- "liblocal-irq",
- "liblog",
- "libqemu",
-]
-
-[[package]]
-name = "libmmio"
-version = "0.0.1"
-dependencies = [
- "libaddress",
-]
-
-[[package]]
-name = "libprimitives"
-version = "0.0.1"
-
-[[package]]
-name = "libprint"
-version = "0.0.1"
-dependencies = [
- "libboot",
- "libconsole",
- "liblog",
- "libqemu",
- "libtest",
-]
-
-[[package]]
-name = "libqemu"
-version = "0.0.1"
-
-[[package]]
-name = "libtest"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "liblog",
- "libqemu",
-]
-
-[[package]]
-name = "libtime"
-version = "0.0.1"
-dependencies = [
- "aarch64-cpu",
- "liblocking",
- "liblog",
- "once_cell",
- "tock-registers",
-]
 
 [[package]]
 name = "linux-raw-sys"
@@ -1011,6 +850,167 @@ name = "usize_conversions"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f70329e2cbe45d6c97a5112daad40c34cd9a4e18edb5a2a18fefeb584d8d25e5"
+
+[[package]]
+name = "vesper-address"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "num",
+ "usize_conversions",
+ "vesper-boot",
+ "vesper-console",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
+]
+
+[[package]]
+name = "vesper-boot"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+ "vesper-cpu",
+]
+
+[[package]]
+name = "vesper-boot-uart"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "vesper-chainboot-protocol",
+ "vesper-console",
+ "vesper-locking",
+ "vesper-mmio",
+ "vesper-primitives",
+ "vesper-time",
+]
+
+[[package]]
+name = "vesper-chainboot-protocol"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-console"
+version = "0.0.1"
+dependencies = [
+ "vesper-locking",
+ "vesper-log",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "vesper-cpu"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+]
+
+[[package]]
+name = "vesper-exceptions"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+ "vesper-boot",
+ "vesper-console",
+ "vesper-local-irq",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
+]
+
+[[package]]
+name = "vesper-kernel-state"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-local-irq"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+ "vesper-log",
+]
+
+[[package]]
+name = "vesper-locking"
+version = "0.0.1"
+dependencies = [
+ "vesper-boot",
+ "vesper-console",
+ "vesper-kernel-state",
+ "vesper-local-irq",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
+]
+
+[[package]]
+name = "vesper-log"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-machine"
+version = "0.0.1"
+dependencies = [
+ "vesper-cpu",
+ "vesper-local-irq",
+ "vesper-log",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "vesper-mmio"
+version = "0.0.1"
+dependencies = [
+ "vesper-address",
+]
+
+[[package]]
+name = "vesper-primitives"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-print"
+version = "0.0.1"
+dependencies = [
+ "vesper-boot",
+ "vesper-console",
+ "vesper-log",
+ "vesper-qemu",
+ "vesper-tests",
+]
+
+[[package]]
+name = "vesper-qemu"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-tests"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "vesper-log",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "vesper-time"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "once_cell",
+ "tock-registers",
+ "vesper-locking",
+ "vesper-log",
+]
 
 [[package]]
 name = "wasi"
