@@ -26,9 +26,11 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fp-probe hello irq-receiver preempt-reader preempt-spinner'
+user_components := 'dispatch-actor dispatch-child dispatch-dispatcher endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fp-probe hello irq-receiver preempt-reader preempt-spinner root-dispatcher'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
+# EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
+driver_components := 'root-dispatcher'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -126,13 +128,17 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
 # Build the privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 _build-privileged board='rpi4' image_features='': (_cross-build privileged_components board privileged_link '' pie_rustflags image_features)
 
+# Build the EL0 driver components the kickstart image bundles (with semihosting output under 'qemu')
+_build-drivers board='rpi4' features='' image_features=features:
+    "{{ just_executable() }}" _cross-build '{{ driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}' '' '{{ image_features }}'
+
 # Build kernel (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
 [group("build")]
 build board='rpi4' features='': (_build-kernel board features)
 
 alias b := build
 
-_build-kernel board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_cross-build 'kickstart' board init_link features)
+_build-kernel board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build 'kickstart' board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'kickstart' }}" "{{ images_dir / 'kernel-' + config + '.bin' }}"
     @# TODO: print final binary size!
@@ -145,9 +151,10 @@ _build-components board='rpi3' features='qemu' image_features=features: (_cross-
 # === E2E test kernels (Kickstart images with test programs) ===
 
 # Build one Kickstart-based e2e test kernel: the nucleus, the privileged
-# components, then `crate` linked as the init image, then its raw binary.
-# Kernels bundling userspace components build them first (_build-endpoint-test …).
-_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_cross-build crate board init_link features)
+# components, the drivers Kickstart bundles, then `crate` linked as the init
+# image, then its raw binary. Kernels bundling further userspace components
+# build them first (_build-endpoint-test …).
+_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build crate board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
     @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
@@ -175,6 +182,9 @@ _build-fp-trap-test board='rpi3': (_build-components board 'qemu' 'qemu,fp_trap_
 
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 _build-preempt-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
+
+# Build the dispatch-test e2e kernel (a userspace root dispatcher bound to the Scheduler)
+_build-dispatch-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'dispatch-test' board)
 
 # Build the irq-test e2e kernel (interrupt delivery to an EL0 receiver Thread)
 _build-irq-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'irq-test' board)
@@ -400,12 +410,12 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-irq _test-irq-rpi4 _test-endpoint _test-fp-trap _test-fault
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-endpoint _test-fp-trap _test-fault
 
 alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
-_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu')
+_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu') (_build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
@@ -447,6 +457,12 @@ _test-preempt: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi3' tes
 # Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
 _test-preempt-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
 
+# Boot dispatch-test: a userspace root dispatcher runs worker Threads round-robin through Scheduler.Dispatch
+_test-dispatch: (_run-test-kernel 'dispatch-test' '_build-dispatch-test' 'rpi3' test_kernel_features qemu_icount_opts)
+
+# Boot dispatch-test on the Raspberry Pi 4 machine
+_test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' '_build-dispatch-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
+
 # Boot irq-test: IRQControl.Issue, IRQHandler binding and Ack, repeated virtual-timer interrupts delivered to an EL0 receiver Thread
 _test-irq: (_run-test-kernel 'irq-test' '_build-irq-test')
 
@@ -481,11 +497,11 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The capability ABI, the boot platform, drivers' logic, Meddle,
+# The capability ABI, the boot platform, drivers' logic, Meddle, dispatcher,
 # chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-dispatcher-host _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -502,6 +518,9 @@ _test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test '
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
     cargo test -p metta-meddle
+
+# Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
+_test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
 
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
@@ -559,7 +578,7 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test 'rpi3') (_build-irq-test 'rpi3') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
+_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test 'rpi3') (_build-dispatch-test 'rpi3') (_build-irq-test 'rpi3') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
@@ -571,7 +590,7 @@ _audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_b
     failed=0
     # fp-probe executes an FP/SIMD instruction on purpose.
     user_components="{{ replace(user_components, 'fp-probe', '') }}"
-    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test irq-test endpoint-test fault-test ${user_components}; do
+    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test endpoint-test fault-test ${user_components}; do
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"

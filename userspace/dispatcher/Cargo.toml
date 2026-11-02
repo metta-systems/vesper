@@ -1,0 +1,45 @@
+[package]
+name = "root-dispatcher"
+
+description = "The root dispatcher: an EL0 program that runs the Scheduler's Threads from its record table, by priority and round-robin within a priority."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+# The host tests (`just _test-dispatcher-host`) need nothing extra; the feature
+# keeps them on the shared `_host-test` recipe.
+host-tests = []
+qemu = ["libuser/qemu"]
+
+# The program itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+libuser = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "root-dispatcher"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "policy"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true
