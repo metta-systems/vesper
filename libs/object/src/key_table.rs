@@ -56,6 +56,9 @@ impl KeySlot {
     /// The root Scheduler (Kickstart grant): the only authority that
     /// configures and starts Retype-created Threads.
     pub const ROOT_SCHEDULER: KeySlot = KeySlot(18);
+    /// The `IRQControl` (Kickstart grant): the only authority that issues
+    /// `IRQHandler`s for interrupt lines.
+    pub const IRQ_CONTROL: KeySlot = KeySlot(19);
     // ... other well-known slots
 }
 

@@ -508,7 +508,9 @@ static IDLING: AtomicBool = AtomicBool::new(false);
 /// timer tick (or when a dispatcher was activated), preempt the current
 /// Thread.
 ///
-/// The timer line re-arms the tick. Every other line is masked and ended.
+/// The timer line re-arms the tick. Every other line is masked and ended;
+/// a line bound by `IRQHandler.SetNotification` also signals its
+/// Notification, and stays masked until the handler's `Ack`.
 ///
 /// An interrupt that ends the kernel's idle wait (taken on `SP_EL1`) only
 /// claims, delivers, accounts and expires deadlines; the idle loop selects.
@@ -516,10 +518,13 @@ fn handle_irq(frame: &mut ExceptionContext) {
     let nested = frame.origin == ExceptionOrigin::CurrentSpx;
     let timer_line = nucleus::platform::physical_timer_line();
     let mut ticked = false;
-    // Interrupt handling is timed: the interrupted Thread is not charged
-    // for it.
+    // Interrupt handling is timed, line by line and in all: the interrupted
+    // Thread is not charged for it, and each line's record counts it.
     let entered = nucleus::timer::counter();
+    let mut handled = [(0_u32, 0_u64); MAX_CLAIMS_PER_ENTRY];
+    let mut handled_count = 0;
     for _ in 0..MAX_CLAIMS_PER_ENTRY {
+        let claim_started = nucleus::timer::counter();
         let Some(line) = nucleus::platform::claim() else {
             break;
         };
@@ -530,9 +535,14 @@ fn handle_irq(frame: &mut ExceptionContext) {
             ticked = true;
         } else {
             nucleus::platform::mask(line);
-            warn!("Masked unbound interrupt line {line}");
+            if !deliver_irq(line) {
+                warn!("Masked unbound interrupt line {line}");
+            }
         }
         nucleus::platform::complete(line);
+        let spent = nucleus::timer::counter().saturating_sub(claim_started);
+        handled[handled_count] = (line, spent);
+        handled_count += 1;
     }
     let interrupt_ticks = nucleus::timer::counter().saturating_sub(entered);
 
@@ -544,7 +554,7 @@ fn handle_irq(frame: &mut ExceptionContext) {
         // SAFETY: the anchor names the retained boot-carved Nucleus, and the
         // kernel lock gives exclusive access for this scheduling transaction.
         let nucleus = unsafe { &mut *nucleus_ptr };
-        nucleus.account_interrupts(interrupt_ticks);
+        nucleus.account_interrupts(&handled[..handled_count], interrupt_ticks);
         if ticked {
             nucleus.ticks += 1;
             // Whatever is due wakes: timed-out waits, dispatcher timers.
@@ -620,6 +630,23 @@ fn reprogram_timer() {
         nucleus.timer_deadline_ticks(nucleus::timer::slice_ticks())
     });
     nucleus::timer::program(deadline);
+}
+
+/// Signal the Notification bound to the claimed `line`, if any; whether
+/// one was signalled.
+fn deliver_irq(line: u32) -> bool {
+    KERNEL_LOCK.lock(|()| {
+        let Some(nucleus_ptr) = nucleus_anchor() else {
+            panic!("nucleus not booted by Kickstart")
+        };
+        // SAFETY: the anchor names the retained boot-carved Nucleus, and the
+        // kernel lock gives exclusive access for this delivery.
+        let nucleus = unsafe { &mut *nucleus_ptr };
+        // SAFETY: exclusive access is serialized by KERNEL_LOCK and no other
+        // Access or guard overlaps this transaction.
+        let access = unsafe { Access::new() };
+        nucleus::api::irq::deliver(&access, line, nucleus)
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════

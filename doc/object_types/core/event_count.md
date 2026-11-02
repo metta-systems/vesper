@@ -46,3 +46,7 @@ Returns the current value without blocking. `EventCountReader` in `libs/object` 
 ## Implementation
 
 Data written to shared memory before an Advance is visible to a Thread that observes the new value through Await or Read. Retiring a waiting Thread removes it from the queue.
+
+## Planned changes
+
+An [IRQHandler](irq_handler.md) target, as an alternative to a Notification: each interrupt advances the count, so a Thread sleeping on it learns from one wakeup how many events arrived ([plan](../../agentic/capabilities-implementation-plan.md#interrupt-delivery)).

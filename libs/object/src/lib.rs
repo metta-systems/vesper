@@ -9,6 +9,7 @@ pub mod export;
 pub mod fault;
 pub mod frame;
 pub mod invocation;
+pub mod irq;
 pub mod key;
 pub mod key_table;
 pub mod notification;
@@ -35,6 +36,7 @@ pub use {
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameAttribute, FrameKey, FrameOp},
     invocation::{INVOCATION_STACK_DEPTH, InvocationOp, PlacementWindow},
+    irq::{IrqControlKey, IrqControlOp, IrqHandlerKey, IrqHandlerOp, IrqStats},
     key::{InconsistencyReason, InvalidKeyReason, Key, RawKey},
     key_table::{KeySlot, KeyTableKey, KeyTableOp},
     notification::{NotificationKey, NotificationOp},
@@ -131,6 +133,9 @@ pub fn decode_syscall_result((status, detail1, detail2): (u64, u64, u64)) -> Sys
             (code::NESTING_DEPTH, count, 0) => CapError::NestingDepth { count },
             (code::UNEXPECTED_RETURN, word1, word2) => CapError::UnexpectedReturn { word1, word2 },
             (code::INSUFFICIENT_BUDGET, remaining, 0) => CapError::InsufficientBudget { remaining },
+            (code::IRQ_LINE_ACTIVE, line, 0) => CapError::IrqLineActive {
+                line: u32::try_from(line).ok()?,
+            },
             (code::KEY_NOT_ACCEPTED, 0, 0) => CapError::KeyNotAccepted,
             (code::NO_PLACEMENT_SLOT, 0, 0) => CapError::NoPlacementSlot,
             (code::NOT_BOUND, 0, 0) => CapError::NotBound,
@@ -237,6 +242,12 @@ pub enum CapError {
     InsufficientBudget {
         /// The source's remaining budget in nanoseconds.
         remaining: u64,
+    },
+    /// The interrupt line already has a live `IRQHandler`, or the nucleus
+    /// keeps it for its own timer.
+    IrqLineActive {
+        /// The line the specifier decoded to.
+        line: u32,
     },
     /// An `Invocation.CallWithKey` named an Invocation that accepts no lent
     /// key: its exporter declared an empty key-placement window.
@@ -374,6 +385,7 @@ impl CapError {
             CapError::NestingDepth { count } => (code::NESTING_DEPTH, count, 0),
             CapError::UnexpectedReturn { word1, word2 } => (code::UNEXPECTED_RETURN, word1, word2),
             CapError::InsufficientBudget { remaining } => (code::INSUFFICIENT_BUDGET, remaining, 0),
+            CapError::IrqLineActive { line } => (code::IRQ_LINE_ACTIVE, u64::from(line), 0),
             CapError::KeyNotAccepted => (code::KEY_NOT_ACCEPTED, 0, 0),
             CapError::NoPlacementSlot => (code::NO_PLACEMENT_SLOT, 0, 0),
             CapError::NotBound => (code::NOT_BOUND, 0, 0),

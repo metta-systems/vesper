@@ -25,9 +25,11 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Await, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
 | WaitSet | `0x09` | [wait_set.md](core/wait_set.md) | AddMember, UpdateMember, RemoveMember, Await |
+| IRQControl | `0x0a` | [irq_control.md](core/irq_control.md) | Issue |
+| IRQHandler | `0x0b` | [irq_handler.md](core/irq_handler.md) | SetNotification, Clear, Ack, Retire, Query |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Write (debug kernels only) |
 
-Indices 10–126 are unassigned.
+Indices 12–126 are unassigned.
 
 ### Architecture kinds
 
@@ -45,7 +47,7 @@ Indices 7–127 are unassigned. Invoking a kind that is not implemented fails wi
 
 ### Kinds by function
 
-The kinds grouped by what they are for. ⓐ marks an architecture kind; ● marks a kind that [`Untyped.Retype`](core/untyped.md#retype) creates. The others come from an operation on another kind (an Invocation from [`AddressSpace.CreateInvocation`](arch/address_space.md#createinvocation)), are handed out at boot (the ASIDPool), or are not implemented. Dotted arrows are the operation that relates two kinds of a group.
+The kinds grouped by what they are for. ⓐ marks an architecture kind; ● marks a kind that [`Untyped.Retype`](core/untyped.md#retype) creates. The others come from an operation on another kind (an Invocation from [`AddressSpace.CreateInvocation`](arch/address_space.md#createinvocation), an IRQHandler from [`IRQControl.Issue`](core/irq_control.md#issue)), are handed out at boot (the ASIDPool), or are not implemented. Dotted arrows are the operation that relates two kinds of a group.
 
 ```mermaid
 flowchart TB
@@ -84,9 +86,12 @@ flowchart TB
         wait_set -.->|waits on| event_count
     end
 
-    subgraph devices["Devices"]
+    subgraph devices["Interrupts and devices"]
+        irq_control["IRQControl"]
+        irq_handler["IRQHandler"]
         io_space["IOSpace ⓐ"]
         io_port["IOPort ⓐ"]
+        irq_control -.->|Issue| irq_handler
     end
 
     subgraph other["Other"]
@@ -104,13 +109,14 @@ flowchart TB
     classDef kind fill:#e3ecf7,stroke:#3b5f8f
     classDef root fill:#fdf3dc,stroke:#a07a20
     class untyped root
-    class address_space,page_table,frame,key_table,asid_pool,asid_control,thread,invocation,scheduler,time,notification,event_count,wait_set,io_space,io_port,null,debug_console kind
+    class address_space,page_table,frame,key_table,asid_pool,asid_control,thread,invocation,scheduler,time,notification,event_count,wait_set,irq_control,irq_handler,io_space,io_port,null,debug_console kind
 ```
 
 - **Protection domain:** an AddressSpace binds a KeyTable (the keys a Thread in it resolves) and a PageTable tree that maps Frames; an ASID from an ASIDPool lets it be activated.
 - **Execution:** a Thread runs in one AddressSpace at a time; calling an Invocation runs it in the exporter's AddressSpace until it returns.
 - **Time and scheduling:** a Scheduler configures, starts and dispatches Threads, each charged to its Time budget.
 - **Signalling and waiting:** Notifications carry bits, EventCounts a monotonic count; a WaitSet waits on several of either at once.
+- **Interrupts and devices:** IRQControl issues an IRQHandler per interrupt line, which signals a Notification.
 
 ## Invocation model
 
@@ -183,6 +189,7 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 34 | `NestingDepth` | saved continuations | 0 |
 | 35 | `UnexpectedReturn` | local `x1` | local `x2` |
 | 36 | `InsufficientBudget` | the source Time's remaining budget | 0 |
+| 37 | `IrqLineActive` | the line | 0 |
 | 38 | `KeyNotAccepted` | 0 | 0 |
 | 39 | `NoPlacementSlot` | 0 | 0 |
 | 40 | `NotBound` | 0 | 0 |
@@ -226,6 +233,7 @@ flowchart TD
     D -- "yes" --> F["Architecture handler"]
     E --> G["Untyped, KeyTable, Thread, Time, Scheduler,<br/>Invocation, Notification, EventCount, DebugConsole"]
     E --> I["Null → NULL_CAPABILITY"]
+    E --> J["IRQControl, IRQHandler →<br/>UNSUPPORTED_CORE_TYPE"]
     F --> L["Frame, PageTable, AddressSpace, ASIDPool"]
     F --> M["ASIDControl, IOSpace, IOPort →<br/>UNSUPPORTED_ARCH_TYPE"]
 ```
