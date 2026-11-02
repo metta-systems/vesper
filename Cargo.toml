@@ -34,6 +34,10 @@ members = [
   "drivers/fb",
   "drivers/fb/client",
   "drivers/fb/server",
+  # GPIO component and its gpio_v1 interface crates
+  "drivers/gpio-bcm2835",
+  "drivers/gpio-bcm2835/client",
+  "drivers/gpio-bcm2835/server",
   "kernel/tests/log-test",
   # Libraries
   "libs/address",
@@ -166,6 +170,8 @@ libmeddle = { path = "libs/meddle", package = "metta-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
+gpio = { path = "drivers/gpio-bcm2835/server" }
+gpio-client = { path = "drivers/gpio-bcm2835/client" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
 fb = { path = "drivers/fb/server" }
