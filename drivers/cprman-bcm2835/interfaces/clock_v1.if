@@ -1,0 +1,43 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## The clock generators of the BCM2835 clock manager (CPRMAN), served by the
+## cprman component, the one owner of its registers. A clock is named by its
+## number in the device tree binding of `brcm,bcm2835-cprman`, the second cell
+## of a node's `clocks` property (30 is the PWM clock). A generator divides one
+## of the clock manager's sources by an integer (BCM2835 ARM Peripherals,
+## section 6.3). Prototype: edited in place.
+local interface clock_v1
+{
+    ## The component serves no clock `clock`.
+    exception unknown_clock { card32 clock; }
+
+    ## No source the component knows the rate of, divided by an integer, gives
+    ## `hz` to within 0.1 %.
+    exception unreachable_rate { card32 hz; }
+
+    ## The generator did not stop in time; it was left as it was.
+    exception busy {}
+
+    ## Run `clock` at `hz`: stop its generator, pick the source and integer
+    ## divisor closest to `hz`, and start it again if it was running. Returns
+    ## the rate the source and divisor give.
+    set_rate(card32 clock, card32 hz)
+        returns (card32 actual_hz)
+        raises (unknown_clock, unreachable_rate, busy);
+
+    ## Start `clock` at the rate it was set to.
+    enable(card32 clock)
+        raises (unknown_clock);
+
+    ## Stop `clock`, once its current cycle is complete.
+    disable(card32 clock)
+        raises (unknown_clock, busy);
+
+    ## The rate `clock` runs at, read back from its generator's source and
+    ## divisor: zero while the generator is stopped.
+    rate(card32 clock)
+        returns (card32 hz)
+        raises (unknown_clock);
+}

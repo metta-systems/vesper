@@ -308,6 +308,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "clock"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "clock-client"
+version = "0.0.1"
+dependencies = [
+ "clock",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "const-default"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,6 +354,22 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "cprman-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "clock",
+ "derive-mmio",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
 
 [[package]]
 name = "crossterm"
