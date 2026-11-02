@@ -1,18 +1,40 @@
 {
+  "context_servers": {
+    "filesystem": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "npx -y @modelcontextprotocol/server-filesystem \"$HOME/Projects/Metta/vesper\""
+      ]
+    },
+    "rust-analyzer": {
+      "command": "rust-analyzer-mcp",
+      "args": []
+    },
+    "pdf": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@paradyno/pdf-mcp-server"
+      ]
+    }
+  },
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
         "cargo": {
-          "target": "/Users/berkus/Projects/Metta/vesper/targets/aarch64-metta-none-eabi.json", // $ZED_WORKTREE_ROOT
+          "target": "targets/aarch64-metta-none-eabi.json",
+          "targetDir": true,
           "extraArgs": [
+            "-Zjson-target-spec",
             "-Zbuild-std=compiler_builtins,core,alloc",
             "-Zbuild-std-features=compiler-builtins-mem"
           ]
         },
         "rustfmt": {
-          "extraArgs": ["+nightly"]
-        }
-      }
-    }
-  }
+          "extraArgs": ["+nightly"],
+        },
+      },
+    },
+  },
 }
