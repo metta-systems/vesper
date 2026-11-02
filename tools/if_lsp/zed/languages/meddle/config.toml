@@ -1,0 +1,4 @@
+name = "Meddle"
+#grammar = "meddle"   # remove this line if you have no tree-sitter grammar
+path_suffixes = ["if"]
+line_comments = ["# "]

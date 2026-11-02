@@ -32,7 +32,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and the capability, boot-platform and Meddle host linting |
 | `just _clippy-pre-push` | Default features on RPi3 and RPi4 plus the capability, boot-platform and Meddle host linting; not the full embedded matrix |
 | `just _clippy-object-host` | Focused native lint check of the capability library and its opt-in ABI test harness |
-| `just clippy-meddle`, `test-meddle` | Native lint and tests of the Meddle interface compiler (`libs/meddle`, `bin/meddler`) and the generated code's runtime (`libs/meddle-runtime`) |
+| `just _clippy-meddle`, `test-meddle` | Native lint and tests of the Meddle interface compiler (`libs/meddle`, `bin/meddler`) and the generated code's runtime (`libs/meddle-runtime`) |
 | `just lint` | Formatting, full embedded Clippy workflow, and host-tool Clippy |
 | `just _test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just _test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
