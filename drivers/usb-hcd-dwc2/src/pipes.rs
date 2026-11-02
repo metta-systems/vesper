@@ -1,0 +1,203 @@
+//
+// SPDX-License-Identifier: BlueOak-1.0.0
+// Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+//
+
+//! The pipes clients opened to device endpoints. A pipe is a handle; the
+//! table records what it names. Nothing here touches hardware.
+//!
+//! A handle packs the table index and a generation, so a closed pipe's handle
+//! fails even when its slot is reused. Zero is never a handle. The component
+//! badges each pipe's Invocation keys with its handle, so holding a key is the
+//! right to use the pipe.
+
+use vesper_usb_protocol::{descriptor::TransferKind, enumeration::Speed};
+
+/// Pipes the controller keeps open at once.
+pub const MAX_PIPES: usize = 16;
+
+/// The hub port a low- or full-speed device sits behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Route {
+    pub hub_address: u8,
+    pub hub_port: u8,
+}
+
+/// How a pipe transfers, set by `configure`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Config {
+    pub kind: TransferKind,
+    pub max_packet: u16,
+    /// Polling interval of an interrupt pipe, in milliseconds; ignored for the
+    /// other kinds.
+    pub interval_ms: u32,
+}
+
+/// Why a pipe cannot be configured as asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigError {
+    /// The packet size or interval is not valid for the kind.
+    Invalid,
+    /// The controller does not serve this kind of pipe yet.
+    NotServed,
+}
+
+impl Config {
+    /// The configuration of a `kind` pipe with `max_packet` bytes per packet.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Invalid`] for a control packet size other than 8, 16, 32
+    /// or 64 bytes, an interrupt packet size of zero or above 1024 bytes, or an
+    /// interrupt interval of zero or beyond 255 ms; [`ConfigError::NotServed`]
+    /// for bulk pipes.
+    pub const fn new(
+        kind: TransferKind,
+        max_packet: u16,
+        interval_ms: u32,
+    ) -> Result<Self, ConfigError> {
+        match kind {
+            TransferKind::Control if matches!(max_packet, 8 | 16 | 32 | 64) => Ok(Self {
+                kind,
+                max_packet,
+                interval_ms,
+            }),
+            TransferKind::Interrupt
+                if max_packet >= 1
+                    && max_packet <= 1024
+                    && interval_ms >= 1
+                    && interval_ms <= crate::periodic::MAX_INTERVAL_MS =>
+            {
+                Ok(Self {
+                    kind,
+                    max_packet,
+                    interval_ms,
+                })
+            }
+            TransferKind::Control | TransferKind::Interrupt => Err(ConfigError::Invalid),
+            _ => Err(ConfigError::NotServed),
+        }
+    }
+}
+
+/// What a pipe names. A pipe is opened to an endpoint of a device and then
+/// configured; it carries no transfer before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pipe {
+    pub device_address: u8,
+    /// The endpoint number, 0 to 15.
+    pub endpoint: u8,
+    /// Whether the endpoint moves data to the host (bit 7 of its address).
+    pub input: bool,
+    pub speed: Speed,
+    pub config: Option<Config>,
+    /// The split-transaction route, once one was set.
+    pub route: Option<Route>,
+    /// The position, among the controller's clients, of the one that opened the
+    /// pipe: the data area its control stages lie in.
+    pub owner: usize,
+}
+
+/// Why a pipe call failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipeError {
+    /// No pipe has this handle.
+    Invalid,
+    /// Every slot is taken.
+    Full,
+}
+
+#[derive(Clone, Copy)]
+struct Slot {
+    /// Counts the pipes this slot held; never zero once used.
+    generation: u16,
+    pipe: Option<Pipe>,
+}
+
+/// The open pipes.
+pub struct PipeTable {
+    slots: [Slot; MAX_PIPES],
+}
+
+impl PipeTable {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            slots: [Slot {
+                generation: 0,
+                pipe: None,
+            }; MAX_PIPES],
+        }
+    }
+
+    /// Open `pipe`, returning its handle.
+    ///
+    /// # Errors
+    ///
+    /// [`PipeError::Full`] if every slot is taken.
+    pub fn open(&mut self, pipe: Pipe) -> Result<u32, PipeError> {
+        let (index, slot) = self
+            .slots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.pipe.is_none())
+            .ok_or(PipeError::Full)?;
+        // Skip zero when the generation wraps, so no handle is ever zero.
+        slot.generation = slot.generation.wrapping_add(1).max(1);
+        slot.pipe = Some(pipe);
+        Ok(u32::from(slot.generation) << 16 | u32::try_from(index).unwrap_or(0))
+    }
+
+    /// The pipe `handle` names.
+    ///
+    /// # Errors
+    ///
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn get(&self, handle: u32) -> Result<&Pipe, PipeError> {
+        let (index, generation) = split(handle);
+        self.slots
+            .get(index)
+            .filter(|slot| slot.generation == generation)
+            .and_then(|slot| slot.pipe.as_ref())
+            .ok_or(PipeError::Invalid)
+    }
+
+    /// Like [`get`](Self::get), for a pipe to change.
+    ///
+    /// # Errors
+    ///
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn get_mut(&mut self, handle: u32) -> Result<&mut Pipe, PipeError> {
+        let (index, generation) = split(handle);
+        self.slots
+            .get_mut(index)
+            .filter(|slot| slot.generation == generation)
+            .and_then(|slot| slot.pipe.as_mut())
+            .ok_or(PipeError::Invalid)
+    }
+
+    /// Close the pipe `handle` names.
+    ///
+    /// # Errors
+    ///
+    /// [`PipeError::Invalid`] for a closed or stale handle.
+    pub fn close(&mut self, handle: u32) -> Result<(), PipeError> {
+        self.get(handle)?;
+        let (index, _) = split(handle);
+        if let Some(slot) = self.slots.get_mut(index) {
+            slot.pipe = None;
+        }
+        Ok(())
+    }
+}
+
+impl Default for PipeTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The slot index and generation a handle packs.
+const fn split(handle: u32) -> (usize, u16) {
+    ((handle & 0xffff) as usize, (handle >> 16) as u16)
+}

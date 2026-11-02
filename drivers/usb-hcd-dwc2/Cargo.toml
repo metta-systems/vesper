@@ -1,0 +1,57 @@
+[package]
+name = "usb-hcd-dwc2"
+
+description = "EL0 driver component for the DesignWare DWC2 USB host controller (Raspberry Pi 3): resets the root port and serves usb_hcd_v1, control transfers on endpoint 0 first."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the register logic.
+host-tests = []
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
+
+[dependencies]
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
+libmmio = { workspace = true }
+vesper-usb-protocol = { workspace = true }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+aarch64-cpu = { workspace = true }
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-trace = { workspace = true }
+libuser = { workspace = true }
+mailbox-client = { workspace = true }
+usb-hcd = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "usb-hcd-dwc2"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "dwc2"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

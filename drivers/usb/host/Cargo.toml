@@ -1,0 +1,28 @@
+[package]
+name = "vesper-usb-host"
+
+description = "What a USB host-side component needs to talk to the DWC2 host controller component: pipes made of the keys usb_hcd_v1.open_pipe installs, and enumeration of a device over them."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+usb-hcd-client = { workspace = true }
+vesper-usb-protocol = { workspace = true }
+
+[lib]
+name = "usb_host"
+test = false
+harness = false
+
+[lints]
+workspace = true

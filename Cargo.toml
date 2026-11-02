@@ -34,6 +34,12 @@ members = [
   "drivers/fb",
   "drivers/fb/client",
   "drivers/fb/server",
+  # USB pure protocol logic (host-testable)
+  "drivers/usb/host",
+  "drivers/usb/protocol",
+  "drivers/usb-hcd-dwc2",
+  "drivers/usb-hcd-dwc2/client",
+  "drivers/usb-hcd-dwc2/server",
   # SD card component and its block_v1 interface crates
   "drivers/sdhost-bcm2835",
   "drivers/sdhost-bcm2835/client",
@@ -42,6 +48,7 @@ members = [
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
   "drivers/gpio-bcm2835/server",
+  "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/log-test",
   # Libraries
@@ -99,6 +106,7 @@ members = [
   "userspace/tests/hello",
   "userspace/tests/irq/protocol",
   "userspace/tests/mailbox/client",
+  "userspace/tests/usb/client",
   "userspace/tests/sd/client",
   "userspace/tests/log/probe",
   "userspace/tests/irq/receiver",
@@ -145,6 +153,7 @@ libblock-channel = { path = "libs/block-channel", package = "vesper-block-channe
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+vesper-usb-protocol = { path = "drivers/usb/protocol" }
 driver-protocol = { path = "userspace/tests/driver/protocol" }
 driver-echo = { path = "userspace/tests/driver/echo" }
 driver-echo-client = { path = "userspace/tests/driver/echo-client" }
@@ -176,10 +185,13 @@ libmeddle = { path = "libs/meddle", package = "metta-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
+usb-hcd = { path = "drivers/usb-hcd-dwc2/server" }
+usb-hcd-client = { path = "drivers/usb-hcd-dwc2/client" }
 block = { path = "drivers/sdhost-bcm2835/server" }
 block-client = { path = "drivers/sdhost-bcm2835/client" }
 gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
+usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
 fb = { path = "drivers/fb/server" }

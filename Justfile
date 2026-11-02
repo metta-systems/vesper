@@ -26,11 +26,11 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 uart-pl011'
+user_components := 'dispatch-actor dispatch-child dispatch-dispatcher driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 uart-pl011 usb-hcd-dwc2 usb-test-client'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher uart-pl011'
+driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher uart-pl011 usb-hcd-dwc2'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -200,6 +200,9 @@ _build-uart-test board='rpi3': (_build-components board 'qemu' test_kernel_featu
 
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
 _build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
+
+# Build the usb-test e2e kernel (the DWC2 host controller component, loaded by Kickstart)
+_build-usb-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-test' board)
 
 # Build the sd-test e2e kernel (the SDHOST component and a program reading and writing the card through block_v1)
 _build-sd-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sd-test' board)
@@ -428,7 +431,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-sd _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-sd _test-log
 
 alias t := test
 
@@ -514,6 +517,11 @@ _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qe
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
 
+# Boot usb-test on raspi3b with a hub on the root port: the DWC2 component resets the port and enumerates the hub
+_test-usb board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-test board)
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
+
 # Boot sd-test on raspi3b with a fresh 4 MiB card image whose blocks 0, 5, 6 and 8191 start with a marker: the program reads them, writes a block back and checks the request rules
 _test-sd board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-sd-test board)
     #!/usr/bin/env bash
@@ -571,11 +579,11 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The capability ABI, the boot platform, drivers' logic, Meddle, dispatcher,
+# The capability ABI, the boot platform, drivers' logic, Meddle, USB, dispatcher,
 # log server, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-dispatcher-host _test-log-host _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-dispatcher-host _test-log-host _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -592,6 +600,9 @@ _test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test '
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
     cargo test -p metta-meddle
+
+# Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
+_test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2')
 
 # Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
 _test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
@@ -625,7 +636,7 @@ clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_
 _clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-log-host _clippy-coc
+_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-log-host _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
@@ -643,6 +654,9 @@ _clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-cl
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
+# Lint the USB protocol host tests with their native host harness
+_clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2')
+
 # Lint the log server's host tests with their native host harness
 _clippy-log-host: (_host-clippy 'log-server' 'protocol')
 
@@ -650,6 +664,18 @@ _clippy-log-host: (_host-clippy 'log-server' 'protocol')
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
+
+# Cross-clippy only the USB stack crates (controller, host library) for a board with a feature set
+_cross-clippy-usb board='rpi3' features='':
+    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      -p usb-hcd-dwc2 -p vesper-usb-host -p vesper-usb-protocol \
+      -- --deny warnings --allow deprecated
+
+# Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)
+_clippy-usb: (_cross-clippy-usb 'rpi3' '') (_cross-clippy-usb 'rpi3' 'qemu') _clippy-usb-host
 
 # Cross-clippy only the log crates (the log server component, its log_v1 interface crates, the client library, libserial-trace, which sends through it, and log-test's probe) for a board with a feature set
 _cross-clippy-log board='rpi3' features='':

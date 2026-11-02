@@ -2298,6 +2298,85 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1230ec65f13e0f9b28d789da20d2d419511893ea9dac2c1f4ef67b8b14e5da80"
 
 [[package]]
+name = "usb-hcd"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "usb-hcd-client"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+ "usb-hcd",
+]
+
+[[package]]
+name = "usb-hcd-dwc2"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "mailbox-client",
+ "usb-hcd",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-serial-trace",
+ "vesper-usb-protocol",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "usb-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "usb-hcd",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "usb-test-client"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "metta-meddle-runtime",
+ "usb-hcd-client",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-usb-host",
+ "vesper-usb-protocol",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "usize_conversions"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2603,6 +2682,23 @@ dependencies = [
  "tock-registers",
  "vesper-locking",
  "vesper-log",
+]
+
+[[package]]
+name = "vesper-usb-host"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle-runtime",
+ "usb-hcd-client",
+ "vesper-objects",
+ "vesper-usb-protocol",
+]
+
+[[package]]
+name = "vesper-usb-protocol"
+version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
 ]
 
 [[package]]
