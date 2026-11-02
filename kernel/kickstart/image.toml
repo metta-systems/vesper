@@ -1,9 +1,9 @@
 # What kickstart embeds (see vesper-image-build). `binary` is the cargo
 # binary name, built with the nucleus linker script.
 
-# The USB components (the controller, the core and the HID component) import
-# the log server's log_v1, which this image does not bundle: the imports stay
-# unlinked.
+# The compositor and the USB components (the controller, the core and the HID
+# component) import the log server's log_v1, which this image does not bundle
+# (the shell holds the serial channel): the imports stay unlinked.
 interfaces = ["../../userspace/log-server/interfaces"]
 
 [nucleus]
@@ -86,3 +86,39 @@ binary = "usb-hid"
 interfaces = "../../drivers/usb-hid/interfaces"
 active = true
 program = true
+
+# The compositor: an EL0 program that owns the display and the input. It maps
+# the framebuffer through the fb component, reads the HID component's events
+# and draws the windows that clients make through `compositor_v1`, whose
+# surfaces it carves from its own memory: the back buffer, the table of the
+# framebuffer's Frames and a few surfaces of 2 MiB Frames fit in 32 MiB.
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+memory = 33554432
+
+# The shell: an EL0 program, loaded once without a device tree node (a
+# component with `program = true`). It has a command prompt on the PL011's serial
+# channel (`serial = true`), switches the LED through the mailbox component
+# and resets the board through the power component. Its `draw` command asks the
+# compositor for a window, which `memory` leaves room for (the table the
+# window's Frames are lent into).
+[[component]]
+name = "shell"
+binary = "shell"
+interfaces = "../../userspace/shell/interfaces"
+active = true
+program = true
+serial = true
+memory = 131072
+resources = ["font"]
+
+# Data files Kickstart maps read-only into the components that name them in
+# `resources`. The first is the 8x8 console font: 95 glyphs for the characters
+# from space to `~`, 8 bytes each, top row first, bit 0 the leftmost pixel.
+[[resource]]
+name = "font"
+file = "resources/font8x8.bin"
