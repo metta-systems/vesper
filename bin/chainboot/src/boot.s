@@ -91,11 +91,12 @@ _start:
 
     // Prepare the jump to Rust code.
     // Set the stack pointer.
-    ADR_ABS x1, __rpi_phys_binary_load_addr
+    ADR_ABS x1, __boot_core_stack_top_exclusive
     mov sp, x1
 
     // Pass DTB location in x0 to Rust init function.
     // It's already in x0 since boot.
+
     // Pass maximum kernel size as an argument in x1 to Rust init function.
     mov x1, x4
 

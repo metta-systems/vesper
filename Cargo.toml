@@ -6,6 +6,8 @@ members = [
   # Libraries
   "libs/address",
   "libs/boot",
+  "libs/boot-uart",
+  "libs/chainboot-protocol",
   "libs/console",
   "libs/cpu",
   "libs/driver",
@@ -52,6 +54,8 @@ cfg-if = { version = "1.0" }
 derive-mmio = { version = "0.8" }
 libaddress = { path = "libs/address", package = "vesper-address" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
+libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
+libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdriver = { path = "libs/driver" }
@@ -85,12 +89,12 @@ argh = { version = "0.1" }
 bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
-futures-util = { version = "0.3", features = ["io"] }
+# futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
 tokio = { version = "1.53", features = ["full"] }
 tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
-tokio-util = { version = "0.7", features = ["codec", "io"] }
+# tokio-util = { version = "0.7", features = ["codec", "io"] }
 #=======
 # mixed
 #=======

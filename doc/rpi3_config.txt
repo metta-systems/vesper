@@ -1,16 +1,38 @@
 # This is a config.txt file that should be on RPi SD boot partition
 
-cec_osd_name=Jellyfish
+cec_osd_name=Vesper
+
+arm_64bit=1
+kernel=chainboot-rpi3.bin
+kernel_address=0x80000
+
+# Don't fill kernel ATAGs
+disable_commandline_tags=1
+
+# Enable UART on GPIO14/15
+enable_uart=1
+
+# Route PL011 UART to GPIO14/15 instead of Bluetooth
+dtoverlay=disable-bt
 
 # Keep rainbow splash screen on boot
 # Helps in debugging boot problems.
 disable_splash=0
 
+# Set UART clock to 4MHz (mailbox ops in chainboot/kernel should do that)
+init_uart_clock=4000000
+
 # Set jtag debug pins to alt4, uses GPIO26 for TDI
 gpio=22-27=a4
+
+# Enable firmware serial output
+uart_2ndstage=1
 
 # Start with 128Mb of GPU memory
 start_x=1
 
-# Don't fill kernel ATAGs
-disable_commandline_tags=1
+# Video memory for compositor
+gpu_mem=128
+
+# Does nothing yet
+audio_pwm_mode=2
