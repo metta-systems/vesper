@@ -1,0 +1,44 @@
+# The board set of the images put on the card (see the main Justfile's `boards`)
+boards := env('VESPER_BOARDS', 'rpi3+rpi4+rpi5')
+
+# Build the card image from boot/ with makesd (makesd.config): target/images/boot.vfat,
+# the FAT boot partition, and target/images/sdcard.img, the whole card to write to an SD card
+# Write sdcard.img using Balena Etcher or Raspberry Pi Imager.
+sdimage:
+    cargo run --quiet --release -p makesd -- \
+        --config makesd.config \
+        --root boot \
+        --output ../../target/images
+
+# The firmware and device trees of every board the card boots: the Raspberry Pi 3
+# and 4 boot from start files on the card, the Raspberry Pi 5 from its EEPROM
+pull-firmware:
+    #!/bin/bash
+    mkdir -p boot/overlays
+
+    BASE=https://raw.githubusercontent.com/raspberrypi/firmware/master/boot
+
+    for file in \
+        bootcode.bin \
+        start_x.elf \
+        fixup_x.dat \
+        start4x.elf \
+        fixup4x.dat \
+        bcm2710-rpi-3-b.dtb \
+        bcm2710-rpi-3-b-plus.dtb \
+        bcm2711-rpi-4-b.dtb \
+        bcm2711-rpi-400.dtb \
+        bcm2712-rpi-5-b.dtb
+    do
+        curl -fL --retry 3 "$BASE/$file" -o "boot/$file" || exit 1
+    done
+
+    for file in disable-bt.dtbo pwm-2chan.dtbo
+    do
+        curl -fL --retry 3 "$BASE/overlays/$file" \
+            -o "boot/overlays/$file" || exit 1
+    done
+
+# Put a boot image on the card as kernel8.img, the kernel config.txt names
+pull-bootable image=('wood-test-' + boards + '.bin'):
+    cp "../../target/images/{{ image }}" boot/kernel8.img

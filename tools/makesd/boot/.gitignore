@@ -1,0 +1,5 @@
+# What `just pull-firmware` downloads and `just pull-bootable` copies here;
+# only config.txt is ours. makesd leaves dot files off the card.
+*
+!.gitignore
+!config.txt

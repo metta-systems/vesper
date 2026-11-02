@@ -74,6 +74,13 @@ On the device boot SD card you'll need a configuration file instructing RasPi to
 arm_64bit=1
 ```
 
+`tools/makesd` builds a card for all three boards: in that directory,
+`just pull-firmware` downloads the firmware and device trees into `boot/`,
+`just pull-bootable <name>.bin` copies a kernel image from `target/images`
+as `kernel8.img`, and `just sdimage` writes `target/images/sdcard.img`
+(an MBR with a FAT32 boot partition holding `boot/`, as `makesd.config` 
+describes) to put on the card.
+
 ### To run tests (tests require QEMU)
 
 ```

@@ -565,11 +565,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu') (_build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
+      --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -951,7 +951,7 @@ _test-runner binary_path:
 # log server, Wood's music synthesiser, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host _test-makesd-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -984,6 +984,10 @@ _test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
 # Run the log server's host tests: the line header, the client's buffer set, line cutting and the server's output line
 _test-log-host: (_host-test 'log-server' 'protocol')
 
+# Run makesd's unit tests: the KDL config, FAT volumes read back (long names, directories, reproducible, FAT32 by request) and the MBR's bytes
+_test-makesd-host:
+    cargo test -p makesd
+
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
@@ -1005,7 +1009,7 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
+      --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs, Wood)
@@ -1053,6 +1057,7 @@ _clippy-log-host: (_host-clippy 'log-server' 'protocol')
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
+    cargo clippy -p makesd --all-targets -- --deny warnings --allow deprecated
 
 # Cross-clippy only the USB stack crates (controller, core, host library, HID) for a board with a feature set
 _cross-clippy-usb board='rpi3' features='':

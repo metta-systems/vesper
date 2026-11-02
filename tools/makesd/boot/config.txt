@@ -1,0 +1,19 @@
+# One card for the Raspberry Pi 3, 4 and 5: the firmware picks the device tree
+# for the board it runs on (bcm2710-*, bcm2711-*, bcm2712-*), and Vesper finds
+# everything else in that tree.
+[all]
+arm_64bit=1
+kernel=kernel8.img
+kernel_address=0x80000
+
+[pi3]
+start_x=1
+gpu_mem=128
+dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+
+[pi4]
+start_x=1
+gpu_mem=128
+dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+
+[all]
