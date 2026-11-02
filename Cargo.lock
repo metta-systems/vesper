@@ -867,6 +867,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-alloc"
+version = "0.0.1"
+dependencies = [
+ "vesper-address",
+ "vesper-log",
+]
+
+[[package]]
 name = "vesper-boot"
 version = "0.0.1"
 dependencies = [
@@ -964,6 +972,15 @@ dependencies = [
  "vesper-local-irq",
  "vesper-log",
  "vesper-qemu",
+]
+
+[[package]]
+name = "vesper-mapping"
+version = "0.0.1"
+dependencies = [
+ "vesper-address",
+ "vesper-log",
+ "vesper-mmio",
 ]
 
 [[package]]
