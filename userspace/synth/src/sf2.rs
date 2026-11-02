@@ -42,6 +42,11 @@ pub struct SoundFont<'a> {
     pub info: &'a [u8],
     /// The `smpl` chunk: 16-bit little-endian sample points.
     pub sample_data: &'a [u8],
+    /// The same points read in place as `i16`, when the chunk starts on a
+    /// 2-byte boundary and the target is little-endian (checked once, by
+    /// [`SoundFont::parse`]): the voices' fast path. `None` leaves the voices
+    /// on [`SoundFont::sample_point`].
+    pub points: Option<&'a [i16]>,
     /// `phdr` records, the terminal `EOP` included.
     pub preset_headers: &'a [u8],
     /// `pbag` records.
@@ -249,6 +254,7 @@ impl<'a> SoundFont<'a> {
         let font = Self {
             info,
             sample_data,
+            points: aligned_points(sample_data),
             preset_headers: records(pdta, *b"phdr", PRESET_HEADER_SIZE, 2)?,
             preset_bags: records(pdta, *b"pbag", BAG_SIZE, 1)?,
             preset_modulators: records(pdta, *b"pmod", MODULATOR_SIZE, 1)?,
@@ -406,6 +412,23 @@ impl<'a> SoundFont<'a> {
             _ => 0,
         }
     }
+}
+
+/// `sample_data` read in place as `i16` points, one per whole pair of bytes,
+/// or `None` when it does not start on a 2-byte boundary or the target is
+/// big-endian. The file is 2-byte aligned wherever it is mapped (a resource
+/// starts on a page, a `Vec` on the allocator's alignment), and RIFF pads
+/// every chunk to an even size, so the `smpl` body is aligned in practice.
+fn aligned_points(sample_data: &[u8]) -> Option<&[i16]> {
+    if cfg!(target_endian = "big") {
+        return None;
+    }
+    let whole = &sample_data[..sample_data.len() & !1];
+    // SAFETY: `i16` has no invalid bit patterns and no padding, so any two
+    // initialised bytes are a valid `i16`; `align_to` puts in `points` only
+    // the 2-byte aligned middle of `whole`, borrowed for the same lifetime.
+    let (before, points, after) = unsafe { whole.align_to::<i16>() };
+    (before.is_empty() && after.is_empty()).then_some(points)
 }
 
 fn bag_at(bags: &[u8], index: usize) -> Bag {

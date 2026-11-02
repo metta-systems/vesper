@@ -809,6 +809,11 @@ _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protoco
 _test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'vesper-synth' 'doom_music')
     cargo test -p sf2-trim
 
+# Time the synthesiser on the host in release mode: every shareware song for 60 s in 512-frame periods, ns per frame and per voice-frame (doc/agentic/audio-profiling.md)
+_profile-synth:
+    RUSTFLAGS="{{ fixed_rustflags }}" \
+    cargo test --release -p vesper-synth --features=host-tests --test doom_music -- --ignored --nocapture --test-threads=1 profile_render
+
 # === Lints ===
 
 # Cross-clippy the workspace for a board with a feature set
