@@ -1,0 +1,37 @@
+[package]
+name = "sd-test-client"
+
+description = "sd-test program: reads and writes the SD card through the block_v1 import of the SDHOST component, checks the request rules and reports."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+block-client = { workspace = true }
+driver-protocol = { workspace = true }
+gpio-client = { workspace = true }
+libblock-channel = { workspace = true }
+libdevice-driver = { workspace = true }
+libio-channel = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+
+[[bin]]
+name = "sd-test-client"
+test = false
+
+[lints]
+workspace = true
