@@ -493,6 +493,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "dma"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "dma-bcm2835"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "dma",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "dma-client"
+version = "0.0.1"
+dependencies = [
+ "dma",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
