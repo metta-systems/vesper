@@ -446,6 +446,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-echo"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "driver-echo-client"
+version = "0.0.1"
+dependencies = [
+ "driver-echo",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "driver-probe"
+version = "0.0.1"
+dependencies = [
+ "driver-echo",
+ "driver-echo-client",
+ "driver-protocol",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "driver-protocol"
+version = "0.0.1"
+dependencies = [
+ "vesper-device-driver",
+ "vesper-objects",
+]
+
+[[package]]
+name = "driver-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-echo",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "endian-type-rs"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
