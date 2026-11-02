@@ -1,0 +1,35 @@
+[package]
+name = "vesper-input-event"
+
+description = "Input event contract for Vesper: the fixed-size event record, HID usage constants, the device descriptor layout and a state tracker. Pure, no I/O."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Shared by producers and consumers; host tests bring their own harness.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "input_event"
+path = "tests/input_event/main.rs"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

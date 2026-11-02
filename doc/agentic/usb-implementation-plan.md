@@ -40,7 +40,7 @@ the serial trace; see [usb-completed.md](usb-completed.md).
   the halt. The failure line now counts the runs that ended in NAK and in XactErr.
   To check on the board: whether it recurs, and which count dominates. Not chosen
   yet: cutting the status stage's retry budget to the spec's 50 ms.
-- [ ] Verify the 2026-10-29 triage on the board (`just boot-usb-hid-test`, then
+- [ ] Verify the 2026-10-29 triage on the board (`just _boot-usb-hid-test`, then
   `just boot-wood-test`), in each topology: mouse straight on a LAN9514 port,
   keyboard (its own high-speed hub) on a LAN9514 port, mouse on the keyboard's
   hub. Expected: no `complete split ... restarted` lines at steady state (or few,
