@@ -13,6 +13,7 @@ members = [
   "libs/chainboot-protocol",
   "libs/console",
   "libs/cpu",
+  "libs/device-driver",
   "libs/devicetree",
   "libs/exception",
   "libs/io-channel",
@@ -35,6 +36,8 @@ members = [
   "libs/syscall",
   "libs/test",
   "libs/time",
+  # Userspace
+  "userspace/runtime",
 ]
 resolver = "3"
 
@@ -69,6 +72,7 @@ nucleus = { path = "kernel/nucleus" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevice-driver = { path = "libs/device-driver", package = "vesper-device-driver" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
@@ -91,6 +95,7 @@ libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-cha
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
+libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 snafu = { version = "0.9", default-features = false }
