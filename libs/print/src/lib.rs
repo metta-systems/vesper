@@ -3,12 +3,16 @@
  * Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
  */
 
-/// No-alloc write!() implementation from <https://stackoverflow.com/a/50201632/145434>
-/// Requires you to allocate a buffer somewhere manually.
-// @todo Try to use arrayvec::ArrayString here instead?
-use core::{cmp::min, fmt};
+#![no_std]
 
-pub struct WriteTo<'a> {
+// No-alloc write!() implementation from <https://stackoverflow.com/a/50201632/145434>
+// Requires you to allocate a buffer somewhere manually (usually, on stack).
+// @todo Try to use arrayvec::ArrayString here instead?
+// @todo probably use defmt for comms with host?
+
+use core::{cmp::min, ffi::CStr, fmt};
+
+struct WriteTo<'a> {
     buffer: &'a mut [u8],
     // on write error (i.e. not enough space in buffer) this grows beyond
     // `buffer.len()`.
@@ -29,11 +33,12 @@ impl<'a> WriteTo<'a> {
     }
 
     #[allow(unused)]
-    pub fn into_cstr(self) -> Option<&'a str> {
+    pub fn into_cstr(self) -> Option<&'a CStr> {
         (self.used < self.buffer.len()).then(|| {
-            self.buffer[self.used] = 0; // Terminate the string
+            // Terminate the string
+            self.buffer[self.used] = 0;
             // SAFETY: only successful concats of str - must be a valid str.
-            unsafe { core::str::from_utf8_unchecked(&self.buffer[..=self.used]) }
+            unsafe { CStr::from_bytes_with_nul_unchecked(&self.buffer[..=self.used]) }
         })
     }
 }
@@ -56,16 +61,14 @@ impl fmt::Write for WriteTo<'_> {
     }
 }
 
-#[allow(unused)]
-pub fn show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
+pub fn format_str<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
     let mut w = WriteTo::new(buffer);
     fmt::write(&mut w, args)?;
     w.into_str().ok_or(fmt::Error)
 }
 
 // Return a zero-terminated str
-#[allow(unused)]
-pub fn c_show<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a str, fmt::Error> {
+pub fn format_cstr<'a>(buffer: &'a mut [u8], args: fmt::Arguments) -> Result<&'a CStr, fmt::Error> {
     let mut w = WriteTo::new(buffer);
     fmt::write(&mut w, args)?;
     w.into_cstr().ok_or(fmt::Error)

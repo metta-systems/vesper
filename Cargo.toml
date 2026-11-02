@@ -17,11 +17,12 @@ members = [
   "libs/memory",
   "libs/platform",
   "libs/primitives",
+  "libs/print",
   "libs/qemu",
   "libs/test",
   "libs/time",
 ]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 authors = ["Berkus Decker <berkus+vesper@metta.systems>"]
@@ -39,30 +40,35 @@ version = "0.0.1"
 #========
 # target
 #========
-aarch64-cpu = { version = "11.2" }
+aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
+arbitrary-int = { version = "2.2", default-features = false }
+bitbybit  = { version = "2.0" }
 bit_field = { version = "0.10" }
 bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
-libboot = { path = "libs/boot" }
-libconsole = { path = "libs/console" }
-libcpu = { path = "libs/cpu" }
+derive-mmio = { version = "0.8" }
+libboot = { path = "libs/boot", package = "vesper-boot" }
+libconsole = { path = "libs/console", package = "vesper-console" }
+libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdriver = { path = "libs/driver" }
-libexception = { path = "libs/exception" }
-libkernel-state = { path = "libs/kernel-state" }
-liblocal-irq = { path = "libs/local-irq" }
-liblocking = { path = "libs/locking" }
-liblog = { path = "libs/log" }
-libmachine = { path = "libs/machine" }
+libexception = { path = "libs/exception", package = "vesper-exceptions" }
+libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
+liblocking = { path = "libs/locking", package = "vesper-locking" }
+liblog = { path = "libs/log", package = "vesper-log" }
+libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmemory = { path = "libs/memory" }
 libplatform = { path = "libs/platform" }
-libprimitives = { path = "libs/primitives" }
-libqemu = { path = "libs/qemu" }
-libtest = { path = "libs/test" }
-libtime = { path = "libs/time" }
+libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
+libprint = { path = "libs/print", package = "vesper-print" }
+libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libtest = { path = "libs/test", package = "vesper-tests" }
+libtime = { path = "libs/time", package = "vesper-time" }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
+# static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }
 ux = { version = "0.1", default-features = false }
@@ -71,21 +77,19 @@ ux = { version = "0.1", default-features = false }
 #======
 anyhow = { version = "1.0" }
 argh = { version = "0.1" }
-bytes = { version = "1.11" }
+bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 futures-util = { version = "0.3", features = ["io"] }
-tokio = { version = "1.49", features = ["full"] }
-tokio-serial = { version = "5.4" }
+# serialport = { version = "4.0" }
+tokio = { version = "1.53", features = ["full"] }
+tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 #=======
 # mixed
 #=======
 seahash = { version = "4.1" }
-
-[patch.crates-io]
-serialport = { git = "https://github.com/metta-systems/serialport-rs", branch = "macos-ENOTTY-fix" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
@@ -98,7 +102,7 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = 's'
-panic = "abort"
+# panic = "abort" # - debug in qemu - wanna see panics
 
 [profile.release-fast]
 codegen-units = 16
@@ -156,7 +160,6 @@ float_cmp_const = "deny"
 fn_params_excessive_bools = "deny"
 fn_to_numeric_cast_any = "deny"
 format_push_string = "deny"
-from_iter_instead_of_collect = "deny"
 get_unwrap = "deny"
 if_not_else = "deny"
 if_then_some_else_none = "deny"
