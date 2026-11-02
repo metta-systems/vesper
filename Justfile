@@ -970,9 +970,10 @@ clean:
 deps-up:
     cargo update
 
-# Prepare local dev tools and set-up git hooks
+# Fetch the git submodules, prepare local dev tools and set-up git hooks
 [group("maintenance")]
 setup-local-dev:
+    git submodule update --init --recursive
     which cargo-binstall || cargo install cargo-binstall
     commit-emoji --help || cargo binstall -y commit-emoji
     commit-emoji -i
