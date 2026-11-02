@@ -37,6 +37,7 @@ pub mod semihosting {
         exit(1)
     }
 
+    #[cfg(target_arch = "aarch64")]
     fn sys_exit_call(params: &ExitParameters) -> ! {
         // SAFETY: safe enough!
         unsafe {
@@ -52,6 +53,14 @@ pub mod semihosting {
         }
     }
 
+    // Host builds (the host tests on x86-64) link the semihosting callers but
+    // never run under QEMU.
+    #[cfg(not(target_arch = "aarch64"))]
+    fn sys_exit_call(_params: &ExitParameters) -> ! {
+        unimplemented!("semihosting is only available on aarch64")
+    }
+
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     pub fn sys_write0_call(text: &core::ffi::CStr) {
         // SAFETY: text must be \0-terminated, which CStr above shall ensure.
@@ -63,6 +72,11 @@ pub mod semihosting {
                 options(nostack)
             );
         }
+    }
+
+    #[cfg(not(target_arch = "aarch64"))]
+    pub fn sys_write0_call(_text: &core::ffi::CStr) {
+        unimplemented!("semihosting is only available on aarch64")
     }
 
     #[doc(inline)]

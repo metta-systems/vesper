@@ -1132,6 +1132,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-objects"
+version = "0.0.1"
+dependencies = [
+ "vesper-print",
+ "vesper-qemu",
+ "vesper-syscalls",
+]
+
+[[package]]
 name = "vesper-primitives"
 version = "0.0.1"
 
@@ -1148,6 +1157,10 @@ dependencies = [
 
 [[package]]
 name = "vesper-qemu"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-syscalls"
 version = "0.0.1"
 
 [[package]]
