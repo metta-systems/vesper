@@ -1,0 +1,52 @@
+[package]
+name = "uart-pl011"
+
+description = "EL0 driver component for the Arm PL011 UART: serves a serial channel's transmit and receive IO channels from the UART's interrupts."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the register logic.
+host-tests = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+arbitrary-int = { workspace = true }
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
+libio-channel = { workspace = true }
+libmmio = { workspace = true }
+libserial-channel = { workspace = true }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libuser = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "uart-pl011"
+test = false
+
+[[test]]
+name = "pl011"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

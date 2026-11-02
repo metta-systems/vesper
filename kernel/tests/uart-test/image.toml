@@ -1,0 +1,15 @@
+# What uart-test bundles (see vesper-image-build): the PL011 driver, loaded
+# by Kickstart once per enabled `arm,pl011` node.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true
