@@ -27,6 +27,7 @@ pub mod scheduler;
 pub mod thread;
 pub mod time;
 pub mod untyped;
+pub mod wait_set;
 
 pub use key_entry::KeyEntry;
 
@@ -202,6 +203,10 @@ fn core_invoke<A: ArchObjects>(
 
         CoreType::EventCount => {
             crate::api::event_count::invoke::<A>(access, caller, key, op, args, nucleus)
+        }
+
+        CoreType::WaitSet => {
+            crate::api::wait_set::invoke::<A>(access, caller, key, op, args, nucleus)
         }
 
         CoreType::Time => crate::api::time::invoke::<A>(access, caller, key, op, args, nucleus)

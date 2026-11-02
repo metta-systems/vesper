@@ -36,6 +36,7 @@ Retype creates `count` objects and installs their capabilities into consecutive 
 | PageTable | 12 | A zeroed 4 KiB translation table and its kernel record |
 | Notification | 0 | A Notification with no pending bits |
 | EventCount | 0 | An EventCount at 0 |
+| WaitSet | 0 | An empty [WaitSet](wait_set.md) |
 | Time | 0 | An empty Time on the creating core: zero budget |
 | Thread | 0 | An inert Thread: no AddressSpace or execution state until a [Scheduler](scheduler.md) configures and starts it |
 | Scheduler | 0 | An inert [Scheduler](scheduler.md): not the root, no parent, no Threads, no dispatcher; it has no execution authority until a parent adopts it |

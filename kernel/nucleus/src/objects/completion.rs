@@ -44,6 +44,9 @@ pub enum PendingKind {
     /// in the first result word, or the shared `CounterOverflow` error when
     /// an advance's overflow wakes the waiter.
     EventCountAwait,
+    /// `WaitSet.Await`: completion delivers the mask of ready member slots
+    /// in the first result word.
+    WaitSetAwait,
     /// `Scheduler.Dispatch`: the dispatcher waits to be activated;
     /// completion delivers the activation reason bits in the first result
     /// word and the scheduler's event count in the second.
