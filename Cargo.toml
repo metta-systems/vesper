@@ -18,6 +18,7 @@ members = [
   "bin/chainboot",
   "bin/chainofcommand",
   "bin/meddler",
+  "tools/makesd",
   # Privileged components
   "drivers/irqchip-bcm2836",
   "drivers/irqchip-gicv2",
@@ -306,6 +307,9 @@ anyhow = { version = "1.0" }
 argh = { version = "0.1" }
 bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
+# Without chrono: every file is dated 1980-01-01, so images are reproducible.
+fatfs = { version = "0.3", default-features = false, features = ["std", "alloc"] }
+kdl = { version = "6.7", default-features = false }
 futures = { version = "0.3" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
