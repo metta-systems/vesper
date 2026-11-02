@@ -12,6 +12,7 @@ rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
 nucleus_link    := 'linker/nucleus.ld'
+init_link       := 'linker/kickstart.ld'
 user_link       := 'userspace/runtime/user.ld'
 test_link       := 'linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
@@ -43,8 +44,15 @@ target_root     := justfile_directory() / 'target'
 images_dir      := target_root / 'images'
 profile_suffix  := if image_profile == 'debug' { '-debug' } else { '' }
 rpi3_qemu       := 'rpi3-qemu' + profile_suffix
+rpi4_qemu       := 'rpi4-qemu' + profile_suffix
 rpi4_hw         := 'rpi4' + profile_suffix
+# Features of the Kickstart-based e2e test kernels unless a test names its own
+test_kernel_features := 'qemu,debug_kernel'
 # Boot images and ELFs of the configurations the run, debug and SD-card recipes use
+kernel_rpi3_qemu_bin    := images_dir / 'kernel-' + rpi3_qemu + '.bin'
+kernel_rpi4_qemu_bin    := images_dir / 'kernel-' + rpi4_qemu + '.bin'
+kernel_rpi4_bin         := images_dir / 'kernel-' + rpi4_hw + '.bin'
+kernel_rpi4_elf         := rpi4_hw_artifacts / image_profile / 'kickstart'
 chainboot_rpi3_qemu_bin := images_dir / 'chainboot-' + rpi3_qemu + '.bin'
 chainboot_rpi4_bin      := images_dir / 'chainboot-' + rpi4_hw + '.bin'
 chainboot_rpi4_elf      := rpi4_hw_artifacts / image_profile / 'chainboot'
@@ -104,14 +112,45 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
       {{ rust_std }} \
       --profile {{ cargo_profile }} -p {{ replace(crates, ' ', ' -p ') }}
 
-# === Kernel (the nucleus; no boot image without an init program) ===
+# === Kernel (nucleus + kickstart -> kernel-<config>.bin) ===
 
-# Build the nucleus (features: '' for hw, 'qemu' for emulation)
+# Build kernel (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
 [group("build")]
-build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features)
-    @echo "{{ok_label}} nucleus built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
+build board='rpi4' features='': (_build-kernel board features)
 
 alias b := build
+
+_build-kernel board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_cross-build 'kickstart' board init_link features)
+    @mkdir -p "{{ images_dir }}"
+    {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'kickstart' }}" "{{ images_dir / 'kernel-' + config + '.bin' }}"
+    @# TODO: print final binary size!
+    @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}: {{ images_dir / 'kernel-' + config + '.bin' }}"
+
+# === E2E test kernels (Kickstart images with test programs) ===
+
+# Build one Kickstart-based e2e test kernel: the nucleus, then `crate` linked
+# as the init image, then its raw binary.
+_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_cross-build crate board init_link features)
+    @mkdir -p "{{ images_dir }}"
+    {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
+    @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
+
+# Rebuild `crate` unconditionally with the `build` recipe line and boot it;
+# in-guest assertions and the QEMU exit status are the result.
+#
+# The rebuild is deliberately a nested `just` invocation, not a recipe
+# dependency: just deduplicates same-argument recipe dependencies within one
+# invocation, so in `just ci` (clean lint build test) a plain dependency could
+# be skipped as already run, leaving the kernel image stale. The nested
+# invocation always runs and refreshes the image. `clock_opts` takes
+# `qemu_icount_opts` for the tests that check timing bounds.
+_run-test-kernel crate build=('_build-test-kernel ' + crate) board='rpi3' features=test_kernel_features clock_opts='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix):
+    "{{ just_executable() }}" {{ build }}
+    {{ qemu }} -M {{ if board == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} {{ clock_opts }} \
+      -dtb "{{ if board == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
+      -kernel "{{ images_dir / crate + '-' + config + '.bin' }}"
+
+# === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
 
 # === Chainboot ===
 
@@ -157,6 +196,22 @@ meddler:
 
 # === QEMU runners ===
 
+# Build and run kernel in QEMU
+[group("emu")]
+qemu: (build 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} with {{ kernel_rpi3_qemu_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+
+# Build and run kernel in QEMU with GDB port
+[group("emu")]
+qemu-gdb: (build 'rpi3' 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ kernel_rpi3_qemu_bin }}"
+    @echo "🚜 .. on {{ rpi3_dtb }}"
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+
 # Build and run chainboot in QEMU
 [group("emu")]
 cb-qemu: (build-chainboot 'rpi3' 'qemu')
@@ -173,6 +228,11 @@ cb-qemu-gdb: (build-chainboot 'rpi3' 'qemu')
     @rm -f qemu.log
     {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -serial pty -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_rpi3_qemu_bin }}"
 
+# Build and boot in qemu via chainofcommand
+[group("emu")]
+boot-qemu: (build 'rpi3' 'qemu') chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi3_qemu_bin }}"
+
 # === Zellij (QEMU in split terminal) ===
 
 # The zellij runs name their serial ports themselves (the PL011, then the mini UART, each
@@ -187,6 +247,23 @@ _write-zellij-config bin runner_opts dtb machine=qemu_machine:
     TARGET_DTB="{{ dtb }}"
     KERNEL_BIN="{{ bin }}"
     EOF
+
+# Build and run kernel in QEMU with PL011 and the mini UART each in a pane
+[group("emu")]
+zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_rpi3_qemu_bin '' rpi3_dtb)
+    zellij --layout emulation/layout.zellij
+
+alias z-qemu := zellij
+
+# Like zellij, but QEMU waits for GDB on port 5555 and traces instructions
+[group("emu")]
+zellij-gdb: (build 'rpi3' 'qemu') (_write-zellij-config kernel_rpi3_qemu_bin qemu_disasm_gdb rpi3_dtb)
+    zellij --layout emulation/layout.zellij
+
+# Like zellij, for the Raspberry Pi 4 kernel on QEMU's raspi4b machine
+[group("emu")]
+zellij-rpi4: (build 'rpi4' 'qemu') (_write-zellij-config kernel_rpi4_qemu_bin '' rpi4_dtb 'raspi4b')
+    zellij --layout emulation/layout.zellij
 
 # Build and run chainboot in QEMU with serial port emulation
 [group("emu")]
@@ -212,10 +289,22 @@ _write-gdb-config:
     EOF
     echo "🖌️ Generated GDB config file {{ gdb_connect }}"
 
+# Build and run kernel in GDB (connect to openocd or QEMU on port 5555)
+[group("debug")]
+gdb: build _write-gdb-config
+    @pipx run gdbgui -g "{{ gdb }} -x '{{ gdb_connect }}' '{{ kernel_rpi4_elf }}'"
+
 # Build and run chainboot in GDB
 [group("debug")]
 cb-gdb: build-chainboot _write-gdb-config
     {{ gdb }} -x "{{ gdb_connect }}" "{{ chainboot_rpi4_elf }}"
+
+# Build and disassemble kernel
+[group("debug")]
+hopper: build
+    hopper --loader ELF --executable "{{ kernel_rpi4_elf }}"
+
+alias disasm := hopper
 
 # Build and disassemble chainboot
 [group("debug")]
@@ -224,12 +313,28 @@ cb-hopper: (build-chainboot 'rpi3' 'qemu')
 
 alias cb-disasm := cb-hopper
 
+# Build and print all symbols
+[group("maintenance")]
+nm: build
+    {{ nm }} "{{ kernel_rpi4_elf }}" | sort -k 1 | rustfilt
+
 # Run `cargo expand` on kernel
 [group("maintenance")]
 expand:
     cargo expand {{ target_json }} --release -- kernel
 
 # === Hardware: SD card, serial boot, JTAG ===
+
+# Build and write kernel to SD Card
+[group("hw")]
+device: build
+    cp "{{ kernel_rpi4_bin }}" "{{ volume }}/kernel8.img"
+    @echo "{{copy_label}} copied kernel to {{ volume }}/kernel8.img"
+
+# Build and write kernel to SD Card, then eject
+[group("hw")]
+device-eject: device
+    diskutil ejectAll "{{ volume }}"
 
 # Build and write chainboot to SD Card, then eject
 [group("hw")]
@@ -238,6 +343,11 @@ cb-eject board='rpi4': (build-chainboot board)
     @echo "{{copy_label}} copied chainboot to {{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
     # TODO: sed proper kernel name here in config.txt
     diskutil unmountDisk "{{ volume }}"
+
+# Build and boot via chainofcommand
+[group("hw")]
+boot: build chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi4_bin }}"
 
 # Start this, then power the board on: Kickstart offers a faster console for 1.5 s at boot and
 # chainofcommand asks for `chainboot_load_baud`; it sends no kernel when chainboot asks for one.
@@ -255,10 +365,10 @@ alias ocd := openocd
 
 # === Testing ===
 
-# The device and nucleus tests in QEMU (rpi3), chainboot's, and the host tests.
+# The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc
 
 alias t := test
 
@@ -266,11 +376,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -286,6 +396,18 @@ _test-key-table: (_test-nucleus 'key_table' 'qemu,debug_kernel')
 
 # Test the nucleus Untyped Retype handler in QEMU (rpi3)
 _test-untyped: (_test-nucleus 'untyped')
+
+# Boot capability-test: boot-table invariants, debug console key, KeyTable/Frame Retype, Untyped split
+_test-capability: (_run-test-kernel 'capability-test')
+
+# Boot ppc-test: Invocation construction and same-Thread PPC Call/Return into the Bounce AddressSpace
+_test-ppc: (_run-test-kernel 'ppc-test')
+
+# Boot sync-test: Notification, EventCount, blocking waits through the Bounce Thread, Thread.Retire
+_test-sync: (_run-test-kernel 'sync-test')
+
+# Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
+_test-memory: (_run-test-kernel 'memory-test')
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
@@ -321,8 +443,8 @@ _host-test package test features='host-tests':
 _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Run the boot-platform tests natively: device tree helpers against the board
-# DTBs in targets/
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters')
+# DTBs in targets/, privileged-image loading
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -340,15 +462,18 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=metta-meddle --exclude=meddler \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
+
+# The images the workspace clippy's build scripts embed (the kernel)
+_clippy-artifacts: (build 'rpi3' 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
-clippy: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') _clippy-host
+clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') _clippy-host
 
 # Run shortened clippy (default features on both boards) and the host-test linting
-_clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
+_clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
 _clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-coc
@@ -363,14 +488,15 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
-# Clippy for the host tools (chainofcommand and its protocol crate's host tests)
+# Clippy for the host tools (chainofcommand and its protocol crate's host tests, vesper-image-build)
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
+    cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
 
 # Check formatting
@@ -380,16 +506,17 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access
-_audit-fp-simd: (build 'rpi3' 'qemu') (build 'rpi3' 'qemu,debug_kernel')
+_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test')
     #!/usr/bin/env bash
     set -euo pipefail
-    # Every configuration the nucleus builds in is audited.
+    # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
+    # debug_kernel test kernels in rpi3-qemu+debug_kernel; every copy of an image is audited.
     configs="{{ rpi3_qemu }} rpi3-qemu+debug_kernel{{ profile_suffix }}"
     # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
     failed=0
-    for image in nucleus; do
+    for image in nucleus kickstart capability-test memory-test sync-test ppc-test; do
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"
