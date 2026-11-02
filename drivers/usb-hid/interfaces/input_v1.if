@@ -1,0 +1,54 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## Keyboard and pointer input from the USB HID driver. The events travel over
+## the io-channel in receive mode: the client posts empty buffers of the
+## channel's data page, and the driver returns each holding the 24-byte records
+## of one frame (see `libs/input-event`), its length cut to them. A frame ends
+## with a `Sync` record. Devices are told apart by the `subject` of each record:
+## the id the driver gave the device, from 1, never reused. This interface
+## carries the calls that read a device's identity and state, which a client
+## makes when it starts, since a `DeviceAdded` record sent while it posted no
+## buffer is lost, and after a `Dropped` record. Prototype: edited in place.
+local interface input_v1
+{
+    ## The area the client reads descriptors and snapshots from.
+    data 4096;
+
+    ## Every function receives the badge of the key it was called through: the
+    ## driver finds the caller's data area from the key.
+    badged;
+
+    ## The io-channel input events travel on: a control page and one data page.
+    channel 1;
+
+    ## No device with that id is served.
+    exception no_device {}
+
+    ## The stage is not inside the data area or too small.
+    exception not_permitted {}
+
+    ## Write the descriptor of device `subject` at the start of `stage`: the
+    ## fixed 272-byte layout of `input-event`'s `Descriptor`. A client learns
+    ## which devices exist by asking for ids from 1 until `no_device`; an id of
+    ## a device that went away raises `no_device`, and later ids may still exist.
+    descriptor(card32 subject, octet& stage)
+        raises (no_device, not_permitted);
+
+    ## Write the current state of device `subject` at the start of `stage` as
+    ## the records that rebuild it: a `Key` down for every key and button held
+    ## and an `Abs` for every absolute axis, then a `Sync`. Returns the bytes
+    ## written, a multiple of 24.
+    snapshot(card32 subject, octet& stage)
+        returns (card32 length)
+        raises (no_device, not_permitted);
+
+    ## The trace lines the producer kept since the last call, for the program
+    ## that holds the serial channel when the producer has none: as many as fit
+    ## `text`, each ending in a line feed. Returns the bytes written; lines that
+    ## did not fit the producer's backlog are lost.
+    trace(octet& text)
+        returns (card32 bytes)
+        raises (not_permitted);
+}

@@ -40,6 +40,9 @@ members = [
   "drivers/usb/protocol",
   "drivers/usb/server",
   "drivers/usb/client",
+  "drivers/usb-hid",
+  "drivers/usb-hid/client",
+  "drivers/usb-hid/server",
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
@@ -54,6 +57,7 @@ members = [
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/usb-core-test",
+  "kernel/tests/usb-hid-test",
   "kernel/tests/log-test",
   # Libraries
   "libs/address",
@@ -70,6 +74,7 @@ members = [
   "libs/exception",
   "libs/image",
   "libs/image-build",
+  "libs/input-event",
   "libs/io-channel",
   "libs/irqchip",
   "libs/kicktest",
@@ -113,6 +118,7 @@ members = [
   "userspace/tests/usb/client",
   "userspace/tests/sd/client",
   "userspace/tests/log/probe",
+  "userspace/tests/input/trace",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
@@ -157,6 +163,7 @@ libblock-channel = { path = "libs/block-channel", package = "vesper-block-channe
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+vesper-input-event = { path = "libs/input-event" }
 vesper-usb-protocol = { path = "drivers/usb/protocol" }
 driver-protocol = { path = "userspace/tests/driver/protocol" }
 driver-echo = { path = "userspace/tests/driver/echo" }
@@ -198,6 +205,9 @@ gpio-client = { path = "drivers/gpio-bcm2835/client" }
 usb = { path = "drivers/usb/server" }
 usb-client = { path = "drivers/usb/client" }
 usb-core = { path = "drivers/usb" }
+usb-hid = { path = "drivers/usb-hid" }
+input = { path = "drivers/usb-hid/server" }
+input-client = { path = "drivers/usb-hid/client" }
 usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
