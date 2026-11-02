@@ -1,0 +1,33 @@
+sdimage:
+    genimage \
+        --config genimage.cfg \
+        --rootpath boot \
+        --inputpath boot \
+        --outputpath ../../target/images \
+        --tmppath /tmp/genimage-work
+
+pull-firmware:
+    #!/bin/bash
+    mkdir -p boot/overlays
+
+    BASE=https://raw.githubusercontent.com/raspberrypi/firmware/master/boot
+
+    for file in \
+        bootcode.bin \
+        start_x.elf \
+        fixup_x.dat \
+        bcm2710-rpi-3-b-plus.dtb
+    do
+        curl -fL --retry 3 "$BASE/$file" -o "boot/$file" || exit 1
+    done
+
+    for file in disable-bt.dtbo pwm-2chan.dtbo
+    do
+        curl -fL --retry 3 "$BASE/overlays/$file" \
+            -o "boot/overlays/$file" || exit 1
+    done
+
+pull-bootable:
+    cp ../../doc/rpi3_config.txt boot/config.txt
+    cp ../../target/images/wood-test-rpi3.bin boot/
+    sed -i 's/^kernel=.*/kernel=woof-test-rpi3.bin/' boot/config.txt

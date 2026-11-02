@@ -1,0 +1,6 @@
+arm_64bit=1
+start_x=1
+gpu_mem=128
+dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+
+device_tree=bcm2710-rpi-3-b-plus.dtb
