@@ -300,7 +300,8 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The capability ABI, the boot platform, the chainboot protocol and chainofcommand.
+# The capability ABI, the boot platform, the IO channels,
+# chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
 test-host: _test-object-host _test-platform-host _test-chainboot-host
@@ -315,8 +316,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree')
-
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel')
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
@@ -352,8 +352,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree')
-
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel')
 # Clippy for the host tools (chainofcommand and its protocol crate's host tests)
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated

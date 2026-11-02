@@ -1,0 +1,34 @@
+[package]
+name = "vesper-block-channel"
+
+description = "What a block device driver and its client agree on: the request queue on an IO channel, the request header and the checks the driver makes before it touches a request."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[dependencies]
+libio-channel = { workspace = true }
+
+[features]
+# Opt in to standard host integration tests, not the freestanding test-device workflow.
+host-tests = []
+
+# Shared by block device drivers and their clients; host integration tests opt in above.
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "block_channel"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

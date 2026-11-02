@@ -1027,6 +1027,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-block-channel"
+version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
+]
+
+[[package]]
 name = "vesper-boot"
 version = "0.0.1"
 dependencies = [
@@ -1091,6 +1098,13 @@ dependencies = [
  "vesper-log",
  "vesper-qemu",
  "vesper-tests",
+]
+
+[[package]]
+name = "vesper-io-channel"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
 ]
 
 [[package]]
@@ -1192,6 +1206,13 @@ dependencies = [
 [[package]]
 name = "vesper-qemu"
 version = "0.0.1"
+
+[[package]]
+name = "vesper-serial-channel"
+version = "0.0.1"
+dependencies = [
+ "vesper-io-channel",
+]
 
 [[package]]
 name = "vesper-syscalls"
