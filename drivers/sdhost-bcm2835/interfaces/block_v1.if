@@ -1,0 +1,37 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## A block device: storage read and written in whole blocks of 512 bytes. The
+## reads and writes themselves travel over the io-channel as a request queue
+## (`libs/block-channel`): the client puts each request, a header and the
+## buffers of its blocks in the channel's data pages, on the channel, calls
+## `submitted`, and waits on the channel's `EventCount` for the requests to
+## come back with their outcome in the header. Requests are served in the order
+## they were put. Nothing here is controller-specific, so every block device
+## driver can serve the same interface. Prototype: edited in place.
+local interface block_v1
+{
+    ## The io-channel requests travel on: a control page and sixteen data pages,
+    ## shared by each client and the driver.
+    channel 16;
+
+    ## No card or other medium is in the device.
+    exception no_medium {}
+
+    ## The device did not come up: `step` is the step of its bring-up that
+    ## failed. For an SD card, 1: the interface condition, 2: the power-up,
+    ## 3: the identification, 4: the relative address, 5: the card-specific
+    ## data, 6: the selection, 7: the bus width, 8: the block length.
+    exception device_failed { card32 step; }
+
+    ## The device's size, in blocks of 512 bytes.
+    blocks()
+        returns (card64 count)
+        raises (no_medium, device_failed);
+
+    ## Tell the driver that requests wait on the channel. The driver serves
+    ## every request put before the call; a client may put several and call
+    ## once.
+    submitted();
+}

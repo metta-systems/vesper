@@ -34,10 +34,15 @@ members = [
   "drivers/fb",
   "drivers/fb/client",
   "drivers/fb/server",
+  # SD card component and its block_v1 interface crates
+  "drivers/sdhost-bcm2835",
+  "drivers/sdhost-bcm2835/client",
+  "drivers/sdhost-bcm2835/server",
   # GPIO component and its gpio_v1 interface crates
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
   "drivers/gpio-bcm2835/server",
+  "kernel/tests/sd-test",
   "kernel/tests/log-test",
   # Libraries
   "libs/address",
@@ -94,6 +99,7 @@ members = [
   "userspace/tests/hello",
   "userspace/tests/irq/protocol",
   "userspace/tests/mailbox/client",
+  "userspace/tests/sd/client",
   "userspace/tests/log/probe",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
@@ -170,6 +176,8 @@ libmeddle = { path = "libs/meddle", package = "metta-meddle" }
 libmeddle-runtime = { path = "libs/meddle-runtime", package = "metta-meddle-runtime" }
 mailbox = { path = "drivers/mailbox/server" }
 mailbox-client = { path = "drivers/mailbox/client" }
+block = { path = "drivers/sdhost-bcm2835/server" }
+block-client = { path = "drivers/sdhost-bcm2835/client" }
 gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
 power = { path = "drivers/power/server" }
