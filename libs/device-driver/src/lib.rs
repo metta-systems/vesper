@@ -244,8 +244,8 @@ pub const NO_BUS_ADDRESS: u64 = u64::MAX;
 /// Most `VideoCore` memory blocks one driver receives.
 pub const MAX_VIDEO_BLOCKS: usize = 8;
 
-/// Most functions of other components one driver imports; 28 keeps the
-/// record within its page.
+/// Most functions of other components one driver imports (Wood, the most,
+/// imports 17); 28 keeps the record within its page.
 pub const MAX_IMPORTS: usize = 28;
 
 /// Most interrupts of one node: one Notification bit each.

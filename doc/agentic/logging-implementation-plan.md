@@ -46,7 +46,7 @@ Exit checks:
 
 - [x] `just _test-log-host`: 12 host tests of the header, buffer set, line cutting and
   output line pass.
-- [x] `just test-wood`: passes as before, and the UART file holds the server's start
+- [x] `just _test-wood`: passes as before, and the UART file holds the server's start
   line, the compositor's display and device lines, `wood: the engine started`, Wood's
   music summary, `midi-synth: ready at 44091710 mHz` and the audio driver's
   `open for client 0`, each with the `[seconds] I ` prefix (0 lines dropped in the
@@ -54,7 +54,7 @@ Exit checks:
 - [x] Unchanged behaviour where the import stays unlinked: `just _test-compositor`,
   `just _test-window-events`, `just _test-audio`, `just _test-shell`,
   `just _test-usb-core`, `just _test-usb-hid` pass.
-- [x] `just build-wood-test-hw` builds.
+- [x] `just _build-wood-test-hw` builds.
 - [x] Lint: `just _clippy-log` (the log crates and `libserial-trace`, with and without
   `qemu`, and the host tests); the target build of Wood, `midi-synth`, the compositor,
   the audio driver and the USB components with and without `qemu`, and
@@ -99,12 +99,12 @@ Depends on L-A's hardware exit only for confidence; no open decision.
   volume). Kickstart's driver Thread stacks went from 16 to 32 KiB (`STACK_PAGES`):
   `usb-core` overflowed 16 KiB under QEMU once its trace went to the log channel; the
   maintainer approved the 32 KiB stacks on 2026-10-29 ("keep 32k stacks").
-  Checked: `just test-wood` (the UART file holds the controller's bring-up and port
+  Checked: `just _test-wood` (the UART file holds the controller's bring-up and port
   reset, a device the core enumerated and `usb-hid: serving a Keyboard`; 38 USB
   lines in a 12.5 s run, 33 of them in the first 0.76 s, 0 dropped); test-usb, test-usb-core, test-usb-hid,
   test-compositor, test-shell (all run by hand, logs in `target/usbclient-*.log`),
   test-window-events, test-audio, test-midi, test-dispatch, test-driver, test-mailbox,
-  test-uart; `just build-wood-test-hw`; clippy of the USB crates, `libserial-trace`,
+  test-uart; `just _build-wood-test-hw`; clippy of the USB crates, `libserial-trace`,
   Kickstart and the wood-test kernel with and without `qemu`; `just _clippy-log`,
   `just _clippy-usb-host`. Board: pending (L-C).
 - [ ] Add the `log_v1` import to mailbox, fb, gpio, cprman, dma and `draw_demo`; add
@@ -148,7 +148,7 @@ through the serial console too"). Design: section Panics and faults.
   stack: `FAULT: log_probe thread 1: stack overflow (guard page)` on the UART) and
   `just _test-log-host` (`FaultReport`: 3 tests). Regressions: test-wood, test-midi,
   test-audio, test-window-events, test-usb, test-usb-core, test-usb-hid (by hand,
-  logs in `target/panic-*.log`); `just build-wood-test-hw`; clippy of the log crates
+  logs in `target/panic-*.log`); `just _build-wood-test-hw`; clippy of the log crates
   (`just _clippy-log`, now with `log-probe`), `vesper-device-driver`,
   `vesper-user-runtime`, Kickstart, log-test and wood-test with and without `qemu`.
 - [ ] Board: a `FAULT:` or `PANICKED:` line on the Pi 3 B's UART (the next boot of
@@ -181,7 +181,7 @@ chainboot does unless chainboot handed over, and prints its early lines on the U
   chainofcommand over TCP negotiates 187 500 baud (QEMU's UART clock is 3 MHz, so
   1 500 000 is refused, which checks the refusal); chainboot loading it at 187 500
   hands over and Kickstart keeps the rate; with no host Kickstart stays at 115 200.
-  `just test-wood` passes with the early lines ahead of the log server's.
+  `just _test-wood` passes with the early lines ahead of the log server's.
 - [ ] Board: wood-test from the SD card with `just console`, and through
   `just boot-wood-test` (handoff), on the Pi 3 B.
 
@@ -190,7 +190,7 @@ chainboot does unless chainboot handed over, and prints its early lines on the U
 | Command | What it checks |
 |---|---|
 | `just _test-log-host` | the log protocol library |
-| `just test-wood` | the log server in QEMU, its clients' lines on the UART file, Wood's music |
+| `just _test-wood` | the log server in QEMU, its clients' lines on the UART file, Wood's music |
 | `just _test-log` | a probe's stack overflow and panic reach the UART as `FAULT:` and `PANICKED:` lines |
-| `just build-wood-test-hw` | the board image builds |
+| `just _build-wood-test-hw` | the board image builds |
 | `just _clippy-log` | the log crates' lint, allowing the known `libmeddle` breakage |

@@ -175,7 +175,7 @@ pub fn note(arguments: fmt::Arguments<'_>) {
 /// a 4 KiB buffer on the stack, which inlined into [`Trace::line`] or [`note`]
 /// sat in one frame with the log channel's send and the serial line's buffer.
 /// Apart, each path takes its own stack only while it runs; `usb-core`'s 16
-/// KiB stack overflowed with them together.
+/// KiB stack overflowed in wood-test with them together.
 #[inline(never)]
 #[cfg_attr(
     not(feature = "qemu"),

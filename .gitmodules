@@ -1,0 +1,3 @@
+[submodule "userspace/wood"]
+	path = userspace/wood
+	url = git@github.com:metta-systems/vesper-doom.git

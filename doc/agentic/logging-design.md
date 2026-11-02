@@ -98,7 +98,7 @@ question to the maintainer.
   a kernel log object such as Fuchsia's debuglog (minimal kernel API).
 - **L9. QEMU: both semihosting and serial.** `liblog-client`'s `Logger` and
   `libserial-trace` keep printing on the semihosting console under `qemu`, so every
-  recipe's checks hold; `just test-wood` sends the UART to its own file
+  recipe's checks hold; `just _test-wood` sends the UART to its own file
   (`target/wood-test-serial.log`, `-serial file:`) so serial lines are never split by
   semihosting output, and checks the server's lines there. Not chosen: serial only
   under QEMU (rewrites every recipe's checks); semihosting only (the log server is not
@@ -284,7 +284,7 @@ The server's export `flush` only advances its `EventCount`.
   `serial = true` moved from it to `log_server` in `kernel/tests/wood-test/image.toml`.
 - **Wood:** `userspace/wood/vesper/src/logger.rs` is a `liblog_client::Logger`; both
   Threads log through it (`enabled()` is now true on the board).
-- **MIDI synthesiser:** `userspace/wood/midi-synth/interfaces/imports.if` imports
+- **MIDI synthesiser:** `userspace/midi-synth/interfaces/imports.if` imports
   `log_v1`; its `note` lines (including those written during `service` on Wood's
   playback Thread) go to its own channel.
 - **Audio driver:** imports `log_v1` too; its `Trace` lines reach the UART.
@@ -316,7 +316,7 @@ overwhelm the timings". The policy is a boot-time trail and a quiet steady state
 - **Levels:** `Trace` and `note` send everything at Info; there is no Debug-only line,
   since nothing per transfer is traced at all.
 
-In `just test-wood` (a keyboard behind a hub) the three components write 38 lines in a
+In `just _test-wood` (a keyboard behind a hub) the three components write 38 lines in a
 12.5 s run: 33 in the first 0.76 s (bring-up and the enumeration of the hub and the
 keyboard), then only the back-off lines (`no Mouse yet` at 1, 2, 4 and 8 s, one slow
 poll): 5 lines in the remaining 11.7 s, about 0.4 a second and falling, none for the

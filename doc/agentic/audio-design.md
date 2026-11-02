@@ -931,7 +931,7 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   the frame they arrive at, not on how frames are split into calls (the block grid,
   section "The synthesiser as built"). The component logs the FNV-1a hash of each
   song's first 64 rendered periods with the song's size, looping flag and volume; its
-  host test computes the same from the IWAD and the trimmed bank, and `just test-wood`
+  host test computes the same from the IWAD and the trimmed bank, and `just _test-wood`
   compares: the title's `D_INTROA` (878 bytes, once, volume 64) `0x40f16e7eae7a5f45`,
   the first demo's `D_E1M5` (13 101 bytes, looping) `0x4f0a9ddf3a4a14be`.
 - **No floating point** in the linked component: `just _synth-no-float` finds no
@@ -946,7 +946,7 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   sequencer's event timing against the MUS ticks.
 - QEMU: the audio driver's capture mode already counts audible stream periods
   (`stream::is_audible`); with music, the title screen (`D_INTRO`) and the demos make
-  nearly every period audible, which `just test-wood` can assert (for example "audible
+  nearly every period audible, which `just _test-wood` can assert (for example "audible
   stream periods" close to the periods played), and Wood can log a hash of the first
   rendered seconds to compare with the host test's golden value.
 - Hardware: the render time per buffer against the generic timer (`CNTVCT_EL0`),
@@ -1026,7 +1026,7 @@ Checked against QEMU 11.1.2 (`info mtree` on `-M raspi3b`) and its sources ([S2]
   pattern (`stream::starts_with_test_pattern`) is checked against it; any other stream,
   such as Wood's mixed effects, is checked against the ring slot each period was copied
   from, then silence, and its periods that are not silent are counted and traced at
-  powers of two (`stream::is_audible`; `just test-wood` asserts them). So the end-to-end test
+  powers of two (`stream::is_audible`; `just _test-wood` asserts them). So the end-to-end test
   (`just _test-audio`) checks that the client's samples reach "the FIFO" converted, right
   first, in order, through the DMA and the cache maintenance. Everything about pacing,
   the real rate, pops, levels and left/right needs the board.

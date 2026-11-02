@@ -176,7 +176,7 @@ Done in QEMU (2026-10-28), hardware check pending:
   sound and the driver's underrun count at powers of two.
 - wood-test: the gpio, cprman, dma and audio drivers (the compositor keeps the serial
   channel, so the audio driver traces on semihosting only); Wood imports `audio_v1`;
-  `just test-wood` and `just qemu-wood` boot the audio test tree (`targets/audio-test.dtb`).
+  `just _test-wood` and `just qemu-wood` boot the audio test tree (`targets/audio-test.dtb`).
   The boot thread expects Wood's four `audio_v1` imports only when the PWM node is
   enabled, so a board without the overlay boots with Wood silent. Capacity: the image
   has 14 instances (`MAX_DRIVER_INSTANCES` raised from 12 to 16) and takes about 1230
@@ -189,7 +189,7 @@ Done in QEMU (2026-10-28), hardware check pending:
   against the ring slot they were copied from and counted when not silent
   (`is_audible`), traced at powers of two. Ramps and silence are always checked. Host
   tests in `tests/stream.rs`.
-- QEMU exit passed: `just test-wood` (log in `target/wood-test.log`): Wood opens the
+- QEMU exit passed: `just _test-wood` (log in `target/wood-test.log`): Wood opens the
   output at 44 091.710 Hz, the driver starts its stream, the demo's effects reach the
   capture ("audio: capture: 512 audible stream periods of 1129", "wood: INFO audio:
   1126 buffers mixed, 512 with sound, 0 underruns"); the key checks pass as before.
@@ -279,7 +279,7 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 - Image: `kernel/tests/wood-test/image.toml` bundles `midi_synth` (4 MiB RAM) with the
   `soundfont` resource `target/wood/sc55-doom1.sf2`; `build-wood` builds the component
   and runs `just _wood-soundfont` first; the test kernel loads it (15 instances of 16).
-- QEMU exit passed: `just test-wood` (log in `target/wood-test.log`): the synthesiser
+- QEMU exit passed: `just _test-wood` (log in `target/wood-test.log`): the synthesiser
   loads the 4 299 638-byte SoundFont, Wood takes it at 44 091 710 mHz, the title's
   `D_INTROA` (878 bytes of MIDI) and the first demo's `D_E1M5` (13 101 bytes, looping)
   play at volume 64, the first 64 periods of each hash as the host test computes them
@@ -327,10 +327,10 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   target, with and without `qemu`, their host tests, the trimming tool; the known
   `metta-meddle` `map_unwrap_or` breakage stops it until fixed) and `just
   _synth-no-float` (no soft-float routine in the library or the linked component).
-- `just test-wood` for the music end to end in QEMU.
+- `just _test-wood` for the music end to end in QEMU.
 - QEMU tests per stage as above (`just _test-audio` for A1 and A3, `just _test-dma` for
   A2);
-  `just _test-mailbox`, `just _test-driver`, `just test-wood` for regressions in shared
+  `just _test-mailbox`, `just _test-driver`, `just _test-wood` for regressions in shared
   code.
 - `just _clippy-audio`: the audio crates (with the `dma` driver, the interface crates and
   the audio test client) with and without `qemu`, and their host tests (`pwm`,
