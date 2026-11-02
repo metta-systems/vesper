@@ -5,16 +5,19 @@
 //! 32.32 fixed point; gains are Q16 and ramp linearly across each block, so
 //! envelope, volume and pan changes do not click.
 
-use crate::{
-    bank::{Zone, voice_value},
-    channel::Channel,
-    envelope::{Envelope, EnvelopeParameters},
-    generator,
-    sf2::{SampleHeader, SoundFont},
-    tables::{
-        Rate, SILENT_CENTIBELS, attenuation_gain, concave_centibels, pan_gains, phase_step,
-        timecents_frames,
+use {
+    crate::{
+        bank::{Zone, voice_value},
+        channel::Channel,
+        envelope::{Envelope, EnvelopeParameters},
+        generator,
+        sf2::{SampleHeader, SoundFont},
+        tables::{
+            Rate, SILENT_CENTIBELS, attenuation_gain, concave_centibels, pan_gains, phase_step,
+            timecents_frames,
+        },
     },
+    core::mem,
 };
 
 /// How a voice treats its sample's loop (generator `sampleModes`).
@@ -274,10 +277,6 @@ impl Voice {
     /// next grid point (at least `frames`). A ramp starts at a grid point (or
     /// at the voice's first frame) and runs to the next, however the frames
     /// are split into calls, so the output does not depend on the split.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "positions stay below 2^32 points, mixed values within i32"
-    )]
     pub fn render(
         &mut self,
         font: &SoundFont<'_>,
@@ -298,19 +297,51 @@ impl Voice {
         if self.ramp_left == 0 {
             self.start_ramp(channel, until_boundary);
         }
-        let left_delta = self.left_delta;
-        let right_delta = self.right_delta;
-        let mut left_gain = self.left_gain;
-        let mut right_gain = self.right_gain;
+        let mut gains = Gains {
+            left: self.left_gain,
+            right: self.right_gain,
+            left_delta: self.left_delta,
+            right_delta: self.right_delta,
+        };
+        let step = self.step;
+        let mut position = self.position;
+        // `released` changes only between calls, so the loop state holds for
+        // the whole call.
+        let looping = self.looping();
+        // Within a run every frame has `index + 1 < run_limit`: both points
+        // are in the sample, the next point is `index + 1`, and the loop
+        // cannot wrap before the run's last step.
+        let run_limit = if looping { self.loop_end } else { self.end };
+        let out = out.as_chunks_mut::<2>().0;
+        let frame_count = out.len().min(frames as usize);
+        let mut remaining = &mut out[..frame_count];
 
-        for [left, right] in out.as_chunks_mut::<2>().0.iter_mut().take(frames as usize) {
-            let index = (self.position >> 32) as u32;
-            if !self.looping() && index >= self.end {
+        loop {
+            if let Some(points) = font.points {
+                let limit = run_limit.min(u32::try_from(points.len()).unwrap_or(u32::MAX));
+                let run = run_frames(position, step, limit).min(remaining.len());
+                if run > 0 {
+                    let (run_out, rest) = mem::take(&mut remaining).split_at_mut(run);
+                    remaining = rest;
+                    position = mix_run(points, run_out, position, step, &mut gains);
+                    if looping {
+                        position = self.wrap(position);
+                    }
+                }
+            }
+            // One frame the slow way: at the loop's or the sample's end, or
+            // on a bank whose points are not aligned.
+            let Some(([left, right], rest)) = mem::take(&mut remaining).split_first_mut() else {
+                break;
+            };
+            remaining = rest;
+            let index = (position >> 32) as u32;
+            if !looping && index >= self.end {
                 // The sample ran out: the voice ends here.
                 self.envelope.finish();
                 break;
             }
-            let next = if self.looping() && index + 1 >= self.loop_end {
+            let next = if looping && index + 1 >= self.loop_end {
                 self.loop_start
             } else {
                 index + 1
@@ -321,30 +352,112 @@ impl Voice {
             } else {
                 0
             };
-            // 15 bits of fraction: the product of a 17-bit difference fits.
-            let fraction = ((self.position >> 17) & 0x7fff) as i32;
-            let point = here + (((after - here) * fraction) >> 15);
-            left_gain += left_delta;
-            right_gain += right_delta;
-            *left += ((i64::from(point) * i64::from(left_gain)) >> 16) as i32;
-            *right += ((i64::from(point) * i64::from(right_gain)) >> 16) as i32;
-
-            self.position += self.step;
-            if self.looping() {
-                let loop_length = u64::from(self.loop_end - self.loop_start) << 32;
-                while self.position >> 32 >= u64::from(self.loop_end) {
-                    self.position -= loop_length;
-                }
+            gains.mix(left, right, interpolate(here, after, position));
+            position += step;
+            if looping {
+                position = self.wrap(position);
             }
         }
+
+        self.position = position;
         self.ramp_left = self.ramp_left.saturating_sub(frames);
         if self.ramp_left == 0 {
             // Land exactly on the target, whatever the deltas rounded away.
             self.left_gain = self.target_left;
             self.right_gain = self.target_right;
         } else {
-            self.left_gain = left_gain;
-            self.right_gain = right_gain;
+            self.left_gain = gains.left;
+            self.right_gain = gains.right;
         }
     }
+
+    /// `position` brought back into the loop, if it ran past its end.
+    fn wrap(&self, mut position: u64) -> u64 {
+        let loop_length = u64::from(self.loop_end - self.loop_start) << 32;
+        while position >> 32 >= u64::from(self.loop_end) {
+            position -= loop_length;
+        }
+        position
+    }
+}
+
+/// The gains of a render call: where they are, Q16, and their step per frame.
+#[derive(Clone, Copy)]
+struct Gains {
+    left: i32,
+    right: i32,
+    left_delta: i32,
+    right_delta: i32,
+}
+
+impl Gains {
+    /// Step the gains and add `point` at them to a frame.
+    #[inline(always)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a point times a Q16 gain, shifted back, fits i32"
+    )]
+    fn mix(&mut self, left: &mut i32, right: &mut i32, point: i32) {
+        self.left += self.left_delta;
+        self.right += self.right_delta;
+        *left += ((i64::from(point) * i64::from(self.left)) >> 16) as i32;
+        *right += ((i64::from(point) * i64::from(self.right)) >> 16) as i32;
+    }
+}
+
+/// The point between `here` and `after` at the fraction of `position`.
+#[inline(always)]
+const fn interpolate(here: i32, after: i32, position: u64) -> i32 {
+    // 15 bits of fraction: the product of a 17-bit difference fits.
+    let fraction = ((position >> 17) & 0x7fff) as i32;
+    here + (((after - here) * fraction) >> 15)
+}
+
+/// Frames from `position`, `step` apart, whose point index `i` keeps
+/// `i + 1 < limit` (unbounded when `step` is 0).
+fn run_frames(position: u64, step: u64, limit: u32) -> usize {
+    let Some(last) = limit.checked_sub(1) else {
+        return 0;
+    };
+    let threshold = u64::from(last) << 32;
+    if position >= threshold {
+        return 0;
+    }
+    if step == 0 {
+        return usize::MAX;
+    }
+    usize::try_from((threshold - position).div_ceil(step)).unwrap_or(usize::MAX)
+}
+
+/// Add a run of frames from `points` to `out`, starting at `position`, and
+/// return the position after it. The caller sized the run by [`run_frames`],
+/// so every frame reads `index` and `index + 1` within `points` and needs no
+/// end or wrap check: the frames are those of [`Voice::render`]'s slow path,
+/// bit for bit.
+#[inline(always)]
+fn mix_run(
+    points: &[i16],
+    out: &mut [[i32; 2]],
+    mut position: u64,
+    step: u64,
+    gains: &mut Gains,
+) -> u64 {
+    let Some(last_frame) = out.len().checked_sub(1) else {
+        return position;
+    };
+    // The run's highest index: it reads up to `last_index + 1`, so one
+    // check here bounds every read below (the indices only grow).
+    let last_index = ((position + last_frame as u64 * step) >> 32) as usize;
+    let window = &points[..last_index + 2];
+    // A copy in registers for the run.
+    let mut run_gains = *gains;
+    for [left, right] in out {
+        let index = ((position >> 32) as usize).min(last_index);
+        let here = i32::from(window[index]);
+        let after = i32::from(window[index + 1]);
+        run_gains.mix(left, right, interpolate(here, after, position));
+        position += step;
+    }
+    *gains = run_gains;
+    position
 }

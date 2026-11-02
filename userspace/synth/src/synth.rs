@@ -8,7 +8,7 @@ use {
         tables::Rate,
         voice::{NoteStart, Voice},
     },
-    core::array,
+    core::{array, mem},
 };
 
 /// Voices that can sound at once. Doom's shareware tracks hold at most 15
@@ -41,8 +41,9 @@ pub struct Synth<'a> {
     channels: [Channel; CHANNELS],
     voices: [Option<Voice>; POLYPHONY],
     serial: u64,
-    /// Master volume in Q16 (65 536 is full).
-    master_volume: u32,
+    /// Master volume in Q16 (65 536 is full); signed, so the output scale
+    /// is one `i32` by `i32` multiply.
+    master_volume: i32,
     /// Frames since the last point of the block grid.
     grid_phase: usize,
 }
@@ -90,7 +91,7 @@ impl<'a> Synth<'a> {
 
     /// Set the master volume, 0 to 127 (as Doom's music volume), linear.
     pub fn set_volume(&mut self, volume: u8) {
-        self.master_volume = (u32::from(volume.min(127)) << 16) / 127;
+        self.master_volume = (i32::from(volume.min(127)) << 16) / 127;
     }
 
     /// Silence every voice and put every channel back to power-on.
@@ -245,14 +246,15 @@ impl<'a> Synth<'a> {
     /// Render `out.len() / 2` frames and add them (interleaved stereo, master
     /// volume applied, not clipped) to `out`.
     pub fn mix(&mut self, mut out: &mut [i32]) {
+        // Zeroed once: each block's samples are taken out as they are used.
         let mut block = [0_i32; 2 * BLOCK_FRAMES];
         while out.len() >= 2 {
             let frames = self.frames_to_boundary().min(out.len() / 2);
             let (chunk, rest) = out.split_at_mut(2 * frames);
             let block = &mut block[..2 * frames];
             self.render_voices(block);
-            for (sample, &rendered) in chunk.iter_mut().zip(block.iter()) {
-                *sample += self.scale(rendered);
+            for (sample, rendered) in chunk.iter_mut().zip(block.iter_mut()) {
+                *sample += self.scale(mem::take(rendered));
             }
             out = rest;
         }
@@ -260,14 +262,19 @@ impl<'a> Synth<'a> {
 
     /// Render `out.len() / 2` frames into `out` (interleaved stereo s16).
     pub fn render(&mut self, mut out: &mut [i16]) {
+        // Zeroed once: each block's samples are taken out as they are used.
         let mut block = [0_i32; 2 * BLOCK_FRAMES];
         while out.len() >= 2 {
             let frames = self.frames_to_boundary().min(out.len() / 2);
             let (chunk, rest) = out.split_at_mut(2 * frames);
             let block = &mut block[..2 * frames];
             self.render_voices(block);
-            for (sample, &rendered) in chunk.iter_mut().zip(block.iter()) {
-                *sample = clip(self.scale(rendered));
+            // A frame at a time: one load, zeroing and loop step per pair.
+            let frames_out = chunk.as_chunks_mut::<2>().0.iter_mut();
+            for ([left, right], rendered) in frames_out.zip(block.as_chunks_mut::<2>().0) {
+                let [rendered_left, rendered_right] = mem::take(rendered);
+                *left = clip(self.scale(rendered_left));
+                *right = clip(self.scale(rendered_right));
             }
             out = rest;
         }
@@ -286,10 +293,9 @@ impl<'a> Synth<'a> {
         ((i64::from(rendered) * i64::from(self.master_volume)) >> (16 + MASTER_SHIFT)) as i32
     }
 
-    /// Render every voice into `block` (zeroed first; at most the frames to
-    /// the next grid point) and free the voices that finished.
+    /// Add every voice into `block` (which the caller zeroed; at most the
+    /// frames to the next grid point) and free the voices that finished.
     fn render_voices(&mut self, block: &mut [i32]) {
-        block.fill(0);
         let frames = block.len() / 2;
         let until_boundary = u32::try_from(self.frames_to_boundary()).unwrap_or(0);
         let count = u32::try_from(frames).unwrap_or(0);
