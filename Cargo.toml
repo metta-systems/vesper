@@ -10,6 +10,7 @@ members = [
   "libs/chainboot-protocol",
   "libs/console",
   "libs/cpu",
+  "libs/devicetree",
   "libs/exception",
   "libs/kernel-state",
   "libs/local-irq",
@@ -56,6 +57,7 @@ libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
+libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
