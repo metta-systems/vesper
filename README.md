@@ -53,6 +53,8 @@ You can override the name of mounted sdcard volume by specifying env variable `V
 just setup-local-dev
 ```
 
+This also fetches the git submodules (the SC-55 SoundFont Wood plays its music with); to fetch only them, run `git submodule update --init`.
+
 ### To build kernel and run it in QEMU emulator
 
 ```
