@@ -22,6 +22,7 @@ members = [
   "drivers/irqchip-gicv2",
   # EL0 driver components
   "drivers/uart-pl011",
+  "kernel/tests/log-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -55,6 +56,7 @@ members = [
   "libs/print",
   "libs/qemu",
   "libs/serial-channel",
+  "libs/serial-trace",
   "libs/syscall",
   "libs/test",
   "libs/time",
@@ -75,6 +77,7 @@ members = [
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
   "userspace/tests/irq/protocol",
+  "userspace/tests/log/probe",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
@@ -82,6 +85,11 @@ members = [
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
   "userspace/tests/dispatch/child",
+  # The log server component, its log_v1 interface crates and the client library
+  "userspace/log-server",
+  "userspace/log-server/client",
+  "userspace/log-server/server",
+  "libs/log-client",
 ]
 resolver = "3"
 
@@ -149,6 +157,7 @@ libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
+libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
@@ -157,6 +166,10 @@ log = { version = "0.4", default-features = false }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 snafu = { version = "0.9", default-features = false }
+log-server = { path = "userspace/log-server" }
+log-interface = { path = "userspace/log-server/server" }
+log-interface-client = { path = "userspace/log-server/client" }
+liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }

@@ -198,6 +198,12 @@ _build-uart-test board='rpi3': (_build-components board 'qemu' test_kernel_featu
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
 _build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
 
+# Build log-test's programs: the probe and the log server, for the image configuration `board` + `image_features`; only log-test bundles the probe, so it is not in `user_components`
+_build-log-probe board='rpi3' features='qemu' image_features=features: (_cross-build 'log-probe log-server' board user_link features '' image_features)
+
+# Build the log-test e2e kernel: the PL011 driver, the log server and a probe whose Threads overflow a stack and panic
+_build-log-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
+
 # === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
 
 # === Chainboot ===
@@ -416,7 +422,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-log
 
 alias t := test
 
@@ -496,6 +502,32 @@ _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qe
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
 
+# Boot log-test: the probe's second Thread overflows its stack and its fault handler (liblog_client's, installed by Kickstart) logs `FAULT: log_probe thread 1: stack overflow (guard page)`; then its first Thread panics and the panic handler logs `PANICKED: log_probe: made to panic on purpose at …`, which ends the run. Both lines must reach the UART through the log server. The semihosting console goes to target/log-test.log, the UART to target/log-test-serial.log
+_test-log board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-log-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/log-test.log"
+    serial="{{ target_root }}/log-test-serial.log"
+    rm -f "$log" "$serial"
+    # GNU timeout (`gtimeout` from Homebrew coreutils on macOS); without one the run is unbounded.
+    limit=$(command -v timeout || command -v gtimeout || true)
+    ${limit:+$limit 120} {{ qemu }} -M raspi3b -display none -monitor none \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'log-test-' + config + '.bin' }}" < /dev/null > "$log"
+    status=$?
+    grep -a "log-test: \|log-probe: \|FAULT: \|PANICKED" "$log" | tail -12
+    cat "$serial"
+    # The panic ends the run with a failure exit; a timeout (124) means it never came.
+    [ "$status" -ne 124 ] || { echo "log-test: timed out; see $log"; exit 1; }
+    grep -a -q "log-test: ✅ the probe has its fault handler" "$log" || { echo "log-test: the probe's fault handler was not installed; see $log"; exit 1; }
+    # Only the file name and line of the panic: the path before them is the host's spelling.
+    grep -a -q "EL0 PANICKED: panicked at .*main\.rs:[0-9]*" "$log" || { echo "log-test: no panic on the semihosting console; see $log"; exit 1; }
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] '
+    for expected in "I log-server: 1 clients, serial output attached" "I log-probe: ready" "E FAULT: log_probe thread 1: stack overflow (guard page) at pc 0x[0-9a-f]*, far 0x[0-9a-f]*, sp 0x[0-9a-f]*, esr 0x[0-9a-f]*" "E PANICKED: log_probe: made to panic on purpose at .*main\.rs:[0-9]*"; do
+      grep -a -q "${prefix}${expected}" "$serial" || { echo "log-test: the UART got no line \"$expected\" from the log server"; exit 1; }
+    done
+    echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
+
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ chainboot_link }}" \
@@ -516,10 +548,10 @@ _test-runner binary_path:
 # === Host tests ===
 
 # The capability ABI, the boot platform, drivers' logic, Meddle, dispatcher,
-# chainboot protocol and chainofcommand.
+# log server, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-dispatcher-host _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-dispatcher-host _test-log-host _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -540,6 +572,9 @@ _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
 # Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
 _test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
 
+# Run the log server's host tests: the line header, the client's buffer set, line cutting and the server's output line
+_test-log-host: (_host-test 'log-server' 'protocol')
+
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
@@ -555,8 +590,8 @@ _cross-clippy board='rpi3' features='':
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
 
-# The images the workspace clippy's build scripts embed (the kernel, the components)
-_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu')
+# The images the workspace clippy's build scripts embed (the kernel, the components, log-test's programs)
+_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu') (_build-log-probe 'rpi3' 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
@@ -566,7 +601,7 @@ clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_
 _clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-coc
+_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-log-host _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
@@ -584,10 +619,25 @@ _clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-cl
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
+# Lint the log server's host tests with their native host harness
+_clippy-log-host: (_host-clippy 'log-server' 'protocol')
+
 # Clippy for the host tools (chainofcommand and its protocol crate's host tests, vesper-image-build)
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
+
+# Cross-clippy only the log crates (the log server component, its log_v1 interface crates, the client library, libserial-trace, which sends through it, and log-test's probe) for a board with a feature set
+_cross-clippy-log board='rpi3' features='':
+    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      -p log-server -p log-interface -p log-interface-client -p vesper-log-client -p vesper-serial-trace -p log-probe \
+      -- --deny warnings --allow deprecated --allow clippy::map_unwrap_or --allow clippy::doc_markdown
+
+# Lint just the log crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
+_clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') _clippy-log-host
 
 # Check formatting
 [group("maintenance")]

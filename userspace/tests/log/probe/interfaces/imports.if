@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The probe's lines, its fault report and its panic report go to the log
+# server, the program holding the UART.
+uses log_v1 via component log_server { flush }
