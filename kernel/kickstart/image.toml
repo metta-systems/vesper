@@ -17,6 +17,14 @@ binary = "irqchip-bcm2836"
 name = "gicv2"
 binary = "irqchip-gicv2"
 
+# EL0 device drivers, built with userspace/runtime/user.ld (`just
+# build-drivers`). Kickstart loads one instance per enabled device tree node
+# whose `compatible` list names one of a driver's strings.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
 # The root dispatcher: the EL0 program that decides which Thread of the root
 # Scheduler runs, by priority and round-robin within a priority. Kickstart
 # does not start it: once every other

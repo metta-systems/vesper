@@ -174,5 +174,5 @@ once uses `split!`.
    - passing the same field twice to `split!` is rejected;
    - writing a `ReadPure` register is rejected.
 3. Disassembly: device accesses compile to plain `ldr` / `str` with no writeback forms.
-4. `just clippy`, `just fmt-check`, `just test-host` and the QEMU driver tests (`just test-uart`,
-   `just test-uart-rpi4`).
+4. `just clippy`, `just fmt-check`, `just test-host` and the QEMU driver tests (`just _test-uart`,
+   `just _test-uart-rpi4`).
