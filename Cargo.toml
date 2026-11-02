@@ -17,6 +17,7 @@ members = [
   "libs/log",
   "libs/machine",
   "libs/mapping",
+  "libs/memory",
   "libs/mmio",
   "libs/primitives",
   "libs/print",
@@ -62,6 +63,7 @@ liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmapping = { path = "libs/mapping", package = "vesper-mapping" }
+# libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
@@ -70,6 +72,7 @@ libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
+snafu = { version = "0.9", default-features = false }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
 usize_conversions = { version = "0.2" }

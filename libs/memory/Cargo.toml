@@ -1,0 +1,33 @@
+[package]
+name = "vesper-memory"
+
+description = "Vesper nanokernel memory descriptors shared code library."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+libaddress = { workspace = true }
+liblog = { workspace = true }
+libmapping = { workspace = true }
+snafu = { workspace = true }
+tock-registers = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[lints]
+workspace = true
