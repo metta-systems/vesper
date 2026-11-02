@@ -20,6 +20,7 @@ pub mod arch;
 pub mod debug_console;
 pub mod event_count;
 pub mod invocation;
+pub mod irq;
 pub mod key_entry;
 pub mod key_table;
 pub mod notification;
@@ -214,6 +215,16 @@ fn core_invoke<A: ArchObjects>(
 
         CoreType::Scheduler => {
             crate::api::scheduler::invoke::<A>(access, caller, key, op, args, nucleus)
+        }
+
+        CoreType::IRQControl => {
+            crate::api::irq::invoke_control::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
+        }
+
+        CoreType::IRQHandler => {
+            crate::api::irq::invoke_handler::<A>(access, caller, key, op, args, nucleus)
+                .map(InvokeOutcome::Complete)
         }
 
         _ => Err(CapError::UnsupportedCoreType(core_type)),

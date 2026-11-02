@@ -8,7 +8,7 @@
 
 ## Purpose
 
-A Time holds a CPU-time budget on one core. A scheduler gives budget to a child scheduler or to a Thread's Time by transferring part of its own. Nothing returns budget automatically: unused budget goes back only by an explicit Transfer or Merge. A Thread that waits for events has its own Time.
+A Time holds a CPU-time budget on one core. A scheduler gives budget to a child scheduler or to a Thread's Time by transferring part of its own. Nothing returns budget automatically: unused budget goes back only by an explicit Transfer or Merge. A Thread that waits for events, such as an interrupt [receiver](irq_handler.md), has its own Time.
 
 Budgets are in nanoseconds. `u64::MAX` (`libobject::time::INFINITE_BUDGET`) is an infinite budget, which never decreases.
 

@@ -73,6 +73,10 @@ pub mod scheduler_client;
 pub mod scheduler_record_client;
 
 #[cfg(test)]
+#[path = "../src/irq.rs"]
+pub mod irq_client;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, size_of};
 
@@ -381,6 +385,7 @@ mod tests {
         assert_eq!(KeySlot::FAULT_HANDLER, KeySlot(16));
         assert_eq!(KeySlot::BOOT_TIME, KeySlot(17));
         assert_eq!(KeySlot::ROOT_SCHEDULER, KeySlot(18));
+        assert_eq!(KeySlot::IRQ_CONTROL, KeySlot(19));
     }
 
     #[test]
@@ -657,6 +662,8 @@ mod tests {
             (CoreType::Notification, "Notification"),
             (CoreType::EventCount, "EventCount"),
             (CoreType::WaitSet, "WaitSet"),
+            (CoreType::IRQControl, "IRQControl"),
+            (CoreType::IRQHandler, "IRQHandler"),
             (CoreType::DebugConsole, "DebugConsole"),
         ] {
             assert_eq!(name(kind), expected);
@@ -729,7 +736,7 @@ mod tests {
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
-    const CORE_TYPES: [(CoreType, ObjectType, u8); 11] = [
+    const CORE_TYPES: [(CoreType, ObjectType, u8); 13] = [
         (CoreType::Null, ObjectType::NULL, 0),
         (CoreType::Untyped, ObjectType::UNTYPED, 1),
         (CoreType::KeyTable, ObjectType::KEY_TABLE, 2),
@@ -740,6 +747,8 @@ mod tests {
         (CoreType::Notification, ObjectType::NOTIFICATION, 7),
         (CoreType::EventCount, ObjectType::EVENT_COUNT, 8),
         (CoreType::WaitSet, ObjectType::WAIT_SET, 9),
+        (CoreType::IRQControl, ObjectType::IRQ_CONTROL, 10),
+        (CoreType::IRQHandler, ObjectType::IRQ_HANDLER, 11),
         (CoreType::DebugConsole, ObjectType::DEBUG_CONSOLE, 127),
     ];
 

@@ -261,6 +261,8 @@ fn unsupported_types_decode_only_known_local_indices() {
         (7, CoreType::Notification),
         (8, CoreType::EventCount),
         (9, CoreType::WaitSet),
+        (10, CoreType::IRQControl),
+        (11, CoreType::IRQHandler),
         (127, CoreType::DebugConsole),
     ];
     let arch_types = [
@@ -512,6 +514,23 @@ fn time_budget_statuses_round_trip_and_reject_unused_details() {
         );
         assert_unknown_response((36, remaining, 1));
     }
+}
+
+#[test]
+fn irq_line_active_round_trips_the_line() {
+    use vesper_objects::syscall_status::IRQ_LINE_ACTIVE;
+
+    assert_eq!(IRQ_LINE_ACTIVE, 37);
+    for line in [0, 1, 30, 1019, u32::MAX] {
+        assert_error!(
+            (37, u64::from(line), 0),
+            CapError::IrqLineActive { line },
+            CapError::IrqLineActive { line: actual } if actual == line
+        );
+        assert_unknown_response((37, u64::from(line), 1));
+    }
+    // A line wider than 32 bits is not this status.
+    assert_unknown_response((37, 1 << 32, 0));
 }
 
 #[test]

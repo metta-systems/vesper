@@ -1005,13 +1005,13 @@ fn interrupt_time_is_published_in_the_scheduler_record_of_the_interrupted_thread
         let frequency = nucleus.counter_frequency();
         let events = scheduler_record().try_snapshot(1).unwrap().events;
         nucleus.current_thread = Some(keys.thread_id);
-        nucleus.account_interrupts(frequency / 1_000);
+        nucleus.account_interrupts(&[(5, frequency / 1_000)], frequency / 1_000);
         let published = scheduler_record().try_snapshot(1).unwrap();
         assert_eq!(published.interrupt_ns, 1_000_000);
         assert_eq!(published.events, events);
 
         // The total accumulates across entries.
-        nucleus.account_interrupts(frequency / 1_000);
+        nucleus.account_interrupts(&[(5, frequency / 1_000)], frequency / 1_000);
         assert_eq!(
             scheduler_record().try_snapshot(1).unwrap().interrupt_ns,
             2_000_000

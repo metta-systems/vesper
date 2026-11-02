@@ -62,6 +62,10 @@ pub const UNEXPECTED_RETURN: u64 = 35;
 /// A finite source Time holds less budget than a `Time.Transfer` asks for.
 /// Detail 1 is the source's remaining budget in nanoseconds; detail 2 is zero.
 pub const INSUFFICIENT_BUDGET: u64 = 36;
+/// `IRQControl.Issue` named a line that already has a live `IRQHandler`, or
+/// the line the nucleus keeps for its own timer. Detail 1 is the line;
+/// detail 2 is zero.
+pub const IRQ_LINE_ACTIVE: u64 = 37;
 /// An `Invocation.CallWithKey` named an Invocation whose exporter declared no
 /// key-placement window (count 0), so it accepts no lent key. Details are zero.
 pub const KEY_NOT_ACCEPTED: u64 = 38;

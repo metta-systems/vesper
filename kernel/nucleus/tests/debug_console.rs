@@ -31,6 +31,9 @@ mod timer;
 #[path = "support/resume.rs"]
 mod resume_tests;
 
+#[path = "support/irq.rs"]
+mod irq_tests;
+
 #[path = "support/scheduler.rs"]
 mod scheduler_tests;
 
@@ -238,6 +241,7 @@ fn with_nucleus(
         pending: crate::objects::PendingPool::new(),
         activations: crate::objects::Activations::new(),
         idle_ticks: 0,
+        irq_table: crate::objects::irq::IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
         dispatched: None,

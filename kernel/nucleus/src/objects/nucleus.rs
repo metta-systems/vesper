@@ -10,6 +10,7 @@ use {
             carved::{Carved, CarvedId},
             completion::{PendingKind, PendingState},
             event_count::AdvanceOutcome,
+            irq::IrqTable,
             key_table::KeyTableBinding,
             scheduler::Region,
             thread::{ExecutionContext, RecordSlot, ThreadId},
@@ -98,6 +99,8 @@ pub struct Nucleus<A: ArchObjects> {
     /// Kernel mechanism only:
     /// scheduling policy stays in userspace.
     pub activations: Activations,
+    /// The interrupt lines' records: live `IRQHandler`s and their bindings.
+    pub irq_table: IrqTable,
     /// Preemption-timer ticks taken since boot.
     pub ticks: u64,
     /// When the current Thread was last made current, in counter ticks on the
@@ -1187,10 +1190,14 @@ impl<A: ArchObjects> Nucleus<A> {
         self.wake_wait_sets();
     }
 
-    /// Account interrupt handling: move the start of the current interval
-    /// past the `total_ticks` spent, so the running Thread's Time is not
-    /// charged for them.
-    pub fn account_interrupts(&mut self, total_ticks: u64) {
+    /// Account interrupt handling: add each handled line's ticks to its
+    /// record and move the start of the current interval past the
+    /// `total_ticks` spent, so the running Thread's Time is not charged for
+    /// them.
+    pub fn account_interrupts(&mut self, handled: &[(u32, u64)], total_ticks: u64) {
+        for &(line, ticks) in handled {
+            self.irq_table.record_handled(line, ticks);
+        }
         let now = self.counter_ticks();
         self.current_since_ticks = self
             .current_since_ticks
@@ -1495,6 +1502,7 @@ mod tests {
                 pending: PendingPool::new(),
                 activations: Activations::new(),
                 idle_ticks: 0,
+                irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
                 current_since_ticks: 0,
                 dispatched: None,

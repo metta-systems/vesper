@@ -119,6 +119,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             pending: crate::objects::PendingPool::new(),
             activations: crate::objects::Activations::new(),
             idle_ticks: 0,
+            irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             current_since_ticks: 0,
             dispatched: None,

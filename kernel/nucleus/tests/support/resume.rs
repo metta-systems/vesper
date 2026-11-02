@@ -666,7 +666,7 @@ fn idle_time_is_metered_apart_from_interrupt_time() {
         nucleus.current_since_ticks = nucleus
             .counter_ticks()
             .saturating_sub(ticks_for_ms(nucleus, 10));
-        nucleus.account_interrupts(ticks_for_ms(nucleus, 4));
+        nucleus.account_interrupts(&[], ticks_for_ms(nucleus, 4));
         // The interrupts moved the start of the idle interval 4 ms ahead.
         let since_before = nucleus.current_since_ticks - ticks_for_ms(nucleus, 4);
         nucleus.thread_mut(waits.target).unwrap().context = ExecutionContext::Preempted {
@@ -871,7 +871,7 @@ fn interrupt_time_is_not_charged_to_the_interrupted_thread() {
         // The Thread started 10 ms ago, and 4 ms of that went to interrupts.
         run_for_ms(nucleus, 10);
         let started = nucleus.current_since_ticks;
-        nucleus.account_interrupts(ticks_for_ms(nucleus, 4));
+        nucleus.account_interrupts(&[(5, 1_000), (6, 500)], ticks_for_ms(nucleus, 4));
         assert_eq!(
             nucleus.current_since_ticks,
             started + ticks_for_ms(nucleus, 4)
@@ -890,7 +890,7 @@ fn interrupt_time_never_moves_the_interval_past_now() {
     with_resume(|nucleus, waits| {
         run_for_ms(nucleus, 1);
         // More interrupt time than has elapsed (a clock skew) clamps to now.
-        nucleus.account_interrupts(ticks_for_ms(nucleus, 1_000));
+        nucleus.account_interrupts(&[], ticks_for_ms(nucleus, 1_000));
         assert!(nucleus.current_since_ticks <= nucleus.counter_ticks());
         nucleus.charge_current(waits.source);
         assert!(nucleus.run_time_ticks(waits.source).unwrap() < ticks_for_ms(nucleus, 1));
@@ -1001,7 +1001,7 @@ fn interrupt_time_pushes_the_exhaustion_deadline_out() {
         let slice = slice(nucleus);
         let before = nucleus.timer_deadline_ticks(slice).unwrap();
         // Time spent in interrupts is not the Thread's, so it gets it back.
-        nucleus.account_interrupts(700);
+        nucleus.account_interrupts(&[], 700);
         assert_eq!(nucleus.timer_deadline_ticks(slice), Some(before + 700));
     });
 }
