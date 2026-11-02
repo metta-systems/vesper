@@ -130,6 +130,7 @@ members = [
   "userspace/log-server",
   "userspace/log-server/client",
   "userspace/log-server/server",
+  "libs/heap",
   "libs/log-client",
 ]
 resolver = "3"
@@ -228,10 +229,12 @@ libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
 log = { version = "0.4", default-features = false }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
+rlsf = { version = "0.2", default-features = false }
 snafu = { version = "0.9", default-features = false }
 log-server = { path = "userspace/log-server" }
 log-interface = { path = "userspace/log-server/server" }
 log-interface-client = { path = "userspace/log-server/client" }
+libheap = { path = "libs/heap", package = "vesper-heap" }
 liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
 tock-registers = { version = "0.10" }
