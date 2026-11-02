@@ -52,8 +52,12 @@ rpi4_hw_artifacts   := target_root / rpi4_hw / target
 
 chainboot_serial    := '/dev/ttyUSB0' # '/dev/cu.usbserial-019586E3'
 chainboot_baud      := '115200'
+# The rate chainofcommand asks chainboot to load the kernel at, and the console stays at
+# (e.g. `just chainboot_load_baud=2000000 boot`); empty loads at `chainboot_baud`.
+# It also asks Kickstart's console for it when the kernel boots from the SD card (`just console`)
+chainboot_load_baud := '1500000'
 
-chainofcommand_args := chainboot_serial + ' ' + chainboot_baud
+chainofcommand_args := chainboot_serial + ' ' + chainboot_baud + (if chainboot_load_baud != '' { ' --load-baud ' + chainboot_load_baud } else { '' })
 
 # QEMU option fragments
 # Console, monitor and semihosting wiring shared by every QEMU run
@@ -107,7 +111,23 @@ build-chainboot board='rpi4' features='': (_build-chainboot board features)
 _build-chainboot board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'chainboot' board chainboot_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / 'chainboot' }}" "{{ images_dir / 'chainboot-' + config + '.bin' }}"
+    @just _audit-chainboot-exclusives "{{ target_root / config / target / image_profile / 'chainboot' }}"
     @echo "{{ok_label}} chainboot built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}: {{ images_dir / 'chainboot-' + config + '.bin' }}"
+
+# Fail if the chainboot ELF holds an exclusive or atomic read-modify-write instruction: chainboot runs without the data cache, where the Pi's cores never complete them and the program hangs without a sound. QEMU completes them, so only this check (and the board) can tell.
+_audit-chainboot-exclusives elf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Load/store-exclusive, and the LSE atomics: add, clear, xor, set, min and max loads and stores, swap, compare-and-swap.
+    # The address column is padded to the widest address, so a full-width one starts at the margin.
+    exclusive='^[[:space:]]*[0-9a-f]+:[[:space:]]+(ldx(r[bh]?|p)|ldaxr[bh]?|ldaxp|stx(r[bh]?|p)|stlxr[bh]?|stlxp|(ld|st)(add|clr|eor|set|smax|smin|umax|umin)(a|l|al)?[bh]?|swp(a|l|al)?[bh]?|cas(p)?(a|l|al)?[bh]?)[[:space:]]'
+    found=$(rust-objdump -d --no-show-raw-insn "{{ elf }}" | sed 's/<[^>]*>//g' | grep -E "${exclusive}" || true)
+    if [ -n "${found}" ]; then
+        echo "❌ {{ file_name(elf) }} contains exclusive or atomic read-modify-write instructions:"
+        echo "${found}"
+        exit 1
+    fi
+    echo "{{ ok_label }} {{ file_name(elf) }}: no exclusive or atomic read-modify-write instructions"
 
 # === Host tools ===
 
@@ -203,6 +223,13 @@ cb-eject board='rpi4': (build-chainboot board)
     # TODO: sed proper kernel name here in config.txt
     diskutil unmountDisk "{{ volume }}"
 
+# Start this, then power the board on: Kickstart offers a faster console for 1.5 s at boot and
+# chainofcommand asks for `chainboot_load_baud`; it sends no kernel when chainboot asks for one.
+# Be the serial console of a kernel booted from the SD card, without chainboot
+[group("hw")]
+console: chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --console
+
 # Start openocd connected via JTAG
 [group("hw")]
 openocd board='rpi4':
@@ -227,7 +254,7 @@ _test-device:
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=chainboot
+    --workspace --exclude=chainofcommand --exclude=chainboot --exclude=vesper-boot-uart
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
@@ -248,7 +275,7 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# Chainofcommand's unit tests.
+# The chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
 test-host: _test-chainboot-host
@@ -258,8 +285,8 @@ _host-test package test features='host-tests':
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo test -p {{ package }} --features={{ features }} --test {{ test }}
 
-# Run chainofcommand's unit tests
-_test-chainboot-host:
+# Run the chainboot protocol's host tests and chainofcommand's unit tests
+_test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
 # === Lints ===
@@ -289,8 +316,8 @@ _host-clippy package test features='host-tests':
     cargo clippy -p {{ package }} --features={{ features }} --test {{ test }} \
       -- --deny warnings --allow deprecated
 
-# Clippy for the host tools (chainofcommand)
-_clippy-coc:
+# Clippy for the host tools (chainofcommand and its protocol crate's host tests)
+_clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
 
 # Check formatting
