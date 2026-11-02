@@ -38,14 +38,20 @@ MSRV: 1.61.0
 
 We require `cargo build --build-std` feature (since 2020-07-15), compiler_builtins memory operations ([since 2020-09-30](https://github.com/rust-lang/rust/pull/77284)) and `const_fn_fn_ptr_basics` feature (stable since Rust 1.61.0).
 
-* Install tools: `cargo install just cargo-make`.
+* Install tools: `cargo install just`.
 * Install qemu (at least version 4.1.1): `brew install qemu`.
 * Optionally install OpenOCD with [RTT patches](http://openocd.zylin.com/#/c/4055/11).
-* Install aarch64 gdb.
+* Install aarch64 gdb: `brew install aarch64-elf-binutils`
 
 You can override invoked `qemu`, `openocd` and `gdb` by specifying full paths to them as env variables `QEMU`, `OPENOCD` and `GDB`, respectively.
 
 You can override the name of mounted sdcard volume by specifying env variable `VOLUME` (it defaults to `/Volumes/BOOT`).
+
+### To first prepare dev environment
+
+```
+just setup-local-dev
+```
 
 ### To build kernel and run it in QEMU emulator
 
