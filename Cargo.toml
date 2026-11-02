@@ -1,6 +1,11 @@
 [workspace]
 members = [
   "kernel/nucleus",
+  "kernel/kickstart",
+  "kernel/tests/memory-test",
+  "kernel/tests/ppc-test",
+  "kernel/tests/sync-test",
+  "kernel/tests/capability-test",
   "bin/chainboot",
   "bin/chainofcommand",
   "bin/meddler",
@@ -11,13 +16,17 @@ members = [
   "libs/boot",
   "libs/boot-uart",
   "libs/chainboot-protocol",
+  "libs/component-loader",
   "libs/console",
   "libs/cpu",
   "libs/device-driver",
   "libs/devicetree",
   "libs/exception",
+  "libs/image",
+  "libs/image-build",
   "libs/io-channel",
   "libs/irqchip",
+  "libs/kicktest",
   "libs/kernel-state",
   "libs/local-irq",
   "libs/locking",
@@ -68,6 +77,8 @@ libaddress = { path = "libs/address", package = "vesper-address" }
 libblock-channel = { path = "libs/block-channel", package = "vesper-block-channel" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
+libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
@@ -76,8 +87,11 @@ libdevice-driver = { path = "libs/device-driver", package = "vesper-device-drive
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libimage = { path = "libs/image", package = "vesper-image" }
+libimage-build = { path = "libs/image-build", package = "vesper-image-build" }
 libio-channel = { path = "libs/io-channel", package = "vesper-io-channel" }
 libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
+libkicktest = { path = "libs/kicktest", package = "vesper-kicktest" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
@@ -119,6 +133,8 @@ tokio-stream = { version = "0.1" }
 #==========
 # build.rs
 #==========
+goblin = { version = "0.10" }
+minijinja = { version = "3" }
 # Meddle IDL front end and Rust emitter (libs/meddle)
 ariadne = { version = "0.6" }
 chumsky = { version = "0.13" }
@@ -127,6 +143,7 @@ prettyplease = { version = "0.3" }
 proc-macro2 = { version = "1.0" }
 quote = { version = "1.0" }
 syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
+toml = { version = "1.1" }
 #=======
 # mixed
 #=======

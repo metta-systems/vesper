@@ -1,0 +1,5 @@
+# What kickstart embeds (see vesper-image-build). `binary` is the cargo
+# binary name, built with the nucleus linker script.
+
+[nucleus]
+binary = "nucleus"

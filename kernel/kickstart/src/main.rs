@@ -1,0 +1,698 @@
+#![no_std]
+#![no_main]
+#![allow(unused)]
+#![feature(format_args_nl)]
+
+//! The real Vesper startup kernel: initialize the machine, build the initial
+//! kernel state, and — as the boot path grows — bring up the whole system.
+//! The e2e runtime/bootup tests live in the separate test kernels under
+//! `kernel/tests`, which reuse the shared boot code from the `kickstart`
+//! library crate.
+
+// Init-thread process.
+// - Start initializing the kernel
+// - Enter itself into process list as high-priority privileged process
+// - The bootup is driven by the kickstart which loads and parses devtree, maps the kernel, gives itself all necessary
+//   capabilities, (probably loads more things into their places) and transitions to user mode.
+// - From user mode it can continue distributing capabilities and launching servers until everything is handed out.
+// - After init is completed, it should create more low-priority user processes including idle, fs, some other handlers and
+//   a user-space boot process like /sbin/init or sth, with scripts to control the boot up.
+// - At this point, exit the kickstart process normally.
+// - The init-thread can be terminated and its memory freed up (should it inject a process descriptor for itself somehow to allow normal shutdown mechanisms to clean up? most probably).
+
+// create "tracing" and "debug" components for kernel call keys (intercepting syscall caps)
+
+// Kernel's main.rs just brings together all libs and syscall entry points.
+// kickstart.rs provides a boot up entry point which sets up everything.
+
+// kickstart should do some shared init
+// and some system-specific loading like parsing the DTB and loading system drivers
+
+// distribute keys - this should be listed somewhere in the definitions (CapDL?)
+
+// kernel entities:
+// - keys
+// - key invocation
+// - time access and timers activation - ??
+
+// userspace entities:
+// - processes
+// - threads (first version - threads are in-process, kernel has no idea)
+// - scheduler (invokes process upcall key)
+
+mod components {
+    //! Bundled driver components (generated from `image.toml`).
+    include!(concat!(env!("OUT_DIR"), "/components.rs"));
+}
+
+use {
+    cfg_if::cfg_if,
+    kickstart::{
+        bootstrap::{BootState, bootstrap_nucleus, device_untypeds, retained_init_memory},
+        drivers::{BootKeys, instance_count, load_drivers},
+        kickstart_init_el2, print_my_sp,
+    },
+    libboot as boot,
+    libcomponent_loader::{
+        builder::{Builder, ImageArchive, ImageTarget},
+        keys::{SlotCursor, boot_key},
+        paging::image_table_count,
+        retained::RetainedInitMemory,
+    },
+    libcpu::endless_sleep,
+    libobject::{
+        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
+        address_space::AddressSpaceKey,
+    },
+    libqemu::semihosting as semi,
+};
+
+boot::entry!(boot_main);
+
+/// EL2 entry: run the shared boot through the EL1 transition, then continue
+/// in [`kickstart_run`].
+fn boot_main(dtb: u32) -> ! {
+    kickstart_init_el2(dtb, kickstart_run as *const u8 as u64)
+}
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    semi::println!("🥾 PANICKED: {info}");
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "qemu")] {
+            libqemu::semihosting::exit_failure()
+        } else {
+            endless_sleep()
+        }
+    }
+}
+
+// DTB should be available to this code through BOOT_INFO records.
+pub fn kickstart_run() -> ! {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PHASE 5: Initialize kernel objects and structures
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    // Run initial thread further in EL1, setting up the capDL etc.
+    semi::println!("🥾 init_main_run: enabled MMU and dropped to EL1");
+    print_my_sp();
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Build the initial kernel state in carved memory (inert nucleus).
+    // ─────────────────────────────────────────────────────────────────────
+
+    // The boot Thread, its AddressSpace and the boot ASID pool come first;
+    // every page table, component AddressSpace and Thread after them is
+    // carved from the boot Untyped as the builder goes.
+    let instances = instance_count(components::DRIVERS);
+    let retained = retained_init_memory();
+    let boot_state = bootstrap_nucleus();
+    let park = start_drivers(boot_state, &retained, instances);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Initialize kernel subsystems
+    // ─────────────────────────────────────────────────────────────────────
+
+    // semi::println!("🥾 Initializing kernel subsystems...");
+
+    // Initialize per-CPU data structures
+    // percpu::init();
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Build physical memory map and create Untyped caps
+    // ─────────────────────────────────────────────────────────────────────
+
+    // semi::println!("🥾 Building physical memory allocator...");
+
+    // Create the root untyped capability list
+    // This will be delegated to init process
+    // let mut untyped_list = UntypedList::new();
+    // let mut untyped_list = create_untyped_caps();
+
+    // for i in 0..boot_info.memory_region_count {
+    //     let region = &boot_info.memory_regions[i];
+
+    //     // Skip reserved regions (kernel image, DTB, modules, page tables)
+    //     let usable_ranges = subtract_reserved_regions(region, boot_info);
+
+    //     for range in usable_ranges {
+    //         // Create untyped caps for each usable chunk
+    //         // Align to largest power-of-2 for efficient retyping
+    //         let untypeds = create_untyped_caps_for_range(range);
+    //         untyped_list.extend(untypeds);
+    //         semi::println!(
+    //             "🥾  Untyped: {:#x} - {:#x} ({} caps)",
+    //             range.base.as_u64(),
+    //             range.base.as_u64() + range.size as u64,
+    //             untypeds.len()
+    //         );
+    //     }
+    // }
+
+    // semi::println!("🥾 Total untyped caps - {}", untyped_list.len());
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PHASE 6: Create the init component and its capability space
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    // semi::println!("🥾 Creating init component...");
+
+    // let init_module = boot_info
+    //     .modules
+    //     .iter()
+    //     .find(|m| {
+    //         let name = core::str::from_utf8(&m.name).unwrap_or("");
+    //         name.matches("init")
+    //     })
+    //     .expect("🥾 No init module found in boot modules");
+
+    // let init_component = create_init_component(init_module, &mut untyped_list);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Mark init thread memory as reclaimable
+    // ─────────────────────────────────────────────────────────────────────
+
+    // semi::println!("🥾 Marking init thread memory for reclamation...");
+
+    // // The init stack and any init-only code/data can now be reclaimed, they are in the Untypeds table now.
+    // mark_init_memory_reclaimable(boot_info, &mut untyped_list);
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PHASE 7: Delegate all resources to init component
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    // semi::println!(
+    //     "🥾 Delegating {} untyped caps to init...",
+    //     untyped_list.len()
+    // );
+
+    // delegate_untypeds_to_init(&init_component, untyped_list);
+
+    // // Create module caps for other boot modules and delegate
+    // delegate_module_caps_to_init(&init_component, boot_info);
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PHASE 8: Context switch to init component
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    let (_, privilege_level) = libexception::current_privilege_level();
+    liblog::info!("🥾 Current privilege level {privilege_level}");
+
+    liblog::info!("🥾 Exception handling state:");
+    libexception::asynchronous::print_state();
+
+    // semi::println!("🥾 Switching to init component...");
+    // semi::println!("════════════════════════════✂️🥾🥾🥾🥾🥾✂️═══════════════════════════════");
+
+    // // Init runs on the boot Time (KeySlot::BOOT_TIME)
+    // let init_time = TimeKey::from_key(boot_key(KeySlot::BOOT_TIME.0, 1));
+
+    // // Finally: switch to userspace init
+    // // This replaces TTBR0 with init's page tables
+    // // Kernel high map (TTBR1) is ready for when init makes syscalls
+    // // This never returns
+    // switch_to_component(init_component, init_time);
+    print_my_sp();
+
+    // Nothing else runs on the boot Thread yet: park it for good, leaving the
+    // core to the drivers (and idle when they all wait).
+    semi::println!("🥾 Boot Thread parked");
+    loop {
+        let _never = park.await_bits(NotificationKey::WAIT_INFINITE);
+    }
+
+    // kernel_init_mmio_va_allocator()
+
+    // SAFETY: Not safe!
+    // if let Err(x) = unsafe { libplatform::drivers::init() } {
+    //     panic!("🥾 Error initializing platform drivers: {}", x);
+    // }
+
+    // Initialize all device drivers.
+    // SAFETY: Not safe!
+    // unsafe {
+    //     libplatform::drivers::driver_manager().init_drivers_and_irqs();
+    // }
+
+    // Unmask interrupts on the boot CPU core.
+    // libexception::exception::asynchronous::local_irq_unmask();
+
+    // Announce conclusion of the kernel_init() phase.
+    // libkernel_state::state_manager().transition_to_single_core_main();
+
+    // libconsole::init_logger();
+
+    // info!("🧠 {}", libkernel::version());
+
+    // info!(
+    //     "🥾 {} version {}",
+    //     env!("CARGO_PKG_NAME"),
+    //     env!("CARGO_PKG_VERSION")
+    // );
+
+    // info!(
+    //     "🥾 Booting on: {}",
+    //     libplatform::BcmHost::board_name()
+    // );
+
+    // info!("🥾 MMU online. Special regions:");
+    // machine::platform::memory::mmu::virt_mem_layout().print_layout();
+
+    // dump_memory_map();
+
+    // info!(
+    //     "🥾 Architectural timer resolution: {} ns",
+    //     libtime::time::time_manager().resolution().as_nanos()
+    // );
+
+    // info!("🥾 Drivers loaded:");
+    // libplatform::drivers::driver_manager().enumerate();
+
+    // info!("🥾 Registered IRQ handlers:");
+    // libplatform::exception::asynchronous::irq_manager().print_handler();
+
+    // // Test a failing timer case.
+    // libtime::time::time_manager().spin_for(Duration::from_nanos(1));
+
+    // for _ in 0..3 {
+    //     info!("🥾 Spinning for 1 second");
+    //     libtime::time::time_manager().spin_for(Duration::from_secs(1));
+    // }
+}
+
+/// First boot `KeyTable` slot the builder carves into.
+const FIRST_BUILDER_SLOT: u32 = 64;
+
+/// Guard of the `KeyTable` archiving the builder's image Frames.
+const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
+
+/// Give the boot Thread a builder `AddressSpace`, and
+/// load and start the bundled drivers, one instance per enabled device tree
+/// node they serve (`instances` of them). Returns a Notification nobody
+/// signals, for the boot Thread to park on.
+fn start_drivers(
+    boot: BootState,
+    retained: &RetainedInitMemory,
+    instances: usize,
+) -> NotificationKey {
+    let keys = BootKeys::of(&boot);
+    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
+    let untyped = UntypedKey::from_key(keys.untyped);
+    let self_table = KeyTableKey::from_key(keys.self_table);
+    let builder = Builder {
+        untyped: &untyped,
+        self_table: &self_table,
+        boot_table_addr: keytable_addr,
+        retained,
+    };
+    let devices = device_untypeds();
+    let mut slots =
+        SlotCursor::starting_at(FIRST_BUILDER_SLOT).avoiding(devices.first_slot, devices.count);
+
+    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
+    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
+    Builder::assign_asid(builder_as_key);
+    builder.map_retained_image(
+        &[ImageTarget {
+            address_space: builder_as_key,
+            l2: builder_l2,
+            first_table_slot: slots
+                .take(u32::try_from(image_table_count(retained)).unwrap_or(u32::MAX)),
+        }],
+        &ImageArchive {
+            slot: slots.take(1),
+            guard: BUILDER_ARCHIVE_GUARD,
+            grant_scratch: slots.take(1),
+            copy_scratch: slots.take(1),
+        },
+    );
+    AddressSpaceKey::from_key(builder_as_key)
+        .activate()
+        .unwrap_or_else(|error| panic!("🥾 builder Activate failed: {:?}", error.code()));
+
+    let park = untyped
+        .retype(
+            ObjectType::NOTIFICATION,
+            0,
+            0,
+            1,
+            &self_table,
+            slots.take(1),
+            Rights::all(),
+        )
+        .unwrap_or_else(|error| panic!("🥾 park Notification Retype failed: {:?}", error.code()));
+
+    let started = load_drivers(
+        nucleus,
+        &builder,
+        keys,
+        components::DRIVERS,
+        &mut slots,
+        |_loaded| {},
+    );
+    assert_eq!(
+        started, instances,
+        "🥾 every planned driver instance starts"
+    );
+    semi::println!("🥾 Started {started} driver instances");
+    NotificationKey::from_key(park)
+}
+
+/*
+// ─────────────────────────────────────────────────────────────────────
+// Create init component from boot module
+// ─────────────────────────────────────────────────────────────────────
+
+/// Create the init component from a loaded ELF module
+fn create_init_component(module: &LoadedModule, untyped_list: &mut UntypedList) -> ComponentRef {
+    // ─────────────────────────────────────────────────────────────────────
+    // Allocate component kernel structures
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Take an untyped for component structures
+    let component_untyped = untyped_list
+        .take_of_size(COMPONENT_STRUCT_SIZE)
+        .expect("🥾 No memory for init component");
+
+    let component = Component::create_from_untyped(
+        component_untyped,
+        ComponentId(1), // Init is component 1 (0 is idle)
+        "init",
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Create init's TTBR0 page tables
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Allocate page table memory from untyped
+    let pt_untyped = untyped_list
+        .take_of_size(PAGE_TABLE_SIZE)
+        .expect("🥾 No memory for init page tables");
+
+    let page_tables = UserPageTables::create_from_untyped(pt_untyped);
+    component.set_page_tables(page_tables);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Parse ELF and create address space
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Module is loaded in physical memory, accessible via kernel linear map
+    let elf_data = unsafe {
+        let virt = phys_to_kernel_virt(module.phys_start);
+        core::slice::from_raw_parts(virt as *const u8, module.size)
+    };
+
+    let elf = Elf64::parse(elf_data).expect("🧝🏼‍♂️ Invalid ELF");
+
+    semi::println!("🧝🏼‍♂️  ELF entry point: {:#x}", elf.entry_point());
+
+    // Map each loadable segment
+    for phdr in elf.program_headers() {
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+
+        let virt_start = VirtAddr::new(phdr.p_vaddr);
+        let virt_end = virt_start + phdr.p_memsz as u64;
+        let file_size = phdr.p_filesz as usize;
+        let mem_size = phdr.p_memsz as usize;
+
+        // Determine page flags from ELF flags
+        let flags = elf_flags_to_page_flags(phdr.p_flags);
+
+        semi::println!(
+            "🧝🏼‍♂️  Segment: {:#x} - {:#x} ({:?})",
+            virt_start.as_u64(),
+            virt_end.as_u64(),
+            flags
+        );
+
+        // Allocate physical pages for this segment
+        let pages_needed = mem_size.div_ceil(PAGE_SIZE);
+        let segment_untyped = untyped_list
+            .take_of_size(pages_needed * PAGE_SIZE)
+            .expect("🧝🏼‍♂️ No memory for init segment");
+
+        // Map pages into init's address space
+        let phys_base = segment_untyped.phys_addr();
+        component
+            .page_tables()
+            .map_range(virt_start, phys_base, pages_needed, flags);
+
+        // Copy segment data
+        let src = &elf_data[phdr.p_offset as usize..][..file_size];
+        let dst = unsafe {
+            let virt = phys_to_kernel_virt(phys_base);
+            core::slice::from_raw_parts_mut(virt as *mut u8, mem_size)
+        };
+        dst[..file_size].copy_from_slice(src);
+
+        // Zero BSS portion
+        write_bytes(&mut dst[file_size..], 0, dst.len() - file_size);
+
+        // Pass the segment region to init as Untyped/Frame capabilities -- FIXME: This is how we pass
+        // the process images to init component. Buffer is a userspace/libOS construct:
+        // the kernel hands over memory via Untyped/Frame capabilities only.
+        // let segment_cap = FrameCap::create_from_untyped(segment_untyped, flags.into());
+        // component.cspace().insert_at_next_free(segment_cap);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Create init's stack
+    // ─────────────────────────────────────────────────────────────────────
+
+    const INIT_STACK_SIZE: usize = 64 * 1024; // 64KB
+    const INIT_STACK_TOP: u64 = 0x7FFF_FFFF_0000; // TODO: should be dynamic..
+
+    let stack_untyped = untyped_list
+        .take_of_size(INIT_STACK_SIZE)
+        .expect("🥾 No memory for init stack");
+
+    component.page_tables().map_range(
+        VirtAddr::new(INIT_STACK_TOP - INIT_STACK_SIZE as u64),
+        stack_untyped.phys_addr(),
+        INIT_STACK_SIZE / PAGE_SIZE,
+        PageFlags::USER_RW,
+    );
+
+    semi::println!(
+        "🥾  Stack: {:#x} - {:#x}",
+        INIT_STACK_TOP - INIT_STACK_SIZE as u64,
+        INIT_STACK_TOP
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Setup initial register state
+    // ─────────────────────────────────────────────────────────────────────
+
+    component.set_entry_point(VirtAddr::new(elf.entry_point()));
+    component.set_stack_pointer(VirtAddr::new(INIT_STACK_TOP));
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Create init's initial capability space
+    // ─────────────────────────────────────────────────────────────────────
+
+    setup_init_cspace(&component);
+
+    component
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Create the component's initial capability space
+// ─────────────────────────────────────────────────────────────────────
+
+/// Setup init's capability space with well-known slots
+fn setup_init_keyspace(thread: &ThreadRef) {
+    let keyspace = thread.keyspace();
+
+    // Slot 0: NULL (always invalid)
+    // Slot 1: Self component cap
+    keyspace.insert(KEYSPACE_SLOT_SELF, thread.self_cap());
+
+    // Slot 2: Parent component cap (for init, this is invalid/null)
+    // Slot 17: the boot Time (KeySlot::BOOT_TIME)
+
+    // Slots 0x10-0x1F: Will be filled with notification caps
+    // Slots 0x20-0x2F: Will be filled with event count caps
+    // etc. per the CSpace layout
+
+    // Create a notification for init to receive kernel events
+    let kernel_notify = NotifyCap::create();
+    keyspace.insert(KEYSPACE_SLOT_KERNEL_NOTIFY, kernel_notify);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Delegate all remaining untypeds to init
+// ─────────────────────────────────────────────────────────────────────
+
+/// Delegate all untyped caps to init's cspace
+fn delegate_untypeds_to_init(init_component: &ComponentRef, untyped_list: UntypedList) {
+    let cspace = init_component.cspace();
+
+    // Start placing untypeds at well-known slot range
+    const UNTYPED_SLOT_START: u32 = 0x1000;
+    let mut slot = UNTYPED_SLOT_START;
+
+    for untyped in untyped_list.into_iter() {
+        // Create capability referencing this untyped
+        let cap = UntypedCap::new(untyped);
+        cspace.insert(slot, cap);
+        slot += 1;
+    }
+
+    semi_prinln!(
+        "🥾  Delegated {} untyped caps to slots {:#x}-{:#x}",
+        slot - UNTYPED_SLOT_START,
+        UNTYPED_SLOT_START,
+        slot - 1
+    );
+}
+
+/// Create caps for boot modules and delegate to init
+fn delegate_module_caps_to_init(init_component: &ComponentRef, boot_info: &BootInfo) {
+    let cspace = init_component.cspace();
+
+    const MODULE_SLOT_START: u32 = 0x2000;
+    let mut slot = MODULE_SLOT_START;
+
+    for i in 0..boot_info.module_count {
+        let module = &boot_info.modules[i];
+
+        // Skip the init module itself (already loaded)
+        let name = core::str::from_utf8(&module.name).unwrap_or("");
+        if name.matches("init") {
+            continue;
+        }
+
+        // Pass the module's memory to init as a read-only Untyped/Frame capability -- FIXME: this
+        // is how process images are passed on. Buffer is a userspace/libOS construct:
+        // the kernel hands over memory via Untyped/Frame capabilities only.
+        // let module_cap =
+        //     FrameCap::create_for_phys_range(module.phys_start, module.size, Rights::READ);
+
+        // cspace.insert(slot, module_cap);
+
+        semi::println!("🥾  Module '{}' at slot {:#x}", name, slot);
+        slot += 1;
+    }
+}
+
+/// Mark init thread memory as reclaimable
+/// TODO: this memory should've been first removed from the DTB memory map!
+fn mark_init_memory_reclaimable(boot_info: &BootInfo, untypeds_list: ) {
+    // The init thread area is entirely one blob of reclaimable memory. Convert it to untyped and donate to init component.
+
+    // Also mark .init sections in kernel image
+    extern "C" {
+        static __init_start: u8;
+        static __init_end: u8;
+    }
+
+    unsafe {
+        let init_start = &__init_start as *const _ as u64;
+        let init_end = &__init_end as *const _ as u64;
+        let init_size = (init_end - init_start) as usize;
+
+        if init_size > 0 {
+            untypeds_list.push(ReclaimableRegion {
+                phys: kernel_virt_to_phys(VirtAddr::new(init_start)),
+                size: init_size,
+                kind: ReclaimableKind::InitCode,
+            });
+
+            semi::println!(
+                "🥾  Init code memory {:#x}-{:#x} ({init_size} bytes) reclaimed",
+                init_start,
+                init_end
+            );
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Switch to init component
+// ─────────────────────────────────────────────────────────────────────
+
+/// Final step: switch to init component with initial time budget
+fn switch_to_component(component: ComponentRef, time: TimeKey) -> ! {
+    // Install the Time init runs on in its key table
+    component.cspace().insert(KeySlot::BOOT_TIME, time);
+
+    // Setup TTBR0 for user space
+    let ttbr0 = component.page_tables().root_phys();
+
+    // Get entry context
+    let entry_point = component.entry_point();
+    let stack_pointer = component.stack_pointer();
+
+    // Record this as current component -- why percpu??
+    percpu::set_current_component(component);
+
+    semi::println!(
+        "🥾 Entering init at {:#x} with SP={:#x}",
+        entry_point.as_u64(),
+        stack_pointer.as_u64()
+    );
+
+    // Do the context switch - this never returns
+    unsafe {
+        context_switch_to_user(ttbr0, entry_point, stack_pointer);
+    }
+}
+
+/// Low-level context switch to user mode
+#[unsafe(naked)]
+unsafe extern "C" fn context_switch_to_user(ttbr0: PhysAddr, entry: VirtAddr, sp: VirtAddr) -> ! {
+    core::arch::naked_asm!(
+        // Set user page tables (TTBR0)
+        "msr ttbr0_el1, x0",
+        "isb",
+        // Invalidate TLB for ASID 0 (init)
+        "tlbi aside1is, xzr",
+        "dsb sy",
+        "isb",
+        // Set up ELR (return address) and SPSR (return state)
+        "msr elr_el1, x1",
+        // SPSR: EL0t, all interrupts enabled
+        "mov x3, #0", // EL0t
+        "msr spsr_el1, x3",
+        // Set user stack pointer
+        "msr sp_el0, x2",
+        // Clear all general-purpose registers for security
+        "mov x0, #0",
+        "mov x1, #0",
+        "mov x2, #0",
+        "mov x3, #0",
+        "mov x4, #0",
+        "mov x5, #0",
+        "mov x6, #0",
+        "mov x7, #0",
+        "mov x8, #0",
+        "mov x9, #0",
+        "mov x10, #0",
+        "mov x11, #0",
+        "mov x12, #0",
+        "mov x13, #0",
+        "mov x14, #0",
+        "mov x15, #0",
+        "mov x16, #0",
+        "mov x17, #0",
+        "mov x18, #0",
+        "mov x19, #0",
+        "mov x20, #0",
+        "mov x21, #0",
+        "mov x22, #0",
+        "mov x23, #0",
+        "mov x24, #0",
+        "mov x25, #0",
+        "mov x26, #0",
+        "mov x27, #0",
+        "mov x28, #0",
+        "mov x29, #0",
+        "mov x30, #0",
+        // Enter user mode
+        "eret",
+        options(noreturn),
+    );
+}
+*/
