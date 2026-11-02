@@ -71,7 +71,9 @@ members = [
   "kernel/tests/sd-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
+  "kernel/tests/compositor-test",
   "kernel/tests/log-test",
+  "kernel/tests/window-events-test",
   # Libraries
   "libs/address",
   "libs/alloc",
@@ -80,11 +82,14 @@ members = [
   "libs/boot-uart",
   "libs/chainboot-protocol",
   "libs/component-loader",
+  "userspace/libs/compositor-core",
+  "userspace/libs/framebuffer",
   "libs/console",
   "libs/cpu",
   "libs/device-driver",
   "libs/devicetree",
   "libs/exception",
+  "libs/graphics",
   "libs/image",
   "libs/image-build",
   "libs/input-event",
@@ -112,6 +117,7 @@ members = [
   "libs/time",
   # Userspace
   "userspace/runtime",
+  "userspace/shell",
   "userspace/tests/endpoint/client",
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",
@@ -133,6 +139,10 @@ members = [
   "userspace/tests/audio/tone",
   "userspace/tests/log/probe",
   "userspace/tests/input/trace",
+  "userspace/tests/compositor/events",
+  "userspace/gui/compositor",
+  "userspace/gui/compositor/client",
+  "userspace/gui/compositor/server",
   "userspace/tests/irq/receiver",
   "userspace/dispatcher",
   "userspace/tests/preempt/spinner",
@@ -190,6 +200,7 @@ irq-protocol = { path = "userspace/tests/irq/protocol" }
 mailbox-impl = { path = "drivers/mailbox" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
+libcompositor-core = { path = "userspace/libs/compositor-core", package = "metta-compositor-core" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
@@ -230,6 +241,8 @@ usb-core = { path = "drivers/usb" }
 usb-hid = { path = "drivers/usb-hid" }
 input = { path = "drivers/usb-hid/server" }
 input-client = { path = "drivers/usb-hid/client" }
+compositor-server = { path = "userspace/gui/compositor/server" }
+compositor-client = { path = "userspace/gui/compositor/client" }
 usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
@@ -241,6 +254,8 @@ libobject = { path = "libs/object", package = "vesper-objects" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
+libframebuffer = { path = "userspace/libs/framebuffer", package = "vesper-framebuffer" }
+libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
 libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }

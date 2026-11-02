@@ -30,11 +30,11 @@ device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-ar
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'fb-impl mailbox-impl power-impl root-dispatcher uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
+driver_components := 'compositor fb-impl mailbox-impl power-impl root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
@@ -219,6 +219,12 @@ _build-usb-hid-test board='rpi3': (_build-components board 'qemu' test_kernel_fe
 # Build the sd-test e2e kernel (the SDHOST component and a program reading and writing the card through block_v1)
 _build-sd-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sd-test' board)
 
+# Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
+_build-compositor-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
+
+# Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
+_build-window-events-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'window-events-test' board)
+
 # Build log-test's programs: the probe and the log server, for the image configuration `board` + `image_features`; only log-test bundles the probe, so it is not in `user_components`
 _build-log-probe board='rpi3' features='qemu' image_features=features: (_cross-build 'log-probe log-server' board user_link features '' image_features)
 
@@ -255,6 +261,13 @@ _boot-usb-hid-test: _build-usb-hid-test-hw chainofcommand
 _test-usb-hid-hw: _build-usb-hid-test-hw
     sudo {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb_forward }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+
+# Build compositor-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor traces the routed input on the UART
+_build-compositor-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'compositor-test' board '')
+
+# Build compositor-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a mouse and a keyboard, the compositor traces the routed input on the UART
+_boot-compositor-test: _build-compositor-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
 
 # Build audio-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the test client streams a tone through audio_v1 to the audio driver's DMA ring, which traces each stream on the UART
 _build-audio-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'audio-test' board '')
@@ -479,7 +492,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-sd _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -637,6 +650,57 @@ _test-dma board='rpi3' features=test_kernel_features config=(board + '-' + repla
     expect "audio: dma_v1 refused" "dma_v1 did not refuse"
     echo "{{ ok_label }} DMA chains copy memory, one completion per control block, on own and shared interrupt lines"
 
+# Boot compositor-test on raspi3b with a hub on the root port and a keyboard behind it: the compositor reads the keyboard through input_v1 and has drawn the background on the framebuffer
+_test-compositor board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-compositor-test board)
+    @rm -f target/compositor-test.log
+    {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'compositor-test-' + config + '.bin' }}" > target/compositor-test.log
+    @grep -q "compositor: frame 1 drew the background: true" target/compositor-test.log || { echo "compositor-test: the background did not reach the framebuffer"; exit 1; }
+    @echo "{{ ok_label }} the compositor drew the background and read the keyboard"
+
+# Boot window-events-test on raspi3b with a USB keyboard and mouse behind a hub: once window-events has made its windows (B, the newest, has the focus), click on A, drag over B, release and type `a` through the QEMU monitor; window-events checks what each window received and ends the run with the result. The console goes to target/window-events-test.log
+_test-window-events board='rpi3' seconds='120' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-window-events-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/window-events-test.log"
+    monitor="{{ target_root }}/window-events-test-monitor.sock"
+    rm -f "$log" "$monitor"
+    {{ qemu }} -M raspi3b -display none -monitor "unix:$monitor,server,nowait" \
+      -chardev stdio,mux=on,id=char0,signal=off -serial chardev:char0 -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -device usb-hub,port=1 -device usb-kbd,port=1.1 -device usb-mouse,port=1.2 \
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'window-events-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    monitor_command() { printf '%s\n' "$1" | socat - "UNIX-CONNECT:$monitor" > /dev/null; }
+    # The windows exist and the compositor has the keyboard and the mouse before the script runs.
+    for _ in $(seq {{ seconds }}); do
+      grep -q "window-events: windows" "$log" && grep -q "compositor: device 1:" "$log" && grep -q "compositor: device 2:" "$log" && break
+      sleep 1
+    done
+    sleep 1
+    # The pointer starts in the middle of the screen, inside A.
+    monitor_command "mouse_button 1"
+    sleep 1
+    monitor_command "mouse_move 300 0"
+    sleep 1
+    monitor_command "mouse_button 0"
+    sleep 1
+    monitor_command "sendkey a"
+    for _ in $(seq 60); do
+      kill -0 "$qemu_pid" 2> /dev/null || break
+      sleep 1
+    done
+    if kill -0 "$qemu_pid" 2> /dev/null; then
+      monitor_command "quit"
+      wait "$qemu_pid"
+      echo "window-events-test: window-events did not finish; see $log"
+      exit 1
+    fi
+    wait "$qemu_pid"
+    status=$?
+    grep -a "window-events: [✅❌]" "$log"
+    [ "$status" -eq 0 ] || { echo "window-events-test: failed with status $status; see $log"; exit 1; }
+    echo "{{ ok_label }} a new window took the focus, a click moved it, the drag stayed with the window pressed on and the key reached the focused window"
+
 # Boot log-test: the probe's second Thread overflows its stack and its fault handler (liblog_client's, installed by Kickstart) logs `FAULT: log_probe thread 1: stack overflow (guard page)`; then its first Thread panics and the panic handler logs `PANICKED: log_probe: made to panic on purpose at …`, which ends the run. Both lines must reach the UART through the log server. The semihosting console goes to target/log-test.log, the UART to target/log-test-serial.log
 _test-log board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-log-test board)
     #!/usr/bin/env bash
@@ -663,6 +727,22 @@ _test-log board='rpi3' features=test_kernel_features config=(board + '-' + repla
     done
     echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
 
+# Boot the production image (rpi3, QEMU) and type commands at the shell on the serial console (the kernel's semihosting output goes to its own file), from a slow feeder so the UART's FIFO never overflows: the commands must answer, and `end` must shut QEMU down with a success status
+_test-shell: (build 'rpi3' 'qemu')
+    @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
+    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none {{ qemu_usb }} -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
+    @grep -q "Supported console commands" target/shell-test.log || { echo "shell-test: help printed nothing"; exit 1; }
+    @grep -q "Unknown command feats, try 'help'" target/shell-test.log || { echo "shell-test: an unknown command was not reported"; exit 1; }
+    @if grep -q "led on failed\|led off failed" target/shell-test.log; then echo "shell-test: the LED command failed"; exit 1; fi
+    @grep -q "font: 95 glyphs mapped" target/shell-test.log || { echo "shell-test: the font resource was not mapped"; exit 1; }
+    @if grep -q "draw failed" target/shell-test.log; then echo "shell-test: draw failed"; exit 1; fi
+    @grep -q "lamp: frame 1, [1-9][0-9]* sampled cells lit" target/shell-semihosting.log || { echo "shell-test: the lamp drew nothing"; exit 1; }
+    @grep -q "lamp: frame 20," target/shell-semihosting.log || { echo "shell-test: the lamp stopped animating"; exit 1; }
+    @grep -q "compositor: frame 1 drew the background: true" target/shell-semihosting.log || { echo "shell-test: the compositor drew no background"; exit 1; }
+    @grep -q "compositor: frame [0-9]*: 1 windows, [1-9][0-9]* sampled pixels differ from the background" target/shell-semihosting.log || { echo "shell-test: the shell's window did not reach the framebuffer"; exit 1; }
+    @grep -q "Bye" target/shell-test.log || { echo "shell-test: end did not say goodbye"; exit 1; }
+    @echo "{{ ok_label }} shell answered help, the LED commands, an unknown command and end, and drew in a window of the compositor"
+
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ chainboot_link }}" \
@@ -682,11 +762,11 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The capability ABI, the boot platform, drivers' logic, Meddle, USB, input, dispatcher,
+# The capability ABI, the boot platform, drivers' logic, Meddle, USB, input, compositor, dispatcher,
 # log server, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-dispatcher-host _test-log-host _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -698,7 +778,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -709,6 +789,9 @@ _test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-h
 
 # Run the input event library tests natively: record layout, descriptor, state tracker
 _test-input-host: (_host-test 'vesper-input-event' 'input_event')
+
+# Run the compositor logic tests natively: windows, hit-testing, focus, grab and input routing
+_test-compositor-host: (_host-test 'metta-compositor-core' 'compositor_core')
 
 # Run the root dispatcher's host tests: the highest runnable priority first, round-robin within a priority, the starvation guard
 _test-dispatcher-host: (_host-test 'root-dispatcher' 'policy')
@@ -742,7 +825,7 @@ clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_
 _clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-log-host _clippy-coc
+_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-compositor-host _clippy-log-host _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
@@ -754,7 +837,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
@@ -765,6 +848,9 @@ _clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 
 
 # Lint the input event library tests with their native host harness
 _clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
+
+# Lint the compositor logic tests with their native host harness
+_clippy-compositor-host: (_host-clippy 'metta-compositor-core' 'compositor_core')
 
 # Lint the log server's host tests with their native host harness
 _clippy-log-host: (_host-clippy 'log-server' 'protocol')

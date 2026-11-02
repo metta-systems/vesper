@@ -1,0 +1,29 @@
+[package]
+name = "vesper-framebuffer"
+
+description = "Maps the display's framebuffer through the fb component: configures the mode, receives the Frames and maps them write-combining in the window Kickstart provisioned."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[dependencies]
+fb-client = { workspace = true }
+libdevice-driver = { workspace = true }
+libgraphics = { workspace = true }
+libobject = { workspace = true }
+
+[lib]
+name = "libframebuffer"
+test = false
+harness = false
+
+[lints]
+workspace = true
