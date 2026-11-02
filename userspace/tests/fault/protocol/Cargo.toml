@@ -1,0 +1,26 @@
+[package]
+name = "fault-protocol"
+
+description = "What fault-test's builder and its EL0 components agree on: roles, handler modes, result bits and the init page."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+tock-registers = { workspace = true }
+
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
+[lints]
+workspace = true

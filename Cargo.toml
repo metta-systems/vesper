@@ -6,6 +6,9 @@ members = [
   "kernel/tests/ppc-test",
   "kernel/tests/sync-test",
   "kernel/tests/capability-test",
+  "kernel/tests/endpoint-test",
+  "kernel/tests/fault-test",
+  "kernel/tests/fp-trap-test",
   "bin/chainboot",
   "bin/chainofcommand",
   "bin/meddler",
@@ -47,6 +50,16 @@ members = [
   "libs/time",
   # Userspace
   "userspace/runtime",
+  "userspace/tests/endpoint/client",
+  "userspace/tests/endpoint/endpoint",
+  "userspace/tests/endpoint/protocol",
+  "userspace/tests/endpoint/server",
+  "userspace/tests/fault/bare",
+  "userspace/tests/fault/faulter",
+  "userspace/tests/fault/protocol",
+  "userspace/tests/fp-trap/probe",
+  "userspace/tests/fp-trap/protocol",
+  "userspace/tests/hello",
 ]
 resolver = "3"
 
@@ -78,6 +91,9 @@ libblock-channel = { path = "libs/block-channel", package = "vesper-block-channe
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
+fault-protocol = { path = "userspace/tests/fault/protocol" }
+fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
 kickstart = { path = "kernel/kickstart" }
 nucleus = { path = "kernel/nucleus" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
