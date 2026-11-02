@@ -1,0 +1,26 @@
+[package]
+name = "driver-protocol"
+
+description = "What driver-test and its probe driver agree on: the report key slot and the compatible strings."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+libdevice-driver = { workspace = true }
+libobject = { workspace = true }
+
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
+[lints]
+workspace = true

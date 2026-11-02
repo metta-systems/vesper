@@ -6,6 +6,7 @@ members = [
   "kernel/tests/ppc-test",
   "kernel/tests/sync-test",
   "kernel/tests/capability-test",
+  "kernel/tests/driver-test",
   "kernel/tests/endpoint-test",
   "kernel/tests/fault-test",
   "kernel/tests/fp-trap-test",
@@ -60,6 +61,10 @@ members = [
   "userspace/tests/endpoint/endpoint",
   "userspace/tests/endpoint/protocol",
   "userspace/tests/endpoint/server",
+  "userspace/tests/driver/echo",
+  "userspace/tests/driver/echo-client",
+  "userspace/tests/driver/probe",
+  "userspace/tests/driver/protocol",
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
@@ -106,6 +111,9 @@ libblock-channel = { path = "libs/block-channel", package = "vesper-block-channe
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libcomponent-loader = { path = "libs/component-loader", package = "metta-component-loader" }
+driver-protocol = { path = "userspace/tests/driver/protocol" }
+driver-echo = { path = "userspace/tests/driver/echo" }
+driver-echo-client = { path = "userspace/tests/driver/echo-client" }
 endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
 fault-protocol = { path = "userspace/tests/fault/protocol" }
 fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
