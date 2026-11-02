@@ -106,7 +106,7 @@ Depends on L-A's hardware exit only for confidence; no open decision.
   test-window-events, test-audio, test-midi, test-dispatch, test-driver, test-mailbox,
   test-uart; `just build-wood-test-hw`; clippy of the USB crates, `libserial-trace`,
   Kickstart and the wood-test kernel with and without `qemu`; `just _clippy-log`,
-  `just clippy-usb-host`. Board: pending (L-C).
+  `just _clippy-usb-host`. Board: pending (L-C).
 - [ ] Add the `log_v1` import to mailbox, fb, gpio, cprman, dma and `draw_demo`; add
   the log server to compositor-test, window-events-test, audio-test, usb-core-test and
   usb-hid-test (each recipe's serial-file check as in `test-wood`).
