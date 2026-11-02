@@ -1,13 +1,12 @@
 [package]
-name = "libprimitives"
+name = "vesper-primitives"
 
-description = "Kernel primitives"
+description = "Vesper nanokernel primitives."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -19,6 +18,11 @@ publish = false
 maintenance = { status = "experimental" }
 
 [dependencies]
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

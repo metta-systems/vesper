@@ -1,13 +1,12 @@
 [package]
-name = "libqemu"
+name = "vesper-qemu"
 
-description = "QEMU implementations"
+description = "Vesper nanokernel QEMU support."
 
 authors = { workspace = true }
 categories = { workspace = true }
 documentation = { workspace = true }
 edition = { workspace = true }
-homepage = { workspace = true }
 license = { workspace = true }
 readme = { workspace = true }
 repository = { workspace = true }
@@ -19,7 +18,15 @@ publish = false
 maintenance = { status = "experimental" }
 
 [dependencies]
-qemu-exit = { workspace = true }
+# libprint = { workspace = true }
+
+# [dev-dependencies]
+# libtest = { workspace = true }
+
+# Tests are offloaded to kernel integration tests binary.
+[lib]
+test = false
+harness = false
 
 [lints]
 workspace = true

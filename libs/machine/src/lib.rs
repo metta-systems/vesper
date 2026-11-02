@@ -1,14 +1,11 @@
 #![no_std]
 #![no_main]
-#![allow(incomplete_features)]
-#![feature(generic_const_exprs)] // incomplete_features
 #![feature(format_args_nl)]
 #![feature(int_roundings)]
 #![feature(linkage)]
 #![feature(step_trait)]
 #![feature(trait_alias)]
 #![feature(decl_macro)]
-#![feature(allocator_api)]
 #![feature(stmt_expr_attributes)]
 #![feature(slice_ptr_get)]
 #![feature(custom_test_frameworks)]
@@ -23,7 +20,6 @@
 #![allow(unused)]
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
-#![feature(ptr_internals)]
 
 #[cfg(not(target_arch = "aarch64"))]
 compile_error!("Architecture not supported, sorry!");
@@ -86,7 +82,6 @@ mod lib_tests {
         }
 
         memory::mmu::post_enable_init();
-        platform::drivers::qemu_bring_up_console();
 
         test_main();
 

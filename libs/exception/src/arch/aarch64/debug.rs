@@ -7,7 +7,7 @@ use {
     tock_registers::{LocalRegisterCopy, interfaces::Readable, register_bitfields},
 };
 
-fn cause_to_string(cause: u64) -> &'static str {
+pub fn cause_to_string(cause: u64) -> &'static str {
     if cause == ESR_EL1::EC::DataAbortCurrentEL.read(ESR_EL1::EC) {
         "Data Alignment Check"
     } else {
@@ -75,7 +75,7 @@ register_bitfields! {
             /// Synchronous External abort, not on translation table walk or hardware update of translation table.
             SyncExternalAbort = 0b010000,
             /// Synchronous Tag Check Fault.
-            /// (When FEAT_MTE is implemented)
+            /// (When `FEAT_MTE` is implemented)
             SyncTagCheckFault = 0b010001,
             /// Synchronous External abort on translation table walk or hardware update of translation table, level 0.
             SyncAbortOnTranslationTL0 = 0b010100,
@@ -86,26 +86,26 @@ register_bitfields! {
             /// Synchronous External abort on translation table walk or hardware update of translation table, level 3.
             SyncAbortOnTranslationTL3 = 0b010111,
             /// Synchronous parity or ECC error on memory access, not on translation table walk.
-            /// (When FEAT_RAS is not implemented)
+            /// (When `FEAT_RAS` is not implemented)
             SyncParityError = 0b011000,
             /// Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 0.
-            /// (When FEAT_RAS is not implemented)
+            /// (When `FEAT_RAS` is not implemented)
             SyncParityErrorOnTranslationTL0 = 0b011100,
             /// Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 1.
-            /// (When FEAT_RAS is not implemented)
+            /// (When `FEAT_RAS` is not implemented)
             SyncParityErrorOnTranslationTL1 = 0b011101,
             /// Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 2.
-            /// (When FEAT_RAS is not implemented)
+            /// (When `FEAT_RAS` is not implemented)
             SyncParityErrorOnTranslationTL2 = 0b011110,
             /// Synchronous parity or ECC error on memory access on translation table walk or hardware update of translation table, level 3.
-            /// (When FEAT_RAS is not implemented)
+            /// (When `FEAT_RAS` is not implemented)
             SyncParityErrorOnTranslationTL3 = 0b011111,
             /// Alignment fault.
             AlignmentFault = 0b100001,
             /// TLB conflict abort.
             TlbConflictAbort = 0b110000,
             /// Unsupported atomic hardware update fault.
-            /// (When FEAT_HAFDBS is implemented)
+            /// (When `FEAT_HAFDBS` is implemented)
             UnsupportedAtomicUpdate = 0b110001,
             /// IMPLEMENTATION DEFINED fault (Lockdown).
             Lockdown = 0b110100,
@@ -115,9 +115,9 @@ register_bitfields! {
     ]
 }
 
-type IssForDataAbort = LocalRegisterCopy<u64, ISS_DA::Register>;
+pub type IssForDataAbort = LocalRegisterCopy<u64, ISS_DA::Register>;
 
-fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
+pub fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
     match iss.read_as_enum(ISS_DA::DFSC) {
         Some(ISS_DA::DFSC::Value::AddressSizeTL0) => {
             "Address size fault, level 0 of translation or translation table base register"
@@ -183,7 +183,8 @@ fn iss_dfsc_to_string(iss: IssForDataAbort) -> &'static str {
 /// Not for production use!
 /// @todo merge this with default exception handler a bit?
 /// @returns true if we can skip the instruction and return, false if we need to continue handling the exception.
-pub fn synchronous_common(e: &mut super::ExceptionContext) -> bool {
+// #[cfg(any(test, feature = "test_build"))]
+pub fn exception_dump(e: &mut super::ExceptionContext) -> bool {
     println!("      ESR_EL1: {:#010x} (syndrome)", ESR_EL1.get());
     let cause = ESR_EL1.read(ESR_EL1::EC);
     println!(
