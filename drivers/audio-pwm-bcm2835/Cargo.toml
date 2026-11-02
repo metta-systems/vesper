@@ -1,0 +1,66 @@
+[package]
+name = "audio-pwm-bcm2835"
+
+description = "EL0 driver component for the BCM2835 PWM block as the Raspberry Pi's headphone jack: PCM output through audio_v1, from a DMA ring in its own memory."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[features]
+default = []
+# Opt in to standard host integration tests of the register values, samples and stream.
+host-tests = []
+# Under QEMU, which does not emulate the PWM block and cannot run a DMA ring,
+# the driver checks clock_v1 and dma_v1, never touches the PWM registers, and
+# plays each period of the ring by a DMA copy into a capture buffer, which it
+# checks against the capture test's pattern when the stream starts with it,
+# and against the ring's words for any other client.
+qemu = ["libserial-trace/qemu", "libuser/qemu"]
+
+[dependencies]
+bitbybit = { workspace = true }
+derive-mmio = { workspace = true }
+libio-channel = { workspace = true }
+libmmio = { workspace = true }
+
+# The component itself only builds for Vesper; host tests use the library.
+[target.'cfg(target_os = "vesper")'.dependencies]
+audio = { workspace = true }
+clock-client = { workspace = true }
+dma-client = { workspace = true }
+gpio-client = { workspace = true }
+libdevice-driver = { workspace = true }
+libmeddle-runtime = { workspace = true }
+libobject = { workspace = true }
+# libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libprint = { workspace = true }
+libserial-trace = { workspace = true }
+libuser = { workspace = true }
+
+[lib]
+test = false
+harness = false
+
+[[bin]]
+name = "audio-pwm-bcm2835"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "pwm"
+required-features = ["host-tests"]
+
+[[test]]
+name = "stream"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

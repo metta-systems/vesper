@@ -1,0 +1,61 @@
+# What audio-test bundles (see vesper-image-build): the clock manager component,
+# loaded by Kickstart for the `brcm,bcm2835-cprman` node, and the PWM audio
+# driver, loaded for the `brcm,bcm2835-pwm` node, which only the test tree
+# (`just _test-audio`) or the board's `pwm-2chan` overlay enable, and the DMA
+# controller component, loaded for the `brcm,bcm2835-dma` node. The audio
+# driver sets the PWM clock through the clock manager, routes the jack's pins
+# through the gpio component and runs its DMA ring through the DMA component;
+# it holds the PL011 driver's serial channel, so on the board its trace shows
+# on the UART. The test client is a program that streams to it through
+# audio_v1.
+
+# The audio driver imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component, loaded for the `brcm,bcm2835-dma` node: the
+# audio driver claims its channels through dma_v1.
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../../drivers/dma-bcm2835/interfaces"
+
+[[driver]]
+name = "audio"
+binary = "audio-pwm-bcm2835"
+interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
+serial = true
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The test client: a program (Kickstart starts it at boot, without a device
+# tree node) importing audio_v1 through the PWM node's compatible string. A
+# tone on the board, the capture test under QEMU.
+[[component]]
+name = "client"
+binary = "audio-test-client"
+interfaces = "../../../userspace/tests/audio/tone/interfaces"
+active = true
+program = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

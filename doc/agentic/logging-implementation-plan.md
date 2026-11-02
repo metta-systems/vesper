@@ -52,7 +52,7 @@ Exit checks:
   `open for client 0`, each with the `[seconds] I ` prefix (0 lines dropped in the
   runs so far).
 - [x] Unchanged behaviour where the import stays unlinked: `just test-compositor`,
-  `just test-window-events`, `just test-audio`, `just test-shell`,
+  `just test-window-events`, `just _test-audio`, `just test-shell`,
   `just _test-usb-core`, `just _test-usb-hid` pass.
 - [x] `just build-wood-test-hw` builds.
 - [x] Lint: `just _clippy-log` (the log crates and `libserial-trace`, with and without
