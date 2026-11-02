@@ -16,6 +16,7 @@ members = [
   "libs/log",
   "libs/machine",
   "libs/memory",
+  "libs/mmio",
   "libs/platform",
   "libs/primitives",
   "libs/print",
@@ -61,6 +62,7 @@ liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machine" }
 libmemory = { path = "libs/memory" }
+libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libplatform = { path = "libs/platform" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
