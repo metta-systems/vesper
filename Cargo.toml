@@ -4,6 +4,7 @@ members = [
   "bin/chainofcommand",
   # Libraries
   "libs/address",
+  "libs/alloc",
   "libs/boot",
   "libs/boot-uart",
   "libs/chainboot-protocol",
@@ -15,6 +16,7 @@ members = [
   "libs/locking",
   "libs/log",
   "libs/machine",
+  "libs/mapping",
   "libs/mmio",
   "libs/primitives",
   "libs/print",
@@ -47,6 +49,7 @@ bitbybit  = { version = "2.0" }
 cfg-if = { version = "1.0" }
 derive-mmio = { version = "0.8" }
 libaddress = { path = "libs/address", package = "vesper-address" }
+# liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
@@ -58,6 +61,7 @@ liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
 libmachine = { path = "libs/machine", package = "vesper-machine" }
+libmapping = { path = "libs/mapping", package = "vesper-mapping" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
