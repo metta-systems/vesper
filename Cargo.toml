@@ -36,7 +36,10 @@ members = [
   "drivers/fb/server",
   # USB pure protocol logic (host-testable)
   "drivers/usb/host",
+  "drivers/usb",
   "drivers/usb/protocol",
+  "drivers/usb/server",
+  "drivers/usb/client",
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
@@ -50,6 +53,7 @@ members = [
   "drivers/gpio-bcm2835/server",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
+  "kernel/tests/usb-core-test",
   "kernel/tests/log-test",
   # Libraries
   "libs/address",
@@ -191,6 +195,9 @@ block = { path = "drivers/sdhost-bcm2835/server" }
 block-client = { path = "drivers/sdhost-bcm2835/client" }
 gpio = { path = "drivers/gpio-bcm2835/server" }
 gpio-client = { path = "drivers/gpio-bcm2835/client" }
+usb = { path = "drivers/usb/server" }
+usb-client = { path = "drivers/usb/client" }
+usb-core = { path = "drivers/usb" }
 usb-host = { path = "drivers/usb/host", package = "vesper-usb-host" }
 power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }

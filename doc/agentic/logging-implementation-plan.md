@@ -53,7 +53,7 @@ Exit checks:
   runs so far).
 - [x] Unchanged behaviour where the import stays unlinked: `just test-compositor`,
   `just test-window-events`, `just test-audio`, `just test-shell`,
-  `just test-usb-core`, `just test-usb-hid` pass.
+  `just _test-usb-core`, `just test-usb-hid` pass.
 - [x] `just build-wood-test-hw` builds.
 - [x] Lint: `just _clippy-log` (the log crates and `libserial-trace`, with and without
   `qemu`, and the host tests); the target build of Wood, `midi-synth`, the compositor,
