@@ -649,6 +649,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "fb"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "fb-client"
+version = "0.0.1"
+dependencies = [
+ "fb",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "fb-impl"
+version = "0.0.1"
+dependencies = [
+ "fb",
+ "mailbox-client",
+ "mailbox-impl",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "fdt-rs"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1103,6 +1134,80 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailbox"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "mailbox-client"
+version = "0.0.1"
+dependencies = [
+ "mailbox",
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "mailbox-impl"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "mailbox",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "mailbox-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "mailbox",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "mailbox-test-client"
+version = "0.0.1"
+dependencies = [
+ "driver-protocol",
+ "fb-client",
+ "mailbox-client",
+ "mailbox-impl",
+ "metta-meddle-runtime",
+ "power-client",
+ "vesper-device-driver",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "meddler"
 version = "0.0.1"
 dependencies = [
@@ -1409,6 +1514,40 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "power"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "power-client"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+ "power",
+]
+
+[[package]]
+name = "power-impl"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "derive-mmio",
+ "mailbox-client",
+ "metta-meddle-runtime",
+ "power",
+ "vesper-device-driver",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
 
 [[package]]
 name = "ppc-test"
