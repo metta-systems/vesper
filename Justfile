@@ -76,6 +76,10 @@ rpi3_qemu_artifacts := target_root / rpi3_qemu / target
 rpi4_hw_artifacts   := target_root / rpi4_hw / target
 # The SC-55 bank trimmed to the shareware IWAD's music (`_wood-soundfont`, audio decision D9.4)
 wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
+# `bytes:looping:hash` of the songs `_test-wood` hears first (the title's D_INTROA once, the
+# first demo's D_E1M5 looping, at volume 64): the hash of their first 64 rendered periods as
+# the MIDI synthesiser logs it and its host test computes it (midi-synth tests/session.rs)
+wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14be'
 # Doom's E1M1 music as a Standard MIDI File, the song midi-test plays (`_wood-midi`)
 wood_midi           := target_root / 'wood' / 'd_e1m1.mid'
 # `bytes:looping:hash` of the song `_test-midi` plays (D_E1M1 looping, at volume 64), as above
@@ -254,6 +258,15 @@ _build-midi-player board='rpi3' features='qemu' image_features=features: _wood-s
 # Build the midi-test e2e kernel: the MIDI synthesiser, a player program with Doom's D_E1M1, audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
 _build-midi-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
 
+# Build Wood, the Room Doom engine's Vesper program, the MIDI synthesiser component that plays
+# its music, with the trimmed SoundFont it bundles, and the log server that writes their lines to
+# the UART, for the image configuration `board` + `image_features`; only wood-test bundles them,
+# so they are not in `user_components`
+_build-wood board='rpi3' features='qemu' image_features=features: _wood-soundfont (_cross-build 'wood midi-synth log-server' board user_link features '' image_features)
+
+# Build the wood-test e2e kernel: compositor-test's components plus Wood, the Room Doom engine in a window of its own
+_build-wood-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
+
 # === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
 
 # Build usb-core-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `usb-core` traces on the UART
@@ -295,6 +308,17 @@ _build-midi-test-hw board='rpi3': (_build-components board '' '') (_build-midi-p
 # Build midi-test for the Raspberry Pi 3 and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000 _boot-midi-test`): with headphones in the jack and `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the player plays Doom's E1M1 music, looping, at volume 64, and nothing else runs. The UART shows the song's timing and first notes, the ARM and core clocks, and every 256 periods (about 3 s) the music summary (`service` min/avg/max against the period, packets, periods with sound, playing, the longest refill, underruns), the level (peak and RMS), the synthesiser's peak voice count and the song position
 _boot-midi-test: _build-midi-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-rpi3.bin' }}"
+
+# Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
+_build-wood-test-hw board='rpi3': (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
+
+# Plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack:
+# with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads
+# and Wood plays Doom's sound effects (without it Wood runs silent).
+# Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand
+[group("hw")]
+boot-wood-test: _build-wood-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
 
 # === Chainboot ===
 
@@ -347,6 +371,17 @@ qemu: (build 'rpi3' 'qemu')
     @echo "🚜 .. on {{ rpi3_dtb }}"
     @rm -f qemu.log
     {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+
+# The compositor's screen with the lava lamp and Wood playing Doom's demos, its sound effects
+# going to the audio driver's capture buffer (QEMU has no PWM to hear them on). Wood's window has
+# the keyboard focus as the newest window; clicking a window (the USB mouse behind the hub; click
+# into QEMU's window to grab the pointer, Ctrl-Alt-G releases it) moves the focus. The console
+# (serial and semihosting) goes to the terminal and qemu.log.
+# Build wood-test and run Doom in QEMU with a display window
+[group("emu")]
+qemu-wood features='qemu': (_build-components 'rpi3' 'qemu' features) (_build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features)
+    @rm -f qemu.log
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
 
 # Build and run kernel in QEMU with GDB port
 [group("emu")]
@@ -798,6 +833,75 @@ _test-midi board='rpi3' features=test_kernel_features config=(board + '-' + repl
     done
     echo "{{ ok_label }} the player played D_E1M1 through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
 
+# Boot wood-test on raspi3b with the devices of _test-compositor and the audio test tree (targets/audio-test.dtb, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it, and draw-demo's lava lamp, whose window lost the focus to it, must pause. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The log server holds the UART: the lines of the compositor, Wood, the synthesiser, the audio driver and the USB components (the controller's bring-up and port reset, a device the core enumerated, the keyboard the HID component serves) must reach it with its timestamp and level prefix, and Wood's music summary must appear. The semihosting console goes to target/wood-test.log, the UART to target/wood-test-serial.log, the screen to target/wood-test.ppm
+_test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-wood-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/wood-test.log"
+    serial="{{ target_root }}/wood-test-serial.log"
+    screen="{{ target_root }}/wood-test.ppm"
+    monitor="{{ target_root }}/wood-test-monitor.sock"
+    rm -f "$log" "$serial" "$screen" "$monitor"
+    {{ qemu }} -M raspi3b -display none -monitor "unix:$monitor,server,nowait" \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -device usb-hub,port=1 -device usb-kbd,port=1.1 \
+      -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    monitor_command() { printf '%s\n' "$1" | socat - "UNIX-CONNECT:$monitor" > /dev/null; }
+    # The engine runs and the keyboard is the compositor's before keys are pressed.
+    for _ in $(seq {{ seconds }}); do
+      grep -q "wood: INFO the engine started" "$log" && grep -q "compositor: device 1:" "$log" && break
+      sleep 1
+    done
+    sleep 5
+    monitor_command "sendkey esc"
+    sleep 2
+    monitor_command "sendkey down"
+    sleep 3
+    monitor_command "screendump $screen"
+    sleep 2
+    monitor_command "quit"
+    wait "$qemu_pid"
+    grep -q "compositor: frame 1 drew the background: true" "$log" || { echo "wood-test: the background did not reach the framebuffer"; exit 1; }
+    grep -q "wood: INFO frame 1 presented: true" "$log" || { echo "wood-test: Wood presented no frame"; exit 1; }
+    grep -q "wood: INFO focus gained" "$log" || { echo "wood-test: Wood's window did not get the focus"; exit 1; }
+    grep -q "lamp: paused after frame [0-9]*, unfocused" "$log" || { echo "wood-test: the lava lamp kept animating without the focus"; exit 1; }
+    ! grep -q "lamp: resumed" "$log" || { echo "wood-test: the lava lamp resumed while Wood had the focus"; exit 1; }
+    grep -q "wood: INFO key 0x29 down: doom key 0x1b" "$log" || { echo "wood-test: Escape did not reach Wood"; exit 1; }
+    grep -q "wood: INFO key 0x51 down: doom key 0xaf" "$log" || { echo "wood-test: Down did not reach Wood"; exit 1; }
+    grep -a "wood: INFO audio: \|audio: open for\|audio: capture: " "$log" | tail -4
+    grep -q "wood: INFO audio: open at 44091.710 Hz" "$log" || { echo "wood-test: Wood did not open the audio output"; exit 1; }
+    grep -q "audio: open for client 0: a ramp up, then its packets" "$log" || { echo "wood-test: the audio driver did not start Wood's stream"; exit 1; }
+    grep -q "wood: INFO audio: [0-9]* buffers mixed, [1-9][0-9]* with sound" "$log" || { echo "wood-test: Wood mixed no sound effect"; exit 1; }
+    grep -q "audio: capture: [1-9][0-9]* audible stream periods of" "$log" || { echo "wood-test: no sound effect reached the capture buffer"; exit 1; }
+    audible=$(grep -a -o "audio: capture: [0-9]* audible stream periods of [0-9]*" "$log" | tail -1 | cut -d' ' -f3,8)
+    underruns=$(grep -a -o "with sound, [0-9]* underruns" "$log" | tail -1 | cut -d' ' -f3)
+    # Music: the synthesiser loaded its SoundFont, Wood took it, the title song's first
+    # periods hash as the host test computes them (`start_hashes_of_the_first_songs` in
+    # userspace/midi-synth/tests/session.rs), and nearly every period is audible.
+    grep -a "midi-synth: \|wood: INFO music: " "$log" | tail -4
+    grep -q "midi-synth: ready at 44091710 mHz" "$log" || { echo "wood-test: the MIDI synthesiser did not start"; exit 1; }
+    grep -q "wood: INFO music: the MIDI synthesiser plays at 44091710 mHz" "$log" || { echo "wood-test: Wood did not take the MIDI synthesiser"; exit 1; }
+    for expected in {{ wood_music_hashes }}; do
+      bytes=${expected%%:*}; rest=${expected#*:}; looping=${rest%%:*}; hash=${rest#*:}
+      line=$(grep -a -o "midi-synth: song of $bytes bytes (looping $looping, volume 64): first 64 periods hash 0x[0-9a-f]*, [0-9]* audible" "$log" | head -1)
+      [ -n "$line" ] || { echo "wood-test: no start hash for the song of $bytes bytes"; exit 1; }
+      [ "$(echo "$line" | grep -o '0x[0-9a-f]*')" = "$hash" ] || { echo "wood-test: the song of $bytes bytes rendered differently from the host: $line"; exit 1; }
+    done
+    music=$(grep -a -o "music: [0-9]* periods pulled, [0-9]* with sound" "$log" | tail -1 | cut -d' ' -f2,5)
+    [ -n "$music" ] && [ $(( ${music#* } * 10 )) -ge $(( ${music% *} * 9 )) ] || { echo "wood-test: too few music periods with sound: $music"; exit 1; }
+    [ $(( ${audible% *} * 10 )) -ge $(( ${audible#* } * 9 )) ] || { echo "wood-test: too few audible stream periods: $audible"; exit 1; }
+    # The log server wrote every client's lines to the UART, each with its prefix.
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] I '
+    grep -a "${prefix}wood: music: summary" "$serial" | tail -2
+    for expected in "log-server: 7 clients, serial output attached" "compositor: display [0-9]*x[0-9]* pitch" "compositor: device 1 added" "wood: the engine started" "wood: music: summary of [0-9]* periods" "midi-synth: ready at 44091710 mHz" "audio: open for client 0" "usb-hcd-dwc2: core 0x[0-9a-f]* reset, host mode" "usb-hcd-dwc2: port reset: enabled" "usb-core: hub [0-9]* port [0-9]*: [a-z]* speed device at address [0-9]*" "usb-hid: serving a Keyboard as device"; do
+      grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "wood-test: the UART got no line \"$expected\" from the log server"; exit 1; }
+    done
+    dropped=0
+    for count in $(grep -a -o "([0-9]* dropped)" "$serial" | tr -dc '0-9\n'); do dropped=$(( dropped + count )); done
+    usb_lines=$(grep -a -c "${prefix}\(([0-9]* dropped) \)\?usb" "$serial")
+    echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its music and sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, ${music#* } of ${music% *} music periods with sound, the songs' first periods as on the host, $underruns underruns); the log server wrote the compositor's, Wood's, the synthesiser's, the audio driver's and the USB components' lines to the UART ($usb_lines USB lines, $dropped dropped); the screen is in $screen"
+
 # Boot the production image (rpi3, QEMU) and type commands at the shell on the serial console (the kernel's semihosting output goes to its own file), from a slow feeder so the UART's FIFO never overflows: the commands must answer, and `end` must shut QEMU down with a success status
 _test-shell: (build 'rpi3' 'qemu')
     @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
@@ -874,14 +978,14 @@ _test-log-host: (_host-test 'log-server' 'protocol')
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
-# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth); and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes test-wood and _test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); and the song export of sf2-trim
-_test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'vesper-synth' 'doom_music') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point; and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes _test-wood and _test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); the song export of sf2-trim; and, in the userspace/wood submodule, Room's tests on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
+_test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
     cargo test -p sf2-trim
+    just --justfile userspace/wood/room/Justfile test-music
 
-# Time the synthesiser on the host in release mode: every shareware song for 60 s in 512-frame periods, ns per frame and per voice-frame (doc/agentic/audio-profiling.md)
+# Time the synthesiser on the host in release mode: every shareware song for 60 s in 512-frame periods, ns per frame and per voice-frame (doc/agentic/audio-profiling.md); the benchmark is Room's, in the userspace/wood submodule
 _profile-synth:
-    RUSTFLAGS="{{ fixed_rustflags }}" \
-    cargo test --release -p vesper-synth --features=host-tests --test doom_music -- --ignored --nocapture --test-threads=1 profile_render
+    just --justfile userspace/wood/room/Justfile profile-music
 
 # === Lints ===
 
@@ -894,8 +998,8 @@ _cross-clippy board='rpi3' features='':
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim \
       -- --deny warnings --allow deprecated
 
-# The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs)
-_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu') (_build-log-probe 'rpi3' 'qemu') (_build-midi-player 'rpi3' 'qemu')
+# The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs, Wood)
+_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu') (_build-log-probe 'rpi3' 'qemu') (_build-midi-player 'rpi3' 'qemu') (_build-wood 'rpi3' 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
@@ -964,6 +1068,18 @@ _cross-clippy-log board='rpi3' features='':
 # Lint just the log crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 _clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') _clippy-log-host
 
+# Cross-clippy only Wood (the Room engine's Vesper program) for a board with a feature set
+_cross-clippy-wood board='rpi3' features='':
+    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+    cargo clippy {{ target_json }} \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} \
+      -p wood \
+      -- --deny warnings --allow deprecated
+
+# Lint just Wood: the target build with and without `qemu` (much shorter than `clippy`)
+_clippy-wood: (_cross-clippy-wood 'rpi3' '') (_cross-clippy-wood 'rpi3' 'qemu')
+
 # Cross-clippy only the audio crates (the clock manager, DMA and PWM audio components, their interface crates and the audio test client) for a board with a feature set
 _cross-clippy-audio board='rpi3' features='':
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
@@ -977,7 +1093,7 @@ _cross-clippy-audio board='rpi3' features='':
 _clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
 # Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, and the bank-trimming and song-export tool
-_clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'vesper-synth' 'doom_music') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
+_clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
     cargo clippy {{ target_json }} {{ rust_std }} -p vesper-synth -p midi-synth -p midi-synth-server -p midi-synth-client -p midi-player \
       -- --deny warnings --allow deprecated

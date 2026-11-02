@@ -405,8 +405,8 @@ macro_rules! log_println {
 }
 
 /// The `log` crate's records as lines on the log channel, each starting with
-/// the component's name: `shell: text`, at the record's level. Under QEMU also
-/// on the semihosting console as `shell: INFO text`.
+/// the component's name: `wood: text`, at the record's level. Under QEMU also
+/// on the semihosting console as `wood: INFO text`.
 pub struct Logger {
     name: &'static str,
 }

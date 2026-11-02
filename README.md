@@ -53,7 +53,7 @@ You can override the name of mounted sdcard volume by specifying env variable `V
 just setup-local-dev
 ```
 
-This also fetches the git submodules (the SC-55 SoundFont Wood plays its music with); to fetch only them, run `git submodule update --init`.
+This also fetches the git submodules: Wood, the Doom engine as a Vesper program, at `userspace/wood` (the [vesper-doom](https://github.com/metta-systems/vesper-doom) repository), and inside it the SC-55 SoundFont Wood plays its music with; to fetch only them, run `git submodule update --init --recursive`.
 
 ### To build kernel and run it in QEMU emulator
 

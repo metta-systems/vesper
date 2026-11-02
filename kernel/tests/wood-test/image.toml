@@ -1,0 +1,162 @@
+# What wood-test bundles (see vesper-image-build): everything compositor-test
+# does (the DWC2 host controller component, the USB core, the USB HID component,
+# the mailbox and fb components, the PL011 driver, the compositor, the shell's
+# lava-lamp window and the root dispatcher), plus Wood, the Room Doom engine, in
+# a window of its own, with the shareware IWAD as its resource, and the drivers
+# of audio-test (the gpio component, the clock manager, the DMA controller and
+# the PWM audio driver) for Wood's sound effects, the MIDI synthesiser
+# component with its SoundFont for Wood's music, and the log server, which
+# holds the PL011's serial channel and writes the lines of the compositor,
+# Wood, the synthesiser, the audio driver and the three USB components to the
+# UART.
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../../drivers/gpio-bcm2835/interfaces"
+
+# The clock manager, which sets the PWM clock for the audio driver.
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component: the audio driver claims a channel for its ring
+# (on the board) or its capture copies (under QEMU) through dma_v1.
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../../drivers/dma-bcm2835/interfaces"
+
+# The PWM audio driver, loaded for the `brcm,bcm2835-pwm` node, which only the
+# test tree (`just _test-wood`) or the board's `pwm-2chan` overlay enable. Wood's
+# playback Thread is its client. Its trace goes to the log server.
+[[driver]]
+name = "audio"
+binary = "audio-pwm-bcm2835"
+interfaces = "../../../drivers/audio-pwm-bcm2835/interfaces"
+
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../../drivers/fb/interfaces"
+video_memory = true
+
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../../drivers/usb-hcd-dwc2/interfaces"
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "compositor"
+binary = "compositor"
+interfaces = "../../../userspace/gui/compositor/interfaces"
+active = true
+program = true
+memory = 33554432
+
+# The log server: the one holder of the PL011's serial channel. The
+# compositor, Wood, the MIDI synthesiser, the audio driver, the USB controller,
+# the USB core and the USB HID component import its log_v1 (7 of the 8 clients
+# an exporter can serve) and put their lines on its io-channel, never waiting;
+# it writes them to the UART with a timestamp and level, dropping and counting
+# what the UART cannot keep up with.
+[[component]]
+name = "log_server"
+binary = "log-server"
+interfaces = "../../../userspace/log-server/interfaces"
+active = true
+program = true
+serial = true
+
+# The shell's `draw` started by itself: a window of the compositor with the
+# shell's scene and the lava lamp, so the board shows a window to move the
+# cursor over. The lamp animates only while its window has the focus: Wood's
+# window, made later, takes it, so the lamp stays paused until a click gives
+# it back. `memory` leaves room for the table the window's Frames are lent
+# into.
+[[component]]
+name = "draw_demo"
+binary = "draw-demo"
+interfaces = "../../../userspace/shell/demo-interfaces"
+active = true
+program = true
+memory = 131072
+resources = ["font"]
+
+# The 8x8 console font the scene's text is drawn with (see
+# kernel/kickstart/image.toml).
+[[resource]]
+name = "font"
+file = "../../kickstart/resources/font8x8.bin"
+
+# Wood: the Room engine, playing its demos until keys arrive, in a 640x400
+# window of the compositor. `memory` is a 16 MiB RAM Untyped: 2 MiB for the
+# engine's stack, 12 MiB of heap for the engine's zone and tables, and the
+# table its window's Frames are lent into (see userspace/wood/vesper).
+[[component]]
+name = "wood"
+binary = "wood"
+interfaces = "../../../userspace/wood/vesper/interfaces"
+active = true
+program = true
+memory = 16777216
+resources = ["doom1_wad"]
+
+# The shareware Doom v1.9 IWAD (see userspace/wood/wad/README.md), which Wood
+# serves to the engine as `doom1.wad`.
+[[resource]]
+name = "doom1_wad"
+file = "../../../userspace/wood/wad/doom1.wad"
+
+# The MIDI synthesiser: Wood's music. Wood's playback Thread sends it the
+# engine's songs and pulls each period's rendered frames on midi_synth_v1's
+# io-channel. `memory` is a 4 MiB RAM Untyped for its 2 MiB heap (the bank's
+# zones and the song); the SoundFont stays in its resource mapping.
+[[component]]
+name = "midi_synth"
+binary = "midi-synth"
+interfaces = "../../../userspace/midi-synth/interfaces"
+active = true
+program = true
+memory = 4194304
+resources = ["soundfont"]
+
+# The SC-55 SoundFont trimmed to the shareware IWAD's music (audio decision
+# D9.4): a build artifact, written by `just _wood-soundfont` before the image.
+[[resource]]
+name = "soundfont"
+file = "../../../target/wood/sc55-doom1.sf2"
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

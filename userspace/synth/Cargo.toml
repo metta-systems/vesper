@@ -17,24 +17,12 @@ build = "build.rs"
 
 [features]
 default = []
-# Opt in to the host integration tests (they read the IWAD and the SC-55 bank
-# from the repository and compare against rustysynth).
+# Opt in to the host integration tests. The tests on Doom's music (the IWAD
+# and the SC-55 bank) are in vesper-doom's Room: `just test-music` there.
 host-tests = []
-
-[dev-dependencies]
-# Room's MUS to MIDI converter makes the test songs, as it does in the game.
-room = { workspace = true }
-# The host's synthesiser, as the reference for the trimmed bank and the loose
-# similarity check.
-rustysynth = { workspace = true }
-seahash = { workspace = true }
 
 [[test]]
 name = "synth"
-required-features = ["host-tests"]
-
-[[test]]
-name = "doom_music"
 required-features = ["host-tests"]
 
 [lints]

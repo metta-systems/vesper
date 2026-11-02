@@ -196,30 +196,6 @@ pub fn tempo(microseconds: u32) -> Vec<u8> {
     vec![0xff, 0x51, 3, bytes[1], bytes[2], bytes[3]]
 }
 
-/// The MUS lumps (`D_*`) of a WAD, by name.
-pub fn music_lumps(wad: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let dword = |offset: usize| {
-        usize::try_from(u32::from_le_bytes(
-            wad[offset..offset + 4].try_into().unwrap(),
-        ))
-        .unwrap()
-    };
-    let (count, directory) = (dword(4), dword(8));
-    (0..count)
-        .filter_map(|entry| {
-            let record = directory + entry * 16;
-            let (position, size) = (dword(record), dword(record + 4));
-            let name: String = wad[record + 8..record + 16]
-                .iter()
-                .take_while(|&&byte| byte != 0)
-                .map(|&byte| char::from(byte))
-                .collect();
-            let data = &wad[position..position + size];
-            (name.starts_with("D_") && data.starts_with(b"MUS\x1a")).then(|| (name, data.to_vec()))
-        })
-        .collect()
-}
-
 /// Peak absolute value of the left or right channel of interleaved frames.
 pub fn peak(frames: &[i16], side: usize) -> i32 {
     frames

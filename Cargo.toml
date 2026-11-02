@@ -72,6 +72,7 @@ members = [
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
+  "kernel/tests/wood-test",
   "kernel/tests/midi-test",
   "kernel/tests/log-test",
   "kernel/tests/window-events-test",
@@ -152,6 +153,8 @@ members = [
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
   "userspace/tests/dispatch/child",
+  # Wood: the Room engine as a component
+  "userspace/wood/vesper",
   # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
   "userspace/synth",
   "userspace/synth/tools/sf2-trim",
@@ -301,8 +304,6 @@ argh = { version = "0.1" }
 bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
-# The host's music synthesiser (Room's), the reference for vesper-synth's tests
-rustysynth = { version = "1" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
 tokio = { version = "1.53", features = ["full"] }

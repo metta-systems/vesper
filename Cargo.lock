@@ -5133,11 +5133,6 @@ dependencies = [
 [[package]]
 name = "vesper-synth"
 version = "0.0.1"
-dependencies = [
- "room",
- "rustysynth",
- "seahash",
-]
 
 [[package]]
 name = "vesper-syscalls"
@@ -5967,6 +5962,53 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "wood"
+version = "0.0.1"
+dependencies = [
+ "audio-client",
+ "audio-pwm-bcm2835",
+ "compositor-client",
+ "log",
+ "mailbox-client",
+ "metta-compositor-core",
+ "metta-meddle-runtime",
+ "midi-synth",
+ "midi-synth-client",
+ "room",
+ "vesper-device-driver",
+ "vesper-heap",
+ "vesper-input-event",
+ "vesper-io-channel",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "wood-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
 
 [[package]]
 name = "x11-dl"

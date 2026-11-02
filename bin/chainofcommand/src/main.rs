@@ -1528,14 +1528,14 @@ mod tests {
             port: None,
             baud: None,
             load_baud: Some(2_000_000),
-            kernel: Some("kernel.bin".into()),
+            kernel: Some("wood.bin".into()),
             console: false,
             positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
         };
         let settings = args.resolve().expect("valid");
         assert_eq!(settings.rates.initial, 115_200);
         assert_eq!(settings.rates.load, Some(2_000_000));
-        assert_eq!(settings.kernel.as_deref(), Some("kernel.bin"));
+        assert_eq!(settings.kernel.as_deref(), Some("wood.bin"));
     }
 
     #[test]
@@ -1556,7 +1556,7 @@ mod tests {
             port: None,
             baud: None,
             load_baud: None,
-            kernel: Some("kernel.bin".into()),
+            kernel: Some("wood.bin".into()),
             console: true,
             positional: vec!["/dev/ttyUSB0".into()],
         };
