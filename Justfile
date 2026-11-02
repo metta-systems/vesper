@@ -275,15 +275,19 @@ _test-runner binary_path:
 
 # === Host tests ===
 
-# The chainboot protocol and chainofcommand.
+# The boot platform, the chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-chainboot-host
+test-host: _test-platform-host _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo test -p {{ package }} --features={{ features }} --test {{ test }}
+
+# Run the boot-platform tests natively: device tree helpers against the board
+# DTBs in targets/
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree')
 
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
@@ -308,13 +312,16 @@ clippy: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3
 _clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-coc
+_clippy-host: _clippy-platform-host _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
     RUSTFLAGS="{{ fixed_rustflags }}" \
     cargo clippy -p {{ package }} --features={{ features }} --test {{ test }} \
       -- --deny warnings --allow deprecated
+
+# Lint the boot-platform host tests
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree')
 
 # Clippy for the host tools (chainofcommand and its protocol crate's host tests)
 _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
