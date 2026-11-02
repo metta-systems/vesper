@@ -150,6 +150,9 @@ members = [
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
   "userspace/tests/dispatch/child",
+  # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
+  "userspace/synth",
+  "userspace/synth/tools/sf2-trim",
   # The log server component, its log_v1 interface crates and the client library
   "userspace/log-server",
   "userspace/log-server/client",
@@ -157,6 +160,9 @@ members = [
   "libs/heap",
   "libs/log-client",
 ]
+# Room is a workspace of its own (its host platform, tests and tools); Wood
+# links its engine library by path.
+exclude = ["userspace/wood/room"]
 resolver = "3"
 
 [workspace.package]
@@ -266,7 +272,10 @@ log = { version = "0.4", default-features = false }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 rlsf = { version = "0.2", default-features = false }
+# The Room engine library (its own workspace, excluded above)
+room = { path = "userspace/wood/room", default-features = false }
 snafu = { version = "0.9", default-features = false }
+vesper-synth = { path = "userspace/synth" }
 log-server = { path = "userspace/log-server" }
 log-interface = { path = "userspace/log-server/server" }
 log-interface-client = { path = "userspace/log-server/client" }
@@ -283,6 +292,8 @@ argh = { version = "0.1" }
 bytes = { version = "1.12" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
+# The host's music synthesiser (Room's), the reference for vesper-synth's tests
+rustysynth = { version = "1" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
 tokio = { version = "1.53", features = ["full"] }

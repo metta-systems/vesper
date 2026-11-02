@@ -1,2 +1,4 @@
 absolute-paths-allowed-crates = ["core"]
 absolute-paths-max-segments = 6
+# ".." keeps clippy's default list; SoundFont is the format's own spelling.
+doc-valid-idents = ["SoundFont", ".."]

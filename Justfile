@@ -74,6 +74,8 @@ chainboot_rpi4_elf      := rpi4_hw_artifacts / image_profile / 'chainboot'
 # `target/<config>/<triple>`, where a configuration's ELFs live under `<profile>/`
 rpi3_qemu_artifacts := target_root / rpi3_qemu / target
 rpi4_hw_artifacts   := target_root / rpi4_hw / target
+# The SC-55 bank trimmed to the shareware IWAD's music (`_wood-soundfont`, audio decision D9.4)
+wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 
 chainboot_serial    := '/dev/ttyUSB0' # '/dev/cu.usbserial-019586E3'
 chainboot_baud      := '115200'
@@ -500,11 +502,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu') (_build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=vesper-synth
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=vesper-synth --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -763,10 +765,10 @@ _test-runner binary_path:
 # === Host tests ===
 
 # The capability ABI, the boot platform, drivers' logic, Meddle, USB, input, compositor, dispatcher,
-# log server, chainboot protocol and chainofcommand.
+# log server, Wood's music synthesiser, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-chainboot-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts)
 _host-test package test features='host-tests':
@@ -803,6 +805,10 @@ _test-log-host: (_host-test 'log-server' 'protocol')
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point, and on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth); and the song export of sf2-trim
+_test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'vesper-synth' 'doom_music')
+    cargo test -p sf2-trim
+
 # === Lints ===
 
 # Cross-clippy the workspace for a board with a feature set
@@ -811,7 +817,7 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim \
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's programs)
@@ -825,7 +831,7 @@ clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_
 _clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
 
 # Lint every host test and host tool
-_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-compositor-host _clippy-log-host _clippy-coc
+_clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-compositor-host _clippy-log-host _clippy-vesper-synth _clippy-coc
 
 # Lint one opt-in (`host-tests`) integration test with its native host harness
 _host-clippy package test features='host-tests':
@@ -895,6 +901,19 @@ _cross-clippy-audio board='rpi3' features='':
 
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 _clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
+
+# Lint Wood's music synthesiser: the library for the target, its host tests, and the bank-trimming and song-export tool
+_clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'vesper-synth' 'doom_music')
+    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    cargo clippy {{ target_json }} {{ rust_std }} -p vesper-synth \
+      -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim --all-targets -- --deny warnings --allow deprecated
+
+# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
+_wood-soundfont:
+    cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad \
+      --soundfont "userspace/wood/room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2" \
+      --output "{{ wood_soundfont }}"
 
 # Check formatting
 [group("maintenance")]
