@@ -4,6 +4,7 @@ members = [
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
+  "libs/address",
   "libs/boot",
   "libs/console",
   "libs/cpu",
@@ -48,6 +49,7 @@ bitflags = { version = "2.10" }
 buddy-alloc = { version = "0.6.0", git = "https://github.com/metta-systems/buddy-alloc", branch = "feature/allocator-api" }
 cfg-if = { version = "1.0" }
 derive-mmio = { version = "0.8" }
+libaddress = { path = "libs/address", package = "vesper-address" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
@@ -65,6 +67,7 @@ libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
+num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }
 qemu-exit = { version = "3.0" }
 snafu = { version = "0.8", default-features = false, features = ["unstable-core-error"] }
