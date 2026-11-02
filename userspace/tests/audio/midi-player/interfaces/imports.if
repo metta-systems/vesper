@@ -1,0 +1,17 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The player streams the rendered song to the PWM audio driver on the
+# interface's io-channel. It has no device tree node, so the chain starts from
+# the node found by its compatible string.
+uses audio_v1 via device compatible "brcm,bcm2835-pwm" { rate, open, close, underruns }
+# It sends the song to the MIDI synthesiser, a program in the same image, and
+# pulls each period's rendered frames back on the interface's io-channel, as
+# Wood's playback Thread does; `voices` gives the summary its voice count.
+uses midi_synth_v1 via component midi_synth { rate, open, close, service, playing, voices }
+# Its lines go to the log server, the program holding the UART, and never wait.
+uses log_v1 via component log_server { flush }
+# The ARM and core clocks, logged at start: the synthesiser's render time per
+# period means little without them.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_clock_rate }

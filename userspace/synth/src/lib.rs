@@ -5,7 +5,7 @@
 //! soft-float and traps FP/SIMD, so every level, pitch and time is fixed
 //! point, and the exponential and trigonometric curves are tables generated
 //! by `build.rs` on the build host (`tables`). `#![deny(clippy::float_arithmetic)]`
-//! and the `no_float` host test keep it that way; `just synth-no-float` checks
+//! and the `no_float` host test keep it that way; `just _synth-no-float` checks
 //! the target build for soft-float calls.
 //!
 //! - [`sf2`]: a zero-copy reader of the SoundFont (the sample data is read in

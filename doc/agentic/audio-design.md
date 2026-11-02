@@ -89,11 +89,11 @@ options that were weighed are summarised after each answer.
   - **D9.6. The renderer is per platform**: the host keeps `rustysynth` (with the
     SC-55) as its production renderer, the new synthesiser is for Vesper only (option
     a). So the synthesiser is not part of Room's engine: it is its own `no_std` crate
-    on the Vesper side (`userspace/wood/synth`, `wood-synth`), used by the music
+    on the Vesper side (`userspace/synth`, `vesper-synth`), used by the music
     component; Room's `mus2midi` stays the source of the MIDI. Clarified the same day:
     the new synthesiser may be plugged into Room's host build for testing (listening
     checks, comparison with `rustysynth`) behind an opt-in switch, `rustysynth` staying
-    the default (Room's `wood-synth` feature).
+    the default (Room's `vesper-synth` feature).
 - **D10. Wood pulls `midi_synth_v1` and mixes locally** (answered 2026-10-28, option a
   of the decisions file with the interface renamed). The maintainer's words: "rename
   music_v1 to midi_synth_v1; the bidirectional xbufs would send midi data in one
@@ -788,7 +788,7 @@ completeness; not recommended unless the maintainer wants hardware FP for other 
 Built 2026-10-28 after D9 (option 2; D9.4 b, D9.5 a, D9.6 a); host-tested only, not yet
 run on Vesper (that is A5c) or on the board (A5a, A5d).
 
-- **Where.** `userspace/wood/synth`, crate `wood-synth` in the Vesper workspace
+- **Where.** `userspace/synth`, crate `vesper-synth` in the Vesper workspace
   (`no_std` + `alloc`, no dependencies), for the music component (D9.1). Not in Room: the
   host keeps `rustysynth` (D9.6). Room's `mus2midi` (now `pub`) stays the MIDI source.
 - **Modules.** `sf2` reads the SoundFont in place (RIFF `sfbk`, `INFO`, `sdta/smpl`, the
@@ -857,7 +857,7 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   samples.
 - **No floating point.** `#![deny(clippy::float_arithmetic)]` in the crate; the host
   test `library_source_has_no_floating_point` fails on any `f32`/`f64` or float literal
-  in `src/`; `just synth-no-float` builds the crate for the Vesper target and fails if
+  in `src/`; `just _synth-no-float` builds the crate for the Vesper target and fails if
   its object code references a soft-float routine (`__addsf3`, `__divdf3`, `__floatsisf`,
   comparisons and conversions), checking the pattern against the core library, which
   references 14 of them. The check is on the library's own code; the music component's
@@ -878,8 +878,8 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
   of each 100 ms window in dB): correlation 0.94 (`D_E1M1`), 0.96 (`D_E1M2`), 0.88
   (`D_INTER`); overall level 1.4 to 2.5 dB below `rustysynth`. The first 10 s of
   `D_E1M1` peak at 7 600 (about -12.7 dBFS), so there is headroom for the effects on top.
-- **On the host, opt-in** (D9.6 clarification): Room's feature `wood-synth`
-  (`cd userspace/wood/room && cargo run --release --features wood-synth -- -iwad
+- **On the host, opt-in** (D9.6 clarification): Room's feature `vesper-synth`
+  (`cd userspace/wood/room && cargo run --release --features vesper-synth -- -iwad
   ../wad/doom1.wad`) renders the host's music with this synthesiser instead of
   `rustysynth`, from the same SoundFont the host loads, for listening checks; the
   default build is unchanged.
@@ -889,7 +889,7 @@ run on Vesper (that is A5c) or on the board (A5a, A5d).
 
 Built 2026-10-28 after D10; checked in QEMU, not on the board.
 
-- **The component** `userspace/wood/midi-synth` (binary `midi-synth`, instance
+- **The component** `userspace/midi-synth` (binary `midi-synth`, instance
   `midi_synth` in wood-test): a program with no imports, a 4 MiB RAM Untyped (one 2 MiB
   Frame of heap, a TLSF as Wood's) and the trimmed SC-55 as its `[[resource]]`
   (`target/wood/sc55-doom1.sf2`, written by `just _wood-soundfont`, which `build-wood`
@@ -934,7 +934,7 @@ Built 2026-10-28 after D10; checked in QEMU, not on the board.
   host test computes the same from the IWAD and the trimmed bank, and `just test-wood`
   compares: the title's `D_INTROA` (878 bytes, once, volume 64) `0x40f16e7eae7a5f45`,
   the first demo's `D_E1M5` (13 101 bytes, looping) `0x4f0a9ddf3a4a14be`.
-- **No floating point** in the linked component: `just synth-no-float` finds no
+- **No floating point** in the linked component: `just _synth-no-float` finds no
   soft-float routine in its ELF (Wood's own ELF links four, from the engine).
 
 ### Testing (all options)
