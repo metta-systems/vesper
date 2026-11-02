@@ -44,7 +44,7 @@ use {
         },
         objects::{
             ArchObjects, EventCount, ExecutionContext, KeyTable, Notification, Nucleus, Scheduler,
-            Thread, Time,
+            Thread, Time, WaitSet,
             access::Access,
             carved::{Carved, CarvedId, CarvedObject},
             key_table::CallerTable,
@@ -106,6 +106,9 @@ enum Carve {
     /// counter with a bounded await queue), carved from the Untyped
     /// (`size_bits` zero).
     EventCount,
+    /// A `WaitSet`: a Thread's multiplexer over Notifications and
+    /// `EventCount`s, empty, carved from the Untyped (`size_bits` zero).
+    WaitSet,
     /// A `Time`: an empty budget (zero budget) on the
     /// creating core, carved from the Untyped (`size_bits` zero).
     Time,
@@ -229,6 +232,12 @@ fn retype<A: ArchObjects>(
             }
             Carve::EventCount
         }
+        ObjectType::WAIT_SET => {
+            if size_bits != 0 {
+                return Err(CapError::InvalidSize(usize::from(size_bits)));
+            }
+            Carve::WaitSet
+        }
         ObjectType::TIME => {
             if size_bits != 0 {
                 return Err(CapError::InvalidSize(usize::from(size_bits)));
@@ -348,6 +357,7 @@ fn retype<A: ArchObjects>(
         }
         Carve::Notification => carved_layout::<Notification>(),
         Carve::EventCount => carved_layout::<EventCount>(),
+        Carve::WaitSet => carved_layout::<WaitSet>(),
         Carve::Time => carved_layout::<Time>(),
         Carve::Thread => carved_layout::<Thread>(),
         Carve::Scheduler => carved_layout::<Scheduler>(),
@@ -469,6 +479,12 @@ fn retype<A: ArchObjects>(
                 requested,
                 0,
             ),
+            Carve::WaitSet => KeyEntry::new_carved(
+                // SAFETY: as for `carve_object`.
+                unsafe { carve_object(paddr, WaitSet::new()) },
+                requested,
+                0,
+            ),
             Carve::Time => KeyEntry::new_carved(
                 // SAFETY: as for `carve_object`.
                 unsafe { carve_object(paddr, Time::empty(core)) },
@@ -551,6 +567,7 @@ fn retype<A: ArchObjects>(
         Carve::PageTable { .. } => "PageTable",
         Carve::Notification => "Notification",
         Carve::EventCount => "EventCount",
+        Carve::WaitSet => "WaitSet",
         Carve::Time => "Time",
         Carve::Thread => "Thread",
         Carve::Scheduler => "Scheduler",

@@ -24,9 +24,10 @@ An object type is one byte. Bit 7 selects the category; bits 6–0 hold the inde
 | Invocation | `0x06` | [invocation.md](core/invocation.md) | Call, CallWithKey |
 | Notification | `0x07` | [notification.md](core/notification.md) | Signal, Await, Poll |
 | EventCount | `0x08` | [event_count.md](core/event_count.md) | Advance, Await, Read |
+| WaitSet | `0x09` | [wait_set.md](core/wait_set.md) | AddMember, UpdateMember, RemoveMember, Await |
 | DebugConsole | `0x7f` | [debug_console.md](core/debug_console.md) | Write (debug kernels only) |
 
-Indices 9–126 are unassigned.
+Indices 10–126 are unassigned.
 
 ### Architecture kinds
 
@@ -78,6 +79,9 @@ flowchart TB
     subgraph events["Signalling and waiting"]
         notification["Notification ●"]
         event_count["EventCount ●"]
+        wait_set["WaitSet ●"]
+        wait_set -.->|waits on| notification
+        wait_set -.->|waits on| event_count
     end
 
     subgraph devices["Devices"]
@@ -100,13 +104,13 @@ flowchart TB
     classDef kind fill:#e3ecf7,stroke:#3b5f8f
     classDef root fill:#fdf3dc,stroke:#a07a20
     class untyped root
-    class address_space,page_table,frame,key_table,asid_pool,asid_control,thread,invocation,scheduler,time,notification,event_count,io_space,io_port,null,debug_console kind
+    class address_space,page_table,frame,key_table,asid_pool,asid_control,thread,invocation,scheduler,time,notification,event_count,wait_set,io_space,io_port,null,debug_console kind
 ```
 
 - **Protection domain:** an AddressSpace binds a KeyTable (the keys a Thread in it resolves) and a PageTable tree that maps Frames; an ASID from an ASIDPool lets it be activated.
 - **Execution:** a Thread runs in one AddressSpace at a time; calling an Invocation runs it in the exporter's AddressSpace until it returns.
 - **Time and scheduling:** a Scheduler configures, starts and dispatches Threads, each charged to its Time budget.
-- **Signalling and waiting:** Notifications carry bits, EventCounts a monotonic count.
+- **Signalling and waiting:** Notifications carry bits, EventCounts a monotonic count; a WaitSet waits on several of either at once.
 
 ## Invocation model
 
@@ -185,6 +189,8 @@ A key is a 64-bit value that names one capability in the caller's KeyTable:
 | 41 | `InvalidSelfReference` | the self slot (4, `SELF_KEYTABLE`) | the key that led to the table, see [KeyTable](core/key_table.md#keys-and-incarnations) |
 | 42 | `StaleGeneration` | the current generation of the Thread or stack pool slot | 0 |
 | 43 | `TimedOut` | the EventCount value (0 for a Notification) | 0 |
+| 44 | `Watched` | 0 | 0 |
+| 45 | `MemberRetired` | the WaitSet slot | 0 |
 | 46 | `AlreadyBadged` | 0 | 0 |
 | 47 | `NoFreeStack` | the pool's stack count | 0 |
 
@@ -226,4 +232,4 @@ flowchart TD
 
 ### Blocking and address-space switches
 
-A blocking operation (`Notification.Await`, `EventCount.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).
+A blocking operation (`Notification.Await`, `EventCount.Await`, `WaitSet.Await`) does not return to the caller until it completes. The kernel saves the caller's registers in its Thread, runs the next runnable Thread, and later resumes the caller with the result in `x0..x2`. `AddressSpace.Activate`, scheduling, `Invocation.Call` and `Thread.Return` switch the hardware translation context (`TTBR0_EL1` and the ASID) on the way back to the caller. A synchronous exception from EL0 other than `svc` is a fault, delivered to the fault handler of the faulting AddressSpace; see [Thread](core/thread.md#fault-delivery).

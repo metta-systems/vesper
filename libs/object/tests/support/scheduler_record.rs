@@ -194,7 +194,8 @@ fn decoding_helpers_name_the_raw_values() {
     assert_eq!(ThreadState::try_from(7), Ok(ThreadState::Donated));
     assert_eq!(ThreadState::try_from(8), Err(()));
     assert_eq!(BlockReason::from_raw(3), Some(BlockReason::PpcCall));
-    assert_eq!(BlockReason::from_raw(4), None);
+    assert_eq!(BlockReason::from_raw(4), Some(BlockReason::WaitSetAwait));
+    assert_eq!(BlockReason::from_raw(5), None);
     assert_eq!(StopReason::from_raw(7), Some(StopReason::Faulted));
     assert_eq!(StopReason::from_raw(8), None);
     let unknown = ThreadSnapshot {

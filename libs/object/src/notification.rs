@@ -100,6 +100,9 @@ impl NotificationKey {
 
     /// Await: block until bits are pending, then consume and return them.
     ///
+    /// A Notification listed in a `WaitSet` refuses the wait with
+    /// `CapError::Watched`: the set must be its only claimant.
+    ///
     /// Wire schema: `x2` timeout (nanoseconds; `WAIT_INFINITE` = forever),
     /// `x3..x7` zero. Authority: `RECV`. An already-satisfied wait consumes
     /// and returns the bits immediately; a wait with no pending bits parks

@@ -42,6 +42,10 @@ pub struct Notification {
     state: u64,
     /// Blocked waiters, FIFO, bounded (the per-object wait reservation).
     waiters: WaitQueue,
+    /// `WaitSet`s that list this Notification. While any does, a direct
+    /// `Await` is refused (`Watched`): a direct waiter would take the bits
+    /// before a set could see them. `Poll` stays allowed.
+    watchers: u32,
 }
 
 /// Outcome of an `Await` attempt.
@@ -66,7 +70,36 @@ impl Notification {
         Self {
             state: 0,
             waiters: WaitQueue::new(),
+            watchers: 0,
         }
+    }
+
+    /// Record that a `WaitSet` lists this Notification.
+    ///
+    /// # Errors
+    ///
+    /// `Watched` if a Thread is waiting on the Notification directly: it
+    /// would keep taking the bits a set is to watch. `PoolExhausted` if the
+    /// count is exhausted.
+    pub fn watch(&mut self) -> Result<(), CapError> {
+        if !self.waiters.is_empty() {
+            return Err(CapError::Watched);
+        }
+        self.watchers = self
+            .watchers
+            .checked_add(1)
+            .ok_or(CapError::PoolExhausted)?;
+        Ok(())
+    }
+
+    /// Record that a `WaitSet` no longer lists this Notification.
+    pub fn unwatch(&mut self) {
+        self.watchers = self.watchers.saturating_sub(1);
+    }
+
+    /// Whether any `WaitSet` lists this Notification.
+    pub fn is_watched(&self) -> bool {
+        self.watchers != 0
     }
 
     /// Pending bits (diagnostics and tests).
@@ -110,6 +143,7 @@ impl Notification {
     /// The queue reservation is validated before the record is registered,
     /// so a full queue rejects the attempt before admission with no record
     /// to roll back.
+    /// A Notification listed in a `WaitSet` refuses the wait with `Watched`.
     /// `own` is this Notification's carved identity, recorded in the pending
     /// record so Thread teardown can find the queue holding it.
     pub fn await_bits(
@@ -118,6 +152,11 @@ impl Notification {
         waiter: ThreadId,
         pending: &mut PendingPool,
     ) -> Result<AwaitOutcome, CapError> {
+        // A set watches this Notification: it must be the only claimant of
+        // the bits, so a direct wait is refused before anything is consumed.
+        if self.is_watched() {
+            return Err(CapError::Watched);
+        }
         if self.state != 0 {
             let bits = self.state;
             self.state = 0;
@@ -212,6 +251,52 @@ mod tests {
             Ok(AwaitOutcome::Blocked(record)) => record,
             _ => panic!("wait should block"),
         }
+    }
+
+    #[test_case]
+    fn a_watched_notification_refuses_a_direct_await_and_keeps_its_bits() {
+        let mut pending = PendingPool::new();
+        let mut notification = Notification::new();
+        assert!(notification.watch().is_ok());
+        assert!(notification.is_watched());
+        assert!(matches!(notification.signal(0b1, &mut pending), Ok(None)));
+        // The refusal comes before anything is consumed or queued, and `Poll`
+        // still works.
+        assert!(matches!(
+            notification.await_bits(own(), waiter(0), &mut pending),
+            Err(CapError::Watched)
+        ));
+        assert_eq!(notification.pending_bits(), 0b1);
+        assert!(pending.is_empty());
+        assert_eq!(notification.poll(), 0b1);
+    }
+
+    #[test_case]
+    fn watching_counts_sets_and_a_direct_await_works_again_after_the_last_unwatch() {
+        let mut pending = PendingPool::new();
+        let mut notification = Notification::new();
+        assert!(notification.watch().is_ok());
+        assert!(notification.watch().is_ok());
+        notification.unwatch();
+        assert!(notification.is_watched(), "one set still lists it");
+        notification.unwatch();
+        assert!(!notification.is_watched());
+        notification.unwatch();
+        assert!(!notification.is_watched(), "unwatching never underflows");
+        assert!(matches!(notification.signal(0b10, &mut pending), Ok(None)));
+        assert!(matches!(
+            notification.await_bits(own(), waiter(0), &mut pending),
+            Ok(AwaitOutcome::Ready(0b10))
+        ));
+    }
+
+    #[test_case]
+    fn a_notification_with_a_direct_waiter_cannot_be_watched() {
+        let mut pending = PendingPool::new();
+        let mut notification = Notification::new();
+        block_waiter(&mut notification, &mut pending, 0);
+        assert!(matches!(notification.watch(), Err(CapError::Watched)));
+        assert!(!notification.is_watched());
     }
 
     #[test_case]
