@@ -8,7 +8,7 @@
 //! Wood's playback Thread plays music, with nothing else running: it sends
 //! the song on `midi_synth_v1`'s io-channel, then for each period submits a
 //! render buffer, calls `service`, copies the frames into a buffer of
-//! `audio_v1`'s io-channel and queues it, keeping four buffers queued.
+//! `audio_v1`'s io-channel and queues it, keeping eight buffers queued.
 //!
 //! It logs (through the log server, to the UART) the song's timing and first
 //! notes at start, the ARM and core clocks, and every 256 periods (about 3 s)

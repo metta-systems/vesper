@@ -43,9 +43,10 @@ const MUSIC_VOLUME: u8 = 64;
 /// Whether the song loops (it does in Wood's levels).
 const LOOPING: bool = true;
 
-/// Buffers kept queued on `audio_v1`: 46 ms ahead of the driver's ring, as
-/// Wood's playback Thread keeps.
-const QUEUED_BUFFERS: u64 = 4;
+/// Buffers kept queued on `audio_v1`: 93 ms ahead of the driver's ring, as
+/// Wood's playback Thread keeps; the eight fill the channel's four data
+/// pages.
+const QUEUED_BUFFERS: u64 = 8;
 
 /// Bytes of one audio buffer: one period.
 const BUFFER_BYTES: u64 = PERIOD_FRAMES as u64 * FRAME_BYTES;
