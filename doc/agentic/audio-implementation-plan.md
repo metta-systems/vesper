@@ -205,14 +205,14 @@ Done in QEMU (2026-10-28), hardware check pending:
 ## A5: music
 
 D9 and D10 answered 2026-10-28 (design doc, section Decisions): an integer SoundFont
-synthesiser (`wood-synth`) in a separate component exporting `midi_synth_v1`, the SC-55
+synthesiser (`vesper-synth`) in a separate component exporting `midi_synth_v1`, the SC-55
 trimmed per IWAD, rendered at the output rate; Wood pulls the rendered music and mixes
 it with the effects; the host keeps `rustysynth`.
 
 ### A5a: measure the budget on the board
 
 - The MIDI synthesiser component logs the ARM clock (`mailbox_v1.get_clock_rate`, ARM clock) and times a
-  fixed render workload per 512-frame buffer against `CNTVCT_EL0`: `wood-synth` holding
+  fixed render workload per 512-frame buffer against `CNTVCT_EL0`: `vesper-synth` holding
   24 voices of the trimmed bank, rendered into a scratch buffer, while the effects play
   as in A4. Wood already logs the time each `service` call takes (the render of one
   period plus the call), at powers of two of the periods with music; under QEMU that is
@@ -229,7 +229,7 @@ it with the effects; the host keeps `rustysynth`.
 Done on the host (2026-10-28); runs on Vesper from A5c on. Design doc section "The
 synthesiser as built (A5b)".
 
-- `userspace/wood/synth` (`wood-synth`, `no_std` + `alloc`, in the Vesper workspace):
+- `userspace/synth` (`vesper-synth`, `no_std` + `alloc`, in the Vesper workspace):
   SoundFont reader in place, zones with merged generators, 16 MIDI channels, 32 voices
   with 32.32 linear-interpolated playback, the loop modes, the volume envelope,
   velocity/volume/expression/pan/bend/sustain, exclusive classes, voice stealing, the
@@ -238,16 +238,16 @@ synthesiser as built (A5b)".
 - `userspace/wood/tools/sf2-trim` and `just _wood-soundfont`: the SC-55 trimmed to the
   shareware music into `target/wood/sc55-doom1.sf2` (4 299 638 bytes: 38 presets, 51
   instruments, 223 samples; 37 programs and 23 drum notes).
-- Room: `mus2midi` is `pub`; the opt-in feature `wood-synth` renders the host's music
+- Room: `mus2midi` is `pub`; the opt-in feature `vesper-synth` renders the host's music
   with the new synthesiser (default stays `rustysynth`).
-- Exits passed: `just _test-wood-synth` (in `just test-host`): tables, zone selection,
+- Exits passed: `just _test-vesper-synth` (in `just test-host`): tables, zone selection,
   preset offsets, envelope stages, pitch (440 Hz at its root, octaves, bend and its
   range), loop modes, controllers, exclusive class and polyphony, event frames with a
   tempo change and across loops, pause, the MIDI reader, no float in the source; on the
   shareware data, the programs and drums found, the trimmed file's validity, `rustysynth`
   loading it, golden hashes of the first 10 s of `D_E1M1` and `D_INTRO` at the output
   rate, loudness against `rustysynth` (correlation 0.88 to 0.96, within 2.5 dB). `just
-  synth-no-float` and `just _clippy-wood-synth` pass.
+  _synth-no-float` and `just _clippy-vesper-synth` pass.
 - Board status of A5 as a whole: nothing of A5 has run on the board yet.
 
 ### A5c: the MIDI synthesiser component, `midi_synth_v1` and mixing in Wood
@@ -255,14 +255,14 @@ synthesiser as built (A5b)".
 Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 "`midi_synth_v1` and the synthesiser component".
 
-- `userspace/wood/midi-synth` (component `midi-synth`, instance `midi_synth`):
+- `userspace/midi-synth` (component `midi-synth`, instance `midi_synth`):
   `interfaces/midi_synth_v1.if` (crates `midi-synth-server`, `midi-synth-client`):
   `badged;`, `channel 16;`, `rate`, `open` (`busy`), `close` (`not_open`), `service`
   (`not_open`), `playing`. The io-channel carries both directions: song packets (MIDI
   bytes, several for a large song) from Wood, render packets that come back holding the
   next frames, and stop, pause, resume and volume packets, in one ordered FIFO; the
   synthesiser handles them during `service`, on Wood's Thread. The pure part (protocol,
-  data page layout, `Session` over `wood-synth`, the start hash) is the crate's library,
+  data page layout, `Session` over `vesper-synth`, the start hash) is the crate's library,
   host-tested in `tests/session.rs`; the component carves a 2 MiB heap, loads the
   SoundFont resource and exports the interface.
 - Wood: `src/music.rs`. The `music_*` platform methods queue commands (a spin-locked
@@ -272,7 +272,7 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   clip, host test `voices_mix_onto_what_the_frames_hold`). `music_is_playing` follows the
   synthesiser's `playing`, asked every 32 periods. Without the synthesiser the music is
   silence and the commands are dropped.
-- `wood-synth` change found on the way: the envelope and gain ramps move on a grid of 64
+- `vesper-synth` change found on the way: the envelope and gain ramps move on a grid of 64
   frames counted from the reset, so the output no longer depends on how frames are split
   into render calls (host test `output_is_independent_of_the_render_split`; the A5b
   golden hashes were re-recorded).
@@ -285,7 +285,7 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   play at volume 64, the first 64 periods of each hash as the host test computes them
   (`wood_music_hashes`), 1 024 of 1 035 periods pulled have music (the first 11 before
   the title song), 1 024 of 1 038 captured stream periods are audible, 0 underruns.
-  `just synth-no-float` finds no soft-float routine in the linked component.
+  `just _synth-no-float` finds no soft-float routine in the linked component.
 
 ### A5d: hardware
 
@@ -293,12 +293,12 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   headphones): the title music, then the demos' level music with the effects on top, no
   clicks or dropouts, the music looping; the render share per buffer as measured in A5a
   and no underruns (read as decided in A5a).
-- Music alone, to debug it on the board: `just boot-midi-test` (image
+- Music alone, to debug it on the board: `just _boot-midi-test` (image
   `kernel/tests/midi-test`) plays `D_E1M1` looping at volume 64 through the MIDI
   synthesiser and the jack, with nothing else running (no Wood, effects, compositor or
   USB). Its player (`userspace/tests/audio/midi-player`) logs Wood's music summary every
   256 periods plus the level, the synthesiser's peak voices (`midi_synth_v1.voices`) and
-  the song position. `just test-midi` runs it under QEMU: the start hash as on the host
+  the song position. `just _test-midi` runs it under QEMU: the start hash as on the host
   (`midi_test_hash`), 508 of 512 periods audible, 0 underruns.
 
 ### A5e: follow-ups (not needed for the exit)
@@ -307,7 +307,7 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   instruments matter; the modulation envelope and vibrato LFO likewise.
 - A registered or Doom II IWAD: `just _wood-soundfont` with that IWAD (the tool takes
   `--wad`); GeneralUser GS trimmed the same way if images are to be published (D9.4 c).
-- Listening comparison on the host with Room's `wood-synth` feature.
+- Listening comparison on the host with Room's `vesper-synth` feature.
 - Performance: see [audio-profiling.md](audio-profiling.md) (2026-10-29) for the
   profile and the ranked proposals.
   - The synthesiser costs about 25 aarch64 instructions per voice-frame (61 before
@@ -322,11 +322,11 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 ## Verification
 
 - Host tests for each pure library (clock math, control blocks, sample conversion,
-  mixer, the music synthesiser: `just _test-wood-synth`).
-- `just _clippy-wood-synth` (the synthesiser and the MIDI synthesiser component for the
+  mixer, the music synthesiser: `just _test-vesper-synth`).
+- `just _clippy-vesper-synth` (the synthesiser and the MIDI synthesiser component for the
   target, with and without `qemu`, their host tests, the trimming tool; the known
   `metta-meddle` `map_unwrap_or` breakage stops it until fixed) and `just
-  synth-no-float` (no soft-float routine in the library or the linked component).
+  _synth-no-float` (no soft-float routine in the library or the linked component).
 - `just test-wood` for the music end to end in QEMU.
 - QEMU tests per stage as above (`just _test-audio` for A1 and A3, `just _test-dma` for
   A2);

@@ -72,6 +72,7 @@ members = [
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
+  "kernel/tests/midi-test",
   "kernel/tests/log-test",
   "kernel/tests/window-events-test",
   # Libraries
@@ -137,6 +138,7 @@ members = [
   "userspace/tests/usb/client",
   "userspace/tests/sd/client",
   "userspace/tests/audio/tone",
+  "userspace/tests/audio/midi-player",
   "userspace/tests/log/probe",
   "userspace/tests/input/trace",
   "userspace/tests/compositor/events",
@@ -153,6 +155,10 @@ members = [
   # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
   "userspace/synth",
   "userspace/synth/tools/sf2-trim",
+  # The MIDI synthesiser component and its midi_synth_v1 interface crates
+  "userspace/midi-synth",
+  "userspace/midi-synth/client",
+  "userspace/midi-synth/server",
   # The log server component, its log_v1 interface crates and the client library
   "userspace/log-server",
   "userspace/log-server/client",
@@ -276,6 +282,9 @@ rlsf = { version = "0.2", default-features = false }
 room = { path = "userspace/wood/room", default-features = false }
 snafu = { version = "0.9", default-features = false }
 vesper-synth = { path = "userspace/synth" }
+midi-synth = { path = "userspace/midi-synth" }
+midi-synth-client = { path = "userspace/midi-synth/client" }
+midi-synth-server = { path = "userspace/midi-synth/server" }
 log-server = { path = "userspace/log-server" }
 log-interface = { path = "userspace/log-server/server" }
 log-interface-client = { path = "userspace/log-server/client" }
