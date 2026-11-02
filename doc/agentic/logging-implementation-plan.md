@@ -1,0 +1,196 @@
+# Logging implementation plan
+
+Design: [logging-design.md](logging-design.md) (with the answered decisions L1 to L10).
+Open decisions: [logging-decisions.md](logging-decisions.md). This file holds only open
+work and the checks of what was built; mark an item `- [x]` only after its exit check
+has passed.
+
+## Dependencies
+
+- L1 to L10 are answered (2026-10-28); the maintainer reviews them afterwards, so a
+  change there may reopen built items. "Needs review" items: the `(N dropped)` prefix
+  (L3) and the image-build `interfaces` key (L4).
+- L11 (console input) is answered (2026-10-29): received bytes go into the input
+  events, and input decision D8 (2026-10-29, a) turns them back into the shell's
+  bytes through the console adapter (input stage INPUT3).
+- L-D (panics, and faults) is in scope since 2026-10-29 ("keep 32k stacks, add panic
+  reporting through the serial console too").
+- Board: L-A's hardware exit is pending.
+
+## L-A: the log server in wood-test, first clients, music diagnostics
+
+Built (2026-10-28):
+
+- `userspace/log-server/interfaces/log_v1.if` (`channel 2;`, `flush()`); generated
+  crates `userspace/log-server/server` (`log-interface`) and `client`
+  (`log-interface-client`).
+- `userspace/log-server`: library (channel layout, `Header`, `FreeBuffers`,
+  `LineWriter`, `format_line`) and the component (one Thread, round robin, serial
+  buffers of 1 KiB, `flush` advancing its `EventCount`).
+- `libs/log-client` (`liblog_client`): `send`, `Logger` (`log::Log`), `log_println!`.
+- `libs/serial-trace`: `Trace::line` and `note` send on the log channel first.
+- Clients: compositor, Wood (`logger.rs`), `midi_synth` and the audio driver import
+  `log_v1`; Wood also imports `mailbox_v1.get_clock_rate`.
+- `kernel/tests/wood-test`: `log_server` with `serial = true` (moved from the
+  compositor); the test kernel loads it and checks its 3 + PWM-node clients, the
+  compositor without a serial channel, and the new imports.
+- `libs/image-build`: top-level `interfaces` key; set in kernel/kickstart,
+  compositor-test, window-events-test and audio-test, whose clients' imports stay
+  unlinked.
+- Wood's music summary every 256 periods and the clocks at music start (design doc,
+  section Music diagnostics).
+- Justfile: `build-wood` builds `log-server`; `test-wood` writes the UART to
+  `target/wood-test-serial.log` and checks it; `test-log-host`, `clippy-log`.
+
+Exit checks:
+
+- [x] `just _test-log-host`: 12 host tests of the header, buffer set, line cutting and
+  output line pass.
+- [x] `just test-wood`: passes as before, and the UART file holds the server's start
+  line, the compositor's display and device lines, `wood: the engine started`, Wood's
+  music summary, `midi-synth: ready at 44091710 mHz` and the audio driver's
+  `open for client 0`, each with the `[seconds] I ` prefix (0 lines dropped in the
+  runs so far).
+- [x] Unchanged behaviour where the import stays unlinked: `just test-compositor`,
+  `just test-window-events`, `just test-audio`, `just test-shell`,
+  `just test-usb-core`, `just test-usb-hid` pass.
+- [x] `just build-wood-test-hw` builds.
+- [x] Lint: `just _clippy-log` (the log crates and `libserial-trace`, with and without
+  `qemu`, and the host tests); the target build of Wood, `midi-synth`, the compositor,
+  the audio driver and the USB components with and without `qemu`, and
+  `vesper-image-build`, all with `--allow clippy::map_unwrap_or --allow
+  clippy::doc_markdown` for the known `libmeddle` breakage (`clippy-log` passes them
+  too); `just fmt-check`.
+- [ ] Hardware exit: `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000
+  boot-wood-test` on the Pi 3 B (the overlay line in `config.txt`, headphones in):
+  the terminal shows `log-server: 4 clients, serial output attached`, then the
+  compositor's, Wood's, the synthesiser's and the audio driver's lines with the
+  timestamp prefix. What to read for the music:
+  - `wood: music: ARM clock N MHz, core clock N MHz`: the clocks the render runs at
+    (the A5a measurement this gives directly);
+  - `wood: music: summary of 256 periods: service min/avg/max …`: the synthesiser's
+    render time per period against the 11 612 µs period; an average above a few
+    thousand µs, or maxima near the period, explain bad music;
+  - `refill max R us of a 11612 us period` and `underruns U (+D)`: a growing `+D`
+    means periods were filled with silence;
+  - `packets handled`, `F failed`, `playing`: whether the synthesiser takes the
+    packets and thinks a song plays;
+  - `midi-synth: a song of B bytes plays` / `does not parse` / `packet … refused` and
+    `wood: music: song N of B bytes sent`: whether the songs load;
+  - `(N dropped)` before a line: the UART did not keep up (try a lower log volume or
+    a higher rate).
+- [ ] Measure the PL011's transmit interrupt rate at 1.5 Mbaud while the log is busy
+  (design doc, Interactions and limits); raise the FIFO interrupt level if it costs the
+  playback Thread time.
+
+## L-B: every component a client, relays removed
+
+Depends on L-A's hardware exit only for confidence; no open decision.
+
+- [ ] Raise `MAX_AREAS` in `libs/device-driver` (and the init page layout checks) so the
+  log server can serve every component of wood-test (13 or more). With the USB
+  components wood-test's log server has 7 clients of the 8 (the wood-test kernel
+  checks the count against `MAX_AREAS`); the next client needs the raise.
+- [x] The USB components are clients (2026-10-29): `usb-hcd-dwc2`, `usb_core` and
+  `usb_hid` import `log_v1` (`interfaces/imports.if`); usb-core-test, usb-hid-test and
+  usb-test list the log server's interface directory (top-level `interfaces`) so the
+  imports stay unlinked there, as in kernel/kickstart, compositor-test and
+  window-events-test. The volume policy is in the design doc (section USB log
+  volume). Kickstart's driver Thread stacks went from 16 to 32 KiB (`STACK_PAGES`):
+  `usb-core` overflowed 16 KiB under QEMU once its trace went to the log channel; the
+  maintainer approved the 32 KiB stacks on 2026-10-29 ("keep 32k stacks").
+  Checked: `just test-wood` (the UART file holds the controller's bring-up and port
+  reset, a device the core enumerated and `usb-hid: serving a Keyboard`; 38 USB
+  lines in a 12.5 s run, 33 of them in the first 0.76 s, 0 dropped); test-usb, test-usb-core, test-usb-hid,
+  test-compositor, test-shell (all run by hand, logs in `target/usbclient-*.log`),
+  test-window-events, test-audio, test-midi, test-dispatch, test-driver, test-mailbox,
+  test-uart; `just build-wood-test-hw`; clippy of the USB crates, `libserial-trace`,
+  Kickstart and the wood-test kernel with and without `qemu`; `just _clippy-log`,
+  `just clippy-usb-host`. Board: pending (L-C).
+- [ ] Add the `log_v1` import to mailbox, fb, gpio, cprman, dma and `draw_demo`; add
+  the log server to compositor-test, window-events-test, audio-test, usb-core-test and
+  usb-hid-test (each recipe's serial-file check as in `test-wood`).
+- [ ] Remove `libserial-trace`'s backlog, `drain` and the `trace(octet&)` exports of
+  `input_v1`, `usb_v1` and `usb_hcd_v1`, and the relays in `input_trace` and
+  `usb_core` (no backwards compatibility; the interfaces are prototypes and are edited
+  in place).
+- [ ] Check at image build time that exactly one component has `serial = true`.
+- Exit: each changed image's recipe passes with its UART file holding every client's
+  lines; `just _test-log-host`.
+
+## L-C: production image and hardware
+
+- [ ] Serial RX into the input events (L11): the log server attaches the receive side
+  and turns received bytes into input records the compositor routes; the shell reads
+  them as bytes through the console adapter (input D8 a, INPUT3).
+- [ ] Production image (`kernel/kickstart/image.toml`) with a log server: after the
+  RX item above.
+- [ ] Hardware exits of the L-B images on the Pi 3 B.
+
+## L-D: panics, faults and early output
+
+In scope since 2026-10-29 (the maintainer: "keep 32k stacks, add panic reporting
+through the serial console too"). Design: section Panics and faults.
+
+- [x] The EL0 panic handler (`userspace/runtime`) puts `PANICKED: <component>:
+  <message> at <file>:<line>` on the component's log channel through the reporter
+  `liblog_client` registers (`libuser::set_panic_reporter`), best effort and bounded
+  (retries, then up to 100 ms for the server and 50 ms for the UART), with a
+  re-entrancy flag; components without a channel behave as before. Checked by
+  `just _test-log` (log-test: `log_probe`'s first Thread panics; the UART file holds
+  the line with the `E` level).
+- [x] Faults: `liblog_client` exports the fault handler (`vesper_fault_entry`);
+  Kickstart installs it at `FAULT_HANDLER` with a stack of its own for every image that
+  exports it; the init record names the component and its Threads' stacks
+  (`MAX_IMPORTS` 32 to 28 to fit); the handler logs `FAULT: <component> thread <n>:
+  <cause> …`, naming a guard-page hit `stack overflow (guard page)`, and terminates
+  the Thread. Checked by `just _test-log` (`log_probe`'s second Thread overflows its
+  stack: `FAULT: log_probe thread 1: stack overflow (guard page)` on the UART) and
+  `just _test-log-host` (`FaultReport`: 3 tests). Regressions: test-wood, test-midi,
+  test-audio, test-window-events, test-usb, test-usb-core, test-usb-hid (by hand,
+  logs in `target/panic-*.log`); `just build-wood-test-hw`; clippy of the log crates
+  (`just _clippy-log`, now with `log-probe`), `vesper-device-driver`,
+  `vesper-user-runtime`, Kickstart, log-test and wood-test with and without `qemu`.
+- [ ] Board: a `FAULT:` or `PANICKED:` line on the Pi 3 B's UART (the next boot of
+  wood-test that hits one; nothing forces one there).
+- [ ] A line from the log server when a client's channel shows a malformed packet or
+  a large drop count, so a misbehaving client is named.
+
+## L-E: serial console at boot (L12)
+
+Decision L12 (2026-10-29): Kickstart sets the PL011 up, negotiates the rate as
+chainboot does unless chainboot handed over, and prints its early lines on the UART.
+
+- [x] Protocol (`libs/chainboot-protocol`): the console beacon `^B^B^B`, the ACK
+  `^F^F^F`, `CONSOLE_WAIT` (a beacon every 250 ms for 1.5 s), `CONSOLE_CONFIRM_WAIT`,
+  `HOST_CONSOLE_CONFIRM_TIMEOUT`, `CONSOLE_REQUEST_GAP`, the chainboot handoff
+  (`HANDOFF_MAGIC`, `handoff_registers`, `kept_rate`) and `Run`; host tests in
+  `tests/chainboot_protocol/console.rs` (encoding, an older host ignoring the beacon,
+  timing).
+- [x] `libs/boot-uart` (`vesper-boot-uart`): chainboot's GPIO, mailbox and PL011 code,
+  shared by chainboot and Kickstart. `libboot` keeps `x1` and `x2` at entry
+  (`loader_registers`); chainboot passes its handoff there at the jump.
+- [x] Kickstart's early console (`kernel/kickstart/src/early_console.rs`): bring-up,
+  the handoff check, the negotiation, early lines on UART and semihosting, handed over
+  before the MMU goes on.
+- [x] chainofcommand answers the console beacon with `--load-baud`; `--console` sends
+  no kernel (`just console`). What arrives after a protocol exchange's last read is
+  printed (it was dropped, which lost Kickstart's first lines after a load). Host
+  tests: `cargo test -p chainofcommand`.
+- [x] QEMU, by hand (logs in `target/kserial-*.log`): the production image with
+  chainofcommand over TCP negotiates 187 500 baud (QEMU's UART clock is 3 MHz, so
+  1 500 000 is refused, which checks the refusal); chainboot loading it at 187 500
+  hands over and Kickstart keeps the rate; with no host Kickstart stays at 115 200.
+  `just test-wood` passes with the early lines ahead of the log server's.
+- [ ] Board: wood-test from the SD card with `just console`, and through
+  `just boot-wood-test` (handoff), on the Pi 3 B.
+
+## Verification commands
+
+| Command | What it checks |
+|---|---|
+| `just _test-log-host` | the log protocol library |
+| `just test-wood` | the log server in QEMU, its clients' lines on the UART file, Wood's music |
+| `just _test-log` | a probe's stack overflow and panic reach the UART as `FAULT:` and `PANICKED:` lines |
+| `just build-wood-test-hw` | the board image builds |
+| `just _clippy-log` | the log crates' lint, allowing the known `libmeddle` breakage |

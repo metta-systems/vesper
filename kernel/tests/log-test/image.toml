@@ -1,0 +1,32 @@
+# What log-test bundles (see vesper-image-build): the PL011 driver, the log
+# server holding its serial channel, the probe whose Threads overflow a stack
+# and panic, and the root dispatcher.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "log_server"
+binary = "log-server"
+interfaces = "../../../userspace/log-server/interfaces"
+active = true
+program = true
+serial = true
+
+# Imports log_v1; links liblog_client, so its image exports the fault handler.
+[[component]]
+name = "log_probe"
+binary = "log-probe"
+interfaces = "../../../userspace/tests/log/probe/interfaces"
+active = true
+program = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true
