@@ -12,6 +12,7 @@ rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
 nucleus_link    := 'linker/nucleus.ld'
+user_link       := 'userspace/runtime/user.ld'
 test_link       := 'linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
 
@@ -321,7 +322,8 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters')
+
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
     cargo test -p metta-meddle
@@ -361,7 +363,8 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters')
+
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated

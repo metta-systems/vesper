@@ -1306,6 +1306,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-device-driver"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle-runtime",
+ "vesper-objects",
+]
+
+[[package]]
 name = "vesper-devicetree"
 version = "0.0.1"
 dependencies = [
@@ -1462,6 +1470,15 @@ dependencies = [
  "tock-registers",
  "vesper-locking",
  "vesper-log",
+]
+
+[[package]]
+name = "vesper-user-runtime"
+version = "0.0.1"
+dependencies = [
+ "cfg-if",
+ "vesper-print",
+ "vesper-qemu",
 ]
 
 [[package]]
