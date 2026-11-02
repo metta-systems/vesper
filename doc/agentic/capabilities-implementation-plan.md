@@ -27,7 +27,7 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 |---|---|
 | `just build` | Build nucleus and kickstart and produce the kernel binary; defaults to RPi4/hardware |
 | `just build rpi3 qemu` | Build the RPi3/QEMU kernel configuration without starting QEMU |
-| `just build-endpoint-test` | Build the endpoint-test e2e kernel image (nucleus + endpoint-test and its bundled components, sharing `libkicktest` scaffolding with the other test kernels); defaults to RPi3/QEMU |
+| `just _build-endpoint-test` | Build the endpoint-test e2e kernel image (nucleus + endpoint-test and its bundled components, sharing `libkicktest` scaffolding with the other test kernels); defaults to RPi3/QEMU |
 | `just fmt-check` | Workspace formatting check using the configured nightly toolchain |
 | `just clippy` | RPi3/QEMU feature-off and debug-enabled build prerequisites, all nine embedded configurations, and the capability, boot-platform and Meddle host linting |
 | `just _clippy-pre-push` | Default features on RPi3 and RPi4 plus the capability, boot-platform and Meddle host linting; not the full embedded matrix |
@@ -37,10 +37,10 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just _test-device` | Device integration tests and doctests with the target configuration and QEMU runner |
 | `just _test-debug-console` | Debug-enabled nucleus handler and slot-identity regression tests under QEMU; included in `just test` |
 | `just _test-capability`, `test-memory`, `test-sync`, `test-ppc` | Boot one e2e test kernel each (separate binaries reusing the real kickstart boot path, sharing `libkicktest`): capability handoff and Retype; translation tables, mappings, activation and AddressSpace retirement; Notification/EventCount and blocking through the Bounce fixture Thread; Invocation construction and PPC Call/Return into Bounce. In-guest assertions and the QEMU exit status are the result; all included in `just test` |
-| `just test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
+| `just _test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
 | `just test-preempt`, `test-irq`, `test-driver`, `test-mailbox`, `test-uart` (each also `-rpi4`) | Boot the timer-preemption, interrupt-delivery, driver-loading, mailbox and PL011-driver e2e kernels on raspi3b and raspi4b; `test-driver` also covers `imports.if` wiring and generated-interface calls between probe instances, `test-mailbox` the kernel-owned page grant and a two-link import; all included in `just test` |
-| `just test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
-| `just test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
+| `just _test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
+| `just _test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
 | `just _audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just _test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just _test-object-host` | Opt-in capability ABI integration tests on the native host (requires AArch64) |

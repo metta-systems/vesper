@@ -335,6 +335,66 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6419a5c75e40011b9fe0174db3fe24006ab122fbe1b7e9cc5974b338a755c76"
 
 [[package]]
+name = "endpoint-client"
+version = "0.0.1"
+dependencies = [
+ "endpoint-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "endpoint-component"
+version = "0.0.1"
+dependencies = [
+ "endpoint-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "endpoint-protocol"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+]
+
+[[package]]
+name = "endpoint-server"
+version = "0.0.1"
+dependencies = [
+ "endpoint-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "endpoint-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "endpoint-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,6 +415,56 @@ name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
+
+[[package]]
+name = "fault-bare"
+version = "0.0.1"
+dependencies = [
+ "fault-protocol",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "fault-faulter"
+version = "0.0.1"
+dependencies = [
+ "fault-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "fault-protocol"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+]
+
+[[package]]
+name = "fault-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "fault-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
 
 [[package]]
 name = "fdt-rs"
@@ -389,6 +499,47 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "fp-probe"
+version = "0.0.1"
+dependencies = [
+ "fp-trap-protocol",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "fp-trap-protocol"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "tock-registers",
+]
+
+[[package]]
+name = "fp-trap-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "fp-trap-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
 
 [[package]]
 name = "futures"
@@ -511,6 +662,15 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hello"
+version = "0.0.1"
+dependencies = [
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
 
 [[package]]
 name = "indexmap"

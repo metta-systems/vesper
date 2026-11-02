@@ -21,6 +21,10 @@ fixed_rustflags := '-D warnings -Z macro-backtrace'
 # Device tests run in QEMU (rpi3) with the test linker script
 device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
 
+# Sort components alphabetically!
+# EL0 userspace components, linked with the userspace runtime's user.ld
+user_components := 'endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fp-probe hello'
+
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
 gdb             := env('GDB', 'aarch64-elf-gdb') # An aarch64-enabled GDB (brew install aarch64-elf-gdb)
@@ -126,10 +130,15 @@ _build-kernel board features config=(board + (if features == '' { '' } else { '-
     @# TODO: print final binary size!
     @echo "{{ok_label}} kernel built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}: {{ images_dir / 'kernel-' + config + '.bin' }}"
 
+# Build the EL0 userspace components (linked with the userspace runtime's user.ld) for the
+# image configuration `board` + `image_features`
+_build-components board='rpi3' features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features)
+
 # === E2E test kernels (Kickstart images with test programs) ===
 
 # Build one Kickstart-based e2e test kernel: the nucleus, then `crate` linked
 # as the init image, then its raw binary.
+# Kernels bundling userspace components build them first (_build-endpoint-test …).
 _build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_cross-build crate board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
@@ -149,6 +158,15 @@ _run-test-kernel crate build=('_build-test-kernel ' + crate) board='rpi3' featur
     {{ qemu }} -M {{ if board == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} {{ clock_opts }} \
       -dtb "{{ if board == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
       -kernel "{{ images_dir / crate + '-' + config + '.bin' }}"
+
+# Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
+_build-endpoint-test board='rpi3' features='qemu': (_build-components board features) (_build-test-kernel 'endpoint-test' board features)
+
+# Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
+_build-fp-trap-test board='rpi3': (_build-components board 'qemu' 'qemu,fp_trap_test') (_build-test-kernel 'fp-trap-test' board 'qemu,fp_trap_test')
+
+# Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
+_build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
 
 # === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
 
@@ -368,7 +386,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-endpoint _test-fp-trap _test-fault
 
 alias t := test
 
@@ -408,6 +426,15 @@ _test-sync: (_run-test-kernel 'sync-test')
 
 # Boot memory-test: PageTable/Frame mapping, alias policy, ASIDs, activation and TLB invalidation, AddressSpace.Retire
 _test-memory: (_run-test-kernel 'memory-test')
+
+# Boot endpoint-test: client, endpoint and server AddressSpaces rendezvous through PPC
+_test-endpoint: (_run-test-kernel 'endpoint-test' '_build-endpoint-test' 'rpi3' 'qemu')
+
+# Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t and at EL0
+_test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qemu,fp_trap_test')
+
+# Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
+_test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
@@ -465,8 +492,8 @@ _cross-clippy board='rpi3' features='':
       --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler \
       -- --deny warnings --allow deprecated
 
-# The images the workspace clippy's build scripts embed (the kernel)
-_clippy-artifacts: (build 'rpi3' 'qemu')
+# The images the workspace clippy's build scripts embed (the kernel, the components)
+_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
@@ -505,8 +532,8 @@ fmt-check:
     cargo +nightly fmt -- --check
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
-# FP/SIMD instruction or register access
-_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test')
+# FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
+_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
     # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
@@ -516,7 +543,9 @@ _audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_b
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
     failed=0
-    for image in nucleus kickstart capability-test memory-test sync-test ppc-test; do
+    # fp-probe executes an FP/SIMD instruction on purpose.
+    user_components="{{ replace(user_components, 'fp-probe', '') }}"
+    for image in nucleus kickstart capability-test memory-test sync-test ppc-test endpoint-test fault-test ${user_components}; do
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"

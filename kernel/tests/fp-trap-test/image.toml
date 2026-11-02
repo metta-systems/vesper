@@ -1,0 +1,8 @@
+# What fp-trap-test bundles (see vesper-image-build): its EL0 probe
+# component. `binary` is the cargo binary name, built with
+# userspace/runtime/user.ld.
+
+[[component]]
+name = "probe"
+binary = "fp-probe"
+active = true
