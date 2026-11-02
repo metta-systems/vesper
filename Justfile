@@ -11,6 +11,7 @@ board_rpi4_flags  := '-C target-cpu=cortex-a73 --cfg board_rpi4'
 rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
 
+nucleus_link    := 'linker/nucleus.ld'
 test_link       := 'linker/test.ld'
 chainboot_link  := 'bin/chainboot/src/link.ld'
 
@@ -101,6 +102,15 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
       --profile {{ cargo_profile }} -p {{ replace(crates, ' ', ' -p ') }}
+
+# === Kernel (the nucleus; no boot image without an init program) ===
+
+# Build the nucleus (features: '' for hw, 'qemu' for emulation)
+[group("build")]
+build board='rpi4' features='': (_cross-build 'nucleus' board nucleus_link features)
+    @echo "{{ok_label}} nucleus built for {{ board }}{{ if features != '' { ' [' + features + ']' } else { '' } }}"
+
+alias b := build
 
 # === Chainboot ===
 
@@ -239,15 +249,15 @@ alias ocd := openocd
 
 # === Testing ===
 
-# The device tests in QEMU (rpi3), chainboot's, and the host tests.
+# The device and nucleus tests in QEMU (rpi3), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped
 
 alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
-_test-device:
+_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
       --workspace --exclude=chainofcommand --exclude=chainboot
@@ -255,6 +265,21 @@ _test-device:
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
     --workspace --exclude=chainofcommand --exclude=chainboot --exclude=vesper-boot-uart
+
+# Run one nucleus integration test binary in QEMU (rpi3)
+_test-nucleus test features='qemu':
+    RUSTFLAGS="{{ device_test_rustflags }}" \
+    cargo test -p nucleus --test {{ test }} {{ target_json }} \
+      --features={{ features }} {{ rust_std }}
+
+# Test the debug-only nucleus console handler and the scheduler/PPC suites in QEMU (rpi3)
+_test-debug-console: (_test-nucleus 'debug_console' 'qemu,debug_kernel')
+
+# Test the nucleus KeyTable management handler in QEMU (rpi3)
+_test-key-table: (_test-nucleus 'key_table' 'qemu,debug_kernel')
+
+# Test the nucleus Untyped Retype handler in QEMU (rpi3)
+_test-untyped: (_test-nucleus 'untyped')
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
@@ -309,7 +334,7 @@ _cross-clippy board='rpi3' features='':
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
-clippy: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'mmu') _clippy-host
+clippy: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') _clippy-host
 
 # Run shortened clippy (default features on both boards) and the host-test linting
 _clippy-pre-push: (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
@@ -338,9 +363,43 @@ _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
 fmt-check:
     cargo +nightly fmt -- --check
 
-# Run every lint: formatting, clippy for every feature set and the host tests
+# Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
+# FP/SIMD instruction or register access
+_audit-fp-simd: (build 'rpi3' 'qemu') (build 'rpi3' 'qemu,debug_kernel')
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Every configuration the nucleus builds in is audited.
+    configs="{{ rpi3_qemu }} rpi3-qemu+debug_kernel{{ profile_suffix }}"
+    # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
+    # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
+    fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
+    failed=0
+    for image in nucleus; do
+        audited=0
+        for config in ${configs}; do
+            elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"
+            [ -f "${elf}" ] || continue
+            audited=1
+            # Symbol names in <…> are not operands.
+            found=$(rust-objdump -d --no-show-raw-insn "${elf}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
+            if [ -n "${found}" ]; then
+                echo "❌ ${image} (${config}) contains FP/SIMD instructions:"
+                echo "${found}"
+                failed=1
+            else
+                echo "{{ ok_label }} ${image} (${config}): integer-only"
+            fi
+        done
+        if [ "${audited}" = 0 ]; then
+            echo "❌ ${image}: not built in any of ${configs}"
+            failed=1
+        fi
+    done
+    exit "${failed}"
+
+# Run every lint: formatting, clippy for every feature set and the host tests, the FP/SIMD audit
 [group("lint")]
-lint: fmt-check clippy
+lint: fmt-check clippy _audit-fp-simd
 
 # === CI ===
 
@@ -350,7 +409,7 @@ pre-push: fmt-check _clippy-pre-push test
 
 # Run CI tasks
 [group("ci")]
-ci: clean lint test
+ci: clean lint build test
 
 # === Maintenance & Tools ===
 

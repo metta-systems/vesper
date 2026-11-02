@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "kernel/nucleus",
   "bin/chainboot",
   "bin/chainofcommand",
   # Libraries
@@ -12,6 +13,7 @@ members = [
   "libs/cpu",
   "libs/devicetree",
   "libs/exception",
+  "libs/irqchip",
   "libs/kernel-state",
   "libs/local-irq",
   "libs/locking",
@@ -56,12 +58,14 @@ libaddress = { path = "libs/address", package = "vesper-address" }
 # liballoc = { path = "libs/alloc", package = "vesper-alloc" }
 libboot = { path = "libs/boot", package = "vesper-boot" }
 libboot-uart = { path = "libs/boot-uart", package = "vesper-boot-uart" }
+nucleus = { path = "kernel/nucleus" }
 libchainboot-protocol = { path = "libs/chainboot-protocol", package = "vesper-chainboot-protocol" }
 libconsole = { path = "libs/console", package = "vesper-console" }
 libcpu = { path = "libs/cpu", package = "vesper-cpu" }
 libdevicetree = { path = "libs/devicetree", package = "vesper-devicetree" }
 libexception = { path = "libs/exception", package = "vesper-exceptions" }
 libkernel-state = { path = "libs/kernel-state", package = "vesper-kernel-state" }
+libirqchip = { path = "libs/irqchip", package = "vesper-irqchip" }
 liblocal-irq = { path = "libs/local-irq", package = "vesper-local-irq" }
 liblocking = { path = "libs/locking", package = "vesper-locking" }
 liblog = { path = "libs/log", package = "vesper-log" }
@@ -100,6 +104,7 @@ tokio-stream = { version = "0.1" }
 # mixed
 #=======
 seahash = { version = "4.1" }
+owo-colors = { version = "4.4" }
 
 [profile.dev]
 # See https://github.com/rust-lang/cargo/issues/7359 about why panic=abort is not working here.
