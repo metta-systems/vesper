@@ -294,12 +294,14 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
   clicks or dropouts, the music looping; the render share per buffer as measured in A5a
   and no underruns (read as decided in A5a).
 - Music alone, to debug it on the board: `just _boot-midi-test` (image
-  `kernel/tests/midi-test`) plays `D_E1M1` looping at volume 64 through the MIDI
-  synthesiser and the jack, with nothing else running (no Wood, effects, compositor or
-  USB). Its player (`userspace/tests/audio/midi-player`) logs Wood's music summary every
-  256 periods plus the level, the synthesiser's peak voices (`midi_synth_v1.voices`) and
-  the song position. `just _test-midi` runs it under QEMU: the start hash as on the host
-  (`midi_test_hash`), 508 of 512 periods audible, 0 underruns.
+  `kernel/tests/midi-test`) plays its test song (Bach's Prelude in C, with GeneralUser
+  GS trimmed to it, in `userspace/midi-synth/fixtures`; Doom's music stays with Wood in
+  the vesper-doom submodule) looping at volume 64 through the MIDI synthesiser and the
+  jack, with nothing else running (no Wood, effects, compositor or USB). Its player
+  (`userspace/tests/audio/midi-player`) logs Wood's music summary every 256 periods plus
+  the level, the synthesiser's peak voices (`midi_synth_v1.voices`) and the song
+  position. `just _test-midi` runs it under QEMU: the start hash as on the host
+  (`midi_test_hash`), nearly every period audible, 0 underruns.
 
 ### A5e: follow-ups (not needed for the exit)
 

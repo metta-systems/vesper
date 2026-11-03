@@ -153,9 +153,11 @@ members = [
   "userspace/tests/dispatch/dispatcher",
   "userspace/tests/dispatch/actor",
   "userspace/tests/dispatch/child",
-  # Wood: the Room engine as a component
+  # Wood (the vesper-doom submodule): the Room engine as a component, and the
+  # host tool exporting the IWAD's music as MIDI
   "userspace/wood/vesper",
-  # Wood's music: the integer SoundFont synthesiser and the bank-trimming host tool
+  "userspace/wood/tools/wad-music",
+  # The integer SoundFont synthesiser and the bank-trimming host tool
   "userspace/synth",
   "userspace/synth/tools/sf2-trim",
   # The MIDI synthesiser component and its midi_synth_v1 interface crates

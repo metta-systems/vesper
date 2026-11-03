@@ -9,8 +9,9 @@
 //! and plays itself.
 //!
 //! At start it carves a heap from its RAM, loads the SoundFont bundled with it
-//! (its `[[resource]]`, the SC-55 trimmed to the IWAD's music by
-//! `just _wood-soundfont`) with `vesper-synth`, and says the exports can be
+//! (its `[[resource]]`: in wood-test the SC-55 trimmed to the IWAD's music by
+//! `just _wood-soundfont`, in midi-test the bank in `fixtures/`) with
+//! `vesper-synth`, and says the exports can be
 //! served; its own Thread then sleeps for good. The work happens in
 //! `service`, on the caller's Thread: the packets the client put are
 //! handled in order by the [`midi_synth::Session`], each handed back.

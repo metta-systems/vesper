@@ -78,13 +78,23 @@ rpi4_hw_artifacts   := target_root / rpi4_hw / target
 wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 # `bytes:looping:hash` of the songs `_test-wood` hears first (the title's D_INTROA once, the
 # first demo's D_E1M5 looping, at volume 64): the hash of their first 64 rendered periods as
-# the MIDI synthesiser logs it and its host test computes it (midi-synth tests/session.rs)
+# the MIDI synthesiser logs it and Room's host test computes it (`start_hashes_of_the_first_songs`
+# in userspace/wood/room/tests/doom_music.rs)
 wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14be'
-# Doom's E1M1 music as a Standard MIDI File, the song midi-test plays (`_wood-midi`)
-wood_midi           := target_root / 'wood' / 'd_e1m1.mid'
-# `bytes:looping:hash` of the song `_test-midi` plays (D_E1M1 looping, at volume 64), as above
-# (`start_hash_of_the_midi_test_song` in midi-synth tests/session.rs)
-midi_test_hash      := '23329:true:0x4366085f6c416218'
+# The IWAD's songs as Standard MIDI Files, which `_wood-soundfont` trims the SC-55 bank to
+wood_music          := target_root / 'wood' / 'music'
+# `bytes:looping:hash` of the song `_test-midi` plays (the test song, Bach's Prelude in C,
+# looping, at volume 64), as above (`start_hash_of_the_midi_test_song` in midi-synth tests/session.rs)
+midi_test_hash      := '4676:true:0x56aa0af323da6658'
+# The MIDI synthesiser's test song and the bank trimmed to it (`_midi-test-soundfont`)
+midi_test_fixtures  := justfile_directory() / 'userspace' / 'midi-synth' / 'fixtures'
+midi_test_song      := midi_test_fixtures / 'wtk1-prelude1.mid'
+midi_test_soundfont := midi_test_fixtures / 'wtk1-prelude1.sf2'
+# GeneralUser GS v2.0.3, the bank the test bank is trimmed from: pinned to the commit of its
+# repository that last changed it, checked by SHA-256, downloaded once into target/soundfonts
+general_user_url    := 'https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/97049183643d5fc5a9322a69c5b09efb667c6c3a/GeneralUser-GS.sf2'
+general_user_sha256 := '9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe'
+general_user_sf2    := target_root / 'soundfonts' / 'GeneralUser-GS.sf2'
 
 chainboot_serial    := '/dev/ttyUSB0' # '/dev/cu.usbserial-019586E3'
 chainboot_baud      := '115200'
@@ -253,9 +263,9 @@ audio-test-dtb:
     fdtoverlay -i "{{ rpi3_dtb }}" -o "{{ audio_test_dtb }}" "{{ target_root / 'audio-test-pwm.dtbo' }}"
 
 # Build midi-test's programs: the player, the MIDI synthesiser and the log server, with the trimmed SoundFont and the song they bundle, for the image configuration `board` + `image_features`; only midi-test bundles the player, so it is not in `user_components`
-_build-midi-player board='rpi3' features='qemu' image_features=features: _wood-soundfont _wood-midi (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
+_build-midi-player board='rpi3' features='qemu' image_features=features: (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
 
-# Build the midi-test e2e kernel: the MIDI synthesiser, a player program with Doom's D_E1M1, audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
+# Build the midi-test e2e kernel: the MIDI synthesiser, a player program with the test song (Bach's Prelude in C, with the bank trimmed to it, both in userspace/midi-synth/fixtures), audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
 _build-midi-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
 
 # Build Wood, the Room Doom engine's Vesper program, the MIDI synthesiser component that plays
@@ -302,7 +312,7 @@ _build-audio-test-hw board='rpi3': (_build-components board '' '') (_build-test-
 _boot-audio-test: _build-audio-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'audio-test-rpi3.bin' }}"
 
-# Build midi-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the player plays Doom's D_E1M1 through the MIDI synthesiser and the PWM audio driver on the headphone jack, looping, for good, and the log server writes the player's, the synthesiser's and the audio driver's lines on the UART
+# Build midi-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the player plays the test song (Bach's Prelude in C) through the MIDI synthesiser and the PWM audio driver on the headphone jack, looping, for good, and the log server writes the player's, the synthesiser's and the audio driver's lines on the UART
 _build-midi-test-hw board='rpi3': (_build-components board '' '') (_build-midi-player board '' '') (_build-test-kernel 'midi-test' board '')
 
 # Build midi-test for the Raspberry Pi 3 and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000 _boot-midi-test`): with headphones in the jack and `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the player plays Doom's E1M1 music, looping, at volume 64, and nothing else runs. The UART shows the song's timing and first notes, the ARM and core clocks, and every 256 periods (about 3 s) the music summary (`service` min/avg/max against the period, packets, periods with sound, playing, the longest refill, underruns), the level (peak and RMS), the synthesiser's peak voice count and the song position
@@ -555,11 +565,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu') (_build-drivers 'rpi3' 'qemu')
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=vesper-synth
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
 
     VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=vesper-synth --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -782,7 +792,7 @@ _test-log board='rpi3' features=test_kernel_features config=(board + '-' + repla
     done
     echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
 
-# Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends D_E1M1 to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
+# Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends the test song (Bach's Prelude in C) to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
 _test-midi board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board)
     #!/usr/bin/env bash
     set -uo pipefail
@@ -799,14 +809,14 @@ _test-midi board='rpi3' features=test_kernel_features config=(board + '-' + repl
     [ "$status" -eq 0 ] || { echo "midi-test: failed with status $status; see $log"; exit 1; }
     expect() { grep -a -q "$1" "$log" || { echo "midi-test: $2; see $log"; exit 1; }; }
     expect "midi-synth: ready at 44091710 mHz" "the MIDI synthesiser did not start"
-    expect "midi-player: INFO song: 23329 bytes, division 70 ticks per quarter, tempo 500000 us per quarter (120 bpm)" "the player did not read its song"
+    expect "midi-player: INFO song: 4676 bytes, division 384 ticks per quarter, tempo 1000000 us per quarter (60 bpm)" "the player did not read its song"
     expect "midi-player: INFO song: first notes: ch" "the player did not log the first notes"
-    expect "midi-synth: a song of 23329 bytes plays" "the synthesiser did not take the song"
+    expect "midi-synth: a song of 4676 bytes plays" "the synthesiser did not take the song"
     expect "midi-player: INFO the synthesiser handled [1-9][0-9]* song packets; playing true at volume 64" "the synthesiser does not play the song"
     expect "audio: open for client 0: a ramp up, then its packets" "the audio driver did not start the stream"
     expect "midi-player: INFO music: summary of 256 periods: service min/avg/max" "no music summary"
     expect "midi-player: INFO music: level peak [1-9][0-9]* rms [1-9][0-9]* of 32767; voices peak [1-9][0-9]* of 32" "no level and voices line"
-    expect "midi-player: INFO position: pass 0, tick [1-9][0-9]* of 13440" "no position line"
+    expect "midi-player: INFO position: pass 0, tick [1-9][0-9]* of 53760" "no position line"
     # The song's first periods hash as the host test computes them
     # (`start_hash_of_the_midi_test_song` in userspace/midi-synth/tests/session.rs).
     midi_hash="{{ midi_test_hash }}"
@@ -831,7 +841,7 @@ _test-midi board='rpi3' features=test_kernel_features config=(board + '-' + repl
     for expected in "log-server: 3 clients, serial output attached" "midi-synth: ready at 44091710 mHz" "midi-player: music: summary of 256 periods" "audio: open for client 0"; do
       grep -a -q "${prefix}\(([0-9]* dropped) \)\?${expected}" "$serial" || { echo "midi-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
-    echo "{{ ok_label }} the player played D_E1M1 through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
+    echo "{{ ok_label }} the player played the test song through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
 
 # Boot wood-test on raspi3b with the devices of _test-compositor and the audio test tree (targets/audio-test.dtb, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it, and draw-demo's lava lamp, whose window lost the focus to it, must pause. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The log server holds the UART: the lines of the compositor, Wood, the synthesiser, the audio driver and the USB components (the controller's bring-up and port reset, a device the core enumerated, the keyboard the HID component serves) must reach it with its timestamp and level prefix, and Wood's music summary must appear. The semihosting console goes to target/wood-test.log, the UART to target/wood-test-serial.log, the screen to target/wood-test.ppm
 _test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-wood-test board)
@@ -978,9 +988,9 @@ _test-log-host: (_host-test 'log-server' 'protocol')
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
-# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point; and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes _test-wood and _test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); the song export of sf2-trim; and, in the userspace/wood submodule, Room's tests on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point; and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes _test-wood and _test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); sf2-trim's check of the test bank and wad-music's song export; and, in the userspace/wood submodule, Room's tests on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
 _test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
-    cargo test -p sf2-trim
+    cargo test -p sf2-trim -p wad-music
     just --justfile userspace/wood/room/Justfile test-music
 
 # Time the synthesiser on the host in release mode: every shareware song for 60 s in 512-frame periods, ns per frame and per voice-frame (doc/agentic/audio-profiling.md); the benchmark is Room's, in the userspace/wood submodule
@@ -995,7 +1005,7 @@ _cross-clippy board='rpi3' features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim \
+      --workspace --exclude=chainofcommand --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs, Wood)
@@ -1092,7 +1102,7 @@ _cross-clippy-audio board='rpi3' features='':
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 _clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
-# Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, and the bank-trimming and song-export tool
+# Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, the bank-trimming tool (sf2-trim) and Wood's song export (wad-music)
 _clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
     cargo clippy {{ target_json }} {{ rust_std }} -p vesper-synth -p midi-synth -p midi-synth-server -p midi-synth-client -p midi-player \
@@ -1100,7 +1110,7 @@ _clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-
     RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
     cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth -p midi-player --features qemu \
       -- --deny warnings --allow deprecated
-    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim --all-targets -- --deny warnings --allow deprecated
+    RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -p wad-music --all-targets -- --deny warnings --allow deprecated
 
 # Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only): the vesper-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
 _synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
@@ -1127,15 +1137,34 @@ _synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
     if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
     echo "midi-synth component: no soft-float routines linked"
 
-# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2
+# Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2: wad-music (in the userspace/wood submodule) exports the songs as MIDI, converted by Room's mus2midi as the game does, and sf2-trim keeps what they play
 _wood-soundfont:
-    cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf "{{ wood_music }}"
+    cargo run -q -p wad-music -- --wad userspace/wood/wad/doom1.wad --out-dir "{{ wood_music }}"
+    cargo run -q -p sf2-trim -- \
       --soundfont "userspace/wood/room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2" \
-      --output "{{ wood_soundfont }}"
+      --output "{{ wood_soundfont }}" "{{ wood_music }}"/*.mid
 
-# Export Doom's E1M1 music from the shareware IWAD as a Standard MIDI File, converted by Room's mus2midi as the game does, into target/wood/d_e1m1.mid (the song midi-test plays)
-_wood-midi:
-    cargo run -p sf2-trim -- --wad userspace/wood/wad/doom1.wad --song D_E1M1 --midi "{{ wood_midi }}"
+# Trim GeneralUser GS to the programs and drum notes of the MIDI synthesiser's test song (audio decision D9.4), into the committed test bank (userspace/midi-synth/fixtures/wtk1-prelude1.sf2): run it after changing the song (a MIDI file given as `song` replaces it first, e.g. `just _midi-test-soundfont new.mid`). GeneralUser GS is downloaded once, from the pinned commit, and checked by SHA-256
+_midi-test-soundfont song=midi_test_song:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha256() { if command -v sha256sum > /dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+    if [ ! -f "{{ general_user_sf2 }}" ] || [ "$(sha256 "{{ general_user_sf2 }}")" != "{{ general_user_sha256 }}" ]; then
+      mkdir -p "$(dirname "{{ general_user_sf2 }}")"
+      echo "downloading GeneralUser GS into {{ general_user_sf2 }}"
+      curl -sSfL -o "{{ general_user_sf2 }}.part" "{{ general_user_url }}"
+      [ "$(sha256 "{{ general_user_sf2 }}.part")" = "{{ general_user_sha256 }}" ] \
+        || { echo "GeneralUser GS: unexpected SHA-256 from {{ general_user_url }}"; exit 1; }
+      mv "{{ general_user_sf2 }}.part" "{{ general_user_sf2 }}"
+    fi
+    song="$(cd "{{ invocation_directory() }}" && realpath "{{ song }}")"
+    [ "$song" = "{{ midi_test_song }}" ] || cp "$song" "{{ midi_test_song }}"
+    cargo run -q -p sf2-trim -- --soundfont "{{ general_user_sf2 }}" \
+      --output "{{ midi_test_soundfont }}" "{{ midi_test_song }}"
+    echo "a new song or bank changes the start hash: see userspace/midi-synth/fixtures/README.md"
 
 # Check formatting
 [group("maintenance")]

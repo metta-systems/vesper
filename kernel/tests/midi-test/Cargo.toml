@@ -1,7 +1,7 @@
 [package]
 name = "midi-test"
 
-description = "Vesper end-to-end test kernel: the MIDI synthesiser component plays one song (Doom's D_E1M1) for a player program, which streams it to the PWM audio driver through audio_v1; the log server writes the player's, the synthesiser's and the audio driver's lines to the UART. Nothing else: no Wood, no compositor, no USB."
+description = "Vesper end-to-end test kernel: the MIDI synthesiser component plays one song (Bach's Prelude in C, its test song) for a player program, which streams it to the PWM audio driver through audio_v1; the log server writes the player's, the synthesiser's and the audio driver's lines to the UART. Nothing else: no Wood, no compositor, no USB."
 
 authors = { workspace = true }
 categories = { workspace = true }

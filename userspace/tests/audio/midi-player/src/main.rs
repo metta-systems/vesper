@@ -2,8 +2,8 @@
 // Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
 
-//! `midi-player`: midi-test's program. It plays its bundled song (Doom's
-//! `D_E1M1`, written by `just _wood-midi`) through the MIDI synthesiser
+//! `midi-player`: midi-test's program. It plays its bundled song (Bach's
+//! Prelude in C, `userspace/midi-synth/fixtures/wtk1-prelude1.mid`) through the MIDI synthesiser
 //! component and the PWM audio driver, looping, at a fixed volume, the way
 //! Wood's playback Thread plays music, with nothing else running: it sends
 //! the song on `midi_synth_v1`'s io-channel, then for each period submits a

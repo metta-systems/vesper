@@ -1,65 +1,49 @@
 //! Host tests of the MIDI test player's library: the start-up lines' numbers
-//! for `D_E1M1` as `just _wood-midi` exports it, the song position against
-//! the sequencer's own clock, and the level meter.
+//! for the test song (`userspace/midi-synth/fixtures/wtk1-prelude1.mid`), the
+//! song position against the sequencer's own clock, and the level meter.
 
 #[cfg(test)]
 mod tests {
     use {
         midi_player::{LevelMeter, Note, NoteList, Position, SongInfo},
-        room::engine::sound::mus2midi::mus2midi,
-        std::{fs, path::Path},
         vesper_synth::{OUTPUT_RATE, Song},
     };
 
-    /// `D_E1M1` of the shareware IWAD as MIDI, converted as the game does.
-    fn e1m1() -> Vec<u8> {
-        let wad =
-            fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../wood/wad/doom1.wad"))
-                .unwrap();
-        let dword = |offset: usize| {
-            usize::try_from(u32::from_le_bytes(
-                wad[offset..offset + 4].try_into().unwrap(),
-            ))
-            .unwrap()
-        };
-        let record = (0..dword(4))
-            .map(|entry| dword(8) + entry * 16)
-            .find(|&record| wad[record + 8..record + 16].starts_with(b"D_E1M1\0"))
-            .unwrap();
-        let (position, size) = (dword(record), dword(record + 4));
-        mus2midi(&wad[position..position + size]).unwrap()
-    }
+    /// The test song: Bach's Prelude in C, BWV 846, from the Mutopia Project.
+    const PRELUDE: &[u8] = include_bytes!("../../../../midi-synth/fixtures/wtk1-prelude1.mid");
 
     fn info() -> SongInfo {
-        SongInfo::of(&Song::parse(&e1m1()).unwrap(), OUTPUT_RATE)
+        SongInfo::of(&Song::parse(PRELUDE).unwrap(), OUTPUT_RATE)
     }
 
     #[test]
-    fn e1m1_timing_and_first_notes() {
+    fn prelude_timing_and_first_notes() {
         let info = info();
-        // mus2midi: 70 ticks per quarter at 120 bpm, one tick per MUS tick
-        // (1/140 s), one tempo event at the start.
-        assert_eq!(info.division, 70);
-        assert_eq!(info.tempo, 500_000);
-        assert_eq!(info.beats_per_minute(), 120);
+        // 384 ticks per quarter at 60 bpm (384 ticks per second), one tempo
+        // event at the start.
+        assert_eq!(info.division, 384);
+        assert_eq!(info.tempo, 1_000_000);
+        assert_eq!(info.beats_per_minute(), 60);
         assert_eq!(info.tempo_changes, 1);
-        assert!(info.notes > 1000, "{} notes", info.notes);
+        assert_eq!(info.notes, 549);
+        assert_eq!(info.end_tick, 53_760);
         assert_eq!(info.first_notes.len(), 8);
+        assert_eq!(info.first_notes[0].to_string(), "ch0 C4(60) v90 @0");
         assert!(
             info.first_notes
                 .array_windows::<2>()
                 .all(|[earlier, later]| earlier.tick <= later.tick)
         );
-        // A pass lasts the end tick at 140 ticks per second, at
+        // A pass lasts the end tick at 384 ticks per second (140 s), at
         // 44 091.710 Hz.
-        let expected = u64::from(info.end_tick) * 44_091_710 / 140_000;
+        let expected = u64::from(info.end_tick) * 44_091_710 / 384_000;
         assert!(
             info.pass_frames().abs_diff(expected) <= 1,
             "{} frames, expected {expected}",
             info.pass_frames()
         );
         println!(
-            "D_E1M1: {} events, {} notes, end tick {}, {} frames a pass; first notes: {}",
+            "prelude: {} events, {} notes, end tick {}, {} frames a pass; first notes: {}",
             info.events,
             info.notes,
             info.end_tick,
@@ -101,13 +85,13 @@ mod tests {
                 frame: 0
             }
         );
-        // One second in: 140 ticks.
+        // One second in: 384 ticks.
         let second = info.position(44_092);
-        assert_eq!((second.pass, second.tick), (0, 140));
+        assert_eq!((second.pass, second.tick), (0, 384));
         // Past the end the song starts over.
         let next = info.position(pass + 44_092);
         assert_eq!(next.pass, 1);
-        assert!((139..=140).contains(&next.tick), "tick {}", next.tick);
+        assert!((383..=384).contains(&next.tick), "tick {}", next.tick);
         assert!(info.position(pass - 1).tick <= info.end_tick);
         assert_eq!(info.position(3 * pass + 5).pass, 3);
     }

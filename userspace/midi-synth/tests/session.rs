@@ -1,6 +1,6 @@
 //! Host tests of the synthesiser component's session: the packet protocol of
-//! `midi_synth_v1` over memory of the test's own, with the shareware IWAD's
-//! music and the SC-55 trimmed to it, as the component plays them.
+//! `midi_synth_v1` over memory of the test's own, with the test song and the
+//! bank trimmed to it (`fixtures/`), as the component plays them.
 
 #[cfg(test)]
 mod tests {
@@ -10,14 +10,22 @@ mod tests {
             Command, Fnv, HASH_FRAMES, Handled, Memory, PERIOD_BYTES, PERIOD_FRAMES,
             RENDER_AREA_BYTES, SONG_FIRST, SONG_LAST, SONG_LOOPING, Session, volume_value,
         },
-        room::engine::sound::mus2midi::mus2midi,
         std::{fs, path::Path, sync::OnceLock},
-        vesper_synth::{
-            Bank, OUTPUT_RATE, Sequencer, Song, Synth,
-            sf2::SoundFont,
-            trim::{Usage, trim},
-        },
+        vesper_synth::{Bank, OUTPUT_RATE, Sequencer, Song, Synth},
     };
+
+    /// The test song, Bach's Prelude in C (BWV 846, from the Mutopia
+    /// Project): `fixtures/README.md`.
+    const PRELUDE: &[u8] = include_bytes!("../fixtures/wtk1-prelude1.mid");
+
+    /// `GeneralUser GS` trimmed to the test song, read once.
+    fn bank() -> &'static [u8] {
+        static BANK: OnceLock<Vec<u8>> = OnceLock::new();
+        BANK.get_or_init(|| {
+            fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/wtk1-prelude1.sf2"))
+                .unwrap()
+        })
+    }
 
     /// Where the test's data pages start, and their size: sixteen pages.
     const BASE: u64 = 0x4000_1000;
@@ -61,61 +69,8 @@ mod tests {
         }
     }
 
-    struct Data {
-        songs: Vec<(String, Vec<u8>)>,
-        bank: Vec<u8>,
-    }
-
-    /// The IWAD's songs as MIDI and the SC-55 trimmed to them, as
-    /// `just _wood-soundfont` writes it.
-    fn data() -> &'static Data {
-        static DATA: OnceLock<Data> = OnceLock::new();
-        DATA.get_or_init(|| {
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-            let wad = fs::read(root.join("wad/doom1.wad")).unwrap();
-            let source =
-                fs::read(root.join("room/soundfonts/SC55Soundfont-1.2b/SC-55 SoundFont v1.2b.sf2"))
-                    .unwrap();
-            let dword = |offset: usize| {
-                usize::try_from(u32::from_le_bytes(
-                    wad[offset..offset + 4].try_into().unwrap(),
-                ))
-                .unwrap()
-            };
-            let songs: Vec<(String, Vec<u8>)> = (0..dword(4))
-                .filter_map(|entry| {
-                    let record = dword(8) + entry * 16;
-                    let (position, size) = (dword(record), dword(record + 4));
-                    let name: String = wad[record + 8..record + 16]
-                        .iter()
-                        .take_while(|&&byte| byte != 0)
-                        .map(|&byte| char::from(byte))
-                        .collect();
-                    let lump = &wad[position..position + size];
-                    (name.starts_with("D_") && lump.starts_with(b"MUS\x1a"))
-                        .then(|| (name, mus2midi(lump).unwrap()))
-                })
-                .collect();
-            let mut usage = Usage::default();
-            for (_, midi) in &songs {
-                usage.add_song(&Song::parse(midi).unwrap());
-            }
-            let bank = trim(&SoundFont::parse(&source).unwrap(), &usage).bytes;
-            Data { songs, bank }
-        })
-    }
-
-    fn song(name: &str) -> &'static [u8] {
-        &data()
-            .songs
-            .iter()
-            .find(|(song, _)| song == name)
-            .unwrap()
-            .1
-    }
-
     fn session() -> Session<'static> {
-        Session::new(Bank::new(&data().bank).unwrap())
+        Session::new(Bank::new(bank()).unwrap())
     }
 
     /// Send `midi` as song packets of at most `chunk` bytes, through the song
@@ -176,12 +131,11 @@ mod tests {
         pages.frames(packet.recs()[0])
     }
 
-    /// The start hash of `name` at `volume`, rendered straight by the
+    /// The start hash of the test song at `volume`, rendered straight by the
     /// sequencer in periods, as the component hashes it.
-    fn reference_hash(name: &str, looping: bool, volume: u8) -> (u64, u32) {
-        let mut sequencer =
-            Sequencer::new(Synth::new(Bank::new(&data().bank).unwrap(), OUTPUT_RATE));
-        sequencer.play(Song::parse(song(name)).unwrap(), looping);
+    fn reference_hash(looping: bool, volume: u8) -> (u64, u32) {
+        let mut sequencer = Sequencer::new(Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE));
+        sequencer.play(Song::parse(PRELUDE).unwrap(), looping);
         sequencer.set_volume(volume);
         let mut hash = Fnv::NEW;
         let mut audible = 0;
@@ -221,7 +175,7 @@ mod tests {
 
     #[test]
     fn a_song_in_chunks_plays_as_the_sequencer_renders_it() {
-        let midi = song("D_E1M1");
+        let midi = PRELUDE;
         let mut session = session();
         let mut pages = Pages::new();
         assert!(!session.playing());
@@ -244,7 +198,7 @@ mod tests {
         assert_eq!(start.hash, hash.value());
         assert_eq!(
             (start.hash, start.audible_periods),
-            reference_hash("D_E1M1", true, 127)
+            reference_hash(true, 127)
         );
         assert_eq!(
             (start.song_bytes, start.looping, start.volume),
@@ -266,46 +220,19 @@ mod tests {
         assert_eq!(session.take_start_hash().unwrap().hash, start.hash);
     }
 
-    /// The start hashes of the first two songs of `just _test-wood`, as the
-    /// component logs them there ("first 64 periods hash"): the title's
-    /// `D_INTROA` once, then the first demo's level song (`D_E1M5`) looping,
-    /// both at the volume the engine sets, 64. `just _test-wood` checks its log against
-    /// the same values (`wood_music_hashes` in the Justfile); change both
-    /// together, and only for an intended change of the output.
-    #[test]
-    fn start_hashes_of_the_first_songs() {
-        // The QEMU log names the songs by size: 878 and 13 101 bytes.
-        assert_eq!(song("D_INTROA").len(), 878);
-        assert_eq!(song("D_E1M5").len(), 13_101);
-        let hashes: Vec<(&str, u64, u32)> = [("D_INTROA", false), ("D_E1M5", true)]
-            .into_iter()
-            .map(|(name, looping)| {
-                let (hash, audible) = reference_hash(name, looping, 64);
-                println!("{name} looping {looping} volume 64: {hash:#018x}, {audible} audible");
-                (name, hash, audible)
-            })
-            .collect();
-        assert_eq!(
-            hashes,
-            [
-                ("D_INTROA", 0x40f1_6e7e_ae7a_5f45, 64),
-                ("D_E1M5", 0x4f0a_9ddf_3a4a_14be, 64)
-            ]
-        );
-    }
-
-    /// The start hash of the song `just _test-midi` plays: `D_E1M1` (as
-    /// `just _wood-midi` exports it, 23 329 bytes), looping, at the MIDI test
-    /// player's volume, 64 (`MUSIC_VOLUME` in
-    /// userspace/tests/audio/midi-player). `just _test-midi` checks the
-    /// synthesiser's log line against it (`midi_test_hash` in the Justfile);
-    /// change both together, and only for an intended change of the output.
+    /// The start hash of the song `just _test-midi` plays: the test song
+    /// (4 676 bytes), looping, at the MIDI test player's volume, 64
+    /// (`MUSIC_VOLUME` in userspace/tests/audio/midi-player). `just _test-midi`
+    /// checks the synthesiser's log line against it (`midi_test_hash` in the
+    /// Justfile); change both together, and only for an intended change of
+    /// the output. Wood's songs' start hashes are checked in vesper-doom's
+    /// Room (`tests/doom_music.rs`).
     #[test]
     fn start_hash_of_the_midi_test_song() {
-        assert_eq!(song("D_E1M1").len(), 23_329);
-        let (hash, audible) = reference_hash("D_E1M1", true, 64);
-        println!("D_E1M1 looping true volume 64: {hash:#018x}, {audible} audible");
-        assert_eq!((hash, audible), (0x4366_085f_6c41_6218, 64));
+        assert_eq!(PRELUDE.len(), 4_676);
+        let (hash, audible) = reference_hash(true, 64);
+        println!("prelude looping true volume 64: {hash:#018x}, {audible} audible");
+        assert_eq!((hash, audible), (0x56aa_0af3_23da_6658, 64));
     }
 
     /// The peak voice count `voices` reports: none before a song, some while
@@ -316,7 +243,7 @@ mod tests {
         let mut pages = Pages::new();
         render(&mut session, &mut pages, 0);
         assert_eq!(session.take_peak_voices(), 0);
-        send_song(&mut session, &mut pages, song("D_E1M1"), true, 60_000);
+        send_song(&mut session, &mut pages, PRELUDE, true, 60_000);
         for index in 0..64 {
             render(&mut session, &mut pages, index % 4);
         }
@@ -329,7 +256,7 @@ mod tests {
     fn controls_pause_volume_and_stop() {
         let mut session = session();
         let mut pages = Pages::new();
-        send_song(&mut session, &mut pages, song("D_E1M1"), true, 60_000);
+        send_song(&mut session, &mut pages, PRELUDE, true, 60_000);
         for index in 0..20 {
             render(&mut session, &mut pages, index % 4);
         }

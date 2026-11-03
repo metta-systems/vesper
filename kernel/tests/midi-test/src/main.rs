@@ -5,7 +5,7 @@
 
 //! midi-test: Wood's music path alone, loaded by Kickstart: the MIDI
 //! synthesiser component with its SoundFont, a player program with one song
-//! (Doom's `D_E1M1`), audio-test's drivers (the gpio component, the clock
+//! (Bach's Prelude in C, the synthesiser's test song), audio-test's drivers (the gpio component, the clock
 //! manager, the DMA controller and the PWM audio driver), the mailbox
 //! component, the PL011 driver and the log server. No Wood, no sound effects,
 //! no compositor, no USB: it exists to debug the music on the board.
@@ -31,7 +31,7 @@
 //! Thread ends the run successfully; on the board the player plays for good.
 //! A failed check panics and fails the run instead.
 
-// The bundled SoundFont is a 4 MiB resource.
+// The bundled SoundFont is a 2 MiB resource.
 #[allow(clippy::large_include_file)]
 mod components {
     //! Bundled userspace components (generated from `image.toml`).
