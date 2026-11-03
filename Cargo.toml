@@ -265,6 +265,7 @@ power = { path = "drivers/power/server" }
 power-client = { path = "drivers/power/client" }
 fb = { path = "drivers/fb/server" }
 fb-client = { path = "drivers/fb/client" }
+fdt-rs = { version = "0.4", default-features = false }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
@@ -308,7 +309,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 futures = { version = "0.3" }
 # futures-util = { version = "0.3", features = ["io"] }
 # serialport = { version = "4.0" }
-tokio = { version = "1.53", features = ["full"] }
+tokio = { version = "1.54", features = ["full"] }
 tokio-serial = { version = "5.5" }
 tokio-stream = { version = "0.1" }
 # tokio-util = { version = "0.7", features = ["codec", "io"] }
