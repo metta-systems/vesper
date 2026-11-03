@@ -1451,9 +1451,9 @@ dependencies = [
 
 [[package]]
 name = "fdt-rs"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee31ca45a6defbba7504c84c7dac4c68379b59366d01e8c9cf64ab7b11ba4816"
+checksum = "581d3afdd654deb68c19fcbe4bc411910cc64067d4a13d8637bda7722cb9c2ea"
 dependencies = [
  "endian-type-rs",
  "fallible-iterator",
