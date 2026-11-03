@@ -75,7 +75,8 @@ question to the maintainer.
   label (needs the exporter to learn its clients' names, a Kickstart change); a name
   the client declares once in an `open(name)` call (spoofable, no gain over the text).
 - **L6. Record format: a header in the packet's value word, formatted by the server.**
-  Level (the `log` crate's numbering, 0 for none), a cut flag, the client's drop count
+  Level (the `log` crate's numbering, 0 for none), a cut flag, a last-line flag (the
+  Thread stops after it and waits for the line to leave), the client's drop count
   (16 bits, saturating) and the client's clock in microseconds (40 bits). The server
   writes `[     12.345678] I wood: text\r\n` (`-` for no level, `…` after a cut line)
   and replaces control bytes with `?`, so a client cannot move the terminal's cursor or
@@ -255,7 +256,11 @@ One active Thread (`src/component.rs`):
    client in turn, checks the packet (one record, at most 256 bytes, inside that
    client's data pages), formats it into the serial buffer being filled (1 KiB each,
    16 buffers, so the 32-slot transmit FIFO holds all of them) and hands the client's
-   packet back. A malformed packet comes back with its length zeroed.
+   packet back. A last line (`Header::last`, a panic or a fault) is the exception: its
+   buffer comes back (length zeroed) only once the driver gave that serial buffer
+   back, so the client knows the line left for the UART. Holding every line that long
+   made clients drop lines in a burst, with the UART's backlog in front of them. A
+   malformed packet comes back at once with its length zeroed.
 3. Puts the filled buffer and advances `transmit_submitted` once per pass.
 4. With every serial buffer in flight it waits on `transmit_completed` (20 ms timeout);
    with nothing to do it waits on its own `EventCount` (advanced by `flush`) with the
@@ -358,9 +363,12 @@ channel (the first line sent, or a fault). The reporter sends
 
 - **Never blocks unbounded:** `send` never waits; the line is retried 4 times 5 ms
   apart while another Thread holds the channel's try-lock, then the Thread gives the
-  server up to 100 ms (5 ms sleeps on the channel's `EventCount`, which the server
-  never advances) to take every buffer back, then 50 ms for the UART driver. Without a
-  sleep key it spins on the clock for the same times.
+  server up to 2 s (5 ms sleeps on the channel's `EventCount`, which the server never
+  advances) to give every buffer back, which for the line, sent marked last, it does
+  once the UART driver sent it, then 5 ms for the transmit FIFO's last bytes. Waiting for the driver rather
+  than a fixed time keeps the line whole on a slow QEMU host (Windows CI), where the
+  driver's interrupt-paced bursts took longer than the 50 ms the client once gave
+  them. Without a sleep key it spins on the clock for the same times.
 - **Re-entrancy:** a flag set by the first panic; a panic while reporting (a message
   whose formatting panics, a logger left broken) or a second Thread's panic halts
   without a report (and prints `EL0 PANICKED again, not reported` under QEMU).

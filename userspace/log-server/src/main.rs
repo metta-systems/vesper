@@ -13,7 +13,9 @@
 //! (so a client that floods gets no more of the UART than the others),
 //! formats it with its timestamp and level ([`log_server::format_line`]),
 //! gathers the lines in buffers of the serial channel's data area and hands
-//! them to the PL011 driver. When the serial buffers are all in flight it
+//! them to the PL011 driver. A buffer holding a client's last line (a panic
+//! or a fault) goes back only once the driver sent it, so the client can wait
+//! for that line to leave for the UART. When the serial buffers are all in flight it
 //! stops taking lines: the clients' buffers fill up and the clients drop
 //! lines and count them, never waiting. With nothing to do it sleeps until a
 //! client's `flush` or a few milliseconds pass.
