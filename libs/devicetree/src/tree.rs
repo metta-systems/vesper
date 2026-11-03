@@ -128,11 +128,25 @@ impl<'i, 'dt> DeviceTree<'i, 'dt> {
     }
 
     /// Memory the boot firmware reserved (`/memreserve/` entries).
+    ///
+    /// Read from the memory reservation block directly (Devicetree
+    /// Specification v0.4, §5.3: big-endian 64-bit address and size pairs,
+    /// ended by a pair of zeroes): fdt-rs 0.4.5 keeps its entries' fields
+    /// private.
     pub fn reserved_memory(&self) -> impl Iterator<Item = Region> + '_ {
-        self.index.fdt().reserved_entries().map(|entry| Region {
-            start: entry.address.into(),
-            size: entry.size.into(),
-        })
+        let fdt = self.index.fdt();
+        let block = fdt.buf().get(fdt.off_mem_rsvmap()..).unwrap_or_default();
+        block
+            .as_chunks::<8>()
+            .0
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[address, size]| Region {
+                start: u64::from_be_bytes(*address),
+                size: u64::from_be_bytes(*size),
+            })
+            .take_while(|region| region.start != 0 || region.size != 0)
     }
 
     /// Every translated `reg` entry of every node that is not memory.
