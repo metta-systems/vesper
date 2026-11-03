@@ -18,6 +18,7 @@ mod tests {
         let header = Header {
             level: Some(Level::Warn),
             cut: true,
+            last: true,
             dropped: 513,
             micros: 12_345_678,
         };
@@ -25,6 +26,7 @@ mod tests {
         let plain = Header {
             level: None,
             cut: false,
+            last: false,
             dropped: 0,
             micros: 0,
         };
@@ -37,10 +39,21 @@ mod tests {
         let header = Header {
             level: Some(Level::Info),
             cut: false,
+            last: false,
             dropped: 0,
             micros: (1 << 40) + 7,
         };
         assert_eq!(Header::decode(header.encode()).micros, 7);
+    }
+
+    #[test]
+    fn last_line_flag_is_its_own_bit() {
+        let last = Header::decode(1 << 4);
+        assert!(last.last);
+        assert!(!last.cut);
+        assert_eq!(last.level, None);
+        assert_eq!(last.dropped, 0);
+        assert_eq!(last.micros, 0);
     }
 
     #[test]
@@ -119,6 +132,7 @@ mod tests {
         let header = Header {
             level: Some(Level::Info),
             cut: false,
+            last: false,
             dropped: 0,
             micros: 12_345_678,
         };
@@ -133,6 +147,7 @@ mod tests {
         let header = Header {
             level: None,
             cut: true,
+            last: false,
             dropped: 3,
             micros: 5,
         };
@@ -147,6 +162,7 @@ mod tests {
         let header = Header {
             level: Some(Level::Error),
             cut: false,
+            last: true,
             dropped: 0,
             micros: 0,
         };
@@ -161,6 +177,7 @@ mod tests {
         let header = Header {
             level: Some(Level::Trace),
             cut: true,
+            last: false,
             dropped: u16::MAX,
             micros: (1 << 40) - 1,
         };
@@ -175,6 +192,7 @@ mod tests {
         let header = Header {
             level: Some(Level::Info),
             cut: false,
+            last: false,
             dropped: 0,
             micros: 0,
         };

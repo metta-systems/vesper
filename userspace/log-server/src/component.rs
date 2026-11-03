@@ -11,8 +11,8 @@ use {
     libuser::semihosting as semi,
     log_interface::log_v1::{CHANNEL_PAGES as DECLARED_PAGES, LogV1},
     log_server::{
-        CHANNEL_PAGES, CHANNEL_SLOTS, Header, LINE_BYTES, Level, OUTPUT_LINE_BYTES, channel_at,
-        format_line,
+        CHANNEL_PAGES, CHANNEL_SLOTS, Header, LINE_BYTES, Level, OUTPUT_LINE_BYTES, buffer_of,
+        buffer_record, channel_at, format_line,
     },
 };
 
@@ -54,6 +54,34 @@ struct Client {
     lines: Consumer<'static, CHANNEL_SLOTS, NoEvent>,
     returns: Producer<'static, CHANNEL_SLOTS, NoEvent>,
     data: DataArea,
+    /// The client's buffers whose last lines (`Header::last`) each serial
+    /// buffer carries, one bit per client buffer: they go back once the
+    /// driver sent that serial buffer, so a client that has every buffer back
+    /// knows its last line left for the UART. Other lines go back at once: a
+    /// client holding all its buffers through the UART's backlog would drop
+    /// lines in a burst.
+    held: [u32; SERIAL_BUFFERS as usize],
+}
+
+impl Client {
+    /// Give back the buffers whose lines went out in the serial buffers of
+    /// `sent`, one bit each.
+    fn release(&mut self, sent: u32) {
+        let mut sent = sent;
+        while sent != 0 {
+            let serial_index = sent.trailing_zeros();
+            sent &= sent - 1;
+            let mut held = core::mem::take(&mut self.held[serial_index as usize]);
+            while held != 0 {
+                let index = held.trailing_zeros();
+                held &= held - 1;
+                let packet =
+                    Packet::new(0, &[buffer_record(self.data.base, index, 0)]).expect("one record");
+                // The return FIFO holds every buffer the client has.
+                let _returned = self.returns.put(&packet);
+            }
+        }
+    }
 }
 
 /// The transmit side of the PL011's serial channel, with the buffer being
@@ -64,6 +92,9 @@ struct Serial {
     sent_count: EventCountKey,
     /// Buffers not in flight, one bit each
     free: u32,
+    /// Buffers back from the driver whose clients' lines are not given back
+    /// yet, one bit each
+    sent_back: u32,
     /// The buffer being filled and its bytes so far
     filling: Option<(u32, u64)>,
     /// Packets put since the last signal
@@ -91,20 +122,24 @@ impl Serial {
             sent,
             sent_count: event(keys.transmit_completed),
             free: (1 << SERIAL_BUFFERS) - 1,
+            sent_back: 0,
             filling: None,
             unsignalled: false,
         })
     }
 
-    /// Take back the buffers the driver is done with.
-    fn reclaim(&mut self) {
+    /// Take back the buffers the driver is done with; those whose clients'
+    /// lines are to be given back now, one bit each.
+    fn reclaim(&mut self) -> u32 {
         while let Ok(Some(back)) = self.sent.get() {
             if let Ok(index) = u32::try_from(back.value())
                 && index < SERIAL_BUFFERS
             {
                 self.free |= 1 << index;
+                self.sent_back |= 1 << index;
             }
         }
+        core::mem::take(&mut self.sent_back)
     }
 
     /// Room for one more output line: the buffer being filled has it, or
@@ -121,9 +156,9 @@ impl Serial {
         DATA_AREA_VA + index as u64 * SERIAL_BUFFER_BYTES
     }
 
-    /// Format a line into the buffer being filled (starting one if needed).
-    /// The caller checked [`has_room`](Self::has_room).
-    fn write(&mut self, header: Header, text: &[u8]) {
+    /// Format a line into the buffer being filled (starting one if needed);
+    /// that buffer's index. The caller checked [`has_room`](Self::has_room).
+    fn write(&mut self, header: Header, text: &[u8]) -> Option<u32> {
         let (index, len) = match self.filling {
             Some((index, len)) if len + OUTPUT_LINE_BYTES as u64 <= SERIAL_BUFFER_BYTES => {
                 (index, len)
@@ -132,7 +167,7 @@ impl Serial {
                 self.put();
                 let index = self.free.trailing_zeros();
                 if index >= SERIAL_BUFFERS {
-                    return;
+                    return None;
                 }
                 self.free &= !(1 << index);
                 (index, 0)
@@ -151,6 +186,7 @@ impl Serial {
         };
         let written = format_line(header, text, out);
         self.filling = Some((index, len + written as u64));
+        Some(index)
     }
 
     /// Hand the buffer being filled to the driver.
@@ -166,6 +202,7 @@ impl Serial {
         // The FIFO holds every buffer at once, so this never fails.
         if self.submit.put(&packet).is_err() {
             self.free |= 1 << index;
+            self.sent_back |= 1 << index;
             return;
         }
         self.unsignalled = true;
@@ -190,10 +227,11 @@ fn own_line(serial: &mut Option<Serial>, text: &str) {
         let header = Header {
             level: Some(Level::Info),
             cut: false,
+            last: false,
             dropped: 0,
             micros: libuser::clock::now_ns() / 1000,
         };
-        serial.write(header, text.as_bytes());
+        let _index = serial.write(header, text.as_bytes());
         serial.send();
     }
 }
@@ -219,6 +257,7 @@ fn main(_init_va: u64) -> ! {
                 base: area.channel_base + 4096,
                 len: CHANNEL_PAGES * 4096,
             },
+            held: [0; SERIAL_BUFFERS as usize],
         });
         count += 1;
     }
@@ -266,7 +305,10 @@ fn main(_init_va: u64) -> ! {
 /// any line was taken.
 fn serve_once(clients: &mut [Option<Client>], mut serial: Option<&mut Serial>) -> bool {
     if let Some(serial) = serial.as_deref_mut() {
-        serial.reclaim();
+        let sent = serial.reclaim();
+        for client in clients.iter_mut().flatten() {
+            client.release(sent);
+        }
     }
     let mut moved = false;
     for client in clients.iter_mut().flatten() {
@@ -293,7 +335,15 @@ fn serve_once(clients: &mut [Option<Client>], mut serial: Option<&mut Serial>) -
             let text = unsafe {
                 core::slice::from_raw_parts(core::ptr::with_exposed_provenance::<u8>(address), len)
             };
-            serial.write(Header::decode(packet.value()), text);
+            let header = Header::decode(packet.value());
+            if let Some(serial_index) = serial.write(header, text)
+                && header.last
+                && let Some(index) = buffer_of(client.data.base, record)
+            {
+                // A last line: back once the driver sent the serial buffer.
+                client.held[serial_index as usize] |= 1 << index;
+                continue;
+            }
         } else if let Some(record) = packet.recs_mut().first_mut() {
             // Malformed, or no serial output: back unwritten.
             record.len = 0;

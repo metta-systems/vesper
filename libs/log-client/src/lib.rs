@@ -117,8 +117,15 @@ impl Channel {
         }
     }
 
-    /// Write the line into a free buffer and put it; whether it went.
-    fn put(&mut self, level: Option<Level>, arguments: fmt::Arguments<'_>, dropped: u32) -> bool {
+    /// Write the line into a free buffer and put it; whether it went. A
+    /// `last` line's buffer comes back only once the UART driver sent it.
+    fn put(
+        &mut self,
+        level: Option<Level>,
+        arguments: fmt::Arguments<'_>,
+        dropped: u32,
+        last: bool,
+    ) -> bool {
         self.dropped = self.dropped.saturating_add(dropped);
         self.reclaim();
         let Some(index) = self.free.take() else {
@@ -143,6 +150,7 @@ impl Channel {
         let header = Header {
             level,
             cut,
+            last,
             dropped: u16::try_from(self.dropped).unwrap_or(u16::MAX),
             micros: libuser::clock::now_ns() / 1000,
         };
@@ -160,7 +168,8 @@ impl Channel {
         true
     }
 
-    /// Whether the server gave every buffer back: it has taken every line.
+    /// Whether the server gave every buffer back: it took every line, and the
+    /// UART driver sent every last line.
     fn all_returned(&mut self) -> bool {
         self.reclaim();
         self.free.count() as usize == BUFFERS
@@ -212,6 +221,12 @@ pub enum Sent {
 /// stacks (`usb-core`'s overflowed) trace from deep call chains.
 #[inline(never)]
 pub fn send(level: Option<Level>, arguments: fmt::Arguments<'_>) -> Sent {
+    send_line(level, arguments, false)
+}
+
+/// [`send`], marking a `last` line ([`send_last_line`]).
+#[inline(never)]
+fn send_line(level: Option<Level>, arguments: fmt::Arguments<'_>, last: bool) -> Sent {
     if SHARED.busy.swap(true, Ordering::Acquire) {
         SHARED.dropped_while_busy.fetch_add(1, Ordering::Relaxed);
         return Sent::Dropped;
@@ -224,7 +239,7 @@ pub fn send(level: Option<Level>, arguments: fmt::Arguments<'_>) -> Sent {
     let (sent, client) = match state {
         State::Attached(Some(channel)) => {
             let dropped = SHARED.dropped_while_busy.swap(0, Ordering::Relaxed);
-            if channel.put(level, arguments, dropped) {
+            if channel.put(level, arguments, dropped, last) {
                 (Sent::Put, Some(&raw const channel.client))
             } else {
                 (Sent::Dropped, None)
@@ -254,12 +269,14 @@ static PAUSE_EVENT: AtomicU64 = AtomicU64::new(0);
 const LAST_LINE_TRIES: u32 = 4;
 /// The wait between those tries and between looks at the returned buffers.
 const LAST_LINE_PAUSE_NS: u64 = 5_000_000;
-/// How many looks the server gets to take the line: 100 ms in all.
-const LAST_LINE_LOOKS: u32 = 20;
-/// Once the server took the line, the time the UART driver gets to send it
-/// (a 256-byte line takes 22 ms at 115 200 baud) before the Thread stops;
-/// under QEMU the panic then ends the run.
-const LAST_LINE_DRAIN_NS: u64 = 50_000_000;
+/// How many looks the server and the UART driver get to send the line: 2 s
+/// in all (a 256-byte line takes 22 ms at 115 200 baud, but a slow QEMU
+/// host takes far longer for the driver's interrupt-paced bursts).
+const LAST_LINE_LOOKS: u32 = 400;
+/// Once the line left for the UART's transmit FIFO, the time its last bytes
+/// get (16 take 1.4 ms at 115 200 baud) before the Thread stops; under QEMU
+/// the panic then ends the run.
+const LAST_LINE_DRAIN_NS: u64 = 5_000_000;
 
 /// Let other Threads run for `ns`: a wait on [`PAUSE_EVENT`] that only its
 /// timeout ends, or, without one, a spin on the clock.
@@ -279,18 +296,19 @@ fn pause(ns: u64) {
 }
 
 /// Send the line a Thread logs before it stops for good, and give the log
-/// server a bounded time to take it: [`send`], retried a few times while
-/// another Thread holds the channel, then up to 100 ms until every buffer
-/// has come back, then 50 ms for the UART. A panic inside [`send`] on this
+/// server a bounded time to take it: [`send`] as a last line, retried a few
+/// times while another Thread holds the channel, then up to 2 s until every
+/// buffer has come back (the server gives a last line's buffer back once the
+/// driver sent it), then 5 ms for the transmit FIFO. A panic inside [`send`] on this
 /// Thread leaves the channel held: the line is dropped, never waited for.
 fn send_last_line(arguments: fmt::Arguments<'_>) -> Sent {
-    let mut sent = send(Some(Level::Error), arguments);
+    let mut sent = send_line(Some(Level::Error), arguments, true);
     for _ in 1..LAST_LINE_TRIES {
         if sent != Sent::Dropped {
             break;
         }
         pause(LAST_LINE_PAUSE_NS);
-        sent = send(Some(Level::Error), arguments);
+        sent = send_line(Some(Level::Error), arguments, true);
     }
     if sent != Sent::Put {
         return sent;
@@ -308,8 +326,8 @@ fn send_last_line(arguments: fmt::Arguments<'_>) -> Sent {
         };
         SHARED.busy.store(false, Ordering::Release);
         if returned {
-            // The server wrote the line into a serial buffer; give the UART
-            // driver time to send it.
+            // The driver wrote the line to the transmit FIFO; give the UART
+            // time to shift its last bytes out.
             pause(LAST_LINE_DRAIN_NS);
             break;
         }

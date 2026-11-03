@@ -99,12 +99,16 @@ impl Level {
 /// |---|---|
 /// | 0..3 | level (0: none) |
 /// | 3 | the line was cut |
+/// | 4 | the client's last line: its buffer comes back once the UART driver sent it |
 /// | 8..24 | lines the client dropped before this one (saturating) |
 /// | 24..64 | the client's clock when it wrote the line, in microseconds |
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     pub level: Option<Level>,
     pub cut: bool,
+    /// The Thread stops after this line (a panic or a fault) and waits for
+    /// its buffer to know the line left the UART
+    pub last: bool,
     pub dropped: u16,
     /// Microseconds since boot, modulo 2^40 (about 12.7 days)
     pub micros: u64,
@@ -112,6 +116,7 @@ pub struct Header {
 
 const LEVEL_MASK: u64 = 0b111;
 const CUT_BIT: u64 = 1 << 3;
+const LAST_BIT: u64 = 1 << 4;
 const DROPPED_SHIFT: u32 = 8;
 const MICROS_SHIFT: u32 = 24;
 const MICROS_MASK: u64 = (1 << (64 - MICROS_SHIFT)) - 1;
@@ -124,8 +129,10 @@ impl Header {
             None => 0,
         };
         let cut = if self.cut { CUT_BIT } else { 0 };
+        let last = if self.last { LAST_BIT } else { 0 };
         level
             | cut
+            | last
             | ((self.dropped as u64) << DROPPED_SHIFT)
             | ((self.micros & MICROS_MASK) << MICROS_SHIFT)
     }
@@ -135,6 +142,7 @@ impl Header {
         Self {
             level: Level::from_number(value & LEVEL_MASK),
             cut: value & CUT_BIT != 0,
+            last: value & LAST_BIT != 0,
             dropped: ((value >> DROPPED_SHIFT) & 0xffff) as u16,
             micros: value >> MICROS_SHIFT,
         }
