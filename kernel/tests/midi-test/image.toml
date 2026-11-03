@@ -68,11 +68,11 @@ program = true
 memory = 4194304
 resources = ["soundfont"]
 
-# The SC-55 SoundFont trimmed to the shareware IWAD's music (audio decision
-# D9.4): a build artifact, written by `just _wood-soundfont` before the image.
+# GeneralUser GS trimmed to the test song (audio decision D9.4), committed
+# with it (userspace/midi-synth/fixtures/README.md).
 [[resource]]
 name = "soundfont"
-file = "../../../target/wood/sc55-doom1.sf2"
+file = "../../../userspace/midi-synth/fixtures/wtk1-prelude1.sf2"
 
 # The player: plays the song through the synthesiser and the audio driver,
 # looping, and logs how it goes. `memory` is a 4 MiB RAM Untyped for its 2 MiB
@@ -86,12 +86,10 @@ program = true
 memory = 4194304
 resources = ["song"]
 
-# Doom's E1M1 music as a Standard MIDI File, converted from the shareware
-# IWAD's MUS lump by Room's mus2midi as the game does: a build artifact,
-# written by `just _wood-midi` before the image.
+# The test song: Bach's Prelude in C, BWV 846, from the Mutopia Project.
 [[resource]]
 name = "song"
-file = "../../../target/wood/d_e1m1.mid"
+file = "../../../userspace/midi-synth/fixtures/wtk1-prelude1.mid"
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.

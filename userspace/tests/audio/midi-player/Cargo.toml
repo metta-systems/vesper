@@ -1,7 +1,7 @@
 [package]
 name = "midi-player"
 
-description = "midi-test program: plays one song (Doom's D_E1M1) through the MIDI synthesiser component and the PWM audio driver, looping, and logs how the synthesiser keeps up: service times, levels, voices, underruns and the song position."
+description = "midi-test program: plays one song (Bach's Prelude in C, the MIDI synthesiser's test song) through the MIDI synthesiser component and the PWM audio driver, looping, and logs how the synthesiser keeps up: service times, levels, voices, underruns and the song position."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -15,8 +15,8 @@ version = { workspace = true }
 
 [features]
 default = []
-# Opt in to the host tests of the library (they read the IWAD from the
-# repository).
+# Opt in to the host tests of the library (they read the test song,
+# userspace/midi-synth/fixtures/wtk1-prelude1.mid).
 host-tests = []
 # Under QEMU the program plays a bounded number of periods, closes and reports;
 # its log shows on the semihosting console too.
@@ -48,10 +48,6 @@ log = { workspace = true }
 # The ARM and core clocks, logged at start.
 mailbox-client = { workspace = true }
 midi-synth-client = { workspace = true }
-
-[dev-dependencies]
-# Room's MUS to MIDI converter makes the test song, as `just _wood-midi` does.
-room = { workspace = true }
 
 [lib]
 name = "midi_player"

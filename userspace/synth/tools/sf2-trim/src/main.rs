@@ -6,7 +6,7 @@
 //! (`vesper_synth::trim::trim`).
 //!
 //! The MIDI synthesiser's test bank is made this way from the test song
-//! (`userspace/midi-synth/fixtures/README.md`), and Wood's bank from the
+//! (`just _midi-test-soundfont`), and Wood's bank from the
 //! IWAD's songs, which vesper-doom's `wad-music` exports
 //! (`just _wood-soundfont`).
 
@@ -148,7 +148,7 @@ mod tests {
 
     /// The committed test bank is the test song's trim: trimming it again by
     /// the song keeps it byte for byte. A changed song needs the bank made
-    /// again (`userspace/midi-synth/fixtures/README.md`).
+    /// again: `just _midi-test-soundfont`.
     #[test]
     fn test_bank_is_trimmed_to_the_test_song() {
         let bank = fixture("wtk1-prelude1.sf2");

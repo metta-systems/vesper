@@ -4,7 +4,7 @@
 //! what it logs about its song at start ([`SongInfo`]), where in the song a
 //! rendered frame falls ([`SongInfo::position`], with the sequencer's own
 //! timing), and the level of the frames it streams ([`LevelMeter`]). Host
-//! tests (`tests/song.rs`) run them on `D_E1M1`.
+//! tests (`tests/song.rs`) run them on the test song, Bach's Prelude in C.
 
 extern crate alloc;
 

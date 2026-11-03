@@ -2522,7 +2522,6 @@ dependencies = [
  "metta-meddle-runtime",
  "midi-synth",
  "midi-synth-client",
- "room",
  "vesper-device-driver",
  "vesper-heap",
  "vesper-io-channel",
@@ -2538,7 +2537,6 @@ version = "0.0.1"
 dependencies = [
  "metta-meddle-runtime",
  "midi-synth-server",
- "room",
  "vesper-device-driver",
  "vesper-heap",
  "vesper-io-channel",
@@ -5182,6 +5180,16 @@ dependencies = [
  "cfg-if",
  "vesper-print",
  "vesper-qemu",
+]
+
+[[package]]
+name = "wad-music"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "argh",
+ "room",
+ "vesper-synth",
 ]
 
 [[package]]
