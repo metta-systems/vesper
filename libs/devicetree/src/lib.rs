@@ -8,15 +8,23 @@
 //!   through every ancestor bus's `ranges` (§2.3.8);
 //! - `compatible` is a string list matched entry by entry;
 //! - [`interrupts`] resolves interrupt routing: the generic timer, the root
-//!   controller and each node's interrupts with their controller.
+//!   controller and each node's interrupts with their controller;
+//! - [`DeviceTree::board`] and its siblings find what boot programs need
+//!   before any driver runs: the board, the console UART, the firmware mailbox
+//!   and the activity LED.
 
+mod board;
 mod dump;
 pub mod interrupts;
 mod tree;
 
 pub use {
+    board::{
+        ActivityLed, Board, BootHardware, ConsoleUart, FIRMWARE_GPIO_BASE, Gpio, GpioKind, Mailbox,
+        Soc, UartClock,
+    },
     dump::dump,
-    tree::{Device, DeviceTree},
+    tree::{Device, DeviceTree, INDEX_BUFFER_BYTES},
 };
 
 pub use fdt_rs::{

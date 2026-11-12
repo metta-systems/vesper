@@ -15,6 +15,7 @@ mod platform;
 use {
     aarch64_cpu::asm::barrier,
     core::{hash::Hasher, time::Duration},
+    libboot_uart::{ClockSource, ClockState},
     libchainboot_protocol::{
         BEACON, BOOT_BAUD_RATE, BOOT_RATE_WAIT, FAST_RATE_WAIT, Opening, RATE_ACCEPTED,
         RATE_REFUSED, RateRefusal, SWITCH_SETTLE, Wait, decode_rate_request_body,
@@ -39,7 +40,8 @@ unsafe extern "C" fn kernel_init(dtb: u32, max_kernel_size: u64) -> ! {
     libmachine::debug::jtag::wait_debugger();
 
     semi::println!("Initializing the console");
-    let bringup = match platform::init() {
+    // SAFETY: once, with the device tree the firmware passed.
+    let bringup = match unsafe { platform::init(dtb) } {
         Ok(bringup) => bringup,
         Err(x) => panic!("Error initializing the console: {x}"),
     };
@@ -194,23 +196,39 @@ fn kernel_main(dtb: u32, max_kernel_size: u64, bringup: platform::Bringup) -> ! 
     test_main();
 
     print!("{}", LOGO);
-    println!("{:>51}\n", platform::model_name(bringup.board_revision));
+    match bringup.board {
+        Ok(board) => {
+            println!(
+                "{:>51}\n",
+                board.model.unwrap_or("A board without a model name")
+            );
+            println!(
+                "Board {} (SoC {:?})",
+                board.compatible.unwrap_or("without a compatible"),
+                board.soc
+            );
+        }
+        Err(why) => {
+            println!("\nNo device tree: {why}");
+            println!("The console is the one of the board the core's type points to");
+        }
+    }
     println!("Preserving DTB at {:8x}", dtb);
     println!(
         "UART clock {} Hz ({})",
         bringup.uart_clock.rate,
-        if bringup.uart_clock.reported {
-            "from the firmware"
-        } else {
-            "assumed, the firmware did not say"
+        match bringup.uart_clock.source {
+            ClockSource::DeviceTree => "from the device tree",
+            ClockSource::Firmware => "from the firmware",
+            ClockSource::Assumed => "assumed, the firmware did not say",
         }
     );
     println!(
         "UART clock running: {}",
-        match bringup.clock_running {
-            Some(true) => "yes",
-            Some(false) => "no",
-            None => "the firmware did not say",
+        match bringup.clock_state {
+            ClockState::Running => "yes",
+            ClockState::Stopped => "no",
+            ClockState::Unknown => "the firmware did not say",
         }
     );
     println!("Counter frequency {} Hz", platform::counter_frequency());

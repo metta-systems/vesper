@@ -1,7 +1,7 @@
 [package]
 name = "vesper-boot-uart"
 
-description = "The PL011 on header pins 14 and 15 before any driver runs: GPIO routing, the UART clock from the firmware mailbox, a polled PL011. Shared by chainboot and Kickstart's early console; both run it with the MMU off."
+description = "The boot console PL011 before any driver runs, found through the device tree: header pin routing, the UART clock from the device tree or the firmware mailbox, a polled PL011. Shared by chainboot and Kickstart's early console; both run it with the MMU off."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -24,6 +24,7 @@ bitbybit = { workspace = true }
 derive-mmio = { workspace = true }
 libchainboot-protocol = { workspace = true }
 libconsole = { workspace = true }
+libdevicetree = { workspace = true }
 liblocking = { workspace = true }
 libmmio = { workspace = true }
 libprimitives = { workspace = true }

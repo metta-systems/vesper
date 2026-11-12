@@ -1320,11 +1320,14 @@ pub fn run() {
     semi::println!("Memory suite passed");
 }
 
-/// The PL011's register page (QEMU's raspi3b and raspi4b device trees).
-#[cfg(board_rpi3)]
-const PL011_PAGE: u64 = 0x3f20_1000;
-#[cfg(board_rpi4)]
-const PL011_PAGE: u64 = 0xfe20_1000;
+/// The register page of the console PL011 the device tree names.
+fn pl011_page() -> u64 {
+    kickstart::device_tree::at_el1()
+        .console_uart()
+        .expect("the device tree names a PL011")
+        .base
+        & !0xfff
+}
 /// Where the device Frame is mapped: a free page under the suite's L3 table.
 const DEVICE_VA: u64 = 0x1000_3000;
 /// First boot-table slot for the device Frames this check retypes.
@@ -1341,13 +1344,14 @@ fn device_frame_reads_pl011(
     active_ttbr0: u64,
 ) {
     devices::assert_device_untypeds_avoid_the_kernel(keytable_addr);
+    let pl011_page = pl011_page();
     let (untyped_key, base, _) = devices::device_untyped_extents(keytable_addr)
-        .find(|&(_, start, end)| (start..end).contains(&PL011_PAGE))
+        .find(|&(_, start, end)| (start..end).contains(&pl011_page))
         .expect("no device Untyped covers the PL011");
 
     // Frames are carved from the start of the Untyped: retype up to the
     // PL011's page and use the last one.
-    let count = u32::try_from((PL011_PAGE - base) / 0x1000 + 1).unwrap();
+    let count = u32::try_from((pl011_page - base) / 0x1000 + 1).unwrap();
     let first = UntypedKey::from_key(untyped_key)
         .retype(
             ObjectType::FRAME,
@@ -1379,7 +1383,7 @@ fn device_frame_reads_pl011(
         .unwrap_or_else(|error| panic!("device Frame.Map failed: {:?}", error.code()));
     let (level, pte) = translation::read_leaf(active_ttbr0, DEVICE_VA);
     assert_eq!(level, 3);
-    assert_eq!(pte & 0x0000_FFFF_FFFF_F000, PL011_PAGE);
+    assert_eq!(pte & 0x0000_FFFF_FFFF_F000, pl011_page);
     assert_eq!(
         (pte >> 2) & 0b111,
         3,

@@ -1,16 +1,21 @@
 //! Kickstart's early console: its own boot lines on the PL011, before any driver
 //! runs, so that a hang early in the boot shows on the board.
 //!
-//! [`start`] runs first thing at EL2, with the MMU off (`libboot` turns it off
-//! for EL1 and EL2), where a store-exclusive never completes on the board: nothing
-//! here or in `libboot_uart` uses an atomic read-modify-write.
+//! [`start`] runs at EL2 as soon as the device tree is indexed, with the MMU off
+//! (`libboot` turns it off for EL1 and EL2), where a store-exclusive never
+//! completes on the board: nothing here or in `libboot_uart` uses an atomic
+//! read-modify-write. The device tree says where the UART, the GPIO block and
+//! the firmware mailbox are, and how the UART is clocked; when it cannot be
+//! read, the core's type points to the board, so that the console can say so.
 //!
 //! - **Started by chainboot.** `x1` and `x2` at entry hold chainboot's handoff
 //!   (`libchainboot_protocol::kept_rate`): chainboot routed the pins, set the UART
 //!   up and negotiated its rate with the host. The UART is used as it is.
 //! - **Started by the firmware** (from the SD card). The pins are routed to the
-//!   PL011 (GPIO 14 and 15 to ALT0, BCM2837 ARM Peripherals sections 6.1 and 6.2),
-//!   the firmware is asked to run the UART clock and to say its rate, and the
+//!   PL011 where the board has them on a Broadcom GPIO block (GPIO 14 and 15 to
+//!   ALT0, BCM2837 ARM Peripherals sections 6.1 and 6.2), the UART clock is
+//!   started (by the firmware, unless the tree gives a fixed clock) and its rate
+//!   read, and the
 //!   UART is set up at 115200 8N1 with FIFOs, every interrupt masked (PL011 TRM,
 //!   DDI 0183G, section 3.3: UARTIBRD, UARTFBRD, `UARTLCR_H`, UARTCR, UARTIMSC).
 //!   This is done even when the firmware
@@ -30,7 +35,7 @@ use {
         sync::atomic::{AtomicBool, Ordering},
         time::Duration,
     },
-    libboot_uart::{DEFAULT_UART_CLOCK, GPIO_BASE, PL011_BASE, gpio, mailbox, pl011::Pl011},
+    libboot_uart::{ClockState, attach, pl011::Pl011, route_header_pins, start_uart_clock},
     libchainboot_protocol::{
         BOOT_BAUD_RATE, CONSOLE_ACK, CONSOLE_BEACON, CONSOLE_CONFIRM_WAIT, CONSOLE_REQUEST_GAP,
         CONSOLE_WAIT, Opening, RATE_ACCEPTED, RATE_REFUSED, RATE_REQUEST_BODY_LENGTH,
@@ -38,14 +43,15 @@ use {
         opening, validate_rate,
     },
     libconsole::{SerialOps, console::interface::Write},
+    libdevicetree::BootHardware,
     libqemu::semihosting as semi,
     libtime::time::time_manager,
 };
 
-// SAFETY: the PL011 is at this address on every board Kickstart is built for, the
-// MMU is off while the early console is open so the address is the physical one,
-// and nothing else uses the UART until `hand_over`.
-static UART: Pl011 = unsafe { Pl011::new(PL011_BASE) };
+/// The console UART, attached in [`start`] at the address the device tree
+/// gives: the MMU is off while the early console is open, so the address is the
+/// physical one, and nothing else uses the UART until `hand_over`.
+static UART: Pl011 = Pl011::unattached();
 
 /// Whether the early lines go to the UART: from [`start`] to [`hand_over`].
 /// Only loaded and stored.
@@ -97,28 +103,40 @@ impl fmt::Display for Console {
     }
 }
 
-/// Open the early console: keep chainboot's UART when `loader_registers` (`x1`
-/// and `x2` at entry) hold its handoff, otherwise set the UART up and negotiate
-/// its rate with the host. Say how it went.
-pub fn start(loader_registers: [u64; 2]) -> Console {
+/// Open the early console on `hardware`'s UART (the device tree's, or guessed
+/// from the core's type when the tree cannot be read): keep chainboot's UART
+/// when `loader_registers` (`x1` and `x2` at entry) hold its handoff,
+/// otherwise set the UART up and negotiate its rate with the host. Say how it
+/// went.
+pub fn start(loader_registers: [u64; 2], hardware: Option<BootHardware>) -> Console {
+    let Some(hardware) = hardware else {
+        return Console::NoUart {
+            why: "neither the device tree nor the core's type names a PL011",
+        };
+    };
+    // SAFETY: `hardware` gives the board's registers, the MMU is off, and
+    // nothing else uses the UART or the mailbox this early.
+    if let Err(why) = unsafe { attach(&hardware, &UART) } {
+        return Console::NoUart { why };
+    }
+
     if let Some(rate) = kept_rate(loader_registers) {
         OPEN.store(true, Ordering::Relaxed);
         return Console::Kept { rate };
     }
 
     // The pins go first: the UART should not drive them before they are its.
-    // SAFETY: the GPIO registers are at `GPIO_BASE`, and nothing else uses them
-    // this early.
+    // SAFETY: as for `attach`.
     unsafe {
-        gpio::route_uart(GPIO_BASE);
+        route_header_pins(&hardware);
     }
-    let _started = mailbox::start_uart_clock();
-    if mailbox::uart_clock_running() == Ok(false) {
+    let (state, clock) = start_uart_clock(hardware.uart.clock);
+    if state == ClockState::Stopped {
         return Console::NoUart {
             why: "the firmware says the UART clock is stopped",
         };
     }
-    let clock = mailbox::uart_clock_rate().unwrap_or(DEFAULT_UART_CLOCK);
+    let clock = clock.rate;
     if let Err(why) = UART.init(clock) {
         return Console::NoUart { why };
     }

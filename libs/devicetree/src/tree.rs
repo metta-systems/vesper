@@ -8,6 +8,11 @@ use {
     core::alloc::Layout,
 };
 
+/// Bytes of an index buffer that holds the index of any supported board's
+/// tree, for programs that keep it in a static buffer (the host tests check
+/// the trees in `targets/` fit, with room for the alignment).
+pub const INDEX_BUFFER_BYTES: usize = 128 * 1024;
+
 /// An indexed flattened device tree.
 ///
 /// The index lives in a caller-provided buffer of [`DeviceTree::index_layout`]

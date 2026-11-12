@@ -58,6 +58,7 @@ libobject = { workspace = true }
 libtime = { workspace = true }
 nucleus = { workspace = true }
 snafu = { workspace = true }
+tock-registers = { workspace = true }
 
 [build-dependencies]
 libimage-build = { workspace = true }

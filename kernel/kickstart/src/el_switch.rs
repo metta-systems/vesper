@@ -5,12 +5,30 @@ use {
     aarch64_cpu::{
         asm::{self, barrier},
         registers::{
-            CNTKCTL_EL1, CPACR_EL1, ELR_EL2, HCR_EL2, MAIR_EL1, MDSCR_EL1, PMUSERENR_EL0,
-            ReadWriteable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TPIDR_EL0,
-            TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            CNTKCTL_EL1, CPACR_EL1, ELR_EL2, HCR_EL2, ID_AA64MMFR0_EL1, MAIR_EL1, MDSCR_EL1,
+            PMUSERENR_EL0, ReadWriteable, Readable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2,
+            TCR_EL1, TPIDR_EL0, TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
         },
     },
+    tock_registers::fields::FieldValue,
 };
+
+/// `TCR_EL1.IPS` for the physical address range this core implements
+/// (`ID_AA64MMFR0_EL1.PARange`, which uses the same encodings), at most 48
+/// bits: 52 bits needs a 64 KiB granule or LPA2, and the tables use 4 KiB
+/// pages. Left at zero the size is 32 bits, and every physical address above
+/// 4 GiB faults, among them all of the BCM2712's peripherals.
+fn intermediate_physical_address_size() -> FieldValue<u64, TCR_EL1::Register> {
+    use ID_AA64MMFR0_EL1::PARange::Value as Range;
+    match ID_AA64MMFR0_EL1.read_as_enum(ID_AA64MMFR0_EL1::PARange) {
+        Some(Range::Bits_36) => TCR_EL1::IPS::Bits_36,
+        Some(Range::Bits_40) => TCR_EL1::IPS::Bits_40,
+        Some(Range::Bits_42) => TCR_EL1::IPS::Bits_42,
+        Some(Range::Bits_44) => TCR_EL1::IPS::Bits_44,
+        Some(Range::Bits_48 | Range::Bits_52) => TCR_EL1::IPS::Bits_48,
+        Some(Range::Bits_32) | None => TCR_EL1::IPS::Bits_32,
+    }
+}
 
 /// Establish the integer-only FP/SIMD policy before anything runs at EL1 or
 /// EL0: architectural reset leaves this control UNKNOWN, so it is set
@@ -145,7 +163,7 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
 
     TCR_EL1.write(
         TCR_EL1::TBI0::Ignored // Top byte ignored, can be used for tagging.
-            // + TCR_EL1::IPS.val(ips) // Intermediate Physical Address Size
+            + intermediate_physical_address_size()
             // ttbr0 user memory addresses
             + TCR_EL1::TG0::KiB_4 // 4 KiB granule
             + TCR_EL1::SH0::Inner

@@ -29,7 +29,7 @@
 
 use {
     mailbox::mailbox_v1::{__runtime::IoRec, Clock, Device, Exception, MailboxV1},
-    mailbox_impl::{ACT_LED_PIN, tag},
+    mailbox_impl::{activity_led_pin, tag},
 };
 
 /// `firmware_error` code of a request that cannot run (non-Vesper builds).
@@ -97,7 +97,13 @@ impl MailboxV1 for VideoCoreMailbox {
     }
 
     fn set_led(_badge: u64, on: bool) -> Result<(), Exception> {
-        call(tag::SET_GPIO_STATE, &[ACT_LED_PIN, u32::from(on)], 2).map(|_values| ())
+        let [revision, ..] = call(tag::GET_BOARD_REVISION, &[], 1)?;
+        call(
+            tag::SET_GPIO_STATE,
+            &[activity_led_pin(revision), u32::from(on)],
+            2,
+        )
+        .map(|_values| ())
     }
 
     fn property(badge: u64, tags: IoRec) -> Result<(), Exception> {
