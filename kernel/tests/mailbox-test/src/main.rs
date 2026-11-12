@@ -40,6 +40,7 @@ use {
         paging::image_table_count,
     },
     libdevice_driver::DATA_WINDOW_VA,
+    libdevicetree::Soc,
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
@@ -67,20 +68,38 @@ const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 /// node, the framebuffer node and the vcsm client.
 const INSTANCES: usize = 4;
 
-/// The mailbox's register page: in the BCM interrupt controller's page on the
-/// Raspberry Pi 3, an ordinary device page on the Raspberry Pi 4.
-#[cfg(board_rpi3)]
-const MAILBOX_PAGE: (u64, u64) = (0x3f00_b000, libdevice_driver::PAGE_FRAME);
-#[cfg(board_rpi4)]
-const MAILBOX_PAGE: (u64, u64) = (0xfe00_b000, libdevice_driver::PAGE_UNTYPED);
+/// What the mailbox and fb components are handed on the emulated board the
+/// device tree describes.
+struct Expected {
+    /// The mailbox's register page and how it is handed over: in the BCM
+    /// interrupt controller's page on the Raspberry Pi 3, an ordinary device
+    /// page on the Raspberry Pi 4.
+    mailbox_page: (u64, u64),
+    /// The `VideoCore` memory the firmware reports: from the top of RAM up to
+    /// the peripheral window on the Raspberry Pi 3, up to the first gigabyte on
+    /// the Raspberry Pi 4.
+    video_memory: (u64, u64),
+}
 
-/// The `VideoCore` memory the firmware reports on the emulated boards: from the
-/// top of RAM up to the peripheral window on the Raspberry Pi 3, up to the
-/// first gigabyte on the Raspberry Pi 4.
-#[cfg(board_rpi3)]
-const VIDEO_MEMORY: (u64, u64) = (0x3c00_0000, 0x3f00_0000);
-#[cfg(board_rpi4)]
-const VIDEO_MEMORY: (u64, u64) = (0x3c00_0000, 0x4000_0000);
+fn expected() -> Expected {
+    let tree = kickstart::device_tree::at_el1();
+    let mailbox_page = tree
+        .firmware_mailbox()
+        .expect("the device tree has a firmware mailbox")
+        .base
+        & !0xfff;
+    match tree.board().soc {
+        Some(Soc::Bcm2837) => Expected {
+            mailbox_page: (mailbox_page, libdevice_driver::PAGE_FRAME),
+            video_memory: (0x3c00_0000, 0x3f00_0000),
+        },
+        Some(Soc::Bcm2711) => Expected {
+            mailbox_page: (mailbox_page, libdevice_driver::PAGE_UNTYPED),
+            video_memory: (0x3c00_0000, 0x4000_0000),
+        },
+        soc => panic!("mailbox-test runs on QEMU's raspi3b and raspi4b, not {soc:?}"),
+    }
+}
 
 /// Four words, a place to note the mailbox's data areas in.
 #[derive(Default)]
@@ -144,6 +163,7 @@ pub fn run() -> ! {
         .unwrap_or_else(|error| panic!("report identity: {:?}", error.code()));
 
     // ── Driver loading ────────────────────────────────────────────────────
+    let expected = expected();
     // What each driver was handed, noted as its record is checked.
     let mut mailbox_areas: Vec4 = Vec4::default();
     let mut client_area = 0;
@@ -194,7 +214,7 @@ pub fn run() -> ! {
                     .expect("the mailbox has a register page");
                 assert_eq!(
                     (page.paddr, page.kind),
-                    MAILBOX_PAGE,
+                    expected.mailbox_page,
                     "the mailbox register page and how it is handed over"
                 );
                 assert!(imports.is_empty());
@@ -237,14 +257,14 @@ pub fn run() -> ! {
                 // from the top of RAM to the end of the gap.
                 let video = init.video();
                 assert!(!video.is_empty(), "fb holds the video memory");
-                let mut cursor = VIDEO_MEMORY.0;
+                let mut cursor = expected.video_memory.0;
                 for block in video {
                     assert_eq!(block.base, cursor, "blocks follow each other");
                     assert_eq!(block.base % (1 << block.size_bits), 0, "aligned");
                     assert_ne!(block.key, 0);
                     cursor = block.end();
                 }
-                assert_eq!(cursor, VIDEO_MEMORY.1, "up to the end of the gap");
+                assert_eq!(cursor, expected.video_memory.1, "up to the end of the gap");
                 fb_area = area_of_mailbox_imports;
             } else {
                 // The vcsm node has no registers; its imports reach the

@@ -29,6 +29,7 @@ bitbybit = { workspace = true }
 libboot-uart = { workspace = true }
 libchainboot-protocol = { workspace = true }
 libconsole = { workspace = true }
+libdevicetree = { workspace = true }
 liblocking = { workspace = true }
 liblog = { workspace = true }
 libmachine = { workspace = true }

@@ -213,3 +213,11 @@ needs them.
   node whose pin group holds GPIO 48 to 53). The stock tree enables SDHOST and
   gives the Arasan to the Wi-Fi chip; a tree that enables the Arasan for the
   card instead (the `sdio` overlay) would need an Arasan SDHCI driver.
+- **The activity LED handed to its driver:** `mailbox_v1.set_led` picks the
+  LED's firmware GPIO from the board revision code the firmware reports
+  (`mailbox_impl::activity_led_pin`), so the mailbox component knows boards.
+  Kickstart could instead read the device tree's `/leds` node
+  (`libdevicetree`'s `DeviceTree::activity_led`) and hand the LED to whoever
+  switches it through the driver init page: a firmware GPIO to the mailbox
+  component, a SoC GPIO to the GPIO component, the Raspberry Pi 5's
+  `brcm,brcmstb-gpio` pin to a driver for that block.
