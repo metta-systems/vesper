@@ -98,23 +98,6 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     libmachine::debug::jtag::wait_debugger();
 
     // ─────────────────────────────────────────────────────────────────────
-    // Initialize early UART for debug output
-    // ─────────────────────────────────────────────────────────────────────
-
-    // The PL011 at its physical address, the MMU off: kept as chainboot left it,
-    // or set up and its rate negotiated with the host (`early_console`). It is
-    // handed over before the MMU goes on.
-    let console = early_console::start(libboot::arch::aarch64::boot::loader_registers());
-    crate::early_println!("🥾 started");
-    crate::early_println!("🥾 Early console at {console}");
-
-    // unsafe {
-    //     BOOT_INFO.dtb_phys = PhysAddr::new(dtb_phys);
-    // }
-
-    crate::early_println!("🥾 DTB at physical {:#016x}", dtb_ptr as u64);
-
-    // ─────────────────────────────────────────────────────────────────────
     // Start bump allocator
     // ─────────────────────────────────────────────────────────────────────
 
@@ -142,9 +125,42 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // Safety: we got the address from the bootloader, if it lied - well, we're screwed!
     let device_tree = unsafe { device_tree::index(dtb_ptr, &mut allocator) };
 
-    if let Some(board_name) = device_tree.model() {
-        crate::early_println!("🥾 Running on {board_name}");
+    // ─────────────────────────────────────────────────────────────────────
+    // Initialize early UART for debug output
+    // ─────────────────────────────────────────────────────────────────────
+
+    // The PL011 the device tree names (or, when the tree cannot be read, the
+    // one of the board the core's type points to), at its physical address,
+    // the MMU off: kept as chainboot left it, or set up and its rate negotiated
+    // with the host (`early_console`). It is handed over before the MMU goes on.
+    let hardware = device_tree
+        .as_ref()
+        .ok()
+        .and_then(libdevicetree::DeviceTree::boot_hardware);
+    let guessed = libboot_uart::guess_boot_hardware().filter(|_| hardware.is_none());
+    let console = early_console::start(
+        libboot::arch::aarch64::boot::loader_registers(),
+        hardware.or(guessed.map(|(_, hardware)| hardware)),
+    );
+    crate::early_println!("🥾 started");
+    crate::early_println!("🥾 Early console at {console}");
+    if let Some((soc, _)) = guessed {
+        crate::early_println!("🥾 The console is a guess: the {soc:?} the core's type points to");
     }
+    crate::early_println!("🥾 DTB at physical {:#016x}", dtb_ptr as u64);
+    let device_tree = device_tree.unwrap_or_else(|why| {
+        crate::early_println!("🥾 Cannot boot without the device tree: {why}");
+        early_console::hand_over();
+        panic!("🥾 no device tree: {why}")
+    });
+
+    let board = device_tree.board();
+    crate::early_println!(
+        "🥾 Running on {} ({}, SoC {:?})",
+        board.model.unwrap_or("an unnamed board"),
+        board.compatible.unwrap_or("no compatible"),
+        board.soc
+    );
 
     // libdevicetree::dump(&device_tree, &mut writer).expect("oof");
 

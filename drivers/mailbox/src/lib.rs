@@ -195,11 +195,26 @@ pub fn check_request(words: &[u32]) -> Result<(), Rejected> {
     }
 }
 
-/// The firmware's number of the activity LED's GPIO, for `tag::SET_GPIO_STATE`.
+/// The firmware's number of the activity LED's GPIO, for `tag::SET_GPIO_STATE`,
+/// on the board with the revision code `revision` (`tag::GET_BOARD_REVISION`).
 ///
 /// The Raspberry Pi 3 has the LED on its GPIO expander, which the firmware
 /// numbers from 128: expander pin 2 is 130, as the former platform mailbox
-/// code used on hardware. The Raspberry Pi 4 wires it to the `SoC`'s GPIO 42;
-/// that pin is not yet confirmed on a board. `mailbox_v1.set_led` hides the
+/// code used on hardware. The Raspberry Pi 4, 400 and Compute Module 4 (a
+/// new-style code, bit 23, with the type 0x11, 0x13 or 0x14 in bits 11:4) wire
+/// it to the `SoC`'s GPIO 42; that pin is not yet confirmed on a board. Every
+/// other board gets the expander pin. `mailbox_v1.set_led` hides the
 /// difference.
-pub const ACT_LED_PIN: u32 = if cfg!(board_rpi4) { 42 } else { 130 };
+#[must_use]
+pub const fn activity_led_pin(revision: u32) -> u32 {
+    const NEW_STYLE: u32 = 1 << 23;
+    const EXPANDER_PIN: u32 = 130;
+    const PI_4_FAMILY_PIN: u32 = 42;
+    if revision & NEW_STYLE == 0 {
+        return EXPANDER_PIN;
+    }
+    match (revision >> 4) & 0xff {
+        0x11 | 0x13 | 0x14 => PI_4_FAMILY_PIN,
+        _ => EXPANDER_PIN,
+    }
+}

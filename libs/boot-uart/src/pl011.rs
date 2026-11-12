@@ -230,25 +230,31 @@ fn enable(registers: &mut MmioRegisterBlock<'static>) {
     );
 }
 
-/// A PL011 UART.
+/// A PL011 UART, at the address the device tree gives ([`Pl011::attach`]).
+/// Until then it sends nothing and receives nothing.
 pub struct Pl011 {
-    registers: IRQSafeNullLock<MmioRegisterBlock<'static>>,
+    registers: IRQSafeNullLock<Option<MmioRegisterBlock<'static>>>,
 }
 
 impl Pl011 {
-    /// The PL011 whose registers start at `base`.
+    /// A UART whose registers are not known yet.
+    #[must_use]
+    pub const fn unattached() -> Self {
+        Self {
+            registers: IRQSafeNullLock::new(None),
+        }
+    }
+
+    /// Use the PL011 whose registers start at `base` from now on.
     ///
     /// # Safety
     ///
     /// `base` is the address of a PL011's registers, accessible for as long
     /// as the program runs, and nothing else uses the UART.
-    pub const unsafe fn new(base: usize) -> Self {
-        Self {
-            registers: IRQSafeNullLock::new(
-                // SAFETY: the caller's contract.
-                unsafe { RegisterBlock::new_mmio(base as *mut RegisterBlock) },
-            ),
-        }
+    pub unsafe fn attach(&self, base: usize) {
+        // SAFETY: the caller's contract.
+        let registers = unsafe { RegisterBlock::new_mmio(base as *mut RegisterBlock) };
+        self.registers.lock(|attached| *attached = Some(registers));
     }
 
     /// Set the UART up, running at `clock` Hz: 115200 8N1 with FIFOs, every
@@ -257,10 +263,12 @@ impl Pl011 {
     ///
     /// # Errors
     ///
-    /// If the clock and the rate give no divisors the registers hold.
+    /// If the UART is not attached, or the clock and the rate give no divisors
+    /// the registers hold.
     pub fn init(&self, clock: u32) -> Result<(), &'static str> {
         let (integer, fraction) = register_divisors(clock, BOOT_BAUD_RATE)?;
         self.registers.lock(|registers| {
+            let registers = registers.as_mut().ok_or("no UART")?;
             // Turn the UART off and let the character in flight finish.
             registers.write_control(Control::ZERO);
             let _settled = spin_while(|| registers.read_flag().busy());
@@ -278,8 +286,8 @@ impl Pl011 {
             );
 
             enable(registers);
-        });
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Switch to `baud_rate`, the UART running at `clock` Hz, once everything
@@ -302,6 +310,7 @@ impl Pl011 {
             return Err("the transmitter is not running");
         }
         self.registers.lock(|registers| {
+            let registers = registers.as_mut().ok_or("no UART")?;
             let drained = spin_while(|| {
                 let flags = registers.read_flag();
                 !flags.transmit_fifo_empty() || flags.busy()
@@ -321,8 +330,18 @@ impl Pl011 {
 }
 
 impl SerialOps for Pl011 {
+    /// The next byte; an unattached UART never receives one.
+    #[expect(
+        clippy::infinite_loop,
+        reason = "an unattached UART waits for ever, as an attached one waits for a byte"
+    )]
     fn read_byte(&self) -> u8 {
         self.registers.lock(|registers| {
+            let Some(registers) = registers.as_mut() else {
+                loop {
+                    core::hint::spin_loop();
+                }
+            };
             loop_while(|| registers.read_flag().receive_fifo_empty());
             registers.read_data().byte()
         })
@@ -330,6 +349,7 @@ impl SerialOps for Pl011 {
 
     fn read_byte_nonblocking(&self) -> Option<u8> {
         self.registers.lock(|registers| {
+            let registers = registers.as_mut()?;
             (!registers.read_flag().receive_fifo_empty()).then(|| registers.read_data().byte())
         })
     }
@@ -339,6 +359,9 @@ impl SerialOps for Pl011 {
             return;
         }
         self.registers.lock(|registers| {
+            let Some(registers) = registers.as_mut() else {
+                return;
+            };
             if spin_while(|| registers.read_flag().transmit_fifo_full()) {
                 registers.write_data(Data::ZERO.with_byte(byte));
             } else {
@@ -353,6 +376,9 @@ impl SerialOps for Pl011 {
             return;
         }
         self.registers.lock(|registers| {
+            let Some(registers) = registers.as_mut() else {
+                return;
+            };
             if !spin_while(|| registers.read_flag().busy()) {
                 TRANSMITTER_DEAD.store(true, Ordering::Relaxed);
             }
@@ -366,6 +392,9 @@ impl SerialOps for Pl011 {
         const FIFO_DEPTH: u32 = 16;
 
         self.registers.lock(|registers| {
+            let Some(registers) = registers.as_mut() else {
+                return;
+            };
             for _ in 0..FIFO_DEPTH * 4 {
                 if registers.read_flag().receive_fifo_empty() {
                     break;
