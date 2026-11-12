@@ -58,6 +58,7 @@ mod tests {
 
     const RPI3: &[u8] = include_bytes!("../../../targets/bcm2710-rpi-3-b-plus.dtb");
     const RPI4: &[u8] = include_bytes!("../../../targets/bcm2711-rpi-4-b.dtb");
+    const RPI5: &[u8] = include_bytes!("../../../targets/bcm2712-rpi-5-b.dtb");
 
     #[test]
     fn rpi3_reg_uses_parent_cells_and_translates_through_soc_ranges() {
@@ -663,5 +664,202 @@ mod tests {
             assert_eq!(interrupt(index, &device, 2), None);
             assert_eq!(interrupts(index, &device).count(), 2);
         });
+    }
+
+    mod board {
+        use {
+            super::{RPI3, RPI4, RPI5, with_tree},
+            vesper_devicetree::{
+                ActivityLed, Board, ConsoleUart, DeviceTree, Gpio, GpioKind, Mailbox, Soc,
+                UartClock,
+            },
+        };
+
+        #[test]
+        fn every_board_tree_indexes_in_the_fixed_index_buffer() {
+            for dtb in [RPI3, RPI4, RPI5] {
+                let blob = super::AlignedBlob::new(dtb);
+                // SAFETY: the blob is u32-aligned, complete, and outlives the call.
+                let raw =
+                    unsafe { DeviceTree::blob_from_raw(blob.bytes().as_ptr()) }.expect("valid DTB");
+                let layout = DeviceTree::index_layout(&raw).expect("index layout");
+                assert!(
+                    layout.size() + layout.align() <= vesper_devicetree::INDEX_BUFFER_BYTES,
+                    "{} bytes",
+                    layout.size() + layout.align()
+                );
+            }
+        }
+
+        #[test]
+        fn the_fallback_hardware_is_what_each_boards_tree_says() {
+            for (dtb, soc) in [
+                (RPI3, Soc::Bcm2837),
+                (RPI4, Soc::Bcm2711),
+                (RPI5, Soc::Bcm2712),
+            ] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(tree.board().soc, Some(soc));
+                    assert_eq!(tree.boot_hardware(), Some(soc.fallback_boot_hardware()));
+                });
+            }
+        }
+
+        #[test]
+        fn cpu_parts_name_the_socs_of_their_boards() {
+            assert_eq!(Soc::from_cpu_part(0xd03), Some(Soc::Bcm2837));
+            assert_eq!(Soc::from_cpu_part(0xd08), Some(Soc::Bcm2711));
+            assert_eq!(Soc::from_cpu_part(0xd0b), Some(Soc::Bcm2712));
+            // A Cortex-A57 is on no Raspberry Pi.
+            assert_eq!(Soc::from_cpu_part(0xd07), None);
+        }
+
+        #[test]
+        fn the_root_names_board_and_soc() {
+            for (dtb, model, compatible, soc) in [
+                (
+                    RPI3,
+                    "Raspberry Pi 3 Model B+",
+                    "raspberrypi,3-model-b-plus",
+                    Soc::Bcm2837,
+                ),
+                (
+                    RPI4,
+                    "Raspberry Pi 4 Model B",
+                    "raspberrypi,4-model-b",
+                    Soc::Bcm2711,
+                ),
+                (
+                    RPI5,
+                    "Raspberry Pi 5",
+                    "raspberrypi,5-model-b",
+                    Soc::Bcm2712,
+                ),
+            ] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.board(),
+                        Board {
+                            model: Some(model),
+                            compatible: Some(compatible),
+                            soc: Some(soc),
+                            // Only the firmware writes `/system/linux,revision`.
+                            revision: None,
+                        }
+                    );
+                });
+            }
+        }
+
+        #[test]
+        fn the_console_is_the_first_pl011_unless_stdout_path_names_one() {
+            // The Raspberry Pi 3 and 4 trees have no `stdout-path`; their first
+            // PL011 is `uart0`, clocked by the firmware.
+            for (dtb, base) in [(RPI3, 0x3f20_1000), (RPI4, 0xfe20_1000)] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.console_uart(),
+                        Some(ConsoleUart {
+                            base,
+                            clock: UartClock::Firmware
+                        })
+                    );
+                });
+            }
+            // The Raspberry Pi 5 tree's `stdout-path` is `serial10`, the debug
+            // connector's PL011 in the high peripheral window, on a fixed clock.
+            with_tree(RPI5, |tree| {
+                assert_eq!(
+                    tree.console_uart(),
+                    Some(ConsoleUart {
+                        base: 0x10_7d00_1000,
+                        clock: UartClock::Fixed(9_216_000)
+                    })
+                );
+            });
+        }
+
+        #[test]
+        fn the_header_gpio_block_and_its_kind() {
+            with_tree(RPI3, |tree| {
+                assert_eq!(
+                    tree.header_gpio(),
+                    Some(Gpio {
+                        base: 0x3f20_0000,
+                        kind: GpioKind::Bcm2835
+                    })
+                );
+            });
+            with_tree(RPI4, |tree| {
+                assert_eq!(
+                    tree.header_gpio(),
+                    Some(Gpio {
+                        base: 0xfe20_0000,
+                        kind: GpioKind::Bcm2711
+                    })
+                );
+            });
+            // The Raspberry Pi 5's header is on RP1.
+            with_tree(RPI5, |tree| assert_eq!(tree.header_gpio(), None));
+        }
+
+        #[test]
+        fn the_mailbox_and_the_address_the_firmware_sees() {
+            // The uncached bus alias on the BCM2837 and BCM2711, from `dma-ranges`.
+            for (dtb, base) in [(RPI3, 0x3f00_b880), (RPI4, 0xfe00_b880)] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.firmware_mailbox(),
+                        Some(Mailbox {
+                            base,
+                            bus_offset: 0xc000_0000
+                        })
+                    );
+                });
+            }
+            // The BCM2712's bus has no `dma-ranges`: addresses map one to one.
+            with_tree(RPI5, |tree| {
+                assert_eq!(
+                    tree.firmware_mailbox(),
+                    Some(Mailbox {
+                        base: 0x10_7c01_3880,
+                        bus_offset: 0
+                    })
+                );
+            });
+        }
+
+        #[test]
+        fn the_activity_led_and_how_it_is_switched() {
+            with_tree(RPI3, |tree| {
+                assert_eq!(
+                    tree.activity_led(),
+                    Some(ActivityLed::Gpio {
+                        gpio: Gpio {
+                            base: 0x3f20_0000,
+                            kind: GpioKind::Bcm2835
+                        },
+                        pin: 29,
+                        active_low: false
+                    })
+                );
+            });
+            with_tree(RPI4, |tree| {
+                assert_eq!(
+                    tree.activity_led(),
+                    Some(ActivityLed::Gpio {
+                        gpio: Gpio {
+                            base: 0xfe20_0000,
+                            kind: GpioKind::Bcm2711
+                        },
+                        pin: 42,
+                        active_low: false
+                    })
+                );
+            });
+            // On the always-on `brcm,brcmstb-gpio` block, which no boot
+            // program drives.
+            with_tree(RPI5, |tree| assert_eq!(tree.activity_led(), None));
+        }
     }
 }

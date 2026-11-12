@@ -12,14 +12,18 @@
 //! Its users run with the MMU off, or chainboot on a flat map with the data cache
 //! off, so a buffer's physical address is its address, and nothing caches it.
 //! Every wait is bounded: a firmware that does not answer must not stop the boot.
+//!
+//! Where the mailbox is and how the firmware addresses the ARM's memory come
+//! from the device tree ([`attach`]); until then every request fails.
 
 use {
-    crate::PERIPHERALS,
     aarch64_cpu::asm::barrier,
     arbitrary_int::{u4, u28},
     bitbybit::bitfield,
     core::{ptr, time::Duration},
     derive_mmio::Mmio,
+    libdevicetree::Mailbox,
+    liblocking::{IRQSafeNullLock, interface::Mutex},
     libmmio::assert_register_offsets,
     libtime::time::time_manager,
 };
@@ -96,12 +100,34 @@ assert_register_offsets!(RegisterBlock, 0x3c, {
     to_firmware_status: 0x38,
 });
 
-/// Where the registers are.
-const BASE: usize = PERIPHERALS + 0xb880;
+/// The mailbox the device tree describes, once [`attach`]ed. Plain loads and
+/// stores only: its users run where an atomic read-modify-write never completes.
+static MAILBOX: IRQSafeNullLock<Option<Attached>> = IRQSafeNullLock::new(None);
 
-/// The address the `VideoCore` reaches the ARM's memory at, uncached: the physical
-/// address with these bits set.
-const BUS_ALIAS: usize = 0xc000_0000;
+/// Use the mailbox `mailbox` describes from now on.
+///
+/// # Safety
+///
+/// `mailbox.base` is the address of the firmware mailbox's registers,
+/// accessible for as long as the program runs, and nothing else uses them.
+pub unsafe fn attach(mailbox: Mailbox) {
+    let reachable = usize::try_from(mailbox.base).ok().map(|base| Attached {
+        base,
+        bus_offset: mailbox.bus_offset,
+    });
+    MAILBOX.lock(|attached| *attached = reachable);
+}
+
+/// An attached mailbox: where its registers are, and [`Mailbox::bus_offset`].
+#[derive(Clone, Copy)]
+struct Attached {
+    base: usize,
+    bus_offset: u64,
+}
+
+fn attached() -> Option<Attached> {
+    MAILBOX.lock(|attached| *attached)
+}
 
 /// Words of a message: the header, one tag with two value words, and the end tag.
 const WORDS: usize = 8;
@@ -146,14 +172,17 @@ impl Message {
         (word(1) == ANSWERED && word(4) & ANSWERED != 0).then(|| [word(5), word(6)])
     }
 
-    /// The word that tells the firmware where the message is. The address
-    /// escapes: the compiler has to treat the message as read and written by
-    /// someone else from here on.
-    fn word(&self) -> Word {
-        let bus = (ptr::from_ref(self).expose_provenance() | BUS_ALIAS) >> 4;
-        Word::ZERO
-            .with_channel(PROPERTY_CHANNEL)
-            .with_address(u28::new(u32::try_from(bus).unwrap_or(0)))
+    /// The word that tells the firmware where the message is, at `bus_offset`
+    /// from its physical address. The address escapes: the compiler has to
+    /// treat the message as read and written by someone else from here on.
+    fn word(&self, bus_offset: u64) -> Result<Word, &'static str> {
+        let physical = ptr::from_ref(self).expose_provenance() as u64;
+        let bus = physical
+            .checked_add(bus_offset)
+            .and_then(|bus| u32::try_from(bus >> 4).ok())
+            .and_then(|bus| u28::try_new(bus).ok())
+            .ok_or("the message is out of the firmware's reach")?;
+        Ok(Word::ZERO.with_channel(PROPERTY_CHANNEL).with_address(bus))
     }
 }
 
@@ -172,32 +201,39 @@ pub fn wait_until(mut done: impl FnMut() -> bool) -> bool {
     true
 }
 
-/// The mailbox. There is one core and nobody else uses it, so the handle is made
-/// where it is used.
-fn mailbox() -> MmioRegisterBlock<'static> {
-    // SAFETY: `BASE` is the mailbox's address; its users run on one core with the
-    // MMU off, and the mailbox is used from one place at a time.
-    unsafe { RegisterBlock::new_mmio(ptr::with_exposed_provenance_mut(BASE)) }
+/// The attached mailbox's registers. There is one core and nobody else uses
+/// them, so the handle is made where it is used.
+fn registers(mailbox: Attached) -> MmioRegisterBlock<'static> {
+    // SAFETY: `attach`'s contract: the address is the mailbox's; its users run
+    // on one core with the MMU off, and the mailbox is used from one place at
+    // a time.
+    unsafe { RegisterBlock::new_mmio(ptr::with_exposed_provenance_mut(mailbox.base)) }
 }
 
-/// Hand `message` to the firmware without waiting for the answer. Fails when the
-/// mailbox does not take it. The message must stay where it is, unchanged, until
-/// [`answered`] says the firmware is done with it.
+/// Hand `message` to the firmware without waiting for the answer. Fails when no
+/// mailbox is attached, the message is out of the firmware's reach, or the
+/// mailbox does not take it. The message must stay where it is, unchanged,
+/// until [`answered`] says the firmware is done with it.
 pub fn send(message: &Message) -> Result<(), &'static str> {
-    let mut registers = mailbox();
+    let mailbox = attached().ok_or("no mailbox")?;
+    let word = message.word(mailbox.bus_offset)?;
+    let mut registers = registers(mailbox);
     if !wait_until(|| !registers.read_to_firmware_status().full()) {
         return Err("mailbox stayed full");
     }
     // The message is in memory before the firmware is told about it.
     barrier::dsb(barrier::SY);
-    registers.write_to_firmware(message.word());
+    registers.write_to_firmware(word);
     Ok(())
 }
 
 /// Whether the firmware has answered a message: takes its answer word off the
 /// mailbox, and never waits.
 pub fn answered() -> bool {
-    let mut registers = mailbox();
+    let Some(mailbox) = attached() else {
+        return false;
+    };
+    let mut registers = registers(mailbox);
     if registers.read_from_firmware_status().empty() {
         return false;
     }

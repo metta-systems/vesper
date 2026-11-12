@@ -3,17 +3,22 @@
 use {
     kickstart::bootstrap::{device_untypeds, kernel_owned_device_ranges, video_untypeds},
     libcomponent_loader::keys::{BOOT_TABLE_GUARD, boot_key},
+    libdevicetree::{find_compatible, regions},
     libobject::RawKey,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
 };
 
-/// The ARM local interrupt block, which also holds the core timer controls.
-#[cfg(board_rpi3)]
-const LOCAL_INTC: u64 = 0x4000_0000;
-#[cfg(board_rpi4)]
-const LOCAL_INTC: u64 = 0xff80_0000;
-
 const PAGE: u64 = 0x1000;
+
+/// Where the device tree puts the ARM local interrupt block, which also holds
+/// the core timer controls.
+fn local_interrupt_block() -> u64 {
+    let tree = kickstart::device_tree::at_el1().index();
+    find_compatible(tree, &["brcm,bcm2836-l1-intc"])
+        .and_then(|(node, _)| regions(&node).next())
+        .expect("the device tree has no ARM local interrupt block")
+        .start
+}
 
 /// Every device Untyped in the boot table, as `(key, start, end)`.
 pub fn device_untyped_extents(keytable_addr: u64) -> impl Iterator<Item = (RawKey, u64, u64)> {
@@ -50,7 +55,8 @@ pub fn is_video_untyped(key: RawKey) -> bool {
 pub fn assert_device_untypeds_avoid_the_kernel(keytable_addr: u64) {
     let range = device_untypeds();
     assert!(range.count > 0, "Kickstart handed out no device Untypeds");
-    let (local_start, local_end) = (LOCAL_INTC, LOCAL_INTC + PAGE);
+    let local_start = local_interrupt_block();
+    let local_end = local_start + PAGE;
     let mut previous_end = 0;
     for (_, start, end) in device_untyped_extents(keytable_addr) {
         assert!(

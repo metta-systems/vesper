@@ -65,11 +65,18 @@ just qemu
 just device
 ```
 
-On the device boot SD card you'll need a configuration file instructing RasPi to launch in 64-bit mode.
+One image boots on a Raspberry Pi 3, 4 and 5: it finds the board's hardware in the device
+tree the firmware passes. It is built for a board set, by default `rpi3+rpi4+rpi5`, compiled
+for the oldest core of the set; `just boards=rpi4+rpi5 device` builds for a smaller set.
+
+On the device boot SD card you'll need a configuration file instructing RasPi to launch in
+64-bit mode, from where the kernel is linked:
 
 ```
-# config.txt on RPi3
+# config.txt
 arm_64bit=1
+kernel=kernel8.img
+kernel_address=0x80000
 ```
 
 `tools/makesd` builds a card for all three boards: in that directory,

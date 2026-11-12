@@ -6,7 +6,11 @@
  */
 
 //! The GPIO block, as far as booting needs it: routing the PL011 to the header
-//! pins 14 (TXD0) and 15 (RXD0) with their pull-ups on.
+//! pins 14 (TXD0) and 15 (RXD0) with their pull-ups on, and driving an output.
+//!
+//! The BCM2837 and BCM2711 blocks share the function select, set and clear
+//! registers and differ in how a pin is pulled; the device tree tells which
+//! block a board has ([`Gpio`]).
 //!
 //! <https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf>
 //! and the BCM2711 ARM Peripherals manual.
@@ -14,6 +18,7 @@
 use {
     bitbybit::{bitenum, bitfield},
     derive_mmio::Mmio,
+    libdevicetree::{Gpio, GpioKind},
     libmmio::assert_register_offsets,
 };
 
@@ -46,7 +51,6 @@ struct Pins {
 }
 
 /// The pull a `GPPUD` write applies (BCM2837).
-#[cfg(board_rpi3)]
 #[bitenum(u2, exhaustive = false)]
 #[derive(Debug, PartialEq, Eq)]
 enum PullControl {
@@ -56,7 +60,6 @@ enum PullControl {
 }
 
 /// `GPPUD` (BCM2837): the pull applied to the pins clocked by `GPPUDCLKn`.
-#[cfg(board_rpi3)]
 #[bitfield(u32, default = 0, debug)]
 struct PullUpDownEnable {
     #[bits(0..=1, rw)]
@@ -64,7 +67,6 @@ struct PullUpDownEnable {
 }
 
 /// The pull of a pin (BCM2711).
-#[cfg(board_rpi4)]
 #[bitenum(u2, exhaustive = false)]
 #[derive(Debug, PartialEq, Eq)]
 enum PullResistor {
@@ -74,14 +76,13 @@ enum PullResistor {
 }
 
 /// `GPIO_PUP_PDN_CNTRL_REGn` (BCM2711): the pull of sixteen pins.
-#[cfg(board_rpi4)]
 #[bitfield(u32, default = 0, debug)]
 struct PullUpDownControl {
     #[bits(0..=1, rw, stride = 2)]
     pull: [Option<PullResistor>; 16],
 }
 
-#[cfg(board_rpi3)]
+/// The registers both blocks have.
 #[derive(Mmio)]
 #[mmio(no_owned)]
 #[repr(C)]
@@ -93,41 +94,39 @@ struct RegisterBlock {
     _reserved2: [u32; 1],
     #[mmio(Write)]
     clear_pin: [Pins; 2],
-    _reserved3: [u32; 25],
+}
+
+assert_register_offsets!(RegisterBlock, 0x30, {
+    function_select: 0x00,
+    set_pin: 0x1c,
+    clear_pin: 0x28,
+});
+
+/// The BCM2837's pull registers, from the start of the block.
+#[derive(Mmio)]
+#[mmio(no_owned)]
+#[repr(C)]
+struct Bcm2835PullRegisters {
+    _reserved: [u32; 37],
     pull_up_down: PullUpDownEnable,
     pull_up_down_clock: [Pins; 2],
 }
 
-#[cfg(board_rpi3)]
-assert_register_offsets!(RegisterBlock, 0xa0, {
-    function_select: 0x00,
-    set_pin: 0x1c,
-    clear_pin: 0x28,
+assert_register_offsets!(Bcm2835PullRegisters, 0xa0, {
     pull_up_down: 0x94,
     pull_up_down_clock: 0x98,
 });
 
-#[cfg(board_rpi4)]
+/// The BCM2711's pull registers, from the start of the block.
 #[derive(Mmio)]
 #[mmio(no_owned)]
 #[repr(C)]
-struct RegisterBlock {
-    function_select: [FunctionSelect; 6],
-    _reserved1: [u32; 1],
-    #[mmio(Write)]
-    set_pin: [Pins; 2],
-    _reserved2: [u32; 1],
-    #[mmio(Write)]
-    clear_pin: [Pins; 2],
-    _reserved3: [u32; 45],
+struct Bcm2711PullRegisters {
+    _reserved: [u32; 57],
     pull_up_down_control: [PullUpDownControl; 4],
 }
 
-#[cfg(board_rpi4)]
-assert_register_offsets!(RegisterBlock, 0xf4, {
-    function_select: 0x00,
-    set_pin: 0x1c,
-    clear_pin: 0x28,
+assert_register_offsets!(Bcm2711PullRegisters, 0xf4, {
     pull_up_down_control: 0xe4,
 });
 
@@ -140,20 +139,33 @@ const fn locate(pin: usize, per_register: usize) -> (usize, usize) {
     (pin / per_register, pin % per_register)
 }
 
+/// The registers both blocks have.
+///
+/// # Safety
+///
+/// As for the public functions.
+unsafe fn registers(gpio: Gpio) -> MmioRegisterBlock<'static> {
+    // SAFETY: the caller's contract.
+    unsafe { RegisterBlock::new_mmio(gpio.base as *mut RegisterBlock) }
+}
+
 /// Connect the PL011's TXD0 and RXD0 to header pins 14 and 15 and pull both up.
 ///
 /// # Safety
 ///
-/// `base` is the address of the GPIO registers, accessible for as long as the
-/// program runs, and nothing else uses them.
-pub unsafe fn route_uart(base: usize) {
+/// `gpio` describes a GPIO block whose registers are accessible for as long as
+/// the program runs, and nothing else uses them.
+pub unsafe fn route_uart(gpio: Gpio) {
     // SAFETY: the caller's contract.
-    let mut registers = unsafe { RegisterBlock::new_mmio(base as *mut RegisterBlock) };
+    let mut common = unsafe { registers(gpio) };
     for pin in UART_PINS {
         let (bank, index) = locate(pin, 10);
-        let _in_range = registers
+        let _in_range = common
             .modify_function_select(bank, |select| select.with_function(index, UART_FUNCTION));
-        pull_up(&mut registers, pin);
+        // SAFETY: the caller's contract.
+        unsafe {
+            pull_up(gpio, pin);
+        }
     }
 }
 
@@ -161,14 +173,13 @@ pub unsafe fn route_uart(base: usize) {
 ///
 /// # Safety
 ///
-/// `base` is the address of the GPIO registers, accessible for as long as the
-/// program runs, and nothing else uses them; `pin` is a pin the program owns.
-pub unsafe fn make_output(base: usize, pin: usize) {
+/// As for [`route_uart`]; `pin` is a pin the program owns.
+pub unsafe fn make_output(gpio: Gpio, pin: usize) {
     // SAFETY: the caller's contract.
-    let mut registers = unsafe { RegisterBlock::new_mmio(base as *mut RegisterBlock) };
+    let mut common = unsafe { registers(gpio) };
     let (bank, index) = locate(pin, 10);
-    let _in_range = registers
-        .modify_function_select(bank, |select| select.with_function(index, Function::Output));
+    let _in_range =
+        common.modify_function_select(bank, |select| select.with_function(index, Function::Output));
 }
 
 /// Drive the output `pin` high or low. The set and clear registers act on the
@@ -177,23 +188,47 @@ pub unsafe fn make_output(base: usize, pin: usize) {
 /// # Safety
 ///
 /// As for [`make_output`].
-pub unsafe fn write_pin(base: usize, pin: usize, high: bool) {
+pub unsafe fn write_pin(gpio: Gpio, pin: usize, high: bool) {
     // SAFETY: the caller's contract.
-    let mut registers = unsafe { RegisterBlock::new_mmio(base as *mut RegisterBlock) };
+    let mut common = unsafe { registers(gpio) };
     let (bank, bit) = locate(pin, 32);
     let pins = Pins::ZERO.with_pin(bit, true);
     let _in_range = if high {
-        registers.write_set_pin(bank, pins)
+        common.write_set_pin(bank, pins)
     } else {
-        registers.write_clear_pin(bank, pins)
+        common.write_clear_pin(bank, pins)
     };
+}
+
+/// Pull `pin` up the way the block does it.
+///
+/// # Safety
+///
+/// As for [`route_uart`].
+unsafe fn pull_up(gpio: Gpio, pin: usize) {
+    match gpio.kind {
+        GpioKind::Bcm2835 => {
+            // SAFETY: the caller's contract.
+            let mut registers =
+                unsafe { Bcm2835PullRegisters::new_mmio(gpio.base as *mut Bcm2835PullRegisters) };
+            pull_up_bcm2835(&mut registers, pin);
+        }
+        GpioKind::Bcm2711 => {
+            // SAFETY: the caller's contract.
+            let mut registers =
+                unsafe { Bcm2711PullRegisters::new_mmio(gpio.base as *mut Bcm2711PullRegisters) };
+            let (bank, index) = locate(pin, 16);
+            let _in_range = registers.modify_pull_up_down_control(bank, |control| {
+                control.with_pull(index, PullResistor::Up)
+            });
+        }
+    }
 }
 
 /// Pull `pin` up (BCM2837): select the pull in `GPPUD`, clock it into the pin,
 /// then take both away again, waiting a microsecond between the steps as the
 /// Linux driver does.
-#[cfg(board_rpi3)]
-fn pull_up(registers: &mut MmioRegisterBlock<'_>, pin: usize) {
+fn pull_up_bcm2835(registers: &mut MmioBcm2835PullRegisters<'_>, pin: usize) {
     use core::time::Duration;
 
     const DELAY: Duration = Duration::from_micros(1);
@@ -208,12 +243,4 @@ fn pull_up(registers: &mut MmioRegisterBlock<'_>, pin: usize) {
 
     registers.write_pull_up_down(PullUpDownEnable::ZERO.with_control(PullControl::Off));
     let _in_range = registers.write_pull_up_down_clock(bank, Pins::ZERO);
-}
-
-/// Pull `pin` up (BCM2711): its two bits in the control register of its bank.
-#[cfg(board_rpi4)]
-fn pull_up(registers: &mut MmioRegisterBlock<'_>, pin: usize) {
-    let (bank, index) = locate(pin, 16);
-    let _in_range = registers
-        .modify_pull_up_down_control(bank, |control| control.with_pull(index, PullResistor::Up));
 }
