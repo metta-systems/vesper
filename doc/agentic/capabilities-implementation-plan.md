@@ -151,7 +151,6 @@ All Time and userspace-scheduling work, including the scheduler-shared records (
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
   - [ ] Move endpoint-test's fixture init pages and hand-wired Invocations onto the init record and the generated-interface import wiring Kickstart gives drivers (`DriverInit`, `imports.if`).
-  - [ ] Copy a component's `.data` per instance before loading the same component twice, so each instance of a driver (an exporter included) has its own `.data` state.
   - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).
