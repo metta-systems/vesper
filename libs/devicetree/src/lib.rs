@@ -340,6 +340,16 @@ pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u3
     property(node, property_name).and_then(|prop| prop.u32(0).ok())
 }
 
+/// The frequency of `node`'s first clock (`clocks`), in Hz, when that clock is
+/// a `fixed-clock` node; `None` for a clock another provider runs.
+pub fn fixed_clock_rate(tree: &DevTreeIndex<'_, '_>, node: &Node<'_, '_, '_>) -> Option<u32> {
+    let clock = node_by_phandle(tree, linked_phandle(node, "clocks")?)?;
+    if !is_compatible(&clock, "fixed-clock") {
+        return None;
+    }
+    property(&clock, "clock-frequency")?.u32(0).ok()
+}
+
 /// The DMA channels a Broadcom DMA controller node (`brcm,bcm2835-dma`)
 /// leaves to the ARM, one bit per channel: its `brcm,dma-channel-mask`. The
 /// firmware may change it at boot, so it is read from the tree it hands over.
