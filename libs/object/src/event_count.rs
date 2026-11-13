@@ -44,8 +44,8 @@ pub enum EventCountOp {
     Advance = 0,
     /// Block until the counter is `>= target`, then return the observed
     /// value. Requires `RECV`. Takes one relative timeout argument
-    /// (nanoseconds; `WAIT_INFINITE` blocks forever; finite values are
-    /// unsupported until the time subsystem exists).
+    /// (nanoseconds; `WAIT_INFINITE` blocks forever; a finite timeout ends
+    /// the wait with `TimedOut`).
     Await = 1,
     /// Observe the counter without blocking. Requires `RECV`.
     Read = 2,

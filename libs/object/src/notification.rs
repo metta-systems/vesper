@@ -40,8 +40,7 @@ pub enum NotificationOp {
     Signal = 0,
     /// Block until bits are pending and consume them. Requires `RECV`.
     /// Takes one relative timeout argument (nanoseconds; `WAIT_INFINITE`
-    /// blocks forever; finite values are unsupported until the time
-    /// subsystem exists).
+    /// blocks forever; a finite timeout ends the wait with `TimedOut`).
     Await = 1,
     /// Consume pending bits immediately or return zero (none pending).
     /// Requires `RECV`. Never blocks.
@@ -106,8 +105,9 @@ impl NotificationKey {
     /// Wire schema: `x2` timeout (nanoseconds; `WAIT_INFINITE` = forever),
     /// `x3..x7` zero. Authority: `RECV`. An already-satisfied wait consumes
     /// and returns the bits immediately; a wait with no pending bits parks
-    /// the caller and returns when a signal completes it (finite timeouts
-    /// are unsupported until the time subsystem exists).
+    /// the caller and returns when a signal completes it, or with
+    /// [`CapError::TimedOut`] at the first timer interrupt past a finite
+    /// timeout.
     pub fn await_bits(&self, timeout_ns: u64) -> Result<u64, CapError> {
         // SAFETY: the syscall transport is the encapsulated unsafe boundary.
         let result = unsafe {
