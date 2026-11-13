@@ -1,8 +1,6 @@
 // Host builds only check the interface implementation; the component itself
 // runs on Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! EL0 driver component for a standard SD host controller (SDHCI), serving
 //! `block_v1` (see `interfaces/block_v1.if`).
@@ -76,6 +74,7 @@ mod component {
             device_address, driver_compatible, driver_init, map_device_pages,
         },
         libio_channel::{DataArea, IoRec, NoEvent, Packet},
+        liblog_client::log_println,
         libmeddle_runtime::PAGE_BYTES,
         libobject::{
             CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey, KeyTableKey,
@@ -86,7 +85,6 @@ mod component {
             Card, CardError, Command, READ_MULTIPLE_BLOCK, READ_SINGLE_BLOCK, WRITE_BLOCK,
             WRITE_MULTIPLE_BLOCK,
         },
-        libuser::semihosting as semi,
         mailbox_client::mailbox_v1::{Bindings, Client, Clock},
         sdhci::{Bcm2712Config, Mover, RegisterBlock, Sdhci, adma2_descriptor, configure_bcm2712},
     };
@@ -291,13 +289,14 @@ mod component {
             DMA_VA + (index as u64 + 1) * PAGE_BYTES
         }
 
-        /// Clean (`write_back`) or invalidate bytes `0..bytes` of `frame`.
-        fn maintain(frame: u64, write_back: bool, bytes: u32) {
+        /// Run `maintenance` on bytes `0..bytes` of `frame`.
+        fn maintain(frame: u64, maintenance: Maintenance, bytes: u32) {
             let frame = FrameKey::from_key(RawKey::from_wire(frame));
-            let result = if write_back {
-                frame.clean_data(0, u64::from(bytes))
-            } else {
-                frame.invalidate_data(0, u64::from(bytes))
+            let end = u64::from(bytes);
+            let result = match maintenance {
+                Maintenance::Clean => frame.clean_data(0, end),
+                Maintenance::CleanInvalidate => frame.clean_invalidate_data(0, end),
+                Maintenance::Invalidate => frame.invalidate_data(0, end),
             };
             result.unwrap_or_else(|error| {
                 panic!("sdhci: cache maintenance failed: {:?}", error.code())
@@ -321,7 +320,7 @@ mod component {
             }
             Self::maintain(
                 self.descriptors,
-                true,
+                Maintenance::Clean,
                 u32::try_from(pages * 8).unwrap_or(PAGE),
             );
         }
@@ -348,9 +347,8 @@ mod component {
             }
         }
 
-        /// Make bounce bytes `0..bytes` visible to the controller
-        /// (`write_back`), or drop what the cache holds of them.
-        fn maintain_bounce(&self, write_back: bool, bytes: u32) {
+        /// Run `maintenance` on bounce bytes `0..bytes`.
+        fn maintain_bounce(&self, maintenance: Maintenance, bytes: u32) {
             for (index, frame) in self
                 .bounce
                 .iter()
@@ -358,9 +356,24 @@ mod component {
                 .enumerate()
             {
                 let start = u32::try_from(index).unwrap_or(0) * PAGE;
-                Self::maintain(*frame, write_back, (bytes - start).min(PAGE));
+                Self::maintain(*frame, maintenance, (bytes - start).min(PAGE));
             }
         }
+    }
+
+    /// What a DMA page's cached lines need around a transfer.
+    #[derive(Clone, Copy)]
+    enum Maintenance {
+        /// Before the controller reads the page: write what the CPU wrote
+        /// back to memory.
+        Clean,
+        /// Before the controller writes the page: write back and drop every
+        /// line, so that no dirty line (the zeroes `Retype` left, or the last
+        /// write's bytes) is evicted over what the controller writes.
+        CleanInvalidate,
+        /// After the controller wrote the page: drop the lines a speculative
+        /// fetch may have loaded meanwhile, so that the CPU reads memory.
+        Invalidate,
     }
 
     /// The command moving `blocks` blocks for `op`.
@@ -400,7 +413,9 @@ mod component {
                         dma.describe(bytes);
                         if op == Op::Write {
                             Dma::copy(address, bytes, true);
-                            dma.maintain_bounce(true, bytes);
+                            dma.maintain_bounce(Maintenance::Clean, bytes);
+                        } else {
+                            dma.maintain_bounce(Maintenance::CleanInvalidate, bytes);
                         }
                         let moved = host.transfer(
                             command(op, count),
@@ -411,7 +426,7 @@ mod component {
                             },
                         );
                         if op == Op::Read && moved.is_ok() {
-                            dma.maintain_bounce(false, bytes);
+                            dma.maintain_bounce(Maintenance::Invalidate, bytes);
                             Dma::copy(address, bytes, false);
                         }
                         moved
@@ -551,15 +566,50 @@ mod component {
         Some(Card::bring_up(host))
     }
 
+    /// Read block 0 the way a client's read goes and say what it holds: a
+    /// boot card's master boot record ends in `0x55 0xaa` (bytes 510 and 511)
+    /// and gives its first partition's type at byte 450. Nothing is written,
+    /// so this runs on a board's boot card too.
+    fn check_first_block(
+        host: &mut Sdhci<'_, impl FnMut(u64)>,
+        dma: Option<&Dma>,
+        card: &Card,
+        moves: &str,
+    ) {
+        let mut words = [0_u32; 128];
+        let buffer = IoRec {
+            base: words.as_mut_ptr() as u64,
+            len: BLOCK_BYTES,
+        };
+        let status = transfer(host, dma, card, Op::Read, 0, &[buffer]);
+        if status != Status::Done {
+            log_println!("sdhci: block 0 read by {moves} failed: {status:?}");
+            return;
+        }
+        let bytes = |index: usize| words[index / 4].to_le_bytes()[index % 4];
+        if [bytes(510), bytes(511)] == [0x55, 0xaa] {
+            log_println!(
+                "sdhci: block 0 read by {moves}: a master boot record, first partition type {:#04x}",
+                bytes(450)
+            );
+        } else {
+            let first: [u8; 8] = core::array::from_fn(bytes);
+            let last: [u8; 8] = core::array::from_fn(|index| bytes(504 + index));
+            log_println!(
+                "sdhci: block 0 read by {moves}: no master boot record signature; \
+                 bytes 0..8 {first:02x?}, 504..512 {last:02x?}, {} of 512 zero",
+                (0..512).filter(|&index| bytes(index) == 0).count()
+            );
+            // Read it again by the data port: a signature there points at
+            // the DMA path, none at the card.
+            if dma.is_some() {
+                check_first_block(host, None, card, "the data port");
+            }
+        }
+    }
+
     /// Map the registers, bring the card up, say the exports can be served,
     /// then serve requests whenever the doorbell rings.
-    #[cfg_attr(
-        not(feature = "qemu"),
-        expect(
-            unused_variables,
-            reason = "the bring-up report prints over semihosting only"
-        )
-    )]
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
         let init = unsafe { driver_init(init_va) };
@@ -587,7 +637,7 @@ mod component {
         let card = match host.as_mut() {
             None => {
                 FAILURE.store(NO_CONTROLLER, Ordering::Release);
-                semi::println!("sdhci: {:#x}: no base clock", registers_paddr);
+                log_println!("sdhci: {registers_paddr:#x}: no base clock");
                 Err(CardError::NoCard)
             }
             Some(host) => {
@@ -605,11 +655,11 @@ mod component {
                 match &card {
                     None => {
                         FAILURE.store(NO_CONTROLLER, Ordering::Release);
-                        semi::println!("sdhci: {:#x}: the reset did not finish", registers_paddr);
+                        log_println!("sdhci: {registers_paddr:#x}: the reset did not finish");
                     }
                     Some(Ok(card)) => {
                         BLOCKS.store(card.blocks, Ordering::Release);
-                        semi::println!(
+                        log_println!(
                             "sdhci: {:#x} up, version {}, base clock {} Hz, blocks by {}: \
                              card {:#06x}, {} blocks, {} capacity",
                             registers_paddr,
@@ -624,14 +674,17 @@ mod component {
                                 "standard"
                             }
                         );
+                        check_first_block(host, dma.as_ref(), card, moves);
                     }
                     Some(Err(CardError::NoCard)) => {
                         FAILURE.store(NO_CARD, Ordering::Release);
-                        semi::println!("sdhci: {:#x} up, no card", registers_paddr);
+                        log_println!("sdhci: {registers_paddr:#x} up, no card");
                     }
                     Some(Err(failure @ CardError::Failed { step, .. })) => {
                         FAILURE.store(*step as u32, Ordering::Release);
-                        semi::println!("sdhci: card bring-up failed: {:?}", failure);
+                        log_println!(
+                            "sdhci: {registers_paddr:#x}: card bring-up failed: {failure:?}"
+                        );
                     }
                 }
                 // A controller that did not come up serves no requests.
