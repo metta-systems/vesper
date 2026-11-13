@@ -16,7 +16,7 @@ publish = false
 
 [features]
 default = []
-# Opt in to standard host integration tests of the card protocol and register values.
+# Opt in to standard host integration tests of the register values.
 host-tests = []
 qemu = ["libuser/qemu"]
 
@@ -26,6 +26,7 @@ bitbybit = { workspace = true }
 block = { workspace = true }
 derive-mmio = { workspace = true }
 libmmio = { workspace = true }
+libsd-card = { workspace = true }
 
 # The component itself only builds for Vesper; host tests use the library.
 [target.'cfg(target_os = "vesper")'.dependencies]

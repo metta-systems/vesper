@@ -17,6 +17,8 @@
 //!   `libdevicetree::brcm_pins`), which the driver sets up through `gpio_v1`;
 //! - for a DMA controller node, its `brcm,dma-channel-mask`: the channels the
 //!   firmware leaves to the ARM;
+//! - the rate of the node's first clock, when it is a `fixed-clock`
+//!   (`libdevicetree::fixed_clock_rate`);
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -86,6 +88,7 @@ use {
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
+        fixed_clock_rate,
         interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
     },
@@ -499,7 +502,9 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
 /// The node `links` lead to from `node` (none for a program, which has no
 /// node, so its chain starts with `compatible`): a property step reads the
 /// first cell of the current node's property as the phandle of the next node,
-/// and a `compatible` first step starts from the one node with that string.
+/// and a `compatible` first step starts from the first enabled node with that
+/// string (a disabled node has no instance; the Raspberry Pi trees describe
+/// the Arasan controller twice, once disabled, at one address).
 fn follow_links<'a, 'i, 'dt>(
     tree: &'a DevTreeIndex<'i, 'dt>,
     node: Option<&Node<'a, 'i, 'dt>>,
@@ -511,7 +516,9 @@ fn follow_links<'a, 'i, 'dt>(
             Link::Property(property) => {
                 node_by_phandle(tree, linked_phandle(current.as_ref()?, property)?)?
             }
-            Link::Compatible(compatible) if index == 0 => find_compatible(tree, &[compatible])?.0,
+            Link::Compatible(compatible) if index == 0 => tree
+                .nodes()
+                .find(|candidate| is_enabled(candidate) && is_compatible(candidate, compatible))?,
             Link::Compatible(_) => return None,
         });
     }
@@ -1174,6 +1181,12 @@ pub fn load_drivers(
             .node
             .as_ref()
             .and_then(brcm_dma_channel_mask)
+            .map_or(0, u64::from);
+        // ── A fixed clock's rate ─────────────────────────────────────────
+        init.clock_hz = instance
+            .node
+            .as_ref()
+            .and_then(|node| fixed_clock_rate(tree, node))
             .map_or(0, u64::from);
         init.notification = move_to(
             builder,

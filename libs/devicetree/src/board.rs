@@ -5,8 +5,8 @@
 //! boots on every board it is built for.
 
 use crate::{
-    DeviceTree, FallibleIterator, Node, PropReader, dma_address, is_compatible, is_enabled,
-    linked_phandle, node_by_phandle, property, regions,
+    DeviceTree, FallibleIterator, Node, PropReader, dma_address, fixed_clock_rate, is_compatible,
+    is_enabled, node_by_phandle, property, regions,
 };
 
 /// The Broadcom system on a chip, from the root node's `compatible` list.
@@ -219,15 +219,6 @@ fn is_usable_pl011(node: &Node<'_, '_, '_>) -> bool {
     is_compatible(node, "arm,pl011") && is_enabled(node) && regions(node).next().is_some()
 }
 
-/// The frequency of `node`'s first clock, when it is a fixed clock.
-fn fixed_clock_rate(tree: &DeviceTree<'_, '_>, node: &Node<'_, '_, '_>) -> Option<u32> {
-    let clock = node_by_phandle(tree.index(), linked_phandle(node, "clocks")?)?;
-    if !is_compatible(&clock, "fixed-clock") {
-        return None;
-    }
-    property(&clock, "clock-frequency")?.u32(0).ok()
-}
-
 impl<'i, 'dt> DeviceTree<'i, 'dt> {
     /// Which board this is.
     pub fn board(&self) -> Board<'dt> {
@@ -260,7 +251,8 @@ impl<'i, 'dt> DeviceTree<'i, 'dt> {
             .or_else(|| self.index().nodes().find(is_usable_pl011))?;
         Some(ConsoleUart {
             base: regions(&node).next()?.start,
-            clock: fixed_clock_rate(self, &node).map_or(UartClock::Firmware, UartClock::Fixed),
+            clock: fixed_clock_rate(self.index(), &node)
+                .map_or(UartClock::Firmware, UartClock::Fixed),
         })
     }
 

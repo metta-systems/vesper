@@ -140,6 +140,7 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 - [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (requires a GPIO component).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (such as `property`).
 - [ ] `sdhost-bcm2835`: wait for the controller's interrupt instead of polling, and move several blocks per command (CMD18/CMD25); then bundle it in the production image and validate it on a Raspberry Pi 3.
+- [ ] `sdhci`: validate on a Raspberry Pi 4 (EMMC2: ADMA2 into bounce pages below the 1 GiB DMA limit, the base clock from the firmware's EMMC2 clock if the capabilities give none) and a Raspberry Pi 5 (`brcm,bcm2712-sdhci`: the 200 MHz fixed clock, the configuration block's forced card detect and SD pin select, registers above 4 GiB); the boot card stays at 3.3 V and 25 MHz.
 - [ ] A read-only filesystem over `block_v1` (exFAT or ext4), with a file-finding interface, on the way to Mimisbrunnr's own storage interface.
 
 ## Phase 7 — Time and userspace scheduling
