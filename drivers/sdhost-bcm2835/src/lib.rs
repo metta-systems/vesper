@@ -1,8 +1,8 @@
 #![no_std]
 
 //! Register logic of the BCM2835 SDHOST controller, the Raspberry Pi's SD card
-//! interface (`brcm,bcm2835-sdhost`), and the SD card protocol on top of it
-//! ([`card`]).
+//! interface (`brcm,bcm2835-sdhost`), as a [`Bus`] for the SD card protocol
+//! of `libsd-card`.
 //!
 //! The controller runs by programmed IO: the driver moves every data word
 //! through the data register, so the data area needs no DMA mapping. It sends
@@ -12,16 +12,14 @@
 //! Resources: Broadcom never documented the controller, so the register layout
 //! and its quirks follow Linux `drivers/mmc/host/bcm2835.c` and QEMU
 //! `hw/sd/bcm2835_sdhost.c`; the card protocol follows the SD Physical Layer
-//! Simplified Specification (see [`card`]).
-
-pub mod card;
+//! Simplified Specification (see `libsd-card`).
 
 use {
     arbitrary_int::{u4, u5, u6, u11},
     bitbybit::bitfield,
-    card::{BLOCK_BYTES, Bus, BusError, Command, Data, Response},
     derive_mmio::Mmio,
     libmmio::assert_register_offsets,
+    libsd_card::{BLOCK_BYTES, Bus, BusError, Command, Data, Response},
 };
 
 /// Command register: writing it with `new` set sends the command.
@@ -326,7 +324,7 @@ impl<'registers> Sdhost<'registers> {
         self.wait_data_idle()
     }
 
-    /// Read the block a [`card::READ_SINGLE_BLOCK`] command started, giving
+    /// Read the block a [`libsd_card::READ_SINGLE_BLOCK`] command started, giving
     /// each word to `store` in order.
     ///
     /// # Errors
@@ -341,7 +339,7 @@ impl<'registers> Sdhost<'registers> {
         })
     }
 
-    /// Write the block a [`card::WRITE_BLOCK`] command started, taking each
+    /// Write the block a [`libsd_card::WRITE_BLOCK`] command started, taking each
     /// word from `load` in order.
     ///
     /// # Errors

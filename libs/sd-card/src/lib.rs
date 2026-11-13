@@ -1,5 +1,8 @@
+#![no_std]
+
 //! The SD card protocol: bringing a card from power-up to the transfer state
 //! and reading its size, over any controller that sends commands ([`Bus`]).
+//! The SDHOST and SDHCI drivers share it.
 //!
 //! Section numbers are those of the SD Physical Layer Simplified
 //! Specification, version 9.10.
@@ -22,9 +25,10 @@ pub enum Response {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Data {
     None,
-    /// One block from the card
+    /// Blocks from the card: one, or for a multiple-block command as many as
+    /// the controller was told
     Read,
-    /// One block to the card
+    /// Blocks to the card, counted the same way
     Write,
 }
 
@@ -70,10 +74,22 @@ pub const READ_SINGLE_BLOCK: Command = Command {
     data: Data::Read,
     ..Command::new(17, Response::Short)
 };
+/// CMD18: read blocks until a CMD12 (`STOP_TRANSMISSION`) stops the card; a
+/// controller with Auto CMD12 sends it after the last block.
+pub const READ_MULTIPLE_BLOCK: Command = Command {
+    data: Data::Read,
+    ..Command::new(18, Response::Short)
+};
 /// CMD24: write one block.
 pub const WRITE_BLOCK: Command = Command {
     data: Data::Write,
     ..Command::new(24, Response::Short)
+};
+/// CMD25: write blocks until a CMD12 stops the card, as for
+/// [`READ_MULTIPLE_BLOCK`].
+pub const WRITE_MULTIPLE_BLOCK: Command = Command {
+    data: Data::Write,
+    ..Command::new(25, Response::Short)
 };
 /// ACMD41: the host's capacity support; the card answers its OCR.
 pub const SD_SEND_OP_COND: Command = Command::new(41, Response::ShortNoCrc);
