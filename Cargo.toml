@@ -51,6 +51,8 @@ members = [
   "drivers/sdhost-bcm2835",
   "drivers/sdhost-bcm2835/client",
   "drivers/sdhost-bcm2835/server",
+  # SDHCI card controller component (serves the same block_v1)
+  "drivers/sdhci",
   # GPIO component and its gpio_v1 interface crates
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
@@ -70,6 +72,7 @@ members = [
   "kernel/tests/audio-test",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
+  "kernel/tests/sdhci-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
@@ -113,6 +116,7 @@ members = [
   "libs/primitives",
   "libs/print",
   "libs/qemu",
+  "libs/sd-card",
   "libs/serial-channel",
   "libs/serial-trace",
   "libs/syscall",
@@ -275,6 +279,7 @@ libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libframebuffer = { path = "userspace/libs/framebuffer", package = "vesper-framebuffer" }
 libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
+libsd-card = { path = "libs/sd-card", package = "vesper-sd-card" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
 libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }

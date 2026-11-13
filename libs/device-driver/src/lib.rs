@@ -20,6 +20,8 @@
 //!   by its first `Ack`;
 //! - for a DMA controller node, the channels it leaves to the ARM
 //!   (`brcm,dma-channel-mask`);
+//! - the rate of the node's first clock, when the device tree gives it as a
+//!   `fixed-clock`;
 //! - the Notification, a RAM Untyped (with its physical base and the address
 //!   the node's device reaches it at, for DMA buffers), the driver's Time, its
 //!   `AddressSpace` and its own table;
@@ -443,6 +445,10 @@ pub struct DriverInit {
     /// The DMA channels a DMA controller node leaves to the ARM, one bit
     /// per channel (`brcm,dma-channel-mask`); zero for every other node
     pub dma_channel_mask: u64,
+    /// The rate of the node's first clock in Hz, when the device tree gives it
+    /// as a `fixed-clock`; zero for a clock another provider runs (the
+    /// firmware, through the mailbox) and for a node without clocks
+    pub clock_hz: u64,
     /// The `VideoCore` memory a driver that asked for it holds: the memory the
     /// firmware allocates framebuffers in, outside every other Untyped
     pub video_count: u64,
@@ -541,6 +547,7 @@ impl DriverInit {
             pull: NO_PULL,
         }; MAX_PINS],
         dma_channel_mask: 0,
+        clock_hz: 0,
         video_count: 0,
         video: [VideoBlock {
             key: 0,

@@ -671,7 +671,7 @@ mod tests {
             super::{RPI3, RPI4, RPI5, with_tree},
             vesper_devicetree::{
                 ActivityLed, Board, ConsoleUart, DeviceTree, Gpio, GpioKind, Mailbox, Soc,
-                UartClock,
+                UartClock, find_compatible, fixed_clock_rate,
             },
         };
 
@@ -860,6 +860,25 @@ mod tests {
             // On the always-on `brcm,brcmstb-gpio` block, which no boot
             // program drives.
             with_tree(RPI5, |tree| assert_eq!(tree.activity_led(), None));
+        }
+
+        #[test]
+        fn sd_controller_clocks() {
+            let clock_of = |tree: &DeviceTree<'_, '_>, compatible| {
+                let (node, _) =
+                    find_compatible(tree.index(), &[compatible]).expect("the SD controller");
+                fixed_clock_rate(tree.index(), &node)
+            };
+            // The Raspberry Pi 5's SD controller runs from a fixed 200 MHz
+            // clock (`clk_emmc2`).
+            with_tree(RPI5, |tree| {
+                assert_eq!(clock_of(tree, "brcm,bcm2712-sdhci"), Some(200_000_000));
+            });
+            // The Raspberry Pi 4's EMMC2 clock is the clock manager's: the
+            // firmware tells its rate.
+            with_tree(RPI4, |tree| {
+                assert_eq!(clock_of(tree, "brcm,bcm2711-emmc2"), None);
+            });
         }
     }
 }

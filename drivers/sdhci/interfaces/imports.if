@@ -1,0 +1,9 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The base clock, when neither the controller's capabilities nor a fixed clock
+# in the device tree give it, is the firmware's EMMC2 clock, whose rate the
+# firmware reports through the mailbox, found by the firmware node's
+# compatible string.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_clock_rate }

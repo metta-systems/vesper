@@ -52,6 +52,16 @@ binary = "fb"
 interfaces = "../../drivers/fb/interfaces"
 video_memory = true
 
+# The SD card slot of the Raspberry Pi 4 and 5 (and, under QEMU, the Arasan
+# controller that holds QEMU's card): brings the card up at boot and serves
+# block_v1. Its DMA bounce pages and descriptor table need more than the
+# default memory.
+[[driver]]
+name = "sdhci"
+binary = "sdhci"
+interfaces = "../../drivers/sdhci/interfaces"
+memory = 131072
+
 # The root dispatcher: the EL0 program that decides which Thread of the root
 # Scheduler runs, by priority and round-robin within a priority. Kickstart
 # does not start it: once every other
