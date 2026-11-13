@@ -8,9 +8,9 @@
 //!   returns `CounterOverflow`, leaves the counter unchanged, and completes
 //!   every queued `Await` with the same error so waiters observe the
 //!   producer's failure instead of blocking indefinitely
-//! - `Await` `1`: `x2` target, `x3` timeout (nanoseconds; `u64::MAX` =
-//!   infinite; zero and finite values are invalid/unsupported until the
-//!   time subsystem exists), `x4..x7` zero. An already-satisfied await
+//! - `Await` `1`: `x2` target, `x3` timeout (nanoseconds from now;
+//!   `u64::MAX` = infinite; zero is invalid; a finite deadline ends the wait
+//!   with `TimedOut`), `x4..x7` zero. An already-satisfied await
 //!   returns the current value. An await that would block reports
 //!   `InvokeOutcome::Blocked`: the syscall entry parks the caller and
 //!   switches, and the caller's return happens when the record completes.
