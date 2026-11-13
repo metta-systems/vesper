@@ -1,0 +1,40 @@
+# What board-test bundles (see vesper-image-build): the drivers being brought
+# up on new boards, whose lines the log server writes on the UART; Kickstart
+# itself prints on semihosting only once it drops to EL1.
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[component]]
+name = "log_server"
+binary = "log-server"
+interfaces = "../../../userspace/log-server/interfaces"
+active = true
+program = true
+serial = true
+
+# The mailbox component, through which the SD controller may learn its base
+# clock.
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+# The SD card controller (EMMC2 on the Raspberry Pi 4, the SD controller on
+# the Raspberry Pi 5): it logs its bring-up and reads block 0, and writes
+# nothing to the card.
+[[driver]]
+name = "sd"
+binary = "sdhci"
+interfaces = "../../../drivers/sdhci/interfaces"
+memory = 131072
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

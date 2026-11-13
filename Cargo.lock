@@ -490,6 +490,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "board-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3864,6 +3886,7 @@ dependencies = [
  "vesper-block-channel",
  "vesper-device-driver",
  "vesper-io-channel",
+ "vesper-log-client",
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",

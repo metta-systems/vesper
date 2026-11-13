@@ -73,6 +73,7 @@ members = [
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
   "kernel/tests/sdhci-test",
+  "kernel/tests/board-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",

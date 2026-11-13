@@ -4,6 +4,10 @@
 # starts it at boot, without a device tree node, with an extra Thread. It
 # imports block_v1 through the Arasan controller's compatible string.
 
+# The controller imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked and its lines print on semihosting only.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
 # The mailbox component, through which the controller may learn its base
 # clock.
 [[driver]]

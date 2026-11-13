@@ -267,6 +267,9 @@ _build-log-probe board=boards features='qemu' image_features=features: (_cross-b
 # Build the log-test e2e kernel: the PL011 driver, the log server and a probe whose Threads overflow a stack and panic
 _build-log-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
 
+# Build the board-test e2e kernel (the PL011, the log server, the mailbox and the SDHCI component), for `just _test-board`
+_build-board-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'board-test' board)
+
 # Build the audio-test e2e kernel (the clock manager component, the DMA controller component, the PWM audio driver, the gpio component and the PL011 driver)
 _build-audio-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'audio-test' board)
 
@@ -333,6 +336,14 @@ _build-midi-test-hw board=boards: (_build-components board '' '') (_build-midi-p
 # Build midi-test for the Raspberry Pi 3 and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000 _boot-midi-test`): with headphones in the jack and `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the player plays Doom's E1M1 music, looping, at volume 64, and nothing else runs. The UART shows the song's timing and first notes, the ARM and core clocks, and every 256 periods (about 3 s) the music summary (`service` min/avg/max against the period, packets, periods with sound, playing, the longest refill, underruns), the level (peak and RMS), the synthesiser's peak voice count and the song position
 _boot-midi-test: _build-midi-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-' + boards_hw + '.bin' }}"
+
+# Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds on the UART through the log server
+_build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
+
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds; nothing is written to the card
+[group("hw")]
+boot-board-test: _build-board-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
@@ -572,7 +583,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -820,6 +831,51 @@ _test-log board=boards features=test_kernel_features config=(board + '-' + repla
       grep -a -q "${prefix}${expected}" "$serial" || { echo "log-test: the UART got no line \"$expected\" from the log server"; exit 1; }
     done
     echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
+
+# Boot board-test on raspi4b with a 4 MiB card image holding a master boot record (signature 0x55aa, first partition type 0x0c): the SDHCI component's bring-up and block-0 lines must reach the UART through the log server, as on a board. QEMU holds the card on the Arasan controller, by the data port; EMMC2 comes up without one. The semihosting console goes to target/board-test.log, the UART to target/board-test-serial.log
+_test-board board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-board-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/board-test.log"
+    serial="{{ target_root }}/board-test-serial.log"
+    image="{{ target_root }}/board-test.img"
+    rm -f "$log" "$serial"
+    dd if=/dev/zero of="${image}" bs=1048576 count=4 2>/dev/null
+    printf '\x0c' | dd of="${image}" bs=1 seek=450 conv=notrunc 2>/dev/null
+    printf '\x55\xaa' | dd of="${image}" bs=1 seek=510 conv=notrunc 2>/dev/null
+    # The kernel waits for good once the drivers are up: the run is stopped once
+    # every expected line is on the UART, or after 60 s.
+    {{ qemu }} -M raspi4b -display none -monitor none \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -drive if=sd,format=raw,file="${image}" \
+      -dtb "{{ rpi4_dtb }}" -kernel "{{ images_dir / 'board-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] '
+    expected=(
+      "I log-server: [0-9]* clients, serial output attached"
+      "I sdhci: 0xfe300000 up, version 2, base clock 52000000 Hz, blocks by the data port: card 0x[0-9a-f]*, 8192 blocks, standard capacity"
+      "I sdhci: block 0 read by the data port: a master boot record, first partition type 0x0c"
+      "I sdhci: 0xfe340000 up, no card"
+    )
+    all_seen() {
+      for line in "${expected[@]}"; do
+        grep -a -q "${prefix}${line}" "$serial" 2>/dev/null || return 1
+      done
+    }
+    for _tick in $(seq 1 120); do
+      all_seen && break
+      kill -0 "$qemu_pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill "$qemu_pid" 2>/dev/null
+    wait "$qemu_pid" 2>/dev/null
+    grep -a "board-test: \|sdhci: \|PANICKED" "$log" | tail -12
+    cat "$serial"
+    if grep -a -q "PANICKED" "$log"; then echo "board-test: a panic; see $log"; exit 1; fi
+    for line in "${expected[@]}"; do
+      grep -a -q "${prefix}${line}" "$serial" || { echo "board-test: the UART got no line \"$line\" from the log server"; exit 1; }
+    done
+    echo "{{ ok_label }} the SDHCI component's bring-up and block-0 lines reached the UART through the log server"
 
 # Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends the test song (Bach's Prelude in C) to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
 _test-midi board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board)

@@ -1,8 +1,6 @@
 // Host builds only check the interface implementation; the component itself
 // runs on Vesper.
 #![cfg_attr(target_os = "vesper", no_std, no_main)]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
-#![cfg_attr(all(target_os = "vesper", feature = "qemu"), feature(format_args_nl))]
 
 //! EL0 driver component for a standard SD host controller (SDHCI), serving
 //! `block_v1` (see `interfaces/block_v1.if`).
@@ -76,6 +74,7 @@ mod component {
             device_address, driver_compatible, driver_init, map_device_pages,
         },
         libio_channel::{DataArea, IoRec, NoEvent, Packet},
+        liblog_client::log_println,
         libmeddle_runtime::PAGE_BYTES,
         libobject::{
             CapError, EventCountKey, FrameAttribute, FrameKey, IrqHandlerKey, KeyTableKey,
@@ -86,7 +85,6 @@ mod component {
             Card, CardError, Command, READ_MULTIPLE_BLOCK, READ_SINGLE_BLOCK, WRITE_BLOCK,
             WRITE_MULTIPLE_BLOCK,
         },
-        libuser::semihosting as semi,
         mailbox_client::mailbox_v1::{Bindings, Client, Clock},
         sdhci::{Bcm2712Config, Mover, RegisterBlock, Sdhci, adma2_descriptor, configure_bcm2712},
     };
@@ -551,15 +549,39 @@ mod component {
         Some(Card::bring_up(host))
     }
 
+    /// Read block 0 the way a client's read goes and say what it holds: a
+    /// boot card's master boot record ends in `0x55 0xaa` (bytes 510 and 511)
+    /// and gives its first partition's type at byte 450. Nothing is written,
+    /// so this runs on a board's boot card too.
+    fn check_first_block(
+        host: &mut Sdhci<'_, impl FnMut(u64)>,
+        dma: Option<&Dma>,
+        card: &Card,
+        moves: &str,
+    ) {
+        let mut words = [0_u32; 128];
+        let buffer = IoRec {
+            base: words.as_mut_ptr() as u64,
+            len: BLOCK_BYTES,
+        };
+        let status = transfer(host, dma, card, Op::Read, 0, &[buffer]);
+        if status != Status::Done {
+            log_println!("sdhci: block 0 read by {moves} failed: {status:?}");
+            return;
+        }
+        let bytes = |index: usize| words[index / 4].to_le_bytes()[index % 4];
+        if [bytes(510), bytes(511)] == [0x55, 0xaa] {
+            log_println!(
+                "sdhci: block 0 read by {moves}: a master boot record, first partition type {:#04x}",
+                bytes(450)
+            );
+        } else {
+            log_println!("sdhci: block 0 read by {moves}: no master boot record signature");
+        }
+    }
+
     /// Map the registers, bring the card up, say the exports can be served,
     /// then serve requests whenever the doorbell rings.
-    #[cfg_attr(
-        not(feature = "qemu"),
-        expect(
-            unused_variables,
-            reason = "the bring-up report prints over semihosting only"
-        )
-    )]
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
         let init = unsafe { driver_init(init_va) };
@@ -587,7 +609,7 @@ mod component {
         let card = match host.as_mut() {
             None => {
                 FAILURE.store(NO_CONTROLLER, Ordering::Release);
-                semi::println!("sdhci: {:#x}: no base clock", registers_paddr);
+                log_println!("sdhci: {registers_paddr:#x}: no base clock");
                 Err(CardError::NoCard)
             }
             Some(host) => {
@@ -605,11 +627,11 @@ mod component {
                 match &card {
                     None => {
                         FAILURE.store(NO_CONTROLLER, Ordering::Release);
-                        semi::println!("sdhci: {:#x}: the reset did not finish", registers_paddr);
+                        log_println!("sdhci: {registers_paddr:#x}: the reset did not finish");
                     }
                     Some(Ok(card)) => {
                         BLOCKS.store(card.blocks, Ordering::Release);
-                        semi::println!(
+                        log_println!(
                             "sdhci: {:#x} up, version {}, base clock {} Hz, blocks by {}: \
                              card {:#06x}, {} blocks, {} capacity",
                             registers_paddr,
@@ -624,14 +646,17 @@ mod component {
                                 "standard"
                             }
                         );
+                        check_first_block(host, dma.as_ref(), card, moves);
                     }
                     Some(Err(CardError::NoCard)) => {
                         FAILURE.store(NO_CARD, Ordering::Release);
-                        semi::println!("sdhci: {:#x} up, no card", registers_paddr);
+                        log_println!("sdhci: {registers_paddr:#x} up, no card");
                     }
                     Some(Err(failure @ CardError::Failed { step, .. })) => {
                         FAILURE.store(*step as u32, Ordering::Release);
-                        semi::println!("sdhci: card bring-up failed: {:?}", failure);
+                        log_println!(
+                            "sdhci: {registers_paddr:#x}: card bring-up failed: {failure:?}"
+                        );
                     }
                 }
                 // A controller that did not come up serves no requests.
