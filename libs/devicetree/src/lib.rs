@@ -16,6 +16,7 @@
 mod board;
 mod dump;
 pub mod interrupts;
+pub mod pci;
 mod tree;
 
 pub use {
@@ -40,7 +41,7 @@ pub type Node<'a, 'i, 'dt> = DevTreeIndexNode<'a, 'i, 'dt>;
 pub type Prop<'a, 'i, 'dt> = DevTreeIndexProp<'a, 'i, 'dt>;
 
 /// Default `#address-cells` when a bus does not specify it (`DTSpec` §2.3.5).
-const DEFAULT_ADDRESS_CELLS: u32 = 2;
+pub(crate) const DEFAULT_ADDRESS_CELLS: u32 = 2;
 /// Default `#size-cells` when a bus does not specify it (`DTSpec` §2.3.5).
 const DEFAULT_SIZE_CELLS: u32 = 1;
 
@@ -86,7 +87,7 @@ pub fn reg_cells(node: &Node<'_, '_, '_>) -> Cells {
 }
 
 /// Read a `count`-cell big-endian number starting at u32 `index` of `prop`.
-fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
+pub(crate) fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
     match count {
         0 => Some(0),
         1 => prop.u32(index).ok().map(u64::from),
