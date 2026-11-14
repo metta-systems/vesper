@@ -75,7 +75,7 @@ macro_rules! note {
 #[cfg(target_os = "vesper")]
 mod component {
     use {
-        aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Readable},
+        aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Read},
         core::{
             cell::UnsafeCell,
             sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},

@@ -30,7 +30,7 @@ mod components {
 }
 
 use {
-    aarch64_cpu::registers::{Readable, TTBR0_EL1},
+    aarch64_cpu::registers::{Read, TTBR0_EL1},
     core::sync::atomic::Ordering,
     endpoint_protocol::{
         CLIENT_REQUESTS, ClientInit, ClientReport, EndpointInit, INIT_VA, REPORT_VA, STACK_REGION,

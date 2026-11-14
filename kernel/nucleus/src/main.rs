@@ -197,7 +197,7 @@ extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn current_elx_synchronous(e: &mut ExceptionContext) {
     {
-        use aarch64_cpu::registers::{ESR_EL1, Readable};
+        use aarch64_cpu::registers::{ESR_EL1, Read};
 
         const TEST_SVC_ID: u64 = 0x1337;
 
@@ -244,7 +244,7 @@ extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
     // Only an SVC is a capability invocation; every other synchronous
     // exception from EL0 is a fault, delivered to the fault handler.
     if !is_aarch64_svc() {
-        use aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Readable};
+        use aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Read};
 
         let faulting = e.save();
         let info = FaultInfo {
@@ -312,7 +312,7 @@ extern "C" fn lower_aarch32_serror(e: &mut ExceptionContext) {
 /// the trapping instruction. Production builds halt on it like any `EL1t` fault.
 #[cfg(feature = "fp_trap_test")]
 fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
-    use aarch64_cpu::registers::{ESR_EL1, Readable};
+    use aarch64_cpu::registers::{ESR_EL1, Read};
 
     if !ESR_EL1.matches_all(ESR_EL1::EC::TrappedFP) {
         return false;
@@ -335,7 +335,7 @@ fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
 /// one syscall, so every `svc #n` is the same invocation (see the contract's
 /// ordinary control invocation baseline).
 fn is_aarch64_svc() -> bool {
-    use aarch64_cpu::registers::{ESR_EL1, Readable};
+    use aarch64_cpu::registers::{ESR_EL1, Read};
 
     // ESR_EL1 bits 31:26 hold the exception class; 0x15 is an SVC
     // instruction executed in AArch64 state (see
@@ -870,6 +870,6 @@ fn get_pc() -> u64 {
 }
 
 fn get_sp() -> u64 {
-    use aarch64_cpu::registers::Readable;
+    use aarch64_cpu::registers::Read;
     aarch64_cpu::registers::SP.get()
 }

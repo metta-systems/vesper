@@ -17,7 +17,7 @@ use {
     core::intrinsics::unlikely,
     libaddress::{Address, Physical},
     liblog::println,
-    tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
+    tock_registers::{Read, Write},
 };
 
 /// MMU enable errors.

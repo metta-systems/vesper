@@ -6,8 +6,8 @@ use {
         asm::{self, barrier},
         registers::{
             CNTKCTL_EL1, CPACR_EL1, ELR_EL2, HCR_EL2, MAIR_EL1, MDSCR_EL1, PMUSERENR_EL0,
-            ReadWriteable, SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TPIDR_EL0,
-            TPIDRRO_EL0, TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Writeable,
+            SCTLR_EL1, SP_EL0, SP_EL1, SPSR_EL1, SPSR_EL2, TCR_EL1, TPIDR_EL0, TPIDRRO_EL0,
+            TTBR0_EL1, TTBR1_EL1, VBAR_EL1, Write,
         },
     },
 };

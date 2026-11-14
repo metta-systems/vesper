@@ -10,7 +10,7 @@
 //! as in the other suites: it occupies `AddressSpace` index 1 and ASID 2.
 
 use {
-    aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
+    aarch64_cpu::registers::{Read, TCR_EL1, TTBR0_EL1, TTBR1_EL1},
     core::{arch::asm, slice},
     kickstart::bootstrap::{BootState, bootstrap_nucleus, retained_init_memory},
     libaddress::PhysAddr,

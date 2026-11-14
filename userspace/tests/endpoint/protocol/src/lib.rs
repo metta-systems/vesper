@@ -8,7 +8,7 @@
 //! parameters into a page mapped at [`INIT_VA`] in that component only.
 
 use {
-    aarch64_cpu::registers::{Readable, TPIDR_EL0, Writeable},
+    aarch64_cpu::registers::{Read, TPIDR_EL0, Write},
     core::sync::atomic::AtomicU64,
 };
 

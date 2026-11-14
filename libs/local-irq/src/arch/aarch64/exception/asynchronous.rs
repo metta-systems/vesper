@@ -7,7 +7,7 @@
 use {
     aarch64_cpu::registers::*,
     core::arch::asm,
-    tock_registers::interfaces::{Readable, Writeable},
+    tock_registers::{Read, Write},
 };
 
 //--------------------------------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 use {
     aarch64_cpu::registers::{ID_AA64MMFR0_EL1, SCTLR_EL1, TCR_EL1},
     liblog::println,
-    tock_registers::interfaces::Readable,
+    tock_registers::Read,
 };
 
 /// Parse the `ID_AA64MMFR0_EL1` register for runtime information about supported MMU features.

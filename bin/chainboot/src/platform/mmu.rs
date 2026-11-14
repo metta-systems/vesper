@@ -27,7 +27,7 @@ use {
     bitbybit::bitfield,
     core::{arch::asm, ptr},
     liblocking::{IRQSafeNullLock, interface::Mutex},
-    tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
+    tock_registers::{Read, Write},
 };
 
 /// Address space of one level-2 table: 512 blocks of 2 MiB.

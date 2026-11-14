@@ -29,7 +29,7 @@ mod components {
 }
 
 use {
-    aarch64_cpu::registers::{Readable, TTBR0_EL1},
+    aarch64_cpu::registers::{Read, TTBR0_EL1},
     fp_trap_protocol::{INIT_VA, ProbeInit, STACK_REGION, TRAPPED_BIT, probe, trapped},
     kickstart::{
         bootstrap::{bootstrap_nucleus, retained_init_memory},

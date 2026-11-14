@@ -9,7 +9,7 @@
 pub use libcomponent_loader::paging::read_leaf;
 use {
     crate::registers,
-    aarch64_cpu::registers::{Readable, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
+    aarch64_cpu::registers::{Read, TCR_EL1, TTBR0_EL1, TTBR1_EL1, VBAR_EL1},
     core::sync::atomic::{AtomicU64, Ordering},
     libaddress::PhysAddr,
     libcomponent_loader::{

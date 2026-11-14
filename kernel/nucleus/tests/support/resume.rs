@@ -16,7 +16,7 @@ use {
             thread::ThreadId,
         },
     },
-    aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, Writeable},
+    aarch64_cpu::registers::{Read, SCTLR_EL1, TCR_EL1, Write},
     libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
     libobject::{
         CapError, KeySlot, ObjectType, RawKey, Rights,
@@ -440,7 +440,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
             )
             .unwrap_or_else(|e| panic!("AS cap: {:?}", e.error.code()));
         let ttbr_before = {
-            use aarch64_cpu::registers::{Readable, TTBR0_EL1};
+            use aarch64_cpu::registers::{Read, TTBR0_EL1};
             TTBR0_EL1.get()
         };
         let prepared = match cap_invoke(nucleus, key, 0, &[0; 6]) {
@@ -453,7 +453,7 @@ fn activate_returns_checked_metadata_without_a_hardware_transition_or_state_chan
         assert_eq!(prepared.asid(), 1);
         assert_eq!(prepared.keytable(), source_binding);
         {
-            use aarch64_cpu::registers::{Readable, TTBR0_EL1};
+            use aarch64_cpu::registers::{Read, TTBR0_EL1};
             assert_eq!(TTBR0_EL1.get(), ttbr_before);
         }
         assert_eq!(nucleus.current_thread, Some(waits.source));

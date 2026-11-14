@@ -193,7 +193,7 @@ version = "0.0.1"
 # target
 #========
 arm-gic = { version = "0.10", default-features = false }
-aarch64-cpu = { version = "11.2", git = "https://github.com/rust-embedded/aarch64-cpu", branch = "main" }
+aarch64-cpu = { version = "12.0" }
 arbitrary-int = { version = "2.2", default-features = false }
 bitbybit  = { version = "2.0" }
 # bitflags = { version = "2.10" }
@@ -298,7 +298,7 @@ log-interface-client = { path = "userspace/log-server/client" }
 libheap = { path = "libs/heap", package = "vesper-heap" }
 liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
-tock-registers = { version = "0.10" }
+tock-registers = { version = "0.12" }
 usize_conversions = { version = "0.2" }
 #======
 # host

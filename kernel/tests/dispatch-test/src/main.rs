@@ -31,7 +31,7 @@ mod components {
 }
 
 use {
-    aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Readable, Writeable},
+    aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Read, Write},
     kickstart::{
         bootstrap::{
             bootstrap_nucleus, device_untypeds, interrupt_controllers, retained_init_memory,
