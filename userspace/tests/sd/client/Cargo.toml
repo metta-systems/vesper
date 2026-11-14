@@ -1,7 +1,7 @@
 [package]
 name = "sd-test-client"
 
-description = "sd-test program: reads and writes the SD card through the block_v1 import of the SDHOST component, checks the request rules and reports."
+description = "sd-test and sdhci-test program: reads and writes the SD card through the block_v1 import of the SDHOST or SDHCI component, checks the request rules and reports."
 
 authors = { workspace = true }
 categories = { workspace = true }

@@ -20,6 +20,8 @@
 //!   by its first `Ack`;
 //! - for a DMA controller node, the channels it leaves to the ARM
 //!   (`brcm,dma-channel-mask`);
+//! - the rate of the node's first clock, when the device tree gives it as a
+//!   `fixed-clock`;
 //! - the Notification, a RAM Untyped (with its physical base and the address
 //!   the node's device reaches it at, for DMA buffers), the driver's Time, its
 //!   `AddressSpace` and its own table;
@@ -177,7 +179,7 @@ pub const MAX_AREAS: usize = 8;
 /// Most resources a component maps.
 pub const MAX_RESOURCES: usize = 4;
 
-/// Where the init page is mapped, read-only, in every driver.
+/// Where the init record's [`INIT_PAGES`] pages are mapped in every driver.
 pub const INIT_VA: u64 = 0x2000_0000;
 /// The 2 MiB span holding the driver's guarded stack.
 pub const STACK_REGION: u64 = 0x3000_0000;
@@ -309,10 +311,11 @@ pub struct Interrupt {
     pub line: u64,
 }
 
-/// One block of `VideoCore` memory: a device Untyped in the driver's table.
+/// One aligned block of device memory outside every register range: a device
+/// Untyped in the driver's table (`VideoCore` memory, a PCI window).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct VideoBlock {
+pub struct DeviceBlock {
     /// Wire key of the device Untyped in the driver's table
     pub key: u64,
     /// Physical base of the block
@@ -321,10 +324,187 @@ pub struct VideoBlock {
     pub size_bits: u64,
 }
 
-impl VideoBlock {
+impl DeviceBlock {
     /// Physical address just past the block.
     pub const fn end(&self) -> u64 {
         self.base + (1 << self.size_bits)
+    }
+}
+
+/// Most outbound or inbound windows of one PCI host bridge.
+pub const MAX_PCI_WINDOWS: usize = 4;
+/// Most device memory blocks a PCI host bridge's outbound windows split into.
+pub const MAX_WINDOW_BLOCKS: usize = 8;
+/// Most resets of one node a PCI host bridge driver receives.
+pub const MAX_RESETS: usize = 4;
+/// Bytes of [`Reset::name`].
+pub const RESET_NAME_BYTES: usize = 8;
+/// A [`PciHost`] index naming nothing.
+pub const NONE_INDEX: u64 = u64::MAX;
+
+/// [`PciWindow::space`]: the `phys.hi` space codes of the PCI bus binding.
+pub const PCI_SPACE_IO: u64 = 1;
+pub const PCI_SPACE_MEMORY32: u64 = 2;
+pub const PCI_SPACE_MEMORY64: u64 = 3;
+
+/// One window of a PCI host bridge, from its node's `ranges` (outbound) or
+/// `dma-ranges` (inbound).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PciWindow {
+    /// The address on the PCI side
+    pub pci: u64,
+    /// The CPU physical address
+    pub cpu: u64,
+    pub size: u64,
+    /// The space code: [`PCI_SPACE_MEMORY32`], [`PCI_SPACE_MEMORY64`] or
+    /// [`PCI_SPACE_IO`]
+    pub space: u64,
+    /// One for a prefetchable window
+    pub prefetchable: u64,
+}
+
+/// [`MsiParent::kind`]: the node names no MSI controller.
+pub const MSI_NONE: u64 = 0;
+/// [`MsiParent::kind`]: the bridge serves its own MSIs (its `msi-parent` is
+/// itself).
+pub const MSI_OWN: u64 = 1;
+/// [`MsiParent::kind`]: another node serves them, one interrupt line per
+/// vector (`brcm,bcm2712-mip`).
+pub const MSI_CONTROLLER: u64 = 2;
+
+/// Where a PCI host bridge's MSIs go.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MsiParent {
+    /// [`MSI_NONE`], [`MSI_OWN`] or [`MSI_CONTROLLER`]
+    pub kind: u64,
+    /// For [`MSI_CONTROLLER`]: the controller's registers, by index in
+    /// [`DriverInit::regions`]
+    pub region: u64,
+    /// For [`MSI_CONTROLLER`]: the PCI address devices write their MSIs to
+    /// (its second `reg` entry, untranslated)
+    pub doorbell: u64,
+    /// For [`MSI_CONTROLLER`]: the controller's vector number of its first
+    /// interrupt line (`brcm,msi-offset`)
+    pub first_vector: u64,
+    /// For [`MSI_CONTROLLER`]: its vectors, one interrupt line each
+    pub vector_count: u64,
+    /// For [`MSI_CONTROLLER`]: the interrupt of its first vector, by index in
+    /// [`DriverInit::interrupts`], or [`NONE_INDEX`]
+    pub interrupt: u64,
+}
+
+/// One reset of the node, from its `resets`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Reset {
+    /// The reset controller's registers, by index in [`DriverInit::regions`]
+    pub region: u64,
+    /// The reset's specifier cell (zero for a controller with one reset)
+    pub id: u64,
+    /// Its `reset-names` entry, NUL-padded
+    pub name: [u8; RESET_NAME_BYTES],
+}
+
+impl Reset {
+    /// Its `reset-names` entry ("" if it has none or it is not UTF-8).
+    pub fn name(&self) -> &str {
+        let len = self
+            .name
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(RESET_NAME_BYTES);
+        core::str::from_utf8(&self.name[..len]).unwrap_or("")
+    }
+}
+
+/// What a PCI host bridge driver receives (manifest `pci_host = true`): its
+/// node's windows, the device memory behind the outbound ones, its MSI
+/// controller and its resets. The registers of the MSI controller and of the
+/// reset controllers follow the node's own in [`DriverInit::regions`] and
+/// [`DriverInit::pages`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PciHost {
+    pub window_count: u64,
+    /// Outbound: CPU addresses that reach PCI (`ranges`)
+    pub windows: [PciWindow; MAX_PCI_WINDOWS],
+    pub inbound_count: u64,
+    /// Inbound: PCI addresses that reach the CPU's side (`dma-ranges`)
+    pub inbound: [PciWindow; MAX_PCI_WINDOWS],
+    pub block_count: u64,
+    /// Device Untypeds over the outbound windows' memory
+    pub blocks: [DeviceBlock; MAX_WINDOW_BLOCKS],
+    pub msi: MsiParent,
+    pub reset_count: u64,
+    pub resets: [Reset; MAX_RESETS],
+}
+
+impl PciHost {
+    /// A record with nothing in it.
+    pub const EMPTY: Self = Self {
+        window_count: 0,
+        windows: [PciWindow {
+            pci: 0,
+            cpu: 0,
+            size: 0,
+            space: 0,
+            prefetchable: 0,
+        }; MAX_PCI_WINDOWS],
+        inbound_count: 0,
+        inbound: [PciWindow {
+            pci: 0,
+            cpu: 0,
+            size: 0,
+            space: 0,
+            prefetchable: 0,
+        }; MAX_PCI_WINDOWS],
+        block_count: 0,
+        blocks: [DeviceBlock {
+            key: 0,
+            base: 0,
+            size_bits: 0,
+        }; MAX_WINDOW_BLOCKS],
+        msi: MsiParent {
+            kind: MSI_NONE,
+            region: NONE_INDEX,
+            doorbell: 0,
+            first_vector: 0,
+            vector_count: 0,
+            interrupt: NONE_INDEX,
+        },
+        reset_count: 0,
+        resets: [Reset {
+            region: NONE_INDEX,
+            id: 0,
+            name: [0; RESET_NAME_BYTES],
+        }; MAX_RESETS],
+    };
+
+    /// The outbound windows.
+    pub fn windows(&self) -> &[PciWindow] {
+        &self.windows[..clamp(self.window_count, MAX_PCI_WINDOWS)]
+    }
+
+    /// The inbound windows.
+    pub fn inbound(&self) -> &[PciWindow] {
+        &self.inbound[..clamp(self.inbound_count, MAX_PCI_WINDOWS)]
+    }
+
+    /// The device memory blocks over the outbound windows.
+    pub fn blocks(&self) -> &[DeviceBlock] {
+        &self.blocks[..clamp(self.block_count, MAX_WINDOW_BLOCKS)]
+    }
+
+    /// The node's resets, in `resets` order.
+    pub fn resets(&self) -> &[Reset] {
+        &self.resets[..clamp(self.reset_count, MAX_RESETS)]
+    }
+
+    /// The reset `reset-names` calls `name`.
+    pub fn reset(&self, name: &str) -> Option<&Reset> {
+        self.resets().iter().find(|reset| reset.name() == name)
     }
 }
 
@@ -443,10 +623,14 @@ pub struct DriverInit {
     /// The DMA channels a DMA controller node leaves to the ARM, one bit
     /// per channel (`brcm,dma-channel-mask`); zero for every other node
     pub dma_channel_mask: u64,
+    /// The rate of the node's first clock in Hz, when the device tree gives it
+    /// as a `fixed-clock`; zero for a clock another provider runs (the
+    /// firmware, through the mailbox) and for a node without clocks
+    pub clock_hz: u64,
     /// The `VideoCore` memory a driver that asked for it holds: the memory the
     /// firmware allocates framebuffers in, outside every other Untyped
     pub video_count: u64,
-    pub video: [VideoBlock; MAX_VIDEO_BLOCKS],
+    pub video: [DeviceBlock; MAX_VIDEO_BLOCKS],
     pub import_count: u64,
     /// Data areas shared with the clients that call this driver's exports
     pub area_count: u64,
@@ -474,6 +658,9 @@ pub struct DriverInit {
     /// The stack of each Thread Kickstart starts: the first Thread's, then
     /// the further Threads' in declaration order
     pub thread_stacks: [StackSpan; 1 + MAX_FURTHER_THREADS],
+    /// What a PCI host bridge driver receives; empty for every other
+    /// component
+    pub pci: PciHost,
 }
 
 /// The page tables Kickstart provisions for mapping a framebuffer at
@@ -503,7 +690,9 @@ pub struct ResourceRecord {
     pub len: u64,
 }
 
-const _: () = assert!(size_of::<DriverInit>() <= 4096);
+/// Pages of the init record Kickstart maps at [`INIT_VA`].
+pub const INIT_PAGES: u32 = 2;
+const _: () = assert!(size_of::<DriverInit>() <= INIT_PAGES as usize * 4096);
 
 impl DriverInit {
     /// A record with nothing in it.
@@ -541,8 +730,9 @@ impl DriverInit {
             pull: NO_PULL,
         }; MAX_PINS],
         dma_channel_mask: 0,
+        clock_hz: 0,
         video_count: 0,
-        video: [VideoBlock {
+        video: [DeviceBlock {
             key: 0,
             base: 0,
             size_bits: 0,
@@ -586,6 +776,7 @@ impl DriverInit {
         },
         name: [0; NAME_BYTES],
         thread_stacks: [StackSpan { bottom: 0, top: 0 }; 1 + MAX_FURTHER_THREADS],
+        pci: PciHost::EMPTY,
     };
 
     /// The component's manifest name ("?" if it is not UTF-8).
@@ -626,7 +817,7 @@ impl DriverInit {
     }
 
     /// The blocks of `VideoCore` memory the driver holds.
-    pub fn video(&self) -> &[VideoBlock] {
+    pub fn video(&self) -> &[DeviceBlock] {
         &self.video[..clamp(self.video_count, MAX_VIDEO_BLOCKS)]
     }
     /// The data areas shared with the driver's clients.

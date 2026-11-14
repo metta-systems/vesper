@@ -17,34 +17,32 @@
 //! cache is on, for speed, and invalidated on the way in and out. Peripherals are
 //! Device memory, never executed from.
 //!
-//! The map is 2 MiB blocks under one level-1 table, for the first gigabyte (the
-//! Raspberry Pi 3) or the first four (the Raspberry Pi 4). It works at EL2, where
-//! the firmware starts the kernel, and at EL1.
+//! The map covers 512 GiB under one level-1 table: the first four gigabytes in
+//! 2 MiB blocks, RAM where the device tree's memory nodes say and Device memory
+//! elsewhere (the Raspberry Pi 3 and 4 peripherals), and the rest in 1 GiB
+//! blocks of Device memory (the Raspberry Pi 5's peripherals, from 64 GiB up).
+//! It works at EL2, where the firmware starts the kernel, and at EL1.
 
 use {
     aarch64_cpu::{asm::barrier, registers::*},
     arbitrary_int::{u2, u3, u27, u36},
     bitbybit::bitfield,
     core::{arch::asm, ptr},
+    libdevicetree::{DeviceTree, Region},
     liblocking::{IRQSafeNullLock, interface::Mutex},
     tock_registers::interfaces::{ReadWriteable, Readable, Writeable},
 };
 
-/// Address space of one level-2 table: 512 blocks of 2 MiB.
+/// Address space of one level-2 table, and of a level-1 block.
 const GIB: u64 = 1 << 30;
+/// A level-2 block.
 const BLOCK: u64 = 2 << 20;
 
-/// Gigabytes mapped, one level-2 table each.
-#[cfg(board_rpi3)]
-const GIBS: usize = 1;
-#[cfg(board_rpi4)]
-const GIBS: usize = 4;
+/// Gigabytes mapped in 2 MiB blocks, one level-2 table each.
+const FINE_GIBS: usize = 4;
 
-/// Where RAM ends and the peripherals begin.
-#[cfg(board_rpi3)]
-const RAM_END: u64 = 0x3f00_0000;
-#[cfg(board_rpi4)]
-const RAM_END: u64 = 0xfc00_0000;
+/// Most memory regions the map tells RAM by.
+const MAX_RAM_REGIONS: usize = 8;
 
 /// `MAIR` attribute slots.
 const DEVICE: u8 = 0;
@@ -121,31 +119,36 @@ struct Page {
     entries: [u64; 512],
 }
 
-/// The tables: one level 1 and a level 2 for each gigabyte.
+/// The tables: one level 1 and a level 2 for each of the first gigabytes.
 #[repr(C)]
 struct Tables {
     level1: Page,
-    level2: [Page; GIBS],
+    level2: [Page; FINE_GIBS],
 }
 
 impl Tables {
     const fn new() -> Self {
         Self {
             level1: Page { entries: [0; 512] },
-            level2: [const { Page { entries: [0; 512] } }; GIBS],
+            level2: [const { Page { entries: [0; 512] } }; FINE_GIBS],
         }
     }
 
-    /// Fill the tables. They are written with the MMU off, straight to memory.
-    /// Where the peripherals are also never executed from by privileged code
-    /// (`privileged_never`: EL1 has a bit for that).
-    fn build(&mut self, privileged_never: bool) {
+    /// Fill the tables, with the 2 MiB blocks starting in `ram` as RAM. They are
+    /// written with the MMU off, straight to memory. Where the peripherals are
+    /// also never executed from by privileged code (`privileged_never`: EL1 has
+    /// a bit for that).
+    fn build(&mut self, ram: &[Region], privileged_never: bool) {
+        let is_ram = |address: u64| {
+            ram.iter()
+                .any(|region| (region.start..region.start + region.size).contains(&address))
+        };
         let base = ptr::from_ref(&self.level2).addr() as u64;
         for (gib, level2) in self.level2.iter_mut().enumerate() {
             let first = gib as u64 * GIB;
             for (index, entry) in level2.entries.iter_mut().enumerate() {
                 let address = first + index as u64 * BLOCK;
-                let ram = address < RAM_END;
+                let ram = is_ram(address);
                 *entry = block(address, ram)
                     .with_privileged_execute_never(privileged_never && !ram)
                     .raw_value();
@@ -155,6 +158,11 @@ impl Tables {
                 .with_valid(true)
                 .with_table(true)
                 .with_address(u36::new(table >> 12))
+                .raw_value();
+        }
+        for (gib, entry) in self.level1.entries.iter_mut().enumerate().skip(FINE_GIBS) {
+            *entry = block(gib as u64 * GIB, false)
+                .with_privileged_execute_never(privileged_never)
                 .raw_value();
         }
     }
@@ -202,11 +210,22 @@ fn invalidate_instruction_cache() {
     barrier::isb(barrier::SY);
 }
 
-/// Turn the MMU on with the identity map.
-pub fn enable() {
+/// Turn the MMU on with the identity map, RAM where `device_tree`'s memory
+/// nodes say. Leaves it off when they list no memory: chainboot runs from RAM,
+/// and a map without it would stop it.
+pub fn enable(device_tree: &DeviceTree<'_, '_>) {
+    let mut ram = [Region { start: 0, size: 0 }; MAX_RAM_REGIONS];
+    let mut count = 0;
+    for (slot, region) in ram.iter_mut().zip(device_tree.memory()) {
+        *slot = region;
+        count += 1;
+    }
+    if count == 0 {
+        return;
+    }
     let level = current_level();
     let level1 = TABLES.lock(|tables| {
-        tables.build(matches!(level, ExceptionLevel::El1));
+        tables.build(&ram[..count], matches!(level, ExceptionLevel::El1));
         ptr::from_ref(&tables.level1).addr() as u64
     });
     // The tables are in memory before the MMU looks at them.

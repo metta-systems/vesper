@@ -4,8 +4,8 @@
 //! - `Signal` `0`: `x2` bits — used when the capability badge is zero —
 //!   `x3..x7` zero. ORs the authorized bits into the bitmap and wakes at
 //!   most one waiter. Success returns zeros.
-//! - `Await` `1`: `x2` timeout (nanoseconds; `u64::MAX` = infinite; zero and
-//!   finite values are invalid/unsupported until the time subsystem exists),
+//! - `Await` `1`: `x2` timeout (nanoseconds from now; `u64::MAX` = infinite;
+//!   zero is invalid; a finite deadline ends the wait with `TimedOut`),
 //!   `x3..x7` zero. An already-satisfied wait consumes and returns the
 //!   pending bits. A wait that would block reports `InvokeOutcome::Blocked`:
 //!   the syscall entry parks the caller and switches, and the caller's

@@ -51,6 +51,10 @@ members = [
   "drivers/sdhost-bcm2835",
   "drivers/sdhost-bcm2835/client",
   "drivers/sdhost-bcm2835/server",
+  # SDHCI card controller component (serves the same block_v1)
+  "drivers/sdhci",
+  # PCIe root complex component
+  "drivers/pcie-brcmstb",
   # GPIO component and its gpio_v1 interface crates
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
@@ -70,6 +74,8 @@ members = [
   "kernel/tests/audio-test",
   "kernel/tests/usb-test",
   "kernel/tests/sd-test",
+  "kernel/tests/sdhci-test",
+  "kernel/tests/board-test",
   "kernel/tests/usb-core-test",
   "kernel/tests/usb-hid-test",
   "kernel/tests/compositor-test",
@@ -110,9 +116,11 @@ members = [
   "libs/memory",
   "libs/mmio",
   "libs/object",
+  "libs/pci",
   "libs/primitives",
   "libs/print",
   "libs/qemu",
+  "libs/sd-card",
   "libs/serial-channel",
   "libs/serial-trace",
   "libs/syscall",
@@ -270,11 +278,13 @@ fdt-rs = { version = "0.4", default-features = false }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
+libpci = { path = "libs/pci", package = "vesper-pci" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }
 libframebuffer = { path = "userspace/libs/framebuffer", package = "vesper-framebuffer" }
 libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
+libsd-card = { path = "libs/sd-card", package = "vesper-sd-card" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
 libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
@@ -360,7 +370,7 @@ debug = true
 opt-level = 's'
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)', 'cfg(board_rpi5)'] }
 
 # Enable a batch of clippy lints
 # Reference: https://rust-lang.github.io/rust-clippy/master/index.html

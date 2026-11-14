@@ -490,6 +490,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "board-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -627,6 +649,7 @@ dependencies = [
  "vesper-boot-uart",
  "vesper-chainboot-protocol",
  "vesper-console",
+ "vesper-devicetree",
  "vesper-locking",
  "vesper-log",
  "vesper-machine",
@@ -2129,6 +2152,7 @@ dependencies = [
  "metta-meddle-runtime",
  "nucleus",
  "snafu",
+ "tock-registers",
  "vesper-address",
  "vesper-boot",
  "vesper-boot-uart",
@@ -3258,6 +3282,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pcie-brcmstb"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-pci",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3850,6 +3889,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdhci"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "block",
+ "derive-mmio",
+ "mailbox-client",
+ "metta-meddle-runtime",
+ "vesper-block-channel",
+ "vesper-device-driver",
+ "vesper-io-channel",
+ "vesper-log-client",
+ "vesper-mmio",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-sd-card",
+ "vesper-user-runtime",
+]
+
+[[package]]
+name = "sdhci-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "block",
+ "cfg-if",
+ "driver-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-device-driver",
+ "vesper-devicetree",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
 name = "sdhost-bcm2835"
 version = "0.0.1"
 dependencies = [
@@ -3866,6 +3952,7 @@ dependencies = [
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",
+ "vesper-sd-card",
  "vesper-user-runtime",
 ]
 
@@ -4893,6 +4980,7 @@ dependencies = [
  "derive-mmio",
  "vesper-chainboot-protocol",
  "vesper-console",
+ "vesper-devicetree",
  "vesper-locking",
  "vesper-mmio",
  "vesper-primitives",
@@ -5016,6 +5104,7 @@ dependencies = [
  "nucleus",
  "vesper-address",
  "vesper-cpu",
+ "vesper-devicetree",
  "vesper-exceptions",
  "vesper-image",
  "vesper-objects",
@@ -5111,6 +5200,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-pci"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+]
+
+[[package]]
 name = "vesper-primitives"
 version = "0.0.1"
 
@@ -5127,6 +5224,10 @@ dependencies = [
 
 [[package]]
 name = "vesper-qemu"
+version = "0.0.1"
+
+[[package]]
+name = "vesper-sd-card"
 version = "0.0.1"
 
 [[package]]

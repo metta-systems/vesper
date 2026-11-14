@@ -8,15 +8,24 @@
 //!   through every ancestor bus's `ranges` (§2.3.8);
 //! - `compatible` is a string list matched entry by entry;
 //! - [`interrupts`] resolves interrupt routing: the generic timer, the root
-//!   controller and each node's interrupts with their controller.
+//!   controller and each node's interrupts with their controller;
+//! - [`DeviceTree::board`] and its siblings find what boot programs need
+//!   before any driver runs: the board, the console UART, the firmware mailbox
+//!   and the activity LED.
 
+mod board;
 mod dump;
 pub mod interrupts;
+pub mod pci;
 mod tree;
 
 pub use {
+    board::{
+        ActivityLed, Board, BootHardware, ConsoleUart, FIRMWARE_GPIO_BASE, Gpio, GpioKind, Mailbox,
+        Soc, UartClock,
+    },
     dump::dump,
-    tree::{Device, DeviceTree},
+    tree::{Device, DeviceTree, INDEX_BUFFER_BYTES},
 };
 
 pub use fdt_rs::{
@@ -32,7 +41,7 @@ pub type Node<'a, 'i, 'dt> = DevTreeIndexNode<'a, 'i, 'dt>;
 pub type Prop<'a, 'i, 'dt> = DevTreeIndexProp<'a, 'i, 'dt>;
 
 /// Default `#address-cells` when a bus does not specify it (`DTSpec` §2.3.5).
-const DEFAULT_ADDRESS_CELLS: u32 = 2;
+pub(crate) const DEFAULT_ADDRESS_CELLS: u32 = 2;
 /// Default `#size-cells` when a bus does not specify it (`DTSpec` §2.3.5).
 const DEFAULT_SIZE_CELLS: u32 = 1;
 
@@ -78,7 +87,7 @@ pub fn reg_cells(node: &Node<'_, '_, '_>) -> Cells {
 }
 
 /// Read a `count`-cell big-endian number starting at u32 `index` of `prop`.
-fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
+pub(crate) fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
     match count {
         0 => Some(0),
         1 => prop.u32(index).ok().map(u64::from),
@@ -330,6 +339,16 @@ pub fn phandle(node: &Node<'_, '_, '_>) -> Option<u32> {
 /// to, as in a consumer's `clocks = <&provider ...>` or `mboxes = <&mailbox>`.
 pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u32> {
     property(node, property_name).and_then(|prop| prop.u32(0).ok())
+}
+
+/// The frequency of `node`'s first clock (`clocks`), in Hz, when that clock is
+/// a `fixed-clock` node; `None` for a clock another provider runs.
+pub fn fixed_clock_rate(tree: &DevTreeIndex<'_, '_>, node: &Node<'_, '_, '_>) -> Option<u32> {
+    let clock = node_by_phandle(tree, linked_phandle(node, "clocks")?)?;
+    if !is_compatible(&clock, "fixed-clock") {
+        return None;
+    }
+    property(&clock, "clock-frequency")?.u32(0).ok()
 }
 
 /// The DMA channels a Broadcom DMA controller node (`brcm,bcm2835-dma`)

@@ -71,12 +71,10 @@ mod component {
             EventCountKey, KeyTableKey, ObjectType, RawKey, Rights, UntypedKey,
             export::init_return_key, thread::ThreadReturnKey,
         },
+        libsd_card::{Bus, Card, CardError, READ_SINGLE_BLOCK, WRITE_BLOCK},
         libuser::semihosting as semi,
         mailbox_client::mailbox_v1::{Bindings, Client, Clock},
-        sdhost_bcm2835::{
-            RegisterBlock, Sdhost,
-            card::{Bus, Card, CardError, READ_SINGLE_BLOCK, WRITE_BLOCK},
-        },
+        sdhost_bcm2835::{RegisterBlock, Sdhost},
     };
 
     libuser::entry!(main);

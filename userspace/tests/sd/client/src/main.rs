@@ -3,12 +3,14 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! sd-test's program. It calls the SDHOST component through the `block_v1`
-//! import Kickstart wired along the controller's compatible string, and
-//! drives the request queue on the io-channel: it reads marked blocks of the
-//! card image `just _test-sd` attaches, writes a block and reads it back, and
-//! checks the requests the driver must refuse. It then reports on the key
-//! sd-test installed (`driver_protocol::REPORT_SLOT`).
+//! The program of sd-test and sdhci-test. It calls the SDHOST or the SDHCI
+//! component through the `block_v1` import Kickstart wired along the
+//! controller's compatible string (each test's own `imports.if`), and drives
+//! the request queue on the io-channel: it reads marked blocks of the card
+//! image the test attaches, writes blocks and reads them back, one and several
+//! per request, and checks the requests the driver must refuse. Where the
+//! image wires `gpio_v1` (sd-test), it also checks a pull change. It then
+//! reports on the key the test installed (`driver_protocol::REPORT_SLOT`).
 
 use {
     block_client::block_v1::{Bindings, Client},
@@ -34,6 +36,9 @@ const MARKED: [u64; 4] = [0, 5, 6, IMAGE_BLOCKS - 1];
 
 /// The block the program writes and reads back.
 const SCRATCH_BLOCK: u64 = 100;
+
+/// Blocks of the run written and read back in one request each.
+const MULTIPLE_BLOCKS: u64 = 3;
 
 /// A GPIO pin no device of the board uses, for the pull check.
 const UNUSED_PIN: u32 = 26;
@@ -247,6 +252,52 @@ fn main(init_va: u64) -> ! {
     );
     semi::println!("sd-test: wrote block {SCRATCH_BLOCK} and read it back");
 
+    // Several blocks in one buffer: the two adjacent marked blocks read at
+    // once, and a run written and read back at once (one multiple-block
+    // command each on a controller that has them).
+    let adjacent = area.buffer(6, 2);
+    let run_out = area.buffer(8, MULTIPLE_BLOCKS);
+    let run_in = area.buffer(8 + MULTIPLE_BLOCKS, MULTIPLE_BLOCKS);
+    for (index, byte) in Area::bytes(&run_out).iter_mut().enumerate() {
+        *byte = (index / 7).to_le_bytes()[0] ^ 0xa5;
+    }
+    Area::bytes(&run_in).fill(0);
+    let headers = [
+        area.header(9, read, MARKED[1]),
+        area.header(10, write, SCRATCH_BLOCK + 1),
+        area.header(11, read, SCRATCH_BLOCK + 1),
+    ];
+    run(
+        &client,
+        channel,
+        completed,
+        &[
+            request(10, headers[0], &[adjacent]).unwrap(),
+            request(11, headers[1], &[run_out]).unwrap(),
+            request(12, headers[2], &[run_in]).unwrap(),
+        ],
+    );
+    for header in headers {
+        assert_eq!(Area::status(header), Some(Status::Done));
+    }
+    let bytes = Area::bytes(&adjacent);
+    let second = usize::try_from(BLOCK_BYTES).unwrap_or_default();
+    for (offset, block) in [(0, MARKED[1]), (second, MARKED[2])] {
+        let mut text = [0; 32];
+        let expected = marker(block, &mut text);
+        assert_eq!(
+            &bytes[offset..offset + expected.len()],
+            expected,
+            "block {block} of a two-block read"
+        );
+    }
+    assert_eq!(
+        Area::bytes(&run_in),
+        Area::bytes(&run_out),
+        "the blocks written at once read back"
+    );
+    semi::println!("sd-test: moved several blocks per request");
+
     // The requests the driver refuses.
     let past_end = area.header(5, read, IMAGE_BLOCKS - 1);
     let unknown_op = area.header(6, 9, 0);
@@ -281,22 +332,29 @@ fn main(init_va: u64) -> ! {
     );
     semi::println!("sd-test: the driver refused the malformed requests");
 
-    // A pull change through the gpio component, on a pin nothing else uses.
-    let gpio = gpio_v1::Client::new(gpio_v1::Bindings::from_imports(init.imports()));
-    gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Up)
-        .expect("a pull on a pin of the block");
-    gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Off)
-        .expect("a pull on a pin of the block");
-    assert!(
-        matches!(
-            gpio.set_pull(54, gpio_v1::PinPull::Up),
-            Err(gpio_v1::Error::Exception(gpio_v1::Exception::InvalidPin {
-                pin: 54
-            }))
-        ),
-        "the block has 54 pins"
-    );
-    semi::println!("sd-test: pulled GPIO {UNUSED_PIN} up and back off");
+    // A pull change through the gpio component, on a pin nothing else uses,
+    // where the image wires `gpio_v1` (the SDHOST image does).
+    if init
+        .imports()
+        .iter()
+        .any(|record| record.type_code == gpio_v1::TYPE_CODE)
+    {
+        let gpio = gpio_v1::Client::new(gpio_v1::Bindings::from_imports(init.imports()));
+        gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Up)
+            .expect("a pull on a pin of the block");
+        gpio.set_pull(UNUSED_PIN, gpio_v1::PinPull::Off)
+            .expect("a pull on a pin of the block");
+        assert!(
+            matches!(
+                gpio.set_pull(54, gpio_v1::PinPull::Up),
+                Err(gpio_v1::Error::Exception(gpio_v1::Exception::InvalidPin {
+                    pin: 54
+                }))
+            ),
+            "the block has 54 pins"
+        );
+        semi::println!("sd-test: pulled GPIO {UNUSED_PIN} up and back off");
+    }
 
     NotificationKey::from_key(report_key(init.table))
         .signal(0)

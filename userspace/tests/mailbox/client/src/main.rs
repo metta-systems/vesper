@@ -31,11 +31,9 @@ use {
 
 libuser::entry!(main);
 
-/// The revision code QEMU's firmware reports for the emulated board.
-#[cfg(board_rpi3)]
-const BOARD_REVISION: u32 = 0x00a0_2082;
-#[cfg(board_rpi4)]
-const BOARD_REVISION: u32 = 0x00b0_3115;
+/// The revision codes QEMU's firmware reports for the boards it emulates, the
+/// raspi3b and the raspi4b: the same image runs on both.
+const QEMU_BOARD_REVISIONS: [u32; 2] = [0x00a0_2082, 0x00b0_3115];
 
 driver_threads!(background);
 
@@ -172,7 +170,11 @@ fn check_property(mailbox: &Client) {
     // The mailbox still answers after every refusal.
     assert_eq!(mailbox.property(area.reference(0, bytes).unwrap()), Ok(()));
     assert!(area.read_words(0, &mut answer[..length]));
-    assert_eq!(answer[5], BOARD_REVISION);
+    assert!(
+        QEMU_BOARD_REVISIONS.contains(&answer[5]),
+        "revision {:#x} is no emulated board's",
+        answer[5]
+    );
 }
 
 /// The power component: the client may power the devices off, but holds no
@@ -363,9 +365,9 @@ fn main(init_va: u64) -> ! {
     let revision = mailbox
         .get_board_revision()
         .unwrap_or_else(|error| panic!("get_board_revision failed: {error:?}"));
-    assert_eq!(
-        revision, BOARD_REVISION,
-        "the firmware reports the board's revision"
+    assert!(
+        QEMU_BOARD_REVISIONS.contains(&revision),
+        "the firmware reports an emulated board's revision, not {revision:#x}"
     );
     let serial = mailbox
         .get_board_serial()

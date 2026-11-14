@@ -140,6 +140,9 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 - [ ] Port the rest of the old `Power::off` into `power`: the GPIO pin power-down before the halt (requires a GPIO component).
 - [ ] Asynchronous submit and complete for interfaces with data areas: a request queue in the area and EventCount completion, for functions that should not hold the caller's Thread until the answer (such as `property`).
 - [ ] `sdhost-bcm2835`: wait for the controller's interrupt instead of polling, and move several blocks per command (CMD18/CMD25); then bundle it in the production image and validate it on a Raspberry Pi 3.
+- [ ] `sdhci`: validate on a Raspberry Pi 4 (EMMC2: ADMA2 into bounce pages below the 1 GiB DMA limit, the base clock from the firmware's EMMC2 clock if the capabilities give none) and a Raspberry Pi 5 (`brcm,bcm2712-sdhci`: the 200 MHz fixed clock, the configuration block's forced card detect and SD pin select, registers above 4 GiB) with `just boot-board-test`: its `sdhci:` lines on the UART name the base clock, ADMA2, the card's size and block 0's master boot record; the boot card stays at 3.3 V and 25 MHz.
+- [ ] `pcie-brcmstb`: validate on a Raspberry Pi 4 (link up, the VL805 `1106:3483` behind the root port with its BAR in the 0xc000_0000 window, the software-raised MSI arriving on line 180) and a Raspberry Pi 5 (rescal and bridge resets, the 54 MHz PLL, RP1 `1de4:0001` with its BARs, the MIP's first vector arriving on GIC SPI 128) with `just boot-board-test`, from its `pcie:` lines on the UART.
+- [ ] `pcie-brcmstb`: pass the node's `brcm,vdm-qos-map`/`brcm,fifo-qos-map`, `max-link-speed`, `aspm-no-l0s` and `brcm,clkreq-mode` instead of assuming the boards' values.
 - [ ] A read-only filesystem over `block_v1` (exFAT or ext4), with a file-finding interface, on the way to Mimisbrunnr's own storage interface.
 
 ## Phase 7 — Time and userspace scheduling
@@ -150,7 +153,6 @@ All Time and userspace-scheduling work, including the scheduler-shared records (
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
   - [ ] Move endpoint-test's fixture init pages and hand-wired Invocations onto the init record and the generated-interface import wiring Kickstart gives drivers (`DriverInit`, `imports.if`).
-  - [ ] Copy a component's `.data` per instance before loading the same component twice, so each instance of a driver (an exporter included) has its own `.data` state.
   - [ ] Move the Bounce fixture (sync-test, ppc-test, via `libkicktest::bounce`) onto EL0 components where it does not need EL1 register access.
 - [ ] Detect the Arm architecture version and optional features at runtime (`ID_AA64*_EL1`) and enable the protections the running core supports.
   - [ ] Enable PAN when `ID_AA64MMFR1_EL1.PAN` reports FEAT_PAN: set `PSTATE.PAN` and clear `SCTLR_EL1.SPAN`. Prerequisite: the EL1t boot Thread stops using its EL0-accessible low stack. Validate on a core with FEAT_PAN (QEMU `virt` with a newer CPU).

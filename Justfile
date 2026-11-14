@@ -5,11 +5,15 @@ target          := 'aarch64-metta-none-eabi'
 target_json     := "-Zjson-target-spec --target='" + justfile_directory() / 'targets' / target + ".json'"
 rust_std        := '-Zbuild-std=compiler_builtins,core,alloc -Zbuild-std-features=compiler-builtins-mem'
 
-# Board presets: rustflags, dtb, qemu-machine
-board_rpi3_flags  := '-C target-cpu=cortex-a53 --cfg board_rpi3'
-board_rpi4_flags  := '-C target-cpu=cortex-a73 --cfg board_rpi4'
+# The board set an image is built for: `rpi3`, `rpi4` and `rpi5` joined by `+` (for example
+# `rpi4+rpi5`). One image boots on every board of its set: the device tree the firmware passes
+# says which it is on. The code is built for the oldest core of the set (`_board-flags`), with
+# a `board_rpiN` cfg for each board in it. Recipes taking a `board` argument take a set;
+# `just boards=rpi5 build` (or VESPER_BOARDS) changes the default.
+boards            := env('VESPER_BOARDS', 'rpi3+rpi4+rpi5')
 rpi3_dtb          := justfile_directory() / 'targets/bcm2710-rpi-3-b-plus.dtb'
 rpi4_dtb          := justfile_directory() / 'targets/bcm2711-rpi-4-b.dtb'
+rpi5_dtb          := justfile_directory() / 'targets/bcm2712-rpi-5-b.dtb'
 # The rpi3 tree with the PWM node enabled for the headphone jack, kept in the repository so
 # the tests need no dtc (`just audio-test-dtb` remakes it from targets/overlays/audio-test-pwm.dts,
 # as the board's `pwm-2chan` overlay does)
@@ -25,19 +29,21 @@ privileged_link := 'linker/privileged.ld'
 fixed_rustflags := '-D warnings -Z macro-backtrace'
 # Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
 pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
-# Device tests run in QEMU (rpi3) with the test linker script
-device_test_rustflags := fixed_rustflags + ' ' + board_rpi3_flags + ' -C link-arg=--script=' + test_link
+# Device tests run in QEMU (rpi3) with the test linker script; the recipes add the board set's flags
+device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
-driver_components := 'compositor fb-impl mailbox-impl power-impl root-dispatcher shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
+driver_components := 'compositor fb-impl mailbox-impl power-impl root-dispatcher sdhci shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid'
 
 qemu            := env('QEMU', 'qemu-system-aarch64')
 qemu_machine    := env('QEMU_MACHINE', 'raspi3b')
+# The device tree of `qemu_machine`
+qemu_dtb        := if qemu_machine == 'raspi4b' { rpi4_dtb } else { rpi3_dtb }
 gdb             := env('GDB', 'aarch64-elf-gdb') # An aarch64-enabled GDB (brew install aarch64-elf-gdb)
 objcopy         := 'rust-objcopy'
 nm              := 'rust-nm'
@@ -50,30 +56,28 @@ export VESPER_IMAGE_PROFILE := image_profile
 # Cargo names the debug profile `dev` (`debug` is reserved); its outputs go to `debug/`
 cargo_profile   := if image_profile == 'debug' { 'dev' } else { image_profile }
 
-# Image configurations. Every board/feature/profile combination builds in its own
-# target directory, `target/<config>`, named `<board>[-<feature>+<feature>…][-debug]`
-# (for example `rpi3-qemu`, `rpi4`, `rpi3-qemu+debug_kernel`), so Kickstart embeds the
-# nucleus and components of its own configuration. Boot images are written to
+# Image configurations. Every board set/feature/profile combination builds in its own
+# target directory, `target/<config>`, named `<boards>[-<feature>+<feature>…][-debug]`
+# (for example `rpi3+rpi4+rpi5-qemu`, `rpi4+rpi5`, `rpi5-qemu+debug_kernel`), so Kickstart
+# embeds the nucleus and components of its own configuration. Boot images are written to
 # `target/images/<image>-<config>.bin`.
 target_root     := justfile_directory() / 'target'
 images_dir      := target_root / 'images'
 profile_suffix  := if image_profile == 'debug' { '-debug' } else { '' }
-rpi3_qemu       := 'rpi3-qemu' + profile_suffix
-rpi4_qemu       := 'rpi4-qemu' + profile_suffix
-rpi4_hw         := 'rpi4' + profile_suffix
+boards_qemu     := boards + '-qemu' + profile_suffix
+boards_hw       := boards + profile_suffix
 # Features of the Kickstart-based e2e test kernels unless a test names its own
 test_kernel_features := 'qemu,debug_kernel'
 # Boot images and ELFs of the configurations the run, debug and SD-card recipes use
-kernel_rpi3_qemu_bin    := images_dir / 'kernel-' + rpi3_qemu + '.bin'
-kernel_rpi4_qemu_bin    := images_dir / 'kernel-' + rpi4_qemu + '.bin'
-kernel_rpi4_bin         := images_dir / 'kernel-' + rpi4_hw + '.bin'
-kernel_rpi4_elf         := rpi4_hw_artifacts / image_profile / 'kickstart'
-chainboot_rpi3_qemu_bin := images_dir / 'chainboot-' + rpi3_qemu + '.bin'
-chainboot_rpi4_bin      := images_dir / 'chainboot-' + rpi4_hw + '.bin'
-chainboot_rpi4_elf      := rpi4_hw_artifacts / image_profile / 'chainboot'
+kernel_qemu_bin    := images_dir / 'kernel-' + boards_qemu + '.bin'
+kernel_bin         := images_dir / 'kernel-' + boards_hw + '.bin'
+kernel_elf         := hw_artifacts / image_profile / 'kickstart'
+chainboot_qemu_bin := images_dir / 'chainboot-' + boards_qemu + '.bin'
+chainboot_bin      := images_dir / 'chainboot-' + boards_hw + '.bin'
+chainboot_elf      := hw_artifacts / image_profile / 'chainboot'
 # `target/<config>/<triple>`, where a configuration's ELFs live under `<profile>/`
-rpi3_qemu_artifacts := target_root / rpi3_qemu / target
-rpi4_hw_artifacts   := target_root / rpi4_hw / target
+qemu_artifacts  := target_root / boards_qemu / target
+hw_artifacts    := target_root / boards_hw / target
 # The SC-55 bank trimmed to the shareware IWAD's music (`_wood-soundfont`, audio decision D9.4)
 wood_soundfont      := target_root / 'wood' / 'sc55-doom1.sf2'
 # `bytes:looping:hash` of the songs `_test-wood` hears first (the title's D_INTROA once, the
@@ -139,12 +143,17 @@ _default:
 
 # === Low-level: cross-compile a single crate ===
 
-# Cross-build crates (space-separated) for a board with a linker script, features and extra
+# The rustflags of the board set `board`: the oldest core's CPU, a `board_rpiN` cfg per board
+_board-flags board=boards:
+    @echo '{{ if board =~ '^rpi[345](\+rpi[345])*$' { '-C target-cpu=' + (if board =~ 'rpi3' { 'cortex-a53' } else if board =~ 'rpi4' { 'cortex-a72' } else { 'cortex-a76' }) + (if board =~ 'rpi3' { ' --cfg board_rpi3' } else { '' }) + (if board =~ 'rpi4' { ' --cfg board_rpi4' } else { '' }) + (if board =~ 'rpi5' { ' --cfg board_rpi5' } else { '' }) } else { error('a board set is rpi3, rpi4 and rpi5 joined by +, not ' + board) } }}'
+
+# Cross-build crates (space-separated) for a board set with a linker script, features and extra
 # rustflags, into the target directory of the image configuration `board` + `image_features`
 # (the features of the image they are bundled into, which may differ from their own)
-_cross-build crates board='rpi4' linker_script='' features='' rustflags='' image_features=features:
+_cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
+    @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
-    RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}{{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}" \
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -153,15 +162,15 @@ _cross-build crates board='rpi4' linker_script='' features='' rustflags='' image
 # === Kernel (nucleus + kickstart -> kernel-<config>.bin) ===
 
 # Build the privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
-_build-privileged board='rpi4' image_features='': (_cross-build privileged_components board privileged_link '' pie_rustflags image_features)
+_build-privileged board=boards image_features='': (_cross-build privileged_components board privileged_link '' pie_rustflags image_features)
 
 # Build the EL0 driver components the kickstart image bundles (with semihosting output under 'qemu')
-_build-drivers board='rpi4' features='' image_features=features:
+_build-drivers board=boards features='' image_features=features:
     "{{ just_executable() }}" _cross-build '{{ driver_components }}' '{{ board }}' '{{ user_link }}' '{{ if features =~ "qemu" { "qemu" } else { "" } }}' '' '{{ image_features }}'
 
-# Build kernel (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
+# Build kernel for a board set (features: '' for hw, 'qemu' for emulation) into target/images/kernel-<config>.bin
 [group("build")]
-build board='rpi4' features='': (_build-kernel board features)
+build board=boards features='': (_build-kernel board features)
 
 alias b := build
 
@@ -173,7 +182,7 @@ _build-kernel board features config=(board + (if features == '' { '' } else { '-
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld) for the
 # image configuration `board` + `image_features`
-_build-components board='rpi3' features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features)
+_build-components board=boards features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features)
 
 # === E2E test kernels (Kickstart images with test programs) ===
 
@@ -181,7 +190,7 @@ _build-components board='rpi3' features='qemu' image_features=features: (_cross-
 # components, the drivers Kickstart bundles, then `crate` linked as the init
 # image, then its raw binary. Kernels bundling further userspace components
 # build them first (_build-endpoint-test …).
-_build-test-kernel crate board='rpi3' features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build crate board init_link features)
+_build-test-kernel crate board=boards features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build crate board init_link features)
     @mkdir -p "{{ images_dir }}"
     {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
     @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
@@ -195,65 +204,74 @@ _build-test-kernel crate board='rpi3' features=test_kernel_features config=(boar
 # be skipped as already run, leaving the kernel image stale. The nested
 # invocation always runs and refreshes the image. `clock_opts` takes
 # `qemu_icount_opts` for the tests that check timing bounds.
-_run-test-kernel crate build=('_build-test-kernel ' + crate) board='rpi3' features=test_kernel_features clock_opts='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix):
+#
+# `build` builds the image for the default board set, which `machine` (`rpi3` or
+# `rpi4`, QEMU's raspi3b or raspi4b with that board's tree) must be in.
+_run-test-kernel crate build=('_build-test-kernel ' + crate) machine='rpi3' features=test_kernel_features clock_opts='' config=(boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix):
     "{{ just_executable() }}" {{ build }}
-    {{ qemu }} -M {{ if board == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} {{ clock_opts }} \
-      -dtb "{{ if board == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
+    {{ qemu }} -M {{ if machine == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} {{ clock_opts }} \
+      -dtb "{{ if machine == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" \
       -kernel "{{ images_dir / crate + '-' + config + '.bin' }}"
 
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
-_build-endpoint-test board='rpi3' features='qemu': (_build-components board features) (_build-test-kernel 'endpoint-test' board features)
+_build-endpoint-test board=boards features='qemu': (_build-components board features) (_build-test-kernel 'endpoint-test' board features)
 
 # Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
-_build-fp-trap-test board='rpi3': (_build-components board 'qemu' 'qemu,fp_trap_test') (_build-test-kernel 'fp-trap-test' board 'qemu,fp_trap_test')
+_build-fp-trap-test board=boards: (_build-components board 'qemu' 'qemu,fp_trap_test') (_build-test-kernel 'fp-trap-test' board 'qemu,fp_trap_test')
 
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
-_build-preempt-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
+_build-preempt-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
 
 # Build the dispatch-test e2e kernel (a userspace root dispatcher bound to the Scheduler)
-_build-dispatch-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'dispatch-test' board)
+_build-dispatch-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'dispatch-test' board)
 
 # Build the driver-test e2e kernel (Kickstart driver matching and the driver init page)
-_build-driver-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'driver-test' board)
+_build-driver-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'driver-test' board)
 
 # Build the mailbox-test e2e kernel (the mailbox component and a client wired through the firmware node)
-_build-mailbox-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'mailbox-test' board)
+_build-mailbox-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'mailbox-test' board)
 
 # Build the irq-test e2e kernel (interrupt delivery to an EL0 receiver Thread)
-_build-irq-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'irq-test' board)
+_build-irq-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'irq-test' board)
 
 # Build the uart-test e2e kernel (the PL011 driver component serving a client's IO channels in loopback)
-_build-uart-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'uart-test' board)
+_build-uart-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'uart-test' board)
 
 # Build the fault-test e2e kernel (fault delivery to EL0 fault handlers)
-_build-fault-test board='rpi3': (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
+_build-fault-test board=boards: (_build-components board 'qemu') (_build-test-kernel 'fault-test' board 'qemu')
 
 # Build the usb-test e2e kernel (the DWC2 host controller component, loaded by Kickstart)
-_build-usb-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-test' board)
+_build-usb-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-test' board)
 
 # Build the usb-core-test e2e kernel (the DWC2 component, the PL011 driver and the USB core, loaded by Kickstart)
-_build-usb-core-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-core-test' board)
+_build-usb-core-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-core-test' board)
 
 # Build the usb-hid-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the input-trace program)
-_build-usb-hid-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-hid-test' board)
+_build-usb-hid-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'usb-hid-test' board)
 
 # Build the sd-test e2e kernel (the SDHOST component and a program reading and writing the card through block_v1)
-_build-sd-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sd-test' board)
+_build-sd-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sd-test' board)
+
+# Build the sdhci-test e2e kernel (the SDHCI component and the same program, wired to the Arasan controller)
+_build-sdhci-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'sdhci-test' board)
 
 # Build the compositor-test e2e kernel (the DWC2 component, the PL011 driver, the USB core, the HID component and the compositor)
-_build-compositor-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
+_build-compositor-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'compositor-test' board)
 
 # Build the window-events-test e2e kernel: compositor-test's components plus window-events, a client checking the events of its two windows
-_build-window-events-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'window-events-test' board)
+_build-window-events-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'window-events-test' board)
 
 # Build log-test's programs: the probe and the log server, for the image configuration `board` + `image_features`; only log-test bundles the probe, so it is not in `user_components`
-_build-log-probe board='rpi3' features='qemu' image_features=features: (_cross-build 'log-probe log-server' board user_link features '' image_features)
+_build-log-probe board=boards features='qemu' image_features=features: (_cross-build 'log-probe log-server' board user_link features '' image_features)
 
 # Build the log-test e2e kernel: the PL011 driver, the log server and a probe whose Threads overflow a stack and panic
-_build-log-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
+_build-log-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
+
+# Build the board-test e2e kernel (the PL011, the log server, the mailbox, the SDHCI and the PCIe components), for `just _test-board`
+_build-board-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'board-test' board)
 
 # Build the audio-test e2e kernel (the clock manager component, the DMA controller component, the PWM audio driver, the gpio component and the PL011 driver)
-_build-audio-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'audio-test' board)
+_build-audio-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'audio-test' board)
 
 # Remake targets/audio-test.dtb after changing the overlay or the rpi3 tree: the rpi3 tree with targets/overlays/audio-test-pwm.dts applied, which enables the PWM node with the jack's pins as the board's `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` does (needs dtc and fdtoverlay)
 [group("tools")]
@@ -263,64 +281,72 @@ audio-test-dtb:
     fdtoverlay -i "{{ rpi3_dtb }}" -o "{{ audio_test_dtb }}" "{{ target_root / 'audio-test-pwm.dtbo' }}"
 
 # Build midi-test's programs: the player, the MIDI synthesiser and the log server, with the trimmed SoundFont and the song they bundle, for the image configuration `board` + `image_features`; only midi-test bundles the player, so it is not in `user_components`
-_build-midi-player board='rpi3' features='qemu' image_features=features: (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
+_build-midi-player board=boards features='qemu' image_features=features: (_cross-build 'midi-player midi-synth log-server' board user_link features '' image_features)
 
 # Build the midi-test e2e kernel: the MIDI synthesiser, a player program with the test song (Bach's Prelude in C, with the bank trimmed to it, both in userspace/midi-synth/fixtures), audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
-_build-midi-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
+_build-midi-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
 
 # Build Wood, the Room Doom engine's Vesper program, the MIDI synthesiser component that plays
 # its music, with the trimmed SoundFont it bundles, and the log server that writes their lines to
 # the UART, for the image configuration `board` + `image_features`; only wood-test bundles them,
 # so they are not in `user_components`
-_build-wood board='rpi3' features='qemu' image_features=features: _wood-soundfont (_cross-build 'wood midi-synth log-server' board user_link features '' image_features)
+_build-wood board=boards features='qemu' image_features=features: _wood-soundfont (_cross-build 'wood midi-synth log-server' board user_link features '' image_features)
 
 # Build the wood-test e2e kernel: compositor-test's components plus Wood, the Room Doom engine in a window of its own
-_build-wood-test board='rpi3': (_build-components board 'qemu' test_kernel_features) (_build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
+_build-wood-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-wood board 'qemu' test_kernel_features) (_build-test-kernel 'wood-test' board)
 
 # === Hardware test images (booted on a Raspberry Pi 3 via chainofcommand) ===
 
 # Build usb-core-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `usb-core` traces on the UART
-_build-usb-core-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'usb-core-test' board '')
+_build-usb-core-test-hw board=boards: (_build-components board '' '') (_build-test-kernel 'usb-core-test' board '')
 
 # Build usb-core-test for the Raspberry Pi 3 and boot it via chainofcommand: `usb-core`'s trace appears on the UART
 _boot-usb-core-test: _build-usb-core-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-core-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-core-test-' + boards_hw + '.bin' }}"
 
 # Build usb-hid-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): `input-trace` prints the keyboard's events on the UART
-_build-usb-hid-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'usb-hid-test' board '')
+_build-usb-hid-test-hw board=boards: (_build-components board '' '') (_build-test-kernel 'usb-hid-test' board '')
 
 # Build usb-hid-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a keyboard and press keys, `input-trace` prints the events on the UART
 _boot-usb-hid-test: _build-usb-hid-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'usb-hid-test-' + boards_hw + '.bin' }}"
 
 # Run the usb-hid-test hardware image in QEMU with the host's USB keyboard and mouse passed through (needs root)
 _test-usb-hid-hw: _build-usb-hid-test-hw
     sudo {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb_forward }} \
-      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-rpi3.bin' }}"
+      -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-' + boards_hw + '.bin' }}"
 
 # Build compositor-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor traces the routed input on the UART
-_build-compositor-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'compositor-test' board '')
+_build-compositor-test-hw board=boards: (_build-components board '' '') (_build-test-kernel 'compositor-test' board '')
 
 # Build compositor-test for the Raspberry Pi 3 and boot it via chainofcommand: plug in a mouse and a keyboard, the compositor traces the routed input on the UART
 _boot-compositor-test: _build-compositor-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'compositor-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'compositor-test-' + boards_hw + '.bin' }}"
 
 # Build audio-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the test client streams a tone through audio_v1 to the audio driver's DMA ring, which traces each stream on the UART
-_build-audio-test-hw board='rpi3': (_build-components board '' '') (_build-test-kernel 'audio-test' board '')
+_build-audio-test-hw board=boards: (_build-components board '' '') (_build-test-kernel 'audio-test' board '')
 
 # Build audio-test for the Raspberry Pi 3 and boot it via chainofcommand: with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the test client plays a 440 Hz tone through audio_v1 on the left side of the headphone jack for 3 s, the right for 3 s, both for 3 s, then both for a minute, 0.7 s apart; the audio driver traces on the UART, at each close, the measured sample rate, the underruns, late periods, the PWM's STA flags and the DMA errors
 _boot-audio-test: _build-audio-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'audio-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'audio-test-' + boards_hw + '.bin' }}"
 
 # Build midi-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the player plays the test song (Bach's Prelude in C) through the MIDI synthesiser and the PWM audio driver on the headphone jack, looping, for good, and the log server writes the player's, the synthesiser's and the audio driver's lines on the UART
-_build-midi-test-hw board='rpi3': (_build-components board '' '') (_build-midi-player board '' '') (_build-test-kernel 'midi-test' board '')
+_build-midi-test-hw board=boards: (_build-components board '' '') (_build-midi-player board '' '') (_build-test-kernel 'midi-test' board '')
 
 # Build midi-test for the Raspberry Pi 3 and boot it via chainofcommand (e.g. `just chainboot_serial=/dev/ttyUSB0 chainboot_load_baud=1500000 _boot-midi-test`): with headphones in the jack and `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt, the player plays Doom's E1M1 music, looping, at volume 64, and nothing else runs. The UART shows the song's timing and first notes, the ARM and core clocks, and every 256 periods (about 3 s) the music summary (`service` min/avg/max against the period, packets, periods with sound, playing, the longest refill, underruns), the level (peak and RMS), the synthesiser's peak voice count and the song position
 _boot-midi-test: _build-midi-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-' + boards_hw + '.bin' }}"
+
+# Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds, and the PCIe root complex its link, the functions behind it and an MSI self-test, on the UART through the log server
+_build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
+
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived
+[group("hw")]
+boot-board-test: _build-board-test-hw chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
-_build-wood-test-hw board='rpi3': (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
+_build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
 
 # Plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack:
 # with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads
@@ -328,13 +354,13 @@ _build-wood-test-hw board='rpi3': (_build-components board '' '') (_build-wood b
 # Build wood-test for the Raspberry Pi 3 and boot it via chainofcommand
 [group("hw")]
 boot-wood-test: _build-wood-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'wood-test-rpi3.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'wood-test-' + boards_hw + '.bin' }}"
 
 # === Chainboot ===
 
 # Build chainboot bootloader (features: '' for hw, 'qemu' for emulation) into target/images/chainboot-<config>.bin
 [group("build")]
-build-chainboot board='rpi4' features='': (_build-chainboot board features)
+build-chainboot board=boards features='': (_build-chainboot board features)
 
 _build-chainboot board features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'chainboot' board chainboot_link features)
     @mkdir -p "{{ images_dir }}"
@@ -376,11 +402,11 @@ meddler:
 
 # Build and run kernel in QEMU
 [group("emu")]
-qemu: (build 'rpi3' 'qemu')
-    @echo "🚜 Run QEMU {{ qemu_base_opts }} with {{ kernel_rpi3_qemu_bin }}"
-    @echo "🚜 .. on {{ rpi3_dtb }}"
+qemu: (build boards 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} with {{ kernel_qemu_bin }}"
+    @echo "🚜 .. on {{ qemu_dtb }}"
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+    {{ qemu }} {{ qemu_base_opts }} -dtb "{{ qemu_dtb }}" -kernel "{{ kernel_qemu_bin }}"
 
 # The compositor's screen with the lava lamp and Wood playing Doom's demos, its sound effects
 # going to the audio driver's capture buffer (QEMU has no PWM to hear them on). Wood's window has
@@ -389,38 +415,38 @@ qemu: (build 'rpi3' 'qemu')
 # (serial and semihosting) goes to the terminal and qemu.log.
 # Build wood-test and run Doom in QEMU with a display window
 [group("emu")]
-qemu-wood features='qemu': (_build-components 'rpi3' 'qemu' features) (_build-wood 'rpi3' 'qemu' features) (_build-test-kernel 'wood-test' 'rpi3' features)
+qemu-wood features='qemu': (_build-components boards 'qemu' features) (_build-wood boards 'qemu' features) (_build-test-kernel 'wood-test' boards features)
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-rpi3-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_usb }} -device usb-mouse,port=1.2 -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'wood-test-' + boards + '-' + replace(features, ',', '+') + profile_suffix + '.bin' }}"
 
 # Build and run kernel in QEMU with GDB port
 [group("emu")]
-qemu-gdb: (build 'rpi3' 'qemu')
-    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ kernel_rpi3_qemu_bin }}"
-    @echo "🚜 .. on {{ rpi3_dtb }}"
+qemu-gdb: (build boards 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ kernel_qemu_bin }}"
+    @echo "🚜 .. on {{ qemu_dtb }}"
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -dtb "{{ qemu_dtb }}" -kernel "{{ kernel_qemu_bin }}"
 
 # Build and run chainboot in QEMU
 [group("emu")]
-cb-qemu: (build-chainboot 'rpi3' 'qemu')
-    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm }} with {{ chainboot_rpi3_qemu_bin }}"
-    @echo "🚜 .. on {{ rpi3_dtb }}"
+cb-qemu: (build-chainboot boards 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm }} with {{ chainboot_qemu_bin }}"
+    @echo "🚜 .. on {{ qemu_dtb }}"
     @rm -f qemu.log
-    {{ qemu }} -serial tcp:127.0.0.1:4321,server,nowait {{ qemu_base_opts }} -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_rpi3_qemu_bin }}"
+    {{ qemu }} -serial tcp:127.0.0.1:4321,server,nowait {{ qemu_base_opts }} -dtb "{{ qemu_dtb }}" -kernel "{{ chainboot_qemu_bin }}"
 
 # Build and run chainboot in QEMU with GDB port
 [group("emu")]
-cb-qemu-gdb: (build-chainboot 'rpi3' 'qemu')
-    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ chainboot_rpi3_qemu_bin }}"
-    @echo "🚜 .. on {{ rpi3_dtb }}"
+cb-qemu-gdb: (build-chainboot boards 'qemu')
+    @echo "🚜 Run QEMU {{ qemu_base_opts }} {{ qemu_disasm_gdb }} with {{ chainboot_qemu_bin }}"
+    @echo "🚜 .. on {{ qemu_dtb }}"
     @rm -f qemu.log
-    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -serial pty -dtb "{{ rpi3_dtb }}" -kernel "{{ chainboot_rpi3_qemu_bin }}"
+    {{ qemu }} {{ qemu_base_opts }} {{ qemu_disasm_gdb }} -serial pty -dtb "{{ qemu_dtb }}" -kernel "{{ chainboot_qemu_bin }}"
 
 # Build and boot in qemu via chainofcommand
 [group("emu")]
-boot-qemu: (build 'rpi3' 'qemu') chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi3_qemu_bin }}"
+boot-qemu: (build boards 'qemu') chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_qemu_bin }}"
 
 # === Zellij (QEMU in split terminal) ===
 
@@ -439,29 +465,29 @@ _write-zellij-config bin runner_opts dtb machine=qemu_machine:
 
 # Build and run kernel in QEMU with PL011 and the mini UART each in a pane
 [group("emu")]
-zellij: (build 'rpi3' 'qemu') (_write-zellij-config kernel_rpi3_qemu_bin '' rpi3_dtb)
+zellij: (build boards 'qemu') (_write-zellij-config kernel_qemu_bin '' qemu_dtb)
     zellij --layout emulation/layout.zellij
 
 alias z-qemu := zellij
 
 # Like zellij, but QEMU waits for GDB on port 5555 and traces instructions
 [group("emu")]
-zellij-gdb: (build 'rpi3' 'qemu') (_write-zellij-config kernel_rpi3_qemu_bin qemu_disasm_gdb rpi3_dtb)
+zellij-gdb: (build boards 'qemu') (_write-zellij-config kernel_qemu_bin qemu_disasm_gdb qemu_dtb)
     zellij --layout emulation/layout.zellij
 
-# Like zellij, for the Raspberry Pi 4 kernel on QEMU's raspi4b machine
+# Like zellij, with the same kernel on QEMU's raspi4b machine
 [group("emu")]
-zellij-rpi4: (build 'rpi4' 'qemu') (_write-zellij-config kernel_rpi4_qemu_bin '' rpi4_dtb 'raspi4b')
+zellij-rpi4: (build boards 'qemu') (_write-zellij-config kernel_qemu_bin '' rpi4_dtb 'raspi4b')
     zellij --layout emulation/layout.zellij
 
 # Build and run chainboot in QEMU with serial port emulation
 [group("emu")]
-cb-zellij: (build-chainboot 'rpi3' 'qemu') (_write-zellij-config chainboot_rpi3_qemu_bin qemu_disasm rpi3_dtb)
+cb-zellij: (build-chainboot boards 'qemu') (_write-zellij-config chainboot_qemu_bin qemu_disasm qemu_dtb)
     zellij --layout emulation/layout.zellij
 
 # Run chainboot with GDB in zellij window
 [group("emu")]
-cb-zellij-gdb: (build-chainboot 'rpi3' 'qemu') (_write-zellij-config chainboot_rpi3_qemu_bin qemu_disasm_gdb rpi3_dtb)
+cb-zellij-gdb: (build-chainboot boards 'qemu') (_write-zellij-config chainboot_qemu_bin qemu_disasm_gdb qemu_dtb)
     zellij --layout emulation/layout.zellij
 
 # === GDB and disassembly ===
@@ -481,31 +507,31 @@ _write-gdb-config:
 # Build and run kernel in GDB (connect to openocd or QEMU on port 5555)
 [group("debug")]
 gdb: build _write-gdb-config
-    @pipx run gdbgui -g "{{ gdb }} -x '{{ gdb_connect }}' '{{ kernel_rpi4_elf }}'"
+    @pipx run gdbgui -g "{{ gdb }} -x '{{ gdb_connect }}' '{{ kernel_elf }}'"
 
 # Build and run chainboot in GDB
 [group("debug")]
 cb-gdb: build-chainboot _write-gdb-config
-    {{ gdb }} -x "{{ gdb_connect }}" "{{ chainboot_rpi4_elf }}"
+    {{ gdb }} -x "{{ gdb_connect }}" "{{ chainboot_elf }}"
 
 # Build and disassemble kernel
 [group("debug")]
 hopper: build
-    hopper --loader ELF --executable "{{ kernel_rpi4_elf }}"
+    hopper --loader ELF --executable "{{ kernel_elf }}"
 
 alias disasm := hopper
 
 # Build and disassemble chainboot
 [group("debug")]
-cb-hopper: (build-chainboot 'rpi3' 'qemu')
-    #hopper --loader RAW --plugin arm --cpu aarch64 --variant generic --base-address 0x80000 --executable "{{ chainboot_rpi3_qemu_bin }}"
+cb-hopper: (build-chainboot boards 'qemu')
+    #hopper --loader RAW --plugin arm --cpu aarch64 --variant generic --base-address 0x80000 --executable "{{ chainboot_qemu_bin }}"
 
 alias cb-disasm := cb-hopper
 
 # Build and print all symbols
 [group("maintenance")]
 nm: build
-    {{ nm }} "{{ kernel_rpi4_elf }}" | sort -k 1 | rustfilt
+    {{ nm }} "{{ kernel_elf }}" | sort -k 1 | rustfilt
 
 # Run `cargo expand` on kernel
 [group("maintenance")]
@@ -517,7 +543,7 @@ expand:
 # Build and write kernel to SD Card
 [group("hw")]
 device: build
-    cp "{{ kernel_rpi4_bin }}" "{{ volume }}/kernel8.img"
+    cp "{{ kernel_bin }}" "{{ volume }}/kernel8.img"
     @echo "{{copy_label}} copied kernel to {{ volume }}/kernel8.img"
 
 # Build and write kernel to SD Card, then eject
@@ -527,7 +553,7 @@ device-eject: device
 
 # Build and write chainboot to SD Card, then eject
 [group("hw")]
-cb-eject board='rpi4': (build-chainboot board)
+cb-eject board=boards: (build-chainboot board)
     cp "{{ images_dir / 'chainboot-' + board + '.bin' }}" "{{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
     @echo "{{copy_label}} copied chainboot to {{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
     # TODO: sed proper kernel name here in config.txt
@@ -536,7 +562,7 @@ cb-eject board='rpi4': (build-chainboot board)
 # Build and boot via chainofcommand
 [group("hw")]
 boot: build chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_rpi4_bin }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ kernel_bin }}"
 
 # Start this, then power the board on: Kickstart offers a faster console for 1.5 s at boot and
 # chainofcommand asks for `chainboot_load_baud`; it sends no kernel when chainboot asks for one.
@@ -557,23 +583,23 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
 # Run device crate tests in QEMU (rpi3) --verbose
-_test-device: (_cross-build 'nucleus' 'rpi3' nucleus_link 'qemu') (_build-privileged 'rpi3' 'qemu') (_build-drivers 'rpi3' 'qemu')
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
+_test-device: (_cross-build 'nucleus' boards nucleus_link 'qemu') (_build-privileged boards 'qemu') (_build-drivers boards 'qemu')
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
       --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
 
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }}" \
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
     --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
-    RUSTFLAGS="{{ device_test_rustflags }}" \
+    RUSTFLAGS="{{ device_test_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo test -p nucleus --test {{ test }} {{ target_json }} \
       --features={{ features }} {{ rust_std }}
 
@@ -602,37 +628,37 @@ _test-memory: (_run-test-kernel 'memory-test')
 _test-preempt: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi3' test_kernel_features qemu_icount_opts)
 
 # Boot preempt-test on the Raspberry Pi 4 machine: the same image, ticking through the GICv2 component
-_test-preempt-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
+_test-preempt-rpi4: (_run-test-kernel 'preempt-test' '_build-preempt-test' 'rpi4' test_kernel_features qemu_icount_opts)
 
 # Boot dispatch-test: a userspace root dispatcher runs worker Threads round-robin through Scheduler.Dispatch
 _test-dispatch: (_run-test-kernel 'dispatch-test' '_build-dispatch-test' 'rpi3' test_kernel_features qemu_icount_opts)
 
 # Boot dispatch-test on the Raspberry Pi 4 machine
-_test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' '_build-dispatch-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
+_test-dispatch-rpi4: (_run-test-kernel 'dispatch-test' '_build-dispatch-test' 'rpi4' test_kernel_features qemu_icount_opts)
 
 # Boot driver-test: Kickstart loads a probe driver per matching device tree node and hands it registers, interrupts, memory and a Time; the PL011 probe's high-priority Thread must wake on time beside two spinning normal Threads (the root dispatcher's priorities), and a spinning input Thread must not keep them off the CPU (the starvation guard)
 _test-driver: (_run-test-kernel 'driver-test' '_build-driver-test' 'rpi3' test_kernel_features qemu_icount_opts)
 
 # Boot driver-test on the Raspberry Pi 4 machine: the same checks through the GICv2 component
-_test-driver-rpi4: (_run-test-kernel 'driver-test' '_build-driver-test rpi4' 'rpi4' test_kernel_features qemu_icount_opts)
+_test-driver-rpi4: (_run-test-kernel 'driver-test' '_build-driver-test' 'rpi4' test_kernel_features qemu_icount_opts)
 
 # Boot mailbox-test: Kickstart loads the mailbox component (through the kernel-owned page on the Raspberry Pi 3) and a client on the firmware power node that calls it
 _test-mailbox: (_run-test-kernel 'mailbox-test' '_build-mailbox-test')
 
 # Boot mailbox-test on the Raspberry Pi 4 machine: the mailbox page is an ordinary device page there
-_test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' '_build-mailbox-test rpi4' 'rpi4')
+_test-mailbox-rpi4: (_run-test-kernel 'mailbox-test' '_build-mailbox-test' 'rpi4')
 
 # Boot uart-test: the PL011 driver component's two Threads serve a client's transmit and receive IO channels in loopback by interrupts
 _test-uart: (_run-test-kernel 'uart-test' '_build-uart-test')
 
 # Boot uart-test on the Raspberry Pi 4 machine: the same exchange through the GICv2 component
-_test-uart-rpi4: (_run-test-kernel 'uart-test' '_build-uart-test rpi4' 'rpi4')
+_test-uart-rpi4: (_run-test-kernel 'uart-test' '_build-uart-test' 'rpi4')
 
 # Boot irq-test: IRQControl.Issue, IRQHandler binding and Ack, repeated virtual-timer interrupts delivered to an EL0 receiver Thread
 _test-irq: (_run-test-kernel 'irq-test' '_build-irq-test')
 
 # Boot irq-test on the Raspberry Pi 4 machine: the same checks through the GICv2 component
-_test-irq-rpi4: (_run-test-kernel 'irq-test' '_build-irq-test rpi4' 'rpi4')
+_test-irq-rpi4: (_run-test-kernel 'irq-test' '_build-irq-test' 'rpi4')
 
 # Boot endpoint-test: client, endpoint and server AddressSpaces rendezvous through PPC
 _test-endpoint: (_run-test-kernel 'endpoint-test' '_build-endpoint-test' 'rpi3' 'qemu')
@@ -644,22 +670,22 @@ _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qe
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
 
 # Boot usb-test on raspi3b with a hub on the root port: the DWC2 component resets the port and enumerates the hub
-_test-usb board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-test board)
+_test-usb board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-test board)
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-test-' + config + '.bin' }}"
 
 # Boot usb-core-test on raspi3b with a hub on the root port and a keyboard behind it: the USB core enumerates both
-_test-usb-core board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-core-test board)
+_test-usb-core board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-core-test board)
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-core-test-' + config + '.bin' }}"
 
 # Boot usb-hid-test on raspi3b with a hub on the root port and a keyboard behind it: the HID component claims the keyboard and input-trace reads it through input_v1
-_test-usb-hid board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-hid-test board)
+_test-usb-hid board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-usb-hid-test board)
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} {{ qemu_usb }} \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'usb-hid-test-' + config + '.bin' }}"
 
 # Boot sd-test on raspi3b with a fresh 4 MiB card image whose blocks 0, 5, 6 and 8191 start with a marker: the program reads them, writes a block back and checks the request rules
-_test-sd board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-sd-test board)
+_test-sd board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-sd-test board)
     #!/usr/bin/env bash
     set -euo pipefail
     image="{{ target_root / 'sd-test.img' }}"
@@ -670,8 +696,22 @@ _test-sd board='rpi3' features=test_kernel_features config=(board + '-' + replac
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -drive if=sd,format=raw,file="${image}" \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'sd-test-' + config + '.bin' }}"
 
+# Boot sdhci-test with the same card image on raspi3b (`machine='rpi3'`) or raspi4b (`machine='rpi4'`, where EMMC2 also comes up, without a card): the program reads the marked blocks, writes blocks back one and several per request and checks the request rules
+_test-sdhci machine='rpi3' board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-sdhci-test board)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image="{{ target_root / 'sdhci-test.img' }}"
+    dd if=/dev/zero of="${image}" bs=1048576 count=4 2>/dev/null
+    for block in 0 5 6 8191; do
+        printf 'vesper sd block %d' "${block}" | dd of="${image}" bs=512 seek="${block}" conv=notrunc 2>/dev/null
+    done
+    {{ qemu }} -M {{ if machine == 'rpi3' { 'raspi3b' } else { 'raspi4b' } }} {{ qemu_io_opts }} {{ qemu_test_opts }} -drive if=sd,format=raw,file="${image}" \
+      -dtb "{{ if machine == 'rpi3' { rpi3_dtb } else { rpi4_dtb } }}" -kernel "{{ images_dir / 'sdhci-test-' + config + '.bin' }}"
+
+_test-sdhci-rpi4: (_test-sdhci 'rpi4')
+
 # Boot audio-test on raspi3b with the audio test tree: the audio driver sets the PWM clock to 100 MHz through the clock manager component and reads it back, and clock_v1 refuses an unknown clock and an unreachable rate; then the test client runs the capture test through audio_v1: QEMU has no PWM block and cannot run a DMA ring, so the driver plays each period by a DMA copy into a capture buffer and checks the captured words against the client's pattern (converted, in order, silence and underruns once the client stops), and packets come back in order (`just _boot-audio-test` plays a tone on the board). The console goes to target/audio-test.log
-_test-audio board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-audio-test board)
+_test-audio board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-audio-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/audio-test.log"
@@ -695,7 +735,7 @@ _test-audio board='rpi3' features=test_kernel_features config=(board + '-' + rep
     echo "{{ ok_label }} the PWM clock runs at 100 MHz from PLLD through clock_v1; PCM streams through audio_v1 into the capture buffer converted and in order, with underruns counted"
 
 # Boot audio-test on raspi3b for its DMA checks: Kickstart hands the DMA controller component each interrupt line once, the audio driver copies memory through dma_v1 with chains of linked control blocks on the first channel and on one sharing line 27, one completion per block, and dma_v1 refuses what it must. QEMU's DMA model runs a chain inside the write that starts it, so no ring runs here (`just _boot-audio-test` plays one on the board). The console goes to target/dma-test.log
-_test-dma board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-audio-test board)
+_test-dma board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-audio-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/dma-test.log"
@@ -716,7 +756,7 @@ _test-dma board='rpi3' features=test_kernel_features config=(board + '-' + repla
     echo "{{ ok_label }} DMA chains copy memory, one completion per control block, on own and shared interrupt lines"
 
 # Boot compositor-test on raspi3b with a hub on the root port and a keyboard behind it: the compositor reads the keyboard through input_v1 and has drawn the background on the framebuffer
-_test-compositor board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-compositor-test board)
+_test-compositor board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-compositor-test board)
     @rm -f target/compositor-test.log
     {{ qemu }} -M raspi3b {{ qemu_io_opts }} {{ qemu_test_opts }} -device usb-hub,port=1 -device usb-kbd,port=1.1 \
       -dtb "{{ rpi3_dtb }}" -kernel "{{ images_dir / 'compositor-test-' + config + '.bin' }}" > target/compositor-test.log
@@ -724,7 +764,7 @@ _test-compositor board='rpi3' features=test_kernel_features config=(board + '-' 
     @echo "{{ ok_label }} the compositor drew the background and read the keyboard"
 
 # Boot window-events-test on raspi3b with a USB keyboard and mouse behind a hub: once window-events has made its windows (B, the newest, has the focus), click on A, drag over B, release and type `a` through the QEMU monitor; window-events checks what each window received and ends the run with the result. The console goes to target/window-events-test.log
-_test-window-events board='rpi3' seconds='120' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-window-events-test board)
+_test-window-events board=boards seconds='120' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-window-events-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/window-events-test.log"
@@ -767,7 +807,7 @@ _test-window-events board='rpi3' seconds='120' features=test_kernel_features con
     echo "{{ ok_label }} a new window took the focus, a click moved it, the drag stayed with the window pressed on and the key reached the focused window"
 
 # Boot log-test: the probe's second Thread overflows its stack and its fault handler (liblog_client's, installed by Kickstart) logs `FAULT: log_probe thread 1: stack overflow (guard page)`; then its first Thread panics and the panic handler logs `PANICKED: log_probe: made to panic on purpose at …`, which ends the run. Both lines must reach the UART through the log server. The semihosting console goes to target/log-test.log, the UART to target/log-test-serial.log
-_test-log board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-log-test board)
+_test-log board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-log-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/log-test.log"
@@ -792,8 +832,53 @@ _test-log board='rpi3' features=test_kernel_features config=(board + '-' + repla
     done
     echo "{{ ok_label }} the probe's stack overflow and panic reached the UART through the log server as FAULT: and PANICKED: lines"
 
+# Boot board-test on raspi4b with a 4 MiB card image holding a master boot record (signature 0x55aa, first partition type 0x0c): the SDHCI component's bring-up and block-0 lines must reach the UART through the log server, as on a board. QEMU holds the card on the Arasan controller, by the data port; EMMC2 comes up without one. The semihosting console goes to target/board-test.log, the UART to target/board-test-serial.log
+_test-board board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-board-test board)
+    #!/usr/bin/env bash
+    set -uo pipefail
+    log="{{ target_root }}/board-test.log"
+    serial="{{ target_root }}/board-test-serial.log"
+    image="{{ target_root }}/board-test.img"
+    rm -f "$log" "$serial"
+    dd if=/dev/zero of="${image}" bs=1048576 count=4 2>/dev/null
+    printf '\x0c' | dd of="${image}" bs=1 seek=450 conv=notrunc 2>/dev/null
+    printf '\x55\xaa' | dd of="${image}" bs=1 seek=510 conv=notrunc 2>/dev/null
+    # The kernel waits for good once the drivers are up: the run is stopped once
+    # every expected line is on the UART, or after 60 s.
+    {{ qemu }} -M raspi4b -display none -monitor none \
+      -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
+      -drive if=sd,format=raw,file="${image}" \
+      -dtb "{{ rpi4_dtb }}" -kernel "{{ images_dir / 'board-test-' + config + '.bin' }}" < /dev/null > "$log" &
+    qemu_pid=$!
+    prefix='^\[ *[0-9]*\.[0-9]\{6\}\] '
+    expected=(
+      "I log-server: [0-9]* clients, serial output attached"
+      "I sdhci: 0xfe300000 up, version 2, base clock 52000000 Hz, blocks by the data port: card 0x[0-9a-f]*, 8192 blocks, standard capacity"
+      "I sdhci: block 0 read by the data port: a master boot record, first partition type 0x0c"
+      "I sdhci: 0xfe340000 up, no card"
+    )
+    all_seen() {
+      for line in "${expected[@]}"; do
+        grep -a -q "${prefix}${line}" "$serial" 2>/dev/null || return 1
+      done
+    }
+    for _tick in $(seq 1 120); do
+      all_seen && break
+      kill -0 "$qemu_pid" 2>/dev/null || break
+      sleep 0.5
+    done
+    kill "$qemu_pid" 2>/dev/null
+    wait "$qemu_pid" 2>/dev/null
+    grep -a "board-test: \|sdhci: \|PANICKED" "$log" | tail -12
+    cat "$serial"
+    if grep -a -q "PANICKED" "$log"; then echo "board-test: a panic; see $log"; exit 1; fi
+    for line in "${expected[@]}"; do
+      grep -a -q "${prefix}${line}" "$serial" || { echo "board-test: the UART got no line \"$line\" from the log server"; exit 1; }
+    done
+    echo "{{ ok_label }} the SDHCI component's bring-up and block-0 lines reached the UART through the log server"
+
 # Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends the test song (Bach's Prelude in C) to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
-_test-midi board='rpi3' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board)
+_test-midi board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/midi-test.log"
@@ -844,7 +929,7 @@ _test-midi board='rpi3' features=test_kernel_features config=(board + '-' + repl
     echo "{{ ok_label }} the player played the test song through the MIDI synthesiser and the audio driver: its first periods as on the host ($hash), $sounding of $periods periods with sound, $audible of $stream captured stream periods audible, 0 underruns; the log server wrote the lines to the UART"
 
 # Boot wood-test on raspi3b with the devices of _test-compositor and the audio test tree (targets/audio-test.dtb, the PWM node enabled), wait up to `seconds` for the engine to start, press Escape (Doom's menu opens) and Down through the QEMU monitor, save the screen and stop QEMU: Wood's window has the focus as the newest window, so the keys reach it, and draw-demo's lava lamp, whose window lost the focus to it, must pause. Wood's playback Thread pulls each period's music from the MIDI synthesiser (midi_synth_v1), mixes the demo's sound effects on top and streams the result through audio_v1; the songs' first periods must hash as on the host (`wood_music_hashes`); the audio driver plays each period into its capture buffer by DMA copies, checks it against the ring and counts the audible ones. The log server holds the UART: the lines of the compositor, Wood, the synthesiser, the audio driver and the USB components (the controller's bring-up and port reset, a device the core enumerated, the keyboard the HID component serves) must reach it with its timestamp and level prefix, and Wood's music summary must appear. The semihosting console goes to target/wood-test.log, the UART to target/wood-test-serial.log, the screen to target/wood-test.ppm
-_test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-wood-test board)
+_test-wood board=boards seconds='90' features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-wood-test board)
     #!/usr/bin/env bash
     set -uo pipefail
     log="{{ target_root }}/wood-test.log"
@@ -913,9 +998,9 @@ _test-wood board='rpi3' seconds='90' features=test_kernel_features config=(board
     echo "{{ ok_label }} Wood presented frames in its window and received Escape and Down; its music and sound effects reached the audio driver's capture (at least ${audible% *} of ${audible#* } stream periods audible, ${music#* } of ${music% *} music periods with sound, the songs' first periods as on the host, $underruns underruns); the log server wrote the compositor's, Wood's, the synthesiser's, the audio driver's and the USB components' lines to the UART ($usb_lines USB lines, $dropped dropped); the screen is in $screen"
 
 # Boot the production image (rpi3, QEMU) and type commands at the shell on the serial console (the kernel's semihosting output goes to its own file), from a slow feeder so the UART's FIFO never overflows: the commands must answer, and `end` must shut QEMU down with a success status
-_test-shell: (build 'rpi3' 'qemu')
+_test-shell: (build boards 'qemu')
     @rm -f qemu.log target/shell-test.log target/shell-semihosting.log
-    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none {{ qemu_usb }} -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_rpi3_qemu_bin }}" > target/shell-test.log
+    (sleep 10; printf 'help\n'; sleep 2; printf 'led on\n'; sleep 2; printf 'led off\n'; sleep 2; printf 'feats\n'; sleep 2; printf 'draw\n'; sleep 2; printf 'end\n'; sleep 3) | {{ qemu }} -M raspi3b -display none -monitor none {{ qemu_usb }} -chardev stdio,id=uart,signal=off -serial chardev:uart -chardev file,id=semihosting,path=target/shell-semihosting.log -semihosting-config enable=on,userspace=on,chardev=semihosting -dtb "{{ rpi3_dtb }}" -kernel "{{ kernel_qemu_bin }}" > target/shell-test.log
     @grep -q "Supported console commands" target/shell-test.log || { echo "shell-test: help printed nothing"; exit 1; }
     @grep -q "Unknown command feats, try 'help'" target/shell-test.log || { echo "shell-test: an unknown command was not reported"; exit 1; }
     @if grep -q "led on failed\|led off failed" target/shell-test.log; then echo "shell-test: the LED command failed"; exit 1; fi
@@ -930,7 +1015,7 @@ _test-shell: (build 'rpi3' 'qemu')
 
 # Run chainboot tests in QEMU (rpi3) with its own linker script
 _test-chainboot:
-    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }} -C link-arg=--script={{ chainboot_link }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}') -C link-arg=--script={{ chainboot_link }}" \
     cargo test {{ target_json }} --features=qemu {{ rust_std }} \
       -p chainboot
 
@@ -963,7 +1048,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -1004,8 +1089,8 @@ _profile-synth:
 # === Lints ===
 
 # Cross-clippy the workspace for a board with a feature set
-_cross-clippy board='rpi3' features='':
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+_cross-clippy board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1013,14 +1098,14 @@ _cross-clippy board='rpi3' features='':
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs, Wood)
-_clippy-artifacts: (build 'rpi3' 'qemu') (_build-components 'rpi3' 'qemu') (_build-log-probe 'rpi3' 'qemu') (_build-midi-player 'rpi3' 'qemu') (_build-wood 'rpi3' 'qemu')
+_clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_build-log-probe boards 'qemu') (_build-midi-player boards 'qemu') (_build-wood boards 'qemu')
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
-clippy: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') (_cross-clippy 'rpi3' 'noserial') (_cross-clippy 'rpi3' 'qemu') (_cross-clippy 'rpi3' 'noserial,qemu') (_cross-clippy 'rpi3' 'jtag') (_cross-clippy 'rpi3' 'noserial,jtag') (build 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'debug_kernel') (_cross-clippy 'rpi3' 'qemu,debug_kernel') (_cross-clippy 'rpi3' 'qemu,fp_trap_test') (_cross-clippy 'rpi3' 'mmu') _clippy-host
+clippy: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rpi5' '') (_cross-clippy boards 'noserial') (_cross-clippy boards 'qemu') (_cross-clippy boards 'noserial,qemu') (_cross-clippy boards 'jtag') (_cross-clippy boards 'noserial,jtag') (build boards 'qemu,debug_kernel') (_cross-clippy boards 'debug_kernel') (_cross-clippy boards 'qemu,debug_kernel') (_cross-clippy boards 'qemu,fp_trap_test') (_cross-clippy boards 'mmu') _clippy-host
 
-# Run shortened clippy (default features on both boards) and the host-test linting
-_clippy-pre-push: _clippy-artifacts (_cross-clippy 'rpi3' '') (_cross-clippy 'rpi4' '') _clippy-host
+# Run shortened clippy (default features for the board set and for the Raspberry Pi 5 alone) and the host-test linting
+_clippy-pre-push: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rpi5' '') _clippy-host
 
 # Lint every host test and host tool
 _clippy-host: _clippy-object-host _clippy-platform-host _clippy-meddle _clippy-usb-host _clippy-input-host _clippy-compositor-host _clippy-log-host _clippy-vesper-synth _clippy-coc
@@ -1035,7 +1120,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
@@ -1060,8 +1145,8 @@ _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p makesd --all-targets -- --deny warnings --allow deprecated
 
 # Cross-clippy only the USB stack crates (controller, core, host library, HID) for a board with a feature set
-_cross-clippy-usb board='rpi3' features='':
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+_cross-clippy-usb board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1069,11 +1154,11 @@ _cross-clippy-usb board='rpi3' features='':
       -- --deny warnings --allow deprecated
 
 # Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)
-_clippy-usb: (_cross-clippy-usb 'rpi3' '') (_cross-clippy-usb 'rpi3' 'qemu') _clippy-usb-host
+_clippy-usb: (_cross-clippy-usb boards '') (_cross-clippy-usb boards 'qemu') _clippy-usb-host
 
 # Cross-clippy only the log crates (the log server component, its log_v1 interface crates, the client library, libserial-trace, which sends through it, and log-test's probe) for a board with a feature set
-_cross-clippy-log board='rpi3' features='':
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+_cross-clippy-log board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1081,11 +1166,11 @@ _cross-clippy-log board='rpi3' features='':
       -- --deny warnings --allow deprecated --allow clippy::map_unwrap_or --allow clippy::doc_markdown
 
 # Lint just the log crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
-_clippy-log: (_cross-clippy-log 'rpi3' '') (_cross-clippy-log 'rpi3' 'qemu') _clippy-log-host
+_clippy-log: (_cross-clippy-log boards '') (_cross-clippy-log boards 'qemu') _clippy-log-host
 
 # Cross-clippy only Wood (the Room engine's Vesper program) for a board with a feature set
-_cross-clippy-wood board='rpi3' features='':
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+_cross-clippy-wood board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1093,11 +1178,11 @@ _cross-clippy-wood board='rpi3' features='':
       -- --deny warnings --allow deprecated
 
 # Lint just Wood: the target build with and without `qemu` (much shorter than `clippy`)
-_clippy-wood: (_cross-clippy-wood 'rpi3' '') (_cross-clippy-wood 'rpi3' 'qemu')
+_clippy-wood: (_cross-clippy-wood boards '') (_cross-clippy-wood boards 'qemu')
 
 # Cross-clippy only the audio crates (the clock manager, DMA and PWM audio components, their interface crates and the audio test client) for a board with a feature set
-_cross-clippy-audio board='rpi3' features='':
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} {{ if board == 'rpi3' { board_rpi3_flags } else { board_rpi4_flags } }}" \
+_cross-clippy-audio board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1105,26 +1190,26 @@ _cross-clippy-audio board='rpi3' features='':
       -- --deny warnings --allow deprecated
 
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
-_clippy-audio: (_cross-clippy-audio 'rpi3' '') (_cross-clippy-audio 'rpi3' 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
+_clippy-audio: (_cross-clippy-audio boards '') (_cross-clippy-audio boards 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
 # Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, the bank-trimming tool (sf2-trim) and Wood's song export (wad-music)
 _clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
-    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo clippy {{ target_json }} {{ rust_std }} -p vesper-synth -p midi-synth -p midi-synth-server -p midi-synth-client -p midi-player \
       -- --deny warnings --allow deprecated
-    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth -p midi-player --features qemu \
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -p wad-music --all-targets -- --deny warnings --allow deprecated
 
 # Check that Wood's music synthesiser calls no soft-float routine in its target build (audio decision D9: integer only): the vesper-synth library, and the linked MIDI synthesiser component, which must hold none of them; the core library is checked too, to show the pattern finds them
-_synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
+_synth-no-float: (_cross-build 'midi-synth' boards user_link '')
     #!/usr/bin/env bash
     set -euo pipefail
     # A dev build of its own: its core keeps the float code that shows the
     # pattern works (a release core with LTO references none).
     export CARGO_TARGET_DIR="{{ target_root / 'synth-no-float' }}"
-    RUSTFLAGS="{{ fixed_rustflags }} {{ board_rpi3_flags }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
       cargo build {{ target_json }} {{ rust_std }} -p vesper-synth
     artifacts="$CARGO_TARGET_DIR/{{ target }}/debug"
     pattern='^__(add|sub|mul|div|neg|pow)[sdt]f[23]$|^__(fix|fixuns)[sdt]f[sdt]i$|^__float(un)?[sdt]i[sdt]f$|^__(extend|trunc)[sdt]f[sdt]f2$|^__(eq|ne|lt|le|gt|ge|un|cmp)[sdt]f2$|^__powi[sdt]f2$'
@@ -1137,7 +1222,7 @@ _synth-no-float: (_cross-build 'midi-synth' 'rpi3' user_link '')
     if [ -n "$found" ]; then echo "vesper-synth calls soft-float routines:"; echo "$found"; exit 1; fi
     echo "vesper-synth: no soft-float calls"
     # The linked component: LTO keeps a soft-float routine only if something calls it.
-    component="{{ target_root / 'rpi3' + profile_suffix / target / image_profile / 'midi-synth' }}"
+    component="{{ target_root / boards + profile_suffix / target / image_profile / 'midi-synth' }}"
     linked=$(rust-nm "$component" | awk '{print $NF}' | grep -E "$pattern" | sort -u || true)
     if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
     echo "midi-synth component: no soft-float routines linked"
@@ -1178,12 +1263,12 @@ fmt-check:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-_audit-fp-simd: (build 'rpi3' 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test 'rpi3') (_build-dispatch-test 'rpi3') (_build-irq-test 'rpi3') (_build-driver-test 'rpi3') (_build-mailbox-test 'rpi3') (_build-uart-test 'rpi3') (_build-fault-test 'rpi3') (_build-endpoint-test 'rpi3' 'qemu')
+_audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test boards) (_build-dispatch-test boards) (_build-irq-test boards) (_build-driver-test boards) (_build-mailbox-test boards) (_build-uart-test boards) (_build-fault-test boards) (_build-endpoint-test boards 'qemu')
     #!/usr/bin/env bash
     set -euo pipefail
-    # The production kernel and the qemu-only test kernels build in rpi3-qemu, the
-    # debug_kernel test kernels in rpi3-qemu+debug_kernel; every copy of an image is audited.
-    configs="{{ rpi3_qemu }} rpi3-qemu+debug_kernel{{ profile_suffix }}"
+    # The production kernel and the qemu-only test kernels build in <boards>-qemu, the
+    # debug_kernel test kernels in <boards>-qemu+debug_kernel; every copy of an image is audited.
+    configs="{{ boards_qemu }} {{ boards }}-qemu+debug_kernel{{ profile_suffix }}"
     # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
     fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
@@ -1233,7 +1318,7 @@ ci: clean lint build test
 # Generate and open documentation
 [group("maintenance")]
 doc:
-    VESPER_ARTIFACT_DIR="{{ rpi3_qemu_artifacts }}" cargo doc --open --no-deps {{ target_json }} {{ rust_std }}
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" cargo doc --open --no-deps {{ target_json }} {{ rust_std }}
 
 # Clean project
 [group("maintenance")]

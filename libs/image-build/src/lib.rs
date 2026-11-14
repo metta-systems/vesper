@@ -770,8 +770,10 @@ struct Settings {
     budget_ns: u64,
     /// Size exponent of the RAM Untyped (default 64 KiB)
     memory_bits: u8,
-    /// Whether the instance receives the `VideoCore` memory Untypeds (`video_memory = true`)
-    video_memory: bool,
+    /// What the instance receives beyond its node's registers and interrupts,
+    /// as the `libimage::Extra` variant's name: `VideoMemory` for
+    /// `video_memory = true`, `PciHost` for `pci_host = true`
+    extra: &'static str,
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`)
     serial: bool,
@@ -808,13 +810,25 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
         "{}: {kind} `{name}` memory must be a power of two of at least 4096 bytes",
         path.display()
     );
+    let switch = |key: &str| {
+        entry
+            .get(key)
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    };
+    let extra = match (switch("video_memory"), switch("pci_host")) {
+        (false, false) => "Nothing",
+        (true, false) => "VideoMemory",
+        (false, true) => "PciHost",
+        (true, true) => panic!(
+            "{}: {kind} `{name}` asks for both video_memory and pci_host",
+            path.display()
+        ),
+    };
     Settings {
         budget_ns,
         memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
-        video_memory: entry
-            .get("video_memory")
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(false),
+        extra,
         serial: entry
             .get("serial")
             .and_then(toml::Value::as_bool)
@@ -1140,7 +1154,7 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
         compatible => &image.driver_compatible,
         budget_ns => settings.budget_ns,
         memory_bits => settings.memory_bits,
-        video_memory => settings.video_memory,
+        extra => settings.extra,
         serial => settings.serial,
         dispatcher => settings.dispatcher,
         priority => image.entry_priority,
