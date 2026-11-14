@@ -53,6 +53,8 @@ members = [
   "drivers/sdhost-bcm2835/server",
   # SDHCI card controller component (serves the same block_v1)
   "drivers/sdhci",
+  # PCIe root complex component
+  "drivers/pcie-brcmstb",
   # GPIO component and its gpio_v1 interface crates
   "drivers/gpio-bcm2835",
   "drivers/gpio-bcm2835/client",
@@ -114,6 +116,7 @@ members = [
   "libs/memory",
   "libs/mmio",
   "libs/object",
+  "libs/pci",
   "libs/primitives",
   "libs/print",
   "libs/qemu",
@@ -275,6 +278,7 @@ fdt-rs = { version = "0.4", default-features = false }
 # libmemory = { path = "libs/memory", package = "vesper-memory" }
 libmmio = { path = "libs/mmio", package = "vesper-mmio" }
 libobject = { path = "libs/object", package = "vesper-objects" }
+libpci = { path = "libs/pci", package = "vesper-pci" }
 libprimitives = { path = "libs/primitives", package = "vesper-primitives" }
 libprint = { path = "libs/print", package = "vesper-print" }
 libqemu = { path = "libs/qemu", package = "vesper-qemu" }

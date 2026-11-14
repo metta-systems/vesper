@@ -1,0 +1,8 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The bring-up report, a panic and a fault go to the log server, the program
+# holding the UART, in an image that has one (board-test); without it the
+# lines print on semihosting only (under QEMU).
+uses log_v1 via component log_server { flush }

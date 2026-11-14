@@ -99,6 +99,13 @@ revisit after use. Unanswered questions:
   contract.
 - **IRQ follow-up:** whether a Thread may bind one Notification for both
   PPC-server and interrupt waits (seL4 `TCB_BindNotification`).
+- **PCI child drivers (P3):** how a driver for a function behind a PCI host
+  bridge (xHCI on the VL805, RP1) gets its BAR Frames and its interrupts:
+  from the host bridge driver (which holds the window Untypeds and, on the
+  BCM2711, demultiplexes the MSIs) or from Kickstart at boot; and who holds
+  the BCM2712 MIP's lines other than the self-test's first one. Interrupt
+  handlers can be neither copied nor moved after boot, which constrains the
+  answer.
 - **D9:** ABI version and optional-operation discovery for separately built
   components: how a component learns the running kernel's ABI revision and
   supported operations, and what happens on a mismatch. Not needed while
