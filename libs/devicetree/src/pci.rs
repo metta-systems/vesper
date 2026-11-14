@@ -20,6 +20,12 @@ const PHYS_HI_PREFETCHABLE: u32 = 1 << 30;
 /// `phys.hi` bits 25:24: the space code.
 const PHYS_HI_SPACE_SHIFT: u32 = 24;
 const PHYS_HI_SPACE_MASK: u32 = 0b11;
+/// `phys.hi` bits 15:8: device and function. (Bits 23:16 hold the bus.)
+const PHYS_HI_FUNCTION_SHIFT: u32 = 8;
+const PHYS_HI_DEVICE_FUNCTION_MASK: u32 = 0xff;
+
+/// Routing ID of function 01:00.0, the one behind a host bridge's root port.
+const BEHIND_ROOT_PORT: u16 = 1 << 8;
 
 /// The address space a PCI range is in: `phys.hi`'s space code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +109,61 @@ pub fn is_host_bridge(node: &Node<'_, '_, '_>) -> bool {
             .is_some_and(|kind| kind == "pci")
     };
     is_pci(node) && !node.parent().is_some_and(|parent| is_pci(&parent))
+}
+
+/// The host bridge `node` lies below: its nearest ancestor that is one.
+pub fn host_bridge_of<'a, 'i: 'a, 'dt: 'i>(node: &Node<'a, 'i, 'dt>) -> Option<Node<'a, 'i, 'dt>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if is_host_bridge(&candidate) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// The routing ID (`bus << 8 | device << 3 | function`) of the PCI function
+/// `node` describes, when its parent is a PCI bus below a host bridge: the
+/// device and function of its `reg`'s `phys.hi`, on bus *n* for a node *n*
+/// PCI bridges below the host bridge. A node without `reg` right below a host
+/// bridge (the Raspberry Pi 5's `rp1`) stands for function 01:00.0.
+///
+/// The bus number in `phys.hi` is not read, as Linux does not read it either
+/// (`of_pci_find_child_device` matches the device and function only): the
+/// tree the Raspberry Pi 4 firmware ships calls the VL805 `usb@0,0` with
+/// `reg` all zero, though it is 01:00.0.
+///
+/// shortcut: the bus numbers assume one bridge at each level, numbered depth
+/// first, and the `reg`-less case one function behind the root port; read
+/// the bus numbers enumeration gave once a tree needs more.
+pub fn pci_function(node: &Node<'_, '_, '_>) -> Option<u16> {
+    let parent = node.parent()?;
+    let Some(prop) = property(node, "reg") else {
+        return is_host_bridge(&parent).then_some(BEHIND_ROOT_PORT);
+    };
+    if bus_cells(&parent).address as usize != PCI_ADDRESS_CELLS {
+        return None;
+    }
+    let phys_hi = prop.u32(0).ok()?;
+    let device_function =
+        u16::try_from((phys_hi >> PHYS_HI_FUNCTION_SHIFT) & PHYS_HI_DEVICE_FUNCTION_MASK).ok()?;
+    Some(bridges_above(node)? << 8 | device_function)
+}
+
+/// How many PCI bridges lie between `node` and its host bridge; `None`
+/// below no host bridge.
+fn bridges_above(node: &Node<'_, '_, '_>) -> Option<u16> {
+    let mut bridges = 0;
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if is_host_bridge(&candidate) {
+            return Some(bridges);
+        }
+        bridges += 1;
+        current = candidate.parent();
+    }
+    None
 }
 
 /// The outbound windows of host bridge `node`: its `ranges`, with CPU

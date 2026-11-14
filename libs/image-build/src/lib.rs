@@ -780,6 +780,9 @@ struct Settings {
     /// Whether the program is the root dispatcher (`dispatcher = true`):
     /// Kickstart binds its Thread to the root Scheduler instead of starting it
     dispatcher: bool,
+    /// Full paths of device tree nodes a driver serves besides its
+    /// `compatible` strings (`nodes = [...]`)
+    nodes: Vec<String>,
 }
 
 /// A `[[driver]]` manifest entry: an active component plus what Kickstart
@@ -837,6 +840,24 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
             .get("dispatcher")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
+        nodes: entry
+            .get("nodes")
+            .and_then(toml::Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|node_path| {
+                node_path
+                    .as_str()
+                    .filter(|node_path| node_path.starts_with('/'))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: {kind} `{name}` nodes must be full device tree paths",
+                            path.display()
+                        )
+                    })
+                    .to_string()
+            })
+            .collect(),
     }
 }
 
@@ -1074,7 +1095,8 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static <NAME>: libimage::ComponentImage`, plus
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
-/// the strings of its `.driver_compatible` section, its first Thread's
+/// the strings of its `.driver_compatible` section, the device tree paths its
+/// entry's `nodes` names, its first Thread's
 /// priority (`.entry_priority`), the entries and
 /// priorities of its `.driver_threads` section, its `budget_ns` and its
 /// `memory` size, all listed in
@@ -1122,8 +1144,8 @@ pub fn bundle_components(manifest: &str) {
     for driver in &driver_entries {
         let image = ElfImage::read(&find_artifact(&driver.component.binary));
         assert!(
-            !image.driver_compatible.is_empty(),
-            "{}: a driver declares its compatible strings with driver_compatible!",
+            !image.driver_compatible.is_empty() || !driver.settings.nodes.is_empty(),
+            "{}: a driver declares its compatible strings with driver_compatible! or its manifest entry names nodes",
             driver.component.binary
         );
         drivers.push(driver.component.name.to_uppercase());
@@ -1152,6 +1174,7 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
     context! {
         what,
         compatible => &image.driver_compatible,
+        nodes => &settings.nodes,
         budget_ns => settings.budget_ns,
         memory_bits => settings.memory_bits,
         extra => settings.extra,

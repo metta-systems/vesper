@@ -330,6 +330,20 @@ pub fn interrupt_parent<'a, 'i: 'a, 'dt: 'i>(
     None
 }
 
+/// Whether `node`'s full path is `path`, such as
+/// `/scb/pcie@7d500000/pci@1,0/usb@1,0` (unit addresses included).
+pub fn has_path(node: &Node<'_, '_, '_>, path: &str) -> bool {
+    let mut current = Some(node.clone());
+    // The root node's name is empty, as is the part before the first `/`.
+    for component in path.rsplit('/') {
+        match current {
+            Some(candidate) if candidate.name() == Ok(component) => current = candidate.parent(),
+            _ => return false,
+        }
+    }
+    current.is_none()
+}
+
 /// `node`'s `phandle`, if it has one.
 pub fn phandle(node: &Node<'_, '_, '_>) -> Option<u32> {
     property(node, "phandle").and_then(|prop| prop.u32(0).ok())

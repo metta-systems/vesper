@@ -337,6 +337,8 @@ pub const MAX_PCI_WINDOWS: usize = 4;
 pub const MAX_WINDOW_BLOCKS: usize = 8;
 /// Most resets of one node a PCI host bridge driver receives.
 pub const MAX_RESETS: usize = 4;
+/// Most [`PciChild`] records.
+pub const MAX_PCI_CHILDREN: usize = 4;
 /// Bytes of [`Reset::name`].
 pub const RESET_NAME_BYTES: usize = 8;
 /// A [`PciHost`] index naming nothing.
@@ -390,9 +392,27 @@ pub struct MsiParent {
     pub first_vector: u64,
     /// For [`MSI_CONTROLLER`]: its vectors, one interrupt line each
     pub vector_count: u64,
-    /// For [`MSI_CONTROLLER`]: the interrupt of its first vector, by index in
+    /// For [`MSI_CONTROLLER`]: the interrupt of its last vector, which no
+    /// child's MSI-X vector is programmed to, by index in
     /// [`DriverInit::interrupts`], or [`NONE_INDEX`]
     pub interrupt: u64,
+}
+
+/// One driver of a function behind the bridge, which imports `pci_v1`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PciChild {
+    /// The badge of its `pci_v1` keys: the base of the data area it shares
+    /// with the bridge's driver
+    pub badge: u64,
+    /// Its function's routing ID (`bus << 8 | device << 3 | function`), from
+    /// its device-tree node
+    pub function: u64,
+    /// A key in the bridge driver's table that signals the child's
+    /// Notification (`SEND`), zero for none
+    pub msi_key: u64,
+    /// The bits it signals: the child's MSI bit, after its interrupts' bits
+    pub msi_bits: u64,
 }
 
 /// One reset of the node, from its `resets`.
@@ -439,6 +459,9 @@ pub struct PciHost {
     pub msi: MsiParent,
     pub reset_count: u64,
     pub resets: [Reset; MAX_RESETS],
+    pub child_count: u64,
+    /// The drivers of functions behind the bridge
+    pub children: [PciChild; MAX_PCI_CHILDREN],
 }
 
 impl PciHost {
@@ -480,7 +503,27 @@ impl PciHost {
             id: 0,
             name: [0; RESET_NAME_BYTES],
         }; MAX_RESETS],
+        child_count: 0,
+        children: [PciChild {
+            badge: 0,
+            function: 0,
+            msi_key: 0,
+            msi_bits: 0,
+        }; MAX_PCI_CHILDREN],
     };
+
+    /// The drivers of functions behind the bridge.
+    pub fn children(&self) -> &[PciChild] {
+        &self.children[..clamp(self.child_count, MAX_PCI_CHILDREN)]
+    }
+
+    /// The child whose `pci_v1` keys carry `badge`, with its index.
+    pub fn child(&self, badge: u64) -> Option<(usize, &PciChild)> {
+        self.children()
+            .iter()
+            .enumerate()
+            .find(|(_, child)| child.badge == badge && badge != 0)
+    }
 
     /// The outbound windows.
     pub fn windows(&self) -> &[PciWindow] {
@@ -927,6 +970,43 @@ const SLOT_BITS: u32 = 8;
 pub fn local_key(table: u64, slot: u32) -> RawKey {
     let guard_bits = RawKey::from_wire(table).slot().0 & !((1 << SLOT_BITS) - 1);
     RawKey::new(KeySlot(guard_bits | slot), 1)
+}
+
+/// The sizes (`size_bits`) of the aligned chunks that carve a Untyped's
+/// watermark forward from `from` to `to`, both multiples of 16 bytes with
+/// `from <= to` (offsets from the block's base).
+///
+/// Retype allocates at the watermark, aligned to the object, so skipping
+/// memory means carving it into Untypeds, each aligned to its own size: the
+/// largest power of two that fits both the gap and the watermark's alignment.
+#[derive(Clone, Debug)]
+pub struct SkipChunks {
+    from: u64,
+    to: u64,
+}
+
+/// The chunks that move a watermark from `from` to `to`.
+pub const fn skip_chunks(from: u64, to: u64) -> SkipChunks {
+    SkipChunks { from, to }
+}
+
+impl Iterator for SkipChunks {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        if self.from >= self.to {
+            return None;
+        }
+        let gap_bits = 63 - (self.to - self.from).leading_zeros();
+        let alignment_bits = if self.from == 0 {
+            63
+        } else {
+            self.from.trailing_zeros()
+        };
+        let bits = gap_bits.min(alignment_bits);
+        self.from += 1_u64 << bits;
+        u8::try_from(bits).ok()
+    }
 }
 
 /// Where [`map_device_pages`] maps the page at `index` of `init.pages()`.

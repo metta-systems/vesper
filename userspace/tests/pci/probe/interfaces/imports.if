@@ -1,0 +1,9 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The function comes from the PCIe host bridge driver, the one loaded `pcie`
+# instance (each board enables one bridge).
+uses pci_v1 via component pcie { claim, raise_msi }
+# The report goes to the log server, which holds the UART.
+uses log_v1 via component log_server { flush }
