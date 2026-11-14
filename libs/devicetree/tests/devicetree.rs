@@ -60,6 +60,143 @@ mod tests {
     const RPI4: &[u8] = include_bytes!("../../../targets/bcm2711-rpi-4-b.dtb");
     const RPI5: &[u8] = include_bytes!("../../../targets/bcm2712-rpi-5-b.dtb");
 
+    mod pci {
+        use {
+            super::{RPI4, RPI5, with_index},
+            vesper_devicetree::{
+                find_compatible, phandle,
+                pci::{
+                    PciRange, PciSpace, Reset, brcm_msi_offset, is_host_bridge, msi_parent,
+                    msi_range, pci_dma_ranges, pci_ranges, resets,
+                },
+            },
+        };
+
+        #[test]
+        fn rpi4_bridge_windows_and_its_own_msi_controller() {
+            with_index(RPI4, |index| {
+                let (bridge, _) = find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
+                // `/scb` maps 0x6_0000_0000 one to one.
+                assert_eq!(
+                    pci_ranges(&bridge).collect::<Vec<_>>(),
+                    [PciRange {
+                        space: PciSpace::Memory32,
+                        prefetchable: false,
+                        pci: 0xc000_0000,
+                        cpu: 0x6_0000_0000,
+                        size: 0x4000_0000,
+                    }]
+                );
+                // The first 3 GiB of RAM, through `/scb`'s one-to-one
+                // `dma-ranges`.
+                assert_eq!(
+                    pci_dma_ranges(&bridge).collect::<Vec<_>>(),
+                    [PciRange {
+                        space: PciSpace::Memory32,
+                        prefetchable: false,
+                        pci: 0,
+                        cpu: 0,
+                        size: 0xc000_0000,
+                    }]
+                );
+                assert!(is_host_bridge(&bridge));
+                // The root port below it is a PCI node, not a host bridge.
+                let root_port = index
+                    .nodes()
+                    .find(|node| node.name() == Ok("pci@1,0"))
+                    .expect("root port");
+                assert!(!is_host_bridge(&root_port));
+                let parent = msi_parent(index, &bridge).expect("msi-parent");
+                assert_eq!(phandle(&parent), phandle(&bridge));
+                assert_eq!(msi_range(index, &parent), None);
+                assert_eq!(resets(index, &bridge).count(), 0);
+            });
+        }
+
+        #[test]
+        fn rpi5_rp1_bridge_windows_mip_and_resets() {
+            with_index(RPI5, |index| {
+                let bridge = index
+                    .nodes()
+                    .find(|node| node.name() == Ok("pcie@1000120000"))
+                    .expect("pcie2");
+                assert_eq!(
+                    pci_ranges(&bridge).collect::<Vec<_>>(),
+                    [
+                        PciRange {
+                            space: PciSpace::Memory32,
+                            prefetchable: false,
+                            pci: 0,
+                            cpu: 0x1f_0000_0000,
+                            size: 0xffff_fffc,
+                        },
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: true,
+                            pci: 0x4_0000_0000,
+                            cpu: 0x1c_0000_0000,
+                            size: 0x3_0000_0000,
+                        },
+                    ]
+                );
+                assert_eq!(
+                    pci_dma_ranges(&bridge).collect::<Vec<_>>(),
+                    [
+                        PciRange {
+                            space: PciSpace::Memory32,
+                            prefetchable: false,
+                            pci: 0,
+                            cpu: 0x1f_0000_0000,
+                            size: 0x40_0000,
+                        },
+                        // All of RAM, at 64 GiB on the PCI side.
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: true,
+                            pci: 0x10_0000_0000,
+                            cpu: 0,
+                            size: 0x10_0000_0000,
+                        },
+                        // The MIP's doorbell page.
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: false,
+                            pci: 0xff_ffff_f000,
+                            cpu: 0x10_0013_0000,
+                            size: 0x1000,
+                        },
+                    ]
+                );
+                let mip = msi_parent(index, &bridge).expect("msi-parent");
+                assert_eq!(mip.name(), Ok("msi-controller@1000130000"));
+                let range = msi_range(index, &mip).expect("msi-ranges");
+                // GIC SPI 128 up, rising edge.
+                assert_eq!(range.cells(), [0, 0x80, 1]);
+                assert_eq!(range.count, 64);
+                assert_eq!(brcm_msi_offset(&mip), 0);
+                let (rescal, _) =
+                    find_compatible(index, &["brcm,bcm7216-pcie-sata-rescal"]).expect("rescal");
+                let (bridge_resets, _) =
+                    find_compatible(index, &["brcm,brcmstb-reset"]).expect("brcmstb-reset");
+                assert_eq!(
+                    resets(index, &bridge).collect::<Vec<_>>(),
+                    [
+                        Reset {
+                            controller: phandle(&rescal).expect("phandle"),
+                            id: 0,
+                            name: "rescal",
+                        },
+                        Reset {
+                            controller: phandle(&bridge_resets).expect("phandle"),
+                            id: 0x2c,
+                            name: "bridge",
+                        },
+                    ]
+                );
+            });
+        }
+    }
+
     #[test]
     fn rpi3_reg_uses_parent_cells_and_translates_through_soc_ranges() {
         with_index(RPI3, |index| {

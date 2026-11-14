@@ -38,6 +38,10 @@ use {
     aarch64_cpu::registers::{Readable, SPSR_EL2, Writeable},
     core::{cell::UnsafeCell, slice},
     libaddress::{PhysAddr, VirtAddr},
+    libdevicetree::{
+        is_enabled,
+        pci::{PciSpace, is_host_bridge, pci_ranges},
+    },
     liblocking::interface::Mutex,
     libmapping::{AccessPermissions, AttributeFields, MemAttributes},
     libqemu::semihosting as semi,
@@ -357,6 +361,39 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
                     node.name,
                 ) {
                     semi::println!("🌴 Not recording {} region: {error:?}", node.name);
+                }
+            });
+        }
+    }
+
+    // The memory windows of the enabled PCI host bridges: device memory no
+    // `reg` covers, which becomes device Untypeds like the registers and
+    // goes to the bridge's driver (`libdevice_driver::PciHost`).
+    for bridge in device_tree
+        .index()
+        .nodes()
+        .filter(|node| is_enabled(node) && is_host_bridge(node))
+    {
+        for window in pci_ranges(&bridge)
+            .filter(|window| matches!(window.space, PciSpace::Memory32 | PciSpace::Memory64))
+        {
+            semi::println!(
+                "🌴 PCI window {:#x}+{:#x} -> PCI {:#x}",
+                window.cpu,
+                window.size,
+                window.pci
+            );
+            BOOT_INFO.lock(|bi| {
+                if let Err(error) = bi.insert_used_region(
+                    PhysAddr::new(window.cpu),
+                    PhysAddr::new(window.cpu + window.size),
+                    AttributeFields {
+                        mem_attributes: MemAttributes::Device,
+                        ..AttributeFields::default()
+                    },
+                    "pci window",
+                ) {
+                    semi::println!("🌴 Not recording a PCI window: {error:?}");
                 }
             });
         }

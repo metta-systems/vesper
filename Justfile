@@ -34,7 +34,7 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -267,7 +267,7 @@ _build-log-probe board=boards features='qemu' image_features=features: (_cross-b
 # Build the log-test e2e kernel: the PL011 driver, the log server and a probe whose Threads overflow a stack and panic
 _build-log-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'log-test' board)
 
-# Build the board-test e2e kernel (the PL011, the log server, the mailbox and the SDHCI component), for `just _test-board`
+# Build the board-test e2e kernel (the PL011, the log server, the mailbox, the SDHCI and the PCIe components), for `just _test-board`
 _build-board-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-log-probe board 'qemu' test_kernel_features) (_build-test-kernel 'board-test' board)
 
 # Build the audio-test e2e kernel (the clock manager component, the DMA controller component, the PWM audio driver, the gpio component and the PL011 driver)
@@ -337,10 +337,10 @@ _build-midi-test-hw board=boards: (_build-components board '' '') (_build-midi-p
 _boot-midi-test: _build-midi-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-' + boards_hw + '.bin' }}"
 
-# Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds on the UART through the log server
+# Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds, and the PCIe root complex its link, the functions behind it and an MSI self-test, on the UART through the log server
 _build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
 
-# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds; nothing is written to the card
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived
 [group("hw")]
 boot-board-test: _build-board-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
@@ -1048,7 +1048,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -1120,7 +1120,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')

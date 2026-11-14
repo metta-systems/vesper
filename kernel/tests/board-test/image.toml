@@ -30,6 +30,15 @@ binary = "sdhci"
 interfaces = "../../../drivers/sdhci/interfaces"
 memory = 131072
 
+# The PCIe root complex (the VL805's on the Raspberry Pi 4, RP1's on the
+# Raspberry Pi 5): it logs the link, the functions behind it with their BARs,
+# and whether an MSI raised in software arrives.
+[[driver]]
+name = "pcie"
+binary = "pcie-brcmstb"
+interfaces = "../../../drivers/pcie-brcmstb/interfaces"
+pci_host = true
+
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.
 [[component]]

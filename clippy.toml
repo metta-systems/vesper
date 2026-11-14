@@ -1,4 +1,5 @@
 absolute-paths-allowed-crates = ["core"]
 absolute-paths-max-segments = 6
-# ".." keeps clippy's default list; SoundFont is the format's own spelling.
-doc-valid-idents = ["SoundFont", ".."]
+# ".." keeps clippy's default list; SoundFont is the format's own spelling,
+# PCIe, QoS and SerDes the usual spellings of those terms.
+doc-valid-idents = ["SoundFont", "PCIe", "QoS", "SerDes", ".."]

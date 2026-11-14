@@ -79,20 +79,27 @@ use {
         loader::{StackRegion, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
-        FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
-        MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS,
-        MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL,
-        PAGE_FRAME, PAGE_UNTYPED, PinSetting, Priority, Region, ResourceRecord, STACK_REGION,
-        StackSpan, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit, DriverInit,
+        ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA, Interrupt,
+        MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS,
+        MAX_INTERRUPTS, MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES, MAX_VIDEO_BLOCKS,
+        MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS, NO_PULL, NONE_INDEX,
+        PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32, PCI_SPACE_MEMORY64, PciHost,
+        PciWindow, PinSetting, Priority, RESET_NAME_BYTES, Region, Reset, ResourceRecord,
+        STACK_REGION, StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
         fixed_clock_rate,
         interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
-        is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
+        is_compatible, is_enabled, linked_phandle, node_by_phandle,
+        pci::{
+            PciRange, PciSpace, brcm_msi_offset, msi_parent, msi_range, pci_dma_ranges,
+            pci_ranges, resets,
+        },
+        phandle, reg, regions,
     },
-    libimage::{DriverImage, Link, Provider},
+    libimage::{DriverImage, Extra, Link, Provider},
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
@@ -204,6 +211,31 @@ struct Instance {
     region_count: usize,
     pages: [u64; MAX_DEVICE_PAGES],
     page_count: usize,
+    /// For a PCI host bridge driver: the regions of its MSI controller and
+    /// reset controllers, which follow the node's own
+    pci: PciLinks,
+}
+
+/// Where the registers of a PCI host bridge's linked nodes are among its
+/// instance's regions.
+#[derive(Clone, Copy)]
+struct PciLinks {
+    /// The MSI controller's, when it is another node
+    msi_region: Option<usize>,
+    resets: [Reset; MAX_RESETS],
+    reset_count: usize,
+}
+
+impl PciLinks {
+    const NONE: Self = Self {
+        msi_region: None,
+        resets: [Reset {
+            region: NONE_INDEX,
+            id: 0,
+            name: [0; RESET_NAME_BYTES],
+        }; MAX_RESETS],
+        reset_count: 0,
+    };
 }
 
 impl Instance {
@@ -217,7 +249,32 @@ impl Instance {
             region_count: 0,
             pages: [0; MAX_DEVICE_PAGES],
             page_count: 0,
+            pci: PciLinks::NONE,
         }
+    }
+
+    /// Add `region` and its pages; its index among the regions (an earlier
+    /// one starting at the same address is reused), `None` if it does not fit
+    /// the init record.
+    fn add_region(&mut self, region: Region) -> Option<usize> {
+        if let Some(index) = self.regions[..self.region_count]
+            .iter()
+            .position(|known| known.start == region.start)
+        {
+            return Some(index);
+        }
+        let index = self.region_count;
+        *self.regions.get_mut(index)? = region;
+        self.region_count += 1;
+        let mut page = region.start & !(PAGE - 1);
+        while page < region.start + region.size {
+            if !self.pages().contains(&page) {
+                *self.pages.get_mut(self.page_count)? = page;
+                self.page_count += 1;
+            }
+            page += PAGE;
+        }
+        Some(index)
     }
 
     /// The name of the node it serves, for messages.
@@ -234,8 +291,12 @@ impl Instance {
 }
 
 /// The physical pages `node`'s registers span, sorted and deduplicated, with
-/// its register ranges; `None` if they do not fit the init record.
+/// its register ranges; `None` if they do not fit the init record. A PCI host
+/// bridge driver's instance also spans the first register range of its MSI
+/// controller, when that is another node, and of each of its reset
+/// controllers.
 fn plan_instance(
+    tree: &'static DevTreeIndex<'static, 'static>,
     driver: &'static DriverImage,
     compatible_index: usize,
     node: &Node<'static, 'static, 'static>,
@@ -248,27 +309,117 @@ fn plan_instance(
         region_count: 0,
         pages: [0; MAX_DEVICE_PAGES],
         page_count: 0,
+        pci: PciLinks::NONE,
+    };
+    let first_region = |linked: &Node<'_, '_, '_>| {
+        regions(linked).find(|region| region.size != 0).map(|region| Region {
+            start: region.start,
+            size: region.size,
+        })
     };
     for region in regions(node) {
         if region.size == 0 {
             continue;
         }
-        *instance.regions.get_mut(instance.region_count)? = Region {
+        instance.add_region(Region {
             start: region.start,
             size: region.size,
-        };
-        instance.region_count += 1;
-        let mut page = region.start & !(PAGE - 1);
-        while page < region.start + region.size {
-            if !instance.pages().contains(&page) {
-                *instance.pages.get_mut(instance.page_count)? = page;
-                instance.page_count += 1;
-            }
-            page += PAGE;
+        })?;
+    }
+    if driver.extra == Extra::PciHost {
+        if let Some(controller) = msi_parent(tree, node).filter(|parent| !same_node(parent, node)) {
+            instance.pci.msi_region = Some(instance.add_region(first_region(&controller)?)?);
+        }
+        for reset in resets(tree, node).take(MAX_RESETS) {
+            let controller = node_by_phandle(tree, reset.controller)?;
+            let region = instance.add_region(first_region(&controller)?)?;
+            let mut name = [0; RESET_NAME_BYTES];
+            let length = reset.name.len().min(RESET_NAME_BYTES);
+            name[..length].copy_from_slice(&reset.name.as_bytes()[..length]);
+            instance.pci.resets[instance.pci.reset_count] = Reset {
+                region: region as u64,
+                id: u64::from(reset.id),
+                name,
+            };
+            instance.pci.reset_count += 1;
         }
     }
     instance.pages[..instance.page_count].sort_unstable();
     Some(instance)
+}
+
+/// The device-tree part of a PCI host bridge's record: its windows, its MSI
+/// controller and its resets (the window memory and the MSI interrupt are
+/// filled in as they are handed over).
+fn pci_host_record(
+    tree: &'static DevTreeIndex<'static, 'static>,
+    node: &Node<'static, 'static, 'static>,
+    links: &PciLinks,
+) -> PciHost {
+    let mut record = PciHost::EMPTY;
+    let window = |range: PciRange| PciWindow {
+        pci: range.pci,
+        cpu: range.cpu,
+        size: range.size,
+        space: match range.space {
+            PciSpace::Io => PCI_SPACE_IO,
+            PciSpace::Memory64 => PCI_SPACE_MEMORY64,
+            PciSpace::Configuration | PciSpace::Memory32 => PCI_SPACE_MEMORY32,
+        },
+        prefetchable: u64::from(range.prefetchable),
+    };
+    for (slot, range) in record
+        .windows
+        .iter_mut()
+        .zip(pci_ranges(node).filter(|range| range.space != PciSpace::Configuration))
+    {
+        *slot = window(range);
+        record.window_count += 1;
+    }
+    for (slot, range) in record.inbound.iter_mut().zip(pci_dma_ranges(node)) {
+        *slot = window(range);
+        record.inbound_count += 1;
+    }
+    if let Some(controller) = msi_parent(tree, node) {
+        record.msi.kind = if same_node(&controller, node) {
+            MSI_OWN
+        } else {
+            MSI_CONTROLLER
+        };
+        if let (Some(region), Some(range)) = (links.msi_region, msi_range(tree, &controller)) {
+            record.msi.region = region as u64;
+            // The doorbell is a PCI address: its `reg` entry is kept as
+            // written, untranslated.
+            record.msi.doorbell = reg(&controller).nth(1).map_or(0, |doorbell| doorbell.start);
+            record.msi.first_vector = u64::from(brcm_msi_offset(&controller));
+            record.msi.vector_count = u64::from(range.count);
+        }
+    }
+    record.reset_count = links.reset_count as u64;
+    record.resets = links.resets;
+    record
+}
+
+/// The interrupt the first vector of `node`'s MSI controller raises, when
+/// that controller is another node with one line per vector: its first
+/// `msi-ranges` specifier, moved on by its `brcm,msi-offset` (the
+/// `brcm,bcm2712-mip` binding, whose lines are GIC SPIs, the number in the
+/// second cell).
+fn first_msi_interrupt(
+    tree: &'static DevTreeIndex<'static, 'static>,
+    node: &Node<'static, 'static, 'static>,
+) -> Option<libdevicetree::interrupts::Interrupt> {
+    let controller = msi_parent(tree, node).filter(|parent| !same_node(parent, node))?;
+    let range = msi_range(tree, &controller)?;
+    let mut cells = [0; MAX_INTERRUPT_CELLS];
+    let count = range.cells().len().min(MAX_INTERRUPT_CELLS);
+    cells[..count].copy_from_slice(&range.cells()[..count]);
+    *cells.get_mut(1)? += brcm_msi_offset(&controller);
+    Some(libdevicetree::interrupts::Interrupt {
+        controller: range.controller,
+        cell_count: u32::try_from(count).ok()?,
+        cells,
+    })
 }
 
 /// Whether `page` touches a range the kernel drives itself.
@@ -298,7 +449,7 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             continue;
         };
         let name = node.name().unwrap_or("?");
-        let Some(instance) = plan_instance(driver, compatible_index, &node) else {
+        let Some(instance) = plan_instance(tree, driver, compatible_index, &node) else {
             semi::println!(
                 "🥾 Driver {}: {name} has too many registers, skipped",
                 driver.component.name
@@ -393,6 +544,23 @@ impl DeviceMemory {
             });
         }
         memory
+    }
+
+    /// Take every uncarved piece lying inside `[start, end)` out of the
+    /// pool, up to `pieces.len()` of them; how many were taken.
+    fn take_within(&mut self, start: u64, end: u64, pieces: &mut [Piece]) -> usize {
+        let mut taken = 0;
+        for entry in &mut self.pieces {
+            let Some(piece) = *entry else { continue };
+            if taken == pieces.len() || piece.used != 0 || piece.base < start || piece.end() > end
+            {
+                continue;
+            }
+            pieces[taken] = piece;
+            taken += 1;
+            *entry = None;
+        }
+        taken
     }
 
     fn add(&mut self, piece: Piece) {
@@ -858,8 +1026,13 @@ pub fn load_drivers(
                     )
                 });
         }
-        let init_page =
-            builder.private_pages(component.address_space_key, component.l2, INIT_VA, 1, slots);
+        let init_page = builder.private_pages(
+            component.address_space_key,
+            component.l2,
+            INIT_VA,
+            INIT_PAGES,
+            slots,
+        );
         Builder::map_table(
             builder.carve_tables(slots.take(1), 1),
             component.l2,
@@ -1004,7 +1177,7 @@ pub fn load_drivers(
             .unwrap_or(NO_BUS_ADDRESS);
         init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
         init.memory_size = 1 << driver.memory_bits;
-        if driver.video_memory {
+        if driver.extra == Extra::VideoMemory {
             // The blocks move to the first instance that asks for them.
             let video = video_untypeds();
             let blocks = if video_given { 0 } else { video.count };
@@ -1016,7 +1189,7 @@ pub fn load_drivers(
                     .unwrap_or_else(|error| panic!("🥾 video Untyped {slot}: {:?}", error.code()));
                 let index = usize::try_from(init.video_count).unwrap_or(MAX_VIDEO_BLOCKS);
                 assert!(index < MAX_VIDEO_BLOCKS, "🥾 too many video memory blocks");
-                init.video[index] = VideoBlock {
+                init.video[index] = DeviceBlock {
                     key: move_to(builder, &mut self_table, &component, key, local_slot()).to_wire(),
                     base: region.paddr,
                     size_bits: u64::from(region.size_bits),
@@ -1024,6 +1197,33 @@ pub fn load_drivers(
                 init.video_count += 1;
             }
             video_given |= blocks != 0;
+        }
+        // ── A PCI host bridge: its windows and the memory behind them ──
+        if let (Extra::PciHost, Some(node)) = (driver.extra, instance.node.as_ref()) {
+            let tree = device_tree::at_el1().index();
+            init.pci = pci_host_record(tree, node, &instance.pci);
+            let windows = init.pci.windows;
+            for window in &windows[..init.pci.windows().len()] {
+                let end = (window.cpu + window.size).next_multiple_of(PAGE);
+                let mut pieces = [Piece {
+                    key: RawKey::from_wire(0),
+                    base: 0,
+                    size_bits: 0,
+                    used: 0,
+                }; MAX_WINDOW_BLOCKS];
+                let room = MAX_WINDOW_BLOCKS - init.pci.blocks().len();
+                let taken = memory.take_within(window.cpu, end, &mut pieces[..room]);
+                for piece in &pieces[..taken] {
+                    let index = init.pci.blocks().len();
+                    init.pci.blocks[index] = DeviceBlock {
+                        key: move_to(builder, &mut self_table, &component, piece.key, local_slot())
+                            .to_wire(),
+                        base: piece.base,
+                        size_bits: u64::from(piece.size_bits),
+                    };
+                    init.pci.block_count += 1;
+                }
+            }
         }
         let mut retype = |kind: ObjectType| {
             untyped
@@ -1095,12 +1295,21 @@ pub fn load_drivers(
             .carved_id()
             .unwrap_or_else(|error| panic!("🥾 Notification identity: {:?}", error.code()));
         let mut interrupt_count = 0;
+        // A PCI host bridge whose MSIs another controller turns into one line
+        // per vector also gets its first vector's line, after the node's own.
+        let first_msi = instance
+            .node
+            .as_ref()
+            .filter(|_| driver.extra == Extra::PciHost)
+            .and_then(|node| first_msi_interrupt(tree, node));
         // A line the node lists more than once (channels sharing it) is
         // issued once, at its first position.
-        for interrupt in instance
+        for (interrupt, is_msi) in instance
             .node
             .iter()
             .flat_map(|node| distinct_interrupts(tree, node))
+            .map(|interrupt| (interrupt, false))
+            .chain(first_msi.map(|interrupt| (interrupt, true)))
             .take(MAX_INTERRUPTS)
         {
             let Some(controller) = controllers.index_of(interrupt.controller) else {
@@ -1156,6 +1365,9 @@ pub fn load_drivers(
                 bits,
                 line: u64::from(issued.line),
             };
+            if is_msi {
+                init.pci.msi.interrupt = interrupt_count as u64;
+            }
             interrupt_count += 1;
         }
         init.interrupt_count = interrupt_count as u64;

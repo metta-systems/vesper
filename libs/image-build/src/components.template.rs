@@ -2,7 +2,7 @@
 
 #[allow(unused)]
 use libimage::{
-    ComponentImage, DriverImage, Export, Import, InterfaceExport, Link, LoadableSection,
+    ComponentImage, DriverImage, Export, Extra, Import, InterfaceExport, Link, LoadableSection,
     Permissions, Provider, ResourceMapping, SectionMeta, ThreadImage,
 };
 
@@ -63,7 +63,7 @@ pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     compatible: &[{% for entry in component.driver.compatible %}"{{entry}}"{% if not loop.last %}, {% endif %}{% endfor %}],
     budget_ns: {{component.driver.budget_ns}},
     memory_bits: {{component.driver.memory_bits}},
-    video_memory: {{component.driver.video_memory | bool}},
+    extra: Extra::{{component.driver.extra}},
     serial: {{component.driver.serial | bool}},
     dispatcher: {{component.driver.dispatcher | bool}},
     priority: {{component.driver.priority}},

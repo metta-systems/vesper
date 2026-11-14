@@ -3282,6 +3282,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pcie-brcmstb"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
+ "metta-meddle-runtime",
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-pci",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5182,6 +5197,14 @@ dependencies = [
  "vesper-print",
  "vesper-qemu",
  "vesper-syscalls",
+]
+
+[[package]]
+name = "vesper-pci"
+version = "0.0.1"
+dependencies = [
+ "arbitrary-int",
+ "bitbybit",
 ]
 
 [[package]]

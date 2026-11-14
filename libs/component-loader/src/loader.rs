@@ -353,13 +353,16 @@ impl Builder<'_> {
     }
 }
 
-/// Write `value` at the start of the builder-owned page at `paddr` (a
-/// component's init page), through the kernel direct map.
+/// Most bytes of an init record: a driver's takes two pages.
+pub const MAX_INIT_BYTES: usize = 2 * 4096;
+
+/// Write `value` at the start of the builder-owned pages at `paddr` (a
+/// component's init pages), through the kernel direct map.
 ///
-/// The page must be a freshly retyped Frame the builder owns, written before
-/// the component runs; `T` must fit in the page.
+/// The pages must be freshly retyped, physically contiguous Frames the
+/// builder owns, written before the component runs; `T` must fit in them.
 pub fn write_init<T>(paddr: u64, value: T) {
-    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    const { assert!(core::mem::size_of::<T>() <= MAX_INIT_BYTES) };
     // SAFETY: per the contract above, `paddr` names an accounted page nobody
     // else accesses yet, and the direct map covers it.
     unsafe {
@@ -376,7 +379,7 @@ pub fn write_init<T>(paddr: u64, value: T) {
 /// The page must hold a `T` written by [`write_init`], and nothing else may
 /// access it while `update` runs.
 pub fn update_init<T, Output>(paddr: u64, update: impl FnOnce(&mut T) -> Output) -> Output {
-    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    const { assert!(core::mem::size_of::<T>() <= MAX_INIT_BYTES) };
     // SAFETY: per the contract above, `paddr` names a builder-owned page
     // holding an initialized `T`, the direct map covers it, and this borrow
     // is the only access for the duration of `update`.
