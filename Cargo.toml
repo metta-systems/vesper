@@ -298,7 +298,7 @@ log-interface-client = { path = "userspace/log-server/client" }
 libheap = { path = "libs/heap", package = "vesper-heap" }
 liblog-client = { path = "libs/log-client", package = "vesper-log-client" }
 # static_assertions = { version = "1.1.0" }
-tock-registers = { version = "0.10" }
+tock-registers = { version = "0.12" }
 usize_conversions = { version = "0.2" }
 #======
 # host

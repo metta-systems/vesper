@@ -8,7 +8,7 @@ version = "11.2.0"
 source = "git+https://github.com/rust-embedded/aarch64-cpu?branch=main#81e6008accbaf69df7c634e8412c300ed6e4b614"
 dependencies = [
  "arm-targets",
- "tock-registers",
+ "tock-registers 0.10.1",
 ]
 
 [[package]]
@@ -623,7 +623,7 @@ dependencies = [
  "arbitrary-int",
  "bitbybit",
  "seahash",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-boot-uart",
  "vesper-chainboot-protocol",
  "vesper-console",
@@ -1378,7 +1378,7 @@ name = "fault-protocol"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "tock-registers",
+ "tock-registers 0.12.0",
 ]
 
 [[package]]
@@ -1517,7 +1517,7 @@ name = "fp-trap-protocol"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "tock-registers",
+ "tock-registers 0.12.0",
 ]
 
 [[package]]
@@ -2729,7 +2729,7 @@ dependencies = [
  "aarch64-cpu",
  "cfg-if",
  "owo-colors",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-address",
  "vesper-boot",
  "vesper-console",
@@ -4436,6 +4436,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d2d250f87fb3fb6f225c907cf54381509f47b40b74b1d1f12d2dccbc915bdfe"
 
 [[package]]
+name = "tock-registers"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc2477fb5e50cca83e3c38fd91757ffd87382baf2a3e032f10e9b29a9a50474b"
+dependencies = [
+ "tock-registers-macros",
+]
+
+[[package]]
+name = "tock-registers-codegen"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad0d3248c0eae7e1f35a6c0ac7c44f186c5753d256b8b2fab6623f6cc874a04e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "tock-registers-macros"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54cca8ecbbf8a53416ded79fd5d5ff92c0762521f712a4a606f727b5135ca370"
+dependencies = [
+ "tock-registers-codegen",
+]
+
+[[package]]
 name = "tokio"
 version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4879,7 +4908,7 @@ name = "vesper-boot"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-cpu",
 ]
 
@@ -4940,7 +4969,7 @@ name = "vesper-exceptions"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-boot",
  "vesper-console",
  "vesper-local-irq",
@@ -5028,7 +5057,7 @@ name = "vesper-local-irq"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-log",
 ]
 
@@ -5088,7 +5117,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "snafu",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-address",
  "vesper-log",
  "vesper-mapping",
@@ -5172,7 +5201,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "once_cell",
- "tock-registers",
+ "tock-registers 0.12.0",
  "vesper-locking",
  "vesper-log",
 ]
