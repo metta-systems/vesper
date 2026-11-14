@@ -12,7 +12,7 @@
 //! hostile-EL0 confinement or FP/SIMD trap validation.
 
 use {
-    aarch64_cpu::registers::{Readable, TTBR0_EL1},
+    aarch64_cpu::registers::{Read, TTBR0_EL1},
     core::{
         arch::{asm, naked_asm},
         cell::UnsafeCell,

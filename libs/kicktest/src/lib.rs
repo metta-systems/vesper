@@ -31,9 +31,7 @@ pub mod threads;
 pub mod translation;
 
 use {
-    aarch64_cpu::registers::{
-        CNTKCTL_EL1, CPACR_EL1, MDSCR_EL1, PMUSERENR_EL0, Readable, TPIDRRO_EL0,
-    },
+    aarch64_cpu::registers::{CNTKCTL_EL1, CPACR_EL1, MDSCR_EL1, PMUSERENR_EL0, Read, TPIDRRO_EL0},
     core::panic::PanicInfo,
     libqemu::semihosting as semi,
 };

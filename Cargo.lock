@@ -4,8 +4,9 @@ version = 4
 
 [[package]]
 name = "aarch64-cpu"
-version = "11.2.0"
-source = "git+https://github.com/rust-embedded/aarch64-cpu?branch=main#81e6008accbaf69df7c634e8412c300ed6e4b614"
+version = "12.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d29c35ddc46f9490b91fe6271e848f68ff5b04f9df8e5416457abd05ab2ddf9"
 dependencies = [
  "arm-targets",
  "tock-registers",
@@ -4431,9 +4432,32 @@ dependencies = [
 
 [[package]]
 name = "tock-registers"
-version = "0.10.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d2d250f87fb3fb6f225c907cf54381509f47b40b74b1d1f12d2dccbc915bdfe"
+checksum = "fc2477fb5e50cca83e3c38fd91757ffd87382baf2a3e032f10e9b29a9a50474b"
+dependencies = [
+ "tock-registers-macros",
+]
+
+[[package]]
+name = "tock-registers-codegen"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad0d3248c0eae7e1f35a6c0ac7c44f186c5753d256b8b2fab6623f6cc874a04e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "tock-registers-macros"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54cca8ecbbf8a53416ded79fd5d5ff92c0762521f712a4a606f727b5135ca370"
+dependencies = [
+ "tock-registers-codegen",
+]
 
 [[package]]
 name = "tokio"

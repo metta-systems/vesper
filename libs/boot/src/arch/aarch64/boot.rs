@@ -18,7 +18,7 @@ use {
         sync::atomic::{AtomicU64, Ordering},
     },
     libcpu::endless_sleep,
-    tock_registers::interfaces::{Readable, Writeable},
+    tock_registers::{Read, Write},
 };
 
 /// The core that boots; the others park.

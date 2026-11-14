@@ -9,7 +9,7 @@
 use {
     aarch64_cpu::{
         asm::barrier,
-        registers::{ELR_EL1, ESR_EL1, FAR_EL1, Readable, VBAR_EL1, Writeable},
+        registers::{ELR_EL1, ESR_EL1, FAR_EL1, Read, VBAR_EL1, Write},
     },
     core::arch::global_asm,
 };

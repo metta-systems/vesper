@@ -53,7 +53,7 @@ pub fn model_name(revision: Option<u32>) -> &'static str {
 /// is zero.
 #[must_use]
 pub fn counter_frequency() -> u64 {
-    use {aarch64_cpu::registers::CNTFRQ_EL0, tock_registers::interfaces::Readable};
+    use {aarch64_cpu::registers::CNTFRQ_EL0, tock_registers::Read};
     CNTFRQ_EL0.get()
 }
 

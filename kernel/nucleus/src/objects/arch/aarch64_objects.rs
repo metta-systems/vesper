@@ -240,7 +240,7 @@ impl ArchObjects for AArch64 {
     }
 
     fn validate_translation_context(root_paddr: u64, asid: u16) -> Result<(), CapError> {
-        use aarch64_cpu::registers::{ID_AA64MMFR0_EL1, Readable, TCR_EL1};
+        use aarch64_cpu::registers::{ID_AA64MMFR0_EL1, Read, TCR_EL1};
 
         validate_translation_metadata(root_paddr, asid, TCR_EL1.get(), ID_AA64MMFR0_EL1.get())
     }

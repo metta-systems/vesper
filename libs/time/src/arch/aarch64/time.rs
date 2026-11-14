@@ -20,7 +20,7 @@ use {
     },
     liblog::warn,
     once_cell::unsync::Lazy,
-    tock_registers::interfaces::Readable,
+    tock_registers::Read,
 };
 
 //--------------------------------------------------------------------------------------------------

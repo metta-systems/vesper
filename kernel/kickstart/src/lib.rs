@@ -35,7 +35,7 @@ use {
         boot_info::{BOOT_INFO, DeviceTreeBlob},
         memory::{Alloc, BootAllocator},
     },
-    aarch64_cpu::registers::{Readable, SPSR_EL2, Writeable},
+    aarch64_cpu::registers::{Read, SPSR_EL2, Write},
     core::{cell::UnsafeCell, slice},
     libaddress::{PhysAddr, VirtAddr},
     liblocking::interface::Mutex,
@@ -553,7 +553,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
 /// Print the current stack pointer through semihosting.
 pub fn print_my_sp() {
-    use aarch64_cpu::registers::Readable;
+    use aarch64_cpu::registers::Read;
     let sp = aarch64_cpu::registers::SP.get();
     semi::println!("🥾 Current SP: {sp:016x}");
 }

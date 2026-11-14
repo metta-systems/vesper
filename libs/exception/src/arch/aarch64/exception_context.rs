@@ -1,5 +1,5 @@
 use {
-    aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Readable, SPSR_EL1},
+    aarch64_cpu::registers::{ESR_EL1, FAR_EL1, Read, SPSR_EL1},
     core::{
         fmt,
         mem::{align_of, offset_of, size_of},

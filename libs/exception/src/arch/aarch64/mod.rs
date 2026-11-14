@@ -49,9 +49,7 @@
 //! to interrupt the handling of a lower priority source, then software needs
 //! to explicitly re-enable interrupts
 
-use {
-    crate::PrivilegeLevel, aarch64_cpu::registers::CurrentEL, tock_registers::interfaces::Readable,
-};
+use {crate::PrivilegeLevel, aarch64_cpu::registers::CurrentEL, tock_registers::Read};
 
 mod debug;
 pub mod esr_el1;

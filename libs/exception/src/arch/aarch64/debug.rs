@@ -4,7 +4,7 @@
 use {
     aarch64_cpu::registers::{ESR_EL1, FAR_EL1, SPSR_EL1},
     liblog::println,
-    tock_registers::{LocalRegisterCopy, interfaces::Readable, register_bitfields},
+    tock_registers::{LocalRegisterCopy, Read, register_bitfields},
 };
 
 pub fn cause_to_string(cause: u64) -> &'static str {

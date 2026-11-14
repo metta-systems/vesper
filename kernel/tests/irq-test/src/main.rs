@@ -29,7 +29,7 @@ mod components {
 }
 
 use {
-    aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Readable, Writeable},
+    aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Read, Write},
     irq_protocol::{INIT_VA, IRQ_BADGE, ROUNDS, ReceiverInit, STACK_REGION},
     kickstart::{
         bootstrap::{bootstrap_nucleus, interrupt_controllers, retained_init_memory},

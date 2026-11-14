@@ -7,7 +7,7 @@
 
 use {
     crate::ppc,
-    aarch64_cpu::registers::{Readable, TCR_EL1},
+    aarch64_cpu::registers::{Read, TCR_EL1},
     core::arch::asm,
     kickstart::bootstrap::{BootState, bootstrap_nucleus, retained_init_memory},
     libcomponent_loader::{

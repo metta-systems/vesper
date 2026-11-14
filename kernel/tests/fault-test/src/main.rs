@@ -30,7 +30,7 @@ mod components {
 }
 
 use {
-    aarch64_cpu::registers::{Readable, TTBR0_EL1},
+    aarch64_cpu::registers::{Read, TTBR0_EL1},
     fault_protocol::{
         BLOCKED_BIT, FaulterInit, INIT_VA, ROLE_BLOCKED, ROLE_NESTED, ROLE_SEQUENCE,
         ROLE_TERMINATE, ROLE_WHILE_BUSY, ROLE_WITNESS, SEQUENCE_BIT, STACK_REGION, WITNESS_BIT,

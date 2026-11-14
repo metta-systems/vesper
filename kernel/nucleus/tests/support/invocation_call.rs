@@ -19,7 +19,7 @@ use {
             thread::ThreadId,
         },
     },
-    aarch64_cpu::registers::{Readable, SCTLR_EL1, TCR_EL1, TTBR0_EL1, Writeable},
+    aarch64_cpu::registers::{Read, SCTLR_EL1, TCR_EL1, TTBR0_EL1, Write},
     core::num::NonZero,
     libexception::arch::aarch64::SavedContext,
     libobject::{

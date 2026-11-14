@@ -10,7 +10,7 @@
 
 use {
     crate::translation,
-    aarch64_cpu::registers::{Readable, TTBR0_EL1},
+    aarch64_cpu::registers::{Read, TTBR0_EL1},
     core::{
         arch::asm,
         sync::atomic::{AtomicU64, Ordering},
