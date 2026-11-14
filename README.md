@@ -1,8 +1,6 @@
 # Vesper
 
-## Badges
-
-[![justforfunnoreally.dev badge](https://img.shields.io/badge/justforfunnoreally-dev-9ff)](https://justforfunnoreally.dev) [![Built with cargo-make](https://sagiegurari.github.io/cargo-make/assets/badges/cargo-make.svg)](https://sagiegurari.github.io/cargo-make) ![Build](https://github.com/metta-systems/vesper/workflows/Build/badge.svg) ![License](https://raster.shields.io/badge/license-BlueOak%20with%20restrictions-blue.png) [![Dependency Status](https://deps.rs/repo/github/metta-systems/vesper/status.svg)](https://deps.rs/repo/github/metta-systems/vesper) [![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod)](https://gitpod.io/#https://github.com/metta-systems/vesper)
+[![justforfunnoreally.dev badge](https://img.shields.io/badge/just_for-fun-9ff)](https://justforfunnoreally.dev) [![Built with just](https://img.shields.io/badge/built_with-just-green)](https://just.systems) [![Build](https://github.com/metta-systems/vesper/actions/workflows/build.yaml/badge.svg)](https://github.com/metta-systems/vesper/actions/workflows/build.yaml) ![License](https://img.shields.io/badge/license-BlueOak_with_restrictions-blue.png)
 
 ## About kernel
 
