@@ -218,6 +218,49 @@ mod tests {
     }
 
     #[test]
+    fn a_claimed_function_decodes_and_its_msi_points_at_the_bridge() {
+        // The VL805's MSI capability: 64-bit addresses, writable enable and
+        // vector count, address and data.
+        let mut vl805 = Modelled::new(at(1, 0, 0), 0x1106, 0x3483, 0x0c_0330, 0)
+            .capabilities(&[(0x90, MSI | 1 << 23)]);
+        vl805.writable[0x90 / 4] = 0x0071_0000;
+        vl805.writable[0x94 / 4] = u32::MAX;
+        vl805.writable[0x98 / 4] = u32::MAX;
+        vl805.writable[0x9c / 4] = 0xffff;
+        // A 32-bit capability elsewhere takes its data a word earlier.
+        let mut narrow =
+            Modelled::new(at(1, 0, 0), 0x1234, 0x5678, 0x0c_0330, 0).capabilities(&[(0x50, MSI)]);
+        narrow.writable[0x50 / 4] = 0x0071_0000;
+        narrow.writable[0x54 / 4] = u32::MAX;
+        narrow.writable[0x58 / 4] = 0xffff;
+        for (modelled, capability, address, data) in [
+            (vl805, 0x90_u16, 0xf_ffff_fffc_u64, 0x6540_u16),
+            (narrow, 0x50, 0xffff_f000, 0x0003),
+        ] {
+            let mut model = Model {
+                functions: vec![root_port(0x2711), modelled],
+                probed: Vec::new(),
+            };
+            // Enumeration numbers bus 1 behind the root port first.
+            walk(&mut model, &[]);
+            vesper_pci::enable(&mut model, at(1, 0, 0));
+            vesper_pci::set_up_msi(&mut model, at(1, 0, 0), capability, address, data);
+            let read = |offset: u16| word(&model, at(1, 0, 0), usize::from(offset));
+            // Memory decoding, bus mastering, and the legacy interrupt off.
+            assert_eq!(read(0x04) & 0x0407, 0x0406);
+            // Enabled, with one vector.
+            assert_eq!(read(capability) & 0x0071_0000, 0x0001_0000);
+            assert_eq!(read(capability + 4), (address & 0xffff_ffff) as u32);
+            if address >> 32 != 0 {
+                assert_eq!(read(capability + 8), (address >> 32) as u32);
+                assert_eq!(read(capability + 12), u32::from(data));
+            } else {
+                assert_eq!(read(capability + 8), u32::from(data));
+            }
+        }
+    }
+
+    #[test]
     fn rpi5_rp1_bars_fill_the_32_bit_and_prefetchable_windows() {
         let mut model = Model {
             functions: vec![

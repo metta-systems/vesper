@@ -64,10 +64,10 @@ mod tests {
         use {
             super::{RPI4, RPI5, with_index},
             vesper_devicetree::{
-                find_compatible, phandle,
+                find_compatible, has_path,
                 pci::{
-                    PciRange, PciSpace, Reset, brcm_msi_offset, is_host_bridge, msi_parent,
-                    msi_range, pci_dma_ranges, pci_ranges, resets,
+                    PciRange, PciSpace, Reset, brcm_msi_offset, host_bridge_of, is_host_bridge,
+                    msi_parent, msi_range, pci_dma_ranges, pci_function, pci_ranges, resets,
                 },
                 phandle,
             },
@@ -111,6 +111,42 @@ mod tests {
                 assert_eq!(phandle(&parent), phandle(&bridge));
                 assert_eq!(msi_range(index, &parent), None);
                 assert_eq!(resets(index, &bridge).count(), 0);
+            });
+        }
+
+        #[test]
+        fn rpi4_vl805_node_by_path_and_its_function() {
+            with_index(RPI4, |index| {
+                const PATH: &str = "/scb/pcie@7d500000/pci@1,0/usb@1,0";
+                let matching: Vec<_> = index.nodes().filter(|node| has_path(node, PATH)).collect();
+                assert_eq!(matching.len(), 1, "one node has the path");
+                let vl805 = &matching[0];
+                // The same name elsewhere, or a path missing a step, is no match.
+                assert!(!has_path(vl805, "/pcie@7d500000/pci@1,0/usb@1,0"));
+                assert!(!has_path(vl805, "usb@1,0"));
+                // `reg` 0x10000: bus 1, device 0, function 0.
+                assert_eq!(pci_function(vl805), Some(0x100));
+                let bridge = host_bridge_of(vl805).expect("below a host bridge");
+                assert_eq!(bridge.name(), Ok("pcie@7d500000"));
+                // A node outside any PCI bus has no function.
+                let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("pl011");
+                assert_eq!(pci_function(&uart), None);
+                assert!(host_bridge_of(&uart).is_none());
+            });
+        }
+
+        #[test]
+        fn rpi5_rp1_stands_for_the_function_behind_the_root_port() {
+            with_index(RPI5, |index| {
+                let rp1 = index
+                    .nodes()
+                    .find(|node| has_path(node, "/axi/pcie@1000120000/rp1"))
+                    .expect("rp1");
+                assert_eq!(pci_function(&rp1), Some(0x100));
+                assert_eq!(
+                    host_bridge_of(&rp1).map(|bridge| bridge.name()),
+                    Some(Ok("pcie@1000120000"))
+                );
             });
         }
 

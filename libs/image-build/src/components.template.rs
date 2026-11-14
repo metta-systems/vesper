@@ -61,6 +61,7 @@ pub static {{component.stem}}: ComponentImage = ComponentImage {
 pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     component: &{{component.stem}},
     compatible: &[{% for entry in component.driver.compatible %}"{{entry}}"{% if not loop.last %}, {% endif %}{% endfor %}],
+    nodes: &[{% for entry in component.driver.nodes %}"{{entry}}"{% if not loop.last %}, {% endif %}{% endfor %}],
     budget_ns: {{component.driver.budget_ns}},
     memory_bits: {{component.driver.memory_bits}},
     extra: Extra::{{component.driver.extra}},

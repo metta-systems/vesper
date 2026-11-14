@@ -232,6 +232,10 @@ pub struct DriverImage {
     pub component: &'static ComponentImage,
     /// Device tree `compatible` strings the driver serves
     pub compatible: &'static [&'static str],
+    /// Full paths of device tree nodes the driver serves besides
+    /// (`nodes = [...]`), for nodes without `compatible` such as a function
+    /// behind a PCI bridge
+    pub nodes: &'static [&'static str],
     /// Budget each instance's Time receives
     pub budget_ns: u64,
     /// Size exponent of each instance's RAM Untyped

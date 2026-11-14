@@ -90,10 +90,10 @@ mod component {
         fb_impl::{
             ATTRIBUTE_WORDS, CONFIGURE_WORDS, FramePlan, attributes_request, configure_request,
             covered_by, page_range, physical_address, read_allocation, read_attributes,
-            skip_chunks,
         },
         libdevice_driver::{
             INIT_VA, MAX_VIDEO_BLOCKS, NO_BUS_ADDRESS, Turnstile, driver_compatible, driver_init,
+            skip_chunks,
         },
         libobject::{
             EventCountKey, FrameAttribute, KeyTableKey, NotificationKey, ObjectType, RawKey,

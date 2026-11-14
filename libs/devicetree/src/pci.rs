@@ -20,6 +20,12 @@ const PHYS_HI_PREFETCHABLE: u32 = 1 << 30;
 /// `phys.hi` bits 25:24: the space code.
 const PHYS_HI_SPACE_SHIFT: u32 = 24;
 const PHYS_HI_SPACE_MASK: u32 = 0b11;
+/// `phys.hi` bits 23:8: bus, device and function, as a routing ID.
+const PHYS_HI_FUNCTION_SHIFT: u32 = 8;
+const PHYS_HI_FUNCTION_MASK: u32 = 0xffff;
+
+/// Routing ID of function 01:00.0, the one behind a host bridge's root port.
+const BEHIND_ROOT_PORT: u16 = 1 << 8;
 
 /// The address space a PCI range is in: `phys.hi`'s space code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +109,37 @@ pub fn is_host_bridge(node: &Node<'_, '_, '_>) -> bool {
             .is_some_and(|kind| kind == "pci")
     };
     is_pci(node) && !node.parent().is_some_and(|parent| is_pci(&parent))
+}
+
+/// The host bridge `node` lies below: its nearest ancestor that is one.
+pub fn host_bridge_of<'a, 'i: 'a, 'dt: 'i>(node: &Node<'a, 'i, 'dt>) -> Option<Node<'a, 'i, 'dt>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if is_host_bridge(&candidate) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+/// The routing ID (`bus << 8 | device << 3 | function`) of the PCI function
+/// `node` describes: the bus, device and function of its `reg`'s `phys.hi`,
+/// when its parent is a PCI bus. A node without `reg` right below a host
+/// bridge (the Raspberry Pi 5's `rp1`) stands for function 01:00.0.
+///
+/// shortcut: the `reg`-less case assumes one function behind the root port;
+/// read the bus numbers enumeration gave once a tree needs more.
+pub fn pci_function(node: &Node<'_, '_, '_>) -> Option<u16> {
+    let parent = node.parent()?;
+    let Some(prop) = property(node, "reg") else {
+        return is_host_bridge(&parent).then_some(BEHIND_ROOT_PORT);
+    };
+    if bus_cells(&parent).address as usize != PCI_ADDRESS_CELLS {
+        return None;
+    }
+    let phys_hi = prop.u32(0).ok()?;
+    u16::try_from((phys_hi >> PHYS_HI_FUNCTION_SHIFT) & PHYS_HI_FUNCTION_MASK).ok()
 }
 
 /// The outbound windows of host bridge `node`: its `ranges`, with CPU

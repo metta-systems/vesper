@@ -3283,12 +3283,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pci"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+]
+
+[[package]]
+name = "pci-client"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle",
+ "metta-meddle-runtime",
+ "pci",
+]
+
+[[package]]
+name = "pci-probe"
+version = "0.0.1"
+dependencies = [
+ "metta-meddle-runtime",
+ "pci",
+ "pci-client",
+ "vesper-device-driver",
+ "vesper-log-client",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "pcie-brcmstb"
 version = "0.0.1"
 dependencies = [
  "arbitrary-int",
  "bitbybit",
  "metta-meddle-runtime",
+ "pci",
  "vesper-device-driver",
  "vesper-log-client",
  "vesper-objects",

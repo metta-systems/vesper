@@ -1,0 +1,50 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+## A PCI host bridge's functions, handed to the drivers of their device-tree
+## nodes. The badge of a client's keys names it: Kickstart tells the bridge's
+## driver which function each client's node stands for.
+local interface pci_v1
+{
+    ## One page shared by each client and the bridge's driver, which `claim`
+    ## writes its record into.
+    data 4096;
+
+    ## A client lends one table at a time.
+    placement 1;
+
+    badged;
+
+    ## The link is down, or no function answers at the caller's address.
+    exception no_function {}
+
+    ## The function was claimed already.
+    exception already_claimed {}
+
+    ## The lent table refused a Frame: `installed` Frames of the call are in it.
+    exception install_failed { card32 installed; }
+
+    ## The function has no MSI capability, or no MSI reaches the caller.
+    exception no_msi {}
+
+    ## `found` is not in the caller's data area, or too short for the record.
+    exception bad_record {}
+
+    ## Claim the function behind the caller's device-tree node: install Frames
+    ## covering each of its assigned memory BARs into the table the caller
+    ## lends, at consecutive slots from `first_slot`, BAR by BAR in address
+    ## order, turn on its memory decoding and bus mastering, and point its MSI
+    ## capability, if it has one, at the bridge, one vector, which signals the
+    ## caller's Notification. Then write what it claimed into `found`
+    ## (`pci::claimed`), and return how many Frames were installed. The Frames
+    ## are the caller's to map; the function stays claimed.
+    claim(octet& found, card32 first_slot) lends (key_table into)
+        returns (card32 installed)
+        raises (no_function, already_claimed, install_failed, bad_record);
+
+    ## Raise the caller's MSI vector from software, as if its function had
+    ## written it: a test of the path to the caller's Notification.
+    raise_msi()
+        raises (no_function, no_msi);
+}

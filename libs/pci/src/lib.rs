@@ -18,7 +18,7 @@
 //! §7.7).
 
 use {
-    arbitrary_int::{u4, u6, u7, u12, u24, u28},
+    arbitrary_int::{u3, u4, u6, u7, u12, u24, u28},
     bitbybit::bitfield,
 };
 
@@ -200,6 +200,27 @@ pub struct CapabilityHeader {
     #[bits(20..=23, r)]
     port_type: u4,
 }
+
+/// The first word of an MSI capability (§7.7.1.1, §7.7.1.2): its header and
+/// `Message Control`.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct MsiControl {
+    #[bit(16, rw)]
+    enable: bool,
+    /// Vectors enabled, as a power of two
+    #[bits(20..=22, rw)]
+    multiple_message_enable: u3,
+    /// The message address has an upper half, and the data moves up a word
+    #[bit(23, r)]
+    address_64: bool,
+}
+
+/// Words of an MSI capability after its first (§7.7.1).
+const MSI_ADDRESS: u16 = 0x04;
+const MSI_ADDRESS_UPPER: u16 = 0x08;
+const MSI_DATA_32: u16 = 0x08;
+const MSI_DATA_64: u16 = 0x0c;
 
 /// Capability IDs (PCI Code and ID Assignment Specification).
 const CAPABILITY_MSI: u8 = 0x05;
@@ -681,6 +702,51 @@ pub fn enumerate(
     };
     walk.bus(0, false)?;
     Ok(walk.count)
+}
+
+/// Turn on `function`'s memory decoding and bus mastering, which enumeration
+/// leaves off for endpoints: its BARs answer and it may start DMA.
+pub fn enable(mut config: impl ConfigSpace, function: Function) {
+    let command =
+        CommandStatus::new_with_raw_value(config.read(function, COMMAND_STATUS).unwrap_or(0))
+            .with_memory_space(true)
+            .with_bus_master(true);
+    // The upper half is `Status`, whose error bits a write of one clears.
+    config.write(function, COMMAND_STATUS, command.raw_value() & 0xffff);
+}
+
+/// Point the MSI capability at `capability` of `function` at `address` with
+/// `data`, one vector, and enable it. Its legacy interrupt is disabled, as
+/// §6.8.1.3 asks of software that enables MSI.
+pub fn set_up_msi(
+    mut config: impl ConfigSpace,
+    function: Function,
+    capability: u16,
+    address: u64,
+    data: u16,
+) {
+    let control = MsiControl::new_with_raw_value(config.read(function, capability).unwrap_or(0));
+    let (low, high) = halves(address);
+    config.write(function, capability + MSI_ADDRESS, low);
+    let data_offset = if control.address_64() {
+        config.write(function, capability + MSI_ADDRESS_UPPER, high);
+        MSI_DATA_64
+    } else {
+        MSI_DATA_32
+    };
+    config.write(function, capability + data_offset, u32::from(data));
+    config.write(
+        function,
+        capability,
+        control
+            .with_multiple_message_enable(u3::new(0))
+            .with_enable(true)
+            .raw_value(),
+    );
+    let command =
+        CommandStatus::new_with_raw_value(config.read(function, COMMAND_STATUS).unwrap_or(0))
+            .with_interrupt_disable(true);
+    config.write(function, COMMAND_STATUS, command.raw_value() & 0xffff);
 }
 
 impl<Config: ConfigSpace> ConfigSpace for &mut Config {
