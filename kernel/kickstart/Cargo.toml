@@ -54,6 +54,8 @@ libmapping = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
 libprint = { workspace = true }
 libqemu = { workspace = true }
+# A panic's stack trace (`--cfg stacktrace`).
+libstacktrace = { workspace = true }
 libobject = { workspace = true }
 libtime = { workspace = true }
 nucleus = { workspace = true }

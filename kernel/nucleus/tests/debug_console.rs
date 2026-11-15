@@ -21,6 +21,10 @@ mod objects;
 #[allow(dead_code)]
 #[path = "../src/board_console.rs"]
 mod board_console;
+// How a DebugConsole Write reads its caller's bytes.
+#[allow(dead_code)]
+#[path = "../src/user_memory.rs"]
+mod user_memory;
 
 // The interrupt-controller component as the IRQ operations reach it.
 #[allow(dead_code)]
@@ -46,7 +50,6 @@ mod invocation_call_tests;
 
 use {
     api::{KeyEntry, debug_console::invoke, key_entry::ThreadSelector},
-    objects::debug_console::Reader,
     core::{
         mem::{MaybeUninit, align_of, size_of},
         num::NonZero,
@@ -67,6 +70,7 @@ use {
         object_pool::IdentityError,
         thread::ThreadId,
     },
+    user_memory::Reader,
 };
 
 // The debug console is a stateless singleton, not a pool object; its entry

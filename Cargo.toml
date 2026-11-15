@@ -127,6 +127,7 @@ members = [
   "libs/sd-card",
   "libs/serial-channel",
   "libs/serial-trace",
+  "libs/stacktrace",
   "libs/syscall",
   "libs/test",
   "libs/time",
@@ -294,6 +295,7 @@ libgraphics = { path = "libs/graphics", package = "vesper-graphics" }
 libsd-card = { path = "libs/sd-card", package = "vesper-sd-card" }
 libserial-channel = { path = "libs/serial-channel", package = "vesper-serial-channel" }
 libserial-trace = { path = "libs/serial-trace", package = "vesper-serial-trace" }
+libstacktrace = { path = "libs/stacktrace", package = "vesper-stacktrace" }
 libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
@@ -377,7 +379,7 @@ debug = true
 opt-level = 's'
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)', 'cfg(board_rpi5)', 'cfg(test_boot_panic)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)', 'cfg(board_rpi5)', 'cfg(stacktrace)', 'cfg(test_boot_panic)'] }
 
 # Enable a batch of clippy lints
 # Reference: https://rust-lang.github.io/rust-clippy/master/index.html
