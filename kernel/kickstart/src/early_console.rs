@@ -227,6 +227,25 @@ pub fn panic_line(line: fmt::Arguments) {
     }
 }
 
+/// In a build with stack traces (`libstacktrace`), print the trace of the
+/// code that panicked, after `prefix`, on semihosting (under `qemu`) and like
+/// [`panic_line`]. Inlined into the panic handler, whose frame the walk
+/// starts from.
+#[inline(always)]
+pub fn panic_backtrace(prefix: &str) {
+    if libstacktrace::ENABLED {
+        // SAFETY: the walk starts at the panic handler's frame, on the
+        // panicking code's own stack.
+        let trace = libstacktrace::Backtrace::new(
+            None,
+            libstacktrace::current_frame_pointer(),
+            |address| unsafe { libstacktrace::read_own(address) },
+        );
+        libqemu::semihosting::println!("{prefix}{trace}");
+        panic_line(format_args!("{prefix}{trace}"));
+    }
+}
+
 /// Print a boot line on semihosting (under `qemu`) and on the early console.
 #[macro_export]
 macro_rules! early_println {

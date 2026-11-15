@@ -52,6 +52,9 @@ libmapping = { workspace = true }
 libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
+# Stack traces on a panic, an unexpected exception and an EL0 fault
+# (`--cfg stacktrace`).
+libstacktrace = { workspace = true }
 owo-colors = { workspace = true }
 tock-registers = { workspace = true }
 

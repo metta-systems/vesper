@@ -25,6 +25,7 @@ cfg-if = { workspace = true }
 libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
+libstacktrace = { workspace = true }
 
 [lib]
 # EL0-only no_std code: no test harness or panic handler on the target.

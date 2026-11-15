@@ -2174,6 +2174,7 @@ dependencies = [
  "vesper-print",
  "vesper-qemu",
  "vesper-serial-channel",
+ "vesper-stacktrace",
  "vesper-time",
 ]
 
@@ -2769,6 +2770,7 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+ "vesper-stacktrace",
  "vesper-tests",
 ]
 
@@ -5330,6 +5332,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vesper-stacktrace"
+version = "0.0.1"
+
+[[package]]
 name = "vesper-synth"
 version = "0.0.1"
 
@@ -5382,6 +5388,7 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+ "vesper-stacktrace",
 ]
 
 [[package]]

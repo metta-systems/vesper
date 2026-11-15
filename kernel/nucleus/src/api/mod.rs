@@ -170,7 +170,7 @@ fn core_invoke<A: ArchObjects>(
         }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
-            use crate::objects::debug_console::Reader;
+            use crate::user_memory::Reader;
             semi::println!("core_invoke: DebugConsole");
             let caller_table = access.resolve_caller_table(caller)?;
             let entry = caller_table.lookup(key, caller.guard)?;

@@ -1,8 +1,5 @@
 use {
-    crate::{
-        api::KeyEntry,
-        objects::{DebugConsole, debug_console::Reader},
-    },
+    crate::{api::KeyEntry, objects::DebugConsole, user_memory::Reader},
     libobject::{CapError, ObjectType, SyscallResult, debug_console::DebugConsoleOp},
 };
 

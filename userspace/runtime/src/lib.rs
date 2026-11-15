@@ -15,7 +15,9 @@
 //! component (`libobject::debug_console::set_panic_console`; on the boards it
 //! prints on the UART), then calls the reporter a linked library registered
 //! with [`set_panic_reporter`] (`liblog_client` puts a `PANICKED:` line on
-//! the component's log channel), then exits QEMU or halts.
+//! the component's log channel), then exits QEMU or halts. In a build with
+//! stack traces (`libstacktrace`) an `EL0 backtrace:` line follows the panic
+//! on both consoles.
 
 pub mod clock;
 
@@ -26,6 +28,7 @@ use {
     },
     libobject::{DebugConsoleKey, debug_console::panic_console},
     libqemu::semihosting as semi,
+    libstacktrace::{Backtrace, current_frame_pointer, read_own},
 };
 
 pub use libqemu::semihosting;
@@ -126,6 +129,15 @@ fn panic(info: &PanicInfo) -> ! {
     } else {
         semi::println!("EL0 PANICKED: {info}");
         console_line(format_args!("EL0 PANICKED: {info}"));
+        if libstacktrace::ENABLED {
+            // SAFETY: the walk starts at this function's frame, on the
+            // panicking Thread's own stack.
+            let trace = Backtrace::new(None, current_frame_pointer(), |address| unsafe {
+                read_own(address)
+            });
+            semi::println!("EL0 {trace}");
+            console_line(format_args!("EL0 {trace}"));
+        }
         let reporter = PANIC_REPORTER.load(Ordering::Acquire);
         if !reporter.is_null() {
             // SAFETY: only `set_panic_reporter` stores a non-null value, and

@@ -29,6 +29,10 @@ privileged_link := 'linker/privileged.ld'
 fixed_rustflags := '-D warnings -Z macro-backtrace'
 # More rustflags for every cross-built crate, e.g. `just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel`
 extra_rustflags := ''
+# `on` builds stack traces into panics and faults (libs/stacktrace): `--cfg stacktrace` with frame
+# pointers kept, e.g. `just stacktrace=on boot-board-test debug_kernel`
+stacktrace := 'off'
+stacktrace_rustflags := if stacktrace == 'on' { ' --cfg stacktrace -C force-frame-pointers=yes' } else if stacktrace == 'off' { '' } else { error('stacktrace is on or off, not ' + stacktrace) }
 # Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
 pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 # Device tests run in QEMU (rpi3) with the test linker script; the recipes add the board set's flags
@@ -49,7 +53,8 @@ qemu_dtb        := if qemu_machine == 'raspi4b' { rpi4_dtb } else { rpi3_dtb }
 gdb             := env('GDB', 'aarch64-elf-gdb') # An aarch64-enabled GDB (brew install aarch64-elf-gdb)
 objcopy         := 'rust-objcopy'
 nm              := 'rust-nm'
-volume          := env('VOLUME', '/Volumes/BOOT')
+addr2line       := env('ADDR2LINE', 'aarch64-elf-addr2line') # brew install aarch64-elf-binutils
+volume         := env('VOLUME', '/Volumes/BOOT')
 
 # Profile of the cross-built images (`debug` or `release`); Kickstart's build script embeds the
 # nucleus and components from this profile's directory (VESPER_IMAGE_PROFILE)
@@ -155,7 +160,7 @@ _board-flags board=boards:
 _cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
-    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -534,6 +539,28 @@ alias cb-disasm := cb-hopper
 [group("maintenance")]
 nm: build
     {{ nm }} "{{ kernel_elf }}" | sort -k 1 | rustfilt
+
+# The image configuration `symbolize` reads binaries from (e.g. `rpi3+rpi4+rpi5-debug_kernel`);
+# empty for the one built last
+symbolize_config := ''
+
+# Name the functions and source lines of a `backtrace:` line (`stacktrace=on` builds): `binary` is
+# the component or kernel binary the addresses are in (e.g. `uart-pl011`, `log-probe`, `nucleus`,
+# `board-test`), from the hardware image configuration built last unless `symbolize_config` names
+# one; each address is moved back one instruction, from a return address to its call (an
+# exception's first address, its PC, then shows the instruction before it)
+[group("maintenance")]
+symbolize binary +addresses:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{ if symbolize_config != '' { 'elf="' + target_root / symbolize_config / target / image_profile / binary + '"; [ -f "$elf" ] || elf=""' } else { 'elf=$(ls -t "' + target_root + '"/*/' + target + '/' + image_profile + '/' + binary + ' 2>/dev/null | grep -v -- "-qemu" | head -1 || true)' } }}
+    [ -n "$elf" ] || { echo "no {{ binary }} built{{ if symbolize_config != '' { ' for ' + symbolize_config } else { ' for the boards' } }} under {{ target_root }}"; exit 1; }
+    echo "$elf"
+    calls=()
+    for address in {{ addresses }}; do
+      calls+=("$(printf '%#x' $((address - 4)))")
+    done
+    {{ addr2line }} -f -C -i -p -e "$elf" "${calls[@]}"
 
 # Run `cargo expand` on kernel
 [group("maintenance")]
@@ -1079,7 +1106,7 @@ _test-object-host: (_host-test 'vesper-objects' 'object_type') (_host-test 'vesp
 
 # Run the boot-platform tests natively: device tree helpers against the board
 # DTBs in targets/, privileged-image loading, interrupt-controller register logic
-_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics')
+_test-platform-host: (_host-test 'vesper-devicetree' 'devicetree') (_host-test 'vesper-image' 'privileged') (_host-test 'irqchip-bcm2836' 'bcm2836') (_host-test 'irqchip-gicv2' 'gicv2') (_host-test 'vesper-io-channel' 'io_channel') (_host-test 'vesper-serial-channel' 'serial_channel') (_host-test 'vesper-block-channel' 'block_channel') (_host-test 'uart-pl011' 'pl011') (_host-test 'sdhost-bcm2835' 'sdhost') (_host-test 'vesper-sd-card' 'sd_card') (_host-test 'sdhci' 'sdhci') (_host-test 'vesper-pci' 'pci') (_host-test 'pcie-brcmstb' 'pcie') (_host-test 'gpio-bcm2835' 'gpio') (_host-test 'vesper-device-driver' 'areas') (_host-test 'vesper-device-driver' 'masters') (_host-test 'vesper-device-driver' 'carving') (_host-test 'mailbox-impl' 'tags') (_host-test 'power-impl' 'pm') (_host-test 'cprman-bcm2835' 'cprman') (_host-test 'dma-bcm2835' 'dma') (_host-test 'audio-pwm-bcm2835' 'pwm') (_host-test 'audio-pwm-bcm2835' 'stream') (_host-test 'fb-impl' 'requests') (_host-test 'shell' 'commands') (_host-test 'vesper-graphics' 'graphics') (_host-test 'vesper-stacktrace' 'stacktrace')
 
 # Run the Meddle interface compiler tests and the generated code's runtime tests natively
 _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
@@ -1121,7 +1148,7 @@ _profile-synth:
 
 # Cross-clippy the workspace for a board with a feature set
 _cross-clippy board=boards features='':
-    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1151,7 +1178,7 @@ _host-clippy package test features='host-tests':
 _clippy-object-host: (_host-clippy 'vesper-objects' 'object_type') (_host-clippy 'vesper-objects' 'object_type' 'host-tests,debug_kernel')
 
 # Lint the boot-platform host tests
-_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics')
+_clippy-platform-host: (_host-clippy 'vesper-devicetree' 'devicetree') (_host-clippy 'vesper-image' 'privileged') (_host-clippy 'irqchip-bcm2836' 'bcm2836') (_host-clippy 'irqchip-gicv2' 'gicv2') (_host-clippy 'vesper-io-channel' 'io_channel') (_host-clippy 'vesper-serial-channel' 'serial_channel') (_host-clippy 'vesper-block-channel' 'block_channel') (_host-clippy 'uart-pl011' 'pl011') (_host-clippy 'sdhost-bcm2835' 'sdhost') (_host-clippy 'vesper-sd-card' 'sd_card') (_host-clippy 'sdhci' 'sdhci') (_host-clippy 'vesper-pci' 'pci') (_host-clippy 'pcie-brcmstb' 'pcie') (_host-clippy 'gpio-bcm2835' 'gpio') (_host-clippy 'vesper-device-driver' 'areas') (_host-clippy 'vesper-device-driver' 'masters') (_host-clippy 'vesper-device-driver' 'carving') (_host-clippy 'mailbox-impl' 'tags') (_host-clippy 'power-impl' 'pm') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream') (_host-clippy 'fb-impl' 'requests') (_host-clippy 'shell' 'commands') (_host-clippy 'vesper-graphics' 'graphics') (_host-clippy 'vesper-stacktrace' 'stacktrace')
 
 # Lint the Meddle interface compiler (library, meddler and tests) and the runtime host tests
 _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')

@@ -118,7 +118,44 @@ just boot-board-test debug_kernel  # a debug kernel: a component's panic message
 just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel
                                    # also load a probe that panics on purpose and overflows a stack,
                                    # to check that both reach the UART
+just stacktrace=on boot-board-test debug_kernel
+                                   # with stack traces: a `backtrace: 0x… 0x…` line after a panic,
+                                   # an unexpected exception or a component's fault
+just symbolize log-probe 0x400344 0x400050
+                                   # name the functions and lines of a backtrace's addresses, from
+                                   # that binary (a component's, `nucleus`, `board-test`) of the
+                                   # image built last; `symbolize_config=…` picks another one
 ```
+
+#### Stack traces
+
+`stacktrace=on` builds stack traces in. A trace follows the chain of frame records each
+function keeps at its frame pointer, so the switch adds two flags to every cross-built crate:
+`--cfg stacktrace`, which turns the trace code (`libs/stacktrace`) on, and
+`-C force-frame-pointers=yes`, which keeps the frame records it reads. Frame pointers are a
+compiler option for the whole crate, not something a `cfg` can switch per function, so the one
+switch sets both. Without it the trace code compiles to nothing. Switching it, like
+`extra_rustflags`, rebuilds the image configuration's crates.
+
+For example, with the probe that panics on purpose and overflows a stack:
+
+```
+just chainboot_serial=/dev/tty.usbmodem102 stacktrace=on extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel
+```
+
+A trace is a line of addresses, innermost first, after:
+
+- a component's panic: `EL0 backtrace: …`, after its `EL0 PANICKED:` line;
+- a component's fault: `   backtrace: …` under the nucleus's `⚠️` line, starting at the
+  faulting PC;
+- a nucleus panic: `nucleus panic backtrace: …`, and an unexpected exception's register dump
+  ends with one starting at its PC;
+- a Kickstart panic: `🥾 backtrace: …`.
+
+Then `just symbolize <binary> <addresses…>` names the functions and source lines, for example
+`just symbolize log-probe 0x400344 0x400050 0x400130`. It reads the binary from the hardware
+image configuration built last (`symbolize_config=rpi3+rpi4+rpi5-debug_kernel` picks one), and
+uses `aarch64-elf-addr2line` (`ADDR2LINE` overrides it).
 
 Kickstart prints its `🥾` lines on the UART from the start. The nucleus adds a few of
 its own: `🧵` when a Thread first runs, `💤` when nothing is runnable for the first
