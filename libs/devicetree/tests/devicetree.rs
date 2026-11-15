@@ -156,6 +156,25 @@ mod tests {
         }
 
         #[test]
+        fn rpi5_wifi_controller_lists_its_device_and_the_card_slot_none() {
+            // Kickstart leaves an SD host controller with a child node
+            // undriven: the child is an SDIO device, not a card.
+            with_index(RPI5, |index| {
+                let children = |path: &str| {
+                    let node = index
+                        .nodes()
+                        .find(|node| has_path(node, path))
+                        .unwrap_or_else(|| panic!("{path}"));
+                    node.children()
+                        .map(|child| child.name().unwrap_or("?").to_owned())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(children("/axi/mmc@1100000"), ["wifi@1"]);
+                assert!(children("/soc@107c000000/mmc@fff000").is_empty());
+            });
+        }
+
+        #[test]
         fn rpi5_rp1_bridge_windows_mip_and_resets() {
             with_index(RPI5, |index| {
                 let bridge = index

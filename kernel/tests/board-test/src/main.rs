@@ -7,13 +7,20 @@
 //! the UART.
 //!
 //! Kickstart loads the PL011 driver, the log server (holding the PL011's
-//! serial channel), the mailbox, the SD card controller and the root
-//! dispatcher. The controller logs its bring-up (base clock, ADMA2 or the data
-//! port, the card's size) and what block 0 holds through the log server, so a
-//! board shows them on its UART: the Raspberry Pi 4's GPIO 14 and 15, the
-//! Raspberry Pi 5's debug connector. Nothing writes to the card. Kickstart
-//! prints on semihosting only once it drops to EL1, so this Thread then only
-//! waits.
+//! serial channel), the mailbox, the SD card controller, the PCIe root
+//! complex, what lies behind it (the Raspberry Pi 4's VL805 xHCI controller,
+//! the Raspberry Pi 5's RP1 through `pci-probe`) and the root dispatcher. The
+//! SD controller logs its bring-up (base clock, ADMA2 or the data port, the
+//! card's size) and what block 0 holds, the root complex its link, functions,
+//! BARs and MSI self-test, and the functions behind it theirs, all through the
+//! log server, so a board shows them on its UART: the Raspberry Pi 4's GPIO 14
+//! and 15, the Raspberry Pi 5's debug connector. Nothing writes to the card.
+//! Built with `--cfg test_boot_panic` (`just extra_rustflags='--cfg
+//! test_boot_panic' boot-board-test debug_kernel`), Kickstart on the boards
+//! also loads log-test's probe, which panics on purpose and overflows a stack,
+//! to show a component's last words reach the UART.
+//! Kickstart prints on semihosting only once it drops to EL1, so this Thread
+//! then only waits.
 
 mod components {
     //! Bundled userspace components (generated from `image.toml`).
@@ -110,6 +117,13 @@ pub fn run() -> ! {
             &components::LOG_SERVER_DRIVER,
             &components::MAILBOX_DRIVER,
             &components::SD_DRIVER,
+            &components::PCIE_DRIVER,
+            &components::XHCI_DRIVER,
+            &components::PCI_PROBE_DRIVER,
+            // On the boards only, by request (`--cfg test_boot_panic`): its
+            // panic on purpose would end a QEMU run.
+            #[cfg(all(not(feature = "qemu"), test_boot_panic))]
+            &components::LOG_PROBE_DRIVER,
             &components::DISPATCHER_DRIVER,
         ],
         &mut slots,

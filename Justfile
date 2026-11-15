@@ -27,6 +27,8 @@ chainboot_link  := 'bin/chainboot/src/link.ld'
 privileged_link := 'linker/privileged.ld'
 
 fixed_rustflags := '-D warnings -Z macro-backtrace'
+# More rustflags for every cross-built crate, e.g. `just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel`
+extra_rustflags := ''
 # Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
 pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 # Device tests run in QEMU (rpi3) with the test linker script; the recipes add the board set's flags
@@ -153,7 +155,7 @@ _board-flags board=boards:
 _cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
-    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}" \
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \

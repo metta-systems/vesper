@@ -604,7 +604,6 @@ fn handle_irq(frame: &mut ExceptionContext) {
     let interrupt_ticks = nucleus::timer::counter().saturating_sub(entered);
 
     let saved = frame.save();
-    trace_interrupt(&handled[..handled_count], &saved, nested);
     let resumed = KERNEL_LOCK.lock(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
@@ -636,47 +635,6 @@ fn handle_irq(frame: &mut ExceptionContext) {
         Err(error) => panic!("preemption scheduling invariant failed: {:?}", error.code()),
     }
     reprogram_timer();
-}
-
-/// Interrupt entries so far, for [`trace_interrupt`]. Only loaded and stored.
-static INTERRUPT_ENTRIES: AtomicU64 = AtomicU64::new(0);
-
-/// Say on the board which lines an interrupt entry claimed and what it
-/// interrupted: the first 16 entries, then every power of two, so that a
-/// Thread that never blocks shows where it runs.
-fn trace_interrupt(handled: &[(u32, u64)], interrupted: &SavedContext, nested: bool) {
-    if cfg!(feature = "qemu") {
-        // `board_line` prints nothing under QEMU: skip the lookup too.
-        return;
-    }
-    let entry = INTERRUPT_ENTRIES.load(Ordering::Relaxed) + 1;
-    INTERRUPT_ENTRIES.store(entry, Ordering::Relaxed);
-    if entry > 16 && !entry.is_power_of_two() {
-        return;
-    }
-    let thread = if nested {
-        0
-    } else {
-        KERNEL_LOCK
-            .lock(|()| {
-                // SAFETY: the anchor names the live Nucleus; the lock
-                // serializes this read.
-                let nucleus = unsafe { &*nucleus_anchor()? };
-                nucleus.current_thread_id().ok()
-            })
-            .map_or(0, |current| current.address)
-    };
-    let mut lines = [0_u32; 4];
-    for (slot, (line, _spent)) in lines.iter_mut().zip(handled) {
-        *slot = *line;
-    }
-    board_line(format_args!(
-        "⏱ interrupt #{entry}: lines {:?} ({} claimed), {} thread {thread:#x} at PC {:#x}",
-        &lines[..handled.len().min(lines.len())],
-        handled.len(),
-        if nested { "in the kernel, not" } else { "in" },
-        interrupted.elr_el1,
-    ));
 }
 
 /// Wait in the kernel until a Thread is runnable, then select it.

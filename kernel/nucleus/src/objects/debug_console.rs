@@ -45,8 +45,8 @@ impl DebugConsole {
         for (offset, byte) in (0..).zip(&mut copy[..length]) {
             // SAFETY: `readable` found every page of the range readable at
             // the caller's level in the active `AddressSpace`, which stays
-            // active through the call; PAN is off, so EL1 reads what EL0 may.
-            *byte = unsafe { ((address + offset) as *const u8).read_volatile() };
+            // active through the call.
+            *byte = unsafe { read_byte(address + offset, reader) };
         }
         #[cfg(feature = "qemu")]
         if let Ok(text) = core::ffi::CStr::from_bytes_until_nul(&copy) {
@@ -54,6 +54,36 @@ impl DebugConsole {
         }
         board_console::bytes(&copy[..length]);
         Ok(())
+    }
+}
+
+/// The byte at `address`, read with `reader`'s permissions.
+///
+/// An EL0 caller's byte is read with `LDTRB`, the load that checks EL0's
+/// permissions: with PAN set, which the cores that have it (the Raspberry Pi
+/// 5's Cortex-A76) set on every exception entry, an ordinary EL1 load of
+/// memory EL0 may reach faults.
+///
+/// # Safety
+/// `reader` may read `address` in the active `AddressSpace`.
+unsafe fn read_byte(address: u64, reader: Reader) -> u8 {
+    match reader {
+        Reader::El0 => {
+            let byte: u32;
+            // SAFETY: the caller's contract; LDTRB only reads.
+            unsafe {
+                core::arch::asm!(
+                    "ldtrb {byte:w}, [{address}]",
+                    byte = out(reg) byte,
+                    address = in(reg) address,
+                    options(nostack, preserves_flags, readonly)
+                );
+            }
+            // LDTRB zero-extends the byte it loads.
+            byte.to_le_bytes()[0]
+        }
+        // SAFETY: the caller's contract.
+        Reader::El1 => unsafe { (address as *const u8).read_volatile() },
     }
 }
 

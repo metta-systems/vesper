@@ -61,8 +61,9 @@
 //!
 //! A node whose registers touch a page the kernel keeps is skipped, unless its
 //! driver serves a compatible string on `privileged::SHARES_KERNEL_PAGES`: that
-//! driver receives a device Frame minted for the page. Kickstart never calls
-//! into a driver.
+//! driver receives a device Frame minted for the page. An SD host controller
+//! node with a child node has an SDIO device on it (a Wi-Fi chip) and is
+//! skipped too. Kickstart never calls into a driver.
 //!
 //! Untypeds, Notifications, Times and `IRQHandler`s are outside the
 //! `CopyDerive`/`Move` allowlist, so Kickstart grants them bootstrap-only: it
@@ -459,8 +460,19 @@ fn kernel_owned(page: u64) -> bool {
         .any(|&(start, size)| page < start + size && start < page + PAGE)
 }
 
+/// The compatible strings of SD host controllers, whose node may hold an
+/// SDIO device instead of a card slot. Such a node lists the device as a
+/// child (the Raspberry Pi 5's `mmc@1100000` its Wi-Fi chip, `wifi@1`), and
+/// it is left undriven.
+const SD_HOST_COMPATIBLES: [&str; 3] = [
+    "brcm,bcm2711-emmc2",
+    "brcm,bcm2712-sdhci",
+    "brcm,bcm2835-sdhci",
+];
+
 /// Every enabled node some driver of `drivers` serves, the first matching
-/// driver taking it.
+/// driver taking it; an SD host controller node with a device on it is not
+/// served ([`SD_HOST_COMPATIBLES`]).
 fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INSTANCES], usize) {
     let tree = device_tree::at_el1().index();
     let mut instances = [const { None }; MAX_DRIVER_INSTANCES];
@@ -487,6 +499,17 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             continue;
         };
         let name = node.name().unwrap_or("?");
+        let matched = driver.compatible.get(compatible_index);
+        if matched.is_some_and(|compatible| SD_HOST_COMPATIBLES.contains(compatible))
+            && let Some(device) = node.children().next()
+        {
+            crate::early_println!(
+                "🥾 Driver {}: {name} has {} on it, not a card slot, skipped",
+                driver.component.name,
+                device.name().unwrap_or("a device")
+            );
+            continue;
+        }
         let Some(instance) = plan_instance(tree, driver, compatible_index, &node) else {
             crate::early_println!(
                 "🥾 Driver {}: {name} has too many registers, skipped",
@@ -494,10 +517,8 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             );
             continue;
         };
-        let shares_kernel_pages = driver
-            .compatible
-            .get(compatible_index)
-            .is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
+        let shares_kernel_pages =
+            matched.is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
         if !shares_kernel_pages && instance.pages().iter().any(|&page| kernel_owned(page)) {
             crate::early_println!(
                 "🥾 Driver {}: {name} shares a page with the kernel, skipped",
