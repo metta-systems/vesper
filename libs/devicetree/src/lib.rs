@@ -175,6 +175,16 @@ pub fn translate(node: &Node<'_, '_, '_>, address: u64) -> Option<u64> {
     Some(address)
 }
 
+/// The address of `count` cells at `index`, as [`read_number`] reads it; a PCI
+/// address (three cells: the space code, then the 64-bit address) is its
+/// address cells, the space code dropped.
+fn read_bus_address(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
+    match count {
+        3 => read_number(prop, index + 1, 2),
+        _ => read_number(prop, index, count),
+    }
+}
+
 /// Most bus levels [`dma_address`] walks above a node.
 const MAX_BUS_DEPTH: usize = 8;
 
@@ -208,8 +218,8 @@ pub fn dma_address(node: &Node<'_, '_, '_>, cpu_address: u64, size: u64) -> Opti
         let entries = dma_ranges.length() / size_of::<u32>() / stride;
         address = (0..entries).find_map(|entry| {
             let index = entry * stride;
-            let child_base = read_number(&dma_ranges, index, child_cells.address)?;
-            let parent_base = read_number(
+            let child_base = read_bus_address(&dma_ranges, index, child_cells.address)?;
+            let parent_base = read_bus_address(
                 &dma_ranges,
                 index + child_cells.address as usize,
                 parent_address_cells,

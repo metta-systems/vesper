@@ -19,6 +19,7 @@ mod tests {
         assert_eq!(check_request(&request(tag::GET_BOARD_REVISION, 1)), Ok(()));
         assert_eq!(check_request(&request(tag::GET_ARM_MEMORY, 2)), Ok(()));
         assert_eq!(check_request(&request(tag::SET_PHYSICAL_SIZE, 2)), Ok(()));
+        assert_eq!(check_request(&request(tag::NOTIFY_XHCI_RESET, 1)), Ok(()));
         // No tags at all: header, end tag, padding.
         assert_eq!(check_request(&[12, 0, 0]), Ok(()));
     }

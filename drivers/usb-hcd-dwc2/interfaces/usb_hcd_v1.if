@@ -3,10 +3,9 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 ## The host controller of a USB bus (Raspberry Pi 3's `DesignWare` DWC2 in host
-## mode). The controller schedules every transfer: a client opens a pipe to one
-## endpoint and transfers through it (`pipe_v1`). Nothing here is DWC2-specific,
-## so a later xHCI controller can serve the same interface. Prototype: edited
-## in place.
+## mode, Raspberry Pi 4's VL805 xHCI). The controller schedules every transfer:
+## a client opens a pipe to one endpoint and transfers through it (`pipe_v1`).
+## Prototype: edited in place.
 local interface usb_hcd_v1
 {
     ## The area the client stages control transfers in (see `pipe_v1`), and where
@@ -44,9 +43,12 @@ local interface usb_hcd_v1
     exception not_permitted {}
 
     ## The controller did not come up: `step` is the step of its bring-up that
-    ## timed out. 1: the AHB master going idle, 2: the core soft reset, 3: host
-    ## mode, 4: the transmit FIFO flush, 5: the receive FIFO flush. The
-    ## controller serves nothing else.
+    ## failed, numbered per controller. DWC2 (each a timeout): 1: the AHB
+    ## master going idle, 2: the core soft reset, 3: host mode, 4: the transmit
+    ## FIFO flush, 5: the receive FIFO flush. xHCI: 1: no function behind the
+    ## bridge, 2: the firmware's VL805 load, 3: the claim, 4: controller not
+    ## ready, 5: halt, 6: reset, 7: no 4 KiB pages, 8: too many scratchpad
+    ## buffers, 9: run. The controller serves nothing else.
     exception controller_failed { card32 step; }
 
     ## Reset the root port `port` for the device attached to it, and return the

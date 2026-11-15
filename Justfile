@@ -34,7 +34,7 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
-user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hid usb-test-client window-events'
+user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -340,7 +340,7 @@ _boot-midi-test: _build-midi-test-hw chainofcommand
 # Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds, and the PCIe root complex its link, the functions behind it and an MSI self-test, on the UART through the log server
 _build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
 
-# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
 [group("hw")]
 boot-board-test: _build-board-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
@@ -1055,7 +1055,7 @@ _test-meddle: (_host-test 'metta-meddle-runtime' 'words')
     cargo test -p metta-meddle
 
 # Run the USB protocol logic tests natively: setup packets, descriptors, enumeration, HID boot reports
-_test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2') (_host-test 'usb-core' 'usb_core') (_host-test 'usb-hid' 'hid')
+_test-usb-host: (_host-test 'vesper-usb-protocol' 'protocol') (_host-test 'usb-hcd-dwc2' 'dwc2') (_host-test 'usb-hcd-xhci' 'xhci') (_host-test 'usb-core' 'usb_core') (_host-test 'usb-hid' 'hid')
 
 # Run the input event library tests natively: record layout, descriptor, state tracker
 _test-input-host: (_host-test 'vesper-input-event' 'input_event')
@@ -1127,7 +1127,7 @@ _clippy-meddle: (_host-clippy 'metta-meddle-runtime' 'words')
     cargo clippy -p metta-meddle -p meddler --tests -- --deny warnings --allow deprecated
 
 # Lint the USB protocol host tests with their native host harness
-_clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-core' 'usb_core') (_host-clippy 'usb-hid' 'hid')
+_clippy-usb-host: (_host-clippy 'vesper-usb-protocol' 'protocol') (_host-clippy 'usb-hcd-dwc2' 'dwc2') (_host-clippy 'usb-hcd-xhci' 'xhci') (_host-clippy 'usb-core' 'usb_core') (_host-clippy 'usb-hid' 'hid')
 
 # Lint the input event library tests with their native host harness
 _clippy-input-host: (_host-clippy 'vesper-input-event' 'input_event')
@@ -1150,7 +1150,7 @@ _cross-clippy-usb board=boards features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      -p usb-hcd-dwc2 -p usb-core -p vesper-usb-host -p vesper-usb-protocol -p usb-hid -p input-trace \
+      -p usb-hcd-dwc2 -p usb-hcd-xhci -p usb-core -p vesper-usb-host -p vesper-usb-protocol -p usb-hid -p input-trace \
       -- --deny warnings --allow deprecated
 
 # Lint just the USB stack: the target build with and without `qemu`, and the host tests (much shorter than `clippy`)
