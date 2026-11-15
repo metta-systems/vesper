@@ -80,11 +80,10 @@ mod component {
         },
         usb_hcd_xhci::{
             regs::{
-                Capabilities, Command, CommandRingControl, Configure, DequeueLow,
-                INTERRUPTER_0, Interrupter, InterrupterManagement, MmioCapabilities,
-                MmioInterrupter, MmioOperational, MmioPort, Operational, PAGE_SIZE_4K, Port,
-                Ports, Status, neutral, port_offset, port_speed, port_status_bits,
-                protocol_ports, split_address,
+                Capabilities, Command, CommandRingControl, Configure, DequeueLow, INTERRUPTER_0,
+                Interrupter, InterrupterManagement, MmioCapabilities, MmioInterrupter,
+                MmioOperational, MmioPort, Operational, PAGE_SIZE_4K, Port, Ports, Status, neutral,
+                port_offset, port_speed, port_status_bits, protocol_ports, split_address,
             },
             ring::{Consumer, Placement, Producer},
             trb::{SUCCESS, TRB_BYTES, Trb, kind, segment_table_entry},
@@ -346,9 +345,7 @@ mod component {
             // SAFETY: BAR0 is mapped read/write as device memory at `base` for
             // the driver's lifetime, and the capability registers start it.
             unsafe {
-                Capabilities::new_mmio(core::ptr::with_exposed_provenance_mut::<Capabilities>(
-                    base,
-                ))
+                Capabilities::new_mmio(core::ptr::with_exposed_provenance_mut::<Capabilities>(base))
             }
         }
 
@@ -445,9 +442,8 @@ mod component {
             }
             let (low, high) = split_address(self.consumer.dequeue_pointer());
             self.interrupter.write_dequeue_high(high);
-            self.interrupter.write_dequeue_low(
-                DequeueLow::new_with_raw_value(low).with_handler_busy(true),
-            );
+            self.interrupter
+                .write_dequeue_low(DequeueLow::new_with_raw_value(low).with_handler_busy(true));
             count
         }
     }
@@ -507,7 +503,12 @@ mod component {
             let connected = wait_until(CONNECT_MS, || {
                 (0..u32::from(usb2.count))
                     .filter_map(|index| usb2.port_id(index))
-                    .any(|port_id| self.registers.port(port_id).read_status_control().connected())
+                    .any(|port_id| {
+                        self.registers
+                            .port(port_id)
+                            .read_status_control()
+                            .connected()
+                    })
             });
             for index in 0..u32::from(usb2.count) {
                 let Some(port_id) = usb2.port_id(index) else {
@@ -709,7 +710,11 @@ mod component {
 
     /// Map the claimed Frames of BAR0 at their places in the device window;
     /// returns BAR0's address there.
-    fn map_bar0(init: &DriverInit, frames: &KeyTableKey, claimed: &Claimed) -> Result<usize, BringUp> {
+    fn map_bar0(
+        init: &DriverInit,
+        frames: &KeyTableKey,
+        claimed: &Claimed,
+    ) -> Result<usize, BringUp> {
         let own = table(init);
         for index in 0..claimed.installed {
             let key = RawKey::new(KeySlot((FRAME_TABLE_GUARD << FRAME_TABLE_BITS) | index), 1);
@@ -755,7 +760,11 @@ mod component {
 
     /// Halt and reset the controller, set up its context array, scratchpad
     /// buffers, command ring and event ring, and run it (§4.2).
-    fn start(init: &DriverInit, base: usize, bar0_size: usize) -> Result<(Controller, EventRing), BringUp> {
+    fn start(
+        init: &DriverInit,
+        base: usize,
+        bar0_size: usize,
+    ) -> Result<(Controller, EventRing), BringUp> {
         let registers = Registers::new(base);
         let capabilities = registers.capabilities();
         let version = capabilities.read_length_version();
@@ -801,7 +810,9 @@ mod component {
         }
         let scratchpad_count = structural2.scratchpad_buffers();
         if scratchpad_count > MAX_SCRATCHPADS {
-            note!("xhci: {scratchpad_count} scratchpad buffers asked for, {MAX_SCRATCHPADS} at most");
+            note!(
+                "xhci: {scratchpad_count} scratchpad buffers asked for, {MAX_SCRATCHPADS} at most"
+            );
             return Err(BringUp::Scratchpads);
         }
 
@@ -854,9 +865,8 @@ mod component {
         operational.write_context_array_high(high);
         let commands = Producer::new(command.bus, RING_TRBS);
         let (low, high) = split_address(commands.base());
-        operational.write_command_ring_low(
-            CommandRingControl::new_with_raw_value(low).with_cycle(true),
-        );
+        operational
+            .write_command_ring_low(CommandRingControl::new_with_raw_value(low).with_cycle(true));
         operational.write_command_ring_high(high);
 
         let mut interrupter = registers.interrupter();
@@ -908,7 +918,10 @@ mod component {
                 registers.port(trb.port()).read_status_control().raw_value()
             ),
             kind::HOST_CONTROLLER => {
-                note!("xhci: host controller event, code {}", trb.completion_code());
+                note!(
+                    "xhci: host controller event, code {}",
+                    trb.completion_code()
+                );
             }
             other => note!(
                 "xhci: event type {other}, code {}, parameter {:#x}",
@@ -1043,7 +1056,9 @@ mod component {
         }
 
         fn trace(badge: u64, text: IoRec) -> Result<u32, Exception> {
-            let (_client, area) = init().area_for_badge(badge).ok_or(Exception::NotPermitted)?;
+            let (_client, area) = init()
+                .area_for_badge(badge)
+                .ok_or(Exception::NotPermitted)?;
             let data = DataArea {
                 base: area.base,
                 len: area.len,

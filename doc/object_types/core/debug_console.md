@@ -9,7 +9,9 @@
 
 ## Purpose
 
-DebugConsole prints text for debugging. It exists only in kernels built with the `debug_kernel` Cargo feature, where the first component receives it at `KeySlot::DEBUG_CONSOLE` (slot 15). Other kernels have no DebugConsole capability. It is meant for trusted test code; production components should not depend on it.
+DebugConsole prints text for debugging. It exists only in kernels built with the `debug_kernel` Cargo feature. There the boot code holds it at `KeySlot::DEBUG_CONSOLE` (slot 15), and every component Kickstart loads gets a `WRITE` copy in the same slot of its own table, also named by `DriverInit::debug_console`. Other kernels have no DebugConsole capability. It is meant for debugging; production components should not depend on it.
+
+The userspace runtime's panic handler prints the panic message on it (`libobject::debug_console::set_panic_console`; `libdevice_driver::driver_init` sets it from `DriverInit::debug_console`).
 
 ## Operations
 
@@ -19,12 +21,17 @@ DebugConsole prints text for debugging. It exists only in kernels built with the
 
 ### Write
 
-Prints `x3` bytes starting at `x2`. `DebugConsoleKey::write(&str)` wraps it.
+Prints the bytes at `x2` as they are, with no newline added. `DebugConsoleKey::write(&[u8])` wraps it.
 
-- `x2` is read as a physical address. Write works only for buffers whose virtual address equals their physical address, as in the test kernels' images.
-- The length must be below 4096 bytes; a longer length halts the kernel.
-- The bytes must not contain a NUL byte; if they do, Write fails with `Unknown`.
-- Output goes to the QEMU semihosting console and appears only when the kernel runs under QEMU.
+- `x2` is a virtual address in the caller's AddressSpace. Every page of the range must be readable at the caller's exception level: EL0 for a component, EL1 for the boot code.
+- At most `libobject::debug_console::WRITE_LIMIT` (1024) bytes are printed; the rest of a longer buffer is dropped without an error.
+- The bytes are copied before they are printed.
+- Under QEMU the output goes to the semihosting console, up to the first NUL byte. On the boards it goes to the console UART, with each malformed UTF-8 sequence printed as U+FFFD.
+
+| Error | When |
+|---|---|
+| `InvalidPointer` | A page of the range is not readable by the caller, or the range wraps past the top of the address space; nothing is printed |
+| `InvalidOperation` | The operation is not Write |
 
 ## Implementation
 

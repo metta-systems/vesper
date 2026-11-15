@@ -36,7 +36,11 @@ use {
         memory::{Alloc, BootAllocator},
     },
     aarch64_cpu::registers::{Read, SPSR_EL2, Write},
-    core::{cell::UnsafeCell, slice},
+    core::{
+        cell::UnsafeCell,
+        slice,
+        sync::atomic::{AtomicU64, Ordering},
+    },
     libaddress::{PhysAddr, VirtAddr},
     libdevicetree::{
         is_enabled,
@@ -536,6 +540,18 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     .expect("🥾 Failed to create kernel mapping");
     crate::early_println!("🥾 Higher-half mapped the nucleus");
 
+    // The console UART's register page in the kernel half too: a panic at EL1
+    // or in the nucleus takes the UART over through it.
+    if let Some(base) = early_console::uart_physical() {
+        paging::create_device_mapping(
+            &mut mmu_setup,
+            PhysAddr::new(base & !0xfff),
+            VirtAddr::new(early_console::CONSOLE_VIRT),
+            0x1000,
+        )
+        .expect("🥾 Failed to map the console UART for panics");
+    }
+
     if let Some(plan) = &irqchip_plan {
         let handoff = privileged::load(plan, &mut mmu_setup)
             .expect("🥾 Failed to load the interrupt controller component");
@@ -586,11 +602,13 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
     print_my_sp();
 
-    // The UART is not mapped once the MMU is on: the early console ends here, and
-    // the `uart-pl011` driver component owns the UART from its start.
-    crate::early_println!("🥾 MMU on, dropping to EL1: the early console ends here");
+    // The early console pauses here: it goes on at EL1 through the UART's
+    // kernel-half mapping (`el1_entry`).
+    crate::early_println!("🥾 MMU on, dropping to EL1");
     early_console::hand_over();
 
+    // EL1 starts in `el1_entry`, which goes on to `run_entry`.
+    RUN_ENTRY.store(run_entry, Ordering::Relaxed);
     // SAFETY: Only the boot core is active at EL2 using SP_EL2. The boot image
     // and its low stack are identity-mapped; vectors and the distinct persistent
     // trap stack are high-mapped. Both stack tops are page-aligned. This terminal
@@ -600,7 +618,7 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             ttbr0,
             ttbr1,
             vbar,
-            run_entry,
+            el1_entry as *const u8 as u64,
             // el1_stack_top, // This is solely for the kernel
             // Implementation status: pass it separately as the SP_EL1 trap
             // stack, leaving the linked fixture's low execution stack in SP_EL0.
@@ -608,6 +626,35 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
             el1_stack_top,
         );
     }
+}
+
+/// The boot image's own continuation (`run_entry` of [`kickstart_init_el2`]),
+/// which [`el1_entry`] runs. Only loaded and stored.
+static RUN_ENTRY: AtomicU64 = AtomicU64::new(0);
+
+/// The first code at EL1: point the panic paths at the console UART's
+/// kernel-half mapping, Kickstart's and the nucleus's, then run the image's
+/// continuation.
+fn el1_entry() -> ! {
+    // SAFETY: the MMU is on, and `kickstart_init_el2` mapped the UART's page
+    // at `CONSOLE_VIRT` whenever the early console found a UART.
+    unsafe {
+        early_console::move_to_kernel_half();
+    }
+    crate::early_println!("🥾 At EL1 with the MMU on");
+    if let Some(base) = early_console::uart_kernel_half() {
+        // SAFETY: the paired nucleus is mapped; the setter is a boot-only
+        // store, and `base` is the PL011 mapped as device memory for good.
+        unsafe {
+            let set = core::mem::transmute::<u64, unsafe extern "C" fn(usize)>(
+                embed::NUCLEUS_SET_BOARD_CONSOLE_VIRT,
+            );
+            set(base);
+        }
+    }
+    // SAFETY: `run_entry` is the image's `fn() -> !` continuation.
+    let run = unsafe { core::mem::transmute::<u64, fn() -> !>(RUN_ENTRY.load(Ordering::Relaxed)) };
+    run()
 }
 
 /// Print the current stack pointer through semihosting.

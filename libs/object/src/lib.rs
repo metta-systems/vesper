@@ -27,7 +27,6 @@ pub mod wait_set;
 
 use syscall_status as code;
 
-#[cfg(feature = "debug_kernel")]
 pub use debug_console::DebugConsoleKey;
 
 pub use {

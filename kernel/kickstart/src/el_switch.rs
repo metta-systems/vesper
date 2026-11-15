@@ -184,6 +184,15 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     TTBR0_EL1.set(ttbr0);
     TTBR1_EL1.set(ttbr1);
 
+    // The EL1 TLBs and the instruction cache may hold entries from before
+    // (the firmware's, out of reset UNKNOWN): drop them before the first walk
+    // of these tables and the first fetch of the code loaded with caches off.
+    tlb_invalidate_all();
+    // SAFETY: invalidating the instruction cache only drops cached lines.
+    unsafe {
+        core::arch::asm!("ic iallu", "dsb nsh", "isb", options(nostack, preserves_flags));
+    }
+
     // ═══════════════════════════════════════════════════════════
     // STEP 4: Prepare to drop to EL1 with MMU enabled
     // ═══════════════════════════════════════════════════════════

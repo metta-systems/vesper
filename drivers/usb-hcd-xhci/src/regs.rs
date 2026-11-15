@@ -13,11 +13,8 @@
 //! word, written in that order (§5.1).
 
 use {
-    arbitrary_int::prelude::*,
-    bitbybit::bitfield,
-    derive_mmio::Mmio,
-    libmmio::assert_register_offsets,
-    vesper_usb_protocol::enumeration::Speed,
+    arbitrary_int::prelude::*, bitbybit::bitfield, derive_mmio::Mmio,
+    libmmio::assert_register_offsets, vesper_usb_protocol::enumeration::Speed,
 };
 
 /// `CAPLENGTH` and `HCIVERSION` (§5.3.1, §5.3.2).

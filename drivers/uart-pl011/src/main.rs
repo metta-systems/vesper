@@ -138,7 +138,11 @@ mod component {
             panic!("uart-pl011: mapping registers failed: {:?}", error.code())
         });
         let mut uart = uart(init);
-        assert!(uart.is_pl011(), "uart-pl011: not a PL011");
+        // The identity check is off: the Pi 5's uart10 implements only the
+        // first 0x200 bytes of its page, so its peripheral ID registers at
+        // 0xFE0 read back something else; its node gives the ID in
+        // `arm,primecell-periphid` instead.
+        // assert!(uart.is_pl011(), "uart-pl011: not a PL011");
 
         let attached = attach(init);
         let channel = if attached {

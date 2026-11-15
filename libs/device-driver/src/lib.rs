@@ -654,6 +654,9 @@ pub struct DriverInit {
     pub time: u64,
     /// An `EventCount` only the driver's Threads hold (`SEND | RECV`)
     pub event_count: u64,
+    /// A `DebugConsole` key (`WRITE`) for the panic handler, in a
+    /// `debug_kernel` kernel; zero in every other kernel
+    pub debug_console: u64,
     pub region_count: u64,
     pub page_count: u64,
     pub interrupt_count: u64,
@@ -752,6 +755,7 @@ impl DriverInit {
         memory_size: 0,
         time: 0,
         event_count: 0,
+        debug_console: 0,
         region_count: 0,
         page_count: 0,
         interrupt_count: 0,
@@ -910,7 +914,8 @@ fn clamp(count: u64, limit: usize) -> usize {
     usize::try_from(count).map_or(limit, |count| count.min(limit))
 }
 
-/// The driver's init record.
+/// The driver's init record. Its `DebugConsole` key, if it has one, becomes
+/// the panic console ([`libobject::debug_console::set_panic_console`]).
 ///
 /// # Safety
 ///
@@ -919,7 +924,11 @@ fn clamp(count: u64, limit: usize) -> usize {
 /// and never changes it.
 pub unsafe fn driver_init(address: u64) -> &'static DriverInit {
     // SAFETY: forwarded caller contract.
-    unsafe { &*(address as *const DriverInit) }
+    let init = unsafe { &*(address as *const DriverInit) };
+    if init.debug_console != 0 {
+        libobject::debug_console::set_panic_console(RawKey::from_wire(init.debug_console));
+    }
+    init
 }
 
 /// Map every register page of `init` at consecutive pages from

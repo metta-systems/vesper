@@ -415,11 +415,14 @@ impl<'registers> Pl011<'registers> {
     /// next time, so it stays unmasked: an idle transmitter raises nothing.
     pub fn configure(&mut self, loopback: bool) {
         let registers = &mut self.registers;
-        registers.write_control(Control::ZERO);
-        // Let a byte in flight leave before the line settings change.
+        // Let what the boot console left in the transmit FIFO leave before
+        // the line settings change, while the UART still sends: BUSY stays
+        // set as long as the FIFO holds a byte, and a UART switched off never
+        // empties it.
         while registers.read_flag().busy() {
             core::hint::spin_loop();
         }
+        registers.write_control(Control::ZERO);
         // Turning the FIFOs off flushes the transmit FIFO.
         registers.modify_line_control(|line| line.with_fifo_enable(false));
         registers.write_interrupt_mask(InterruptSources::ZERO);

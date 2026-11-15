@@ -109,7 +109,9 @@ revisit after use. Unanswered questions:
   input snapshot, copy-fault recovery), which no other operation currently
   needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
   `x3..x7` with client chunking, so the nucleus never reads user memory. Until
-  this is decided the console stays a debug-only prototype.
+  this is decided the console stays a debug-only prototype. The hardware
+  debugging aid's checked pointer reads (contract, DebugConsole debug-only
+  exception) are temporary and do not answer this question.
 
 ## Future work
 
@@ -203,11 +205,6 @@ needs them.
   and invalidate it after the answer, or keep the buffers in a non-cacheable
   region. Worth doing only if chainboot needs atomics; QEMU does not model
   caches, so the board is the test.
-- **Panics visible on hardware:** move chainboot's PL011 driver into
-  `libmachine` so the nucleus panic handler can take the UART over and dump the
-  panic there; and give EL0 components a DebugConsole key their panic handler
-  writes to, so a component's panic reaches the UART too (today it prints only
-  over semihosting, which hardware does not have).
 - **Arasan SDHCI for the card on the boards:** the Raspberry Pi 3 has two SD
   controllers, and the device tree says which one has the card (the enabled
   node whose pin group holds GPIO 48 to 53). The stock tree enables SDHOST and

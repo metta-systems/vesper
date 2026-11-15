@@ -2757,6 +2757,7 @@ dependencies = [
  "tock-registers",
  "vesper-address",
  "vesper-boot",
+ "vesper-boot-uart",
  "vesper-console",
  "vesper-cpu",
  "vesper-exceptions",
@@ -5378,6 +5379,7 @@ name = "vesper-user-runtime"
 version = "0.0.1"
 dependencies = [
  "cfg-if",
+ "vesper-objects",
  "vesper-print",
  "vesper-qemu",
 ]

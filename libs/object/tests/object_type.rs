@@ -720,9 +720,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "debug_kernel")]
     #[test]
-    fn debug_console_client_is_available_for_debug_kernels() {
+    fn debug_console_client_is_always_built() {
         use vesper_objects::{DebugConsoleKey, KeySlot, RawKey};
 
         // Construct handles only: host tests must not execute the SVC transport.
@@ -733,6 +732,19 @@ mod tests {
         const OTHER: DebugConsoleKey = DebugConsoleKey::from_key(REISSUED);
         assert_eq!(CONSOLE.raw().to_wire(), 0x1234_5678_0000_007f);
         assert_eq!(OTHER.raw().to_wire(), 0x8765_4321_0000_007f);
+    }
+
+    #[test]
+    fn panic_console_is_the_key_last_set() {
+        use vesper_objects::{
+            KeySlot, RawKey,
+            debug_console::{panic_console, set_panic_console},
+        };
+
+        assert!(panic_console().is_none());
+        let key = RawKey::new(KeySlot(15), 1);
+        set_panic_console(key);
+        assert_eq!(panic_console().map(|console| console.raw()), Some(key));
     }
 
     // Literal ABI oracles: do not derive these IDs from the production catalogue.
