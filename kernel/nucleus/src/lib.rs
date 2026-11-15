@@ -44,6 +44,8 @@ pub mod objects;
 pub mod platform;
 /// The kernel-owned preemption timer.
 pub mod timer;
+/// Reading a caller's memory at its own exception level.
+pub mod user_memory;
 
 // Root-level re-exports the object modules reference via `crate::…`; the bin
 // previously supplied these through its own `use` statements.

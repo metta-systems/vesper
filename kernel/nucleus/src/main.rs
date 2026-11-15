@@ -40,7 +40,8 @@ use {
         syscall_status,
     },
     libqemu::semihosting as semi,
-    nucleus::board_console,
+    libstacktrace::{Backtrace, current_frame_pointer, read_own},
+    nucleus::{board_console, user_memory},
     nucleus::objects::{
         ArchObjects, ArchObjectsImpl, Nucleus,
         access::{Access, ObjectId},
@@ -183,7 +184,27 @@ fn panicked(info: &PanicInfo) -> ! {
     if board_console::attached() {
         libconsole::console::register_console(&board_console::BOARD_UART);
     }
+    if libstacktrace::ENABLED {
+        println!(
+            "nucleus panic {}",
+            Backtrace::new(None, current_frame_pointer(), kernel_word)
+        );
+    }
     libmachine::panic::handler(info)
+}
+
+/// Where the kernel half starts: the `TTBR1` range of a 48-bit address space.
+const KERNEL_HALF: u64 = 0xFFFF_0000_0000_0000;
+
+/// The 64-bit word at `address` of the nucleus's own memory, for a stack
+/// trace: only in the kernel half, where its stacks are, and only where an
+/// EL1 read translates, so that a broken frame chain cannot fault the panic.
+fn kernel_word(address: u64) -> Option<u64> {
+    if address < KERNEL_HALF || !user_memory::readable(address, 8, user_memory::Reader::El1) {
+        return None;
+    }
+    // SAFETY: the word is in the kernel half and translates for an EL1 read.
+    unsafe { read_own(address) }
 }
 
 //------------------------------------------------------------------------------
@@ -199,9 +220,12 @@ fn panicked(info: &PanicInfo) -> ! {
 /// Default pointer is configured in the linker script.
 #[unsafe(no_mangle)]
 extern "C" fn default_exception_handler(exc: &ExceptionContext) {
+    // In a build with stack traces, the trace from the exception's PC along
+    // the interrupted code's frame chain (nucleus code only: `kernel_word`).
     panic!(
         "Unexpected CPU Exception!\n\n\
-        {exc}"
+        {exc}\n{}",
+        Backtrace::new(Some(exc.elr_el1), exc.gpr[29], kernel_word)
     );
 }
 
@@ -857,6 +881,13 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
         info.far,
         info.depth
     );
+    if libstacktrace::ENABLED {
+        // The faulting Thread's AddressSpace is still the active one.
+        board_println!(
+            "   {}",
+            Backtrace::new(Some(info.pc), faulting.gpr[29], user_memory::read_el0_word)
+        );
+    }
     let delivery = KERNEL_LOCK.lock(|()| {
         let Some(nucleus_ptr) = nucleus_anchor() else {
             panic!("nucleus not booted by Kickstart")
