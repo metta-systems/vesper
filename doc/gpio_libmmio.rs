@@ -11,7 +11,7 @@
 //!   `name()` takes `&self` and exists when reads have no side effects;
 //!   `name_mut()` takes `&mut self` and exists when the register can be written
 //!   or read with side effects. The handles they return implement tock's
-//!   `Readable` / `Writeable`, so `read`, `is_set`, `matches_all`, `read_as_enum`,
+//!   `Read` / `Write`, so `read`, `is_set`, `matches_all`, `read_as_enum`,
 //!   `write`, `modify` are unchanged.
 //! - Cell types state whether reads are pure: `ReadPure`, `ReadPureWrite`,
 //!   `ReadOnly` / `ReadWrite` (side-effecting read), `WriteOnly`.
@@ -27,11 +27,7 @@ use {
         register_block,
         registers::{ReadPure, ReadPureWrite, WriteOnly},
     },
-    tock_registers::{
-        fields::Field,
-        interfaces::{ReadWriteable, Readable, Writeable},
-        register_bitfields,
-    },
+    tock_registers::{Read, Write, fields::Field, register_bitfields},
 };
 
 /// Generates `pub enums` with no variants for each `ident` passed in.
@@ -173,8 +169,8 @@ register_block! {
 }
 
 // What the macro generates for the rpi3 block, abridged. `Pure` handles are
-// `Copy + Sync` and only `Readable`; `Exclusive` handles are neither `Clone` nor
-// `Sync` and are `Readable` / `Writeable` as the cell allows.
+// `Copy + Sync` and only `Read`; `Exclusive` handles are neither `Clone` nor
+// `Sync` and are `Read` / `Write` as the cell allows.
 //
 // #[repr(C)] pub struct RegisterBlock { /* inert cells, laid out by register_structs! */ }
 //
