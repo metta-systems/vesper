@@ -69,7 +69,7 @@ mod tests {
                     PciRange, PciSpace, Reset, brcm_msi_offset, host_bridge_of, is_host_bridge,
                     msi_parent, msi_range, pci_dma_ranges, pci_function, pci_ranges, resets,
                 },
-                phandle,
+                phandle, primecell_periphid,
             },
         };
 
@@ -152,6 +152,18 @@ mod tests {
                     host_bridge_of(&rp1).map(|bridge| bridge.name()),
                     Some(Ok("pcie@1000120000"))
                 );
+            });
+        }
+
+        #[test]
+        fn rpi5_console_uart_states_its_peripheral_id() {
+            // uart10's 0x200-byte block ends before the ID registers at 0xFE0.
+            with_index(RPI5, |index| {
+                let uart = index
+                    .nodes()
+                    .find(|node| has_path(node, "/soc@107c000000/serial@7d001000"))
+                    .expect("uart10");
+                assert_eq!(primecell_periphid(&uart), Some(0x0034_1011));
             });
         }
 

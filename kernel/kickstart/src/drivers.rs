@@ -21,6 +21,8 @@
 //!   firmware leaves to the ARM;
 //! - the rate of the node's first clock, when it is a `fixed-clock`
 //!   (`libdevicetree::fixed_clock_rate`);
+//! - the AMBA peripheral ID a `PrimeCell` node states in place of its ID
+//!   registers (`arm,primecell-periphid`, `libdevicetree::primecell_periphid`);
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -100,6 +102,7 @@ use {
         fixed_clock_rate, has_path,
         interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
         is_compatible, is_enabled, linked_phandle, node_by_phandle,
+        primecell_periphid,
         pci::{
             PciRange, PciSpace, brcm_msi_offset, host_bridge_of, msi_parent, msi_range,
             pci_dma_ranges, pci_function, pci_ranges, resets,
@@ -1541,6 +1544,12 @@ pub fn load_drivers(
             .node
             .as_ref()
             .and_then(|node| fixed_clock_rate(tree, node))
+            .map_or(0, u64::from);
+        // ── A PrimeCell's stated peripheral ID ──────────────────────────
+        init.primecell_id = instance
+            .node
+            .as_ref()
+            .and_then(primecell_periphid)
             .map_or(0, u64::from);
         init.notification = move_to(
             builder,

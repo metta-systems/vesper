@@ -269,6 +269,13 @@ assert_register_offsets!(RegisterBlock, 0x1000, {
 /// `PART_NUMBER0` of every PL011.
 pub const PART_NUMBER0: u8 = 0x11;
 
+/// Whether a stated AMBA peripheral ID names a PL011: `PeriphID3` to
+/// `PeriphID0` as one word (a device tree's `arm,primecell-periphid`), whose
+/// low byte, `PeriphID0`, is [`PART_NUMBER0`].
+pub const fn id_names_pl011(peripheral_id: u32) -> bool {
+    peripheral_id.to_le_bytes()[0] == PART_NUMBER0
+}
+
 /// Most bytes one [`Pl011::receive`] pass takes from the receive FIFO: a
 /// device that keeps receiving cannot hold the driver in one pass.
 pub const RECEIVE_BURST: usize = 32;

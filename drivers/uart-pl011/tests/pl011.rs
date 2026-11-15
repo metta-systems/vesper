@@ -14,7 +14,7 @@ mod tests {
         libserial_channel::SerialChannel,
         uart_pl011::{
             Interrupts, PART_NUMBER0, Pl011, RECEIVE_BURST, Received, Receiver, RegisterBlock,
-            TRANSMIT_BURST,
+            TRANSMIT_BURST, id_names_pl011,
         },
     };
 
@@ -80,6 +80,16 @@ mod tests {
         assert!(!uart.is_pl011());
         device.write_peripheral_id0(u32::from(PART_NUMBER0));
         assert!(uart.is_pl011());
+    }
+
+    #[test]
+    fn a_stated_peripheral_id_names_a_pl011_by_its_part_number() {
+        // The Raspberry Pi 5's uart10 (`arm,primecell-periphid`): revision 3,
+        // designer Arm, part 0x011.
+        assert!(id_names_pl011(0x0034_1011));
+        // A PL010 (part 0x010) and a PL061 GPIO (part 0x061) are not.
+        assert!(!id_names_pl011(0x0004_1010));
+        assert!(!id_names_pl011(0x0004_1061));
     }
 
     #[test]

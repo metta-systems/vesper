@@ -673,6 +673,10 @@ pub struct DriverInit {
     /// as a `fixed-clock`; zero for a clock another provider runs (the
     /// firmware, through the mailbox) and for a node without clocks
     pub clock_hz: u64,
+    /// The AMBA peripheral ID the node states in place of its ID registers
+    /// (`arm,primecell-periphid`); zero when it has none, and its registers
+    /// are to be read
+    pub primecell_id: u64,
     /// The `VideoCore` memory a driver that asked for it holds: the memory the
     /// firmware allocates framebuffers in, outside every other Untyped
     pub video_count: u64,
@@ -778,6 +782,7 @@ impl DriverInit {
         }; MAX_PINS],
         dma_channel_mask: 0,
         clock_hz: 0,
+        primecell_id: 0,
         video_count: 0,
         video: [DeviceBlock {
             key: 0,
