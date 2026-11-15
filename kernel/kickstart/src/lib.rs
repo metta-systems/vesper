@@ -284,7 +284,11 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
         size: u64,
     }
 
-    let mut nodes: [Node; 100] = [Node::default(); 100];
+    // Device regions kickstart can sort and record: the Raspberry Pi 4 tree
+    // alone has over a hundred.
+    const MAX_DEVICE_REGIONS: usize = 256;
+
+    let mut nodes: [Node; MAX_DEVICE_REGIONS] = [Node::default(); MAX_DEVICE_REGIONS];
     let mut num_nodes = 0;
 
     // See https://mjmwired.net/kernel/Documentation/devicetree/bindings/display/brcm,bcm-vc4.txt
@@ -311,7 +315,10 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     // Print "-" prefix is status = disabled;
 
     for device in device_tree.devices() {
-        nodes[num_nodes] = Node {
+        let Some(slot) = nodes.get_mut(num_nodes) else {
+            panic!("🌴 More than {MAX_DEVICE_REGIONS} device regions in the device tree");
+        };
+        *slot = Node {
             start: device.region.start,
             size: device.region.size,
             name: device.name,

@@ -1,7 +1,7 @@
 [package]
 name = "pci-probe"
 
-description = "board-test driver of the function behind the PCIe root port (the Raspberry Pi 4's VL805, the Raspberry Pi 5's RP1): claims it through pci_v1, logs its BARs and first register, and checks that an MSI raised in software reaches its Notification."
+description = "board-test driver of the function behind the Raspberry Pi 5's PCIe root port (RP1): claims it through pci_v1, logs its BARs and first register, and checks whether an MSI raised in software reaches its Notification."
 
 authors = { workspace = true }
 categories = { workspace = true }

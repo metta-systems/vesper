@@ -1,17 +1,17 @@
 #![no_std]
 #![no_main]
 
-//! board-test's driver of the function behind the PCIe root port: the
-//! Raspberry Pi 4's VL805 (`usb@1,0`) and the Raspberry Pi 5's RP1 (`rp1`),
-//! nodes its manifest entry names by path.
+//! board-test's driver of the function behind the PCIe root port of the
+//! Raspberry Pi 5, RP1 (`rp1`), a node its manifest entry names by path (the
+//! Raspberry Pi 4's VL805 has its own driver, `usb-hcd-xhci`).
 //!
 //! It claims the function from the host bridge driver through `pci_v1`,
 //! lending a table of its own for the BAR Frames, and logs what the claimed
 //! record says: the function's IDs, its MSI bit and its BARs. It maps the
-//! first Frame and logs the BAR's first word (the VL805's `CAPLENGTH` and
-//! `HCIVERSION`, or the start of RP1's peripheral window). Then it asks the
-//! bridge driver to raise its MSI from software and waits for the bit on its
-//! own Notification. All of it goes to the log server as `pci-probe:` lines.
+//! first Frame and logs the BAR's first word (the start of RP1's peripheral
+//! window). Then it asks the bridge driver to raise its MSI from software and
+//! waits for the bit on its own Notification (RP1 has MSI-X only, so the
+//! bridge refuses). All of it goes to the log server as `pci-probe:` lines.
 
 use {
     libdevice_driver::{DriverInit, device_page_va, driver_init},

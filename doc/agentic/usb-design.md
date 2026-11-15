@@ -201,30 +201,50 @@ during USB2 are recorded in the status section above.
   a real hub. Hub support and split transactions are needed even for a single
   keyboard. Sources: <https://blog.ittraining.com.tw/2017/06/raspberry-pi-3-ethernet-chip-lan9514.html>,
   <https://github.com/raspberrypi/linux/issues/2021>.
-- RPi4 uses a VL805 xHCI on PCIe. See the RPi4 section below.
+- RPi4 uses a VL805 xHCI on PCIe. See [RPi4 xHCI](#rpi4-xhci).
 
-## RPi4 follow-up (after RPi3 works)
+## RPi4 xHCI
 
-Not in scope for the RPi3 work. Recorded here so the HCD interface stays
-compatible. Sources are mostly 2020-era patches, so check current Raspberry Pi
-kernel and firmware sources before implementing.
+Hardware: USB-A ports sit on a VL805 xHCI (`1106:3483`) behind the BCM2711 PCIe
+controller (`pcie0`, `brcm,bcm2711-pcie` at 0x7d500000). The Pi 4 DMA window is
+capped at the first 3 GB of RAM, so xHCI buffers must come from below that. The
+USB 2 ports sit behind a VIA hub (`2109:3431`) on the VL805's USB 2 root port, so
+a keyboard there goes through `usb-core`'s hub path, as on the RPi3.
 
-Hardware: USB-A ports sit on a VL805 xHCI behind the BCM2711 PCIe controller
-(`pcie0`, `brcm,bcm2711-pcie` at 0x7d500000). The Pi 4 DMA window is capped at
-the first 3 GB of RAM, so xHCI buffers must come from below that.
+Maintainer decisions (2026-11-15, all as recommended):
+
+- **X1a:** the xHCI driver itself sends the firmware's VL805 notify before it
+  touches the controller, through `mailbox_v1.property` with the tag allowed.
+  It builds the PCI address from the function `pci_v1.claim` reports.
+- **X2a:** `usb_hcd_v1` is edited in place for device addressing: the controller
+  assigns addresses (`address_device`: xHCI Enable Slot and Address Device, DWC2
+  `SET_ADDRESS`), a hub is marked as one so xHCI can fill its slot's hub fields,
+  `usb-core` stops sending `SET_ADDRESS`, and `controller_failed.step` is worded
+  per controller.
+- **X3a:** slices: (1) `drivers/usb-hcd-xhci` brings the controller up (notify,
+  halt and reset, DCBAA and scratchpad, command ring, one event ring on MSI
+  through `pci_v1`, a No Op command round trip) and serves `port_status` and
+  `reset_port` on the USB 2 root ports, in board-test on the Raspberry Pi 4
+  node in place of `pci-probe`; (2) X2a and control transfers, so `usb-core`
+  enumerates the hub; (3) interrupt-IN, so `usb-hid` gets a keyboard.
+- **X4a:** USB 2 root ports only at first; SuperSpeed ports and RP1's DWC3
+  controllers later.
 
 Bring-up, in order:
 
-1. **PCIe.** Bring the link up, set the CPU-to-PCI and PCI-to-memory windows,
-   find the VL805 and program its BAR so the xHCI registers are mapped. (From
-   memory; the search did not give the exact sequence.)
+1. **PCIe.** Done by `pcie-brcmstb`; the xHCI driver claims the function and
+   its BAR through `pci_v1`.
 2. **VL805 firmware.** After a PCIe reset the VL805 loads firmware from an EEPROM
    if one is present, otherwise from VideoCore. Pi 4B 1.4 dropped the SPI EEPROM,
-   so VideoCore must load it there. It is a firmware mailbox request sent after
-   PCIe configuration and before xHCI starts
-   ([U-Boot patch](https://lists.denx.de/pipermail/u-boot/2020-April/409300.html)).
-   Needs a new `mailbox_v1` property tag. Tag ID and current firmware behaviour
-   unverified. Without the load the xHCI can hang.
+   so VideoCore must load it there. The request is tag
+   `RPI_FIRMWARE_NOTIFY_XHCI_RESET` (0x0003_0058) with one 32-bit value, the
+   function's address `bus << 20 | device << 15 | function << 12` (0x0010_0000
+   for 01:00.0); Linux then waits 200 µs to 1 ms for the VL805 to start
+   (`drivers/reset/reset-raspberrypi.c` and
+   `include/soc/bcm2835/raspberrypi-firmware.h` in the rpi-6.12.y kernel). Linux
+   sends it from the xHCI driver's probe, through the node's
+   `resets = <&reset RASPBERRYPI_FIRMWARE_RESET_ID_USB>`, before the controller
+   is touched (`drivers/usb/host/xhci-pci.c`). Without the load the xHCI can hang.
 3. **xHCI core.** Wait for CNR to clear in USBSTS; set MaxSlotsEn in CONFIG;
    point DCBAAP at the device context base array (plus scratchpad buffers if
    HCSPARAMS2 asks for them); set up the command ring and event ring
@@ -232,19 +252,19 @@ Bring-up, in order:
    completion event
    ([Agilex xHCI programming model](https://intel.com/content/www/us/en/docs/programmable/814346/24-3/programming-model-56434.html),
    [Linux xhci.h history](https://git.linaro.org/plugins/gitiles/kernel/linux-linaro-stable.git/+/33b2831ac870d50cc8e01c317b07fb1e69c13fe1%5E%21/drivers/usb)).
-4. **Interrupts.** The VL805 normally signals MSI, which the BCM2711 PCIe block
-   should route to the GIC. Unverified.
+4. **Interrupts.** The VL805's MSI reaches the driver's Notification through
+   `pcie-brcmstb`, which `pci_v1.claim` sets up.
 5. **Enumeration.** Per root port: reset it (USB 2 ports need this before they are
    enabled), then Enable Slot, Address Device, GET_DESCRIPTOR, Configure Endpoint.
-   HID interrupt-IN then runs on the normal ring path. From memory, the VL805 has
-   a built-in 4-port hub, so a single keyboard needs no hub driver.
+   HID interrupt-IN then runs on the normal ring path.
 
-Minimum for a keyboard on RPi4: 1–5 above with control transfers and interrupt-IN.
-Hubs, isochronous transfers and xHCI error recovery can wait.
+Linux's VL805 quirks (`xhci_pci_quirks`): 40-bit DMA, broken dequeue cycle
+state in endpoint contexts, TRB overfetch, no dequeue moves onto a link TRB,
+and VIA SuperSpeed bulk-out and hub TT bugs. None matters for a keyboard behind
+the hub.
 
-Design impact: an xHCI component implements `usb_hcd_v1` unchanged, so `usb-core` and
-`hid` carry over. New work is the HCD, PCIe bring-up and the firmware call. The
-DMA strategy (answered in USB2, see the status section) also applies to xHCI rings.
+Isochronous transfers and xHCI error recovery can wait. The DMA strategy
+(answered in USB2, see the status section) also applies to xHCI rings.
 
 ## Prior art and candidate crates
 

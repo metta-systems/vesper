@@ -77,7 +77,9 @@ fn boot_main(dtb: u32) -> ! {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    semi::println!("🥾 PANICKED: {info}");
+    // Also on the early console: on hardware, a panic before the MMU goes on
+    // has nowhere else to show.
+    kickstart::early_println!("🥾 PANICKED: {info}");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_failure()
