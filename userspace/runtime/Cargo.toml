@@ -22,6 +22,7 @@ qemu = []
 [dependencies]
 cfg-if = { workspace = true }
 # libqemu's semihosting print macros expand to ::libprint::format_cstr().
+libobject = { workspace = true }
 libprint = { workspace = true }
 libqemu = { workspace = true }
 

@@ -27,6 +27,8 @@ chainboot_link  := 'bin/chainboot/src/link.ld'
 privileged_link := 'linker/privileged.ld'
 
 fixed_rustflags := '-D warnings -Z macro-backtrace'
+# More rustflags for every cross-built crate, e.g. `just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel`
+extra_rustflags := ''
 # Privileged (EL1) components: position-independent, linked at 0 and relocated by kickstart
 pie_rustflags   := '-C relocation-model=pie -C link-arg=--pie'
 # Device tests run in QEMU (rpi3) with the test linker script; the recipes add the board set's flags
@@ -153,7 +155,7 @@ _board-flags board=boards:
 _cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
-    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}" \
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -338,12 +340,12 @@ _boot-midi-test: _build-midi-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'midi-test-' + boards_hw + '.bin' }}"
 
 # Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds, and the PCIe root complex its link, the functions behind it and an MSI self-test, on the UART through the log server
-_build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
+_build-board-test-hw board=boards features='': (_build-components board '' features) (_build-log-probe board '' features) (_build-test-kernel 'board-test' board features)
 
-# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or put it on a card image as kernel8.img (`just sdimage board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or put it on a card image as kernel8.img (`just sdimage board-test-<boards>.bin`); `just boot-board-test debug_kernel` builds a debug kernel, where a component's panic message shows on the UART too (`board-test-<boards>-debug_kernel.bin` for `sdimage`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
 [group("hw")]
-boot-board-test: _build-board-test-hw chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
+boot-board-test features='': (_build-board-test-hw boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')

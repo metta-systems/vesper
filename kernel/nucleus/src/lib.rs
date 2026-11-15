@@ -36,6 +36,8 @@
 
 /// Syscall API — capability invocation handlers.
 pub mod api;
+/// The board's console UART.
+pub mod board_console;
 /// Nucleus object implementations.
 pub mod objects;
 /// The privileged interrupt-controller component.

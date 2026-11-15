@@ -23,16 +23,21 @@
 //!   console negotiation of the protocol crate runs, the same rate request and
 //!   answers as chainboot's: a host that answers within 1.5 s gets its rate.
 //!
-//! [`hand_over`] ends the early console just before the MMU goes on and Kickstart
-//! drops to EL1, where the UART is not mapped: from there on Kickstart prints on
-//! semihosting only, and the `uart-pl011` driver component is the UART's one
-//! owner. The driver keeps the divisors it finds, so the rate carries over to the
-//! log server's output.
+//! [`hand_over`] pauses the early console just before the MMU goes on and
+//! Kickstart drops to EL1, where Kickstart reaches the UART through its mapping
+//! in the kernel half ([`CONSOLE_VIRT`], [`move_to_kernel_half`]) and the
+//! early console goes on for the whole run, polled, beside the `uart-pl011`
+//! driver component the log server writes through. The driver keeps the
+//! divisors it finds, so the rate carries over to the log server's output.
+//!
+//! A panic prints there too ([`panic_line`]), and the nucleus writes its few
+//! component lines (each Thread's first run, faults, exits) and its panics
+//! through the same mapping (`nucleus_set_board_console`).
 
 use {
     core::{
         fmt,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicBool, AtomicU64, Ordering},
         time::Duration,
     },
     libboot_uart::{ClockState, attach, pl011::Pl011, route_header_pins, start_uart_clock},
@@ -56,6 +61,20 @@ static UART: Pl011 = Pl011::unattached();
 /// Whether the early lines go to the UART: from [`start`] to [`hand_over`].
 /// Only loaded and stored.
 static OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Whether [`UART`] is attached at an address that works now: the physical one
+/// while the MMU is off, the kernel-half one after [`move_to_kernel_half`].
+/// Only loaded and stored.
+static REACHABLE: AtomicBool = AtomicBool::new(false);
+
+/// The physical address of the console UART's registers, or 0 when the early
+/// console has none. Only loaded and stored.
+static UART_PHYSICAL: AtomicU64 = AtomicU64::new(0);
+
+/// Where Kickstart maps the console UART's register page in the kernel half,
+/// for its EL1 lines and the nucleus's: in the privileged component's L0 slot,
+/// 1 GiB above the component and its MMIO.
+pub const CONSOLE_VIRT: u64 = 0xFFFF_8080_4000_0000;
 
 /// How the early console came to its rate.
 #[derive(Clone, Copy, Debug)]
@@ -119,6 +138,8 @@ pub fn start(loader_registers: [u64; 2], hardware: Option<BootHardware>) -> Cons
     if let Err(why) = unsafe { attach(&hardware, &UART) } {
         return Console::NoUart { why };
     }
+    UART_PHYSICAL.store(hardware.uart.base, Ordering::Relaxed);
+    REACHABLE.store(true, Ordering::Relaxed);
 
     if let Some(rate) = kept_rate(loader_registers) {
         OPEN.store(true, Ordering::Relaxed);
@@ -160,6 +181,49 @@ pub fn hand_over() {
     if OPEN.load(Ordering::Relaxed) {
         UART.flush();
         OPEN.store(false, Ordering::Relaxed);
+    }
+    // The physical address stops working when the MMU goes on.
+    REACHABLE.store(false, Ordering::Relaxed);
+}
+
+/// The physical address of the console UART's registers, if the early console
+/// found one: Kickstart maps their page at [`CONSOLE_VIRT`].
+pub fn uart_physical() -> Option<u64> {
+    let base = UART_PHYSICAL.load(Ordering::Relaxed);
+    (base != 0).then_some(base)
+}
+
+/// The kernel-half address of the console UART's registers, once their page is
+/// mapped at [`CONSOLE_VIRT`].
+pub fn uart_kernel_half() -> Option<usize> {
+    uart_physical().and_then(|base| usize::try_from(CONSOLE_VIRT + (base & 0xfff)).ok())
+}
+
+/// Reach the UART through the kernel half from now on, and open the early
+/// console again for the rest of the run: Kickstart's EL1 lines (the drivers
+/// it loads) and the boot image's own show on the board.
+///
+/// # Safety
+///
+/// The MMU is on, and the UART's register page is mapped at
+/// [`CONSOLE_VIRT`] as device memory.
+pub unsafe fn move_to_kernel_half() {
+    if let Some(base) = uart_kernel_half() {
+        // SAFETY: the caller's contract.
+        unsafe {
+            UART.attach(base);
+        }
+        REACHABLE.store(true, Ordering::Relaxed);
+        OPEN.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Print a panic's `line` on the UART, wherever it can be reached now, even
+/// after the early console is handed over: nothing else runs after a panic.
+pub fn panic_line(line: fmt::Arguments) {
+    if REACHABLE.load(Ordering::Relaxed) {
+        let _ignored = UART.write_fmt(format_args!("{line}\n"));
+        UART.flush();
     }
 }
 

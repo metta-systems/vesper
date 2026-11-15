@@ -71,7 +71,7 @@ mod tests {
                     PciRange, PciSpace, Reset, brcm_msi_offset, host_bridge_of, is_host_bridge,
                     msi_parent, msi_range, pci_dma_ranges, pci_function, pci_ranges, resets,
                 },
-                phandle,
+                phandle, primecell_periphid,
             },
         };
 
@@ -154,6 +154,37 @@ mod tests {
                     host_bridge_of(&rp1).map(|bridge| bridge.name()),
                     Some(Ok("pcie@1000120000"))
                 );
+            });
+        }
+
+        #[test]
+        fn rpi5_console_uart_states_its_peripheral_id() {
+            // uart10's 0x200-byte block ends before the ID registers at 0xFE0.
+            with_index(RPI5, |index| {
+                let uart = index
+                    .nodes()
+                    .find(|node| has_path(node, "/soc@107c000000/serial@7d001000"))
+                    .expect("uart10");
+                assert_eq!(primecell_periphid(&uart), Some(0x0034_1011));
+            });
+        }
+
+        #[test]
+        fn rpi5_wifi_controller_lists_its_device_and_the_card_slot_none() {
+            // Kickstart leaves an SD host controller with a child node
+            // undriven: the child is an SDIO device, not a card.
+            with_index(RPI5, |index| {
+                let children = |path: &str| {
+                    let node = index
+                        .nodes()
+                        .find(|node| has_path(node, path))
+                        .unwrap_or_else(|| panic!("{path}"));
+                    node.children()
+                        .map(|child| child.name().unwrap_or("?").to_owned())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(children("/axi/mmc@1100000"), ["wifi@1"]);
+                assert!(children("/soc@107c000000/mmc@fff000").is_empty());
             });
         }
 

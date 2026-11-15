@@ -39,6 +39,8 @@ aarch64-cpu = { workspace = true }
 # bitflags = { workspace = true }
 cfg-if = { workspace = true }
 libaddress = { workspace = true }
+# The polled PL011 a panic takes the console UART over with.
+libboot-uart = { workspace = true }
 libconsole = { workspace = true }
 libcpu = { workspace = true }
 libexception = { workspace = true }

@@ -103,7 +103,7 @@ pub fn run() {
     // Prototype status: use only the key actually issued to this boot AddressSpace.
     let dbg = DebugConsoleKey::from_key(debug_console_key);
     dbg.write(
-        "DEBCON| Debug output via capability invocation on the boot AddressSpace's debug console capability\n",
+        b"DEBCON| Debug output via capability invocation on the boot AddressSpace's debug console capability\n",
     )
     .unwrap_or_else(|error| {
         panic!(
@@ -116,7 +116,7 @@ pub fn run() {
     let invalid_key = RawKey::new(debug_console_key.slot(), 0);
     let err = DebugConsoleKey::from_key(invalid_key);
     assert!(matches!(
-        err.write("DEBCON| Invalid capability invocation - no output"),
+        err.write(b"DEBCON| Invalid capability invocation - no output"),
         Err(CapError::InvalidKey {
             key,
             reason: InvalidKeyReason::ZeroIncarnation,

@@ -613,7 +613,8 @@ mod component {
     fn main(init_va: u64) -> ! {
         // SAFETY: Kickstart passes the init page's address in x0.
         let init = unsafe { driver_init(init_va) };
-        map_device_pages(init)
+        // The register Frames take the table's first free slots.
+        let first_free = map_device_pages(init)
             .unwrap_or_else(|error| panic!("pcie: mapping registers failed: {:?}", error.code()));
         let soc = if init.compatible_index == BCM2712 {
             Soc::Bcm2712
@@ -718,15 +719,15 @@ mod component {
             Err(Error::LinkDown) => log_println!("pcie: {start:#x}: link down"),
             Err(error) => log_println!("pcie: {start:#x}: bring-up failed: {error:?}"),
         }
-        serve(init)
+        serve(init, first_free)
     }
 
     /// Open the turnstile, say the component is ready, and hand on the MSIs
     /// of the bridge's own controller to the children whose vectors they
-    /// are.
-    fn serve(init: &DriverInit) -> ! {
+    /// are. The driver's own objects go into its table from `first_free`.
+    fn serve(init: &DriverInit, first_free: u64) -> ! {
         let table = KeyTableKey::from_key(RawKey::from_wire(init.table));
-        let first_free = u32::try_from(init.first_free_slot).unwrap_or(u32::MAX);
+        let first_free = u32::try_from(first_free).unwrap_or(u32::MAX);
         let turns = UntypedKey::from_key(RawKey::from_wire(init.memory))
             .retype(
                 ObjectType::EVENT_COUNT,
