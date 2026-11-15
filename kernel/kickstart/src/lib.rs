@@ -181,15 +181,12 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
 
     // reg == region, usually defines LOC+SIZE unless #size-cells is set to 0
     // can also be reg = <0x7e100000 0x00000114 0x7e00a000 0x00000024 >; to define two locations
-    let mut total_memory = 0;
-
     for region in device_tree.memory() {
         crate::early_println!(
             "🌴 Memory {} KiB at offset {}",
             region.size / 1024,
             region.start
         );
-        total_memory += region.size;
         BOOT_INFO.lock(|bi| {
             bi.insert_free_region(
                 PhysAddr::new(region.start),
@@ -530,7 +527,9 @@ pub fn kickstart_init_el2(dtb: u32, run_entry: u64) -> ! {
     let (el1_stack_top,) = paging::create_kernel_mapping(
         &mut mmu_setup,
         &kernel_layout,
-        total_memory,
+        device_tree
+            .memory()
+            .map(|region| (region.start, region.size)),
         el1_stack.as_u64(),
         el1_stack_size,
     )

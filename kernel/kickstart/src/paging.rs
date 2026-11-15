@@ -30,6 +30,8 @@ const KERNEL_PHYS_MAP: u64 = 0xFFFF_8000_0000_0000; // Linear map base
 const KERNEL_DEVICE_BASE: u64 = 0xFFFF_8080_0000_0000;
 const KERNEL_HEAP_BASE: u64 = 0xFFFF_FFFF_0000_0000;
 const KERNEL_STACK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
+/// The block size of the nucleus's physical memory window.
+const BLOCK_2MB: u64 = 2 * 1024 * 1024;
 
 /// Page table entry flags for `AArch64` Stage 1
 pub mod flags {
@@ -308,7 +310,7 @@ pub fn create_identity_mapping(
 pub fn create_kernel_mapping(
     setup: &mut MmuSetup,
     layout: &KernelLayout,
-    max_ram_bytes: u64,
+    ram: impl Iterator<Item = (u64, u64)>,
     el1_stack: u64,
     el1_stack_size: usize,
 ) -> Result<(u64,), &'static str> {
@@ -333,16 +335,21 @@ pub fn create_kernel_mapping(
         executable: false,
     };
 
-    // Map all physical memory using 2MB blocks with a specific offset
-    // Kernel mapping for phys memory starts at
-    for i in 0..max_ram_bytes.div_ceil(2 * 1024 * 1024) {
-        setup.map_block_2mb(
-            Ttbr::Ttbr1,
-            VirtAddr::new(libaddress::PHYSICAL_KERNEL_WINDOW + i * 2 * 1024 * 1024),
-            PhysAddr::new(i * 2 * 1024 * 1024),
-            perms,
-            ("Nucleus phys memory mapping", Alloc::Persistent),
-        );
+    // Map each RAM region (`ram` gives start and size) with 2 MiB blocks at
+    // PHYSICAL_KERNEL_WINDOW + its physical address. RAM need not be one run
+    // from 0: the Raspberry Pi 4 has a hole below 1 GiB, which stays unmapped.
+    for (start, size) in ram {
+        let first_block = start / BLOCK_2MB;
+        let end_block = (start + size).div_ceil(BLOCK_2MB);
+        for block in first_block..end_block {
+            setup.map_block_2mb(
+                Ttbr::Ttbr1,
+                VirtAddr::new(libaddress::PHYSICAL_KERNEL_WINDOW + block * BLOCK_2MB),
+                PhysAddr::new(block * BLOCK_2MB),
+                perms,
+                ("Nucleus phys memory mapping", Alloc::Persistent),
+            );
+        }
     }
 
     // Map kernel stack
