@@ -176,6 +176,21 @@ mod component {
             )));
         }
 
+        fn address(badge: u64) -> Result<u32, Exception> {
+            let init = init();
+            let (_, child) = init.pci.child(badge).ok_or(Exception::NoFunction)?;
+            let mut turn = TURNSTILE.enter(init);
+            let state = state(&mut turn);
+            let function = function_at(child.function);
+            if !state.found[..state.count.min(MAX_FUNCTIONS)]
+                .iter()
+                .any(|device| device.function == function)
+            {
+                return Err(Exception::NoFunction);
+            }
+            u32::try_from(child.function).map_err(|_overflow| Exception::NoFunction)
+        }
+
         fn claim(
             badge: u64,
             into: &KeyTableKey,

@@ -76,6 +76,24 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 - [ ] LED output reports from events on the input transmit channel. Needs the
   transmit channel (no interim Call).
 
+## USB6: xHCI on the Raspberry Pi 4
+
+Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
+
+- [ ] `drivers/usb-hcd-xhci` bring-up: the VL805 firmware notify through
+  `mailbox_v1`, halt and reset, DCBAA and scratchpad, the command ring, one event
+  ring on the MSI `pci_v1.claim` sets up, a No Op command round trip, and
+  `port_status`/`reset_port` on the USB 2 root ports; in board-test on the Raspberry
+  Pi 4 node in place of `pci-probe`. Validate with `just boot-board-test` on a
+  Raspberry Pi 4 from its `xhci:` lines (version, slots and ports, the No Op
+  completion on MSI, the hub's speed after its port reset).
+- [ ] `usb_hcd_v1` device addressing (X2a): `address_device` and hub marking in
+  both controllers, `usb-core` no longer sending `SET_ADDRESS`; xHCI control
+  transfers on endpoint 0, so `usb-core` enumerates the VIA hub on the Raspberry Pi 4.
+- [ ] xHCI interrupt-IN, so `usb-hid` reads a keyboard behind the hub on the
+  Raspberry Pi 4.
+- [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.
+
 ## Verification
 
 - `just _test-usb-host`: protocol and DWC2 host tests.
@@ -90,5 +108,5 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 ## Related
 
 - [usb-decisions.md](usb-decisions.md): open USB decisions.
-- [usb-design.md](usb-design.md): architecture, interfaces and the RPi4 follow-up.
+- [usb-design.md](usb-design.md): architecture, interfaces and the RPi4 xHCI.
 - [input-design.md](input-design.md): the input side that consumes these events.

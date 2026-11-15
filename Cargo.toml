@@ -47,6 +47,8 @@ members = [
   "drivers/usb-hcd-dwc2",
   "drivers/usb-hcd-dwc2/client",
   "drivers/usb-hcd-dwc2/server",
+  # xHCI host controller component (serves the same usb_hcd_v1)
+  "drivers/usb-hcd-xhci",
   # SD card component and its block_v1 interface crates
   "drivers/sdhost-bcm2835",
   "drivers/sdhost-bcm2835/client",

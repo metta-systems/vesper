@@ -10,7 +10,8 @@
 //! after the check.
 //!
 //! Only tags known to be safe for any client are allowed: read-only queries,
-//! and the tags configuring the display. Everything else is refused, tags
+//! the tags configuring the display, and the notice that the VL805 USB
+//! controller was reset (which only loads its firmware). Everything else is refused, tags
 //! that hand over the system (code execution, allocating and locking
 //! `VideoCore` memory, cursor images read from `ARM` memory) and tags that
 //! change clocks or power, which have typed functions or wait for per-client
@@ -66,6 +67,13 @@ pub mod tag {
     pub const SET_OVERSCAN: u32 = 0x0004_800a;
     pub const GET_PALETTE: u32 = 0x0004_000b;
     pub const SET_PALETTE: u32 = 0x0004_800b;
+
+    /// Tell the firmware the VL805 USB controller was reset, so it loads the
+    /// controller's firmware (Raspberry Pi 4 boards without the SPI EEPROM).
+    /// One value word: the PCI address `bus << 20 | device << 15 | function
+    /// << 12` (`RPI_FIRMWARE_NOTIFY_XHCI_RESET` in the Raspberry Pi kernel's
+    /// `include/soc/bcm2835/raspberrypi-firmware.h`).
+    pub const NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 
     /// Refused: they hand over the system. Listed for the tests, which check
     /// that the allow-list stays closed to them.
@@ -130,6 +138,7 @@ const ALLOWED: &[u32] = &[
     tag::SET_OVERSCAN,
     tag::GET_PALETTE,
     tag::SET_PALETTE,
+    tag::NOTIFY_XHCI_RESET,
 ];
 
 /// Whether any client may send the tag `id`.

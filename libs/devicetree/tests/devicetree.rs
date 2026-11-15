@@ -64,7 +64,7 @@ mod tests {
         use {
             super::{RPI4, RPI5, with_index},
             vesper_devicetree::{
-                find_compatible, has_path,
+                dma_address, find_compatible, has_path,
                 pci::{
                     PciRange, PciSpace, Reset, brcm_msi_offset, host_bridge_of, is_host_bridge,
                     msi_parent, msi_range, pci_dma_ranges, pci_function, pci_ranges, resets,
@@ -128,6 +128,11 @@ mod tests {
                 assert_eq!(pci_function(vl805), Some(0x100));
                 let bridge = host_bridge_of(vl805).expect("below a host bridge");
                 assert_eq!(bridge.name(), Ok("pcie@7d500000"));
+                // The bridge's `dma-ranges` (three-cell PCI addresses) let the
+                // function reach the first 3 GiB of RAM one to one, and no more.
+                assert_eq!(dma_address(vl805, 0x1000_0000, 0x1000), Some(0x1000_0000));
+                assert_eq!(dma_address(vl805, 0xbfff_f000, 0x1000), Some(0xbfff_f000));
+                assert_eq!(dma_address(vl805, 0xbfff_f000, 0x2000), None);
                 // A node outside any PCI bus has no function.
                 let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("pl011");
                 assert_eq!(pci_function(&uart), None);
@@ -607,6 +612,16 @@ mod tests {
                 .find(|device| device.compatible == "brcm,bcm2711-l2-intc" && !device.enabled);
             assert!(disabled.is_some());
         });
+    }
+
+    #[test]
+    fn device_region_counts_per_board() {
+        // kickstart sorts the device regions in a fixed array
+        // (`MAX_DEVICE_REGIONS`, 256): the Raspberry Pi 4 tree has over a
+        // hundred, which overflowed the 100 it once had.
+        for (dtb, regions) in [(RPI3, 48), (RPI4, 102), (RPI5, 84)] {
+            with_tree(dtb, |tree| assert_eq!(tree.devices().count(), regions));
+        }
     }
 
     #[test]

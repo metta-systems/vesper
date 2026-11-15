@@ -39,14 +39,25 @@ binary = "pcie-brcmstb"
 interfaces = "../../../drivers/pcie-brcmstb/interfaces"
 pci_host = true
 
-# The function behind the root port, by its node (neither has a driver's
-# compatible string): it claims the function through pci_v1, logs its BARs and
-# first register, and checks its MSI (the VL805's; RP1 has MSI-X only).
+# The Raspberry Pi 4's VL805 USB controller, by its node (it has no compatible
+# string): it has the firmware load the controller, claims it through pci_v1,
+# brings it up, checks a command completes on its MSI, and resets the USB 2
+# ports a device is connected to, logging each step.
+[[driver]]
+name = "xhci"
+binary = "usb-hcd-xhci"
+interfaces = "../../../drivers/usb-hcd-xhci/interfaces"
+nodes = ["/scb/pcie@7d500000/pci@1,0/usb@1,0"]
+memory = 262144
+
+# The Raspberry Pi 5's RP1 behind the root port, by its node (it has no
+# compatible string either): it claims the function through pci_v1, logs its
+# BARs and first register, and checks that it has no MSI (RP1 has MSI-X only).
 [[driver]]
 name = "pci_probe"
 binary = "pci-probe"
 interfaces = "../../../userspace/tests/pci/probe/interfaces"
-nodes = ["/scb/pcie@7d500000/pci@1,0/usb@1,0", "/axi/pcie@1000120000/rp1"]
+nodes = ["/axi/pcie@1000120000/rp1"]
 
 # The root dispatcher: Kickstart binds it once every other program and driver
 # is loaded, and registers the boot Thread with it.
