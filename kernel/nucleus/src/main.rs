@@ -26,7 +26,7 @@ use {
     core::{
         arch::asm,
         panic::PanicInfo,
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         time::Duration,
     },
     libcpu::endless_sleep,
@@ -40,6 +40,7 @@ use {
         syscall_status,
     },
     libqemu::semihosting as semi,
+    nucleus::board_console,
     nucleus::objects::{
         ArchObjects, ArchObjectsImpl, Nucleus,
         access::{Access, ObjectId},
@@ -107,6 +108,58 @@ pub unsafe extern "C" fn nucleus_set_platform(handoff: *const libirqchip::Platfo
     }
 }
 
+/// Use the console UART whose registers Kickstart mapped at `base` in the
+/// kernel half as the board console (`nucleus::board_console`).
+///
+/// # Safety
+/// Boot-only, from the single boot core with interrupts masked. `base` is the
+/// kernel-half address of a PL011's registers, mapped as device memory for as
+/// long as the nucleus runs.
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.bootstrap")]
+pub unsafe extern "C" fn nucleus_set_board_console(base: usize) {
+    // SAFETY: the caller's contract.
+    unsafe {
+        board_console::attach(base);
+    }
+}
+
+/// Print `line` on the board console, when Kickstart gave one.
+fn board_line(line: core::fmt::Arguments) {
+    board_console::line(line);
+}
+
+/// Print a line on semihosting (under `qemu`) and on the board console.
+macro_rules! board_println {
+    ($($arg:tt)+) => {{
+        semi::println!($($arg)+);
+        board_line(format_args!($($arg)+));
+    }};
+}
+
+/// Threads seen running, for [`first_run`]: their addresses. Only loaded and
+/// stored, under the kernel lock or with interrupts masked on the one core.
+static SEEN_THREADS: [AtomicU64; 64] = [const { AtomicU64::new(0) }; 64];
+
+/// Whether this is the first time the Thread at `address` runs (while
+/// [`SEEN_THREADS`] has room; after that, never).
+fn first_run(address: u64) -> bool {
+    for seen in &SEEN_THREADS {
+        match seen.load(Ordering::Relaxed) {
+            0 => {
+                seen.store(address, Ordering::Relaxed);
+                return true;
+            }
+            known if known == address => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether the nucleus has gone idle before. Only loaded and stored.
+static IDLED: AtomicBool = AtomicBool::new(false);
+
 /// The boot-carved [`Nucleus`], or `None` before Kickstart records it.
 pub fn nucleus_anchor() -> Option<*mut Nucleus<nucleus::objects::ArchObjectsImpl>> {
     let addr = NUCLEUS.load(Ordering::Relaxed);
@@ -122,10 +175,14 @@ fn panicked(info: &PanicInfo) -> ! {
     // Route panic output through the console logger: without an installed
     // logger, liblog drops every message on the default NopLogger, so a
     // nucleus panic would silently degrade into a bare hang. In QEMU builds
-    // the logger mirrors to the semihosting console; without a registered
-    // UART console the console write itself is a null-sink no-op. The only
-    // install error is "a logger is already installed", which is fine here.
+    // the logger mirrors to the semihosting console. The only install error
+    // is "a logger is already installed", which is fine here.
     let _logger = libconsole::init_logger();
+    // Take the console UART over from its driver, which never runs again, so
+    // that the panic shows on the board too.
+    if board_console::attached() {
+        libconsole::console::register_console(&board_console::BOARD_UART);
+    }
     libmachine::panic::handler(info)
 }
 
@@ -588,6 +645,10 @@ fn handle_irq(frame: &mut ExceptionContext) {
 /// restricted path of [`handle_irq`]). The trap frame that led here stays
 /// untouched below, for the caller to rewrite with the selected Thread.
 fn idle_until_runnable() -> PreparedResume {
+    if !IDLED.load(Ordering::Relaxed) {
+        IDLED.store(true, Ordering::Relaxed);
+        board_line(format_args!("💤 nothing runnable: idle, the first time"));
+    }
     loop {
         // The timer runs only for a wait timeout or a dispatcher's timer.
         reprogram_timer();
@@ -760,6 +821,15 @@ fn resume_selected(
         restored.sp,
         restored.elr_el1,
     );
+    if first_run(next.address) {
+        board_line(format_args!(
+            "🧵 thread {:#x} runs for the first time, PC {:#x}, SP {:#x} (thread {:#x} {why})",
+            next.address,
+            restored.elr_el1,
+            restored.sp,
+            resumed.current.map_or(0, |current| current.address),
+        ));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -771,8 +841,16 @@ fn resume_selected(
 /// as faulted and resume the next one. `faulting` is the complete faulting
 /// state (for a Return fault, with PC at its `svc`).
 fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: FaultInfo) {
-    semi::println!(
-        "⚠️  fault {:?} at PC {:#x}, ESR {:#x}, FAR {:#x}, depth {}",
+    let thread = KERNEL_LOCK
+        .lock(|()| {
+            // SAFETY: the anchor names the live Nucleus; the lock serializes
+            // this read.
+            let nucleus = unsafe { &*nucleus_anchor()? };
+            nucleus.current_thread_id().ok()
+        })
+        .map_or(0, |current| current.address);
+    board_println!(
+        "⚠️  fault {:?} in thread {thread:#x} at PC {:#x}, ESR {:#x}, FAR {:#x}, depth {}",
         info.kind,
         info.pc,
         info.esr,
@@ -799,7 +877,7 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
             semi::println!("{}", "✅ fault delivered to its handler".on_cyan());
         }
         Ok(FaultDelivery::Unhandled(resumed)) => {
-            semi::println!("⛔ unhandled fault: thread parked as faulted");
+            board_println!("⛔ unhandled fault: thread parked as faulted");
             switch_to(frame, &resumed, "faulted");
         }
         // Nothing is left to run (or scheduling state is corrupt).
@@ -825,7 +903,7 @@ fn exit_current(frame: &mut ExceptionContext) -> Option<(u64, u64, u64)> {
     });
     match resumed {
         Ok(resumed) => {
-            semi::println!("✅ Thread::Retire() (self)");
+            board_println!("✅ Thread::Retire() (self)");
             switch_to(frame, &resumed, "exited");
             None
         }
@@ -850,7 +928,7 @@ fn terminate_faulted(frame: &mut ExceptionContext, faulting: &SavedContext) {
     });
     match resumed {
         Ok(resumed) => {
-            semi::println!("⛔ fault handler terminated the thread");
+            board_println!("⛔ fault handler terminated the thread");
             switch_to(frame, &resumed, "terminated");
         }
         Err(error) => panic!("fault left nothing to run: {:?}", error.code()),

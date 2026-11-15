@@ -382,6 +382,14 @@ pub fn brcm_dma_channel_mask(node: &Node<'_, '_, '_>) -> Option<u32> {
     property(node, "brcm,dma-channel-mask").and_then(|prop| prop.u32(0).ok())
 }
 
+/// The AMBA peripheral ID a `PrimeCell` node states in place of its ID
+/// registers (`arm,primecell-periphid`): `PeriphID3` to `PeriphID0`, one byte
+/// each, as one word. A node gives it when the registers are absent or wrong,
+/// as the Raspberry Pi 5's `uart10`, whose 0x200-byte block ends before them.
+pub fn primecell_periphid(node: &Node<'_, '_, '_>) -> Option<u32> {
+    property(node, "arm,primecell-periphid").and_then(|prop| prop.u32(0).ok())
+}
+
 /// One pin of a Broadcom pin group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BrcmPin {

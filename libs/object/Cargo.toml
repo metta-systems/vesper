@@ -18,7 +18,9 @@ publish = false
 maintenance = { status = "experimental" }
 
 [features]
-# Opt in to the debug-only prototype console wrapper.
+# No effect of its own: the debug console wrapper is always built, and only a
+# `debug_kernel` kernel hands out console keys. The kernels' `debug_kernel`
+# features still forward it.
 debug_kernel = []
 # Opt in to standard host integration tests, not the freestanding test-device workflow.
 host-tests = []

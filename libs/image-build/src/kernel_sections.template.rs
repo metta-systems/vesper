@@ -54,6 +54,10 @@ pub const NUCLEUS_SET_ANCHOR_VIRT: u64 = {{nucleus_set_anchor_virt | address}};
 /// Exported boot-only installer of the privileged interrupt-controller component.
 pub const NUCLEUS_SET_PLATFORM_VIRT: u64 = {{nucleus_set_platform_virt | address}};
 
+/// Exported boot-only setter of the board's console UART the nucleus prints
+/// its component lines and a panic on.
+pub const NUCLEUS_SET_BOARD_CONSOLE_VIRT: u64 = {{nucleus_set_board_console_virt | address}};
+
 // ═══════════════════════════════════════════════════════════════
 // Combined kernel sections
 // ═══════════════════════════════════════════════════════════════

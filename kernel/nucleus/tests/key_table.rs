@@ -16,6 +16,10 @@ mod api;
 #[allow(unused)]
 #[path = "../src/objects/mod.rs"]
 mod objects;
+// What a DebugConsole Write prints on outside QEMU.
+#[allow(dead_code)]
+#[path = "../src/board_console.rs"]
+mod board_console;
 
 // The interrupt-controller component as the IRQ operations reach it.
 #[allow(dead_code)]

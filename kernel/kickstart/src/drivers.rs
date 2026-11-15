@@ -21,6 +21,8 @@
 //!   firmware leaves to the ARM;
 //! - the rate of the node's first clock, when it is a `fixed-clock`
 //!   (`libdevicetree::fixed_clock_rate`);
+//! - the AMBA peripheral ID a `PrimeCell` node states in place of its ID
+//!   registers (`arm,primecell-periphid`, `libdevicetree::primecell_periphid`);
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -61,8 +63,9 @@
 //!
 //! A node whose registers touch a page the kernel keeps is skipped, unless its
 //! driver serves a compatible string on `privileged::SHARES_KERNEL_PAGES`: that
-//! driver receives a device Frame minted for the page. Kickstart never calls
-//! into a driver.
+//! driver receives a device Frame minted for the page. An SD host controller
+//! node with a child node has an SDIO device on it (a Wi-Fi chip) and is
+//! skipped too. Kickstart never calls into a driver.
 //!
 //! Untypeds, Notifications, Times and `IRQHandler`s are outside the
 //! `CopyDerive`/`Move` allowlist, so Kickstart grants them bootstrap-only: it
@@ -178,6 +181,9 @@ pub struct BootKeys {
     pub root_scheduler: RawKey,
     pub irq_control: RawKey,
     pub boot_thread: RawKey,
+    /// The debug console grant, which every component gets a `WRITE` copy of
+    #[cfg(feature = "debug_kernel")]
+    pub debug_console: RawKey,
 }
 
 impl BootKeys {
@@ -189,6 +195,8 @@ impl BootKeys {
             root_scheduler: boot.root_scheduler_key,
             irq_control: boot.irq_control_key,
             boot_thread: boot.boot_thread_key,
+            #[cfg(feature = "debug_kernel")]
+            debug_console: boot.debug_console_key,
         }
     }
 }
@@ -454,8 +462,19 @@ fn kernel_owned(page: u64) -> bool {
         .any(|&(start, size)| page < start + size && start < page + PAGE)
 }
 
+/// The compatible strings of SD host controllers, whose node may hold an
+/// SDIO device instead of a card slot. Such a node lists the device as a
+/// child (the Raspberry Pi 5's `mmc@1100000` its Wi-Fi chip, `wifi@1`), and
+/// it is left undriven.
+const SD_HOST_COMPATIBLES: [&str; 3] = [
+    "brcm,bcm2711-emmc2",
+    "brcm,bcm2712-sdhci",
+    "brcm,bcm2835-sdhci",
+];
+
 /// Every enabled node some driver of `drivers` serves, the first matching
-/// driver taking it.
+/// driver taking it; an SD host controller node with a device on it is not
+/// served ([`SD_HOST_COMPATIBLES`]).
 fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INSTANCES], usize) {
     let tree = device_tree::at_el1().index();
     let mut instances = [const { None }; MAX_DRIVER_INSTANCES];
@@ -482,26 +501,35 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
             continue;
         };
         let name = node.name().unwrap_or("?");
+        let matched = driver.compatible.get(compatible_index);
+        if matched.is_some_and(|compatible| SD_HOST_COMPATIBLES.contains(compatible))
+            && let Some(device) = node.children().next()
+        {
+            crate::early_println!(
+                "🥾 Driver {}: {name} has {} on it, not a card slot, skipped",
+                driver.component.name,
+                device.name().unwrap_or("a device")
+            );
+            continue;
+        }
         let Some(instance) = plan_instance(tree, driver, compatible_index, &node) else {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Driver {}: {name} has too many registers, skipped",
                 driver.component.name
             );
             continue;
         };
-        let shares_kernel_pages = driver
-            .compatible
-            .get(compatible_index)
-            .is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
+        let shares_kernel_pages =
+            matched.is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
         if !shares_kernel_pages && instance.pages().iter().any(|&page| kernel_owned(page)) {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Driver {}: {name} shares a page with the kernel, skipped",
                 driver.component.name
             );
             continue;
         }
         if count == MAX_DRIVER_INSTANCES {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Driver {}: too many instances, {name} skipped",
                 driver.component.name
             );
@@ -516,7 +544,7 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
         .filter(|driver| driver.compatible.is_empty() && driver.nodes.is_empty())
     {
         if count == MAX_DRIVER_INSTANCES {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Program {}: too many instances, skipped",
                 driver.component.name
             );
@@ -812,12 +840,14 @@ fn record_pci_child(
             .is_some_and(|(bridge, own)| same_node(&bridge, own));
     let function = calling.instance.node.as_ref().and_then(pci_function);
     let (Some(function), true, true) = (function, is_child, badge != 0) else {
-        semi::println!("🥾 Driver {image}: {name} is no function behind its pci_v1 exporter");
+        crate::early_println!(
+            "🥾 Driver {image}: {name} is no function behind its pci_v1 exporter"
+        );
         return;
     };
     let Some(msi_bits) = 1_u64.checked_shl(u32::try_from(calling.interrupt_count).unwrap_or(64))
     else {
-        semi::println!("🥾 Driver {image}: {name} has no Notification bit left for its MSI");
+        crate::early_println!("🥾 Driver {image}: {name} has no Notification bit left for its MSI");
         return;
     };
     let notification = calling.notification;
@@ -1006,7 +1036,7 @@ fn bind_root_dispatcher(
     root_scheduler
         .bind_dispatcher(dispatcher.thread)
         .unwrap_or_else(|error| panic!("🥾 BindDispatcher failed: {:?}", error.code()));
-    semi::println!("🥾 Root dispatcher bound over {slot_count} Threads");
+    crate::early_println!("🥾 Root dispatcher bound over {slot_count} Threads");
 }
 
 /// Pages of each target stack of the pool an exporting driver serves calls on.
@@ -1173,7 +1203,7 @@ pub fn load_drivers(
             *record = if kernel_owned(page) {
                 // Only a driver on `SHARES_KERNEL_PAGES` gets here: no device
                 // Untyped covers the page, so the Frame is minted directly.
-                semi::println!(
+                crate::early_println!(
                     "🥾 Driver {}: {name} receives the kernel-owned page {page:#x}",
                     image.name
                 );
@@ -1391,6 +1421,18 @@ pub fn load_drivers(
             local_slot(),
         )
         .to_wire();
+        // The console the component's panic handler prints on.
+        #[cfg(feature = "debug_kernel")]
+        {
+            init.debug_console = grant(
+                &component,
+                builder
+                    .entry(keys.debug_console)
+                    .derive(Rights(Rights::WRITE)),
+                KeySlot::DEBUG_CONSOLE.0,
+            )
+            .to_wire();
+        }
 
         // ── Interrupts ──────────────────────────────────────────────────
         let tree = device_tree::at_el1().index();
@@ -1424,7 +1466,7 @@ pub fn load_drivers(
             .take(MAX_INTERRUPTS)
         {
             let Some(controller) = controllers.index_of(interrupt.controller) else {
-                semi::println!(
+                crate::early_println!(
                     "🥾 Driver {}: {name} has an interrupt on a controller the kernel does not drive",
                     image.name
                 );
@@ -1442,7 +1484,7 @@ pub fn load_drivers(
                 Ok(issued) => issued,
                 // Another node's driver holds the line already.
                 Err(CapError::IrqLineActive { line }) => {
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {name}'s interrupt line {line} is taken, skipped",
                         image.name
                     );
@@ -1510,6 +1552,12 @@ pub fn load_drivers(
             .node
             .as_ref()
             .and_then(|node| fixed_clock_rate(tree, node))
+            .map_or(0, u64::from);
+        // ── A PrimeCell's stated peripheral ID ──────────────────────────
+        init.primecell_id = instance
+            .node
+            .as_ref()
+            .and_then(primecell_periphid)
             .map_or(0, u64::from);
         init.notification = move_to(
             builder,
@@ -1590,7 +1638,7 @@ pub fn load_drivers(
                         continue;
                     }
                     unlinked = Some(import.interface);
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
                         client_image.name,
                         import.interface,
@@ -1601,7 +1649,7 @@ pub fn load_drivers(
                 Err(count) => {
                     // Not granted: the client's call reports it, and naming a
                     // different provider in the manifest is the fix.
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
                         client_image.name,
                         import.interface,
@@ -1885,7 +1933,7 @@ pub fn load_drivers(
                 });
             }
             None => {
-                semi::println!(
+                crate::early_println!(
                     "🥾 Program {} asks for a serial channel and no PL011 driver is loaded",
                     prepared[client].as_ref().map_or("?", |loaded| loaded
                         .instance
@@ -1962,7 +2010,7 @@ pub fn load_drivers(
             init.first_free_slot = u64::from(first_free_slot);
             *init
         });
-        semi::println!(
+        crate::early_println!(
             "🥾 Driver {} for {name}: {} register pages, {} interrupts, {} imports",
             instance.driver.component.name,
             init.page_count,
@@ -2000,6 +2048,9 @@ pub fn load_drivers(
             root_scheduler
                 .start_thread(thread)
                 .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+            // The address the nucleus names the Thread by on the board.
+            let address = builder.entry(thread).thread_id().map_or(0, |id| id.address);
+            crate::early_println!("🥾   thread {address:#x}");
             managed[managed_count] = Some(ManagedThread { thread, priority });
             managed_count += 1;
         }

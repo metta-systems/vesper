@@ -462,11 +462,11 @@ extern "C" fn export_body(
     input5: u64,
 ) -> PpcResult {
     // A nested ordinary invocation from inside the migrated call: the key
-    // resolves in Bounce's own table. The kernel reads the string through
-    // the direct map at the pointer's numeric value; that works only because
-    // every root maps the same physical image pages at their identity VA.
+    // resolves in Bounce's own table. The kernel reads the string at its
+    // address in the AddressSpace the call migrated into, which maps the
+    // image there.
     DebugConsoleKey::from_key(RawKey::from_wire(DEBUG_CONSOLE_KEY.load(Ordering::Acquire)))
-        .write("DEBCON| Bounce: PPC export body writing through its own DebugConsole key\n")
+        .write(b"DEBCON| Bounce: PPC export body writing through its own DebugConsole key\n")
         .unwrap_or_else(|error| panic!("Bounce DebugConsole write failed: {:?}", error.code()));
     CONSOLE_WRITES.fetch_add(1, Ordering::AcqRel);
     BODY_DUMMIES.store(dummy0, Ordering::Release);

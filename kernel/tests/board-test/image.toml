@@ -54,6 +54,18 @@ nodes = [
 ]
 memory = 262144
 
+# log-test's probe, loaded on the boards only and only with
+# `--cfg test_boot_panic` (under QEMU its panic would end the run): its first
+# Thread panics on purpose and its second overflows its
+# stack, to show both reach the UART, the panic through the debug console in a
+# `debug_kernel` kernel as well as through the log server.
+[[component]]
+name = "log_probe"
+binary = "log-probe"
+interfaces = "../../../userspace/tests/log/probe/interfaces"
+active = true
+program = true
+
 # The Raspberry Pi 5's RP1 behind the root port, by its node (it has no
 # compatible string either): it claims the function through pci_v1, logs its
 # BARs and first register, and checks that it has no MSI (RP1 has MSI-X only).

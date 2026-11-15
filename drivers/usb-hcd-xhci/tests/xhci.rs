@@ -10,8 +10,8 @@ mod tests {
     use {
         usb_hcd_xhci::{
             regs::{
-                PortStatus, Ports, Structural2, neutral, port_offset, port_speed,
-                port_status_bits, protocol_ports, split_address,
+                PortStatus, Ports, Structural2, neutral, port_offset, port_speed, port_status_bits,
+                protocol_ports, split_address,
             },
             ring::{Consumer, Producer},
             trb::{SUCCESS, TRB_BYTES, Trb, kind, segment_table_entry},
@@ -121,7 +121,10 @@ mod tests {
             status: 0x0100_0000,
             control: 0x8400_8401,
         };
-        assert_eq!(trb.words(), [0x5566_7788, 0x1122_3344, 0x0100_0000, 0x8400_8401]);
+        assert_eq!(
+            trb.words(),
+            [0x5566_7788, 0x1122_3344, 0x0100_0000, 0x8400_8401]
+        );
         assert_eq!(Trb::from_words(trb.words()), trb);
         assert_eq!(trb.kind(), kind::COMMAND_COMPLETION);
         assert_eq!(trb.completion_code(), SUCCESS);
@@ -162,7 +165,10 @@ mod tests {
         assert_eq!((first.index, first.bus, link), (0, base, None));
         assert!(first.trb.cycle());
         let (second, link) = ring.push(Trb::no_op_command());
-        assert_eq!((second.index, second.bus, link), (1, base + TRB_BYTES, None));
+        assert_eq!(
+            (second.index, second.bus, link),
+            (1, base + TRB_BYTES, None)
+        );
         // The third fills the segment up to the link, which comes with it,
         // in the same pass's cycle.
         let (third, link) = ring.push(Trb::no_op_command());
@@ -197,10 +203,7 @@ mod tests {
 
     #[test]
     fn a_segment_table_entry_holds_the_base_and_size() {
-        assert_eq!(
-            segment_table_entry(0x1_0000_2000, 256),
-            [0x2000, 1, 256, 0]
-        );
+        assert_eq!(segment_table_entry(0x1_0000_2000, 256), [0x2000, 1, 256, 0]);
     }
 
     /// BAR0 words: a USB Legacy Support capability at 0x100 pointing on to a

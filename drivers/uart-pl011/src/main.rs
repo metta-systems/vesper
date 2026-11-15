@@ -48,7 +48,7 @@ mod component {
             TRANSMIT_SUBMITTED_SLOT,
         },
         libuser::semihosting as semi,
-        uart_pl011::{Pl011, Receiver, RegisterBlock, TRANSMIT_BURST},
+        uart_pl011::{Pl011, Receiver, RegisterBlock, TRANSMIT_BURST, id_names_pl011},
     };
 
     libuser::entry!(main);
@@ -138,7 +138,19 @@ mod component {
             panic!("uart-pl011: mapping registers failed: {:?}", error.code())
         });
         let mut uart = uart(init);
-        assert!(uart.is_pl011(), "uart-pl011: not a PL011");
+        // A node may state the ID instead (`arm,primecell-periphid`): the
+        // Raspberry Pi 5's uart10 implements only the first 0x200 bytes of its
+        // page, so its ID registers at 0xFE0 read back something else.
+        let is_pl011 = match u32::try_from(init.primecell_id) {
+            Ok(0) => uart.is_pl011(),
+            Ok(stated) => id_names_pl011(stated),
+            Err(_) => false,
+        };
+        assert!(
+            is_pl011,
+            "uart-pl011: not a PL011 (stated peripheral ID {:#x})",
+            init.primecell_id
+        );
 
         let attached = attach(init);
         let channel = if attached {
