@@ -340,7 +340,7 @@ _boot-midi-test: _build-midi-test-hw chainofcommand
 # Build board-test for the boards (no QEMU, no semihosting): the SD card controller logs its bring-up and what block 0 holds, and the PCIe root complex its link, the functions behind it and an MSI self-test, on the UART through the log server
 _build-board-test-hw board=boards: (_build-components board '' '') (_build-log-probe board '' '') (_build-test-kernel 'board-test' board '')
 
-# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or copy the image to the SD card as kernel8.img (`just -f tools/genimage/Justfile pull-bootable image=board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
+# Build board-test and boot it via chainofcommand on a Raspberry Pi 4 or 5 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-board-test`), or put it on a card image as kernel8.img (`just sdimage board-test-<boards>.bin`): the UART (GPIO 14 and 15 on the Raspberry Pi 4, the debug connector on the Raspberry Pi 5) shows `sdhci:` lines with the controller's base clock, ADMA2 or the data port, the card's size and what block 0 holds (nothing is written to the card), and `pcie:` lines with the link's speed and width, each function behind the root complex with its BARs, and whether a software-raised MSI arrived; on the Raspberry Pi 4 `xhci:` lines with the VL805's firmware load, its bring-up, a No Op command completing on its MSI and the USB 2 ports a device is on, reset
 [group("hw")]
 boot-board-test: _build-board-test-hw chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards_hw + '.bin' }}"
@@ -558,6 +558,35 @@ cb-eject board=boards: (build-chainboot board)
     @echo "{{copy_label}} copied chainboot to {{ volume }}/{{ 'chainboot-' + board + '.bin' }}"
     # TODO: sed proper kernel name here in config.txt
     diskutil unmountDisk "{{ volume }}"
+
+# Build chainboot for the hardware and make target/images/sdcard.img with it as kernel8.img (see `sdimage`): the card then loads kernels over the serial line from chainofcommand
+[group("hw")]
+cb-sdimage board=boards: (build-chainboot board)
+    "{{ just_executable() }}" sdimage "chainboot-{{ board + profile_suffix }}.bin"
+
+# Make target/images/sdcard.img, the card for the Raspberry Pi 3, 4 and 5 (tools/makesd): pull the firmware when tools/makesd/boot lacks it, put `image` from target/images on the card as kernel8.img (the hardware image built last when not given, e.g. `just sdimage board-test-rpi3+rpi4+rpi5.bin`), then build the card image. Write it with Balena Etcher or Raspberry Pi Imager
+[group("hw")]
+sdimage image='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    makesd="{{ justfile_directory() / 'tools/makesd' }}"
+    # pull-firmware fetches this overlay last and stops at the first failure,
+    # so it is there only when every firmware file is.
+    if [ ! -f "$makesd/boot/overlays/pwm-2chan.dtbo" ]; then
+        "{{ just_executable() }}" -f "$makesd/Justfile" pull-firmware
+    fi
+    image="{{ image }}"
+    if [ -z "$image" ]; then
+        # The newest hardware boot image: no chainboot, no QEMU builds.
+        image=$(ls -t "{{ images_dir }}" | grep '\.bin$' | grep -v -e '^chainboot-' -e '-qemu' | head -n 1 || true)
+        if [ -z "$image" ]; then
+            echo "No hardware boot image in {{ images_dir }}: build one first (e.g. just build)" >&2
+            exit 1
+        fi
+    fi
+    "{{ just_executable() }}" -f "$makesd/Justfile" pull-bootable "$image"
+    echo "{{ copy_label }} $image is kernel8.img"
+    "{{ just_executable() }}" -f "$makesd/Justfile" sdimage
 
 # Build and boot via chainofcommand
 [group("hw")]
@@ -1260,6 +1289,11 @@ _midi-test-soundfont song=midi_test_song:
 [group("maintenance")]
 fmt-check:
     cargo +nightly fmt -- --check
+
+# Format source
+[group("maintenance")]
+fmt:
+    cargo +nightly fmt
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
