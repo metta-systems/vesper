@@ -86,6 +86,47 @@ as `kernel8.img`, and `just sdimage` writes `target/images/sdcard.img`
 (an MBR with a FAT32 boot partition holding `boot/`, as `makesd.config` 
 describes) to put on the card.
 
+### To debug on hardware over the serial line
+
+Connect a USB serial adapter to the board's console UART: GPIO 14 and 15 on the
+Raspberry Pi 3 and 4, the debug connector (UART) on the Raspberry Pi 5. The recipes
+use `chainboot_serial` (default `/dev/ttyUSB0`) for its port; set it before the
+recipe name for any other adapter, with any of the recipes below:
+
+```
+just chainboot_serial=/dev/tty.usbmodem102 boot-board-test debug_kernel
+```
+
+Put chainboot on the card once, and then load kernels over the serial line
+without touching the card again:
+
+```
+just cb-sdimage        # target/images/sdcard.img with chainboot as kernel8.img; write it to the card
+just boot              # build the kernel, send it to chainboot, stay as its serial console
+just boot-board-test   # the same for board-test, the drivers being brought up on the boards
+```
+
+`chainofcommand` waits for the board: power it on after starting the recipe. It loads
+at `chainboot_load_baud` (default 1500000) and then stays on the line as a terminal.
+
+Some more shortcuts:
+
+```
+just console                       # only a serial console, for a kernel booted from the card itself
+just sdimage board-test-rpi3+rpi4+rpi5.bin   # put a built image on the card instead of chainboot
+just boot-board-test debug_kernel  # a debug kernel: a component's panic message reaches the UART too
+just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel
+                                   # also load a probe that panics on purpose and overflows a stack,
+                                   # to check that both reach the UART
+```
+
+Kickstart prints its `🥾` lines on the UART from the start. The nucleus adds a few of
+its own: `🧵` when a Thread first runs, `💤` when nothing is runnable for the first
+time, `⚠️` for a fault and `⛔` when a fault handler stops a Thread. A nucleus panic
+takes the UART over and dumps the registers. Components log through the log server,
+whose lines carry a timestamp (`[     5.148328] I sdhci: …`). These sources share
+the UART, so their lines can cut into each other.
+
 ### To run tests (tests require QEMU)
 
 ```
