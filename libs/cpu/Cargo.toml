@@ -21,8 +21,14 @@ description = ""
 [badges]
 maintenance = { status = "experimental" }
 
+[features]
+# Opt in to standard host integration tests of the pure parts (the cache
+# set/way operands).
+host-tests = []
+
 [dependencies]
 aarch64-cpu = { workspace = true }
+tock-registers = { workspace = true }
 
 # Tests are offloaded to kernel integration tests binary.
 [lib]
@@ -30,6 +36,10 @@ test = false
 harness = false
 
 # For proper testing in libcpu, we build it as a test_runner binary!
+
+[[test]]
+name = "cache"
+required-features = ["host-tests"]
 
 [lints]
 workspace = true

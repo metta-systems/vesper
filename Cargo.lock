@@ -5087,6 +5087,7 @@ name = "vesper-cpu"
 version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
+ "tock-registers",
 ]
 
 [[package]]

@@ -13,6 +13,6 @@ pub mod arch;
 // Architectural Public Reexports
 //--------------------------------------------------------------------------------------------------
 #[cfg(target_arch = "aarch64")]
-pub use crate::arch::aarch64::smp;
+pub use crate::arch::aarch64::{cache, smp};
 #[cfg(target_arch = "aarch64")]
 pub use crate::arch::aarch64::{endless_sleep, nop};

@@ -184,13 +184,27 @@ pub unsafe fn enable_mmu_and_drop_to_el1(
     TTBR0_EL1.set(ttbr0);
     TTBR1_EL1.set(ttbr1);
 
+    // The data caches may hold lines from before: the firmware's, out of
+    // reset UNKNOWN. Kickstart wrote the tables and loaded the nucleus with
+    // caches off, so a stale line would hide them once caches are on. Clean
+    // as well as invalidate: the firmware resident at EL3 (the Raspberry Pi 4
+    // and 5's Arm Trusted Firmware) ran with caches on, and its dirty lines
+    // must reach memory, not be lost.
+    libcpu::cache::clean_invalidate_data_caches();
+
     // The EL1 TLBs and the instruction cache may hold entries from before
     // (the firmware's, out of reset UNKNOWN): drop them before the first walk
     // of these tables and the first fetch of the code loaded with caches off.
     tlb_invalidate_all();
+
     // SAFETY: invalidating the instruction cache only drops cached lines.
     unsafe {
-        core::arch::asm!("ic iallu", "dsb nsh", "isb", options(nostack, preserves_flags));
+        core::arch::asm!(
+            "ic iallu",
+            "dsb nsh",
+            "isb",
+            options(nostack, preserves_flags)
+        );
     }
 
     // ═══════════════════════════════════════════════════════════
