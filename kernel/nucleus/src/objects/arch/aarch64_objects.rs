@@ -9,8 +9,8 @@ use {
         key_table::KeyTableBinding,
     },
     libaddress::PhysAddr,
+    libcpu::cache,
     libobject::{ArchType, CapError, FrameAttribute, ObjectType},
-    tock_registers::{LocalRegisterCopy, register_bitfields},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -18,50 +18,6 @@ use {
 // ═══════════════════════════════════════════════════════════════════
 
 pub struct AArch64;
-
-register_bitfields! {
-    u64,
-
-    /// Cache Type Register.
-    CTR_EL0 [
-        /// Log2 of the 4-byte words in the smallest instruction cache line
-        IminLine OFFSET(0) NUMBITS(4) [],
-        /// Log2 of the 4-byte words in the smallest data or unified cache line
-        DminLine OFFSET(16) NUMBITS(4) [],
-    ]
-}
-
-/// Bytes in the smallest data cache line of the running core.
-fn data_cache_line_bytes() -> u64 {
-    let raw: u64;
-    // SAFETY: reading `CTR_EL0` at EL1 has no side effects.
-    unsafe {
-        core::arch::asm!(
-            "mrs {raw}, ctr_el0",
-            raw = out(reg) raw,
-            options(nomem, nostack, preserves_flags),
-        );
-    }
-    let cache_type = LocalRegisterCopy::<u64, CTR_EL0::Register>::new(raw);
-    4 << cache_type.read(CTR_EL0::DminLine)
-}
-
-/// Issue one data-cache maintenance instruction on the line holding `address`.
-macro_rules! data_cache_line_op {
-    ($instruction:literal, $address:expr) => {
-        // SAFETY: data-cache maintenance by virtual address on a kernel
-        // direct-map address of ordinary RAM: it changes no architectural
-        // memory contents beyond what the operation defines, and the caller
-        // completes it with a barrier.
-        unsafe {
-            core::arch::asm!(
-                concat!("dc ", $instruction, ", {address}"),
-                address = in(reg) $address,
-                options(nostack, preserves_flags),
-            );
-        }
-    };
-}
 
 /// Encode the ASID and VA page number for `TLBI VAE1IS`.
 /// Low VA offset bits are discarded; operand bits 43:0 contain VA[55:12].
@@ -206,35 +162,17 @@ impl ArchObjects for AArch64 {
     }
 
     fn maintain_cache(operation: CacheMaintenance, paddr: u64, length: u64) {
-        let line = data_cache_line_bytes();
         let start = PhysAddr::new(paddr).user_to_kernel().as_u64();
         let end = start + length;
-        let mut address = start & !(line - 1);
-        while address < end {
-            let whole_line = address >= start && address + line <= end;
+        // SAFETY: the range is a Frame's ordinary RAM, mapped in the kernel's
+        // physical window; invalidating it discards only what the Frame's
+        // holder asked to discard.
+        unsafe {
             match operation {
-                CacheMaintenance::Clean => data_cache_line_op!("cvac", address),
-                CacheMaintenance::Invalidate if whole_line => data_cache_line_op!("ivac", address),
-                CacheMaintenance::Invalidate | CacheMaintenance::CleanInvalidate => {
-                    data_cache_line_op!("civac", address);
-                }
-                CacheMaintenance::UnifyInstruction => data_cache_line_op!("cvau", address),
-            }
-            address += line;
-        }
-        if operation == CacheMaintenance::UnifyInstruction {
-            // SAFETY: completes the cleans to the Point of Unification, then
-            // invalidates every instruction cache in the inner shareable
-            // domain (safe with aliasing instruction caches) and synchronizes
-            // the instruction stream.
-            unsafe {
-                core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb", options(nostack));
-            }
-        } else {
-            // SAFETY: completes the maintenance before the caller proceeds,
-            // including towards a non-coherent bus master.
-            unsafe {
-                core::arch::asm!("dsb sy", options(nostack, preserves_flags));
+                CacheMaintenance::Clean => cache::clean_data_range(start, end),
+                CacheMaintenance::Invalidate => cache::invalidate_data_range(start, end),
+                CacheMaintenance::CleanInvalidate => cache::clean_invalidate_data_range(start, end),
+                CacheMaintenance::UnifyInstruction => cache::unify_instruction_range(start, end),
             }
         }
     }
