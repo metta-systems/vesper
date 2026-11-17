@@ -60,12 +60,29 @@ memory = 524288
 # The USB core, on the Raspberry Pi 4's xHCI driver (its import's `or
 # component xhci`): it resets the root port, has the controller address the
 # VIA hub there and enumerates it and the devices on its ports, logging each
-# control transfer. Its hub ports are polled until the controller serves
-# interrupt pipes. Elsewhere it links no controller and says so.
+# control transfer; the hub's Status Change endpoint names the ports to look
+# at. Elsewhere it links no controller and says so.
 [[component]]
 name = "usb_core"
 binary = "usb-core"
 interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
+# The USB HID driver on the same controller: it claims a boot keyboard or
+# mouse behind the hub and reads its reports through an interrupt pipe.
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+# Its consumer: it logs each device usb-hid serves and every key and motion.
+[[component]]
+name = "input_trace"
+binary = "input-trace"
+interfaces = "../../../userspace/tests/input/trace/interfaces"
 active = true
 program = true
 

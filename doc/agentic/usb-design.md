@@ -277,11 +277,26 @@ Bring-up, in order:
 
 Linux's VL805 quirks (`xhci_pci_quirks`): 40-bit DMA, broken dequeue cycle
 state in endpoint contexts, TRB overfetch, no dequeue moves onto a link TRB,
-and VIA SuperSpeed bulk-out and hub TT bugs. None matters for a keyboard behind
-the hub.
+and VIA SuperSpeed bulk-out and hub TT bugs. The VL805 raises no interrupt
+after `ERDP` is written high word first; the driver writes it low word first, as
+xHCI §5.1 has it.
+[doc/usb.md](../usb.md#via-vl805-no-interrupts-after-erdp-is-written-high-word-first)
+has the evidence and how the TRB read-ahead bug Linux works around differs.
 
-Isochronous transfers and xHCI error recovery can wait. The DMA strategy
-(answered in USB2, see the status section) also applies to xHCI rings.
+Interrupt-IN on xHCI keeps `pipe_v1`'s rule that a pipe is polled only while
+its client has an empty buffer posted: one Normal TRB is out per pipe, on a
+64-TRB ring that shares a page with the report buffer (the ring's tail is zero
+memory, so the VL805's TRB overfetch reads nothing live), and the controller
+does the polling. After 2 s without an MSI while a TRB is out, a watchdog
+drains any events no MSI brought in and traces that it found some. A client
+posts
+buffers without a signal, so the service Thread looks at the channels every
+2 ms while a pipe waits for one. A stall waits for `clear_halt`; other failures
+are recovered at once (Reset Endpoint, then Set TR Dequeue Pointer to the
+enqueue pointer, which never sits on the link TRB).
+
+Isochronous transfers can wait. The DMA strategy (answered in USB2, see the
+status section) also applies to xHCI rings.
 
 ## Prior art and candidate crates
 

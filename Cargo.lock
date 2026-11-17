@@ -4899,6 +4899,7 @@ dependencies = [
  "pci-client",
  "usb-hcd",
  "vesper-device-driver",
+ "vesper-io-channel",
  "vesper-mmio",
  "vesper-objects",
  "vesper-print",

@@ -80,8 +80,6 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 
 Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
 
-- [ ] xHCI interrupt-IN, so `usb-hid` reads a keyboard behind the hub on the
-  Raspberry Pi 4.
 - [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.
 
 ## Verification
