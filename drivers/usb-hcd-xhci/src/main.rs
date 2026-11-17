@@ -839,6 +839,12 @@ mod component {
                 let port_id = self
                     .usb2
                     .and_then(|usb2| usb2.port_id(port))
+                    .filter(|&port_id| {
+                        self.registers
+                            .port(port_id)
+                            .read_status_control()
+                            .connected()
+                    })
                     .ok_or(Exception::NoDevice)?;
                 Position::root(port_id)
             } else {
@@ -887,7 +893,9 @@ mod component {
                     position.route
                 );
                 self.disable_slot(slot);
-                return Err(Exception::NoDevice);
+                return Err(Exception::TransferFailed {
+                    status: u32::from(failure),
+                });
             }
             let pages = self.pages[index].as_ref().expect("the device's pages");
             pages.output.invalidate();

@@ -35,6 +35,12 @@ local interface usb_hcd_v1
     ## No device is attached to the port.
     exception no_device {}
 
+    ## A device is attached but the transfer to it failed on the bus. `status`
+    ## is the controller's report: for DWC2 its channel status, as
+    ## `pipe_v1.transfer_failed` carries it; for xHCI the completion code (0
+    ## when the command did not complete).
+    exception transfer_failed { card32 status; }
+
     ## The controller is busy with a reset or another exclusive operation, or has
     ## no pipe left.
     exception busy {}
@@ -73,12 +79,13 @@ local interface usb_hcd_v1
     ## full-speed device behind a high-speed hub, set up with the Enable Slot
     ## and Address Device commands; DWC2 sends `SET_ADDRESS` to address 0
     ## itself, as a split transaction through that translator. Only one device
-    ## on the bus may answer at the default address while this runs. A device
-    ## that does not answer raises `no_device`; the controller then keeps
-    ## nothing of it. The address is the device's until `release_device`.
+    ## on the bus may answer at the default address while this runs. A root
+    ## port with no device raises `no_device`; a device that does not take the
+    ## address raises `transfer_failed`, and the controller then keeps nothing
+    ## of it. The address is the device's until `release_device`.
     address_device(card32 hub_address, card32 port, speed speed)
         returns (card32 address)
-        raises (no_device, busy, not_permitted, controller_failed);
+        raises (no_device, transfer_failed, busy, not_permitted, controller_failed);
 
     ## Forget the device at `address`: xHCI disables its slot, DWC2 frees the
     ## address. Call it when the device is gone, and after a device that failed

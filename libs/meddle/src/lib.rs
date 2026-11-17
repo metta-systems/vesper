@@ -29,7 +29,8 @@
 //!             [ "raises" "(" name { "," name } ")" ] ";" ;
 //! field     = { doc } type name ;
 //! type      = name [ "&" ] ;
-//! uses      = "uses" name "via" provider "{" name { "," name } [ "," ] "}" ;
+//! uses      = "uses" name "via" provider { "or" provider }
+//!             "{" name { "," name } [ "," ] "}" ;
 //! provider  = "device" link { "," link } | "component" name ;
 //! link      = name | string | "compatible" string ;
 //! ```
@@ -90,6 +91,12 @@
 //!   for providers no property leads to.
 //! - `via component name`: the one loaded instance of the manifest component
 //!   `name` that exports the interface.
+//!
+//! Further providers follow `or`, tried in order: the first that finds a
+//! loaded instance exporting the interface is the exporter, so one component
+//! can call whichever of several controllers the board has (`usb-core` takes
+//! the DWC2 node by its compatible string `or component xhci`). `device`,
+//! `component` and `or` are words only there.
 //!
 //! A call passes at most six argument words and answers with an outcome word
 //! and one more word, so a function returns at most one one-word result and
@@ -389,7 +396,8 @@ pub enum ProviderSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImportSummary {
     pub interface: InterfaceSummary,
-    pub provider: ProviderSummary,
+    /// The providers to try, in order (at least one)
+    pub providers: Vec<ProviderSummary>,
     /// Indices of the used functions in `interface.functions`
     pub functions: Vec<usize>,
 }
@@ -453,22 +461,28 @@ pub fn summarize_imports(
                 })
                 .collect();
             Ok(ImportSummary {
-                provider: match &declaration.provider {
-                    ast::Provider::Device(links) => ProviderSummary::Device(
-                        links
-                            .iter()
-                            .map(|link| match link {
-                                ast::Link::Property(name) => {
-                                    LinkSummary::Property(name.text.clone())
-                                }
-                                ast::Link::Compatible(name) => {
-                                    LinkSummary::Compatible(name.text.clone())
-                                }
-                            })
-                            .collect(),
-                    ),
-                    ast::Provider::Component(name) => ProviderSummary::Component(name.text.clone()),
-                },
+                providers: declaration
+                    .providers
+                    .iter()
+                    .map(|provider| match provider {
+                        ast::Provider::Device(links) => ProviderSummary::Device(
+                            links
+                                .iter()
+                                .map(|link| match link {
+                                    ast::Link::Property(name) => {
+                                        LinkSummary::Property(name.text.clone())
+                                    }
+                                    ast::Link::Compatible(name) => {
+                                        LinkSummary::Compatible(name.text.clone())
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        ast::Provider::Component(name) => {
+                            ProviderSummary::Component(name.text.clone())
+                        }
+                    })
+                    .collect(),
                 interface,
                 functions,
             })

@@ -9,7 +9,9 @@
 //! Kickstart loads the PL011 driver, the log server (holding the PL011's
 //! serial channel), the mailbox, the SD card controller, the PCIe root
 //! complex, what lies behind it (the Raspberry Pi 4's VL805 xHCI controller,
-//! the Raspberry Pi 5's RP1 through `pci-probe`) and the root dispatcher. The
+//! the Raspberry Pi 5's RP1 through `pci-probe`), the USB core on the xHCI
+//! controller (it enumerates the Raspberry Pi 4's VIA hub) and the root
+//! dispatcher. The
 //! SD controller logs its bring-up (base clock, ADMA2 or the data port, the
 //! card's size) and what block 0 holds, the root complex its link, functions,
 //! BARs and MSI self-test, and the functions behind it theirs, all through the
@@ -119,6 +121,7 @@ pub fn run() -> ! {
             &components::SD_DRIVER,
             &components::PCIE_DRIVER,
             &components::XHCI_DRIVER,
+            &components::USB_CORE_DRIVER,
             &components::PCI_PROBE_DRIVER,
             // On the boards only, by request (`--cfg test_boot_panic`): its
             // panic on purpose would end a QEMU run.

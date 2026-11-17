@@ -313,7 +313,14 @@ pub fn check_uses(uses: &[Uses], interfaces: &[&Interface]) -> Vec<Diagnostic> {
             continue;
         };
         duplicates(&declaration.functions, "function", &mut diagnostics);
-        if let ast::Provider::Device(links) = &declaration.provider {
+        for links in declaration
+            .providers
+            .iter()
+            .filter_map(|provider| match provider {
+                ast::Provider::Device(links) => Some(links),
+                ast::Provider::Component(_) => None,
+            })
+        {
             for link in links.iter().skip(1) {
                 if let ast::Link::Compatible(name) = link {
                     diagnostics.push(Diagnostic::error(

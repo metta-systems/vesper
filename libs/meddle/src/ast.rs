@@ -20,12 +20,14 @@ pub struct File {
 }
 
 /// `uses interface via device link, ... { function, ... }` or
-/// `uses interface via component name { function, ... }`: the functions of
-/// `interface` a component calls, through the instance its `provider` names.
+/// `uses interface via component name { function, ... }`, with more
+/// providers after `or`: the functions of `interface` a component calls,
+/// through the instance the first of its `providers` that finds one names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uses {
     pub interface: Name,
-    pub provider: Provider,
+    /// At least one, in the order they are tried.
+    pub providers: Vec<Provider>,
     pub functions: Vec<Name>,
 }
 

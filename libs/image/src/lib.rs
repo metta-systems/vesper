@@ -155,8 +155,10 @@ pub struct Import {
     pub type_code: u64,
     /// The function's declaration index in the interface
     pub function: u64,
-    /// How the exporting instance is found
-    pub provider: Provider,
+    /// How the exporting instance is found: the providers in the order they
+    /// are tried; the first that finds a loaded instance exporting the
+    /// interface names the exporter
+    pub providers: &'static [Provider],
     /// Bytes of the data area the interface shares between a client and its
     /// exporter (zero: none)
     pub data_bytes: u64,

@@ -176,7 +176,10 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   Slot) and closes the device's pipes, called on teardown and after a failed
   enumeration once the port is disabled; `mark_hub(address, ports, think_time,
   multi_tt)` follows the hub descriptor (xHCI Configure Endpoint on the slot, DWC2
-  nothing). `open_pipe` takes the first slot of the lent table, the device address,
+  nothing); xHCI refuses to address a device behind a hub not yet marked. A device
+  that does not take its address raises `transfer_failed { status }` (DWC2 channel
+  status, xHCI completion code), distinct from `no_device` for an empty root port
+  (maintainer review, 2026-11-17). `open_pipe` takes the first slot of the lent table, the device address,
   the endpoint address and the speed, and installs the keys of `pipe_v1`.
 - `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `configure`, `set_route`, `close_pipe`, `clear_halt`,
   `control`, the functions of one open pipe; the split-transaction route is set
@@ -190,8 +193,11 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   waits for the transmit channel). Events travel over an io-channel (`channel 1`) whose
   records are defined in [input-design.md](input-design.md); the client posts empty
   buffers and each comes back holding one frame.
-- `imports.if` files: `usb-core` uses `usb_hcd_v1` via `compatible "brcm,bcm2708-usb"`
-  (the DWC2 node's compatible string, to be verified). `usb-hid` is comment-only
+- `imports.if` files: `usb-core` uses `usb_hcd_v1` `via device compatible
+  "brcm,bcm2708-usb" or component xhci`: the DWC2 node on the Raspberry Pi 3, else the
+  manifest's `xhci` driver on the Raspberry Pi 4, whose VL805 node has no compatible
+  string (maintainer decision, 2026-11-17: a `uses` line may name fallback providers
+  after `or`, Kickstart takes the first that finds a loaded exporter). `usb-hid` is comment-only
   until its device tree link is decided.
 
 ## Constraints from Meddle
