@@ -100,7 +100,7 @@ use {
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
         fixed_clock_rate, has_path,
-        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
+        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts, interrupt_named},
         is_compatible, is_enabled, linked_phandle, node_by_phandle,
         primecell_periphid,
         pci::{
@@ -1447,6 +1447,13 @@ pub fn load_drivers(
             .as_ref()
             .filter(|_| driver.extra == Extra::PciHost)
             .and_then(|node| last_msi_interrupt(tree, node));
+        // A PCI host bridge that serves its own MSIs raises them on the line
+        // its `interrupt-names` calls `msi`.
+        let own_msi = instance
+            .node
+            .as_ref()
+            .filter(|_| driver.extra == Extra::PciHost && init.pci.msi.kind == MSI_OWN)
+            .and_then(|node| interrupt_named(tree, node, "msi"));
         // A line the node lists more than once (channels sharing it) is
         // issued once, at its first position.
         for (interrupt, is_msi) in instance
@@ -1510,7 +1517,7 @@ pub fn load_drivers(
                 bits,
                 line: u64::from(issued.line),
             };
-            if is_msi {
+            if is_msi || (Some(interrupt) == own_msi && init.pci.msi.interrupt == NONE_INDEX) {
                 init.pci.msi.interrupt = interrupt_count as u64;
             }
             interrupt_count += 1;

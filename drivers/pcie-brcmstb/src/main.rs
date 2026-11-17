@@ -31,7 +31,7 @@ mod component {
     use {
         core::cell::UnsafeCell,
         libdevice_driver::{
-            DriverInit, INIT_VA, MAX_PCI_CHILDREN, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN,
+            DriverInit, INIT_VA, Interrupt, MAX_PCI_CHILDREN, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN,
             NONE_INDEX, PCI_SPACE_IO, PciWindow, Turn, Turnstile, device_address,
             driver_compatible, driver_init, map_device_pages, skip_chunks,
         },
@@ -537,12 +537,18 @@ mod component {
         Mip(Registers, u32),
     }
 
+    /// The interrupt kickstart names in `pci.msi.interrupt`: the bridge's
+    /// `msi` line, or the MSI controller's line of its last vector.
+    fn msi_interrupt(init: &DriverInit) -> Option<Interrupt> {
+        usize::try_from(init.pci.msi.interrupt)
+            .ok()
+            .and_then(|index| init.interrupts().get(index).copied())
+    }
+
     /// Raise one MSI vector from software and wait for its interrupt.
     fn msi_self_test(init: &DriverInit, bridge: &mut Bridge<Registers>) {
         let (handler, mut source) = match init.pci.msi.kind {
-            // The bridge's `msi` line, the same as its `pcie` line on the
-            // BCM2711, is its first.
-            MSI_OWN => (init.interrupts().first().copied(), MsiSource::Own),
+            MSI_OWN => (msi_interrupt(init), MsiSource::Own),
             MSI_CONTROLLER if init.pci.msi.interrupt != NONE_INDEX => {
                 let Some(mut mip) = registers(init, init.pci.msi.region) else {
                     log_println!("pcie: MSI controller registers not mapped");
@@ -552,9 +558,7 @@ mod component {
                 let last_vector =
                     (init.pci.msi.first_vector + init.pci.msi.vector_count).saturating_sub(1);
                 (
-                    usize::try_from(init.pci.msi.interrupt)
-                        .ok()
-                        .and_then(|index| init.interrupts().get(index).copied()),
+                    msi_interrupt(init),
                     MsiSource::Mip(mip, u32::try_from(last_vector).unwrap_or(0)),
                 )
             }
@@ -741,13 +745,8 @@ mod component {
         EventCountKey::from_key(RawKey::from_wire(init.event_count))
             .advance(1)
             .unwrap_or_else(|error| panic!("pcie: ready advance failed: {:?}", error.code()));
-        // The bridge's own MSIs arrive on its first line (its `pcie` and `msi`
-        // lines are one on the BCM2711).
-        let msi_line = init
-            .interrupts()
-            .first()
-            .copied()
-            .filter(|_| init.pci.msi.kind == MSI_OWN);
+        // The bridge's own MSIs arrive on its `msi` line.
+        let msi_line = msi_interrupt(init).filter(|_| init.pci.msi.kind == MSI_OWN);
         let ack = |handler: u64| {
             IrqHandlerKey::from_key(RawKey::from_wire(handler))
                 .ack()

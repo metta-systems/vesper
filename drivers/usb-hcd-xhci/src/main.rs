@@ -724,14 +724,18 @@ mod component {
                         key,
                         &own,
                         slot(init, FIRST_BAR_SLOT + u64::from(index)),
-                        Rights(Rights::READ | Rights::WRITE),
+                        // `GetExtent` below needs `GRANT`.
+                        Rights(Rights::READ | Rights::WRITE | Rights::GRANT),
                     )
                     .map_err(|error| {
                         note!("xhci: BAR Frame copy failed: {:?}", error.code());
                         BringUp::Claim
                     })?,
             );
-            let (paddr, size) = frame.get_extent().map_err(|_error| BringUp::Claim)?;
+            let (paddr, size) = frame.get_extent().map_err(|error| {
+                note!("xhci: BAR Frame GetExtent failed: {:?}", error.code());
+                BringUp::Claim
+            })?;
             let Some(offset) = paddr
                 .checked_sub(claimed.bar0)
                 .filter(|&offset| offset + size <= claimed.bar0_size)

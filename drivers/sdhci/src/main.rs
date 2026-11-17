@@ -289,13 +289,14 @@ mod component {
             DMA_VA + (index as u64 + 1) * PAGE_BYTES
         }
 
-        /// Clean (`write_back`) or invalidate bytes `0..bytes` of `frame`.
-        fn maintain(frame: u64, write_back: bool, bytes: u32) {
+        /// Run `maintenance` on bytes `0..bytes` of `frame`.
+        fn maintain(frame: u64, maintenance: Maintenance, bytes: u32) {
             let frame = FrameKey::from_key(RawKey::from_wire(frame));
-            let result = if write_back {
-                frame.clean_data(0, u64::from(bytes))
-            } else {
-                frame.invalidate_data(0, u64::from(bytes))
+            let end = u64::from(bytes);
+            let result = match maintenance {
+                Maintenance::Clean => frame.clean_data(0, end),
+                Maintenance::CleanInvalidate => frame.clean_invalidate_data(0, end),
+                Maintenance::Invalidate => frame.invalidate_data(0, end),
             };
             result.unwrap_or_else(|error| {
                 panic!("sdhci: cache maintenance failed: {:?}", error.code())
@@ -319,7 +320,7 @@ mod component {
             }
             Self::maintain(
                 self.descriptors,
-                true,
+                Maintenance::Clean,
                 u32::try_from(pages * 8).unwrap_or(PAGE),
             );
         }
@@ -346,9 +347,8 @@ mod component {
             }
         }
 
-        /// Make bounce bytes `0..bytes` visible to the controller
-        /// (`write_back`), or drop what the cache holds of them.
-        fn maintain_bounce(&self, write_back: bool, bytes: u32) {
+        /// Run `maintenance` on bounce bytes `0..bytes`.
+        fn maintain_bounce(&self, maintenance: Maintenance, bytes: u32) {
             for (index, frame) in self
                 .bounce
                 .iter()
@@ -356,9 +356,24 @@ mod component {
                 .enumerate()
             {
                 let start = u32::try_from(index).unwrap_or(0) * PAGE;
-                Self::maintain(*frame, write_back, (bytes - start).min(PAGE));
+                Self::maintain(*frame, maintenance, (bytes - start).min(PAGE));
             }
         }
+    }
+
+    /// What a DMA page's cached lines need around a transfer.
+    #[derive(Clone, Copy)]
+    enum Maintenance {
+        /// Before the controller reads the page: write what the CPU wrote
+        /// back to memory.
+        Clean,
+        /// Before the controller writes the page: write back and drop every
+        /// line, so that no dirty line (the zeroes `Retype` left, or the last
+        /// write's bytes) is evicted over what the controller writes.
+        CleanInvalidate,
+        /// After the controller wrote the page: drop the lines a speculative
+        /// fetch may have loaded meanwhile, so that the CPU reads memory.
+        Invalidate,
     }
 
     /// The command moving `blocks` blocks for `op`.
@@ -398,7 +413,9 @@ mod component {
                         dma.describe(bytes);
                         if op == Op::Write {
                             Dma::copy(address, bytes, true);
-                            dma.maintain_bounce(true, bytes);
+                            dma.maintain_bounce(Maintenance::Clean, bytes);
+                        } else {
+                            dma.maintain_bounce(Maintenance::CleanInvalidate, bytes);
                         }
                         let moved = host.transfer(
                             command(op, count),
@@ -409,7 +426,7 @@ mod component {
                             },
                         );
                         if op == Op::Read && moved.is_ok() {
-                            dma.maintain_bounce(false, bytes);
+                            dma.maintain_bounce(Maintenance::Invalidate, bytes);
                             Dma::copy(address, bytes, false);
                         }
                         moved
@@ -576,7 +593,18 @@ mod component {
                 bytes(450)
             );
         } else {
-            log_println!("sdhci: block 0 read by {moves}: no master boot record signature");
+            let first: [u8; 8] = core::array::from_fn(bytes);
+            let last: [u8; 8] = core::array::from_fn(|index| bytes(504 + index));
+            log_println!(
+                "sdhci: block 0 read by {moves}: no master boot record signature; \
+                 bytes 0..8 {first:02x?}, 504..512 {last:02x?}, {} of 512 zero",
+                (0..512).filter(|&index| bytes(index) == 0).count()
+            );
+            // Read it again by the data port: a signature there points at
+            // the DMA path, none at the card.
+            if dma.is_some() {
+                check_first_block(host, None, card, "the data port");
+            }
         }
     }
 

@@ -42,12 +42,16 @@ pci_host = true
 # The Raspberry Pi 4's VL805 USB controller, by its node (it has no compatible
 # string): it has the firmware load the controller, claims it through pci_v1,
 # brings it up, checks a command completes on its MSI, and resets the USB 2
-# ports a device is connected to, logging each step.
+# ports a device is connected to, logging each step. The upstream tree names
+# the node `pci@1,0/usb@1,0`, the one the Pi 4 firmware ships `pci@0,0/usb@0,0`.
 [[driver]]
 name = "xhci"
 binary = "usb-hcd-xhci"
 interfaces = "../../../drivers/usb-hcd-xhci/interfaces"
-nodes = ["/scb/pcie@7d500000/pci@1,0/usb@1,0"]
+nodes = [
+    "/scb/pcie@7d500000/pci@1,0/usb@1,0",
+    "/scb/pcie@7d500000/pci@0,0/usb@0,0",
+]
 memory = 262144
 
 # log-test's probe, loaded on the boards only and only with
