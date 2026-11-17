@@ -324,7 +324,7 @@ goblin = { version = "0.10" }
 minijinja = { version = "3" }
 # Meddle IDL front end and Rust emitter (libs/meddle)
 ariadne = { version = "0.6" }
-chumsky = { version = "0.13" }
+chumsky = { version = "0.14" }
 logos = { version = "0.16" }
 prettyplease = { version = "0.3" }
 proc-macro2 = { version = "1.0" }
