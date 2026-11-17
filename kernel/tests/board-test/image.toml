@@ -52,7 +52,10 @@ nodes = [
     "/scb/pcie@7d500000/pci@1,0/usb@1,0",
     "/scb/pcie@7d500000/pci@0,0/usb@0,0",
 ]
-memory = 262144
+# The rings, the context page, the control transfers' data page and up to 31
+# scratchpad buffers, and three pages for each device it addresses (up to 8):
+# past 256 KiB, and memory comes in powers of two.
+memory = 524288
 
 # log-test's probe, loaded on the boards only and only with
 # `--cfg test_boot_panic` (under QEMU its panic would end the run): its first

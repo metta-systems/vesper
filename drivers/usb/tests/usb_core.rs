@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests {
     use {
-        usb_core::devices::{AddressPool, Attachment, Device, DeviceTable, MAX_DEVICES},
-        vesper_usb_protocol::enumeration::{FIRST_ADDRESS, LAST_ADDRESS, Speed},
+        usb_core::devices::{Attachment, Device, DeviceTable, MAX_DEVICES},
+        vesper_usb_protocol::enumeration::Speed,
     };
 
     fn device(address: u8, attachment: Attachment) -> Device {
@@ -16,37 +16,6 @@ mod tests {
             vendor: 0x0424,
             product: 0x9514,
         }
-    }
-
-    #[test]
-    fn addresses_are_handed_out_lowest_first_and_come_back() {
-        let mut pool = AddressPool::new();
-        assert_eq!(pool.take(), Some(FIRST_ADDRESS));
-        assert_eq!(pool.take(), Some(2));
-        assert_eq!(pool.take(), Some(3));
-        pool.release(2);
-        assert_eq!(pool.take(), Some(2), "the lowest free address again");
-        assert_eq!(pool.take(), Some(4));
-    }
-
-    #[test]
-    fn the_pool_runs_out_after_the_last_address_and_ignores_strays() {
-        let mut pool = AddressPool::new();
-        for expected in FIRST_ADDRESS..=LAST_ADDRESS {
-            assert_eq!(pool.take(), Some(expected));
-        }
-        assert_eq!(pool.take(), None);
-        pool.release(0);
-        pool.release(128);
-        pool.release(255);
-        assert_eq!(pool.take(), None, "addresses outside the range are ignored");
-        pool.release(100);
-        assert_eq!(pool.take(), Some(100));
-        // Releasing an address twice frees it once.
-        pool.release(7);
-        pool.release(7);
-        assert_eq!(pool.take(), Some(7));
-        assert_eq!(pool.take(), None);
     }
 
     #[test]

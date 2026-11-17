@@ -42,7 +42,8 @@ local interface pipe_v1
     ## Say what the pipe transfers: its `kind`, the endpoint's `max_packet` bytes
     ## per packet and, for an interrupt pipe, its polling `interval_ms` (ignored
     ## for the other kinds). A pipe may be configured again, for example when a
-    ## device's real control packet size is learned. A control pipe has a
+    ## device's real control packet size is learned (an xHCI controller then
+    ## updates the device's endpoint 0 with Evaluate Context). A control pipe has a
     ## `max_packet` of 8, 16, 32 or 64. An interrupt pipe must be to an IN
     ## endpoint, with a `max_packet` of 1 to 1024 and an `interval_ms` of 1 to
     ## 255; it is polled every `interval_ms` while its client has an empty
@@ -57,8 +58,11 @@ local interface pipe_v1
     ## it is plugged into, so transfers use split transactions. A high-speed
     ## device needs none and raises `not_permitted`. `control` on a routed pipe
     ## runs each packet as a start split and complete splits through the hub.
-    ## Implementation status: untested on hardware; QEMU has no transaction
-    ## translator, so a split transfer there fails with `transfer_failed`.
+    ## An xHCI controller accepts the call and ignores it: it set the
+    ## translator in the device's slot at `usb_hcd_v1.address_device`.
+    ## Implementation status: DWC2 split transactions are untested on
+    ## hardware; QEMU has no transaction translator, so a split transfer there
+    ## fails with `transfer_failed`.
     set_route(card32 hub_address, card32 hub_port)
         raises (invalid_pipe, busy, not_permitted);
 
