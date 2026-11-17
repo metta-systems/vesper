@@ -80,20 +80,6 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 
 Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
 
-- [ ] `drivers/usb-hcd-xhci` bring-up: the VL805 firmware notify through
-  `mailbox_v1`, halt and reset, DCBAA and scratchpad, the command ring, one event
-  ring on the MSI `pci_v1.claim` sets up, a No Op command round trip, and
-  `port_status`/`reset_port` on the USB 2 root ports; in board-test on the Raspberry
-  Pi 4 node in place of `pci-probe`. Validate with `just boot-board-test` on a
-  Raspberry Pi 4 from its `xhci:` lines (version, slots and ports, the No Op
-  completion on MSI, the hub's speed after its port reset).
-- [ ] `usb_hcd_v1` device addressing (X2a): `address_device` and hub marking in
-  both controllers, `usb-core` no longer sending `SET_ADDRESS`; xHCI control
-  transfers on endpoint 0, so `usb-core` enumerates the VIA hub on the Raspberry Pi 4.
-  Built, with DWC2 passing `just _test-usb`, `_test-usb-core`, `_test-usb-hid`;
-  board-test carries `usb-core` on the `xhci` driver. Validate with
-  `just boot-board-test` on a Raspberry Pi 4 from its `usb-core:` and `xhci:` lines
-  (the VIA hub `2109:3431` addressed, its descriptor and ports).
 - [ ] xHCI interrupt-IN, so `usb-hid` reads a keyboard behind the hub on the
   Raspberry Pi 4.
 - [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.
