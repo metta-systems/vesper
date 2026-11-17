@@ -5,10 +5,11 @@
 
 //! usb-test's program. It calls the DWC2 host controller component through the
 //! `usb_hcd_v1` import Kickstart wired along the controller's compatible
-//! string. It resets the root port, enumerates the device behind it with
-//! `vesper_usb_protocol` over a control pipe (the work `usb-core` takes over in
-//! USB3), checks that the root device is a hub, then checks the rules of pipes
-//! and control stages, and reports on the key usb-test installed
+//! string. It resets the root port, has the controller address the device
+//! behind it and enumerates it with `vesper_usb_protocol` over a control pipe
+//! (the work `usb-core` takes over in USB3), checks that the root device is a
+//! hub, then checks the rules of addressing, pipes and control stages, and
+//! reports on the key usb-test installed
 //! (`driver_protocol::REPORT_SLOT`).
 //!
 //! A pipe is the `pipe_v1` keys `open_pipe` installs in this program's
@@ -26,7 +27,7 @@ use {
         usb_hcd_v1::{Bindings, Client, Error, Exception, Speed},
     },
     usb_host::{
-        enumerate::{EnumerateError, Enumerated, enumerate},
+        enumerate::{EnumerateError, Enumerated, Place, enumerate},
         pipes::{OpenError, PIPE_KEYS, Pipe, Pipes},
     },
     vesper_usb_protocol::{
@@ -40,7 +41,7 @@ use {
 
 libuser::entry!(main);
 
-/// Address the root device is enumerated to.
+/// Address the controller gives the root device, the first it addresses.
 const ROOT_ADDRESS: u8 = 1;
 /// Hub device class code (USB 2.0 §11.23).
 const CLASS_HUB: u8 = 9;
@@ -215,6 +216,16 @@ fn check_rules(hcd: &mut Pipes<'_>, speed: Speed) {
         client.reset_port(1),
         Err(Error::Exception(Exception::NoDevice)),
         "only the root port exists"
+    );
+    // The controller addresses a device only where it can reach one: not on
+    // a root port that does not exist, nor behind a hub it never addressed.
+    assert_eq!(
+        client.address_device(0, 1, Speed::Full),
+        Err(Error::Exception(Exception::NoDevice))
+    );
+    assert_eq!(
+        client.address_device(u32::from(ROOT_ADDRESS) + 8, 1, Speed::Full),
+        Err(Error::Exception(Exception::NotPermitted))
     );
 
     // A usable pipe to the enumerated device.
@@ -520,6 +531,7 @@ fn main(init_va: u64) -> ! {
         "a device is attached"
     );
     let Enumerated {
+        address,
         device,
         configuration,
         configuration_len,
@@ -527,7 +539,10 @@ fn main(init_va: u64) -> ! {
         ..
     } = enumerate(
         &mut hcd,
-        ROOT_ADDRESS,
+        Place {
+            hub_address: 0,
+            port: 0,
+        },
         None,
         || {
             client
@@ -547,7 +562,8 @@ fn main(init_va: u64) -> ! {
         },
         |_setup, _result| {},
     )
-    .unwrap_or_else(|error| panic!("enumeration failed: {error:?}"));
+    .unwrap_or_else(|failed| panic!("enumeration failed: {failed:?}"));
+    assert_eq!(address, ROOT_ADDRESS, "the controller's first address");
     let Some(Ok(Descriptor::Device(root))) = descriptor::walk(&device).next() else {
         panic!("the root device's descriptor is malformed");
     };

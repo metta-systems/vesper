@@ -90,6 +90,9 @@ Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
 - [ ] `usb_hcd_v1` device addressing (X2a): `address_device` and hub marking in
   both controllers, `usb-core` no longer sending `SET_ADDRESS`; xHCI control
   transfers on endpoint 0, so `usb-core` enumerates the VIA hub on the Raspberry Pi 4.
+  Built, with DWC2 passing `just _test-usb`, `_test-usb-core`, `_test-usb-hid`; the
+  Pi 4 run waits on `usb-core`'s link to the xHCI driver
+  ([usb-decisions.md](usb-decisions.md) item 2).
 - [ ] xHCI interrupt-IN, so `usb-hid` reads a keyboard behind the hub on the
   Raspberry Pi 4.
 - [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.

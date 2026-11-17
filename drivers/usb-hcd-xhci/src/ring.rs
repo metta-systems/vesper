@@ -50,6 +50,14 @@ impl Producer {
         self.base
     }
 
+    /// The bus address of the next TRB and the cycle bit it will carry: where
+    /// a Set TR Dequeue Pointer command moves the controller past every TRB
+    /// placed so far.
+    #[must_use]
+    pub const fn enqueue_pointer(&self) -> (u64, bool) {
+        (self.base + self.enqueue as u64 * TRB_BYTES, self.cycle)
+    }
+
     /// Place `trb` at the enqueue pointer with the producer cycle bit. When
     /// that fills the segment up to its last TRB, the Link TRB to write after
     /// it comes second: it carries the cycle bit of the pass it ends, and the

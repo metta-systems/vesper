@@ -602,6 +602,26 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_device_closes_its_pipes_and_no_others() {
+        let mut table = PipeTable::new();
+        let to = |device_address, endpoint| Pipe {
+            device_address,
+            endpoint,
+            ..pipe()
+        };
+        let first = table.open(to(3, 0)).unwrap();
+        let other = table.open(to(4, 0)).unwrap();
+        let second = table.open(to(3, 1)).unwrap();
+        let mut closed = Vec::new();
+        table.close_device(3, |handle| closed.push(handle));
+        assert_eq!(closed, [first, second]);
+        assert_eq!(table.get(first), Err(PipeError::Invalid));
+        assert_eq!(table.get(second), Err(PipeError::Invalid));
+        table.get(other).unwrap();
+        table.close_device(3, |_| panic!("nothing is left to close"));
+    }
+
+    #[test]
     fn a_closed_pipes_handle_stays_dead_when_its_slot_is_reused() {
         let mut table = PipeTable::new();
         let old = table.open(pipe()).unwrap();
@@ -1092,5 +1112,94 @@ mod tests {
             ),
             (1, 1, 1, 1, 1)
         );
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    use {
+        usb_hcd_dwc2::{
+            devices::{Device, Devices, PlaceError},
+            pipes::Route,
+        },
+        vesper_usb_protocol::enumeration::Speed,
+    };
+
+    #[test]
+    fn the_root_device_takes_the_first_address_and_no_translator() {
+        let mut devices = Devices::new();
+        let root = devices.place(0, 0, Speed::High).expect("root port 0");
+        assert_eq!(
+            root,
+            Device {
+                speed: Speed::High,
+                route: None
+            }
+        );
+        assert_eq!(devices.add(root), Some(1));
+        assert_eq!(devices.get(1), Some(&root));
+        assert_eq!(devices.place(0, 1, Speed::Full), Err(PlaceError::NoPort));
+    }
+
+    #[test]
+    fn a_device_behind_a_hub_gets_its_translator_from_the_hub() {
+        let mut devices = Devices::new();
+        let hub = devices.add(Device {
+            speed: Speed::High,
+            route: None,
+        });
+        assert_eq!(hub, Some(1));
+        // A full-speed keyboard on port 3 of the high-speed hub: that port's
+        // translator (USB 2.0 §11.14).
+        let keyboard = devices.place(1, 3, Speed::Full).expect("behind the hub");
+        assert_eq!(
+            keyboard.route,
+            Some(Route {
+                hub_address: 1,
+                hub_port: 3
+            })
+        );
+        // A high-speed device needs none.
+        assert_eq!(devices.place(1, 2, Speed::High).expect("hub").route, None);
+        // A full-speed hub behind it hands its own translator on.
+        let full_hub = devices.add(keyboard).expect("an address");
+        let behind = devices.place(full_hub, 1, Speed::Low).expect("hub");
+        assert_eq!(behind.route, keyboard.route);
+    }
+
+    #[test]
+    fn an_unknown_hub_or_port_zero_is_refused() {
+        let mut devices = Devices::new();
+        assert_eq!(
+            devices.place(9, 1, Speed::Full),
+            Err(PlaceError::UnknownHub)
+        );
+        let hub = devices
+            .add(Device {
+                speed: Speed::High,
+                route: None,
+            })
+            .expect("an address");
+        assert_eq!(
+            devices.place(hub, 0, Speed::Full),
+            Err(PlaceError::UnknownHub)
+        );
+    }
+
+    #[test]
+    fn a_released_address_is_given_out_again_once() {
+        let mut devices = Devices::new();
+        let device = Device {
+            speed: Speed::Full,
+            route: None,
+        };
+        assert_eq!(devices.add(device), Some(1));
+        assert_eq!(devices.add(device), Some(2));
+        assert!(devices.release(1));
+        assert!(!devices.release(1), "released already");
+        assert!(!devices.release(0) && !devices.release(200));
+        assert!(devices.get(1).is_none());
+        assert_eq!(devices.add(device), Some(1));
+        assert_eq!(devices.add(device), Some(3));
     }
 }

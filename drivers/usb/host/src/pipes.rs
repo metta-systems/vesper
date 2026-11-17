@@ -203,16 +203,19 @@ impl<'a> Pipes<'a> {
         Ok(pipe)
     }
 
-    /// Close `pipe` through its key and give its slots back.
+    /// Close `pipe` through its key and give its slots back. A pipe the
+    /// controller closed already, because its device was released
+    /// (`usb_hcd_v1.release_device`), only gives its slots back.
     ///
     /// # Panics
     ///
     /// When the controller refuses to close an open pipe, or a key cannot be
     /// deleted.
     pub fn close(&mut self, pipe: &Pipe) {
-        pipe.client
-            .close_pipe()
-            .unwrap_or_else(|error| panic!("close_pipe failed: {error:?}"));
+        match pipe.client.close_pipe() {
+            Ok(()) | Err(pipe_v1::Error::Exception(pipe_v1::Exception::InvalidPipe)) => {}
+            Err(error) => panic!("close_pipe failed: {error:?}"),
+        }
         self.release(pipe);
     }
 

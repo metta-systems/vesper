@@ -63,9 +63,12 @@ prototypes and are edited in place. Open decisions are in
   page sits at `0x3802_0000`, above the register pages.
 - `drivers/usb-hcd-dwc2` resets the root port and serves `usb_hcd_v1` for control
   pipes (generated crates `drivers/usb-hcd-dwc2/server` and `client`). It does not
-  enumerate: a client resets the port, opens a pipe to address 0 and enumerates
-  through `vesper_usb_protocol`. `usb-test-client` does so in `just _test-usb` and
-  finds the hub (class 9) at address 1.
+  enumerate: a client resets the port, has the controller address the device
+  (`address_device`, which sends `SET_ADDRESS` to address 0 and records the
+  device's speed and translator, `drivers/usb-hcd-dwc2/src/devices.rs`), opens a
+  pipe to that address and enumerates through `vesper_usb_protocol`.
+  `usb-test-client` does so in `just _test-usb` and finds the hub (class 9) at
+  address 1.
 - A call runs on the caller's Thread, one at a time (a `Turnstile`). The client
   stages the setup packet and data stage in its data area; the component copies
   them to and from its DMA page (data stage at most 4032 bytes). `DataArea` has
@@ -165,12 +168,20 @@ usb_hcd_v1 (dwc2 HCD)  <- control/pipe calls ->  usb_v1 (usb-core: core + hub)  
   `hid`'s table. The mechanism is in the
   [contract](capabilities-contract.md#component-interfaces-and-imports).
 - `drivers/usb-hcd-dwc2/interfaces/usb_hcd_v1.if`: `reset_port`, `port_status`,
-  `open_pipe`. Parameters are DWC2-neutral. `open_pipe` takes the first slot of the
-  lent table, the device address, the endpoint address and the speed, and installs
-  the keys of `pipe_v1`.
+  `address_device`, `release_device`, `mark_hub`, `open_pipe`, `trace`. Parameters
+  are controller-neutral. The controller assigns addresses (X2a, interface answered
+  2026-11-17): `address_device(hub_address, port, speed)` names where the device is
+  (`hub_address` 0 for a root port) and the controller works out the route from the
+  hub's own record; `release_device(address)` frees the address (xHCI Disable
+  Slot) and closes the device's pipes, called on teardown and after a failed
+  enumeration once the port is disabled; `mark_hub(address, ports, think_time,
+  multi_tt)` follows the hub descriptor (xHCI Configure Endpoint on the slot, DWC2
+  nothing). `open_pipe` takes the first slot of the lent table, the device address,
+  the endpoint address and the speed, and installs the keys of `pipe_v1`.
 - `drivers/usb-hcd-dwc2/interfaces/pipe_v1.if`: `configure`, `set_route`, `close_pipe`, `clear_halt`,
   `control`, the functions of one open pipe; the split-transaction route is set
-  separately with `set_route`.
+  separately with `set_route`, which xHCI accepts and ignores (its slot carries the
+  translator).
 - `drivers/usb/interfaces/usb_v1.if`: `claim_interface` (raises `not_ready` while no
   matching interface is attached, so the claimant retries; maintainer decision,
   2026-10-19), `release`, `interrupt_pipe` (the parameters for `open_pipe`), `control`.

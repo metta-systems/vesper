@@ -187,12 +187,12 @@ pub fn run() -> ! {
                 assert!(!init.pages().is_empty());
                 assert!(imports.is_empty());
             } else {
-                // usb-core: the four functions of `usb_hcd_v1` it uses, sharing one
+                // usb-core: the seven functions of `usb_hcd_v1` it uses, sharing one
                 // data area with the controller, and a serial channel. It has no
                 // registers.
                 assert_ne!(init.serial.transmit_submitted, 0, "a serial channel");
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 4, "the four functions of usb_hcd_v1");
+                assert_eq!(imports.len(), 7, "the seven functions of usb_hcd_v1");
                 assert!(
                     imports.iter().all(|record| record.type_code == USB_HCD_V1
                         && record.area_len == 4096
@@ -200,7 +200,7 @@ pub fn run() -> ! {
                         && record.channel_base == record.area_base + 4096),
                     "the functions of one pair share one area"
                 );
-                assert!(imports.iter().map(|record| record.function).eq(0..4));
+                assert!(imports.iter().map(|record| record.function).eq(0..7));
                 client_area = imports[0].area_base;
                 // The report key, in usb-core's table only.
                 // SAFETY: the driver's retained table; no invocation overlaps.

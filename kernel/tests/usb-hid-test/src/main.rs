@@ -177,7 +177,7 @@ pub fn run() -> ! {
                 // usb-core: the functions of `usb_hcd_v1` it uses, and usb_v1
                 // served to usb-hid and to input-trace (its trace).
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 4, "the four functions of usb_hcd_v1");
+                assert_eq!(imports.len(), 7, "the seven functions of usb_hcd_v1");
                 assert_eq!(
                     init.areas().len(),
                     2,
