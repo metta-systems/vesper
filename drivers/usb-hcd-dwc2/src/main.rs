@@ -12,8 +12,11 @@
 //! the Raspberry Pi 3's controller. The instance maps its register page, puts
 //! the core into host mode, powers the root port, and serves `usb_hcd_v1` and
 //! `pipe_v1` (see `interfaces/`) to its clients. It does not enumerate: a client
-//! (`usb-core`) resets the port, opens a control pipe to address 0 and runs the
-//! enumeration through `vesper_usb_protocol`.
+//! (`usb-core`) resets the port, has the component give the device an address
+//! (`address_device`, which sends `SET_ADDRESS` to address 0 itself and keeps
+//! each device's speed and transaction translator, see `devices`), then opens a
+//! control pipe to that address and runs the enumeration through
+//! `vesper_usb_protocol`.
 //!
 //! A call runs on the caller's Thread, one at a time (a `Turnstile`). Each
 //! control transfer runs on host channel 0 by DMA, one endpoint 0 stage at a
@@ -101,6 +104,7 @@ mod component {
         },
         usb_hcd_dwc2::{
             control::{self, StageError},
+            devices::{Device as Addressed, Devices, PlaceError},
             microframe::{
                 CompleteSplitSlot, FRAME_NUMBER_MASK, between, complete_split_slot, is_odd,
                 next as next_microframe, start_split_ran, start_split_target,
@@ -1258,6 +1262,40 @@ mod component {
             )?;
             Ok(moved)
         }
+
+        /// Send `SET_ADDRESS` with `address` to the device at the default
+        /// address, reached as `device` says: its SETUP stage, then the IN
+        /// status stage (it has no data stage). The setup packet is one
+        /// 8-byte packet and the status stage empty, so endpoint 0's real
+        /// packet size does not matter yet.
+        fn set_address(&mut self, device: Addressed, address: u8) -> Result<(), PipeException> {
+            if !self.registers.read_port().connected() {
+                return Err(PipeException::NoDevice);
+            }
+            let target = |input: bool| Target {
+                device_address: 0,
+                endpoint: 0,
+                input,
+                low_speed: device.speed == UsbSpeed::Low,
+                kind: UsbKind::Control,
+                max_packet: 8,
+                split: device.route.map(|route| SplitRoute {
+                    hub_address: route.hub_address,
+                    hub_port: route.hub_port,
+                }),
+            };
+            self.events = EventCounts::ZERO;
+            Self::dma_write(SETUP_OFFSET, &SetupPacket::set_address(address).to_bytes());
+            self.run_channel(
+                CHANNEL,
+                target(false),
+                Pid::Setup,
+                SETUP_OFFSET,
+                control::SETUP_BYTES,
+            )?;
+            self.run_channel(CHANNEL, target(true), Pid::Data1, DATA_OFFSET, 0)?;
+            Ok(())
+        }
     }
 
     /// The stages of a control transfer, by the number a failure status
@@ -1521,6 +1559,8 @@ mod component {
         /// The bring-up step that timed out, if one did; every call then raises
         /// `controller_failed`.
         failed: Option<BringUp>,
+        /// The devices `address_device` gave an address.
+        devices: Devices,
         pipes: PipeTable,
         /// The interrupt pipes the poller Thread polls.
         poller: Poller,
@@ -1644,6 +1684,89 @@ mod component {
                 return Err(Exception::ControllerFailed { step: step as u32 });
             }
             Ok(hcd.controller.port_status(port))
+        }
+
+        fn address_device(
+            _badge: u64,
+            hub_address: u32,
+            port: u32,
+            speed: Speed,
+        ) -> Result<u32, Exception> {
+            let (Ok(hub_address), Ok(port)) = (u8::try_from(hub_address), u8::try_from(port))
+            else {
+                return Err(Exception::NotPermitted);
+            };
+            let speed = match speed {
+                Speed::Low => UsbSpeed::Low,
+                Speed::Full => UsbSpeed::Full,
+                Speed::High => UsbSpeed::High,
+            };
+            let mut turn = TURNSTILE.enter(init());
+            let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
+            let device =
+                hcd.devices
+                    .place(hub_address, port, speed)
+                    .map_err(|error| match error {
+                        PlaceError::NoPort => Exception::NoDevice,
+                        PlaceError::UnknownHub => Exception::NotPermitted,
+                    })?;
+            let address = hcd.devices.add(device).ok_or(Exception::Busy)?;
+            match hcd.controller.set_address(device, address) {
+                Ok(()) => Ok(u32::from(address)),
+                Err(error) => {
+                    hcd.devices.release(address);
+                    note!(
+                        "usb-hcd-dwc2: SET_ADDRESS {address} to the {speed:?} speed device on {} port {port}{} failed: {error:?}",
+                        if hub_address == 0 { "root" } else { "hub" },
+                        Hops(device.route)
+                    );
+                    Err(Exception::NoDevice)
+                }
+            }
+        }
+
+        fn release_device(_badge: u64, address: u32) -> Result<(), Exception> {
+            let address = u8::try_from(address).map_err(|_overflow| Exception::NotPermitted)?;
+            let mut turn = TURNSTILE.enter(init());
+            let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
+            if !hcd.devices.release(address) {
+                return Err(Exception::NotPermitted);
+            }
+            let Hcd { pipes, poller, .. } = hcd;
+            pipes.close_device(address, |handle| poller.remove(handle));
+            drop(turn);
+            wake_poller();
+            Ok(())
+        }
+
+        fn mark_hub(
+            _badge: u64,
+            address: u32,
+            ports: u32,
+            think_time: u32,
+            _multi_tt: bool,
+        ) -> Result<(), Exception> {
+            // Split transactions name the hub and port themselves: the
+            // controller keeps nothing of a hub beyond its address.
+            let address = u8::try_from(address).map_err(|_overflow| Exception::NotPermitted)?;
+            if !(1..=255).contains(&ports) || !matches!(think_time, 8 | 16 | 24 | 32) {
+                return Err(Exception::NotPermitted);
+            }
+            let mut turn = TURNSTILE.enter(init());
+            let hcd = hcd(&mut turn);
+            if let Some(step) = hcd.failed {
+                return Err(Exception::ControllerFailed { step: step as u32 });
+            }
+            hcd.devices
+                .get(address)
+                .map(|_| ())
+                .ok_or(Exception::NotPermitted)
         }
 
         fn trace(badge: u64, text: IoRec) -> Result<u32, Exception> {
@@ -2228,6 +2351,7 @@ mod component {
             *HCD.0.get() = Some(Hcd {
                 controller,
                 failed,
+                devices: Devices::new(),
                 pipes: PipeTable::new(),
                 poller: Poller::new(),
                 poll_failures: [EventCounts::ZERO; MAX_PIPES],

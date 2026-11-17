@@ -177,7 +177,7 @@ pub fn run() -> ! {
                 // usb-core: the functions of `usb_hcd_v1` it uses, and usb_v1
                 // served to usb-hid.
                 assert!(init.pages().is_empty());
-                assert_eq!(imports.len(), 4, "the four functions of usb_hcd_v1");
+                assert_eq!(imports.len(), 7, "the seven functions of usb_hcd_v1");
                 assert_eq!(init.areas().len(), 1, "usb-hid is its client");
             } else if name == components::USB_HID.name {
                 // usb-hid: usb_v1 from the core, one function of usb_hcd_v1,

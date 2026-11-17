@@ -5,11 +5,11 @@ use {
     crate::pipes::{OpenError, Pipe, Pipes},
     usb_hcd_client::{
         pipe_v1::{Error as PipeError, Exception as PipeException, TransferKind},
-        usb_hcd_v1::Speed as HcdSpeed,
+        usb_hcd_v1::{Error as HcdError, Speed as HcdSpeed},
     },
     vesper_usb_protocol::{
         enumeration::{Enumerator, Event, Failure, Speed, Step, default_max_packet0},
-        setup::{DESCRIPTOR_CONFIGURATION, DESCRIPTOR_DEVICE, REQUEST_SET_ADDRESS, SetupPacket},
+        setup::{DESCRIPTOR_CONFIGURATION, DESCRIPTOR_DEVICE, SetupPacket},
     },
 };
 
@@ -25,11 +25,22 @@ pub struct Route {
     pub hub_port: u8,
 }
 
+/// Where a device is plugged in: port `port` of the hub at `hub_address`, or
+/// root port `port` when `hub_address` is 0 (as `usb_hcd_v1.address_device`
+/// takes it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub hub_address: u8,
+    pub port: u8,
+}
+
 /// Why a device could not be enumerated.
 #[derive(Debug)]
 pub enum EnumerateError {
     /// The port reset failed.
     Reset,
+    /// The controller did not address the device.
+    Address(HcdError),
     /// The controller refused a pipe.
     Pipe(OpenError),
     /// The controller refused to route a pipe through the hub.
@@ -41,6 +52,15 @@ pub enum EnumerateError {
         /// is what failed.
         transfer: Option<PipeError>,
     },
+}
+
+/// A failed enumeration, and the address the controller gave the device
+/// before it failed, if it got that far: the caller releases it
+/// (`usb_hcd_v1.release_device`) once the device can no longer answer there.
+#[derive(Debug)]
+pub struct Failed {
+    pub error: EnumerateError,
+    pub address: Option<u8>,
 }
 
 /// An enumerated device.
@@ -58,7 +78,9 @@ pub struct Enumerated {
     pub max_packet0: u16,
 }
 
-fn hcd_speed(speed: Speed) -> HcdSpeed {
+/// The controller's name for `speed`.
+#[must_use]
+pub const fn hcd_speed(speed: Speed) -> HcdSpeed {
     match speed {
         Speed::Low => HcdSpeed::Low,
         Speed::Full => HcdSpeed::Full,
@@ -94,41 +116,39 @@ fn open_control(
     Ok(pipe)
 }
 
-/// Enumerate the device behind a port to `address`.
+/// Enumerate the device at `place`, which the controller addresses.
 ///
 /// `reset` resets the port and returns the speed of the device; the
 /// enumeration asks for it where the state machine does. A device behind a hub
 /// that is already reset returns its speed at once. `route` is the hub and port
-/// of a low- or full-speed device behind a high-speed hub. `sleep` waits that
-/// many milliseconds. `observe` sees every control transfer with its result,
-/// for tracing.
+/// of a low- or full-speed device behind a high-speed hub, for the pipes'
+/// split transactions. `sleep` waits that many milliseconds. `observe` sees
+/// every control transfer with its result, for tracing.
 ///
 /// # Errors
 ///
-/// [`EnumerateError`] for a refused pipe or a device that does not enumerate.
-///
-/// # Panics
-///
-/// When `address` is not a valid device address.
+/// [`Failed`] for a device the controller did not address, a refused pipe or
+/// a device that does not enumerate, with the address it was given if it got
+/// one.
 pub fn enumerate(
     pipes: &mut Pipes<'_>,
-    address: u8,
+    place: Place,
     route: Option<Route>,
     mut reset: impl FnMut() -> Result<Speed, EnumerateError>,
     mut sleep: impl FnMut(u32),
     mut observe: impl FnMut(SetupPacket, &Result<usize, PipeError>),
-) -> Result<Enumerated, EnumerateError> {
-    let mut enumerator = Enumerator::new(address).expect("a valid address");
-    let mut current = 0;
+) -> Result<Enumerated, Failed> {
+    let mut enumerator = Enumerator::new();
+    let mut address = None;
     let mut max_packet = 8;
     let mut speed = Speed::Full;
     let mut device = [0; 18];
     let mut configuration = [0; CONFIGURATION_CAPACITY];
     let mut configuration_len = 0;
     let mut reply = [0; CONFIGURATION_CAPACITY];
-    // The pipe to the device as it is addressed now, with the packet size it
-    // is configured for.
-    let mut pipe = None::<(Pipe, u8, u16)>;
+    // The pipe to the device's endpoint 0, with the packet size it is
+    // configured for.
+    let mut pipe = None::<(Pipe, u16)>;
     let mut last_error = None;
     let mut step = enumerator.next(Event::Start);
     let result = loop {
@@ -147,11 +167,33 @@ pub fn enumerate(
                 sleep(milliseconds);
                 enumerator.next(Event::Delayed)
             }
+            Step::AddressDevice => {
+                let addressed = pipes.client().address_device(
+                    u32::from(place.hub_address),
+                    u32::from(place.port),
+                    hcd_speed(speed),
+                );
+                match addressed.map(u8::try_from) {
+                    Ok(Ok(given)) => {
+                        address = Some(given);
+                        enumerator.next(Event::Addressed(given))
+                    }
+                    // An address past a byte is not one the state machine
+                    // takes: it fails the enumeration as a protocol error.
+                    Ok(Err(_)) => enumerator.next(Event::Addressed(0)),
+                    Err(error) => break Err(EnumerateError::Address(error)),
+                }
+            }
             Step::Control { setup } => {
+                let Some(current) = address else {
+                    break Err(EnumerateError::Failed {
+                        failure: Failure::Protocol,
+                        transfer: None,
+                    });
+                };
                 // Configure the pipe again when the device's packet size was
-                // learned, and reopen it when the device's address changed.
-                if let Some((open, open_address, open_packet)) = pipe.as_mut()
-                    && *open_address == current
+                // learned.
+                if let Some((open, open_packet)) = pipe.as_mut()
                     && *open_packet != max_packet
                 {
                     if let Err(error) = open.client.configure(TransferKind::Control, max_packet, 0)
@@ -160,19 +202,13 @@ pub fn enumerate(
                     }
                     *open_packet = max_packet;
                 }
-                if pipe
-                    .as_ref()
-                    .is_none_or(|(_, open_address, _)| *open_address != current)
-                {
-                    if let Some((old, _, _)) = pipe.take() {
-                        pipes.close(&old);
-                    }
+                if pipe.is_none() {
                     match open_control(pipes, current, speed, max_packet, route) {
-                        Ok(opened) => pipe = Some((opened, current, max_packet)),
+                        Ok(opened) => pipe = Some((opened, max_packet)),
                         Err(error) => break Err(error),
                     }
                 }
-                let (open, _, _) = pipe.as_ref().expect("a pipe is open");
+                let (open, _) = pipe.as_ref().expect("a pipe is open");
                 // A low-speed control endpoint has 8-byte packets (USB 2.0 §5.5.3),
                 // so the first 8 bytes of the device descriptor are one full
                 // packet and the data stage would end early. Read the whole
@@ -191,9 +227,6 @@ pub fn enumerate(
                     Ok(moved) => {
                         let got = reply.get(..moved).unwrap_or_default();
                         let descriptor_type = setup.value >> 8;
-                        if setup.request == REQUEST_SET_ADDRESS {
-                            current = u8::try_from(setup.value).expect("a 7-bit address");
-                        }
                         if descriptor_type == u16::from(DESCRIPTOR_DEVICE) {
                             if first_read {
                                 max_packet = u16::from(got.get(7).copied().unwrap_or(8));
@@ -220,9 +253,12 @@ pub fn enumerate(
                     }
                 }
             }
-            Step::Configured { .. } => {
+            Step::Configured {
+                address: configured,
+                ..
+            } => {
                 break Ok(Enumerated {
-                    address,
+                    address: configured,
                     speed,
                     device,
                     configuration,
@@ -238,8 +274,8 @@ pub fn enumerate(
             }
         };
     };
-    if let Some((open, _, _)) = pipe {
+    if let Some((open, _)) = pipe {
         pipes.close(&open);
     }
-    result
+    result.map_err(|error| Failed { error, address })
 }

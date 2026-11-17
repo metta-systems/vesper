@@ -7,9 +7,12 @@
 //! I/O: the caller feeds it the results of each step (port reset, delays,
 //! control transfers) and carries out the step it returns.
 //!
-//! Sequence: reset the port, read the first 8 bytes of the device descriptor
-//! at address 0, `SET_ADDRESS`, read the full device descriptor, read the
-//! configuration header, read the whole configuration, `SET_CONFIGURATION`. The
+//! Sequence: reset the port, have the host controller address the device
+//! (`usb_hcd_v1.address_device`: an xHCI controller's Address Device
+//! command, or a `SET_ADDRESS` the DWC2 controller sends itself), read the
+//! first 8 bytes of the device descriptor at the new address, the full device
+//! descriptor, the configuration header and the whole configuration, then
+//! `SET_CONFIGURATION`. Linux enumerates behind xHCI in this order too. The
 //! caller keeps the full configuration bytes it got back, and walks their
 //! interfaces with `descriptor::walk`.
 
@@ -29,6 +32,63 @@ pub const ADDRESS_SETTLE_MS: u32 = 2;
 pub const FIRST_ADDRESS: u8 = 1;
 /// Highest address a device may take.
 pub const LAST_ADDRESS: u8 = 127;
+
+/// Hands out device addresses, lowest first, and takes them back: the
+/// addresses a host controller that sends `SET_ADDRESS` itself gives devices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AddressPool {
+    /// Bit `n` of word `n / 64` is set when address `n` is taken.
+    taken: [u64; 2],
+}
+
+impl AddressPool {
+    /// A pool with every address from [`FIRST_ADDRESS`] to [`LAST_ADDRESS`] free.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { taken: [0; 2] }
+    }
+
+    /// The lowest free address, now taken, or `None` when all are.
+    pub fn take(&mut self) -> Option<u8> {
+        (FIRST_ADDRESS..=LAST_ADDRESS).find(|&address| {
+            let (word, bit) = Self::place(address);
+            let free = self.taken[word] & bit == 0;
+            if free {
+                self.taken[word] |= bit;
+            }
+            free
+        })
+    }
+
+    /// Whether `address` is taken.
+    #[must_use]
+    pub const fn is_taken(&self, address: u8) -> bool {
+        if address < FIRST_ADDRESS || address > LAST_ADDRESS {
+            return false;
+        }
+        let (word, bit) = Self::place(address);
+        self.taken[word] & bit != 0
+    }
+
+    /// Give `address` back. An address that is not taken stays free.
+    pub fn release(&mut self, address: u8) {
+        if (FIRST_ADDRESS..=LAST_ADDRESS).contains(&address) {
+            let (word, bit) = Self::place(address);
+            self.taken[word] &= !bit;
+        }
+    }
+
+    /// The word and bit of `address` in the bitmap.
+    const fn place(address: u8) -> (usize, u64) {
+        ((address / 64) as usize, 1 << (address % 64))
+    }
+}
+
+impl Default for AddressPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Speed a device runs at, as the host controller reports it after a reset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,9 +147,12 @@ pub enum Step {
     ResetPort,
     /// Wait this many milliseconds, then report `Event::Delayed`.
     Delay { milliseconds: u32 },
-    /// Run this control transfer to device address 0 or the new address. The
-    /// data stage is `setup.length` bytes long (zero for no data stage); pass
-    /// the bytes read back in `Event::Control`.
+    /// Have the host controller address the device, then report the address
+    /// it took with `Event::Addressed`.
+    AddressDevice,
+    /// Run this control transfer to the device at its address. The data stage
+    /// is `setup.length` bytes long (zero for no data stage); pass the bytes
+    /// read back in `Event::Control`.
     Control { setup: SetupPacket },
     /// Enumeration finished: the device is at `address` and configuration
     /// `configuration_value` is active. Interfaces of the configuration are
@@ -112,6 +175,8 @@ pub enum Event<'a> {
     PortReset(Speed),
     /// The delay returned by `Step::Delay` has elapsed.
     Delayed,
+    /// The host controller addressed the device to this address.
+    Addressed(u8),
     /// The control transfer completed; the slice is its data stage (empty for
     /// requests without one).
     Control(&'a [u8]),
@@ -119,16 +184,18 @@ pub enum Event<'a> {
     ControlFailed(Failure),
 }
 
+/// What the enumerator waits for: each state names the reply or the delay
+/// it expects next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     Idle,
     Resetting,
     Recovering,
-    FirstDescriptor,
+    Addressing,
     SettlingAddress,
+    FirstDescriptor,
     DeviceDescriptor,
     ConfigurationHeader,
-    ConfigurationFull,
     /// The whole configuration is being read; `value` is its `bConfigurationValue`.
     Configuring {
         value: u8,
@@ -150,19 +217,16 @@ pub struct Enumerator {
 }
 
 impl Enumerator {
-    /// An enumerator that will give the device `address`, or `None` if the
-    /// address is outside `FIRST_ADDRESS..=LAST_ADDRESS`.
+    /// An enumerator at its start; the device's address comes from the host
+    /// controller.
     #[must_use]
-    pub const fn new(address: u8) -> Option<Self> {
-        if address < FIRST_ADDRESS || address > LAST_ADDRESS {
-            return None;
-        }
-        Some(Self {
-            address,
+    pub const fn new() -> Self {
+        Self {
+            address: 0,
             speed: Speed::Full,
             max_packet0: 8,
             state: State::Idle,
-        })
+        }
     }
 
     /// Advance by one event and return the step to carry out next.
@@ -183,6 +247,19 @@ impl Enumerator {
                 }
             }
             (State::Recovering, Event::Delayed) => {
+                self.state = State::Addressing;
+                Step::AddressDevice
+            }
+            (State::Addressing, Event::Addressed(address))
+                if (FIRST_ADDRESS..=LAST_ADDRESS).contains(&address) =>
+            {
+                self.address = address;
+                self.state = State::SettlingAddress;
+                Step::Delay {
+                    milliseconds: ADDRESS_SETTLE_MS,
+                }
+            }
+            (State::SettlingAddress, Event::Delayed) => {
                 self.state = State::FirstDescriptor;
                 Step::Control {
                     setup: SetupPacket::get_descriptor(DESCRIPTOR_DEVICE, 0, 8),
@@ -191,51 +268,40 @@ impl Enumerator {
             (State::FirstDescriptor, Event::Control(data)) => match device_max_packet0(data) {
                 Ok(max_packet0) => {
                     self.max_packet0 = max_packet0;
-                    self.state = State::SettlingAddress;
+                    self.state = State::DeviceDescriptor;
                     Step::Control {
-                        setup: SetupPacket::set_address(self.address),
+                        setup: SetupPacket::get_descriptor(DESCRIPTOR_DEVICE, 0, 18),
                     }
                 }
                 Err(error) => self.fail(Failure::Descriptor(error)),
             },
-            (State::SettlingAddress, Event::Control(_)) => {
-                self.state = State::DeviceDescriptor;
-                Step::Delay {
-                    milliseconds: ADDRESS_SETTLE_MS,
-                }
-            }
-            (State::DeviceDescriptor, Event::Delayed) => {
-                self.state = State::ConfigurationHeader;
-                Step::Control {
-                    setup: SetupPacket::get_descriptor(DESCRIPTOR_DEVICE, 0, 18),
-                }
-            }
-            (State::ConfigurationHeader, Event::Control(data)) => match device_configurations(data)
-            {
+            (State::DeviceDescriptor, Event::Control(data)) => match device_configurations(data) {
                 Ok(0) => self.fail(Failure::Protocol),
                 Ok(_) => {
-                    self.state = State::ConfigurationFull;
+                    self.state = State::ConfigurationHeader;
                     Step::Control {
                         setup: SetupPacket::get_descriptor(DESCRIPTOR_CONFIGURATION, 0, 9),
                     }
                 }
                 Err(error) => self.fail(Failure::Descriptor(error)),
             },
-            (State::ConfigurationFull, Event::Control(data)) => match configuration_header(data) {
-                Ok(header) => {
-                    self.state = State::Configuring {
-                        value: header.value,
-                    };
-                    Step::Control {
-                        setup: SetupPacket::get_descriptor(
-                            DESCRIPTOR_CONFIGURATION,
-                            0,
-                            header.total_length,
-                        ),
+            (State::ConfigurationHeader, Event::Control(data)) => {
+                match configuration_header(data) {
+                    Ok(header) => {
+                        self.state = State::Configuring {
+                            value: header.value,
+                        };
+                        Step::Control {
+                            setup: SetupPacket::get_descriptor(
+                                DESCRIPTOR_CONFIGURATION,
+                                0,
+                                header.total_length,
+                            ),
+                        }
                     }
+                    Err(error) => self.fail(Failure::Descriptor(error)),
                 }
-                Err(error) => self.fail(Failure::Descriptor(error)),
-            },
+            }
             (State::Configuring { value }, Event::Control(_)) => {
                 self.state = State::SettingConfiguration { value };
                 Step::Control {
@@ -262,6 +328,12 @@ impl Enumerator {
     fn fail(&mut self, failure: Failure) -> Step {
         self.state = State::Failed;
         Step::Failed(failure)
+    }
+}
+
+impl Default for Enumerator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
