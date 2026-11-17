@@ -226,9 +226,9 @@ dependencies = [
 
 [[package]]
 name = "arm-gic"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aae38b5192f8463cef6c94ec9804774c2b106b16b0bb7c41401f9457d5e99229"
+checksum = "c515ae78e71b0da6996b07c9afc2be190df9f60a631fe201d3be991d1e3e7c17"
 dependencies = [
  "arm-sysregs",
  "bitflags 2.13.2",
@@ -3747,9 +3747,9 @@ checksum = "fa4bcfea87b1b7f7a4c3eecc18934a88943b0cd3c16b69965aed94ffa4868954"
 
 [[package]]
 name = "safe-mmio"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e885ed64c91774b671612cb99dda2ede3738b0aa2d39a85a1471b20bf09eabe0"
+checksum = "8227fa63b47c9e32e57da4efeec270bba9a8930387f014f1e4759e46af3bd8c7"
 dependencies = [
  "zerocopy",
 ]
