@@ -9,8 +9,8 @@
 
 use {
     crate::{
-        DevTreeIndex, Node, PropReader, find_compatible, interrupt_cells, interrupt_parent,
-        node_by_phandle, phandle, property,
+        DevTreeIndex, FallibleIterator, Node, PropReader, find_compatible, interrupt_cells,
+        interrupt_parent, node_by_phandle, phandle, property,
     },
     core::iter,
 };
@@ -125,6 +125,19 @@ pub fn interrupt(
         cell_count: u32::try_from(count).ok()?,
         cells: read_cells(&prop, index * count, count)?,
     })
+}
+
+/// `node`'s interrupt that its `interrupt-names` calls `name`.
+pub fn interrupt_named(
+    tree: &DevTreeIndex<'_, '_>,
+    node: &Node<'_, '_, '_>,
+    name: &str,
+) -> Option<Interrupt> {
+    let index = property(node, "interrupt-names")?
+        .iter_str()
+        .position(|entry| Ok(entry == name))
+        .ok()??;
+    interrupt(tree, node, index)
 }
 
 /// Every interrupt of `node`, in order.

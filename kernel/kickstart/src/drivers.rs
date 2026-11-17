@@ -100,7 +100,7 @@ use {
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
         fixed_clock_rate, has_path,
-        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
+        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts, interrupt_named},
         is_compatible, is_enabled, linked_phandle, node_by_phandle,
         pci::{
             PciRange, PciSpace, brcm_msi_offset, host_bridge_of, msi_parent, msi_range,

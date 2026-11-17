@@ -392,9 +392,10 @@ pub struct MsiParent {
     pub first_vector: u64,
     /// For [`MSI_CONTROLLER`]: its vectors, one interrupt line each
     pub vector_count: u64,
-    /// For [`MSI_CONTROLLER`]: the interrupt of its last vector, which no
-    /// child's MSI-X vector is programmed to, by index in
-    /// [`DriverInit::interrupts`], or [`NONE_INDEX`]
+    /// For [`MSI_OWN`]: the bridge's `msi` line; for [`MSI_CONTROLLER`]: the
+    /// interrupt of its last vector, which no child's MSI-X vector is
+    /// programmed to. By index in [`DriverInit::interrupts`], or
+    /// [`NONE_INDEX`]
     pub interrupt: u64,
 }
 

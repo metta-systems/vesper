@@ -117,6 +117,20 @@ mod tests {
         }
 
         #[test]
+        fn rpi4_firmware_vl805_node_is_function_one_zero_zero() {
+            // Its `reg` is all zero: the bus comes from the bridge above it.
+            with_index(RPI4_FIRMWARE, |index| {
+                let vl805 = index
+                    .nodes()
+                    .find(|node| has_path(node, "/scb/pcie@7d500000/pci@0,0/usb@0,0"))
+                    .expect("usb@0,0");
+                assert_eq!(pci_function(&vl805), Some(0x100));
+                let root_port = vl805.parent().expect("pci@0,0");
+                assert_eq!(pci_function(&root_port), Some(0));
+            });
+        }
+
+        #[test]
         fn rpi4_vl805_node_by_path_and_its_function() {
             with_index(RPI4, |index| {
                 const PATH: &str = "/scb/pcie@7d500000/pci@1,0/usb@1,0";
@@ -676,7 +690,8 @@ mod tests {
 
     use vesper_devicetree::interrupts::{
         Interrupt, TimerInterrupt, distinct_interrupts, generic_timer, interrupt,
-        interrupt_controllers, interrupts, root_interrupt_controller, timer_interrupt,
+        interrupt_controllers, interrupt_named, interrupts, root_interrupt_controller,
+        timer_interrupt,
     };
 
     fn phandle_of_compatible(index: &DevTreeIndex<'_, '_>, compatible: &str) -> u32 {
@@ -715,6 +730,22 @@ mod tests {
             let physical = timer_interrupt(index, TimerInterrupt::NonSecurePhysical).unwrap();
             assert_eq!(physical.cells(), &[1, 14, 0xf08]);
         });
+    }
+
+    #[test]
+    fn rpi4_bridge_msi_line_is_found_by_its_name() {
+        // The upstream tree names SPI 148 for both `pcie` and `msi`; the
+        // tree the Pi 4 firmware ships names SPI 147 for `pcie`.
+        for (tree, pcie_line) in [(RPI4, 148), (RPI4_FIRMWARE, 147)] {
+            with_index(tree, |index| {
+                let (bridge, _) = find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
+                let msi = interrupt_named(index, &bridge, "msi").expect("msi line");
+                assert_eq!(msi.cells(), &[0, 148, 4]);
+                let pcie = interrupt_named(index, &bridge, "pcie").expect("pcie line");
+                assert_eq!(pcie.cells(), &[0, pcie_line, 4]);
+                assert_eq!(interrupt_named(index, &bridge, "intx"), None);
+            });
+        }
     }
 
     #[test]
