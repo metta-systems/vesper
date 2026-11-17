@@ -762,30 +762,36 @@ fn same_node(first: &Node<'_, '_, '_>, second: &Node<'_, '_, '_>) -> bool {
     first.name().ok() == second.name().ok() && phandle(first) == phandle(second)
 }
 
-/// A provider for messages: a device tree chain, its steps separated by
-/// commas, or a component name.
-struct Provided(Provider);
+/// An import's providers for messages, as `imports.if` spells them: each a
+/// device tree chain, its steps separated by commas, or a component name,
+/// separated by `or`.
+struct Provided(&'static [Provider]);
 
 impl core::fmt::Display for Provided {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            Provider::Device(links) => {
-                formatter.write_str("device ")?;
-                for (index, link) in links.iter().enumerate() {
-                    if index > 0 {
-                        formatter.write_str(", ")?;
-                    }
-                    match link {
-                        Link::Property(property) => formatter.write_str(property)?,
-                        Link::Compatible(compatible) => {
-                            write!(formatter, "compatible \"{compatible}\"")?;
+        for (place, provider) in self.0.iter().enumerate() {
+            if place > 0 {
+                formatter.write_str(" or ")?;
+            }
+            match provider {
+                Provider::Device(links) => {
+                    formatter.write_str("device ")?;
+                    for (index, link) in links.iter().enumerate() {
+                        if index > 0 {
+                            formatter.write_str(", ")?;
+                        }
+                        match link {
+                            Link::Property(property) => formatter.write_str(property)?,
+                            Link::Compatible(compatible) => {
+                                write!(formatter, "compatible \"{compatible}\"")?;
+                            }
                         }
                     }
                 }
-                Ok(())
+                Provider::Component(name) => write!(formatter, "component {name}")?,
             }
-            Provider::Component(name) => write!(formatter, "component {name}"),
         }
+        Ok(())
     }
 }
 
@@ -1607,29 +1613,37 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let exporter = match import.provider {
-                Provider::Device(links) => {
-                    let target = follow_links(tree, client_instance.node.as_ref(), links);
-                    Ok(prepared.iter().position(|candidate| {
-                        candidate.as_ref().is_some_and(|candidate| {
-                            target.as_ref().is_some_and(|target| {
-                                candidate
+            // The first provider that finds a loaded exporter names it; one
+            // that finds several stops the search.
+            let mut exporter = Ok(None);
+            for provider in import.providers {
+                exporter = match *provider {
+                    Provider::Device(links) => {
+                        let target = follow_links(tree, client_instance.node.as_ref(), links);
+                        Ok(prepared.iter().position(|candidate| {
+                            candidate.as_ref().is_some_and(|candidate| {
+                                target.as_ref().is_some_and(|target| {
+                                    candidate
+                                        .instance
+                                        .node
+                                        .as_ref()
+                                        .is_some_and(|node| same_node(node, target))
+                                }) && candidate
                                     .instance
-                                    .node
-                                    .as_ref()
-                                    .is_some_and(|node| same_node(node, target))
-                            }) && candidate
-                                .instance
-                                .driver
-                                .component
-                                .exports_interface(import.interface, import.type_code)
-                        })
-                    }))
+                                    .driver
+                                    .component
+                                    .exports_interface(import.interface, import.type_code)
+                            })
+                        }))
+                    }
+                    Provider::Component(name) => {
+                        component_exporter(prepared, name, import.interface, import.type_code)
+                    }
+                };
+                if !matches!(exporter, Ok(None)) {
+                    break;
                 }
-                Provider::Component(name) => {
-                    component_exporter(prepared, name, import.interface, import.type_code)
-                }
-            };
+            }
             let exporter = match exporter {
                 Ok(Some(exporter)) => exporter,
                 Ok(None) => {
@@ -1641,7 +1655,7 @@ pub fn load_drivers(
                         "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
                         client_image.name,
                         import.interface,
-                        Provided(import.provider)
+                        Provided(import.providers)
                     );
                     continue;
                 }
@@ -1652,7 +1666,7 @@ pub fn load_drivers(
                         "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
                         client_image.name,
                         import.interface,
-                        Provided(import.provider)
+                        Provided(import.providers)
                     );
                     continue;
                 }

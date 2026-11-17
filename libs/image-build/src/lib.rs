@@ -1045,30 +1045,36 @@ fn interface_contexts(
             .unwrap_or_else(|failure| meddle_failure(&failure));
         for summary in summaries {
             // A device provider is a chain of links; a component provider has a name.
-            let (component, links) = match &summary.provider {
-                libmeddle::ProviderSummary::Device(links) => (
-                    None,
-                    links
-                        .iter()
-                        .map(|link| match link {
-                            libmeddle::LinkSummary::Property(name) => {
-                                context! { property => true, name }
-                            }
-                            libmeddle::LinkSummary::Compatible(name) => {
-                                context! { property => false, name }
-                            }
-                        })
-                        .collect(),
-                ),
-                libmeddle::ProviderSummary::Component(name) => (Some(name.clone()), Vec::new()),
-            };
+            let providers: Vec<_> = summary
+                .providers
+                .iter()
+                .map(|provider| match provider {
+                    libmeddle::ProviderSummary::Device(links) => context! {
+                        component => None::<String>,
+                        links => links
+                            .iter()
+                            .map(|link| match link {
+                                libmeddle::LinkSummary::Property(name) => {
+                                    context! { property => true, name }
+                                }
+                                libmeddle::LinkSummary::Compatible(name) => {
+                                    context! { property => false, name }
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    },
+                    libmeddle::ProviderSummary::Component(name) => context! {
+                        component => Some(name.clone()),
+                        links => Vec::<Value>::new(),
+                    },
+                })
+                .collect();
             for index in summary.functions {
                 imports.push(context! {
                     interface => &summary.interface.name,
                     type_code => summary.interface.type_code,
                     function => index,
-                    component => &component,
-                    links => &links,
+                    providers => &providers,
                     data_bytes => summary.interface.data_bytes,
                     placement_slots => summary.interface.placement_slots,
                     channel_pages => summary.interface.channel_pages,

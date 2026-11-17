@@ -1427,9 +1427,14 @@ mod component {
         trace!(trace, "usb-core: starting");
         let bindings = Bindings::from_imports(init.imports());
         let client = Client::new(bindings);
-        let area = client
-            .data_area()
-            .expect("usb-core shares a data area with the controller");
+        // An image for several boards carries the core where no controller
+        // it links to was loaded.
+        let Some(area) = client.data_area() else {
+            trace!(trace, "usb-core: no host controller linked");
+            loop {
+                sleep_ms(init, 1000);
+            }
+        };
         // The first free slot holds the EventCount that counts the turns of
         // the exports; the pipes' slots follow it.
         let table = KeyTableKey::from_key(RawKey::from_wire(init.table));

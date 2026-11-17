@@ -212,7 +212,14 @@ impl Analysis {
                 ),
                 class: NameClass::Interface,
             });
-            if let Provider::Component(name) = &declaration.provider {
+            for name in declaration
+                .providers
+                .iter()
+                .filter_map(|provider| match provider {
+                    Provider::Component(name) => Some(name),
+                    Provider::Device(_) => None,
+                })
+            {
                 found.push(Occurrence {
                     span: name.span.clone(),
                     definition: None,

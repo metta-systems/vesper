@@ -1723,7 +1723,18 @@ mod component {
                         if hub_address == 0 { "root" } else { "hub" },
                         Hops(device.route)
                     );
-                    Err(Exception::NoDevice)
+                    Err(match error {
+                        PipeException::NoDevice => Exception::NoDevice,
+                        PipeException::TransferFailed { status } => {
+                            Exception::TransferFailed { status }
+                        }
+                        // The channel status of a stall: its STALL event.
+                        PipeException::Stalled => Exception::TransferFailed {
+                            status: ChannelInterrupts::ZERO.with_stall(true).raw_value(),
+                        },
+                        PipeException::Busy => Exception::Busy,
+                        _ => Exception::NotPermitted,
+                    })
                 }
             }
         }

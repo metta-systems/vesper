@@ -318,14 +318,23 @@ where
         .ignore_then(name)
         .map(Provider::Component);
 
+    // `or` is contextual too: it separates the providers a use tries in turn.
+    let or = select! { Token::Identifier("or") => () };
     let uses = just(Token::Uses)
         .ignore_then(name)
         .then_ignore(just(Token::Via))
-        .then(device.or(component).labelled("`device` or `component`"))
+        .then(
+            device
+                .or(component)
+                .labelled("`device` or `component`")
+                .separated_by(or)
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
         .then(name_list.delimited_by(just(Token::LeftBrace), just(Token::RightBrace)))
-        .map(|((interface, provider), functions)| Uses {
+        .map(|((interface, providers), functions)| Uses {
             interface,
-            provider,
+            providers,
             functions,
         });
 
