@@ -23,7 +23,8 @@
 //!    driver's Notification.
 //! 3. Wait for `CNR` to clear, halt, reset, and set up the Device Context Base
 //!    Address Array (with the scratchpad buffers `HCSPARAMS2` asks for), the
-//!    command ring and one event ring on interrupter 0, then run.
+//!    command ring and one event ring on interrupter 0, with its interrupt
+//!    moderation set to 40 µs as Linux sets it, then run.
 //! 4. Send a No Op command and wait for its completion event, on the MSI.
 //! 5. Power the USB 2 root ports, wait for a device to connect, and reset
 //!    each connected one.
@@ -49,16 +50,35 @@
 //! failed transfer leaves the endpoint halted, and the driver resets it and
 //! moves its dequeue pointer past the transfer before it returns.
 //!
+//! An interrupt pipe is an IN endpoint added to its device's slot
+//! (Configure Endpoint, the interval rounded down to a power of two of
+//! 125 µs), with a transfer ring and a report buffer in a page of its own.
+//! While its client has an empty buffer posted on the report channel, one
+//! Normal TRB is out and the controller polls the endpoint itself; the
+//! completion's report goes into the client's buffer, tagged with the
+//! pipe's handle, and the next TRB goes out. A stall stops the polls until
+//! `clear_halt` resets the endpoint; any other failure resets it at once and
+//! polls on, the trace backing off. `close_pipe` drops the endpoint.
+//!
+//! After 2 s without an MSI while a TRB is out, a watchdog on the service
+//! Thread drains any events no MSI brought in, and traces that it found some.
+//! In a `debug_kernel` image the service Thread also traces, every 10 s, the
+//! MSIs and the events read since the last summary, the events counted by
+//! kind, slot, endpoint and completion code.
+//!
 //! A call runs on the caller's Thread, one at a time (a `Turnstile`), and
 //! reads the event ring itself for the completion it waits on: it checks
 //! every 100 µs for the first millisecond, then once a millisecond with the
-//! Thread parked. The component's own Thread drains the event ring on each
-//! MSI, under the same turnstile, and traces the port changes it reports.
+//! Thread parked. The interrupt pipes' events it reads meanwhile are set
+//! aside. The component's own Thread drains the event ring on each MSI,
+//! under the same turnstile, traces the port changes, hands on the reports
+//! and puts out the next polls; while a pipe waits for its client's buffer
+//! it looks at the channels every 2 ms, since a client posts a buffer
+//! without a signal.
 //!
-//! Implementation status: only endpoint 0 is served: `open_pipe` raises
-//! `not_permitted` for any other endpoint, and `configure` for an interrupt
-//! or bulk pipe (interrupt-IN is the next xHCI slice). `set_route` is
-//! accepted and ignored: the slot carries the translator. A failed
+//! Implementation status: bulk pipes and OUT endpoints are not served:
+//! `open_pipe` raises `not_permitted` for an OUT endpoint past 0. `set_route`
+//! is accepted and ignored: the slot carries the translator. A failed
 //! transfer's `transfer_failed` status is the xHCI completion code.
 //! `SuperSpeed` ports are not served.
 
@@ -76,11 +96,15 @@ macro_rules! note {
 mod component {
     use {
         aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Read},
-        core::cell::UnsafeCell,
+        core::{
+            cell::UnsafeCell,
+            sync::atomic::{AtomicU32, Ordering},
+        },
         libdevice_driver::{
             DEVICE_WINDOW_VA, DriverInit, INIT_VA, MAX_DEVICE_PAGES, Masters, NO_BUS_ADDRESS, Turn,
             Turnstile, device_page_va, driver_init,
         },
+        libio_channel::{Cursor, NoEvent, Packet},
         libobject::{
             AddressSpaceKey, CapError, EventCountKey, FrameAttribute, FrameKey, KeySlot,
             KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle, UntypedKey,
@@ -98,14 +122,16 @@ mod component {
         },
         usb_hcd_xhci::{
             context::{
-                ADD_ENDPOINT0, ADD_SLOT, Hub, Position, Slot3, endpoint0_context, slot_context,
+                ADD_ENDPOINT0, ADD_SLOT, Hub, Position, Slot3, context_flag, context_index,
+                endpoint0_context, interrupt_in_context, interval_exponent, slot_context,
             },
-            pipes::{Pipe, PipeError, PipeTable},
+            pipes::{Interrupt, MAX_PIPES, Pipe, PipeError, PipeTable, index_of},
             regs::{
                 Capabilities, Command, CommandRingControl, Configure, DequeueLow, INTERRUPTER_0,
                 Interrupter, InterrupterManagement, MmioCapabilities, MmioInterrupter,
-                MmioOperational, MmioPort, Operational, PAGE_SIZE_4K, Port, Ports, Status, neutral,
-                port_offset, port_speed, port_status_bits, protocol_ports, split_address,
+                MmioOperational, MmioPort, Moderation, Operational, PAGE_SIZE_4K, Port, Ports,
+                Status, neutral, port_offset, port_speed, port_status_bits, protocol_ports,
+                split_address,
             },
             ring::{Consumer, Placement, Producer},
             trb::{
@@ -114,6 +140,7 @@ mod component {
         },
         vesper_usb_protocol::{
             enumeration::{Speed as UsbSpeed, default_max_packet0},
+            report_channel::{ReportChannel, data_area as report_data_area},
             setup::SetupPacket,
         },
     };
@@ -135,14 +162,42 @@ mod component {
     /// The DMA pages, by index: the context page (the Device Context Base
     /// Address Array, the Event Ring Segment Table and the scratchpad buffer
     /// array), the command ring, the event ring, the control transfers' data
-    /// page, each device's pages, then the scratchpad buffers.
+    /// page, each device's pages, one page for each interrupt pipe, then the
+    /// scratchpad buffers.
     const CONTEXT_PAGE: usize = 0;
     const COMMAND_PAGE: usize = 1;
     const EVENT_PAGE: usize = 2;
     const DATA_PAGE: usize = 3;
     const FIRST_DEVICE_PAGE: usize = 4;
-    const FIRST_SCRATCHPAD_PAGE: usize = FIRST_DEVICE_PAGE + MAX_DEVICES * DEVICE_PAGES;
+    const FIRST_PIPE_PAGE: usize = FIRST_DEVICE_PAGE + MAX_DEVICES * DEVICE_PAGES;
+    const FIRST_SCRATCHPAD_PAGE: usize = FIRST_PIPE_PAGE + MAX_PIPES;
     const DMA_PAGES: usize = FIRST_SCRATCHPAD_PAGE + MAX_SCRATCHPADS;
+    /// An interrupt pipe's page: its transfer ring of `PIPE_RING_TRBS` TRBs
+    /// from the start, the buffer its reports land in from
+    /// `REPORT_OFFSET`, in cache lines of their own.
+    const PIPE_RING_TRBS: usize = 64;
+    const REPORT_OFFSET: u64 = 2048;
+    /// Bytes of a report at most: an interrupt endpoint's largest packet.
+    const REPORT_BYTES: usize = 1024;
+    const _: () = assert!(PIPE_RING_TRBS as u64 * TRB_BYTES <= REPORT_OFFSET);
+    const _: () = assert!(REPORT_OFFSET + REPORT_BYTES as u64 <= PAGE);
+    /// Events of interrupt pipes a call's wait set aside for the service
+    /// Thread, at most.
+    const DEFERRED_EVENTS: usize = 32;
+    /// Milliseconds between two looks at the report channels while an
+    /// interrupt pipe waits for its client's buffer.
+    const BUFFER_POLL_MS: u64 = 2;
+    /// The bit a call signals on the service Thread's Notification when it
+    /// leaves a pipe waiting for its client's buffer, so the Thread starts
+    /// looking at the channels; above any MSI's bits.
+    const WAKE_BIT: u64 = 1 << 63;
+    /// Milliseconds without an MSI, while an interrupt pipe has a TRB out,
+    /// before the service Thread's watchdog looks for events no MSI brought
+    /// in ([`Controller::watchdog`]).
+    const WATCHDOG_MS: u64 = 2000;
+    /// The least time between two interrupts, in `IMOD`'s 250 ns units:
+    /// 40 µs, Linux's default (`xhci-hcd`'s `imod_interval`).
+    const MODERATION_INTERVAL: u16 = 160;
     /// Offsets in the context page. The array has room for 255 slots and
     /// the scratchpad buffer array (entry 0's target) for every buffer.
     const SEGMENT_TABLE_OFFSET: u64 = 2048;
@@ -374,17 +429,30 @@ mod component {
         /// Write the page back so the controller reads what the CPU wrote,
         /// and no dirty line is left to land over what it writes.
         fn clean(&self) {
+            self.clean_range(0, PAGE);
+        }
+
+        /// Like [`clean`](Self::clean), for `length` bytes from `offset`.
+        fn clean_range(&self, offset: u64, length: u64) {
             self.frame
-                .clean_data(0, PAGE)
+                .clean_data(offset, offset + length)
                 .unwrap_or_else(|error| panic!("usb-hcd-xhci: clean failed: {:?}", error.code()));
         }
 
         /// Drop the page's cached lines so the CPU reads what the controller
         /// wrote.
         fn invalidate(&self) {
-            self.frame.invalidate_data(0, PAGE).unwrap_or_else(|error| {
-                panic!("usb-hcd-xhci: invalidate failed: {:?}", error.code())
-            });
+            self.invalidate_range(0, PAGE);
+        }
+
+        /// Like [`invalidate`](Self::invalidate), for `length` bytes from
+        /// `offset`.
+        fn invalidate_range(&self, offset: u64, length: u64) {
+            self.frame
+                .invalidate_data(offset, offset + length)
+                .unwrap_or_else(|error| {
+                    panic!("usb-hcd-xhci: invalidate failed: {:?}", error.code())
+                });
         }
     }
 
@@ -493,6 +561,14 @@ mod component {
         /// interrupt, before the events are read: an event that arrives
         /// meanwhile raises the MSI again.
         fn acknowledge(&mut self) {
+            // Read a register of the controller first. On the Raspberry Pi
+            // 4 the MSI is a write to the PCIe bridge's own MSI register and
+            // can be seen before the event TRBs the controller wrote ahead
+            // of it reach memory; the read's completion cannot pass those
+            // writes, so once it returns the events are in memory. Without
+            // it a drain could find nothing, and the events would wait for
+            // the next MSI.
+            let _status = self.operational.read_status();
             self.interrupter.write_management(
                 InterrupterManagement::ZERO
                     .with_enable(true)
@@ -512,14 +588,19 @@ mod component {
                 if !self.consumer.owns(&trb) {
                     break;
                 }
+                debug::event(&trb);
                 each(trb);
                 self.consumer.advance();
                 count += 1;
             }
+            // The low word first, then the high, as xHCI §5.1 orders a
+            // 64-bit register's writes. Given the high word first, the VL805
+            // keeps Event Handler Busy set and raises no interrupt for new
+            // events (`doc/usb.md`).
             let (low, high) = split_address(self.consumer.dequeue_pointer());
-            self.interrupter.write_dequeue_high(high);
             self.interrupter
                 .write_dequeue_low(DequeueLow::new_with_raw_value(low).with_handler_busy(true));
+            self.interrupter.write_dequeue_high(high);
             count
         }
     }
@@ -555,6 +636,9 @@ mod component {
         ring: Producer,
         /// What `mark_hub` recorded of a hub.
         hub: Option<Hub>,
+        /// The Device Context Index of the last endpoint context the slot
+        /// has (its Slot Context's Context Entries).
+        entries: u8,
     }
 
     /// How a control transfer ended, from its events.
@@ -601,6 +685,13 @@ mod component {
         devices: [Option<Device>; MAX_DEVICES],
         pages: [Option<DevicePages>; MAX_DEVICES],
         pipes: PipeTable,
+        /// Each interrupt pipe's page, by its table index, kept for the next
+        /// pipe there once it closes.
+        pipe_pages: [Option<DmaPage>; MAX_PIPES],
+        /// Transfer events of interrupt pipes a wait for something else
+        /// read, for [`service`](Self::service) to hand on.
+        deferred: [Trb; DEFERRED_EVENTS],
+        deferred_count: usize,
         /// The keys of `pipe_v1` each client gets for a pipe; `None` when
         /// the component has no clients (no stack pool for calls).
         masters: Option<Masters<{ pipe_v1::FUNCTION_COUNT }>>,
@@ -624,7 +715,9 @@ mod component {
 
         /// Read the event ring until `each` says the event it was given ends
         /// the wait (`Some(true)`), for at most `milliseconds`. Events `each`
-        /// does not claim (`None`) are traced. Whether the wait ended.
+        /// does not claim (`None`) are set aside when they are transfer
+        /// events (an interrupt pipe's report, for [`service`](Self::service))
+        /// and traced otherwise. Whether the wait ended.
         fn wait_events(
             &mut self,
             milliseconds: u64,
@@ -632,20 +725,221 @@ mod component {
         ) -> bool {
             let registers = &self.registers;
             let events = &mut self.events;
+            let deferred = &mut self.deferred;
+            let count = &mut self.deferred_count;
             let mut done = false;
             wait_until(milliseconds, || {
                 events.drain(|trb| match each(&trb) {
                     Some(ends) => done |= ends,
-                    None => trace_event(registers, trb),
+                    None => {
+                        if trb.kind() == kind::TRANSFER_EVENT {
+                            debug::wait_transfer();
+                        }
+                        set_aside(registers, deferred, count, trb);
+                    }
                 });
                 done
             })
         }
 
-        /// Trace the events nobody waits for.
-        fn drain_unclaimed(&mut self) {
+        /// Set aside the events nobody waits for, as [`wait_events`] does.
+        /// Returns how many there were.
+        fn drain_unclaimed(&mut self) -> usize {
             let registers = &self.registers;
-            self.events.drain(|trb| trace_event(registers, trb));
+            let deferred = &mut self.deferred;
+            let count = &mut self.deferred_count;
+            self.events
+                .drain(|trb| set_aside(registers, deferred, count, trb))
+        }
+
+        /// Whether an interrupt pipe has a TRB out.
+        fn polling(&self) -> bool {
+            self.pipes.open_pipes().any(|(_, pipe)| {
+                pipe.interrupt
+                    .is_some_and(|interrupt| interrupt.in_flight.is_some())
+            })
+        }
+
+        /// The watchdog, when no MSI came for `WATCHDOG_MS` while an
+        /// interrupt pipe has a TRB out: drain any events the controller
+        /// wrote without raising an MSI, as an MSI would, and trace that it
+        /// found some, with back-off. A device with nothing to report keeps
+        /// its TRB out for good, so this runs every `WATCHDOG_MS` while every
+        /// device is quiet.
+        fn watchdog(&mut self) {
+            debug::watchdog_run();
+            self.events.acknowledge();
+            let missed = self.drain_unclaimed();
+            if missed > 0 {
+                let (count, traced) = counted(&MISSED_INTERRUPTS);
+                if traced {
+                    note!(
+                        "xhci: watchdog: {missed} events in the ring without an MSI ({count} times so far)"
+                    );
+                }
+            }
+        }
+
+        /// The slot of the device at `address`.
+        fn slot_of(&self, address: u8) -> Option<u8> {
+            self.device_index(address)
+                .and_then(|index| self.devices[index].as_ref())
+                .map(|device| device.slot)
+        }
+
+        /// Hand on the interrupt pipes' reports the event ring brought, and
+        /// put a Normal TRB on every interrupt pipe whose client has an empty
+        /// buffer posted and that has none out. Whether a pipe is left
+        /// waiting for its client's buffer, so its channel is looked at again
+        /// soon.
+        fn service(&mut self) -> bool {
+            // In the order they came: a pipe's events name its TRBs in turn.
+            // Completing one may run a command, whose wait sets more aside.
+            while self.deferred_count > 0 {
+                let pending = self.deferred;
+                let count = core::mem::take(&mut self.deferred_count);
+                for &event in &pending[..count] {
+                    self.complete_interrupt(event);
+                }
+            }
+            let mut starved = false;
+            let pipes: [Option<(u32, Pipe)>; MAX_PIPES] = {
+                let mut open = self.pipes.open_pipes();
+                core::array::from_fn(|_| open.next())
+            };
+            for (handle, pipe) in pipes.into_iter().flatten() {
+                let Some(interrupt) = pipe.interrupt.filter(Interrupt::wants_buffer) else {
+                    continue;
+                };
+                if buffer_waiting(pipe.owner) {
+                    self.poll(handle, pipe, interrupt);
+                } else {
+                    starved = true;
+                }
+            }
+            starved
+        }
+
+        /// Put a Normal TRB for one report on the interrupt pipe `handle`
+        /// and ring its endpoint's doorbell: the controller polls the
+        /// endpoint until the device answers with data.
+        fn poll(&mut self, handle: u32, pipe: Pipe, mut interrupt: Interrupt) {
+            let Some(slot) = self.slot_of(pipe.device_address) else {
+                return;
+            };
+            let Some(page) = self.pipe_pages[index_of(handle)].as_ref() else {
+                return;
+            };
+            let (placed, link) = interrupt.ring.push(Trb::normal(
+                page.bus + REPORT_OFFSET,
+                u32::from(interrupt.max_packet),
+            ));
+            page.write_trb(placed.index, placed.trb);
+            if let Some(link) = link {
+                page.write_trb(link.index, link.trb);
+            }
+            page.clean_range(0, REPORT_OFFSET);
+            // A dirty line of the buffer must not land over the report.
+            page.clean_range(REPORT_OFFSET, REPORT_BYTES as u64);
+            interrupt.in_flight = Some(placed.bus);
+            if let Ok(open) = self.pipes.get_mut(handle) {
+                open.interrupt = Some(interrupt);
+            }
+            self.registers.ring_doorbell(slot, pipe.context_index);
+        }
+
+        /// Take the transfer event `event` for the interrupt pipe whose TRB
+        /// it names: give its client the report, or note the failure.
+        fn complete_interrupt(&mut self, event: Trb) {
+            let found = self.pipes.open_pipes().find(|(_, pipe)| {
+                pipe.interrupt
+                    .is_some_and(|interrupt| interrupt.in_flight == Some(event.parameter))
+            });
+            let Some((handle, pipe)) = found else {
+                note!(
+                    "xhci: transfer event for no pipe: slot {} endpoint {}, code {}",
+                    event.slot(),
+                    event.endpoint(),
+                    event.completion_code()
+                );
+                return;
+            };
+            let Some(mut interrupt) = pipe.interrupt else {
+                return;
+            };
+            let completion = event.completion_code();
+            interrupt.in_flight = None;
+            match completion {
+                SUCCESS | code::SHORT_PACKET => {
+                    let length = usize::from(interrupt.max_packet)
+                        .saturating_sub(usize::try_from(event.residual()).unwrap_or(0));
+                    if let Some(page) = self.pipe_pages[index_of(handle)].as_ref() {
+                        page.invalidate_range(REPORT_OFFSET, REPORT_BYTES as u64);
+                        let mut report = [0_u8; REPORT_BYTES];
+                        let report = &mut report[..length.min(REPORT_BYTES)];
+                        page.read_bytes(REPORT_OFFSET, report);
+                        deliver(pipe.owner, handle, report);
+                        debug::report(report);
+                    }
+                }
+                code::STALL => {
+                    interrupt.halted = true;
+                    note!(
+                        "xhci: pipe {handle}: endpoint {} of device {} stalled; polls stop until clear_halt",
+                        pipe.context_index,
+                        pipe.device_address
+                    );
+                }
+                failure => {
+                    let (count, traced) = counted(&POLL_FAILURES);
+                    if traced {
+                        note!(
+                            "xhci: pipe {handle}: poll of endpoint {} of device {} failed with code {failure} ({count} so far)",
+                            pipe.context_index,
+                            pipe.device_address
+                        );
+                    }
+                }
+            }
+            if let Ok(open) = self.pipes.get_mut(handle) {
+                open.interrupt = Some(interrupt);
+            }
+            // Any failure but a stall halted the endpoint too: get it going
+            // again, past the failed TRB, and poll on.
+            if !matches!(completion, SUCCESS | code::SHORT_PACKET | code::STALL) {
+                self.recover_endpoint(handle);
+            }
+        }
+
+        /// Reset the halted endpoint of the interrupt pipe `handle` and move
+        /// its dequeue pointer past every TRB placed (§4.6.8, §4.6.10).
+        fn recover_endpoint(&mut self, handle: u32) {
+            let Ok(pipe) = self.pipes.get_mut(handle).map(|pipe| *pipe) else {
+                return;
+            };
+            let (Some(interrupt), Some(slot)) = (
+                pipe.interrupt,
+                self.device_index(pipe.device_address)
+                    .and_then(|index| self.devices[index].as_ref())
+                    .map(|device| device.slot),
+            ) else {
+                return;
+            };
+            if let Err(failure) = self.command(Trb::reset_endpoint(slot, pipe.context_index)) {
+                note!("xhci: pipe {handle}: Reset Endpoint failed with code {failure}");
+            }
+            let (dequeue, cycle) = interrupt.ring.enqueue_pointer();
+            if let Err(failure) =
+                self.command(Trb::set_dequeue(dequeue, cycle, slot, pipe.context_index))
+            {
+                note!("xhci: pipe {handle}: Set TR Dequeue Pointer failed with code {failure}");
+            }
+            if let Ok(open) = self.pipes.get_mut(handle)
+                && let Some(open) = open.interrupt.as_mut()
+            {
+                open.in_flight = None;
+                open.halted = false;
+            }
         }
 
         /// Run command `trb` and wait for its completion: the event, or the
@@ -801,27 +1095,31 @@ mod component {
         }
 
         /// Fill the Input Context of the device at `index`: the Input Control
-        /// Context's add flags `add`, then the Slot Context and endpoint 0's
-        /// context where given. Returns its bus address.
+        /// Context's drop flags `drop` and add flags `add`, then the Slot
+        /// Context and one endpoint's context (by its Device Context Index)
+        /// where given. Returns its bus address.
         fn write_input(
             &self,
             index: usize,
+            drop: u32,
             add: u32,
             slot: Option<[u32; 4]>,
-            endpoint0: Option<[u32; 5]>,
+            endpoint: Option<(u8, [u32; 5])>,
         ) -> u64 {
             let input = &self.pages[index]
                 .as_ref()
                 .expect("the device's pages")
                 .input;
             input.zero();
-            // The add flags are word 1 of the Input Control Context.
+            // The drop and add flags are words 0 and 1 of the Input Control
+            // Context; context `n` follows at `n + 1` contexts in.
+            input.write(0, drop);
             input.write(4, add);
             if let Some(words) = slot {
                 input.write_words(self.context_bytes, &words);
             }
-            if let Some(words) = endpoint0 {
-                input.write_words(2 * self.context_bytes, &words);
+            if let Some((context, words)) = endpoint {
+                input.write_words((u64::from(context) + 1) * self.context_bytes, &words);
             }
             input.clean();
             input.bus
@@ -882,9 +1180,10 @@ mod component {
             let max_packet0 = default_max_packet0(speed);
             let input = self.write_input(
                 index,
+                0,
                 ADD_SLOT | ADD_ENDPOINT0,
-                Some(slot_context(position, speed, None)),
-                Some(endpoint0_context(max_packet0, ring.base())),
+                Some(slot_context(position, speed, None, 1)),
+                Some((ENDPOINT0, endpoint0_context(max_packet0, ring.base()))),
             );
             if let Err(failure) = self.command(Trb::address_device(input, slot)) {
                 note!(
@@ -918,6 +1217,7 @@ mod component {
                 max_packet0,
                 ring,
                 hub: None,
+                entries: 1,
             });
             Ok(address)
         }
@@ -945,14 +1245,15 @@ mod component {
         /// `xhci_update_hub_device`).
         fn mark_hub(&mut self, address: u8, hub: Hub) -> Result<(), Exception> {
             let index = self.device_index(address).ok_or(Exception::NotPermitted)?;
-            let (slot, position, speed) = {
+            let (slot, position, speed, entries) = {
                 let device = self.devices[index].as_ref().expect("the device");
-                (device.slot, device.position, device.speed)
+                (device.slot, device.position, device.speed, device.entries)
             };
             let input = self.write_input(
                 index,
+                0,
                 ADD_SLOT,
-                Some(slot_context(position, speed, Some(hub))),
+                Some(slot_context(position, speed, Some(hub), entries)),
                 None,
             );
             if let Err(failure) = self.command(Trb::configure_endpoint(input, slot)) {
@@ -986,9 +1287,10 @@ mod component {
             }
             let input = self.write_input(
                 index,
+                0,
                 ADD_ENDPOINT0,
                 None,
-                Some(endpoint0_context(max_packet, ring)),
+                Some((ENDPOINT0, endpoint0_context(max_packet, ring))),
             );
             if let Err(failure) = self.command(Trb::evaluate_context(input, slot)) {
                 note!(
@@ -1000,6 +1302,126 @@ mod component {
                 device.max_packet0 = max_packet;
             }
             Ok(())
+        }
+
+        /// Add the interrupt IN endpoint of pipe `handle` to its device's slot
+        /// (Configure Endpoint): `max_packet` bytes every `interval_ms`, on a
+        /// fresh transfer ring in the pipe's page. A pipe configured before
+        /// has its endpoint dropped and added again.
+        fn configure_interrupt(
+            &mut self,
+            handle: u32,
+            max_packet: u16,
+            interval_ms: u32,
+        ) -> Result<(), PipeException> {
+            let pipe = *self.pipes.get_mut(handle).map_err(pipe_error)?;
+            // Another configured pipe on the same endpoint would share its
+            // ring.
+            if self.pipes.open_pipes().any(|(other, open)| {
+                other != handle
+                    && open.device_address == pipe.device_address
+                    && open.context_index == pipe.context_index
+                    && open.interrupt.is_some()
+            }) {
+                return Err(PipeException::Busy);
+            }
+            let index = self
+                .device_index(pipe.device_address)
+                .ok_or(PipeException::InvalidPipe)?;
+            let (slot, position, speed, hub, entries) = {
+                let device = self.devices[index].as_ref().expect("the device");
+                (
+                    device.slot,
+                    device.position,
+                    device.speed,
+                    device.hub,
+                    device.entries.max(pipe.context_index),
+                )
+            };
+            let page_index = index_of(handle);
+            let page = self.pipe_pages[page_index]
+                .get_or_insert_with(|| DmaPage::new(init(), FIRST_PIPE_PAGE + page_index));
+            page.zero();
+            page.clean();
+            let ring = Producer::new(page.bus, PIPE_RING_TRBS);
+            let flag = context_flag(pipe.context_index);
+            let input = self.write_input(
+                index,
+                if pipe.interrupt.is_some() { flag } else { 0 },
+                ADD_SLOT | flag,
+                Some(slot_context(position, speed, hub, entries)),
+                Some((
+                    pipe.context_index,
+                    interrupt_in_context(
+                        max_packet,
+                        interval_exponent(speed, interval_ms),
+                        ring.base(),
+                    ),
+                )),
+            );
+            if let Err(failure) = self.command(Trb::configure_endpoint(input, slot)) {
+                note!(
+                    "xhci: pipe {handle}: Configure Endpoint for endpoint {} of device {} failed with code {failure}",
+                    pipe.context_index,
+                    pipe.device_address
+                );
+                return Err(match failure {
+                    code::BANDWIDTH_ERROR | code::RESOURCE_ERROR => PipeException::NoBandwidth,
+                    _ => PipeException::Busy,
+                });
+            }
+            if let Some(device) = self.devices[index].as_mut() {
+                device.entries = entries;
+            }
+            if let Ok(open) = self.pipes.get_mut(handle) {
+                open.interrupt = Some(Interrupt {
+                    ring,
+                    max_packet,
+                    in_flight: None,
+                    halted: false,
+                });
+            }
+            note!(
+                "xhci: pipe {handle}: polling endpoint {} of device {} ({speed:?} speed) every {interval_ms} ms, {max_packet} bytes",
+                pipe.context_index,
+                pipe.device_address
+            );
+            Ok(())
+        }
+
+        /// Drop the interrupt endpoint of pipe `handle` from its device's
+        /// slot (Configure Endpoint), which stops its polls; a device
+        /// already released dropped it with its slot.
+        fn drop_interrupt(&mut self, handle: u32) {
+            let Ok(pipe) = self.pipes.get_mut(handle).map(|pipe| *pipe) else {
+                return;
+            };
+            let Some(index) = pipe
+                .interrupt
+                .and_then(|_| self.device_index(pipe.device_address))
+            else {
+                return;
+            };
+            let (slot, position, speed, hub, entries) = {
+                let device = self.devices[index].as_ref().expect("the device");
+                (
+                    device.slot,
+                    device.position,
+                    device.speed,
+                    device.hub,
+                    device.entries,
+                )
+            };
+            let input = self.write_input(
+                index,
+                context_flag(pipe.context_index),
+                ADD_SLOT,
+                Some(slot_context(position, speed, hub, entries)),
+                None,
+            );
+            if let Err(failure) = self.command(Trb::configure_endpoint(input, slot)) {
+                note!("xhci: pipe {handle}: dropping its endpoint failed with code {failure}");
+            }
         }
 
         /// Run one control transfer on endpoint 0 of the device at `index`.
@@ -1060,8 +1482,13 @@ mod component {
 
             let mut outcome = None;
             let mut residual = 0;
+            // Only endpoint 0's events: an interrupt endpoint of the same
+            // device may complete meanwhile, and its report is set aside.
             self.wait_events(TRANSFER_MS, |event| {
-                if event.kind() != kind::TRANSFER_EVENT || event.slot() != slot {
+                if event.kind() != kind::TRANSFER_EVENT
+                    || event.slot() != slot
+                    || event.endpoint() != ENDPOINT0
+                {
                     return None;
                 }
                 let completion = event.completion_code();
@@ -1138,6 +1565,275 @@ mod component {
                 );
             }
         }
+    }
+
+    /// Polls of interrupt pipes that failed, for the trace's back-off.
+    static POLL_FAILURES: AtomicU32 = AtomicU32::new(0);
+    /// Watchdog runs that found events no MSI brought, for the trace's
+    /// back-off.
+    static MISSED_INTERRUPTS: AtomicU32 = AtomicU32::new(0);
+
+    /// Diagnostics of a `debug_kernel` image: what the event ring brought
+    /// and how, counted and traced every `SUMMARY_MS` while the service
+    /// Thread runs.
+    #[cfg(debug_kernel)]
+    mod debug {
+        use {
+            super::{EventRing, now_us},
+            core::{
+                fmt,
+                sync::atomic::{AtomicU32, AtomicU64, Ordering},
+            },
+            usb_hcd_xhci::trb::{Trb, kind},
+        };
+
+        /// Milliseconds between two summaries: under the console's 30 s.
+        const SUMMARY_MS: u64 = 10_000;
+        /// Kinds of event told apart; the rest are counted together.
+        const CLASSES: usize = 12;
+
+        static LAST_SUMMARY_US: AtomicU64 = AtomicU64::new(0);
+        static MSI_WAKES: AtomicU32 = AtomicU32::new(0);
+        static MSI_EVENTS: AtomicU32 = AtomicU32::new(0);
+        static WAIT_TRANSFERS: AtomicU32 = AtomicU32::new(0);
+        static WATCHDOG_RUNS: AtomicU32 = AtomicU32::new(0);
+        static REPORTS: AtomicU32 = AtomicU32::new(0);
+        static ZERO_REPORTS: AtomicU32 = AtomicU32::new(0);
+        /// Each class's key (`class_key`, 0 for a free entry) and count.
+        static CLASS_KEYS: [AtomicU32; CLASSES] = [const { AtomicU32::new(0) }; CLASSES];
+        static CLASS_COUNTS: [AtomicU32; CLASSES] = [const { AtomicU32::new(0) }; CLASSES];
+        static UNCLASSED: AtomicU32 = AtomicU32::new(0);
+
+        /// An event's class: its kind, completion code and, for a transfer
+        /// event, its slot and endpoint. Never zero: no event has kind 0.
+        fn class_key(trb: &Trb) -> u32 {
+            let (slot, endpoint) = if trb.kind() == kind::TRANSFER_EVENT {
+                (trb.slot(), trb.endpoint())
+            } else {
+                (0, 0)
+            };
+            u32::from_be_bytes([trb.kind(), slot, endpoint, trb.completion_code()])
+        }
+
+        /// Count `trb`, an event read from the ring, by its class.
+        pub(super) fn event(trb: &Trb) {
+            let key = class_key(trb);
+            for (stored, count) in CLASS_KEYS.iter().zip(&CLASS_COUNTS) {
+                let found = stored.load(Ordering::Relaxed);
+                if found == key
+                    || (found == 0
+                        && stored
+                            .compare_exchange(0, key, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok())
+                {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            }
+            UNCLASSED.fetch_add(1, Ordering::Relaxed);
+        }
+
+        /// An MSI woke the service Thread, and `drained` events were read on it.
+        pub(super) fn msi(drained: usize) {
+            MSI_WAKES.fetch_add(1, Ordering::Relaxed);
+            MSI_EVENTS.fetch_add(
+                u32::try_from(drained).unwrap_or(u32::MAX),
+                Ordering::Relaxed,
+            );
+        }
+
+        /// A command's wait read an interrupt pipe's transfer event.
+        pub(super) fn wait_transfer() {
+            WAIT_TRANSFERS.fetch_add(1, Ordering::Relaxed);
+        }
+
+        /// The watchdog ran.
+        pub(super) fn watchdog_run() {
+            WATCHDOG_RUNS.fetch_add(1, Ordering::Relaxed);
+        }
+
+        /// `report` went to its client.
+        pub(super) fn report(report: &[u8]) {
+            REPORTS.fetch_add(1, Ordering::Relaxed);
+            if report.iter().all(|&byte| byte == 0) {
+                ZERO_REPORTS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        /// One class of event, by its key: `transfer slot 4 endpoint 3
+        /// code 1`, `port change code 1`.
+        struct Class(u32);
+
+        impl fmt::Display for Class {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let [event_kind, slot, endpoint, code] = self.0.to_be_bytes();
+                match event_kind {
+                    kind::TRANSFER_EVENT => {
+                        write!(formatter, "transfer slot {slot} endpoint {endpoint}")?;
+                    }
+                    kind::COMMAND_COMPLETION => formatter.write_str("command")?,
+                    kind::PORT_STATUS_CHANGE => formatter.write_str("port change")?,
+                    kind::HOST_CONTROLLER => formatter.write_str("host controller")?,
+                    other => write!(formatter, "type {other}")?,
+                }
+                write!(formatter, " code {code}")
+            }
+        }
+
+        /// Trace what came since the last summary, every `SUMMARY_MS`: the
+        /// MSI wakes and the events read on them, the transfer events read
+        /// in command waits, the watchdog runs, the reports handed on (and
+        /// how many were all zeros), and the interrupter's `IMAN` and `ERDP`
+        /// (Event Handler Busy is bit 3); then one line per class of event
+        /// read, with its count.
+        pub(super) fn summary(events: &EventRing) {
+            let now = now_us();
+            let last = LAST_SUMMARY_US.load(Ordering::Relaxed);
+            if now.saturating_sub(last) < SUMMARY_MS * 1000 {
+                return;
+            }
+            LAST_SUMMARY_US.store(now, Ordering::Relaxed);
+            note!(
+                "xhci: debug: {} MSI wakes ({} events), {} transfer events in command waits, {} watchdog runs, {} reports ({} all zeros); IMAN {:#x}, ERDP low {:#x}",
+                MSI_WAKES.swap(0, Ordering::Relaxed),
+                MSI_EVENTS.swap(0, Ordering::Relaxed),
+                WAIT_TRANSFERS.swap(0, Ordering::Relaxed),
+                WATCHDOG_RUNS.swap(0, Ordering::Relaxed),
+                REPORTS.swap(0, Ordering::Relaxed),
+                ZERO_REPORTS.swap(0, Ordering::Relaxed),
+                events.interrupter.read_management().raw_value(),
+                events.interrupter.read_dequeue_low().raw_value()
+            );
+            for (stored, count) in CLASS_KEYS.iter().zip(&CLASS_COUNTS) {
+                let key = stored.swap(0, Ordering::Relaxed);
+                let count = count.swap(0, Ordering::Relaxed);
+                if key != 0 {
+                    note!("xhci: debug:   {}: {count}", Class(key));
+                }
+            }
+            let unclassed = UNCLASSED.swap(0, Ordering::Relaxed);
+            if unclassed != 0 {
+                note!("xhci: debug:   other events: {unclassed}");
+            }
+        }
+    }
+
+    /// The same hooks in every other image, doing nothing.
+    #[cfg(not(debug_kernel))]
+    mod debug {
+        use {super::EventRing, usb_hcd_xhci::trb::Trb};
+
+        pub(super) const fn event(_trb: &Trb) {}
+        pub(super) const fn msi(_drained: usize) {}
+        pub(super) const fn wait_transfer() {}
+        pub(super) const fn watchdog_run() {}
+        pub(super) const fn report(_report: &[u8]) {}
+        pub(super) const fn summary(_events: &EventRing) {}
+    }
+
+    /// Count one more event on `counter`: its count, and whether to trace it
+    /// (the 1st, 2nd, 4th, 8th...), so a failure that repeats cannot flood
+    /// the log.
+    fn counted(counter: &AtomicU32) -> (u32, bool) {
+        let count = counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        (count, count.is_power_of_two())
+    }
+
+    /// Keep a transfer event nobody waited for in `deferred` for
+    /// [`Controller::service`]; trace any other event, and a transfer event
+    /// that finds no room.
+    fn set_aside(
+        registers: &Registers,
+        deferred: &mut [Trb; DEFERRED_EVENTS],
+        count: &mut usize,
+        trb: Trb,
+    ) {
+        if trb.kind() == kind::TRANSFER_EVENT
+            && let Some(free) = deferred.get_mut(*count)
+        {
+            *free = trb;
+            *count += 1;
+        } else {
+            trace_event(registers, trb);
+        }
+    }
+
+    /// Wake the service Thread from a call that left a pipe waiting for its
+    /// client's buffer: the Thread may be waiting for an MSI only, and none
+    /// comes for a pipe with no TRB out.
+    fn wake_service() {
+        if let Err(error) =
+            NotificationKey::from_key(RawKey::from_wire(init().notification)).signal(WAKE_BIT)
+        {
+            note!("xhci: waking the service Thread failed: {:?}", error.code());
+        }
+    }
+
+    /// Whether the client at position `owner` has an empty buffer posted on
+    /// its report channel.
+    fn buffer_waiting(owner: usize) -> bool {
+        let Some(area) = init()
+            .areas()
+            .get(owner)
+            .filter(|area| area.channel_base != 0)
+        else {
+            return false;
+        };
+        // SAFETY: Kickstart mapped the channel's control page read/write at
+        // `channel_base` for the driver's lifetime.
+        let channel = unsafe { ReportChannel::at(area.channel_base) };
+        !channel.reports.submit.is_empty()
+    }
+
+    /// Give the client at position `owner` `report`, in the first empty
+    /// buffer it posted, tagged with the pipe `handle`. A report longer than
+    /// the buffer is cut.
+    fn deliver(owner: usize, handle: u32, report: &[u8]) {
+        let Some(area) = init()
+            .areas()
+            .get(owner)
+            .filter(|area| area.channel_base != 0)
+        else {
+            return;
+        };
+        // SAFETY: as in `buffer_waiting`.
+        let channel = unsafe { ReportChannel::at(area.channel_base) };
+        let data = report_data_area(area.channel_base);
+        let (mut buffers, mut reports) = channel.reports.server(
+            NoEvent,
+            EventCountKey::from_key(RawKey::from_wire(area.channel_event)),
+        );
+        let Ok(Some(mut packet)) = buffers.get() else {
+            return;
+        };
+        if data.holds(&packet) {
+            let mut cursor = Cursor::START;
+            for &byte in report {
+                let Some(address) = cursor.next_address(&packet) else {
+                    break;
+                };
+                // SAFETY: the data area holds the packet and is mapped
+                // read/write; the client gave the buffer to the driver until
+                // it comes back.
+                unsafe {
+                    core::ptr::with_exposed_provenance_mut::<u8>(
+                        usize::try_from(address).unwrap_or(usize::MAX),
+                    )
+                    .write_volatile(byte);
+                }
+            }
+            cursor.cut(&mut packet);
+        } else {
+            // A buffer outside the data area comes back empty.
+            Cursor::START.cut(&mut packet);
+        }
+        let Some(report) = Packet::new(u64::from(handle), packet.recs()) else {
+            return;
+        };
+        // A client with more buffers out than the FIFO holds loses the report.
+        let _lost = reports.put(&report);
+        // Only a client's EventCount can fail to advance.
+        let _signalled = reports.signal();
     }
 
     /// Copy `length` bytes of `area` from `from` to the start of `page`.
@@ -1275,10 +1971,10 @@ mod component {
             note!("xhci: the function has no BAR0");
             BringUp::Claim
         })?;
+        let vendor = u16::try_from(identity & 0xffff).unwrap_or(0);
+        let device = u16::try_from(identity >> 16 & 0xffff).unwrap_or(0);
         note!(
-            "xhci: claimed {:04x}:{:04x} class {class:#08x}, {installed} Frames, MSI bits {msi_bits:#x}",
-            identity & 0xffff,
-            identity >> 16 & 0xffff
+            "xhci: claimed {vendor:04x}:{device:04x} class {class:#08x}, {installed} Frames, MSI bits {msi_bits:#x}"
         );
         Ok(Claimed {
             msi_bits,
@@ -1455,12 +2151,21 @@ mod component {
         let consumer = Consumer::new(events.bus, RING_TRBS);
         interrupter.write_table_size(1);
         let (low, high) = split_address(consumer.dequeue_pointer());
-        interrupter.write_dequeue_high(high);
+        // Low word first, as in `EventRing::drain`.
         interrupter.write_dequeue_low(DequeueLow::new_with_raw_value(low));
+        interrupter.write_dequeue_high(high);
         // Writing the table's base starts the event ring, so it goes last.
         let (low, high) = split_address(context.bus + SEGMENT_TABLE_OFFSET);
         interrupter.write_table_base_low(low);
         interrupter.write_table_base_high(high);
+        // Whatever the firmware left there is replaced.
+        let found = interrupter.read_moderation();
+        interrupter.write_moderation(Moderation::ZERO.with_interval(MODERATION_INTERVAL));
+        note!(
+            "xhci: interrupt moderation every {} x 250 ns (IMOD was {:#x})",
+            MODERATION_INTERVAL,
+            found.raw_value()
+        );
         interrupter.write_management(
             InterrupterManagement::ZERO
                 .with_enable(true)
@@ -1501,6 +2206,9 @@ mod component {
             devices: [const { None }; MAX_DEVICES],
             pages: [const { None }; MAX_DEVICES],
             pipes: PipeTable::new(),
+            pipe_pages: [const { None }; MAX_PIPES],
+            deferred: [Trb::default(); DEFERRED_EVENTS],
+            deferred_count: 0,
             masters,
             _scratchpads: scratchpads,
         })
@@ -1742,11 +2450,14 @@ mod component {
             let (client, data) = caller(badge).ok_or(Exception::NotPermitted)?;
             let device_address =
                 u8::try_from(device_address).map_err(|_overflow| Exception::NotPermitted)?;
-            // shortcut: endpoint 0 only; interrupt-IN endpoints are the next
-            // xHCI slice.
-            if endpoint != 0 {
-                return Err(Exception::NotPermitted);
-            }
+            // `endpoint` is an endpoint address: the number in bits 0 to 3,
+            // bit 7 the direction. Endpoint 0 and IN endpoints are served;
+            // OUT endpoints carry bulk transfers, which are not.
+            let address = u8::try_from(endpoint)
+                .ok()
+                .filter(|&address| address & 0x70 == 0)
+                .filter(|&address| context_index(address) == ENDPOINT0 || address & 0x80 != 0)
+                .ok_or(Exception::NotPermitted)?;
             let mut turn = TURNSTILE.enter(init());
             let controller = controller(hcd(&mut turn))?;
             controller
@@ -1756,8 +2467,9 @@ mod component {
                 .pipes
                 .open(Pipe {
                     device_address,
-                    endpoint: 0,
+                    context_index: context_index(address),
                     max_packet: None,
+                    interrupt: None,
                     owner: client,
                 })
                 .map_err(|_full| Exception::Busy)?;
@@ -1804,27 +2516,45 @@ mod component {
             badge: u64,
             kind: TransferKind,
             max_packet: u16,
-            _interval_ms: u32,
+            interval_ms: u32,
         ) -> Result<(), PipeException> {
             let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
             let controller = pipe_controller(hcd(&mut turn))?;
             let pipe = *controller.pipes.get_mut(handle).map_err(pipe_error)?;
-            // shortcut: control pipes only until interrupt-IN (the next xHCI
-            // slice).
-            if kind != TransferKind::Control || !matches!(max_packet, 8 | 16 | 32 | 64) {
-                return Err(PipeException::NotPermitted);
+            match kind {
+                // Endpoint 0 carries control transfers.
+                TransferKind::Control
+                    if pipe.context_index == ENDPOINT0
+                        && matches!(max_packet, 8 | 16 | 32 | 64) =>
+                {
+                    let index = controller
+                        .device_index(pipe.device_address)
+                        .ok_or(PipeException::InvalidPipe)?;
+                    controller.set_max_packet0(index, max_packet)?;
+                    controller
+                        .pipes
+                        .get_mut(handle)
+                        .map_err(pipe_error)?
+                        .max_packet = Some(max_packet);
+                    Ok(())
+                }
+                // An IN endpoint past 0 is an interrupt endpoint.
+                TransferKind::Interrupt
+                    if pipe.context_index != ENDPOINT0
+                        && (1..=1024).contains(&max_packet)
+                        && (1..=255).contains(&interval_ms) =>
+                {
+                    controller.configure_interrupt(handle, max_packet, interval_ms)?;
+                    // Its client may have a buffer posted already.
+                    if controller.service() {
+                        wake_service();
+                    }
+                    Ok(())
+                }
+                // Bulk pipes are not served.
+                _ => Err(PipeException::NotPermitted),
             }
-            let index = controller
-                .device_index(pipe.device_address)
-                .ok_or(PipeException::InvalidPipe)?;
-            controller.set_max_packet0(index, max_packet)?;
-            controller
-                .pipes
-                .get_mut(handle)
-                .map_err(pipe_error)?
-                .max_packet = Some(max_packet);
-            Ok(())
         }
 
         fn set_route(badge: u64, _hub_address: u32, _hub_port: u32) -> Result<(), PipeException> {
@@ -1841,22 +2571,28 @@ mod component {
         fn close_pipe(badge: u64) -> Result<(), PipeException> {
             let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
-            pipe_controller(hcd(&mut turn))?
-                .pipes
-                .close(handle)
-                .map_err(pipe_error)
+            let controller = pipe_controller(hcd(&mut turn))?;
+            // An interrupt pipe's endpoint leaves the slot, which stops its
+            // polls.
+            controller.drop_interrupt(handle);
+            controller.pipes.close(handle).map_err(pipe_error)
         }
 
         fn clear_halt(badge: u64) -> Result<(), PipeException> {
             // A control pipe's endpoint is reset after the transfer that
-            // stalled it, and every transfer starts with a SETUP.
+            // stalled it, and every transfer starts with a SETUP. A stalled
+            // interrupt pipe's endpoint is reset now, and polled again.
             let handle = handle(badge)?;
             let mut turn = TURNSTILE.enter(init());
-            pipe_controller(hcd(&mut turn))?
-                .pipes
-                .get_mut(handle)
-                .map(|_| ())
-                .map_err(pipe_error)
+            let controller = pipe_controller(hcd(&mut turn))?;
+            let pipe = *controller.pipes.get_mut(handle).map_err(pipe_error)?;
+            if pipe.interrupt.is_some_and(|interrupt| interrupt.halted) {
+                controller.recover_endpoint(handle);
+                if controller.service() {
+                    wake_service();
+                }
+            }
+            Ok(())
         }
 
         fn control(badge: u64, stage: IoRec) -> Result<u32, PipeException> {
@@ -1942,18 +2678,41 @@ mod component {
 
         // The service Thread: this one. Each MSI is acknowledged, then the
         // event ring drained under the turnstile, so it never takes the
-        // completion a call waits for; without a controller it only waits.
+        // completion a call waits for; the interrupt pipes' reports go to
+        // their clients and the next polls go out. While a pipe waits for
+        // its client's buffer, the channels are looked at every
+        // `BUFFER_POLL_MS` (a client posts without a signal); a call that
+        // leaves a pipe so signals `WAKE_BIT` to start that. While a pipe has
+        // a TRB out, `WATCHDOG_MS` without an MSI runs the watchdog. Without
+        // a controller it only waits.
+        let mut starved = false;
+        let mut polling = false;
         loop {
-            notification
-                .await_bits(NotificationKey::WAIT_INFINITE)
-                .unwrap_or_else(|error| {
-                    panic!("usb-hcd-xhci: event wait failed: {:?}", error.code())
-                });
+            let timeout = if starved {
+                BUFFER_POLL_MS * 1_000_000
+            } else if polling {
+                WATCHDOG_MS * 1_000_000
+            } else {
+                NotificationKey::WAIT_INFINITE
+            };
+            let interrupted = match notification.await_bits(timeout) {
+                Ok(bits) => bits & !WAKE_BIT != 0,
+                Err(CapError::TimedOut { .. }) => false,
+                Err(error) => panic!("usb-hcd-xhci: event wait failed: {:?}", error.code()),
+            };
             if serviced {
                 let mut turn = TURNSTILE.enter(init);
                 if let Some(controller) = hcd(&mut turn).controller.as_mut() {
-                    controller.events.acknowledge();
-                    controller.drain_unclaimed();
+                    if interrupted {
+                        controller.events.acknowledge();
+                        let drained = controller.drain_unclaimed();
+                        debug::msi(drained);
+                    } else if !starved && polling {
+                        controller.watchdog();
+                    }
+                    starved = controller.service();
+                    polling = controller.polling();
+                    debug::summary(&controller.events);
                 }
             }
         }

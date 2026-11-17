@@ -17,6 +17,8 @@ pub struct Trb {
 
 /// TRB type codes (§6.4.6, Table 6-91).
 pub mod kind {
+    /// Normal: one buffer of a bulk or interrupt transfer (§6.4.1.1).
+    pub const NORMAL: u8 = 1;
     /// Setup Stage of a control transfer (§6.4.1.2.1).
     pub const SETUP_STAGE: u8 = 2;
     /// Data Stage of a control transfer (§6.4.1.2.2).
@@ -73,6 +75,10 @@ pub mod code {
     pub const SHORT_PACKET: u8 = 13;
     /// A context parameter is not valid.
     pub const PARAMETER_ERROR: u8 = 17;
+    /// The controller has no internal resources left for the endpoint.
+    pub const RESOURCE_ERROR: u8 = 7;
+    /// The periodic schedule has no room for the endpoint's bandwidth.
+    pub const BANDWIDTH_ERROR: u8 = 8;
     /// The command does not fit the slot's or endpoint's state.
     pub const CONTEXT_STATE_ERROR: u8 = 19;
 }
@@ -240,6 +246,19 @@ impl Trb {
             control: (kind::DATA_STAGE as u32) << KIND_SHIFT
                 | INTERRUPT_ON_SHORT
                 | if input { DIRECTION_IN } else { 0 },
+        }
+    }
+
+    /// A Normal TRB for `length` bytes at bus address `buffer` (§6.4.1.1): its
+    /// completion, or a short packet, raises an event.
+    #[must_use]
+    pub const fn normal(buffer: u64, length: u32) -> Self {
+        Self {
+            parameter: buffer,
+            status: length & TRANSFER_LENGTH_MASK,
+            control: (kind::NORMAL as u32) << KIND_SHIFT
+                | INTERRUPT_ON_SHORT
+                | INTERRUPT_ON_COMPLETION,
         }
     }
 

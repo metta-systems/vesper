@@ -9,3 +9,7 @@ uses input_v1 via component usb_hid { descriptor, snapshot, trace }
 # The USB core's trace, which the program prints for it like the HID component's:
 # neither has a serial channel of its own here.
 uses usb_v1 via component usb_core { trace }
+# In an image with the log server (board-test), the program's lines go to it on
+# the interface's io-channel; elsewhere the import stays unlinked and they go
+# on the serial channel.
+uses log_v1 via component log_server { flush }

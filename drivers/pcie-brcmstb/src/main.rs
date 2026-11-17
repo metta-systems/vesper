@@ -755,6 +755,7 @@ mod component {
         if let Some(line) = msi_line {
             ack(line.handler);
         }
+        let mut interrupts: u64 = 0;
         loop {
             let bits = notification(init)
                 .await_bits(NotificationKey::WAIT_INFINITE)
@@ -765,6 +766,15 @@ mod component {
             let mut turn = TURNSTILE.enter(init);
             let state = state(&mut turn);
             let pending = state.bridge.as_mut().map_or(0, Bridge::take_own_msis);
+            // Board bring-up diagnostic: the line's interrupts and what they
+            // carried, traced with back-off (the 1st, 2nd, 4th...).
+            interrupts += 1;
+            if interrupts.is_power_of_two() {
+                log_println!(
+                    "pcie: MSI line interrupt {interrupts}: vectors pending {pending:#x}, routed {:#x}",
+                    state.msi_vectors
+                );
+            }
             for (vector, child) in init.pci.children().iter().enumerate() {
                 if pending & state.msi_vectors & 1 << vector != 0 {
                     NotificationKey::from_key(RawKey::from_wire(child.msi_key))

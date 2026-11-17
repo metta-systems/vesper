@@ -22,7 +22,7 @@ pub struct Placement {
 /// (§4.9.2): `len` TRBs, the last of them a Link TRB back to the first that
 /// toggles the cycle state. The producer cycle state starts at 1, which is
 /// what `CRCR.RCS` is set to.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Producer {
     base: u64,
     len: usize,

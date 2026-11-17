@@ -73,6 +73,19 @@ pub struct Slot3 {
     state: u5,
 }
 
+/// Endpoint Context word 0 (§6.2.3).
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct Endpoint0 {
+    /// Endpoint State, as the controller keeps it in the Output Device
+    /// Context: 0 disabled, 1 running, 2 halted, 3 stopped, 4 error.
+    #[bits(0..=2, rw)]
+    state: u3,
+    /// Interval: the endpoint is serviced every `2^Interval` × 125 µs.
+    #[bits(16..=23, rw)]
+    interval: u8,
+}
+
 /// Endpoint Context word 1 (§6.2.3).
 #[bitfield(u32, default = 0, debug)]
 #[derive(PartialEq, Eq)]
@@ -80,7 +93,7 @@ pub struct Endpoint1 {
     /// Error Count: transaction errors retried before the endpoint halts.
     #[bits(1..=2, rw)]
     error_count: u2,
-    /// Endpoint Type: 4 is a control endpoint.
+    /// Endpoint Type: 4 a control endpoint, 7 interrupt IN.
     #[bits(3..=5, rw)]
     kind: u3,
     /// Max Packet Size.
@@ -88,8 +101,23 @@ pub struct Endpoint1 {
     max_packet: u16,
 }
 
+/// Endpoint Context word 4 (§6.2.3).
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct Endpoint4 {
+    /// Average TRB Length (§4.14.1.1).
+    #[bits(0..=15, rw)]
+    average_trb: u16,
+    /// Max Endpoint Service Time Interval Payload, low 16 bits: the bytes the
+    /// endpoint moves per interval (§4.14.2).
+    #[bits(16..=31, rw)]
+    max_esit_payload: u16,
+}
+
 /// The Endpoint Type of a bidirectional control endpoint.
 const CONTROL_ENDPOINT: u8 = 4;
+/// The Endpoint Type of an interrupt IN endpoint.
+const INTERRUPT_IN_ENDPOINT: u8 = 7;
 /// Retries of a failed transaction before the endpoint halts: the most
 /// allowed, as Linux sets it.
 const ERROR_RETRIES: u8 = 3;
@@ -104,6 +132,57 @@ const MAX_TIERS: u8 = 5;
 /// 0's context.
 pub const ADD_SLOT: u32 = 1 << 0;
 pub const ADD_ENDPOINT0: u32 = 1 << 1;
+
+/// The Device Context Index of the endpoint at endpoint address `address`
+/// (§4.5.1): `2n` for OUT endpoint `n`, `2n + 1` for IN, 1 for endpoint 0.
+#[must_use]
+pub const fn context_index(address: u8) -> u8 {
+    let number = address & 0x0f;
+    if number == 0 {
+        1
+    } else {
+        number * 2 + (address >> 7)
+    }
+}
+
+/// The Input Control Context add or drop flag of the context at Device
+/// Context Index `index`.
+#[must_use]
+pub const fn context_flag(index: u8) -> u32 {
+    1 << index
+}
+
+/// The Interval of an interrupt endpoint polled every `interval_ms`
+/// milliseconds (§6.2.3.6): the largest power of two of 125 µs units that is
+/// not longer, 3 to 10 for a low- or full-speed endpoint (1 to 128 frames),
+/// 0 to 15 for a high-speed one.
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the exponent of a u32 is below 32"
+)]
+pub const fn interval_exponent(speed: Speed, interval_ms: u32) -> u8 {
+    let microframes = if interval_ms == 0 { 1 } else { interval_ms * 8 };
+    let exponent = (31 - microframes.leading_zeros()) as u8;
+    match speed {
+        Speed::Low | Speed::Full => {
+            if exponent < 3 {
+                3
+            } else if exponent > 10 {
+                10
+            } else {
+                exponent
+            }
+        }
+        Speed::High => {
+            if exponent > 15 {
+                15
+            } else {
+                exponent
+            }
+        }
+    }
+}
 
 /// A hub port whose transaction translator serves a low- or full-speed device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,14 +267,14 @@ pub struct Hub {
 }
 
 /// The first four words of the Slot Context of a `speed` device at
-/// `position`, with endpoint 0 its one valid endpoint, and `hub` when it is
-/// one.
+/// `position`, whose last valid endpoint context is the one at Device
+/// Context Index `entries` (1: endpoint 0 only), and `hub` when it is one.
 #[must_use]
-pub fn slot_context(position: Position, speed: Speed, hub: Option<Hub>) -> [u32; 4] {
+pub fn slot_context(position: Position, speed: Speed, hub: Option<Hub>, entries: u8) -> [u32; 4] {
     let word0 = Slot0::ZERO
         .with_route(u20::new(position.route & 0xf_ffff))
         .with_speed(u4::new(speed_id(speed)))
-        .with_context_entries(u5::new(1))
+        .with_context_entries(u5::new(entries.clamp(1, 31)))
         .with_hub(hub.is_some())
         .with_multi_tt(hub.is_some_and(|hub| hub.multi_tt));
     let word1 = Slot1::ZERO
@@ -233,5 +312,33 @@ pub fn endpoint0_context(max_packet: u16, ring: u64) -> [u32; 5] {
         dequeue as u32,
         (dequeue >> 32) as u32,
         CONTROL_AVERAGE_TRB,
+    ]
+}
+
+/// The first five words of an interrupt IN endpoint's Endpoint Context:
+/// `max_packet` bytes (also its payload per interval and its average TRB, one
+/// report each) every `2^interval` × 125 µs, its transfer ring at bus address
+/// `ring` with cycle state 1.
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the dequeue pointer's low word is the truncation"
+)]
+pub fn interrupt_in_context(max_packet: u16, interval: u8, ring: u64) -> [u32; 5] {
+    let word0 = Endpoint0::ZERO.with_interval(interval);
+    let word1 = Endpoint1::ZERO
+        .with_error_count(u2::new(ERROR_RETRIES))
+        .with_kind(u3::new(INTERRUPT_IN_ENDPOINT))
+        .with_max_packet(max_packet);
+    let word4 = Endpoint4::ZERO
+        .with_average_trb(max_packet)
+        .with_max_esit_payload(max_packet);
+    let dequeue = ring | DEQUEUE_CYCLE_STATE;
+    [
+        word0.raw_value(),
+        word1.raw_value(),
+        dequeue as u32,
+        (dequeue >> 32) as u32,
+        word4.raw_value(),
     ]
 }
