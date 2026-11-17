@@ -57,6 +57,18 @@ nodes = [
 # past 256 KiB, and memory comes in powers of two.
 memory = 524288
 
+# The USB core, on the Raspberry Pi 4's xHCI driver (its import's `or
+# component xhci`): it resets the root port, has the controller address the
+# VIA hub there and enumerates it and the devices on its ports, logging each
+# control transfer. Its hub ports are polled until the controller serves
+# interrupt pipes. Elsewhere it links no controller and says so.
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../../drivers/usb/interfaces"
+active = true
+program = true
+
 # log-test's probe, loaded on the boards only and only with
 # `--cfg test_boot_panic` (under QEMU its panic would end the run): its first
 # Thread panics on purpose and its second overflows its
