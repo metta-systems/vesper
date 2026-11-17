@@ -738,8 +738,7 @@ mod tests {
         // tree the Pi 4 firmware ships names SPI 147 for `pcie`.
         for (tree, pcie_line) in [(RPI4, 148), (RPI4_FIRMWARE, 147)] {
             with_index(tree, |index| {
-                let (bridge, _) =
-                    find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
+                let (bridge, _) = find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
                 let msi = interrupt_named(index, &bridge, "msi").expect("msi line");
                 assert_eq!(msi.cells(), &[0, 148, 4]);
                 let pcie = interrupt_named(index, &bridge, "pcie").expect("pcie line");

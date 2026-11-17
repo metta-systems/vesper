@@ -41,13 +41,16 @@ use {
     },
     libqemu::semihosting as semi,
     libstacktrace::{Backtrace, current_frame_pointer, read_own},
-    nucleus::{board_console, user_memory},
-    nucleus::objects::{
-        ArchObjects, ArchObjectsImpl, Nucleus,
-        access::{Access, ObjectId},
-        completion::PendingKind,
-        fault::FaultDelivery,
-        resume::{PreparedResume, Switch},
+    nucleus::{
+        board_console,
+        objects::{
+            ArchObjects, ArchObjectsImpl, Nucleus,
+            access::{Access, ObjectId},
+            completion::PendingKind,
+            fault::FaultDelivery,
+            resume::{PreparedResume, Switch},
+        },
+        user_memory,
     },
 };
 

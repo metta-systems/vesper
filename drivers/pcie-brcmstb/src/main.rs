@@ -31,8 +31,8 @@ mod component {
     use {
         core::cell::UnsafeCell,
         libdevice_driver::{
-            DriverInit, INIT_VA, Interrupt, MAX_PCI_CHILDREN, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN,
-            NONE_INDEX, PCI_SPACE_IO, PciWindow, Turn, Turnstile, device_address,
+            DriverInit, INIT_VA, Interrupt, MAX_PCI_CHILDREN, MAX_WINDOW_BLOCKS, MSI_CONTROLLER,
+            MSI_OWN, NONE_INDEX, PCI_SPACE_IO, PciWindow, Turn, Turnstile, device_address,
             driver_compatible, driver_init, map_device_pages, skip_chunks,
         },
         liblog_client::log_println,

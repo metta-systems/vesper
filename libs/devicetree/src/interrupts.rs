@@ -9,8 +9,8 @@
 
 use {
     crate::{
-        DevTreeIndex, FallibleIterator, Node, PropReader, find_compatible, interrupt_cells, interrupt_parent,
-        node_by_phandle, phandle, property,
+        DevTreeIndex, FallibleIterator, Node, PropReader, find_compatible, interrupt_cells,
+        interrupt_parent, node_by_phandle, phandle, property,
     },
     core::iter,
 };

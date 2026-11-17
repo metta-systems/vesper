@@ -9,8 +9,8 @@ use {
         key_table::KeyTableBinding,
     },
     libaddress::PhysAddr,
-    libobject::{ArchType, CapError, FrameAttribute, ObjectType},
     libcpu::cache,
+    libobject::{ArchType, CapError, FrameAttribute, ObjectType},
 };
 
 // ═══════════════════════════════════════════════════════════════════

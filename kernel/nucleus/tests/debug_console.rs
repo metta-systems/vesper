@@ -50,7 +50,6 @@ mod invocation_call_tests;
 
 use {
     api::{KeyEntry, debug_console::invoke, key_entry::ThreadSelector},
-    user_memory::Reader,
     core::{
         mem::{MaybeUninit, align_of, size_of},
         num::NonZero,
@@ -71,6 +70,7 @@ use {
         object_pool::IdentityError,
         thread::ThreadId,
     },
+    user_memory::Reader,
 };
 
 // The debug console is a stateless singleton, not a pool object; its entry

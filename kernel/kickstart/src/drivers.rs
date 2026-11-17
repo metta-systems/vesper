@@ -102,12 +102,11 @@ use {
         fixed_clock_rate, has_path,
         interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts, interrupt_named},
         is_compatible, is_enabled, linked_phandle, node_by_phandle,
-        primecell_periphid,
         pci::{
             PciRange, PciSpace, brcm_msi_offset, host_bridge_of, msi_parent, msi_range,
             pci_dma_ranges, pci_function, pci_ranges, resets,
         },
-        phandle, reg, regions,
+        phandle, primecell_periphid, reg, regions,
     },
     libimage::{DriverImage, Extra, Link, Provider},
     libmeddle_runtime::ImportRecord,
@@ -847,7 +846,9 @@ fn record_pci_child(
             .is_some_and(|(bridge, own)| same_node(&bridge, own));
     let function = calling.instance.node.as_ref().and_then(pci_function);
     let (Some(function), true, true) = (function, is_child, badge != 0) else {
-        crate::early_println!("🥾 Driver {image}: {name} is no function behind its pci_v1 exporter");
+        crate::early_println!(
+            "🥾 Driver {image}: {name} is no function behind its pci_v1 exporter"
+        );
         return;
     };
     let Some(msi_bits) = 1_u64.checked_shl(u32::try_from(calling.interrupt_count).unwrap_or(64))

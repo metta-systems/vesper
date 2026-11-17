@@ -4,9 +4,7 @@
 mod tests {
     use {
         std::collections::HashMap,
-        vesper_stacktrace::{
-            Backtrace, ENABLED, MAX_FRAME_BYTES, MAX_FRAMES, frames, write_trace,
-        },
+        vesper_stacktrace::{Backtrace, ENABLED, MAX_FRAME_BYTES, MAX_FRAMES, frames, write_trace},
     };
 
     /// A modelled stack: frame records at their addresses.
@@ -48,11 +46,17 @@ mod tests {
     fn stops_at_a_record_that_does_not_move_up_the_stack() {
         // A loop back to itself, and one back down.
         let looping = Stack::new().record(0x1000, 0x1000, 0x40_0001);
-        assert_eq!(frames(0x1000, looping.read()).collect::<Vec<_>>(), [0x40_0001]);
+        assert_eq!(
+            frames(0x1000, looping.read()).collect::<Vec<_>>(),
+            [0x40_0001]
+        );
         let downward = Stack::new()
             .record(0x2000, 0x1000, 0x40_0002)
             .record(0x1000, 0, 0x40_0003);
-        assert_eq!(frames(0x2000, downward.read()).collect::<Vec<_>>(), [0x40_0002]);
+        assert_eq!(
+            frames(0x2000, downward.read()).collect::<Vec<_>>(),
+            [0x40_0002]
+        );
     }
 
     #[test]
@@ -61,7 +65,10 @@ mod tests {
         let stack = Stack::new()
             .record(0x1_0000, far, 0x40_0004)
             .record(far, 0, 0x40_0005);
-        assert_eq!(frames(0x1_0000, stack.read()).collect::<Vec<_>>(), [0x40_0004]);
+        assert_eq!(
+            frames(0x1_0000, stack.read()).collect::<Vec<_>>(),
+            [0x40_0004]
+        );
     }
 
     #[test]
@@ -75,14 +82,21 @@ mod tests {
     fn stops_where_a_word_cannot_be_read() {
         // The second record is not on the modelled stack.
         let stack = Stack::new().record(0x1000, 0x1100, 0x40_0007);
-        assert_eq!(frames(0x1000, stack.read()).collect::<Vec<_>>(), [0x40_0007]);
+        assert_eq!(
+            frames(0x1000, stack.read()).collect::<Vec<_>>(),
+            [0x40_0007]
+        );
     }
 
     #[test]
     fn lists_at_most_max_frames() {
         let mut stack = Stack::new();
         for index in 0..40_u64 {
-            stack = stack.record(0x1000 + index * 0x40, 0x1000 + (index + 1) * 0x40, 0x40_0000 + index);
+            stack = stack.record(
+                0x1000 + index * 0x40,
+                0x1000 + (index + 1) * 0x40,
+                0x40_0000 + index,
+            );
         }
         assert_eq!(frames(0x1000, stack.read()).count(), MAX_FRAMES);
     }
