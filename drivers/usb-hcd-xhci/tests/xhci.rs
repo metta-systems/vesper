@@ -10,8 +10,8 @@ mod tests {
     use {
         usb_hcd_xhci::{
             regs::{
-                PortStatus, Ports, Structural2, neutral, port_offset, port_speed, port_status_bits,
-                protocol_ports, split_address,
+                Moderation, PortStatus, Ports, Structural2, neutral, port_offset, port_speed,
+                port_status_bits, protocol_ports, split_address,
             },
             ring::{Consumer, Producer},
             trb::{SUCCESS, TRB_BYTES, Trb, kind, segment_table_entry},
@@ -107,6 +107,15 @@ mod tests {
             34
         );
         assert_eq!(Structural2::new_with_raw_value(0).scratchpad_buffers(), 0);
+    }
+
+    #[test]
+    fn the_moderation_interval_is_imods_low_half() {
+        // IMODI in 15:0, IMODC in 31:16 (§5.5.2.2); the reset value is
+        // 4000, 1 ms.
+        assert_eq!(Moderation::ZERO.with_interval(160).raw_value(), 160);
+        let found = Moderation::new_with_raw_value(0x0012_0fa0);
+        assert_eq!((found.interval(), found.counter()), (4000, 0x12));
     }
 
     #[test]
@@ -397,7 +406,7 @@ mod addressing_tests {
                 port: 3,
             }),
         };
-        let [word0, word1, word2, word3] = slot_context(keyboard, Speed::Full, None);
+        let [word0, word1, word2, word3] = slot_context(keyboard, Speed::Full, None, 1);
         assert_eq!(word0 & 0xf_ffff, 0x3, "route string");
         assert_eq!(word0 >> 20 & 0xf, u32::from(speed_id(Speed::Full)));
         assert_eq!(word0 >> 27, 1, "endpoint 0 is the last context");
@@ -422,7 +431,7 @@ mod addressing_tests {
             think_time: 16,
             multi_tt: true,
         };
-        let [word0, word1, word2, _] = slot_context(Position::root(1), Speed::High, Some(hub));
+        let [word0, word1, word2, _] = slot_context(Position::root(1), Speed::High, Some(hub), 1);
         assert_ne!(word0 & 1 << 26, 0, "a hub");
         assert_ne!(word0 & 1 << 25, 0, "multi-TT");
         assert_eq!(word1 >> 24, 4, "ports");
@@ -432,7 +441,7 @@ mod addressing_tests {
                 think_time: bits,
                 ..hub
             };
-            let [_, _, word2, _] = slot_context(Position::root(1), Speed::High, Some(hub));
+            let [_, _, word2, _] = slot_context(Position::root(1), Speed::High, Some(hub), 1);
             assert_eq!(word2 >> 16 & 3, encoded, "{bits} bit times");
         }
     }
@@ -471,11 +480,12 @@ mod addressing_tests {
 
     #[test]
     fn pipe_handles_are_never_zero_and_die_with_their_device() {
-        use usb_hcd_xhci::pipes::{MAX_PIPES, Pipe, PipeError, PipeTable};
+        use usb_hcd_xhci::pipes::{MAX_PIPES, Pipe, PipeError, PipeTable, index_of};
         let pipe = |device_address| Pipe {
             device_address,
-            endpoint: 0,
+            context_index: 1,
             max_packet: None,
+            interrupt: None,
             owner: 0,
         };
         let mut table = PipeTable::new();
@@ -492,10 +502,94 @@ mod addressing_tests {
         table.close_device(1);
         assert_eq!(table.get_mut(reused), Err(PipeError::Invalid));
         table.get_mut(second).unwrap();
+        // The open pipes are listed with their handles; each handle names
+        // its own table index.
+        let listed: Vec<u32> = table.open_pipes().map(|(handle, _)| handle).collect();
+        assert_eq!(listed, [second]);
+        assert!(index_of(second) < MAX_PIPES);
         for _ in 1..MAX_PIPES {
             table.open(pipe(3)).unwrap();
         }
         assert_eq!(table.open(pipe(3)), Err(PipeError::Full));
+        let mut indices: Vec<usize> = table
+            .open_pipes()
+            .map(|(handle, _)| index_of(handle))
+            .collect();
+        indices.sort_unstable();
+        assert_eq!(indices, (0..MAX_PIPES).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn an_interrupt_pipe_wants_a_buffer_only_when_idle_and_not_halted() {
+        use usb_hcd_xhci::{pipes::Interrupt, ring::Producer};
+        let idle = Interrupt {
+            ring: Producer::new(0x8000, 64),
+            max_packet: 8,
+            in_flight: None,
+            halted: false,
+        };
+        assert!(idle.wants_buffer());
+        assert!(
+            !Interrupt {
+                in_flight: Some(0x8000),
+                ..idle
+            }
+            .wants_buffer()
+        );
+        assert!(
+            !Interrupt {
+                halted: true,
+                ..idle
+            }
+            .wants_buffer()
+        );
+    }
+
+    #[test]
+    fn endpoints_map_to_their_device_context_indices() {
+        use usb_hcd_xhci::context::{context_flag, context_index};
+        assert_eq!(context_index(0x00), 1, "endpoint 0");
+        assert_eq!(context_index(0x80), 1, "endpoint 0 either way");
+        assert_eq!(context_index(0x81), 3, "IN 1");
+        assert_eq!(context_index(0x01), 2, "OUT 1");
+        assert_eq!(context_index(0x8f), 31, "IN 15");
+        assert_eq!(context_flag(3), 1 << 3);
+    }
+
+    #[test]
+    fn interrupt_intervals_round_down_to_powers_of_two_microframes() {
+        use usb_hcd_xhci::context::interval_exponent;
+        // 125 µs × 2^n: 1 ms is 2^3, 8 ms 2^6, 10 ms rounds down to 8 ms.
+        assert_eq!(interval_exponent(Speed::Full, 1), 3);
+        assert_eq!(interval_exponent(Speed::Low, 8), 6);
+        assert_eq!(interval_exponent(Speed::Low, 10), 6);
+        assert_eq!(interval_exponent(Speed::High, 1), 3);
+        // Full and low speed span 1 to 128 frames (3 to 10).
+        assert_eq!(interval_exponent(Speed::Full, 255), 10);
+        assert_eq!(interval_exponent(Speed::Full, 0), 3);
+        // High speed goes down to a microframe.
+        assert_eq!(interval_exponent(Speed::High, 0), 0);
+        assert_eq!(interval_exponent(Speed::High, 255), 10);
+    }
+
+    #[test]
+    fn an_interrupt_in_context_names_its_kind_interval_and_payload() {
+        use usb_hcd_xhci::context::interrupt_in_context;
+        let [word0, word1, low, high, word4] = interrupt_in_context(8, 6, 0x4_0000_2000);
+        assert_eq!(word0 >> 16 & 0xff, 6, "interval");
+        assert_eq!(word1 >> 3 & 7, 7, "interrupt IN");
+        assert_eq!(word1 >> 1 & 3, 3, "three retries");
+        assert_eq!(word1 >> 16, 8, "max packet");
+        assert_eq!((low, high), (0x2001, 4), "ring with cycle state 1");
+        assert_eq!(word4, 8 << 16 | 8, "payload and average TRB");
+        // Endpoint 3 (IN 1) as the last context.
+        let [word0, ..] = slot_context(Position::root(1), Speed::Low, None, 3);
+        assert_eq!(word0 >> 27, 3);
+        let normal = Trb::normal(0x2800, 8);
+        assert_eq!(normal.kind(), kind::NORMAL);
+        assert_eq!((normal.parameter, normal.status), (0x2800, 8));
+        assert_ne!(normal.control & 1 << 5, 0, "IOC");
+        assert_ne!(normal.control & 1 << 2, 0, "ISP");
     }
 
     #[test]

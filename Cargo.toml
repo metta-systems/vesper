@@ -379,7 +379,7 @@ debug = true
 opt-level = 's'
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)', 'cfg(board_rpi5)', 'cfg(stacktrace)', 'cfg(test_boot_panic)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(board_rpi3)', 'cfg(board_rpi4)', 'cfg(board_rpi5)', 'cfg(stacktrace)', 'cfg(test_boot_panic)', 'cfg(debug_kernel)'] }
 
 # Enable a batch of clippy lints
 # Reference: https://rust-lang.github.io/rust-clippy/master/index.html

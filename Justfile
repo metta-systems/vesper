@@ -156,11 +156,12 @@ _board-flags board=boards:
 
 # Cross-build crates (space-separated) for a board set with a linker script, features and extra
 # rustflags, into the target directory of the image configuration `board` + `image_features`
-# (the features of the image they are bundled into, which may differ from their own)
+# (the features of the image they are bundled into, which may differ from their own). Crates
+# of a `debug_kernel` image get `--cfg debug_kernel`, for their own debug-only diagnostics
 _cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
-    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
+    RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if image_features =~ 'debug_kernel' { ' --cfg debug_kernel' } else { '' } }}{{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
     cargo build {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
@@ -1148,7 +1149,7 @@ _profile-synth:
 
 # Cross-clippy the workspace for a board with a feature set
 _cross-clippy board=boards features='':
-    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if features =~ 'debug_kernel' { ' --cfg debug_kernel' } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \

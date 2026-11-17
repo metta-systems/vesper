@@ -9,7 +9,9 @@
 //! a `DeviceAdded` record sent before the program posted a buffer is lost, it
 //! also asks for the descriptor of device ids from 1 on, as `input_v1`
 //! prescribes, and traces each device it finds. When it has found a device and
-//! read its state it signals the report key `driver_protocol::REPORT_SLOT`.
+//! read its state it signals the report key `driver_protocol::REPORT_SLOT`,
+//! when a boot test installed one. In an image with the log server its lines
+//! go to the log instead of the serial channel.
 
 use {
     driver_protocol::report_key,
@@ -116,9 +118,11 @@ fn main(_init_va: u64) -> ! {
                     );
                     if !reported {
                         reported = true;
-                        NotificationKey::from_key(report_key(init.table))
-                            .signal(0)
-                            .unwrap_or_else(|error| panic!("report failed: {:?}", error.code()));
+                        // Only a boot test installs the report key; in a
+                        // board's image the signal finds none, and the test
+                        // that waits for it fails on its own.
+                        let _signalled =
+                            NotificationKey::from_key(report_key(init.table)).signal(0);
                     }
                 }
                 Err(Error::Exception(Exception::NoDevice)) => {}

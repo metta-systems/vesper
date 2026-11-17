@@ -355,6 +355,20 @@ pub struct InterrupterManagement {
     enable: bool,
 }
 
+/// `IMOD` (§5.5.2.2): the least time between two interrupts, and the
+/// countdown to the next.
+#[bitfield(u32, default = 0, debug)]
+#[derive(PartialEq, Eq)]
+pub struct Moderation {
+    /// Interrupt Moderation Interval, in 250 ns units; 0 turns moderation
+    /// off.
+    #[bits(0..=15, rw)]
+    interval: u16,
+    /// Interrupt Moderation Counter, which counts the interval down.
+    #[bits(16..=31, rw)]
+    counter: u16,
+}
+
 /// `ERDP`'s low word (§5.5.2.3.3): the event ring dequeue pointer (bits 31:4)
 /// and the Event Handler Busy bit.
 #[bitfield(u32, default = 0, debug)]
@@ -374,8 +388,7 @@ pub struct DequeueLow {
 #[repr(C)]
 pub struct Interrupter {
     management: InterrupterManagement,
-    /// `IMOD`: the interrupt moderation interval, in 250 ns units.
-    moderation: u32,
+    moderation: Moderation,
     /// `ERSTSZ`: Event Ring Segment Table entries.
     table_size: u32,
     _reserved: u32,

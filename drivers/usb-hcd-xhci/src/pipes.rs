@@ -10,19 +10,49 @@
 //! fails even when its slot is reused. Zero is never a handle. The component
 //! badges each pipe's Invocation keys with its handle.
 
+use crate::ring::Producer;
+
 /// Pipes the controller keeps open at once.
 pub const MAX_PIPES: usize = 16;
+
+/// What an interrupt IN pipe keeps once `configure` added its endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interrupt {
+    /// The endpoint's transfer ring.
+    pub ring: Producer,
+    /// Bytes of one report.
+    pub max_packet: u16,
+    /// The bus address of the Normal TRB the controller holds, while one is
+    /// out: the endpoint is polled until it completes.
+    pub in_flight: Option<u64>,
+    /// The endpoint stalled: no TRB goes out until `clear_halt`.
+    pub halted: bool,
+}
+
+impl Interrupt {
+    /// Whether a TRB should go out as soon as the client has a buffer
+    /// posted.
+    #[must_use]
+    pub const fn wants_buffer(&self) -> bool {
+        self.in_flight.is_none() && !self.halted
+    }
+}
 
 /// What a pipe names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pipe {
     pub device_address: u8,
-    /// The endpoint number, 0 to 15.
-    pub endpoint: u8,
-    /// The control packet size `configure` set; `None` before.
+    /// The endpoint's Device Context Index: 1 for endpoint 0, `2n + 1` for
+    /// IN endpoint `n`.
+    pub context_index: u8,
+    /// The control packet size `configure` set; `None` before, and for an
+    /// interrupt pipe.
     pub max_packet: Option<u16>,
+    /// An interrupt pipe's endpoint, once configured.
+    pub interrupt: Option<Interrupt>,
     /// The position, among the controller's clients, of the one that opened
-    /// the pipe: the data area its control stages lie in.
+    /// the pipe: the data area its control stages lie in, and the report
+    /// channel its reports go to.
     pub owner: usize,
 }
 
@@ -104,6 +134,13 @@ impl PipeTable {
         Ok(())
     }
 
+    /// The handles of the open pipes, with what they name.
+    pub fn open_pipes(&self) -> impl Iterator<Item = (u32, Pipe)> + '_ {
+        self.slots.iter().enumerate().filter_map(|(index, slot)| {
+            slot.pipe.map(|pipe| (handle(slot.generation, index), pipe))
+        })
+    }
+
     /// Close every pipe to the device at `device_address`.
     pub fn close_device(&mut self, device_address: u8) {
         for slot in &mut self.slots {
@@ -125,6 +162,13 @@ impl Default for PipeTable {
 
 fn handle(generation: u16, index: usize) -> u32 {
     u32::from(generation) << 16 | u32::try_from(index).unwrap_or(0)
+}
+
+/// The table index of the pipe `handle` names, below [`MAX_PIPES`] for a
+/// handle the table gave out: where the pipe's own pages go.
+#[must_use]
+pub const fn index_of(handle: u32) -> usize {
+    split(handle).0
 }
 
 /// The slot index and generation a handle packs.
