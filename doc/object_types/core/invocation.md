@@ -97,3 +97,5 @@ Each Thread holds a 16-entry stack of call records (source AddressSpace, return 
 ## Planned changes
 
 The two-word `PpcResult` return convention may still change.
+
+FP/SIMD state across a call, for AddressSpaces that allow FP. A target that allows FP is entered with `v0..v31`, FPCR and FPSR zero. On Return a caller that allows FP gets `v8..v15` (all 128 bits), FPCR and FPSR back as before the Call, and the other V registers zero. Each call record grows by 136 bytes for this.

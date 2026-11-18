@@ -151,6 +151,10 @@ Reference: [component interfaces and imports](capabilities-contract.md#component
 
 All Time and userspace-scheduling work, including the scheduler-shared records (D5), is tracked in [`scheduling-implementation-plan.md`](scheduling-implementation-plan.md). Reference: [Time contracts](capabilities-contract.md#time-and-userspace-scheduling). Prerequisites: D2/D4/D5/D8/D9 (open questions in [`capabilities-decisions.md`](capabilities-decisions.md)).
 
+## FP/SIMD per AddressSpace
+
+All FP/SIMD work, including the FP counters in the scheduler-shared records, is tracked in [`simd-implementation-plan.md`](simd-implementation-plan.md). Reference: [architectural state](capabilities-contract.md#architectural-state). The one open question is in [`simd-decisions.md`](simd-decisions.md).
+
 ## Final integration
 
 - [ ] Complete the init handoff: ELF-module AddressSpaces and Threads, their capacities and well-known grants with incarnation-bearing handoff records, Untyped delegation and accounting of boot/reserved memory, read-only module image capabilities, reclaimable boot memory and DTB-map removal ordering, dynamic stack placement, and EL0 entry through the context-switch path.
