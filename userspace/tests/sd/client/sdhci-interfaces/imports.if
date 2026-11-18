@@ -1,0 +1,7 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The sd-test program in sdhci-test: the chain starts from the node found by
+# its compatible string, the Arasan controller that holds QEMU's card.
+uses block_v1 via device compatible "brcm,bcm2835-sdhci" { blocks, submitted }

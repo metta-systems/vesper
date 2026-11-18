@@ -2,7 +2,7 @@
 
 #[allow(unused)]
 use libimage::{
-    ComponentImage, DriverImage, Export, Import, InterfaceExport, Link, LoadableSection,
+    ComponentImage, DriverImage, Export, Extra, Import, InterfaceExport, Link, LoadableSection,
     Permissions, Provider, ResourceMapping, SectionMeta, ThreadImage,
 };
 
@@ -46,7 +46,7 @@ pub static {{component.stem}}: ComponentImage = ComponentImage {
     ],
     imports: &[
 {% for import in component.imports %}
-        Import { interface: "{{import.interface}}", type_code: {{import.type_code | code}}, function: {{import.function}}, provider: {% if import.component %}Provider::Component("{{import.component}}"){% else %}Provider::Device(&[{% for link in import.links %}{% if link.property %}Link::Property("{{link.name}}"){% else %}Link::Compatible("{{link.name}}"){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}]){% endif %}, data_bytes: {{import.data_bytes}}, placement_slots: {{import.placement_slots}}, channel_pages: {{import.channel_pages}}, lends: {{import.lends | bool}}, export: "{{import.export}}" },
+        Import { interface: "{{import.interface}}", type_code: {{import.type_code | code}}, function: {{import.function}}, providers: &[{% for provider in import.providers %}{% if provider.component %}Provider::Component("{{provider.component}}"){% else %}Provider::Device(&[{% for link in provider.links %}{% if link.property %}Link::Property("{{link.name}}"){% else %}Link::Compatible("{{link.name}}"){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}]){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}], data_bytes: {{import.data_bytes}}, placement_slots: {{import.placement_slots}}, channel_pages: {{import.channel_pages}}, lends: {{import.lends | bool}}, export: "{{import.export}}" },
 {% endfor %}
     ],
     resources: &[
@@ -61,9 +61,10 @@ pub static {{component.stem}}: ComponentImage = ComponentImage {
 pub static {{component.stem}}_DRIVER: DriverImage = DriverImage {
     component: &{{component.stem}},
     compatible: &[{% for entry in component.driver.compatible %}"{{entry}}"{% if not loop.last %}, {% endif %}{% endfor %}],
+    nodes: &[{% for entry in component.driver.nodes %}"{{entry}}"{% if not loop.last %}, {% endif %}{% endfor %}],
     budget_ns: {{component.driver.budget_ns}},
     memory_bits: {{component.driver.memory_bits}},
-    video_memory: {{component.driver.video_memory | bool}},
+    extra: Extra::{{component.driver.extra}},
     serial: {{component.driver.serial | bool}},
     dispatcher: {{component.driver.dispatcher | bool}},
     priority: {{component.driver.priority}},

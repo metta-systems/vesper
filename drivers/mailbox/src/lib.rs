@@ -10,7 +10,8 @@
 //! after the check.
 //!
 //! Only tags known to be safe for any client are allowed: read-only queries,
-//! and the tags configuring the display. Everything else is refused, tags
+//! the tags configuring the display, and the notice that the VL805 USB
+//! controller was reset (which only loads its firmware). Everything else is refused, tags
 //! that hand over the system (code execution, allocating and locking
 //! `VideoCore` memory, cursor images read from `ARM` memory) and tags that
 //! change clocks or power, which have typed functions or wait for per-client
@@ -66,6 +67,13 @@ pub mod tag {
     pub const SET_OVERSCAN: u32 = 0x0004_800a;
     pub const GET_PALETTE: u32 = 0x0004_000b;
     pub const SET_PALETTE: u32 = 0x0004_800b;
+
+    /// Tell the firmware the VL805 USB controller was reset, so it loads the
+    /// controller's firmware (Raspberry Pi 4 boards without the SPI EEPROM).
+    /// One value word: the PCI address `bus << 20 | device << 15 | function
+    /// << 12` (`RPI_FIRMWARE_NOTIFY_XHCI_RESET` in the Raspberry Pi kernel's
+    /// `include/soc/bcm2835/raspberrypi-firmware.h`).
+    pub const NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 
     /// Refused: they hand over the system. Listed for the tests, which check
     /// that the allow-list stays closed to them.
@@ -130,6 +138,7 @@ const ALLOWED: &[u32] = &[
     tag::SET_OVERSCAN,
     tag::GET_PALETTE,
     tag::SET_PALETTE,
+    tag::NOTIFY_XHCI_RESET,
 ];
 
 /// Whether any client may send the tag `id`.
@@ -195,11 +204,26 @@ pub fn check_request(words: &[u32]) -> Result<(), Rejected> {
     }
 }
 
-/// The firmware's number of the activity LED's GPIO, for `tag::SET_GPIO_STATE`.
+/// The firmware's number of the activity LED's GPIO, for `tag::SET_GPIO_STATE`,
+/// on the board with the revision code `revision` (`tag::GET_BOARD_REVISION`).
 ///
 /// The Raspberry Pi 3 has the LED on its GPIO expander, which the firmware
 /// numbers from 128: expander pin 2 is 130, as the former platform mailbox
-/// code used on hardware. The Raspberry Pi 4 wires it to the `SoC`'s GPIO 42;
-/// that pin is not yet confirmed on a board. `mailbox_v1.set_led` hides the
+/// code used on hardware. The Raspberry Pi 4, 400 and Compute Module 4 (a
+/// new-style code, bit 23, with the type 0x11, 0x13 or 0x14 in bits 11:4) wire
+/// it to the `SoC`'s GPIO 42; that pin is not yet confirmed on a board. Every
+/// other board gets the expander pin. `mailbox_v1.set_led` hides the
 /// difference.
-pub const ACT_LED_PIN: u32 = if cfg!(board_rpi4) { 42 } else { 130 };
+#[must_use]
+pub const fn activity_led_pin(revision: u32) -> u32 {
+    const NEW_STYLE: u32 = 1 << 23;
+    const EXPANDER_PIN: u32 = 130;
+    const PI_4_FAMILY_PIN: u32 = 42;
+    if revision & NEW_STYLE == 0 {
+        return EXPANDER_PIN;
+    }
+    match (revision >> 4) & 0xff {
+        0x11 | 0x13 | 0x14 => PI_4_FAMILY_PIN,
+        _ => EXPANDER_PIN,
+    }
+}

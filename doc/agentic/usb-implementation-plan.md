@@ -76,6 +76,12 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 - [ ] LED output reports from events on the input transmit channel. Needs the
   transmit channel (no interim Call).
 
+## USB6: xHCI on the Raspberry Pi 4
+
+Decisions X1a–X4a, see [RPi4 xHCI](usb-design.md#rpi4-xhci).
+
+- [ ] SuperSpeed root ports, and RP1's DWC3 xHCI controllers on the Raspberry Pi 5.
+
 ## Verification
 
 - `just _test-usb-host`: protocol and DWC2 host tests.
@@ -90,5 +96,5 @@ Needs decision 1. The input event contract is decided ([input-design.md](input-d
 ## Related
 
 - [usb-decisions.md](usb-decisions.md): open USB decisions.
-- [usb-design.md](usb-design.md): architecture, interfaces and the RPi4 follow-up.
+- [usb-design.md](usb-design.md): architecture, interfaces and the RPi4 xHCI.
 - [input-design.md](input-design.md): the input side that consumes these events.

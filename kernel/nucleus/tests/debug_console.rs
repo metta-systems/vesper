@@ -17,6 +17,14 @@ mod api;
 #[allow(unused)]
 #[path = "../src/objects/mod.rs"]
 mod objects;
+// What a DebugConsole Write prints on outside QEMU.
+#[allow(dead_code)]
+#[path = "../src/board_console.rs"]
+mod board_console;
+// How a DebugConsole Write reads its caller's bytes.
+#[allow(dead_code)]
+#[path = "../src/user_memory.rs"]
+mod user_memory;
 
 // The interrupt-controller component as the IRQ operations reach it.
 #[allow(dead_code)]
@@ -62,6 +70,7 @@ use {
         object_pool::IdentityError,
         thread::ThreadId,
     },
+    user_memory::Reader,
 };
 
 // The debug console is a stateless singleton, not a pool object; its entry
@@ -1245,11 +1254,45 @@ fn rejects_wrong_capability_types_before_touching_write_arguments() {
     ] {
         for op in [0, u64::from(u32::MAX), u64::MAX] {
             assert!(matches!(
-                invoke(&cap, op, u64::MAX, u64::MAX),
+                invoke(&cap, op, u64::MAX, u64::MAX, Reader::El0),
                 Err(CapError::TypeMismatch { expected, found })
                     if expected == ObjectType::DEBUG_CONSOLE && found == cap.object_type()
             ));
         }
+    }
+}
+
+#[test_case]
+fn write_reads_only_what_the_caller_may_read() {
+    let cap = console_entry(Rights::all(), 0);
+    let write = 0;
+    let text = "DEBCON| Write from EL1 test code\n";
+    let address = text.as_ptr() as u64;
+    let length = text.len() as u64;
+    // This test's image is mapped readable at both levels.
+    for reader in [Reader::El0, Reader::El1] {
+        assert!(matches!(
+            invoke(&cap, write, address, length, reader),
+            Ok((0, 0))
+        ));
+    }
+    for reader in [Reader::El0, Reader::El1] {
+        // Nothing to read: nothing to check.
+        assert!(matches!(
+            invoke(&cap, write, u64::MAX, 0, reader),
+            Ok((0, 0))
+        ));
+        // A range past the top of the address space wraps.
+        assert!(matches!(
+            invoke(&cap, write, u64::MAX - 3, 16, reader),
+            Err(CapError::InvalidPointer)
+        ));
+        // Far above any RAM the identity map covers, or beyond the lower
+        // half's range: either way nothing translates.
+        assert!(matches!(
+            invoke(&cap, write, 0x0000_ff00_0000_0000, 16, reader),
+            Err(CapError::InvalidPointer)
+        ));
     }
 }
 
@@ -1264,11 +1307,11 @@ fn rejects_invalid_operations_through_shared_capability_borrows() {
         .chain((0..64).map(|bit| 1_u64 << bit))
     {
         assert!(matches!(
-            invoke(&cap, op, u64::MAX, u64::MAX),
+            invoke(&cap, op, u64::MAX, u64::MAX, Reader::El0),
             Err(CapError::InvalidOperation)
         ));
         assert!(matches!(
-            invoke(alias, op, u64::MAX, u64::MAX),
+            invoke(alias, op, u64::MAX, u64::MAX, Reader::El1),
             Err(CapError::InvalidOperation)
         ));
     }
@@ -1566,7 +1609,7 @@ fn table_lookup_still_requires_an_installed_capability() {
         .lookup(key, FIXTURE_GUARD)
         .unwrap_or_else(|_| panic!("installed console not found"));
     assert!(matches!(
-        invoke(cap, 1, u64::MAX, u64::MAX),
+        invoke(cap, 1, u64::MAX, u64::MAX, Reader::El0),
         Err(CapError::InvalidOperation)
     ));
 }

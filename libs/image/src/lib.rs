@@ -155,8 +155,10 @@ pub struct Import {
     pub type_code: u64,
     /// The function's declaration index in the interface
     pub function: u64,
-    /// How the exporting instance is found
-    pub provider: Provider,
+    /// How the exporting instance is found: the providers in the order they
+    /// are tried; the first that finds a loaded instance exporting the
+    /// interface names the exporter
+    pub providers: &'static [Provider],
     /// Bytes of the data area the interface shares between a client and its
     /// exporter (zero: none)
     pub data_bytes: u64,
@@ -211,6 +213,19 @@ pub struct ResourceMapping {
 /// follow page-aligned.
 pub const RESOURCE_BASE: u64 = 0x3c00_0000;
 
+/// What a driver instance receives beyond its node's registers and
+/// interrupts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extra {
+    Nothing,
+    /// The `VideoCore` memory Untypeds (`video_memory = true`)
+    VideoMemory,
+    /// What a PCI host bridge driver needs (`pci_host = true`): its node's
+    /// windows, the device memory behind them, its MSI controller and its
+    /// resets (`libdevice_driver::PciHost`)
+    PciHost,
+}
+
 /// A device driver bundled into a boot image: an active EL0 component that
 /// Kickstart loads once per enabled device tree node whose `compatible` it
 /// names (see `libdevice_driver`).
@@ -219,12 +234,17 @@ pub struct DriverImage {
     pub component: &'static ComponentImage,
     /// Device tree `compatible` strings the driver serves
     pub compatible: &'static [&'static str],
+    /// Full paths of device tree nodes the driver serves besides
+    /// (`nodes = [...]`), for nodes without `compatible` such as a function
+    /// behind a PCI bridge
+    pub nodes: &'static [&'static str],
     /// Budget each instance's Time receives
     pub budget_ns: u64,
     /// Size exponent of each instance's RAM Untyped
     pub memory_bits: u8,
-    /// Whether each instance receives the `VideoCore` memory Untypeds
-    pub video_memory: bool,
+    /// What each instance receives beyond its node's registers and
+    /// interrupts
+    pub extra: Extra,
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`; see `libserial-channel`)
     pub serial: bool,

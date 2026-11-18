@@ -189,6 +189,20 @@ impl PipeTable {
         }
         Ok(())
     }
+
+    /// Close every pipe to the device at `device_address`, handing each
+    /// closed pipe's handle to `closed`.
+    pub fn close_device(&mut self, device_address: u8, mut closed: impl FnMut(u32)) {
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if slot
+                .pipe
+                .is_some_and(|pipe| pipe.device_address == device_address)
+            {
+                slot.pipe = None;
+                closed(u32::from(slot.generation) << 16 | u32::try_from(index).unwrap_or(0));
+            }
+        }
+    }
 }
 
 impl Default for PipeTable {

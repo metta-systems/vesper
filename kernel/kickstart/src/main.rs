@@ -78,6 +78,9 @@ fn boot_main(dtb: u32) -> ! {
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     semi::println!("🥾 PANICKED: {info}");
+    // And on the board's console, taken over from whoever has it.
+    kickstart::early_console::panic_line(format_args!("🥾 PANICKED: {info}"));
+    kickstart::early_console::panic_backtrace("🥾 ");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_failure()

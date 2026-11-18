@@ -1,16 +1,18 @@
 //! Loading bundled EL0 components and giving their Threads stacks.
 //!
 //! A component's file-backed segments are page-aligned inside the bundling
-//! image (the `.components` section), so they are mapped in place: each page
-//! is granted once as a Frame over the retained image and mapped at the
-//! component's link address with its segment's permissions. `.bss` is fresh,
-//! zeroed Frames. Nothing else of the bundling image is mapped.
+//! image (the `.components` section). The read-only ones are mapped in place:
+//! each page is granted as a Frame over the retained image and mapped at the
+//! component's link address with its segment's permissions, shared by every
+//! instance of the component. A writable segment (`.data`) is copied into
+//! fresh Frames for each instance, so instances never share statics. `.bss` is
+//! fresh, zeroed Frames. Nothing else of the bundling image is mapped.
 
 use {
     crate::{
         builder::Builder,
         component::Component,
-        keys::{BOOT_TABLE_GUARD, SlotCursor},
+        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
         paging::{AP_MASK, AP_RO_USER, AP_RW_USER, LEAF_SPAN, PAGE, PXN, UXN, read_leaf},
     },
     libaddress::PhysAddr,
@@ -168,6 +170,40 @@ impl Builder<'_> {
             let rights = segment_rights(segment.meta.permissions);
             let base = segment.data.as_ptr() as u64;
             assert_eq!(base % PAGE, 0, "bundled segment data must be page-aligned");
+            if segment.meta.permissions.writable {
+                // Each instance writes its own statics: a copy in fresh Frames.
+                // Mapped in place, the instances of one driver would share
+                // them, and the first one's writes would be the next one's
+                // starting values.
+                let count = u32::try_from(segment.data.len() as u64 / PAGE).unwrap_or(u32::MAX);
+                let first = slots.take(count);
+                let incarnation = self.retype_frames(first, count).incarnation();
+                for index in 0..count {
+                    let paddr = Self::frame_paddr(boot_key(first + index, incarnation));
+                    // SAFETY: the source is a page of the retained image, the
+                    // destination a Frame just carved for this component; the
+                    // direct map covers both, they never overlap, and nothing
+                    // else touches the new Frame before it is mapped below.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            PhysAddr::new(base + u64::from(index) * PAGE)
+                                .user_to_kernel()
+                                .as_ptr::<u8>(),
+                            PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>(),
+                            PAGE_BYTES,
+                        );
+                    }
+                }
+                Self::map_frames(
+                    first,
+                    incarnation,
+                    count,
+                    component.address_space_key,
+                    segment.meta.virt_addr,
+                    rights,
+                );
+                continue;
+            }
             for index in 0..segment.data.len() as u64 / PAGE {
                 // The bundling image is identity-mapped: its address is the
                 // physical address of the retained page.
@@ -317,13 +353,16 @@ impl Builder<'_> {
     }
 }
 
-/// Write `value` at the start of the builder-owned page at `paddr` (a
-/// component's init page), through the kernel direct map.
+/// Most bytes of an init record: a driver's takes two pages.
+pub const MAX_INIT_BYTES: usize = 2 * 4096;
+
+/// Write `value` at the start of the builder-owned pages at `paddr` (a
+/// component's init pages), through the kernel direct map.
 ///
-/// The page must be a freshly retyped Frame the builder owns, written before
-/// the component runs; `T` must fit in the page.
+/// The pages must be freshly retyped, physically contiguous Frames the
+/// builder owns, written before the component runs; `T` must fit in them.
 pub fn write_init<T>(paddr: u64, value: T) {
-    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    const { assert!(core::mem::size_of::<T>() <= MAX_INIT_BYTES) };
     // SAFETY: per the contract above, `paddr` names an accounted page nobody
     // else accesses yet, and the direct map covers it.
     unsafe {
@@ -340,7 +379,7 @@ pub fn write_init<T>(paddr: u64, value: T) {
 /// The page must hold a `T` written by [`write_init`], and nothing else may
 /// access it while `update` runs.
 pub fn update_init<T, Output>(paddr: u64, update: impl FnOnce(&mut T) -> Output) -> Output {
-    const { assert!(core::mem::size_of::<T>() <= 4096) };
+    const { assert!(core::mem::size_of::<T>() <= MAX_INIT_BYTES) };
     // SAFETY: per the contract above, `paddr` names a builder-owned page
     // holding an initialized `T`, the direct map covers it, and this borrow
     // is the only access for the duration of `update`.

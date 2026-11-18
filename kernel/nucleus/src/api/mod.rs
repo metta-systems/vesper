@@ -170,10 +170,17 @@ fn core_invoke<A: ArchObjects>(
         }
         #[cfg(feature = "debug_kernel")]
         CoreType::DebugConsole => {
+            use crate::user_memory::Reader;
             semi::println!("core_invoke: DebugConsole");
             let caller_table = access.resolve_caller_table(caller)?;
             let entry = caller_table.lookup(key, caller.guard)?;
-            crate::api::debug_console::invoke(entry, op, args[0], args[1])
+            let reader = match saved.origin {
+                libexception::arch::aarch64::ExceptionOrigin::LowerAarch64
+                | libexception::arch::aarch64::ExceptionOrigin::LowerAarch32 => Reader::El0,
+                libexception::arch::aarch64::ExceptionOrigin::CurrentSp0
+                | libexception::arch::aarch64::ExceptionOrigin::CurrentSpx => Reader::El1,
+            };
+            crate::api::debug_console::invoke(entry, op, args[0], args[1], reader)
                 .map(InvokeOutcome::Complete)
         }
         // Opcode meaning follows the looked-up kind: op 0 on a Thread entry is

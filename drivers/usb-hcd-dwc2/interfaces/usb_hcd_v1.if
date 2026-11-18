@@ -3,10 +3,9 @@
 # Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
 #
 ## The host controller of a USB bus (Raspberry Pi 3's `DesignWare` DWC2 in host
-## mode). The controller schedules every transfer: a client opens a pipe to one
-## endpoint and transfers through it (`pipe_v1`). Nothing here is DWC2-specific,
-## so a later xHCI controller can serve the same interface. Prototype: edited
-## in place.
+## mode, Raspberry Pi 4's VL805 xHCI). The controller schedules every transfer:
+## a client opens a pipe to one endpoint and transfers through it (`pipe_v1`).
+## Prototype: edited in place.
 local interface usb_hcd_v1
 {
     ## The area the client stages control transfers in (see `pipe_v1`), and where
@@ -36,6 +35,12 @@ local interface usb_hcd_v1
     ## No device is attached to the port.
     exception no_device {}
 
+    ## A device is attached but the transfer to it failed on the bus. `status`
+    ## is the controller's report: for DWC2 its channel status, as
+    ## `pipe_v1.transfer_failed` carries it; for xHCI the completion code (0
+    ## when the command did not complete).
+    exception transfer_failed { card32 status; }
+
     ## The controller is busy with a reset or another exclusive operation, or has
     ## no pipe left.
     exception busy {}
@@ -44,9 +49,12 @@ local interface usb_hcd_v1
     exception not_permitted {}
 
     ## The controller did not come up: `step` is the step of its bring-up that
-    ## timed out. 1: the AHB master going idle, 2: the core soft reset, 3: host
-    ## mode, 4: the transmit FIFO flush, 5: the receive FIFO flush. The
-    ## controller serves nothing else.
+    ## failed, numbered per controller. DWC2 (each a timeout): 1: the AHB
+    ## master going idle, 2: the core soft reset, 3: host mode, 4: the transmit
+    ## FIFO flush, 5: the receive FIFO flush. xHCI: 1: no function behind the
+    ## bridge, 2: the firmware's VL805 load, 3: the claim, 4: controller not
+    ## ready, 5: halt, 6: reset, 7: no 4 KiB pages, 8: too many scratchpad
+    ## buffers, 9: run. The controller serves nothing else.
     exception controller_failed { card32 step; }
 
     ## Reset the root port `port` for the device attached to it, and return the
@@ -61,6 +69,40 @@ local interface usb_hcd_v1
     port_status(card32 port)
         returns (card32 bits)
         raises (controller_failed);
+
+    ## Give the device that answers at the default address, freshly reset, an
+    ## address of its own, and return it. The device is on port `port` of the
+    ## hub at `hub_address`, or on root port `port` when `hub_address` is 0,
+    ## and runs at `speed`. The controller knows the hub from its own
+    ## addressing and works out how the device is reached: for xHCI its route
+    ## string, root port and the transaction translator of a low- or
+    ## full-speed device behind a high-speed hub, set up with the Enable Slot
+    ## and Address Device commands; DWC2 sends `SET_ADDRESS` to address 0
+    ## itself, as a split transaction through that translator. Only one device
+    ## on the bus may answer at the default address while this runs. A root
+    ## port with no device raises `no_device`; a device that does not take the
+    ## address raises `transfer_failed`, and the controller then keeps nothing
+    ## of it. The address is the device's until `release_device`.
+    address_device(card32 hub_address, card32 port, speed speed)
+        returns (card32 address)
+        raises (no_device, transfer_failed, busy, not_permitted, controller_failed);
+
+    ## Forget the device at `address`: xHCI disables its slot, DWC2 frees the
+    ## address. Call it when the device is gone, and after a device that failed
+    ## to enumerate had its port disabled, so no later device takes an address
+    ## a stray device still answers at. The pipes still open to the device are
+    ## closed.
+    release_device(card32 address)
+        raises (not_permitted, controller_failed);
+
+    ## Say the device at `address` is a hub with `ports` downstream ports,
+    ## once its hub descriptor is read and before a device behind it is
+    ## addressed. `think_time` is its transaction translator's think time in
+    ## full-speed bit times (8, 16, 24 or 32), `multi_tt` whether the hub runs
+    ## one translator per port. xHCI records it in the device's slot (the
+    ## Configure Endpoint command); DWC2 needs nothing and accepts it.
+    mark_hub(card32 address, card32 ports, card32 think_time, boolean multi_tt)
+        raises (busy, not_permitted, controller_failed);
 
     ## Open a pipe to endpoint `endpoint` of device `device_address`. `endpoint`
     ## is the endpoint address of the USB specification: the number in bits 0 to

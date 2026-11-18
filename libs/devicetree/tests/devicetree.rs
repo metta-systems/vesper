@@ -58,6 +58,233 @@ mod tests {
 
     const RPI3: &[u8] = include_bytes!("../../../targets/bcm2710-rpi-3-b-plus.dtb");
     const RPI4: &[u8] = include_bytes!("../../../targets/bcm2711-rpi-4-b.dtb");
+    /// The Pi 4 tree the SD image carries for the firmware.
+    const RPI4_FIRMWARE: &[u8] = include_bytes!("../../../tools/makesd/boot/bcm2711-rpi-4-b.dtb");
+    const RPI5: &[u8] = include_bytes!("../../../targets/bcm2712-rpi-5-b.dtb");
+
+    mod pci {
+        use {
+            super::{RPI4, RPI4_FIRMWARE, RPI5, with_index},
+            vesper_devicetree::{
+                dma_address, find_compatible, has_path,
+                pci::{
+                    PciRange, PciSpace, Reset, brcm_msi_offset, host_bridge_of, is_host_bridge,
+                    msi_parent, msi_range, pci_dma_ranges, pci_function, pci_ranges, resets,
+                },
+                phandle, primecell_periphid,
+            },
+        };
+
+        #[test]
+        fn rpi4_bridge_windows_and_its_own_msi_controller() {
+            with_index(RPI4, |index| {
+                let (bridge, _) = find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
+                // `/scb` maps 0x6_0000_0000 one to one.
+                assert_eq!(
+                    pci_ranges(&bridge).collect::<Vec<_>>(),
+                    [PciRange {
+                        space: PciSpace::Memory32,
+                        prefetchable: false,
+                        pci: 0xc000_0000,
+                        cpu: 0x6_0000_0000,
+                        size: 0x4000_0000,
+                    }]
+                );
+                // The first 3 GiB of RAM, through `/scb`'s one-to-one
+                // `dma-ranges`.
+                assert_eq!(
+                    pci_dma_ranges(&bridge).collect::<Vec<_>>(),
+                    [PciRange {
+                        space: PciSpace::Memory32,
+                        prefetchable: false,
+                        pci: 0,
+                        cpu: 0,
+                        size: 0xc000_0000,
+                    }]
+                );
+                assert!(is_host_bridge(&bridge));
+                // The root port below it is a PCI node, not a host bridge.
+                let root_port = index
+                    .nodes()
+                    .find(|node| node.name() == Ok("pci@1,0"))
+                    .expect("root port");
+                assert!(!is_host_bridge(&root_port));
+                let parent = msi_parent(index, &bridge).expect("msi-parent");
+                assert_eq!(phandle(&parent), phandle(&bridge));
+                assert_eq!(msi_range(index, &parent), None);
+                assert_eq!(resets(index, &bridge).count(), 0);
+            });
+        }
+
+        #[test]
+        fn rpi4_firmware_vl805_node_is_function_one_zero_zero() {
+            // Its `reg` is all zero: the bus comes from the bridge above it.
+            with_index(RPI4_FIRMWARE, |index| {
+                let vl805 = index
+                    .nodes()
+                    .find(|node| has_path(node, "/scb/pcie@7d500000/pci@0,0/usb@0,0"))
+                    .expect("usb@0,0");
+                assert_eq!(pci_function(&vl805), Some(0x100));
+                let root_port = vl805.parent().expect("pci@0,0");
+                assert_eq!(pci_function(&root_port), Some(0));
+            });
+        }
+
+        #[test]
+        fn rpi4_vl805_node_by_path_and_its_function() {
+            with_index(RPI4, |index| {
+                const PATH: &str = "/scb/pcie@7d500000/pci@1,0/usb@1,0";
+                let matching: Vec<_> = index.nodes().filter(|node| has_path(node, PATH)).collect();
+                assert_eq!(matching.len(), 1, "one node has the path");
+                let vl805 = &matching[0];
+                // The same name elsewhere, or a path missing a step, is no match.
+                assert!(!has_path(vl805, "/pcie@7d500000/pci@1,0/usb@1,0"));
+                assert!(!has_path(vl805, "usb@1,0"));
+                // `reg` 0x10000: bus 1, device 0, function 0.
+                assert_eq!(pci_function(vl805), Some(0x100));
+                let bridge = host_bridge_of(vl805).expect("below a host bridge");
+                assert_eq!(bridge.name(), Ok("pcie@7d500000"));
+                // The bridge's `dma-ranges` (three-cell PCI addresses) let the
+                // function reach the first 3 GiB of RAM one to one, and no more.
+                assert_eq!(dma_address(vl805, 0x1000_0000, 0x1000), Some(0x1000_0000));
+                assert_eq!(dma_address(vl805, 0xbfff_f000, 0x1000), Some(0xbfff_f000));
+                assert_eq!(dma_address(vl805, 0xbfff_f000, 0x2000), None);
+                // A node outside any PCI bus has no function.
+                let (uart, _) = find_compatible(index, &["arm,pl011"]).expect("pl011");
+                assert_eq!(pci_function(&uart), None);
+                assert!(host_bridge_of(&uart).is_none());
+            });
+        }
+
+        #[test]
+        fn rpi5_rp1_stands_for_the_function_behind_the_root_port() {
+            with_index(RPI5, |index| {
+                let rp1 = index
+                    .nodes()
+                    .find(|node| has_path(node, "/axi/pcie@1000120000/rp1"))
+                    .expect("rp1");
+                assert_eq!(pci_function(&rp1), Some(0x100));
+                assert_eq!(
+                    host_bridge_of(&rp1).map(|bridge| bridge.name()),
+                    Some(Ok("pcie@1000120000"))
+                );
+            });
+        }
+
+        #[test]
+        fn rpi5_console_uart_states_its_peripheral_id() {
+            // uart10's 0x200-byte block ends before the ID registers at 0xFE0.
+            with_index(RPI5, |index| {
+                let uart = index
+                    .nodes()
+                    .find(|node| has_path(node, "/soc@107c000000/serial@7d001000"))
+                    .expect("uart10");
+                assert_eq!(primecell_periphid(&uart), Some(0x0034_1011));
+            });
+        }
+
+        #[test]
+        fn rpi5_wifi_controller_lists_its_device_and_the_card_slot_none() {
+            // Kickstart leaves an SD host controller with a child node
+            // undriven: the child is an SDIO device, not a card.
+            with_index(RPI5, |index| {
+                let children = |path: &str| {
+                    let node = index
+                        .nodes()
+                        .find(|node| has_path(node, path))
+                        .unwrap_or_else(|| panic!("{path}"));
+                    node.children()
+                        .map(|child| child.name().unwrap_or("?").to_owned())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(children("/axi/mmc@1100000"), ["wifi@1"]);
+                assert!(children("/soc@107c000000/mmc@fff000").is_empty());
+            });
+        }
+
+        #[test]
+        fn rpi5_rp1_bridge_windows_mip_and_resets() {
+            with_index(RPI5, |index| {
+                let bridge = index
+                    .nodes()
+                    .find(|node| node.name() == Ok("pcie@1000120000"))
+                    .expect("pcie2");
+                assert_eq!(
+                    pci_ranges(&bridge).collect::<Vec<_>>(),
+                    [
+                        PciRange {
+                            space: PciSpace::Memory32,
+                            prefetchable: false,
+                            pci: 0,
+                            cpu: 0x1f_0000_0000,
+                            size: 0xffff_fffc,
+                        },
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: true,
+                            pci: 0x4_0000_0000,
+                            cpu: 0x1c_0000_0000,
+                            size: 0x3_0000_0000,
+                        },
+                    ]
+                );
+                assert_eq!(
+                    pci_dma_ranges(&bridge).collect::<Vec<_>>(),
+                    [
+                        PciRange {
+                            space: PciSpace::Memory32,
+                            prefetchable: false,
+                            pci: 0,
+                            cpu: 0x1f_0000_0000,
+                            size: 0x40_0000,
+                        },
+                        // All of RAM, at 64 GiB on the PCI side.
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: true,
+                            pci: 0x10_0000_0000,
+                            cpu: 0,
+                            size: 0x10_0000_0000,
+                        },
+                        // The MIP's doorbell page.
+                        PciRange {
+                            space: PciSpace::Memory64,
+                            prefetchable: false,
+                            pci: 0xff_ffff_f000,
+                            cpu: 0x10_0013_0000,
+                            size: 0x1000,
+                        },
+                    ]
+                );
+                let mip = msi_parent(index, &bridge).expect("msi-parent");
+                assert_eq!(mip.name(), Ok("msi-controller@1000130000"));
+                let range = msi_range(index, &mip).expect("msi-ranges");
+                // GIC SPI 128 up, rising edge.
+                assert_eq!(range.cells(), [0, 0x80, 1]);
+                assert_eq!(range.count, 64);
+                assert_eq!(brcm_msi_offset(&mip), 0);
+                let (rescal, _) =
+                    find_compatible(index, &["brcm,bcm7216-pcie-sata-rescal"]).expect("rescal");
+                let (bridge_resets, _) =
+                    find_compatible(index, &["brcm,brcmstb-reset"]).expect("brcmstb-reset");
+                assert_eq!(
+                    resets(index, &bridge).collect::<Vec<_>>(),
+                    [
+                        Reset {
+                            controller: phandle(&rescal).expect("phandle"),
+                            id: 0,
+                            name: "rescal",
+                        },
+                        Reset {
+                            controller: phandle(&bridge_resets).expect("phandle"),
+                            id: 0x2c,
+                            name: "bridge",
+                        },
+                    ]
+                );
+            });
+        }
+    }
 
     #[test]
     fn rpi3_reg_uses_parent_cells_and_translates_through_soc_ranges() {
@@ -435,6 +662,16 @@ mod tests {
     }
 
     #[test]
+    fn device_region_counts_per_board() {
+        // kickstart sorts the device regions in a fixed array
+        // (`MAX_DEVICE_REGIONS`, 256): the Raspberry Pi 4 tree has over a
+        // hundred, which overflowed the 100 it once had.
+        for (dtb, regions) in [(RPI3, 48), (RPI4, 102), (RPI5, 84)] {
+            with_tree(dtb, |tree| assert_eq!(tree.devices().count(), regions));
+        }
+    }
+
+    #[test]
     fn dump_writes_device_tree_source() {
         with_tree(RPI3, |tree| {
             let mut out = String::new();
@@ -453,7 +690,8 @@ mod tests {
 
     use vesper_devicetree::interrupts::{
         Interrupt, TimerInterrupt, distinct_interrupts, generic_timer, interrupt,
-        interrupt_controllers, interrupts, root_interrupt_controller, timer_interrupt,
+        interrupt_controllers, interrupt_named, interrupts, root_interrupt_controller,
+        timer_interrupt,
     };
 
     fn phandle_of_compatible(index: &DevTreeIndex<'_, '_>, compatible: &str) -> u32 {
@@ -492,6 +730,22 @@ mod tests {
             let physical = timer_interrupt(index, TimerInterrupt::NonSecurePhysical).unwrap();
             assert_eq!(physical.cells(), &[1, 14, 0xf08]);
         });
+    }
+
+    #[test]
+    fn rpi4_bridge_msi_line_is_found_by_its_name() {
+        // The upstream tree names SPI 148 for both `pcie` and `msi`; the
+        // tree the Pi 4 firmware ships names SPI 147 for `pcie`.
+        for (tree, pcie_line) in [(RPI4, 148), (RPI4_FIRMWARE, 147)] {
+            with_index(tree, |index| {
+                let (bridge, _) = find_compatible(index, &["brcm,bcm2711-pcie"]).expect("pcie0");
+                let msi = interrupt_named(index, &bridge, "msi").expect("msi line");
+                assert_eq!(msi.cells(), &[0, 148, 4]);
+                let pcie = interrupt_named(index, &bridge, "pcie").expect("pcie line");
+                assert_eq!(pcie.cells(), &[0, pcie_line, 4]);
+                assert_eq!(interrupt_named(index, &bridge, "intx"), None);
+            });
+        }
     }
 
     #[test]
@@ -663,5 +917,221 @@ mod tests {
             assert_eq!(interrupt(index, &device, 2), None);
             assert_eq!(interrupts(index, &device).count(), 2);
         });
+    }
+
+    mod board {
+        use {
+            super::{RPI3, RPI4, RPI5, with_tree},
+            vesper_devicetree::{
+                ActivityLed, Board, ConsoleUart, DeviceTree, Gpio, GpioKind, Mailbox, Soc,
+                UartClock, find_compatible, fixed_clock_rate,
+            },
+        };
+
+        #[test]
+        fn every_board_tree_indexes_in_the_fixed_index_buffer() {
+            for dtb in [RPI3, RPI4, RPI5] {
+                let blob = super::AlignedBlob::new(dtb);
+                // SAFETY: the blob is u32-aligned, complete, and outlives the call.
+                let raw =
+                    unsafe { DeviceTree::blob_from_raw(blob.bytes().as_ptr()) }.expect("valid DTB");
+                let layout = DeviceTree::index_layout(&raw).expect("index layout");
+                assert!(
+                    layout.size() + layout.align() <= vesper_devicetree::INDEX_BUFFER_BYTES,
+                    "{} bytes",
+                    layout.size() + layout.align()
+                );
+            }
+        }
+
+        #[test]
+        fn the_fallback_hardware_is_what_each_boards_tree_says() {
+            for (dtb, soc) in [
+                (RPI3, Soc::Bcm2837),
+                (RPI4, Soc::Bcm2711),
+                (RPI5, Soc::Bcm2712),
+            ] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(tree.board().soc, Some(soc));
+                    assert_eq!(tree.boot_hardware(), Some(soc.fallback_boot_hardware()));
+                });
+            }
+        }
+
+        #[test]
+        fn cpu_parts_name_the_socs_of_their_boards() {
+            assert_eq!(Soc::from_cpu_part(0xd03), Some(Soc::Bcm2837));
+            assert_eq!(Soc::from_cpu_part(0xd08), Some(Soc::Bcm2711));
+            assert_eq!(Soc::from_cpu_part(0xd0b), Some(Soc::Bcm2712));
+            // A Cortex-A57 is on no Raspberry Pi.
+            assert_eq!(Soc::from_cpu_part(0xd07), None);
+        }
+
+        #[test]
+        fn the_root_names_board_and_soc() {
+            for (dtb, model, compatible, soc) in [
+                (
+                    RPI3,
+                    "Raspberry Pi 3 Model B+",
+                    "raspberrypi,3-model-b-plus",
+                    Soc::Bcm2837,
+                ),
+                (
+                    RPI4,
+                    "Raspberry Pi 4 Model B",
+                    "raspberrypi,4-model-b",
+                    Soc::Bcm2711,
+                ),
+                (
+                    RPI5,
+                    "Raspberry Pi 5",
+                    "raspberrypi,5-model-b",
+                    Soc::Bcm2712,
+                ),
+            ] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.board(),
+                        Board {
+                            model: Some(model),
+                            compatible: Some(compatible),
+                            soc: Some(soc),
+                            // Only the firmware writes `/system/linux,revision`.
+                            revision: None,
+                        }
+                    );
+                });
+            }
+        }
+
+        #[test]
+        fn the_console_is_the_first_pl011_unless_stdout_path_names_one() {
+            // The Raspberry Pi 3 and 4 trees have no `stdout-path`; their first
+            // PL011 is `uart0`, clocked by the firmware.
+            for (dtb, base) in [(RPI3, 0x3f20_1000), (RPI4, 0xfe20_1000)] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.console_uart(),
+                        Some(ConsoleUart {
+                            base,
+                            clock: UartClock::Firmware
+                        })
+                    );
+                });
+            }
+            // The Raspberry Pi 5 tree's `stdout-path` is `serial10`, the debug
+            // connector's PL011 in the high peripheral window, on a fixed clock.
+            with_tree(RPI5, |tree| {
+                assert_eq!(
+                    tree.console_uart(),
+                    Some(ConsoleUart {
+                        base: 0x10_7d00_1000,
+                        clock: UartClock::Fixed(9_216_000)
+                    })
+                );
+            });
+        }
+
+        #[test]
+        fn the_header_gpio_block_and_its_kind() {
+            with_tree(RPI3, |tree| {
+                assert_eq!(
+                    tree.header_gpio(),
+                    Some(Gpio {
+                        base: 0x3f20_0000,
+                        kind: GpioKind::Bcm2835
+                    })
+                );
+            });
+            with_tree(RPI4, |tree| {
+                assert_eq!(
+                    tree.header_gpio(),
+                    Some(Gpio {
+                        base: 0xfe20_0000,
+                        kind: GpioKind::Bcm2711
+                    })
+                );
+            });
+            // The Raspberry Pi 5's header is on RP1.
+            with_tree(RPI5, |tree| assert_eq!(tree.header_gpio(), None));
+        }
+
+        #[test]
+        fn the_mailbox_and_the_address_the_firmware_sees() {
+            // The uncached bus alias on the BCM2837 and BCM2711, from `dma-ranges`.
+            for (dtb, base) in [(RPI3, 0x3f00_b880), (RPI4, 0xfe00_b880)] {
+                with_tree(dtb, |tree| {
+                    assert_eq!(
+                        tree.firmware_mailbox(),
+                        Some(Mailbox {
+                            base,
+                            bus_offset: 0xc000_0000
+                        })
+                    );
+                });
+            }
+            // The BCM2712's bus has no `dma-ranges`: addresses map one to one.
+            with_tree(RPI5, |tree| {
+                assert_eq!(
+                    tree.firmware_mailbox(),
+                    Some(Mailbox {
+                        base: 0x10_7c01_3880,
+                        bus_offset: 0
+                    })
+                );
+            });
+        }
+
+        #[test]
+        fn the_activity_led_and_how_it_is_switched() {
+            with_tree(RPI3, |tree| {
+                assert_eq!(
+                    tree.activity_led(),
+                    Some(ActivityLed::Gpio {
+                        gpio: Gpio {
+                            base: 0x3f20_0000,
+                            kind: GpioKind::Bcm2835
+                        },
+                        pin: 29,
+                        active_low: false
+                    })
+                );
+            });
+            with_tree(RPI4, |tree| {
+                assert_eq!(
+                    tree.activity_led(),
+                    Some(ActivityLed::Gpio {
+                        gpio: Gpio {
+                            base: 0xfe20_0000,
+                            kind: GpioKind::Bcm2711
+                        },
+                        pin: 42,
+                        active_low: false
+                    })
+                );
+            });
+            // On the always-on `brcm,brcmstb-gpio` block, which no boot
+            // program drives.
+            with_tree(RPI5, |tree| assert_eq!(tree.activity_led(), None));
+        }
+
+        #[test]
+        fn sd_controller_clocks() {
+            let clock_of = |tree: &DeviceTree<'_, '_>, compatible| {
+                let (node, _) =
+                    find_compatible(tree.index(), &[compatible]).expect("the SD controller");
+                fixed_clock_rate(tree.index(), &node)
+            };
+            // The Raspberry Pi 5's SD controller runs from a fixed 200 MHz
+            // clock (`clk_emmc2`).
+            with_tree(RPI5, |tree| {
+                assert_eq!(clock_of(tree, "brcm,bcm2712-sdhci"), Some(200_000_000));
+            });
+            // The Raspberry Pi 4's EMMC2 clock is the clock manager's: the
+            // firmware tells its rate.
+            with_tree(RPI4, |tree| {
+                assert_eq!(clock_of(tree, "brcm,bcm2711-emmc2"), None);
+            });
+        }
     }
 }

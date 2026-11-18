@@ -1,5 +1,7 @@
 //! Driver matching: one instance of a bundled driver per enabled device tree
-//! node that names one of its `compatible` strings.
+//! node that names one of its `compatible` strings, or whose full path its
+//! manifest entry names (`nodes`, for a node without `compatible`, such as the
+//! Raspberry Pi 4's VL805 behind its PCIe root port).
 //!
 //! For each instance Kickstart builds a component `AddressSpace`, loads the
 //! driver's image and hands it, through its init page
@@ -17,6 +19,10 @@
 //!   `libdevicetree::brcm_pins`), which the driver sets up through `gpio_v1`;
 //! - for a DMA controller node, its `brcm,dma-channel-mask`: the channels the
 //!   firmware leaves to the ARM;
+//! - the rate of the node's first clock, when it is a `fixed-clock`
+//!   (`libdevicetree::fixed_clock_rate`);
+//! - the AMBA peripheral ID a `PrimeCell` node states in place of its ID
+//!   registers (`arm,primecell-periphid`, `libdevicetree::primecell_periphid`);
 //! - for a driver whose manifest entry says `video_memory = true`, the device
 //!   Untypeds over the `VideoCore` memory the firmware allocates framebuffers
 //!   in, outside every other Untyped (see `video_untypeds`);
@@ -43,7 +49,11 @@
 //! creates the function's Invocation into the driver's table on a target stack
 //! that instance reserves for this driver, and records it in the init page,
 //! which also carries the driver's own Return key for the functions it
-//! exports. Then the Threads start.
+//! exports. A driver importing `pci_v1` from the PCI host bridge driver its
+//! node lies below is listed in that driver's record (`PciHost::children`):
+//! the badge of its keys, its node's function, and a key signalling its
+//! Notification's MSI bit, the bit after its interrupts'. Then the Threads
+//! start.
 //!
 //! A program, a `[[component]]` manifest entry with `program = true`, is a driver
 //! without a device tree node: one instance of it loads, with no register
@@ -53,8 +63,9 @@
 //!
 //! A node whose registers touch a page the kernel keeps is skipped, unless its
 //! driver serves a compatible string on `privileged::SHARES_KERNEL_PAGES`: that
-//! driver receives a device Frame minted for the page. Kickstart never calls
-//! into a driver.
+//! driver receives a device Frame minted for the page. An SD host controller
+//! node with a child node has an SDIO device on it (a Wi-Fi chip) and is
+//! skipped too. Kickstart never calls into a driver.
 //!
 //! Untypeds, Notifications, Times and `IRQHandler`s are outside the
 //! `CopyDerive`/`Move` allowlist, so Kickstart grants them bootstrap-only: it
@@ -77,19 +88,27 @@ use {
         loader::{StackRegion, update_init, write_init},
     },
     libdevice_driver::{
-        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DevicePage, DispatchInit, DriverInit, ExportedArea,
-        FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_VA, Interrupt, MAX_AREAS, MAX_DEVICE_PAGES,
-        MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS, MAX_INTERRUPTS, MAX_PINS,
-        MAX_REGIONS, MAX_RESOURCES, MAX_VIDEO_BLOCKS, MapWindow, NO_BUS_ADDRESS, NO_PULL,
-        PAGE_FRAME, PAGE_UNTYPED, PinSetting, Priority, Region, ResourceRecord, STACK_REGION,
-        StackSpan, VideoBlock,
+        DATA_WINDOW_VA, DEVICE_WINDOW_VA, DeviceBlock, DevicePage, DispatchInit, DriverInit,
+        ExportedArea, FAULT_HANDLER_EXPORT, FB_WINDOW_SPANS, INIT_PAGES, INIT_VA, Interrupt,
+        MAX_AREAS, MAX_DEVICE_PAGES, MAX_DISPATCHED_THREADS, MAX_FURTHER_THREADS, MAX_IMPORTS,
+        MAX_INTERRUPTS, MAX_PCI_CHILDREN, MAX_PINS, MAX_REGIONS, MAX_RESETS, MAX_RESOURCES,
+        MAX_VIDEO_BLOCKS, MAX_WINDOW_BLOCKS, MSI_CONTROLLER, MSI_OWN, MapWindow, NO_BUS_ADDRESS,
+        NO_PULL, NONE_INDEX, PAGE_FRAME, PAGE_UNTYPED, PCI_SPACE_IO, PCI_SPACE_MEMORY32,
+        PCI_SPACE_MEMORY64, PciChild, PciHost, PciWindow, PinSetting, Priority, RESET_NAME_BYTES,
+        Region, Reset, ResourceRecord, STACK_REGION, StackSpan,
     },
     libdevicetree::{
         DevTreeIndex, Node, brcm_dma_channel_mask, brcm_pins, dma_address, find_compatible,
-        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts},
-        is_compatible, is_enabled, linked_phandle, node_by_phandle, phandle, regions,
+        fixed_clock_rate, has_path,
+        interrupts::{MAX_INTERRUPT_CELLS, distinct_interrupts, interrupt_named},
+        is_compatible, is_enabled, linked_phandle, node_by_phandle,
+        pci::{
+            PciRange, PciSpace, brcm_msi_offset, host_bridge_of, msi_parent, msi_range,
+            pci_dma_ranges, pci_function, pci_ranges, resets,
+        },
+        phandle, primecell_periphid, reg, regions,
     },
-    libimage::{DriverImage, Link, Provider},
+    libimage::{DriverImage, Extra, Link, Provider},
     libmeddle_runtime::ImportRecord,
     libobject::{
         CapError, FrameKey, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, ObjectType,
@@ -102,7 +121,7 @@ use {
     libqemu::semihosting as semi,
     nucleus::{
         api::key_entry::KeyEntry,
-        objects::{ArchObjectsImpl, KeyTable, Nucleus},
+        objects::{ArchObjectsImpl, KeyTable, Nucleus, carved::CarvedId},
     },
 };
 
@@ -118,6 +137,9 @@ const FB_INTERFACE: &str = "fb_v1";
 
 /// The interface whose importers get a surface window.
 const SURFACE_INTERFACE: &str = "compositor_v1";
+
+/// The interface a PCI host bridge driver serves its children through.
+const PCI_INTERFACE: &str = "pci_v1";
 
 /// The `compatible` string of the serial driver a program with `serial = true`
 /// is attached to.
@@ -159,6 +181,9 @@ pub struct BootKeys {
     pub root_scheduler: RawKey,
     pub irq_control: RawKey,
     pub boot_thread: RawKey,
+    /// The debug console grant, which every component gets a `WRITE` copy of
+    #[cfg(feature = "debug_kernel")]
+    pub debug_console: RawKey,
 }
 
 impl BootKeys {
@@ -170,6 +195,8 @@ impl BootKeys {
             root_scheduler: boot.root_scheduler_key,
             irq_control: boot.irq_control_key,
             boot_thread: boot.boot_thread_key,
+            #[cfg(feature = "debug_kernel")]
+            debug_console: boot.debug_console_key,
         }
     }
 }
@@ -201,6 +228,31 @@ struct Instance {
     region_count: usize,
     pages: [u64; MAX_DEVICE_PAGES],
     page_count: usize,
+    /// For a PCI host bridge driver: the regions of its MSI controller and
+    /// reset controllers, which follow the node's own
+    pci: PciLinks,
+}
+
+/// Where the registers of a PCI host bridge's linked nodes are among its
+/// instance's regions.
+#[derive(Clone, Copy)]
+struct PciLinks {
+    /// The MSI controller's, when it is another node
+    msi_region: Option<usize>,
+    resets: [Reset; MAX_RESETS],
+    reset_count: usize,
+}
+
+impl PciLinks {
+    const NONE: Self = Self {
+        msi_region: None,
+        resets: [Reset {
+            region: NONE_INDEX,
+            id: 0,
+            name: [0; RESET_NAME_BYTES],
+        }; MAX_RESETS],
+        reset_count: 0,
+    };
 }
 
 impl Instance {
@@ -214,7 +266,32 @@ impl Instance {
             region_count: 0,
             pages: [0; MAX_DEVICE_PAGES],
             page_count: 0,
+            pci: PciLinks::NONE,
         }
+    }
+
+    /// Add `region` and its pages; its index among the regions (an earlier
+    /// one starting at the same address is reused), `None` if it does not fit
+    /// the init record.
+    fn add_region(&mut self, region: Region) -> Option<usize> {
+        if let Some(index) = self.regions[..self.region_count]
+            .iter()
+            .position(|known| known.start == region.start)
+        {
+            return Some(index);
+        }
+        let index = self.region_count;
+        *self.regions.get_mut(index)? = region;
+        self.region_count += 1;
+        let mut page = region.start & !(PAGE - 1);
+        while page < region.start + region.size {
+            if !self.pages().contains(&page) {
+                *self.pages.get_mut(self.page_count)? = page;
+                self.page_count += 1;
+            }
+            page += PAGE;
+        }
+        Some(index)
     }
 
     /// The name of the node it serves, for messages.
@@ -231,8 +308,12 @@ impl Instance {
 }
 
 /// The physical pages `node`'s registers span, sorted and deduplicated, with
-/// its register ranges; `None` if they do not fit the init record.
+/// its register ranges; `None` if they do not fit the init record. A PCI host
+/// bridge driver's instance also spans the first register range of its MSI
+/// controller, when that is another node, and of each of its reset
+/// controllers.
 fn plan_instance(
+    tree: &'static DevTreeIndex<'static, 'static>,
     driver: &'static DriverImage,
     compatible_index: usize,
     node: &Node<'static, 'static, 'static>,
@@ -245,27 +326,133 @@ fn plan_instance(
         region_count: 0,
         pages: [0; MAX_DEVICE_PAGES],
         page_count: 0,
+        pci: PciLinks::NONE,
+    };
+    let first_region = |linked: &Node<'_, '_, '_>| {
+        regions(linked)
+            .find(|region| region.size != 0)
+            .map(|region| Region {
+                start: region.start,
+                size: region.size,
+            })
     };
     for region in regions(node) {
         if region.size == 0 {
             continue;
         }
-        *instance.regions.get_mut(instance.region_count)? = Region {
+        instance.add_region(Region {
             start: region.start,
             size: region.size,
-        };
-        instance.region_count += 1;
-        let mut page = region.start & !(PAGE - 1);
-        while page < region.start + region.size {
-            if !instance.pages().contains(&page) {
-                *instance.pages.get_mut(instance.page_count)? = page;
-                instance.page_count += 1;
-            }
-            page += PAGE;
+        })?;
+    }
+    if driver.extra == Extra::PciHost {
+        if let Some(controller) = msi_parent(tree, node).filter(|parent| !same_node(parent, node)) {
+            instance.pci.msi_region = Some(instance.add_region(first_region(&controller)?)?);
+        }
+        for reset in resets(tree, node).take(MAX_RESETS) {
+            let controller = node_by_phandle(tree, reset.controller)?;
+            let region = instance.add_region(first_region(&controller)?)?;
+            let mut name = [0; RESET_NAME_BYTES];
+            let length = reset.name.len().min(RESET_NAME_BYTES);
+            name[..length].copy_from_slice(&reset.name.as_bytes()[..length]);
+            instance.pci.resets[instance.pci.reset_count] = Reset {
+                region: region as u64,
+                id: u64::from(reset.id),
+                name,
+            };
+            instance.pci.reset_count += 1;
         }
     }
     instance.pages[..instance.page_count].sort_unstable();
     Some(instance)
+}
+
+/// The device-tree part of a PCI host bridge's record: its windows, its MSI
+/// controller and its resets (the window memory and the MSI interrupt are
+/// filled in as they are handed over).
+fn pci_host_record(
+    tree: &'static DevTreeIndex<'static, 'static>,
+    node: &Node<'static, 'static, 'static>,
+    links: &PciLinks,
+) -> PciHost {
+    let mut record = PciHost::EMPTY;
+    let window = |range: PciRange| PciWindow {
+        pci: range.pci,
+        cpu: range.cpu,
+        size: range.size,
+        space: match range.space {
+            PciSpace::Io => PCI_SPACE_IO,
+            PciSpace::Memory64 => PCI_SPACE_MEMORY64,
+            PciSpace::Configuration | PciSpace::Memory32 => PCI_SPACE_MEMORY32,
+        },
+        prefetchable: u64::from(range.prefetchable),
+    };
+    for (slot, range) in record
+        .windows
+        .iter_mut()
+        .zip(pci_ranges(node).filter(|range| range.space != PciSpace::Configuration))
+    {
+        *slot = window(range);
+        record.window_count += 1;
+    }
+    for (slot, range) in record.inbound.iter_mut().zip(pci_dma_ranges(node)) {
+        *slot = window(range);
+        record.inbound_count += 1;
+    }
+    if let Some(controller) = msi_parent(tree, node) {
+        record.msi.kind = if same_node(&controller, node) {
+            MSI_OWN
+        } else {
+            MSI_CONTROLLER
+        };
+        if let (Some(region), Some(range)) = (links.msi_region, msi_range(tree, &controller)) {
+            record.msi.region = region as u64;
+            // The doorbell is a PCI address: its `reg` entry is kept as
+            // written, untranslated.
+            record.msi.doorbell = reg(&controller).nth(1).map_or(0, |doorbell| doorbell.start);
+            record.msi.first_vector = u64::from(brcm_msi_offset(&controller));
+            record.msi.vector_count = u64::from(range.count);
+        }
+    }
+    record.reset_count = links.reset_count as u64;
+    record.resets = links.resets;
+    record
+}
+
+/// The interrupt the last vector of `node`'s MSI controller raises, when
+/// that controller is another node with one line per vector: its first
+/// `msi-ranges` specifier, moved on by its `brcm,msi-offset` and the vector
+/// count less one (the `brcm,bcm2712-mip` binding, whose lines are GIC SPIs,
+/// the number in the second cell). RP1's MSI-X vector *n* goes to MIP vector
+/// *n*, and RP1 has fewer vectors than the MIP, so the last one stays free for
+/// the bridge driver's self-test.
+fn last_msi_interrupt(
+    tree: &'static DevTreeIndex<'static, 'static>,
+    node: &Node<'static, 'static, 'static>,
+) -> Option<libdevicetree::interrupts::Interrupt> {
+    let controller = msi_parent(tree, node).filter(|parent| !same_node(parent, node))?;
+    let range = msi_range(tree, &controller)?;
+    let mut cells = [0; MAX_INTERRUPT_CELLS];
+    let count = range.cells().len().min(MAX_INTERRUPT_CELLS);
+    cells[..count].copy_from_slice(&range.cells()[..count]);
+    *cells.get_mut(1)? += brcm_msi_offset(&controller) + range.count.checked_sub(1)?;
+    Some(libdevicetree::interrupts::Interrupt {
+        controller: range.controller,
+        cell_count: u32::try_from(count).ok()?,
+        cells,
+    })
+}
+
+/// Whether every ancestor of `node` is enabled.
+fn ancestors_enabled(node: &Node<'_, '_, '_>) -> bool {
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if !is_enabled(&ancestor) {
+            return false;
+        }
+        current = ancestor.parent();
+    }
+    true
 }
 
 /// Whether `page` touches a range the kernel drives itself.
@@ -275,8 +462,19 @@ fn kernel_owned(page: u64) -> bool {
         .any(|&(start, size)| page < start + size && start < page + PAGE)
 }
 
+/// The compatible strings of SD host controllers, whose node may hold an
+/// SDIO device instead of a card slot. Such a node lists the device as a
+/// child (the Raspberry Pi 5's `mmc@1100000` its Wi-Fi chip, `wifi@1`), and
+/// it is left undriven.
+const SD_HOST_COMPATIBLES: [&str; 3] = [
+    "brcm,bcm2711-emmc2",
+    "brcm,bcm2712-sdhci",
+    "brcm,bcm2835-sdhci",
+];
+
 /// Every enabled node some driver of `drivers` serves, the first matching
-/// driver taking it.
+/// driver taking it; an SD host controller node with a device on it is not
+/// served ([`SD_HOST_COMPATIBLES`]).
 fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INSTANCES], usize) {
     let tree = device_tree::at_el1().index();
     let mut instances = [const { None }; MAX_DRIVER_INSTANCES];
@@ -285,36 +483,53 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
         if !is_enabled(&node) {
             continue;
         }
+        // A node the manifest names by path takes compatible index 0. Such a
+        // node (behind a PCI bridge) is matched only when its bus is enabled
+        // too: QEMU disables the bridge and leaves its children's status alone.
         let Some((driver, compatible_index)) = drivers.iter().find_map(|driver| {
             driver
                 .compatible
                 .iter()
                 .position(|entry| is_compatible(&node, entry))
+                .or_else(|| {
+                    (driver.nodes.iter().any(|path| has_path(&node, path))
+                        && ancestors_enabled(&node))
+                    .then_some(0)
+                })
                 .map(|index| (*driver, index))
         }) else {
             continue;
         };
         let name = node.name().unwrap_or("?");
-        let Some(instance) = plan_instance(driver, compatible_index, &node) else {
-            semi::println!(
+        let matched = driver.compatible.get(compatible_index);
+        if matched.is_some_and(|compatible| SD_HOST_COMPATIBLES.contains(compatible))
+            && let Some(device) = node.children().next()
+        {
+            crate::early_println!(
+                "🥾 Driver {}: {name} has {} on it, not a card slot, skipped",
+                driver.component.name,
+                device.name().unwrap_or("a device")
+            );
+            continue;
+        }
+        let Some(instance) = plan_instance(tree, driver, compatible_index, &node) else {
+            crate::early_println!(
                 "🥾 Driver {}: {name} has too many registers, skipped",
                 driver.component.name
             );
             continue;
         };
-        let shares_kernel_pages = driver
-            .compatible
-            .get(compatible_index)
-            .is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
+        let shares_kernel_pages =
+            matched.is_some_and(|compatible| SHARES_KERNEL_PAGES.contains(compatible));
         if !shares_kernel_pages && instance.pages().iter().any(|&page| kernel_owned(page)) {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Driver {}: {name} shares a page with the kernel, skipped",
                 driver.component.name
             );
             continue;
         }
         if count == MAX_DRIVER_INSTANCES {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Driver {}: too many instances, {name} skipped",
                 driver.component.name
             );
@@ -324,9 +539,12 @@ fn plan(drivers: &[&'static DriverImage]) -> ([Option<Instance>; MAX_DRIVER_INST
         count += 1;
     }
     // Programs have no node: one instance each.
-    for driver in drivers.iter().filter(|driver| driver.compatible.is_empty()) {
+    for driver in drivers
+        .iter()
+        .filter(|driver| driver.compatible.is_empty() && driver.nodes.is_empty())
+    {
         if count == MAX_DRIVER_INSTANCES {
-            semi::println!(
+            crate::early_println!(
                 "🥾 Program {}: too many instances, skipped",
                 driver.component.name
             );
@@ -390,6 +608,22 @@ impl DeviceMemory {
             });
         }
         memory
+    }
+
+    /// Take every uncarved piece lying inside `[start, end)` out of the
+    /// pool, up to `pieces.len()` of them; how many were taken.
+    fn take_within(&mut self, start: u64, end: u64, pieces: &mut [Piece]) -> usize {
+        let mut taken = 0;
+        for entry in &mut self.pieces {
+            let Some(piece) = *entry else { continue };
+            if taken == pieces.len() || piece.used != 0 || piece.base < start || piece.end() > end {
+                continue;
+            }
+            pieces[taken] = piece;
+            taken += 1;
+            *entry = None;
+        }
+        taken
     }
 
     fn add(&mut self, piece: Piece) {
@@ -499,7 +733,9 @@ fn install_boot(builder: &Builder<'_>, entry: KeyEntry, slot: u32) -> RawKey {
 /// The node `links` lead to from `node` (none for a program, which has no
 /// node, so its chain starts with `compatible`): a property step reads the
 /// first cell of the current node's property as the phandle of the next node,
-/// and a `compatible` first step starts from the one node with that string.
+/// and a `compatible` first step starts from the first enabled node with that
+/// string (a disabled node has no instance; the Raspberry Pi trees describe
+/// the Arasan controller twice, once disabled, at one address).
 fn follow_links<'a, 'i, 'dt>(
     tree: &'a DevTreeIndex<'i, 'dt>,
     node: Option<&Node<'a, 'i, 'dt>>,
@@ -511,7 +747,9 @@ fn follow_links<'a, 'i, 'dt>(
             Link::Property(property) => {
                 node_by_phandle(tree, linked_phandle(current.as_ref()?, property)?)?
             }
-            Link::Compatible(compatible) if index == 0 => find_compatible(tree, &[compatible])?.0,
+            Link::Compatible(compatible) if index == 0 => tree
+                .nodes()
+                .find(|candidate| is_enabled(candidate) && is_compatible(candidate, compatible))?,
             Link::Compatible(_) => return None,
         });
     }
@@ -523,30 +761,36 @@ fn same_node(first: &Node<'_, '_, '_>, second: &Node<'_, '_, '_>) -> bool {
     first.name().ok() == second.name().ok() && phandle(first) == phandle(second)
 }
 
-/// A provider for messages: a device tree chain, its steps separated by
-/// commas, or a component name.
-struct Provided(Provider);
+/// An import's providers for messages, as `imports.if` spells them: each a
+/// device tree chain, its steps separated by commas, or a component name,
+/// separated by `or`.
+struct Provided(&'static [Provider]);
 
 impl core::fmt::Display for Provided {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            Provider::Device(links) => {
-                formatter.write_str("device ")?;
-                for (index, link) in links.iter().enumerate() {
-                    if index > 0 {
-                        formatter.write_str(", ")?;
-                    }
-                    match link {
-                        Link::Property(property) => formatter.write_str(property)?,
-                        Link::Compatible(compatible) => {
-                            write!(formatter, "compatible \"{compatible}\"")?;
+        for (place, provider) in self.0.iter().enumerate() {
+            if place > 0 {
+                formatter.write_str(" or ")?;
+            }
+            match provider {
+                Provider::Device(links) => {
+                    formatter.write_str("device ")?;
+                    for (index, link) in links.iter().enumerate() {
+                        if index > 0 {
+                            formatter.write_str(", ")?;
+                        }
+                        match link {
+                            Link::Property(property) => formatter.write_str(property)?,
+                            Link::Compatible(compatible) => {
+                                write!(formatter, "compatible \"{compatible}\"")?;
+                            }
                         }
                     }
                 }
-                Ok(())
+                Provider::Component(name) => write!(formatter, "component {name}")?,
             }
-            Provider::Component(name) => write!(formatter, "component {name}"),
         }
+        Ok(())
     }
 }
 
@@ -576,6 +820,66 @@ fn component_exporter(
         (Some(_), 1) => Ok(first),
         (Some(_), count) => Err(count),
     }
+}
+
+/// List `client`, which imports `pci_v1` from the PCI host bridge driver
+/// `exporter` through keys badged `badge`, in the bridge driver's record: the
+/// function its node stands for, and a key, minted into the bridge driver's
+/// table, that signals the client's Notification with the bit after its
+/// interrupts' bits, for the MSIs the bridge driver hands on. A client whose
+/// node lies below another bridge, or names no function, is reported and left
+/// out, so its calls find no function.
+fn record_pci_child(
+    prepared: &mut [Option<Prepared<'_>>],
+    client: usize,
+    exporter: usize,
+    badge: u64,
+) {
+    let calling = prepared[client].as_ref().expect("a loaded client");
+    let exporting = prepared[exporter].as_ref().expect("a loaded exporter");
+    let name = calling.instance.name();
+    let image = calling.instance.driver.component.name;
+    let below = calling.instance.node.as_ref().and_then(host_bridge_of);
+    let is_child = exporting.instance.driver.extra == Extra::PciHost
+        && below
+            .zip(exporting.instance.node.as_ref())
+            .is_some_and(|(bridge, own)| same_node(&bridge, own));
+    let function = calling.instance.node.as_ref().and_then(pci_function);
+    let (Some(function), true, true) = (function, is_child, badge != 0) else {
+        crate::early_println!(
+            "🥾 Driver {image}: {name} is no function behind its pci_v1 exporter"
+        );
+        return;
+    };
+    let Some(msi_bits) = 1_u64.checked_shl(u32::try_from(calling.interrupt_count).unwrap_or(64))
+    else {
+        crate::early_println!("🥾 Driver {image}: {name} has no Notification bit left for its MSI");
+        return;
+    };
+    let notification = calling.notification;
+    let exporting = prepared[exporter].as_mut().expect("a loaded exporter");
+    let slot = exporting.next_slot;
+    exporting.next_slot += 1;
+    let msi_key = grant(
+        &exporting.component,
+        KeyEntry::new_carved(notification, Rights(Rights::SEND), msi_bits),
+        slot,
+    );
+    update_init(exporting.init_page, |init: &mut DriverInit| {
+        let index = usize::try_from(init.pci.child_count).unwrap_or(MAX_PCI_CHILDREN);
+        let record = init
+            .pci
+            .children
+            .get_mut(index)
+            .unwrap_or_else(|| panic!("🥾 more than {MAX_PCI_CHILDREN} PCI children"));
+        *record = PciChild {
+            badge,
+            function: u64::from(function),
+            msi_key: msi_key.to_wire(),
+            msi_bits,
+        };
+        init.pci.child_count += 1;
+    });
 }
 
 /// What one (client, exporter) pair shares: a data area, and the io-channel
@@ -738,7 +1042,7 @@ fn bind_root_dispatcher(
     root_scheduler
         .bind_dispatcher(dispatcher.thread)
         .unwrap_or_else(|error| panic!("🥾 BindDispatcher failed: {:?}", error.code()));
-    semi::println!("🥾 Root dispatcher bound over {slot_count} Threads");
+    crate::early_println!("🥾 Root dispatcher bound over {slot_count} Threads");
 }
 
 /// Pages of each target stack of the pool an exporting driver serves calls on.
@@ -764,6 +1068,11 @@ struct Prepared<'p> {
     further_threads: [Option<RawKey>; MAX_FURTHER_THREADS],
     /// First slot of the driver's table nothing occupies
     next_slot: u32,
+    /// The driver's Notification, to mint further badged keys to it
+    notification: CarvedId,
+    /// Bits of the Notification its interrupts signal: the lowest
+    /// `interrupt_count`
+    interrupt_count: usize,
 }
 
 /// Load one instance of the bundled `drivers` per enabled device tree node
@@ -851,8 +1160,13 @@ pub fn load_drivers(
                     )
                 });
         }
-        let init_page =
-            builder.private_pages(component.address_space_key, component.l2, INIT_VA, 1, slots);
+        let init_page = builder.private_pages(
+            component.address_space_key,
+            component.l2,
+            INIT_VA,
+            INIT_PAGES,
+            slots,
+        );
         Builder::map_table(
             builder.carve_tables(slots.take(1), 1),
             component.l2,
@@ -895,7 +1209,7 @@ pub fn load_drivers(
             *record = if kernel_owned(page) {
                 // Only a driver on `SHARES_KERNEL_PAGES` gets here: no device
                 // Untyped covers the page, so the Frame is minted directly.
-                semi::println!(
+                crate::early_println!(
                     "🥾 Driver {}: {name} receives the kernel-owned page {page:#x}",
                     image.name
                 );
@@ -997,7 +1311,7 @@ pub fn load_drivers(
             .unwrap_or(NO_BUS_ADDRESS);
         init.memory = move_to(builder, &mut self_table, &component, ram, local_slot()).to_wire();
         init.memory_size = 1 << driver.memory_bits;
-        if driver.video_memory {
+        if driver.extra == Extra::VideoMemory {
             // The blocks move to the first instance that asks for them.
             let video = video_untypeds();
             let blocks = if video_given { 0 } else { video.count };
@@ -1009,7 +1323,7 @@ pub fn load_drivers(
                     .unwrap_or_else(|error| panic!("🥾 video Untyped {slot}: {:?}", error.code()));
                 let index = usize::try_from(init.video_count).unwrap_or(MAX_VIDEO_BLOCKS);
                 assert!(index < MAX_VIDEO_BLOCKS, "🥾 too many video memory blocks");
-                init.video[index] = VideoBlock {
+                init.video[index] = DeviceBlock {
                     key: move_to(builder, &mut self_table, &component, key, local_slot()).to_wire(),
                     base: region.paddr,
                     size_bits: u64::from(region.size_bits),
@@ -1017,6 +1331,39 @@ pub fn load_drivers(
                 init.video_count += 1;
             }
             video_given |= blocks != 0;
+        }
+        // ── A PCI host bridge: its windows and the memory behind them ──
+        if let (Extra::PciHost, Some(node)) = (driver.extra, instance.node.as_ref()) {
+            let tree = device_tree::at_el1().index();
+            init.pci = pci_host_record(tree, node, &instance.pci);
+            let windows = init.pci.windows;
+            for window in &windows[..init.pci.windows().len()] {
+                let end = (window.cpu + window.size).next_multiple_of(PAGE);
+                let mut pieces = [Piece {
+                    key: RawKey::from_wire(0),
+                    base: 0,
+                    size_bits: 0,
+                    used: 0,
+                }; MAX_WINDOW_BLOCKS];
+                let room = MAX_WINDOW_BLOCKS - init.pci.blocks().len();
+                let taken = memory.take_within(window.cpu, end, &mut pieces[..room]);
+                for piece in &pieces[..taken] {
+                    let index = init.pci.blocks().len();
+                    init.pci.blocks[index] = DeviceBlock {
+                        key: move_to(
+                            builder,
+                            &mut self_table,
+                            &component,
+                            piece.key,
+                            local_slot(),
+                        )
+                        .to_wire(),
+                        base: piece.base,
+                        size_bits: u64::from(piece.size_bits),
+                    };
+                    init.pci.block_count += 1;
+                }
+            }
         }
         let mut retype = |kind: ObjectType| {
             untyped
@@ -1080,6 +1427,18 @@ pub fn load_drivers(
             local_slot(),
         )
         .to_wire();
+        // The console the component's panic handler prints on.
+        #[cfg(feature = "debug_kernel")]
+        {
+            init.debug_console = grant(
+                &component,
+                builder
+                    .entry(keys.debug_console)
+                    .derive(Rights(Rights::WRITE)),
+                KeySlot::DEBUG_CONSOLE.0,
+            )
+            .to_wire();
+        }
 
         // ── Interrupts ──────────────────────────────────────────────────
         let tree = device_tree::at_el1().index();
@@ -1088,16 +1447,32 @@ pub fn load_drivers(
             .carved_id()
             .unwrap_or_else(|error| panic!("🥾 Notification identity: {:?}", error.code()));
         let mut interrupt_count = 0;
+        // A PCI host bridge whose MSIs another controller turns into one line
+        // per vector also gets its last vector's line, after the node's own.
+        let self_test_msi = instance
+            .node
+            .as_ref()
+            .filter(|_| driver.extra == Extra::PciHost)
+            .and_then(|node| last_msi_interrupt(tree, node));
+        // A PCI host bridge that serves its own MSIs raises them on the line
+        // its `interrupt-names` calls `msi`.
+        let own_msi = instance
+            .node
+            .as_ref()
+            .filter(|_| driver.extra == Extra::PciHost && init.pci.msi.kind == MSI_OWN)
+            .and_then(|node| interrupt_named(tree, node, "msi"));
         // A line the node lists more than once (channels sharing it) is
         // issued once, at its first position.
-        for interrupt in instance
+        for (interrupt, is_msi) in instance
             .node
             .iter()
             .flat_map(|node| distinct_interrupts(tree, node))
+            .map(|interrupt| (interrupt, false))
+            .chain(self_test_msi.map(|interrupt| (interrupt, true)))
             .take(MAX_INTERRUPTS)
         {
             let Some(controller) = controllers.index_of(interrupt.controller) else {
-                semi::println!(
+                crate::early_println!(
                     "🥾 Driver {}: {name} has an interrupt on a controller the kernel does not drive",
                     image.name
                 );
@@ -1115,7 +1490,7 @@ pub fn load_drivers(
                 Ok(issued) => issued,
                 // Another node's driver holds the line already.
                 Err(CapError::IrqLineActive { line }) => {
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {name}'s interrupt line {line} is taken, skipped",
                         image.name
                     );
@@ -1149,6 +1524,9 @@ pub fn load_drivers(
                 bits,
                 line: u64::from(issued.line),
             };
+            if is_msi || (Some(interrupt) == own_msi && init.pci.msi.interrupt == NONE_INDEX) {
+                init.pci.msi.interrupt = interrupt_count as u64;
+            }
             interrupt_count += 1;
         }
         init.interrupt_count = interrupt_count as u64;
@@ -1175,6 +1553,18 @@ pub fn load_drivers(
             .as_ref()
             .and_then(brcm_dma_channel_mask)
             .map_or(0, u64::from);
+        // ── A fixed clock's rate ─────────────────────────────────────────
+        init.clock_hz = instance
+            .node
+            .as_ref()
+            .and_then(|node| fixed_clock_rate(tree, node))
+            .map_or(0, u64::from);
+        // ── A PrimeCell's stated peripheral ID ──────────────────────────
+        init.primecell_id = instance
+            .node
+            .as_ref()
+            .and_then(primecell_periphid)
+            .map_or(0, u64::from);
         init.notification = move_to(
             builder,
             &mut self_table,
@@ -1193,6 +1583,8 @@ pub fn load_drivers(
             thread,
             further_threads,
             next_slot,
+            notification: notification_id,
+            interrupt_count,
         });
     }
     let prepared = &mut prepared[..count];
@@ -1211,6 +1603,8 @@ pub fn load_drivers(
     let mut call_windows = [[None::<PlacementWindow>; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     let mut data_cursor = DATA_WINDOW_VA;
     let mut window_installed = [false; MAX_DRIVER_INSTANCES];
+    // Which (child, host bridge driver) pairs are in the bridge's record.
+    let mut pci_children = [[false; MAX_DRIVER_INSTANCES]; MAX_DRIVER_INSTANCES];
     for client in 0..count {
         let Some(client_instance) = prepared[client].as_ref().map(|loaded| loaded.instance) else {
             continue;
@@ -1220,29 +1614,37 @@ pub fn load_drivers(
         // Imports of one interface are consecutive: report a missing link once.
         let mut unlinked: Option<&str> = None;
         for import in client_image.imports {
-            let exporter = match import.provider {
-                Provider::Device(links) => {
-                    let target = follow_links(tree, client_instance.node.as_ref(), links);
-                    Ok(prepared.iter().position(|candidate| {
-                        candidate.as_ref().is_some_and(|candidate| {
-                            target.as_ref().is_some_and(|target| {
-                                candidate
+            // The first provider that finds a loaded exporter names it; one
+            // that finds several stops the search.
+            let mut exporter = Ok(None);
+            for provider in import.providers {
+                exporter = match *provider {
+                    Provider::Device(links) => {
+                        let target = follow_links(tree, client_instance.node.as_ref(), links);
+                        Ok(prepared.iter().position(|candidate| {
+                            candidate.as_ref().is_some_and(|candidate| {
+                                target.as_ref().is_some_and(|target| {
+                                    candidate
+                                        .instance
+                                        .node
+                                        .as_ref()
+                                        .is_some_and(|node| same_node(node, target))
+                                }) && candidate
                                     .instance
-                                    .node
-                                    .as_ref()
-                                    .is_some_and(|node| same_node(node, target))
-                            }) && candidate
-                                .instance
-                                .driver
-                                .component
-                                .exports_interface(import.interface, import.type_code)
-                        })
-                    }))
+                                    .driver
+                                    .component
+                                    .exports_interface(import.interface, import.type_code)
+                            })
+                        }))
+                    }
+                    Provider::Component(name) => {
+                        component_exporter(prepared, name, import.interface, import.type_code)
+                    }
+                };
+                if !matches!(exporter, Ok(None)) {
+                    break;
                 }
-                Provider::Component(name) => {
-                    component_exporter(prepared, name, import.interface, import.type_code)
-                }
-            };
+            }
             let exporter = match exporter {
                 Ok(Some(exporter)) => exporter,
                 Ok(None) => {
@@ -1250,22 +1652,22 @@ pub fn load_drivers(
                         continue;
                     }
                     unlinked = Some(import.interface);
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {client_name} links no instance exporting {} through `{}`",
                         client_image.name,
                         import.interface,
-                        Provided(import.provider)
+                        Provided(import.providers)
                     );
                     continue;
                 }
                 Err(count) => {
                     // Not granted: the client's call reports it, and naming a
                     // different provider in the manifest is the fix.
-                    semi::println!(
+                    crate::early_println!(
                         "🥾 Driver {}: {client_name} imports {} through `{}`, which {count} loaded instances export",
                         client_image.name,
                         import.interface,
-                        Provided(import.provider)
+                        Provided(import.providers)
                     );
                     continue;
                 }
@@ -1510,6 +1912,10 @@ pub fn load_drivers(
                 };
                 init.import_count += 1;
             });
+            if import.interface == PCI_INTERFACE && !pci_children[client][exporter] {
+                pci_children[client][exporter] = true;
+                record_pci_child(prepared, client, exporter, area_base);
+            }
         }
     }
 
@@ -1541,7 +1947,7 @@ pub fn load_drivers(
                 });
             }
             None => {
-                semi::println!(
+                crate::early_println!(
                     "🥾 Program {} asks for a serial channel and no PL011 driver is loaded",
                     prepared[client].as_ref().map_or("?", |loaded| loaded
                         .instance
@@ -1618,7 +2024,7 @@ pub fn load_drivers(
             init.first_free_slot = u64::from(first_free_slot);
             *init
         });
-        semi::println!(
+        crate::early_println!(
             "🥾 Driver {} for {name}: {} register pages, {} interrupts, {} imports",
             instance.driver.component.name,
             init.page_count,
@@ -1656,6 +2062,9 @@ pub fn load_drivers(
             root_scheduler
                 .start_thread(thread)
                 .unwrap_or_else(|error| panic!("🥾 driver StartThread failed: {:?}", error.code()));
+            // The address the nucleus names the Thread by on the board.
+            let address = builder.entry(thread).thread_id().map_or(0, |id| id.address);
+            crate::early_println!("🥾   thread {address:#x}");
             managed[managed_count] = Some(ManagedThread { thread, priority });
             managed_count += 1;
         }

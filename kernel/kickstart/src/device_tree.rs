@@ -24,31 +24,33 @@ use {
 /// `dtb` must point at the flattened device tree the boot firmware passed,
 /// left intact for the rest of the boot.
 ///
-/// # Panics
+/// # Errors
 ///
 /// If the blob is malformed or its index cannot be allocated.
 pub(crate) unsafe fn index(
     dtb: *const u8,
     allocator: &mut BootAllocator,
-) -> DeviceTree<'static, 'static> {
+) -> Result<DeviceTree<'static, 'static>, &'static str> {
     // SAFETY: the caller's contract.
-    let blob = unsafe { DeviceTree::blob_from_raw(dtb) }.expect("🥾 DeviceTree failed to read");
-    let layout = DeviceTree::index_layout(&blob).expect("🥾 Couldn't calculate DeviceTree index");
+    let blob = unsafe { DeviceTree::blob_from_raw(dtb) }
+        .map_err(|_error| "no device tree header where the firmware said")?;
+    let layout =
+        DeviceTree::index_layout(&blob).map_err(|_error| "the device tree does not parse")?;
     let block = allocator
         .alloc_aligned(
             layout.size(),
             layout.align(),
             ("DTB index", Alloc::Droppable),
         )
-        .expect("🥾 Couldn't allocate DeviceTree index");
+        .ok_or("no memory for the device tree index")?;
     // SAFETY: a fresh, exclusively owned boot allocation of `layout.size()`
     // bytes that stays allocated for the rest of the boot.
     let buffer = unsafe { core::slice::from_raw_parts_mut(block.as_mut_ptr(), layout.size()) };
-    DeviceTree::new(blob, buffer).expect("🥾 Couldn't initialize indexed DeviceTree")
+    DeviceTree::new(blob, buffer).map_err(|_error| "the device tree does not index")
 }
 
 /// Bytes reserved for the EL1 device tree index.
-const INDEX_BYTES: usize = 128 * 1024;
+const INDEX_BYTES: usize = libdevicetree::INDEX_BUFFER_BYTES;
 
 /// The EL1 index: its buffer and, once built, the tree.
 #[repr(C, align(16))]

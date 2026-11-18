@@ -1,0 +1,35 @@
+[package]
+name = "vesper-stacktrace"
+
+description = "Vesper frame-pointer stack traces for panics and exceptions, built in with --cfg stacktrace."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+publish = false
+
+[badges]
+maintenance = { status = "experimental" }
+
+[features]
+# Opt in to standard host integration tests of the frame walk on modelled stacks.
+host-tests = []
+
+[dependencies]
+
+[lib]
+test = false
+harness = false
+
+[[test]]
+name = "stacktrace"
+required-features = ["host-tests"]
+
+[lints]
+workspace = true

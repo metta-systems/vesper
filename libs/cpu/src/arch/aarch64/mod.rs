@@ -7,6 +7,7 @@
 
 use aarch64_cpu::asm;
 
+pub mod cache;
 pub mod smp;
 
 /// Expose CPU-specific no-op opcode.

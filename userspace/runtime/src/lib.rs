@@ -10,10 +10,14 @@
 //! panic handler and the default `vesper_thread_return_fault` handler that
 //! `ppc_export!` adapters call when a Return is rejected.
 //!
-//! The panic handler prints on the semihosting console (under `qemu`), then
-//! calls the reporter a linked library registered with
-//! [`set_panic_reporter`] (`liblog_client` puts a `PANICKED:` line on the
-//! component's log channel), then exits QEMU or halts.
+//! The panic handler prints on the semihosting console (under `qemu`) and on
+//! the panic console, a `DebugConsole` key a `debug_kernel` kernel hands the
+//! component (`libobject::debug_console::set_panic_console`; on the boards it
+//! prints on the UART), then calls the reporter a linked library registered
+//! with [`set_panic_reporter`] (`liblog_client` puts a `PANICKED:` line on
+//! the component's log channel), then exits QEMU or halts. In a build with
+//! stack traces (`libstacktrace`) an `EL0 backtrace:` line follows the panic
+//! on both consoles.
 
 pub mod clock;
 
@@ -22,7 +26,9 @@ use {
         panic::PanicInfo,
         sync::atomic::{AtomicBool, AtomicPtr, Ordering},
     },
+    libobject::{DebugConsoleKey, debug_console::panic_console},
     libqemu::semihosting as semi,
+    libstacktrace::{Backtrace, current_frame_pointer, read_own},
 };
 
 pub use libqemu::semihosting;
@@ -65,12 +71,73 @@ pub fn set_panic_reporter(reporter: fn(&PanicInfo<'_>)) {
     PANIC_REPORTER.store(reporter as *mut (), Ordering::Release);
 }
 
+/// Bytes [`ConsoleLine`] gathers before each `Write`.
+const CONSOLE_CHUNK: usize = 256;
+
+/// A line on the panic console, gathered on the stack and written a
+/// [`CONSOLE_CHUNK`] at a time, so a long message arrives whole in a few
+/// `Write`s.
+struct ConsoleLine {
+    console: DebugConsoleKey,
+    buffer: [u8; CONSOLE_CHUNK],
+    used: usize,
+}
+
+impl ConsoleLine {
+    fn flush(&mut self) {
+        // Nothing is left to tell a failed Write to.
+        let _ignored = self.console.write(&self.buffer[..self.used]);
+        self.used = 0;
+    }
+}
+
+impl core::fmt::Write for ConsoleLine {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for &byte in text.as_bytes() {
+            if self.used == CONSOLE_CHUNK {
+                self.flush();
+            }
+            self.buffer[self.used] = byte;
+            self.used += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Print `line` and a newline on the panic console, if the component has one.
+/// On hardware only: under `qemu` the line is on semihosting already.
+fn console_line(line: core::fmt::Arguments<'_>) {
+    if cfg!(feature = "qemu") {
+        return;
+    }
+    if let Some(console) = panic_console() {
+        let mut writer = ConsoleLine {
+            console,
+            buffer: [0; CONSOLE_CHUNK],
+            used: 0,
+        };
+        let _ignored = core::fmt::Write::write_fmt(&mut writer, format_args!("{line}\n"));
+        writer.flush();
+    }
+}
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     if PANICKING.swap(true, Ordering::AcqRel) {
         semi::println!("EL0 PANICKED again, not reported: {info}");
+        console_line(format_args!("EL0 PANICKED again: {info}"));
     } else {
         semi::println!("EL0 PANICKED: {info}");
+        console_line(format_args!("EL0 PANICKED: {info}"));
+        if libstacktrace::ENABLED {
+            // SAFETY: the walk starts at this function's frame, on the
+            // panicking Thread's own stack.
+            let trace = Backtrace::new(None, current_frame_pointer(), |address| unsafe {
+                read_own(address)
+            });
+            semi::println!("EL0 {trace}");
+            console_line(format_args!("EL0 {trace}"));
+        }
         let reporter = PANIC_REPORTER.load(Ordering::Acquire);
         if !reporter.is_null() {
             // SAFETY: only `set_panic_reporter` stores a non-null value, and

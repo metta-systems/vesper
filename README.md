@@ -65,11 +65,18 @@ just qemu
 just device
 ```
 
-On the device boot SD card you'll need a configuration file instructing RasPi to launch in 64-bit mode.
+One image boots on a Raspberry Pi 3, 4 and 5: it finds the board's hardware in the device
+tree the firmware passes. It is built for a board set, by default `rpi3+rpi4+rpi5`, compiled
+for the oldest core of the set; `just boards=rpi4+rpi5 device` builds for a smaller set.
+
+On the device boot SD card you'll need a configuration file instructing RasPi to launch in
+64-bit mode, from where the kernel is linked:
 
 ```
-# config.txt on RPi3
+# config.txt
 arm_64bit=1
+kernel=kernel8.img
+kernel_address=0x80000
 ```
 
 `tools/makesd` builds a card for all three boards: in that directory,
@@ -78,6 +85,84 @@ arm_64bit=1
 as `kernel8.img`, and `just sdimage` writes `target/images/sdcard.img`
 (an MBR with a FAT32 boot partition holding `boot/`, as `makesd.config` 
 describes) to put on the card.
+
+### To debug on hardware over the serial line
+
+Connect a USB serial adapter to the board's console UART: GPIO 14 and 15 on the
+Raspberry Pi 3 and 4, the debug connector (UART) on the Raspberry Pi 5. The recipes
+use `chainboot_serial` (default `/dev/ttyUSB0`) for its port; set it before the
+recipe name for any other adapter, with any of the recipes below:
+
+```
+just chainboot_serial=/dev/tty.usbmodem102 boot-board-test debug_kernel
+```
+
+Put chainboot on the card once, and then load kernels over the serial line
+without touching the card again:
+
+```
+just cb-sdimage        # target/images/sdcard.img with chainboot as kernel8.img; write it to the card
+just boot              # build the kernel, send it to chainboot, stay as its serial console
+just boot-board-test   # the same for board-test, the drivers being brought up on the boards
+```
+
+`chainofcommand` waits for the board: power it on after starting the recipe. It loads
+at `chainboot_load_baud` (default 1500000) and then stays on the line as a terminal.
+
+Some more shortcuts:
+
+```
+just console                       # only a serial console, for a kernel booted from the card itself
+just sdimage board-test-rpi3+rpi4+rpi5.bin   # put a built image on the card instead of chainboot
+just boot-board-test debug_kernel  # a debug kernel: a component's panic message reaches the UART too
+just extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel
+                                   # also load a probe that panics on purpose and overflows a stack,
+                                   # to check that both reach the UART
+just stacktrace=on boot-board-test debug_kernel
+                                   # with stack traces: a `backtrace: 0x… 0x…` line after a panic,
+                                   # an unexpected exception or a component's fault
+just symbolize log-probe 0x400344 0x400050
+                                   # name the functions and lines of a backtrace's addresses, from
+                                   # that binary (a component's, `nucleus`, `board-test`) of the
+                                   # image built last; `symbolize_config=…` picks another one
+```
+
+#### Stack traces
+
+`stacktrace=on` builds stack traces in. A trace follows the chain of frame records each
+function keeps at its frame pointer, so the switch adds two flags to every cross-built crate:
+`--cfg stacktrace`, which turns the trace code (`libs/stacktrace`) on, and
+`-C force-frame-pointers=yes`, which keeps the frame records it reads. Frame pointers are a
+compiler option for the whole crate, not something a `cfg` can switch per function, so the one
+switch sets both. Without it the trace code compiles to nothing. Switching it, like
+`extra_rustflags`, rebuilds the image configuration's crates.
+
+For example, with the probe that panics on purpose and overflows a stack:
+
+```
+just chainboot_serial=/dev/tty.usbmodem102 stacktrace=on extra_rustflags='--cfg test_boot_panic' boot-board-test debug_kernel
+```
+
+A trace is a line of addresses, innermost first, after:
+
+- a component's panic: `EL0 backtrace: …`, after its `EL0 PANICKED:` line;
+- a component's fault: `   backtrace: …` under the nucleus's `⚠️` line, starting at the
+  faulting PC;
+- a nucleus panic: `nucleus panic backtrace: …`, and an unexpected exception's register dump
+  ends with one starting at its PC;
+- a Kickstart panic: `🥾 backtrace: …`.
+
+Then `just symbolize <binary> <addresses…>` names the functions and source lines, for example
+`just symbolize log-probe 0x400344 0x400050 0x400130`. It reads the binary from the hardware
+image configuration built last (`symbolize_config=rpi3+rpi4+rpi5-debug_kernel` picks one), and
+uses `aarch64-elf-addr2line` (`ADDR2LINE` overrides it).
+
+Kickstart prints its `🥾` lines on the UART from the start. The nucleus adds a few of
+its own: `🧵` when a Thread first runs, `💤` when nothing is runnable for the first
+time, `⚠️` for a fault and `⛔` when a fault handler stops a Thread. A nucleus panic
+takes the UART over and dumps the registers. Components log through the log server,
+whose lines carry a timestamp (`[     5.148328] I sdhci: …`). These sources share
+the UART, so their lines can cut into each other.
 
 ### To run tests (tests require QEMU)
 

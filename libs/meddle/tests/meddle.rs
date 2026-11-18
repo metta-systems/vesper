@@ -382,7 +382,7 @@ mod tests {
         let links: Vec<Vec<&str>> = file
             .uses
             .iter()
-            .map(|uses| match &uses.provider {
+            .map(|uses| match &uses.providers[0] {
                 Provider::Device(links) => {
                     links.iter().map(|link| link.name().text.as_str()).collect()
                 }
@@ -401,8 +401,8 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let file = file.expect("parsed uses");
         assert!(matches!(
-            &file.uses[0].provider,
-            Provider::Device(links)
+            file.uses[0].providers.as_slice(),
+            [Provider::Device(links)]
                 if matches!(
                     links.as_slice(),
                     [Link::Compatible(first), Link::Property(second)]
@@ -477,10 +477,10 @@ mod tests {
         // In the order `uses` names them, as declaration indices.
         assert_eq!(summaries[0].functions, [4, 2]);
         assert_eq!(
-            summaries[0].provider,
-            ProviderSummary::Device(vec![LinkSummary::Property(
+            summaries[0].providers,
+            [ProviderSummary::Device(vec![LinkSummary::Property(
                 "raspberrypi,firmware".to_owned()
-            )])
+            )])]
         );
 
         // A component provider names the manifest component.
@@ -492,11 +492,76 @@ mod tests {
         let summaries =
             libmeddle::summarize_imports(&imports_file, std::slice::from_ref(&directory))
                 .expect("valid imports");
+        assert_eq!(
+            summaries[0].providers,
+            [ProviderSummary::Component("fb".to_owned())]
+        );
+
+        // Providers after `or` are kept in the order they are tried.
+        std::fs::write(
+            &imports_file,
+            "uses mailbox_v1 via device compatible \"brcm,bcm2835-mbox\" or component fb { property }",
+        )
+        .expect("the imports file");
+        let summaries =
+            libmeddle::summarize_imports(&imports_file, std::slice::from_ref(&directory))
+                .expect("valid imports");
         std::fs::remove_dir_all(&imports).ok();
         assert_eq!(
-            summaries[0].provider,
-            ProviderSummary::Component("fb".to_owned())
+            summaries[0].providers,
+            [
+                ProviderSummary::Device(vec![LinkSummary::Compatible(
+                    "brcm,bcm2835-mbox".to_owned()
+                )]),
+                ProviderSummary::Component("fb".to_owned())
+            ]
         );
+    }
+
+    #[test]
+    fn providers_after_or_are_tried_in_order() {
+        let (file, diagnostics) = parse(
+            "uses mailbox_v1 via device firmware, mboxes or component fb or device compatible \"x\" { property }",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let file = file.expect("parsed uses");
+        assert!(matches!(
+            file.uses[0].providers.as_slice(),
+            [
+                Provider::Device(chain),
+                Provider::Component(component),
+                Provider::Device(compatible),
+            ] if chain.len() == 2
+                && component.text == "fb"
+                && matches!(compatible.as_slice(), [Link::Compatible(name)] if name.text == "x")
+        ));
+
+        // `or` needs a provider after it.
+        let (_, diagnostics) = parse("uses mailbox_v1 via component fb or { property }");
+        assert!(!diagnostics.is_empty(), "a dangling `or`");
+
+        // A `compatible` link still only starts a chain, in any provider.
+        let directories = [PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures"
+        ))];
+        let misplaced = source(
+            "imports.if",
+            "uses mailbox_v1 via component fb or device firmware, compatible \"x\" { property }",
+        );
+        let failure = misplaced
+            .imports(&directories)
+            .expect_err("a compatible link after the first");
+        assert!(
+            failure.diagnostics[0]
+                .message
+                .contains("can only start a chain")
+        );
+
+        // `or` stays an ordinary identifier elsewhere.
+        let (file, diagnostics) = parse("interface or_v1 { or(card32 or); }");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(file.is_some());
     }
 
     #[test]

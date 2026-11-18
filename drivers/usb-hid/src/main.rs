@@ -713,12 +713,15 @@ mod component {
 
         let usb = UsbClient::new(UsbBindings::from_imports(init.imports()));
         let hcd = Client::new(Bindings::from_imports(init.imports()));
-        let area = hcd
-            .data_area()
-            .expect("usb-hid shares a data area with the controller");
-        let channel_area = hcd
-            .channel()
-            .expect("usb-hid shares an io-channel with the controller");
+        // An image for several boards carries the driver where no controller
+        // it links to was loaded.
+        let (Some(area), Some(channel_area)) = (hcd.data_area(), hcd.channel()) else {
+            note!("usb-hid: no host controller linked");
+            loop {
+                let _woken = EventCountKey::from_key(RawKey::from_wire(init.event_count))
+                    .sleep(1_000_000_000);
+            }
+        };
         assert_ne!(
             channel_area.event, 0,
             "the controller's channel has an EventCount"

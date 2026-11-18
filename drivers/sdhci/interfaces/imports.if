@@ -1,0 +1,13 @@
+#
+# SPDX-License-Identifier: BlueOak-1.0.0
+# Copyright (c) Berkus Decker <berkus+vesper@metta.systems>
+#
+# The base clock, when neither the controller's capabilities nor a fixed clock
+# in the device tree give it, is the firmware's EMMC2 clock, whose rate the
+# firmware reports through the mailbox, found by the firmware node's
+# compatible string.
+uses mailbox_v1 via device compatible "raspberrypi,bcm2835-firmware", mboxes { get_clock_rate }
+# The bring-up report, the first block's check, a panic and a fault go to the
+# log server, the program holding the UART, in an image that has one
+# (board-test); without it the lines print on semihosting only (under QEMU).
+uses log_v1 via component log_server { flush }

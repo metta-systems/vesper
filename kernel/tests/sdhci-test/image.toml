@@ -1,0 +1,39 @@
+# What sdhci-test bundles (see vesper-image-build): the SDHCI component,
+# loaded by Kickstart for each enabled node it serves, and a test client.
+# The client is a program (a component with `program = true`): Kickstart
+# starts it at boot, without a device tree node, with an extra Thread. It
+# imports block_v1 through the Arasan controller's compatible string.
+
+# The controller imports the log server's log_v1, which this image does not
+# bundle: the import stays unlinked and its lines print on semihosting only.
+interfaces = ["../../../userspace/log-server/interfaces"]
+
+# The mailbox component, through which the controller may learn its base
+# clock.
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../../drivers/mailbox/interfaces"
+
+[[driver]]
+name = "sd"
+binary = "sdhci"
+interfaces = "../../../drivers/sdhci/interfaces"
+memory = 131072
+
+# The sd-test program, wired to the Arasan controller (its own imports file).
+[[component]]
+name = "client"
+binary = "sd-test-client"
+interfaces = "../../../userspace/tests/sd/client/sdhci-interfaces"
+active = true
+program = true
+
+# The root dispatcher: Kickstart binds it once every other program and driver
+# is loaded, and registers the boot Thread with it.
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

@@ -1,56 +1,11 @@
-//! Device addresses and the table of attached devices.
+//! The table of attached devices. The host controller assigns their
+//! addresses (`usb_hcd_v1.address_device`).
 
-use vesper_usb_protocol::enumeration::{FIRST_ADDRESS, LAST_ADDRESS, Speed};
+use vesper_usb_protocol::enumeration::Speed;
 
 /// Devices the table holds: the root device, the hub's other ports and nested
 /// hubs.
 pub const MAX_DEVICES: usize = 16;
-
-/// Hands out device addresses, lowest first, and takes them back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AddressPool {
-    /// Bit `n` of word `n / 64` is set when address `n` is taken.
-    taken: [u64; 2],
-}
-
-impl AddressPool {
-    /// A pool with every address from [`FIRST_ADDRESS`] to [`LAST_ADDRESS`] free.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self { taken: [0; 2] }
-    }
-
-    /// The lowest free address, now taken, or `None` when all are.
-    pub fn take(&mut self) -> Option<u8> {
-        (FIRST_ADDRESS..=LAST_ADDRESS).find(|&address| {
-            let (word, bit) = Self::place(address);
-            let free = self.taken[word] & bit == 0;
-            if free {
-                self.taken[word] |= bit;
-            }
-            free
-        })
-    }
-
-    /// Give `address` back. An address that is not taken stays free.
-    pub fn release(&mut self, address: u8) {
-        if (FIRST_ADDRESS..=LAST_ADDRESS).contains(&address) {
-            let (word, bit) = Self::place(address);
-            self.taken[word] &= !bit;
-        }
-    }
-
-    /// The word and bit of `address` in the bitmap.
-    const fn place(address: u8) -> (usize, u64) {
-        ((address / 64) as usize, 1 << (address % 64))
-    }
-}
-
-impl Default for AddressPool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Where a device is attached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -405,6 +405,9 @@ pub fn generate_kernel(manifest: &str) {
     let (nucleus_set_platform_virt, _) = image
         .symbol("nucleus_set_platform")
         .expect("the nucleus must export nucleus_set_platform");
+    let (nucleus_set_board_console_virt, _) = image
+        .symbol("nucleus_set_board_console")
+        .expect("the nucleus must export nucleus_set_board_console");
 
     render(
         "kernel_sections.rs",
@@ -420,6 +423,7 @@ pub fn generate_kernel(manifest: &str) {
             stack_virt_bottom,
             nucleus_set_anchor_virt,
             nucleus_set_platform_virt,
+            nucleus_set_board_console_virt,
         },
     );
 }
@@ -770,14 +774,19 @@ struct Settings {
     budget_ns: u64,
     /// Size exponent of the RAM Untyped (default 64 KiB)
     memory_bits: u8,
-    /// Whether the instance receives the `VideoCore` memory Untypeds (`video_memory = true`)
-    video_memory: bool,
+    /// What the instance receives beyond its node's registers and interrupts,
+    /// as the `libimage::Extra` variant's name: `VideoMemory` for
+    /// `video_memory = true`, `PciHost` for `pci_host = true`
+    extra: &'static str,
     /// Whether the instance is attached to the PL011 driver's serial channel
     /// (`serial = true`)
     serial: bool,
     /// Whether the program is the root dispatcher (`dispatcher = true`):
     /// Kickstart binds its Thread to the root Scheduler instead of starting it
     dispatcher: bool,
+    /// Full paths of device tree nodes a driver serves besides its
+    /// `compatible` strings (`nodes = [...]`)
+    nodes: Vec<String>,
 }
 
 /// A `[[driver]]` manifest entry: an active component plus what Kickstart
@@ -808,13 +817,25 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
         "{}: {kind} `{name}` memory must be a power of two of at least 4096 bytes",
         path.display()
     );
+    let switch = |key: &str| {
+        entry
+            .get(key)
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+    };
+    let extra = match (switch("video_memory"), switch("pci_host")) {
+        (false, false) => "Nothing",
+        (true, false) => "VideoMemory",
+        (false, true) => "PciHost",
+        (true, true) => panic!(
+            "{}: {kind} `{name}` asks for both video_memory and pci_host",
+            path.display()
+        ),
+    };
     Settings {
         budget_ns,
         memory_bits: u8::try_from(memory.trailing_zeros()).unwrap_or(u8::MAX),
-        video_memory: entry
-            .get("video_memory")
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(false),
+        extra,
         serial: entry
             .get("serial")
             .and_then(toml::Value::as_bool)
@@ -823,6 +844,24 @@ fn settings_of(path: &Path, kind: &str, name: &str, entry: &toml::Value) -> Sett
             .get("dispatcher")
             .and_then(toml::Value::as_bool)
             .unwrap_or(false),
+        nodes: entry
+            .get("nodes")
+            .and_then(toml::Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .map(|node_path| {
+                node_path
+                    .as_str()
+                    .filter(|node_path| node_path.starts_with('/'))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: {kind} `{name}` nodes must be full device tree paths",
+                            path.display()
+                        )
+                    })
+                    .to_string()
+            })
+            .collect(),
     }
 }
 
@@ -1006,30 +1045,36 @@ fn interface_contexts(
             .unwrap_or_else(|failure| meddle_failure(&failure));
         for summary in summaries {
             // A device provider is a chain of links; a component provider has a name.
-            let (component, links) = match &summary.provider {
-                libmeddle::ProviderSummary::Device(links) => (
-                    None,
-                    links
-                        .iter()
-                        .map(|link| match link {
-                            libmeddle::LinkSummary::Property(name) => {
-                                context! { property => true, name }
-                            }
-                            libmeddle::LinkSummary::Compatible(name) => {
-                                context! { property => false, name }
-                            }
-                        })
-                        .collect(),
-                ),
-                libmeddle::ProviderSummary::Component(name) => (Some(name.clone()), Vec::new()),
-            };
+            let providers: Vec<_> = summary
+                .providers
+                .iter()
+                .map(|provider| match provider {
+                    libmeddle::ProviderSummary::Device(links) => context! {
+                        component => None::<String>,
+                        links => links
+                            .iter()
+                            .map(|link| match link {
+                                libmeddle::LinkSummary::Property(name) => {
+                                    context! { property => true, name }
+                                }
+                                libmeddle::LinkSummary::Compatible(name) => {
+                                    context! { property => false, name }
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    },
+                    libmeddle::ProviderSummary::Component(name) => context! {
+                        component => Some(name.clone()),
+                        links => Vec::<Value>::new(),
+                    },
+                })
+                .collect();
             for index in summary.functions {
                 imports.push(context! {
                     interface => &summary.interface.name,
                     type_code => summary.interface.type_code,
                     function => index,
-                    component => &component,
-                    links => &links,
+                    providers => &providers,
                     data_bytes => summary.interface.data_bytes,
                     placement_slots => summary.interface.placement_slots,
                     channel_pages => summary.interface.channel_pages,
@@ -1060,7 +1105,8 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// `pub static <NAME>: libimage::ComponentImage`, plus
 /// `pub static COMPONENTS: &[&ComponentImage]`. A driver is an active
 /// component plus a `pub static <NAME>_DRIVER: libimage::DriverImage` with
-/// the strings of its `.driver_compatible` section, its first Thread's
+/// the strings of its `.driver_compatible` section, the device tree paths its
+/// entry's `nodes` names, its first Thread's
 /// priority (`.entry_priority`), the entries and
 /// priorities of its `.driver_threads` section, its `budget_ns` and its
 /// `memory` size, all listed in
@@ -1108,8 +1154,8 @@ pub fn bundle_components(manifest: &str) {
     for driver in &driver_entries {
         let image = ElfImage::read(&find_artifact(&driver.component.binary));
         assert!(
-            !image.driver_compatible.is_empty(),
-            "{}: a driver declares its compatible strings with driver_compatible!",
+            !image.driver_compatible.is_empty() || !driver.settings.nodes.is_empty(),
+            "{}: a driver declares its compatible strings with driver_compatible! or its manifest entry names nodes",
             driver.component.binary
         );
         drivers.push(driver.component.name.to_uppercase());
@@ -1138,9 +1184,10 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
     context! {
         what,
         compatible => &image.driver_compatible,
+        nodes => &settings.nodes,
         budget_ns => settings.budget_ns,
         memory_bits => settings.memory_bits,
-        video_memory => settings.video_memory,
+        extra => settings.extra,
         serial => settings.serial,
         dispatcher => settings.dispatcher,
         priority => image.entry_priority,

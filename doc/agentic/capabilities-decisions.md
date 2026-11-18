@@ -109,7 +109,9 @@ revisit after use. Unanswered questions:
   input snapshot, copy-fault recovery), which no other operation currently
   needs. (B) a register-inline operation, e.g. a length plus up to 40 bytes in
   `x3..x7` with client chunking, so the nucleus never reads user memory. Until
-  this is decided the console stays a debug-only prototype.
+  this is decided the console stays a debug-only prototype. The hardware
+  debugging aid's checked pointer reads (contract, DebugConsole debug-only
+  exception) are temporary and do not answer this question.
 
 ## Future work
 
@@ -203,13 +205,32 @@ needs them.
   and invalidate it after the answer, or keep the buffers in a non-cacheable
   region. Worth doing only if chainboot needs atomics; QEMU does not model
   caches, so the board is the test.
-- **Panics visible on hardware:** move chainboot's PL011 driver into
-  `libmachine` so the nucleus panic handler can take the UART over and dump the
-  panic there; and give EL0 components a DebugConsole key their panic handler
-  writes to, so a component's panic reaches the UART too (today it prints only
-  over semihosting, which hardware does not have).
-- **Arasan SDHCI driver for the card:** the Raspberry Pi 3 has two SD
+- **Arasan SDHCI for the card on the boards:** the Raspberry Pi 3 has two SD
   controllers, and the device tree says which one has the card (the enabled
   node whose pin group holds GPIO 48 to 53). The stock tree enables SDHOST and
-  gives the Arasan to the Wi-Fi chip; a tree that enables the Arasan for the
-  card instead (the `sdio` overlay) would need an Arasan SDHCI driver.
+  gives the Arasan to the Wi-Fi chip, so the `sdhci` driver serves
+  `brcm,bcm2835-sdhci` only in `qemu` builds; a tree that enables the Arasan
+  for the card instead (the `sdio` overlay) would need the driver to tell the
+  card's node from the Wi-Fi chip's, for example by that pin group.
+- **Zero-copy DMA for packet drivers:** a driver that moves a client's
+  buffers by DMA (the `sdhci` driver's ADMA2 today, xHCI and network drivers
+  later) does not know the physical addresses of the channel data pages its
+  clients share with it, so the controller moves data through bounce pages of
+  the driver's own memory and the CPU copies every byte once more between
+  those and the client's buffers (as the DWC2 driver does). DMA then saves the
+  wait on the controller, not the copy. Avoiding the copy needs packet-driver
+  infrastructure that tells a driver the bus addresses of the pages it is
+  given: Kickstart recording them for the channel pages it maps, client-lent
+  Frames whose extent the driver reads (`Frame.GetAddress`), or a channel
+  whose data pages the driver allocates from its own memory. It also needs the
+  pages in the device's DMA window (the BCM2711's first gigabyte for EMMC2)
+  and a rule for cache maintenance on pages two components map. Ties in with
+  universal channel provisioning above.
+- **The activity LED handed to its driver:** `mailbox_v1.set_led` picks the
+  LED's firmware GPIO from the board revision code the firmware reports
+  (`mailbox_impl::activity_led_pin`), so the mailbox component knows boards.
+  Kickstart could instead read the device tree's `/leds` node
+  (`libdevicetree`'s `DeviceTree::activity_led`) and hand the LED to whoever
+  switches it through the driver init page: a firmware GPIO to the mailbox
+  component, a SoC GPIO to the GPIO component, the Raspberry Pi 5's
+  `brcm,brcmstb-gpio` pin to a driver for that block.

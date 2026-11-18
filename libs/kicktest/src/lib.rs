@@ -87,10 +87,11 @@ pub fn assert_el0_visible_state() {
 }
 
 #[panic_handler]
-// Without `qemu`, semihosting printing compiles away and `info` is unused.
-#[cfg_attr(not(feature = "qemu"), allow(unused_variables))]
 fn panic(info: &PanicInfo) -> ! {
     semi::println!("PANICKED: {info}");
+    // And on the board's console, taken over from whoever has it.
+    kickstart::early_console::panic_line(format_args!("PANICKED: {info}"));
+    kickstart::early_console::panic_backtrace("");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_failure()

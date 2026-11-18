@@ -497,7 +497,7 @@ pub fn bootstrap_nucleus() -> BootState {
         // operation table is mapped at `ops`.
         let line_count = unsafe { (*(handoff.ops as *const libirqchip::IrqChipOps)).line_count };
         carve_irq_table(nucleus, keytable_addr, boot_untyped_key, line_count);
-        semi::println!(
+        crate::early_println!(
             "🥾 Interrupt controller installed: {line_count} lines, physical timer line {timer_line}"
         );
     }

@@ -82,12 +82,12 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "chumsky"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ba4a05c9ce83b07de31b31c874e87c069881ac4355db9e752e3a55c11ec75a6"
+checksum = "e0d2bfadce76f963d776feff99db6dc33783829539258314776383b33e2a00f8"
 dependencies = [
  "hashbrown 0.15.5",
- "regex-automata 0.3.9",
+ "regex-automata",
  "serde",
  "stacker",
  "unicode-ident",
@@ -263,8 +263,8 @@ dependencies = [
  "aho-corasick",
  "bstr",
  "log",
- "regex-automata 0.4.18",
- "regex-syntax 0.8.11",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -296,9 +296,9 @@ version = "0.2.0"
 dependencies = [
  "ignore",
  "logos",
+ "metta-meddle",
  "tokio",
  "tower-lsp-server",
- "vesper-meddle",
 ]
 
 [[package]]
@@ -311,7 +311,7 @@ dependencies = [
  "globset",
  "log",
  "memchr",
- "regex-automata 0.4.18",
+ "regex-automata",
  "same-file",
  "walkdir",
  "winapi-util",
@@ -362,8 +362,8 @@ dependencies = [
  "fnv",
  "proc-macro2",
  "quote",
- "regex-automata 0.4.18",
- "regex-syntax 0.8.11",
+ "regex-automata",
+ "regex-syntax",
  "syn 2.0.119",
 ]
 
@@ -394,6 +394,20 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "metta-meddle"
+version = "0.0.1"
+dependencies = [
+ "ariadne",
+ "chumsky",
+ "logos",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "seahash",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "mio"
@@ -525,31 +539,14 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59b23e92ee4318893fa3fe3e6fb365258efbfe6ac6ab30f090cdcbb7aa37efa9"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-syntax 0.7.5",
-]
-
-[[package]]
-name = "regex-automata"
 version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.11",
+ "regex-syntax",
 ]
-
-[[package]]
-name = "regex-syntax"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbb5fb1acd8a1a18b3dd5be62d25485eb770e05afb408a9627d14d451bae12da"
 
 [[package]]
 name = "regex-syntax"
@@ -836,20 +833,6 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
-
-[[package]]
-name = "vesper-meddle"
-version = "0.0.1"
-dependencies = [
- "ariadne",
- "chumsky",
- "logos",
- "prettyplease",
- "proc-macro2",
- "quote",
- "seahash",
- "syn 3.0.9",
-]
 
 [[package]]
 name = "walkdir"

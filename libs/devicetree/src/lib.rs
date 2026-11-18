@@ -8,15 +8,24 @@
 //!   through every ancestor bus's `ranges` (§2.3.8);
 //! - `compatible` is a string list matched entry by entry;
 //! - [`interrupts`] resolves interrupt routing: the generic timer, the root
-//!   controller and each node's interrupts with their controller.
+//!   controller and each node's interrupts with their controller;
+//! - [`DeviceTree::board`] and its siblings find what boot programs need
+//!   before any driver runs: the board, the console UART, the firmware mailbox
+//!   and the activity LED.
 
+mod board;
 mod dump;
 pub mod interrupts;
+pub mod pci;
 mod tree;
 
 pub use {
+    board::{
+        ActivityLed, Board, BootHardware, ConsoleUart, FIRMWARE_GPIO_BASE, Gpio, GpioKind, Mailbox,
+        Soc, UartClock,
+    },
     dump::dump,
-    tree::{Device, DeviceTree},
+    tree::{Device, DeviceTree, INDEX_BUFFER_BYTES},
 };
 
 pub use fdt_rs::{
@@ -32,7 +41,7 @@ pub type Node<'a, 'i, 'dt> = DevTreeIndexNode<'a, 'i, 'dt>;
 pub type Prop<'a, 'i, 'dt> = DevTreeIndexProp<'a, 'i, 'dt>;
 
 /// Default `#address-cells` when a bus does not specify it (`DTSpec` §2.3.5).
-const DEFAULT_ADDRESS_CELLS: u32 = 2;
+pub(crate) const DEFAULT_ADDRESS_CELLS: u32 = 2;
 /// Default `#size-cells` when a bus does not specify it (`DTSpec` §2.3.5).
 const DEFAULT_SIZE_CELLS: u32 = 1;
 
@@ -78,7 +87,7 @@ pub fn reg_cells(node: &Node<'_, '_, '_>) -> Cells {
 }
 
 /// Read a `count`-cell big-endian number starting at u32 `index` of `prop`.
-fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
+pub(crate) fn read_number(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
     match count {
         0 => Some(0),
         1 => prop.u32(index).ok().map(u64::from),
@@ -166,6 +175,16 @@ pub fn translate(node: &Node<'_, '_, '_>, address: u64) -> Option<u64> {
     Some(address)
 }
 
+/// The address of `count` cells at `index`, as [`read_number`] reads it; a PCI
+/// address (three cells: the space code, then the 64-bit address) is its
+/// address cells, the space code dropped.
+fn read_bus_address(prop: &Prop<'_, '_, '_>, index: usize, count: u32) -> Option<u64> {
+    match count {
+        3 => read_number(prop, index + 1, 2),
+        _ => read_number(prop, index, count),
+    }
+}
+
 /// Most bus levels [`dma_address`] walks above a node.
 const MAX_BUS_DEPTH: usize = 8;
 
@@ -199,8 +218,8 @@ pub fn dma_address(node: &Node<'_, '_, '_>, cpu_address: u64, size: u64) -> Opti
         let entries = dma_ranges.length() / size_of::<u32>() / stride;
         address = (0..entries).find_map(|entry| {
             let index = entry * stride;
-            let child_base = read_number(&dma_ranges, index, child_cells.address)?;
-            let parent_base = read_number(
+            let child_base = read_bus_address(&dma_ranges, index, child_cells.address)?;
+            let parent_base = read_bus_address(
                 &dma_ranges,
                 index + child_cells.address as usize,
                 parent_address_cells,
@@ -321,6 +340,20 @@ pub fn interrupt_parent<'a, 'i: 'a, 'dt: 'i>(
     None
 }
 
+/// Whether `node`'s full path is `path`, such as
+/// `/scb/pcie@7d500000/pci@1,0/usb@1,0` (unit addresses included).
+pub fn has_path(node: &Node<'_, '_, '_>, path: &str) -> bool {
+    let mut current = Some(node.clone());
+    // The root node's name is empty, as is the part before the first `/`.
+    for component in path.rsplit('/') {
+        match current {
+            Some(candidate) if candidate.name() == Ok(component) => current = candidate.parent(),
+            _ => return false,
+        }
+    }
+    current.is_none()
+}
+
 /// `node`'s `phandle`, if it has one.
 pub fn phandle(node: &Node<'_, '_, '_>) -> Option<u32> {
     property(node, "phandle").and_then(|prop| prop.u32(0).ok())
@@ -332,11 +365,29 @@ pub fn linked_phandle(node: &Node<'_, '_, '_>, property_name: &str) -> Option<u3
     property(node, property_name).and_then(|prop| prop.u32(0).ok())
 }
 
+/// The frequency of `node`'s first clock (`clocks`), in Hz, when that clock is
+/// a `fixed-clock` node; `None` for a clock another provider runs.
+pub fn fixed_clock_rate(tree: &DevTreeIndex<'_, '_>, node: &Node<'_, '_, '_>) -> Option<u32> {
+    let clock = node_by_phandle(tree, linked_phandle(node, "clocks")?)?;
+    if !is_compatible(&clock, "fixed-clock") {
+        return None;
+    }
+    property(&clock, "clock-frequency")?.u32(0).ok()
+}
+
 /// The DMA channels a Broadcom DMA controller node (`brcm,bcm2835-dma`)
 /// leaves to the ARM, one bit per channel: its `brcm,dma-channel-mask`. The
 /// firmware may change it at boot, so it is read from the tree it hands over.
 pub fn brcm_dma_channel_mask(node: &Node<'_, '_, '_>) -> Option<u32> {
     property(node, "brcm,dma-channel-mask").and_then(|prop| prop.u32(0).ok())
+}
+
+/// The AMBA peripheral ID a `PrimeCell` node states in place of its ID
+/// registers (`arm,primecell-periphid`): `PeriphID3` to `PeriphID0`, one byte
+/// each, as one word. A node gives it when the registers are absent or wrong,
+/// as the Raspberry Pi 5's `uart10`, whose 0x200-byte block ends before them.
+pub fn primecell_periphid(node: &Node<'_, '_, '_>) -> Option<u32> {
+    property(node, "arm,primecell-periphid").and_then(|prop| prop.u32(0).ok())
 }
 
 /// One pin of a Broadcom pin group.

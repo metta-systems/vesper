@@ -36,12 +36,16 @@
 
 /// Syscall API — capability invocation handlers.
 pub mod api;
+/// The board's console UART.
+pub mod board_console;
 /// Nucleus object implementations.
 pub mod objects;
 /// The privileged interrupt-controller component.
 pub mod platform;
 /// The kernel-owned preemption timer.
 pub mod timer;
+/// Reading a caller's memory at its own exception level.
+pub mod user_memory;
 
 // Root-level re-exports the object modules reference via `crate::…`; the bin
 // previously supplied these through its own `use` statements.

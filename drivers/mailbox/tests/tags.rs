@@ -19,6 +19,7 @@ mod tests {
         assert_eq!(check_request(&request(tag::GET_BOARD_REVISION, 1)), Ok(()));
         assert_eq!(check_request(&request(tag::GET_ARM_MEMORY, 2)), Ok(()));
         assert_eq!(check_request(&request(tag::SET_PHYSICAL_SIZE, 2)), Ok(()));
+        assert_eq!(check_request(&request(tag::NOTIFY_XHCI_RESET, 1)), Ok(()));
         // No tags at all: header, end tag, padding.
         assert_eq!(check_request(&[12, 0, 0]), Ok(()));
     }
@@ -136,12 +137,17 @@ mod tests {
     }
 
     #[test]
-    fn the_led_pin_is_the_expander_pin_unless_built_for_the_pi_4() {
-        // Host builds carry no board cfg: the Raspberry Pi 3's expander pin.
-        assert_eq!(
-            mailbox_impl::ACT_LED_PIN,
-            if cfg!(board_rpi4) { 42 } else { 130 }
-        );
+    fn the_led_pin_is_the_expander_pin_unless_the_board_is_a_pi_4() {
+        use mailbox_impl::activity_led_pin;
+        // The codes QEMU's raspi3b and raspi4b report: a 3B and a 4B.
+        assert_eq!(activity_led_pin(0x00a0_2082), 130);
+        assert_eq!(activity_led_pin(0x00b0_3115), 42);
+        // A 400, a Compute Module 4 and a 5 (type 0x17).
+        assert_eq!(activity_led_pin(0x00c0_3130), 42);
+        assert_eq!(activity_led_pin(0x00b0_3140), 42);
+        assert_eq!(activity_led_pin(0x00c0_4170), 130);
+        // An old-style code has no type field.
+        assert_eq!(activity_led_pin(0x0000_0011), 130);
         assert!(!mailbox_impl::is_allowed(tag::SET_GPIO_STATE));
     }
 }
