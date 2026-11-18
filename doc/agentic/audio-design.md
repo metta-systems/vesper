@@ -600,9 +600,11 @@ repository with throwaway scripts (`/tmp/music-prep/`), not from documentation.
 
 ### Constraints that shape the options
 
-- **Integer-only execution** (capabilities contract, "FP/SIMD", line 734): components
+- **Integer-only execution** (capabilities contract, "Architectural state"): components
   build soft-float, `CPACR_EL1` traps FP/SIMD at EL0 and EL1, no FP state is saved. An
-  `f32` operation compiles to a `compiler-builtins` call (tens of cycles each).
+  `f32` operation compiles to a `compiler-builtins` call (tens of cycles each). FP/SIMD
+  per AddressSpace is designed but not implemented ([simd-design.md](simd-design.md)).
+  Until it is, this holds for every component, and it stays true for the synthesiser.
 - **CPU.** The Pi 3 B's Cortex-A53 runs at 600 to 1 200 MHz (`arm_freq` 1 200,
   `arm_freq_min` 600 in the `config.txt` defaults [M11]; Vesper does not set the ARM clock
   through the mailbox, so which of the two the board runs at under Vesper is unmeasured
@@ -753,15 +755,12 @@ rendered audio as well. Fidelity is the host's, minus the codec.
 
 ### Option 4: allow floating point in this component
 
-Run `rustysynth` (after a `no_std` port) with hardware FP. What the kernel would need:
-FP/SIMD state per Thread (32 × 128-bit V registers plus `FPCR`/`FPSR`, 528 bytes) saved
-and restored on switches, eagerly or lazily by trapping the first use with
-`CPACR_EL1.FPEN`; a per-Thread or per-AddressSpace "FP allowed" attribute set at
-creation (state in an existing object, but a contract change); Wood (with Room) built for
-a hard-float target while the kernel stays soft-float. The contract's integer-only rule
-and the minimal-kernel-API rule both argue against it; the float cost would still be
-about 10 % to 25 % of the core by the operation counts above at native speed. Listed for
-completeness; not recommended unless the maintainer wants hardware FP for other reasons.
+Run `rustysynth` (after a `no_std` port) with hardware FP. The kernel side is now
+designed: FP/SIMD per AddressSpace, with per-Thread state switched eagerly
+([simd-design.md](simd-design.md), not implemented yet). Wood (with Room) would be built
+for the hard-float target and listed among the FP components. The float cost would still
+be about 10 % to 25 % of the core by the operation counts above at native speed. Listed
+for completeness. The synthesiser stays integer-only.
 
 ### Option 5: placement and timing (applies to options 1 to 3)
 

@@ -129,3 +129,7 @@ The kernel never reads or writes the stack memory and does not check that it is 
 ## Implementation
 
 `Untyped.Retype` creates AddressSpaces (`size_bits` 0) from an Untyped's memory; the boot AddressSpace is created and bound by the boot code. An AddressSpace's translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace holds its stack pool table inline, so pools allocate nothing. It also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.
+
+## Planned changes
+
+An FP/SIMD flag, set by bit 8 of `Untyped.Retype`'s `x3` when the AddressSpace is created and fixed after that. Code in an AddressSpace with the flag may execute FP and SIMD instructions. In any other AddressSpace they stay faults. The kernel keeps each Thread's FP state while it runs in such AddressSpaces; see [Thread](../core/thread.md#planned-changes) and [Invocation](../core/invocation.md#planned-changes).

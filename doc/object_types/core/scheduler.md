@@ -205,3 +205,8 @@ The nucleus publishes a Thread's record when it starts, queues, moves to another
 ## Planned changes
 
 Non-blocking dispatch and replacing the running Thread on other CPUs (future kernel multicore work).
+
+FP/SIMD counters in the records.
+- **Thread records.** Bytes 64 to 127 of a Thread record hold eight wrapping `u64` counters: `fp_entries`, `fp_saves`, `fp_loads`, `fp_zeroes`, `preserved_saves`, `first_use_traps`, `decays` and `owner_hits`, in that order.
+- **The root Scheduler's record.** From byte 64 it holds `thread_switches`, `fp_thread_switches` and `fp_entry_toggles`.
+- **Size.** The record size and layout version stay the same.
