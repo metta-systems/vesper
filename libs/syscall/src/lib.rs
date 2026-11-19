@@ -305,7 +305,9 @@ pub unsafe fn protected_call0(cap: u64, op: u64) -> (u64, u64, u64) {
 ///
 /// Register effects follow the conservative declarations: x0..x2
 /// carry inputs and responses; x3..x7 are inputs with discarded
-/// outputs; x8..x17 and the caller-volatile x18 are discarded clobbers.
+/// outputs; x8..x17 and the caller-volatile x18 are discarded clobbers. Built
+/// for the hard-float target (`neon`), v0..v7 and v16..v31 are clobbers too;
+/// v8..v15, FPCR and FPSR come back as they were.
 /// The kernel restores x19..x30, SP and NZCV, but memory and flags are left
 /// to the compiler's conservative defaults (no `nomem`, `readonly`, `pure`,
 /// `preserves_flags`), and `nostack` is deliberately omitted: the migrated
@@ -350,6 +352,33 @@ pub fn ppc_call(key: u64, args: [u64; 6]) -> (u64, u64, u64) {
             // targets that reserve it (Apple) the compiler never allocates it.
             #[cfg(not(target_vendor = "apple"))]
             lateout("x18") _,
+            // In an FP component, the Return gives back v8..v15, FPCR and
+            // FPSR and zeroes every other V register: the AAPCS64 call
+            // clobbers.
+            #[cfg(target_feature = "neon")] lateout("v0") _,
+            #[cfg(target_feature = "neon")] lateout("v1") _,
+            #[cfg(target_feature = "neon")] lateout("v2") _,
+            #[cfg(target_feature = "neon")] lateout("v3") _,
+            #[cfg(target_feature = "neon")] lateout("v4") _,
+            #[cfg(target_feature = "neon")] lateout("v5") _,
+            #[cfg(target_feature = "neon")] lateout("v6") _,
+            #[cfg(target_feature = "neon")] lateout("v7") _,
+            #[cfg(target_feature = "neon")] lateout("v16") _,
+            #[cfg(target_feature = "neon")] lateout("v17") _,
+            #[cfg(target_feature = "neon")] lateout("v18") _,
+            #[cfg(target_feature = "neon")] lateout("v19") _,
+            #[cfg(target_feature = "neon")] lateout("v20") _,
+            #[cfg(target_feature = "neon")] lateout("v21") _,
+            #[cfg(target_feature = "neon")] lateout("v22") _,
+            #[cfg(target_feature = "neon")] lateout("v23") _,
+            #[cfg(target_feature = "neon")] lateout("v24") _,
+            #[cfg(target_feature = "neon")] lateout("v25") _,
+            #[cfg(target_feature = "neon")] lateout("v26") _,
+            #[cfg(target_feature = "neon")] lateout("v27") _,
+            #[cfg(target_feature = "neon")] lateout("v28") _,
+            #[cfg(target_feature = "neon")] lateout("v29") _,
+            #[cfg(target_feature = "neon")] lateout("v30") _,
+            #[cfg(target_feature = "neon")] lateout("v31") _,
         );
     }
     (status, word1, word2)
@@ -399,6 +428,31 @@ pub fn ppc_call_with_key(key: u64, lent_key: u64, args: [u64; 6]) -> (u64, u64, 
             // targets that reserve it (Apple) the compiler never allocates it.
             #[cfg(not(target_vendor = "apple"))]
             lateout("x18") _,
+            // The AAPCS64 call clobbers, as in `ppc_call`.
+            #[cfg(target_feature = "neon")] lateout("v0") _,
+            #[cfg(target_feature = "neon")] lateout("v1") _,
+            #[cfg(target_feature = "neon")] lateout("v2") _,
+            #[cfg(target_feature = "neon")] lateout("v3") _,
+            #[cfg(target_feature = "neon")] lateout("v4") _,
+            #[cfg(target_feature = "neon")] lateout("v5") _,
+            #[cfg(target_feature = "neon")] lateout("v6") _,
+            #[cfg(target_feature = "neon")] lateout("v7") _,
+            #[cfg(target_feature = "neon")] lateout("v16") _,
+            #[cfg(target_feature = "neon")] lateout("v17") _,
+            #[cfg(target_feature = "neon")] lateout("v18") _,
+            #[cfg(target_feature = "neon")] lateout("v19") _,
+            #[cfg(target_feature = "neon")] lateout("v20") _,
+            #[cfg(target_feature = "neon")] lateout("v21") _,
+            #[cfg(target_feature = "neon")] lateout("v22") _,
+            #[cfg(target_feature = "neon")] lateout("v23") _,
+            #[cfg(target_feature = "neon")] lateout("v24") _,
+            #[cfg(target_feature = "neon")] lateout("v25") _,
+            #[cfg(target_feature = "neon")] lateout("v26") _,
+            #[cfg(target_feature = "neon")] lateout("v27") _,
+            #[cfg(target_feature = "neon")] lateout("v28") _,
+            #[cfg(target_feature = "neon")] lateout("v29") _,
+            #[cfg(target_feature = "neon")] lateout("v30") _,
+            #[cfg(target_feature = "neon")] lateout("v31") _,
         );
     }
     (status, word1, word2)

@@ -1,0 +1,16 @@
+# What fp-test bundles (see vesper-image-build). `binary` is the cargo binary
+# name, built with userspace/runtime/user.ld.
+
+# The FP component, loaded twice; image-build's FP scan sets its flag.
+[[component]]
+name = "worker"
+binary = "fp-worker"
+active = true
+
+# The integer-only Call target. It executes an FP/SIMD instruction on purpose,
+# to show that it traps.
+[[component]]
+name = "probe"
+binary = "fp-probe"
+active = true
+expects_fp_trap = true

@@ -7,7 +7,8 @@ This file holds only open work, in order. Each step is verified before the next 
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-Done: S0 (the contract), S1 (object layer) and S2 (routines and switch hooks); see
+Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks), S3 (build
+side) and S4's `fp-test` in QEMU; see
 [simd-completed.md](simd-completed.md).
 
 When an S1 to S4 step implements part of the design, it also rewrites the matching
@@ -37,43 +38,16 @@ guard.
 
 ## S3: build side
 
-- [ ] Add the target spec `targets/aarch64-metta-none-hardfloat.json`, and pass the
-  target spec as a parameter to `_cross-build`. Build the crates of an `fp_components`
-  list with it (F5.1(a)).
-- [ ] `tools/fp-scan`, a host crate with a library and a binary:
-  - an ELF reader that tests every word of the executable segments against the AArch64
-    FP/SIMD encoding classes and the FPCR and FPSR accesses, and reports each hit with
-    its symbol;
-  - host tests with known FP, integer-only and literal-pool words.
-- [ ] Image-build derives `ComponentImage`'s FP flag with the `fp-scan` library
-  (F5.2(a)), and carries it through `libs/image` into `Builder::component`.
-- [ ] The Justfile passes `fp_components` to image-build. A component with FP hits that
-  is not on the list fails the build. Test it with an integer-only test component that
-  contains one FP instruction and is not listed.
-- [ ] `_audit-fp-simd` runs the `fp-scan` binary in place of `rust-objdump` and `grep`:
-  - integer-only images must have no hits;
-  - the nucleus may have hits only in the allow-listed routines;
-  - flagged FP components and fp-trap-test's probe are skipped.
-
-  Check that it still rejects what the old check rejected, using fp-trap-test's probe.
-- [ ] `libsyscall`: under `cfg(target_feature = "neon")`, declare `v0..v7` and
-  `v16..v31` clobbered by `ppc_call` and `ppc_call_with_key`.
-- Verify: the integer-only images build unchanged, an FP component builds, and
-  `just lint` passes.
+Done; see [simd-completed.md](simd-completed.md).
 
 ## S4: end-to-end
 
-- [ ] An `fp-test` kernel, after `kernel/tests/fp-trap-test`, that checks:
-  - two FP components, each preempted mid-loop with sentinel values in its V registers;
-  - a Call from one FP component into the other: the callee sees zeros, and the caller
-    gets back `q8..q15` and FPCR;
-  - a Call into an integer-only component, where an FP instruction traps;
-  - an FP fault that is handled, then resumed with its V registers intact.
+Done: the `fp-test` kernel in QEMU; see [simd-completed.md](simd-completed.md).
 
-  Run it as `just _test-fp` in QEMU.
-- [ ] Run it on the Pi 4, as part of board-test or as its own image.
+- [ ] Run `fp-test` on the Pi 4, as part of board-test or as its own image.
 - [ ] Measure the F11 overhead on the Pi 4. Run the same FP workload (`fp-test`, or a
-  syscall-heavy FP component) with `fp_entry_trap` on and off. Compare syscall round
+  syscall-heavy FP component) with `fp_entry_trap` on and off (`just _build-fp-test`
+  takes the features). Compare syscall round
   trips and the FP statistics. Record the numbers, so the maintainer can decide whether
   the guard stays (F11).
 

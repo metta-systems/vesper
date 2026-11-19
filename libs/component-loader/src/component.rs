@@ -6,6 +6,7 @@ use {
         builder::Builder,
         keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, table_key},
     },
+    libimage::ComponentImage,
     libobject::{AddressSpaceKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights},
     nucleus::{
         api::key_entry::KeyEntry,
@@ -52,13 +53,20 @@ impl Builder<'_> {
     /// well-known self-table slot, create its `AddressSpace` with Retype and
     /// bind the table to it (which installs the `Thread.Return` sentinel at
     /// Slot(1)), grant the self-`AddressSpace` slot, then give it a root
-    /// chain and an ASID. The `AddressSpace` is integer-only.
-    pub fn component(&self, guard: u32, slots: &mut SlotCursor) -> Component {
-        self.component_with_fp(guard, false, slots)
+    /// chain and an ASID. The `AddressSpace` allows FP/SIMD when `image`,
+    /// the component it is for, does (`ComponentImage::fp_simd`).
+    pub fn component(
+        &self,
+        image: &ComponentImage,
+        guard: u32,
+        slots: &mut SlotCursor,
+    ) -> Component {
+        self.component_with_fp(guard, image.fp_simd, slots)
     }
 
-    /// [`component`](Self::component), with the `AddressSpace`'s FP/SIMD
-    /// flag: `fp_simd` lets code in it use FP/SIMD.
+    /// [`component`](Self::component) with the `AddressSpace`'s FP/SIMD
+    /// flag given explicitly: `fp_simd` lets code in it use FP/SIMD. For a
+    /// test that loads one image into both kinds of `AddressSpace`.
     pub fn component_with_fp(
         &self,
         guard: u32,

@@ -54,6 +54,7 @@ pub static {{component.stem}}: ComponentImage = ComponentImage {
         ResourceMapping { name: "{{resource.name}}", virt_addr: {{resource.virt_addr | hex}}, size: {{resource.size | hex}} },
 {% endfor %}
     ],
+    fp_simd: {{component.fp_simd | bool}},
 };
 {% if component.driver %}
 
