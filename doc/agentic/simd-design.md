@@ -1,6 +1,7 @@
 # FP/SIMD design
 
-Status: design; nothing implemented.
+Status: the contract is recorded in `capabilities-contract.md` (S0), and nothing is
+implemented.
 
 - Decided by the maintainer:
   - F1(a), 2026-11-18: FP/SIMD is opt-in, chosen per component.
@@ -485,19 +486,18 @@ Each of these satisfies I1 to I4.
   call clobbers. Every other syscall preserves the whole register file, because the
   kernel does not touch it.
 
-## Documents the change touches
+## Where the selected contract lives
 
-The contract changes first, then the implementation. Each is a rewrite in place:
+The selected contract is in `capabilities-contract.md`. This document is the design
+discussion behind it.
 
-- `capabilities-contract.md`, "Architectural state → FP/SIMD": FP per AddressSpace, and
-  invariants I1 to I4.
-- `doc/object_types/core/invocation.md`: rows for the FP registers in the "Register
-  state" table, and the call record's size.
-- `doc/object_types/arch/address_space.md`: the Retype flag, and the fault for an FP
-  instruction in an integer-only AddressSpace.
-- `doc/object_types/core/thread.md`: FP state survives preemption, blocking and faults.
-- The scheduler-shared record layout: in `capabilities-contract.md`, D5, and its
-  object-types page. The `ThreadRecord` FP counters take the reserved words, and the
-  `SchedulerRecord` FP totals take some of its reserved words.
-- `audio-design.md`, option 4: it points to this design. The synthesiser stays
-  integer-only.
+- **"Architectural state":** FP per AddressSpace and invariants I1 to I4.
+- **The Retype `x3` schema:** the AddressSpace flag in bit 8.
+- **The Call register table:** the FP rows, and the call-record size.
+- **"Fault delivery":** the fault frame.
+- **The scheduler-record layouts:** the FP counters.
+- **The decision register:** D7.
+
+The user-facing pages in `doc/object_types` (Invocation, Thread, AddressSpace,
+Scheduler) carry short planned-change notes until the implementation lands.
+`audio-design.md` option 4 points here. The synthesiser stays integer-only.

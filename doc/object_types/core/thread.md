@@ -98,3 +98,8 @@ A fault is unhandled when slot 16 holds no usable Invocation, when this AddressS
 A component creates a Thread with [`Untyped.Retype`](untyped.md#retype), which carves it from the Untyped's memory. The new Thread is inert until the root [Scheduler](scheduler.md) configures it (AddressSpace, EL0 entry and stack, its own Time) and starts it. The boot code carves the first Threads from the boot Untyped. The run queue links through the Threads themselves, so it has no fixed size. A Thread starts either at EL0 or, for trusted boot code, at EL1 using `SP_EL0`. Its saved state (all general registers, SP, PC, flags and `TPIDR_EL0`) lives in the Thread, so a blocked Thread holds no kernel stack. Each Thread has room for 16 nested Invocation calls.
 
 At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and its own `TPIDR_EL0`; `TPIDRRO_EL0` reads as zero. The physical counter, timers, performance monitors, the debug communications channel and FP/SIMD trap as faults.
+
+## Planned changes
+
+- **FP/SIMD state.** A Thread running in an AddressSpace that allows FP keeps its V registers, FPCR and FPSR across preemption, blocking and faults. The kernel saves them when the Thread is switched away from and loads them when it returns.
+- **Fault frame.** The fault handler receives the faulting state as a frame at the top of its stack, with the frame's address in `x0`. The frame holds the general registers and, for a faulting AddressSpace that allows FP, the FP state. The handler may change it, and Retry or Skip resume from the changed frame after the kernel checks that it still resumes at EL0. A frame that cannot be written makes the fault unhandled. A frame that cannot be read back, or is invalid, terminates the Thread.

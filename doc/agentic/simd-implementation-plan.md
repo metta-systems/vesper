@@ -4,18 +4,14 @@ Companion to [simd-design.md](simd-design.md), which holds the design and its
 correctness argument. [simd-decisions.md](simd-decisions.md) holds the open decisions.
 
 This file holds only open work, in order. Each step is verified before the next one
-starts. Mark an item `- [x]` only after its verification has passed.
+starts. Mark an item `- [x]` only after its verification has passed. A finished item
+leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-## S0: contract
+Done: S0, the contract; see [simd-completed.md](simd-completed.md).
 
-- [ ] Rewrite `capabilities-contract.md`, "Architectural state → FP/SIMD", to describe
-  FP per AddressSpace, with invariants I1 to I4. Update the affected
-  `doc/object_types` pages: Invocation register state, the AddressSpace Retype flag,
-  Thread, and fault delivery: the fault frame and its address in `x0`, and write-back
-  with the SPSR check. Every decision S0 needs is answered.
-- [ ] Add the FP counters to the scheduler-shared record layout: the `ThreadRecord`
-  reserved words and the `SchedulerRecord` totals, in `capabilities-contract.md`, D5,
-  and its object-types page (F10(b)).
+When an S1 to S4 step implements part of the design, it also rewrites the matching
+"Planned changes" note in `doc/object_types` into the page's normal description, and
+drops the "not implemented" status from the contract text it fulfils.
 
 ## S1: object layer and model check (host)
 
