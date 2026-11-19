@@ -1338,7 +1338,8 @@ _audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_b
     configs="{{ boards_qemu }} {{ boards }}-qemu+debug_kernel{{ profile_suffix }}"
     # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
     # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
-    fp_simd='^[[:space:]]+[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
+    # objdump indents low addresses only: kernel lines start with the address itself.
+    fp_simd='^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
     failed=0
     # fp-probe executes an FP/SIMD instruction on purpose. The driver packages name their
     # binaries after the service (mailbox-impl builds `mailbox`).
