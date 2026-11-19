@@ -45,3 +45,14 @@ The details live in the contract and the design, and the history in version cont
 - [x] S1 model check extended with fault delivery, the handler's Return and Thread
   exit: every 5-step sequence of five step kinds. It was shown to fail on a
   deliberately missing fault-frame save.
+- [x] S2 routines: `HardwareFpUnit`, six naked `fp_unit_*` functions in
+  `kernel/nucleus/src/objects/arch/fp_unit.rs`, each opening `FPEN` around itself.
+  Exercised against the real registers by the `fp_unit_tests` in `just _test-debug-console`.
+- [x] S2 switch hooks: `install_translation_context` sets `FPEN` from the AddressSpace's
+  flag (`PreparedTranslationContext::fp_simd`) at all five install sites. Exercised by
+  `fp-trap-test`'s FP AddressSpace probe (`just _test-fp-trap`).
+- [x] S2 audit: `_audit-fp-simd` skips only the `fp_unit_*` bodies, and its regex now
+  matches unindented high-address lines, so it checks the kernel images at all (`just lint`).
+- [x] S2 F11 guard: `FpEntryGuard` behind `fp_entry_trap`, held by the `lower_aarch64_*`
+  and `current_el0_*` handlers, toggles counted in `fp_entry_toggles`. Exercised by
+  `just _test-fp-entry-trap` (kernel FP traps at EL1 serving an FP frame).

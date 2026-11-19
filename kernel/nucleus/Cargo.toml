@@ -20,8 +20,11 @@ maintenance = { status = "experimental" }
 default = []
 # Opt in to debug-only kernel capabilities; never enable in production kernels.
 debug_kernel = []
-# Test-only: absorb FP/SIMD access traps for `fp-trap-test` (see `absorb_fp_simd_trap`); never enable in production kernels.
-fp_trap_test = []
+# Test-only: absorb FP/SIMD access traps for `fp-trap-test` (see `absorb_fp_simd_trap`), and run its
+# kernel probe on request (`run_kernel_fp_probe`); never enable in production kernels.
+fp_trap_test = ["dep:fp-trap-protocol"]
+# Trap FP/SIMD while the kernel runs, also when entered from an FP frame (`FpEntryGuard`); being measured.
+fp_entry_trap = []
 # Enable JTAG debugging of kernel - enable jtag helpers and
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["libmachine/jtag"]
@@ -38,6 +41,8 @@ qemu = [
 aarch64-cpu = { workspace = true }
 # bitflags = { workspace = true }
 cfg-if = { workspace = true }
+# fp-trap-test's probe instruction and kernel-probe request (`fp_trap_test` only).
+fp-trap-protocol = { workspace = true, optional = true }
 libaddress = { workspace = true }
 # The polled PL011 a panic takes the console UART over with.
 libboot-uart = { workspace = true }

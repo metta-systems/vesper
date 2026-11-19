@@ -52,8 +52,19 @@ impl Builder<'_> {
     /// well-known self-table slot, create its `AddressSpace` with Retype and
     /// bind the table to it (which installs the `Thread.Return` sentinel at
     /// Slot(1)), grant the self-`AddressSpace` slot, then give it a root
-    /// chain and an ASID.
+    /// chain and an ASID. The `AddressSpace` is integer-only.
     pub fn component(&self, guard: u32, slots: &mut SlotCursor) -> Component {
+        self.component_with_fp(guard, false, slots)
+    }
+
+    /// [`component`](Self::component), with the `AddressSpace`'s FP/SIMD
+    /// flag: `fp_simd` lets code in it use FP/SIMD.
+    pub fn component_with_fp(
+        &self,
+        guard: u32,
+        fp_simd: bool,
+        slots: &mut SlotCursor,
+    ) -> Component {
         let table_key = self
             .untyped
             .retype(
@@ -92,15 +103,7 @@ impl Builder<'_> {
         // `Thread.Return` sentinel at Slot(1).
         let address_space_key = self
             .untyped
-            .retype(
-                ObjectType::ADDRESS_SPACE,
-                0,
-                0,
-                1,
-                self.self_table,
-                slots.take(1),
-                Rights::all(),
-            )
+            .retype_address_space(fp_simd, 1, self.self_table, slots.take(1), Rights::all())
             .unwrap_or_else(|error| {
                 panic!("component AddressSpace Retype failed: {:?}", error.code())
             });

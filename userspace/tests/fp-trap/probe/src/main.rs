@@ -3,14 +3,22 @@
 // `semi::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
-//! Negative-test EL0 component. It executes one FP/SIMD instruction (see
-//! `fp-trap-protocol`); the trap is delivered to this component's own fault
+//! fp-trap-test's EL0 component. It executes one FP/SIMD instruction (see
+//! `fp-trap-protocol`); a trap is delivered to this component's own fault
 //! handler, which records the syndrome and skips the instruction. The probe
 //! then signals whether it trapped as an FP/SIMD access, and parks forever.
+//!
+//! Its argument is its role: in an integer-only `AddressSpace`
+//! (`ROLE_INTEGER`) the instruction must trap; in an FP `AddressSpace`
+//! (`ROLE_FP`) it must execute, and the probe also has the kernel execute it
+//! while serving this frame (`kernel_probe`) and reports that outcome too.
 
 use {
     core::sync::atomic::{AtomicU64, Ordering},
-    fp_trap_protocol::{NOT_TRAPPED_BIT, TRAPPED_BIT, probe, probe_init, trapped},
+    fp_trap_protocol::{
+        KERNEL_NOT_TRAPPED_BIT, KERNEL_TRAPPED_BIT, NOT_TRAPPED_BIT, ROLE_FP, TRAPPED_BIT,
+        kernel_probe, probe, probe_init, trapped,
+    },
     libobject::{
         NotificationKey, RawKey,
         export::{self, PpcResult},
@@ -62,18 +70,26 @@ ppc_export!(
     pub fn fault_entry => fault_body
 );
 
-fn main(_argument: u64) -> ! {
+fn main(role: u64) -> ! {
     setup_return_key();
     // SAFETY: as in `setup_return_key`.
     let init = unsafe { probe_init() };
     let result = NotificationKey::from_key(RawKey::from_wire(init.result));
     semi::println!("fp-probe: executing an FP/SIMD instruction at EL0");
     probe();
-    let bits = if trapped(LAST_SYNDROME.load(Ordering::Acquire)) {
+    let mut bits = if trapped(LAST_SYNDROME.load(Ordering::Acquire)) {
         TRAPPED_BIT
     } else {
         NOT_TRAPPED_BIT
     };
+    if role == ROLE_FP {
+        semi::println!("fp-probe: asking the kernel to execute it while serving this FP frame");
+        bits |= if trapped(kernel_probe()) {
+            KERNEL_TRAPPED_BIT
+        } else {
+            KERNEL_NOT_TRAPPED_BIT
+        };
+    }
     result
         .signal(bits)
         .unwrap_or_else(|error| panic!("fp-probe: signal failed: {:?}", error.code()));

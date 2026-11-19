@@ -113,8 +113,8 @@ A fault is unhandled when slot 16 holds no usable Invocation, when this AddressS
 
 A component creates a Thread with [`Untyped.Retype`](untyped.md#retype), which carves it from the Untyped's memory. The new Thread is inert until the root [Scheduler](scheduler.md) configures it (AddressSpace, EL0 entry and stack, its own Time) and starts it. The boot code carves the first Threads from the boot Untyped. The run queue links through the Threads themselves, so it has no fixed size. A Thread starts either at EL0 or, for trusted boot code, at EL1 using `SP_EL0`. Its saved state (all general registers, SP, PC, flags and `TPIDR_EL0`) lives in the Thread, so a blocked Thread holds no kernel stack. Each Thread has room for 16 nested Invocation calls.
 
-At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and its own `TPIDR_EL0`; `TPIDRRO_EL0` reads as zero. The physical counter, timers, performance monitors, the debug communications channel and FP/SIMD trap as faults.
+At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and its own `TPIDR_EL0`; `TPIDRRO_EL0` reads as zero. The physical counter, timers, performance monitors and the debug communications channel trap as faults, and so does FP/SIMD outside an AddressSpace that [allows it](../arch/address_space.md#fpsimd).
 
-## Planned changes
+### FP/SIMD state
 
-FP/SIMD state: a Thread running in an AddressSpace that allows FP keeps its V registers, FPCR and FPSR across preemption, blocking and faults (through the fault frame's FP part). FP/SIMD instructions still trap in every AddressSpace today.
+A Thread running in an AddressSpace that allows FP/SIMD keeps its V registers, FPCR and FPSR across preemption and blocking, and across a handled fault through the [fault frame](#fault-frame)'s FP part. A new Thread starts with them zero. Calls follow the [Invocation register state](invocation.md#register-state). The kernel saves the registers when the Thread stops in such an AddressSpace and loads them when it continues there; Threads in other AddressSpaces cost nothing. Each Thread holds 528 bytes for this.

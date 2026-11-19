@@ -46,9 +46,10 @@ use {
         objects::{
             ArchObjects, ArchObjectsImpl, Nucleus,
             access::{Access, ObjectId},
+            arch::fp_unit::FpEntryGuard,
             completion::PendingKind,
             fault::FaultDelivery,
-            resume::{PreparedResume, Switch},
+            resume::{PreparedResume, PreparedTranslationContext, Switch},
         },
         user_memory,
     },
@@ -239,13 +240,16 @@ extern "C" fn default_exception_handler(exc: &ExceptionContext) {
 #[unsafe(no_mangle)]
 extern "C" fn current_el0_synchronous(e: &mut ExceptionContext) {
     // This vector is current EL using SP_EL0 (trusted EL1t), not lower EL0.
-    // Exception entry has selected the shared SP_EL1 trap stack.
+    // Exception entry has selected the shared SP_EL1 trap stack. It can
+    // switch to an EL0 Thread in an FP AddressSpace, so it takes the guard.
+    let _fp_guard = FpEntryGuard::enter();
     current_elx_synchronous(e);
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn current_el0_irq(e: &mut ExceptionContext) {
     // An interruptible trusted `EL1t` Thread (e.g. idle).
+    let _fp_guard = FpEntryGuard::enter();
     handle_irq(e);
 }
 
@@ -325,6 +329,11 @@ extern "C" fn current_elx_serror(e: &mut ExceptionContext) {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_synchronous(e: &mut ExceptionContext) {
+    let _fp_guard = FpEntryGuard::enter();
+    #[cfg(feature = "fp_trap_test")]
+    if run_kernel_fp_probe(e) {
+        return;
+    }
     // Only an SVC is a capability invocation; every other synchronous
     // exception from EL0 is a fault, delivered to the fault handler.
     if !is_aarch64_svc() {
@@ -362,6 +371,7 @@ fn current_invocation_depth() -> u64 {
 
 #[unsafe(no_mangle)]
 extern "C" fn lower_aarch64_irq(e: &mut ExceptionContext) {
+    let _fp_guard = FpEntryGuard::enter();
     handle_irq(e);
 }
 
@@ -409,6 +419,23 @@ fn absorb_fp_simd_trap(e: &mut ExceptionContext) -> bool {
     );
     e.gpr[0] = ESR_EL1.get();
     // Every A64 instruction is four bytes; the trap is taken before it executes.
+    e.elr_el1 += 4;
+    true
+}
+
+/// Test-only hook for `fp-trap-test`'s kernel probe: a `brk` with
+/// `fp_trap_protocol::KERNEL_PROBE_BRK` from EL0 makes the nucleus execute the
+/// probe's FP/SIMD instruction itself, while serving that frame, and hand its
+/// `x0` back past the `brk`. A trap at EL1 comes back through
+/// `absorb_fp_simd_trap` as the syndrome.
+#[cfg(feature = "fp_trap_test")]
+fn run_kernel_fp_probe(e: &mut ExceptionContext) -> bool {
+    use aarch64_cpu::registers::{ESR_EL1, Read};
+
+    if !fp_trap_protocol::is_kernel_probe(ESR_EL1.get()) {
+        return false;
+    }
+    e.gpr[0] = fp_trap_protocol::probe();
     e.elr_el1 += 4;
     true
 }
@@ -494,7 +521,11 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
             // SP_EL1 use the invariant high TTBR1 map, not the replaced root.
             // Trap entry masks interrupts; no scheduling/reentry occurs before
             // this immediate installation on the enforced single boot core.
-            ArchObjectsImpl::install_translation_context(prepared.root(), prepared.asid());
+            ArchObjectsImpl::install_translation_context(
+                prepared.root(),
+                prepared.asid(),
+                prepared.fp_simd(),
+            );
             semi::println!("{}", "✅ AddressSpace::Activate()".on_cyan());
             (syscall_status::SUCCESS, 0, 0)
         }
@@ -515,8 +546,7 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
             // Guards and KERNEL_LOCK have ended; install the target context,
             // then rewrite this transient frame with the scrubbed target
             // entry. Vectors ERET into the target on the same Thread.
-            let translation = committed.translation;
-            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            install(committed.translation);
             frame.restore(committed.target);
             if committed.with_key {
                 semi::println!("{}", "✅ Invocation::CallWithKey()".on_cyan());
@@ -557,8 +587,7 @@ fn cap_invoke_dispatch(frame: &mut ExceptionContext) {
             // in its source AddressSpace. Install, then resume the source with
             // SUCCESS/r0/r1 and its exact saved callee-saved state (or, ending
             // a fault handler, the faulting state as its action selects).
-            let translation = committed.translation;
-            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            install(committed.translation);
             frame.restore(committed.resumed);
             semi::println!("{}", "✅ Thread::Return()".on_cyan());
             return;
@@ -794,12 +823,19 @@ fn install_selected(
     // High kernel code and shared high SP_EL1 remain mapped by TTBR1. The
     // single-core, masked trap path cannot retire/rebind between prepare and
     // install; this is not a reusable lifetime pin for asynchronous work.
-    ArchObjectsImpl::install_translation_context(
-        resumed.translation.root(),
-        resumed.translation.asid(),
-    );
+    install(resumed.translation);
     // SP_EL1 is reclaimed by normal unwinding, with no kernel stack switch.
     frame.restore(resumed.saved);
+}
+
+/// Install a prepared translation context: its root and ASID, and the FP
+/// trap its `AddressSpace` needs.
+fn install(translation: PreparedTranslationContext) {
+    ArchObjectsImpl::install_translation_context(
+        translation.root(),
+        translation.asid(),
+        translation.fp_simd(),
+    );
 }
 
 /// Enter what a scheduling transaction decided: the selected Thread, or,
@@ -905,8 +941,7 @@ fn deliver_fault(frame: &mut ExceptionContext, faulting: &SavedContext, info: Fa
     });
     match delivery {
         Ok(FaultDelivery::Handler(committed)) => {
-            let translation = committed.translation;
-            ArchObjectsImpl::install_translation_context(translation.root(), translation.asid());
+            install(committed.translation);
             frame.restore(committed.target);
             semi::println!("{}", "✅ fault delivered to its handler".on_cyan());
         }

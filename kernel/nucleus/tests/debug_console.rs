@@ -48,6 +48,9 @@ mod scheduler_tests;
 #[path = "support/invocation_call.rs"]
 mod invocation_call_tests;
 
+#[path = "support/fp_unit.rs"]
+mod fp_unit_tests;
+
 use {
     api::{KeyEntry, debug_console::invoke, key_entry::ThreadSelector},
     core::{
