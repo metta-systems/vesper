@@ -6,8 +6,8 @@ use {
         carved::{CarvedId, CarvedObject},
     },
     core::mem::{align_of, size_of},
-    libexception::arch::aarch64::{ExceptionOrigin, SavedContext},
-    libobject::{INVOCATION_STACK_DEPTH, ObjectType},
+    libexception::arch::aarch64::{ExceptionOrigin, FpPreserved, FpState, SavedContext},
+    libobject::{INVOCATION_STACK_DEPTH, ObjectType, scheduler_record::ThreadFpCounters},
 };
 
 // ====================
@@ -71,6 +71,9 @@ pub struct ThreadFault {
     pub address_space: AddressSpaceId,
     /// Stack length while the fault continuation is on top.
     pub depth: usize,
+    /// Where the fault frame is in the handler's stack, which the handler's
+    /// Return reads back.
+    pub frame_address: u64,
 }
 
 /// Where `Invocation.CallWithKey` placed a borrowed entry: the slot and the
@@ -143,6 +146,12 @@ pub struct InvocationContinuation {
     /// The stack the call runs on, from the callee's stack pool, to be given
     /// back when the call returns or its Thread is torn down.
     pub stack: StackUse,
+    /// Whether `source_fp` holds the source's preserved FP registers: set for
+    /// a call out of an FP `AddressSpace`.
+    pub fp_preserved: bool,
+    /// The source's `q8..q15`, FPCR and FPSR, restored at Return when
+    /// `fp_preserved` is set.
+    pub source_fp: FpPreserved,
 }
 
 impl InvocationContinuation {
@@ -158,6 +167,8 @@ impl InvocationContinuation {
             source_tpidr_el0: 0,
             placement: Placement::NONE,
             stack: StackUse::NONE,
+            fp_preserved: false,
+            source_fp: FpPreserved::ZERO,
         }
     }
 
@@ -180,6 +191,8 @@ impl InvocationContinuation {
             source_tpidr_el0: saved.tpidr_el0,
             placement: Placement::NONE,
             stack: StackUse::NONE,
+            fp_preserved: false,
+            source_fp: FpPreserved::ZERO,
         }
     }
 }
@@ -334,6 +347,12 @@ pub struct Thread {
     pub last_stop: u32,
     /// Counter ticks of the Thread's last run.
     pub last_run_ticks: u64,
+    /// The FP/SIMD register file of the Thread's current frame while the
+    /// Thread is off the CPU in an FP `AddressSpace`; zero until first saved.
+    pub fp: FpState,
+    /// FP/SIMD transition counts, published in the Thread's scheduler record
+    /// when it is switched away from.
+    pub fp_stats: ThreadFpCounters,
 }
 
 /// Kernel identity of a Thread: its carved identity. Holding one grants
@@ -370,21 +389,27 @@ impl Thread {
             generation: 0,
             last_stop: 0,
             last_run_ticks: 0,
+            fp: FpState::ZERO,
+            fp_stats: ThreadFpCounters::ZERO,
         }
     }
 }
 
 // The record and array sizes are part of the storage/accounting contract.
 const _: () = {
-    assert!(size_of::<InvocationContinuation>() == 176);
+    // 176 bytes of integer state plus the preserved FP registers (136 B); the
+    // "FP preserved" flag sits in what was padding.
+    assert!(size_of::<InvocationContinuation>() == 312);
     assert!(align_of::<InvocationContinuation>() == 8);
-    assert!(size_of::<InvocationStack>() >= 176 * INVOCATION_STACK_DEPTH);
+    assert!(size_of::<InvocationStack>() >= 312 * INVOCATION_STACK_DEPTH);
 };
 // Thread backing is type-derived and is not required to fit in one page.
 const _: () = {
     assert!(size_of::<SavedContext>() == 288);
     assert!(align_of::<SavedContext>() == 8);
-    assert!(align_of::<Thread>() == 8);
+    // `Thread.fp` keeps the register file 16-byte aligned for the paired
+    // Q-register loads and stores.
+    assert!(align_of::<Thread>() == 16);
     assert!(size_of::<ExecutionContext>() >= size_of::<SavedContext>() + size_of::<ObjectId>());
     assert!(
         size_of::<ExecutionContext>()
@@ -446,6 +471,8 @@ mod tests {
             generation: 0,
             last_stop: 0,
             last_run_ticks: 0,
+            fp: super::FpState::ZERO,
+            fp_stats: super::ThreadFpCounters::ZERO,
         };
         let ExecutionContext::NotStarted { saved } = thread.context else {
             panic!("new Thread has no initial execution context")
@@ -488,6 +515,8 @@ mod tests {
             generation: 0,
             last_stop: 0,
             last_run_ticks: 0,
+            fp: super::FpState::ZERO,
+            fp_stats: super::ThreadFpCounters::ZERO,
         };
 
         // Reuse every byte of the transient frame for another execution context.

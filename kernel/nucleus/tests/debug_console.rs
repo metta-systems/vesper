@@ -250,6 +250,7 @@ fn with_nucleus(
         pending: crate::objects::PendingPool::new(),
         activations: crate::objects::Activations::new(),
         idle_ticks: 0,
+        fp_totals: libobject::scheduler_record::FpTotals::ZERO,
         irq_table: crate::objects::irq::IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,

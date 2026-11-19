@@ -13,43 +13,21 @@ When an S1 to S4 step implements part of the design, it also rewrites the matchi
 "Planned changes" note in `doc/object_types` into the page's normal description, and
 drops the "not implemented" status from the contract text it fulfils.
 
-## S1: object layer and model check (host)
+## S1: object layer and model check
 
-- [ ] `FpState` (528 B, 16-aligned) and `FpPreserved` (`q8..q15`, FPCR and FPSR,
-  F4(a2)). Add `Thread.fp`, a per-core 816 B fault scratch, `InvocationContinuation.source_fp` and its
-  "FP preserved" bit, and update the size asserts in `objects/thread.rs`. Everything is
-  inline (F7(a)).
-- [ ] FP statistics, as the design's "FP statistics" section lists them:
-  `Thread.fp_stats` and the totals in the nucleus, counted in the transition logic.
-  They are published into `ThreadRecord`'s former reserved words at the switch away,
-  and the totals into the root `SchedulerRecord` (`libs/object/src/scheduler_record.rs`,
-  F10(b)). Host tests check the counts for each row of the transition table, and the
-  published record.
-- [ ] The fault frame (F8(d)), as the design's "The fault frame" describes:
-  - it holds the general registers and, for an FP frame, the FP state;
-  - it is written to the handler's pool stack with checked `STTR`, and its address is
-    passed in `x0`;
-  - at Retry and Skip it is read back once into per-core scratch, validated (SPSR at
-    EL0t) and resumed from;
-  - an unreadable or invalid frame terminates the Thread.
+Done:
+- the FP data layout;
+- the counter storage and its publication;
+- the AddressSpace flag;
+- `FpUnit`;
+- the transition logic for Thread switches, Call and Return, with its counting;
+- the row tests and the bounded model check;
+- the fault frame, and the model check's fault, handler-Return and exit steps.
 
-  Host tests cover a modified frame, a bad SPSR, an unwritable stack and an unreadable
-  frame at Return. The FP state lives only in the frame, and the kernel keeps only the
-  general registers (F8.3(iii)).
-- [ ] `AArch64AddressSpace.fp_simd`, set from bit 8 of Retype's `x3` and passed to
-  `new_address_space`. Reject the bit for every other kind. Update `AddressSpaceKey`'s
-  Retype helper in `libs/object`.
-- [ ] Add an `FpUnit` trait next to `install_translation_context`
-  (`objects/arch_objects.rs`), and a fake implementation for host tests.
-- [ ] Transition logic in `stop_current`, `commit_entry`, `commit_call`,
-  `commit_return` and `deliver_fault`, as the transition table in the design gives it.
-- [ ] Host tests:
-  - one per row of the transition table;
-  - no FP leak across Call, Return, fault or Thread switch, after the `TPIDR_EL0` tests
-    in `kernel/nucleus/tests/support/invocation_call.rs`;
-  - the exhaustive bounded model check from the design's "Proof obligations".
-- Verify: the nucleus host tests, `just clippy`, and `just _test-fp-trap`, which still
-  traps, since no hardware FP is enabled yet.
+See [simd-completed.md](simd-completed.md).
+
+- Verify: the nucleus tests, `just clippy`, and `just _test-fp-trap`, which still traps,
+  since no hardware FP is enabled yet.
 
 ## S2: aarch64 routines and the switch hooks
 

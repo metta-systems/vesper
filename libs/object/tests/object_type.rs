@@ -1,6 +1,6 @@
 use vesper_objects::{
-    CapError, Key, KeySlot, KeyTableKey, ObjectType, PlacementWindow, RawKey, Rights,
-    decode_syscall_result, stack_pool, thread,
+    ADDRESS_SPACE_FP_SIMD_BIT, CapError, Key, KeySlot, KeyTableKey, ObjectType, PlacementWindow,
+    RawKey, Rights, decode_syscall_result, stack_pool, thread,
 };
 
 // The wrapper modules below name `crate::FrameAttribute`, as in the library.

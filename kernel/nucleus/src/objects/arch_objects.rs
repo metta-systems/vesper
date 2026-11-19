@@ -65,7 +65,7 @@ pub type PageTableId = CarvedId;
 /// fixtures that carve one kernel-privately. Components create theirs with
 /// `Untyped.Retype` and bind it with `AddressSpace.Bind`.
 pub fn bound_address_space<A: ArchObjects>(keytable: KeyTableBinding) -> A::AddressSpace {
-    let mut address_space = A::new_address_space();
+    let mut address_space = A::new_address_space(false);
     address_space
         .bind(keytable)
         .unwrap_or_else(|_| unreachable!("a fresh AddressSpace is unbound"));
@@ -149,6 +149,9 @@ pub trait AddressSpaceObject: CarvedObject {
     /// The stack pools calls into this `AddressSpace` run on.
     fn stack_pools(&self) -> &crate::objects::stack_pool::StackPools;
     fn stack_pools_mut(&mut self) -> &mut crate::objects::stack_pool::StackPools;
+    /// Whether code in this `AddressSpace` may execute FP/SIMD instructions:
+    /// set when it is created and never changed.
+    fn fp_simd(&self) -> bool;
 }
 
 /// Architecture abstraction trait - extended with invoke methods.
@@ -178,6 +181,8 @@ pub trait ArchObjects: Sized + 'static {
     type AddressSpace: AddressSpaceObject;
     type ASIDPool: AsidPoolObject;
     type ASIDControl: NucleusObject;
+    /// The FP/SIMD register file the transition logic saves, loads and zeroes.
+    type Fp: crate::objects::fp::FpUnit;
 
     // ─── Constants ───
     const FRAME_SIZES: &'static [FrameSize];
@@ -206,8 +211,8 @@ pub trait ArchObjects: Sized + 'static {
 
     /// Construct a fresh, inert `AddressSpace` (no keytable, translation
     /// root or ASID), to be carved from Untyped memory by `Untyped.Retype` or
-    /// by bootstrap.
-    fn new_address_space() -> Self::AddressSpace;
+    /// by bootstrap. `fp_simd` is its fixed FP/SIMD flag.
+    fn new_address_space(fp_simd: bool) -> Self::AddressSpace;
 
     // ─── TLB maintenance (hardware translation withdrawal) ───
 
@@ -248,6 +253,18 @@ pub trait ArchObjects: Sized + 'static {
     /// entry installs only after object guards and the kernel lock have ended,
     /// on the shared high kernel stack. Preparation is not a lifetime pin.
     fn install_translation_context(root_paddr: u64, asid: u16);
+
+    /// Copy `bytes` to `vaddr` in the `AddressSpace` whose translation root
+    /// is `root_paddr`, through the kernel's direct map; that `AddressSpace`
+    /// need not be the active one. Every byte must be EL0-writable Normal
+    /// memory there, or nothing is written and the result is `false`. Used
+    /// for a fault frame in a fault handler's stack.
+    fn copy_to_user(root_paddr: u64, vaddr: u64, bytes: &[u8]) -> bool;
+
+    /// Copy from `vaddr` in the `AddressSpace` rooted at `root_paddr` into
+    /// `bytes`, as [`copy_to_user`](Self::copy_to_user) writes: every byte must
+    /// be EL0-readable Normal memory, or the result is `false`.
+    fn copy_from_user(root_paddr: u64, vaddr: u64, bytes: &mut [u8]) -> bool;
 
     // ─── Mapping mechanics (hardware descriptor installation) ───
     // The arch layer owns the descriptor format, walk, and vacancy checks;

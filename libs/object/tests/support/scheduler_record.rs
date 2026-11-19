@@ -1,8 +1,9 @@
 use {
     super::{
-        BlockReason, FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, LAYOUT_VERSION, MAX_REGIONS, MIN_STRIDE,
-        NO_CPU, RECORD_ALIGN, RECORD_SIZE, RecordRegion, SCHEDULER_SLOT, SchedulerRecord,
-        SchedulerSnapshot, StopReason, ThreadRecord, ThreadSnapshot, valid_stride,
+        BlockReason, FLAG_AWAITING_BUDGET, FLAG_HAS_TIME, FpTotals, LAYOUT_VERSION, MAX_REGIONS,
+        MIN_STRIDE, NO_CPU, RECORD_ALIGN, RECORD_SIZE, RecordRegion, SCHEDULER_SLOT,
+        SchedulerRecord, SchedulerSnapshot, StopReason, ThreadFpCounters, ThreadRecord,
+        ThreadSnapshot, valid_stride,
     },
     std::{
         sync::atomic::{AtomicBool, Ordering},
@@ -27,6 +28,16 @@ fn sample(seed: u64) -> ThreadSnapshot {
         run_time_ns: seed * 3,
         last_run_ns: seed * 5,
         budget_remaining_ns: seed * 7,
+        fp: ThreadFpCounters {
+            fp_entries: seed * 11,
+            fp_saves: seed * 13,
+            fp_loads: seed * 17,
+            fp_zeroes: seed * 19,
+            preserved_saves: seed * 23,
+            first_use_traps: seed * 29,
+            decays: seed * 31,
+            owner_hits: seed * 37,
+        },
     }
 }
 
@@ -58,8 +69,21 @@ fn thread_record_offsets_match_the_literal_layout() {
         offset_of!(ThreadRecord, run_time_ns),
         offset_of!(ThreadRecord, last_run_ns),
         offset_of!(ThreadRecord, budget_remaining_ns),
+        offset_of!(ThreadRecord, fp_entries),
+        offset_of!(ThreadRecord, fp_saves),
+        offset_of!(ThreadRecord, fp_loads),
+        offset_of!(ThreadRecord, fp_zeroes),
+        offset_of!(ThreadRecord, preserved_saves),
+        offset_of!(ThreadRecord, first_use_traps),
+        offset_of!(ThreadRecord, decays),
+        offset_of!(ThreadRecord, owner_hits),
     ];
-    assert_eq!(offsets, [0, 8, 16, 20, 24, 28, 32, 36, 40, 48, 56]);
+    assert_eq!(
+        offsets,
+        [
+            0, 8, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120
+        ]
+    );
     assert_eq!(size_of::<ThreadRecord>(), 128);
     assert_eq!(align_of::<ThreadRecord>(), 64);
 }
@@ -75,8 +99,11 @@ fn scheduler_record_offsets_match_the_literal_layout() {
         offset_of!(SchedulerRecord, timer_expirations),
         offset_of!(SchedulerRecord, dispatcher_state),
         offset_of!(SchedulerRecord, flags),
+        offset_of!(SchedulerRecord, thread_switches),
+        offset_of!(SchedulerRecord, fp_thread_switches),
+        offset_of!(SchedulerRecord, fp_entry_toggles),
     ];
-    assert_eq!(offsets, [0, 8, 12, 16, 24, 32, 36]);
+    assert_eq!(offsets, [0, 8, 12, 16, 24, 32, 36, 64, 72, 80]);
     assert_eq!(size_of::<SchedulerRecord>(), 128);
     assert_eq!(align_of::<SchedulerRecord>(), 64);
 }
@@ -114,6 +141,11 @@ fn publish_then_snapshot_round_trips_and_advances_the_sequence_by_two() {
         interrupt_ns: 123_456,
         grant_end_ns: 987_654,
         idle_ns: 555_000,
+        fp: FpTotals {
+            thread_switches: 40,
+            fp_thread_switches: 12,
+            fp_entry_toggles: 3,
+        },
     };
     scheduler.publish(&state);
     assert_eq!(scheduler.sequence(), 2);

@@ -23,7 +23,7 @@ use {
         CapError,
         scheduler::{activation_mask, activation_reason},
         scheduler_record::{
-            BlockReason, FLAG_AWAITING_BUDGET, FLAG_DISPATCHER, FLAG_HAS_TIME, NO_CPU,
+            BlockReason, FLAG_AWAITING_BUDGET, FLAG_DISPATCHER, FLAG_HAS_TIME, FpTotals, NO_CPU,
             SCHEDULER_SLOT, SchedulerRecord, SchedulerSnapshot, StopReason, ThreadRecord,
             ThreadSnapshot,
         },
@@ -127,6 +127,8 @@ pub struct Nucleus<A: ArchObjects> {
     /// `idle_ns`. Time spent handling interrupts while idle is counted as
     /// interrupt time, not idle time.
     pub idle_ticks: u64,
+    /// Nucleus-wide FP/SIMD totals, published in the root Scheduler's record.
+    pub fp_totals: FpTotals,
 }
 
 /// A Thread that a dispatcher's `Dispatch` runs.
@@ -1010,13 +1012,14 @@ impl<A: ArchObjects> Nucleus<A> {
             return;
         };
         // SAFETY: as in `record_paddr`.
-        let (events, timer_expirations, record, grant) = unsafe {
+        let (events, timer_expirations, record, grant, root) = unsafe {
             let object = &*object;
             (
                 object.events(),
                 object.timer_expirations(),
                 object.record_paddr(SCHEDULER_SLOT),
                 object.grant(),
+                object.parent().is_none(),
             )
         };
         let Some(paddr) = record else {
@@ -1037,6 +1040,8 @@ impl<A: ArchObjects> Nucleus<A> {
             interrupt_ns,
             grant_end_ns,
             idle_ns,
+            // The nucleus-wide totals are the root Scheduler's only.
+            fp: if root { self.fp_totals } else { FpTotals::ZERO },
         });
     }
 
@@ -1138,6 +1143,7 @@ impl<A: ArchObjects> Nucleus<A> {
             run_time_ns: ticks_to_ns_ceil(run_ticks, frequency),
             last_run_ns: ticks_to_ns_ceil(last_run_ticks, frequency),
             budget_remaining_ns,
+            fp: thread.fp_stats,
         };
         let Some(paddr) = Self::record_paddr(record.scheduler, record.slot) else {
             return;
@@ -1312,6 +1318,13 @@ impl<A: ArchObjects> Nucleus<A> {
                 .ok()
                 .map(|address_space| &*address_space)
         }
+    }
+
+    /// Whether code running in the `AddressSpace` `id` may execute FP/SIMD
+    /// instructions: an FP frame. A retired `AddressSpace` is not.
+    pub fn address_space_fp(&self, id: AddressSpaceId) -> bool {
+        self.address_space(id)
+            .is_some_and(AddressSpaceObject::fp_simd)
     }
 
     /// Exclusive access to the live `AddressSpace` behind `id`.
@@ -1502,6 +1515,7 @@ mod tests {
                 pending: PendingPool::new(),
                 activations: Activations::new(),
                 idle_ticks: 0,
+                fp_totals: libobject::scheduler_record::FpTotals::ZERO,
                 irq_table: crate::objects::irq::IrqTable::empty(),
                 ticks: 0,
                 current_since_ticks: 0,
@@ -2036,6 +2050,19 @@ pub(crate) mod test_arena {
     pub(crate) fn thread(n: usize) -> Option<CarvedId> {
         // SAFETY: as in `reset_threads`.
         unsafe { (*(&raw const THREADS)).get(n).copied().flatten() }
+    }
+
+    /// How much of the arena is used: a mark for [`rewind`].
+    pub(crate) fn mark() -> usize {
+        USED.load(Ordering::Relaxed)
+    }
+
+    /// Give back everything carved since `mark`, for a test that runs many
+    /// fixtures in a row. The caller guarantees that no identity of an
+    /// object carved since then is used again: a fresh carve at the same
+    /// address starts the same generation, so a stale identity would validate.
+    pub(crate) fn rewind(mark: usize) {
+        USED.store(mark, Ordering::Relaxed);
     }
 
     /// Carve `object` into the arena; `None` once the arena is full.

@@ -45,11 +45,14 @@ pub struct AArch64AddressSpace {
     unhandled_faults: u64,
     /// The stacks calls into this `AddressSpace` run on.
     stack_pools: StackPools,
+    /// Whether code here may execute FP/SIMD instructions; fixed at creation.
+    fp_simd: bool,
 }
 
 impl AArch64AddressSpace {
-    /// An inert `AddressSpace`: no keytable, translation root or ASID.
-    pub const fn new() -> Self {
+    /// An inert `AddressSpace`: no keytable, translation root or ASID, with
+    /// the fixed FP/SIMD flag `fp_simd`.
+    pub const fn new(fp_simd: bool) -> Self {
         Self {
             keytable: None,
             translation_root: None,
@@ -57,7 +60,15 @@ impl AArch64AddressSpace {
             fault_handler_busy: false,
             unhandled_faults: 0,
             stack_pools: StackPools::new(),
+            fp_simd,
         }
+    }
+
+    /// Change the FP/SIMD flag of a fixture `AddressSpace`. The nucleus tests
+    /// only: a real `AddressSpace`'s flag is fixed at creation.
+    #[cfg(test)]
+    pub const fn set_fp_simd_for_test(&mut self, fp_simd: bool) {
+        self.fp_simd = fp_simd;
     }
 }
 
@@ -118,5 +129,9 @@ impl crate::objects::arch_objects::AddressSpaceObject for AArch64AddressSpace {
 
     fn stack_pools_mut(&mut self) -> &mut StackPools {
         &mut self.stack_pools
+    }
+
+    fn fp_simd(&self) -> bool {
+        self.fp_simd
     }
 }

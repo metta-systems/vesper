@@ -181,6 +181,20 @@ impl StackPools {
     }
 
     /// Take the lowest free stack of the pool `handle` names.
+    /// The stack [`take`](Self::take) would hand out next, without taking it:
+    /// its end (where the callee's `SP` starts) and its size. Fault delivery
+    /// writes the fault frame there before the forced call commits.
+    pub fn peek(&self, handle: StackPoolHandle) -> Result<(u64, u64), CapError> {
+        let pool = self.pool(handle)?;
+        if pool.free == 0 {
+            return Err(CapError::NoFreeStack {
+                count: u64::from(pool.count),
+            });
+        }
+        let index = u64::from(pool.free.trailing_zeros());
+        Ok((pool.base + (index + 1) * pool.stack_bytes, pool.stack_bytes))
+    }
+
     pub fn take(&mut self, handle: StackPoolHandle) -> Result<StackLease, CapError> {
         let pool = *self.pool(handle)?;
         if pool.free == 0 {

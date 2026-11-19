@@ -114,6 +114,63 @@ impl StopReason {
     }
 }
 
+/// A Thread's FP/SIMD transition counts, words 64 to 127 of its record. Every
+/// counter wraps. The nucleus counts them while the Thread runs and publishes
+/// them when it is switched away from.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreadFpCounters {
+    /// Entries into an FP frame.
+    pub fp_entries: u64,
+    /// Full saves of the register file, to the Thread or into a fault frame.
+    pub fp_saves: u64,
+    /// Full loads of a saved register file.
+    pub fp_loads: u64,
+    /// Entries into an FP frame with the register file zeroed.
+    pub fp_zeroes: u64,
+    /// `q8..q15`, FPCR and FPSR saved to a call record.
+    pub preserved_saves: u64,
+    /// First-use traps taken (zero until the less eager variant exists).
+    pub first_use_traps: u64,
+    /// Times the usage budget ran out (zero until the less eager variant).
+    pub decays: u64,
+    /// Saves and loads skipped because the hardware still held the frame
+    /// (zero until owner tracking exists).
+    pub owner_hits: u64,
+}
+
+impl ThreadFpCounters {
+    pub const ZERO: Self = Self {
+        fp_entries: 0,
+        fp_saves: 0,
+        fp_loads: 0,
+        fp_zeroes: 0,
+        preserved_saves: 0,
+        first_use_traps: 0,
+        decays: 0,
+        owner_hits: 0,
+    };
+}
+
+/// The nucleus-wide FP/SIMD totals, words 64 to 87 of the root Scheduler's
+/// record (zero in every other Scheduler's record). Every counter wraps.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct FpTotals {
+    /// Thread switches.
+    pub thread_switches: u64,
+    /// Thread switches with an FP frame on either side.
+    pub fp_thread_switches: u64,
+    /// `FPEN` toggles at kernel entry and exit, with the entry guard.
+    pub fp_entry_toggles: u64,
+}
+
+impl FpTotals {
+    pub const ZERO: Self = Self {
+        thread_switches: 0,
+        fp_thread_switches: 0,
+        fp_entry_toggles: 0,
+    };
+}
+
 /// A consistent copy of a [`ThreadRecord`]. Fields are raw; the accessors
 /// decode them.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -138,6 +195,8 @@ pub struct ThreadSnapshot {
     pub last_run_ns: u64,
     /// Remaining budget of the bound Time, rounded down.
     pub budget_remaining_ns: u64,
+    /// FP/SIMD transition counts.
+    pub fp: ThreadFpCounters,
 }
 
 impl ThreadSnapshot {
@@ -185,6 +244,8 @@ pub struct SchedulerSnapshot {
     /// Total time nothing was runnable and the nucleus waited for an
     /// interrupt, in nanoseconds, rounded up.
     pub idle_ns: u64,
+    /// Nucleus-wide FP/SIMD totals: the root Scheduler's only.
+    pub fp: FpTotals,
 }
 
 /// The record of one Thread, written by the nucleus.
@@ -201,7 +262,14 @@ pub struct ThreadRecord {
     run_time_ns: AtomicU64,
     last_run_ns: AtomicU64,
     budget_remaining_ns: AtomicU64,
-    reserved: [AtomicU64; 8],
+    fp_entries: AtomicU64,
+    fp_saves: AtomicU64,
+    fp_loads: AtomicU64,
+    fp_zeroes: AtomicU64,
+    preserved_saves: AtomicU64,
+    first_use_traps: AtomicU64,
+    decays: AtomicU64,
+    owner_hits: AtomicU64,
 }
 
 /// The scheduler's own record (slot 0), written by the nucleus.
@@ -217,7 +285,10 @@ pub struct SchedulerRecord {
     interrupt_ns: AtomicU64,
     grant_end_ns: AtomicU64,
     idle_ns: AtomicU64,
-    reserved: [AtomicU64; 8],
+    thread_switches: AtomicU64,
+    fp_thread_switches: AtomicU64,
+    fp_entry_toggles: AtomicU64,
+    reserved: [AtomicU64; 5],
 }
 
 const _: () = {
@@ -234,6 +305,14 @@ const _: () = {
     assert!(core::mem::offset_of!(ThreadRecord, run_time_ns) == 40);
     assert!(core::mem::offset_of!(ThreadRecord, last_run_ns) == 48);
     assert!(core::mem::offset_of!(ThreadRecord, budget_remaining_ns) == 56);
+    assert!(core::mem::offset_of!(ThreadRecord, fp_entries) == 64);
+    assert!(core::mem::offset_of!(ThreadRecord, fp_saves) == 72);
+    assert!(core::mem::offset_of!(ThreadRecord, fp_loads) == 80);
+    assert!(core::mem::offset_of!(ThreadRecord, fp_zeroes) == 88);
+    assert!(core::mem::offset_of!(ThreadRecord, preserved_saves) == 96);
+    assert!(core::mem::offset_of!(ThreadRecord, first_use_traps) == 104);
+    assert!(core::mem::offset_of!(ThreadRecord, decays) == 112);
+    assert!(core::mem::offset_of!(ThreadRecord, owner_hits) == 120);
     assert!(size_of::<SchedulerRecord>() == RECORD_SIZE);
     assert!(align_of::<SchedulerRecord>() == RECORD_ALIGN);
     assert!(core::mem::offset_of!(SchedulerRecord, sequence) == 0);
@@ -246,6 +325,9 @@ const _: () = {
     assert!(core::mem::offset_of!(SchedulerRecord, interrupt_ns) == 40);
     assert!(core::mem::offset_of!(SchedulerRecord, grant_end_ns) == 48);
     assert!(core::mem::offset_of!(SchedulerRecord, idle_ns) == 56);
+    assert!(core::mem::offset_of!(SchedulerRecord, thread_switches) == 64);
+    assert!(core::mem::offset_of!(SchedulerRecord, fp_thread_switches) == 72);
+    assert!(core::mem::offset_of!(SchedulerRecord, fp_entry_toggles) == 80);
 };
 
 /// The sequence value that starts a publication after `previous`, and the
@@ -271,7 +353,14 @@ impl ThreadRecord {
             run_time_ns: AtomicU64::new(0),
             last_run_ns: AtomicU64::new(0),
             budget_remaining_ns: AtomicU64::new(0),
-            reserved: [const { AtomicU64::new(0) }; 8],
+            fp_entries: AtomicU64::new(0),
+            fp_saves: AtomicU64::new(0),
+            fp_loads: AtomicU64::new(0),
+            fp_zeroes: AtomicU64::new(0),
+            preserved_saves: AtomicU64::new(0),
+            first_use_traps: AtomicU64::new(0),
+            decays: AtomicU64::new(0),
+            owner_hits: AtomicU64::new(0),
         }
     }
 
@@ -292,9 +381,6 @@ impl ThreadRecord {
     /// Reset the record to all zero, as when a Thread is linked to its
     /// slot. Only the nucleus calls this.
     pub fn clear(&self) {
-        for word in &self.reserved {
-            word.store(0, Ordering::Relaxed);
-        }
         self.publish(&ThreadSnapshot::default());
     }
 
@@ -325,6 +411,17 @@ impl ThreadRecord {
             .store(snapshot.last_run_ns, Ordering::Relaxed);
         self.budget_remaining_ns
             .store(snapshot.budget_remaining_ns, Ordering::Relaxed);
+        let fp = &snapshot.fp;
+        self.fp_entries.store(fp.fp_entries, Ordering::Relaxed);
+        self.fp_saves.store(fp.fp_saves, Ordering::Relaxed);
+        self.fp_loads.store(fp.fp_loads, Ordering::Relaxed);
+        self.fp_zeroes.store(fp.fp_zeroes, Ordering::Relaxed);
+        self.preserved_saves
+            .store(fp.preserved_saves, Ordering::Relaxed);
+        self.first_use_traps
+            .store(fp.first_use_traps, Ordering::Relaxed);
+        self.decays.store(fp.decays, Ordering::Relaxed);
+        self.owner_hits.store(fp.owner_hits, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
 
@@ -349,6 +446,16 @@ impl ThreadRecord {
                 run_time_ns: self.run_time_ns.load(Ordering::Relaxed),
                 last_run_ns: self.last_run_ns.load(Ordering::Relaxed),
                 budget_remaining_ns: self.budget_remaining_ns.load(Ordering::Relaxed),
+                fp: ThreadFpCounters {
+                    fp_entries: self.fp_entries.load(Ordering::Relaxed),
+                    fp_saves: self.fp_saves.load(Ordering::Relaxed),
+                    fp_loads: self.fp_loads.load(Ordering::Relaxed),
+                    fp_zeroes: self.fp_zeroes.load(Ordering::Relaxed),
+                    preserved_saves: self.preserved_saves.load(Ordering::Relaxed),
+                    first_use_traps: self.first_use_traps.load(Ordering::Relaxed),
+                    decays: self.decays.load(Ordering::Relaxed),
+                    owner_hits: self.owner_hits.load(Ordering::Relaxed),
+                },
             };
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {
@@ -373,7 +480,10 @@ impl SchedulerRecord {
             interrupt_ns: AtomicU64::new(0),
             grant_end_ns: AtomicU64::new(0),
             idle_ns: AtomicU64::new(0),
-            reserved: [const { AtomicU64::new(0) }; 8],
+            thread_switches: AtomicU64::new(0),
+            fp_thread_switches: AtomicU64::new(0),
+            fp_entry_toggles: AtomicU64::new(0),
+            reserved: [const { AtomicU64::new(0) }; 5],
         }
     }
 
@@ -431,6 +541,12 @@ impl SchedulerRecord {
         self.grant_end_ns
             .store(snapshot.grant_end_ns, Ordering::Relaxed);
         self.idle_ns.store(snapshot.idle_ns, Ordering::Relaxed);
+        self.thread_switches
+            .store(snapshot.fp.thread_switches, Ordering::Relaxed);
+        self.fp_thread_switches
+            .store(snapshot.fp.fp_thread_switches, Ordering::Relaxed);
+        self.fp_entry_toggles
+            .store(snapshot.fp.fp_entry_toggles, Ordering::Relaxed);
         self.sequence.store(end, Ordering::Release);
     }
 
@@ -450,6 +566,11 @@ impl SchedulerRecord {
                 interrupt_ns: self.interrupt_ns.load(Ordering::Relaxed),
                 grant_end_ns: self.grant_end_ns.load(Ordering::Relaxed),
                 idle_ns: self.idle_ns.load(Ordering::Relaxed),
+                fp: FpTotals {
+                    thread_switches: self.thread_switches.load(Ordering::Relaxed),
+                    fp_thread_switches: self.fp_thread_switches.load(Ordering::Relaxed),
+                    fp_entry_toggles: self.fp_entry_toggles.load(Ordering::Relaxed),
+                },
             };
             fence(Ordering::Acquire);
             if self.sequence.load(Ordering::Relaxed) == before {

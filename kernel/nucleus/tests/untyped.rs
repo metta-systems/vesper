@@ -127,6 +127,7 @@ fn fixture_nucleus() -> &'static mut Nucleus<ArchObjectsImpl> {
             pending: crate::objects::PendingPool::new(),
             activations: crate::objects::Activations::new(),
             idle_ticks: 0,
+            fp_totals: libobject::scheduler_record::FpTotals::ZERO,
             irq_table: crate::objects::irq::IrqTable::empty(),
             ticks: 0,
             current_since_ticks: 0,
@@ -777,6 +778,57 @@ fn retype_carved_kinds_reject_size_bits_device_sources_and_small_untypeds() {
             assert_eq!(region.watermark_bytes(), 0);
         }
     }
+}
+
+/// An `AddressSpace` takes its FP/SIMD flag in bit 8 of `x3` (here through
+/// the `guard` operand, which `retype_args` packs from bit 8): the flag is
+/// accepted and Retype goes on to its other checks, while any bit above it
+/// is rejected before anything else, with the table and watermark unchanged.
+#[test_case]
+fn retype_address_space_takes_the_fp_flag_and_rejects_higher_bits() {
+    let mut fx = Fixture::new(FULL);
+    let ram = fx.install(KeySlot(30), ram_untyped(24));
+    let device = fx.install(KeySlot(31), device_untyped(24));
+    let before = fx.len();
+    let retype = |fx: &mut Fixture, source, size_bits, bits_above| {
+        fx.invoke(
+            source,
+            UntypedOp::Retype as u64,
+            &retype_args(
+                ObjectType::ADDRESS_SPACE,
+                size_bits,
+                bits_above,
+                1,
+                fx.self_key,
+                KeySlot(40),
+                Rights::all(),
+            ),
+        )
+    };
+    // The flag alone passes decoding: the device source is what refuses it.
+    assert!(matches!(
+        retype(&mut fx, device, 0, 1),
+        Err(CapError::InvalidObjectType(ObjectType::ADDRESS_SPACE))
+    ));
+    // With the flag, `size_bits` stays reserved zero.
+    assert!(matches!(
+        retype(&mut fx, ram, 12, 1),
+        Err(CapError::InvalidSize(12))
+    ));
+    // Bit 9 and above are reserved.
+    for bits_above in [2, 3, 1 << 20] {
+        assert!(matches!(
+            retype(&mut fx, ram, 0, bits_above),
+            Err(CapError::InvalidOperation)
+        ));
+    }
+    assert_eq!(fx.len(), before);
+    let region = fx
+        .lookup(ram)
+        .unwrap_or_else(|_| panic!("untyped entry missing"))
+        .as_untyped()
+        .unwrap_or_else(|_| panic!("entry is not an Untyped"));
+    assert_eq!(region.watermark_bytes(), 0);
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -53,6 +53,7 @@ use {
     libaddress::PhysAddr,
     libobject::{
         ArchType, CapError, FrameAttribute, KeySlot, ObjectType, RawKey, Rights, UntypedOp,
+        address_space::ADDRESS_SPACE_FP_SIMD_BIT,
     },
     libqemu::semihosting as semi,
 };
@@ -129,8 +130,8 @@ enum Carve {
     Thread,
     /// An inert `AddressSpace`: no keytable, translation root or ASID until
     /// `AddressSpace.Bind`, `PageTable.Map` and `ASIDPool.Assign`. Carved from
-    /// the Untyped (`size_bits` zero).
-    AddressSpace,
+    /// the Untyped (`size_bits` zero), with its fixed FP/SIMD flag.
+    AddressSpace { fp_simd: bool },
 }
 
 /// `Retype` `0`: carve `count` objects of one kind from the Untyped's unused
@@ -149,8 +150,20 @@ fn retype<A: ArchObjects>(
     );
     // `x3` carries `size_bits` in its low byte. For the `KeyTable` kind the
     // userspace-chosen table guard is packed in bits 39:8 above it;
-    // bits 63:40 are reserved zero. Every other kind requires
+    // bits 63:40 are reserved zero. For `AddressSpace`, bit 8 is its FP/SIMD
+    // flag and bits 63:9 are reserved zero. Every other kind requires
     // bits 63:8 zero (the strict zero convention).
+    let (size_word, fp_simd) = if kind == ObjectType::ADDRESS_SPACE {
+        if args[1] >> (ADDRESS_SPACE_FP_SIMD_BIT + 1) != 0 {
+            return Err(CapError::InvalidOperation);
+        }
+        (
+            args[1] & 0xFF,
+            args[1] & (1 << ADDRESS_SPACE_FP_SIMD_BIT) != 0,
+        )
+    } else {
+        (args[1], false)
+    };
     let (size_bits, table_guard, ceiling_request) = if kind == ObjectType::KEY_TABLE {
         let size_bits = u8::try_from(args[1] & 0xFF)
             .ok()
@@ -176,7 +189,7 @@ fn retype<A: ArchObjects>(
         )
     } else {
         (
-            u8::try_from(args[1])
+            u8::try_from(size_word)
                 .ok()
                 .ok_or(CapError::InvalidOperation)?,
             0,
@@ -260,7 +273,7 @@ fn retype<A: ArchObjects>(
             if size_bits != 0 {
                 return Err(CapError::InvalidSize(usize::from(size_bits)));
             }
-            Carve::AddressSpace
+            Carve::AddressSpace { fp_simd }
         }
         ObjectType::UNTYPED => {
             // A split: the child is its own region of
@@ -361,7 +374,7 @@ fn retype<A: ArchObjects>(
         Carve::Time => carved_layout::<Time>(),
         Carve::Thread => carved_layout::<Thread>(),
         Carve::Scheduler => carved_layout::<Scheduler>(),
-        Carve::AddressSpace => carved_layout::<A::AddressSpace>(),
+        Carve::AddressSpace { .. } => carved_layout::<A::AddressSpace>(),
     };
     // A PageTable also carves its kernel metadata record: the records of a
     // batch follow all its tables, so each table keeps its page alignment
@@ -497,9 +510,9 @@ fn retype<A: ArchObjects>(
                 requested,
                 0,
             ),
-            Carve::AddressSpace => KeyEntry::new_carved(
+            Carve::AddressSpace { fp_simd } => KeyEntry::new_carved(
                 // SAFETY: as for `carve_object`.
-                unsafe { carve_object(paddr, A::new_address_space()) },
+                unsafe { carve_object(paddr, A::new_address_space(fp_simd)) },
                 requested,
                 0,
             ),
@@ -571,7 +584,7 @@ fn retype<A: ArchObjects>(
         Carve::Time => "Time",
         Carve::Thread => "Thread",
         Carve::Scheduler => "Scheduler",
-        Carve::AddressSpace => "AddressSpace",
+        Carve::AddressSpace { .. } => "AddressSpace",
         Carve::Untyped { .. } => "Untyped",
     };
     semi::println!("✅ Untyped::Retype({kind_name}, count {count})");

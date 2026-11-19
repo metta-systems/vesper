@@ -5,9 +5,10 @@
 //! the kernel performs a forced Call into the `Invocation` held at
 //! [`KeySlot::FAULT_HANDLER`](crate::KeySlot::FAULT_HANDLER) in the faulting
 //! `AddressSpace`'s table. The handler's six inputs are
-//! `(kind, esr, far, pc, sp, depth)` — see [`FaultKind`] — and it finishes
-//! with an ordinary `Thread.Return` whose first result word is a
-//! [`FaultAction`].
+//! `(kind, esr, far, pc, sp, depth)` — see [`FaultKind`] — and `x0` holds the
+//! address of a [`FaultFrame`] at the top of its stack. It finishes with an
+//! ordinary `Thread.Return` whose first result word is a [`FaultAction`];
+//! Retry and Skip resume from the frame, which the handler may have changed.
 
 /// What faulted: handler input `x2`.
 #[repr(u64)]
@@ -82,5 +83,100 @@ impl FaultInfo {
             self.sp,
             self.depth,
         ]
+    }
+}
+
+/// [`FaultFrame::version`] of this layout.
+pub const FAULT_FRAME_VERSION: u32 = 1;
+
+/// [`FaultFrame::flags`] bit: the frame holds the faulting frame's FP/SIMD
+/// state (it ran in an `AddressSpace` that allows FP).
+pub const FAULT_FRAME_FP: u32 = 1 << 0;
+
+/// The faulting state, as the kernel writes it at the top of the fault
+/// handler's stack. The handler gets its address in `x0` and starts with `SP`
+/// below it.
+///
+/// The handler may change it: a Retry or Skip resumes from the frame as it
+/// is at the handler's `Thread.Return`. The kernel accepts a changed
+/// `pstate` only if it differs from the faulting one in the condition flags
+/// (NZCV); anything else, or a frame it cannot read back, terminates the
+/// Thread. The FP part is used only when [`FAULT_FRAME_FP`] was set by the
+/// kernel.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FaultFrame {
+    /// [`FAULT_FRAME_BYTES`].
+    pub size: u32,
+    /// [`FAULT_FRAME_VERSION`].
+    pub version: u32,
+    /// `FAULT_FRAME_*` bits.
+    pub flags: u32,
+    pub reserved: u32,
+    /// `x0..x30` of the faulting frame.
+    pub gpr: [u64; 31],
+    pub sp: u64,
+    /// The faulting instruction.
+    pub pc: u64,
+    /// The faulting `SPSR_EL1`.
+    pub pstate: u64,
+    pub tpidr_el0: u64,
+    pub reserved_word: u64,
+    /// `V0..V31`, zero without [`FAULT_FRAME_FP`].
+    pub vectors: [u128; 32],
+    pub fpcr: u32,
+    pub fpsr: u32,
+    pub reserved_tail: u64,
+}
+
+/// Bytes of a [`FaultFrame`]: what a fault handler's stack needs room for,
+/// above its own use.
+pub const FAULT_FRAME_BYTES: usize = 832;
+
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+    assert!(size_of::<FaultFrame>() == FAULT_FRAME_BYTES);
+    assert!(align_of::<FaultFrame>() == 16);
+    assert!(offset_of!(FaultFrame, gpr) == 16);
+    assert!(offset_of!(FaultFrame, sp) == 264);
+    assert!(offset_of!(FaultFrame, pc) == 272);
+    assert!(offset_of!(FaultFrame, pstate) == 280);
+    assert!(offset_of!(FaultFrame, tpidr_el0) == 288);
+    assert!(offset_of!(FaultFrame, vectors) == 304);
+    assert!(offset_of!(FaultFrame, fpcr) == 816);
+    assert!(offset_of!(FaultFrame, fpsr) == 820);
+};
+
+impl FaultFrame {
+    /// A frame with every field zero but the header.
+    pub const EMPTY: Self = Self {
+        #[allow(clippy::cast_possible_truncation, reason = "832 fits")]
+        size: FAULT_FRAME_BYTES as u32,
+        version: FAULT_FRAME_VERSION,
+        flags: 0,
+        reserved: 0,
+        gpr: [0; 31],
+        sp: 0,
+        pc: 0,
+        pstate: 0,
+        tpidr_el0: 0,
+        reserved_word: 0,
+        vectors: [0; 32],
+        fpcr: 0,
+        fpsr: 0,
+        reserved_tail: 0,
+    };
+
+    /// The frame's bytes, as they are written to the handler's stack.
+    pub const fn to_bytes(&self) -> [u8; FAULT_FRAME_BYTES] {
+        // SAFETY: the frame is `repr(C)` with integer fields only and no
+        // padding (the size asserts above), so every byte is initialized.
+        unsafe { core::mem::transmute::<Self, [u8; FAULT_FRAME_BYTES]>(*self) }
+    }
+
+    /// The frame `bytes` hold.
+    pub const fn from_bytes(bytes: [u8; FAULT_FRAME_BYTES]) -> Self {
+        // SAFETY: every bit pattern is a valid frame: integer fields only.
+        unsafe { core::mem::transmute::<[u8; FAULT_FRAME_BYTES], Self>(bytes) }
     }
 }

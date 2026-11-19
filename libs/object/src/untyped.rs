@@ -165,6 +165,27 @@ impl UntypedKey {
         )
     }
 
+    /// Retype `count` inert `AddressSpace`s. `fp_simd` sets their fixed
+    /// FP/SIMD flag, carried in bit
+    /// [`ADDRESS_SPACE_FP_SIMD_BIT`](crate::ADDRESS_SPACE_FP_SIMD_BIT) of `x3`.
+    pub fn retype_address_space(
+        &self,
+        fp_simd: bool,
+        count: u32,
+        dst_table: &KeyTableKey,
+        dst_slot: u32,
+        rights: Rights,
+    ) -> Result<RawKey, CapError> {
+        self.retype_word(
+            ObjectType::ADDRESS_SPACE,
+            u64::from(fp_simd) << crate::ADDRESS_SPACE_FP_SIMD_BIT,
+            count,
+            dst_table,
+            dst_slot,
+            rights,
+        )
+    }
+
     fn retype_word(
         &self,
         kind: ObjectType,
