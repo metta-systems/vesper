@@ -70,10 +70,11 @@ A Thread may retire itself with its own capability. That call never returns: the
 
 ## Fault delivery
 
-A synchronous exception from EL0 other than `svc` (data or instruction abort, alignment fault, undefined instruction, FP/SIMD use, `brk` and the like), or a failed Return, is a fault. The kernel delivers it by making the faulting Thread itself call the Invocation at `KeySlot::FAULT_HANDLER` (slot 16) of the AddressSpace it is running in. The handler runs on the faulting Thread, with SP at the top of the Invocation's stack extent, and receives:
+A synchronous exception from EL0 other than `svc` (data or instruction abort, alignment fault, undefined instruction, FP/SIMD use, `brk` and the like), or a failed Return, is a fault. The kernel delivers it by making the faulting Thread itself call the Invocation at `KeySlot::FAULT_HANDLER` (slot 16) of the AddressSpace it is running in. The handler runs on the faulting Thread, on a stack from the Invocation's pool, and receives:
 
 | Register | Contents |
 |---|---|
+| `x0` | The fault frame's address, at the top of the handler's stack (below) |
 | `x2` | Fault kind (`FaultKind`): 0 CPU exception, 1 `IllegalReturn`, 2 `ReturnTargetRetired` |
 | `x3` | `ESR_EL1` (0 for a Return fault) |
 | `x4` | `FAR_EL1` (0 for a Return fault) |
@@ -91,7 +92,22 @@ The handler finishes with an ordinary `Thread.Return`; `r0` selects what happens
 
 After a Return fault, use skip or terminate; retry repeats the failing Return.
 
-A fault is unhandled when slot 16 holds no usable Invocation, when this AddressSpace's handler is already handling another fault, when the Thread faults again inside its own handler, or when the forced call itself fails (for example, the invocation stack is full). An unhandled fault leaves the Thread `Faulted`: it never runs again, and the kernel runs the next Thread. A `Faulted` Thread is removed with Retire.
+### Fault frame
+
+The kernel writes the faulting state as a [`FaultFrame`](../../../libs/object/src/fault.rs) (832 bytes, 16-byte aligned) at the top of the handler's stack and starts the handler with SP just below it:
+
+| Bytes | Contents |
+|---|---|
+| 0..16 | `size` (832), `version` (1), `flags` (bit 0: the FP part is filled), reserved |
+| 16..264 | `x0..x30` |
+| 264..296 | SP, PC, `pstate` (SPSR), `TPIDR_EL0` |
+| 304..824 | `V0..V31`, FPCR, FPSR: filled for an AddressSpace that allows FP, zero otherwise |
+
+The handler may change the frame. Retry and Skip resume from the frame as it is when the handler returns (Skip then moves past the instruction at the frame's PC). The kernel copies the frame once and checks the copy: its header must be unchanged, and its `pstate` may differ from the faulting one only in the condition flags (NZCV). A frame that fails the check, or that cannot be read back, terminates the Thread with its faulting state.
+
+The handler's stacks must hold the frame plus the handler's own use, and must be EL0-writable normal memory: a stack the frame does not fit in, or cannot be written to, makes the fault unhandled.
+
+A fault is unhandled when slot 16 holds no usable Invocation, when this AddressSpace's handler is already handling another fault, when the Thread faults again inside its own handler, when the forced call itself fails (for example, the invocation stack is full), or when the fault frame does not fit in, or cannot be written to, the handler's stack. An unhandled fault leaves the Thread `Faulted`: it never runs again, and the kernel runs the next Thread. A `Faulted` Thread is removed with Retire.
 
 ## Implementation
 
@@ -101,5 +117,4 @@ At EL0, a Thread can read the virtual counter (`CNTVCT_EL0`, `CNTFRQ_EL0`) and i
 
 ## Planned changes
 
-- **FP/SIMD state.** A Thread running in an AddressSpace that allows FP keeps its V registers, FPCR and FPSR across preemption, blocking and faults. The kernel saves them when the Thread is switched away from and loads them when it returns.
-- **Fault frame.** The fault handler receives the faulting state as a frame at the top of its stack, with the frame's address in `x0`. The frame holds the general registers and, for a faulting AddressSpace that allows FP, the FP state. The handler may change it, and Retry or Skip resume from the changed frame after the kernel checks that it still resumes at EL0. A frame that cannot be written makes the fault unhandled. A frame that cannot be read back, or is invalid, terminates the Thread.
+FP/SIMD state: a Thread running in an AddressSpace that allows FP keeps its V registers, FPCR and FPSR across preemption, blocking and faults (through the fault frame's FP part). FP/SIMD instructions still trap in every AddressSpace today.

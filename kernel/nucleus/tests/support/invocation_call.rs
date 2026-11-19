@@ -11,21 +11,27 @@ use {
             access::Access,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             fault::FaultDelivery,
+            fp::FakeFpUnit,
             invocation::{
                 CallTarget, CommittedCall, CommittedReturn, PreparedCall, ReturnFault,
                 ReturnRejection,
             },
             key_table::CallerTable,
             thread::ThreadId,
+            user_copy::FakeUserMemory,
         },
     },
     aarch64_cpu::registers::{Read, SCTLR_EL1, TCR_EL1, TTBR0_EL1, Write},
     core::num::NonZero,
-    libexception::arch::aarch64::SavedContext,
+    libexception::arch::aarch64::{FpState, SavedContext},
     libobject::{
         CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidKeyReason, KeySlot,
         ObjectType, PlacementWindow, RawKey, Rights, StackPoolHandle,
-        fault::{FaultAction, FaultInfo, FaultKind},
+        fault::{
+            FAULT_FRAME_BYTES, FAULT_FRAME_FP, FAULT_FRAME_VERSION, FaultAction, FaultFrame,
+            FaultInfo, FaultKind,
+        },
+        scheduler_record::ThreadFpCounters,
     },
 };
 
@@ -1260,9 +1266,42 @@ fn dispatch_routes_call_and_return_from_saved_frames() {
 /// The faulting instruction's PC in the fault tests.
 const FAULT_PC: u64 = 0x9_1230;
 
-/// Install a fault handler Invocation (into the target `AddressSpace`, with
-/// the fixture stack pool) at `FAULT_HANDLER` in the current Thread's table.
+/// The fault handler's pool: two stacks of `HANDLER_STACK_BYTES`, room for
+/// the fault frame and the handler's own use, in a fake EL0 window.
+const HANDLER_STACK_BASE: u64 = 0x40_0000;
+const HANDLER_STACK_BYTES: u64 = 0x400;
+/// The first handler stack's end, and the fault frame's place below it.
+const HANDLER_STACK_END: u64 = HANDLER_STACK_BASE + HANDLER_STACK_BYTES;
+const FRAME_ADDRESS: u64 = HANDLER_STACK_END - FAULT_FRAME_BYTES as u64;
+
+/// Install a fault handler Invocation (into the target `AddressSpace`, with a
+/// pool of its own, mapped writable in the fake EL0 window) at
+/// `FAULT_HANDLER` in the current Thread's table.
 fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
+    install_fault_handler_with(nucleus, fixture, HANDLER_STACK_BYTES);
+}
+
+fn install_fault_handler_with(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    stack_bytes: u64,
+) {
+    let pool = nucleus
+        .address_space_mut(fixture.target_as)
+        .unwrap()
+        .stack_pools_mut()
+        .create(
+            HANDLER_STACK_BASE,
+            stack_bytes,
+            2,
+            ArchObjectsImpl::USER_VA_END,
+        )
+        .unwrap_or_else(|error| panic!("handler stack pool: {:?}", error.code()));
+    FakeUserMemory::map(
+        HANDLER_STACK_BASE,
+        usize::try_from(2 * stack_bytes).unwrap(),
+        true,
+    );
     nucleus
         .current_thread_table_mut()
         .unwrap()
@@ -1271,12 +1310,24 @@ fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallF
             KeyEntry::new_invocation(
                 fixture.target_as,
                 NonZero::new(FUNCTION).unwrap(),
-                fixture.pool,
+                pool,
                 PlacementWindow::NONE,
             ),
             FIXTURE_GUARD,
         )
         .unwrap_or_else(|error| panic!("fault handler install: {:?}", error.error.code()));
+}
+
+/// The fault frame as it is in the handler's stack.
+fn frame_in_stack() -> FaultFrame {
+    let mut bytes = [0; FAULT_FRAME_BYTES];
+    assert!(FakeUserMemory::read(FRAME_ADDRESS, &mut bytes));
+    FaultFrame::from_bytes(bytes)
+}
+
+/// Replace the fault frame in the handler's stack, as a handler would.
+fn rewrite_frame(frame: &FaultFrame) {
+    assert!(FakeUserMemory::write(FRAME_ADDRESS, &frame.to_bytes()));
 }
 
 /// A faulting EL0 frame with distinct values in every register.
@@ -1363,9 +1414,33 @@ fn fault_enters_the_handler_with_the_fault_words_at_its_stack_top() {
         };
         let target = committed.target;
         assert_eq!(&target.gpr[2..8], &info.to_arguments());
-        assert_eq!(&target.gpr[0..2], &[0, 0]);
+        assert_eq!(
+            &target.gpr[0..2],
+            &[FRAME_ADDRESS, 0],
+            "x0 is the fault frame"
+        );
         assert!(target.gpr[8..].iter().all(|&register| register == 0));
-        assert_eq!(target.sp, STACK_END, "the handler starts at its stack top");
+        assert_eq!(
+            target.sp, FRAME_ADDRESS,
+            "the handler starts below the fault frame at its stack top"
+        );
+        // The frame holds the faulting registers, and no FP part: the
+        // faulting AddressSpace is integer-only.
+        let frame = frame_in_stack();
+        assert_eq!((frame.size, frame.version), (832, FAULT_FRAME_VERSION));
+        assert_eq!(frame.flags, 0);
+        assert_eq!(&frame.gpr[..30], &faulting.gpr);
+        assert_eq!(frame.gpr[30], faulting.lr);
+        assert_eq!(
+            (frame.sp, frame.pc, frame.pstate, frame.tpidr_el0),
+            (
+                faulting.sp,
+                faulting.elr_el1,
+                faulting.spsr_el1,
+                faulting.tpidr_el0
+            )
+        );
+        assert!(frame.vectors.iter().all(|&register| register == 0));
         assert_eq!(target.elr_el1, FUNCTION);
         assert_eq!(
             target.origin, faulting.origin,
@@ -1383,9 +1458,142 @@ fn fault_enters_the_handler_with_the_fault_words_at_its_stack_top() {
                 frame: faulting,
                 address_space: fixture.source_as,
                 depth: 1,
+                frame_address: FRAME_ADDRESS,
             })
         );
         assert_eq!(handler_state(nucleus, fixture.source_as), (true, 0));
+    });
+}
+
+#[test_case]
+fn a_handler_may_change_the_frame_and_retry_resumes_from_it() {
+    with_call(|nucleus, fixture| {
+        install_fault_handler(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let FaultDelivery::Handler(_) = deliver(nucleus, faulting, fault_info(0)) else {
+            panic!("the fault must reach the handler");
+        };
+        // The handler emulates the instruction: a result in x0, the PC past
+        // it, and the condition flags it sets.
+        let mut frame = frame_in_stack();
+        frame.gpr[0] = 0x0E_0001;
+        frame.pc = FAULT_PC + 4;
+        frame.pstate = (frame.pstate & !0xF000_0000) | 0x8000_0000;
+        rewrite_frame(&frame);
+        let saved = return_frame(
+            fixture.target_return_key,
+            [FaultAction::Retry as u64, 0],
+            [0; 4],
+        );
+        let committed = returned(thread_return(nucleus, &saved));
+        assert!(!committed.terminate);
+        let resumed = committed.resumed;
+        assert_eq!(resumed.gpr[0], 0x0E_0001);
+        assert_eq!(resumed.elr_el1, FAULT_PC + 4);
+        assert_eq!(resumed.spsr_el1, frame.pstate);
+        assert_eq!(&resumed.gpr[1..], &faulting.gpr[1..]);
+        assert_eq!(resumed.origin, faulting.origin);
+    });
+}
+
+#[test_case]
+fn a_frame_that_would_leave_el0_or_cannot_be_read_terminates() {
+    // A changed exception level or interrupt mask is refused; so is a frame
+    // whose header was overwritten, or one the handler unmapped.
+    let refusals: [fn(&mut FaultFrame); 3] = [
+        |frame| frame.pstate |= 0b0101, // EL1h
+        |frame| frame.pstate |= 1 << 7, // IRQs masked
+        |frame| frame.version = 0,
+    ];
+    for refuse in refusals.into_iter().map(Some).chain([None]) {
+        with_call(|nucleus, fixture| {
+            install_fault_handler(nucleus, &fixture);
+            let faulting = faulting_frame();
+            let FaultDelivery::Handler(_) = deliver(nucleus, faulting, fault_info(0)) else {
+                panic!("the fault must reach the handler");
+            };
+            match refuse {
+                Some(refuse) => {
+                    let mut frame = frame_in_stack();
+                    refuse(&mut frame);
+                    rewrite_frame(&frame);
+                }
+                // The handler's stack is gone by the time it returns.
+                None => FakeUserMemory::map(0, 0, false),
+            }
+            let saved = return_frame(
+                fixture.target_return_key,
+                [FaultAction::Retry as u64, 0],
+                [0; 4],
+            );
+            let committed = returned(thread_return(nucleus, &saved));
+            assert!(committed.terminate, "a refused frame terminates");
+            assert_eq!(
+                committed.resumed, faulting,
+                "the kernel's own copy is the faulted state"
+            );
+            assert_eq!(handler_state(nucleus, fixture.source_as), (false, 0));
+        });
+    }
+}
+
+#[test_case]
+fn a_handler_stack_without_room_for_the_frame_leaves_the_fault_unhandled() {
+    // Too small for the frame, or not writable: nothing commits.
+    for (stack_bytes, writable) in [(0x100, true), (HANDLER_STACK_BYTES, false)] {
+        with_call(|nucleus, fixture| {
+            install_fault_handler_with(nucleus, &fixture, stack_bytes);
+            FakeUserMemory::set_writable(writable);
+            let faulted = nucleus.current_thread.unwrap();
+            let next = queue_next_thread(nucleus, &fixture);
+            let faulting = faulting_frame();
+            let delivery = deliver(nucleus, faulting, fault_info(0));
+            expect_unhandled(delivery, nucleus, faulted, faulting, next);
+            assert_eq!(handler_state(nucleus, fixture.source_as), (false, 1));
+            let thread = nucleus.thread(faulted).unwrap();
+            assert_eq!(thread.invocation_stack.len(), 0);
+        });
+    }
+}
+
+#[test_case]
+fn an_fp_fault_carries_its_registers_and_retry_restores_them() {
+    with_call(|nucleus, fixture| {
+        set_fp_frame(nucleus, fixture.source_as, true);
+        set_fp_frame(nucleus, fixture.target_as, true);
+        install_fault_handler(nucleus, &fixture);
+        let thread = nucleus.current_thread.unwrap();
+        let faulted_values = fp_tagged(0xF);
+        FakeFpUnit::set_registers(faulted_values);
+        let FaultDelivery::Handler(_) = deliver(nucleus, faulting_frame(), fault_info(0)) else {
+            panic!("the fault must reach the handler");
+        };
+        // The handler starts zeroed, and finds the faulting registers in the
+        // frame.
+        assert_eq!(FakeFpUnit::registers(), FpState::ZERO);
+        let mut frame = frame_in_stack();
+        assert_eq!(frame.flags, FAULT_FRAME_FP);
+        assert_eq!(frame.vectors, faulted_values.vectors);
+        assert_eq!(
+            (frame.fpcr, frame.fpsr),
+            (faulted_values.fpcr, faulted_values.fpsr)
+        );
+
+        // It fixes one register; the handler's own values must not leak back.
+        frame.vectors[3] = 0x3333;
+        rewrite_frame(&frame);
+        FakeFpUnit::set_registers(fp_tagged(0xE));
+        let saved = return_frame(
+            fixture.target_return_key,
+            [FaultAction::Retry as u64, 0],
+            [0; 4],
+        );
+        returned(thread_return(nucleus, &saved));
+        let mut expected = faulted_values;
+        expected.vectors[3] = 0x3333;
+        assert_eq!(FakeFpUnit::registers(), expected);
+        let stats = fp_stats(nucleus, thread);
+        assert_eq!((stats.fp_saves, stats.fp_loads), (1, 1));
     });
 }
 
@@ -2122,5 +2330,480 @@ fn a_return_is_a_preemption_point_like_any_other_kernel_exit() {
             }
         );
         assert!(!nucleus.preempt_requested);
+    });
+}
+
+// ═════════════════════════════════════════════════════════════════
+// FP/SIMD STATE ACROSS CALL, RETURN AND THREAD SWITCHES
+// ═════════════════════════════════════════════════════════════════
+
+/// A register file in which every register holds a distinct value marked
+/// with `tag`, so a test can tell whose values the registers hold.
+fn fp_tagged(tag: u128) -> FpState {
+    let mut state = FpState::ZERO;
+    for (index, register) in state.vectors.iter_mut().enumerate() {
+        *register = tag << 96 | tag << 32 | (u128::try_from(index).unwrap() + 1);
+    }
+    state.fpcr = 0x0040_0000;
+    state.fpsr = u32::try_from(tag & 0x9f).unwrap();
+    state
+}
+
+fn set_fp_frame(nucleus: &mut Nucleus<ArchObjectsImpl>, address_space: AddressSpaceId, fp: bool) {
+    nucleus
+        .address_space_mut(address_space)
+        .unwrap()
+        .set_fp_simd_for_test(fp);
+}
+
+fn fp_stats(nucleus: &Nucleus<ArchObjectsImpl>, thread: ThreadId) -> ThreadFpCounters {
+    nucleus.thread(thread).unwrap().fp_stats
+}
+
+/// The top call record of the current Thread.
+fn top_record(nucleus: &mut Nucleus<ArchObjectsImpl>) -> InvocationContinuation {
+    *source_mut(nucleus).invocation_stack.top().unwrap()
+}
+
+#[test_case]
+fn a_call_between_fp_frames_hides_each_side_from_the_other() {
+    with_call(|nucleus, fixture| {
+        set_fp_frame(nucleus, fixture.source_as, true);
+        set_fp_frame(nucleus, fixture.target_as, true);
+        let thread = nucleus.current_thread.unwrap();
+        let caller = fp_tagged(0xC);
+        FakeFpUnit::set_registers(caller);
+
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        assert_eq!(
+            FakeFpUnit::registers(),
+            FpState::ZERO,
+            "the target must start with none of its caller's values"
+        );
+        let record = top_record(nucleus);
+        assert!(record.fp_preserved);
+        assert_eq!(record.source_fp, caller.preserved());
+
+        // The callee computes with its own values, then returns.
+        FakeFpUnit::set_registers(fp_tagged(0xE));
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &saved));
+        assert_eq!(
+            FakeFpUnit::registers(),
+            FpState::from_preserved(&caller.preserved()),
+            "the caller gets V8-V15, FPCR and FPSR back and zeros elsewhere"
+        );
+        let stats = fp_stats(nucleus, thread);
+        assert_eq!(
+            (
+                stats.preserved_saves,
+                stats.fp_entries,
+                stats.fp_zeroes,
+                stats.fp_saves,
+                stats.fp_loads
+            ),
+            (1, 2, 1, 0, 0)
+        );
+    });
+}
+
+#[test_case]
+fn an_integer_target_leaves_the_registers_alone_and_return_restores_the_caller() {
+    with_call(|nucleus, fixture| {
+        set_fp_frame(nucleus, fixture.source_as, true);
+        let thread = nucleus.current_thread.unwrap();
+        let caller = fp_tagged(0xC);
+        FakeFpUnit::set_registers(caller);
+
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        // FP traps in the target, so nothing is written for it.
+        assert_eq!(FakeFpUnit::registers(), caller);
+        assert!(top_record(nucleus).fp_preserved);
+
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &saved));
+        assert_eq!(
+            FakeFpUnit::registers(),
+            FpState::from_preserved(&caller.preserved())
+        );
+        let stats = fp_stats(nucleus, thread);
+        assert_eq!(
+            (stats.preserved_saves, stats.fp_entries, stats.fp_zeroes),
+            (1, 1, 0)
+        );
+    });
+}
+
+#[test_case]
+fn an_fp_target_called_from_integer_code_starts_zeroed() {
+    with_call(|nucleus, fixture| {
+        set_fp_frame(nucleus, fixture.target_as, true);
+        let thread = nucleus.current_thread.unwrap();
+        // Whatever an earlier FP frame left in the registers.
+        FakeFpUnit::set_registers(fp_tagged(0x5));
+
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        assert_eq!(FakeFpUnit::registers(), FpState::ZERO);
+        assert!(!top_record(nucleus).fp_preserved);
+
+        // Back in the integer caller nothing is loaded: FP traps there, and
+        // the next FP entry overwrites the whole register file.
+        let callee = fp_tagged(0xE);
+        FakeFpUnit::set_registers(callee);
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &saved));
+        assert_eq!(FakeFpUnit::registers(), callee);
+        let stats = fp_stats(nucleus, thread);
+        assert_eq!(
+            (stats.preserved_saves, stats.fp_entries, stats.fp_zeroes),
+            (0, 1, 1)
+        );
+    });
+}
+
+#[test_case]
+fn calls_between_integer_frames_never_touch_the_registers() {
+    with_call(|nucleus, fixture| {
+        let thread = nucleus.current_thread.unwrap();
+        let left = fp_tagged(0x5);
+        FakeFpUnit::set_registers(left);
+        committed(call(nucleus, &fixture, &call_frame(fixture.key)));
+        assert!(!top_record(nucleus).fp_preserved);
+        let saved = return_frame(fixture.target_return_key, [1, 2], [0; 4]);
+        returned(thread_return(nucleus, &saved));
+        assert_eq!(FakeFpUnit::registers(), left);
+        assert_eq!(fp_stats(nucleus, thread), ThreadFpCounters::ZERO);
+    });
+}
+
+#[test_case]
+fn preempted_fp_threads_keep_their_own_registers() {
+    with_call(|nucleus, fixture| {
+        // Both Threads run in the source AddressSpace, which allows FP.
+        set_fp_frame(nucleus, fixture.source_as, true);
+        let first = nucleus.current_thread.unwrap();
+        let second = queue_next_thread(nucleus, &fixture);
+        let first_values = fp_tagged(0xA);
+        FakeFpUnit::set_registers(first_values);
+        let totals_before = nucleus.fp_totals;
+
+        // A tick that preempts: the dispatcher asked for it. The nucleus keeps
+        // no run queue, so the preempted Thread is queued again by the test,
+        // as a dispatcher would.
+        let tick = |nucleus: &mut Nucleus<ArchObjectsImpl>| {
+            let preempted = nucleus.current_thread.unwrap();
+            nucleus.preempt_requested = true;
+            // SAFETY: serial fixture with exclusive nucleus/pool backing; no
+            // other access context or object/table guard overlaps this call.
+            let access = unsafe { Access::new() };
+            let next = nucleus
+                .preempt_and_select(&access, SavedContext::el0(0xA_0000, STACK_END, 0))
+                .unwrap_or_else(|error| panic!("tick: {:?}", error.code()))
+                .expect("the queued Thread preempts")
+                .expect_resume()
+                .next;
+            assert!(nucleus.activations.push(preempted));
+            next
+        };
+
+        // The second Thread never ran in an FP frame: it starts zeroed.
+        assert_eq!(tick(nucleus), second);
+        assert_eq!(nucleus.thread(first).unwrap().fp, first_values);
+        assert_eq!(FakeFpUnit::registers(), FpState::ZERO);
+
+        // It computes, and is preempted in turn: the first Thread gets its
+        // own values back, and the second keeps its own.
+        let second_values = fp_tagged(0xB);
+        FakeFpUnit::set_registers(second_values);
+        assert_eq!(tick(nucleus), first);
+        assert_eq!(FakeFpUnit::registers(), first_values);
+        assert_eq!(nucleus.thread(second).unwrap().fp, second_values);
+
+        for thread in [first, second] {
+            let stats = fp_stats(nucleus, thread);
+            assert_eq!((stats.fp_saves, stats.fp_loads), (1, 1));
+            assert_eq!(stats.fp_entries, 1);
+        }
+        assert_eq!(
+            nucleus.fp_totals.thread_switches - totals_before.thread_switches,
+            2
+        );
+        assert_eq!(
+            nucleus.fp_totals.fp_thread_switches - totals_before.fp_thread_switches,
+            2
+        );
+    });
+}
+
+/// Bounded model check of the FP/SIMD transitions (`simd-design.md`,
+/// "Proof obligations"): two Threads, the fixture's two `AddressSpace`s S
+/// and T with every combination of FP flags, calls nested up to
+/// `MODEL_DEPTH`, and every sequence of `MODEL_STEPS` steps, each a Call into
+/// the other `AddressSpace`, a Return, a preemption, a fault (handled in the
+/// other `AddressSpace`, whose Return resumes the faulting frame) or the
+/// running Thread's exit.
+///
+/// Before each step the running frame computes: an FP frame writes values no
+/// other frame ever wrote. A reference model tracks what each frame is owed
+/// (its own last values; zeros at a Call or fault entry; its preserved
+/// registers with the rest zero after its call returns; its whole register
+/// file after its fault is handled), and after every step the register file
+/// of an FP frame must hold exactly that. This checks integrity and
+/// confidentiality together: no frame ever sees another frame's values. The
+/// `FPEN` gate (I1) needs the hardware switching of S2 and is not modelled.
+/// Blocking on a wait parks through the same save as a preemption and is not
+/// a separate step.
+#[test_case]
+fn every_bounded_sequence_of_calls_returns_and_preemptions_keeps_fp_state() {
+    // Thousands of fixtures in a row would exhaust the test arena, which
+    // otherwise only grows. Nothing carved for one sequence is named again.
+    let mark = crate::objects::nucleus::test_arena::mark();
+    for flags in 0..4_u8 {
+        for code in 0..MODEL_STEP_KINDS.pow(MODEL_STEPS) {
+            run_model_sequence([flags & 1 != 0, flags & 2 != 0], code);
+            crate::objects::nucleus::test_arena::rewind(mark);
+        }
+    }
+}
+
+const MODEL_STEPS: u32 = 5;
+const MODEL_STEP_KINDS: u32 = 5;
+const MODEL_DEPTH: usize = 3;
+
+/// The model's view of one frame: the `AddressSpace` it runs in (0 for S,
+/// 1 for T) and the register file it is owed.
+#[derive(Clone, Copy)]
+struct ModelFrame {
+    side: usize,
+    owed: FpState,
+}
+
+struct ModelThread {
+    id: ThreadId,
+    frames: [ModelFrame; MODEL_DEPTH + 1],
+    depth: usize,
+    /// The depth of the frame handling this Thread's fault, if any.
+    fault_depth: Option<usize>,
+    alive: bool,
+}
+
+impl ModelThread {
+    fn top(&mut self) -> &mut ModelFrame {
+        &mut self.frames[self.depth]
+    }
+}
+
+/// Install `side`'s fault handler: an Invocation into the other
+/// `AddressSpace`, with a pool of two `HANDLER_STACK_BYTES` stacks at `base`.
+fn install_model_fault_handler(
+    nucleus: &mut Nucleus<ArchObjectsImpl>,
+    fixture: &CallFixture,
+    side: usize,
+    base: u64,
+) {
+    let (table, handler_as) = if side == 0 {
+        (fixture.source_table, fixture.target_as)
+    } else {
+        (fixture.target_table, fixture.source_as)
+    };
+    let pool = nucleus
+        .address_space_mut(handler_as)
+        .unwrap()
+        .stack_pools_mut()
+        .create(base, HANDLER_STACK_BYTES, 2, ArchObjectsImpl::USER_VA_END)
+        .unwrap_or_else(|error| panic!("model handler pool: {:?}", error.code()));
+    install_entry(
+        table,
+        KeySlot::FAULT_HANDLER,
+        KeyEntry::new_invocation(
+            handler_as,
+            NonZero::new(FUNCTION).unwrap(),
+            pool,
+            PlacementWindow::NONE,
+        ),
+    );
+}
+
+/// Run the step sequence `code` (base-5 digits: 0 Call, 1 Return,
+/// 2 preempt, 3 fault, 4 exit) with `fp[side]` the FP flag of S and T,
+/// stopping at the first step the state does not allow.
+fn run_model_sequence(fp: [bool; 2], mut code: u32) {
+    with_call(|nucleus, fixture| {
+        set_fp_frame(nucleus, fixture.source_as, fp[0]);
+        set_fp_frame(nucleus, fixture.target_as, fp[1]);
+        // From T, calls go back into S through this key.
+        let back = install_entry(
+            fixture.target_table,
+            KeySlot(50),
+            KeyEntry::new_invocation(
+                fixture.source_as,
+                NonZero::new(FUNCTION).unwrap(),
+                fixture.pool,
+                PlacementWindow::NONE,
+            ),
+        );
+        // A fault in either AddressSpace goes to a handler in the other; both
+        // handler pools lie in the one fake EL0 window.
+        install_model_fault_handler(nucleus, &fixture, 0, HANDLER_STACK_BASE);
+        install_model_fault_handler(
+            nucleus,
+            &fixture,
+            1,
+            HANDLER_STACK_BASE + 2 * HANDLER_STACK_BYTES,
+        );
+        FakeUserMemory::map(
+            HANDLER_STACK_BASE,
+            usize::try_from(4 * HANDLER_STACK_BYTES).unwrap(),
+            true,
+        );
+        let call_keys = [fixture.key, back];
+        let return_keys = [fixture.source_return_key, fixture.target_return_key];
+        let base = ModelFrame {
+            side: 0,
+            owed: FpState::ZERO,
+        };
+        let first = nucleus.current_thread.unwrap();
+        let second = queue_next_thread(nucleus, &fixture);
+        let mut threads = [
+            ModelThread {
+                id: first,
+                frames: [base; MODEL_DEPTH + 1],
+                depth: 0,
+                fault_depth: None,
+                alive: true,
+            },
+            ModelThread {
+                id: second,
+                frames: [base; MODEL_DEPTH + 1],
+                depth: 0,
+                fault_depth: None,
+                alive: true,
+            },
+        ];
+        // The first Thread is running; whatever is in the registers is its.
+        let mut running = 0;
+        FakeFpUnit::set_registers(FpState::ZERO);
+        let mut tag = 1_u128;
+
+        for _ in 0..MODEL_STEPS {
+            let step = code % MODEL_STEP_KINDS;
+            code /= MODEL_STEP_KINDS;
+
+            // The running frame computes.
+            let thread = &mut threads[running];
+            if fp[thread.top().side] {
+                tag += 1;
+                let values = fp_tagged(tag);
+                FakeFpUnit::set_registers(values);
+                thread.top().owed = values;
+            }
+
+            match step {
+                0 => {
+                    if thread.depth == MODEL_DEPTH {
+                        return;
+                    }
+                    let side = thread.top().side;
+                    let saved = call_frame(call_keys[side]);
+                    committed(call_current(nucleus, &saved));
+                    thread.depth += 1;
+                    *thread.top() = ModelFrame {
+                        side: 1 - side,
+                        owed: FpState::ZERO,
+                    };
+                }
+                1 => {
+                    if thread.depth == 0 {
+                        return;
+                    }
+                    let side = thread.top().side;
+                    // Skip: a fault Return resumes the faulting frame after its
+                    // instruction; an ordinary Return ignores the word.
+                    let saved =
+                        return_frame(return_keys[side], [FaultAction::Skip as u64, 2], [0; 4]);
+                    returned(thread_return(nucleus, &saved));
+                    let handled_fault = thread.fault_depth == Some(thread.depth);
+                    thread.depth -= 1;
+                    if handled_fault {
+                        // The fault frame gave back the whole register file.
+                        thread.fault_depth = None;
+                    } else {
+                        // The caller keeps V8-V15, FPCR and FPSR; the rest is
+                        // zero.
+                        let caller = thread.top();
+                        caller.owed = FpState::from_preserved(&caller.owed.preserved());
+                    }
+                }
+                3 => {
+                    // One fault at a time: a second would find its handler
+                    // busy and stop the Thread for good.
+                    if thread.depth == MODEL_DEPTH
+                        || threads.iter().any(|thread| thread.fault_depth.is_some())
+                    {
+                        return;
+                    }
+                    let thread = &mut threads[running];
+                    let side = thread.top().side;
+                    let info = fault_info(u64::try_from(thread.depth).unwrap());
+                    let faulting = SavedContext::el0(FAULT_PC, STACK_END - 0x20, 0);
+                    let FaultDelivery::Handler(_) = deliver(nucleus, faulting, info) else {
+                        panic!("the model's fault must reach its handler");
+                    };
+                    thread.depth += 1;
+                    thread.fault_depth = Some(thread.depth);
+                    *thread.top() = ModelFrame {
+                        side: 1 - side,
+                        owed: FpState::ZERO,
+                    };
+                }
+                4 => {
+                    let other = 1 - running;
+                    if !threads[other].alive {
+                        return;
+                    }
+                    // SAFETY: serial fixture with exclusive nucleus/pool
+                    // backing; no other access context or guard overlaps.
+                    let access = unsafe { Access::new() };
+                    let next = nucleus
+                        .exit_current_thread(&access)
+                        .unwrap_or_else(|error| panic!("exit: {:?}", error.code()))
+                        .expect_resume()
+                        .next;
+                    threads[running].alive = false;
+                    running = other;
+                    assert_eq!(next, threads[running].id);
+                }
+                _ => {
+                    if !threads[1 - running].alive {
+                        return;
+                    }
+                    let thread = &mut threads[running];
+                    let preempted = thread.id;
+                    nucleus.preempt_requested = true;
+                    // SAFETY: serial fixture with exclusive nucleus/pool
+                    // backing; no other access context or guard overlaps.
+                    let access = unsafe { Access::new() };
+                    let next = nucleus
+                        .preempt_and_select(&access, SavedContext::el0(0xA_0000, STACK_END, 0))
+                        .unwrap_or_else(|error| panic!("tick: {:?}", error.code()))
+                        .expect("the other Thread preempts")
+                        .expect_resume()
+                        .next;
+                    assert!(nucleus.activations.push(preempted));
+                    running = 1 - running;
+                    assert_eq!(next, threads[running].id);
+                }
+            }
+
+            // Whatever frame now runs, an FP frame sees exactly what it is owed.
+            let frame = *threads[running].top();
+            if fp[frame.side] {
+                assert_eq!(
+                    FakeFpUnit::registers(),
+                    frame.owed,
+                    "flags {fp:?}: an FP frame was not given what it is owed"
+                );
+            }
+        }
     });
 }

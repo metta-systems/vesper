@@ -111,7 +111,7 @@ flowchart TD
 
 A stack pool is the set of stacks that calls into this AddressSpace run on. It is `count` stacks (1 to 64) of `stack_bytes` each, back to back from `base`: stack `i` is `[base + i * stack_bytes, base + (i + 1) * stack_bytes)`, and a call on it starts with `SP` at its end. An AddressSpace holds up to 16 pools. A pool is named by a handle, the slot in bits 7:0 and the slot's generation in bits 39:8; a handle is a number and needs `Grant` on the AddressSpace key to use.
 
-The kernel never reads or writes the stack memory and does not check that it is mapped. The usual layout is `[guard][stack]…[stack][guard]`: `stack_bytes` includes an unmapped guard region at the bottom of each unit, and a last guard follows the pool.
+The kernel does not check that the stack memory is mapped, and it reads or writes it only for a fault: it writes the [fault frame](../core/thread.md#fault-frame) at the top of the stack a fault delivery takes from the fault handler's pool, and reads it back at the handler's Return. The usual layout is `[guard][stack]…[stack][guard]`: `stack_bytes` includes an unmapped guard region at the bottom of each unit, and a last guard follows the pool.
 
 **CreateStackPool** fails with `InvalidStack` (status 33; offending value in `x1`, reason in `x2`) and with `PoolExhausted` when all 16 slots are taken. `x5..x7` must be zero (`InvalidOperation`). The checks run in the order of the table.
 

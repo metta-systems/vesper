@@ -30,7 +30,7 @@ use syscall_status as code;
 pub use debug_console::DebugConsoleKey;
 
 pub use {
-    address_space::{AddressSpaceKey, AddressSpaceOp},
+    address_space::{ADDRESS_SPACE_FP_SIMD_BIT, AddressSpaceKey, AddressSpaceOp},
     asid_pool::{ASIDPoolKey, ASIDPoolOp},
     event_count::{EventCountKey, EventCountOp},
     frame::{FrameAttribute, FrameKey, FrameOp},

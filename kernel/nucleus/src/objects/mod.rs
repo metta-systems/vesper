@@ -7,6 +7,7 @@ pub mod completion;
 pub mod debug_console;
 pub mod event_count;
 pub mod fault;
+pub mod fp;
 pub mod invocation;
 pub mod irq;
 pub mod key_table;
@@ -21,6 +22,8 @@ pub mod stack_pool;
 pub mod thread;
 pub mod time;
 pub mod timers;
+#[cfg(test)]
+pub mod user_copy;
 pub mod wait_set;
 
 #[cfg(feature = "debug_kernel")]

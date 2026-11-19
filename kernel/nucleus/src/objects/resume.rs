@@ -10,6 +10,7 @@ use {
         arch_objects::{AddressSpaceId, AddressSpaceObject},
         carved::Carved,
         completion::{PendingKind, PendingState},
+        fp::FpUnit,
         key_table::KeyTableBinding,
         thread::ThreadId,
     },
@@ -440,9 +441,30 @@ impl<A: ArchObjects> Nucleus<A> {
                 .saturating_add(now.saturating_sub(self.current_since_ticks));
             self.current_since_ticks = now;
         }
-        self.thread_mut(next)
-            .expect("validated target Thread")
-            .context = ExecutionContext::Running;
+        let fp_frame = |nucleus: &Self, thread: ThreadId| {
+            nucleus
+                .thread(thread)
+                .is_some_and(|thread| nucleus.address_space_fp(thread.address_space))
+        };
+        let leaving_fp = current.is_some_and(|thread| fp_frame(self, thread));
+        let entering_fp = fp_frame(self, next);
+        if current != Some(next) {
+            self.fp_totals.thread_switches = self.fp_totals.thread_switches.wrapping_add(1);
+            if leaving_fp || entering_fp {
+                self.fp_totals.fp_thread_switches =
+                    self.fp_totals.fp_thread_switches.wrapping_add(1);
+            }
+        }
+        let entering = self.thread_mut(next).expect("validated target Thread");
+        entering.context = ExecutionContext::Running;
+        if entering_fp {
+            // The whole register file becomes this frame's, as saved when it
+            // stopped (zero for a Thread that never ran in an FP frame).
+            A::Fp::load(&entering.fp);
+            let stats = &mut entering.fp_stats;
+            stats.fp_entries = stats.fp_entries.wrapping_add(1);
+            stats.fp_loads = stats.fp_loads.wrapping_add(1);
+        }
         self.current_thread = Some(next);
         self.preempt_requested = false;
         Ok(PreparedResume {
@@ -471,10 +493,23 @@ impl<A: ArchObjects> Nucleus<A> {
             }
             _ => StopReason::SliceEnd,
         };
+        // A Thread that will run again in an FP frame keeps that frame's
+        // registers. An exit or an unhandled fault keeps nothing: the state is
+        // dead, unreadable while FP traps, and overwritten by the next FP entry.
+        let keeps_fp = matches!(
+            parked,
+            ExecutionContext::Parked { .. } | ExecutionContext::Preempted { .. }
+        ) && self
+            .thread(current)
+            .is_some_and(|thread| self.address_space_fp(thread.address_space));
         let leaving = self.thread_mut(current).expect("validated current Thread");
         leaving.last_stop = stop as u32;
         leaving.last_run_ticks = elapsed;
         leaving.context = *parked;
+        if keeps_fp {
+            A::Fp::save(&mut leaving.fp);
+            leaving.fp_stats.fp_saves = leaving.fp_stats.fp_saves.wrapping_add(1);
+        }
     }
 
     /// Validate the next activation, then store `parked` as the current

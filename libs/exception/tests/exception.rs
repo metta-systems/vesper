@@ -8,7 +8,7 @@ use {
     core::mem::{align_of, offset_of, size_of},
     vesper_exceptions::{
         PrivilegeLevel,
-        arch::{ExceptionContext, ExceptionOrigin, SavedContext},
+        arch::{ExceptionContext, ExceptionOrigin, FpPreserved, FpState, SavedContext},
         current_privilege_level,
     },
 };
@@ -159,4 +159,56 @@ fn saved_context_does_not_retain_transient_frame_storage() {
     // SavedContext is Copy: using it for another frame does not consume the continuation.
     frame.restore(saved);
     assert_eq!(frame.save(), saved);
+}
+
+#[test_case]
+fn fp_state_layout_is_the_register_file() {
+    assert_eq!(size_of::<FpState>(), 528);
+    assert_eq!(align_of::<FpState>(), 16);
+    assert_eq!(offset_of!(FpState, fpcr), 512);
+    assert_eq!(offset_of!(FpState, fpsr), 516);
+    assert_eq!(size_of::<FpPreserved>(), 136);
+    assert_eq!(align_of::<FpPreserved>(), 8);
+    assert_eq!(FpState::default(), FpState::ZERO);
+}
+
+/// A full FP state where every register holds a distinct value.
+fn tagged_fp_state() -> FpState {
+    let mut state = FpState::ZERO;
+    for (index, register) in state.vectors.iter_mut().enumerate() {
+        let tag = u128::try_from(index).unwrap() + 1;
+        *register = tag << 96 | tag << 32 | 0x5a;
+    }
+    state.fpcr = 0x0040_0000;
+    state.fpsr = 0x0800_0001;
+    state
+}
+
+#[test_case]
+fn fp_preserved_keeps_q8_to_q15_fpcr_and_fpsr_in_full() {
+    let state = tagged_fp_state();
+    let preserved = state.preserved();
+    assert_eq!(preserved.fpcr, state.fpcr);
+    assert_eq!(preserved.fpsr, state.fpsr);
+    for (index, [low, high]) in preserved.q8_q15.iter().enumerate() {
+        let register = state.vectors[8 + index];
+        assert_eq!(u128::from(*high) << 64 | u128::from(*low), register);
+        assert_ne!(*high, 0, "the high half is kept too");
+    }
+}
+
+#[test_case]
+fn fp_state_from_preserved_zeroes_everything_a_call_may_clobber() {
+    let state = tagged_fp_state();
+    let owed = FpState::from_preserved(&state.preserved());
+    for (index, register) in owed.vectors.iter().enumerate() {
+        if (8..16).contains(&index) {
+            assert_eq!(*register, state.vectors[index]);
+        } else {
+            assert_eq!(*register, 0, "v{index} must not carry the callee's value");
+        }
+    }
+    assert_eq!(owed.fpcr, state.fpcr);
+    assert_eq!(owed.fpsr, state.fpsr);
+    assert_eq!(FpState::from_preserved(&FpPreserved::ZERO), FpState::ZERO);
 }
