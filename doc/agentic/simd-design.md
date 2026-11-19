@@ -124,7 +124,6 @@ All storage is inline; the kernel allocates nothing.
 |---|---|---|---|
 | `Thread.fp: FpState` | The current frame's FP state while the Thread is off the CPU | At a Thread switch away from an FP frame | 528 B: 32 × 16, plus FPCR and FPSR, 16-aligned |
 | `InvocationContinuation.source_fp: FpPreserved`, and an "FP preserved" bit | The caller's `q8..q15`, FPCR and FPSR | At a Call or fault delivery from an FP frame | 136 B and 1 bit |
-| Per-core scratch | One frame's state on its way between the registers and a fault frame: 288 B of general registers and 528 B of FP state | At fault delivery, and at a fault Return | 816 B, once per core |
 
 The kernel keeps all 128 bits of `q8..q15`. AAPCS64 only requires a callee to preserve
 the low halves, `d8..d15`, but Rust's `asm!` clobber model treats `v8..v15` as
@@ -153,27 +152,31 @@ The handler receives the faulting state as a frame on its own stack (F8(d)).
   - The handler starts with SP below the frame.
   - `x0` holds the frame's address. A fault delivery is a plain Call, so `x0` would
     otherwise be zero. `FaultInfo` stays in `x2..x7`.
-- **What it holds:**
+- **What it holds** (`libobject::fault::FaultFrame`, 832 B, 16-aligned):
   - a header with size, version and flags, including whether an FP part is present;
-  - the faulting general registers, the 288 B `SavedContext` (F8.1);
-  - for an FP frame, the 528 B FP state.
+  - the faulting general registers (F8.1): `x0..x30`, SP, PC, `pstate`, `TPIDR_EL0`;
+  - for an FP frame, the V registers, FPCR and FPSR.
 - **How it is written.**
-  - At delivery, `FpUnit::save` puts the faulting FP state into the per-core scratch.
-  - The nucleus then copies the general registers and that FP state to the frame with
-    unprivileged stores (`STTR`), after the same `AT` checks it already makes for reads
-    (`kernel/nucleus/src/user_memory.rs`). This is the first time the nucleus writes
-    caller memory.
-  - A stack that is not writable there makes the fault unhandled, like a full
+  - At delivery, `FpUnit::save` puts the faulting FP state into a kernel-stack copy of
+    the frame, before the forced Call zeroes the registers for an FP handler.
+  - The nucleus walks the handler AddressSpace's own translation tables in software
+    (`page_table::user_page`), requires every page of the frame to be EL0-writable
+    Normal memory with its access flag set, and writes through its direct map of
+    physical memory. The handler AddressSpace need not be the active one. This is the
+    first time the nucleus writes caller memory.
+  - The write happens before the forced Call commits. A stack smaller than the frame,
+    or not writable, makes the fault unhandled with nothing to undo, like a full
     invocation stack. The Thread becomes `Faulted` with its general registers, and its
     FP state is dropped.
-  - The pool's stacks need room for about 0.8 KiB.
+  - The pool's stacks need room for 832 B plus the handler's own use.
 - **Write-back (F8.2).** At a Retry or Skip Return, the kernel resumes from the frame,
   which the handler may have changed.
-  - The kernel copies the frame once into per-core scratch (816 B), using `LDTR`, and
-    validates that copy. It never validates in place, since another Thread of the
-    handler's AddressSpace could change the frame in between.
-  - SPSR must resume at EL0t. Only the condition flags may change.
-  - The FP part goes from the scratch into the V registers with `FpUnit::load`.
+  - The kernel copies the frame once onto its own stack, through the same walk (pages
+    EL0-readable), and validates that copy. It never validates in place, since another
+    Thread of the handler's AddressSpace could change the frame in between.
+  - The header must be unchanged, and `pstate` may differ from the faulting one only in
+    the condition flags (NZCV), so the Thread resumes at the same EL with the same masks.
+  - The FP part goes from the copy into the V registers with `FpUnit::load`.
   - An unreadable or invalid frame terminates the Thread. Its `Faulted` state is the
     kernel's copy of the general registers, `ThreadFault.frame`, as today. The original
     state is never silently resumed.
@@ -186,7 +189,7 @@ The handler receives the faulting state as a frame on its own stack (F8(d)).
     registers and its FP state.
 - **Trust.** The handler is the faulting AddressSpace's own designated handler, and it
   can already terminate or skip the Thread. Changing that Thread's registers adds no new
-  trust. The SPSR check protects the kernel, not the Thread.
+  trust. The `pstate` check protects the kernel, not the Thread.
 - **Confidentiality.** The frame shows the faulting frame's values to the handler's
   domain. That is the deliberate, authorised exception to "a frame sees only its own
   values or zeros". The handler is the domain meant to see them.
@@ -215,8 +218,8 @@ All five TTBR0 writes are in `kernel/nucleus/src/main.rs`. The supporting logic 
 |---|---|---|---|---|
 | Thread switch: preemption, block, dispatch, idle wake, exit | `install_selected`; outgoing state captured in `stop_current`, next to the general registers | Save everything to the outgoing `Thread.fp` | Load the incoming `Thread.fp` | Trap |
 | Call and CallWithKey | `commit_call` | Save `q8..q15`, FPCR and FPSR to the pushed record, and set its bit | Zero everything; FPCR is 0 | Trap |
-| Fault delivery, a forced Call | `deliver_fault` | Save everything to the per-core scratch, then copy it into the fault frame on the handler's stack; the record as for a Call | Zero | Trap |
-| Return | `commit_return` | Nothing | With the record's bit set: load `q8..q15`, FPCR and FPSR and zero the rest. A fault Return reads the fault frame into the scratch, validates it, and loads its FP part in full | Trap |
+| Fault delivery, a forced Call | `deliver_fault` | Save everything into the fault frame, written to the handler's stack before the Call commits; the record as for a Call | Zero | Trap |
+| Return | `commit_return` | Nothing | With the record's bit set: load `q8..q15`, FPCR and FPSR and zero the rest. A fault Return copies the fault frame once, validates the copy, and loads its FP part in full | Trap |
 | `AddressSpace.Activate` | — | Same AddressSpace, no change | | |
 | Exit, retire, terminate | `exit_current_thread`, `Thread.Retire`, `park_faulted` | Nothing: the state is dead, and the next FP entry overwrites it | | |
 
@@ -405,8 +408,7 @@ Each of these satisfies I1 to I4.
 - **Preemption at any instruction of an FP frame.** A full save. Interrupt handling
   touches no FP (I3).
 - **A fault in an FP frame, with the handler in an FP or an integer-only AddressSpace.**
-  - The full state goes through the per-core scratch into the fault frame on the
-    handler's stack. The handler is entered zeroed or trapped. If the frame cannot be
+  - The full state goes into the fault frame on the handler's stack. The handler is entered zeroed or trapped. If the frame cannot be
     written, the fault is unhandled.
   - The handler's Return at the fault depth reads the frame back, validates it and loads
     its FP part. If it is unreadable or invalid, the Thread is terminated. With

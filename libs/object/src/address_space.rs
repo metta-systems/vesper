@@ -12,6 +12,11 @@ use tests::{protected_call0, protected_call1, protected_call3, protected_call6_w
 #[path = "../tests/support/address_space.rs"]
 mod tests;
 
+/// The bit of `Untyped.Retype`'s `x3` word that creates an `AddressSpace`
+/// whose code may execute FP/SIMD instructions. Bits above it are reserved
+/// zero for this kind.
+pub const ADDRESS_SPACE_FP_SIMD_BIT: u32 = 8;
+
 /// `AddressSpace` operations (the translation-root holder — Vesper's
 /// equivalent of seL4's `VSpace`).
 #[repr(u8)]

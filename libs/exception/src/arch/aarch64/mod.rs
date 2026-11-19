@@ -54,9 +54,13 @@ use {crate::PrivilegeLevel, aarch64_cpu::registers::CurrentEL, tock_registers::R
 mod debug;
 pub mod esr_el1;
 mod exception_context;
+mod fp_state;
 mod spsr_el1;
 
-pub use exception_context::{ExceptionContext, ExceptionOrigin, SavedContext};
+pub use {
+    exception_context::{ExceptionContext, ExceptionOrigin, SavedContext},
+    fp_state::{FpPreserved, FpState},
+};
 
 // Helpers for exception debugging
 pub use debug::{IssForDataAbort, cause_to_string, exception_dump, iss_dfsc_to_string};

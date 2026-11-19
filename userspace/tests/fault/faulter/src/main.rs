@@ -11,14 +11,15 @@
 use {
     core::sync::atomic::{AtomicU64, Ordering},
     fault_protocol::{
-        BLOCKED_BIT, MODE_BLOCK, MODE_NESTED, MODE_RETRY_ONCE, MODE_SKIP, MODE_TERMINATE,
-        ROLE_BLOCKED, ROLE_NESTED, ROLE_SEQUENCE, ROLE_TERMINATE, ROLE_WHILE_BUSY, ROLE_WITNESS,
-        SEQUENCE_BIT, WITNESS_BIT, breakpoint, faulter_init, is_breakpoint,
+        BLOCKED_BIT, EMULATED_X0, MODE_BLOCK, MODE_EMULATE, MODE_NESTED, MODE_RETRY_ONCE,
+        MODE_SKIP, MODE_TERMINATE, ROLE_BLOCKED, ROLE_NESTED, ROLE_SEQUENCE, ROLE_TERMINATE,
+        ROLE_WHILE_BUSY, ROLE_WITNESS, SEQUENCE_BIT, WITNESS_BIT, breakpoint,
+        breakpoint_returning_x0, faulter_init, is_breakpoint,
     },
     libobject::{
         NotificationKey, RawKey,
         export::{self, PpcResult},
-        fault::{FaultAction, FaultKind},
+        fault::{FAULT_FRAME_BYTES, FAULT_FRAME_VERSION, FaultAction, FaultFrame, FaultKind},
         ppc_export,
         thread::ThreadReturnKey,
     },
@@ -53,9 +54,10 @@ fn return_key() -> ThreadReturnKey {
     key
 }
 
-/// The fault handler: runs on the faulting Thread, on its own stack.
+/// The fault handler: runs on the faulting Thread, on its own stack, with the
+/// fault frame at `frame_address`, just above its stack pointer.
 extern "C" fn fault_body(
-    _dummy0: u64,
+    frame_address: u64,
     _dummy1: u64,
     kind: u64,
     syndrome: u64,
@@ -65,6 +67,12 @@ extern "C" fn fault_body(
     _depth: u64,
 ) -> PpcResult {
     return_key();
+    // SAFETY: the kernel wrote the frame at the top of this handler's stack
+    // and passed its address; it is 16-byte aligned and this call owns it.
+    let frame = unsafe { &mut *(frame_address as *mut FaultFrame) };
+    assert_eq!(frame.size as usize, FAULT_FRAME_BYTES, "fault frame size");
+    assert_eq!(frame.version, FAULT_FRAME_VERSION, "fault frame version");
+    assert_eq!(frame.pc, pc, "the frame holds the faulting PC");
     let count = FAULTS.fetch_add(1, Ordering::AcqRel) + 1;
     if count == 1 {
         FIRST_PC.store(pc, Ordering::Release);
@@ -73,6 +81,12 @@ extern "C" fn fault_body(
     LAST_SYNDROME.store(syndrome, Ordering::Release);
     LAST_PC.store(pc, Ordering::Release);
     let action = match MODE.load(Ordering::Acquire) {
+        MODE_EMULATE => {
+            // Do the instruction's work in the frame, then resume past it.
+            frame.gpr[0] = EMULATED_X0;
+            frame.pc += 4;
+            FaultAction::Retry
+        }
         MODE_RETRY_ONCE if count == 1 => FaultAction::Retry,
         MODE_SKIP | MODE_RETRY_ONCE => FaultAction::Skip,
         MODE_NESTED => {
@@ -130,6 +144,17 @@ fn sequence(return_key: &ThreadReturnKey) {
         "retry must re-execute the same instruction"
     );
     semi::println!("faulter: retried a breakpoint, then skipped it");
+
+    // Emulate: the handler changes the fault frame, and the Thread resumes
+    // from the changed state.
+    arm(MODE_EMULATE);
+    let x0 = breakpoint_returning_x0();
+    assert_eq!(FAULTS.load(Ordering::Acquire), 1);
+    assert_eq!(
+        x0, EMULATED_X0,
+        "the resumed x0 comes from the changed frame"
+    );
+    semi::println!("faulter: a handler emulated a breakpoint through the fault frame");
 
     // A Return with nothing to return to is a fault at its `svc`.
     arm(MODE_SKIP);

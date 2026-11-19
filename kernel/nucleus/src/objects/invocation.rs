@@ -18,6 +18,7 @@ use {
             access::Access,
             arch_objects::{AddressSpaceId, AddressSpaceObject},
             carved::CarvedId,
+            fp::FpUnit,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, execution_origin, prepare_translation_context},
             thread::ThreadId,
@@ -446,6 +447,14 @@ impl<A: ArchObjects> Nucleus<A> {
                 }
             }
         }
+        // A caller in an FP frame keeps what the call preserves for it: all of
+        // V8–V15, FPCR and FPSR. Reading the registers changes nothing, so a
+        // failed push below needs no undo.
+        let source_fp = self.address_space_fp(continuation.source_address_space);
+        if source_fp {
+            A::Fp::save_preserved(&mut continuation.source_fp);
+            continuation.fp_preserved = true;
+        }
         let pushed = self
             .thread_mut(source_thread)
             .ok_or(CapError::InvalidOperation)?
@@ -465,9 +474,21 @@ impl<A: ArchObjects> Nucleus<A> {
                 count: u64::try_from(prepared.depth).unwrap_or(u64::MAX),
             });
         }
-        self.thread_mut(source_thread)
-            .ok_or(CapError::InvalidOperation)?
-            .address_space = target_address_space;
+        let target_fp = self.address_space_fp(target_address_space);
+        let thread = self
+            .thread_mut(source_thread)
+            .ok_or(CapError::InvalidOperation)?;
+        thread.address_space = target_address_space;
+        let stats = &mut thread.fp_stats;
+        if source_fp {
+            stats.preserved_saves = stats.preserved_saves.wrapping_add(1);
+        }
+        if target_fp {
+            // The target sees none of its caller's values.
+            A::Fp::zero();
+            stats.fp_entries = stats.fp_entries.wrapping_add(1);
+            stats.fp_zeroes = stats.fp_zeroes.wrapping_add(1);
+        }
         Ok(CommittedCall {
             source_thread,
             target: prepared.target_entry_context(lease.sp),
@@ -752,11 +773,15 @@ impl<A: ArchObjects> Nucleus<A> {
         let popped = thread.invocation_stack.pop();
         debug_assert_eq!(popped, Some(prepared.continuation));
         thread.address_space = prepared.continuation.source_address_space;
-
-        // Popping the fault continuation ends the fault handler: resume from
-        // the fault frame as the handler's action selects, and free it.
+        // Popping the fault continuation ends the fault handler.
         let handled_fault = thread.fault.filter(|fault| fault.depth == prepared.depth);
         let Some(fault) = handled_fault else {
+            // A caller in an FP frame gets back what the call preserved, and
+            // every other register zero: no value of the callee's reaches it.
+            if prepared.continuation.fp_preserved {
+                A::Fp::load_preserved(&prepared.continuation.source_fp);
+                thread.fp_stats.fp_entries = thread.fp_stats.fp_entries.wrapping_add(1);
+            }
             self.give_stack(prepared.current_address_space, prepared.continuation.stack);
             return Ok(CommittedReturn {
                 source_thread,
@@ -767,19 +792,43 @@ impl<A: ArchObjects> Nucleus<A> {
             });
         };
         thread.fault = None;
-        let mut resumed = fault.frame;
+
+        // Resume as the handler's action selects, from the fault frame in its
+        // stack as the handler left it. A frame that cannot be read back, or
+        // whose state the kernel refuses, terminates the Thread with the
+        // kernel's own copy of the faulting state.
         let action = FaultAction::from_wire(prepared.payload[0]);
-        if action == FaultAction::Skip {
-            // Every A64 instruction is four bytes.
-            resumed.elr_el1 = resumed.elr_el1.wrapping_add(4);
-        }
+        let from_frame = if action == FaultAction::Terminate {
+            None
+        } else {
+            self.read_fault_frame(&fault, prepared.current_address_space)
+        };
+        let (resumed, terminate) = match from_frame {
+            Some((mut resumed, fp)) => {
+                if let Some(state) = fp {
+                    A::Fp::load(&state);
+                    let thread = self
+                        .thread_mut(source_thread)
+                        .ok_or(CapError::InvalidOperation)?;
+                    let stats = &mut thread.fp_stats;
+                    stats.fp_entries = stats.fp_entries.wrapping_add(1);
+                    stats.fp_loads = stats.fp_loads.wrapping_add(1);
+                }
+                if action == FaultAction::Skip {
+                    // Every A64 instruction is four bytes.
+                    resumed.elr_el1 = resumed.elr_el1.wrapping_add(4);
+                }
+                (resumed, false)
+            }
+            None => (fault.frame, true),
+        };
         self.give_stack(prepared.current_address_space, prepared.continuation.stack);
         self.set_fault_handler_busy(fault.address_space, false);
         Ok(CommittedReturn {
             source_thread,
             resumed,
             translation: prepared.translation,
-            terminate: action == FaultAction::Terminate,
+            terminate,
             placement: prepared.continuation.placement,
         })
     }

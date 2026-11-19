@@ -90,9 +90,12 @@ silently.
 
 - **(a)** Amend the stack-pool rule. The kernel never touches pool stacks, except for
   the fault frame at the top of the stack a fault delivery takes. That frame is written
-  and read only with the checked unprivileged accesses (`AT`, then `STTR` or `LDTR`). An
-  exporter whose pool serves a fault handler sizes its stacks for the frame, about
-  0.8 KiB plus the handler's own use.
+  and read only after a software walk of the handler's translation tables checks each
+  page is EL0-accessible, through the kernel's direct map. An exporter whose pool
+  serves a fault handler sizes its stacks for the 832 B frame plus the handler's own
+  use. **Implemented provisionally as (a)** (maintainer, 2026-11-19: "for now continue
+  as if it was F12 (a)"); the question stays open for later review, and the contract's
+  "Stack pools" text carries the amendment marked provisional.
 - **(b)** Keep the rule, and put the frame somewhere else: a save area the handler's
   AddressSpace registers for fault delivery. That needs a new operand or operation, and
   a rule for several faulting AddressSpaces that share one handler.

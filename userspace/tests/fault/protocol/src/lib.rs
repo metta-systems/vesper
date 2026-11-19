@@ -42,6 +42,12 @@ pub const MODE_TERMINATE: u64 = 2;
 pub const MODE_NESTED: u64 = 3;
 /// Block on the `block` Notification, then skip.
 pub const MODE_BLOCK: u64 = 4;
+/// Emulate the faulting instruction through the fault frame: put
+/// [`EMULATED_X0`] in its `x0`, move its PC past the instruction, and retry.
+pub const MODE_EMULATE: u64 = 5;
+
+/// What [`MODE_EMULATE`] leaves in the faulting Thread's `x0`.
+pub const EMULATED_X0: u64 = 0x0E_3017;
 
 // ── `done` Notification bits ────────────────────────────────────────────
 pub const SEQUENCE_BIT: u64 = 1 << 0;
@@ -81,6 +87,19 @@ pub fn breakpoint() {
     unsafe {
         core::arch::asm!("brk #0x7", options(nomem, nostack));
     }
+}
+
+/// Execute a `brk` with `x0` zero, and return what `x0` holds when the
+/// Thread resumes after it: a handler can change it through the fault frame.
+#[inline(never)]
+pub fn breakpoint_returning_x0() -> u64 {
+    let x0: u64;
+    // SAFETY: `brk` touches no memory or stack; it only traps, and the
+    // handler may change `x0`, which is declared as an output.
+    unsafe {
+        core::arch::asm!("brk #0x7", inout("x0") 0_u64 => x0, options(nomem, nostack));
+    }
+    x0
 }
 
 /// Whether `syndrome` (an `ESR_EL1` value) is a `brk` from `AArch64`.

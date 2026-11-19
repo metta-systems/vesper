@@ -110,6 +110,7 @@ pub fn build_initial_nucleus<A: ArchObjects>(
         pending: PendingPool::new(),
         activations: Activations::new(),
         idle_ticks: 0,
+        fp_totals: libobject::scheduler_record::FpTotals::ZERO,
         irq_table: IrqTable::empty(),
         ticks: 0,
         current_since_ticks: 0,
