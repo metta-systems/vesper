@@ -192,7 +192,7 @@ pub fn run() -> ! {
     libkicktest::dispatcher::init(nucleus, &builder, builder_as, boot.root_scheduler_key);
 
     // ── Components ────────────────────────────────────────────────────────
-    let faulter = builder.component(FAULTER_GUARD, &mut slots);
+    let faulter = builder.component(&components::FAULTER, FAULTER_GUARD, &mut slots);
     builder.load_component(
         &faulter,
         &components::FAULTER,
@@ -200,7 +200,7 @@ pub fn run() -> ! {
         &mut slots,
     );
     verify_component(ttbr(nucleus, faulter.address_space), &components::FAULTER);
-    let bare = builder.component(BARE_GUARD, &mut slots);
+    let bare = builder.component(&components::BARE, BARE_GUARD, &mut slots);
     builder.load_component(&bare, &components::BARE, BARE_GUARD ^ 0x80_0000, &mut slots);
     verify_component(ttbr(nucleus, bare.address_space), &components::BARE);
     let mut faulter_stacks = builder.stack_region(&faulter, STACK_REGION, &mut slots);

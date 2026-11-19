@@ -93,7 +93,7 @@ fn load(
     guard: u32,
     slots: &mut SlotCursor,
 ) -> Component {
-    let component = builder.component(guard, slots);
+    let component = builder.component(image, guard, slots);
     // The table archiving the image page capabilities gets its own guard,
     // derived from the component's.
     builder.load_component(&component, image, guard ^ 0x80_0000, slots);

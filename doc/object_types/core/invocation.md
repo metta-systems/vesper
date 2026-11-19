@@ -91,7 +91,7 @@ A rejected Call or Return is an ordinary error: the registers follow the usual [
 
 ## Userspace support
 
-- `InvocationKey::call(args)`, `InvocationKey::call_with_key(lent_key, args)` and `ThreadReturnKey::return_from_invocation(r0, r1)` in `libs/object` wrap Call, CallWithKey and Return. The raw `libsyscall::ppc_call`, `ppc_call_with_key` and `ppc_return` declare `x0..x18` as clobbered. `AddressSpaceKey::create_invocation_with_window` declares the placement window; `create_invocation` creates an Invocation that accepts no key.
+- `InvocationKey::call(args)`, `InvocationKey::call_with_key(lent_key, args)` and `ThreadReturnKey::return_from_invocation(r0, r1)` in `libs/object` wrap Call, CallWithKey and Return. The raw `libsyscall::ppc_call`, `ppc_call_with_key` and `ppc_return` declare `x0..x18` as clobbered; built for the hard-float target, `ppc_call` and `ppc_call_with_key` also declare `v0..v7` and `v16..v31`. `AddressSpaceKey::create_invocation_with_window` declares the placement window; `create_invocation` creates an Invocation that accepts no key.
 - `ppc_export!(entry => body)` generates an entry function to pass to CreateInvocation. The entry takes eight `u64` arguments (two unused, then the six call arguments) and calls `body` with them. `body` returns `PpcResult { r0, r1 }`, which the entry hands to Return using the key recorded by `export::init_return_key`. If Return is rejected, the entry calls `vesper_thread_return_fault(status, detail1, detail2, r0, r1)`, which the component image must provide. For a CallWithKey target the first of the two unused arguments is the borrowed key.
 
 ## Implementation

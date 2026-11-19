@@ -197,6 +197,10 @@ pub struct ComponentImage {
     /// The resources mapped read-only among `segments`, in the order the
     /// component's manifest entry names them
     pub resources: &'static [ResourceMapping],
+    /// Whether the component uses FP/SIMD: image-build found FP/SIMD
+    /// instructions in it, and it is built for the hard-float target. Its
+    /// `AddressSpace` is created with the FP/SIMD flag.
+    pub fp_simd: bool,
 }
 
 /// Where a bundled resource (a `[[resource]]` data file) is mapped in the

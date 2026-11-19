@@ -41,6 +41,12 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 # Sort components alphabetically!
 # EL0 userspace components, linked with the userspace runtime's user.ld
 user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
+# EL0 components built for the hard-float `fp_target`, loaded into an AddressSpace that allows
+# FP/SIMD. image-build checks the list (VESPER_FP_COMPONENTS): FP code in an unlisted component
+# fails the build.
+fp_components := 'fp-worker'
+fp_target       := 'aarch64-metta-none-hardfloat'
+export VESPER_FP_COMPONENTS := fp_components
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -158,11 +164,11 @@ _board-flags board=boards:
 # rustflags, into the target directory of the image configuration `board` + `image_features`
 # (the features of the image they are bundled into, which may differ from their own). Crates
 # of a `debug_kernel` image get `--cfg debug_kernel`, for their own debug-only diagnostics
-_cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features:
+_cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features target_spec=target:
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
     RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if image_features =~ 'debug_kernel' { ' --cfg debug_kernel' } else { '' } }}{{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
-    cargo build {{ target_json }} \
+    cargo build -Zjson-target-spec --target='{{ justfile_directory() / 'targets' / target_spec + '.json' }}' \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
       --profile {{ cargo_profile }} -p {{ replace(crates, ' ', ' -p ') }}
@@ -190,7 +196,7 @@ _build-kernel board features config=(board + (if features == '' { '' } else { '-
 
 # Build the EL0 userspace components (linked with the userspace runtime's user.ld) for the
 # image configuration `board` + `image_features`
-_build-components board=boards features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features)
+_build-components board=boards features='qemu' image_features=features: (_cross-build user_components board user_link features '' image_features) (_cross-build fp_components board user_link features '' image_features fp_target)
 
 # === E2E test kernels (Kickstart images with test programs) ===
 
@@ -226,6 +232,9 @@ _build-endpoint-test board=boards features='qemu': (_build-components board feat
 
 # Build the fp-trap-test e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook); `features` adds `fp_entry_trap`
 _build-fp-trap-test board=boards features='qemu,fp_trap_test': (_build-components board 'qemu' features) (_build-test-kernel 'fp-trap-test' board features)
+
+# Build the fp-test e2e kernel (FP/SIMD state per AddressSpace); `features` adds `fp_entry_trap`
+_build-fp-test board=boards features='qemu': (_build-components board 'qemu' features) (_build-test-kernel 'fp-test' board features)
 
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 _build-preempt-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
@@ -648,7 +657,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -656,11 +665,11 @@ alias t := test
 _test-device: (_cross-build 'nucleus' boards nucleus_link 'qemu') (_build-privileged boards 'qemu') (_build-drivers boards 'qemu')
     VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo test --tests {{ target_json }} --features=qemu {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
+      --workspace --exclude=chainofcommand --exclude=makesd --exclude=fp-scan --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth
 
     VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ device_test_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo test --doc {{ target_json }} --features=qemu {{ rust_std }} \
-    --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
+    --workspace --exclude=chainofcommand --exclude=makesd --exclude=fp-scan --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=chainboot --exclude=sf2-trim --exclude=wad-music --exclude=vesper-synth --exclude=vesper-boot-uart
 
 # Run one nucleus integration test binary in QEMU (rpi3)
 _test-nucleus test features='qemu':
@@ -733,6 +742,9 @@ _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qe
 
 # Boot fp-trap-test with the nucleus's `fp_entry_trap` guard: kernel FP/SIMD use serving an FP frame traps at EL1
 _test-fp-entry-trap: (_run-test-kernel 'fp-trap-test' ('_build-fp-trap-test ' + boards + ' qemu,fp_trap_test,fp_entry_trap') 'rpi3' 'qemu,fp_trap_test,fp_entry_trap')
+
+# Boot fp-test: FP components keep their V registers across preemption, Calls and a handled fault, and FP/SIMD traps in an integer-only callee
+_test-fp: (_run-test-kernel 'fp-test' '_build-fp-test' 'rpi3' 'qemu')
 
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
@@ -1104,7 +1116,7 @@ _test-runner binary_path:
 # log server, Wood's music synthesiser, chainboot protocol and chainofcommand.
 # Run the host-side tests natively
 [group("test")]
-test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host _test-makesd-host
+test-host: _test-object-host _test-platform-host _test-meddle _test-usb-host _test-input-host _test-compositor-host _test-dispatcher-host _test-log-host _test-vesper-synth _test-chainboot-host _test-makesd-host _test-fp-scan-host
 
 # Run one opt-in (`host-tests`) integration test natively (currently AArch64 hosts); the firmware's device trees are pulled first, for the devicetree test
 _host-test package test features='host-tests': _firmware
@@ -1141,6 +1153,10 @@ _test-log-host: (_host-test 'log-server' 'protocol')
 _test-makesd-host:
     cargo test -p makesd
 
+# Run fp-scan's and image-build's unit tests: the FP/SIMD encoding classes, data in code, and the FP flag rule
+_test-fp-scan-host:
+    cargo test -p fp-scan -p vesper-image-build
+
 # Run the chainboot protocol's host tests and chainofcommand's unit tests
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
@@ -1162,7 +1178,7 @@ _cross-clippy board=boards features='':
     cargo clippy {{ target_json }} \
       {{ if features != '' { '--features=' + features } else { '' } }} \
       {{ rust_std }} \
-      --workspace --exclude=chainofcommand --exclude=makesd --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
+      --workspace --exclude=chainofcommand --exclude=makesd --exclude=fp-scan --exclude=vesper-image-build --exclude=metta-meddle --exclude=meddler --exclude=sf2-trim --exclude=wad-music \
       -- --deny warnings --allow deprecated
 
 # The images the workspace clippy's build scripts embed (the kernel, the components, log-test's and midi-test's programs, Wood)
@@ -1170,7 +1186,15 @@ _clippy-artifacts: (build boards 'qemu') (_build-components boards 'qemu') (_bui
 
 # Run embedded clippy checks (all feature combos) and the host-test linting
 [group("lint")]
-clippy: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rpi5' '') (_cross-clippy boards 'noserial') (_cross-clippy boards 'qemu') (_cross-clippy boards 'noserial,qemu') (_cross-clippy boards 'jtag') (_cross-clippy boards 'noserial,jtag') (build boards 'qemu,debug_kernel') (_cross-clippy boards 'debug_kernel') (_cross-clippy boards 'qemu,debug_kernel') (_cross-clippy boards 'qemu,fp_trap_test') (_cross-clippy boards 'mmu') _clippy-host
+clippy: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rpi5' '') (_cross-clippy boards 'noserial') (_cross-clippy boards 'qemu') (_cross-clippy boards 'noserial,qemu') (_cross-clippy boards 'jtag') (_cross-clippy boards 'noserial,jtag') (build boards 'qemu,debug_kernel') (_cross-clippy boards 'debug_kernel') (_cross-clippy boards 'qemu,debug_kernel') (_cross-clippy boards 'qemu,fp_trap_test') (_cross-clippy boards 'mmu') (_clippy-fp boards '') (_clippy-fp boards 'qemu') _clippy-host
+
+# Cross-clippy the FP/SIMD components for the hard-float target they are built for
+_clippy-fp board=boards features='':
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}')" \
+    cargo clippy -Zjson-target-spec --target='{{ justfile_directory() / 'targets' / fp_target + '.json' }}' \
+      {{ if features != '' { '--features=' + features } else { '' } }} \
+      {{ rust_std }} -p {{ replace(fp_components, ' ', ' -p ') }} \
+      -- --deny warnings --allow deprecated
 
 # Run shortened clippy (default features for the board set and for the Raspberry Pi 5 alone) and the host-test linting
 _clippy-pre-push: _clippy-artifacts (_cross-clippy boards '') (_cross-clippy 'rpi5' '') _clippy-host
@@ -1211,6 +1235,7 @@ _clippy-coc: (_host-clippy 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo clippy -p vesper-image-build -- --deny warnings --allow deprecated # FIXME Shouldn't be here!
     cargo clippy -p chainofcommand --all-targets -- --deny warnings --allow deprecated
     cargo clippy -p makesd --all-targets -- --deny warnings --allow deprecated
+    cargo clippy -p fp-scan --all-targets -- --deny warnings --allow deprecated
 
 # Cross-clippy only the USB stack crates (controller, core, host library, HID) for a board with a feature set
 _cross-clippy-usb board=boards features='':
@@ -1342,33 +1367,31 @@ _audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_b
     # The production kernel and the qemu-only test kernels build in <boards>-qemu, the
     # debug_kernel test kernels in <boards>-qemu+debug_kernel; every copy of an image is audited.
     configs="{{ boards_qemu }} {{ boards }}-qemu+debug_kernel{{ profile_suffix }}"
-    # An instruction line whose mnemonic is an FP one (f…), or whose operands name an
-    # FP/SIMD register (b/h/s/d/q/v0..31, with an optional arrangement) or FPCR/FPSR.
-    # objdump indents low addresses only: kernel lines start with the address itself.
-    fp_simd='^[[:space:]]*[0-9a-f]+:[[:space:]]+(f[a-z0-9]*|[a-z0-9.]+[[:space:]].*\b([bhsdqv][0-9]{1,2}(\.[0-9]*[bhsdq])?|fpcr|fpsr)\b)'
+    # tools/fp-scan decodes every word of the executable segments (the same scan sets a
+    # component's FP flag in image-build).
+    cargo build -q --release -p fp-scan
+    fp_scan="{{ target_root }}/release/fp-scan"
     failed=0
-    # fp-probe executes an FP/SIMD instruction on purpose. The driver packages name their
-    # binaries after the service (mailbox-impl builds `mailbox`).
+    # Kernel images may hold the nucleus's FP/SIMD routines (the naked `fp_unit_*` functions
+    # in objects/arch/fp_unit.rs) and nothing else; every other image none. The FP components
+    # (`fp_components`) are built for the hard-float target and are not audited. fp-probe
+    # executes an FP/SIMD instruction on purpose: it is the check that the scan still finds
+    # one. The driver packages name their binaries after the service (mailbox-impl builds
+    # `mailbox`).
+    kernel_images="nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test fp-test"
     user_components="{{ replace(replace(replace(replace(user_components, 'fp-probe', ''), 'mailbox-impl', 'mailbox'), 'power-impl', 'power'), 'fb-impl', 'fb') }}"
-    for image in nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test ${user_components}; do
+    for image in ${kernel_images} ${user_components} fp-probe; do
+        case " ${kernel_images} " in
+            *" ${image} "*) arguments="--allow fp_unit_" ;;
+            *) arguments="" ;;
+        esac
+        [ "${image}" = fp-probe ] && arguments="--expect-hits"
         audited=0
         for config in ${configs}; do
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"
             [ -f "${elf}" ] || continue
             audited=1
-            # The nucleus's FP/SIMD routines (the naked `fp_unit_*` functions in
-            # objects/arch/fp_unit.rs, found inside their mangled names) are the only allowed
-            # FP code: their bodies are skipped. Symbol names in <…> are not operands.
-            found=$(rust-objdump -d --no-show-raw-insn "${elf}" \
-                | awk '/^[0-9a-f]+ <[^>]*>:$/ { allowed = ($0 ~ /^[0-9a-f]+ <[^>]*fp_unit_[a-z_]+[^>]*>:$/) } !allowed' \
-                | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
-            if [ -n "${found}" ]; then
-                echo "❌ ${image} (${config}) contains FP/SIMD instructions:"
-                echo "${found}"
-                failed=1
-            else
-                echo "{{ ok_label }} ${image} (${config}): integer-only"
-            fi
+            "${fp_scan}" ${arguments} "${elf}" || failed=1
         done
         if [ "${audited}" = 0 ]; then
             echo "❌ ${image}: not built in any of ${configs}"

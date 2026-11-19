@@ -497,7 +497,7 @@ pub fn run() -> ! {
     let done = NotificationKey::from_key(done_key);
 
     // ── The EL0 spinner: its own AddressSpace, image, stack and counter ───
-    let spinner = builder.component(SPINNER_GUARD, &mut slots);
+    let spinner = builder.component(&components::SPINNER, SPINNER_GUARD, &mut slots);
     builder.load_component(
         &spinner,
         &components::SPINNER,
@@ -532,7 +532,7 @@ pub fn run() -> ! {
     let limited_stack = builder.user_stack(&mut stacks, STACK_PAGES, &mut slots);
 
     // ── The EL0 reader: a dispatcher's view of the record table ──────
-    let reader = builder.component(READER_GUARD, &mut slots);
+    let reader = builder.component(&components::READER, READER_GUARD, &mut slots);
     builder.load_component(
         &reader,
         &components::READER,

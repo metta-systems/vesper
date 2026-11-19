@@ -224,7 +224,7 @@ pub fn run() -> ! {
     ));
 
     // ── The receiver: component, Thread and its own Time ─────────────────
-    let receiver = builder.component(RECEIVER_GUARD, &mut slots);
+    let receiver = builder.component(&components::RECEIVER, RECEIVER_GUARD, &mut slots);
     builder.load_component(
         &receiver,
         &components::RECEIVER,

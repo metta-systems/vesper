@@ -134,4 +134,6 @@ The kernel does not check that the stack memory is mapped, and it reads or write
 
 An AddressSpace either allows FP/SIMD or not, fixed when it is created: bit 8 of `Untyped.Retype`'s `x3` sets the flag (`UntypedKey::retype_address_space` in `libs/object`), and any higher bit fails with `InvalidOperation`. The boot AddressSpace does not allow FP.
 
+Kickstart and the component builder create a component's AddressSpace with the flag when its image uses FP/SIMD (`ComponentImage::fp_simd`). Such a component is built for the hard-float target (`targets/aarch64-metta-none-hardfloat.json`, the Justfile's `fp_components`); image-build sets the flag when `tools/fp-scan` finds FP/SIMD instructions in it, and fails the build when it finds them in a component that is not on the list.
+
 Code in an AddressSpace with the flag executes FP and SIMD instructions; in any other AddressSpace they are faults (`ESR_EL1.EC` 0x07), delivered like any other. SVE instructions trap everywhere. The kernel keeps each Thread's FP state while it runs in AddressSpaces with the flag; see [Thread](../core/thread.md#fpsimd-state) and [Invocation](../core/invocation.md#register-state).
