@@ -31,9 +31,16 @@ pub struct PreparedTranslationContext {
     keytable: KeyTableBinding,
     root: u64,
     asid: u16,
+    fp_simd: bool,
 }
 
 impl PreparedTranslationContext {
+    /// Whether the `AddressSpace` allows FP/SIMD: installing it opens or
+    /// closes the FP trap to match.
+    pub const fn fp_simd(self) -> bool {
+        self.fp_simd
+    }
+
     pub const fn address_space(self) -> AddressSpaceId {
         self.address_space
     }
@@ -74,6 +81,7 @@ pub fn prepare_translation_context<A: ArchObjects>(
         keytable,
         root,
         asid,
+        fp_simd: address_space.fp_simd(),
     })
 }
 

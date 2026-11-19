@@ -247,11 +247,19 @@ A trait sits next to `install_translation_context` in
 - `FpUnit::save` and `load` move the whole register file;
 - `zero` clears it;
 - `save_preserved` stores `q8..q15`, FPCR and FPSR, and `load_preserved` writes them back and
-  zeroes the rest;
-- `set_access(fp)` sets `FPEN`.
+  zeroes the rest.
 
-The object layer decides what to do and calls the trait. The aarch64 implementation is
-the assembly routines. Host tests use a fake register file instead.
+The object layer decides what to do and calls the trait. The aarch64 implementation,
+`HardwareFpUnit` in `kernel/nucleus/src/objects/arch/fp_unit.rs`, is six naked
+`fp_unit_*` functions under `.arch_extension fp, simd`. Each opens `FPEN` around itself
+and puts back what it found, since the object layer calls them before the target is
+installed. The nucleus tests use a fake register file for the transition logic, and test
+the hardware routines against the real registers in QEMU.
+
+Access follows installation: `install_translation_context` takes the AddressSpace's FP
+flag, carried in `PreparedTranslationContext`, and sets `FPEN` together with
+`TTBR0_EL1`, under the same `isb`. All five install sites in `kernel/nucleus/src/main.rs`
+go through it, so no site can forget the trap.
 
 ## FP statistics
 

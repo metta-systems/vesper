@@ -130,6 +130,8 @@ The kernel does not check that the stack memory is mapped, and it reads or write
 
 `Untyped.Retype` creates AddressSpaces (`size_bits` 0) from an Untyped's memory; the boot AddressSpace is created and bound by the boot code. An AddressSpace's translation-table leaves are tagged with its ASID, so switching AddressSpaces needs no TLB flush. The AddressSpace holds its stack pool table inline, so pools allocate nothing. It also records whether its fault handler is busy and how many faults went unhandled; see [fault delivery](../core/thread.md#fault-delivery). Retire does not free the KeyTable's memory.
 
-## Planned changes
+### FP/SIMD
 
-An FP/SIMD flag, set by bit 8 of `Untyped.Retype`'s `x3` when the AddressSpace is created and fixed after that. Code in an AddressSpace with the flag may execute FP and SIMD instructions. In any other AddressSpace they stay faults. The kernel keeps each Thread's FP state while it runs in such AddressSpaces; see [Thread](../core/thread.md#planned-changes) and [Invocation](../core/invocation.md#planned-changes).
+An AddressSpace either allows FP/SIMD or not, fixed when it is created: bit 8 of `Untyped.Retype`'s `x3` sets the flag (`UntypedKey::retype_address_space` in `libs/object`), and any higher bit fails with `InvalidOperation`. The boot AddressSpace does not allow FP.
+
+Code in an AddressSpace with the flag executes FP and SIMD instructions; in any other AddressSpace they are faults (`ESR_EL1.EC` 0x07), delivered like any other. SVE instructions trap everywhere. The kernel keeps each Thread's FP state while it runs in AddressSpaces with the flag; see [Thread](../core/thread.md#fpsimd-state) and [Invocation](../core/invocation.md#register-state).

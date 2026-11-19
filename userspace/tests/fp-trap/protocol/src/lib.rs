@@ -51,6 +51,21 @@ pub unsafe fn probe_init() -> &'static ProbeInit {
 pub const TRAPPED_BIT: u64 = 0b01;
 /// Notification bit the EL0 probe signals when its instruction did not trap.
 pub const NOT_TRAPPED_BIT: u64 = 0b10;
+/// Notification bit the EL0 probe signals when the [kernel probe](kernel_probe)
+/// trapped at EL1.
+pub const KERNEL_TRAPPED_BIT: u64 = 0b100;
+/// Notification bit the EL0 probe signals when the kernel probe did not trap.
+pub const KERNEL_NOT_TRAPPED_BIT: u64 = 0b1000;
+
+/// The probe component's argument: run in an integer-only `AddressSpace`,
+/// where the probe must trap at EL0.
+pub const ROLE_INTEGER: u64 = 0;
+/// The probe component's argument: run in an FP `AddressSpace`, where the
+/// probe must execute at EL0, then run the [kernel probe](kernel_probe).
+pub const ROLE_FP: u64 = 1;
+
+/// The `brk` immediate of [`kernel_probe`].
+pub const KERNEL_PROBE_BRK: u16 = 0xF9;
 
 /// `x0` before the probe instruction: not an FP/SIMD-access syndrome.
 const SENTINEL: u64 = 0x5E17_1E15_0000_0000;
@@ -73,6 +88,36 @@ pub fn probe() -> u64 {
         );
     }
     result
+}
+
+/// Ask the nucleus to run [`probe`] at EL1 while it serves this EL0 frame,
+/// and return the probe's `x0`.
+///
+/// Only the nucleus built with `fp_trap_test` answers this `brk` (any other
+/// nucleus delivers it as a fault). With `fp_entry_trap` the kernel runs with
+/// FP/SIMD trapped, so the probe traps at EL1 even when this frame is an FP
+/// frame; without it, entered from an FP frame, the probe executes.
+#[inline(never)]
+pub fn kernel_probe() -> u64 {
+    let result: u64;
+    // SAFETY: the `brk` traps to the nucleus, which writes only `x0` and
+    // resumes after it; no memory or stack is touched here.
+    unsafe {
+        core::arch::asm!(
+            "brk #{immediate}",
+            immediate = const KERNEL_PROBE_BRK,
+            inout("x0") SENTINEL => result,
+            options(nomem, nostack),
+        );
+    }
+    result
+}
+
+/// Whether `syndrome` (an `ESR_EL1` value) is a [`kernel_probe`] request.
+pub fn is_kernel_probe(syndrome: u64) -> bool {
+    let syndrome = LocalRegisterCopy::<u64, ESR_EL1::Register>::new(syndrome);
+    syndrome.matches_all(ESR_EL1::EC::Brk64)
+        && syndrome.read(ESR_EL1::ISS) == u64::from(KERNEL_PROBE_BRK)
 }
 
 /// Whether `syndrome` (an `ESR_EL1` value) is an FP/SIMD access trap.

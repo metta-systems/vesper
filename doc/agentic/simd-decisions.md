@@ -71,6 +71,15 @@ The maintainer's direction on 2026-11-19 is to measure first:
 - The same FP workload runs with the feature on and with it off.
 - Then the maintainer decides whether to keep it or remove it.
 
+Status: the guard is built (S2), and the measurement waits for S4's FP workload. It is an
+`FpEntryGuard` held by every exception handler whose entry can return to a Thread
+(`lower_aarch64_*` and `current_el0_*` in `kernel/nucleus/src/main.rs`), not code in
+`vectors.S`. The effect is the same, since the handler prologue before it is soft-float,
+and the `CPACR_EL1` access stays typed. `_test-fp-entry-trap` shows a kernel FP
+instruction trapping at EL1 while serving an FP frame, and `_test-fp-trap` shows it
+executing without the guard. The toggles are counted in the root Scheduler record's
+`fp_entry_toggles`.
+
 The audit is expected to catch any stray kernel FP instruction, since the kernel is
 small.
 

@@ -3,9 +3,10 @@
 //!
 //! The object layer decides when to save, load or zero the registers and
 //! calls an [`FpUnit`]; the architecture supplies the unit as
-//! [`ArchObjects::Fp`](crate::objects::ArchObjects::Fp). The nucleus tests
-//! use [`FakeFpUnit`], a register file in memory, so they can check what
-//! every transition leaves in the registers.
+//! [`ArchObjects::Fp`](crate::objects::ArchObjects::Fp) (on `AArch64`,
+//! `arch::HardwareFpUnit`). The nucleus tests use [`FakeFpUnit`], a register
+//! file in memory, so they can check what every transition leaves in the
+//! registers; the hardware unit has tests of its own.
 
 use libexception::arch::aarch64::{FpPreserved, FpState};
 
@@ -25,21 +26,11 @@ pub trait FpUnit {
     /// Write V8–V15, FPCR and FPSR from `preserved`, and zero every other
     /// register.
     fn load_preserved(preserved: &FpPreserved);
-}
-
-/// The kernel's unit until the save and load routines exist (S2): FP stays
-/// trapped at EL0 and EL1 for every `AddressSpace`, so no code can observe
-/// the registers and there is nothing to move.
-#[cfg(not(test))]
-pub struct TrappedFpUnit;
-
-#[cfg(not(test))]
-impl FpUnit for TrappedFpUnit {
-    fn save(_state: &mut FpState) {}
-    fn load(_state: &FpState) {}
-    fn zero() {}
-    fn save_preserved(_preserved: &mut FpPreserved) {}
-    fn load_preserved(_preserved: &FpPreserved) {}
+    /// `FPEN` toggles made by the kernel-entry FP guard, for the root
+    /// Scheduler's FP totals; 0 where there is no guard.
+    fn entry_toggles() -> u64 {
+        0
+    }
 }
 
 #[cfg(test)]

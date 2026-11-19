@@ -120,7 +120,7 @@ impl ArchObjects for AArch64 {
     type ASIDPool = AArch64ASIDPool;
     type ASIDControl = AArch64ASIDControl;
     #[cfg(not(test))]
-    type Fp = crate::objects::fp::TrappedFpUnit;
+    type Fp = crate::objects::arch::HardwareFpUnit;
     #[cfg(test)]
     type Fp = crate::objects::fp::FakeFpUnit;
 
@@ -227,15 +227,17 @@ impl ArchObjects for AArch64 {
         validate_translation_metadata(root_paddr, asid, TCR_EL1.get(), ID_AA64MMFR0_EL1.get())
     }
 
-    fn install_translation_context(root_paddr: u64, asid: u16) {
+    fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool) {
         // TTBR0_EL1: ASID in bits 63:48, translation-table base in BADDR.
         // The kernel executes through the TTBR1 high map, so switching the
         // low-half context does not disturb kernel execution.
         let ttbr = root_paddr | (u64::from(asid) << 48);
+        crate::objects::arch::fp_unit::set_fp_access(fp_simd);
         // SAFETY: register write plus context synchronization; reads no
         // memory and clobbers no registers. `dsb ish` publishes the prior
         // descriptor stores to page-table walks before the context switch;
-        // `isb` orders the new context before any subsequent translation.
+        // `isb` orders the new context, and the FP trap set above, before
+        // any subsequent translation or FP/SIMD instruction.
         unsafe {
             core::arch::asm!(
                 "dsb ish",
