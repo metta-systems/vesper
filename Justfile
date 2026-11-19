@@ -224,8 +224,8 @@ _run-test-kernel crate build=('_build-test-kernel ' + crate) machine='rpi3' feat
 # Build the endpoint-test e2e kernel (three-party rendezvous through an endpoint component)
 _build-endpoint-test board=boards features='qemu': (_build-components board features) (_build-test-kernel 'endpoint-test' board features)
 
-# Build the fp-trap-test negative e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook)
-_build-fp-trap-test board=boards: (_build-components board 'qemu' 'qemu,fp_trap_test') (_build-test-kernel 'fp-trap-test' board 'qemu,fp_trap_test')
+# Build the fp-trap-test e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook); `features` adds `fp_entry_trap`
+_build-fp-trap-test board=boards features='qemu,fp_trap_test': (_build-components board 'qemu' features) (_build-test-kernel 'fp-trap-test' board features)
 
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 _build-preempt-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
@@ -648,7 +648,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -730,6 +730,9 @@ _test-endpoint: (_run-test-kernel 'endpoint-test' '_build-endpoint-test' 'rpi3' 
 
 # Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t and at EL0
 _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qemu,fp_trap_test')
+
+# Boot fp-trap-test with the nucleus's `fp_entry_trap` guard: kernel FP/SIMD use serving an FP frame traps at EL1
+_test-fp-entry-trap: (_run-test-kernel 'fp-trap-test' ('_build-fp-trap-test ' + boards + ' qemu,fp_trap_test,fp_entry_trap') 'rpi3' 'qemu,fp_trap_test,fp_entry_trap')
 
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
@@ -1352,8 +1355,12 @@ _audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_b
             elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"
             [ -f "${elf}" ] || continue
             audited=1
-            # Symbol names in <…> are not operands.
-            found=$(rust-objdump -d --no-show-raw-insn "${elf}" | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
+            # The nucleus's FP/SIMD routines (the naked `fp_unit_*` functions in
+            # objects/arch/fp_unit.rs, found inside their mangled names) are the only allowed
+            # FP code: their bodies are skipped. Symbol names in <…> are not operands.
+            found=$(rust-objdump -d --no-show-raw-insn "${elf}" \
+                | awk '/^[0-9a-f]+ <[^>]*>:$/ { allowed = ($0 ~ /^[0-9a-f]+ <[^>]*fp_unit_[a-z_]+[^>]*>:$/) } !allowed' \
+                | sed 's/<[^>]*>//g' | grep -E "${fp_simd}" || true)
             if [ -n "${found}" ]; then
                 echo "❌ ${image} (${config}) contains FP/SIMD instructions:"
                 echo "${found}"

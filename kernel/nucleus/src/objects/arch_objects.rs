@@ -252,7 +252,11 @@ pub trait ArchObjects: Sized + 'static {
     /// Implementation status: preparation is fallible and separate; syscall
     /// entry installs only after object guards and the kernel lock have ended,
     /// on the shared high kernel stack. Preparation is not a lifetime pin.
-    fn install_translation_context(root_paddr: u64, asid: u16);
+    ///
+    /// `fp_simd` is the `AddressSpace`'s FP flag: the FP/SIMD trap opens for
+    /// an FP `AddressSpace` and closes (EL0 and EL1) for any other, so FP
+    /// access always follows the `AddressSpace` being entered.
+    fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool);
 
     /// Copy `bytes` to `vaddr` in the `AddressSpace` whose translation root
     /// is `root_paddr`, through the kernel's direct map; that `AddressSpace`

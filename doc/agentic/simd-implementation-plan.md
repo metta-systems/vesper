@@ -7,7 +7,8 @@ This file holds only open work, in order. Each step is verified before the next 
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-Done: S0, the contract; see [simd-completed.md](simd-completed.md).
+Done: S0 (the contract), S1 (object layer) and S2 (routines and switch hooks); see
+[simd-completed.md](simd-completed.md).
 
 When an S1 to S4 step implements part of the design, it also rewrites the matching
 "Planned changes" note in `doc/object_types` into the page's normal description, and
@@ -31,21 +32,8 @@ See [simd-completed.md](simd-completed.md).
 
 ## S2: aarch64 routines and the switch hooks
 
-- [ ] Write `save`, `load`, `zero`, `save_preserved` and `load_preserved` in
-  `global_asm!` under `.arch_extension simd`, with `FPEN` opened around them.
-- [ ] Set `CPACR_EL1.FPEN` next to each of the five TTBR0 writes in
-  `kernel/nucleus/src/main.rs`.
-- [ ] Give `_audit-fp-simd` an allow-list for the nucleus's FP routines, matched by
-  symbol name. This uses `fp-scan` once S3 has it; until then, the existing `objdump`
-  check with the allow-list.
-- [ ] The F11 entry guard, behind a nucleus feature `fp_entry_trap`:
-  - turn FP off at kernel entry from an FP frame in `vectors.S`, and on again before
-    the `eret` into one;
-  - count the toggles in the FP statistics;
-  - add an `fp-trap-test` case, built with the feature, in which kernel FP use while
-    serving an FP component traps at EL1.
-- Verify: `just lint` passes, and so do `just _test-fp-trap`, `just _test-ppc` and
-  `just _test-fault`.
+Done; see [simd-completed.md](simd-completed.md). F11 stays open until S4 measures the
+guard.
 
 ## S3: build side
 

@@ -173,6 +173,11 @@ x (u32, 1), `record_size` (u32, 128) |
 | 40 | `interrupt_ns` (u64): the total time spent handling interrupts, rounded up; refreshed with every publication and at each interrupt entry that interrupts one of the Scheduler's Threads, and not itself an event |
 | 48 | `grant_end_ns` (u64): when the parent's grant to this Scheduler ends, 0 for none |
 | 56 | `idle_ns` (u64): the total time the nucleus had nothing to run and waited for an interrupt, rounded up, excluding the interrupts handled meanwhile; published when the wait ends, and not itself an event |
+| 64 | `thread_switches` (u64): Thread switches, nucleus-wide |
+| 72 | `fp_thread_switches` (u64): Thread switches with an FP/SIMD frame on either side |
+| 80 | `fp_entry_toggles` (u64): FP/SIMD trap changes at kernel entry and exit; 0 unless the nucleus is built with `fp_entry_trap` |
+
+The counters from byte 64 are nucleus-wide and only the root Scheduler's record carries them; they read 0 in any other.
 
 **Thread record (slots 1 and up)**
 
@@ -186,6 +191,14 @@ x (u32, 1), `record_size` (u32, 128) |
 | 40 | `run_time_ns` (u64), rounded up |
 | 48 | `last_run_ns` (u64), rounded up |
 | 56 | `budget_remaining_ns` (u64), rounded down |
+| 64 | `fp_entries` (u64): entries into an FP/SIMD frame |
+| 72 | `fp_saves` (u64): saves of the whole FP/SIMD state, to the Thread or into a fault frame |
+| 80 | `fp_loads` (u64): loads of a saved FP/SIMD state (a new Thread's is zero) |
+| 88 | `fp_zeroes` (u64): Calls into an FP/SIMD frame, entered with the registers zeroed |
+| 96 | `preserved_saves` (u64): `v8..v15`, FPCR and FPSR kept in a call record |
+| 104..127 | `first_use_traps`, `decays`, `owner_hits` (u64): 0 |
+
+The FP/SIMD counters wrap, and count only frames in AddressSpaces that [allow FP/SIMD](../arch/address_space.md#fpsimd).
 
 - **Flags:** bit 0 `AWAITING_BUDGET` (runnable, but its Time is exhausted), bit 1 `HAS_TIME`, bit 2 `DISPATCHER` (the Thread is a Scheduler's dispatcher; for a Thread of a parent it tells the parent that the Thread runs a domain). Without a bound Time `budget_remaining_ns` is `u64::MAX`.
 - **State:** `Inactive` for a Thread that is not started, `Runnable` for a queued Thread, one waiting for budget and a woken waiter that has not resumed yet, `Running`, `Blocked`, `Faulted`, and `Dying` once the Thread is retired.
@@ -205,8 +218,3 @@ The nucleus publishes a Thread's record when it starts, queues, moves to another
 ## Planned changes
 
 Non-blocking dispatch and replacing the running Thread on other CPUs (future kernel multicore work).
-
-FP/SIMD counters in the records.
-- **Thread records.** Bytes 64 to 127 of a Thread record hold eight wrapping `u64` counters: `fp_entries`, `fp_saves`, `fp_loads`, `fp_zeroes`, `preserved_saves`, `first_use_traps`, `decays` and `owner_hits`, in that order.
-- **The root Scheduler's record.** From byte 64 it holds `thread_switches`, `fp_thread_switches` and `fp_entry_toggles`.
-- **Size.** The record size and layout version stay the same.

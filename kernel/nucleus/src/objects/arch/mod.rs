@@ -25,6 +25,11 @@ pub use asid_pool::AArch64ASIDPool;
 pub mod frame;
 
 #[cfg(target_arch = "aarch64")]
+pub mod fp_unit;
+#[cfg(target_arch = "aarch64")]
+pub use fp_unit::HardwareFpUnit;
+
+#[cfg(target_arch = "aarch64")]
 pub mod page_table;
 #[cfg(target_arch = "aarch64")]
 pub use page_table::AArch64PageTable;

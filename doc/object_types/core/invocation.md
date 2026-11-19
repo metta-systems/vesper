@@ -82,6 +82,10 @@ Each operation stops at the first failing check and changes nothing:
 | Exception level, interrupt masks | As in the caller | As before the Call |
 | `TPIDR_EL0` | Zero | As before the Call |
 | SP, PC | End of the pool's stack, entry address | As before the Call, PC after the `svc` |
+| `v0..v7`, `v16..v31` | Zero | Zero |
+| `v8..v15` (all 128 bits), FPCR, FPSR | Zero | As before the Call |
+
+The FP/SIMD rows apply where the AddressSpace allows [FP/SIMD](../arch/address_space.md#fpsimd): for the target at entry, for the caller after Return. Code in any other AddressSpace cannot read the registers.
 
 A rejected Call or Return is an ordinary error: the registers follow the usual [invocation rules](../README.md#registers) and the Thread stays where it was.
 
@@ -92,10 +96,8 @@ A rejected Call or Return is an ordinary error: the registers follow the usual [
 
 ## Implementation
 
-Each Thread holds a 16-entry stack of call records (source AddressSpace, return PC and SP, flags, `x19..x30`, `TPIDR_EL0`, the slot and incarnation of a key lent by CallWithKey, and the pool slot and index of the stack the call took), 176 bytes each, so the kernel allocates nothing per call. The entry address is stored as given; the kernel does not check that it is mapped or executable. A fault while running inside a target goes to the target AddressSpace's fault handler. A Thread may block on a Notification or EventCount while inside a target.
+Each Thread holds a 16-entry stack of call records (source AddressSpace, return PC and SP, flags, `x19..x30`, `TPIDR_EL0`, the caller's `v8..v15`, FPCR and FPSR, the slot and incarnation of a key lent by CallWithKey, and the pool slot and index of the stack the call took), 312 bytes each, so the kernel allocates nothing per call. The entry address is stored as given; the kernel does not check that it is mapped or executable. A fault while running inside a target goes to the target AddressSpace's fault handler. A Thread may block on a Notification or EventCount while inside a target.
 
 ## Planned changes
 
 The two-word `PpcResult` return convention may still change.
-
-FP/SIMD state across a call, for AddressSpaces that allow FP. A target that allows FP is entered with `v0..v31`, FPCR and FPSR zero. On Return a caller that allows FP gets `v8..v15` (all 128 bits), FPCR and FPSR back as before the Call, and the other V registers zero. Each call record grows by 136 bytes for this.

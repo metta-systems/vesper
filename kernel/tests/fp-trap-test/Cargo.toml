@@ -30,6 +30,10 @@ qemu = [
 fp_trap_test = [
   "nucleus/fp_trap_test",
 ]
+# The nucleus's kernel-entry FP guard; `just _build-fp-trap-test` builds both ways.
+fp_entry_trap = [
+  "nucleus/fp_entry_trap",
+]
 
 [dependencies]
 aarch64-cpu = { workspace = true }

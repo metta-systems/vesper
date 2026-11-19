@@ -2754,6 +2754,7 @@ version = "0.0.1"
 dependencies = [
  "aarch64-cpu",
  "cfg-if",
+ "fp-trap-protocol",
  "owo-colors",
  "tock-registers",
  "vesper-address",

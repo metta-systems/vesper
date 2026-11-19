@@ -10,6 +10,7 @@ use {
             carved::{Carved, CarvedId},
             completion::{PendingKind, PendingState},
             event_count::AdvanceOutcome,
+            fp::FpUnit,
             irq::IrqTable,
             key_table::KeyTableBinding,
             scheduler::Region,
@@ -1041,7 +1042,14 @@ impl<A: ArchObjects> Nucleus<A> {
             grant_end_ns,
             idle_ns,
             // The nucleus-wide totals are the root Scheduler's only.
-            fp: if root { self.fp_totals } else { FpTotals::ZERO },
+            fp: if root {
+                FpTotals {
+                    fp_entry_toggles: A::Fp::entry_toggles(),
+                    ..self.fp_totals
+                }
+            } else {
+                FpTotals::ZERO
+            },
         });
     }
 
