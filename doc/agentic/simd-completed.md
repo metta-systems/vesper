@@ -56,3 +56,15 @@ The details live in the contract and the design, and the history in version cont
 - [x] S2 F11 guard: `FpEntryGuard` behind `fp_entry_trap`, held by the `lower_aarch64_*`
   and `current_el0_*` handlers, toggles counted in `fp_entry_toggles`. Exercised by
   `just _test-fp-entry-trap` (kernel FP traps at EL1 serving an FP frame).
+- [x] S3 target: `targets/aarch64-metta-none-hardfloat.json`; `_cross-build` takes the
+  target spec, and `_build-components` builds `fp_components` (`fp-worker`) with it.
+  Linted by `_clippy-fp` in `just clippy`.
+- [x] S3 `tools/fp-scan`: encoding classes (bits 27:26, SVE, FPCR/FPSR), `$d` data skipped,
+  hits with their symbol; library and binary. Host tests in `just _test-fp-scan-host`.
+- [x] S3 flag: image-build sets `ComponentImage::fp_simd` from the scan and fails on FP in
+  an unlisted component (`fp_simd_flag`, host-tested; shown on fp-probe without
+  `expects_fp_trap`); `Builder::component` takes the image's flag.
+- [x] S3 audit: `_audit-fp-simd` runs `fp-scan`, with `fp_unit_` allowed in kernel images
+  and fp-probe required to have hits (`just lint`).
+- [x] S3 `libsyscall`: `ppc_call` and `ppc_call_with_key` clobber `v0..v7`, `v16..v31`
+  under `target_feature = "neon"`.

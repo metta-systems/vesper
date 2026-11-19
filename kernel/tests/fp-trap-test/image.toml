@@ -6,3 +6,5 @@
 name = "probe"
 binary = "fp-probe"
 active = true
+# It executes an FP/SIMD instruction on purpose, to show that it traps.
+expects_fp_trap = true

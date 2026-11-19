@@ -1537,6 +1537,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-scan"
+version = "0.0.1"
+dependencies = [
+ "argh",
+ "goblin",
+]
+
+[[package]]
 name = "fp-trap-protocol"
 version = "0.0.1"
 dependencies = [
@@ -1565,6 +1573,14 @@ dependencies = [
  "vesper-objects",
  "vesper-print",
  "vesper-qemu",
+]
+
+[[package]]
+name = "fp-worker"
+version = "0.0.1"
+dependencies = [
+ "vesper-print",
+ "vesper-user-runtime",
 ]
 
 [[package]]
@@ -5152,6 +5168,7 @@ version = "0.0.1"
 name = "vesper-image-build"
 version = "0.0.1"
 dependencies = [
+ "fp-scan",
  "goblin",
  "metta-meddle",
  "minijinja",

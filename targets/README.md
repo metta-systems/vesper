@@ -6,6 +6,12 @@ suitable for cross-compiling Rust crates for Vesper.
 
 They are very much based on Robigalia's [sel4-targets](https://gitlab.com/robigalia/sel4-targets).
 
+- `aarch64-metta-none-eabi`: soft-float, no FP/SIMD. The kernel and every integer-only
+  component.
+- `aarch64-metta-none-hardfloat`: hard-float with NEON. Components whose AddressSpace allows
+  FP/SIMD (the Justfile's `fp_components`). The two ABIs do not link together, so shared
+  libraries are built for each.
+
 ## Status
 
 Complete for aarch64. Untested for anything else.

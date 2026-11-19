@@ -18,6 +18,7 @@ members = [
   "bin/chainboot",
   "bin/chainofcommand",
   "bin/meddler",
+  "tools/fp-scan",
   "tools/makesd",
   # Privileged components
   "drivers/irqchip-bcm2836",
@@ -145,6 +146,7 @@ members = [
   "userspace/tests/fault/bare",
   "userspace/tests/fault/faulter",
   "userspace/tests/fault/protocol",
+  "userspace/tests/fp/worker",
   "userspace/tests/fp-trap/probe",
   "userspace/tests/fp-trap/protocol",
   "userspace/tests/hello",
@@ -227,6 +229,7 @@ driver-echo = { path = "userspace/tests/driver/echo" }
 driver-echo-client = { path = "userspace/tests/driver/echo-client" }
 endpoint-protocol = { path = "userspace/tests/endpoint/protocol" }
 fault-protocol = { path = "userspace/tests/fault/protocol" }
+fp-scan = { path = "tools/fp-scan" }
 fp-trap-protocol = { path = "userspace/tests/fp-trap/protocol" }
 irq-protocol = { path = "userspace/tests/irq/protocol" }
 mailbox-impl = { path = "drivers/mailbox" }

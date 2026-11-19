@@ -471,25 +471,32 @@ Each of these satisfies I1 to I4.
 - **One Rust checker, `fp-scan`.** It is a host crate under `tools/`, with a library and
   a binary.
   - It reads an ELF and tests every 32-bit word of its executable segments against the
-    AArch64 encoding classes:
-    - FP and SIMD data processing;
-    - loads and stores of FP or SIMD registers;
+    AArch64 encoding classes, skipping data that the `$d` mapping symbols mark in code:
+    - FP and SIMD data processing, and loads and stores of FP or SIMD registers: the
+      words with A64 bits 27 and 26 both set, which no other class has;
+    - SVE;
     - the `mrs`/`msr` encodings for FPCR and FPSR.
   - It reports each hit with the symbol it falls in.
   - **The image-build library uses it (F5.2(a)).** When `libs/image-build` packs a
-    component, a hit sets `ComponentImage`'s FP flag. Kickstart passes the flag to
-    Retype's `x3` in `Builder::component` (`libs/component-loader/src/component.rs`).
-    No manifest key is needed.
-  - **The scan is checked against `fp_components`.** The Justfile passes the list to
-    image-build.
+    component, a hit sets `ComponentImage`'s FP flag. `Builder::component`
+    (`libs/component-loader/src/component.rs`) takes the image and passes its flag to
+    Retype's `x3`, so no loader can create a component's AddressSpace with the wrong
+    flag. No manifest key selects FP.
+  - **The scan is checked against `fp_components`.** The Justfile exports the list to
+    image-build (`VESPER_FP_COMPONENTS`), which also finds those binaries in the
+    hard-float target's directory.
     - A component that the scan finds FP in, but that is not on the list, fails the
       build. A component built hard-float by mistake, or one with stray FP assembly,
       therefore fails instead of quietly becoming an FP component.
     - A listed component with no hits is allowed. It runs trapped and never traps.
-  - **`_audit-fp-simd` runs the binary,** in place of today's `rust-objdump` and `grep`
-    pipeline. It rejects any hit in an integer-only image. It allows hits in the nucleus
-    only inside the allow-listed `FpUnit` routines, matched by symbol name. It skips
-    the components the scan flagged FP, and fp-trap-test's probe as it does today.
+    - fp-trap-test's probe executes one FP instruction to show that it traps. Its
+      manifest entry says so (`expects_fp_trap = true`): its hits are allowed, it stays
+      integer-only, and a probe without hits fails the build.
+  - **`_audit-fp-simd` runs the binary,** in place of the earlier `rust-objdump` and
+    `grep` pipeline. It rejects any hit in an integer-only image. It allows hits in the
+    kernel images only inside the `fp_unit_*` routines, matched by symbol name. It does
+    not audit the hard-float components, and requires hits in fp-trap-test's probe, as a
+    check that the scan still finds what it must.
   - The flag and the audit then cannot disagree, because they are one check.
 - **`libsyscall`.** Under `cfg(target_feature = "neon")`, `ppc_call` and
   `ppc_call_with_key` declare `v0..v7` and `v16..v31` as clobbered, which are the AAPCS

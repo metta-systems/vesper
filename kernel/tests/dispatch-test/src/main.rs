@@ -408,7 +408,7 @@ pub fn run() -> ! {
     }
 
     // ── The workers: one component, one counter page, three stacks ───────
-    let worker = builder.component(WORKER_GUARD, &mut slots);
+    let worker = builder.component(&components::WORKER, WORKER_GUARD, &mut slots);
     builder.load_component(
         &worker,
         &components::WORKER,
@@ -439,7 +439,7 @@ pub fn run() -> ! {
     };
 
     // ── The dispatcher: its component, page and the shared record table ──
-    let dispatcher = builder.component(DISPATCHER_GUARD, &mut slots);
+    let dispatcher = builder.component(&components::DISPATCHER, DISPATCHER_GUARD, &mut slots);
     builder.load_component(
         &dispatcher,
         &components::DISPATCHER,
@@ -482,7 +482,7 @@ pub fn run() -> ! {
         .as_mut_ptr::<u8>();
 
     // ── The actors: one component, a page of words per Thread ───────────
-    let actor = builder.component(ACTOR_GUARD, &mut slots);
+    let actor = builder.component(&components::ACTOR, ACTOR_GUARD, &mut slots);
     builder.load_component(
         &actor,
         &components::ACTOR,
@@ -654,7 +654,7 @@ pub fn run() -> ! {
     words.write(page::P6_DONE, grant(EXITER_DONE_SLOT, exiter_done_key));
 
     // ── The child domain: a component, a record table and a Thread ───────
-    let child = builder.component(CHILD_GUARD, &mut slots);
+    let child = builder.component(&components::CHILD, CHILD_GUARD, &mut slots);
     builder.load_component(
         &child,
         &components::CHILD,

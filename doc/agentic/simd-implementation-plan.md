@@ -7,7 +7,8 @@ This file holds only open work, in order. Each step is verified before the next 
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-Done: S0 (the contract), S1 (object layer) and S2 (routines and switch hooks); see
+Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks) and S3 (build
+side); see
 [simd-completed.md](simd-completed.md).
 
 When an S1 to S4 step implements part of the design, it also rewrites the matching
@@ -37,33 +38,13 @@ guard.
 
 ## S3: build side
 
-- [ ] Add the target spec `targets/aarch64-metta-none-hardfloat.json`, and pass the
-  target spec as a parameter to `_cross-build`. Build the crates of an `fp_components`
-  list with it (F5.1(a)).
-- [ ] `tools/fp-scan`, a host crate with a library and a binary:
-  - an ELF reader that tests every word of the executable segments against the AArch64
-    FP/SIMD encoding classes and the FPCR and FPSR accesses, and reports each hit with
-    its symbol;
-  - host tests with known FP, integer-only and literal-pool words.
-- [ ] Image-build derives `ComponentImage`'s FP flag with the `fp-scan` library
-  (F5.2(a)), and carries it through `libs/image` into `Builder::component`.
-- [ ] The Justfile passes `fp_components` to image-build. A component with FP hits that
-  is not on the list fails the build. Test it with an integer-only test component that
-  contains one FP instruction and is not listed.
-- [ ] `_audit-fp-simd` runs the `fp-scan` binary in place of `rust-objdump` and `grep`:
-  - integer-only images must have no hits;
-  - the nucleus may have hits only in the allow-listed routines;
-  - flagged FP components and fp-trap-test's probe are skipped.
-
-  Check that it still rejects what the old check rejected, using fp-trap-test's probe.
-- [ ] `libsyscall`: under `cfg(target_feature = "neon")`, declare `v0..v7` and
-  `v16..v31` clobbered by `ppc_call` and `ppc_call_with_key`.
-- Verify: the integer-only images build unchanged, an FP component builds, and
-  `just lint` passes.
+Done; see [simd-completed.md](simd-completed.md).
 
 ## S4: end-to-end
 
-- [ ] An `fp-test` kernel, after `kernel/tests/fp-trap-test`, that checks:
+- [ ] An `fp-test` kernel, after `kernel/tests/fp-trap-test`, that checks the following.
+  `fp-worker` (`userspace/tests/fp/worker`, S3's hard-float build check, which no image
+  bundles yet) grows into its FP components.
   - two FP components, each preempted mid-loop with sentinel values in its V registers;
   - a Call from one FP component into the other: the callee sees zeros, and the caller
     gets back `q8..q15` and FPCR;

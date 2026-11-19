@@ -295,8 +295,12 @@ const ARTIFACT_DIR_VARIABLE: &str = "VESPER_ARTIFACT_DIR";
 ///
 /// If the binary has not been built with that profile.
 pub fn find_artifact(binary: &str) -> PathBuf {
+    find_artifact_in(&artifact_dir(), binary)
+}
+
+fn find_artifact_in(directory: &Path, binary: &str) -> PathBuf {
     let profile = image_profile();
-    let path = artifact_dir().join(&profile).join(binary);
+    let path = directory.join(&profile).join(binary);
     assert!(
         path.is_file(),
         "cannot find binary `{binary}` at {}; build it with the `{profile}` profile first",
@@ -304,6 +308,92 @@ pub fn find_artifact(binary: &str) -> PathBuf {
     );
     rerun_if_changed(&path);
     path
+}
+
+const FP_COMPONENTS_VARIABLE: &str = "VESPER_FP_COMPONENTS";
+/// The hard-float target the [`fp_components`] are built for.
+const FP_TARGET: &str = "aarch64-metta-none-hardfloat";
+
+/// The binaries built for the hard-float target and loaded into an
+/// `AddressSpace` that allows FP/SIMD: `VESPER_FP_COMPONENTS`, exported by
+/// the Justfile (`fp_components`), space-separated.
+fn fp_components() -> Vec<String> {
+    println!("cargo::rerun-if-env-changed={FP_COMPONENTS_VARIABLE}");
+    env::var(FP_COMPONENTS_VARIABLE)
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Locate a component's binary: an [FP component](fp_components) in the
+/// hard-float target's directory beside [`artifact_dir`], any other there.
+fn find_component_artifact(binary: &str, fp_components: &[String]) -> PathBuf {
+    if fp_components.iter().any(|listed| listed == binary) {
+        let directory = artifact_dir()
+            .parent()
+            .map_or_else(|| PathBuf::from(FP_TARGET), |parent| parent.join(FP_TARGET));
+        find_artifact_in(&directory, binary)
+    } else {
+        find_artifact(binary)
+    }
+}
+
+/// The FP/SIMD flag of a component's `AddressSpace`, from the FP/SIMD
+/// instructions `fp-scan` found in it (`hits`), whether it is on the
+/// [FP list](fp_components) (`listed`), and whether its manifest entry says
+/// it executes FP/SIMD only to show the trap (`expects_fp_trap`).
+///
+/// - Hits in a listed component make it an FP component.
+/// - A listed component without hits is allowed; it runs integer-only and
+///   never traps.
+/// - An `expects_fp_trap` component must have hits, and stays integer-only.
+/// - Hits in any other component are an error: it was built hard-float by
+///   mistake, or carries stray FP assembly, and must not quietly become an
+///   FP component.
+///
+/// # Errors
+///
+/// The message for the failed build.
+pub fn fp_simd_flag(
+    binary: &str,
+    hits: &[fp_scan::Hit],
+    listed: bool,
+    expects_fp_trap: bool,
+) -> Result<bool, String> {
+    match (listed, expects_fp_trap, hits.first()) {
+        (true, true, _) => Err(format!(
+            "{binary}: an FP component (in fp_components) cannot also be `expects_fp_trap`"
+        )),
+        (true, false, hit) => Ok(hit.is_some()),
+        (false, true, None) => Err(format!(
+            "{binary}: `expects_fp_trap` is set, but it has no FP/SIMD instruction to trap on"
+        )),
+        // A trap probe with its FP code, or a component without any.
+        (false, true, Some(_)) | (false, false, None) => Ok(false),
+        (false, false, Some(hit)) => Err(format!(
+            "{binary} contains {} FP/SIMD instructions but is not in the Justfile's fp_components \
+             (first: {hit}); list it to make it an FP component, or remove the FP code",
+            hits.len()
+        )),
+    }
+}
+
+/// [`fp_simd_flag`] for the component binary at `path`, panicking (failing
+/// the build) on an error.
+fn scanned_fp_simd_flag(
+    path: &Path,
+    binary: &str,
+    fp_components: &[String],
+    expects_fp_trap: bool,
+) -> bool {
+    let bytes = fs::read(path)
+        .unwrap_or_else(|error| panic!("cannot read ELF {}: {error}", path.display()));
+    let hits = fp_scan::scan(&bytes)
+        .unwrap_or_else(|error| panic!("cannot scan {} for FP/SIMD: {error}", path.display()));
+    let listed = fp_components.iter().any(|listed| listed == binary);
+    fp_simd_flag(binary, &hits, listed, expects_fp_trap)
+        .unwrap_or_else(|message| panic!("{message}"))
 }
 
 fn rerun_if_changed(path: &Path) {
@@ -731,6 +821,10 @@ struct ManifestEntry {
     /// The `[[resource]]` entries the component maps read-only
     /// (`resources = [...]`), by name
     resources: Vec<String>,
+    /// The component executes FP/SIMD on purpose to show that it traps
+    /// (`expects_fp_trap = true`, fp-trap-test's probe): its FP hits are
+    /// allowed and it stays integer-only. See [`fp_simd_flag`].
+    expects_fp_trap: bool,
 }
 
 /// A `[[resource]]` manifest entry: a data file bundled into the boot image
@@ -898,6 +992,7 @@ fn read_drivers(path: &Path, table: &toml::Table) -> Vec<DriverEntry> {
                     active: true,
                     program: None,
                     resources: Vec::new(),
+                    expects_fp_trap: false,
                     name,
                 },
             }
@@ -965,6 +1060,10 @@ fn read_components(path: &Path, table: &toml::Table) -> Vec<ManifestEntry> {
                             .to_string()
                     })
                     .collect(),
+                expects_fp_trap: entry
+                    .get("expects_fp_trap")
+                    .and_then(toml::Value::as_bool)
+                    .unwrap_or(false),
                 name,
             }
         })
@@ -1130,9 +1229,17 @@ pub fn bundle_components(manifest: &str) {
         .filter_map(|entry| entry.interfaces.clone())
         .chain(searched_interface_directories(&manifest_path, &table))
         .collect();
+    let fp_components = fp_components();
     let mut programs = Vec::new();
     for component in &components {
-        let image = ElfImage::read(&find_artifact(&component.binary));
+        let path = find_component_artifact(&component.binary, &fp_components);
+        let image = ElfImage::read(&path);
+        let fp_simd = scanned_fp_simd_flag(
+            &path,
+            &component.binary,
+            &fp_components,
+            component.expects_fp_trap,
+        );
         let stem = component.name.to_uppercase();
         let driver = component
             .program
@@ -1145,6 +1252,7 @@ pub fn bundle_components(manifest: &str) {
             &out,
             component,
             &image,
+            fp_simd,
             &interface_directories,
             &resources,
             driver,
@@ -1152,7 +1260,9 @@ pub fn bundle_components(manifest: &str) {
     }
     let mut drivers = Vec::new();
     for driver in &driver_entries {
-        let image = ElfImage::read(&find_artifact(&driver.component.binary));
+        let path = find_component_artifact(&driver.component.binary, &fp_components);
+        let image = ElfImage::read(&path);
+        let fp_simd = scanned_fp_simd_flag(&path, &driver.component.binary, &fp_components, false);
         assert!(
             !image.driver_compatible.is_empty() || !driver.settings.nodes.is_empty(),
             "{}: a driver declares its compatible strings with driver_compatible! or its manifest entry names nodes",
@@ -1163,6 +1273,7 @@ pub fn bundle_components(manifest: &str) {
             &out,
             &driver.component,
             &image,
+            fp_simd,
             &interface_directories,
             &resources,
             Some(driver_context(&driver.settings, &image, "Driver")),
@@ -1200,12 +1311,14 @@ fn driver_context(settings: &Settings, image: &ElfImage, what: &str) -> Value {
 }
 
 /// The segment statics and the `ComponentImage` of `component` (read as
-/// `image`), and its `DriverImage` if Kickstart loads it (`driver`), for the
-/// components template. Writes the segment and resource blobs to `out`.
+/// `image`, with the FP/SIMD flag `fp_simd`), and its `DriverImage` if
+/// Kickstart loads it (`driver`), for the components template. Writes the
+/// segment and resource blobs to `out`.
 fn component_context(
     out: &Path,
     component: &ManifestEntry,
     image: &ElfImage,
+    fp_simd: bool,
     interface_directories: &[PathBuf],
     resources: &[ResourceEntry],
     driver: Option<Value>,
@@ -1322,6 +1435,50 @@ fn component_context(
         interfaces,
         imports,
         resources => mappings,
+        fp_simd,
         driver,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::fp_simd_flag,
+        fp_scan::{FpClass, Hit},
+    };
+
+    fn hit() -> Hit {
+        Hit {
+            address: 0x40_0000,
+            word: 0x1E62_2800,
+            class: FpClass::DataProcessing,
+            symbol: Some("main".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_listed_component_is_fp_when_the_scan_finds_fp() {
+        assert_eq!(fp_simd_flag("worker", &[hit()], true, false), Ok(true));
+        // Listed but without FP code: allowed, and integer-only.
+        assert_eq!(fp_simd_flag("worker", &[], true, false), Ok(false));
+    }
+
+    #[test]
+    fn fp_code_in_an_unlisted_component_fails_the_build() {
+        let error = fp_simd_flag("stray", &[hit()], false, false).unwrap_err();
+        assert!(
+            error.contains("not in the Justfile's fp_components"),
+            "{error}"
+        );
+        assert_eq!(fp_simd_flag("plain", &[], false, false), Ok(false));
+    }
+
+    #[test]
+    fn a_trap_probe_stays_integer_only_and_must_have_fp_code() {
+        assert_eq!(fp_simd_flag("probe", &[hit()], false, true), Ok(false));
+        let error = fp_simd_flag("probe", &[], false, true).unwrap_err();
+        assert!(error.contains("no FP/SIMD instruction"), "{error}");
+        let error = fp_simd_flag("probe", &[hit()], true, true).unwrap_err();
+        assert!(error.contains("cannot also be"), "{error}");
     }
 }
