@@ -1527,6 +1527,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
+name = "fp-bench"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "fp-test-protocol",
+ "fp-trap-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "fp-bench-worker"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "fp-test-protocol",
+ "vesper-objects",
+ "vesper-user-runtime",
+]
+
+[[package]]
 name = "fp-probe"
 version = "0.0.1"
 dependencies = [

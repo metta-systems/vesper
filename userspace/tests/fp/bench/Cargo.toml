@@ -1,0 +1,31 @@
+[package]
+name = "fp-bench-worker"
+
+description = "fp-bench's FP component: Doom's vertex projection in f32 over E1M1, with and without a system call per chunk."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[features]
+default = []
+qemu = ["libuser/qemu"]
+
+[dependencies]
+aarch64-cpu = { workspace = true }
+fp-test-protocol = { workspace = true }
+libobject = { workspace = true }
+libuser = { workspace = true }
+
+[[bin]]
+name = "fp-bench-worker"
+test = false
+
+[lints]
+workspace = true

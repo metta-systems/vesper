@@ -14,7 +14,8 @@
 //! while serving this frame (`kernel_probe`) and reports that outcome too.
 //!
 //! `probe_call_entry` runs the same probe as a Call target and Returns the
-//! outcome; `fp-test` calls it from an FP component.
+//! outcome; `fp-test` calls it from an FP component. `nop_entry` Returns at
+//! once; `fp-bench` times Calls into it.
 
 use {
     core::sync::atomic::{AtomicU64, Ordering},
@@ -99,6 +100,27 @@ extern "C" fn probe_call_body(
 ppc_export!(
     /// The probe's Call entry (`fp-test` calls it from an FP component).
     pub fn probe_call_entry => probe_call_body
+);
+
+/// An integer-only Call target that Returns at once (`fp-bench` times Calls
+/// into it from an FP component).
+extern "C" fn nop_body(
+    _dummy0: u64,
+    _badge: u64,
+    _input0: u64,
+    _input1: u64,
+    _input2: u64,
+    _input3: u64,
+    _input4: u64,
+    _input5: u64,
+) -> PpcResult {
+    setup_return_key();
+    PpcResult { r0: 0, r1: 0 }
+}
+
+ppc_export!(
+    /// The integer-only Call target of `fp-bench`.
+    pub fn nop_entry => nop_body
 );
 
 fn main(role: u64) -> ! {

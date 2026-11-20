@@ -44,7 +44,7 @@ user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm283
 # EL0 components built for the hard-float `fp_target`, loaded into an AddressSpace that allows
 # FP/SIMD. image-build checks the list (VESPER_FP_COMPONENTS): FP code in an unlisted component
 # fails the build.
-fp_components := 'fp-worker'
+fp_components := 'fp-worker fp-bench-worker'
 fp_target       := 'aarch64-metta-none-hardfloat'
 export VESPER_FP_COMPONENTS := fp_components
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
@@ -233,8 +233,11 @@ _build-endpoint-test board=boards features='qemu': (_build-components board feat
 # Build the fp-trap-test e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook); `features` adds `fp_entry_trap`
 _build-fp-trap-test board=boards features='qemu,fp_trap_test': (_build-components board 'qemu' features) (_build-test-kernel 'fp-trap-test' board features)
 
-# Build the fp-test e2e kernel (FP/SIMD state per AddressSpace); `features` adds `fp_entry_trap`
-_build-fp-test board=boards features='qemu': (_build-components board 'qemu' features) (_build-test-kernel 'fp-test' board features)
+# Build the fp-test e2e kernel (FP/SIMD state per AddressSpace); `features`: 'qemu' for QEMU, '' for the boards, plus `fp_entry_trap` for the kernel-entry FP guard
+_build-fp-test board=boards features='qemu' component_features=(if features =~ 'qemu' { 'qemu' } else { '' }): (_build-components board component_features features) (_build-test-kernel 'fp-test' board features)
+
+# Build the fp-bench kernel (an FP workload timed with a Signal, an integer-only Call and an FP Call per loop iteration); `features`: 'qemu' for QEMU, '' for the boards, plus `fp_entry_trap` for the guarded profile
+_build-fp-bench board=boards features='qemu' component_features=(if features =~ 'qemu' { 'qemu' } else { '' }): (_build-components board component_features features) (_build-test-kernel 'fp-bench' board features)
 
 # Build the preempt-test e2e kernel (timer tick and preemption of EL1t and EL0 Threads)
 _build-preempt-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-test-kernel 'preempt-test' board)
@@ -361,6 +364,16 @@ _build-board-test-hw board=boards features='': (_build-components board '' featu
 [group("hw")]
 boot-board-test features='': (_build-board-test-hw boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'board-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
+# Build fp-bench and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-bench`); `just boot-fp-bench fp_entry_trap` builds the second profile, with the nucleus's kernel-entry FP guard. The UART shows, for Doom's vertex projection over E1M1 with nothing, a Signal, a Call into an integer-only component and a Call into an FP component per 16-vertex chunk, the fastest and slowest of five runs and what one call adds, then the benchmark Thread's FP counters and the nucleus's FP totals
+[group("hw")]
+boot-fp-bench features='': (_build-fp-bench boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'fp-bench-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
+# Build fp-test and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-test`); `just boot-fp-test fp_entry_trap` runs it with the nucleus's kernel-entry FP guard. The UART shows each check: the FP spinners across preemption, a Call into an FP and into an integer-only component, a handled fault, then `✅` or the failed assertion's panic
+[group("hw")]
+boot-fp-test features='': (_build-fp-test boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ images_dir / 'fp-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
@@ -657,7 +670,7 @@ alias ocd := openocd
 # The device, nucleus and e2e kernel tests in QEMU (rpi3, some also rpi4), chainboot's, and the host tests.
 # Run every test
 [group("test")]
-test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
+test: _test-device _test-chainboot test-host _test-debug-console _test-key-table _test-untyped _test-capability _test-memory _test-sync _test-ppc _test-preempt _test-preempt-rpi4 _test-dispatch _test-dispatch-rpi4 _test-irq _test-irq-rpi4 _test-driver _test-driver-rpi4 _test-mailbox _test-mailbox-rpi4 _test-uart _test-uart-rpi4 _test-endpoint _test-fp-trap _test-fp-entry-trap _test-fp _test-fp-bench _test-fault _test-usb _test-usb-core _test-usb-hid _test-compositor _test-sd _test-sdhci _test-sdhci-rpi4 _test-board _test-audio _test-dma _test-log
 
 alias t := test
 
@@ -745,6 +758,9 @@ _test-fp-entry-trap: (_run-test-kernel 'fp-trap-test' ('_build-fp-trap-test ' + 
 
 # Boot fp-test: FP components keep their V registers across preemption, Calls and a handled fault, and FP/SIMD traps in an integer-only callee
 _test-fp: (_run-test-kernel 'fp-test' '_build-fp-test' 'rpi3' 'qemu')
+
+# Boot a short fp-bench on the Raspberry Pi 4 machine: every variant runs and computes the same checksum (the timings mean nothing under QEMU)
+_test-fp-bench: (_run-test-kernel 'fp-bench' '_build-fp-bench' 'rpi4' 'qemu')
 
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
@@ -1378,7 +1394,7 @@ _audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_b
     # executes an FP/SIMD instruction on purpose: it is the check that the scan still finds
     # one. The driver packages name their binaries after the service (mailbox-impl builds
     # `mailbox`).
-    kernel_images="nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test fp-test"
+    kernel_images="nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test fp-test fp-bench"
     user_components="{{ replace(replace(replace(replace(user_components, 'fp-probe', ''), 'mailbox-impl', 'mailbox'), 'power-impl', 'power'), 'fb-impl', 'fb') }}"
     for image in ${kernel_images} ${user_components} fp-probe; do
         case " ${kernel_images} " in
