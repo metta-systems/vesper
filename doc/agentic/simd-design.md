@@ -1,7 +1,8 @@
 # FP/SIMD design
 
-Status: the contract is recorded in `capabilities-contract.md` (S0), and nothing is
-implemented.
+Status: the contract is recorded in `capabilities-contract.md` (S0), and the plain eager
+design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
+[simd-completed.md](simd-completed.md).
 
 - Decided by the maintainer:
   - F1(a), 2026-11-18: FP/SIMD is opt-in, chosen per component.
@@ -170,7 +171,9 @@ The handler receives the faulting state as a frame on its own stack (F8(d)).
     FP state is dropped.
   - The pool's stacks need room for 832 B plus the handler's own use.
 - **Write-back (F8.2).** At a Retry or Skip Return, the kernel resumes from the frame,
-  which the handler may have changed.
+  which the handler may have changed. This needs no new trust: the handler can change
+  only the state of the Thread it handles, which it is already trusted with. The kernel
+  still checks `pstate`, because that check protects the kernel, not the Thread.
   - The kernel copies the frame once onto its own stack, through the same walk (pages
     EL0-readable), and validates that copy. It never validates in place, since another
     Thread of the handler's AddressSpace could change the frame in between.

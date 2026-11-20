@@ -1,9 +1,9 @@
 # UI compositor design
 
 Status: the compositor owns the screen and the input and serves windows; the
-implementation plan says what is still open. Open decisions are listed in
-`ui-compositor-decisions.md`. Implementation order is in
-`ui-compositor-implementation-plan.md`.
+implementation plan says what is still open. Q1 to Q12 are answered and recorded here;
+`ui-compositor-completed.md` lists them, and no compositor decision is open.
+Implementation order is in `ui-compositor-implementation-plan.md`.
 
 ## Scope
 
@@ -60,7 +60,8 @@ flowchart LR
     comp -- "fb_v1 (WC map)" --> fb["framebuffer"]
 ```
 
-- **Component `compositor`.** Imports `fb_v1` and the input channel. Exports a
+- **Component `compositor`** (`userspace/gui/compositor`, a program like the shell,
+  Q9). Imports `fb_v1` and the input channel. Exports a
   `local` interface `compositor_v1.if`. The framebuffer mapping code currently in
   `display.rs` (`map_framebuffer`) moves into a shared library that the compositor
   uses. Interfaces are prototypes and are edited in place.
@@ -100,7 +101,11 @@ flowchart LR
   for each damage rectangle, clip and blit the windows bottom to top, draw the
   cursor sprite (its old and new rectangles are damage), then copy only dirty
   rectangles to the write-combining framebuffer. Layers in version 1 are
-  background, normal windows, overlay (panel) and cursor.
+  background, normal windows, overlay (panel) and cursor. The compositor never reads
+  the framebuffer back: it is write-combining, and hit-testing uses rectangles.
+- **Redraw trigger (Q7).** A fixed 33 ms timer (`FRAME_NS` in
+  `userspace/gui/compositor/src/frame.rs`) that runs only while damage exists. The
+  answer asks for an adaptive target frame rate; the adaptation rule is deferred.
 - **Input routing.** The compositor is the router. It clamps the pointer to the
   display, keeps button and modifier state through the `input-event` state
   tracker, and gives focus to a new window (Q12) and on click, raising the
@@ -126,19 +131,46 @@ flowchart LR
   that receives it, so the shell has no direct path.
 - Driver and program tables are 256 slots. A 1024x768 surface built only of 4 KiB
   Frames needs 768 slots, so surfaces are 2 MiB Frames (Q2).
-- Kickstart wires imports through device-tree links (`uses X via ...`). A program
-  has no node, so a program cannot yet export an interface. The shell is a program
-  but only imports.
+- Kickstart wires imports by one of two `uses` forms (Q8): `uses mailbox_v1 via
+  device firmware, mboxes { property }` follows a device-tree link (`via device
+  compatible "..."` is the compatible-string form), and `uses fb_v1 via component fb`
+  names a manifest component, whose one loaded instance exporting the interface is the
+  exporter; none leaves the import not granted, and more than one is reported and not
+  granted. A program has no device-tree node, so `via component` is how it can export.
 - The USB HID component publishes keyboard and mouse events on `input_v1`'s
   io-channel and serves `descriptor` and `snapshot` calls. The compositor can be
   tested with injected events first.
+- `fb_v1.frames` gives the framebuffer's memory away for good, and a second call
+  fails: whatever holds the framebuffer holds it until reset.
 
-See `ui-compositor-decisions.md` for the open choices and the hazards.
+## Hazards
+
+Facts that shaped the answers above.
+
+- **Revocation can reach the compositor's reads.** If a client owned surface memory
+  the compositor reads and its authority were withdrawn, the next compositor read
+  would fault, and the expected policy is Thread termination
+  (`capabilities-contract.md`). The compositor owning the surface Frames (Q1) keeps a
+  hostile client from taking it down this way. Selective Revoke is not enabled.
+- **Table size.** A 1024x768 surface of 32-bit pixels is 3 MiB: 768 4 KiB Frames, or
+  two 2 MiB Frames. Lent tables have 1024 slots in the shell and 256 in drivers, so
+  surfaces of 4 KiB Frames would exhaust them quickly (Q2).
+- **Write-combining is a ceiling, not a guarantee.** Surfaces in RAM are cacheable, so
+  damaged rectangles reach the framebuffer through its write-combining mapping.
+- **Reading client pixels.** Yutani hit-tests by reading each window's pixels, which
+  couples input latency to client behaviour and needs client memory to stay readable.
+  Hit-testing uses window rectangles, also with alpha (Q6).
+
+## Future work
+
+- **Separate `inputd`-style router.** A multiplexer between input producers and the
+  compositor, as Redox `inputd` does, for when more than one consumer needs input. Not
+  planned for version 1 (Q4).
 
 ## Related
 
 - `doc/agentic/input-design.md` and `input-decisions.md`: event record, routing
-  layer, input D9 (router).
+  layer, open input decisions.
 - `doc/agentic/usb-design.md`: producer side of input.
 - `doc/agentic/capabilities-contract.md`: `CallWithKey` lending (the key
   travels in x8), Frame mapping, revocation and Thread termination.

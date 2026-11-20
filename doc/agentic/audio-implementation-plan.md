@@ -1,7 +1,8 @@
 # Audio implementation plan
 
-Design: [audio-design.md](audio-design.md) (with the answered decisions D1 to D9). Open
-decisions: [audio-decisions.md](audio-decisions.md). This file holds only open work;
+Design: [audio-design.md](audio-design.md) (with the answered decisions D1 to D10, listed
+in [audio-completed.md](audio-completed.md)); no audio decision is open. This file holds
+only open work;
 nothing in a stage starts until the decisions it lists are answered. Mark an item `- [x]`
 only after its exit check has passed.
 
@@ -343,7 +344,7 @@ Done in QEMU (2026-10-28, D10), hardware check pending (A5d). Design doc section
 
 ## Related
 
-- [audio-decisions.md](audio-decisions.md): open decisions.
+- [audio-completed.md](audio-completed.md): answered decisions.
 - [audio-design.md](audio-design.md): hardware facts with sources, architecture, QEMU
   support.
 - [capabilities-decisions.md](capabilities-decisions.md): the isochronous scheduler in

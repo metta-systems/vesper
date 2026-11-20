@@ -1,6 +1,7 @@
 # Input event design
 
-Status: design; the event record is decided (2026-10-18), nothing implemented. Open decisions are in
+Status: the event record is decided (2026-10-18) and its library, `libs/input-event`, is
+built (INPUT1). Open decisions are in
 [input-decisions.md](input-decisions.md). Work order is in
 [input-implementation-plan.md](input-implementation-plan.md). Completed items are in
 [input-completed.md](input-completed.md).
@@ -65,7 +66,9 @@ Pointer Events, SDL's controller database, Wayland key repeat.
    typematic repeat, gamepad standard mapping, gestures.
 
 Routing (focus, pointer, grabs) belongs to the compositor and is not part of this
-layer.
+layer (D9, answered 2026-10-18 with the compositor's Q4: the compositor routes input
+itself; a separate `inputd`-style router is future work in
+[ui-compositor-design.md](ui-compositor-design.md)).
 
 ## Event record
 
