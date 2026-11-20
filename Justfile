@@ -233,8 +233,8 @@ _build-endpoint-test board=boards features='qemu': (_build-components board feat
 # Build the fp-trap-test e2e kernel (its nucleus carries the test-only `fp_trap_test` trap hook); `features` adds `fp_entry_trap`
 _build-fp-trap-test board=boards features='qemu,fp_trap_test': (_build-components board 'qemu' features) (_build-test-kernel 'fp-trap-test' board features)
 
-# Build the fp-test e2e kernel (FP/SIMD state per AddressSpace); `features` adds `fp_entry_trap`
-_build-fp-test board=boards features='qemu': (_build-components board 'qemu' features) (_build-test-kernel 'fp-test' board features)
+# Build the fp-test e2e kernel (FP/SIMD state per AddressSpace); `features`: 'qemu' for QEMU, '' for the boards, plus `fp_entry_trap` for the kernel-entry FP guard
+_build-fp-test board=boards features='qemu' component_features=(if features =~ 'qemu' { 'qemu' } else { '' }): (_build-components board component_features features) (_build-test-kernel 'fp-test' board features)
 
 # Build the fp-bench kernel (an FP workload timed with a Signal, an integer-only Call and an FP Call per loop iteration); `features`: 'qemu' for QEMU, '' for the boards, plus `fp_entry_trap` for the guarded profile
 _build-fp-bench board=boards features='qemu' component_features=(if features =~ 'qemu' { 'qemu' } else { '' }): (_build-components board component_features features) (_build-test-kernel 'fp-bench' board features)
@@ -369,6 +369,11 @@ boot-board-test features='': (_build-board-test-hw boards features) chainofcomma
 [group("hw")]
 boot-fp-bench features='': (_build-fp-bench boards features) chainofcommand
     target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ images_dir / 'fp-bench-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+
+# Build fp-test and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-test`); `just boot-fp-test fp_entry_trap` runs it with the nucleus's kernel-entry FP guard. The UART shows each check: the FP spinners across preemption, a Call into an FP and into an integer-only component, a handled fault, then `✅` or the failed assertion's panic
+[group("hw")]
+boot-fp-test features='': (_build-fp-test boards features) chainofcommand
+    target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ images_dir / 'fp-test-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build wood-test for the Raspberry Pi 3 hardware (no QEMU, no semihosting): the compositor with the lava lamp and Wood playing Doom in a window, keyboard and mouse over USB, its sound effects and music through the PWM audio driver on the headphone jack; the log server writes the lines of the compositor (the routed input), Wood (with a music summary every 256 periods), the MIDI synthesiser, the audio driver and the USB components (controller bring-up, port resets, enumeration, the keyboard served) on the UART
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')

@@ -72,3 +72,7 @@ The details live in the contract and the design, and the history in version cont
   spinners in two FP components across preemption, FP→FP and FP→integer-only Calls, a
   handled `brk`, checked in asm; `just _test-fp` (also passes with `fp_entry_trap`), shown
   to fail on a skipped register in `fp_unit_save` and in the zeroing.
+- [x] S4 `fp-test` on the Pi 4: `just boot-fp-test`, passes without and with
+  `fp_entry_trap`.
+- [x] S4 F11 measurement: `fp-bench` on the Pi 4 without and with `fp_entry_trap`,
+  recorded in `doc/simd-performance.md`.

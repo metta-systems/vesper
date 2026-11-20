@@ -71,7 +71,10 @@ The maintainer's direction on 2026-11-19 is to measure first:
 - The same FP workload runs with the feature on and with it off.
 - Then the maintainer decides whether to keep it or remove it.
 
-Status: the guard is built (S2), and the measurement waits for S4's FP workload. It is an
+Status: the guard is built (S2) and measured on the Pi 4 with `fp-bench`; the numbers are
+in [doc/simd-performance.md](../simd-performance.md). It adds 4.3 ns (0.3 %) to a
+Signal, 79.6 ns (1.3 %) to a Call into an integer-only component and 149.0 ns (2.4 %) to
+a Call into an FP component. The maintainer's decision is pending. The guard is an
 `FpEntryGuard` held by every exception handler whose entry can return to a Thread
 (`lower_aarch64_*` and `current_el0_*` in `kernel/nucleus/src/main.rs`), not code in
 `vectors.S`. The effect is the same, since the handler prologue before it is soft-float,

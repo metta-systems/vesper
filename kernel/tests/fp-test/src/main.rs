@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-// `semi::println!` expands to `format_args_nl!` only under `qemu`.
+// `libqemu::semihosting::println!` expands to `format_args_nl!` only under `qemu`.
 #![cfg_attr(feature = "qemu", feature(format_args_nl))]
 
 //! fp-test: FP/SIMD state per `AddressSpace`, end to end.
@@ -28,8 +28,21 @@
 //! The boot Thread then checks the reports, the Threads' FP counters and
 //! that both spinners were stopped by preemption.
 //!
-//! Runs on the real Kickstart boot path; in-guest assertions and the QEMU
-//! semihosting exit status are the result (`just _test-fp`).
+//! Runs on the real Kickstart boot path; in-guest assertions are the result.
+//! Under QEMU it reports on semihosting and exits with the status
+//! (`just _test-fp`); on the board it reports on the UART, where a failed
+//! assertion prints its panic (`just boot-fp-test`).
+
+/// Print a report line: on semihosting under QEMU, on the board's UART
+/// otherwise.
+macro_rules! report_line {
+    ($($argument:tt)+) => {{
+        #[cfg(feature = "qemu")]
+        libqemu::semihosting::println!($($argument)+);
+        #[cfg(not(feature = "qemu"))]
+        kickstart::early_console::print_line(format_args!($($argument)+));
+    }};
+}
 
 mod components {
     //! Bundled userspace components (generated from `image.toml`).
@@ -64,7 +77,6 @@ use {
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle,
         UntypedKey, address_space::AddressSpaceKey,
     },
-    libqemu::semihosting as semi,
     nucleus::objects::{
         ArchObjectsImpl, ExecutionContext, Nucleus, Thread, arch_objects::AddressSpaceObject,
         thread::ThreadId,
@@ -210,7 +222,7 @@ fn worker_pages(
 }
 
 pub fn run() -> ! {
-    semi::println!("fp-test: enabled MMU and dropped to EL1");
+    report_line!("fp-test: enabled MMU and dropped to EL1");
     let retained = retained_init_memory();
     let image_tables = image_table_count(&retained);
     let boot = bootstrap_nucleus();
@@ -418,7 +430,7 @@ pub fn run() -> ! {
         checker as *const () as u64,
         CHECKER_STACK.0.get() as u64 + STACK_BYTES as u64,
     );
-    semi::println!("fp-test: spinners, scenarios and checker started; parking");
+    report_line!("fp-test: spinners, scenarios and checker started; parking");
     let bits = NotificationKey::from_key(wake_key)
         .await_bits(NotificationKey::WAIT_INFINITE)
         .unwrap_or_else(|error| panic!("Notification.Await failed: {:?}", error.code()));
@@ -431,7 +443,7 @@ pub fn run() -> ! {
         let passes = report(index).spin_passes.load(Ordering::Relaxed);
         let failure = report(index).spin_failure.load(Ordering::Relaxed);
         let stats = thread_of(nucleus, thread).fp_stats;
-        semi::println!(
+        report_line!(
             "fp-test: spinner {name}: {passes} passes, check code {failure}, FP counters {stats:?}"
         );
         assert_eq!(failure, CHECK_PASSED, "spinner {name} lost a register");
@@ -444,7 +456,7 @@ pub fn run() -> ! {
         assert_eq!(saved.origin, ExceptionOrigin::LowerAarch64);
         assert!(stats.fp_saves > 0 && stats.fp_loads > 0);
     }
-    semi::println!(
+    report_line!(
         "fp-test: both FP spinners kept their V registers, FPCR and FPSR across preemption"
     );
 
@@ -457,7 +469,7 @@ pub fn run() -> ! {
         "the scenarios never finished"
     );
     let stats = thread_of(nucleus, scenario).fp_stats;
-    semi::println!("fp-test: scenario Thread FP counters {stats:?}");
+    report_line!("fp-test: scenario Thread FP counters {stats:?}");
     assert_eq!(
         read(&report_a.call_fp_callee),
         CHECK_PASSED,
@@ -468,7 +480,7 @@ pub fn run() -> ! {
         CHECK_PASSED,
         "a Call into an FP component lost state"
     );
-    semi::println!(
+    report_line!(
         "fp-test: a Call into an FP component entered it zeroed and preserved v8..v15, FPCR and FPSR"
     );
     assert_eq!(
@@ -481,7 +493,7 @@ pub fn run() -> ! {
         CHECK_PASSED,
         "a Call into an integer-only component lost state"
     );
-    semi::println!(
+    report_line!(
         "fp-test: FP/SIMD trapped in an integer-only callee; the FP caller got v8..v15, FPCR and FPSR back"
     );
     assert_eq!(
@@ -495,7 +507,7 @@ pub fn run() -> ! {
         CHECK_PASSED,
         "a handled fault lost state"
     );
-    semi::println!(
+    report_line!(
         "fp-test: a handled fault entered its handler zeroed and resumed with every register"
     );
     assert!(
@@ -509,7 +521,12 @@ pub fn run() -> ! {
         assert_eq!(space.unhandled_faults(), 0);
     }
 
-    semi::println!("fp-test: ✅ FP/SIMD state per AddressSpace passed");
+    let guard = if cfg!(feature = "fp_entry_trap") {
+        "with the entry guard"
+    } else {
+        "without the entry guard"
+    };
+    report_line!("fp-test: ✅ FP/SIMD state per AddressSpace passed ({guard})");
     cfg_if::cfg_if! {
         if #[cfg(feature = "qemu")] {
             libqemu::semihosting::exit_success()
