@@ -368,7 +368,7 @@ boot-board-test features='': (_build-board-test-hw boards features) chainofcomma
 # Build fp-bench and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-bench`); `just boot-fp-bench fp_entry_trap` builds the second profile, with the nucleus's kernel-entry FP guard. The UART shows, for Doom's vertex projection over E1M1 with nothing, a Signal, a Call into an integer-only component and a Call into an FP component per 16-vertex chunk, the fastest and slowest of five runs and what one call adds, then the benchmark Thread's FP counters and the nucleus's FP totals
 [group("hw")]
 boot-fp-bench features='': (_build-fp-bench boards features) chainofcommand
-    target/debug/chainofcommand {{ chainofcommand_args }} --kernel "{{ images_dir / 'fp-bench-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
+    target/debug/chainofcommand {{ chainofcommand_args }} --rate-reset false --kernel "{{ images_dir / 'fp-bench-' + boards + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix + '.bin' }}"
 
 # Build fp-test and boot it via chainofcommand on a Raspberry Pi 4 (e.g. `just chainboot_serial=/dev/ttyUSB0 boot-fp-test`); `just boot-fp-test fp_entry_trap` runs it with the nucleus's kernel-entry FP guard. The UART shows each check: the FP spinners across preemption, a Call into an FP and into an integer-only component, a handled fault, then `✅` or the failed assertion's panic
 [group("hw")]

@@ -453,6 +453,9 @@ struct Rates {
     initial: u32,
     /// The rate to ask chainboot to load at, if any.
     load: Option<u32>,
+    /// Whether [`SILENCE_FALLBACK`] of silence at another rate goes back to the
+    /// initial one.
+    silence_fallback: bool,
 }
 
 /// How an upload, or the console negotiation, ended when nothing went wrong.
@@ -692,7 +695,7 @@ where
 
             // Silent too long at another rate: the target may be beaconing at the initial one.
             () = tokio::time::sleep_until(last_heard + SILENCE_FALLBACK),
-                if line_rate != rates.initial && upload.is_none() => {
+                if rates.silence_fallback && line_rate != rates.initial && upload.is_none() => {
                 to_serial.send(Ok(Message::SetRate(rates.initial))).await?;
                 execute!(w, style::Print(format!(
                     "\r\n⏩ Nothing heard at {line_rate} baud for {} s, the target restarted? Back to {} baud\r\n",
@@ -772,7 +775,7 @@ where
                                 // from_internal (status messages) and stdin.
                                 let mut protocol_line = from_proto.take().expect("proto receiver already taken");
                                 let (to_console2, to_serial) = (to_console2.clone(), to_serial.clone());
-                                let rates = Rates { initial: rates.initial, load: load_rate };
+                                let rates = Rates { load: load_rate, ..rates };
                                 upload = Some(tokio::spawn(async move {
                                     let outcome = send_kernel(to_console2, to_serial, &mut protocol_line, kernel, rates).await;
                                     (outcome, protocol_line)
@@ -988,6 +991,11 @@ struct Args {
     /// booted from the SD card)
     #[argh(switch)]
     console: bool,
+    /// whether 30 s of silence at the load rate goes back to the connect rate
+    /// (default true); with false a restart shows as garbage, which still goes
+    /// back to the connect rate
+    #[argh(option, default = "true")]
+    rate_reset: bool,
     /// positional form: <port> [baud] [kernel]
     #[argh(positional)]
     positional: Vec<String>,
@@ -1031,6 +1039,7 @@ impl Args {
             rates: Rates {
                 initial: baud,
                 load: self.load_baud,
+                silence_fallback: self.rate_reset,
             },
             kernel,
         })
@@ -1516,6 +1525,7 @@ mod tests {
             load_baud: None,
             kernel: None,
             console: false,
+            rate_reset: true,
             positional: vec!["/dev/ttyUSB0".into()],
         };
         let settings = args.resolve().expect("valid");
@@ -1530,6 +1540,7 @@ mod tests {
             load_baud: Some(2_000_000),
             kernel: Some("wood.bin".into()),
             console: false,
+            rate_reset: true,
             positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
         };
         let settings = args.resolve().expect("valid");
@@ -1546,6 +1557,7 @@ mod tests {
             load_baud: Some(1_500_000),
             kernel: None,
             console: true,
+            rate_reset: true,
             positional: vec!["/dev/ttyUSB0".into(), "115200".into()],
         };
         let settings = args.resolve().expect("valid");
@@ -1558,6 +1570,7 @@ mod tests {
             load_baud: None,
             kernel: Some("wood.bin".into()),
             console: true,
+            rate_reset: true,
             positional: vec!["/dev/ttyUSB0".into()],
         };
         assert!(args.resolve().is_err());
