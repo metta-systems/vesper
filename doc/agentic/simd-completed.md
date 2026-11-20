@@ -76,3 +76,28 @@ The details live in the contract and the design, and the history in version cont
   `fp_entry_trap`.
 - [x] S4 F11 measurement: `fp-bench` on the Pi 4 without and with `fp_entry_trap`,
   recorded in `doc/simd-performance.md`.
+
+## Completed decisions
+
+Each is recorded in [simd-design.md](simd-design.md), with the contract text in
+`capabilities-contract.md`.
+
+- [x] F1(a), 2026-11-18: FP is opt-in, chosen per component.
+- [x] F2(a), 2026-11-19: the right to execute FP comes from the AddressSpace, fixed at
+  its creation.
+- [x] F3, 2026-11-19: S1–S4 are plain eager save and restore; S5 tracks FP use.
+- [x] F4(a2), 2026-11-19: a Call enters the target zeroed, and Return restores
+  `q8..q15`, FPCR and FPSR from the call record.
+- [x] F5.1(a), 2026-11-19: a Justfile list chooses the hard-float crates.
+- [x] F5.2(a), 2026-11-19: image-build derives the FP flag by scanning the ELF, checked
+  against `fp_components`.
+- [x] F6(b), 2026-11-18: a fault handler can inspect the faulting frame's FP state.
+- [x] F7(a), 2026-11-18: the Thread holds everything inline, about 6 KiB, shrunk in the
+  measured pass.
+- [x] F8(d) with F8.1, F8.2 and F8.3(iii), 2026-11-19: the fault frame on the handler's
+  stack, with the general registers, written back at Retry or Skip, the FP state only in
+  the frame.
+- [x] F9, 2026-11-19: S5 uses a decaying usage flag with owner tracking and a first-use
+  trap; FP statistics are counted per Thread from S1 on.
+- [x] F10(b), 2026-11-19: the FP statistics are published in the scheduler-shared
+  records.

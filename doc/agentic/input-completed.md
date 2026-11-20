@@ -4,6 +4,16 @@ Short markers of what is done. Each line says what exists and where it is exerci
 Open items stay in [input-implementation-plan.md](input-implementation-plan.md) and
 [input-decisions.md](input-decisions.md).
 
+## Completed decisions
+
+- [x] D1, D2, D3, D4, D4.1, D7, D7.1, D11, D12 and D13 (2026-10-18): the event record,
+  code namespace, framing, channel granularity, output direction, timestamps and hotplug
+  ids; `input-design.md`, sections Event record and Behaviour rules.
+- [x] D8 (2026-10-29): the console is an adapter presenting a serial-compatible byte
+  channel; `input-design.md`, section Consumers.
+- [x] D9 (2026-10-18, with the compositor's Q4): the compositor routes input itself;
+  `input-design.md`, section Layers.
+
 ## Design
 
 - [x] Event contract design written: record, descriptor,

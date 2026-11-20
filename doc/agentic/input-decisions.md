@@ -4,14 +4,15 @@ Parking lot for unanswered input event decisions. This is the only place input
 decisions are tracked; other documents link here. Each entry stays open until the
 maintainer answers it. Recommendations are marked as such; they are not decisions.
 Record an answer here only when the maintainer gave it explicitly. Answered items
-move out of this file once the design and plan reflect them.
+move to [input-completed.md](input-completed.md), section Completed decisions, once the
+design and plan reflect them.
 
 Scope: the event record, its transport and its consumers. USB HID producer
 decisions (report decoding, descriptor synthesis, output reports, device-tree
 links) are in [usb-decisions.md](usb-decisions.md).
 
-D1, D2, D3, D4, D4.1, D7, D7.1, D11, D12 and D13 are answered (2026-10-18), and D8
-(2026-10-29), and recorded in [input-design.md](input-design.md). The questions below are what remains.
+Answered decisions are recorded in [input-design.md](input-design.md) and listed in
+[input-completed.md](input-completed.md). The questions below are what remains.
 
 ## D5. Overflow policy
 
@@ -34,14 +35,6 @@ Options:
   driver.
 
 Status: open. Blocks INPUT3.
-
-## D9. Router
-
-Answered 2026-10-18 in [ui-compositor-decisions.md](ui-compositor-decisions.md) (Q4):
-option 3, the compositor routes input itself. A separate `inputd`-style router is
-future work, not a stage. Recorded here as the input-side answer.
-
-Status: answered. No input event stage depends on a router.
 
 ## D10. Touch representation
 

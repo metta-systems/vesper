@@ -1,7 +1,8 @@
 # Logging implementation plan
 
-Design: [logging-design.md](logging-design.md) (with the answered decisions L1 to L10).
-Open decisions: [logging-decisions.md](logging-decisions.md). This file holds only open
+Design: [logging-design.md](logging-design.md) (with the answered decisions L1 to L12,
+listed in [logging-completed.md](logging-completed.md)); no logging decision is open.
+This file holds only open
 work and the checks of what was built; mark an item `- [x]` only after its exit check
 has passed.
 
