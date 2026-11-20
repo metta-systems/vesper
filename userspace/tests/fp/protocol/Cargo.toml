@@ -1,7 +1,7 @@
 [package]
 name = "fp-test-protocol"
 
-description = "The layout fp-test shares with its fp-worker components: init page, report page, roles and check codes."
+description = "The layout fp-test and fp-bench share with their FP components: init and report pages, roles and check codes."
 
 authors = { workspace = true }
 categories = { workspace = true }
