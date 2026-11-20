@@ -1,0 +1,16 @@
+# What fp-bench bundles (see vesper-image-build). `binary` is the cargo binary
+# name, built with userspace/runtime/user.ld.
+
+# The FP benchmark, loaded twice: the runner and the FP Call target.
+[[component]]
+name = "bench"
+binary = "fp-bench-worker"
+active = true
+
+# The integer-only Call target. It also holds an FP/SIMD instruction that
+# fp-test uses to show that it traps.
+[[component]]
+name = "probe"
+binary = "fp-probe"
+active = true
+expects_fp_trap = true

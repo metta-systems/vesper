@@ -45,9 +45,11 @@ Done; see [simd-completed.md](simd-completed.md).
 Done: the `fp-test` kernel in QEMU; see [simd-completed.md](simd-completed.md).
 
 - [ ] Run `fp-test` on the Pi 4, as part of board-test or as its own image.
-- [ ] Measure the F11 overhead on the Pi 4. Run the same FP workload (`fp-test`, or a
-  syscall-heavy FP component) with `fp_entry_trap` on and off (`just _build-fp-test`
-  takes the features). Compare syscall round
+- [ ] Measure the F11 overhead on the Pi 4 with `fp-bench` (`kernel/tests/fp-bench`,
+  `fp-bench-worker`): Doom's vertex projection over E1M1 in NEON, per 16-vertex chunk
+  with nothing, a Signal, a Call into an integer-only component or a Call into an FP
+  component. Run `just boot-fp-bench` and `just boot-fp-bench fp_entry_trap`; `just
+  _test-fp-bench` checks it in QEMU. Compare syscall round
   trips and the FP statistics. Record the numbers, so the maintainer can decide whether
   the guard stays (F11).
 

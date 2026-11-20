@@ -1,7 +1,8 @@
 #![no_std]
 
 //! What `fp-test` and its `fp-worker` components share: where the init and
-//! report pages are, what they hold, the worker roles and the check codes.
+//! report pages are, what they hold, the worker roles and the check codes;
+//! and what `fp-bench` shares with `fp-bench-worker`.
 //!
 //! Every check fills the V registers with sentinels derived from a seed
 //! (`v<n>` holds `seed + n` in its low half and the complement in its high
@@ -86,6 +87,85 @@ pub const CHECK_FAILED_FPCR: u64 = 33;
 pub const CHECK_FAILED_FPSR: u64 = 34;
 /// The Call itself failed.
 pub const CHECK_FAILED_CALL: u64 = 35;
+
+/// Runs of each `fp-bench` variant.
+pub const BENCH_RUNS: usize = 5;
+
+/// `fp-bench`'s variants: the same projection with, per chunk, nothing; a
+/// `Notification.Signal` (kernel entry and exit only); a Call into an
+/// integer-only component; a Call into another FP component. Both Call
+/// targets Return at once.
+pub const BENCH_COMPUTE: usize = 0;
+pub const BENCH_SIGNAL: usize = 1;
+pub const BENCH_CALL_INTEGER: usize = 2;
+pub const BENCH_CALL_FP: usize = 3;
+pub const BENCH_VARIANTS: usize = 4;
+/// The variants' names, for the report.
+pub const BENCH_NAMES: [&str; BENCH_VARIANTS] = [
+    "compute only",
+    "Signal per chunk",
+    "Call into integer-only per chunk",
+    "Call into FP per chunk",
+];
+
+/// What the builder hands an `fp-bench-worker` instance.
+#[repr(C)]
+pub struct BenchInit {
+    /// The instance table's guard and capacity exponent, for its export
+    /// adapter's `Thread.Return` key.
+    pub guard: u64,
+    pub size_bits: u64,
+    /// Frames each run projects (every vertex, from one viewpoint each).
+    pub frames: u64,
+    /// The Notification the Signal variant signals; nobody waits on it
+    /// (wire form).
+    pub busy: u64,
+    /// The Notification the worker signals when the report is complete
+    /// (wire form).
+    pub done: u64,
+    /// The Invocations of `fp-probe`'s and the other instance's `nop_entry`
+    /// (wire form).
+    pub call_integer: u64,
+    pub call_fp: u64,
+}
+
+/// What `fp-bench-worker` reports: counter ticks (`CNTVCT_EL0`) per run.
+#[repr(C)]
+pub struct BenchReport {
+    /// Each run of each variant.
+    pub ticks: [[AtomicU64; BENCH_RUNS]; BENCH_VARIANTS],
+    /// Each variant's projection checksum; all equal when every variant
+    /// computed the same thing.
+    pub checksum: [AtomicU64; BENCH_VARIANTS],
+    /// Vertices projected per run (padding included).
+    pub vertices: AtomicU64,
+    /// Chunks per run: the system calls of each variant but the first.
+    pub chunks: AtomicU64,
+    /// 1 once the words above are written.
+    pub done: AtomicU64,
+}
+
+/// The bench worker's init page, at [`INIT_VA`].
+///
+/// # Safety
+///
+/// Only in `fp-bench-worker`, whose builder maps and fills a [`BenchInit`]
+/// at [`INIT_VA`] before it runs.
+pub unsafe fn bench_init() -> &'static BenchInit {
+    // SAFETY: forwarded caller contract.
+    unsafe { &*(INIT_VA as *const BenchInit) }
+}
+
+/// The bench worker's report page, at [`REPORT_VA`].
+///
+/// # Safety
+///
+/// Only in `fp-bench-worker`, whose builder maps a zeroed page at
+/// [`REPORT_VA`] before it runs.
+pub unsafe fn bench_report() -> &'static BenchReport {
+    // SAFETY: forwarded caller contract; every field is atomic.
+    unsafe { &*(REPORT_VA as *const BenchReport) }
+}
 
 /// The worker's init page.
 ///
