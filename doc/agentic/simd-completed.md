@@ -68,3 +68,7 @@ The details live in the contract and the design, and the history in version cont
   and fp-probe required to have hits (`just lint`).
 - [x] S3 `libsyscall`: `ppc_call` and `ppc_call_with_key` clobber `v0..v7`, `v16..v31`
   under `target_feature = "neon"`.
+- [x] S4 `fp-test` (`kernel/tests/fp-test`, `fp-worker`, `fp-test-protocol`): sentinel
+  spinners in two FP components across preemption, FP→FP and FP→integer-only Calls, a
+  handled `brk`, checked in asm; `just _test-fp` (also passes with `fp_entry_trap`), shown
+  to fail on a skipped register in `fp_unit_save` and in the zeroing.

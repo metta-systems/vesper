@@ -1,0 +1,22 @@
+[package]
+name = "fp-test-protocol"
+
+description = "The layout fp-test shares with its fp-worker components: init page, report page, roles and check codes."
+
+authors = { workspace = true }
+categories = { workspace = true }
+documentation = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+readme = { workspace = true }
+repository = { workspace = true }
+version = { workspace = true }
+
+[lib]
+# EL0-only no_std code: no test harness or panic handler on the target.
+test = false
+harness = false
+
+[lints]
+workspace = true

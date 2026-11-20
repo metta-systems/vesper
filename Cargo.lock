@@ -1545,6 +1545,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-test"
+version = "0.0.1"
+dependencies = [
+ "aarch64-cpu",
+ "cfg-if",
+ "fp-test-protocol",
+ "fp-trap-protocol",
+ "kickstart",
+ "metta-component-loader",
+ "nucleus",
+ "vesper-address",
+ "vesper-boot",
+ "vesper-cpu",
+ "vesper-exceptions",
+ "vesper-image",
+ "vesper-image-build",
+ "vesper-kicktest",
+ "vesper-machine",
+ "vesper-objects",
+ "vesper-print",
+ "vesper-qemu",
+]
+
+[[package]]
+name = "fp-test-protocol"
+version = "0.0.1"
+
+[[package]]
 name = "fp-trap-protocol"
 version = "0.0.1"
 dependencies = [
@@ -1579,6 +1607,8 @@ dependencies = [
 name = "fp-worker"
 version = "0.0.1"
 dependencies = [
+ "fp-test-protocol",
+ "vesper-objects",
  "vesper-print",
  "vesper-user-runtime",
 ]

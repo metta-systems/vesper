@@ -7,8 +7,8 @@ This file holds only open work, in order. Each step is verified before the next 
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
 leaves this file as a one-line marker in [simd-completed.md](simd-completed.md).
 
-Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks) and S3 (build
-side); see
+Done: S0 (the contract), S1 (object layer), S2 (routines and switch hooks), S3 (build
+side) and S4's `fp-test` in QEMU; see
 [simd-completed.md](simd-completed.md).
 
 When an S1 to S4 step implements part of the design, it also rewrites the matching
@@ -42,19 +42,12 @@ Done; see [simd-completed.md](simd-completed.md).
 
 ## S4: end-to-end
 
-- [ ] An `fp-test` kernel, after `kernel/tests/fp-trap-test`, that checks the following.
-  `fp-worker` (`userspace/tests/fp/worker`, S3's hard-float build check, which no image
-  bundles yet) grows into its FP components.
-  - two FP components, each preempted mid-loop with sentinel values in its V registers;
-  - a Call from one FP component into the other: the callee sees zeros, and the caller
-    gets back `q8..q15` and FPCR;
-  - a Call into an integer-only component, where an FP instruction traps;
-  - an FP fault that is handled, then resumed with its V registers intact.
+Done: the `fp-test` kernel in QEMU; see [simd-completed.md](simd-completed.md).
 
-  Run it as `just _test-fp` in QEMU.
-- [ ] Run it on the Pi 4, as part of board-test or as its own image.
+- [ ] Run `fp-test` on the Pi 4, as part of board-test or as its own image.
 - [ ] Measure the F11 overhead on the Pi 4. Run the same FP workload (`fp-test`, or a
-  syscall-heavy FP component) with `fp_entry_trap` on and off. Compare syscall round
+  syscall-heavy FP component) with `fp_entry_trap` on and off (`just _build-fp-test`
+  takes the features). Compare syscall round
   trips and the FP statistics. Record the numbers, so the maintainer can decide whether
   the guard stays (F11).
 

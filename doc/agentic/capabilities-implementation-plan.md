@@ -40,12 +40,13 @@ Vesper is a `no_std` embedded project. Recipes coordinate the custom `aarch64-me
 | `just _test-endpoint` | Boot the endpoint-test e2e kernel: client, rendezvous-endpoint and server `AddressSpace`s meet through PPC `Invocation`s, blocking inside the endpoint; in-guest assertions and the QEMU exit status are the result; included in `just test` |
 | `just _test-preempt`, `test-irq`, `test-driver`, `test-mailbox`, `test-uart` (each also `-rpi4`) | Boot the timer-preemption, interrupt-delivery, driver-loading, mailbox and PL011-driver e2e kernels on raspi3b and raspi4b; `test-driver` also covers `imports.if` wiring and generated-interface calls between probe instances, `test-mailbox` the kernel-owned page grant and a two-link import; all included in `just test` |
 | `just _test-fp-trap` | Boot fp-trap-test: an FP/SIMD instruction must trap at EL1t (test-only nucleus hook) and at EL0 (delivered to the component's fault handler); included in `just test` |
+| `just _test-fp` | Boot fp-test: two FP components keep their V registers, FPCR and FPSR across preemption, a Call between them and a handled fault; a Call into an integer-only component traps its FP instruction; included in `just test` |
 | `just _test-fault` | Boot fault-test: EL0 fault delivery — skip, retry, terminate, Return faults, and every unhandled case parking the Thread as faulted; included in `just test` |
 | `just _audit-fp-simd` | Disassemble every image that runs under the integer-only policy and reject FP/SIMD instructions; part of `just lint` |
 | `just _test-chainboot` | Chainboot tests with its own linker script and target runner |
 | `just _test-object-host` | Opt-in capability ABI integration tests on the native host (requires AArch64) |
 | `just test-host` | Capability ABI, boot-platform and Meddle tests, then native `chainofcommand` tests |
-| `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, mailbox, uart, endpoint, fp-trap, fault; the board-dependent ones on both boards) |
+| `just test` | Device, chainboot, host (capability, boot-platform, Meddle, tools), debug handler/storage, and every e2e test kernel (capability, memory, sync, ppc, preempt, irq, driver, mailbox, uart, endpoint, fp-trap, fp, fault; the board-dependent ones on both boards) |
 | `just pre-push` | Formatting, shortened Clippy, and tests; does not itself push anything |
 | `just ci` | Cleanup, lint, build, and tests; do not invoke its cleanup as an incidental check |
 

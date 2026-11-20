@@ -12,6 +12,9 @@
 //! (`ROLE_INTEGER`) the instruction must trap; in an FP `AddressSpace`
 //! (`ROLE_FP`) it must execute, and the probe also has the kernel execute it
 //! while serving this frame (`kernel_probe`) and reports that outcome too.
+//!
+//! `probe_call_entry` runs the same probe as a Call target and Returns the
+//! outcome; `fp-test` calls it from an FP component.
 
 use {
     core::sync::atomic::{AtomicU64, Ordering},
@@ -68,6 +71,34 @@ extern "C" fn fault_body(
 ppc_export!(
     /// The fault handler entry installed at `KeySlot::FAULT_HANDLER`.
     pub fn fault_entry => fault_body
+);
+
+/// The probe as a Call target: execute the instruction and Return
+/// [`TRAPPED_BIT`] or [`NOT_TRAPPED_BIT`].
+extern "C" fn probe_call_body(
+    _dummy0: u64,
+    _badge: u64,
+    _input0: u64,
+    _input1: u64,
+    _input2: u64,
+    _input3: u64,
+    _input4: u64,
+    _input5: u64,
+) -> PpcResult {
+    setup_return_key();
+    LAST_SYNDROME.store(0, Ordering::Release);
+    probe();
+    let bits = if trapped(LAST_SYNDROME.load(Ordering::Acquire)) {
+        TRAPPED_BIT
+    } else {
+        NOT_TRAPPED_BIT
+    };
+    PpcResult { r0: bits, r1: 0 }
+}
+
+ppc_export!(
+    /// The probe's Call entry (`fp-test` calls it from an FP component).
+    pub fn probe_call_entry => probe_call_body
 );
 
 fn main(role: u64) -> ! {
