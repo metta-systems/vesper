@@ -10,8 +10,8 @@ answered on 2026-10-28 (section Decisions); its research is section Music below.
 A5b (the synthesiser crate and the bank-trimming tool, host-tested) is built; D10 (Wood
 pulls the synthesiser component's `midi_synth_v1` and mixes) was answered the same day,
 and A5c (that component and Wood's music) is built and checked in QEMU; nothing of A5
-has run on the board. No audio decision is open
-([audio-decisions.md](audio-decisions.md)). Stages are in
+has run on the board. No audio decision is open; the answered ones are listed in
+[audio-completed.md](audio-completed.md). Stages are in
 [audio-implementation-plan.md](audio-implementation-plan.md). Interfaces named here are
 drafts until written; once written they are prototypes and are edited in place.
 

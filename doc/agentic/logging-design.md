@@ -8,8 +8,8 @@ check is pending. In L-B the three USB components became clients too (section US
 volume). Stage L-D, panic and fault reports, was taken up on 2026-10-29 ("keep 32k
 stacks, add panic reporting through the serial console too"); the `PANICKED:` and
 `FAULT:` lines are built and checked in QEMU (section Panics and faults). No logging
-question is open
-([logging-decisions.md](logging-decisions.md)); stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
+question is open; the answered ones are listed in
+[logging-completed.md](logging-completed.md). Stages are in [logging-implementation-plan.md](logging-implementation-plan.md).
 `log_v1` is a prototype interface and is edited in place.
 
 The first use is diagnosing Wood's music on the board: the sound effects play, the

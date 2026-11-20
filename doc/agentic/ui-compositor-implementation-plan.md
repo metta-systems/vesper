@@ -1,17 +1,15 @@
 # UI compositor implementation plan
 
-Design: `ui-compositor-design.md`. Open decisions: `ui-compositor-decisions.md`.
-Completed items: `ui-compositor-completed.md`. Nothing here starts until the
-decisions it depends on are recorded. Input stages are in
-`input-implementation-plan.md`.
+Design: `ui-compositor-design.md`. Completed items and the answered decisions:
+`ui-compositor-completed.md`. Nothing here starts until the decisions it depends on
+are recorded. Input stages are in `input-implementation-plan.md`.
 
 ## Dependencies
 
-- Q1 and Q2 (surface memory and granularity) block C3.
-- Q1 (surface memory) remains open; Q10 (input decisions) remains open.
-- Answered: Q2, Q3, Q4, Q5, Q6, Q7, Q8 (`uses device` and `uses component` forms, details open), Q9, Q11, Q12 (see `ui-compositor-decisions.md`).
-- Q8 (program exporters, H3): implemented in the Meddle parser, the image builder and Kickstart (2026-10-18). No import uses `via component` yet, so a compositor started as a program still needs its first `via component` import exercised by a test.
-- `input-decisions.md` D1 to D4 block the real event record used by C1 and C4.
+- Q1 to Q12 are answered (`ui-compositor-completed.md`); no compositor decision is
+  open.
+- Input decisions still open (`input-decisions.md`): D5 (the input channel's
+  overflow policy), D6 (repeat and keymap placement) and D10 (touch).
 - `input-implementation-plan.md` INPUT1 supplied the event record (`libs/input-event`), and USB4 supplies the producer, for C5.
 
 ## C0: documents and interface
@@ -102,7 +100,7 @@ decisions it depends on are recorded. Input stages are in
   panel, and page flipping if the framebuffer offers a virtual height. Alpha
   blending is in version 1 (Q6), so it is not a C6 item.
 - A separate `inputd`-style router is future work, not a stage (see the Future
-  work section of `ui-compositor-decisions.md`).
+  work section of `ui-compositor-design.md`).
 - Each is its own slice with its own decision if the answer is still open.
 
 ## Verification across stages
