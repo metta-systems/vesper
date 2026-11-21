@@ -4,8 +4,7 @@
 use {
     audio::audio_v1::{AudioV1, CHANNEL_PAGES, Exception},
     audio_pwm_bcm2835::{
-        JACK_PINS, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ, RANGE,
-        sample_rate_millihertz,
+        JACK_PINS, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, TIMINGS, Timing,
         stream::{
             CHANNEL_SLOTS, FRAME_BYTES, Fill, Queue, Ring, Stream, channel_at, ramp_down, ramp_up,
         },
@@ -52,6 +51,14 @@ static DOORBELL: AtomicU64 = AtomicU64::new(0);
 /// Wire key of the `EventCount` the refill Thread advances each time the
 /// output is off after `close`.
 static CLOSED: AtomicU64 = AtomicU64::new(0);
+/// The position in [`TIMINGS`] of the timing the PWM clock was set to, before
+/// the driver is ready.
+static TIMING: AtomicU32 = AtomicU32::new(0);
+
+/// The PWM clock and range the stream runs at.
+fn timing() -> Timing {
+    TIMINGS[TIMING.load(Ordering::Acquire) as usize]
+}
 
 fn init() -> &'static DriverInit {
     // SAFETY: Kickstart maps every driver's init record at `INIT_VA`; it is
@@ -92,7 +99,8 @@ impl AudioV1 for Jack {
     }
 
     fn rate(_badge: u64) -> u32 {
-        u32::try_from(sample_rate_millihertz(PWM_CLOCK_HZ, RANGE)).unwrap_or(u32::MAX)
+        wait_ready();
+        u32::try_from(timing().sample_rate_millihertz()).unwrap_or(u32::MAX)
     }
 
     fn open(badge: u64) -> Result<(), Exception> {
@@ -161,11 +169,24 @@ fn route_pins(trace: &mut Trace, init: &DriverInit) {
     }
 }
 
-/// Set the PWM clock to [`PWM_CLOCK_HZ`], start it and read its rate back.
+/// Set the PWM clock to the first of [`TIMINGS`] the clock manager reaches,
+/// keep that timing, start the clock and read its rate back.
 fn start_clock(trace: &mut Trace, clock: &clock_v1::Client) -> u32 {
-    let actual = clock
-        .set_rate(PWM_CLOCK, PWM_CLOCK_HZ)
+    let (index, actual) = TIMINGS
+        .iter()
+        .enumerate()
+        .find_map(
+            |(index, timing)| match clock.set_rate(PWM_CLOCK, timing.clock_hz) {
+                Ok(actual) => Some(Ok((index, actual))),
+                Err(clock_v1::Error::Exception(clock_v1::Exception::UnreachableRate {
+                    ..
+                })) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .unwrap_or_else(|| panic!("audio: the clock manager reaches none of the PWM clocks"))
         .unwrap_or_else(|error| panic!("audio: setting the PWM clock failed: {error:?}"));
+    TIMING.store(u32::try_from(index).unwrap_or(0), Ordering::Release);
     clock
         .enable(PWM_CLOCK)
         .unwrap_or_else(|error| panic!("audio: starting the PWM clock failed: {error:?}"));
@@ -417,7 +438,7 @@ impl Playback<'_> {
         let slot = self.ring.slot(period);
         let frames = ring_pages.frames(slot);
         let content = if period == 0 {
-            ramp_up(frames, RANGE);
+            ramp_up(frames, timing().range);
             Content::RampUp
         } else if self.ramp_down.is_some() {
             frames.fill([0, 0]);
@@ -481,7 +502,7 @@ fn play(trace: &mut Trace, ring_pages: &DmaPages, output: &mut Output<'_>) {
             base: area.channel_base + PAGE_BYTES,
             len: CHANNEL_PAGES * PAGE_BYTES,
         },
-        stream: Stream::new(RANGE),
+        stream: Stream::new(timing().range),
         ring: Ring::new(PERIODS as u64),
         drained: 0,
         ramp_down: None,
@@ -553,7 +574,7 @@ fn main(init_va: u64) -> ! {
     route_pins(&mut trace, init);
     let clock = clock_v1::Client::new(clock_v1::Bindings::from_imports(init.imports()));
     let rate = start_clock(&mut trace, &clock);
-    assert_eq!(rate, PWM_CLOCK_HZ, "audio: the PWM clock's rate");
+    assert_eq!(rate, timing().clock_hz, "audio: the PWM clock's rate");
     let dma = dma_v1::Client::new(dma_v1::Bindings::from_imports(init.imports()));
 
     #[cfg(feature = "qemu")]
@@ -587,8 +608,9 @@ fn main(init_va: u64) -> ! {
     let (ring_pages, _next_slot) = DmaPages::carve(init, next_slot + 2, PERIODS, RING_VA);
     trace!(
         trace,
-        "audio: audio_v1 ready: a ring of {PERIODS} periods of {PERIOD_FRAMES} frames at bus {:#010x}, range {RANGE}",
-        ring_pages.bus_address(0)
+        "audio: audio_v1 ready: a ring of {PERIODS} periods of {PERIOD_FRAMES} frames at bus {:#010x}, range {}",
+        ring_pages.bus_address(0),
+        timing().range
     );
     // Say the exports can be served.
     EventCountKey::from_key(RawKey::from_wire(init.event_count))
@@ -630,12 +652,11 @@ use board::Pwm as Output;
 #[cfg(not(feature = "qemu"))]
 mod board {
     use {
-        super::{DmaPages, PERIOD_TIMEOUT_NS, dma_events, dma_v1},
+        super::{DmaPages, PERIOD_TIMEOUT_NS, dma_events, dma_v1, timing},
         audio_pwm_bcm2835::{
             Control, DmaConfig, MmioRegisterBlock, PERIOD_BYTES, PERIOD_FRAMES, PERIODS,
-            PWM_CLOCK_HZ, PWM_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, clear_errors,
-            clearing, deviation_ppm, dma_feed, fifo_stereo, measured_rate_millihertz,
-            sample_rate_millihertz,
+            RATE_TOLERANCE_PPM, RegisterBlock, clear_errors, clearing, deviation_ppm, dma_feed,
+            fifo_stereo, measured_rate_millihertz, pwm_dreq,
         },
         libdevice_driver::{DriverInit, device_address, map_device_pages},
         libobject::EventCountKey,
@@ -671,7 +692,7 @@ mod board {
             registers.write_control(Control::ZERO);
             registers.write_dma_config(DmaConfig::ZERO);
             let channel = dma
-                .claim(PWM_DREQ)
+                .claim(pwm_dreq(init.regions()[0].start))
                 .unwrap_or_else(|error| panic!("audio: claiming a DMA channel failed: {error:?}"));
             (
                 Self {
@@ -694,8 +715,8 @@ mod board {
         /// refill in time shows as a gap.
         pub fn start(&mut self, ring: &DmaPages) {
             self.registers.write_control(Control::ZERO);
-            self.registers.write_range1(RANGE);
-            self.registers.write_range2(RANGE);
+            self.registers.write_range1(timing().range);
+            self.registers.write_range2(timing().range);
             self.registers.write_control(clearing());
             self.registers.write_dma_config(dma_feed());
             self.registers.write_status(clear_errors());
@@ -756,7 +777,7 @@ mod board {
             self.registers.write_control(Control::ZERO);
             self.registers.write_dma_config(DmaConfig::ZERO);
             self.registers.write_status(clear_errors());
-            let rate_millihertz = sample_rate_millihertz(PWM_CLOCK_HZ, RANGE);
+            let rate_millihertz = timing().sample_rate_millihertz();
             if let Some((first_count, first_at)) = self.first
                 && self.latest.0 > first_count
             {
@@ -797,11 +818,10 @@ mod emulated {
     use {
         super::{
             Content, DMA_PAGES_VA, DmaPages, PERIOD_TIMEOUT_NS, PWM_CLOCK, clock_v1, dma_events,
-            dma_v1,
+            dma_v1, timing,
         },
         audio_pwm_bcm2835::{
-            MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ, PWM_DREQ, RANGE,
-            sample_rate_millihertz,
+            MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_DREQ,
             stream::{
                 expected_stream_period, is_audible, ramp_down, ramp_up, silent_frame,
                 starts_with_test_pattern,
@@ -815,9 +835,10 @@ mod emulated {
     /// A clock the component does not serve and a rate no integer divisor
     /// reaches are refused, and leave the PWM clock as it was.
     pub fn check_refusals(trace: &mut Trace, clock: &clock_v1::Client) {
+        let pwm_clock_hz = timing().clock_hz;
         let pcm_clock = PWM_CLOCK + 1;
         assert_eq!(
-            clock.set_rate(pcm_clock, PWM_CLOCK_HZ),
+            clock.set_rate(pcm_clock, pwm_clock_hz),
             Err(clock_v1::Error::Exception(
                 clock_v1::Exception::UnknownClock { clock: pcm_clock }
             ))
@@ -829,10 +850,10 @@ mod emulated {
                 clock_v1::Exception::UnreachableRate { hz: uart_hz }
             ))
         );
-        assert_eq!(clock.rate(PWM_CLOCK), Ok(PWM_CLOCK_HZ));
+        assert_eq!(clock.rate(PWM_CLOCK), Ok(pwm_clock_hz));
         trace!(
             trace,
-            "audio: clock_v1 refused clock {pcm_clock} and {uart_hz} Hz; the PWM clock still runs at {PWM_CLOCK_HZ} Hz"
+            "audio: clock_v1 refused clock {pcm_clock} and {uart_hz} Hz; the PWM clock still runs at {pwm_clock_hz} Hz"
         );
         trace!(
             trace,
@@ -1065,7 +1086,7 @@ mod emulated {
 
     /// Nanoseconds of one period at the output rate.
     fn period_ns() -> u64 {
-        PERIOD_FRAMES as u64 * 1_000_000_000_000 / sample_rate_millihertz(PWM_CLOCK_HZ, RANGE)
+        PERIOD_FRAMES as u64 * 1_000_000_000_000 / timing().sample_rate_millihertz()
     }
 
     impl<'dma> Capture<'dma> {
@@ -1141,14 +1162,16 @@ mod emulated {
             let mut expected = [[0_u32; 2]; PERIOD_FRAMES];
             match content {
                 Content::RampUp => {
-                    ramp_up(&mut expected, RANGE);
+                    ramp_up(&mut expected, timing().range);
                     self.tally.ramp_up += 1;
                 }
                 Content::Stream { first, frames } => {
                     let filled = ring.frames(slot);
                     if self.check.is_none() && frames > 0 {
                         self.check = Some(
-                            if first == 0 && starts_with_test_pattern(filled, frames, RANGE) {
+                            if first == 0
+                                && starts_with_test_pattern(filled, frames, timing().range)
+                            {
                                 StreamCheck::Pattern
                             } else {
                                 StreamCheck::AsFilled
@@ -1156,20 +1179,20 @@ mod emulated {
                         );
                     }
                     if self.check == Some(StreamCheck::Pattern) {
-                        expected_stream_period(&mut expected, first, frames, RANGE);
+                        expected_stream_period(&mut expected, first, frames, timing().range);
                     } else {
                         // The client's frames as the stream converted them,
                         // then silence.
                         let client_frames = frames.min(PERIOD_FRAMES);
                         expected[..client_frames].copy_from_slice(&filled[..client_frames]);
-                        expected[client_frames..].fill(silent_frame(RANGE));
+                        expected[client_frames..].fill(silent_frame(timing().range));
                     }
                     self.tally.stream += 1;
                     self.tally.client_frames += frames as u64;
                     if frames < PERIOD_FRAMES {
                         self.tally.silent += 1;
                     }
-                    if is_audible(&expected[..frames.min(PERIOD_FRAMES)], RANGE) {
+                    if is_audible(&expected[..frames.min(PERIOD_FRAMES)], timing().range) {
                         self.tally.audible += 1;
                         if self.check == Some(StreamCheck::AsFilled)
                             && self.tally.audible.is_power_of_two()

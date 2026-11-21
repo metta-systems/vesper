@@ -14,6 +14,9 @@ dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
 [pi4]
 start_x=1
 gpu_mem=128
-dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4
+# The jack is on PWM1 here (GPIO 40 and 41 on ALT0 are PWM1_0 and PWM1_1,
+# BCM2711 ARM Peripherals, section 5.3): the firmware's `pwm1` overlay enables
+# `pwm@7e20c800` with those pins, unpulled like the tree's own audio_pins.
+dtoverlay=pwm1,pins_40_41,pull_off
 
 [all]

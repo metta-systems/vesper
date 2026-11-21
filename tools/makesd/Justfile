@@ -33,7 +33,7 @@ pull-firmware:
         curl -fL --retry 3 "$BASE/$file" -o "boot/$file" || exit 1
     done
 
-    for file in disable-bt.dtbo pwm-2chan.dtbo
+    for file in disable-bt.dtbo pwm-2chan.dtbo pwm1.dtbo
     do
         curl -fL --retry 3 "$BASE/overlays/$file" \
             -o "boot/overlays/$file" || exit 1

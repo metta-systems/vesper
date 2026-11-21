@@ -4,9 +4,9 @@
 mod tests {
     use audio_pwm_bcm2835::{
         Control, DmaConfig, MEMORY_DREQ, PERIOD_BYTES, PERIOD_FRAMES, PERIODS, PWM_CLOCK_HZ,
-        PWM_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status, Tone, clear_errors,
-        clearing, deviation_ppm, dma_feed, fifo_stereo, has_errors, measured_rate_millihertz,
-        sample_rate_millihertz, side_frame, word,
+        PWM_DREQ, PWM1_DREQ, RANGE, RATE_TOLERANCE_PPM, RegisterBlock, SINE, Side, Status, TIMINGS,
+        Timing, Tone, clear_errors, clearing, deviation_ppm, dma_feed, fifo_stereo, has_errors,
+        measured_rate_millihertz, pwm_dreq, sample_rate_millihertz, side_frame, word,
     };
 
     #[test]
@@ -69,6 +69,38 @@ mod tests {
     #[test]
     fn the_rate_is_44092_hz() {
         assert_eq!(sample_rate_millihertz(PWM_CLOCK_HZ, RANGE), 44_091_710);
+    }
+
+    /// PWM0 (the BCM2835's one block, and the BCM2711's first) is DREQ 5; the
+    /// BCM2711's PWM1, half a page above it, is DREQ 1 (BCM2711 ARM
+    /// Peripherals, §8 and §8.6). The register start may be a bus or a CPU
+    /// address: only its place in the page counts.
+    #[test]
+    fn each_pwm_block_has_its_dma_request_line() {
+        assert_eq!(pwm_dreq(0x7e20_c000), PWM_DREQ);
+        assert_eq!(pwm_dreq(0x3f20_c000), PWM_DREQ);
+        assert_eq!(pwm_dreq(0x7e20_c800), PWM1_DREQ);
+        assert_eq!(pwm_dreq(0xfe20_c800), PWM1_DREQ);
+        assert_eq!((PWM_DREQ, PWM1_DREQ), (5, 1));
+    }
+
+    /// The Raspberry Pi 3's D4 timing first; the Raspberry Pi 4's 54 MHz
+    /// oscillator over 1225 next, within 0.1 % of the first rate so a client
+    /// rendering at it plays at nearly the same pitch.
+    #[test]
+    fn each_timing_gives_about_44092_hz() {
+        assert_eq!(
+            TIMINGS[0],
+            Timing {
+                clock_hz: PWM_CLOCK_HZ,
+                range: RANGE
+            }
+        );
+        assert_eq!(TIMINGS[1].clock_hz, 54_000_000);
+        assert_eq!(TIMINGS[1].sample_rate_millihertz(), 44_081_632);
+        for timing in TIMINGS {
+            assert!(deviation_ppm(timing.sample_rate_millihertz(), 44_091_710) <= 250);
+        }
     }
 
     #[test]

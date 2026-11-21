@@ -5,7 +5,7 @@ mod tests {
     use {
         arbitrary_int::u12,
         cprman_bcm2835::{
-            ClockControl, ClockDivisor, ClockSource, Generator, Mash, PASSWORD, PWM_CLOCK,
+            Chip, ClockControl, ClockDivisor, ClockSource, Generator, Mash, PASSWORD, PWM_CLOCK,
             PwmGenerator, RegisterBlock, Setting, StillBusy, choose, program, rate, stop,
         },
     };
@@ -18,21 +18,21 @@ mod tests {
     #[test]
     fn the_design_rates_have_integer_divisors() {
         assert_eq!(
-            choose(100_000_000),
+            choose(Chip::Bcm2835, 100_000_000),
             Some(Setting {
                 source: ClockSource::PlldPer,
                 divisor: 5
             })
         );
         assert_eq!(
-            choose(19_200_000),
+            choose(Chip::Bcm2835, 19_200_000),
             Some(Setting {
                 source: ClockSource::Oscillator,
                 divisor: 1
             })
         );
         assert_eq!(
-            choose(250_000_000),
+            choose(Chip::Bcm2835, 250_000_000),
             Some(Setting {
                 source: ClockSource::PlldPer,
                 divisor: 2
@@ -40,27 +40,66 @@ mod tests {
         );
         // The device tree's default PWM rate.
         assert_eq!(
-            choose(10_000_000).map(|setting| setting.hz()),
+            choose(Chip::Bcm2835, 10_000_000).map(|setting| setting.hz(Chip::Bcm2835)),
             Some(10_000_000)
+        );
+    }
+
+    /// The BCM2711's only source of known rate is its 54 MHz oscillator (audio
+    /// decision, 2026-11-21): the Raspberry Pi 4's PWM clock runs from it
+    /// undivided, and PLLD per is never picked there.
+    #[test]
+    fn the_bcm2711_divides_its_54_mhz_oscillator_only() {
+        assert_eq!(Chip::from_compatible_index(0), Some(Chip::Bcm2835));
+        assert_eq!(Chip::from_compatible_index(1), Some(Chip::Bcm2711));
+        assert_eq!(Chip::from_compatible_index(2), None);
+        assert_eq!(
+            choose(Chip::Bcm2711, 54_000_000),
+            Some(Setting {
+                source: ClockSource::Oscillator,
+                divisor: 1
+            })
+        );
+        assert_eq!(
+            choose(Chip::Bcm2711, 27_000_000).map(|setting| setting.hz(Chip::Bcm2711)),
+            Some(27_000_000)
+        );
+        // 100 MHz (the Raspberry Pi 3's PWM clock) is above the oscillator.
+        assert_eq!(choose(Chip::Bcm2711, 100_000_000), None);
+        assert_eq!(ClockSource::PlldPer.hz(Chip::Bcm2711), None);
+        let control = ClockControl::ZERO
+            .with_source(ClockSource::Oscillator)
+            .with_enable(true);
+        let divisor = ClockDivisor::ZERO.with_integer(u12::new(1));
+        assert_eq!(rate(Chip::Bcm2711, control, divisor), 54_000_000);
+        assert_eq!(rate(Chip::Bcm2835, control, divisor), 19_200_000);
+        assert_eq!(
+            rate(
+                Chip::Bcm2711,
+                control.with_source(ClockSource::PlldPer),
+                divisor
+            ),
+            0,
+            "PLLD per's rate is unknown on the BCM2711"
         );
     }
 
     #[test]
     fn rates_no_integer_divisor_reaches_are_refused() {
-        assert_eq!(choose(0), None);
+        assert_eq!(choose(Chip::Bcm2835, 0), None);
         // 500 MHz / 10 and / 11 miss 48 MHz by 4 % and 5 %, the oscillator by far.
-        assert_eq!(choose(48_000_000), None);
+        assert_eq!(choose(Chip::Bcm2835, 48_000_000), None);
         // Above every source.
-        assert_eq!(choose(600_000_000), None);
+        assert_eq!(choose(Chip::Bcm2835, 600_000_000), None);
         // Below 19.2 MHz / 4095 nothing divides far enough.
-        assert_eq!(choose(1_000), None);
+        assert_eq!(choose(Chip::Bcm2835, 1_000), None);
     }
 
     #[test]
     fn the_chosen_rate_is_within_a_thousandth() {
         for hz in (1_000_000..=125_000_000).step_by(997_331) {
-            if let Some(setting) = choose(hz) {
-                assert!(u64::from(setting.hz().abs_diff(hz)) * 1000 <= u64::from(hz));
+            if let Some(setting) = choose(Chip::Bcm2835, hz) {
+                assert!(u64::from(setting.hz(Chip::Bcm2835).abs_diff(hz)) * 1000 <= u64::from(hz));
                 assert!((1..=4095).contains(&setting.divisor));
             }
         }
@@ -72,18 +111,33 @@ mod tests {
             .with_source(ClockSource::PlldPer)
             .with_enable(true);
         let divisor = ClockDivisor::ZERO.with_integer(u12::new(5));
-        assert_eq!(rate(control, divisor), 100_000_000);
-        assert_eq!(rate(control.with_enable(false), divisor), 0, "stopped");
+        assert_eq!(rate(Chip::Bcm2835, control, divisor), 100_000_000);
         assert_eq!(
-            rate(control.with_source(ClockSource::PllcPer), divisor),
+            rate(Chip::Bcm2835, control.with_enable(false), divisor),
+            0,
+            "stopped"
+        );
+        assert_eq!(
+            rate(
+                Chip::Bcm2835,
+                control.with_source(ClockSource::PllcPer),
+                divisor
+            ),
             0,
             "a source of unknown rate"
         );
-        assert_eq!(rate(control, ClockDivisor::ZERO), 0, "no divisor");
+        assert_eq!(
+            rate(Chip::Bcm2835, control, ClockDivisor::ZERO),
+            0,
+            "no divisor"
+        );
         // The fraction counts with a MASH divider only: 5.5 gives 90.9 MHz.
         let half = divisor.with_fraction(u12::new(2048));
-        assert_eq!(rate(control, half), 100_000_000);
-        assert_eq!(rate(control.with_mash(Mash::OneStage), half), 90_909_090);
+        assert_eq!(rate(Chip::Bcm2835, control, half), 100_000_000);
+        assert_eq!(
+            rate(Chip::Bcm2835, control.with_mash(Mash::OneStage), half),
+            90_909_090
+        );
     }
 
     #[test]
@@ -163,7 +217,7 @@ mod tests {
     fn program_follows_the_datasheet_sequence() {
         let mut generator = Recorder::running();
         let mut waits = 0;
-        let setting = choose(100_000_000).unwrap();
+        let setting = choose(Chip::Bcm2835, 100_000_000).unwrap();
         program(&mut generator, setting, true, || {
             waits += 1;
             true
@@ -183,7 +237,7 @@ mod tests {
                 PASSWORD_BITS | 0x10 | 6,
             ]
         );
-        assert_eq!(generator.rate(), 100_000_000);
+        assert_eq!(generator.rate(Chip::Bcm2835), 100_000_000);
     }
 
     #[test]
@@ -199,9 +253,15 @@ mod tests {
     #[test]
     fn program_can_leave_the_generator_stopped() {
         let mut generator = Recorder::running();
-        program(&mut generator, choose(19_200_000).unwrap(), false, || true).unwrap();
+        program(
+            &mut generator,
+            choose(Chip::Bcm2835, 19_200_000).unwrap(),
+            false,
+            || true,
+        )
+        .unwrap();
         assert_eq!(generator.writes.last(), Some(&(PASSWORD_BITS | 1)));
-        assert_eq!(generator.rate(), 0);
+        assert_eq!(generator.rate(Chip::Bcm2835), 0);
     }
 
     #[test]
@@ -210,10 +270,15 @@ mod tests {
         generator.busy_reads = u32::MAX;
         let mut waits = 0;
         assert_eq!(
-            program(&mut generator, choose(100_000_000).unwrap(), true, || {
-                waits += 1;
-                waits < 10
-            }),
+            program(
+                &mut generator,
+                choose(Chip::Bcm2835, 100_000_000).unwrap(),
+                true,
+                || {
+                    waits += 1;
+                    waits < 10
+                }
+            ),
             Err(StillBusy)
         );
         assert_eq!(
@@ -236,7 +301,13 @@ mod tests {
             let mut registers =
                 unsafe { RegisterBlock::new_mmio(block.0.as_mut_ptr().cast::<RegisterBlock>()) };
             let mut generator = PwmGenerator(&mut registers);
-            program(&mut generator, choose(100_000_000).unwrap(), true, || true).unwrap();
+            program(
+                &mut generator,
+                choose(Chip::Bcm2835, 100_000_000).unwrap(),
+                true,
+                || true,
+            )
+            .unwrap();
         }
         assert_eq!(block.0[40], PASSWORD_BITS | 0x10 | 6, "CM_PWMCTL");
         assert_eq!(block.0[41], PASSWORD_BITS | (5 << 12), "CM_PWMDIV");

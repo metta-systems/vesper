@@ -401,9 +401,10 @@ boot-fp-test features='': (_build-fp-test boards features) chainofcommand
 _build-wood-test-hw board=boards: (_build-components board '' '') (_build-wood board '' '') (_build-test-kernel 'wood-test' board '')
 
 # Plug in a keyboard (and a mouse to move focus between windows), and headphones in the jack:
-# with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` in config.txt the audio driver loads
-# and Wood plays Doom's sound effects on the Raspberry Pi 3 (without it, and on the Raspberry Pi 4
-# and 5 until their gpio and clock manager are supported, Wood runs silent).
+# with `dtoverlay=pwm-2chan,pin=40,func=4,pin2=41,func2=4` (Raspberry Pi 3) or
+# `dtoverlay=pwm1,pins_40_41,pull_off` (Raspberry Pi 4) in config.txt, as tools/makesd/boot/config.txt
+# has them, the audio driver loads and Wood plays Doom's music and sound effects (without the
+# overlay, and on the Raspberry Pi 5, Wood runs silent).
 # Build wood-test for the board set and boot it via chainofcommand
 [group("hw")]
 boot-wood-test: _build-wood-test-hw chainofcommand
@@ -646,7 +647,7 @@ _firmware:
     makesd="{{ justfile_directory() / 'tools/makesd' }}"
     # pull-firmware fetches this overlay last and stops at the first failure,
     # so it is there only when every firmware file is.
-    if [ ! -f "$makesd/boot/overlays/pwm-2chan.dtbo" ]; then
+    if [ ! -f "$makesd/boot/overlays/pwm1.dtbo" ]; then
         "{{ just_executable() }}" -f "$makesd/Justfile" pull-firmware
     fi
 

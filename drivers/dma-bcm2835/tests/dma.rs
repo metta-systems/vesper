@@ -7,11 +7,11 @@ mod tests {
         arbitrary_int::{u4, u5},
         dma_bcm2835::{
             CHAIN_BYTES, CHANNELS, CONTROL_BLOCK_BYTES, ChainError, Channels, ControlBlock,
-            ControlStatus, DREQ_MEMORY, DREQ_PWM, DebugStatus, MAX_CHAIN_BLOCKS, MAX_LITE_LENGTH,
-            NODE_INTERRUPTS, PWM_FIFO_BUS, Position, TransferInformation, acknowledging,
-            channels_of_interrupt, clear_debug_errors, clearing_debug_errors, copy_chain,
-            error_bits, finished_blocks, interrupt_index, is_known_request, peripheral_address,
-            position, ring_chain, slot_address, starting,
+            ControlStatus, DREQ_MEMORY, DREQ_PWM, DREQ_PWM1, DebugStatus, MAX_CHAIN_BLOCKS,
+            MAX_LITE_LENGTH, NODE_INTERRUPTS, PWM_FIFO_BUS, Position, TransferInformation,
+            acknowledging, channels_of_interrupt, clear_debug_errors, clearing_debug_errors,
+            copy_chain, error_bits, finished_blocks, interrupt_index, is_known_request,
+            peripheral_address, position, ring_chain, slot_address, starting,
         },
     };
 
@@ -222,11 +222,16 @@ mod tests {
     }
 
     #[test]
-    fn only_memory_and_the_pwm_have_a_request_line() {
+    fn only_memory_and_the_pwm_blocks_have_a_request_line() {
         assert!(is_known_request(DREQ_MEMORY));
         assert!(is_known_request(DREQ_PWM));
+        assert!(is_known_request(DREQ_PWM1));
         assert_eq!(peripheral_address(DREQ_MEMORY), None, "memory has no FIFO");
-        for dreq in [1, 2, 3, 4, 6, 7, 13, 31, 32] {
+        // FIF1 at 0x18 of each block: PWM0 at 0x7e20c000, the BCM2711's PWM1
+        // at 0x7e20c800 (BCM2711 ARM Peripherals, §8.6).
+        assert_eq!(peripheral_address(DREQ_PWM), Some(0x7e20_c018));
+        assert_eq!(peripheral_address(DREQ_PWM1), Some(0x7e20_c818));
+        for dreq in [2, 3, 4, 6, 7, 13, 31, 32] {
             assert!(!is_known_request(dreq), "DREQ {dreq}");
         }
     }

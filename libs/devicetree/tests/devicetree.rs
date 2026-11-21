@@ -4,9 +4,10 @@
 mod tests {
     use vesper_devicetree::{
         BrcmPin, Cells, DevTreeIndex, DeviceTree, PropReader, Region, brcm_dma_channel_mask,
-        brcm_pins, bus_cells, dma_address, dump, find_compatible, interrupt_cells,
-        interrupt_parent, interrupt_specifier, is_compatible, is_enabled, is_interrupt_controller,
-        linked_phandle, node_by_phandle, phandle, property, reg, reg_cells, regions, translate,
+        brcm_pins, bus_cells, dma_address, dump, find_compatible, generic_function_code,
+        interrupt_cells, interrupt_parent, interrupt_specifier, is_compatible, is_enabled,
+        is_interrupt_controller, linked_phandle, node_by_phandle, phandle, property, reg,
+        reg_cells, regions, translate,
     };
 
     /// A DTB blob copied into u32-aligned storage, as `DevTree` requires.
@@ -427,6 +428,52 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[test]
+    fn rpi4_generic_pin_groups_route_the_jack_to_pwm1() {
+        for tree in [RPI4, RPI4_FIRMWARE] {
+            with_index(tree, |index| {
+                // `pwm1` links `pwm1_0_gpio40` and `pwm1_1_gpio41`, each with a
+                // `pin-pwm` child: `pins = "gpio40"; function = "alt0";
+                // bias-disable;` (BCM2711 ARM Peripherals, section 5.3: GPIO 40
+                // and 41 ALT0 are PWM1_0 and PWM1_1).
+                let pwm1 = index
+                    .nodes()
+                    .find(|node| node.name() == Ok("pwm@7e20c800"))
+                    .expect("pwm1");
+                assert_eq!(
+                    brcm_pins(index, &pwm1).collect::<Vec<_>>(),
+                    [
+                        BrcmPin {
+                            pin: 40,
+                            function: 4,
+                            pull: Some(0),
+                        },
+                        BrcmPin {
+                            pin: 41,
+                            function: 4,
+                            pull: Some(0),
+                        },
+                    ]
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn generic_function_names_are_the_select_codes() {
+        let names = [
+            "gpio_in", "gpio_out", "alt5", "alt4", "alt0", "alt1", "alt2", "alt3",
+        ];
+        for (code, name) in names.into_iter().enumerate() {
+            assert_eq!(
+                generic_function_code(name),
+                u32::try_from(code).ok(),
+                "{name}"
+            );
+        }
+        assert_eq!(generic_function_code("alt6"), None);
     }
 
     #[test]

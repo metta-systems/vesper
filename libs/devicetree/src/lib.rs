@@ -401,10 +401,15 @@ pub struct BrcmPin {
     pub pull: Option<u32>,
 }
 
-/// The pins `node`'s default pin state (`pinctrl-0`) sets up, in the
-/// Broadcom pin controller binding: each linked group's `brcm,pins`, with its
-/// `brcm,function` and optional `brcm,pull`, each one value for every pin or
-/// one per pin.
+/// The pins `node`'s default pin state (`pinctrl-0`) sets up, from the
+/// Broadcom pin controller's two bindings:
+///
+/// - each linked group's `brcm,pins`, with its `brcm,function` and optional
+///   `brcm,pull`, each one value for every pin or one per pin (the BCM2835
+///   trees);
+/// - the generic pin configuration (the BCM2711 trees): the group node and
+///   each of its children may name `pins` (`"gpio40"`, ...) with a `function`
+///   (`"alt0"`, ...) and a `bias-disable`, `bias-pull-down` or `bias-pull-up`.
 pub fn brcm_pins<'a, 'i: 'a, 'dt: 'i>(
     tree: &'a DevTreeIndex<'i, 'dt>,
     node: &Node<'a, 'i, 'dt>,
@@ -416,27 +421,83 @@ pub fn brcm_pins<'a, 'i: 'a, 'dt: 'i>(
     (0..group_count)
         .filter_map(move |index| groups.as_ref()?.u32(index).ok())
         .filter_map(move |group| node_by_phandle(tree, group))
-        .flat_map(|group| {
-            let pins = property(&group, "brcm,pins");
-            let functions = property(&group, "brcm,function");
-            let pulls = property(&group, "brcm,pull");
+        .flat_map(|group| brcm_binding_pins(&group).chain(generic_pins(&group)))
+}
+
+/// The function select code a generic pin configuration's `function` names
+/// (the Broadcom pin controller binding: `gpio_in`, `gpio_out`, `alt0` to
+/// `alt5`).
+#[must_use]
+pub fn generic_function_code(function: &str) -> Option<u32> {
+    match function {
+        "gpio_in" => Some(0),
+        "gpio_out" => Some(1),
+        "alt0" => Some(4),
+        "alt1" => Some(5),
+        "alt2" => Some(6),
+        "alt3" => Some(7),
+        "alt4" => Some(3),
+        "alt5" => Some(2),
+        _ => None,
+    }
+}
+
+/// The pins of `group` in the generic pin configuration: its own `pins` and
+/// each child's.
+fn generic_pins<'a, 'i: 'a, 'dt: 'i>(
+    group: &Node<'a, 'i, 'dt>,
+) -> impl Iterator<Item = BrcmPin> + use<'a, 'i, 'dt> {
+    core::iter::once(group.clone())
+        .chain(group.children())
+        .flat_map(|config| {
+            let function = property(&config, "function")
+                .and_then(|prop| prop.str().ok())
+                .and_then(generic_function_code);
+            let pull = [
+                ("bias-disable", 0),
+                ("bias-pull-down", 1),
+                ("bias-pull-up", 2),
+            ]
+            .into_iter()
+            .find_map(|(name, code)| property(&config, name).map(|_| code));
+            let pins = property(&config, "pins");
             let pin_count = pins
                 .as_ref()
-                .map_or(0, |prop| prop.length() / size_of::<u32>());
-            // A per-pin property with a single value applies it to every pin.
-            let value_of = |prop: &Option<Prop<'a, 'i, 'dt>>, index: usize| {
-                let prop = prop.as_ref()?;
-                let shared = prop.length() == size_of::<u32>();
-                prop.u32(if shared { 0 } else { index }).ok()
-            };
+                .map_or(0, |prop| prop.iter_str().count().unwrap_or(0));
             (0..pin_count).filter_map(move |index| {
+                let name = pins.as_ref()?.iter_str().nth(index).ok()??;
                 Some(BrcmPin {
-                    pin: pins.as_ref()?.u32(index).ok()?,
-                    function: value_of(&functions, index)?,
-                    pull: value_of(&pulls, index),
+                    pin: name.strip_prefix("gpio")?.parse().ok()?,
+                    function: function?,
+                    pull,
                 })
             })
         })
+}
+
+/// The pins of `group` in the `brcm,pins` binding.
+fn brcm_binding_pins<'a, 'i: 'a, 'dt: 'i>(
+    group: &Node<'a, 'i, 'dt>,
+) -> impl Iterator<Item = BrcmPin> + use<'a, 'i, 'dt> {
+    let pins = property(group, "brcm,pins");
+    let functions = property(group, "brcm,function");
+    let pulls = property(group, "brcm,pull");
+    let pin_count = pins
+        .as_ref()
+        .map_or(0, |prop| prop.length() / size_of::<u32>());
+    // A per-pin property with a single value applies it to every pin.
+    let value_of = |prop: &Option<Prop<'a, 'i, 'dt>>, index: usize| {
+        let prop = prop.as_ref()?;
+        let shared = prop.length() == size_of::<u32>();
+        prop.u32(if shared { 0 } else { index }).ok()
+    };
+    (0..pin_count).filter_map(move |index| {
+        Some(BrcmPin {
+            pin: pins.as_ref()?.u32(index).ok()?,
+            function: value_of(&functions, index)?,
+            pull: value_of(&pulls, index),
+        })
+    })
 }
 
 /// The node in `tree` whose `phandle` property equals `phandle`.
