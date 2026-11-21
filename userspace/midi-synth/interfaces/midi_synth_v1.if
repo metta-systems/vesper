@@ -23,6 +23,11 @@
 ## - 4, pause and 5, resume: while paused, rendered frames are silent and the
 ##   song holds its place.
 ## - 6, volume: bits 8 to 15 are the music volume, 0 to 127 (127 at start).
+## - 7, engine: bits 8 to 15 choose the voice engine new notes start on, 0
+##   integer, 1 f64; voices already sounding keep theirs. Only the `fp-mode`
+##   synthesiser (`midi-synth-fp`, an FP component) has the f64 engine, and
+##   starts on it; elsewhere 1 is refused. A new client finds the
+##   synthesiser's starting engine.
 ##
 ## A command without data still names one record (an empty one will do). Bits
 ## 16 and up are the client's own, handed back unchanged with the packet. A

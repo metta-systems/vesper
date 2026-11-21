@@ -36,16 +36,16 @@ pub const OUTPUT_RATE: Rate = Rate {
 /// Attenuation at and past which a voice is silent, in centibels (96 dB).
 pub const SILENT_CENTIBELS: u32 = 960;
 
-/// `value * 2^(cents / 1200)`, rounded, for `value` below 2^32.
+/// `value * 2^(cents / 1200)`, rounded, saturating at `u64::MAX`.
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "callers keep the result within u64 by their ranges"
+    reason = "the result is clamped to u64::MAX first"
 )]
 pub fn scale_by_cents(value: u64, cents: i32) -> u64 {
     let octave = cents.div_euclid(1200);
     let within = usize::try_from(cents.rem_euclid(1200)).unwrap_or(0);
-    // value < 2^32 and the ratio < 2^31: the product fits 63 bits.
+    // value < 2^64 and the ratio < 2^31: the product fits 95 bits.
     let scaled = u128::from(value) * u128::from(CENT_RATIOS_Q30[within]);
     let shift = 30 - octave;
     let result = if shift >= 0 {
@@ -65,12 +65,9 @@ pub fn phase_step(sample_rate: u32, cents: i32, output: Rate) -> u64 {
     let ratio = ((u128::from(sample_rate) * u128::from(output.denominator)) << 32)
         / u128::from(output.numerator.max(1));
     let ratio = u64::try_from(ratio).unwrap_or(u64::MAX);
-    // Keep the multiplicand below 2^32 by splitting off the whole part.
-    let whole = ratio >> 32;
-    let fraction = ratio & 0xffff_ffff;
-    scale_by_cents(whole, cents)
-        .saturating_mul(1 << 32)
-        .saturating_add(scale_by_cents(fraction, cents))
+    // The whole 32.32 ratio is scaled at once: scaling its whole part on its
+    // own rounds away every pitch change below an octave.
+    scale_by_cents(ratio, cents)
         // Beyond 2^38 (64 times the sample rate) nothing sensible is left.
         .min(1 << 38)
 }

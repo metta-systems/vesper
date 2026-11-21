@@ -6,10 +6,13 @@ use {
         bank::{Bank, PERCUSSION_BANK},
         channel::Channel,
         tables::Rate,
-        voice::{NoteStart, Voice},
+        voice::{Engine, Mix, NoteStart, Voice},
     },
     core::{array, mem},
 };
+
+#[cfg(feature = "fp-mode")]
+use crate::float;
 
 /// Voices that can sound at once. Doom's shareware tracks hold at most 15
 /// notes; the rest is for release tails and layered zones.
@@ -46,6 +49,8 @@ pub struct Synth<'a> {
     master_volume: i32,
     /// Frames since the last point of the block grid.
     grid_phase: usize,
+    /// The engine new notes start on.
+    engine: Engine,
 }
 
 impl<'a> Synth<'a> {
@@ -60,9 +65,22 @@ impl<'a> Synth<'a> {
             serial: 0,
             master_volume: 1 << 16,
             grid_phase: 0,
+            engine: Engine::Integer,
         };
         synth.reset();
         synth
+    }
+
+    /// The engine new notes start on.
+    #[must_use]
+    pub const fn engine(&self) -> Engine {
+        self.engine
+    }
+
+    /// Start new notes on `engine`; the voices sounding keep theirs. Without
+    /// `fp-mode` the integer engine is the only one.
+    pub const fn set_engine(&mut self, engine: Engine) {
+        self.engine = engine;
     }
 
     /// The bank.
@@ -210,6 +228,7 @@ impl<'a> Synth<'a> {
             rate,
             voices,
             serial,
+            engine,
             ..
         } = self;
         let points = u32::try_from(bank.font().sample_points()).unwrap_or(u32::MAX);
@@ -227,7 +246,7 @@ impl<'a> Synth<'a> {
                     sample,
                 };
                 *serial += 1;
-                let voice = Voice::new(&start, *rate, points, *serial);
+                let voice = Voice::new(&start, *rate, points, *serial, *engine);
                 if voice.exclusive_class != 0 {
                     for other in voices.iter_mut().flatten() {
                         if other.channel == channel
@@ -247,14 +266,15 @@ impl<'a> Synth<'a> {
     /// volume applied, not clipped) to `out`.
     pub fn mix(&mut self, mut out: &mut [i32]) {
         // Zeroed once: each block's samples are taken out as they are used.
-        let mut block = [0_i32; 2 * BLOCK_FRAMES];
+        let mut block = Block::new();
         while out.len() >= 2 {
             let frames = self.frames_to_boundary().min(out.len() / 2);
             let (chunk, rest) = out.split_at_mut(2 * frames);
-            let block = &mut block[..2 * frames];
-            self.render_voices(block);
-            for (sample, rendered) in chunk.iter_mut().zip(block.iter_mut()) {
-                *sample += self.scale(mem::take(rendered));
+            let float_used = self.render_voices(&mut block, frames);
+            for (frame_out, frame) in chunk.as_chunks_mut::<2>().0.iter_mut().zip(0..frames) {
+                let [left, right] = self.take_frame(&mut block, frame, float_used);
+                frame_out[0] += left;
+                frame_out[1] += right;
             }
             out = rest;
         }
@@ -263,21 +283,39 @@ impl<'a> Synth<'a> {
     /// Render `out.len() / 2` frames into `out` (interleaved stereo s16).
     pub fn render(&mut self, mut out: &mut [i16]) {
         // Zeroed once: each block's samples are taken out as they are used.
-        let mut block = [0_i32; 2 * BLOCK_FRAMES];
+        let mut block = Block::new();
         while out.len() >= 2 {
             let frames = self.frames_to_boundary().min(out.len() / 2);
             let (chunk, rest) = out.split_at_mut(2 * frames);
-            let block = &mut block[..2 * frames];
-            self.render_voices(block);
+            let float_used = self.render_voices(&mut block, frames);
             // A frame at a time: one load, zeroing and loop step per pair.
-            let frames_out = chunk.as_chunks_mut::<2>().0.iter_mut();
-            for ([left, right], rendered) in frames_out.zip(block.as_chunks_mut::<2>().0) {
-                let [rendered_left, rendered_right] = mem::take(rendered);
-                *left = clip(self.scale(rendered_left));
-                *right = clip(self.scale(rendered_right));
+            for (frame_out, frame) in chunk.as_chunks_mut::<2>().0.iter_mut().zip(0..frames) {
+                let [left, right] = self.take_frame(&mut block, frame, float_used);
+                *frame_out = [clip(left), clip(right)];
             }
             out = rest;
         }
+    }
+
+    /// Frame `frame` of `block`, master volume applied, leaving zeros
+    /// behind; the f64 engine's part only when `float_used`.
+    #[inline(always)]
+    #[cfg_attr(
+        not(feature = "fp-mode"),
+        expect(unused_variables, reason = "only the float engine adds to the block")
+    )]
+    fn take_frame(&self, block: &mut Block, frame: usize, float_used: bool) -> [i32; 2] {
+        let [left, right] = mem::take(&mut block.integer[frame]);
+        let scaled = [self.scale(left), self.scale(right)];
+        #[cfg(feature = "fp-mode")]
+        if float_used {
+            let [left, right] = mem::replace(&mut block.float[frame], float::SILENT_FRAME);
+            return [
+                scaled[0] + float::scale(left, self.master_volume, MASTER_SHIFT),
+                scaled[1] + float::scale(right, self.master_volume, MASTER_SHIFT),
+            ];
+        }
+        scaled
     }
 
     /// Frames from now to the next point of the block grid.
@@ -293,12 +331,19 @@ impl<'a> Synth<'a> {
         ((i64::from(rendered) * i64::from(self.master_volume)) >> (16 + MASTER_SHIFT)) as i32
     }
 
-    /// Add every voice into `block` (which the caller zeroed; at most the
-    /// frames to the next grid point) and free the voices that finished.
-    fn render_voices(&mut self, block: &mut [i32]) {
-        let frames = block.len() / 2;
+    /// Add every voice into the first `frames` frames of `block` (which the
+    /// caller zeroed; at most the frames to the next grid point) and free the
+    /// voices that finished. Whether an f64 voice added to it.
+    fn render_voices(&mut self, block: &mut Block, frames: usize) -> bool {
         let until_boundary = u32::try_from(self.frames_to_boundary()).unwrap_or(0);
         let count = u32::try_from(frames).unwrap_or(0);
+        let mut mix = Mix {
+            integer: block.integer[..frames].as_flattened_mut(),
+            #[cfg(feature = "fp-mode")]
+            float: &mut block.float[..frames],
+            #[cfg(feature = "fp-mode")]
+            float_used: false,
+        };
         for slot in &mut self.voices {
             if let Some(voice) = slot {
                 let channel = &self.channels[usize::from(voice.channel) % CHANNELS];
@@ -306,7 +351,7 @@ impl<'a> Synth<'a> {
                     self.bank.font(),
                     channel,
                     self.rate,
-                    block,
+                    &mut mix,
                     count,
                     until_boundary,
                 );
@@ -316,6 +361,28 @@ impl<'a> Synth<'a> {
             }
         }
         self.grid_phase = (self.grid_phase + frames) % BLOCK_FRAMES;
+        #[cfg(feature = "fp-mode")]
+        return mix.float_used;
+        #[cfg(not(feature = "fp-mode"))]
+        false
+    }
+}
+
+/// The accumulators of one block of frames: the integer engine's, and with
+/// `fp-mode` the f64 engine's beside it.
+struct Block {
+    integer: [[i32; 2]; BLOCK_FRAMES],
+    #[cfg(feature = "fp-mode")]
+    float: [float::Frame; BLOCK_FRAMES],
+}
+
+impl Block {
+    const fn new() -> Self {
+        Self {
+            integer: [[0; 2]; BLOCK_FRAMES],
+            #[cfg(feature = "fp-mode")]
+            float: [float::SILENT_FRAME; BLOCK_FRAMES],
+        }
     }
 }
 

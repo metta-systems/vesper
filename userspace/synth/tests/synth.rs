@@ -78,6 +78,18 @@ mod tests {
         // A sample at the output rate played at its root steps one point.
         assert_eq!(phase_step(44_100, 0, Rate::hz(44_100)), 1 << 32);
         assert_eq!(phase_step(22_050, 1200, Rate::hz(44_100)), 1 << 32);
+        // Pitches between octaves, with a whole part of one point per frame:
+        // round(2^32 * 2^(cents/1200)), to within the Q30 table's rounding.
+        // A whole part scaled on its own used to round them all to the root.
+        for (cents, expected) in [
+            (100, 4_550_359_342),
+            (700, 6_435_179_895),
+            (-100, 4_053_909_305),
+            (-1300, 2_026_954_652),
+        ] {
+            let step = phase_step(44_100, cents, Rate::hz(44_100));
+            assert!(step.abs_diff(expected) <= 4, "{cents} cents: {step}");
+        }
     }
 
     #[test]
@@ -672,12 +684,17 @@ mod tests {
 
     /// No floating point in the library's source: no `f32`/`f64` and no
     /// float literal outside comments (the tables are built by `build.rs`).
+    /// The one exception is `float.rs`, the f64 engine, compiled only with
+    /// `fp-mode`: the other files name its types through it.
     #[test]
     fn library_source_has_no_floating_point() {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut checked = 0;
         for entry in fs::read_dir(source).unwrap() {
             let path = entry.unwrap().path();
+            if path.file_name().is_some_and(|name| name == "float.rs") {
+                continue;
+            }
             let text = fs::read_to_string(&path).unwrap();
             for (number, line) in text.lines().enumerate() {
                 let code = line.split("//").next().unwrap();

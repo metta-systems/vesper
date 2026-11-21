@@ -52,7 +52,12 @@ S1 to S4 are plain eager save and restore. S5 starts only after their statistics
 been measured on the board.
 
 - [ ] Measure the eager baseline with the FP statistics (from S1 and S2) on a
-  representative FP workload, and record the numbers.
+  representative FP workload, and record the numbers. The workload is `midi-synth-fp`,
+  the MIDI synthesiser with its f64 engine (audio decision D9.7): `_test-midi-fp` in QEMU,
+  midi-test with the `fp-mode` feature on the board. On its integer engine (the engine
+  packet) the same component is an FP AddressSpace that does little or no FP, the case
+  the decaying flag is for; how little depends on what the compiler vectorized in its
+  integer code, to be checked when this is measured.
 - [ ] The usage flag with a decaying budget, and the first-use trap that comes with
   it, as the design's "Later" section describes.
   - The owed state is written into `Thread.fp` before the trap.

@@ -112,6 +112,16 @@ fn start(init: &DriverInit, slot: u32) -> Result<Session<'static>, &'static str>
         bank.font().instrument_count(),
         bank.font().sample_count()
     ));
+    // The fp-mode component (audio decision D9.7) starts on the f64 engine;
+    // a client can switch with an engine packet.
+    #[cfg(feature = "fp-mode")]
+    {
+        note(format_args!(
+            "midi-synth: f64 engine (fp-mode), integer on request"
+        ));
+        Ok(Session::with_engine(bank, vesper_synth::Engine::Float))
+    }
+    #[cfg(not(feature = "fp-mode"))]
     Ok(Session::new(bank))
 }
 

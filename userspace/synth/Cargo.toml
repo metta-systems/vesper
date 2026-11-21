@@ -1,7 +1,7 @@
 [package]
 name = "vesper-synth"
 
-description = "Integer SoundFont 2 wavetable synthesiser and Standard MIDI File sequencer for Wood's music on Vesper: no_std + alloc, no floating point."
+description = "SoundFont 2 wavetable synthesiser and Standard MIDI File sequencer for Wood's music on Vesper: no_std + alloc, integer, with an f64 engine behind the fp-mode feature."
 
 authors = { workspace = true }
 categories = { workspace = true }
@@ -20,6 +20,12 @@ default = []
 # Opt in to the host integration tests. The tests on Doom's music (the IWAD
 # and the SC-55 bank) are in vesper-doom's Room: `just test-music` there.
 host-tests = []
+# The f64 engine beside the integer one (audio decision D9.7), chosen at run
+# time with `Synth::set_engine`. Without it the crate holds no floating point.
+fp-mode = ["dep:libm"]
+
+[dependencies]
+libm = { workspace = true, optional = true }
 
 [[test]]
 name = "synth"

@@ -20,6 +20,9 @@ debug_kernel = ["kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject
 # block waiting for JTAG probe attach at the start of kernel main.
 jtag = ["kickstart/jtag"]
 noserial = []
+# Bundle the MIDI synthesiser with the f64 engine (`midi-synth-fp`, an FP
+# component) instead of the integer one: `just _test-midi-fp`.
+fp-mode = []
 # Build for running under QEMU with semihosting, so various halt/reboot options would for example quit QEMU instead.
 qemu = [
   "kickstart/qemu",

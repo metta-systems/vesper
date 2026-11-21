@@ -5422,6 +5422,9 @@ version = "0.0.1"
 [[package]]
 name = "vesper-synth"
 version = "0.0.1"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "vesper-syscalls"
