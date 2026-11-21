@@ -42,33 +42,26 @@ use {
         ROLE_INTEGER, STACK_REGION, TRAPPED_BIT, probe, trapped,
     },
     kickstart::{
-        bootstrap::{bootstrap_nucleus, retained_init_memory},
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        builder::Builder,
         component::ttbr,
-        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
+        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor},
         loader::{verify_component, write_init},
-        paging::{PAGE, find_leaf, image_table_count},
+        paging::{PAGE, find_leaf},
     },
     libkicktest::threads,
-    libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
-        address_space::AddressSpaceKey,
-    },
+    libobject::{KeySlot, NotificationKey, ObjectType, Rights, address_space::AddressSpaceKey},
     libqemu::semihosting as semi,
     nucleus::objects::{ArchObjectsImpl, KeyTable, Nucleus, arch_objects::AddressSpaceObject},
 };
 
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 const PROBE_GUARD: u32 = 0x0F_9701;
 const FP_PROBE_GUARD: u32 = 0x0F_9702;
 /// Pages in each probe stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
-/// Headroom the fault handler's Invocation requires below its SP.
-/// Fixture boot-table slots start clear of the well-known bootstrap slots.
-const FIRST_FIXTURE_SLOT: u32 = 64;
 /// Where the probe finds its Notification key.
 const PROBE_NOTIFICATION_SLOT: u32 = 5;
 
@@ -92,44 +85,18 @@ pub fn run() -> ! {
     semi::println!("FP/SIMD instruction trapped at EL1t");
 
     // ── EL0: the probe component in its own AddressSpace ──────────────────
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
-
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    let builder_ttbr = ttbr(nucleus, builder_as);
-    verify_retained_image(&retained, &[builder_ttbr]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
-    assert_eq!(TTBR0_EL1.get(), builder_ttbr);
+    let mut boot = BootObjects::bootstrap();
+    let BootImage {
+        nucleus,
+        boot_as_id: builder_as,
+        keys,
+        builder,
+        mut slots,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
+    assert_eq!(TTBR0_EL1.get(), ttbr(nucleus, builder_as));
     // The fixture Threads run on the root Scheduler's dispatcher.
-    libkicktest::dispatcher::init(nucleus, &builder, builder_as, boot.root_scheduler_key);
+    libkicktest::dispatcher::init(nucleus, &builder, builder_as, keys.root_scheduler);
 
     let bits = run_probe(nucleus, &builder, PROBE_GUARD, false, &mut slots);
     assert_eq!(

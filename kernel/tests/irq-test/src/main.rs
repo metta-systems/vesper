@@ -32,15 +32,14 @@ use {
     aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Read, Write},
     irq_protocol::{INIT_VA, IRQ_BADGE, ROUNDS, ReceiverInit, STACK_REGION},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, interrupt_controllers, retained_init_memory},
+        bootstrap::interrupt_controllers,
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
         component::{Component, ttbr},
-        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
+        keys::BOOT_TABLE_GUARD,
         loader::{verify_component, write_init},
-        paging::image_table_count,
     },
     libdevicetree::{
         interrupts::{TimerInterrupt, root_interrupt_controller, timer_interrupt},
@@ -49,9 +48,8 @@ use {
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        CapError, InconsistencyReason, IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey,
-        NotificationKey, ObjectType, RawKey, Rights, TimeKey, UntypedKey,
-        address_space::AddressSpaceKey,
+        CapError, InconsistencyReason, IrqControlKey, IrqHandlerKey, KeySlot, NotificationKey,
+        ObjectType, RawKey, Rights, TimeKey,
         scheduler::{SchedulerKey, ThreadStart},
     },
     libqemu::semihosting as semi,
@@ -63,12 +61,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Guard of the receiver component's `KeyTable`.
 const RECEIVER_GUARD: u32 = 0x1A_0001;
@@ -123,19 +115,7 @@ fn is_retired(error: &CapError) -> bool {
 
 pub fn run() -> ! {
     semi::println!("irq-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
+    let mut boot = BootObjects::bootstrap();
 
     // Kickstart recorded the controllers Issue specifiers are relative to:
     // the root, the timer's interrupt-parent, first; each one an enabled
@@ -169,32 +149,23 @@ pub fn run() -> ! {
     );
 
     // ── The builder's own AddressSpace ────────────────────────────────────
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    let BootImage {
+        nucleus,
+        keytable_addr,
+        boot_as_id,
+        keys,
+        untyped,
+        self_table,
+        builder,
+        mut slots,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
     // ── Issue the virtual timer's line ────────────────────────────────────
-    let irq_control = IrqControlKey::from_key(boot.irq_control_key);
+    let irq_control = IrqControlKey::from_key(keys.irq_control);
     let issued = irq_control
         .issue(
-            &self_table,
+            self_table,
             slots.take(1),
             timer_controller,
             virtual_timer.cells(),
@@ -204,18 +175,18 @@ pub fn run() -> ! {
     let handler = IrqHandlerKey::from_key(issued.handler);
     // One live handler per line; the nucleus keeps its timer line.
     assert!(matches!(
-        irq_control.issue(&self_table, slots.take(1), timer_controller, virtual_timer.cells()),
+        irq_control.issue(self_table, slots.take(1), timer_controller, virtual_timer.cells()),
         Err(CapError::IrqLineActive { line }) if line == issued.line
     ));
     assert!(matches!(
-        irq_control.issue(&self_table, slots.take(1), timer_controller, physical_timer.cells()),
+        irq_control.issue(self_table, slots.take(1), timer_controller, physical_timer.cells()),
         Err(CapError::IrqLineActive { line }) if line != issued.line
     ));
     // A controller index past the recorded ones.
     let unknown_controller = u8::try_from(controllers.count).expect("few controllers");
     assert!(matches!(
         irq_control.issue(
-            &self_table,
+            self_table,
             slots.take(1),
             unknown_controller,
             virtual_timer.cells()
@@ -237,7 +208,7 @@ pub fn run() -> ! {
 
     let mut retype = |kind: ObjectType| {
         untyped
-            .retype(kind, 0, 0, 1, &self_table, slots.take(1), Rights::all())
+            .retype(kind, 0, 0, 1, self_table, slots.take(1), Rights::all())
             .unwrap_or_else(|error| panic!("{kind:?} Retype failed: {:?}", error.code()))
     };
     let irq = retype(ObjectType::NOTIFICATION);
@@ -245,10 +216,10 @@ pub fn run() -> ! {
     let resume = retype(ObjectType::NOTIFICATION);
     let receiver_thread = retype(ObjectType::THREAD);
     let receiver_time = retype(ObjectType::TIME);
-    TimeKey::from_key(boot.boot_time_key)
+    TimeKey::from_key(keys.boot_time)
         .transfer(&TimeKey::from_key(receiver_time), RECEIVER_BUDGET_NS)
         .unwrap_or_else(|error| panic!("Time.Transfer failed: {:?}", error.code()));
-    let root_scheduler = SchedulerKey::from_key(boot.root_scheduler_key);
+    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
     root_scheduler
         .configure_thread(
             receiver_thread,
@@ -301,7 +272,7 @@ pub fn run() -> ! {
         },
     );
     // The receiver runs on the root Scheduler's dispatcher with the boot Thread.
-    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, boot.root_scheduler_key);
+    libkicktest::dispatcher::init(nucleus, &builder, boot_as_id, keys.root_scheduler);
     root_scheduler
         .start_thread(receiver_thread)
         .unwrap_or_else(|error| panic!("StartThread failed: {:?}", error.code()));
@@ -333,7 +304,7 @@ pub fn run() -> ! {
     assert!(is_retired(&error), "a retired handler key still works");
     let reissued = irq_control
         .issue(
-            &self_table,
+            self_table,
             slots.take(1),
             timer_controller,
             virtual_timer.cells(),

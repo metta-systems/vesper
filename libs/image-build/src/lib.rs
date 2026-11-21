@@ -407,20 +407,155 @@ fn out_dir() -> PathBuf {
 // ─── Manifest ───────────────────────────────────────────────────────────
 
 /// Load the image manifest `manifest` (a path relative to the building
-/// crate) and register it for rebuilds.
+/// crate), with its includes merged, and register it and them for rebuilds.
 ///
 /// A manifest describes what an image embeds: a `[nucleus]` table naming the
 /// nucleus binary, and `[[component]]` entries for bundled userspace
 /// components. Binaries are cargo binary names, located by [`find_artifact`].
+/// See [`read_manifest`] for `include`.
 fn load_manifest(manifest: &str) -> (PathBuf, toml::Table) {
     let path = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default()).join(manifest);
-    rerun_if_changed(&path);
-    let text = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("cannot read manifest {}: {error}", path.display()));
-    let table = text
-        .parse()
-        .unwrap_or_else(|error| panic!("invalid manifest {}: {error}", path.display()));
+    let table = read_manifest(&path);
     (path, table)
+}
+
+/// The arrays of entries an included manifest contributes.
+const INCLUDED_KINDS: [&str; 3] = ["driver", "component", "resource"];
+
+/// The manifest at `path` with the fragments its top-level `include = [...]`
+/// names merged in, each registered for rebuilds.
+///
+/// A fragment holds entries several images share (the platform's drivers):
+/// its `[[driver]]`, `[[component]]` and `[[resource]]` entries come before
+/// the including manifest's own, in include order, and its top-level
+/// `interfaces` directories before the manifest's. Its relative paths (an
+/// entry's `interfaces`, a resource's `file`, the top-level `interfaces`)
+/// are relative to the fragment and are made absolute before merging.
+/// A fragment cannot include further fragments or carry `[nucleus]` or
+/// `[[privileged]]`, and no two drivers or components, nor two resources, of
+/// the merged manifest can share a name.
+fn read_manifest(path: &Path) -> toml::Table {
+    let mut table = parse_manifest(path);
+    let Some(includes) = table.remove("include") else {
+        return table;
+    };
+    let includes = includes
+        .as_array()
+        .unwrap_or_else(|| panic!("{}: `include` lists manifest paths", path.display()))
+        .clone();
+    let directory = path.parent().unwrap_or(Path::new("."));
+
+    let mut merged = toml::Table::new();
+    for include in &includes {
+        let fragment_path = directory.join(
+            include
+                .as_str()
+                .unwrap_or_else(|| panic!("{}: `include` lists manifest paths", path.display())),
+        );
+        let fragment = parse_manifest(&fragment_path);
+        for key in ["include", "nucleus", "privileged"] {
+            assert!(
+                !fragment.contains_key(key),
+                "{}: an included manifest cannot have `{key}`",
+                fragment_path.display()
+            );
+        }
+        let fragment = rebased_fragment(&fragment_path, fragment);
+        for (key, value) in fragment {
+            append_array(&mut merged, &fragment_path, key, value);
+        }
+    }
+    for key in INCLUDED_KINDS.into_iter().chain(["interfaces"]) {
+        if let Some(own) = table.remove(key) {
+            append_array(&mut merged, path, key.to_string(), own);
+        }
+    }
+    table.extend(merged);
+    check_unique_names(path, &table);
+    table
+}
+
+/// Parse the manifest file at `path` and register it for rebuilds.
+fn parse_manifest(path: &Path) -> toml::Table {
+    rerun_if_changed(path);
+    let text = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("cannot read manifest {}: {error}", path.display()));
+    text.parse()
+        .unwrap_or_else(|error| panic!("invalid manifest {}: {error}", path.display()))
+}
+
+/// The fragment at `path` with its relative paths made absolute.
+fn rebased_fragment(path: &Path, mut fragment: toml::Table) -> toml::Table {
+    let directory = path.parent().unwrap_or(Path::new("."));
+    let rebase = |value: &mut toml::Value| {
+        if let Some(relative) = value.as_str() {
+            *value = toml::Value::String(directory.join(relative).display().to_string());
+        }
+    };
+    for (key, value) in &mut fragment {
+        let Some(entries) = value.as_array_mut() else {
+            panic!("{}: `{key}` must be an array", path.display());
+        };
+        for entry in entries {
+            match key.as_str() {
+                "interfaces" => rebase(entry),
+                "driver" | "component" | "resource" => {
+                    for field in ["interfaces", "file"] {
+                        if let Some(value) = entry.get_mut(field) {
+                            rebase(value);
+                        }
+                    }
+                }
+                _ => panic!(
+                    "{}: an included manifest cannot have `{key}`",
+                    path.display()
+                ),
+            }
+        }
+    }
+    fragment
+}
+
+/// Append the array `value` to `merged[key]`.
+fn append_array(merged: &mut toml::Table, path: &Path, key: String, value: toml::Value) {
+    let toml::Value::Array(entries) = value else {
+        panic!("{}: `{key}` must be an array", path.display());
+    };
+    match merged
+        .entry(key)
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+    {
+        toml::Value::Array(existing) => existing.extend(entries),
+        _ => unreachable!("only arrays are merged"),
+    }
+}
+
+/// Panic if two drivers or components, or two resources, of the merged
+/// manifest at `path` share a name.
+fn check_unique_names(path: &Path, table: &toml::Table) {
+    let names = |kinds: &[&str]| -> Vec<String> {
+        kinds
+            .iter()
+            .filter_map(|kind| table.get(*kind).and_then(toml::Value::as_array))
+            .flatten()
+            .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+            .map(str::to_string)
+            .collect()
+    };
+    for group in [&["driver", "component"][..], &["resource"][..]] {
+        let mut seen = names(group);
+        seen.sort();
+        if let Some([name, _]) = seen.windows(2).find_map(|pair| {
+            <&[String; 2]>::try_from(pair)
+                .ok()
+                .filter(|[first, second]| first == second)
+        }) {
+            panic!(
+                "{}: `{name}` is named twice (including the fragments it includes)",
+                path.display(),
+            );
+        }
+    }
 }
 
 // ─── Nucleus ────────────────────────────────────────────────────────────
@@ -1459,9 +1594,188 @@ fn component_context(
 #[cfg(test)]
 mod tests {
     use {
-        super::fp_simd_flag,
+        super::{fp_simd_flag, read_manifest},
         fp_scan::{FpClass, Hit},
+        std::{
+            fs,
+            path::{Path, PathBuf},
+        },
     };
+
+    /// A fresh directory for one test's manifests, holding `files` (path
+    /// relative to it, contents).
+    fn manifests(test: &str, files: &[(&str, &str)]) -> PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("vesper-image-build-{}-{test}", std::process::id()));
+        // A leftover from an earlier run, if any; absent is fine.
+        drop(fs::remove_dir_all(&directory));
+        for (path, contents) in files {
+            let path = directory.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+        directory
+    }
+
+    /// The `field` of every entry of `kind` in `table`.
+    fn fields(table: &toml::Table, kind: &str, field: &str) -> Vec<String> {
+        table[kind]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry[field].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    const FRAGMENT: &str = r#"
+interfaces = ["../log/interfaces"]
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+[[driver]]
+name = "xhci"
+binary = "usb-hcd-xhci"
+interfaces = "../drivers/xhci/interfaces"
+
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+
+[[resource]]
+name = "font"
+file = "font.bin"
+"#;
+
+    #[test]
+    fn included_entries_come_first_with_their_paths_rebased() {
+        let directory = manifests(
+            "merge",
+            &[
+                ("platform/platform.toml", FRAGMENT),
+                (
+                    "image/image.toml",
+                    r#"
+include = ["../platform/platform.toml"]
+interfaces = ["own/interfaces"]
+
+[nucleus]
+binary = "nucleus"
+
+[[driver]]
+name = "audio"
+binary = "audio-pwm"
+interfaces = "audio/interfaces"
+
+[[component]]
+name = "wood"
+binary = "wood"
+
+[[resource]]
+name = "wad"
+file = "doom1.wad"
+"#,
+                ),
+            ],
+        );
+        let table = read_manifest(&directory.join("image/image.toml"));
+        // The fragment's directory as the include path names it.
+        let platform = directory.join("image").join("../platform");
+
+        assert!(!table.contains_key("include"));
+        assert_eq!(table["nucleus"]["binary"].as_str(), Some("nucleus"));
+        assert_eq!(fields(&table, "driver", "name"), ["uart", "xhci", "audio"]);
+        assert_eq!(fields(&table, "component", "name"), ["dispatcher", "wood"]);
+        assert_eq!(fields(&table, "resource", "name"), ["font", "wad"]);
+
+        // The fragment's paths are absolute, under its own directory; the
+        // image's own stay relative to the image's manifest.
+        let interfaces = table["driver"].as_array().unwrap();
+        assert_eq!(
+            interfaces[1]["interfaces"].as_str().map(Path::new),
+            Some(platform.join("../drivers/xhci/interfaces").as_path())
+        );
+        assert_eq!(
+            interfaces[2]["interfaces"].as_str(),
+            Some("audio/interfaces")
+        );
+        assert_eq!(
+            fields(&table, "resource", "file"),
+            [
+                platform.join("font.bin").display().to_string(),
+                "doom1.wad".to_string()
+            ]
+        );
+        let searched: Vec<&str> = table["interfaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|directory| directory.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            searched,
+            [
+                platform
+                    .join("../log/interfaces")
+                    .display()
+                    .to_string()
+                    .as_str(),
+                "own/interfaces"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_manifest_without_include_is_unchanged() {
+        let directory = manifests("plain", &[("image.toml", FRAGMENT)]);
+        let table = read_manifest(&directory.join("image.toml"));
+        assert_eq!(fields(&table, "driver", "name"), ["uart", "xhci"]);
+        assert_eq!(fields(&table, "resource", "file"), ["font.bin"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "`uart` is named twice")]
+    fn a_name_both_included_and_own_fails() {
+        let directory = manifests(
+            "duplicate",
+            &[
+                ("platform.toml", FRAGMENT),
+                (
+                    "image.toml",
+                    "include = [\"platform.toml\"]\n[[component]]\nname = \"uart\"\nbinary = \"shell\"\n",
+                ),
+            ],
+        );
+        read_manifest(&directory.join("image.toml"));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot have `include`")]
+    fn a_fragment_cannot_include_further() {
+        let directory = manifests(
+            "nested",
+            &[
+                ("inner.toml", FRAGMENT),
+                ("platform.toml", "include = [\"inner.toml\"]\n"),
+                ("image.toml", "include = [\"platform.toml\"]\n"),
+            ],
+        );
+        read_manifest(&directory.join("image.toml"));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot have `nucleus`")]
+    fn a_fragment_cannot_name_the_nucleus() {
+        let directory = manifests(
+            "nucleus",
+            &[
+                ("platform.toml", "[nucleus]\nbinary = \"nucleus\"\n"),
+                ("image.toml", "include = [\"platform.toml\"]\n"),
+            ],
+        );
+        read_manifest(&directory.join("image.toml"));
+    }
 
     fn hit() -> Hit {
         Hit {

@@ -1,0 +1,140 @@
+# The platform every full image bundles (see vesper-image-build `include`): the
+# drivers of the Raspberry Pi 3, 4 and 5 and the USB stack above them. Kickstart
+# loads one instance of a driver per enabled device tree node it serves, so one
+# set boots on every board: a node a board does not have, or has disabled,
+# starts nothing. Paths are relative to this file. An image includes it with
+# `include = ["<path>/platform.toml"]` and lists only what is its own (the
+# serial channel's holder, the compositor, its programs and resources).
+
+# The USB components, the PCIe root complex and the SD controller import the log
+# server's log_v1: in an image that does not bundle it the imports stay
+# unlinked.
+interfaces = ["../../userspace/log-server/interfaces"]
+
+# ─── Console and firmware ────────────────────────────────────────────────
+
+[[driver]]
+name = "uart"
+binary = "uart-pl011"
+
+# The VideoCore mailbox component: on the Raspberry Pi 3 its registers share
+# the BCM interrupt controller's page, which Kickstart hands it as a device
+# Frame (`privileged::SHARES_KERNEL_PAGES`).
+[[driver]]
+name = "mailbox"
+binary = "mailbox"
+interfaces = "../../drivers/mailbox/interfaces"
+
+# The power control: the power management node's registers halt and reset the
+# board; powering devices off goes through the mailbox component.
+[[driver]]
+name = "power"
+binary = "power"
+interfaces = "../../drivers/power/interfaces"
+
+# The display: configures the framebuffer through the mailbox component.
+[[driver]]
+name = "fb"
+binary = "fb"
+interfaces = "../../drivers/fb/interfaces"
+video_memory = true
+
+# ─── Storage ─────────────────────────────────────────────────────────────
+
+# The SD card slot of the Raspberry Pi 4 and 5 (and, under QEMU, the Arasan
+# controller that holds QEMU's card): brings the card up at boot and serves
+# block_v1. Its DMA bounce pages and descriptor table need more than the
+# default memory.
+[[driver]]
+name = "sdhci"
+binary = "sdhci"
+interfaces = "../../drivers/sdhci/interfaces"
+memory = 131072
+
+# ─── Pins, clocks and DMA ────────────────────────────────────────────────
+
+# The gpio component, through which the audio driver routes the jack's pins.
+[[driver]]
+name = "gpio"
+binary = "gpio-bcm2835"
+interfaces = "../../drivers/gpio-bcm2835/interfaces"
+
+# The clock manager, which sets the PWM clock for the audio driver.
+[[driver]]
+name = "cprman"
+binary = "cprman-bcm2835"
+interfaces = "../../drivers/cprman-bcm2835/interfaces"
+
+# The DMA controller component: a driver claims a channel through dma_v1 (the
+# audio driver for its ring on the board, or its capture copies under QEMU).
+[[driver]]
+name = "dma"
+binary = "dma-bcm2835"
+interfaces = "../../drivers/dma-bcm2835/interfaces"
+
+# ─── USB ─────────────────────────────────────────────────────────────────
+
+# The Raspberry Pi 3's DWC2 host controller, loaded once per enabled
+# `brcm,bcm2708-usb` node (the Raspberry Pi 4 has the node, disabled: its
+# DWC2 only drives the USB-C power port).
+[[driver]]
+name = "usb"
+binary = "usb-hcd-dwc2"
+interfaces = "../../drivers/usb-hcd-dwc2/interfaces"
+
+# The PCIe root complex (the VL805's on the Raspberry Pi 4, RP1's on the
+# Raspberry Pi 5): it brings the link up and serves pci_v1.
+[[driver]]
+name = "pcie"
+binary = "pcie-brcmstb"
+interfaces = "../../drivers/pcie-brcmstb/interfaces"
+pci_host = true
+
+# The Raspberry Pi 4's VL805 USB controller, by its node (it has no compatible
+# string): it has the firmware load the controller, claims it through pci_v1
+# and brings it up. The upstream tree names the node `pci@1,0/usb@1,0`, the
+# one the Pi 4 firmware ships `pci@0,0/usb@0,0`.
+[[driver]]
+name = "xhci"
+binary = "usb-hcd-xhci"
+interfaces = "../../drivers/usb-hcd-xhci/interfaces"
+nodes = [
+    "/scb/pcie@7d500000/pci@1,0/usb@1,0",
+    "/scb/pcie@7d500000/pci@0,0/usb@0,0",
+]
+# The rings, the context page, the control transfers' data page and up to 31
+# scratchpad buffers, and three pages for each device it addresses (up to 8):
+# past 256 KiB, and memory comes in powers of two.
+memory = 524288
+
+# The USB core and the USB HID component, programs without a device tree node,
+# on whichever controller loaded (the DWC2 node, or else the `xhci` driver):
+# the core enumerates devices, and the HID component claims a boot keyboard
+# and mouse from it and publishes their events to the compositor.
+[[component]]
+name = "usb_core"
+binary = "usb-core"
+interfaces = "../../drivers/usb/interfaces"
+active = true
+program = true
+
+[[component]]
+name = "usb_hid"
+binary = "usb-hid"
+interfaces = "../../drivers/usb-hid/interfaces"
+active = true
+program = true
+
+# ─── Scheduling ──────────────────────────────────────────────────────────
+
+# The root dispatcher: the EL0 program that decides which Thread of the root
+# Scheduler runs, by priority and round-robin within a priority. Kickstart
+# does not start it: once every other program and driver is loaded it shares
+# the record table with it and binds its Thread with
+# `Scheduler.BindDispatcher` (`dispatcher = true`).
+[[component]]
+name = "dispatcher"
+binary = "root-dispatcher"
+active = true
+program = true
+dispatcher = true

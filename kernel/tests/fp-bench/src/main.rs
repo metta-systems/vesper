@@ -36,23 +36,21 @@ use {
     },
     fp_trap_protocol::ProbeInit,
     kickstart::{
-        bootstrap::{bootstrap_nucleus, retained_init_memory},
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        builder::Builder,
         component::{Component, ttbr},
         keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
         loader::{verify_component, write_init},
-        paging::image_table_count,
     },
     libimage::ComponentImage,
     libkicktest::threads,
     libobject::{
         KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, StackPoolHandle,
-        UntypedKey, address_space::AddressSpaceKey, scheduler::SchedulerKey,
-        scheduler_record::SchedulerRecord,
+        address_space::AddressSpaceKey, scheduler::SchedulerKey, scheduler_record::SchedulerRecord,
     },
     nucleus::objects::{ArchObjectsImpl, KeyTable, Nucleus, arch_objects::AddressSpaceObject},
 };
@@ -74,14 +72,11 @@ macro_rules! report_line {
     }};
 }
 
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 const RUNNER_GUARD: u32 = 0x0F_B501;
 const TARGET_GUARD: u32 = 0x0F_B502;
 const PROBE_GUARD: u32 = 0x0F_9701;
 /// Pages in each stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
-/// Fixture boot-table slots start clear of the well-known bootstrap slots.
-const FIRST_FIXTURE_SLOT: u32 = 64;
 /// Where the runner finds its keys.
 const BUSY_SLOT: u32 = 5;
 const DONE_SLOT: u32 = 6;
@@ -174,41 +169,18 @@ impl core::fmt::Display for Nanoseconds {
 
 pub fn run() -> ! {
     report_line!("fp-bench: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, builder_as) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let mut slots = SlotCursor::starting_at(FIRST_FIXTURE_SLOT);
-
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, builder_as)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
-    libkicktest::dispatcher::init(nucleus, &builder, builder_as, boot.root_scheduler_key);
+    let mut boot = BootObjects::bootstrap();
+    let BootImage {
+        nucleus,
+        boot_as_id: builder_as,
+        keys,
+        builder,
+        mut slots,
+        address_space: builder_as_key,
+        l2: builder_l2,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
+    libkicktest::dispatcher::init(nucleus, &builder, builder_as, keys.root_scheduler);
 
     // The root Scheduler's record table, for the nucleus-wide FP totals: one
     // Frame, mapped read-only in the builder's AddressSpace.
@@ -228,7 +200,7 @@ pub fn run() -> ! {
         Rights(Rights::READ),
     );
     let record_frame = boot_key(record_first, record_frames.incarnation());
-    SchedulerKey::from_key(boot.root_scheduler_key)
+    SchedulerKey::from_key(keys.root_scheduler)
         .share_region(record_frame, 0, RECORD_STRIDE)
         .unwrap_or_else(|error| panic!("ShareRegion failed: {:?}", error.code()));
     let records = PhysAddr::new(Builder::frame_paddr(record_frame))

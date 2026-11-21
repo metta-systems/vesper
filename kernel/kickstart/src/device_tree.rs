@@ -103,3 +103,18 @@ pub fn at_el1() -> &'static DeviceTree<'static, 'static> {
     // SAFETY: stored above on the first call; never written again.
     unsafe { (*EL1_INDEX.tree.get()).as_ref() }.expect("🥾 the device tree is being indexed")
 }
+
+/// How many enabled nodes of the boot device tree are compatible with one of
+/// `compatible` (a driver's `DriverImage::compatible` list).
+pub fn enabled_nodes(compatible: &[&str]) -> usize {
+    at_el1()
+        .index()
+        .nodes()
+        .filter(|node| libdevicetree::is_enabled(node))
+        .filter(|node| {
+            compatible
+                .iter()
+                .any(|name| libdevicetree::is_compatible(node, name))
+        })
+        .count()
+}

@@ -48,22 +48,12 @@ mod components {
 use {
     cfg_if::cfg_if,
     kickstart::{
-        bootstrap::{BootState, bootstrap_nucleus, device_untypeds, retained_init_memory},
-        drivers::{BootKeys, instance_count, load_drivers},
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2, print_my_sp,
     },
     libboot as boot,
-    libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget},
-        keys::{SlotCursor, boot_key},
-        paging::image_table_count,
-        retained::RetainedInitMemory,
-    },
     libcpu::endless_sleep,
-    libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
-        address_space::AddressSpaceKey,
-    },
+    libobject::NotificationKey,
     libqemu::semihosting as semi,
 };
 
@@ -107,10 +97,8 @@ pub fn kickstart_run() -> ! {
     // The boot Thread, its AddressSpace and the boot ASID pool come first;
     // every page table, component AddressSpace and Thread after them is
     // carved from the boot Untyped as the builder goes.
-    let instances = instance_count(components::DRIVERS);
-    let retained = retained_init_memory();
-    let boot_state = bootstrap_nucleus();
-    let park = start_drivers(boot_state, &retained, instances);
+    let mut boot = BootObjects::bootstrap();
+    let park = start_drivers(&mut boot.builder_address_space(BUILDER_ARCHIVE_GUARD));
 
     // ─────────────────────────────────────────────────────────────────────
     // Initialize kernel subsystems
@@ -283,80 +271,12 @@ pub fn kickstart_run() -> ! {
     // }
 }
 
-/// First boot `KeyTable` slot the builder carves into.
-const FIRST_BUILDER_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
-
-/// Give the boot Thread a builder `AddressSpace`, and
-/// load and start the bundled drivers, one instance per enabled device tree
-/// node they serve (`instances` of them). Returns a Notification nobody
-/// signals, for the boot Thread to park on.
-fn start_drivers(
-    boot: BootState,
-    retained: &RetainedInitMemory,
-    instances: usize,
-) -> NotificationKey {
-    let keys = BootKeys::of(&boot);
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(keys.untyped);
-    let self_table = KeyTableKey::from_key(keys.self_table);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained,
-    };
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_BUILDER_SLOT).avoiding(devices.first_slot, devices.count);
-
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    Builder::assign_asid(builder_as_key);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots
-                .take(u32::try_from(image_table_count(retained)).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("🥾 builder Activate failed: {:?}", error.code()));
-
-    let park = untyped
-        .retype(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            1,
-            &self_table,
-            slots.take(1),
-            Rights::all(),
-        )
-        .unwrap_or_else(|error| panic!("🥾 park Notification Retype failed: {:?}", error.code()));
-
-    let started = load_drivers(
-        nucleus,
-        &builder,
-        keys,
-        components::DRIVERS,
-        &mut slots,
-        |_loaded| {},
-    );
-    assert_eq!(
-        started, instances,
-        "🥾 every planned driver instance starts"
-    );
+/// Load and start the bundled drivers, one instance per enabled device tree
+/// node they serve, in the boot Thread's builder `AddressSpace`. Returns a
+/// Notification nobody signals, for the boot Thread to park on.
+fn start_drivers(image: &mut BootImage<'_>) -> NotificationKey {
+    let park = image.notification();
+    let started = image.start_drivers(components::DRIVERS, |_loaded, _builder| {});
     semi::println!("🥾 Started {started} driver instances");
     NotificationKey::from_key(park)
 }

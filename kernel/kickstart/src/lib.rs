@@ -23,6 +23,7 @@ pub mod drivers;
 pub mod early_console;
 mod el_switch;
 mod embed;
+pub mod image;
 mod loader;
 mod memory;
 mod paging;

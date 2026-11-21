@@ -29,24 +29,15 @@ mod components {
 use {
     driver_protocol::{LEND_TABLE_SLOT, PLAIN_TABLE_SLOT, REPORT_SLOT},
     kickstart::{
-        bootstrap::{bootstrap_nucleus, device_untypeds, retained_init_memory},
-        drivers::{BootKeys, LoadedDriver, load_drivers},
+        image::{BUILDER_ARCHIVE_GUARD, BootObjects},
         kickstart_init_el2,
     },
-    libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
-        component::ttbr,
-        keys::{BOOT_TABLE_SIZE_BITS, SlotCursor, boot_key},
-        paging::image_table_count,
-    },
+    libcomponent_loader::keys::BOOT_TABLE_SIZE_BITS,
     libdevice_driver::DATA_WINDOW_VA,
     libdevicetree::Soc,
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
-    libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, Rights, UntypedKey,
-        address_space::AddressSpaceKey,
-    },
+    libobject::{KeySlot, NotificationKey, Rights},
     libqemu::semihosting as semi,
     mailbox::mailbox_v1::TYPE_CODE as MAILBOX_V1,
     nucleus::{api::key_entry::KeyEntry, objects::KeyTable},
@@ -57,12 +48,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Instances the board device trees produce: the mailbox, the power management
 /// node, the framebuffer node and the vcsm client.
@@ -107,57 +92,12 @@ struct Vec4([u64; 4]);
 
 pub fn run() -> ! {
     semi::println!("mailbox-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let keys = BootKeys::of(&boot);
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(keys.untyped);
-    let self_table = KeyTableKey::from_key(keys.self_table);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_FIXTURE_SLOT).avoiding(devices.first_slot, devices.count);
+    let mut boot = BootObjects::bootstrap();
+    let mut image = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
-    // ── The builder's own AddressSpace ────────────────────────────────────
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
-
-    let report = untyped
-        .retype(
-            ObjectType::NOTIFICATION,
-            0,
-            0,
-            1,
-            &self_table,
-            slots.take(1),
-            Rights::all(),
-        )
-        .unwrap_or_else(|error| panic!("report Notification Retype failed: {:?}", error.code()));
-    let report_id = builder
+    let report = image.notification();
+    let report_id = image
+        .builder
         .entry(report)
         .carved_id()
         .unwrap_or_else(|error| panic!("report identity: {:?}", error.code()));
@@ -170,183 +110,168 @@ pub fn run() -> ! {
     let mut power_area = 0;
     let mut fb_area = 0;
     let mut seen = 0;
-    let started = load_drivers(
-        nucleus,
-        &builder,
-        keys,
-        &[
-            &components::MAILBOX_DRIVER,
-            &components::POWER_DRIVER,
-            &components::FB_DRIVER,
-            &components::CLIENT_DRIVER,
-            &components::DISPATCHER_DRIVER,
-        ],
-        &mut slots,
-        |loaded: &LoadedDriver<'_>| {
-            let init = loaded.init;
-            let name = loaded.driver.component.name;
-            let imports = init.imports();
-            // Every import of the mailbox interface carries the area the
-            // client shares with the mailbox: one page, in the data window.
-            let mailbox_imports = imports
-                .iter()
-                .filter(|record| record.type_code == MAILBOX_V1)
-                .count();
-            let area_of_mailbox_imports = imports
-                .iter()
-                .find(|record| record.type_code == MAILBOX_V1)
-                .map_or(0, |record| record.area_base);
-            for record in imports
-                .iter()
-                .filter(|record| record.type_code == MAILBOX_V1)
-            {
-                assert_eq!(
-                    (record.area_base, record.area_len),
-                    (area_of_mailbox_imports, 4096),
-                    "{name}: the functions of one pair share one area"
-                );
-                assert!(record.area_base >= DATA_WINDOW_VA);
+    image.start_drivers(components::DRIVERS, |loaded, _builder| {
+        let init = loaded.init;
+        let name = loaded.driver.component.name;
+        let imports = init.imports();
+        // Every import of the mailbox interface carries the area the
+        // client shares with the mailbox: one page, in the data window.
+        let mailbox_imports = imports
+            .iter()
+            .filter(|record| record.type_code == MAILBOX_V1)
+            .count();
+        let area_of_mailbox_imports = imports
+            .iter()
+            .find(|record| record.type_code == MAILBOX_V1)
+            .map_or(0, |record| record.area_base);
+        for record in imports
+            .iter()
+            .filter(|record| record.type_code == MAILBOX_V1)
+        {
+            assert_eq!(
+                (record.area_base, record.area_len),
+                (area_of_mailbox_imports, 4096),
+                "{name}: the functions of one pair share one area"
+            );
+            assert!(record.area_base >= DATA_WINDOW_VA);
+        }
+        if name == components::MAILBOX.name {
+            let page = init
+                .pages()
+                .first()
+                .expect("the mailbox has a register page");
+            assert_eq!(
+                (page.paddr, page.kind),
+                expected.mailbox_page,
+                "the mailbox register page and how it is handed over"
+            );
+            assert!(imports.is_empty());
+            // Three clients call it (the vcsm client, power and fb), each
+            // with an area of one page of its own, and calls on a pool.
+            assert_ne!(init.export_pool, 0, "the mailbox serves calls on a pool");
+            let areas = init.areas();
+            assert_eq!(areas.len(), 3, "three clients, three data areas");
+            for (index, area) in areas.iter().enumerate() {
+                assert_eq!(area.len, 4096);
+                mailbox_areas.0[index] = area.base;
             }
-            if name == components::MAILBOX.name {
-                let page = init
-                    .pages()
-                    .first()
-                    .expect("the mailbox has a register page");
-                assert_eq!(
-                    (page.paddr, page.kind),
-                    expected.mailbox_page,
-                    "the mailbox register page and how it is handed over"
-                );
-                assert!(imports.is_empty());
-                // Three clients call it (the vcsm client, power and fb), each
-                // with an area of one page of its own, and calls on a pool.
-                assert_ne!(init.export_pool, 0, "the mailbox serves calls on a pool");
-                let areas = init.areas();
-                assert_eq!(areas.len(), 3, "three clients, three data areas");
-                for (index, area) in areas.iter().enumerate() {
-                    assert_eq!(area.len, 4096);
-                    mailbox_areas.0[index] = area.base;
-                }
-                mailbox_areas.0[..3].sort_unstable();
-                assert_eq!(
-                    mailbox_areas.0[..3],
-                    [DATA_WINDOW_VA, DATA_WINDOW_VA + 4096, DATA_WINDOW_VA + 8192],
-                    "areas follow each other in the window"
-                );
-            } else if name == components::POWER.name {
-                // The power management registers, and `set_power_state` of the
-                // mailbox, found through the firmware node by compatible string.
-                assert!(init.pages().len() >= 2);
-                let [set_power_state] = imports else {
-                    panic!("power imports one function, found {}", imports.len());
-                };
-                assert_eq!(mailbox_imports, 1);
-                assert_eq!(set_power_state.function, 4, "set_power_state");
-                assert!(init.areas().is_empty());
-                power_area = area_of_mailbox_imports;
-            } else if name == components::FB.name {
-                // No registers; `property` of the mailbox through the firmware
-                // link of its own node.
-                assert!(init.pages().is_empty());
-                let [property] = imports else {
-                    panic!("fb imports one function, found {}", imports.len());
-                };
-                assert_eq!(mailbox_imports, 1);
-                assert_eq!(property.function, 6, "property");
-                // The video memory, in aligned blocks that follow each other
-                // from the top of RAM to the end of the gap.
-                let video = init.video();
-                assert!(!video.is_empty(), "fb holds the video memory");
-                let mut cursor = expected.video_memory.0;
-                for block in video {
-                    assert_eq!(block.base, cursor, "blocks follow each other");
-                    assert_eq!(block.base % (1 << block.size_bits), 0, "aligned");
-                    assert_ne!(block.key, 0);
-                    cursor = block.end();
-                }
-                assert_eq!(cursor, expected.video_memory.1, "up to the end of the gap");
-                fb_area = area_of_mailbox_imports;
-            } else {
-                // The vcsm node has no registers; its imports reach the
-                // mailbox through the firmware node, and the power and
-                // framebuffer components by compatible string.
-                assert!(init.pages().is_empty());
-                let imports: &[_; 12] = imports.try_into().unwrap_or_else(|_| {
-                    panic!(
-                        "six mailbox, one power, five fb functions, found {}",
-                        imports.len()
-                    )
+            mailbox_areas.0[..3].sort_unstable();
+            assert_eq!(
+                mailbox_areas.0[..3],
+                [DATA_WINDOW_VA, DATA_WINDOW_VA + 4096, DATA_WINDOW_VA + 8192],
+                "areas follow each other in the window"
+            );
+        } else if name == components::POWER.name {
+            // The power management registers, and `set_power_state` of the
+            // mailbox, found through the firmware node by compatible string.
+            assert!(init.pages().len() >= 2);
+            let [set_power_state] = imports else {
+                panic!("power imports one function, found {}", imports.len());
+            };
+            assert_eq!(mailbox_imports, 1);
+            assert_eq!(set_power_state.function, 4, "set_power_state");
+            assert!(init.areas().is_empty());
+            power_area = area_of_mailbox_imports;
+        } else if name == components::FB.name {
+            // No registers; `property` of the mailbox through the firmware
+            // link of its own node.
+            assert!(init.pages().is_empty());
+            let [property] = imports else {
+                panic!("fb imports one function, found {}", imports.len());
+            };
+            assert_eq!(mailbox_imports, 1);
+            assert_eq!(property.function, 6, "property");
+            // The video memory, in aligned blocks that follow each other
+            // from the top of RAM to the end of the gap.
+            let video = init.video();
+            assert!(!video.is_empty(), "fb holds the video memory");
+            let mut cursor = expected.video_memory.0;
+            for block in video {
+                assert_eq!(block.base, cursor, "blocks follow each other");
+                assert_eq!(block.base % (1 << block.size_bits), 0, "aligned");
+                assert_ne!(block.key, 0);
+                cursor = block.end();
+            }
+            assert_eq!(cursor, expected.video_memory.1, "up to the end of the gap");
+            fb_area = area_of_mailbox_imports;
+        } else {
+            // The vcsm node has no registers; its imports reach the
+            // mailbox through the firmware node, and the power and
+            // framebuffer components by compatible string.
+            assert!(init.pages().is_empty());
+            let imports: &[_; 12] = imports.try_into().unwrap_or_else(|_| {
+                panic!(
+                    "six mailbox, one power, five fb functions, found {}",
+                    imports.len()
+                )
+            });
+            assert_eq!(mailbox_imports, 6);
+            let functions: [u64; 6] = core::array::from_fn(|index| imports[index].function);
+            assert_eq!(
+                functions,
+                [0, 1, 2, 3, 5, 6],
+                "declaration indices of the imported mailbox functions"
+            );
+            assert_eq!(imports[6].function, 0, "devices_off");
+            assert!(imports[6..].iter().all(|record| record.area_len == 0));
+            assert!(imports[7..].iter().map(|record| record.function).eq(0..5));
+            assert_ne!(imports[6].invocation, imports[7].invocation);
+            client_area = area_of_mailbox_imports;
+            // The report key, in the client's table only.
+            // SAFETY: the driver's retained table; no invocation overlaps.
+            unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
+                .insert(
+                    KeySlot(REPORT_SLOT),
+                    KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1),
+                    loaded.component.guard,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("report grant failed: {:?}", failure.error.code())
                 });
-                assert_eq!(mailbox_imports, 6);
-                let functions: [u64; 6] = core::array::from_fn(|index| imports[index].function);
-                assert_eq!(
-                    functions,
-                    [0, 1, 2, 3, 5, 6],
-                    "declaration indices of the imported mailbox functions"
-                );
-                assert_eq!(imports[6].function, 0, "devices_off");
-                assert!(imports[6..].iter().all(|record| record.area_len == 0));
-                assert!(imports[7..].iter().map(|record| record.function).eq(0..5));
-                assert_ne!(imports[6].invocation, imports[7].invocation);
-                client_area = area_of_mailbox_imports;
-                // The report key, in the client's table only.
-                // SAFETY: the driver's retained table; no invocation overlaps.
+            // Keys to the client's own table, for it to lend to fb through
+            // `CallWithKey`: one carries `INSTALL | LEND`, the other
+            // only `INSTALL`.
+            // SAFETY: the driver's retained table is an initialized carve.
+            let client_table = unsafe { KeyTable::carve_id(loaded.component.table_addr) };
+            for (slot, rights) in [
+                (LEND_TABLE_SLOT, Rights(Rights::INSTALL | Rights::LEND)),
+                (PLAIN_TABLE_SLOT, Rights(Rights::INSTALL)),
+            ] {
+                // SAFETY: as above.
                 unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
                     .insert(
-                        KeySlot(REPORT_SLOT),
-                        KeyEntry::new_carved(report_id, Rights(Rights::SEND), 1),
+                        KeySlot(slot),
+                        KeyEntry::new_keytable(
+                            client_table,
+                            loaded.component.guard,
+                            BOOT_TABLE_SIZE_BITS,
+                            rights,
+                            0,
+                        ),
                         loaded.component.guard,
                     )
                     .unwrap_or_else(|failure| {
-                        panic!("report grant failed: {:?}", failure.error.code())
+                        panic!("table key grant failed: {:?}", failure.error.code())
                     });
-                // Keys to the client's own table, for it to lend to fb through
-                // `CallWithKey`: one carries `INSTALL | LEND`, the other
-                // only `INSTALL`.
-                // SAFETY: the driver's retained table is an initialized carve.
-                let client_table = unsafe { KeyTable::carve_id(loaded.component.table_addr) };
-                for (slot, rights) in [
-                    (LEND_TABLE_SLOT, Rights(Rights::INSTALL | Rights::LEND)),
-                    (PLAIN_TABLE_SLOT, Rights(Rights::INSTALL)),
-                ] {
-                    // SAFETY: as above.
-                    unsafe { &mut *KeyTable::at_carve(loaded.component.table_addr) }
-                        .insert(
-                            KeySlot(slot),
-                            KeyEntry::new_keytable(
-                                client_table,
-                                loaded.component.guard,
-                                BOOT_TABLE_SIZE_BITS,
-                                rights,
-                                0,
-                            ),
-                            loaded.component.guard,
-                        )
-                        .unwrap_or_else(|failure| {
-                            panic!("table key grant failed: {:?}", failure.error.code())
-                        });
-                }
             }
-            assert_ne!(
-                init.return_key, 0,
-                "{name}: exports answer with a Return key"
-            );
-            seen += 1;
-            semi::println!(
-                "mailbox-test: {name} on {}: {} pages, {} interrupts, {} imports",
-                loaded.node,
-                init.pages().len(),
-                init.interrupts().len(),
-                imports.len()
-            );
-        },
-    );
+        }
+        assert_ne!(
+            init.return_key, 0,
+            "{name}: exports answer with a Return key"
+        );
+        seen += 1;
+        semi::println!(
+            "mailbox-test: {name} on {}: {} pages, {} interrupts, {} imports",
+            loaded.node,
+            init.pages().len(),
+            init.interrupts().len(),
+            imports.len()
+        );
+    });
     assert_eq!(
-        started,
-        INSTANCES + 1,
-        "the instances and the root dispatcher"
+        seen, INSTANCES,
+        "the instances, all but the root dispatcher"
     );
-    assert_eq!(seen, INSTANCES);
     // The areas the clients were handed are the ones the mailbox serves.
     let mut handed_out = [client_area, power_area, fb_area];
     handed_out.sort_unstable();

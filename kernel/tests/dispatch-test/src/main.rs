@@ -33,26 +33,23 @@ mod components {
 use {
     aarch64_cpu::registers::{CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_TVAL_EL0, Read, Write},
     kickstart::{
-        bootstrap::{
-            bootstrap_nucleus, device_untypeds, interrupt_controllers, retained_init_memory,
-        },
+        bootstrap::interrupt_controllers,
+        image::{BUILDER_ARCHIVE_GUARD, BootImage, BootObjects},
         kickstart_init_el2,
     },
     libaddress::PhysAddr,
     libcomponent_loader::{
-        builder::{Builder, ImageArchive, ImageTarget, verify_retained_image},
+        builder::Builder,
         component::ttbr,
-        keys::{BOOT_TABLE_GUARD, SlotCursor, boot_key},
+        keys::{BOOT_TABLE_GUARD, boot_key},
         loader::verify_component,
-        paging::image_table_count,
     },
     libdevicetree::interrupts::{TimerInterrupt, timer_interrupt},
     // `libkicktest` supplies the panic handler.
     libkicktest as _,
     libobject::{
-        IrqControlKey, IrqHandlerKey, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey,
-        Rights, TimeKey, UntypedKey,
-        address_space::AddressSpaceKey,
+        IrqControlKey, IrqHandlerKey, KeySlot, NotificationKey, ObjectType, RawKey, Rights,
+        TimeKey,
         scheduler::{SchedulerKey, ThreadStart, activation_reason},
         scheduler_record::{SchedulerRecord, StopReason, ThreadRecord},
         time::INFINITE_BUDGET,
@@ -66,12 +63,6 @@ libboot::entry!(boot_main);
 fn boot_main(dtb: u32) -> ! {
     kickstart_init_el2(dtb, run as *const u8 as u64)
 }
-
-/// First boot `KeyTable` slot the builder carves fixtures into.
-const FIRST_FIXTURE_SLOT: u32 = 64;
-
-/// Guard of the `KeyTable` archiving the builder's image Frames.
-const BUILDER_ARCHIVE_GUARD: u32 = 0x0A_4C01;
 
 /// Guards of the worker and dispatcher components' `KeyTable`s.
 const WORKER_GUARD: u32 = 0x05_7201;
@@ -288,45 +279,20 @@ impl Words {
 
 pub fn run() -> ! {
     semi::println!("dispatch-test: enabled MMU and dropped to EL1");
-    let retained = retained_init_memory();
-    let image_tables = image_table_count(&retained);
-    let boot = bootstrap_nucleus();
-    let (nucleus, keytable_addr, boot_as_id) = (boot.nucleus, boot.keytable_addr, boot.boot_as_id);
-    let untyped = UntypedKey::from_key(boot.boot_untyped_key);
-    let self_table = KeyTableKey::from_key(boot.self_table_key);
-    let builder = Builder {
-        untyped: &untyped,
-        self_table: &self_table,
-        boot_table_addr: keytable_addr,
-        retained: &retained,
-    };
-    // Kickstart parks the device Untypeds in boot slots the fixtures must avoid.
-    let devices = device_untypeds();
-    let mut slots =
-        SlotCursor::starting_at(FIRST_FIXTURE_SLOT).avoiding(devices.first_slot, devices.count);
-
     // The builder's own AddressSpace maps the boot image, so the boot Thread
-    // and idle have a real root and ASID.
-    let builder_as_key = boot_key(KeySlot::SELF_ADDRESS_SPACE.0, 1);
-    let builder_l2 = builder.root_chain(builder_as_key, &mut slots);
-    assert_eq!(Builder::assign_asid(builder_as_key), 1);
-    builder.map_retained_image(
-        &[ImageTarget {
-            address_space: builder_as_key,
-            l2: builder_l2,
-            first_table_slot: slots.take(u32::try_from(image_tables).unwrap_or(u32::MAX)),
-        }],
-        &ImageArchive {
-            slot: slots.take(1),
-            guard: BUILDER_ARCHIVE_GUARD,
-            grant_scratch: slots.take(1),
-            copy_scratch: slots.take(1),
-        },
-    );
-    verify_retained_image(&retained, &[ttbr(nucleus, boot_as_id)]);
-    AddressSpaceKey::from_key(builder_as_key)
-        .activate()
-        .unwrap_or_else(|error| panic!("builder Activate failed: {:?}", error.code()));
+    // and idle have a real root and ASID; the slot cursor skips the device
+    // Untypeds Kickstart parks in boot slots.
+    let mut boot = BootObjects::bootstrap();
+    let BootImage {
+        nucleus,
+        keytable_addr,
+        keys,
+        untyped,
+        self_table,
+        builder,
+        mut slots,
+        ..
+    } = boot.builder_address_space(BUILDER_ARCHIVE_GUARD);
 
     // The virtual timer is the interrupt source: the test arms it, the line is
     // issued from the device tree, and a receiver Thread waits for it.
@@ -336,9 +302,9 @@ pub fn run() -> ! {
     let timer_controller = interrupt_controllers()
         .index_of(virtual_timer.controller)
         .expect("the timer's controller is driven");
-    let issued = IrqControlKey::from_key(boot.irq_control_key)
+    let issued = IrqControlKey::from_key(keys.irq_control)
         .issue(
-            &self_table,
+            self_table,
             slots.take(1),
             timer_controller,
             virtual_timer.cells(),
@@ -348,7 +314,7 @@ pub fn run() -> ! {
 
     let mut retype = |kind: ObjectType| {
         untyped
-            .retype(kind, 0, 0, 1, &self_table, slots.take(1), Rights::all())
+            .retype(kind, 0, 0, 1, self_table, slots.take(1), Rights::all())
             .unwrap_or_else(|error| panic!("{kind:?} Retype failed: {:?}", error.code()))
     };
     let phase_one_key = retype(ObjectType::NOTIFICATION);
@@ -381,7 +347,7 @@ pub fn run() -> ! {
     let child_done_key = retype(ObjectType::NOTIFICATION);
     let [ready_key, armed_key, done_key] =
         core::array::from_fn(|_| retype(ObjectType::NOTIFICATION));
-    let boot_time = TimeKey::from_key(boot.boot_time_key);
+    let boot_time = TimeKey::from_key(keys.boot_time);
     for (worker, time_key) in worker_time_keys.iter().enumerate() {
         let budget_ns = if worker == FINITE_WORKER {
             FINITE_BUDGET_NS
@@ -580,7 +546,7 @@ pub fn run() -> ! {
 
     // The dispatcher's keys: the Scheduler, the workers' Threads and the two
     // Notifications it signals, in slots of its own table.
-    let root_scheduler = SchedulerKey::from_key(boot.root_scheduler_key);
+    let root_scheduler = SchedulerKey::from_key(keys.root_scheduler);
     let grant = |slot: u32, key: RawKey| {
         // SAFETY: the dispatcher's retained table; no invocation overlaps and
         // its Thread has not started.
@@ -592,10 +558,7 @@ pub fn run() -> ! {
     let words = Words(dispatcher_page_pointer(dispatcher_page));
     words.write(page::RECORDS, RECORD_VA);
     words.write(page::STRIDE, u64::from(RECORD_STRIDE));
-    words.write(
-        page::SCHEDULER,
-        grant(SCHEDULER_SLOT, boot.root_scheduler_key),
-    );
+    words.write(page::SCHEDULER, grant(SCHEDULER_SLOT, keys.root_scheduler));
     words.write(page::PHASE_ONE, grant(PHASE_ONE_SLOT, phase_one_key));
     words.write(page::PHASE_TWO, grant(PHASE_TWO_SLOT, phase_two_key));
     for (index, thread_key) in (0_u32..).zip(worker_thread_keys) {
@@ -712,7 +675,7 @@ pub fn run() -> ! {
     // which the dispatcher runs when the test needs it to.
     {
         let root = builder
-            .entry(boot.root_scheduler_key)
+            .entry(keys.root_scheduler)
             .carved_id()
             .unwrap_or_else(|error| panic!("root Scheduler identity: {:?}", error.code()));
         let boot_thread = nucleus.current_thread.expect("the boot Thread exists");
@@ -721,10 +684,7 @@ pub fn run() -> ! {
             .expect("the boot Thread exists")
             .scheduler = Some(root);
         nucleus.join_scheduler(boot_thread, root);
-        words.write(
-            page::BOOT_THREAD,
-            grant(BOOT_THREAD_SLOT, boot.boot_thread_key),
-        );
+        words.write(page::BOOT_THREAD, grant(BOOT_THREAD_SLOT, keys.boot_thread));
     }
     let child_worker_stack = builder.user_stack(&mut worker_stacks, STACK_PAGES, &mut slots);
 

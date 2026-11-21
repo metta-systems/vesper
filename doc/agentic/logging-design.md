@@ -427,10 +427,10 @@ probe whose second Thread overflows its stack and whose first Thread panics).
 
 ### Interactions and limits
 
-- **Kickstart limits.** `MAX_AREAS` (8 data areas per exporter) caps the log server at 8
-  clients; wood-test uses 7 (with the USB components). Migrating the rest needs it raised
-  (an `ExportedArea` is 32 bytes of the init page). Each channel takes 3 pages of the
-  2 MiB data window shared by all pairs.
+- **Kickstart limits.** `MAX_AREAS` (16 data areas per exporter) caps the log server at 16
+  clients; wood-test uses up to 9 on the Raspberry Pi 4 (the USB components, the SD
+  controller and the PCIe root complex). An `ExportedArea` is 32 bytes of the init page.
+  Each channel takes 3 pages of the 2 MiB data window shared by all pairs.
 - **PL011 interrupt load at high baud.** At 1.5 Mbaud an 8-byte transmit burst drains
   in 53 µs: up to about 19 000 transmit interrupts per second while the log is busy;
   worth measuring before trusting timing measured at that rate. The FIFO level
