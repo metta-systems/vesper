@@ -6,6 +6,18 @@
 //! one to each call and takes it back at `Thread.Return`. The kernel never
 //! touches the stack memory; what is mapped there, guard regions included, is
 //! the exporter's business.
+//!
+//! A pool that serves a fault handler also has a *fault area*: a RAM Frame,
+//! mapped in the same `AddressSpace`, with one [`FAULT_SLOT_BYTES`] slot per
+//! stack. A fault delivered on stack `i` gets its
+//! [`FaultFrame`](crate::fault::FaultFrame) in slot `i`, which the kernel
+//! writes through its own mapping of the Frame.
+
+/// Bytes of one fault-area slot: slot `i` starts at byte `i * FAULT_SLOT_BYTES`
+/// of the fault area and holds the fault frame of stack `i`.
+pub const FAULT_SLOT_BYTES: u64 = 1024;
+
+const _: () = assert!(crate::fault::FAULT_FRAME_BYTES as u64 <= FAULT_SLOT_BYTES);
 
 /// Most stack pools one `AddressSpace` holds.
 pub const MAX_STACK_POOLS: usize = 16;

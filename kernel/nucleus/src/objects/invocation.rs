@@ -794,14 +794,14 @@ impl<A: ArchObjects> Nucleus<A> {
         thread.fault = None;
 
         // Resume as the handler's action selects, from the fault frame in its
-        // stack as the handler left it. A frame that cannot be read back, or
-        // whose state the kernel refuses, terminates the Thread with the
-        // kernel's own copy of the faulting state.
+        // fault slot as the handler left it. A frame whose state the kernel
+        // refuses terminates the Thread with the kernel's own copy of the
+        // faulting state.
         let action = FaultAction::from_wire(prepared.payload[0]);
         let from_frame = if action == FaultAction::Terminate {
             None
         } else {
-            self.read_fault_frame(&fault, prepared.current_address_space)
+            self.read_fault_frame(&fault)
         };
         let (resumed, terminate) = match from_frame {
             Some((mut resumed, fp)) => {

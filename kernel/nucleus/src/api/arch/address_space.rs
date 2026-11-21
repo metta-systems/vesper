@@ -31,7 +31,9 @@
 //!   current-relative Thread.Return authority is kernel-constructed separately.
 //!
 //! - `CreateStackPool` `4`: `x2` base, `x3` bytes per stack, `x4` stack count,
-//!   `x5..x7` zero. Requires `GRANT`. Returns the pool handle in `x1`.
+//!   `x5` the fault area's Frame key or zero, `x6..x7` zero. Requires `GRANT`
+//!   (and `READ|WRITE` on the Frame, a RAM Frame mapped in this
+//!   `AddressSpace`, `NotMapped` otherwise). Returns the pool handle in `x1`.
 //! - `DestroyStackPool` `5`: `x2` pool handle, `x3..x7` zero. Requires `GRANT`.
 //!   Fails with `InvalidOperation` while a stack of the pool is in use.
 //!
@@ -65,6 +67,7 @@ use {
             carved::Carved,
             key_table::CallerTable,
             resume::{PreparedTranslationContext, prepare_translation_context},
+            stack_pool::FaultArea,
         },
     },
     core::num::NonZero,
@@ -126,7 +129,8 @@ fn resolve(
 }
 
 /// `CreateStackPool` `4`: `x2` base, `x3` bytes per stack, `x4` stack count,
-/// `x5..x7` zero. Requires `GRANT`. Returns the pool handle in `x1`.
+/// `x5` the fault area's Frame key or zero, `x6..x7` zero. Requires `GRANT`.
+/// Returns the pool handle in `x1`.
 fn create_stack_pool<A: ArchObjects>(
     access: &Access,
     caller: CallerTable,
@@ -134,17 +138,65 @@ fn create_stack_pool<A: ArchObjects>(
     args: &[u64; 6],
     nucleus: &mut Nucleus<A>,
 ) -> Result<(u64, u64), CapError> {
-    if args[3..].iter().any(|&arg| arg != 0) {
+    if args[4..].iter().any(|&arg| arg != 0) {
         return Err(CapError::InvalidOperation);
     }
     let address_space_id = resolve(access, caller, as_key, Rights::GRANT)?;
+    let fault_area = match args[3] {
+        0 => None,
+        key => Some(fault_area(
+            access,
+            caller,
+            RawKey::from_wire(key),
+            address_space_id,
+        )?),
+    };
     let handle = nucleus
         .address_space_mut(address_space_id)
         .ok_or(CapError::InvalidAddressSpace)?
         .stack_pools_mut()
-        .create(args[0], args[1], args[2], A::USER_VA_END)?;
+        .create(args[0], args[1], args[2], fault_area, A::USER_VA_END)?;
     semi::println!("✅ AddressSpace::CreateStackPool()");
     Ok((handle.to_wire(), 0))
+}
+
+/// The fault area `frame_key` names for a pool of `address_space`: a RAM
+/// Frame (`READ|WRITE`) mapped there (`NotMapped` when unmapped,
+/// `InvalidOperation` when mapped in another `AddressSpace`). The kernel
+/// writes fault frames through its own mapping of the Frame, so only the
+/// mapped address is taken from the handler's side.
+fn fault_area(
+    access: &Access,
+    caller: CallerTable,
+    frame_key: RawKey,
+    address_space: AddressSpaceId,
+) -> Result<FaultArea, CapError> {
+    let caller_table = access.resolve_caller_table(caller)?;
+    let entry = caller_table
+        .lookup(frame_key, caller.guard)
+        .map_err(|error| error.with_key_operand(5))?;
+    if entry.object_type() != ObjectType::FRAME {
+        return Err(CapError::TypeMismatch {
+            expected: ObjectType::FRAME,
+            found: entry.object_type(),
+        });
+    }
+    if !entry.rights().has(Rights::READ | Rights::WRITE) {
+        return Err(CapError::InsufficientRights);
+    }
+    let frame = entry.as_frame()?;
+    if frame.is_device() {
+        return Err(CapError::InvalidOperation);
+    }
+    let mapping = frame.mapping().ok_or(CapError::NotMapped)?;
+    if mapping.address_space != address_space {
+        return Err(CapError::InvalidOperation);
+    }
+    Ok(FaultArea {
+        paddr: frame.paddr,
+        vaddr: mapping.vaddr,
+        bytes: 1_u64 << frame.size_bits,
+    })
 }
 
 /// `DestroyStackPool` `5`: `x2` pool handle, `x3..x7` zero. Requires `GRANT`.

@@ -205,7 +205,7 @@ pub fn run() {
     assert_eq!(TCR_EL1.get() & 0x3F, 16, "the fixture uses 48-bit TTBR0");
     let user_end_exclusive = 1_u64 << 48;
     let pool = boot_as
-        .create_stack_pool(0x1000, 0x1000, 1)
+        .create_stack_pool(0x1000, 0x1000, 1, None)
         .unwrap_or_else(|error| panic!("AddressSpace.CreateStackPool failed: {:?}", error.code()));
     let invocation_key = boot_as
         .create_invocation(0x1234, &self_table, KeySlot(62), pool)
@@ -351,7 +351,7 @@ pub fn run() {
     for (base, bytes, count, reason, reason_id, value) in malformed_pools {
         assert_invalid_stack(
             boot_as
-                .create_stack_pool(base, bytes, count)
+                .create_stack_pool(base, bytes, count, None)
                 .map(|handle| RawKey::from_wire(handle.to_wire())),
             value,
             reason,
@@ -362,10 +362,15 @@ pub fn run() {
             (33, value, reason_id)
         );
     }
-    // Reserved operands are refused, and CreateInvocation takes only a pool
-    // handle without reserved bits and zero x6 and x7.
+    // Reserved operands are refused (CreateStackPool's x6 and x7), and
+    // CreateInvocation takes only a pool handle without reserved bits and
+    // zero x6 and x7.
     assert_eq!(
-        create_pool_raw(boot_as_key, [0x1000, 0x1000, 1, 1, 0, 0]),
+        create_pool_raw(boot_as_key, [0x1000, 0x1000, 1, 0, 1, 0]),
+        CapError::InvalidOperation.code()
+    );
+    assert_eq!(
+        create_pool_raw(boot_as_key, [0x1000, 0x1000, 1, 0, 0, 1]),
         CapError::InvalidOperation.code()
     );
     for args in [
@@ -402,7 +407,7 @@ pub fn run() {
     let mut filler = [None; 16];
     let mut made = 0;
     loop {
-        match boot_as.create_stack_pool(0x1000, 0x1000, 1) {
+        match boot_as.create_stack_pool(0x1000, 0x1000, 1, None) {
             Ok(handle) => {
                 filler[made] = Some(handle);
                 made += 1;
@@ -477,7 +482,7 @@ pub fn run() {
         (KeySlot(6), (0, 0x30, 1)),
     ] {
         let stack_pool = boot_as
-            .create_stack_pool(base, bytes, count)
+            .create_stack_pool(base, bytes, count, None)
             .unwrap_or_else(|error| panic!("valid pool rejected: {:?}", error.code()));
         let response = create_invocation_raw(
             boot_as_key,
@@ -763,7 +768,7 @@ pub fn run() {
     }
     ppc::component_init(ppc_return_key, bounce_debug_console_key);
     let ppc_pool = AddressSpaceKey::from_key(bounce_as_key)
-        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1, None)
         .unwrap_or_else(|error| panic!("PPC CreateStackPool failed: {:?}", error.code()));
     let ppc_key = AddressSpaceKey::from_key(bounce_as_key)
         .create_invocation(
@@ -789,7 +794,7 @@ pub fn run() {
     // A destroyed pool leaves its Invocations stale: the generation of the
     // slot is the diagnostic.
     let doomed_pool = AddressSpaceKey::from_key(bounce_as_key)
-        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1)
+        .create_stack_pool(ppc::STACK_BASE, ppc::STACK_END - ppc::STACK_BASE, 1, None)
         .unwrap_or_else(|error| panic!("second CreateStackPool failed: {:?}", error.code()));
     let doomed_key = AddressSpaceKey::from_key(bounce_as_key)
         .create_invocation(

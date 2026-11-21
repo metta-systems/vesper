@@ -258,18 +258,6 @@ pub trait ArchObjects: Sized + 'static {
     /// access always follows the `AddressSpace` being entered.
     fn install_translation_context(root_paddr: u64, asid: u16, fp_simd: bool);
 
-    /// Copy `bytes` to `vaddr` in the `AddressSpace` whose translation root
-    /// is `root_paddr`, through the kernel's direct map; that `AddressSpace`
-    /// need not be the active one. Every byte must be EL0-writable Normal
-    /// memory there, or nothing is written and the result is `false`. Used
-    /// for a fault frame in a fault handler's stack.
-    fn copy_to_user(root_paddr: u64, vaddr: u64, bytes: &[u8]) -> bool;
-
-    /// Copy from `vaddr` in the `AddressSpace` rooted at `root_paddr` into
-    /// `bytes`, as [`copy_to_user`](Self::copy_to_user) writes: every byte must
-    /// be EL0-readable Normal memory, or the result is `false`.
-    fn copy_from_user(root_paddr: u64, vaddr: u64, bytes: &mut [u8]) -> bool;
-
     // ─── Mapping mechanics (hardware descriptor installation) ───
     // The arch layer owns the descriptor format, walk, and vacancy checks;
     // the API handlers own authority and the transaction order.

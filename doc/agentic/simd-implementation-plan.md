@@ -1,7 +1,8 @@
 # FP/SIMD implementation plan
 
 Companion to [simd-design.md](simd-design.md), which holds the design and its
-correctness argument. [simd-decisions.md](simd-decisions.md) holds the open decisions.
+correctness argument. No FP/SIMD decision is open; future work is at the end of this
+file.
 
 This file holds only open work, in order. Each step is verified before the next one
 starts. Mark an item `- [x]` only after its verification has passed. A finished item
@@ -64,3 +65,16 @@ been measured on the board.
   and `owner_hits`.
 - [ ] Shrink the Thread, now that its size is accepted (F7(a)): for example, keep the
   FP part of call records in a side table used only by FP callers.
+
+## Future work
+
+Ideas that might be pursued later. They need no decision now and constrain nothing
+current.
+
+- **A crate marker for hard-float builds** (formerly F5.1(b)). A crate declares itself
+  FP, for example with `[package.metadata.vesper] fp_simd = true`, and the Justfile
+  derives its `fp_components` list from `cargo metadata`. The crate then states its own
+  nature, and the list cannot drift from it.
+- **Checking the scan against the crate marker.** Once the marker exists, image-build
+  compares the `fp-scan` result with each crate's marker instead of with the Justfile
+  list. A component with FP hits but no marker fails the build.

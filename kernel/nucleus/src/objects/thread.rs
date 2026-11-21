@@ -71,9 +71,9 @@ pub struct ThreadFault {
     pub address_space: AddressSpaceId,
     /// Stack length while the fault continuation is on top.
     pub depth: usize,
-    /// Where the fault frame is in the handler's stack, which the handler's
-    /// Return reads back.
-    pub frame_address: u64,
+    /// The physical address of the fault frame, in the fault area of the
+    /// handler's pool, which the handler's Return reads back.
+    pub frame_paddr: u64,
 }
 
 /// Where `Invocation.CallWithKey` placed a borrowed entry: the slot and the

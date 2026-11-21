@@ -17,12 +17,12 @@ use {
                 ReturnRejection,
             },
             key_table::CallerTable,
+            stack_pool::FaultArea,
             thread::ThreadId,
-            user_copy::FakeUserMemory,
         },
     },
     aarch64_cpu::registers::{Read, SCTLR_EL1, TCR_EL1, TTBR0_EL1, Write},
-    core::num::NonZero,
+    core::{cell::UnsafeCell, num::NonZero},
     libexception::arch::aarch64::{FpState, SavedContext},
     libobject::{
         CapError, INVOCATION_STACK_DEPTH, InconsistencyReason, InvalidKeyReason, KeySlot,
@@ -32,6 +32,7 @@ use {
             FaultInfo, FaultKind,
         },
         scheduler_record::ThreadFpCounters,
+        stack_pool::FAULT_SLOT_BYTES,
     },
 };
 
@@ -92,6 +93,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                     STACK_BASE,
                     STACK_BYTES,
                     POOL_STACKS,
+                    None,
                     ArchObjectsImpl::USER_VA_END,
                 )
                 .unwrap_or_else(|error| panic!("fixture stack pool: {:?}", error.code()));
@@ -104,6 +106,7 @@ fn with_call(test: impl FnOnce(&mut Nucleus<ArchObjectsImpl>, CallFixture)) {
                     STACK_BASE,
                     STACK_BYTES,
                     POOL_STACKS,
+                    None,
                     ArchObjectsImpl::USER_VA_END,
                 )
                 .unwrap_or_else(|error| panic!("fixture source stack pool: {:?}", error.code()));
@@ -1266,25 +1269,61 @@ fn dispatch_routes_call_and_return_from_saved_frames() {
 /// The faulting instruction's PC in the fault tests.
 const FAULT_PC: u64 = 0x9_1230;
 
-/// The fault handler's pool: two stacks of `HANDLER_STACK_BYTES`, room for
-/// the fault frame and the handler's own use, in a fake EL0 window.
+/// The fault handler's pool: two stacks of `HANDLER_STACK_BYTES`.
 const HANDLER_STACK_BASE: u64 = 0x40_0000;
 const HANDLER_STACK_BYTES: u64 = 0x400;
-/// The first handler stack's end, and the fault frame's place below it.
+/// The first handler stack's end.
 const HANDLER_STACK_END: u64 = HANDLER_STACK_BASE + HANDLER_STACK_BYTES;
-const FRAME_ADDRESS: u64 = HANDLER_STACK_END - FAULT_FRAME_BYTES as u64;
+/// Where the handler's `AddressSpace` maps the fault areas.
+const FAULT_AREA_VA: u64 = 0x50_0000;
+/// Fault-area slots of the test buffer: two per handler pool, two pools.
+const FAULT_AREA_SLOTS: usize = 4;
+
+/// The memory of the test handler pools' fault areas. The unit tests run
+/// without translation, so the buffer's address is its physical address and
+/// the kernel writes it directly.
+#[repr(C, align(4096))]
+struct FaultAreaBytes(UnsafeCell<[u8; FAULT_AREA_SLOTS * FAULT_SLOT_BYTES as usize]>);
+
+// SAFETY: the nucleus tests run on one core, one test at a time, and no
+// reference into the cell outlives a single call.
+unsafe impl Sync for FaultAreaBytes {}
+
+static FAULT_AREA_BYTES: FaultAreaBytes = FaultAreaBytes(UnsafeCell::new(
+    [0; FAULT_AREA_SLOTS * FAULT_SLOT_BYTES as usize],
+));
+
+/// The physical address of fault-area slot `slot` of the test buffer.
+fn fault_slot_paddr(slot: usize) -> u64 {
+    FAULT_AREA_BYTES.0.get() as u64 + slot as u64 * FAULT_SLOT_BYTES
+}
+
+/// The fault area of `slots` slots from slot `first` of the test buffer,
+/// zeroed.
+fn fault_area(first: usize, slots: usize) -> FaultArea {
+    let offset = first * FAULT_SLOT_BYTES as usize;
+    let length = slots * FAULT_SLOT_BYTES as usize;
+    // SAFETY: see `FaultAreaBytes`.
+    let buffer = unsafe { &mut *FAULT_AREA_BYTES.0.get() };
+    buffer[offset..offset + length].fill(0);
+    FaultArea {
+        paddr: fault_slot_paddr(first),
+        vaddr: FAULT_AREA_VA + offset as u64,
+        bytes: length as u64,
+    }
+}
 
 /// Install a fault handler Invocation (into the target `AddressSpace`, with a
-/// pool of its own, mapped writable in the fake EL0 window) at
-/// `FAULT_HANDLER` in the current Thread's table.
+/// pool of its own and a fault area) at `FAULT_HANDLER` in the current
+/// Thread's table.
 fn install_fault_handler(nucleus: &mut Nucleus<ArchObjectsImpl>, fixture: &CallFixture) {
-    install_fault_handler_with(nucleus, fixture, HANDLER_STACK_BYTES);
+    install_fault_handler_with(nucleus, fixture, Some(fault_area(0, 2)));
 }
 
 fn install_fault_handler_with(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     fixture: &CallFixture,
-    stack_bytes: u64,
+    fault_area: Option<FaultArea>,
 ) {
     let pool = nucleus
         .address_space_mut(fixture.target_as)
@@ -1292,16 +1331,12 @@ fn install_fault_handler_with(
         .stack_pools_mut()
         .create(
             HANDLER_STACK_BASE,
-            stack_bytes,
+            HANDLER_STACK_BYTES,
             2,
+            fault_area,
             ArchObjectsImpl::USER_VA_END,
         )
         .unwrap_or_else(|error| panic!("handler stack pool: {:?}", error.code()));
-    FakeUserMemory::map(
-        HANDLER_STACK_BASE,
-        usize::try_from(2 * stack_bytes).unwrap(),
-        true,
-    );
     nucleus
         .current_thread_table_mut()
         .unwrap()
@@ -1318,16 +1353,21 @@ fn install_fault_handler_with(
         .unwrap_or_else(|error| panic!("fault handler install: {:?}", error.error.code()));
 }
 
-/// The fault frame as it is in the handler's stack.
-fn frame_in_stack() -> FaultFrame {
+/// The fault frame as it is in the first stack's fault slot.
+fn frame_in_slot() -> FaultFrame {
     let mut bytes = [0; FAULT_FRAME_BYTES];
-    assert!(FakeUserMemory::read(FRAME_ADDRESS, &mut bytes));
+    // SAFETY: see `FaultAreaBytes`.
+    let buffer = unsafe { &*FAULT_AREA_BYTES.0.get() };
+    bytes.copy_from_slice(&buffer[..FAULT_FRAME_BYTES]);
     FaultFrame::from_bytes(bytes)
 }
 
-/// Replace the fault frame in the handler's stack, as a handler would.
+/// Replace the fault frame in the first stack's fault slot, as a handler
+/// would.
 fn rewrite_frame(frame: &FaultFrame) {
-    assert!(FakeUserMemory::write(FRAME_ADDRESS, &frame.to_bytes()));
+    // SAFETY: see `FaultAreaBytes`.
+    let buffer = unsafe { &mut *FAULT_AREA_BYTES.0.get() };
+    buffer[..FAULT_FRAME_BYTES].copy_from_slice(&frame.to_bytes());
 }
 
 /// A faulting EL0 frame with distinct values in every register.
@@ -1416,17 +1456,17 @@ fn fault_enters_the_handler_with_the_fault_words_at_its_stack_top() {
         assert_eq!(&target.gpr[2..8], &info.to_arguments());
         assert_eq!(
             &target.gpr[0..2],
-            &[FRAME_ADDRESS, 0],
-            "x0 is the fault frame"
+            &[FAULT_AREA_VA, 0],
+            "x0 is the fault frame, in the first stack's fault slot"
         );
         assert!(target.gpr[8..].iter().all(|&register| register == 0));
         assert_eq!(
-            target.sp, FRAME_ADDRESS,
-            "the handler starts below the fault frame at its stack top"
+            target.sp, HANDLER_STACK_END,
+            "the handler starts at its stack top: the stack stays untouched"
         );
         // The frame holds the faulting registers, and no FP part: the
         // faulting AddressSpace is integer-only.
-        let frame = frame_in_stack();
+        let frame = frame_in_slot();
         assert_eq!((frame.size, frame.version), (832, FAULT_FRAME_VERSION));
         assert_eq!(frame.flags, 0);
         assert_eq!(&frame.gpr[..30], &faulting.gpr);
@@ -1458,7 +1498,7 @@ fn fault_enters_the_handler_with_the_fault_words_at_its_stack_top() {
                 frame: faulting,
                 address_space: fixture.source_as,
                 depth: 1,
-                frame_address: FRAME_ADDRESS,
+                frame_paddr: fault_slot_paddr(0),
             })
         );
         assert_eq!(handler_state(nucleus, fixture.source_as), (true, 0));
@@ -1475,7 +1515,7 @@ fn a_handler_may_change_the_frame_and_retry_resumes_from_it() {
         };
         // The handler emulates the instruction: a result in x0, the PC past
         // it, and the condition flags it sets.
-        let mut frame = frame_in_stack();
+        let mut frame = frame_in_slot();
         frame.gpr[0] = 0x0E_0001;
         frame.pc = FAULT_PC + 4;
         frame.pstate = (frame.pstate & !0xF000_0000) | 0x8000_0000;
@@ -1497,30 +1537,24 @@ fn a_handler_may_change_the_frame_and_retry_resumes_from_it() {
 }
 
 #[test_case]
-fn a_frame_that_would_leave_el0_or_cannot_be_read_terminates() {
+fn a_frame_that_would_leave_el0_or_lost_its_header_terminates() {
     // A changed exception level or interrupt mask is refused; so is a frame
-    // whose header was overwritten, or one the handler unmapped.
+    // whose header was overwritten.
     let refusals: [fn(&mut FaultFrame); 3] = [
         |frame| frame.pstate |= 0b0101, // EL1h
         |frame| frame.pstate |= 1 << 7, // IRQs masked
         |frame| frame.version = 0,
     ];
-    for refuse in refusals.into_iter().map(Some).chain([None]) {
+    for refuse in refusals {
         with_call(|nucleus, fixture| {
             install_fault_handler(nucleus, &fixture);
             let faulting = faulting_frame();
             let FaultDelivery::Handler(_) = deliver(nucleus, faulting, fault_info(0)) else {
                 panic!("the fault must reach the handler");
             };
-            match refuse {
-                Some(refuse) => {
-                    let mut frame = frame_in_stack();
-                    refuse(&mut frame);
-                    rewrite_frame(&frame);
-                }
-                // The handler's stack is gone by the time it returns.
-                None => FakeUserMemory::map(0, 0, false),
-            }
+            let mut frame = frame_in_slot();
+            refuse(&mut frame);
+            rewrite_frame(&frame);
             let saved = return_frame(
                 fixture.target_return_key,
                 [FaultAction::Retry as u64, 0],
@@ -1538,22 +1572,19 @@ fn a_frame_that_would_leave_el0_or_cannot_be_read_terminates() {
 }
 
 #[test_case]
-fn a_handler_stack_without_room_for_the_frame_leaves_the_fault_unhandled() {
-    // Too small for the frame, or not writable: nothing commits.
-    for (stack_bytes, writable) in [(0x100, true), (HANDLER_STACK_BYTES, false)] {
-        with_call(|nucleus, fixture| {
-            install_fault_handler_with(nucleus, &fixture, stack_bytes);
-            FakeUserMemory::set_writable(writable);
-            let faulted = nucleus.current_thread.unwrap();
-            let next = queue_next_thread(nucleus, &fixture);
-            let faulting = faulting_frame();
-            let delivery = deliver(nucleus, faulting, fault_info(0));
-            expect_unhandled(delivery, nucleus, faulted, faulting, next);
-            assert_eq!(handler_state(nucleus, fixture.source_as), (false, 1));
-            let thread = nucleus.thread(faulted).unwrap();
-            assert_eq!(thread.invocation_stack.len(), 0);
-        });
-    }
+fn a_handler_pool_without_a_fault_area_leaves_the_fault_unhandled() {
+    // The frame has nowhere to go: nothing commits.
+    with_call(|nucleus, fixture| {
+        install_fault_handler_with(nucleus, &fixture, None);
+        let faulted = nucleus.current_thread.unwrap();
+        let next = queue_next_thread(nucleus, &fixture);
+        let faulting = faulting_frame();
+        let delivery = deliver(nucleus, faulting, fault_info(0));
+        expect_unhandled(delivery, nucleus, faulted, faulting, next);
+        assert_eq!(handler_state(nucleus, fixture.source_as), (false, 1));
+        let thread = nucleus.thread(faulted).unwrap();
+        assert_eq!(thread.invocation_stack.len(), 0);
+    });
 }
 
 #[test_case]
@@ -1571,7 +1602,7 @@ fn an_fp_fault_carries_its_registers_and_retry_restores_them() {
         // The handler starts zeroed, and finds the faulting registers in the
         // frame.
         assert_eq!(FakeFpUnit::registers(), FpState::ZERO);
-        let mut frame = frame_in_stack();
+        let mut frame = frame_in_slot();
         assert_eq!(frame.flags, FAULT_FRAME_FP);
         assert_eq!(frame.vectors, faulted_values.vectors);
         assert_eq!(
@@ -2594,7 +2625,8 @@ impl ModelThread {
 }
 
 /// Install `side`'s fault handler: an Invocation into the other
-/// `AddressSpace`, with a pool of two `HANDLER_STACK_BYTES` stacks at `base`.
+/// `AddressSpace`, with a pool of two `HANDLER_STACK_BYTES` stacks at `base`
+/// and fault-area slots `2 * side` and `2 * side + 1`.
 fn install_model_fault_handler(
     nucleus: &mut Nucleus<ArchObjectsImpl>,
     fixture: &CallFixture,
@@ -2610,7 +2642,13 @@ fn install_model_fault_handler(
         .address_space_mut(handler_as)
         .unwrap()
         .stack_pools_mut()
-        .create(base, HANDLER_STACK_BYTES, 2, ArchObjectsImpl::USER_VA_END)
+        .create(
+            base,
+            HANDLER_STACK_BYTES,
+            2,
+            Some(fault_area(2 * side, 2)),
+            ArchObjectsImpl::USER_VA_END,
+        )
         .unwrap_or_else(|error| panic!("model handler pool: {:?}", error.code()));
     install_entry(
         table,
@@ -2642,19 +2680,14 @@ fn run_model_sequence(fp: [bool; 2], mut code: u32) {
                 PlacementWindow::NONE,
             ),
         );
-        // A fault in either AddressSpace goes to a handler in the other; both
-        // handler pools lie in the one fake EL0 window.
+        // A fault in either AddressSpace goes to a handler in the other; the
+        // two handler pools share the test fault-area buffer.
         install_model_fault_handler(nucleus, &fixture, 0, HANDLER_STACK_BASE);
         install_model_fault_handler(
             nucleus,
             &fixture,
             1,
             HANDLER_STACK_BASE + 2 * HANDLER_STACK_BYTES,
-        );
-        FakeUserMemory::map(
-            HANDLER_STACK_BASE,
-            usize::try_from(4 * HANDLER_STACK_BYTES).unwrap(),
-            true,
         );
         let call_keys = [fixture.key, back];
         let return_keys = [fixture.source_return_key, fixture.target_return_key];

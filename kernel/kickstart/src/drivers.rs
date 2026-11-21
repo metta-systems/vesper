@@ -1144,7 +1144,7 @@ pub fn load_drivers(
         // `FAULT_HANDLER` slot, on a stack of its own: a Thread that overflowed
         // its stack still has one to report on.
         if let Some(fault_entry) = image.export(FAULT_HANDLER_EXPORT) {
-            let fault_pool = builder.stack_pool(&mut stacks, FAULT_STACK_PAGES, 1, slots);
+            let fault_pool = builder.fault_handler_pool(&mut stacks, FAULT_STACK_PAGES, 1, slots);
             AddressSpaceKey::from_key(component.address_space_key)
                 .create_invocation(
                     fault_entry,

@@ -5,16 +5,17 @@
 //! `KeySlot::FAULT_HANDLER` in the table of the `AddressSpace` it is executing
 //! in, so the handler runs with the faulting Thread's priority and budget.
 //! Before the Call commits, the faulting state is written as a `FaultFrame`
-//! at the top of the handler's stack, whose address the handler gets in `x0`.
-//! The handler finishes with an ordinary `Thread.Return`; when that Return
-//! pops the fault continuation, `commit_return` reads the frame back,
-//! validates it and resumes from it according to the handler's `FaultAction`
-//! instead of the continuation.
+//! into the fault area of the handler's stack pool, in the slot of the stack
+//! the Call takes, through the kernel's own mapping of the area's Frame; the
+//! handler gets the slot's address in `x0`. The handler finishes with an
+//! ordinary `Thread.Return`; when that Return pops the fault continuation,
+//! `commit_return` copies the frame back, validates the copy and resumes from
+//! it according to the handler's `FaultAction` instead of the continuation.
 //!
 //! A fault nobody takes — no handler, a busy handler, a fault inside the
-//! handler, a forced Call the ordinary Call rules reject, or a handler stack
-//! the frame does not fit in or cannot be written to — parks the Thread as
-//! `Faulted` and counts the fault on its `AddressSpace`.
+//! handler, a forced Call the ordinary Call rules reject, or a handler pool
+//! without a fault area — parks the Thread as `Faulted` and counts the fault
+//! on its `AddressSpace`.
 
 use {
     crate::objects::{
@@ -24,7 +25,9 @@ use {
         fp::FpUnit,
         invocation::{CallTarget, CommittedCall, PreparedCall},
         key_table::KeyTable,
+        nucleus::kernel_window,
         resume::Switch,
+        stack_pool::FaultSlot,
         thread::ThreadId,
     },
     libexception::arch::aarch64::{FpState, SavedContext},
@@ -127,19 +130,18 @@ impl<A: ArchObjects> Nucleus<A> {
                     frame.fpcr = state.fpcr;
                     frame.fpsr = state.fpsr;
                 }
-                // The frame goes at the top of the stack the call will take,
-                // before anything commits: a stack it does not fit in, or
-                // cannot be written, leaves the fault unhandled.
-                if let Some(frame_address) = self.write_fault_frame(&prepared, &frame) {
+                // The frame goes into the fault slot of the stack the call
+                // will take, before anything commits: a pool without a fault
+                // area leaves the fault unhandled.
+                if let Some(slot) = self.write_fault_frame(&prepared, &frame) {
                     let mut committed = self.commit_call(access, prepared)?;
-                    committed.target.sp = frame_address;
-                    committed.target.gpr[0] = frame_address;
+                    committed.target.gpr[0] = slot.vaddr;
                     let thread = self.thread_mut(current).ok_or(CapError::InvalidThread)?;
                     thread.fault = Some(ThreadFault {
                         frame: faulting,
                         address_space: faulting_address_space,
                         depth: depth + 1,
-                        frame_address,
+                        frame_paddr: slot.paddr,
                     });
                     if fp {
                         thread.fp_stats.fp_saves = thread.fp_stats.fp_saves.wrapping_add(1);
@@ -157,39 +159,42 @@ impl<A: ArchObjects> Nucleus<A> {
             .map(FaultDelivery::Unhandled)
     }
 
-    /// Write `frame` at the top of the stack the forced call `prepared` will
-    /// take from the handler's pool; its address, or `None` when the stack is
-    /// too small for it or the handler cannot write there. Nothing commits.
-    fn write_fault_frame(&self, prepared: &PreparedCall, frame: &FaultFrame) -> Option<u64> {
-        let translation = prepared.translation();
-        let (end, stack_bytes) = self
-            .address_space(translation.address_space())?
+    /// Write `frame` into the fault slot of the stack the forced call
+    /// `prepared` will take from the handler's pool; the slot, or `None` when
+    /// the pool has no fault area. Nothing commits.
+    fn write_fault_frame(&self, prepared: &PreparedCall, frame: &FaultFrame) -> Option<FaultSlot> {
+        let slot = self
+            .address_space(prepared.translation().address_space())?
             .stack_pools()
-            .peek(prepared.stack_pool())
-            .ok()?;
-        let bytes = u64::try_from(FAULT_FRAME_BYTES).ok()?;
-        if stack_bytes < bytes {
-            return None;
+            .fault_slot(prepared.stack_pool())
+            .ok()??;
+        let bytes = frame.to_bytes();
+        // SAFETY: the slot lies in the RAM Frame registered as the pool's
+        // fault area, which holds a slot for every stack and whose memory the
+        // nucleus does not reclaim; the kernel lock serializes the access.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), kernel_window(slot.paddr), bytes.len());
         }
-        let address = end - bytes;
-        A::copy_to_user(translation.root(), address, &frame.to_bytes()).then_some(address)
+        Some(slot)
     }
 
-    /// Read back the fault frame of `fault` from the handler's stack in
-    /// `handler_address_space`: the state to resume, and the FP state to load
-    /// when the faulting frame is an FP frame. `None` when the frame cannot
-    /// be read or the kernel refuses it.
+    /// Copy back the fault frame of `fault` from its fault slot: the state to
+    /// resume, and the FP state to load when the faulting frame is an FP
+    /// frame. `None` when the kernel refuses the frame.
     pub(crate) fn read_fault_frame(
         &self,
         fault: &ThreadFault,
-        handler_address_space: AddressSpaceId,
     ) -> Option<(SavedContext, Option<FpState>)> {
-        let root = self
-            .address_space(handler_address_space)?
-            .translation_root()?;
         let mut bytes = [0; FAULT_FRAME_BYTES];
-        if !A::copy_from_user(root, fault.frame_address, &mut bytes) {
-            return None;
+        // SAFETY: as in `write_fault_frame`; the handler may change the slot
+        // at any time, so the frame is copied once and only the copy is
+        // validated.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                kernel_window(fault.frame_paddr),
+                bytes.as_mut_ptr(),
+                bytes.len(),
+            );
         }
         let frame = FaultFrame::from_bytes(bytes);
         let resumed = resume_state(&frame, &fault.frame)?;
