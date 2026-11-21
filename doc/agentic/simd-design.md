@@ -32,6 +32,9 @@ design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
   - F10(b), 2026-11-19: the FP statistics are published in the scheduler-shared
     records. They are scheduling information, which the root scheduler can read and act
     on, so the FP policy can become adaptive later.
+  - F11(c), 2026-11-21: the kernel-entry FP guard is on in debug kernels and off in
+    release kernels, whose guarantee is an audit that fails when it scans nothing. See
+    "The model".
 - The other open decisions are in [simd-decisions.md](simd-decisions.md).
 - The work order is in [simd-implementation-plan.md](simd-implementation-plan.md).
 
@@ -101,13 +104,23 @@ from one AddressSpace into another:
    from an FP frame starts with FP enabled. A kernel FP instruction at that point would
    silently corrupt the frame's live registers.
 
-   F11 proposes turning FP off in `vectors.S` at every entry from an FP frame, and back
-   on before the `eret` into one. The kernel would then always run trapped, outside its
-   own routines. It is built behind a nucleus feature, `fp_entry_trap`. The overhead is
-   measured with the feature on and off before the maintainer decides whether it stays.
+   The entry guard (F11(c), 2026-11-21) turns FP off at every entry from an FP frame,
+   and back on before the `eret` into one, so the kernel runs trapped outside its own
+   routines. It is the nucleus feature `fp_entry_trap`, which `debug_kernel` turns on;
+   release kernels run without it, since the nucleus is expected never to use FP and
+   the guard would cost 1.3 to 2.4 % of every Call from an FP frame
+   (`doc/simd-performance.md`). The debug kernels, which the test kernels are, are
+   therefore the run-time check of the audit.
 
-   Either way, `_audit-fp-simd` stays mandatory in `just lint`, including the nucleus
-   with an allow-list naming the three routines.
+   `_audit-fp-simd` stays mandatory in `just lint`, and must never pass while checking
+   nothing, as it did once when an `nm` output format mismatch kept it from reading the
+   nucleus at all:
+   - it finds every soft-float image the build produced by itself, the release kernels
+     included, instead of reading a list kept by hand;
+   - an image with no code to scan fails;
+   - each function the allow-list names, the nucleus's FP routines, must hold FP
+     instructions, so every image that links the nucleus shows that the scan sees them;
+   - `fp-probe`, which executes FP on purpose, must show FP instructions.
 
 Terms used below:
 
@@ -296,7 +309,7 @@ the root Scheduler's `SchedulerRecord`, which also has eight reserved words:
 
 - Thread switches;
 - Thread switches that involved an FP frame on either side;
-- with F11(a), the `FPEN` toggles at kernel entry and exit.
+- with the entry guard, the `FPEN` toggles at kernel entry and exit.
 
 Sums of the per-Thread counters need no totals of their own, because a scheduler
 can add up its Threads' records.
@@ -433,10 +446,11 @@ Each of these satisfies I1 to I4.
   next.
 - **`EL1t` fixture Threads.** They run in integer-only AddressSpaces, so I1 traps EL1
   again on entry, and `fp-trap-test`'s EL1t check stays valid.
-- **The kernel running with `FPEN` = `0b11` after an entry from an FP frame.** Without
-  F11(a), the build and the audit are the only guarantee of I3. This is the weakest point
-  of the design. With F11(a), the hardware traps a stray kernel FP instruction. In both
-  cases the audit stays part of `just lint`.
+- **The kernel running with `FPEN` = `0b11` after an entry from an FP frame.** In a
+  release kernel, the build and the audit are the only guarantee of I3. This is the
+  weakest point of the design, which is why the audit fails when it scans nothing (see
+  "The model"). In a debug kernel, the entry guard makes the hardware trap a stray kernel
+  FP instruction. In both cases the audit stays part of `just lint`.
 - **The first start of a Thread.** `Thread.fp` is zero from the carve, and the first
   entry loads it.
 - **`Activate`, CallWithKey, `Scheduler.Dispatch` and `Thread.Suspend`.** These reduce

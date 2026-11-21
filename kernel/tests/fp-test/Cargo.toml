@@ -15,7 +15,8 @@ version = { workspace = true }
 
 [features]
 default = []
-debug_kernel = ["kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject/debug_kernel", "nucleus/debug_kernel"]
+# The nucleus's debug_kernel turns on its entry guard, so the reported profile follows it.
+debug_kernel = ["fp_entry_trap", "kickstart/debug_kernel", "libkicktest/debug_kernel", "libobject/debug_kernel", "nucleus/debug_kernel"]
 jtag = ["kickstart/jtag"]
 noserial = []
 # Build for running under QEMU with semihosting, so exit reports the result.

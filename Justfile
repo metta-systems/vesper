@@ -757,10 +757,10 @@ _test-fp-trap: (_run-test-kernel 'fp-trap-test' '_build-fp-trap-test' 'rpi3' 'qe
 _test-fp-entry-trap: (_run-test-kernel 'fp-trap-test' ('_build-fp-trap-test ' + boards + ' qemu,fp_trap_test,fp_entry_trap') 'rpi3' 'qemu,fp_trap_test,fp_entry_trap')
 
 # Boot fp-test: FP components keep their V registers across preemption, Calls and a handled fault, and FP/SIMD traps in an integer-only callee
-_test-fp: (_run-test-kernel 'fp-test' '_build-fp-test' 'rpi3' 'qemu')
+_test-fp: (_run-test-kernel 'fp-test' ('_build-fp-test ' + boards + ' ' + test_kernel_features) 'rpi3' test_kernel_features)
 
 # Boot a short fp-bench on the Raspberry Pi 4 machine: every variant runs and computes the same checksum (the timings mean nothing under QEMU)
-_test-fp-bench: (_run-test-kernel 'fp-bench' '_build-fp-bench' 'rpi4' 'qemu')
+_test-fp-bench: (_run-test-kernel 'fp-bench' ('_build-fp-bench ' + boards + ' ' + test_kernel_features) 'rpi4' test_kernel_features)
 
 # Boot fault-test: faults are delivered to EL0 fault handlers (skip, retry, terminate, Return faults) and every unhandled case parks the Thread
 _test-fault: (_run-test-kernel 'fault-test' '_build-fault-test' 'rpi3' 'qemu')
@@ -1377,43 +1377,62 @@ fmt:
 
 # Audit the integer-only FP/SIMD policy: no linked image that runs under it may contain an
 # FP/SIMD instruction or register access (fp-trap-test and fp-probe execute one on purpose)
-_audit-fp-simd: (build boards 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test boards) (_build-dispatch-test boards) (_build-irq-test boards) (_build-driver-test boards) (_build-mailbox-test boards) (_build-uart-test boards) (_build-fault-test boards) (_build-endpoint-test boards 'qemu')
+_audit-fp-simd: (build boards) (build boards 'qemu') (_build-test-kernel 'capability-test') (_build-test-kernel 'memory-test') (_build-test-kernel 'sync-test') (_build-test-kernel 'ppc-test') (_build-preempt-test boards) (_build-dispatch-test boards) (_build-irq-test boards) (_build-driver-test boards) (_build-mailbox-test boards) (_build-uart-test boards) (_build-fault-test boards) (_build-endpoint-test boards 'qemu') (_build-fp-trap-test boards) (_build-fp-test boards) (_build-fp-bench boards)
     #!/usr/bin/env bash
     set -euo pipefail
-    # The production kernel and the qemu-only test kernels build in <boards>-qemu, the
-    # debug_kernel test kernels in <boards>-qemu+debug_kernel; every copy of an image is audited.
-    configs="{{ boards_qemu }} {{ boards }}-qemu+debug_kernel{{ profile_suffix }}"
-    # tools/fp-scan decodes every word of the executable segments (the same scan sets a
-    # component's FP flag in image-build).
+    # Release kernels run without the FP entry guard, so this audit is their only check
+    # that the kernel executes no FP/SIMD outside its own routines. It must never pass
+    # while checking nothing, so it finds the images by itself, and tools/fp-scan fails
+    # when it sees nothing it should (no code, or no FP in the routines it allows).
     cargo build -q --release -p fp-scan
     fp_scan="{{ target_root }}/release/fp-scan"
-    failed=0
-    # Kernel images may hold the nucleus's FP/SIMD routines (the naked `fp_unit_*` functions
-    # in objects/arch/fp_unit.rs) and nothing else; every other image none. The FP components
-    # (`fp_components`) are built for the hard-float target and are not audited. fp-probe
-    # executes an FP/SIMD instruction on purpose: it is the check that the scan still finds
-    # one. The driver packages name their binaries after the service (mailbox-impl builds
-    # `mailbox`).
-    kernel_images="nucleus kickstart {{ privileged_components }} capability-test memory-test sync-test ppc-test preempt-test dispatch-test irq-test driver-test mailbox-test uart-test endpoint-test fault-test fp-test fp-bench"
-    user_components="{{ replace(replace(replace(replace(user_components, 'fp-probe', ''), 'mailbox-impl', 'mailbox'), 'power-impl', 'power'), 'fb-impl', 'fb') }}"
-    for image in ${kernel_images} ${user_components} fp-probe; do
-        case " ${kernel_images} " in
-            *" ${image} "*) arguments="--allow fp_unit_" ;;
-            *) arguments="" ;;
-        esac
-        [ "${image}" = fp-probe ] && arguments="--expect-hits"
-        audited=0
-        for config in ${configs}; do
-            elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${image}"
-            [ -f "${elf}" ] || continue
-            audited=1
-            "${fp_scan}" ${arguments} "${elf}" || failed=1
+    # Every soft-float ELF executable built for the board set, in every configuration of
+    # it (`<boards>` and `<boards>-<features>`; other directories are left from other board
+    # sets). The FP components (`fp_components`) build for the hard-float target, in
+    # another directory.
+    images=()
+    for directory in "{{ target_root }}/{{ boards }}/{{ target }}/{{ image_profile }}" "{{ target_root }}/{{ boards }}"-*/{{ target }}/{{ image_profile }}; do
+        [ -d "${directory}" ] || continue
+        for file in "${directory}"/*; do
+            [ -f "${file}" ] && [ -x "${file}" ] || continue
+            [ "$(head -c 4 "${file}" | od -An -tx1 | tr -d ' \n')" = 7f454c46 ] || continue
+            images+=("${file}")
         done
-        if [ "${audited}" = 0 ]; then
-            echo "❌ ${image}: not built in any of ${configs}"
-            failed=1
-        fi
     done
+    failed=0
+    # The configurations the release, QEMU and debug kernels build in must be among them.
+    for config in "{{ boards }}{{ profile_suffix }}" "{{ boards_qemu }}" "{{ boards }}-qemu+debug_kernel{{ profile_suffix }}"; do
+        for required in nucleus kickstart; do
+            elf="{{ target_root }}/${config}/{{ target }}/{{ image_profile }}/${required}"
+            if [ ! -f "${elf}" ]; then
+                echo "❌ ${elf}: not built, so not audited"
+                failed=1
+            fi
+        done
+    done
+    # Images may hold the nucleus's FP/SIMD routines (the naked `fp_unit_*` functions in
+    # objects/arch/fp_unit.rs) and nothing else, and each such routine must show FP
+    # instructions. The nucleus must define them. fp-probe executes an FP/SIMD
+    # instruction on purpose and must show it. The test-only `fp_trap_test` feature adds
+    # the kernel probe `fp_trap_protocol::probe`, which executes one too.
+    probes=0
+    for image in "${images[@]}"; do
+        allow=(--allow fp_unit_)
+        case "${image}" in
+            *fp_trap_test*) allow+=(--allow fp_trap_protocol5probe) ;;
+        esac
+        case "$(basename "${image}")" in
+            fp-probe) arguments=(--expect-hits); probes=$((probes + 1)) ;;
+            nucleus) arguments=("${allow[@]}" --expect-allowed) ;;
+            *) arguments=("${allow[@]}") ;;
+        esac
+        "${fp_scan}" "${arguments[@]}" "${image}" || failed=1
+    done
+    if [ "${probes}" = 0 ]; then
+        echo "❌ fp-probe: not built, so the scan is not shown to find FP/SIMD"
+        failed=1
+    fi
+    echo "${#images[@]} images audited"
     exit "${failed}"
 
 # Run every lint: formatting, clippy for every feature set and the host tests, the FP/SIMD audit
