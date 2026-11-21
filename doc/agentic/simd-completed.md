@@ -36,10 +36,9 @@ The details live in the contract and the design, and the history in version cont
     The model check covers both `AddressSpace`s with every combination of FP flags, two
     Threads, depth 3, and every 6-step sequence of Call, Return and preemption. It was
     shown to fail on a deliberately missing zeroing.
-- [x] S1 fault frame (F8(d), F8.1–F8.3(iii); F12 provisionally (a)): `FaultFrame`
-  (832 B, `libs/object/src/fault.rs`) written at the top of the handler's pool stack
-  through `page_table::user_page` and the kernel direct map, its address in `x0` and SP
-  below it; read back, validated and resumed at Retry or Skip, FP part included.
+- [x] S1 fault frame (F8(d), F8.1–F8.3(iii)): `FaultFrame` (832 B,
+  `libs/object/src/fault.rs`) handed to the handler, its address in `x0` (placed per
+  F12(b1) below); read back, validated and resumed at Retry or Skip, FP part included.
   Exercised by the nucleus fault tests (`just _test-debug-console`) and fault-test's
   emulating handler (`just _test-fault`).
 - [x] S1 model check extended with fault delivery, the handler's Return and Thread
@@ -83,6 +82,14 @@ The details live in the contract and the design, and the history in version cont
   itself (402, the release kernels included) and `fp-scan` refuses an audit that sees
   nothing (`fp_scan::audit`, host-tested); shown to fail on a blind decoder and on an
   unread symbol table.
+- [x] F12(b1) fault area: `CreateStackPool` `x5` registers a RAM Frame, slot `i` per
+  stack `i` (`FAULT_SLOT_BYTES`); fault delivery writes the frame there through the
+  kernel's mapping and leaves the stack alone (`objects/stack_pool.rs`, `objects/fault.rs`,
+  `Builder::fault_handler_pool`). Exercised by the nucleus tests (`just
+  _test-debug-console`), fault-test's refusals (`just _test-fault`), `just _test-fp` and
+  `just _test-ppc`.
+- [x] F12(b1) walker kept: the EL0 page walk and copies moved, unused, to
+  `kernel/nucleus/src/user_memory.rs`; `ArchObjects::copy_to_user`/`copy_from_user` are gone.
 
 ## Completed decisions
 
@@ -110,3 +117,5 @@ Each is recorded in [simd-design.md](simd-design.md), with the contract text in
   records.
 - [x] F11(c), 2026-11-21: the entry guard is on in debug kernels and off in release
   kernels; the audit must fail when it scans nothing.
+- [x] F12(b1), 2026-11-21: the kernel never touches pool stacks; the fault frame goes
+  into the handler pool's fault area, a registered Frame.

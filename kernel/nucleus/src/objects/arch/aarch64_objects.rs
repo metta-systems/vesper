@@ -25,46 +25,6 @@ pub const fn tlbi_vae1is_operand(asid: u16, vaddr: u64) -> u64 {
     ((asid as u64) << 48) | ((vaddr >> 12) & 0x0000_0FFF_FFFF_FFFF)
 }
 
-/// Copy `length` bytes at `vaddr` of the `AddressSpace` rooted at `root`,
-/// page by page: `copy` gets each piece's physical address and its range of
-/// the buffer. Every page is checked first, so either all of it is copied or
-/// none (`false`).
-#[cfg(not(test))]
-fn user_copy(
-    root: u64,
-    vaddr: u64,
-    length: usize,
-    write: bool,
-    mut copy: impl FnMut(u64, core::ops::Range<usize>),
-) -> bool {
-    const PAGE: u64 = 4096;
-    let Some(end) = vaddr.checked_add(length as u64) else {
-        return false;
-    };
-    let mut page = vaddr & !(PAGE - 1);
-    while page < end {
-        if super::page_table::user_page(root, page, write).is_none() {
-            return false;
-        }
-        page += PAGE;
-    }
-    let mut done = 0;
-    while done < length {
-        let at = vaddr + done as u64;
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "a page offset is below 4096"
-        )]
-        let chunk = (length - done).min((PAGE - (at & (PAGE - 1))) as usize);
-        let Some(paddr) = super::page_table::user_page(root, at, write) else {
-            return false;
-        };
-        copy(paddr, done..done + chunk);
-        done += chunk;
-    }
-    true
-}
-
 /// Validate the existing 4 KiB, non-LPA2 TTBR0 encoding against the active
 /// physical-address/ASID widths. Kept pure so rejected metadata needs no MMU
 /// transition in tests. Zero is a valid physical table address, not a sentinel.
@@ -247,50 +207,6 @@ impl ArchObjects for AArch64 {
                 options(nostack),
             );
         }
-    }
-
-    #[cfg(not(test))]
-    fn copy_to_user(root_paddr: u64, vaddr: u64, bytes: &[u8]) -> bool {
-        user_copy(root_paddr, vaddr, bytes.len(), true, |paddr, range| {
-            // SAFETY: `user_copy` found the page EL0-writable Normal memory of
-            // that `AddressSpace`; the direct map reaches all of RAM.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    bytes[range.clone()].as_ptr(),
-                    libaddress::PhysAddr::new(paddr)
-                        .user_to_kernel()
-                        .as_mut_ptr::<u8>(),
-                    range.len(),
-                );
-            }
-        })
-    }
-
-    #[cfg(not(test))]
-    fn copy_from_user(root_paddr: u64, vaddr: u64, bytes: &mut [u8]) -> bool {
-        let length = bytes.len();
-        user_copy(root_paddr, vaddr, length, false, |paddr, range| {
-            // SAFETY: as in `copy_to_user`, for EL0-readable memory.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    libaddress::PhysAddr::new(paddr)
-                        .user_to_kernel()
-                        .as_ptr::<u8>(),
-                    bytes[range.clone()].as_mut_ptr(),
-                    range.len(),
-                );
-            }
-        })
-    }
-
-    #[cfg(test)]
-    fn copy_to_user(_root_paddr: u64, vaddr: u64, bytes: &[u8]) -> bool {
-        crate::objects::user_copy::FakeUserMemory::write(vaddr, bytes)
-    }
-
-    #[cfg(test)]
-    fn copy_from_user(_root_paddr: u64, vaddr: u64, bytes: &mut [u8]) -> bool {
-        crate::objects::user_copy::FakeUserMemory::read(vaddr, bytes)
     }
 
     fn install_table_entry(

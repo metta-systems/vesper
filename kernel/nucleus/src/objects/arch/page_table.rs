@@ -67,7 +67,7 @@ pub const ENTRIES_PER_TABLE: usize = 512;
 pub const VA_BITS: u32 = 48;
 
 /// Output-address bits [47:12] of a page/block/table descriptor.
-const ENTRY_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+pub(crate) const ENTRY_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 
 /// The hardware-format table: 512 entries × 8 bytes = 4 KiB.
 #[repr(C, align(4096))]
@@ -172,7 +172,7 @@ pub fn leaf_level(size_bits: u8) -> u8 {
     clippy::missing_safety_doc,
     reason = "the caller-facing contract is on the public wrappers below"
 )]
-unsafe fn raw_table(paddr: u64) -> &'static mut RawPageTable {
+pub(crate) unsafe fn raw_table(paddr: u64) -> &'static mut RawPageTable {
     // SAFETY: the caller guarantees a live carved table at `paddr`.
     unsafe {
         &mut *PhysAddr::new(paddr)
@@ -246,53 +246,6 @@ fn walk_to_leaf(root_paddr: u64, vaddr: u64, size_bits: u8) -> Result<u64, CapEr
         table = entry & ENTRY_ADDR_MASK;
     }
     Ok(table)
-}
-
-/// The physical address `vaddr` maps to in the tables rooted at
-/// `root_paddr`, if EL0 may access it there: readable, and writable too when
-/// `write` is set. The mapping must be Normal cacheable memory (device and
-/// write-combining mappings are refused), with its access flag set.
-///
-/// This is how the kernel reads and writes a fault frame in a fault handler's
-/// stack without that `AddressSpace` being the active one: it follows the
-/// handler's own tables and goes through the direct map.
-pub fn user_page(root_paddr: u64, vaddr: u64, write: bool) -> Option<u64> {
-    if vaddr >> VA_BITS != 0 {
-        return None;
-    }
-    let mut table = root_paddr;
-    for level in 0..=3_u8 {
-        // SAFETY: the root is a bound `AddressSpace`'s translation root and
-        // each step follows a valid table descriptor `install_table_entry`
-        // installed, so every address names a live carved table.
-        let entry = unsafe { raw_table(table) }.entries[slot_index(level, vaddr)];
-        if entry & pte::VALID == 0 {
-            return None;
-        }
-        let leaf = level == 3 || entry & pte::DESCRIPTOR == 0;
-        if !leaf {
-            table = entry & ENTRY_ADDR_MASK;
-            continue;
-        }
-        if level == 0 || (level == 3 && entry & pte::DESCRIPTOR == 0) {
-            // No block at level 0, and a level-3 entry must be a page.
-            return None;
-        }
-        let ap = entry & (0b11 << 6);
-        let el0_access = if write {
-            ap == pte::AP_RW_USER
-        } else {
-            ap == pte::AP_RW_USER || ap == pte::AP_RO_USER
-        };
-        let normal = entry & (0b111 << 2) == pte::ATTR_NORMAL;
-        if !el0_access || !normal || entry & pte::AF == 0 {
-            return None;
-        }
-        let span_bits = 39 - 9 * u32::from(level);
-        let offset = vaddr & ((1 << span_bits) - 1);
-        return Some((entry & ENTRY_ADDR_MASK & !((1 << span_bits) - 1)) | offset);
-    }
-    None
 }
 
 /// Install the page/block descriptor for a frame mapping.

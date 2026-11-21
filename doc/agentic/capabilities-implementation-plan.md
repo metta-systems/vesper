@@ -155,7 +155,7 @@ All Time and userspace-scheduling work, including the scheduler-shared records (
 
 ## FP/SIMD per AddressSpace
 
-All FP/SIMD work, including the FP counters in the scheduler-shared records, is tracked in [`simd-implementation-plan.md`](simd-implementation-plan.md). Reference: [architectural state](capabilities-contract.md#architectural-state). The one open question is in [`simd-decisions.md`](simd-decisions.md).
+All FP/SIMD work, including the FP counters in the scheduler-shared records, is tracked in [`simd-implementation-plan.md`](simd-implementation-plan.md). Reference: [architectural state](capabilities-contract.md#architectural-state). No FP/SIMD decision is open; future work is at the end of the FP/SIMD plan.
 
 ## Final integration
 

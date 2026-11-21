@@ -55,7 +55,7 @@ fn return_key() -> ThreadReturnKey {
 }
 
 /// The fault handler: runs on the faulting Thread, on its own stack, with the
-/// fault frame at `frame_address`, just above its stack pointer.
+/// fault frame at `frame_address`, in its pool's fault area.
 extern "C" fn fault_body(
     frame_address: u64,
     _dummy1: u64,
@@ -67,8 +67,9 @@ extern "C" fn fault_body(
     _depth: u64,
 ) -> PpcResult {
     return_key();
-    // SAFETY: the kernel wrote the frame at the top of this handler's stack
-    // and passed its address; it is 16-byte aligned and this call owns it.
+    // SAFETY: the kernel wrote the frame into the fault slot of this handler's
+    // stack and passed its address; it is 16-byte aligned and this call owns
+    // it.
     let frame = unsafe { &mut *(frame_address as *mut FaultFrame) };
     assert_eq!(frame.size as usize, FAULT_FRAME_BYTES, "fault frame size");
     assert_eq!(frame.version, FAULT_FRAME_VERSION, "fault frame version");

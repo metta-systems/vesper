@@ -74,7 +74,7 @@ A synchronous exception from EL0 other than `svc` (data or instruction abort, al
 
 | Register | Contents |
 |---|---|
-| `x0` | The fault frame's address, at the top of the handler's stack (below) |
+| `x0` | The fault frame's address, in the fault area of the handler's stack pool (below) |
 | `x2` | Fault kind (`FaultKind`): 0 CPU exception, 1 `IllegalReturn`, 2 `ReturnTargetRetired` |
 | `x3` | `ESR_EL1` (0 for a Return fault) |
 | `x4` | `FAR_EL1` (0 for a Return fault) |
@@ -94,7 +94,7 @@ After a Return fault, use skip or terminate; retry repeats the failing Return.
 
 ### Fault frame
 
-The kernel writes the faulting state as a [`FaultFrame`](../../../libs/object/src/fault.rs) (832 bytes, 16-byte aligned) at the top of the handler's stack and starts the handler with SP just below it:
+The kernel writes the faulting state as a [`FaultFrame`](../../../libs/object/src/fault.rs) (832 bytes, 16-byte aligned) into the slot of the handler pool's [fault area](../arch/address_space.md#stack-pools) that belongs to the stack the handler runs on. The handler starts with SP at the top of that stack, which the kernel leaves untouched:
 
 | Bytes | Contents |
 |---|---|
@@ -103,11 +103,9 @@ The kernel writes the faulting state as a [`FaultFrame`](../../../libs/object/sr
 | 264..296 | SP, PC, `pstate` (SPSR), `TPIDR_EL0` |
 | 304..824 | `V0..V31`, FPCR, FPSR: filled for an AddressSpace that allows FP, zero otherwise |
 
-The handler may change the frame. Retry and Skip resume from the frame as it is when the handler returns (Skip then moves past the instruction at the frame's PC). The kernel copies the frame once and checks the copy: its header must be unchanged, and its `pstate` may differ from the faulting one only in the condition flags (NZCV). A frame that fails the check, or that cannot be read back, terminates the Thread with its faulting state.
+The handler may change the frame. Retry and Skip resume from the frame as it is when the handler returns (Skip then moves past the instruction at the frame's PC). The kernel copies the frame once and checks the copy: its header must be unchanged, and its `pstate` may differ from the faulting one only in the condition flags (NZCV). A frame that fails the check terminates the Thread with its faulting state.
 
-The handler's stacks must hold the frame plus the handler's own use, and must be EL0-writable normal memory: a stack the frame does not fit in, or cannot be written to, makes the fault unhandled.
-
-A fault is unhandled when slot 16 holds no usable Invocation, when this AddressSpace's handler is already handling another fault, when the Thread faults again inside its own handler, when the forced call itself fails (for example, the invocation stack is full), or when the fault frame does not fit in, or cannot be written to, the handler's stack. An unhandled fault leaves the Thread `Faulted`: it never runs again, and the kernel runs the next Thread. A `Faulted` Thread is removed with Retire.
+A fault is unhandled when slot 16 holds no usable Invocation, when this AddressSpace's handler is already handling another fault, when the Thread faults again inside its own handler, when the forced call itself fails (for example, the invocation stack is full), or when the handler's pool has no fault area. An unhandled fault leaves the Thread `Faulted`: it never runs again, and the kernel runs the next Thread. A `Faulted` Thread is removed with Retire.
 
 ## Implementation
 

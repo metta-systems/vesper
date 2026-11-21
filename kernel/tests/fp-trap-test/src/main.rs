@@ -198,7 +198,7 @@ fn run_probe(
     // The probe's main stack and its fault handler's stack, each guarded.
     let mut stacks = builder.stack_region(&probe_component, STACK_REGION, slots);
     let main_stack = builder.user_stack(&mut stacks, STACK_PAGES, slots);
-    let handler_pool = builder.stack_pool(&mut stacks, STACK_PAGES, 1, slots);
+    let handler_pool = builder.fault_handler_pool(&mut stacks, STACK_PAGES, 1, slots);
     for stack in [main_stack] {
         for guard_page in [stack.bottom - PAGE, stack.top] {
             assert!(

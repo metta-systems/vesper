@@ -36,14 +36,14 @@ use {
 /// The kernel's pointer to the physical memory at `paddr`, through the
 /// direct map.
 #[cfg(not(test))]
-fn kernel_window(paddr: u64) -> *mut u8 {
+pub(crate) fn kernel_window(paddr: u64) -> *mut u8 {
     PhysAddr::new(paddr).user_to_kernel().as_mut_ptr::<u8>()
 }
 
 /// The unit-test binaries run without translation, where physical and kernel
 /// addresses coincide.
 #[cfg(test)]
-fn kernel_window(paddr: u64) -> *mut u8 {
+pub(crate) fn kernel_window(paddr: u64) -> *mut u8 {
     paddr as *mut u8
 }
 

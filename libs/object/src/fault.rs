@@ -6,7 +6,8 @@
 //! [`KeySlot::FAULT_HANDLER`](crate::KeySlot::FAULT_HANDLER) in the faulting
 //! `AddressSpace`'s table. The handler's six inputs are
 //! `(kind, esr, far, pc, sp, depth)` — see [`FaultKind`] — and `x0` holds the
-//! address of a [`FaultFrame`] at the top of its stack. It finishes with an
+//! address of a [`FaultFrame`] in its stack pool's fault area (see
+//! [`stack_pool`](crate::stack_pool)). It finishes with an
 //! ordinary `Thread.Return` whose first result word is a [`FaultAction`];
 //! Retry and Skip resume from the frame, which the handler may have changed.
 
@@ -93,9 +94,9 @@ pub const FAULT_FRAME_VERSION: u32 = 1;
 /// state (it ran in an `AddressSpace` that allows FP).
 pub const FAULT_FRAME_FP: u32 = 1 << 0;
 
-/// The faulting state, as the kernel writes it at the top of the fault
-/// handler's stack. The handler gets its address in `x0` and starts with `SP`
-/// below it.
+/// The faulting state, as the kernel writes it into the fault-area slot of
+/// the stack the fault handler runs on. The handler gets its address in `x0`
+/// and starts with `SP` at the top of its stack.
 ///
 /// The handler may change it: a Retry or Skip resumes from the frame as it
 /// is at the handler's `Thread.Return`. The kernel accepts a changed
@@ -129,8 +130,7 @@ pub struct FaultFrame {
     pub reserved_tail: u64,
 }
 
-/// Bytes of a [`FaultFrame`]: what a fault handler's stack needs room for,
-/// above its own use.
+/// Bytes of a [`FaultFrame`]; it fits one fault-area slot.
 pub const FAULT_FRAME_BYTES: usize = 832;
 
 const _: () = {
@@ -167,7 +167,7 @@ impl FaultFrame {
         reserved_tail: 0,
     };
 
-    /// The frame's bytes, as they are written to the handler's stack.
+    /// The frame's bytes, as they are written to the fault slot.
     pub const fn to_bytes(&self) -> [u8; FAULT_FRAME_BYTES] {
         // SAFETY: the frame is `repr(C)` with integer fields only and no
         // padding (the size asserts above), so every byte is initialized.

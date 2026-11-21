@@ -25,8 +25,15 @@ pub(super) unsafe fn protected_call1(key: u64, op: u64, arg0: u64) -> Response {
     respond((key, op, [arg0, 0, 0, 0, 0, 0]))
 }
 
-pub(super) unsafe fn protected_call3(key: u64, op: u64, a0: u64, a1: u64, a2: u64) -> Response {
-    respond((key, op, [a0, a1, a2, 0, 0, 0]))
+pub(super) unsafe fn protected_call4(
+    key: u64,
+    op: u64,
+    a0: u64,
+    a1: u64,
+    a2: u64,
+    a3: u64,
+) -> Response {
+    respond((key, op, [a0, a1, a2, a3, 0, 0]))
 }
 
 pub(super) unsafe fn protected_call0(key: u64, op: u64) -> Response {
@@ -201,7 +208,7 @@ fn create_stack_pool_encodes_extent_and_returns_the_handle() {
     let returned = StackPoolHandle::new(2, 9);
     RESPONSE.with(|pending| assert!(pending.replace(Some((0, returned.to_wire(), 0))).is_none()));
 
-    let result = address_space.create_stack_pool(0x2000_0000, 0x3000, 16);
+    let result = address_space.create_stack_pool(0x2000_0000, 0x3000, 16, None);
 
     assert_eq!(result.map_err(CapError::code), Ok(returned));
     REQUEST.with(|request| {
@@ -211,6 +218,33 @@ fn create_stack_pool_encodes_extent_and_returns_the_handle() {
                 address_space_key.to_wire(),
                 4,
                 [0x2000_0000, 0x3000, 16, 0, 0, 0]
+            ))
+        );
+    });
+}
+
+#[test]
+fn create_stack_pool_passes_the_fault_area_key_in_x5() {
+    let address_space_key = RawKey::new(KeySlot(1), 7);
+    let fault_area = RawKey::new(KeySlot(42), 3);
+    let returned = StackPoolHandle::new(0, 1);
+    RESPONSE.with(|pending| assert!(pending.replace(Some((0, returned.to_wire(), 0))).is_none()));
+
+    let result = AddressSpaceKey::from_key(address_space_key).create_stack_pool(
+        0x2000,
+        0x1000,
+        2,
+        Some(fault_area),
+    );
+
+    assert_eq!(result.map_err(CapError::code), Ok(returned));
+    REQUEST.with(|request| {
+        assert_eq!(
+            request.take(),
+            Some((
+                address_space_key.to_wire(),
+                4,
+                [0x2000, 0x1000, 2, fault_area.to_wire(), 0, 0]
             ))
         );
     });
@@ -229,7 +263,7 @@ fn create_stack_pool_decodes_every_typed_reason_without_losing_values() {
     ] {
         for value in [0, 0x1234_5678_9abc_def0, u64::MAX] {
             RESPONSE.with(|pending| assert!(pending.replace(Some((33, value, id))).is_none()));
-            let result = address_space.create_stack_pool(0x2000, 0x1000, 4);
+            let result = address_space.create_stack_pool(0x2000, 0x1000, 4, None);
             REQUEST.with(|request| assert!(request.take().is_some()));
             match result {
                 Err(CapError::InvalidStack {
@@ -256,7 +290,7 @@ fn create_stack_pool_reports_a_full_table() {
         );
     });
     assert!(matches!(
-        address_space.create_stack_pool(0x2000, 0x1000, 4),
+        address_space.create_stack_pool(0x2000, 0x1000, 4, None),
         Err(CapError::PoolExhausted)
     ));
     REQUEST.with(|request| assert!(request.take().is_some()));

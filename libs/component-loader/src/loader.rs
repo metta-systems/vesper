@@ -19,7 +19,7 @@ use {
     libimage::{ComponentImage, PAGE_BYTES, Permissions},
     libobject::{
         AddressSpaceKey, FrameKey, KeySlot, KeyTableKey, ObjectType, RawKey, Rights,
-        StackPoolHandle,
+        StackPoolHandle, stack_pool::FAULT_SLOT_BYTES,
     },
     nucleus::objects::KeyTable,
 };
@@ -299,6 +299,18 @@ impl Builder<'_> {
         pages: u32,
         slots: &mut SlotCursor,
     ) -> UserStack {
+        self.guarded_pages(region, pages, slots).0
+    }
+
+    /// Map `pages` fresh RW pages in `region` between unmapped guard pages,
+    /// as [`user_stack`](Self::user_stack) does: the span and the key of its
+    /// first Frame.
+    pub fn guarded_pages(
+        &self,
+        region: &mut StackRegion,
+        pages: u32,
+        slots: &mut SlotCursor,
+    ) -> (UserStack, RawKey) {
         let first_page = region.next_page;
         region.next_page = first_page + u64::from(pages) + 1;
         assert!(
@@ -316,10 +328,11 @@ impl Builder<'_> {
             bottom,
             Rights(Rights::READ | Rights::WRITE),
         );
-        UserStack {
+        let span = UserStack {
             bottom,
             top: bottom + u64::from(pages) * PAGE,
-        }
+        };
+        (span, boot_key(first, frames.incarnation()))
     }
 
     /// Map `count` stacks of `pages` pages each in `region`, every stack with
@@ -340,6 +353,56 @@ impl Builder<'_> {
         count: u32,
         slots: &mut SlotCursor,
     ) -> StackPoolHandle {
+        let base = self.pool_stacks(region, pages, count, slots);
+        AddressSpaceKey::from_key(region.address_space)
+            .create_stack_pool(base, (u64::from(pages) + 1) * PAGE, u64::from(count), None)
+            .unwrap_or_else(|error| panic!("CreateStackPool failed: {:?}", error.code()))
+    }
+
+    /// A [`stack_pool`](Self::stack_pool) for a fault handler's Invocation:
+    /// the pool also gets a fault area, one more guarded page in `region`
+    /// whose slot `i` (`FAULT_SLOT_BYTES` each) receives the fault frame of a
+    /// fault handled on stack `i`.
+    ///
+    /// # Panics
+    ///
+    /// When one page has too few slots for `count` stacks, or as
+    /// [`stack_pool`](Self::stack_pool) does.
+    pub fn fault_handler_pool(
+        &self,
+        region: &mut StackRegion,
+        pages: u32,
+        count: u32,
+        slots: &mut SlotCursor,
+    ) -> StackPoolHandle {
+        assert!(
+            u64::from(count) * FAULT_SLOT_BYTES <= PAGE,
+            "a one-page fault area holds {} slots",
+            PAGE / FAULT_SLOT_BYTES
+        );
+        let base = self.pool_stacks(region, pages, count, slots);
+        let (_, fault_area) = self.guarded_pages(region, 1, slots);
+        AddressSpaceKey::from_key(region.address_space)
+            .create_stack_pool(
+                base,
+                (u64::from(pages) + 1) * PAGE,
+                u64::from(count),
+                Some(fault_area),
+            )
+            .unwrap_or_else(|error| {
+                panic!("fault handler CreateStackPool failed: {:?}", error.code())
+            })
+    }
+
+    /// Map the `count` stacks of a pool in `region`; the pool's base, the
+    /// guard page below its first stack.
+    fn pool_stacks(
+        &self,
+        region: &mut StackRegion,
+        pages: u32,
+        count: u32,
+        slots: &mut SlotCursor,
+    ) -> u64 {
         let mut base = 0;
         for index in 0..count {
             let stack = self.user_stack(region, pages, slots);
@@ -347,9 +410,7 @@ impl Builder<'_> {
                 base = stack.bottom - PAGE;
             }
         }
-        AddressSpaceKey::from_key(region.address_space)
-            .create_stack_pool(base, (u64::from(pages) + 1) * PAGE, u64::from(count))
-            .unwrap_or_else(|error| panic!("CreateStackPool failed: {:?}", error.code()))
+        base
     }
 }
 

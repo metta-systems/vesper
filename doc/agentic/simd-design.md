@@ -19,8 +19,8 @@ design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
     checker that does it also replaces the disassembly in `_audit-fp-simd`. A component
     with FP hits that is not in `fp_components` fails the build.
   - F6(b), 2026-11-18: a fault handler can inspect the faulting frame's FP state.
-  - F8(d), 2026-11-19: the handler gets the faulting state as a fault frame on its own
-    stack.
+  - F8(d), 2026-11-19: the handler gets the faulting state as a fault frame. Where the
+    frame lives is F12(b1).
     - F8.1: the frame includes the general registers.
     - F8.2: the handler may write the frame back.
     - F8.3(iii): the kernel keeps only the general registers, and the FP state lives
@@ -35,7 +35,12 @@ design (S1–S4) is implemented and checked in QEMU and on the Pi 4; see
   - F11(c), 2026-11-21: the kernel-entry FP guard is on in debug kernels and off in
     release kernels, whose guarantee is an audit that fails when it scans nothing. See
     "The model".
-- The other open decisions are in [simd-decisions.md](simd-decisions.md).
+  - F12(b1), 2026-11-21: the kernel never touches pool stacks. The fault frame goes
+    into the *fault area* of the handler's pool, a RAM Frame registered at
+    `CreateStackPool`, and the kernel writes it through its own mapping of that Frame.
+    See "The fault frame".
+- No FP/SIMD decision is open; future work is at the end of
+  [simd-implementation-plan.md](simd-implementation-plan.md).
 - The work order is in [simd-implementation-plan.md](simd-implementation-plan.md).
 
 ## Scope
@@ -153,19 +158,27 @@ from the callee leaks back.
 A fault interrupts the frame between two arbitrary instructions, so every V register
 is live, and its full FP state has to be kept. Under F8.3(iii) the kernel keeps only the
 general registers, in `ThreadFault.frame`, as it does today. The FP state's only copy is
-the fault frame on the handler's stack, described below. There is no `ThreadFault.fp`.
+the fault frame in the handler pool's fault area, described below. There is no
+`ThreadFault.fp`.
 
 ### The fault frame
 
-The handler receives the faulting state as a frame on its own stack (F8(d)).
+The handler receives the faulting state as a fault frame (F8(d)), in its pool's fault
+area (F12(b1)). The kernel never touches pool stacks.
 
-- **Where it lives.** The kernel writes the frame at the top of the stack that the
-  forced Call takes from the handler Invocation's pool.
-  - The stack is leased to this one call, survives Thread switches while the handler
-    runs, and is released at the handler's Return.
-  - The handler starts with SP below the frame.
-  - `x0` holds the frame's address. A fault delivery is a plain Call, so `x0` would
+- **Where it lives.** A pool that serves a fault handler is made with a *fault area*:
+  a RAM Frame (`READ|WRITE`), mapped in the pool's AddressSpace, passed in
+  `CreateStackPool`'s `x5`. It holds one 1 KiB slot per stack (`FAULT_SLOT_BYTES`), so a
+  4 KiB Frame serves up to 4 stacks. The kernel writes the frame into the slot of the
+  stack the forced Call takes, slot `i` for stack `i`.
+  - The stack and its slot are leased to this one call, survive Thread switches while
+    the handler runs, and are released at the handler's Return.
+  - The handler starts with SP at the top of its stack, like any Call.
+  - `x0` holds the slot's address: the Frame's mapped address, recorded when the pool
+    is made, plus the slot offset. A fault delivery is a plain Call, so `x0` would
     otherwise be zero. `FaultInfo` stays in `x2..x7`.
+  - This follows `Scheduler.ShareRegion`: the Frame is checked once, at registration,
+    and stays valid because the nucleus does not reclaim Frame memory.
 - **What it holds** (`libobject::fault::FaultFrame`, 832 B, 16-aligned):
   - a header with size, version and flags, including whether an FP part is present;
   - the faulting general registers (F8.1): `x0..x30`, SP, PC, `pstate`, `TPIDR_EL0`;
@@ -173,36 +186,37 @@ The handler receives the faulting state as a frame on its own stack (F8(d)).
 - **How it is written.**
   - At delivery, `FpUnit::save` puts the faulting FP state into a kernel-stack copy of
     the frame, before the forced Call zeroes the registers for an FP handler.
-  - The nucleus walks the handler AddressSpace's own translation tables in software
-    (`page_table::user_page`), requires every page of the frame to be EL0-writable
-    Normal memory with its access flag set, and writes through its direct map of
-    physical memory. The handler AddressSpace need not be the active one. This is the
-    first time the nucleus writes caller memory.
-  - The write happens before the forced Call commits. A stack smaller than the frame,
-    or not writable, makes the fault unhandled with nothing to undo, like a full
-    invocation stack. The Thread becomes `Faulted` with its general registers, and its
-    FP state is dropped.
-  - The pool's stacks need room for 832 B plus the handler's own use.
+  - The nucleus writes the slot through its own mapping of the Frame. It does not walk
+    the handler's translation tables, and the handler AddressSpace need not be the
+    active one. The page is a capability-named Frame, not a page found by a walk, so a
+    later multicore kernel has no unmap race between finding the page and writing it.
+  - The write happens before the forced Call commits. A pool without a fault area
+    makes the fault unhandled with nothing to undo, like a full invocation stack. The
+    Thread becomes `Faulted` with its general registers, and its FP state is dropped.
+  - A handler that unmaps the Frame later finds nothing at `x0`; the kernel's write
+    still lands in the Frame.
+  - The software walk that (a) used is kept, unused, in `kernel/nucleus/src/user_memory.rs`
+    for a DebugConsole that reads its caller's buffer by address.
 - **Write-back (F8.2).** At a Retry or Skip Return, the kernel resumes from the frame,
   which the handler may have changed. This needs no new trust: the handler can change
   only the state of the Thread it handles, which it is already trusted with. The kernel
   still checks `pstate`, because that check protects the kernel, not the Thread.
-  - The kernel copies the frame once onto its own stack, through the same walk (pages
-    EL0-readable), and validates that copy. It never validates in place, since another
-    Thread of the handler's AddressSpace could change the frame in between.
+  - The kernel copies the slot once onto its own stack, through the same mapping, and
+    validates that copy. It never validates in place, since another Thread of the
+    handler's AddressSpace could change the frame in between.
   - The header must be unchanged, and `pstate` may differ from the faulting one only in
     the condition flags (NZCV), so the Thread resumes at the same EL with the same masks.
   - The FP part goes from the copy into the V registers with `FpUnit::load`.
-  - An unreadable or invalid frame terminates the Thread. Its `Faulted` state is the
-    kernel's copy of the general registers, `ThreadFault.frame`, as today. The original
-    state is never silently resumed.
-  - Terminate leaves the frame on the handler's stack for inspection.
+  - An invalid frame terminates the Thread. Its `Faulted` state is the kernel's copy of
+    the general registers, `ThreadFault.frame`, as today. The original state is never
+    silently resumed.
+  - Terminate leaves the frame in the slot for inspection.
 - **Which copy counts (F8.3(iii)).**
   - The kernel keeps the general registers in `ThreadFault.frame`. That copy is the
     fallback for `Faulted` and the unhandled-fault path.
   - The FP state lives only in the frame.
-  - A readable, valid frame is always what a Retry or Skip resumes, both its general
-    registers and its FP state.
+  - A valid frame is always what a Retry or Skip resumes, both its general registers
+    and its FP state.
 - **Trust.** The handler is the faulting AddressSpace's own designated handler, and it
   can already terminate or skip the Thread. Changing that Thread's registers adds no new
   trust. The `pstate` check protects the kernel, not the Thread.
@@ -234,7 +248,7 @@ All five TTBR0 writes are in `kernel/nucleus/src/main.rs`. The supporting logic 
 |---|---|---|---|---|
 | Thread switch: preemption, block, dispatch, idle wake, exit | `install_selected`; outgoing state captured in `stop_current`, next to the general registers | Save everything to the outgoing `Thread.fp` | Load the incoming `Thread.fp` | Trap |
 | Call and CallWithKey | `commit_call` | Save `q8..q15`, FPCR and FPSR to the pushed record, and set its bit | Zero everything; FPCR is 0 | Trap |
-| Fault delivery, a forced Call | `deliver_fault` | Save everything into the fault frame, written to the handler's stack before the Call commits; the record as for a Call | Zero | Trap |
+| Fault delivery, a forced Call | `deliver_fault` | Save everything into the fault frame, written to the handler pool's fault area before the Call commits; the record as for a Call | Zero | Trap |
 | Return | `commit_return` | Nothing | With the record's bit set: load `q8..q15`, FPCR and FPSR and zero the rest. A fault Return copies the fault frame once, validates the copy, and loads its FP part in full | Trap |
 | `AddressSpace.Activate` | — | Same AddressSpace, no change | | |
 | Exit, retire, terminate | `exit_current_thread`, `Thread.Retire`, `park_faulted` | Nothing: the state is dead, and the next FP entry overwrites it | | |
@@ -432,11 +446,12 @@ Each of these satisfies I1 to I4.
 - **Preemption at any instruction of an FP frame.** A full save. Interrupt handling
   touches no FP (I3).
 - **A fault in an FP frame, with the handler in an FP or an integer-only AddressSpace.**
-  - The full state goes into the fault frame on the handler's stack. The handler is entered zeroed or trapped. If the frame cannot be
-    written, the fault is unhandled.
-  - The handler's Return at the fault depth reads the frame back, validates it and loads
-    its FP part. If it is unreadable or invalid, the Thread is terminated. With
-    Terminate, the frame stays on the handler's stack.
+  - The full state goes into the fault frame in the handler pool's fault area. The
+    handler is entered zeroed or trapped. If the pool has no fault area, the fault is
+    unhandled.
+  - The handler's Return at the fault depth copies the frame back, validates the copy
+    and loads its FP part. If it is invalid, the Thread is terminated. With Terminate,
+    the frame stays in its slot.
   - A fault inside the handler is unhandled, as today, and parks the Thread.
 - **A Thread retired, terminated or exiting while its values are live in hardware.**
   Nothing is saved. The values are unreadable (I1) and are overwritten at the next FP

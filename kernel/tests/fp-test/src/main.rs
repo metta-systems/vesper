@@ -297,13 +297,14 @@ pub fn run() -> ! {
     let mut stacks_a = builder.stack_region(&worker_a, STACK_REGION, &mut slots);
     let spin_stack_a = builder.user_stack(&mut stacks_a, STACK_PAGES, &mut slots);
     let scenario_stack = builder.user_stack(&mut stacks_a, STACK_PAGES, &mut slots);
-    let handler_pool_a = builder.stack_pool(&mut stacks_a, STACK_PAGES, 1, &mut slots);
+    let handler_pool_a = builder.fault_handler_pool(&mut stacks_a, STACK_PAGES, 1, &mut slots);
     let mut stacks_b = builder.stack_region(&worker_b, STACK_REGION, &mut slots);
     let spin_stack_b = builder.user_stack(&mut stacks_b, STACK_PAGES, &mut slots);
     let call_pool_b = builder.stack_pool(&mut stacks_b, STACK_PAGES, 1, &mut slots);
     let mut stacks_probe = builder.stack_region(&probe, STACK_REGION, &mut slots);
     let call_pool_probe = builder.stack_pool(&mut stacks_probe, STACK_PAGES, 1, &mut slots);
-    let handler_pool_probe = builder.stack_pool(&mut stacks_probe, STACK_PAGES, 1, &mut slots);
+    let handler_pool_probe =
+        builder.fault_handler_pool(&mut stacks_probe, STACK_PAGES, 1, &mut slots);
 
     // Worker A calls B and the probe; A and the probe handle their own faults.
     let table_a = worker_a.table();

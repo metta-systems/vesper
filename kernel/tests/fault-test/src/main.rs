@@ -50,7 +50,7 @@ use {
     libimage::ComponentImage,
     libkicktest::threads,
     libobject::{
-        KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
+        CapError, KeySlot, KeyTableKey, NotificationKey, ObjectType, RawKey, Rights, UntypedKey,
         address_space::AddressSpaceKey,
     },
     libqemu::semihosting as semi,
@@ -69,7 +69,6 @@ const FAULTER_GUARD: u32 = 0x0F_A701;
 const BARE_GUARD: u32 = 0x0B_A401;
 /// Pages per stack (each also gets a guard page on both sides).
 const STACK_PAGES: u32 = 4;
-/// Headroom the fault handler's Invocation requires below its SP.
 /// Fixture boot-table slots start clear of the well-known bootstrap slots.
 const FIRST_FIXTURE_SLOT: u32 = 64;
 
@@ -240,9 +239,32 @@ pub fn run() -> ! {
         },
     );
 
+    // A fault area must be a Frame mapped in the pool's AddressSpace, with a
+    // slot for every stack; each refusal leaves the pool table unchanged.
+    let faulter_as = AddressSpaceKey::from_key(faulter.address_space_key);
+    let unmapped = builder.retype_frames(slots.take(1), 1);
+    let (_, foreign) = builder.guarded_pages(&mut bare_stacks, 1, &mut slots);
+    let (_, area) = builder.guarded_pages(&mut faulter_stacks, 1, &mut slots);
+    let pool = |count, fault_area| faulter_as.create_stack_pool(0x1000, 0x1000, count, fault_area);
+    assert!(matches!(pool(1, Some(unmapped)), Err(CapError::NotMapped)));
+    assert!(matches!(
+        pool(1, Some(foreign)),
+        Err(CapError::InvalidOperation)
+    ));
+    assert!(matches!(
+        pool(5, Some(area)),
+        Err(CapError::InvalidOperation)
+    ));
+    let accepted = pool(4, Some(area))
+        .unwrap_or_else(|error| panic!("a four-slot fault area: {:?}", error.code()));
+    faulter_as
+        .destroy_stack_pool(accepted)
+        .unwrap_or_else(|error| panic!("DestroyStackPool failed: {:?}", error.code()));
+    semi::println!("fault-test: fault-area checks passed");
+
     // The faulter's handler, at the well-known slot of its own table. The
     // bare component's slot stays empty.
-    let handler_pool = builder.stack_pool(&mut faulter_stacks, STACK_PAGES, 1, &mut slots);
+    let handler_pool = builder.fault_handler_pool(&mut faulter_stacks, STACK_PAGES, 1, &mut slots);
     AddressSpaceKey::from_key(faulter.address_space_key)
         .create_invocation(
             components::FAULTER

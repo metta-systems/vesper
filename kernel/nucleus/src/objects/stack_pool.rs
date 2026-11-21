@@ -8,17 +8,42 @@
 //! reads or writes the stack memory and does not prove it mapped: what is
 //! mapped there, guard regions included, is the exporter's business.
 //!
+//! A pool that serves a fault handler has a [`FaultArea`]: a RAM Frame with a
+//! fault-frame slot per stack, which fault delivery writes through the
+//! kernel's own mapping of the Frame.
+//!
 //! A pool is named by a [`StackPoolHandle`]: its slot and the slot's
 //! generation. Destroying a pool bumps the generation, so every handle and
 //! every Invocation that names it fails afterwards.
 
 use libobject::{
     CapError, InvalidStackReason,
-    stack_pool::{MAX_POOL_STACKS, MAX_STACK_POOLS, StackPoolHandle},
+    stack_pool::{FAULT_SLOT_BYTES, MAX_POOL_STACKS, MAX_STACK_POOLS, StackPoolHandle},
 };
 
 /// The generation of a slot's first pool.
 const FIRST_GENERATION: u32 = 1;
+
+/// A pool's fault area: the RAM Frame that holds the fault frames of its
+/// stacks, slot `i` ([`FAULT_SLOT_BYTES`] each) for stack `i`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FaultArea {
+    /// Physical base of the Frame.
+    pub paddr: u64,
+    /// Where the pool's `AddressSpace` maps the Frame.
+    pub vaddr: u64,
+    /// Size of the Frame in bytes.
+    pub bytes: u64,
+}
+
+/// The fault-frame slot of one stack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FaultSlot {
+    /// Where the kernel writes it, physically.
+    pub paddr: u64,
+    /// Where the handler finds it.
+    pub vaddr: u64,
+}
 
 #[derive(Clone, Copy)]
 struct Pool {
@@ -27,6 +52,7 @@ struct Pool {
     count: u8,
     /// Bit `i` is set when stack `i` is free.
     free: u64,
+    fault_area: Option<FaultArea>,
 }
 
 impl Pool {
@@ -79,19 +105,22 @@ impl StackPools {
     }
 
     /// Make a pool of `count` stacks of `stack_bytes` from `base`, all in the
-    /// user range below `user_va_end`.
+    /// user range below `user_va_end`, with `fault_area` if it serves a fault
+    /// handler.
     ///
     /// Checks, in order, each reporting the submitted value it names: the
     /// count (`StackCountOutOfRange`), the stack size (`StackBytesTooSmall`,
     /// `StackBytesMisaligned`), the base (`BaseMisaligned`,
     /// `BaseOutsideUserRange`) and the end (`EndOutsideUserRange`, reporting the
-    /// computed end, or the stack size when the arithmetic overflows). A full
-    /// table is `PoolExhausted`.
+    /// computed end, or the stack size when the arithmetic overflows). A fault
+    /// area without a slot for every stack is `InvalidOperation`. A full table
+    /// is `PoolExhausted`.
     pub fn create(
         &mut self,
         base: u64,
         stack_bytes: u64,
         count: u64,
+        fault_area: Option<FaultArea>,
         user_va_end: u64,
     ) -> Result<StackPoolHandle, CapError> {
         use InvalidStackReason as Reason;
@@ -119,6 +148,9 @@ impl StackPools {
         if end > user_va_end {
             return Err(invalid(end, Reason::EndOutsideUserRange));
         }
+        if fault_area.is_some_and(|area| area.bytes < count * FAULT_SLOT_BYTES) {
+            return Err(CapError::InvalidOperation);
+        }
         // `count` is at most 64 and fits a byte.
         let count = u8::try_from(count).map_err(|_too_many| CapError::InvalidOperation)?;
         let (index, slot) = self
@@ -132,6 +164,7 @@ impl StackPools {
             stack_bytes,
             count,
             free: Pool::all_free(count),
+            fault_area,
         });
         let index = u8::try_from(index).map_err(|_too_many| CapError::InvalidOperation)?;
         Ok(StackPoolHandle::new(index, slot.generation))
@@ -180,21 +213,24 @@ impl StackPools {
         Ok(())
     }
 
-    /// Take the lowest free stack of the pool `handle` names.
-    /// The stack [`take`](Self::take) would hand out next, without taking it:
-    /// its end (where the callee's `SP` starts) and its size. Fault delivery
-    /// writes the fault frame there before the forced call commits.
-    pub fn peek(&self, handle: StackPoolHandle) -> Result<(u64, u64), CapError> {
+    /// The fault-frame slot of the stack [`take`](Self::take) would hand out
+    /// next, without taking it; `None` when the pool has no fault area. Fault
+    /// delivery writes the fault frame there before the forced call commits.
+    pub fn fault_slot(&self, handle: StackPoolHandle) -> Result<Option<FaultSlot>, CapError> {
         let pool = self.pool(handle)?;
         if pool.free == 0 {
             return Err(CapError::NoFreeStack {
                 count: u64::from(pool.count),
             });
         }
-        let index = u64::from(pool.free.trailing_zeros());
-        Ok((pool.base + (index + 1) * pool.stack_bytes, pool.stack_bytes))
+        let offset = u64::from(pool.free.trailing_zeros()) * FAULT_SLOT_BYTES;
+        Ok(pool.fault_area.map(|area| FaultSlot {
+            paddr: area.paddr + offset,
+            vaddr: area.vaddr + offset,
+        }))
     }
 
+    /// Take the lowest free stack of the pool `handle` names.
     pub fn take(&mut self, handle: StackPoolHandle) -> Result<StackLease, CapError> {
         let pool = *self.pool(handle)?;
         if pool.free == 0 {
@@ -259,7 +295,7 @@ mod tests {
 
     fn pools_with_two_stacks() -> (StackPools, StackPoolHandle) {
         let mut pools = StackPools::new();
-        let handle = ok(pools.create(0x2000_0000, 0x2000, 2, USER_END));
+        let handle = ok(pools.create(0x2000_0000, 0x2000, 2, None, USER_END));
         (pools, handle)
     }
 
@@ -309,7 +345,7 @@ mod tests {
     #[test_case]
     fn a_pool_of_sixty_four_uses_the_whole_mask() {
         let mut pools = StackPools::new();
-        let handle = ok(pools.create(0x1000, 0x10, 64, USER_END));
+        let handle = ok(pools.create(0x1000, 0x10, 64, None, USER_END));
         for index in 0..64 {
             let lease = ok(pools.take(handle));
             assert_eq!(lease.index, index);
@@ -349,7 +385,7 @@ mod tests {
             pools.destroy(handle),
             Err(CapError::StaleGeneration { current: 2 })
         ));
-        let again = ok(pools.create(0x2000_0000, 0x2000, 2, USER_END));
+        let again = ok(pools.create(0x2000_0000, 0x2000, 2, None, USER_END));
         assert_eq!(again.slot(), handle.slot());
         assert_eq!(again.generation(), 2);
         assert!(pools.admit(again).is_ok());
@@ -373,17 +409,17 @@ mod tests {
         let mut handles = [None; MAX_STACK_POOLS];
         for (index, handle) in handles.iter_mut().enumerate() {
             let base = 0x1_0000 + index as u64 * 0x1000;
-            *handle = Some(ok(pools.create(base, 0x100, 4, USER_END)));
+            *handle = Some(ok(pools.create(base, 0x100, 4, None, USER_END)));
         }
         assert!(matches!(
-            pools.create(0x100_0000, 0x100, 4, USER_END),
+            pools.create(0x100_0000, 0x100, 4, None, USER_END),
             Err(CapError::PoolExhausted)
         ));
         let freed = handles[3]
             .take()
             .unwrap_or_else(|| panic!("slot 3 was filled"));
         ok(pools.destroy(freed));
-        let reused = ok(pools.create(0x100_0000, 0x100, 4, USER_END));
+        let reused = ok(pools.create(0x100_0000, 0x100, 4, None, USER_END));
         assert_eq!(reused.slot(), freed.slot());
         assert_ne!(reused.generation(), freed.generation());
     }
@@ -392,11 +428,69 @@ mod tests {
     fn a_slot_whose_generation_would_overflow_is_never_used_again() {
         let mut pools = StackPools::new();
         pools.slots[0].generation = u32::MAX;
-        let handle = ok(pools.create(0x1000, 0x100, 1, USER_END));
+        let handle = ok(pools.create(0x1000, 0x100, 1, None, USER_END));
         assert_eq!((handle.slot(), handle.generation()), (0, u32::MAX));
         ok(pools.destroy(handle));
-        let next = ok(pools.create(0x1000, 0x100, 1, USER_END));
+        let next = ok(pools.create(0x1000, 0x100, 1, None, USER_END));
         assert_eq!(next.slot(), 1, "slot 0 is retired");
+    }
+
+    #[test_case]
+    fn the_fault_slot_follows_the_stack_the_next_call_takes() {
+        let area = FaultArea {
+            paddr: 0x8_0000,
+            vaddr: 0x30_0000,
+            bytes: 0x1000,
+        };
+        let mut pools = StackPools::new();
+        let handle = ok(pools.create(0x2000_0000, 0x2000, 3, Some(area), USER_END));
+        let slot = |pools: &StackPools| ok(pools.fault_slot(handle));
+        assert_eq!(
+            slot(&pools),
+            Some(FaultSlot {
+                paddr: 0x8_0000,
+                vaddr: 0x30_0000
+            })
+        );
+        let first = ok(pools.take(handle));
+        assert_eq!(
+            slot(&pools),
+            Some(FaultSlot {
+                paddr: 0x8_0000 + FAULT_SLOT_BYTES,
+                vaddr: 0x30_0000 + FAULT_SLOT_BYTES
+            }),
+            "slot 1 belongs to stack 1"
+        );
+        ok(pools.take(handle));
+        assert!(pools.give(first.slot, first.index));
+        assert_eq!(slot(&pools).map(|slot| slot.vaddr), Some(0x30_0000));
+        ok(pools.take(handle));
+        ok(pools.take(handle));
+        assert!(matches!(
+            pools.fault_slot(handle),
+            Err(CapError::NoFreeStack { count: 3 })
+        ));
+    }
+
+    #[test_case]
+    fn a_pool_without_a_fault_area_has_no_fault_slot() {
+        let (pools, handle) = pools_with_two_stacks();
+        assert_eq!(ok(pools.fault_slot(handle)), None);
+    }
+
+    #[test_case]
+    fn a_fault_area_needs_a_slot_for_every_stack() {
+        let mut pools = StackPools::new();
+        let area = FaultArea {
+            paddr: 0x8_0000,
+            vaddr: 0x30_0000,
+            bytes: 0x1000,
+        };
+        assert!(pools.create(0x1000, 0x100, 4, Some(area), USER_END).is_ok());
+        assert!(matches!(
+            pools.create(0x1000, 0x100, 5, Some(area), USER_END),
+            Err(CapError::InvalidOperation)
+        ));
     }
 
     fn reason(result: Result<StackPoolHandle, CapError>) -> (u64, InvalidStackReason) {
@@ -411,7 +505,7 @@ mod tests {
         use InvalidStackReason as Reason;
 
         let mut pools = StackPools::new();
-        let mut create = |base, bytes, count| pools.create(base, bytes, count, USER_END);
+        let mut create = |base, bytes, count| pools.create(base, bytes, count, None, USER_END);
         assert_eq!(
             reason(create(0x1000, 0x100, 0)),
             (0, Reason::StackCountOutOfRange)
@@ -457,7 +551,7 @@ mod tests {
         );
         // Every failure left the table empty.
         let mut count = 0;
-        while pools.create(0x1000, 0x100, 1, USER_END).is_ok() {
+        while pools.create(0x1000, 0x100, 1, None, USER_END).is_ok() {
             count += 1;
         }
         assert_eq!(count, MAX_STACK_POOLS - 1, "one pool was made above");

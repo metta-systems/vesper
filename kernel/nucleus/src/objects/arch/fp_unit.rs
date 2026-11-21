@@ -247,7 +247,7 @@ pub fn entry_toggles() -> u64 {
     0
 }
 
-/// The F11 entry guard (`doc/agentic/simd-decisions.md`): with
+/// The F11 entry guard (`doc/agentic/simd-design.md`): with
 /// `fp_entry_trap`, a kernel entry from EL0 traps FP/SIMD at once and its
 /// exit opens it again for an FP frame, so a stray kernel FP instruction
 /// traps at EL1 instead of corrupting the frame's live registers. Without the

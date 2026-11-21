@@ -4,9 +4,9 @@ use crate::{
 };
 
 #[cfg(not(test))]
-use libsyscall::{protected_call0, protected_call1, protected_call3, protected_call6_with_x8};
+use libsyscall::{protected_call0, protected_call1, protected_call4, protected_call6_with_x8};
 #[cfg(test)]
-use tests::{protected_call0, protected_call1, protected_call3, protected_call6_with_x8};
+use tests::{protected_call0, protected_call1, protected_call4, protected_call6_with_x8};
 
 #[cfg(test)]
 #[path = "../tests/support/address_space.rs"]
@@ -83,28 +83,39 @@ impl AddressSpaceKey {
     /// stack, which the kernel takes for the call and gives back at its
     /// `Thread.Return`.
     ///
-    /// Wire schema: `x2` base, `x3` `stack_bytes`, `x4` `count`, `x5..x7` zero.
-    /// Requires `GRANT`. `[base, base + count * stack_bytes)` must be a nonempty
-    /// user-range extent with 16-byte aligned ends, and `stack_bytes` a multiple
-    /// of 16 and at least 16 (`InvalidStack`). A full pool table is
-    /// `PoolExhausted`. The kernel does not touch the stack memory or prove it
-    /// mapped; mapping the stacks, and leaving a guard region below each stack
-    /// and above the last unmapped, is the exporter's job.
+    /// `fault_area` is the pool's fault area, needed when the pool serves a
+    /// fault handler: a RAM Frame key (`READ|WRITE`) mapped in this
+    /// `AddressSpace`, of at least `count * FAULT_SLOT_BYTES` bytes (see
+    /// [`stack_pool`](crate::stack_pool)). A fault frame lands in the slot of
+    /// the stack the handler runs on, and the handler gets its address in `x0`.
+    ///
+    /// Wire schema: `x2` base, `x3` `stack_bytes`, `x4` `count`, `x5` the fault
+    /// area's Frame key or zero, `x6..x7` zero. Requires `GRANT`.
+    /// `[base, base + count * stack_bytes)` must be a nonempty user-range extent
+    /// with 16-byte aligned ends, and `stack_bytes` a multiple of 16 and at
+    /// least 16 (`InvalidStack`). An unmapped fault area is `NotMapped`; one
+    /// mapped elsewhere, too small or device memory is `InvalidOperation`. A
+    /// full pool table is `PoolExhausted`. The kernel does not touch the stack
+    /// memory or prove it mapped; mapping the stacks, and leaving a guard
+    /// region below each stack and above the last unmapped, is the exporter's
+    /// job.
     pub fn create_stack_pool(
         &self,
         base: u64,
         stack_bytes: u64,
         count: u64,
+        fault_area: Option<RawKey>,
     ) -> Result<StackPoolHandle, CapError> {
-        // SAFETY: protected_call3 encapsulates the SVC ABI; these are raw
+        // SAFETY: protected_call4 encapsulates the SVC ABI; these are raw
         // register operands from the CreateStackPool wire schema.
         let response = unsafe {
-            protected_call3(
+            protected_call4(
                 self.key.to_wire(),
                 AddressSpaceOp::CreateStackPool as u64,
                 base,
                 stack_bytes,
                 count,
+                fault_area.map_or(0, |key| key.to_wire()),
             )
         };
         let (handle, _) = decode_syscall_result(response)?;

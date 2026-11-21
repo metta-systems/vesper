@@ -22,8 +22,6 @@ pub mod stack_pool;
 pub mod thread;
 pub mod time;
 pub mod timers;
-#[cfg(test)]
-pub mod user_copy;
 pub mod wait_set;
 
 #[cfg(feature = "debug_kernel")]
