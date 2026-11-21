@@ -15,3 +15,15 @@ decision and the alternatives weighed, is in [audio-design.md](audio-design.md).
 - [x] D10 (2026-10-28): Wood pulls the synthesiser component's `midi_synth_v1`, whose
   io-channel carries MIDI one way and rendered audio the other, mixes locally and stays
   the one `audio_v1` client. `audio-design.md`, section Decisions.
+- [x] D9.7 (2026-11-21): an f64 engine behind `fp-mode`, chosen at run time, the
+  integer-only build kept; `audio-design.md`, section Decisions.
+
+## Completed work
+
+- [x] Integer pitch fix: `phase_step` scales the whole 32.32 ratio, so pitches between
+  octaves no longer play at the sample's root (44.1 kHz samples); `midi_test_hash`
+  changed, Wood's hashes did not. Exercised by the `tables` host test and `just _test-midi`.
+- [x] D9.7 f64 engine: `userspace/synth/src/float.rs`, the engine packet (command 7) of
+  `midi_synth_v1`, the `midi-synth-fp` FP component (`fp_binaries`). Exercised by the
+  fp-mode host tests (43.5 dB from the integer engine on the test song), `just
+  _synth-fp-vectorized` and `just _test-midi-fp` (three runs, the host's hash each time).

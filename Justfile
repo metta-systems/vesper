@@ -42,11 +42,16 @@ device_test_rustflags := fixed_rustflags + ' -C link-arg=--script=' + test_link
 # EL0 userspace components, linked with the userspace runtime's user.ld
 user_components := 'audio-pwm-bcm2835 audio-test-client compositor cprman-bcm2835 dispatch-actor dispatch-child dispatch-dispatcher dma-bcm2835 driver-probe endpoint-client endpoint-component endpoint-server fault-bare fault-faulter fb-impl fp-probe gpio-bcm2835 hello input-trace irq-receiver mailbox-impl mailbox-test-client pci-probe pcie-brcmstb power-impl preempt-reader preempt-spinner root-dispatcher sd-test-client sdhci sdhost-bcm2835 shell uart-pl011 usb-core usb-hcd-dwc2 usb-hcd-xhci usb-hid usb-test-client window-events'
 # EL0 components built for the hard-float `fp_target`, loaded into an AddressSpace that allows
-# FP/SIMD. image-build checks the list (VESPER_FP_COMPONENTS): FP code in an unlisted component
-# fails the build.
+# FP/SIMD (packages, built by `_build-components`).
 fp_components := 'fp-worker fp-bench-worker'
 fp_target       := 'aarch64-metta-none-hardfloat'
-export VESPER_FP_COMPONENTS := fp_components
+# Every FP component binary, the packages above and `midi-synth-fp` (the midi-synth package with
+# `fp-mode`, audio decision D9.7, built by `_build-midi-synth-fp`). image-build checks the list
+# (VESPER_FP_COMPONENTS): FP code in an unlisted component fails the build.
+fp_binaries := fp_components + ' midi-synth-fp'
+export VESPER_FP_COMPONENTS := fp_binaries
+# The profile overrides `midi-synth-fp` builds with: opt-level 3, where rustc's vectorizers run
+synth_fp_opt := '--config profile.release.package.vesper-synth.opt-level=3 --config profile.release.package.midi-synth.opt-level=3'
 # Privileged components every kickstart image bundles (see kernel/kickstart/image.toml)
 privileged_components := 'irqchip-bcm2836 irqchip-gicv2'
 # EL0 driver and program components the kickstart image bundles (see kernel/kickstart/image.toml)
@@ -102,7 +107,9 @@ wood_music_hashes   := '878:false:0x40f16e7eae7a5f45 13101:true:0x4f0a9ddf3a4a14
 wood_music          := target_root / 'wood' / 'music'
 # `bytes:looping:hash` of the song `_test-midi` plays (the test song, Bach's Prelude in C,
 # looping, at volume 64), as above (`start_hash_of_the_midi_test_song` in midi-synth tests/session.rs)
-midi_test_hash      := '4676:true:0x56aa0af323da6658'
+midi_test_hash      := '4676:true:0x9d66dc5df8b1a3f9'
+# The same on the f64 engine (`_test-midi-fp`, `start_hash_of_the_midi_test_song_on_the_f64_engine`)
+midi_test_fp_hash   := '4676:true:0xeb6a065c743feb07'
 # The MIDI synthesiser's test song and the bank trimmed to it (`_midi-test-soundfont`)
 midi_test_fixtures  := justfile_directory() / 'userspace' / 'midi-synth' / 'fixtures'
 midi_test_song      := midi_test_fixtures / 'wtk1-prelude1.mid'
@@ -163,14 +170,15 @@ _board-flags board=boards:
 # Cross-build crates (space-separated) for a board set with a linker script, features and extra
 # rustflags, into the target directory of the image configuration `board` + `image_features`
 # (the features of the image they are bundled into, which may differ from their own). Crates
-# of a `debug_kernel` image get `--cfg debug_kernel`, for their own debug-only diagnostics
-_cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features target_spec=target:
+# of a `debug_kernel` image get `--cfg debug_kernel`, for their own debug-only diagnostics.
+# `cargo_args` go to cargo itself (`_build-midi-synth-fp`'s profile overrides)
+_cross-build crates board=boards linker_script='' features='' rustflags='' image_features=features target_spec=target cargo_args='':
     @"{{ just_executable() }}" _board-flags '{{ board }}' > /dev/null
     CARGO_TARGET_DIR="{{ target_root / (board + (if image_features == '' { '' } else { '-' + replace(image_features, ',', '+') }) + profile_suffix) }}" \
     RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ board }}'){{ if image_features =~ 'debug_kernel' { ' --cfg debug_kernel' } else { '' } }}{{ if linker_script != '' { ' -C link-arg=--script=' + linker_script } else { '' } }}{{ if rustflags != '' { ' ' + rustflags } else { '' } }}{{ if extra_rustflags != '' { ' ' + extra_rustflags } else { '' } }}{{ stacktrace_rustflags }}" \
     cargo build -Zjson-target-spec --target='{{ justfile_directory() / 'targets' / target_spec + '.json' }}' \
       {{ if features != '' { '--features=' + features } else { '' } }} \
-      {{ rust_std }} \
+      {{ rust_std }} {{ cargo_args }} \
       --profile {{ cargo_profile }} -p {{ replace(crates, ' ', ' -p ') }}
 
 # === Kernel (nucleus + kickstart -> kernel-<config>.bin) ===
@@ -203,10 +211,12 @@ _build-components board=boards features='qemu' image_features=features: (_cross-
 # Build one Kickstart-based e2e test kernel: the nucleus, the privileged
 # components, the drivers Kickstart bundles, then `crate` linked as the init
 # image, then its raw binary. Kernels bundling further userspace components
-# build them first (_build-endpoint-test …).
-_build-test-kernel crate board=boards features=test_kernel_features config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build crate board init_link features)
+# build them first (_build-endpoint-test …). `crate_features` are features of
+# `crate` alone, for a variant of its image (midi-test's `fp-mode`): the image
+# is then named `crate-crate_features-config`.
+_build-test-kernel crate board=boards features=test_kernel_features crate_features='' config=(board + (if features == '' { '' } else { '-' + replace(features, ',', '+') }) + profile_suffix) all_crate_features=(if crate_features == '' { features } else { features + ',' + crate_features }): (_cross-build 'nucleus' board nucleus_link features) (_build-privileged board features) (_build-drivers board features) (_cross-build crate board init_link all_crate_features '' features)
     @mkdir -p "{{ images_dir }}"
-    {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + '-' + config + '.bin' }}"
+    {{ objcopy }} --strip-all -O binary "{{ target_root / config / target / image_profile / crate }}" "{{ images_dir / crate + (if crate_features == '' { '' } else { '-' + replace(crate_features, ',', '+') }) + '-' + config + '.bin' }}"
     @echo "{{ok_label}} {{ crate }} built for {{ board }} [{{ features }}]"
 
 # Rebuild `crate` unconditionally with the `build` recipe line and boot it;
@@ -305,6 +315,17 @@ _build-midi-player board=boards features='qemu' image_features=features: (_cross
 
 # Build the midi-test e2e kernel: the MIDI synthesiser, a player program with the test song (Bach's Prelude in C, with the bank trimmed to it, both in userspace/midi-synth/fixtures), audio-test's drivers, the mailbox, the PL011 and the log server; no Wood, compositor or USB
 _build-midi-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board)
+
+# Build the MIDI synthesiser with the f64 engine, `midi-synth-fp` (audio decision D9.7): the
+# midi-synth package with `fp-mode`, for the hard-float target, an FP component (`fp_binaries`).
+# The two synthesiser crates build at opt-level 3 (`synth_fp_opt`): the workspace's 's' keeps
+# rustc's vectorizers off, and fat LTO optimises at the linked crate's level, so midi-synth needs
+# it too (`_synth-fp-vectorized` checks the result)
+_build-midi-synth-fp board=boards features='qemu' image_features=features crate_features=(features + (if features == '' { '' } else { ',' }) + 'fp-mode'): (_cross-build 'midi-synth' board user_link crate_features '' image_features fp_target synth_fp_opt)
+
+# Build midi-test with `midi-synth-fp` in place of the integer synthesiser (its `fp-mode`
+# feature): target/images/midi-test-fp-mode-<config>.bin
+_build-midi-fp-test board=boards: (_build-components board 'qemu' test_kernel_features) (_build-midi-player board 'qemu' test_kernel_features) (_build-midi-synth-fp board 'qemu' test_kernel_features) (_build-test-kernel 'midi-test' board test_kernel_features 'fp-mode')
 
 # Build Wood, the Room Doom engine's Vesper program, the MIDI synthesiser component that plays
 # its music, with the trimmed SoundFont it bundles, and the log server that writes their lines to
@@ -974,22 +995,33 @@ _test-board board=boards features=test_kernel_features config=(board + '-' + rep
     echo "{{ ok_label }} the SDHCI component's bring-up and block-0 lines reached the UART through the log server"
 
 # Boot midi-test on raspi3b with the audio test tree (targets/audio-test.dtb, the PWM node enabled): the player sends the test song (Bach's Prelude in C) to the MIDI synthesiser (looping, volume 64), pulls 512 periods with `service` and streams them through audio_v1, where the audio driver plays each into its capture buffer by DMA copies, checks it against the ring and counts the audible ones; then it closes and reports. The song must load and play, its first periods must hash as on the host (`midi_test_hash`), nearly every period must be audible, with 0 underruns, and the log server must write the player's summary to the UART. The semihosting console goes to target/midi-test.log, the UART to target/midi-test-serial.log
-_test-midi board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board)
+_test-midi board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-test board) (_run-midi (images_dir / 'midi-test-' + config + '.bin') midi_test_hash 'midi-test')
+
+# _test-midi with the f64 engine: midi-test bundling `midi-synth-fp` (audio decision D9.7), an FP
+# component that starts on the f64 engine; its first periods must hash as on the host
+# (`midi_test_fp_hash`)
+_test-midi-fp board=boards features=test_kernel_features config=(board + '-' + replace(features, ',', '+') + profile_suffix): (_build-midi-fp-test board) (_run-midi (images_dir / 'midi-test-fp-mode-' + config + '.bin') midi_test_fp_hash 'midi-test-fp' 'fp')
+
+# Boot a midi-test `image` and check its run (see _test-midi): the start hash must be `hash`; logs
+# go to target/`log_stem`.log and target/`log_stem`-serial.log; `fp` set: the synthesiser must
+# say it runs the f64 engine
+_run-midi image hash log_stem fp='':
     #!/usr/bin/env bash
     set -uo pipefail
-    log="{{ target_root }}/midi-test.log"
-    serial="{{ target_root }}/midi-test-serial.log"
+    log="{{ target_root }}/{{ log_stem }}.log"
+    serial="{{ target_root }}/{{ log_stem }}-serial.log"
     rm -f "$log" "$serial"
     # GNU timeout (`gtimeout` from Homebrew coreutils on macOS); without one the run is unbounded.
     limit=$(command -v timeout || command -v gtimeout || true)
     ${limit:+$limit 600} {{ qemu }} -M raspi3b -display none -monitor none \
       -chardev stdio,mux=on,id=char0,signal=off -serial "file:$serial" -semihosting-config enable=on,userspace=on,chardev=char0 \
-      -dtb "{{ audio_test_dtb }}" -kernel "{{ images_dir / 'midi-test-' + config + '.bin' }}" < /dev/null > "$log"
+      -dtb "{{ audio_test_dtb }}" -kernel "{{ image }}" < /dev/null > "$log"
     status=$?
     grep -a "midi-test: \|midi-player: \|midi-synth: \|audio: open for\|audio: closed\|audio: capture checked" "$log" | grep -v "midi-test: .* on " | tail -40
     [ "$status" -eq 0 ] || { echo "midi-test: failed with status $status; see $log"; exit 1; }
     expect() { grep -a -q "$1" "$log" || { echo "midi-test: $2; see $log"; exit 1; }; }
     expect "midi-synth: ready at 44091710 mHz" "the MIDI synthesiser did not start"
+    if [ -n "{{ fp }}" ]; then expect "midi-synth: f64 engine (fp-mode)" "the synthesiser is not the fp-mode one"; fi
     expect "midi-player: INFO song: 4676 bytes, division 384 ticks per quarter, tempo 1000000 us per quarter (60 bpm)" "the player did not read its song"
     expect "midi-player: INFO song: first notes: ch" "the player did not log the first notes"
     expect "midi-synth: a song of 4676 bytes plays" "the synthesiser did not take the song"
@@ -999,8 +1031,9 @@ _test-midi board=boards features=test_kernel_features config=(board + '-' + repl
     expect "midi-player: INFO music: level peak [1-9][0-9]* rms [1-9][0-9]* of 32767; voices peak [1-9][0-9]* of 32" "no level and voices line"
     expect "midi-player: INFO position: pass 0, tick [1-9][0-9]* of 53760" "no position line"
     # The song's first periods hash as the host test computes them
-    # (`start_hash_of_the_midi_test_song` in userspace/midi-synth/tests/session.rs).
-    midi_hash="{{ midi_test_hash }}"
+    # (`start_hash_of_the_midi_test_song` in userspace/midi-synth/tests/session.rs, and
+    # `..._on_the_f64_engine` for the f64 engine).
+    midi_hash="{{ hash }}"
     bytes=${midi_hash%%:*}
     rest=${midi_hash#*:}; looping=${rest%%:*}; hash=${rest#*:}
     line=$(grep -a -o "midi-synth: song of $bytes bytes (looping $looping, volume 64): first 64 periods hash 0x[0-9a-f]*, [0-9]* audible" "$log" | head -1)
@@ -1177,8 +1210,8 @@ _test-fp-scan-host:
 _test-chainboot-host: (_host-test 'vesper-chainboot-protocol' 'chainboot_protocol')
     cargo test -p chainofcommand
 
-# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point; and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes _test-wood and _test-midi check, the peak voice count); midi-test's player library (the song's timing and first notes, the position, the level meter); sf2-trim's check of the test bank and wad-music's song export; and, in the userspace/wood submodule, Room's tests on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
-_test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'midi-synth' 'session') (_host-test 'midi-player' 'song')
+# Run the music synthesiser's host tests: tables, zones, envelope, pitch, loops, controllers, sequencer timing, render-split independence, no floating point; and the MIDI synthesiser component's midi_synth_v1 session (packets, chunked songs, controls, refusals, the start hashes _test-wood and _test-midi check, the peak voice count); both again with `fp-mode` (the engine packet, the f64 engine against the integer one on the test song and on single notes, the start hash _test-midi-fp checks); midi-test's player library (the song's timing and first notes, the position, the level meter); sf2-trim's check of the test bank and wad-music's song export; and, in the userspace/wood submodule, Room's tests on the shareware IWAD's music with the trimmed SC-55 bank (what it keeps, rustysynth loading it, golden hashes, loudness against rustysynth)
+_test-vesper-synth: (_host-test 'vesper-synth' 'synth') (_host-test 'midi-synth' 'session') (_host-test 'vesper-synth' 'synth' 'host-tests,fp-mode') (_host-test 'midi-synth' 'session' 'host-tests,fp-mode') (_host-test 'midi-player' 'song')
     cargo test -p sf2-trim -p wad-music
     just --justfile userspace/wood/room/Justfile test-music
 
@@ -1301,13 +1334,17 @@ _cross-clippy-audio board=boards features='':
 # Lint just the audio crates: the target build with and without `qemu`, and their host tests (much shorter than `clippy`)
 _clippy-audio: (_cross-clippy-audio boards '') (_cross-clippy-audio boards 'qemu') (_host-clippy 'cprman-bcm2835' 'cprman') (_host-clippy 'dma-bcm2835' 'dma') (_host-clippy 'audio-pwm-bcm2835' 'pwm') (_host-clippy 'audio-pwm-bcm2835' 'stream')
 
-# Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, their host tests, the bank-trimming tool (sf2-trim) and Wood's song export (wad-music)
-_clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-synth' 'session') (_host-clippy 'midi-player' 'song')
+# Lint Wood's music synthesiser: the library, the MIDI synthesiser component and midi-test's player (with and without `qemu`) for the target, the library and the component with `fp-mode` for the hard-float target, their host tests (also with `fp-mode`), the bank-trimming tool (sf2-trim) and Wood's song export (wad-music)
+_clippy-vesper-synth: (_host-clippy 'vesper-synth' 'synth') (_host-clippy 'midi-synth' 'session') (_host-clippy 'vesper-synth' 'synth' 'host-tests,fp-mode') (_host-clippy 'midi-synth' 'session' 'host-tests,fp-mode') (_host-clippy 'midi-player' 'song')
     RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo clippy {{ target_json }} {{ rust_std }} -p vesper-synth -p midi-synth -p midi-synth-server -p midi-synth-client -p midi-player \
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
     cargo clippy {{ target_json }} {{ rust_std }} -p midi-synth -p midi-player --features qemu \
+      -- --deny warnings --allow deprecated
+    VESPER_ARTIFACT_DIR="{{ qemu_artifacts }}" RUSTFLAGS="{{ fixed_rustflags }} $("{{ just_executable() }}" _board-flags '{{ boards }}')" \
+    cargo clippy -Zjson-target-spec --target='{{ justfile_directory() / 'targets' / fp_target + '.json' }}' {{ rust_std }} \
+      -p vesper-synth -p midi-synth --features midi-synth/fp-mode,midi-synth/qemu \
       -- --deny warnings --allow deprecated
     RUSTFLAGS="{{ fixed_rustflags }}" cargo clippy -p sf2-trim -p wad-music --all-targets -- --deny warnings --allow deprecated
 
@@ -1335,6 +1372,22 @@ _synth-no-float: (_cross-build 'midi-synth' boards user_link '')
     linked=$(rust-nm "$component" | awk '{print $NF}' | grep -E "$pattern" | sort -u || true)
     if [ -n "$linked" ]; then echo "the midi-synth component links soft-float routines:"; echo "$linked"; exit 1; fi
     echo "midi-synth component: no soft-float routines linked"
+
+# Check that the f64 engine's mixing loop is vectorized in the linked midi-synth-fp (audio
+# decision D9.7): `vesper_synth::float::mix_run` must hold two-lane f64 multiplies and adds
+# (`fmul`/`fadd` on `.2d`). Fails as well when the function is not found, so it cannot pass on
+# nothing
+_synth-fp-vectorized: (_build-midi-synth-fp boards 'qemu')
+    #!/usr/bin/env bash
+    set -euo pipefail
+    binary="{{ target_root / boards + '-qemu' + profile_suffix / fp_target / image_profile / 'midi-synth-fp' }}"
+    listing=$(rust-objdump -d --demangle "$binary" | awk '/vesper_synth::float::mix_run>:/{found=1;next} found&&/^$/{found=0} found')
+    total=$(echo "$listing" | grep -c '^ ' || true)
+    [ "$total" -gt 0 ] || { echo "vesper_synth::float::mix_run not found in $binary"; exit 1; }
+    multiplies=$(echo "$listing" | grep -cE 'fmul[[:space:]]+v[0-9]+\.2d' || true)
+    adds=$(echo "$listing" | grep -cE 'fadd[[:space:]]+v[0-9]+\.2d' || true)
+    echo "mix_run: $total instructions, $multiplies fmul and $adds fadd on two f64 lanes"
+    [ "$multiplies" -gt 0 ] && [ "$adds" -gt 0 ] || { echo "the f64 mixing loop is not vectorized"; exit 1; }
 
 # Trim the SC-55 SoundFont to the programs and drum notes of the shareware IWAD's music (audio decision D9.4), into target/wood/sc55-doom1.sf2: wad-music (in the userspace/wood submodule) exports the songs as MIDI, converted by Room's mus2midi as the game does, and sf2-trim keeps what they play
 _wood-soundfont:
@@ -1437,7 +1490,7 @@ _audit-fp-simd: (build boards) (build boards 'qemu') (_build-test-kernel 'capabi
 
 # Run every lint: formatting, clippy for every feature set and the host tests, the FP/SIMD audit
 [group("lint")]
-lint: fmt-check clippy _audit-fp-simd
+lint: fmt-check clippy _audit-fp-simd _synth-no-float _synth-fp-vectorized
 
 # === CI ===
 

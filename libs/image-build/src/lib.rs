@@ -1216,11 +1216,27 @@ fn page_padded(mut data: Vec<u8>) -> Vec<u8> {
 /// bundling image's linker
 /// script must place `.components` page-aligned inside its retained image.
 pub fn bundle_components(manifest: &str) {
+    bundle_components_replacing(manifest, &[]);
+}
+
+/// [`bundle_components`], with the `[[component]]` entries whose binary is
+/// the first of a pair of `replacements` bundling the second instead: one
+/// manifest for an image and its variant (midi-test with the `fp-mode`
+/// synthesiser, `midi-synth-fp` in place of `midi-synth`).
+pub fn bundle_components_replacing(manifest: &str, replacements: &[(&str, &str)]) {
     let (manifest_path, table) = load_manifest(manifest);
     let out = out_dir();
 
     let mut bundled = Vec::new();
-    let components = read_components(&manifest_path, &table);
+    let mut components = read_components(&manifest_path, &table);
+    for component in &mut components {
+        if let Some((_, replacement)) = replacements
+            .iter()
+            .find(|(binary, _)| *binary == component.binary)
+        {
+            component.binary = (*replacement).to_string();
+        }
+    }
     let driver_entries = read_drivers(&manifest_path, &table);
     let resources = read_resources(&manifest_path, &table);
     let interface_directories: Vec<PathBuf> = components

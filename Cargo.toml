@@ -308,6 +308,8 @@ libsyscall = { path = "libs/syscall", package = "vesper-syscalls" }
 libtest = { path = "libs/test", package = "vesper-tests" }
 libtime = { path = "libs/time", package = "vesper-time" }
 libuser = { path = "userspace/runtime", package = "vesper-user-runtime" }
+# musl's maths library in Rust, no_std: the synthesiser's f64 engine (fp-mode).
+libm = { version = "0.2.16", default-features = false }
 log = { version = "0.4", default-features = false }
 num = { version = "0.4", default-features = false }
 once_cell = { version = "1.21", default-features = false, features = ["unstable"] }

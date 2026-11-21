@@ -7,11 +7,12 @@ mod tests {
     use {
         libio_channel::{DataArea, IoRec, Packet},
         midi_synth::{
-            Command, Fnv, HASH_FRAMES, Handled, Memory, PERIOD_BYTES, PERIOD_FRAMES,
-            RENDER_AREA_BYTES, SONG_FIRST, SONG_LAST, SONG_LOOPING, Session, volume_value,
+            Command, ENGINE_FLOAT, ENGINE_INTEGER, Fnv, HASH_FRAMES, Handled, Memory, PERIOD_BYTES,
+            PERIOD_FRAMES, RENDER_AREA_BYTES, SONG_FIRST, SONG_LAST, SONG_LOOPING, Session,
+            engine_value, volume_value,
         },
         std::{fs, path::Path, sync::OnceLock},
-        vesper_synth::{Bank, OUTPUT_RATE, Sequencer, Song, Synth},
+        vesper_synth::{Bank, Engine, OUTPUT_RATE, Sequencer, Song, Synth},
     };
 
     /// The test song, Bach's Prelude in C (BWV 846, from the Mutopia
@@ -132,11 +133,24 @@ mod tests {
     }
 
     /// The start hash of the test song at `volume`, rendered straight by the
-    /// sequencer in periods, as the component hashes it.
+    /// sequencer in periods on the integer engine, as the component hashes it.
     fn reference_hash(looping: bool, volume: u8) -> (u64, u32) {
-        let mut sequencer = Sequencer::new(Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE));
+        reference_hash_on(Engine::Integer, looping, volume)
+    }
+
+    /// A sequencer playing the test song on `engine`.
+    fn prelude_on(engine: Engine, looping: bool, volume: u8) -> Sequencer<'static> {
+        let mut synth = Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE);
+        synth.set_engine(engine);
+        let mut sequencer = Sequencer::new(synth);
         sequencer.play(Song::parse(PRELUDE).unwrap(), looping);
         sequencer.set_volume(volume);
+        sequencer
+    }
+
+    /// [`reference_hash`] on `engine`.
+    fn reference_hash_on(engine: Engine, looping: bool, volume: u8) -> (u64, u32) {
+        let mut sequencer = prelude_on(engine, looping, volume);
         let mut hash = Fnv::NEW;
         let mut audible = 0;
         let mut period = vec![0_i16; 2 * PERIOD_FRAMES];
@@ -161,6 +175,7 @@ mod tests {
             Command::Pause,
             Command::Resume,
             Command::Volume,
+            Command::Engine,
         ] {
             let value = command.value(SONG_LAST, 0x1234);
             assert_eq!(Command::of(value), Some(command));
@@ -168,9 +183,42 @@ mod tests {
             assert_eq!(value & SONG_LAST, SONG_LAST);
         }
         assert_eq!(Command::of(0), None);
-        assert_eq!(Command::of(7), None);
+        assert_eq!(Command::of(8), None);
         assert_eq!(volume_value(200, 0) >> 8 & 0xff, 127);
         assert_eq!(volume_value(64, 3), 6 | 64 << 8 | 3 << 16);
+        assert_eq!(engine_value(ENGINE_FLOAT, 3), 7 | 1 << 8 | 3 << 16);
+    }
+
+    /// The engine packet: integer is always there; f64 only with `fp-mode`;
+    /// an unknown engine is refused, and the engine stays.
+    #[test]
+    fn the_engine_packet_picks_the_engine() {
+        let mut session = session();
+        let mut pages = Pages::new();
+        assert_eq!(session.engine_in_use(), Engine::Integer);
+        let float = control(&mut session, &mut pages, engine_value(ENGINE_FLOAT, 0));
+        #[cfg(feature = "fp-mode")]
+        {
+            assert_eq!(float, Handled::Control);
+            assert_eq!(session.engine_in_use(), Engine::Float);
+            // A new client finds the session's own engine again.
+            session.reset();
+            assert_eq!(session.engine_in_use(), Engine::Integer);
+            let mut float_session = Session::with_engine(Bank::new(bank()).unwrap(), Engine::Float);
+            float_session.reset();
+            assert_eq!(float_session.engine_in_use(), Engine::Float);
+        }
+        #[cfg(not(feature = "fp-mode"))]
+        assert_eq!(float, Handled::Refused);
+        assert_eq!(
+            control(&mut session, &mut pages, engine_value(9, 0)),
+            Handled::Refused
+        );
+        assert_eq!(
+            control(&mut session, &mut pages, engine_value(ENGINE_INTEGER, 0)),
+            Handled::Control
+        );
+        assert_eq!(session.engine_in_use(), Engine::Integer);
     }
 
     #[test]
@@ -232,7 +280,7 @@ mod tests {
         assert_eq!(PRELUDE.len(), 4_676);
         let (hash, audible) = reference_hash(true, 64);
         println!("prelude looping true volume 64: {hash:#018x}, {audible} audible");
-        assert_eq!((hash, audible), (0x56aa_0af3_23da_6658, 64));
+        assert_eq!((hash, audible), (0x9d66_dc5d_f8b1_a3f9, 64));
     }
 
     /// The peak voice count `voices` reports: none before a song, some while
@@ -323,5 +371,99 @@ mod tests {
         let handled = send_song(&mut session, &mut pages, b"not a MIDI file", false, 100);
         assert_eq!(handled, [Handled::BadSong]);
         assert!(!session.playing());
+    }
+
+    /// Seconds of the test song the engine comparison renders.
+    #[cfg(feature = "fp-mode")]
+    const COMPARED_SECONDS: usize = 30;
+
+    /// The f64 engine plays the test song as the integer engine does: the
+    /// same notes, envelopes, gains and pan, so the two renders differ only
+    /// by the integer engine's rounding (its Q16 gains, 15-bit interpolation,
+    /// whole-centibel tables and whole-frame stage times).
+    #[cfg(feature = "fp-mode")]
+    #[test]
+    fn the_f64_engine_renders_the_song_as_the_integer_engine_does() {
+        let frames = COMPARED_SECONDS * 44_092;
+        let render = |engine| {
+            let mut sequencer = prelude_on(engine, false, 127);
+            let mut out = vec![0_i16; 2 * frames];
+            for period in out.chunks_mut(2 * PERIOD_FRAMES) {
+                sequencer.render(period);
+            }
+            out
+        };
+        let (signal_rms, ratio_db, largest) =
+            difference(&render(Engine::Integer), &render(Engine::Float));
+        println!(
+            "integer vs f64 over {COMPARED_SECONDS} s: signal rms {signal_rms:.1}, \
+             {ratio_db:.1} dB apart, largest difference {largest}"
+        );
+        assert!(signal_rms > 500.0, "the song must be audible");
+        // Measured: 43.5 dB and 27, dominated by the integer engine's
+        // whole-centibel concave curve (half a centibel is 0.6 % of gain).
+        assert!(ratio_db >= 40.0, "{ratio_db:.1} dB apart");
+        assert!(largest <= 64, "largest difference {largest}");
+    }
+
+    /// Single notes across the bank's range, each held half a second and
+    /// released: the two engines agree on every one. (A pitch between octaves
+    /// once played at the root's pitch in the integer engine only; this
+    /// shows such a difference at once.)
+    #[cfg(feature = "fp-mode")]
+    #[test]
+    fn single_notes_match_between_the_engines() {
+        for key in [36_u8, 48, 55, 60, 64, 67, 72, 76, 79, 84] {
+            let render = |engine| {
+                let mut synth = Synth::new(Bank::new(bank()).unwrap(), OUTPUT_RATE);
+                synth.set_engine(engine);
+                synth.message(0x90, key, 100);
+                let mut out = vec![0_i16; 2 * 44_092];
+                let (held, released) = out.split_at_mut(2 * 22_046);
+                synth.render(held);
+                synth.message(0x80, key, 0);
+                synth.render(released);
+                out
+            };
+            let (signal_rms, ratio_db, largest) =
+                difference(&render(Engine::Integer), &render(Engine::Float));
+            assert!(signal_rms > 50.0, "key {key} must sound");
+            assert!(ratio_db >= 35.0, "key {key}: {ratio_db:.1} dB apart");
+            assert!(largest <= 64, "key {key}: largest difference {largest}");
+        }
+    }
+
+    /// How far render `other` is from `reference`: the reference's RMS level,
+    /// their difference below it in dB, and the largest single difference.
+    #[cfg(feature = "fp-mode")]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "sums of squares of i16 values, far below 2^53"
+    )]
+    fn difference(reference: &[i16], other: &[i16]) -> (f64, f64, i32) {
+        let mut signal = 0.0;
+        let mut error = 0.0;
+        let mut largest = 0;
+        for (&a, &b) in reference.iter().zip(other) {
+            let difference = i32::from(a) - i32::from(b);
+            largest = largest.max(difference.abs());
+            signal += f64::from(a) * f64::from(a);
+            error += f64::from(difference) * f64::from(difference);
+        }
+        let samples = reference.len() as f64;
+        let signal_rms = (signal / samples).sqrt();
+        let error_rms = (error / samples).sqrt();
+        let ratio_db = 20.0 * (signal_rms / error_rms.max(f64::MIN_POSITIVE)).log10();
+        (signal_rms, ratio_db, largest)
+    }
+
+    /// The start hash of the test song on the f64 engine, as the `fp-mode`
+    /// component logs it in `_test-midi-fp`.
+    #[cfg(feature = "fp-mode")]
+    #[test]
+    fn start_hash_of_the_midi_test_song_on_the_f64_engine() {
+        let (hash, audible) = reference_hash_on(Engine::Float, true, 64);
+        println!("prelude on f64, looping true volume 64: {hash:#018x}, {audible} audible");
+        assert_eq!((hash, audible), (0xeb6a_065c_743f_eb07, 64));
     }
 }

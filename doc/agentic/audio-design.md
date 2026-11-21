@@ -94,6 +94,22 @@ options that were weighed are summarised after each answer.
     the new synthesiser may be plugged into Room's host build for testing (listening
     checks, comparison with `rustysynth`) behind an opt-in switch, `rustysynth` staying
     the default (Room's `vesper-synth` feature).
+  - **D9.7. An f64 mode behind the `fp-mode` feature** (maintainer decision,
+    2026-11-21, M1(c), M2(b), M3(b), M4(a)), as the representative FP workload for the
+    FP/SIMD plan's S5. Without `fp-mode` the synthesiser stays integer-only, as Doom
+    was, and `clippy::float_arithmetic` stays denied with the `_synth-no-float` check.
+    With it, the crate and the `midi-synth` component build hard-float, and a runtime
+    switch (the `midi_synth_v1` mode command) picks the integer or the f64 engine; the
+    `fp-mode` component starts in f64.
+    - The f64 engine is a whole voice in f64 (M2(b)): sample position and pitch step,
+      the envelope, the attenuation and pan curves, computed with `libm` (the `no_std`
+      port of musl's maths library) instead of the integer tables.
+    - It is plain f64 code, left to the compiler's vectorizer (M3(b)); the loop and the
+      flags are tuned until the mixing loop is shown to be vectorized.
+    - Correctness (M4(a)): a host test renders the test song with both engines and
+      bounds their difference; a midi-test variant boots the `fp-mode` component. Its
+      output hash is used only once repeated runs show it stable; the integer hashes
+      stay as they are.
 - **D10. Wood pulls `midi_synth_v1` and mixes locally** (answered 2026-10-28, option a
   of the decisions file with the interface renamed). The maintainer's words: "rename
   music_v1 to midi_synth_v1; the bidirectional xbufs would send midi data in one

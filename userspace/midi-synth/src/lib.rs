@@ -12,7 +12,7 @@ extern crate alloc;
 use {
     alloc::vec::Vec,
     libio_channel::{Channel, DataArea, IoRec, Packet},
-    vesper_synth::{Bank, OUTPUT_RATE, Sequencer, Song, Synth},
+    vesper_synth::{Bank, Engine, OUTPUT_RATE, Sequencer, Song, Synth},
 };
 
 /// Slots of each of the channel's FIFOs.
@@ -71,6 +71,9 @@ pub enum Command {
     Resume,
     /// Bits 8 to 15: the volume.
     Volume,
+    /// Bits 8 to 15: the voice engine new notes start on ([`ENGINE_INTEGER`],
+    /// [`ENGINE_FLOAT`]).
+    Engine,
 }
 
 const COMMAND_SONG: u64 = 1;
@@ -79,6 +82,12 @@ const COMMAND_STOP: u64 = 3;
 const COMMAND_PAUSE: u64 = 4;
 const COMMAND_RESUME: u64 = 5;
 const COMMAND_VOLUME: u64 = 6;
+const COMMAND_ENGINE: u64 = 7;
+
+/// Engine packet value: the integer engine.
+pub const ENGINE_INTEGER: u8 = 0;
+/// Engine packet value: the f64 engine, only in the `fp-mode` component.
+pub const ENGINE_FLOAT: u8 = 1;
 
 /// Song packet flag: the first bytes of a new song.
 pub const SONG_FIRST: u64 = 1 << 8;
@@ -101,6 +110,7 @@ impl Command {
             COMMAND_PAUSE => Some(Self::Pause),
             COMMAND_RESUME => Some(Self::Resume),
             COMMAND_VOLUME => Some(Self::Volume),
+            COMMAND_ENGINE => Some(Self::Engine),
             _ => None,
         }
     }
@@ -116,6 +126,7 @@ impl Command {
             Self::Pause => COMMAND_PAUSE,
             Self::Resume => COMMAND_RESUME,
             Self::Volume => COMMAND_VOLUME,
+            Self::Engine => COMMAND_ENGINE,
         };
         code | (flags & 0xff00) | (tag << CLIENT_SHIFT)
     }
@@ -126,6 +137,13 @@ impl Command {
 pub const fn volume_value(volume: u8, tag: u64) -> u64 {
     let volume = if volume > 127 { 127 } else { volume }; // TODO: min()?
     Command::Volume.value((volume as u64) << 8, tag)
+}
+
+/// The value word of an engine packet choosing `engine` ([`ENGINE_INTEGER`]
+/// or [`ENGINE_FLOAT`]).
+#[must_use]
+pub const fn engine_value(engine: u8, tag: u64) -> u64 {
+    Command::Engine.value((engine as u64) << 8, tag)
 }
 
 /// The data pages as the synthesiser reads and writes them.
@@ -275,14 +293,27 @@ pub struct Session<'bank> {
     /// The most voices sounding at the end of a rendered block since
     /// [`Session::take_peak_voices`] last ran.
     peak_voices: usize,
+    /// The engine a new client finds.
+    default_engine: Engine,
 }
 
 impl<'bank> Session<'bank> {
-    /// A silent synthesiser over `bank` at the output rate, full volume.
+    /// A silent synthesiser over `bank` at the output rate, full volume, on
+    /// the integer engine.
     #[must_use]
     pub fn new(bank: Bank<'bank>) -> Self {
+        Self::with_engine(bank, Engine::Integer)
+    }
+
+    /// A silent synthesiser over `bank` at the output rate, full volume, new
+    /// notes on `engine` (also after a [`reset`](Self::reset)).
+    #[must_use]
+    pub fn with_engine(bank: Bank<'bank>, engine: Engine) -> Self {
+        let mut synth = Synth::new(bank, OUTPUT_RATE);
+        synth.set_engine(engine);
         Self {
-            sequencer: Sequencer::new(Synth::new(bank, OUTPUT_RATE)),
+            default_engine: engine,
+            sequencer: Sequencer::new(synth),
             collecting: Vec::new(),
             volume: 127,
             hashed_frames: HASH_FRAMES,
@@ -301,6 +332,7 @@ impl<'bank> Session<'bank> {
         self.sequencer.stop();
         self.sequencer.resume();
         self.sequencer.synth_mut().reset();
+        self.sequencer.synth_mut().set_engine(self.default_engine);
         self.collecting.clear();
         self.volume = 127;
         self.sequencer.set_volume(self.volume);
@@ -359,6 +391,7 @@ impl<'bank> Session<'bank> {
                 self.sequencer.set_volume(self.volume);
                 Handled::Control
             }
+            Some(Command::Engine) => self.engine(packet.value()),
         };
         if handled == Handled::Refused {
             for record in packet.recs_mut() {
@@ -366,6 +399,26 @@ impl<'bank> Session<'bank> {
             }
         }
         handled
+    }
+
+    /// The engine packet `value`: new notes start on the engine it names.
+    /// The f64 engine exists only in the `fp-mode` component; elsewhere, and
+    /// for an unknown engine, the packet is refused.
+    fn engine(&mut self, value: u64) -> Handled {
+        let engine = match u8::try_from((value >> 8) & 0xff) {
+            Ok(ENGINE_INTEGER) => Engine::Integer,
+            #[cfg(feature = "fp-mode")]
+            Ok(ENGINE_FLOAT) => Engine::Float,
+            _ => return Handled::Refused,
+        };
+        self.sequencer.synth_mut().set_engine(engine);
+        Handled::Control
+    }
+
+    /// The engine new notes start on.
+    #[must_use]
+    pub fn engine_in_use(&self) -> Engine {
+        self.sequencer.synth().engine()
     }
 
     fn song(&mut self, packet: &Packet, memory: &dyn Memory) -> Handled {

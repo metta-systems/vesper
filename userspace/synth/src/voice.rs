@@ -1,9 +1,19 @@
-//! One sounding sample: fixed-point playback with linear interpolation, the
-//! SoundFont loop modes, the volume envelope, attenuation and pan.
+//! One sounding sample: the note it answers and how it is played.
 //!
-//! Positions are absolute sample-point indices into the bank's sample data in
-//! 32.32 fixed point; gains are Q16 and ramp linearly across each block, so
-//! envelope, volume and pan changes do not click.
+//! [`Voice`] holds what the synthesiser decides on (channel, key, release,
+//! stealing order) and a sound, the engine that renders it:
+//!
+//! - [`IntegerSound`], always there: fixed-point playback with linear
+//!   interpolation, the SoundFont loop modes, the volume envelope,
+//!   attenuation and pan. Positions are absolute sample-point indices into
+//!   the bank's sample data in 32.32 fixed point; gains are Q16 and ramp
+//!   linearly across each block, so envelope, volume and pan changes do not
+//!   click.
+//! - the f64 sound of [`crate::float`], with the `fp-mode` feature: the same
+//!   voice in double precision.
+//!
+//! Both start from one [`VoiceSetup`], the generator values resolved in the
+//! SoundFont's own units.
 
 use {
     crate::{
@@ -31,6 +41,16 @@ pub enum LoopMode {
     UntilRelease,
 }
 
+/// Which engine renders the voices a note starts.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Engine {
+    /// Fixed point ([`IntegerSound`]).
+    Integer,
+    /// Double precision (`crate::float`).
+    #[cfg(feature = "fp-mode")]
+    Float,
+}
+
 /// What starts a voice: the note and the zones and sample that answer it.
 #[derive(Clone, Copy, Debug)]
 pub struct NoteStart<'z> {
@@ -48,49 +68,39 @@ pub struct NoteStart<'z> {
     pub sample: &'z SampleHeader,
 }
 
-/// A voice.
+/// A voice's generators resolved for its note, in the SoundFont's units:
+/// what either engine starts from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Voice {
-    /// MIDI channel.
-    pub(crate) channel: u8,
-    /// MIDI key that started it.
-    pub(crate) key: u8,
-    /// Exclusive class (0: none).
-    pub(crate) exclusive_class: i32,
-    /// Order of starting, for stealing the oldest.
-    pub(crate) serial: u64,
-    /// Released by a note-off (or by the sustain pedal's release).
-    pub(crate) released: bool,
-    /// Note-off seen while the sustain pedal was down.
-    pub(crate) held_by_pedal: bool,
-    end: u32,
-    loop_start: u32,
-    loop_end: u32,
-    mode: LoopMode,
-    /// Position in 32.32 sample points.
-    position: u64,
-    /// Step per frame in 32.32.
-    step: u64,
-    /// The channel bend the step was computed for.
-    step_bend: i32,
-    sample_rate: u32,
+pub struct VoiceSetup {
+    /// First sample point.
+    pub begin: u32,
+    /// Sample point past the last.
+    pub end: u32,
+    /// Loop start and end points.
+    pub loop_start: u32,
+    pub loop_end: u32,
+    pub mode: LoopMode,
+    /// The sample's recording rate in Hz.
+    pub sample_rate: u32,
     /// Pitch above the sample's root, in cents, without the channel's bend.
-    pitch_cents: i32,
-    /// Attenuation of the sample and the velocity, in centibels.
-    attenuation: u32,
+    pub pitch_cents: i32,
+    /// Generator `initialAttenuation` in centibels, 0 to 1440.
+    pub initial_attenuation: u32,
+    /// The velocity the attenuation follows (the note's, or the zone's fixed
+    /// one), 1 to 127.
+    pub velocity: u8,
     /// Pan from the generators, -500 to 500.
-    pan: i32,
-    envelope: Envelope,
-    /// Gains reached so far, Q16.
-    left_gain: i32,
-    right_gain: i32,
-    /// The ramp under way: its end values, the step per frame and the
-    /// frames left to it (zero: start a new ramp).
-    target_left: i32,
-    target_right: i32,
-    left_delta: i32,
-    right_delta: i32,
-    ramp_left: u32,
+    pub pan: i32,
+    /// Envelope stage times in timecents (the hold and decay scaled by key).
+    pub delay: i32,
+    pub attack: i32,
+    pub hold: i32,
+    pub decay: i32,
+    pub release: i32,
+    /// Sustain level as attenuation in centibels, 0 to 1440.
+    pub sustain: u32,
+    /// Exclusive class (0: none).
+    pub exclusive_class: i32,
 }
 
 /// Generator value `operator` of the start's zones.
@@ -104,10 +114,10 @@ fn address(base: u32, fine: i32, coarse: i32) -> u32 {
     u32::try_from(address.max(0)).unwrap_or(u32::MAX)
 }
 
-impl Voice {
-    /// Start a voice for `start` at `rate`, numbered `serial`.
+impl VoiceSetup {
+    /// The setup of `start` in a bank of `points` sample points.
     #[must_use]
-    pub fn new(start: &NoteStart<'_>, rate: Rate, points: u32, serial: u64) -> Self {
+    pub fn new(start: &NoteStart<'_>, points: u32) -> Self {
         let sample = start.sample;
         let begin = address(
             sample.start,
@@ -158,47 +168,260 @@ impl Voice {
             + value(start, generator::FINE_TUNE)
             + i32::from(sample.pitch_correction);
 
-        // initialAttenuation counts 0.4 of its value, as in EMU hardware and
-        // in rustysynth and FluidSynth.
-        let initial =
+        let initial_attenuation =
             u32::try_from(value(start, generator::INITIAL_ATTENUATION).clamp(0, 1440)).unwrap_or(0);
-        let attenuation = initial * 2 / 5 + concave_centibels(velocity);
 
-        let frames = |operator| timecents_frames(value(start, operator), rate);
-        let key_scaled = |operator, scale| {
-            timecents_frames(
-                value(start, operator) + (60 - key) * value(start, scale),
-                rate,
-            )
-        };
-        let envelope = Envelope::new(EnvelopeParameters {
-            delay: frames(generator::DELAY_VOL_ENV),
-            attack: frames(generator::ATTACK_VOL_ENV),
-            hold: key_scaled(generator::HOLD_VOL_ENV, generator::KEYNUM_TO_VOL_ENV_HOLD),
-            decay: key_scaled(generator::DECAY_VOL_ENV, generator::KEYNUM_TO_VOL_ENV_DECAY),
-            sustain: u32::try_from(value(start, generator::SUSTAIN_VOL_ENV).clamp(0, 1440))
-                .unwrap_or(0),
-            release: frames(generator::RELEASE_VOL_ENV),
-        });
-
+        let key_scaled =
+            |operator, scale| value(start, operator) + (60 - key) * value(start, scale);
         Self {
-            channel: start.channel,
-            key: start.key,
-            exclusive_class: value(start, generator::EXCLUSIVE_CLASS),
-            serial,
-            released: false,
-            held_by_pedal: false,
+            begin,
             end,
             loop_start,
             loop_end,
             mode,
-            position: u64::from(begin) << 32,
-            step: phase_step(sample.sample_rate, pitch_cents, rate),
-            step_bend: 0,
             sample_rate: sample.sample_rate,
             pitch_cents,
-            attenuation,
+            initial_attenuation,
+            velocity,
             pan: value(start, generator::PAN),
+            delay: value(start, generator::DELAY_VOL_ENV),
+            attack: value(start, generator::ATTACK_VOL_ENV),
+            hold: key_scaled(generator::HOLD_VOL_ENV, generator::KEYNUM_TO_VOL_ENV_HOLD),
+            decay: key_scaled(generator::DECAY_VOL_ENV, generator::KEYNUM_TO_VOL_ENV_DECAY),
+            release: value(start, generator::RELEASE_VOL_ENV),
+            sustain: u32::try_from(value(start, generator::SUSTAIN_VOL_ENV).clamp(0, 1440))
+                .unwrap_or(0),
+            exclusive_class: value(start, generator::EXCLUSIVE_CLASS),
+        }
+    }
+}
+
+/// A voice.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Voice {
+    /// MIDI channel.
+    pub(crate) channel: u8,
+    /// MIDI key that started it.
+    pub(crate) key: u8,
+    /// Exclusive class (0: none).
+    pub(crate) exclusive_class: i32,
+    /// Order of starting, for stealing the oldest.
+    pub(crate) serial: u64,
+    /// Released by a note-off (or by the sustain pedal's release).
+    pub(crate) released: bool,
+    /// Note-off seen while the sustain pedal was down.
+    pub(crate) held_by_pedal: bool,
+    sound: Sound,
+}
+
+/// The engine state of a voice.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Sound {
+    Integer(IntegerSound),
+    #[cfg(feature = "fp-mode")]
+    Float(crate::float::FloatSound),
+}
+
+/// Where a render call adds a voice's frames: the integer accumulator, and
+/// with `fp-mode` the f64 one beside it.
+pub struct Mix<'block> {
+    /// Interleaved stereo, the integer engine's units (a point times a gain).
+    pub integer: &'block mut [i32],
+    /// Stereo frames, the f64 engine's (the same units).
+    #[cfg(feature = "fp-mode")]
+    pub float: &'block mut [crate::float::Frame],
+    /// Whether an f64 voice added to `float`.
+    #[cfg(feature = "fp-mode")]
+    pub float_used: bool,
+}
+
+impl Voice {
+    /// Start a voice for `start` at `rate` with `engine`, numbered `serial`,
+    /// in a bank of `points` sample points.
+    #[must_use]
+    pub fn new(
+        start: &NoteStart<'_>,
+        rate: Rate,
+        points: u32,
+        serial: u64,
+        engine: Engine,
+    ) -> Self {
+        let setup = VoiceSetup::new(start, points);
+        let sound = match engine {
+            Engine::Integer => Sound::Integer(IntegerSound::new(&setup, rate)),
+            #[cfg(feature = "fp-mode")]
+            Engine::Float => Sound::Float(crate::float::FloatSound::new(&setup, rate)),
+        };
+        Self {
+            channel: start.channel,
+            key: start.key,
+            exclusive_class: setup.exclusive_class,
+            serial,
+            released: false,
+            held_by_pedal: false,
+            sound,
+        }
+    }
+
+    /// Release the note (note-off, or the pedal let go).
+    pub fn release(&mut self) {
+        self.released = true;
+        self.held_by_pedal = false;
+        match &mut self.sound {
+            Sound::Integer(sound) => sound.envelope.release(),
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => sound.release(),
+        }
+    }
+
+    /// Release within `frames` (exclusive class, stealing).
+    pub fn cut(&mut self, frames: u32) {
+        self.released = true;
+        self.held_by_pedal = false;
+        match &mut self.sound {
+            Sound::Integer(sound) => sound.envelope.release_within(frames),
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => sound.release_within(frames),
+        }
+    }
+
+    /// Whether the voice has nothing more to play.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        match &self.sound {
+            Sound::Integer(sound) => sound.envelope.is_finished(),
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => sound.is_finished(),
+        }
+    }
+
+    /// Current loudness, Q16 (for choosing a voice to steal).
+    #[must_use]
+    pub fn loudness(&self) -> i32 {
+        match &self.sound {
+            Sound::Integer(sound) => sound.left_gain.max(sound.right_gain),
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => sound.loudness(),
+        }
+    }
+
+    /// The engine rendering this voice.
+    #[must_use]
+    pub const fn engine(&self) -> Engine {
+        match self.sound {
+            Sound::Integer(_) => Engine::Integer,
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(_) => Engine::Float,
+        }
+    }
+
+    /// Add `frames` frames of this voice into `mix`, with `channel`'s volume,
+    /// pan and bend; see [`IntegerSound::render`] for `until_boundary`.
+    pub fn render(
+        &mut self,
+        font: &SoundFont<'_>,
+        channel: &Channel,
+        rate: Rate,
+        mix: &mut Mix<'_>,
+        frames: u32,
+        until_boundary: u32,
+    ) {
+        let looping = self.looping();
+        match &mut self.sound {
+            Sound::Integer(sound) => sound.render(
+                font,
+                channel,
+                rate,
+                looping,
+                mix.integer,
+                frames,
+                until_boundary,
+            ),
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => {
+                mix.float_used = true;
+                sound.render(font, channel, looping, mix.float, frames, until_boundary);
+            }
+        }
+    }
+
+    /// Whether the sample loops now: its mode, and for a loop until release,
+    /// whether the note is still held. `released` changes only between render
+    /// calls, so the answer holds for a whole call.
+    fn looping(&self) -> bool {
+        let mode = match &self.sound {
+            Sound::Integer(sound) => sound.mode,
+            #[cfg(feature = "fp-mode")]
+            Sound::Float(sound) => sound.mode(),
+        };
+        match mode {
+            LoopMode::None => false,
+            LoopMode::Continuous => true,
+            LoopMode::UntilRelease => !self.released,
+        }
+    }
+}
+
+/// The integer engine's state of a voice.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IntegerSound {
+    end: u32,
+    loop_start: u32,
+    loop_end: u32,
+    mode: LoopMode,
+    /// Position in 32.32 sample points.
+    position: u64,
+    /// Step per frame in 32.32.
+    step: u64,
+    /// The channel bend the step was computed for.
+    step_bend: i32,
+    sample_rate: u32,
+    /// Pitch above the sample's root, in cents, without the channel's bend.
+    pitch_cents: i32,
+    /// Attenuation of the sample and the velocity, in centibels.
+    attenuation: u32,
+    /// Pan from the generators, -500 to 500.
+    pan: i32,
+    envelope: Envelope,
+    /// Gains reached so far, Q16.
+    left_gain: i32,
+    right_gain: i32,
+    /// The ramp under way: its end values, the step per frame and the
+    /// frames left to it (zero: start a new ramp).
+    target_left: i32,
+    target_right: i32,
+    left_delta: i32,
+    right_delta: i32,
+    ramp_left: u32,
+}
+
+impl IntegerSound {
+    /// The integer playback of `setup` at `rate`.
+    #[must_use]
+    pub fn new(setup: &VoiceSetup, rate: Rate) -> Self {
+        let frames = |timecents| timecents_frames(timecents, rate);
+        let envelope = Envelope::new(EnvelopeParameters {
+            delay: frames(setup.delay),
+            attack: frames(setup.attack),
+            hold: frames(setup.hold),
+            decay: frames(setup.decay),
+            sustain: setup.sustain,
+            release: frames(setup.release),
+        });
+        Self {
+            end: setup.end,
+            loop_start: setup.loop_start,
+            loop_end: setup.loop_end,
+            mode: setup.mode,
+            position: u64::from(setup.begin) << 32,
+            step: phase_step(setup.sample_rate, setup.pitch_cents, rate),
+            step_bend: 0,
+            sample_rate: setup.sample_rate,
+            pitch_cents: setup.pitch_cents,
+            // initialAttenuation counts 0.4 of its value, as in EMU hardware
+            // and in rustysynth and FluidSynth.
+            attenuation: setup.initial_attenuation * 2 / 5 + concave_centibels(setup.velocity),
+            pan: setup.pan,
             envelope,
             left_gain: 0,
             right_gain: 0,
@@ -207,40 +430,6 @@ impl Voice {
             left_delta: 0,
             right_delta: 0,
             ramp_left: 0,
-        }
-    }
-
-    /// Release the note (note-off, or the pedal let go).
-    pub fn release(&mut self) {
-        self.released = true;
-        self.held_by_pedal = false;
-        self.envelope.release();
-    }
-
-    /// Release within `frames` (exclusive class, stealing).
-    pub fn cut(&mut self, frames: u32) {
-        self.released = true;
-        self.held_by_pedal = false;
-        self.envelope.release_within(frames);
-    }
-
-    /// Whether the voice has nothing more to play.
-    #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.envelope.is_finished()
-    }
-
-    /// Current loudness, Q16 (for choosing a voice to steal).
-    #[must_use]
-    pub fn loudness(&self) -> i32 {
-        self.left_gain.max(self.right_gain)
-    }
-
-    fn looping(&self) -> bool {
-        match self.mode {
-            LoopMode::None => false,
-            LoopMode::Continuous => true,
-            LoopMode::UntilRelease => !self.released,
         }
     }
 
@@ -269,24 +458,30 @@ impl Voice {
         self.ramp_left = segment.max(1);
     }
 
-    /// Add `frames` frames of this voice into `out` (interleaved stereo, at
-    /// least `2 * frames` long), with `channel`'s volume, pan and bend.
+    /// Add `frames` frames into `out` (interleaved stereo, at least
+    /// `2 * frames` long), with `channel`'s volume, pan and bend, `looping`
+    /// as the voice says.
     ///
     /// The envelope and the gains move on a grid of blocks the synthesiser
     /// keeps from its first frame: `until_boundary` frames are left to the
     /// next grid point (at least `frames`). A ramp starts at a grid point (or
     /// at the voice's first frame) and runs to the next, however the frames
     /// are split into calls, so the output does not depend on the split.
-    pub fn render(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the render call's state, in one place"
+    )]
+    fn render(
         &mut self,
         font: &SoundFont<'_>,
         channel: &Channel,
         rate: Rate,
+        looping: bool,
         out: &mut [i32],
         frames: u32,
         until_boundary: u32,
     ) {
-        if self.is_finished() {
+        if self.envelope.is_finished() {
             return;
         }
         let bend = channel.bend_cents();
@@ -305,9 +500,6 @@ impl Voice {
         };
         let step = self.step;
         let mut position = self.position;
-        // `released` changes only between calls, so the loop state holds for
-        // the whole call.
-        let looping = self.looping();
         // Within a run every frame has `index + 1 < run_limit`: both points
         // are in the sample, the next point is `index + 1`, and the loop
         // cannot wrap before the run's last step.
@@ -432,8 +624,8 @@ fn run_frames(position: u64, step: u64, limit: u32) -> usize {
 /// Add a run of frames from `points` to `out`, starting at `position`, and
 /// return the position after it. The caller sized the run by [`run_frames`],
 /// so every frame reads `index` and `index + 1` within `points` and needs no
-/// end or wrap check: the frames are those of [`Voice::render`]'s slow path,
-/// bit for bit.
+/// end or wrap check: the frames are those of [`IntegerSound::render`]'s slow
+/// path, bit for bit.
 #[inline(always)]
 fn mix_run(
     points: &[i16],

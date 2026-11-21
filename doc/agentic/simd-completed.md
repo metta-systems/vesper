@@ -90,6 +90,8 @@ The details live in the contract and the design, and the history in version cont
   `just _test-ppc`.
 - [x] F12(b1) walker kept: the EL0 page walk and copies moved, unused, to
   `kernel/nucleus/src/user_memory.rs`; `ArchObjects::copy_to_user`/`copy_from_user` are gone.
+- [x] F12(b1) on the Pi 4: `just boot-fp-test` passes without and with `fp_entry_trap`,
+  the handled fault through the fault area included.
 
 ## Completed decisions
 
